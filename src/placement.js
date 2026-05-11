@@ -11,7 +11,7 @@ export default function getPlacements() {
 
 addPlacement({
   id: "jskit-ai-studio.home.menu.bootup",
-  target: "shell.primary-nav",
+  target: "shell.secondary-nav",
   kind: "link",
   surfaces: ["home"],
   order: 40,
@@ -24,7 +24,7 @@ addPlacement({
 
 addPlacement({
   id: "jskit-ai-studio.home.menu.app-bootup",
-  target: "shell.primary-nav",
+  target: "shell.secondary-nav",
   kind: "link",
   surfaces: ["home"],
   order: 50,
@@ -40,7 +40,7 @@ addPlacement({
   target: "shell.primary-nav",
   kind: "link",
   surfaces: ["home"],
-  order: 60,
+  order: 40,
   props: {
     label: "Home",
     to: "/home",
