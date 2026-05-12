@@ -95,6 +95,7 @@ async function runCloseHook(session, reason) {
     await session.onClose({
       exitCode: session.exitCode,
       id: session.id,
+      output: session.output,
       reason,
       status: session.status
     });

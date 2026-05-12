@@ -68,7 +68,40 @@ function isOpenIssueSession(session = {}) {
 }
 
 function canUseIssueSessionTerminal(session = {}) {
-  return isOpenIssueSession(session) && session.worktreeReady === true;
+  return isOpenIssueSession(session) &&
+    session.worktreeReady === true &&
+    Array.isArray(session.completedSteps) &&
+    session.completedSteps.includes("dependencies_installed");
+}
+
+function issueSessionCodexPrompt(session = {}) {
+  const promptField = String(session?.codex?.promptField || "");
+  return promptField ? String(session?.[promptField] || "") : "";
+}
+
+function issueSessionCodexExpectedOutputs(session = {}) {
+  const outputs = session?.codex?.expectedOutputs;
+  if (Array.isArray(outputs) && outputs.length > 0) {
+    return outputs.filter((output) => output?.field);
+  }
+  const output = session?.codex?.expectedOutput;
+  return output?.field ? [output] : [];
+}
+
+function hasIssueSessionCodexPrompt(session = {}) {
+  return session?.codex?.mode === "inject_prompt" && Boolean(issueSessionCodexPrompt(session));
+}
+
+function shouldAutoInjectIssueSessionCodexPrompt(session = {}) {
+  return hasIssueSessionCodexPrompt(session) && session?.codex?.autoInject === true;
+}
+
+function shouldUseManualIssueSessionCodexPrompt(session = {}) {
+  return hasIssueSessionCodexPrompt(session) && session?.codex?.autoInject !== true;
+}
+
+function issueSessionCodexPromptActionLabel(session = {}) {
+  return String(session?.codex?.promptActionLabel || "").trim() || "Submit prompt to Codex";
 }
 
 function issueSessionCurrentStepLabel(session = {}, stepDefinitions = []) {
@@ -169,11 +202,15 @@ export {
   isAbandonedIssueSession,
   isClosedIssueSession,
   isOpenIssueSession,
+  issueSessionCodexExpectedOutputs,
+  issueSessionCodexPromptActionLabel,
   issueSessionCurrentStepLabel,
   issueSessionFacts,
   issueSessionStatusColor,
   issueSessionStatusLabel,
   issueSessionTitleFromIssueText,
   parseGithubSessionLink,
+  shouldAutoInjectIssueSessionCodexPrompt,
+  shouldUseManualIssueSessionCodexPrompt,
   shortIssueSessionId
 };

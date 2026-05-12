@@ -182,7 +182,7 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
       const firstSteps = createdPayload.stepDefinitions
         .slice()
         .sort((left, right) => left.index - right.index)
-        .slice(0, 4);
+        .slice(0, 5);
       assert.equal(createdPayload.ok, true);
       assert.equal(createdPayload.currentStep, firstSteps[1].id);
       assert.equal(createdPayload.currentStepAction.stepId, firstSteps[1].id);
@@ -202,14 +202,33 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
       assert.equal(detail.statusCode, 200);
       assert.equal(detail.json().receipts[0].stepId, firstSteps[0].id);
 
-      const stepped = await app.inject({
+      const worktreeCreated = await app.inject({
         method: "POST",
         url: `/api/studio/current-app/issue-sessions/${createdPayload.sessionId}/step`,
         payload: {}
       });
-      assert.equal(stepped.statusCode, 200);
-      assert.equal(stepped.json().currentStep, firstSteps[2].id);
-      assert.equal(stepped.json().currentStepAction.input.name, "prompt");
+      assert.equal(worktreeCreated.statusCode, 200);
+      assert.equal(worktreeCreated.json().currentStep, firstSteps[2].id);
+      assert.equal(worktreeCreated.json().currentStepAction.input.type, "none");
+
+      const dependenciesInstalled = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${createdPayload.sessionId}/step`,
+        payload: {}
+      });
+      assert.equal(dependenciesInstalled.statusCode, 200);
+      assert.equal(dependenciesInstalled.json().currentStep, firstSteps[3].id);
+      assert.equal(dependenciesInstalled.json().currentStepAction.input.name, "prompt");
+      await writeFile(path.join(dependenciesInstalled.json().worktree, "session-ui.txt"), "review me\n", "utf8");
+
+      const diff = await app.inject({
+        method: "GET",
+        url: `/api/studio/current-app/issue-sessions/${createdPayload.sessionId}/diff`
+      });
+      assert.equal(diff.statusCode, 200);
+      assert.equal(diff.json().hasChanges, true);
+      assert.match(diff.json().gitStatus, /\?\? session-ui\.txt/);
+      assert.match(diff.json().untrackedDiff, /session-ui\.txt/);
 
       const prompted = await app.inject({
         method: "POST",
@@ -219,7 +238,7 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
         }
       });
       assert.equal(prompted.statusCode, 200);
-      assert.equal(prompted.json().currentStep, firstSteps[3].id);
+      assert.equal(prompted.json().currentStep, firstSteps[4].id);
       assert.equal(prompted.json().currentStepAction.input.fields[0].name, "issueTitle");
       assert.equal(prompted.json().currentStepAction.input.fields[1].name, "issue");
       assert.equal(prompted.json().codex.expectedOutputs[0].field, "issueTitle");
@@ -360,6 +379,70 @@ test("Studio issue sessions persist Codex thread ids in session state", async ()
   });
 });
 
+test("Studio issue sessions upload temporary Codex attachments outside the target app", async () => {
+  await withTemporaryGitPackageRoot("session-attachment-target-app", async (targetRoot) => {
+    const previousTargetRoot = process.env.JSKIT_STUDIO_TARGET_ROOT;
+    process.env.JSKIT_STUDIO_TARGET_ROOT = targetRoot;
+
+    let app;
+    try {
+      app = await createServer();
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/studio/current-app/issue-sessions",
+        payload: {}
+      });
+      assert.equal(created.statusCode, 200);
+      const sessionId = created.json().sessionId;
+
+      const blocked = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/codex-attachments`,
+        payload: {
+          dataBase64: Buffer.from("hello").toString("base64"),
+          fileName: "mockup.png"
+        }
+      });
+      assert.equal(blocked.statusCode, 400);
+      assert.equal(blocked.json().ok, false);
+
+      const stepped = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/step`,
+        payload: {}
+      });
+      assert.equal(stepped.statusCode, 200);
+      assert.equal(stepped.json().worktreeReady, true);
+
+      const uploaded = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/codex-attachments`,
+        payload: {
+          contentType: "image/png",
+          dataBase64: Buffer.from("hello").toString("base64"),
+          fileName: "../mockup image.png"
+        }
+      });
+      assert.equal(uploaded.statusCode, 200);
+      assert.equal(uploaded.json().ok, true);
+      assert.equal(uploaded.json().fileName, "mockup image.png");
+      assert.equal(uploaded.json().size, 5);
+      assert.match(uploaded.json().containerPath, /^\/studio-attachments\//);
+      assert.doesNotMatch(uploaded.json().containerPath, /\.\./);
+      await assert.rejects(access(path.join(targetRoot, "mockup image.png")));
+    } finally {
+      if (app) {
+        await app.close();
+      }
+      if (previousTargetRoot == null) {
+        delete process.env.JSKIT_STUDIO_TARGET_ROOT;
+      } else {
+        process.env.JSKIT_STUDIO_TARGET_ROOT = previousTargetRoot;
+      }
+    }
+  });
+});
+
 test("Studio issue-session list is read-only and local-only", async () => {
   await withTemporaryGitPackageRoot("session-target-app", async (targetRoot) => {
     const previousTargetRoot = process.env.JSKIT_STUDIO_TARGET_ROOT;
@@ -452,6 +535,7 @@ test("GET /api/studio/bootstrap reports mandatory bootstrap checks", async () =>
   assert.equal(payload.checks.some((check) => check.id === "toolchain-image"), true);
   assert.equal(payload.checks.some((check) => check.id === "mysql-capability"), true);
   assert.equal(payload.checks.some((check) => check.id === "ripgrep"), true);
+  assert.equal(payload.checks.some((check) => check.id === "playwright"), true);
   assert.equal(payload.checks.some((check) => check.id === "gh-auth"), true);
   assert.equal(payload.checks.some((check) => check.id === "codex-auth"), true);
   assert.equal(payload.checks.some((check) => check.id === "mysql-database"), false);

@@ -3,14 +3,14 @@
     rounded="lg"
     class="codex-terminal"
     :class="{
-      'codex-terminal--desktop-actionless': !codexPrompt,
+      'codex-terminal--desktop-actionless': !showPromptButton,
       'codex-terminal--focused': terminalFocused
     }"
   >
     <div class="codex-terminal__bar">
       <div class="codex-terminal__actions">
         <v-btn
-          v-if="codexPrompt"
+          v-if="showPromptButton"
           :disabled="!canUseTerminal || terminalStarting"
           :loading="injectingPrompt"
           :prepend-icon="mdiSend"
@@ -36,8 +36,21 @@
           {{ terminalError }}
         </v-alert>
 
-        <div class="codex-terminal__stage">
+        <div
+          class="codex-terminal__stage"
+          :class="{ 'codex-terminal__stage--dragging': attachmentDragActive }"
+          @dragenter.prevent="handleAttachmentDragEnter"
+          @dragover.prevent="handleAttachmentDragOver"
+          @dragleave.prevent="handleAttachmentDragLeave"
+          @drop.prevent="handleAttachmentDrop"
+        >
           <div ref="terminalHost" class="codex-terminal__host" @click="focusTerminal" />
+          <div v-if="attachmentDragActive || attachmentUploading" class="codex-terminal__drop-overlay">
+            <v-sheet class="codex-terminal__drop-card" rounded="lg" elevation="10">
+              <v-icon :icon="mdiPaperclip" size="28" />
+              <span>{{ attachmentUploading ? "Uploading temporary file..." : "Drop temporary files for Codex" }}</span>
+            </v-sheet>
+          </div>
           <div v-if="showTerminalStartPanel" class="codex-terminal__restart-panel">
             <v-sheet class="codex-terminal__restart-card" rounded="lg" elevation="8">
               <span>{{ terminalExited ? "Codex exited." : "Codex is not running." }}</span>
@@ -85,7 +98,9 @@
           </div>
         </div>
 
-        <p v-if="copyStatus" class="text-caption text-medium-emphasis mb-0">{{ copyStatus }}</p>
+        <p v-if="copyStatus || attachmentStatus" class="text-caption text-medium-emphasis mb-0">
+          {{ attachmentStatus || copyStatus }}
+        </p>
       </div>
     </v-expand-transition>
   </v-sheet>
@@ -98,6 +113,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import {
   mdiChevronDown,
   mdiChevronUp,
+  mdiPaperclip,
   mdiRestart,
   mdiSend
 } from "@mdi/js";
@@ -105,7 +121,8 @@ import {
   closeIssueSessionCodexTerminal,
   issueSessionCodexTerminalWebSocketUrl,
   saveIssueSessionCodexThread,
-  startIssueSessionCodexTerminal
+  startIssueSessionCodexTerminal,
+  uploadIssueSessionCodexAttachment
 } from "@/lib/studioApi.js";
 import {
   codexTrustPromptLooksActive,
@@ -120,6 +137,18 @@ const props = defineProps({
     default: null
   },
   visible: {
+    type: Boolean,
+    default: true
+  },
+  autoInjectPrompt: {
+    type: Boolean,
+    default: true
+  },
+  promptInjectionRequestKey: {
+    type: [String, Number],
+    default: ""
+  },
+  showPromptAction: {
     type: Boolean,
     default: true
   }
@@ -143,6 +172,9 @@ const componentMounted = ref(false);
 const codexThreadId = ref("");
 const codexThreadCaptureRequired = ref(false);
 const codexThreadCaptureStarted = ref(false);
+const attachmentDragDepth = ref(0);
+const attachmentUploading = ref(false);
+const attachmentStatus = ref("");
 
 let terminalInstance = null;
 let terminalFitAddon = null;
@@ -164,6 +196,7 @@ let terminalStartPromise = null;
 let terminalRecoveryPromise = null;
 let codexThreadCapturePromise = null;
 let codexThreadSavePromise = null;
+let handledPromptInjectionRequestKey = "";
 let terminalHasOutput = false;
 let terminalLatestOutput = "";
 let terminalLastOutputAt = 0;
@@ -191,8 +224,11 @@ const codexPromptInjectionKey = computed(() => {
   }
   return `${sessionId.value}:${hashText(codexPrompt.value)}`;
 });
+const manualPromptInjectionRequestKey = computed(() => String(props.promptInjectionRequestKey || ""));
+const showPromptButton = computed(() => Boolean(codexPrompt.value && props.showPromptAction));
 const promptActionLabel = computed(() => autoPromptInjected.value ? "Re-inject Prompt" : "Inject Prompt");
 const terminalExited = computed(() => terminalStatus.value === "exited");
+const attachmentDragActive = computed(() => attachmentDragDepth.value > 0);
 const showTerminalStartPanel = computed(() => (
   canUseTerminal.value &&
   componentMounted.value &&
@@ -715,6 +751,79 @@ async function sendTerminalData(data) {
   }
 }
 
+function filesFromDropEvent(event) {
+  return Array.from(event?.dataTransfer?.files || []).filter((file) => file && file.size >= 0);
+}
+
+function handleAttachmentDragEnter(event) {
+  const hasFiles = filesFromDropEvent(event).length > 0 ||
+    Array.from(event?.dataTransfer?.types || []).includes("Files");
+  if (!hasFiles) {
+    return;
+  }
+  attachmentDragDepth.value += 1;
+  if (event?.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function handleAttachmentDragOver(event) {
+  if (event?.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+}
+
+function handleAttachmentDragLeave() {
+  attachmentDragDepth.value = Math.max(0, attachmentDragDepth.value - 1);
+}
+
+async function injectAttachmentPath(containerPath) {
+  const normalizedPath = String(containerPath || "").trim();
+  if (!normalizedPath) {
+    return false;
+  }
+  return sendTerminalData(`\u001b[200~[${normalizedPath}] \u001b[201~`);
+}
+
+async function uploadDroppedAttachment(file) {
+  const attachment = await uploadIssueSessionCodexAttachment(sessionId.value, file);
+  if (attachment?.ok === false) {
+    throw new Error(attachment.error || attachment.errors?.[0]?.message || "Attachment upload failed.");
+  }
+  if (!(await injectAttachmentPath(attachment.containerPath))) {
+    throw new Error("Attachment path could not be sent to Codex.");
+  }
+  return attachment;
+}
+
+async function handleAttachmentDrop(event) {
+  attachmentDragDepth.value = 0;
+  const files = filesFromDropEvent(event);
+  if (!files.length) {
+    return;
+  }
+  attachmentUploading.value = true;
+  attachmentStatus.value = "";
+  try {
+    if (!(await ensureTerminalReady())) {
+      return;
+    }
+    const uploaded = [];
+    for (const file of files) {
+      uploaded.push(await uploadDroppedAttachment(file));
+    }
+    const label = uploaded.length === 1
+      ? uploaded[0].fileName
+      : `${uploaded.length} files`;
+    attachmentStatus.value = `${label} attached. Press Enter in Codex when ready.`;
+    focusTerminal();
+  } catch (error) {
+    attachmentStatus.value = String(error?.message || error || "Attachment upload failed.");
+  } finally {
+    attachmentUploading.value = false;
+  }
+}
+
 function delay(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -932,13 +1041,29 @@ async function injectPrompt() {
 
 async function injectPromptAutomatically() {
   const injectionKey = codexPromptInjectionKey.value;
-  if (!componentMounted.value || !injectionKey || autoInjectedPromptKey.value === injectionKey) {
+  if (
+    !props.autoInjectPrompt ||
+    !componentMounted.value ||
+    !injectionKey ||
+    autoInjectedPromptKey.value === injectionKey
+  ) {
     return;
   }
   autoInjectedPromptKey.value = injectionKey;
   autoPromptInjected.value = false;
   if (!(await injectPrompt()) && autoInjectedPromptKey.value === injectionKey) {
     autoInjectedPromptKey.value = "";
+  }
+}
+
+async function injectPromptForRequest() {
+  const requestKey = manualPromptInjectionRequestKey.value;
+  if (!componentMounted.value || !requestKey || handledPromptInjectionRequestKey === requestKey) {
+    return;
+  }
+  handledPromptInjectionRequestKey = requestKey;
+  if (!(await injectPrompt()) && handledPromptInjectionRequestKey === requestKey) {
+    handledPromptInjectionRequestKey = "";
   }
 }
 
@@ -1035,6 +1160,9 @@ watch(sessionId, async (nextSessionId, previousSessionId) => {
   }
   autoInjectedPromptKey.value = "";
   autoPromptInjected.value = false;
+  handledPromptInjectionRequestKey = "";
+  attachmentDragDepth.value = 0;
+  attachmentStatus.value = "";
   expanded.value = defaultExpanded();
   startTerminalWhenReady();
   void injectPromptAutomatically();
@@ -1065,6 +1193,13 @@ watch(codexPromptInjectionKey, (nextPromptKey) => {
   }
 });
 
+watch(manualPromptInjectionRequestKey, (nextRequestKey) => {
+  if (nextRequestKey) {
+    expanded.value = true;
+    void injectPromptForRequest();
+  }
+});
+
 watch(() => props.visible, async (visible) => {
   if (!visible) {
     return;
@@ -1080,8 +1215,10 @@ onMounted(() => {
   void nextTick().then(() => {
     startTerminalWhenReady();
     void injectPromptAutomatically();
+    void injectPromptForRequest();
   });
   void injectPromptAutomatically();
+  void injectPromptForRequest();
 });
 
 onBeforeUnmount(() => {
@@ -1144,6 +1281,34 @@ onBeforeUnmount(() => {
 
 .codex-terminal__stage {
   position: relative;
+}
+
+.codex-terminal__stage--dragging .codex-terminal__host {
+  border-color: rgb(var(--v-theme-primary));
+  box-shadow:
+    0 0 0 3px rgba(var(--v-theme-primary), 0.3),
+    0 0 28px rgba(var(--v-theme-primary), 0.38);
+}
+
+.codex-terminal__drop-overlay {
+  align-items: center;
+  background: rgba(10, 12, 16, 0.48);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 1rem;
+  pointer-events: none;
+  position: absolute;
+}
+
+.codex-terminal__drop-card {
+  align-items: center;
+  background: rgba(var(--v-theme-surface), 0.96);
+  color: rgb(var(--v-theme-on-surface));
+  display: flex;
+  font-weight: 650;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
 }
 
 .codex-terminal__restart-panel {

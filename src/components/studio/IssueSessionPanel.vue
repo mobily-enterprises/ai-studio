@@ -68,6 +68,51 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="diffDialogOpen" max-width="min(94vw, 72rem)">
+      <v-card class="studio-issue-sessions__diff-dialog">
+        <v-card-title class="studio-issue-sessions__diff-title">
+          <span>Review changes</span>
+          <v-chip
+            v-if="diffPayload"
+            :color="diffPayload.hasChanges ? 'primary' : 'default'"
+            size="small"
+            variant="tonal"
+          >
+            {{ diffPayload.hasChanges ? "Changes found" : "No changes" }}
+          </v-chip>
+        </v-card-title>
+        <v-card-text
+          ref="diffBodyElement"
+          class="studio-issue-sessions__diff-body"
+          @click="handleDiffBodyClick"
+        >
+          <v-alert v-if="diffError" type="error" variant="tonal" class="mb-3">
+            {{ diffError }}
+          </v-alert>
+          <v-progress-linear v-if="diffLoading" color="primary" indeterminate class="mb-3" />
+          <pre v-if="diffPayload?.gitStatus" class="studio-issue-sessions__diff-status">{{ diffPayload.gitStatus }}</pre>
+          <!-- eslint-disable-next-line vue/no-v-html -- Diff2Html escapes git diff content before rendering. -->
+          <div v-if="renderedDiff" class="studio-issue-sessions__diff-rendered" v-html="renderedDiff" />
+          <v-alert v-else-if="!diffLoading && !diffError" type="info" variant="tonal">
+            No diff is available for this session worktree.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeDiffDialog">Close</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :disabled="!diffPayload?.hasChanges || diffLoading"
+            :loading="issueSessionBusy"
+            @click="acceptReviewedChanges"
+          >
+            {{ selectedStepAction?.buttonLabel || "Accept changes" }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <div v-if="selectedSession" class="studio-issue-sessions__workspace">
       <section class="studio-issue-sessions__main">
         <div class="studio-issue-sessions__timeline">
@@ -101,7 +146,7 @@
                   class="studio-issue-sessions__monospace"
                 />
 
-                <template v-if="isCodexOutputStep && hasAnyEditableCodexOutput">
+                <template v-if="isCodexOutputStep && codexOutputFormVisible">
                   <template
                     v-for="output in codexEditableOutputs"
                     :key="codexOutputDraftKeyFor(output)"
@@ -161,25 +206,64 @@
                   </v-btn>
                 </div>
 
-                <div v-else class="studio-issue-sessions__action-buttons">
-                  <v-btn
-                    color="primary"
-                    variant="flat"
-                    :loading="issueSessionBusy"
-                    :disabled="!canRunAction"
-                    :prepend-icon="mdiPlay"
-                    @click="runCurrentAction"
-                  >
-                    {{ currentActionButtonLabel }}
-                  </v-btn>
-                  <v-btn
-                    v-if="selectedSession.prompt && !isCodexPromptInjection"
+                <div v-else class="studio-issue-sessions__action-stack">
+                  <v-alert
+                    v-if="issueCreatedNotice"
+                    color="success"
+                    density="comfortable"
                     variant="tonal"
-                    :prepend-icon="mdiContentCopy"
-                    @click="copyText(selectedSession.prompt, 'Prompt')"
+                    class="studio-issue-sessions__issue-created"
                   >
-                    Copy Prompt
-                  </v-btn>
+                    <a
+                      :href="issueCreatedNotice.href"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Issue created: {{ issueCreatedNotice.label }}
+                    </a>
+                  </v-alert>
+
+                  <div class="studio-issue-sessions__action-buttons">
+                    <v-btn
+                      v-if="hasManualCodexPromptAction"
+                      color="primary"
+                      variant="tonal"
+                      :disabled="selectedSessionTerminalBlocked || issueSessionBusy"
+                      :prepend-icon="mdiSend"
+                      @click="requestCodexPromptInjection"
+                    >
+                      {{ manualCodexPromptButtonLabel }}
+                    </v-btn>
+                    <v-btn
+                      v-if="diffUtilityAction"
+                      color="primary"
+                      variant="tonal"
+                      :disabled="issueSessionBusy"
+                      :prepend-icon="mdiFileCompare"
+                      @click="openDiffDialog"
+                    >
+                      {{ diffUtilityAction.label || "Review changes" }}
+                    </v-btn>
+                    <v-btn
+                      v-if="showCurrentActionButton"
+                      color="primary"
+                      variant="flat"
+                      :loading="issueSessionBusy"
+                      :disabled="!canRunAction"
+                      :prepend-icon="mdiPlay"
+                      @click="runCurrentAction"
+                    >
+                      {{ currentActionButtonLabel }}
+                    </v-btn>
+                    <v-btn
+                      v-if="selectedSession.prompt && !isCodexPromptInjection"
+                      variant="tonal"
+                      :prepend-icon="mdiContentCopy"
+                      @click="copyText(selectedSession.prompt, 'Prompt')"
+                    >
+                      Copy Prompt
+                    </v-btn>
+                  </div>
                 </div>
 
                 <p v-if="copyStatus" class="text-caption text-medium-emphasis mb-0">{{ copyStatus }}</p>
@@ -214,11 +298,20 @@
         </v-alert>
 
         <div class="studio-issue-sessions__terminal-stack">
+          <IssueSessionStepTerminal
+            v-if="selectedSessionNeedsSetupTerminal"
+            :session="selectedSession"
+            :visible="true"
+            @finished="handleSessionStepTerminalFinished"
+          />
           <CodexSessionTerminal
             v-for="terminalSession in terminalSessions"
             v-show="terminalSession.sessionId === selectedSessionId"
             :key="terminalSession.sessionId"
             :session="terminalSession"
+            :auto-inject-prompt="shouldAutoInjectIssueSessionCodexPrompt(terminalSession)"
+            :prompt-injection-request-key="promptInjectionRequestKeyFor(terminalSession)"
+            :show-prompt-action="!shouldUseManualIssueSessionCodexPrompt(terminalSession)"
             :visible="terminalSession.sessionId === selectedSessionId"
             @output="recordCodexTerminalOutput(terminalSession.sessionId, $event)"
             @session-update="applyIssueSessionUpdate"
@@ -320,6 +413,8 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
+import { html as renderDiffHtml } from "diff2html";
+import "diff2html/bundles/css/diff2html.min.css";
 import {
   mdiAlertCircle,
   mdiChevronDown,
@@ -329,6 +424,7 @@ import {
   mdiCircleOutline,
   mdiCircleSlice8,
   mdiContentCopy,
+  mdiFileCompare,
   mdiFolderOutline,
   mdiGithub,
   mdiIdentifier,
@@ -337,19 +433,27 @@ import {
   mdiPlus,
   mdiProgressCheck,
   mdiRobotOutline,
+  mdiSend,
   mdiSourceBranch
 } from "@mdi/js";
 import CodexSessionTerminal from "@/components/studio/CodexSessionTerminal.vue";
+import IssueSessionStepTerminal from "@/components/studio/IssueSessionStepTerminal.vue";
 import { useIssueSessions } from "@/composables/useIssueSessions.js";
-import { extractMarkedOutput } from "@/lib/codexOutput.js";
+import { extractMarkedOutputDetails } from "@/lib/codexOutput.js";
+import { readIssueSessionDiff } from "@/lib/studioApi.js";
 import {
   canUseIssueSessionTerminal,
   isAbandonedIssueSession,
   isClosedIssueSession,
   isOpenIssueSession,
+  issueSessionCodexExpectedOutputs,
+  issueSessionCodexPromptActionLabel,
   issueSessionFacts,
   issueSessionStatusColor,
   issueSessionStatusLabel,
+  parseGithubSessionLink,
+  shouldAutoInjectIssueSessionCodexPrompt,
+  shouldUseManualIssueSessionCodexPrompt,
   shortIssueSessionId
 } from "@/lib/issueSessionViewModel.js";
 
@@ -360,7 +464,13 @@ const codexOutputSourceByKey = ref({});
 const expandedFactKeys = ref({});
 const abandonDialogOpen = ref(false);
 const abandonSessionId = ref("");
+const diffDialogOpen = ref(false);
+const diffError = ref("");
+const diffLoading = ref(false);
+const diffPayload = ref(null);
+const diffBodyElement = ref(null);
 const terminalSessionById = ref({});
+const promptInjectionRequestBySessionId = ref({});
 
 const {
   abandonSelectedSession,
@@ -411,6 +521,10 @@ const selectedSessionTerminalBlocked = computed(() => {
   );
 });
 
+const selectedSessionNeedsSetupTerminal = computed(() => {
+  return selectedSession.value?.currentStep === "dependencies_installed";
+});
+
 const hasCodexPromptHandoff = computed(() => {
   return selectedSession.value?.codex?.mode === "inject_prompt";
 });
@@ -419,20 +533,45 @@ const isCodexPromptInjection = computed(() => {
   return hasCodexPromptHandoff.value && Boolean(selectedSession.value?.prompt);
 });
 
-const codexExpectedOutput = computed(() => {
-  return selectedSession.value?.codex?.expectedOutput || null;
-});
-
 const codexExpectedOutputs = computed(() => {
-  const outputs = selectedSession.value?.codex?.expectedOutputs;
-  if (Array.isArray(outputs) && outputs.length > 0) {
-    return outputs.filter((output) => output?.field);
-  }
-  return codexExpectedOutput.value?.field ? [codexExpectedOutput.value] : [];
+  return issueSessionCodexExpectedOutputs(selectedSession.value || {});
 });
 
 const isCodexOutputStep = computed(() => {
   return hasCodexPromptHandoff.value && codexEditableOutputs.value.length > 0;
+});
+
+const hasManualCodexPromptAction = computed(() => {
+  return shouldUseManualIssueSessionCodexPrompt(selectedSession.value || {}) &&
+    !codexOutputFormVisible.value;
+});
+
+const manualCodexPromptButtonLabel = computed(() => {
+  return issueSessionCodexPromptActionLabel(selectedSession.value || {});
+});
+
+const diffUtilityAction = computed(() => {
+  const actions = selectedStepAction.value?.utilityActions || [];
+  return actions.find((action) => action?.kind === "diff") || null;
+});
+
+const combinedDiff = computed(() => {
+  const payload = diffPayload.value || {};
+  return [payload.stagedDiff, payload.unstagedDiff, payload.untrackedDiff]
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .join("\n");
+});
+
+const renderedDiff = computed(() => {
+  if (!combinedDiff.value) {
+    return "";
+  }
+  return renderDiffHtml(combinedDiff.value, {
+    drawFileList: true,
+    matching: "lines",
+    outputFormat: "side-by-side"
+  });
 });
 
 const codexInputFieldsByName = computed(() => {
@@ -457,6 +596,23 @@ const hasAnyEditableCodexOutput = computed(() => {
   return codexEditableOutputs.value.some((output) => codexOutputDraftValue(output).trim());
 });
 
+const hasCodexOutputDraftEntry = computed(() => {
+  return codexEditableOutputs.value.some((output) => {
+    const key = codexOutputDraftKeyFor(output);
+    return key && Object.prototype.hasOwnProperty.call(codexOutputDraftByKey.value, key);
+  });
+});
+
+const codexOutputFormVisible = computed(() => {
+  return hasAnyEditableCodexOutput.value || hasCodexOutputDraftEntry.value;
+});
+
+const requiredCodexOutputsFilled = computed(() => {
+  const requiredOutputs = codexEditableOutputs.value.filter((output) => output.required !== false);
+  return requiredOutputs.length > 0 &&
+    requiredOutputs.every((output) => Boolean(codexOutputDraftValue(output).trim()));
+});
+
 const codexWaitingMessage = computed(() => {
   if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
     return "Run this step to ask Codex for the required output.";
@@ -468,13 +624,17 @@ const codexWaitingMessage = computed(() => {
 });
 
 const extractedCodexOutputEntries = computed(() => {
-  return codexEditableOutputs.value.map((output) => ({
-    key: codexOutputDraftKeyFor(output),
-    value: extractMarkedOutput(selectedCodexTerminalOutput.value, output.extract, {
+  return codexEditableOutputs.value.map((output) => {
+    const extracted = extractMarkedOutputDetails(selectedCodexTerminalOutput.value, output.extract, {
       formatHint: output.formatHint,
       singleLine: !codexOutputIsMultiline(output)
-    })
-  }));
+    });
+    return {
+      key: codexOutputDraftKeyFor(output),
+      signature: extracted.signature,
+      value: extracted.value
+    };
+  });
 });
 
 function codexOutputDraftKeyFor(output = {}) {
@@ -532,13 +692,14 @@ const canRunAction = computed(() => {
   if (!selectedStepAction.value || isTerminalSession.value || issueSessionBusy.value) {
     return false;
   }
+  if (selectedSessionNeedsSetupTerminal.value) {
+    return false;
+  }
   if (isCodexOutputStep.value) {
     if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
       return true;
     }
-    return codexEditableOutputs.value
-      .filter((output) => output.required !== false)
-      .every((output) => Boolean(codexOutputDraftValue(output).trim()));
+    return requiredCodexOutputsFilled.value;
   }
   const input = selectedStepInput.value || {};
   if (input.required && input.name) {
@@ -547,7 +708,26 @@ const canRunAction = computed(() => {
   return true;
 });
 
+const showCurrentActionButton = computed(() => {
+  if (isChoiceStep.value) {
+    return false;
+  }
+  if (!isCodexOutputStep.value) {
+    return true;
+  }
+  if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
+    return true;
+  }
+  return requiredCodexOutputsFilled.value;
+});
+
 const currentActionButtonLabel = computed(() => {
+  if (selectedSessionNeedsSetupTerminal.value) {
+    return "Installing dependencies";
+  }
+  if (issueCreatedNotice.value && !selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
+    return "Continue to plan";
+  }
   if (isCodexOutputStep.value && codexEditableOutputs.value.some((output) => output.field === "issue")) {
     return "Create issue";
   }
@@ -563,6 +743,23 @@ const sessionFactItems = computed(() => {
       ...fact,
       icon: sessionFactIcon(fact.icon)
     }));
+});
+
+const issueCreatedNotice = computed(() => {
+  const session = selectedSession.value || {};
+  const issueUrl = String(session.issueUrl || "").trim();
+  if (
+    !issueUrl ||
+    session.currentStep !== "plan_made" ||
+    !completedStepIds.value.has("issue_created")
+  ) {
+    return null;
+  }
+  const parsedLink = parseGithubSessionLink(issueUrl, "issue");
+  return {
+    href: issueUrl,
+    label: parsedLink.label.replace(/^Issue\s+/u, "")
+  };
 });
 
 function shortSessionId(sessionId) {
@@ -628,6 +825,10 @@ function canDisplayTerminalSession(session = {}) {
   }
   return Boolean(terminalSessionById.value[sessionId]) ||
     (sessionId === selectedSessionId.value && !terminalLimitReachedFor(sessionId));
+}
+
+function promptInjectionRequestKeyFor(session = {}) {
+  return promptInjectionRequestBySessionId.value[session?.sessionId || ""] || "";
 }
 
 function canAbandonSessionFromChip(session = {}) {
@@ -716,8 +917,13 @@ function forgetTerminalSession(sessionId) {
     [sessionId]: _terminalOutput,
     ...remainingTerminalOutputs
   } = codexTerminalOutputBySessionId.value;
+  const {
+    [sessionId]: _promptInjectionRequest,
+    ...remainingPromptInjectionRequests
+  } = promptInjectionRequestBySessionId.value;
   terminalSessionById.value = remainingTerminalSessions;
   codexTerminalOutputBySessionId.value = remainingTerminalOutputs;
+  promptInjectionRequestBySessionId.value = remainingPromptInjectionRequests;
 }
 
 function pruneTerminalSessions() {
@@ -731,6 +937,9 @@ function pruneTerminalSessions() {
   );
   codexTerminalOutputBySessionId.value = Object.fromEntries(
     Object.entries(codexTerminalOutputBySessionId.value).filter(([sessionId]) => sessionIds.has(sessionId))
+  );
+  promptInjectionRequestBySessionId.value = Object.fromEntries(
+    Object.entries(promptInjectionRequestBySessionId.value).filter(([sessionId]) => sessionIds.has(sessionId))
   );
 }
 
@@ -807,6 +1016,90 @@ async function confirmAbandonSession() {
   cancelAbandonSession();
 }
 
+async function handleSessionStepTerminalFinished(event = {}) {
+  if (!event.sessionId || event.sessionId !== selectedSessionId.value) {
+    return;
+  }
+  await selectSession(event.sessionId, { preserveList: true });
+  await loadIssueSessions();
+}
+
+async function openDiffDialog() {
+  if (!selectedSessionId.value) {
+    return;
+  }
+  diffDialogOpen.value = true;
+  diffLoading.value = true;
+  diffError.value = "";
+  diffPayload.value = null;
+  try {
+    const response = await readIssueSessionDiff(selectedSessionId.value);
+    diffPayload.value = response;
+    if (response?.ok === false) {
+      diffError.value = response.errors?.[0]?.message || "Diff inspection failed.";
+    }
+  } catch (error) {
+    diffError.value = String(error?.message || error || "Diff inspection failed.");
+  } finally {
+    diffLoading.value = false;
+  }
+}
+
+function closeDiffDialog() {
+  diffDialogOpen.value = false;
+}
+
+function handleDiffBodyClick(event) {
+  const clickedElement = event.target instanceof Element ? event.target : null;
+  const link = clickedElement?.closest("a");
+  const diffBody = diffBodyElement.value?.$el || diffBodyElement.value;
+  if (!link || !diffBody?.contains(link)) {
+    return;
+  }
+
+  const href = String(link.getAttribute("href") || "");
+  if (!href.startsWith("#")) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const target = document.getElementById(href.slice(1));
+  if (target && diffBody.contains(target)) {
+    target.scrollIntoView({
+      block: "start",
+      behavior: "smooth"
+    });
+  }
+}
+
+async function acceptReviewedChanges() {
+  const response = await runSelectedStep();
+  rememberTerminalSession(response);
+  if (response?.ok !== false) {
+    closeDiffDialog();
+  }
+}
+
+function requestCodexPromptInjection() {
+  const session = selectedSession.value || {};
+  const sessionId = session.sessionId || "";
+  if (!sessionId || selectedSessionTerminalBlocked.value) {
+    copyStatus.value = selectedSessionTerminalBlocked.value
+      ? "Open terminal limit reached."
+      : "No active session is selected.";
+    return;
+  }
+  rememberTerminalSession(session);
+  promptInjectionRequestBySessionId.value = {
+    ...promptInjectionRequestBySessionId.value,
+    [sessionId]: `${Date.now()}:${Math.random().toString(36).slice(2)}`
+  };
+  copyStatus.value = `${manualCodexPromptButtonLabel.value} requested.`;
+}
+
 function runCurrentAction() {
   if (isCodexOutputStep.value) {
     void runCodexOutputStep();
@@ -831,21 +1124,20 @@ watch(extractedCodexOutputEntries, (entries) => {
   for (const entry of entries) {
     const key = entry.key;
     const nextOutput = String(entry.value || "");
-    if (!key || !nextOutput) {
+    const nextSource = String(entry.signature || "");
+    if (!key || !nextOutput || !nextSource) {
       continue;
     }
-    const previousSource = nextSources[key] || "";
-    const existingDraft = nextDrafts[key];
-    if (existingDraft === undefined || existingDraft === previousSource) {
+    if (nextSources[key] !== nextSource) {
       nextDrafts = {
         ...nextDrafts,
         [key]: nextOutput
       };
+      nextSources = {
+        ...nextSources,
+        [key]: nextSource
+      };
     }
-    nextSources = {
-      ...nextSources,
-      [key]: nextOutput
-    };
   }
   codexOutputDraftByKey.value = nextDrafts;
   codexOutputSourceByKey.value = nextSources;
@@ -878,6 +1170,36 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.studio-issue-sessions__action-buttons :deep(.v-btn),
+.studio-issue-sessions__choice-row :deep(.v-btn) {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.studio-issue-sessions__action-buttons :deep(.v-btn__content),
+.studio-issue-sessions__choice-row :deep(.v-btn__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-issue-sessions__action-stack {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.studio-issue-sessions__issue-created a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.studio-issue-sessions__issue-created a:hover {
+  text-decoration: underline;
 }
 
 .studio-issue-sessions__strip {
@@ -961,6 +1283,65 @@ onMounted(() => {
 
 .studio-issue-sessions__empty {
   padding: 0.75rem;
+}
+
+.studio-issue-sessions__diff-dialog {
+  max-height: 90vh;
+}
+
+.studio-issue-sessions__diff-title {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.studio-issue-sessions__diff-body {
+  max-height: 72vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.studio-issue-sessions__diff-status {
+  background: rgba(var(--v-theme-surface-variant), 0.55);
+  border: 1px solid rgba(var(--v-border-color), 0.3);
+  border-radius: 8px;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  margin: 0 0 0.75rem;
+  overflow: auto;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.studio-issue-sessions__diff-rendered {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.studio-issue-sessions__diff-rendered :deep(.d2h-wrapper) {
+  color: #1f2937;
+}
+
+.studio-issue-sessions__diff-rendered :deep(.d2h-file-wrapper) {
+  border-color: rgba(var(--v-border-color), 0.34);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.studio-issue-sessions__diff-rendered :deep(.d2h-file-header) {
+  border-radius: 8px 8px 0 0;
+}
+
+.studio-issue-sessions__diff-rendered :deep(.d2h-files-diff),
+.studio-issue-sessions__diff-rendered :deep(.d2h-file-side-diff) {
+  min-width: 0;
+}
+
+.studio-issue-sessions__diff-rendered :deep(.d2h-file-side-diff) {
+  overflow-x: auto;
 }
 
 .studio-issue-sessions__workspace {

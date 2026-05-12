@@ -4,6 +4,7 @@ import {
   cleanSingleLineCodexOutput,
   codexTrustPromptLooksActive,
   extractCodexThreadId,
+  extractMarkedOutputDetails,
   extractMarkedOutput,
   isPlaceholderMarkedOutput,
   isCodexThreadId,
@@ -26,6 +27,28 @@ describe("codex output extraction", () => {
     ].join("\n");
 
     expect(extractMarkedOutput(output, "issue_text")).toBe("# New\n\nShip it.");
+  });
+
+  it("reports the source block used for a marked output", () => {
+    const firstOutput = [
+      "[issue_text]",
+      "# Same",
+      "[/issue_text]"
+    ].join("\n");
+    const secondOutput = [
+      firstOutput,
+      "retry",
+      "[issue_text]",
+      "# Same",
+      "[/issue_text]"
+    ].join("\n");
+
+    const first = extractMarkedOutputDetails(firstOutput, "issue_text");
+    const second = extractMarkedOutputDetails(secondOutput, "issue_text");
+
+    expect(first.value).toBe("# Same");
+    expect(second.value).toBe("# Same");
+    expect(first.signature).not.toBe(second.signature);
   });
 
   it("ignores terminal control sequences around marked output", () => {

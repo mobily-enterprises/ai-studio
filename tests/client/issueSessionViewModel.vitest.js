@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   canUseIssueSessionTerminal,
   isClosedIssueSession,
+  issueSessionCodexExpectedOutputs,
+  issueSessionCodexPromptActionLabel,
   issueSessionFacts,
   issueSessionStatusColor,
   issueSessionTitleFromIssueText,
   parseGithubSessionLink,
+  shouldAutoInjectIssueSessionCodexPrompt,
+  shouldUseManualIssueSessionCodexPrompt,
   shortIssueSessionId
 } from "../../src/lib/issueSessionViewModel.js";
 
@@ -14,10 +18,62 @@ describe("issue session view model", () => {
   it("centralizes session status and terminal availability rules", () => {
     expect(isClosedIssueSession({ status: "abandoned" })).toBe(true);
     expect(isClosedIssueSession({ status: "finished" })).toBe(true);
-    expect(canUseIssueSessionTerminal({ status: "running", worktreeReady: true })).toBe(true);
-    expect(canUseIssueSessionTerminal({ status: "running", worktreeReady: false })).toBe(false);
-    expect(canUseIssueSessionTerminal({ status: "abandoned", worktreeReady: true })).toBe(false);
+    expect(canUseIssueSessionTerminal({
+      completedSteps: ["dependencies_installed"],
+      status: "running",
+      worktreeReady: true
+    })).toBe(true);
+    expect(canUseIssueSessionTerminal({
+      completedSteps: [],
+      status: "running",
+      worktreeReady: true
+    })).toBe(false);
+    expect(canUseIssueSessionTerminal({
+      completedSteps: ["dependencies_installed"],
+      status: "running",
+      worktreeReady: false
+    })).toBe(false);
+    expect(canUseIssueSessionTerminal({
+      completedSteps: ["dependencies_installed"],
+      status: "abandoned",
+      worktreeReady: true
+    })).toBe(false);
     expect(issueSessionStatusColor("waiting_for_user")).toBe("warning");
+  });
+
+  it("only auto-injects Codex prompts explicitly marked for auto injection", () => {
+    const structuredHandoff = {
+      prompt: "Draft the issue.",
+      codex: {
+        expectedOutputs: [
+          { field: "issue" },
+          { field: "" }
+        ],
+        mode: "inject_prompt",
+        promptField: "prompt"
+      }
+    };
+    const sideEffectHandoff = {
+      prompt: "Execute the approved plan.",
+      codex: {
+        autoInject: true,
+        mode: "inject_prompt",
+        promptActionLabel: "Execute plan",
+        promptField: "prompt"
+      }
+    };
+
+    expect(issueSessionCodexExpectedOutputs(structuredHandoff)).toEqual([{ field: "issue" }]);
+    expect(shouldAutoInjectIssueSessionCodexPrompt(structuredHandoff)).toBe(false);
+    expect(shouldUseManualIssueSessionCodexPrompt(structuredHandoff)).toBe(true);
+    expect(shouldAutoInjectIssueSessionCodexPrompt(sideEffectHandoff)).toBe(true);
+    expect(shouldUseManualIssueSessionCodexPrompt(sideEffectHandoff)).toBe(false);
+    expect(issueSessionCodexPromptActionLabel(sideEffectHandoff)).toBe("Execute plan");
+    expect(issueSessionCodexPromptActionLabel({})).toBe("Submit prompt to Codex");
+    expect(shouldUseManualIssueSessionCodexPrompt({
+      ...sideEffectHandoff,
+      prompt: ""
+    })).toBe(false);
   });
 
   it("derives display labels from session fields", () => {
@@ -51,7 +107,7 @@ describe("issue session view model", () => {
     }, [
       { id: "session_created", label: "Session created" },
       { id: "worktree_created", label: "Worktree created" },
-      { id: "issue_prompt_rendered", label: "Issue prompt rendered" }
+      { id: "issue_prompt_rendered", label: "Initial issue prompt" }
     ]);
 
     expect(facts.map((fact) => fact.key)).toEqual([

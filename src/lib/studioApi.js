@@ -99,6 +99,10 @@ async function readIssueSession(sessionId) {
   return studioHttpClient.get(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}`);
 }
 
+async function readIssueSessionDiff(sessionId) {
+  return studioHttpClient.get(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/diff`);
+}
+
 async function runIssueSessionStep(sessionId, input = {}) {
   return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/step`, input);
 }
@@ -112,6 +116,11 @@ function issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId = "") {
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
 }
 
+function issueSessionStepTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = `${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/step-terminal`;
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
 function resolveWebSocketUrl(pathname) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}${pathname}`;
@@ -121,12 +130,43 @@ function issueSessionCodexTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
 
+function issueSessionStepTerminalWebSocketUrl(sessionId, terminalSessionId) {
+  return resolveWebSocketUrl(`${issueSessionStepTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
 async function startIssueSessionCodexTerminal(sessionId) {
   return studioHttpClient.post(issueSessionCodexTerminalEndpoint(sessionId), {});
 }
 
+async function startIssueSessionStepTerminal(sessionId) {
+  return studioHttpClient.post(issueSessionStepTerminalEndpoint(sessionId), {});
+}
+
 async function closeIssueSessionCodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function closeIssueSessionStepTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(issueSessionStepTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  const chunks = [];
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(index, index + chunkSize)));
+  }
+  return btoa(chunks.join(""));
+}
+
+async function uploadIssueSessionCodexAttachment(sessionId, file) {
+  const arrayBuffer = await file.arrayBuffer();
+  return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-attachments`, {
+    contentType: String(file.type || ""),
+    dataBase64: arrayBufferToBase64(arrayBuffer),
+    fileName: String(file.name || "attachment")
+  });
 }
 
 async function saveIssueSessionCodexThread(sessionId, threadId) {
@@ -185,19 +225,24 @@ export {
   TARGET_APP_TERMINAL_ENDPOINT,
   abandonIssueSession,
   closeIssueSessionCodexTerminal,
+  closeIssueSessionStepTerminal,
   createIssueSession,
   consumeStudioGate,
   issueSessionCodexTerminalEndpoint,
   issueSessionCodexTerminalWebSocketUrl,
+  issueSessionStepTerminalWebSocketUrl,
   listIssueSessions,
   readAppSetupStatus,
   readBootstrapStatus,
   readCurrentApp,
   readIssueSession,
+  readIssueSessionDiff,
   readTargetAppStatus,
   resolveStudioGate,
   runIssueSessionStep,
   saveIssueSessionCodexThread,
   startIssueSessionCodexTerminal,
-  studioHttpClient
+  startIssueSessionStepTerminal,
+  studioHttpClient,
+  uploadIssueSessionCodexAttachment
 };

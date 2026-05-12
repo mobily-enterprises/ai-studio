@@ -1,5 +1,6 @@
 import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/shared/surface";
 import {
+  codexAttachmentInputValidator,
   codexThreadInputValidator,
   currentAppQueryInputValidator
 } from "./inputSchemas.js";
@@ -138,6 +139,26 @@ function registerRoutes(
   );
 
   router.register(
+    "GET",
+    `${routeBase}/issue-sessions/:sessionId/diff`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Inspect a JSKIT issue session worktree diff."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).inspectIssueSessionDiff(request.params.sessionId);
+      reply.code(sessionStatusCode(response)).send(response);
+    }
+  );
+
+  router.register(
     "POST",
     `${routeBase}/issue-sessions/:sessionId/step`,
     {
@@ -182,6 +203,33 @@ function registerRoutes(
 
   router.register(
     "POST",
+    `${routeBase}/issue-sessions/:sessionId/codex-attachments`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Upload a temporary attachment for a Codex terminal."
+      },
+      body: codexAttachmentInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).uploadCodexAttachment(
+        request.params.sessionId,
+        request.input.body || {}
+      );
+      const status = response?.ok === false
+        ? response.errors ? sessionStatusCode(response, { missingStatus: 404 }) : 400
+        : 200;
+      reply.code(status).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
     `${routeBase}/issue-sessions/:sessionId/codex-terminal`,
     {
       auth: "public",
@@ -196,6 +244,26 @@ function registerRoutes(
         return;
       }
       const response = await getCurrentAppService(app).startCodexTerminal(request.params.sessionId);
+      reply.code(sessionStatusCode(response, { missingStatus: 404 })).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/issue-sessions/:sessionId/step-terminal`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Start a setup terminal for a JSKIT issue-session step."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).startSessionStepTerminal(request.params.sessionId);
       reply.code(sessionStatusCode(response, { missingStatus: 404 })).send(response);
     }
   );
@@ -240,6 +308,29 @@ function registerRoutes(
         return;
       }
       const response = await getCurrentAppService(app).closeCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(200).send(response);
+    }
+  );
+
+  router.register(
+    "DELETE",
+    `${routeBase}/issue-sessions/:sessionId/step-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Close a setup terminal for a JSKIT issue session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).closeSessionStepTerminal(
         request.params.sessionId,
         request.params.terminalSessionId
       );

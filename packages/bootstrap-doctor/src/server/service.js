@@ -955,6 +955,25 @@ async function inspectBootstrap({
       })
       : missingToolchainCheck("ripgrep", "ripgrep")
   });
+  const playwright = await runBootstrapStep(emit, {
+    id: "playwright",
+    label: "Playwright",
+    run: () => toolchainReady
+      ? checkToolchainCommand({
+        id: "playwright",
+        label: "Playwright",
+        commandArgs: [
+          "bash",
+          "-lc",
+          "version=\"$(playwright --version)\" && browser=\"$(find \"$PLAYWRIGHT_BROWSERS_PATH\" -maxdepth 4 -type f \\( -name chrome -o -name chrome-headless-shell \\) | head -n 1)\" && test -n \"$browser\" && printf '%s\\n%s\\n' \"$version\" \"$browser\""
+        ],
+        expected: "Playwright and Chromium run inside the managed toolchain.",
+        explanation: "Studio uses Playwright for local UI verification without reinstalling browsers in every session worktree.",
+        isValid: (output) => output.includes("Version ") && output.includes("/ms-playwright/"),
+        repair: buildToolchainRepair()
+      })
+      : missingToolchainCheck("playwright", "Playwright")
+  });
   const gh = await runBootstrapStep(emit, {
     id: "gh",
     label: "GitHub CLI",
@@ -1023,6 +1042,7 @@ async function inspectBootstrap({
     npm,
     git,
     ripgrep,
+    playwright,
     gh,
     ghAuth,
     codex,

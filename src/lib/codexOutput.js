@@ -42,10 +42,13 @@ function isPlaceholderMarkedOutput(value) {
   return /^<[^>\r\n]+>$/u.test(String(value || "").trim());
 }
 
-function extractMarkedOutput(value, marker, options = {}) {
+function extractMarkedOutputDetails(value, marker, options = {}) {
   const normalizedMarker = String(marker || "").trim();
   if (!normalizedMarker) {
-    return "";
+    return {
+      signature: "",
+      value: ""
+    };
   }
 
   const source = stripTerminalControlSequences(value);
@@ -54,13 +57,22 @@ function extractMarkedOutput(value, marker, options = {}) {
     "gu"
   );
   let extracted = "";
+  let signature = "";
   for (const match of source.matchAll(pattern)) {
     const nextValue = normalizeMarkedOutput(match[1], options);
     if (nextValue && !isPlaceholderMarkedOutput(nextValue)) {
       extracted = nextValue;
+      signature = `${match.index}:${match[0].length}`;
     }
   }
-  return extracted;
+  return {
+    signature,
+    value: extracted
+  };
+}
+
+function extractMarkedOutput(value, marker, options = {}) {
+  return extractMarkedOutputDetails(value, marker, options).value;
 }
 
 function isCodexThreadId(value) {
@@ -107,6 +119,7 @@ export {
   cleanSingleLineCodexOutput,
   codexTrustPromptLooksActive,
   extractCodexThreadId,
+  extractMarkedOutputDetails,
   extractMarkedOutput,
   isPlaceholderMarkedOutput,
   isCodexThreadId,

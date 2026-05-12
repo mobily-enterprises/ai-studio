@@ -1,13 +1,16 @@
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { loadAppConfigFromAppRoot } from "@jskit-ai/kernel/server/support";
 import {
   abandonSession,
+  adoptDependenciesInstalled,
   createSession,
+  inspectSessionDiff,
   inspectSessionDetails,
   listSessions,
   runSessionStep
@@ -25,12 +28,19 @@ const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
 const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
 const TERMINAL_NAMESPACE = "current-app-codex";
 const TERMINAL_NAMESPACE_PREFIX = `${TERMINAL_NAMESPACE}:`;
+const STEP_TERMINAL_NAMESPACE = "current-app-session-step";
+const STEP_TERMINAL_NAMESPACE_PREFIX = `${STEP_TERMINAL_NAMESPACE}:`;
 const CODEX_THREAD_ID_FILE = "codex_thread_id";
 const CODEX_THREAD_PROBE = "!echo $CODEX_THREAD_ID";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const MAX_OPEN_ISSUE_SESSIONS = 3;
 const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
 const STUDIO_DAEMON_ID = crypto.randomUUID();
+const ATTACHMENT_CONTAINER_ROOT = "/studio-attachments";
+const ATTACHMENT_HOST_ROOT = path.join(tmpdir(), "jskit-ai-studio", "attachments", STUDIO_DAEMON_ID);
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_TTL_MS = 30 * 60 * 1000;
+const attachmentCleanupTimers = new Map();
 
 const JSKIT_APP_MARKERS = Object.freeze([
   { id: "packageJson", label: "package.json", relativePath: "package.json", kind: "file" },
@@ -99,6 +109,10 @@ function terminalNamespace(sessionId) {
   return `${TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
 }
 
+function stepTerminalNamespace(sessionId) {
+  return `${STEP_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
+}
+
 function activeSessionDirectory(targetRoot, sessionId) {
   const normalizedSessionId = String(sessionId || "").trim();
   if (
@@ -160,6 +174,88 @@ function containerWorkspacePath(targetRoot, absolutePath) {
   return path.posix.join("/workspace", ...relativePath.split(path.sep));
 }
 
+function attachmentSessionKey(targetRoot, sessionId) {
+  return path.join(stableHash(targetRoot), stableHash(sessionId));
+}
+
+function attachmentHostDirectory(targetRoot, sessionId, attachmentId = "") {
+  const parts = [
+    ATTACHMENT_HOST_ROOT,
+    ...attachmentSessionKey(targetRoot, sessionId).split(path.sep)
+  ];
+  if (attachmentId) {
+    parts.push(attachmentId);
+  }
+  return path.join(...parts);
+}
+
+function attachmentContainerPath(targetRoot, sessionId, attachmentId, fileName) {
+  return path.posix.join(
+    ATTACHMENT_CONTAINER_ROOT,
+    ...attachmentSessionKey(targetRoot, sessionId).split(path.sep),
+    attachmentId,
+    fileName
+  );
+}
+
+function sanitizeAttachmentFileName(fileName = "") {
+  const baseName = path.basename(String(fileName || "attachment").replaceAll("\\", "/"));
+  const sanitized = baseName
+    .replace(/[^\w .@+-]/gu, "_")
+    .replace(/^\.+/u, "")
+    .trim()
+    .slice(0, 160);
+  return sanitized || "attachment";
+}
+
+function decodeAttachmentData(value = "") {
+  const raw = String(value || "").trim();
+  const data = raw.includes(",") && /^data:[^,]+;base64,/iu.test(raw)
+    ? raw.slice(raw.indexOf(",") + 1)
+    : raw;
+  const normalized = data.replace(/\s/gu, "");
+  if (!normalized || !/^[A-Za-z0-9+/]*={0,2}$/u.test(normalized)) {
+    return null;
+  }
+  return Buffer.from(normalized, "base64");
+}
+
+async function prepareAttachmentRoot() {
+  await mkdir(ATTACHMENT_HOST_ROOT, {
+    recursive: true
+  });
+}
+
+async function cleanupCodexAttachments(targetRoot, sessionId, attachmentId = "") {
+  const cleanupPath = attachmentId
+    ? attachmentHostDirectory(targetRoot, sessionId, attachmentId)
+    : attachmentHostDirectory(targetRoot, sessionId);
+  const timerKey = `${stableHash(targetRoot)}:${stableHash(sessionId)}:${attachmentId}`;
+  const timer = attachmentCleanupTimers.get(timerKey);
+  if (timer) {
+    clearTimeout(timer);
+    attachmentCleanupTimers.delete(timerKey);
+  }
+  await rm(cleanupPath, {
+    force: true,
+    recursive: true
+  });
+}
+
+function scheduleAttachmentCleanup(targetRoot, sessionId, attachmentId) {
+  const timerKey = `${stableHash(targetRoot)}:${stableHash(sessionId)}:${attachmentId}`;
+  const existingTimer = attachmentCleanupTimers.get(timerKey);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timer = setTimeout(() => {
+    attachmentCleanupTimers.delete(timerKey);
+    void cleanupCodexAttachments(targetRoot, sessionId, attachmentId);
+  }, ATTACHMENT_TTL_MS);
+  timer.unref?.();
+  attachmentCleanupTimers.set(timerKey, timer);
+}
+
 function codexStartupScript(codexThreadId = "") {
   const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
   const codexOptions = "--dangerously-bypass-approvals-and-sandbox";
@@ -210,12 +306,69 @@ function codexTerminalArgs({
     `${targetRoot}:/workspace`,
     "-v",
     `${targetRoot}:${targetRoot}`,
+    "-v",
+    `${ATTACHMENT_HOST_ROOT}:${ATTACHMENT_CONTAINER_ROOT}:ro`,
     "-w",
     worktree,
     TOOLCHAIN_IMAGE,
     "bash",
     "-lc",
     codexStartupScript(codexThreadId)
+  ];
+}
+
+function dependencyInstallScript() {
+  const installCommand = [
+    "set +e",
+    "printf '\\n[studio] Installing dependencies in %s\\n' \"$PWD\"",
+    "printf '[studio] $ npm install --foreground-scripts --no-audit --no-fund\\n\\n'",
+    "NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_YES=true npm_config_audit=false npm_config_fund=false npm_config_yes=true npm install --foreground-scripts --no-audit --no-fund",
+    "status=$?",
+    "printf '\\n[studio] npm install exited with code %s\\n' \"$status\"",
+    "exit \"$status\""
+  ].join("\n");
+  return [
+    "set -e",
+    "mkdir -p /tmp/studio-home /tmp/npm-cache",
+    "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
+    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" --clear-groups env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(installCommand)}`,
+    "fi",
+    `exec env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(installCommand)}`
+  ].join("\n");
+}
+
+function dependencyInstallTerminalArgs({
+  sessionId,
+  targetRoot,
+  terminalId,
+  worktree
+}) {
+  return [
+    "run",
+    "--rm",
+    "-it",
+    "--label",
+    "jskit-ai-studio.kind=session-step-terminal",
+    "--label",
+    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    "--label",
+    `jskit-ai-studio.session=${sessionId}`,
+    "--label",
+    `jskit-ai-studio.terminal=${terminalId}`,
+    "--label",
+    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    "-v",
+    `${targetRoot}:/workspace`,
+    "-v",
+    `${targetRoot}:${targetRoot}`,
+    ...hostUserIdentityEnvArgs(),
+    "-w",
+    worktree,
+    TOOLCHAIN_IMAGE,
+    "bash",
+    "-lc",
+    dependencyInstallScript()
   ];
 }
 
@@ -662,6 +815,13 @@ function createService({ appRoot = "" } = {}) {
       });
     },
 
+    async inspectIssueSessionDiff(sessionId) {
+      return inspectSessionDiff({
+        targetRoot: inspectionRoot,
+        sessionId
+      });
+    },
+
     async runIssueSessionStep(sessionId, input = {}) {
       const response = await runSessionStep({
         targetRoot: inspectionRoot,
@@ -685,6 +845,7 @@ function createService({ appRoot = "" } = {}) {
       };
       if (CLOSED_SESSION_STATUSES.has(String(result.status || ""))) {
         await closeTerminalSessionsForNamespace(terminalNamespace(sessionId));
+        await closeTerminalSessionsForNamespace(stepTerminalNamespace(sessionId));
       }
       return result;
     },
@@ -696,6 +857,7 @@ function createService({ appRoot = "" } = {}) {
       });
       if (String(response?.status || "") === "abandoned") {
         await closeTerminalSessionsForNamespace(terminalNamespace(sessionId));
+        await closeTerminalSessionsForNamespace(stepTerminalNamespace(sessionId));
       }
       return response;
     },
@@ -734,6 +896,7 @@ function createService({ appRoot = "" } = {}) {
         };
       }
 
+      await prepareAttachmentRoot();
       const namespace = terminalNamespace(sessionId);
       const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
       return withCodexThreadState(startTerminalSession({
@@ -754,12 +917,121 @@ function createService({ appRoot = "" } = {}) {
         maxRunning: MAX_OPEN_ISSUE_SESSIONS,
         namespace,
         namespaceLimitPrefix: TERMINAL_NAMESPACE_PREFIX,
-        onClose: ({ id }) => removeDockerContainer(codexContainerName({
-          sessionId,
-          terminalId: id
-        })),
+        onClose: async ({ id }) => {
+          await removeDockerContainer(codexContainerName({
+            sessionId,
+            terminalId: id
+          }));
+          await cleanupCodexAttachments(inspectionRoot, sessionId);
+        },
         reuseRunning: true
       }), codexThreadId);
+    },
+
+    async startSessionStepTerminal(sessionId) {
+      const session = await inspectSessionDetails({
+        targetRoot: inspectionRoot,
+        sessionId
+      });
+      if (session?.ok === false) {
+        return session;
+      }
+      if (session?.currentStep !== "dependencies_installed") {
+        return {
+          ok: false,
+          error: "The current session step does not run in the setup terminal."
+        };
+      }
+      if (!session?.worktree || session.worktreeReady !== true) {
+        return {
+          ok: false,
+          error: "Session worktree is not ready yet."
+        };
+      }
+      const worktreePath = path.resolve(session.worktree);
+      const workspacePath = containerWorkspacePath(inspectionRoot, worktreePath);
+      if (!workspacePath) {
+        return {
+          ok: false,
+          error: "Session worktree is outside the target root."
+        };
+      }
+
+      const namespace = stepTerminalNamespace(sessionId);
+      return startTerminalSession({
+        args: ({ id }) => dependencyInstallTerminalArgs({
+          sessionId,
+          targetRoot: inspectionRoot,
+          terminalId: id,
+          worktree: worktreePath
+        }),
+        command: "docker",
+        commandPreview: ({ args }) => dockerCommand(args),
+        cwd: inspectionRoot,
+        maxRunning: MAX_OPEN_ISSUE_SESSIONS,
+        namespace,
+        namespaceLimitPrefix: STEP_TERMINAL_NAMESPACE_PREFIX,
+        onClose: async ({ exitCode }) => {
+          if (exitCode === 0) {
+            await adoptDependenciesInstalled({
+              message: `Installed Node dependencies in ${worktreePath}.`,
+              sessionId,
+              targetRoot: inspectionRoot
+            });
+          }
+        },
+        reuseRunning: true
+      });
+    },
+
+    async uploadCodexAttachment(sessionId, input = {}) {
+      const session = await inspectSessionDetails({
+        targetRoot: inspectionRoot,
+        sessionId
+      });
+      if (session?.ok === false) {
+        return session;
+      }
+      if (!session?.worktree || session.worktreeReady !== true) {
+        return {
+          ok: false,
+          error: "Session worktree is not ready yet."
+        };
+      }
+
+      const fileName = sanitizeAttachmentFileName(input?.fileName);
+      const data = decodeAttachmentData(input?.dataBase64);
+      if (!data || data.length < 1) {
+        return {
+          ok: false,
+          error: "Attachment data is invalid."
+        };
+      }
+      if (data.length > MAX_ATTACHMENT_BYTES) {
+        return {
+          ok: false,
+          error: `Attachment is too large. Maximum size is ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB.`
+        };
+      }
+
+      const attachmentId = crypto.randomUUID();
+      const hostDirectory = attachmentHostDirectory(inspectionRoot, sessionId, attachmentId);
+      const hostPath = path.join(hostDirectory, fileName);
+      await mkdir(hostDirectory, {
+        recursive: true
+      });
+      await writeFile(hostPath, data);
+      scheduleAttachmentCleanup(inspectionRoot, sessionId, attachmentId);
+
+      return {
+        ok: true,
+        attachmentId,
+        containerPath: attachmentContainerPath(inspectionRoot, sessionId, attachmentId, fileName),
+        contentType: String(input?.contentType || ""),
+        expiresInMs: ATTACHMENT_TTL_MS,
+        fileName,
+        size: data.length
+      };
     },
 
     async subscribeCodexTerminal(sessionId, terminalSessionId, subscriber) {
@@ -769,15 +1041,33 @@ function createService({ appRoot = "" } = {}) {
       }), codexThreadId);
     },
 
+    async subscribeSessionStepTerminal(sessionId, terminalSessionId, subscriber) {
+      return subscribeTerminalSession(terminalSessionId, subscriber, {
+        namespace: stepTerminalNamespace(sessionId)
+      });
+    },
+
     writeCodexTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
         namespace: terminalNamespace(sessionId)
       });
     },
 
+    writeSessionStepTerminal(sessionId, terminalSessionId, data) {
+      return writeTerminalSession(terminalSessionId, data, {
+        namespace: stepTerminalNamespace(sessionId)
+      });
+    },
+
     closeCodexTerminal(sessionId, terminalSessionId) {
       return closeTerminalSession(terminalSessionId, {
         namespace: terminalNamespace(sessionId)
+      });
+    },
+
+    closeSessionStepTerminal(sessionId, terminalSessionId) {
+      return closeTerminalSession(terminalSessionId, {
+        namespace: stepTerminalNamespace(sessionId)
       });
     }
   });

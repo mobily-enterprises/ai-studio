@@ -43,6 +43,7 @@
     "@tanstack/vue-query": "^5.90.5",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "diff2html": "^3.4.56",
     "execa": "^9.6.1",
     "fastify": "^5.7.4",
     "json-rest-schema": "1.x.x",

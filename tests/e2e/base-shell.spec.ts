@@ -482,12 +482,12 @@ const codexPromptSessionPayload = {
   sessionId: codexPromptSessionId,
   status: "waiting_for_user",
   currentStep: "issue",
-  completedSteps: ["session-created", "worktree", "prompt"],
+  completedSteps: ["session-created", "worktree", "dependencies_installed", "prompt"],
   stepDefinitions: codexPromptStepDefinitions,
   currentStepAction: {
     stepId: "issue",
     kind: "codex_output",
-    buttonLabel: "Save issue text",
+    buttonLabel: "Save issue draft",
     description: "Codex should create the issue and return the issue URL.",
     input: {
       fields: [
@@ -565,7 +565,7 @@ const nonCodexStepSessionPayload = {
   ...codexPromptSessionPayload,
   sessionId: nonCodexStepSessionId,
   currentStep: "prompt",
-  completedSteps: ["session-created", "worktree"],
+  completedSteps: ["session-created", "worktree", "dependencies_installed"],
   currentStepAction: {
     stepId: "prompt",
     kind: "input",

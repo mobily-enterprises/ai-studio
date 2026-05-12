@@ -33,7 +33,29 @@ const codexThreadInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const codexAttachmentInputValidator = deepFreeze({
+  schema: createSchema({
+    contentType: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    dataBase64: {
+      type: "string",
+      noTrim: true,
+      required: true
+    },
+    fileName: {
+      type: "string",
+      noTrim: false,
+      required: true
+    }
+  }),
+  mode: "patch"
+});
+
 export {
+  codexAttachmentInputValidator,
   codexThreadInputValidator,
   currentAppQueryInputValidator,
   terminalInputValidator

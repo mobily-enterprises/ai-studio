@@ -1,5 +1,7 @@
 FROM node:22-bookworm
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -20,6 +22,8 @@ RUN mkdir -p /etc/apt/keyrings \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @openai/codex
+RUN npm install -g @openai/codex @playwright/test@1.59.1 \
+  && playwright install --with-deps chromium \
+  && chmod -R 0777 /ms-playwright
 
 WORKDIR /workspace
