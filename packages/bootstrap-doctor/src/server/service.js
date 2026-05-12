@@ -940,6 +940,21 @@ async function inspectBootstrap({
       })
       : missingToolchainCheck("git", "git")
   });
+  const ripgrep = await runBootstrapStep(emit, {
+    id: "ripgrep",
+    label: "ripgrep",
+    run: () => toolchainReady
+      ? checkToolchainCommand({
+        id: "ripgrep",
+        label: "ripgrep",
+        commandArgs: ["rg", "--version"],
+        expected: "ripgrep runs inside the managed toolchain.",
+        explanation: "Codex uses rg for fast local codebase search inside the managed toolchain container.",
+        isValid: (output) => output.toLowerCase().includes("ripgrep"),
+        repair: buildToolchainRepair()
+      })
+      : missingToolchainCheck("ripgrep", "ripgrep")
+  });
   const gh = await runBootstrapStep(emit, {
     id: "gh",
     label: "GitHub CLI",
@@ -1007,6 +1022,7 @@ async function inspectBootstrap({
     node,
     npm,
     git,
+    ripgrep,
     gh,
     ghAuth,
     codex,

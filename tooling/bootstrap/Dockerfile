@@ -7,6 +7,7 @@ RUN apt-get update \
     curl \
     git \
     gnupg \
+    ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /etc/apt/keyrings \

@@ -451,6 +451,7 @@ test("GET /api/studio/bootstrap reports mandatory bootstrap checks", async () =>
   assert.equal(payload.checks.some((check) => check.id === "docker"), true);
   assert.equal(payload.checks.some((check) => check.id === "toolchain-image"), true);
   assert.equal(payload.checks.some((check) => check.id === "mysql-capability"), true);
+  assert.equal(payload.checks.some((check) => check.id === "ripgrep"), true);
   assert.equal(payload.checks.some((check) => check.id === "gh-auth"), true);
   assert.equal(payload.checks.some((check) => check.id === "codex-auth"), true);
   assert.equal(payload.checks.some((check) => check.id === "mysql-database"), false);
