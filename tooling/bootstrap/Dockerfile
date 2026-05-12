@@ -3,6 +3,7 @@ FROM node:22-bookworm
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    bubblewrap \
     curl \
     git \
     gnupg \

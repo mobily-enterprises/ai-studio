@@ -32,7 +32,7 @@ config.mobile = {
 config.surfaceDefinitions = {};
 config.surfaceDefinitions.home = {
   id: "home",
-  label: "Home",
+  label: "Sessions",
   pagesRoot: "home",
   enabled: true,
   requiresAuth: false,

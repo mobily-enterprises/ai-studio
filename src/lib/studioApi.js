@@ -93,6 +93,35 @@ async function abandonIssueSession(sessionId) {
   return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/abandon`, {});
 }
 
+function issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = `${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-terminal`;
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
+async function startIssueSessionCodexTerminal(sessionId) {
+  return studioHttpClient.post(issueSessionCodexTerminalEndpoint(sessionId), {});
+}
+
+async function readIssueSessionCodexTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.get(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function writeIssueSessionCodexTerminal(sessionId, terminalSessionId, data) {
+  return studioHttpClient.post(`${issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId)}/input`, {
+    data
+  });
+}
+
+async function closeIssueSessionCodexTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function saveIssueSessionCodexThread(sessionId, threadId) {
+  return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-thread`, {
+    threadId
+  });
+}
+
 async function resolveStudioGate() {
   const bootstrap = await readBootstrapStatus();
   if (bootstrap?.ready !== true) {
@@ -142,15 +171,21 @@ export {
   TARGET_APP_STREAM_ENDPOINT,
   TARGET_APP_TERMINAL_ENDPOINT,
   abandonIssueSession,
+  closeIssueSessionCodexTerminal,
   createIssueSession,
   consumeStudioGate,
+  issueSessionCodexTerminalEndpoint,
   listIssueSessions,
   readAppSetupStatus,
   readBootstrapStatus,
   readCurrentApp,
   readIssueSession,
+  readIssueSessionCodexTerminal,
   readTargetAppStatus,
   resolveStudioGate,
   runIssueSessionStep,
-  studioHttpClient
+  saveIssueSessionCodexThread,
+  startIssueSessionCodexTerminal,
+  studioHttpClient,
+  writeIssueSessionCodexTerminal
 };

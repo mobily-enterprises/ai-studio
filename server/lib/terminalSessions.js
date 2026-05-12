@@ -16,6 +16,11 @@ function sessionsForNamespace(namespace) {
   return stores.get(normalizedNamespace);
 }
 
+function namespacesForPrefix(namespacePrefix = "") {
+  const normalizedPrefix = String(namespacePrefix || "");
+  return [...stores.keys()].filter((namespace) => namespace.startsWith(normalizedPrefix));
+}
+
 function trimBuffer(output) {
   if (output.length <= MAX_BUFFER_LENGTH) {
     return output;
@@ -23,16 +28,107 @@ function trimBuffer(output) {
   return output.slice(output.length - MAX_BUFFER_LENGTH);
 }
 
+function isRunningSession(session = {}) {
+  return session.status === "running" || session.status === "closing";
+}
+
+function terminalSessionResponse(session) {
+  return {
+    ok: true,
+    id: session.id,
+    commandPreview: session.commandPreview,
+    exitCode: session.exitCode,
+    output: session.output,
+    status: session.status
+  };
+}
+
+function listStoredSessions({ namespace = "", namespacePrefix = "", runningOnly = false } = {}) {
+  const namespaces = namespace
+    ? [normalizeNamespace(namespace)]
+    : namespacesForPrefix(namespacePrefix);
+  const results = [];
+  for (const currentNamespace of namespaces) {
+    const sessions = sessionsForNamespace(currentNamespace);
+    for (const session of sessions.values()) {
+      if (runningOnly && !isRunningSession(session)) {
+        continue;
+      }
+      results.push({
+        namespace: currentNamespace,
+        session
+      });
+    }
+  }
+  return results;
+}
+
+function countRunningTerminalSessions({ namespacePrefix = "" } = {}) {
+  return listStoredSessions({
+    namespacePrefix,
+    runningOnly: true
+  }).length;
+}
+
+async function runCloseHook(session, reason) {
+  if (!session || session.closeHookStarted) {
+    return;
+  }
+  session.closeHookStarted = true;
+  if (typeof session.onClose !== "function") {
+    return;
+  }
+  try {
+    await session.onClose({
+      exitCode: session.exitCode,
+      id: session.id,
+      reason,
+      status: session.status
+    });
+  } catch (error) {
+    session.output = trimBuffer(`${session.output}\r\n[terminal cleanup failed] ${String(error?.message || error)}\r\n`);
+  }
+}
+
 function startTerminalSession({
   args,
   command,
   commandPreview,
   cwd = process.cwd(),
-  namespace = "default"
+  maxRunning = 0,
+  namespace = "default",
+  namespaceLimitPrefix = "",
+  onClose = null,
+  reuseRunning = false
 }) {
   const sessions = sessionsForNamespace(namespace);
   const id = crypto.randomUUID();
-  const terminal = spawnPty(command, args, {
+  const existingSession = reuseRunning
+    ? [...sessions.values()].find((session) => isRunningSession(session))
+    : null;
+  if (existingSession) {
+    return terminalSessionResponse(existingSession);
+  }
+
+  const runningLimit = Number(maxRunning || 0);
+  const runningLimitPrefix = namespaceLimitPrefix || namespace;
+  if (runningLimit > 0 && countRunningTerminalSessions({ namespacePrefix: runningLimitPrefix }) >= runningLimit) {
+    return {
+      ok: false,
+      code: "terminal_limit",
+      error: `Terminal limit reached (${runningLimit}).`
+    };
+  }
+
+  const resolvedArgs = typeof args === "function" ? args({ id, namespace }) : args;
+  const resolvedCommandPreview = typeof commandPreview === "function"
+    ? commandPreview({
+      args: resolvedArgs,
+      id,
+      namespace
+    })
+    : commandPreview;
+  const terminal = spawnPty(command, resolvedArgs, {
     cols: 100,
     cwd,
     env: process.env,
@@ -42,8 +138,9 @@ function startTerminalSession({
 
   const session = {
     id,
-    commandPreview,
+    commandPreview: resolvedCommandPreview,
     exitCode: null,
+    onClose,
     output: "",
     status: "running",
     terminal
@@ -56,6 +153,7 @@ function startTerminalSession({
   terminal.onExit(({ exitCode }) => {
     session.exitCode = exitCode;
     session.status = "exited";
+    void runCloseHook(session, "exit");
   });
 
   sessions.set(id, session);
@@ -72,14 +170,7 @@ function readTerminalSession(id, { namespace = "default" } = {}) {
     };
   }
 
-  return {
-    ok: true,
-    id: session.id,
-    commandPreview: session.commandPreview,
-    exitCode: session.exitCode,
-    output: session.output,
-    status: session.status
-  };
+  return terminalSessionResponse(session);
 }
 
 function writeTerminalSession(id, data, { namespace = "default" } = {}) {
@@ -99,7 +190,7 @@ function writeTerminalSession(id, data, { namespace = "default" } = {}) {
   return readTerminalSession(id, { namespace });
 }
 
-function closeTerminalSession(id, { namespace = "default" } = {}) {
+async function closeTerminalSession(id, { namespace = "default" } = {}) {
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
   if (!session) {
@@ -110,8 +201,10 @@ function closeTerminalSession(id, { namespace = "default" } = {}) {
   }
 
   if (session.status === "running") {
+    session.status = "closing";
     session.terminal.kill();
   }
+  await runCloseHook(session, "close");
   sessions.delete(id);
 
   return {
@@ -120,8 +213,40 @@ function closeTerminalSession(id, { namespace = "default" } = {}) {
   };
 }
 
+async function closeTerminalSessionsForNamespace(namespace = "default") {
+  const sessions = sessionsForNamespace(namespace);
+  let closed = 0;
+
+  for (const id of [...sessions.keys()]) {
+    const result = await closeTerminalSession(id, { namespace });
+    if (result.closed) {
+      closed += 1;
+    }
+  }
+
+  return {
+    ok: true,
+    closed
+  };
+}
+
+async function closeTerminalSessionsForNamespacePrefix(namespacePrefix = "") {
+  let closed = 0;
+  for (const namespace of namespacesForPrefix(namespacePrefix)) {
+    const result = await closeTerminalSessionsForNamespace(namespace);
+    closed += Number(result.closed || 0);
+  }
+  return {
+    ok: true,
+    closed
+  };
+}
+
 export {
   closeTerminalSession,
+  closeTerminalSessionsForNamespace,
+  closeTerminalSessionsForNamespacePrefix,
+  countRunningTerminalSessions,
   readTerminalSession,
   startTerminalSession,
   writeTerminalSession

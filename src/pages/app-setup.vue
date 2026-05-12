@@ -78,7 +78,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <ShellLayout title="JSKIT AI Studio" subtitle="Local operator">
+  <ShellLayout>
     <DoctorStatusPage
       title="App Setup"
       :lede="lede"

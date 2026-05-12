@@ -55,7 +55,7 @@ addPlacement({
   surfaces: ["home"],
   order: 40,
   props: {
-    label: "Home",
+    label: "Sessions",
     to: "/home",
     exact: true
   }

@@ -7,8 +7,6 @@ import {
   runIssueSessionStep
 } from "@/lib/studioApi.js";
 
-const USER_CHECK_STEPS = Object.freeze(["11_user_check_1", "14_user_check_2", "17_user_check_3"]);
-
 function errorMessage(error, fallback) {
   return String(error?.message || error || fallback);
 }
@@ -17,27 +15,85 @@ function firstSessionId(sessions = []) {
   return sessions[0]?.sessionId || "";
 }
 
+const DEFAULT_MAX_OPEN_SESSIONS = 3;
+const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
+
+function isOpenIssueSession(session = {}) {
+  return !CLOSED_SESSION_STATUSES.has(String(session?.status || ""));
+}
+
+function visibleIssueSessions(sessions = []) {
+  return sessions.filter((session) => String(session?.status || "") !== "abandoned");
+}
+
 function useIssueSessions() {
   const issueSessions = ref([]);
   const issueSessionsLoading = ref(false);
   const issueSessionBusy = ref(false);
   const issueSessionsError = ref("");
+  const issueSessionLimits = ref({
+    maxOpenSessions: DEFAULT_MAX_OPEN_SESSIONS,
+    openSessionCount: 0
+  });
+  const issueSessionStepDefinitions = ref([]);
   const selectedSessionId = ref("");
   const selectedSession = ref(null);
-  const issuePromptInput = ref("");
-  const issueTextInput = ref("");
+  const stepInputValues = ref({});
 
-  const isUserCheckStep = computed(() => {
-    return USER_CHECK_STEPS.includes(selectedSession.value?.currentStep || "");
+  const selectedStepAction = computed(() => {
+    return selectedSession.value?.currentStepAction || null;
   });
 
+  const selectedStepInput = computed(() => {
+    return selectedStepAction.value?.input || { type: "none" };
+  });
+
+  const isChoiceStep = computed(() => selectedStepInput.value?.type === "choice");
+  const isTextStep = computed(() => selectedStepInput.value?.type === "text");
+  const stepDefinitions = computed(() => {
+    return selectedSession.value?.stepDefinitions || issueSessionStepDefinitions.value || [];
+  });
+  const activeIssueSessionCount = computed(() => {
+    return Number(issueSessionLimits.value.openSessionCount || issueSessions.value.filter(isOpenIssueSession).length);
+  });
+  const maxOpenIssueSessions = computed(() => {
+    return Number(issueSessionLimits.value.maxOpenSessions || DEFAULT_MAX_OPEN_SESSIONS);
+  });
+  const canCreateIssueSession = computed(() => {
+    return activeIssueSessionCount.value < maxOpenIssueSessions.value;
+  });
+
+  function rememberContract(response = {}) {
+    if (Array.isArray(response.stepDefinitions)) {
+      issueSessionStepDefinitions.value = response.stepDefinitions;
+    }
+    if (response.limits && typeof response.limits === "object") {
+      issueSessionLimits.value = {
+        maxOpenSessions: Number(response.limits.maxOpenSessions || DEFAULT_MAX_OPEN_SESSIONS),
+        openSessionCount: Number(response.limits.openSessionCount || 0)
+      };
+    }
+  }
+
+  function resetStepInputValues(session = selectedSession.value) {
+    const input = session?.currentStepAction?.input || {};
+    if (!input.name || input.type === "none") {
+      stepInputValues.value = {};
+      return;
+    }
+    stepInputValues.value = {
+      [input.name]: ""
+    };
+  }
+
   function applySessionList(sessions = []) {
-    issueSessions.value = sessions;
-    const selectedStillExists = sessions.some((session) => session.sessionId === selectedSessionId.value);
+    const displaySessions = visibleIssueSessions(sessions);
+    issueSessions.value = displaySessions;
+    const selectedStillExists = displaySessions.some((session) => session.sessionId === selectedSessionId.value);
     if (selectedStillExists) {
       return;
     }
-    selectedSessionId.value = firstSessionId(sessions);
+    selectedSessionId.value = firstSessionId(displaySessions);
     if (!selectedSessionId.value) {
       selectedSession.value = null;
     }
@@ -48,6 +104,7 @@ function useIssueSessions() {
     issueSessionsError.value = "";
     try {
       const response = await listIssueSessions();
+      rememberContract(response);
       applySessionList(response?.sessions || []);
       if (selectedSessionId.value) {
         await selectSession(selectedSessionId.value, { preserveList: true });
@@ -64,24 +121,35 @@ function useIssueSessions() {
     issueSessionsError.value = "";
     try {
       selectedSession.value = await readIssueSession(sessionId);
+      rememberContract(selectedSession.value);
+      resetStepInputValues(selectedSession.value);
       if (!preserveList) {
         const response = await listIssueSessions();
+        rememberContract(response);
         applySessionList(response?.sessions || []);
       }
+      return selectedSession.value;
     } catch (loadError) {
       selectedSessionId.value = "";
       selectedSession.value = null;
       issueSessionsError.value = errorMessage(loadError, "Issue session could not be loaded.");
+      return null;
     }
   }
 
   async function createSession() {
+    if (!canCreateIssueSession.value) {
+      issueSessionsError.value = `Studio allows up to ${maxOpenIssueSessions.value} active sessions at once. Finish or abandon one before creating another.`;
+      return;
+    }
     issueSessionBusy.value = true;
     issueSessionsError.value = "";
     try {
       const response = await createIssueSession();
       if (response?.ok === false) {
         selectedSession.value = response;
+        rememberContract(response);
+        resetStepInputValues(response);
         issueSessionsError.value = response.errors?.[0]?.message || "Session creation failed.";
         return;
       }
@@ -94,45 +162,39 @@ function useIssueSessions() {
     }
   }
 
-  function selectedStepInput(override = {}) {
-    const currentStep = selectedSession.value?.currentStep || "";
-    if (currentStep === "03_issue_prompt_rendered") {
-      return {
-        prompt: issuePromptInput.value,
-        ...override
-      };
+  function buildStepPayload(override = {}) {
+    const input = selectedStepInput.value || {};
+    if (!input.name || input.type === "none") {
+      return override;
     }
-    if (currentStep === "04_issue_drafted") {
-      return {
-        issue: issueTextInput.value,
-        ...override
-      };
-    }
-    return override;
+    return {
+      [input.name]: stepInputValues.value[input.name] || "",
+      ...override
+    };
   }
 
   async function runSelectedStep(override = {}) {
     if (!selectedSessionId.value) {
-      return;
+      return null;
     }
     issueSessionBusy.value = true;
     issueSessionsError.value = "";
     try {
-      const response = await runIssueSessionStep(selectedSessionId.value, selectedStepInput(override));
+      const response = await runIssueSessionStep(selectedSessionId.value, buildStepPayload(override));
       selectedSession.value = response;
+      rememberContract(response);
       if (response?.ok === false) {
         issueSessionsError.value = response.errors?.[0]?.message || "Session step failed.";
-      }
-      if (response?.currentStep !== "03_issue_prompt_rendered") {
-        issuePromptInput.value = "";
-      }
-      if (response?.currentStep !== "04_issue_drafted") {
-        issueTextInput.value = "";
+      } else {
+        resetStepInputValues(response);
       }
       const listResponse = await listIssueSessions();
+      rememberContract(listResponse);
       applySessionList(listResponse?.sessions || []);
+      return response;
     } catch (stepError) {
       issueSessionsError.value = errorMessage(stepError, "Session step failed.");
+      return null;
     } finally {
       issueSessionBusy.value = false;
     }
@@ -140,15 +202,20 @@ function useIssueSessions() {
 
   async function abandonSelectedSession() {
     if (!selectedSessionId.value) {
-      return;
+      return null;
     }
     issueSessionBusy.value = true;
     issueSessionsError.value = "";
     try {
-      selectedSession.value = await abandonIssueSession(selectedSessionId.value);
+      const abandonedSession = await abandonIssueSession(selectedSessionId.value);
+      selectedSession.value = abandonedSession;
+      rememberContract(selectedSession.value);
+      resetStepInputValues(selectedSession.value);
       await loadIssueSessions();
+      return abandonedSession;
     } catch (abandonError) {
       issueSessionsError.value = errorMessage(abandonError, "Session abandon failed.");
+      return null;
     } finally {
       issueSessionBusy.value = false;
     }
@@ -156,19 +223,25 @@ function useIssueSessions() {
 
   return {
     abandonSelectedSession,
+    activeIssueSessionCount,
+    canCreateIssueSession,
     createSession,
-    isUserCheckStep,
-    issuePromptInput,
+    isChoiceStep,
+    isTextStep,
     issueSessionBusy,
     issueSessions,
     issueSessionsError,
     issueSessionsLoading,
-    issueTextInput,
+    maxOpenIssueSessions,
     loadIssueSessions,
     runSelectedStep,
     selectSession,
     selectedSession,
-    selectedSessionId
+    selectedSessionId,
+    selectedStepAction,
+    selectedStepInput,
+    stepDefinitions,
+    stepInputValues
   };
 }
 

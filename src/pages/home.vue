@@ -14,7 +14,7 @@ import { RouterView } from "vue-router";
 </script>
 
 <template>
-  <ShellLayout title="JSKIT AI Studio" subtitle="Local operator">
+  <ShellLayout>
     <RouterView />
   </ShellLayout>
 </template>

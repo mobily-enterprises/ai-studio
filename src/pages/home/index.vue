@@ -1,14 +1,6 @@
 <template>
   <section class="generated-ui-screen generated-ui-screen--app studio-screen d-flex flex-column ga-3">
-    <header class="studio-screen__header d-flex flex-column flex-md-row ga-3 align-md-end justify-space-between">
-      <div>
-        <h1 class="studio-screen__title">Home</h1>
-        <p class="text-body-2 text-medium-emphasis mb-0 studio-screen__lede">
-          Current project:
-          <span class="font-weight-medium text-high-emphasis">{{ appNameLabel }}</span>
-        </p>
-      </div>
-
+    <header class="studio-screen__header d-flex justify-end">
       <div class="d-flex ga-2 align-center flex-wrap">
         <v-chip
           v-if="currentApp"
@@ -191,27 +183,19 @@
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import {
   mdiRefresh
 } from "@mdi/js";
 import {
-  consumeStudioGate,
-  readCurrentApp,
-  resolveStudioGate
+  readCurrentApp
 } from "@/lib/studioApi.js";
 import IssueSessionPanel from "@/components/studio/IssueSessionPanel.vue";
 
-const router = useRouter();
 const gateLoading = ref(false);
 const currentApp = ref(null);
 const currentAppLoading = ref(false);
 const currentAppError = ref("");
 const issueSessionPanelKey = ref(0);
-
-const appNameLabel = computed(() => {
-  return currentApp.value?.packageJson?.name || "loading";
-});
 
 const gitSummary = computed(() => {
   const git = currentApp.value?.git;
@@ -289,16 +273,10 @@ async function loadHome() {
   gateLoading.value = true;
   currentAppError.value = "";
   try {
-    const gate = consumeStudioGate("/home") || await resolveStudioGate();
-    if (gate.route !== "/home") {
-      await router.replace(gate.route || "/bootup");
-      return;
-    }
-    consumeStudioGate("/home");
     await loadCurrentApp();
     issueSessionPanelKey.value += 1;
   } catch (loadError) {
-    currentAppError.value = String(loadError?.message || loadError || "Studio readiness check failed.");
+    currentAppError.value = String(loadError?.message || loadError || "Current app inspection failed.");
   } finally {
     gateLoading.value = false;
   }
@@ -317,7 +295,7 @@ onMounted(() => {
 
 .studio-screen {
   margin-inline: auto;
-  max-width: 68rem;
+  max-width: min(96rem, calc(100vw - 2rem));
 }
 
 .studio-screen__title {

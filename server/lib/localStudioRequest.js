@@ -45,7 +45,7 @@ function requireLocalStudioRequest(request, reply, {
         {
           code: "studio_local_request_required",
           message,
-          repairCommand: "Open JSKIT AI Studio on localhost or 127.0.0.1."
+          repairCommand: "Open Studio on localhost or 127.0.0.1."
         }
       ]
     });

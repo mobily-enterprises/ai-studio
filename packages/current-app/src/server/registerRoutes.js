@@ -1,7 +1,8 @@
 import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/shared/surface";
 import {
+  codexThreadInputValidator,
   currentAppQueryInputValidator,
-  issueSessionStepInputValidator
+  terminalInputValidator
 } from "./inputSchemas.js";
 import { ACTION_READ_CURRENT_APP } from "./actions.js";
 import {
@@ -27,6 +28,11 @@ function requireLocalCurrentAppRequest(request, reply) {
   return requireLocalStudioRequest(request, reply, {
     message: "Current-app Studio routes only accept loopback Studio requests."
   });
+}
+
+function requestBodyObject(request) {
+  const body = request.input?.body || request.body || {};
+  return body && typeof body === "object" && !Array.isArray(body) ? body : {};
 }
 
 function registerRoutes(
@@ -141,8 +147,7 @@ function registerRoutes(
       meta: {
         tags: ["studio", "issue-sessions"],
         summary: "Run the next JSKIT issue-session step."
-      },
-      body: issueSessionStepInputValidator
+      }
     },
     async function (request, reply) {
       if (!requireLocalCurrentAppRequest(request, reply)) {
@@ -150,7 +155,7 @@ function registerRoutes(
       }
       const response = await getCurrentAppService(app).runIssueSessionStep(
         request.params.sessionId,
-        request.input.body || {}
+        requestBodyObject(request)
       );
       reply.code(sessionStatusCode(response, { missingStatus: 404 })).send(response);
     }
@@ -173,6 +178,121 @@ function registerRoutes(
       }
       const response = await getCurrentAppService(app).abandonIssueSession(request.params.sessionId);
       reply.code(sessionStatusCode(response, { missingStatus: 404 })).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/issue-sessions/:sessionId/codex-terminal`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Start a Codex terminal for a JSKIT issue session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).startCodexTerminal(request.params.sessionId);
+      reply.code(sessionStatusCode(response, { missingStatus: 404 })).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/issue-sessions/:sessionId/codex-thread`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Persist the Codex thread id for a JSKIT issue session."
+      },
+      body: codexThreadInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).saveCodexThread(
+        request.params.sessionId,
+        request.input.body || {}
+      );
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "GET",
+    `${routeBase}/issue-sessions/:sessionId/codex-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Read a Codex terminal for a JSKIT issue session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).readCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/issue-sessions/:sessionId/codex-terminal/:terminalSessionId/input`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Write input to a Codex terminal for a JSKIT issue session."
+      },
+      body: terminalInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = getCurrentAppService(app).writeCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId,
+        request.input.body?.data || ""
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "DELETE",
+    `${routeBase}/issue-sessions/:sessionId/codex-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Close a Codex terminal for a JSKIT issue session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).closeCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(200).send(response);
     }
   );
 }

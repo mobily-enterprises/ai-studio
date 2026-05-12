@@ -11,17 +11,11 @@
 <script setup>
 import { onMounted } from "vue";
 import { useRouter } from "vue-router";
-import { resolveStudioGate } from "@/lib/studioApi.js";
 
 const router = useRouter();
 
 onMounted(async () => {
-  try {
-    const gate = await resolveStudioGate();
-    await router.replace(gate.route || "/bootup");
-  } catch {
-    await router.replace("/bootup");
-  }
+  await router.replace("/home");
 });
 </script>
 

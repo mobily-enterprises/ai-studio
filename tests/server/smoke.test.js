@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -179,14 +179,20 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
 
       assert.equal(created.statusCode, 200);
       const createdPayload = created.json();
+      const firstSteps = createdPayload.stepDefinitions
+        .slice()
+        .sort((left, right) => left.index - right.index)
+        .slice(0, 4);
       assert.equal(createdPayload.ok, true);
-      assert.equal(createdPayload.currentStep, "02_worktree_created");
+      assert.equal(createdPayload.currentStep, firstSteps[1].id);
+      assert.equal(createdPayload.currentStepAction.stepId, firstSteps[1].id);
 
       const list = await app.inject({
         method: "GET",
         url: "/api/studio/current-app/issue-sessions"
       });
       assert.equal(list.statusCode, 200);
+      assert.equal(Array.isArray(list.json().stepDefinitions), true);
       assert.deepEqual(list.json().sessions.map((session) => session.sessionId), [createdPayload.sessionId]);
 
       const detail = await app.inject({
@@ -194,7 +200,7 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
         url: `/api/studio/current-app/issue-sessions/${createdPayload.sessionId}`
       });
       assert.equal(detail.statusCode, 200);
-      assert.equal(detail.json().receipts[0].stepId, "01_session_created");
+      assert.equal(detail.json().receipts[0].stepId, firstSteps[0].id);
 
       const stepped = await app.inject({
         method: "POST",
@@ -202,7 +208,20 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
         payload: {}
       });
       assert.equal(stepped.statusCode, 200);
-      assert.equal(stepped.json().currentStep, "03_issue_prompt_rendered");
+      assert.equal(stepped.json().currentStep, firstSteps[2].id);
+      assert.equal(stepped.json().currentStepAction.input.name, "prompt");
+
+      const prompted = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${createdPayload.sessionId}/step`,
+        payload: {
+          prompt: "Add session UI"
+        }
+      });
+      assert.equal(prompted.statusCode, 200);
+      assert.equal(prompted.json().currentStep, firstSteps[3].id);
+      assert.equal(prompted.json().currentStepAction.input.name, "issue");
+      assert.equal(prompted.json().codex.mode, "inject_prompt");
 
       const abandoned = await app.inject({
         method: "POST",
@@ -211,6 +230,120 @@ test("Studio current-app API exposes JSKIT issue sessions from target filesystem
       });
       assert.equal(abandoned.statusCode, 200);
       assert.equal(abandoned.json().status, "abandoned");
+
+      const listedAfterAbandon = await app.inject({
+        method: "GET",
+        url: "/api/studio/current-app/issue-sessions"
+      });
+      assert.equal(listedAfterAbandon.statusCode, 200);
+      assert.equal(
+        listedAfterAbandon.json().sessions.some((session) => session.sessionId === createdPayload.sessionId),
+        false
+      );
+    } finally {
+      if (app) {
+        await app.close();
+      }
+      if (previousTargetRoot == null) {
+        delete process.env.JSKIT_STUDIO_TARGET_ROOT;
+      } else {
+        process.env.JSKIT_STUDIO_TARGET_ROOT = previousTargetRoot;
+      }
+    }
+  });
+});
+
+test("Studio issue-session creation is capped at three active sessions", async () => {
+  await withTemporaryGitPackageRoot("session-limit-target-app", async (targetRoot) => {
+    const previousTargetRoot = process.env.JSKIT_STUDIO_TARGET_ROOT;
+    process.env.JSKIT_STUDIO_TARGET_ROOT = targetRoot;
+
+    let app;
+    try {
+      app = await createServer();
+      for (let index = 0; index < 3; index += 1) {
+        const created = await app.inject({
+          method: "POST",
+          url: "/api/studio/current-app/issue-sessions",
+          payload: {}
+        });
+        assert.equal(created.statusCode, 200);
+        assert.equal(created.json().ok, true);
+      }
+
+      const blocked = await app.inject({
+        method: "POST",
+        url: "/api/studio/current-app/issue-sessions",
+        payload: {}
+      });
+      assert.equal(blocked.statusCode, 200);
+      assert.equal(blocked.json().ok, false);
+      assert.equal(blocked.json().errors[0].code, "open_session_limit");
+      assert.equal(blocked.json().limits.openSessionCount, 3);
+    } finally {
+      if (app) {
+        await app.close();
+      }
+      if (previousTargetRoot == null) {
+        delete process.env.JSKIT_STUDIO_TARGET_ROOT;
+      } else {
+        process.env.JSKIT_STUDIO_TARGET_ROOT = previousTargetRoot;
+      }
+    }
+  });
+});
+
+test("Studio issue sessions persist Codex thread ids in session state", async () => {
+  await withTemporaryGitPackageRoot("session-codex-thread-target-app", async (targetRoot) => {
+    const previousTargetRoot = process.env.JSKIT_STUDIO_TARGET_ROOT;
+    process.env.JSKIT_STUDIO_TARGET_ROOT = targetRoot;
+
+    let app;
+    try {
+      app = await createServer();
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/studio/current-app/issue-sessions",
+        payload: {}
+      });
+      assert.equal(created.statusCode, 200);
+      const sessionId = created.json().sessionId;
+
+      const saved = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/codex-thread`,
+        payload: {
+          threadId: "019e1575-2458-7b93-bf9d-e7d7ffd49ad2"
+        }
+      });
+      assert.equal(saved.statusCode, 200);
+      assert.equal(saved.json().codexThreadId, "019e1575-2458-7b93-bf9d-e7d7ffd49ad2");
+
+      const persisted = await readFile(
+        path.join(targetRoot, ".jskit", "sessions", "active", sessionId, "codex_thread_id"),
+        "utf8"
+      );
+      assert.equal(persisted, "019e1575-2458-7b93-bf9d-e7d7ffd49ad2\n");
+
+      const rejected = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/codex-thread`,
+        payload: {
+          threadId: "../not-a-thread"
+        }
+      });
+      assert.equal(rejected.statusCode, 400);
+      assert.equal(rejected.json().ok, false);
+
+      const rejectedVersion = await app.inject({
+        method: "POST",
+        url: `/api/studio/current-app/issue-sessions/${sessionId}/codex-thread`,
+        payload: {
+          threadId: "v0.130.0"
+        }
+      });
+      assert.equal(rejectedVersion.statusCode, 400);
+      assert.equal(rejectedVersion.json().ok, false);
     } finally {
       if (app) {
         await app.close();

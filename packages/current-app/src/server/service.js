@@ -1,5 +1,6 @@
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -11,8 +12,25 @@ import {
   listSessions,
   runSessionStep
 } from "@jskit-ai/jskit-cli/server";
+import {
+  closeTerminalSession,
+  closeTerminalSessionsForNamespace,
+  readTerminalSession,
+  startTerminalSession,
+  writeTerminalSession
+} from "../../../../server/lib/terminalSessions.js";
 
 const execFileAsync = promisify(execFile);
+const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
+const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
+const TERMINAL_NAMESPACE = "current-app-codex";
+const TERMINAL_NAMESPACE_PREFIX = `${TERMINAL_NAMESPACE}:`;
+const CODEX_THREAD_ID_FILE = "codex_thread_id";
+const CODEX_THREAD_PROBE = "!echo $CODEX_THREAD_ID";
+const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const MAX_OPEN_ISSUE_SESSIONS = 3;
+const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
+const STUDIO_DAEMON_ID = crypto.randomUUID();
 
 const JSKIT_APP_MARKERS = Object.freeze([
   { id: "packageJson", label: "package.json", relativePath: "package.json", kind: "file" },
@@ -32,6 +50,219 @@ const PROJECT_DIRECTORIES = Object.freeze([
   { id: "packages", label: "packages", relativePath: "packages" },
   { id: "tests", label: "tests", relativePath: "tests" }
 ]);
+
+function shellQuote(value) {
+  const stringValue = String(value);
+  if (/^[A-Za-z0-9_./:=@,+-]+$/.test(stringValue)) {
+    return stringValue;
+  }
+  return `'${stringValue.replaceAll("'", "'\\''")}'`;
+}
+
+function dockerCommand(args) {
+  return ["docker", ...args].map(shellQuote).join(" ");
+}
+
+function stableHash(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value || ""))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+function codexContainerName({ sessionId, terminalId }) {
+  return `jskit-ai-studio-codex-${stableHash(sessionId)}-${stableHash(terminalId)}`;
+}
+
+function normalizeCodexThreadId(value) {
+  const threadId = String(value || "").trim();
+  if (!CODEX_THREAD_ID_PATTERN.test(threadId)) {
+    return "";
+  }
+  return threadId.toLowerCase();
+}
+
+function hostUserIdentityEnvArgs() {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    return [];
+  }
+  return [
+    "-e",
+    `JSKIT_HOST_UID=${process.getuid()}`,
+    "-e",
+    `JSKIT_HOST_GID=${process.getgid()}`
+  ];
+}
+
+function terminalNamespace(sessionId) {
+  return `${TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
+}
+
+function activeSessionDirectory(targetRoot, sessionId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (
+    !normalizedSessionId ||
+    normalizedSessionId.includes("/") ||
+    normalizedSessionId.includes("\\") ||
+    normalizedSessionId === "." ||
+    normalizedSessionId === ".."
+  ) {
+    return "";
+  }
+
+  const activeRoot = path.resolve(targetRoot, ".jskit", "sessions", "active");
+  const sessionPath = path.resolve(activeRoot, normalizedSessionId);
+  if (!(sessionPath === activeRoot || sessionPath.startsWith(`${activeRoot}${path.sep}`))) {
+    return "";
+  }
+  return sessionPath;
+}
+
+function codexThreadIdPath(targetRoot, sessionId) {
+  const sessionPath = activeSessionDirectory(targetRoot, sessionId);
+  return sessionPath ? path.join(sessionPath, CODEX_THREAD_ID_FILE) : "";
+}
+
+function isOpenIssueSession(session = {}) {
+  return !CLOSED_SESSION_STATUSES.has(String(session.status || ""));
+}
+
+function isVisibleIssueSession(session = {}) {
+  return String(session.status || "") !== "abandoned";
+}
+
+function issueSessionLimits(sessions = []) {
+  return {
+    maxOpenSessions: MAX_OPEN_ISSUE_SESSIONS,
+    openSessionCount: sessions.filter(isOpenIssueSession).length
+  };
+}
+
+function visibleIssueSessionList(response = {}) {
+  const sessions = Array.isArray(response.sessions) ? response.sessions : [];
+  return {
+    ...response,
+    limits: issueSessionLimits(sessions),
+    sessions: sessions.filter(isVisibleIssueSession)
+  };
+}
+
+function containerWorkspacePath(targetRoot, absolutePath) {
+  const relativePath = path.relative(targetRoot, absolutePath);
+  if (!relativePath || relativePath === ".") {
+    return "/workspace";
+  }
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return "";
+  }
+  return path.posix.join("/workspace", ...relativePath.split(path.sep));
+}
+
+function codexStartupScript(codexThreadId = "") {
+  const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
+  const codexCommand = normalizedThreadId
+    ? `codex resume ${shellQuote(normalizedThreadId)}`
+    : "codex";
+  return [
+    "set -e",
+    "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "  mkdir -p /home/studio/.codex /home/studio/.config",
+    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /home/studio/.codex /home/studio/.config",
+    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" --clear-groups env HOME=/home/studio ${codexCommand}`,
+    "fi",
+    `exec env HOME=/home/studio ${codexCommand}`
+  ].join("\n");
+}
+
+function codexTerminalArgs({
+  codexThreadId,
+  containerName,
+  sessionId,
+  targetRoot,
+  terminalId,
+  worktree
+}) {
+  return [
+    "run",
+    "--rm",
+    "-it",
+    "--name",
+    containerName,
+    "--label",
+    "jskit-ai-studio.kind=codex-terminal",
+    "--label",
+    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    "--label",
+    `jskit-ai-studio.session=${sessionId}`,
+    "--label",
+    `jskit-ai-studio.terminal=${terminalId}`,
+    "--label",
+    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    "-v",
+    `${TOOL_HOME_VOLUME}:/home/studio`,
+    "-e",
+    "HOME=/home/studio",
+    ...hostUserIdentityEnvArgs(),
+    "-v",
+    `${targetRoot}:/workspace`,
+    "-w",
+    containerWorkspacePath(targetRoot, worktree),
+    TOOLCHAIN_IMAGE,
+    "bash",
+    "-lc",
+    codexStartupScript(codexThreadId)
+  ];
+}
+
+async function removeDockerContainer(containerName) {
+  if (!containerName) {
+    return;
+  }
+  await execFileAsync("docker", ["rm", "-f", containerName], {
+    timeout: 10000,
+    maxBuffer: 1024 * 1024
+  }).catch(() => null);
+}
+
+async function readCodexThreadId(targetRoot, sessionId) {
+  const threadIdFile = codexThreadIdPath(targetRoot, sessionId);
+  if (!threadIdFile) {
+    return "";
+  }
+  try {
+    return normalizeCodexThreadId(await readFile(threadIdFile, "utf8"));
+  } catch {
+    return "";
+  }
+}
+
+async function saveCodexThreadId(targetRoot, sessionId, threadId) {
+  const normalizedThreadId = normalizeCodexThreadId(threadId);
+  const threadIdFile = codexThreadIdPath(targetRoot, sessionId);
+  const sessionPath = activeSessionDirectory(targetRoot, sessionId);
+  if (!normalizedThreadId || !threadIdFile || !sessionPath || !(await pathExists(sessionPath))) {
+    return {
+      ok: false,
+      error: "Invalid Codex thread id."
+    };
+  }
+
+  await writeFile(threadIdFile, `${normalizedThreadId}\n`, "utf8");
+  return {
+    ok: true,
+    codexThreadId: normalizedThreadId
+  };
+}
+
+function withCodexThreadState(response = {}, codexThreadId = "") {
+  return {
+    ...response,
+    codexThreadId,
+    needsThreadCapture: !codexThreadId,
+    threadProbe: CODEX_THREAD_PROBE
+  };
+}
 
 function normalizePlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -378,12 +609,31 @@ function createService({ appRoot = "" } = {}) {
     },
 
     async listIssueSessions() {
-      return listSessions({
+      return visibleIssueSessionList(await listSessions({
         targetRoot: inspectionRoot
-      });
+      }));
     },
 
     async createIssueSession() {
+      const existingSessions = await listSessions({
+        targetRoot: inspectionRoot
+      });
+      const limits = issueSessionLimits(existingSessions.sessions || []);
+      if (limits.openSessionCount >= limits.maxOpenSessions) {
+        return {
+          ok: false,
+          status: "blocked",
+          errors: [
+            {
+              code: "open_session_limit",
+              message: `Studio allows up to ${limits.maxOpenSessions} active sessions at once. Finish or abandon one before creating another.`
+            }
+          ],
+          limits,
+          sessions: visibleIssueSessionList(existingSessions).sessions,
+          stepDefinitions: existingSessions.stepDefinitions || []
+        };
+      }
       return createSession({
         targetRoot: inspectionRoot
       });
@@ -400,11 +650,7 @@ function createService({ appRoot = "" } = {}) {
       const response = await runSessionStep({
         targetRoot: inspectionRoot,
         sessionId,
-        options: {
-          issue: input?.issue,
-          prompt: input?.prompt,
-          userCheck: input?.userCheck
-        }
+        options: input || {}
       });
       const details = await inspectSessionDetails({
         targetRoot: inspectionRoot,
@@ -412,18 +658,103 @@ function createService({ appRoot = "" } = {}) {
       });
       return {
         ...details,
+        codex: response.codex || details.codex || null,
+        currentStepAction: response.currentStepAction || details.currentStepAction || null,
         errors: response.errors || details.errors || [],
         ok: response.ok,
         preconditions: response.preconditions || details.preconditions || [],
         prompt: response.prompt || details.prompt || "",
+        stepDefinitions: response.stepDefinitions || details.stepDefinitions || [],
         status: response.status || details.status
       };
     },
 
     async abandonIssueSession(sessionId) {
+      await closeTerminalSessionsForNamespace(terminalNamespace(sessionId));
       return abandonSession({
         targetRoot: inspectionRoot,
         sessionId
+      });
+    },
+
+    async saveCodexThread(sessionId, input = {}) {
+      const session = await inspectSessionDetails({
+        targetRoot: inspectionRoot,
+        sessionId
+      });
+      if (session?.ok === false) {
+        return session;
+      }
+      return saveCodexThreadId(inspectionRoot, sessionId, input?.threadId);
+    },
+
+    async startCodexTerminal(sessionId) {
+      const session = await inspectSessionDetails({
+        targetRoot: inspectionRoot,
+        sessionId
+      });
+      if (session?.ok === false) {
+        return session;
+      }
+      if (!session?.worktree) {
+        return {
+          ok: false,
+          error: "Session worktree is not ready yet."
+        };
+      }
+      const worktreePath = path.resolve(session.worktree);
+      const workspacePath = containerWorkspacePath(inspectionRoot, worktreePath);
+      if (!workspacePath) {
+        return {
+          ok: false,
+          error: "Session worktree is outside the target root."
+        };
+      }
+
+      const namespace = terminalNamespace(sessionId);
+      const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
+      return withCodexThreadState(startTerminalSession({
+        args: ({ id }) => codexTerminalArgs({
+          codexThreadId,
+          containerName: codexContainerName({
+            sessionId,
+            terminalId: id
+          }),
+          sessionId,
+          targetRoot: inspectionRoot,
+          terminalId: id,
+          worktree: worktreePath
+        }),
+        command: "docker",
+        commandPreview: ({ args }) => dockerCommand(args),
+        cwd: inspectionRoot,
+        maxRunning: MAX_OPEN_ISSUE_SESSIONS,
+        namespace,
+        namespaceLimitPrefix: TERMINAL_NAMESPACE_PREFIX,
+        onClose: ({ id }) => removeDockerContainer(codexContainerName({
+          sessionId,
+          terminalId: id
+        })),
+        reuseRunning: true
+      }), codexThreadId);
+    },
+
+    async readCodexTerminal(sessionId, terminalSessionId) {
+      const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
+      return withCodexThreadState(readTerminalSession(terminalSessionId, {
+        namespace: terminalNamespace(sessionId)
+      }), codexThreadId);
+    },
+
+    writeCodexTerminal(sessionId, terminalSessionId, data) {
+      return writeTerminalSession(terminalSessionId, data, {
+        namespace: terminalNamespace(sessionId)
+      });
+    },
+
+    closeCodexTerminal(sessionId, terminalSessionId) {
+      return closeTerminalSession(terminalSessionId, {
+        namespace: terminalNamespace(sessionId)
       });
     }
   });

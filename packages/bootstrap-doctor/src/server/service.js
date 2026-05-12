@@ -975,6 +975,25 @@ async function inspectBootstrap({
       })
       : missingToolchainCheck("codex", "Codex CLI")
   });
+  const codexSandbox = await runBootstrapStep(emit, {
+    id: "codex-sandbox",
+    label: "Codex sandbox",
+    run: () => toolchainReady
+      ? checkToolchainCommand({
+        id: "codex-sandbox",
+        label: "Codex sandbox",
+        commandArgs: [
+          "bash",
+          "-lc",
+          "command -v bwrap && bwrap --version"
+        ],
+        expected: "bubblewrap is available inside the managed toolchain.",
+        explanation: "Codex uses bubblewrap for sandboxing inside the managed toolchain container.",
+        isValid: (output) => output.includes("bwrap") || output.toLowerCase().includes("bubblewrap"),
+        repair: buildToolchainRepair()
+      })
+      : missingToolchainCheck("codex-sandbox", "Codex sandbox")
+  });
   const codexAuth = await runBootstrapStep(emit, {
     id: "codex-auth",
     label: "Codex login",
@@ -991,6 +1010,7 @@ async function inspectBootstrap({
     gh,
     ghAuth,
     codex,
+    codexSandbox,
     codexAuth
   ];
 

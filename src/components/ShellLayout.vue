@@ -6,7 +6,10 @@ export default {
   name: "ShellLayout",
   inheritAttrs: false,
   setup(_, { attrs, slots }) {
-    return () => h(PackageShellLayout, attrs, slots);
+    return () => h(PackageShellLayout, attrs, {
+      ...slots,
+      "top-left": slots["top-left"] || (() => null)
+    });
   }
 };
 </script>

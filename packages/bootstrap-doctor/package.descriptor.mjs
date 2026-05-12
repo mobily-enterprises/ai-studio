@@ -3,7 +3,7 @@ export default Object.freeze({
   packageId: "@local/bootstrap-doctor",
   version: "0.1.0",
   kind: "runtime",
-  description: "Mandatory local runtime bootstrap checks and repairs for JSKIT AI Studio.",
+  description: "Mandatory local runtime bootstrap checks and repairs for Studio.",
   dependsOn: [
     "@jskit-ai/kernel"
   ],

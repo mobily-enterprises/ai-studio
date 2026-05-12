@@ -3,7 +3,7 @@ export default Object.freeze({
   packageId: "@local/app-setup-doctor",
   version: "0.1.0",
   kind: "runtime",
-  description: "Sequential target app setup readiness checks for JSKIT AI Studio.",
+  description: "Sequential target app setup readiness checks for Studio.",
   dependsOn: [
     "@jskit-ai/kernel"
   ],

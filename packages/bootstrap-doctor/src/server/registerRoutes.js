@@ -167,7 +167,7 @@ function registerRoutes(
       }
     },
     async function (request, reply) {
-      const response = getBootstrapService(app).closeTerminal(request.params.sessionId);
+      const response = await getBootstrapService(app).closeTerminal(request.params.sessionId);
       reply.code(200).send(response);
     }
   );

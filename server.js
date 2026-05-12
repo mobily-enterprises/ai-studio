@@ -15,6 +15,9 @@ import {
   resolveStudioAppRoot,
   resolveStudioTargetRoot
 } from "./server/lib/studioRoots.js";
+import {
+  closeTerminalSessionsForNamespacePrefix
+} from "./server/lib/terminalSessions.js";
 
 const SPA_INDEX_FILE = "index.html";
 const API_BASE_PATH = "/api";
@@ -96,6 +99,10 @@ async function createServer(options = {}) {
         allowUnionTypes: true
       }
     }
+  });
+
+  app.addHook("onClose", async () => {
+    await closeTerminalSessionsForNamespacePrefix("");
   });
 
   app.get("/api/health", async () => {
@@ -224,6 +231,27 @@ async function startServer(options = {}) {
   const app = await createServer({
     appRoot: options?.appRoot,
     targetRoot: options?.targetRoot
+  });
+  let closing = false;
+  const closeAndExit = async (signal) => {
+    if (closing) {
+      return;
+    }
+    closing = true;
+    app.log.info({ signal }, "Stopping jskit-ai-studio server.");
+    try {
+      await app.close();
+      process.exitCode = 0;
+    } catch (error) {
+      app.log.error({ error }, "Failed to stop jskit-ai-studio server cleanly.");
+      process.exitCode = 1;
+    }
+  };
+  process.once("SIGINT", closeAndExit);
+  process.once("SIGTERM", closeAndExit);
+  app.addHook("onClose", async () => {
+    process.off("SIGINT", closeAndExit);
+    process.off("SIGTERM", closeAndExit);
   });
   await app.listen({ port, host });
   return app;

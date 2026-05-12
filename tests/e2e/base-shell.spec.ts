@@ -407,7 +407,7 @@ const currentAppPayload = {
     surfaces: [
       {
         id: "home",
-        label: "Home",
+        label: "Sessions",
         enabled: true,
         requiresAuth: false,
         requiresWorkspace: false,
@@ -432,6 +432,154 @@ const currentAppPayload = {
     branch: "main",
     changedFiles: []
   }
+};
+
+const codexPromptText = "Create the GitHub issue for the requested Studio session UI.";
+const codexPromptSessionId = "2026-05-12_01-02-39";
+const secondCodexPromptText = "Create another GitHub issue while the first terminal keeps running.";
+const secondCodexPromptSessionId = "2026-05-12_01-03-40";
+const thirdCodexPromptText = "Create a third GitHub issue while two terminals keep running.";
+const thirdCodexPromptSessionId = "2026-05-12_01-04-41";
+const nonCodexStepSessionId = "2026-05-12_01-05-42";
+const codexThreadProbe = "!echo $CODEX_THREAD_ID";
+const codexThreadCommand = "echo $CODEX_THREAD_ID";
+const codexThreadId = "019e1575-2458-7b93-bf9d-e7d7ffd49ad2";
+const codexShellSubmitSequence = ["\u001b", "\u0015", "!", codexThreadCommand, "\u001b", "\r"];
+const codexPromptStepDefinitions = [
+  {
+    id: "session-created",
+    index: 0,
+    label: "Session created",
+    kind: "system",
+    description: "Create the durable session directory."
+  },
+  {
+    id: "worktree",
+    index: 1,
+    label: "Worktree",
+    kind: "command",
+    description: "Prepare the isolated session worktree."
+  },
+  {
+    id: "prompt",
+    index: 2,
+    label: "Prompt",
+    kind: "input",
+    description: "Capture the developer request."
+  },
+  {
+    id: "issue",
+    index: 3,
+    label: "Issue",
+    kind: "codex_output",
+    description: "Ask Codex to create the GitHub issue."
+  }
+];
+const codexPromptSessionPayload = {
+  ok: true,
+  sessionId: codexPromptSessionId,
+  status: "waiting_for_user",
+  currentStep: "issue",
+  completedSteps: ["session-created", "worktree", "prompt"],
+  stepDefinitions: codexPromptStepDefinitions,
+  currentStepAction: {
+    stepId: "issue",
+    kind: "codex_output",
+    buttonLabel: "Save issue text",
+    description: "Codex should create the issue and return the issue URL.",
+    input: {
+      extract: "issue_text",
+      formatHint: "markdown",
+      type: "text",
+      name: "issue",
+      label: "Issue URL",
+      required: true
+    }
+  },
+  codex: {
+    mode: "inject_prompt",
+    promptField: "prompt",
+    expectedOutput: {
+      extract: "issue_text",
+      field: "issue",
+      formatHint: "markdown"
+    }
+  },
+  prompt: codexPromptText,
+  receipts: [],
+  errors: [],
+  issueUrl: "",
+  prUrl: "",
+  transcriptLog: "",
+  worktree: "/workspace/example-target-app/.jskit/sessions/worktrees/2026-05-12_01-02-39"
+};
+const secondCodexPromptSessionPayload = {
+  ...codexPromptSessionPayload,
+  sessionId: secondCodexPromptSessionId,
+  prompt: secondCodexPromptText,
+  worktree: "/workspace/example-target-app/.jskit/sessions/worktrees/2026-05-12_01-03-40"
+};
+const thirdCodexPromptSessionPayload = {
+  ...codexPromptSessionPayload,
+  sessionId: thirdCodexPromptSessionId,
+  prompt: thirdCodexPromptText,
+  worktree: "/workspace/example-target-app/.jskit/sessions/worktrees/2026-05-12_01-04-41"
+};
+const nonCodexStepSessionPayload = {
+  ...codexPromptSessionPayload,
+  sessionId: nonCodexStepSessionId,
+  currentStep: "prompt",
+  completedSteps: ["session-created", "worktree"],
+  currentStepAction: {
+    stepId: "prompt",
+    kind: "input",
+    buttonLabel: "Save prompt",
+    description: "Capture the developer request.",
+    input: {
+      type: "text",
+      name: "prompt",
+      label: "Request",
+      multiline: true,
+      required: true
+    }
+  },
+  codex: null,
+  prompt: "",
+  worktree: "/workspace/example-target-app/.jskit/sessions/worktrees/2026-05-12_01-05-42"
+};
+const codexIssueDraftedPayload = {
+  ...codexPromptSessionPayload,
+  completedSteps: [...codexPromptSessionPayload.completedSteps, "issue"],
+  codex: null,
+  currentStep: "issue-created",
+  currentStepAction: {
+    stepId: "issue-created",
+    kind: "automatic",
+    buttonLabel: "Create GitHub issue",
+    description: "Create the GitHub issue with gh.",
+    input: {
+      type: "none"
+    }
+  },
+  issueText: "# Add session UI\n\nMake sessions clearer.",
+  prompt: "",
+  status: "running"
+};
+const codexIssueCreatedPayload = {
+  ...codexIssueDraftedPayload,
+  completedSteps: [...codexIssueDraftedPayload.completedSteps, "issue-created"],
+  currentStep: "implementation-prompt",
+  currentStepAction: {
+    stepId: "implementation-prompt",
+    kind: "codex_prompt",
+    buttonLabel: "Render implementation prompt",
+    description: "Render the implementation prompt.",
+    input: {
+      type: "none"
+    }
+  },
+  issueUrl: "https://github.com/merc/example-target-app/issues/123",
+  status: "running"
 };
 
 function sseStatusPayload(status, itemsKey = "checks") {
@@ -483,6 +631,18 @@ function trackStudioApiRequests(page) {
     },
     requests
   };
+}
+
+function mockCodexThreadIdForSession(sessionId: string) {
+  const suffix = String(sessionId || "")
+    .replace(/\D/gu, "")
+    .padEnd(12, "0")
+    .slice(-12);
+  return `019e1575-2458-7b93-bf9d-${suffix}`;
+}
+
+function codexThreadCaptured(inputs: string[]) {
+  return inputs.includes(codexThreadCommand) && inputs.includes("\r");
 }
 
 async function mockBootstrapBlocked(page) {
@@ -546,12 +706,275 @@ async function mockStudioReady(page) {
       body: JSON.stringify(readyAppSetupPayload)
     });
   });
+  await mockCurrentAppInspection(page);
+}
+
+async function mockCurrentAppInspection(page) {
   await page.route("**/api/studio/current-app", async (route) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(currentAppPayload)
     });
   });
+  await page.route("**/api/studio/current-app/issue-sessions", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        limits: {
+          maxOpenSessions: 3,
+          openSessionCount: 0
+        },
+        ok: true,
+        sessions: [],
+        stepDefinitions: []
+      })
+    });
+  });
+}
+
+async function mockCodexPromptSession(page, { stepPayloads = [], terminalInputs = [] } = {}) {
+  let terminalOutput = "Codex ready.";
+  let stepRequestCount = 0;
+  await page.route("**/api/studio/current-app", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(currentAppPayload)
+    });
+  });
+  await page.route("**/api/studio/current-app/issue-sessions", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        limits: {
+          maxOpenSessions: 3,
+          openSessionCount: 1
+        },
+        ok: true,
+        sessions: [codexPromptSessionPayload],
+        stepDefinitions: codexPromptStepDefinitions
+      })
+    });
+  });
+  await page.route(`**/api/studio/current-app/issue-sessions/${codexPromptSessionId}`, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(codexPromptSessionPayload)
+    });
+  });
+  await page.route(`**/api/studio/current-app/issue-sessions/${codexPromptSessionId}/step`, async (route) => {
+    stepPayloads.push(route.request().postDataJSON());
+    stepRequestCount += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(stepRequestCount === 1 ? codexIssueDraftedPayload : codexIssueCreatedPayload)
+    });
+  });
+  await page.route(`**/api/studio/current-app/issue-sessions/${codexPromptSessionId}/codex-terminal`, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        id: "term-1",
+        status: "running",
+        commandPreview: "codex",
+        output: terminalOutput,
+        needsThreadCapture: true,
+        threadProbe: codexThreadProbe
+      })
+    });
+  });
+  await page.route(`**/api/studio/current-app/issue-sessions/${codexPromptSessionId}/codex-thread`, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        codexThreadId: route.request().postDataJSON().threadId,
+        ok: true
+      })
+    });
+  });
+  await page.route(
+    `**/api/studio/current-app/issue-sessions/${codexPromptSessionId}/codex-terminal/term-1`,
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          id: "term-1",
+          status: "running",
+          commandPreview: "codex",
+          output: terminalOutput,
+          needsThreadCapture: true,
+          threadProbe: codexThreadProbe
+        })
+      });
+    }
+  );
+  await page.route(
+    `**/api/studio/current-app/issue-sessions/${codexPromptSessionId}/codex-terminal/term-1/input`,
+    async (route) => {
+      const input = route.request().postDataJSON().data;
+      terminalInputs.push(input);
+      if (input === "\r" && terminalInputs.includes(codexThreadCommand)) {
+        terminalOutput = [
+          "Codex ready.",
+          codexThreadProbe,
+          codexThreadId
+        ].join("\n");
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true
+        })
+      });
+    }
+  );
+
+  return {
+    setTerminalOutput(output) {
+      terminalOutput = String(output || "");
+    },
+    stepPayloads,
+    terminalInputs
+  };
+}
+
+function isOpenMockSession(session) {
+  return !["abandoned", "finished"].includes(String(session.status || ""));
+}
+
+async function mockCodexPromptSessions(page, sessionPayloads) {
+  let visibleSessionPayloads = [...sessionPayloads];
+  const terminalStarts = Object.fromEntries(sessionPayloads.map((session) => [session.sessionId, 0]));
+  const terminalDeletes = Object.fromEntries(sessionPayloads.map((session) => [session.sessionId, 0]));
+  const terminalInputs = Object.fromEntries(sessionPayloads.map((session) => [session.sessionId, []]));
+  const payloadsBySessionId = Object.fromEntries(sessionPayloads.map((session) => [session.sessionId, session]));
+
+  await page.route("**/api/studio/current-app", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(currentAppPayload)
+    });
+  });
+  await page.route("**/api/studio/current-app/issue-sessions", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        limits: {
+          maxOpenSessions: 3,
+          openSessionCount: visibleSessionPayloads.filter(isOpenMockSession).length
+        },
+        ok: true,
+        sessions: visibleSessionPayloads,
+        stepDefinitions: codexPromptStepDefinitions
+      })
+    });
+  });
+
+  for (const sessionId of Object.keys(payloadsBySessionId)) {
+    await page.route(`**/api/studio/current-app/issue-sessions/${sessionId}`, async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(payloadsBySessionId[sessionId])
+      });
+    });
+    await page.route(`**/api/studio/current-app/issue-sessions/${sessionId}/abandon`, async (route) => {
+      payloadsBySessionId[sessionId] = {
+        ...payloadsBySessionId[sessionId],
+        codex: null,
+        currentStep: "",
+        status: "abandoned"
+      };
+      visibleSessionPayloads = visibleSessionPayloads.filter((session) => session.sessionId !== sessionId);
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(payloadsBySessionId[sessionId])
+      });
+    });
+    await page.route(`**/api/studio/current-app/issue-sessions/${sessionId}/codex-terminal`, async (route) => {
+      terminalStarts[sessionId] += 1;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          id: `term-${sessionId}`,
+          status: "running",
+          commandPreview: "codex",
+          output: `Codex ready for ${sessionId}.`,
+          needsThreadCapture: true,
+          threadProbe: codexThreadProbe
+        })
+      });
+    });
+    await page.route(`**/api/studio/current-app/issue-sessions/${sessionId}/codex-thread`, async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          codexThreadId: route.request().postDataJSON().threadId,
+          ok: true
+        })
+      });
+    });
+    await page.route(
+      `**/api/studio/current-app/issue-sessions/${sessionId}/codex-terminal/term-${sessionId}`,
+      async (route) => {
+        if (route.request().method() === "DELETE") {
+          terminalDeletes[sessionId] += 1;
+          await route.fulfill({
+            contentType: "application/json",
+            body: JSON.stringify({
+              closed: true,
+              ok: true
+            })
+          });
+          return;
+        }
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true,
+            id: `term-${sessionId}`,
+            status: "running",
+            commandPreview: "codex",
+            output: codexThreadCaptured(terminalInputs[sessionId])
+              ? [
+                `Codex ready for ${sessionId}.`,
+                codexThreadProbe,
+                mockCodexThreadIdForSession(sessionId)
+              ].join("\n")
+              : `Codex ready for ${sessionId}.`,
+            needsThreadCapture: true,
+            threadProbe: codexThreadProbe
+          })
+        });
+      }
+    );
+    await page.route(
+      `**/api/studio/current-app/issue-sessions/${sessionId}/codex-terminal/term-${sessionId}/input`,
+      async (route) => {
+        terminalInputs[sessionId].push(route.request().postDataJSON().data);
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true
+          })
+        });
+      }
+    );
+  }
+
+  return {
+    terminalDeletes,
+    terminalInputs,
+    terminalStarts
+  };
+}
+
+async function mockTwoCodexPromptSessions(page) {
+  return mockCodexPromptSessions(page, [
+    codexPromptSessionPayload,
+    secondCodexPromptSessionPayload
+  ]);
 }
 
 async function mockAppSetupBlocked(page) {
@@ -711,38 +1134,50 @@ test.describe("app setup doctor responsive smoke", () => {
   }
 });
 
-test.describe("studio gate redirects", () => {
-  test("root redirects to bootup when machine bootup is blocked", async ({ page }) => {
+test.describe("studio startup navigation", () => {
+  test("root redirects to home without running bootup doctors", async ({ page }) => {
     const apiRequests = trackStudioApiRequests(page);
     await mockBootstrapBlocked(page);
+    await mockCurrentAppInspection(page);
     await page.goto(`${BASE_URL}/`);
-    await expect(page).toHaveURL(/\/bootup$/u);
-    await expect(page.getByRole("heading", { name: "Bootup", exact: true })).toBeVisible();
-    expect(apiRequests.count("/api/studio/bootstrap")).toBe(1);
+    await expect(page).toHaveURL(/\/home$/u);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByText("example-target-app").first()).toBeVisible();
+    expect(apiRequests.count("/api/studio/bootstrap")).toBe(0);
     expect(apiRequests.count("/api/studio/bootstrap/stream")).toBe(0);
+    expect(apiRequests.count("/api/studio/target-app")).toBe(0);
+    expect(apiRequests.count("/api/studio/app-setup")).toBe(0);
+    expect(apiRequests.count("/api/studio/current-app")).toBe(1);
   });
 
-  test("home redirects to app bootup when target app bootup is blocked", async ({ page }) => {
+  test("home loads the current app without running bootup doctors", async ({ page }) => {
     const apiRequests = trackStudioApiRequests(page);
     await mockTargetAppBlocked(page);
+    await mockCurrentAppInspection(page);
     await page.goto(`${BASE_URL}/home`);
-    await expect(page).toHaveURL(/\/app-bootup$/u);
-    await expect(page.getByRole("heading", { name: "App Bootup", exact: true })).toBeVisible();
-    expect(apiRequests.count("/api/studio/bootstrap")).toBe(1);
-    expect(apiRequests.count("/api/studio/target-app")).toBe(1);
+    await expect(page).toHaveURL(/\/home$/u);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByText("example-target-app").first()).toBeVisible();
+    expect(apiRequests.count("/api/studio/bootstrap")).toBe(0);
+    expect(apiRequests.count("/api/studio/target-app")).toBe(0);
     expect(apiRequests.count("/api/studio/target-app/stream")).toBe(0);
+    expect(apiRequests.count("/api/studio/app-setup")).toBe(0);
+    expect(apiRequests.count("/api/studio/current-app")).toBe(1);
   });
 
-  test("home redirects to app setup when setup is blocked", async ({ page }) => {
+  test("home stays on home even when setup checks would be blocked", async ({ page }) => {
     const apiRequests = trackStudioApiRequests(page);
     await mockAppSetupBlocked(page);
+    await mockCurrentAppInspection(page);
     await page.goto(`${BASE_URL}/home`);
-    await expect(page).toHaveURL(/\/app-setup$/u);
-    await expect(page.getByRole("heading", { name: "App Setup", exact: true })).toBeVisible();
-    expect(apiRequests.count("/api/studio/bootstrap")).toBe(1);
-    expect(apiRequests.count("/api/studio/target-app")).toBe(1);
-    expect(apiRequests.count("/api/studio/app-setup")).toBe(1);
+    await expect(page).toHaveURL(/\/home$/u);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByText("example-target-app").first()).toBeVisible();
+    expect(apiRequests.count("/api/studio/bootstrap")).toBe(0);
+    expect(apiRequests.count("/api/studio/target-app")).toBe(0);
+    expect(apiRequests.count("/api/studio/app-setup")).toBe(0);
     expect(apiRequests.count("/api/studio/app-setup/stream")).toBe(0);
+    expect(apiRequests.count("/api/studio/current-app")).toBe(1);
   });
 
   test("root redirects to home when every bootup gate is ready", async ({ page }) => {
@@ -750,11 +1185,11 @@ test.describe("studio gate redirects", () => {
     await mockStudioReady(page);
     await page.goto(`${BASE_URL}/`);
     await expect(page).toHaveURL(/\/home$/u);
-    await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
     await expect(page.getByText("example-target-app").first()).toBeVisible();
-    expect(apiRequests.count("/api/studio/bootstrap")).toBe(1);
-    expect(apiRequests.count("/api/studio/target-app")).toBe(1);
-    expect(apiRequests.count("/api/studio/app-setup")).toBe(1);
+    expect(apiRequests.count("/api/studio/bootstrap")).toBe(0);
+    expect(apiRequests.count("/api/studio/target-app")).toBe(0);
+    expect(apiRequests.count("/api/studio/app-setup")).toBe(0);
     expect(apiRequests.count("/api/studio/current-app")).toBe(1);
   });
 
@@ -779,5 +1214,107 @@ test.describe("studio gate redirects", () => {
     expect(apiRequests.count("/api/studio/target-app")).toBe(1);
     expect(apiRequests.count("/api/studio/app-setup")).toBe(0);
     expect(apiRequests.count("/api/studio/app-setup/stream")).toBe(1);
+  });
+
+  test("codex issue step injects the prompt and waits for marked issue text before Done", async ({ page }) => {
+    const stepPayloads: unknown[] = [];
+    const terminalInputs: string[] = [];
+    const codexSession = await mockCodexPromptSession(page, {
+      stepPayloads,
+      terminalInputs
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    const doneButton = page.getByRole("button", { name: "Done" });
+    await expect(doneButton).toBeVisible();
+    await expect(doneButton).toBeDisabled();
+
+    await expect.poll(() => terminalInputs.length).toBe(7);
+    expect(terminalInputs.slice(0, 6)).toEqual(codexShellSubmitSequence);
+    expect(terminalInputs[6]).toContain(codexPromptText);
+
+    codexSession.setTerminalOutput([
+      "Codex ready.",
+      "[issue_text]",
+      "# Add session UI",
+      "",
+      "Make sessions clearer.",
+      "[/issue_text]"
+    ].join("\n"));
+
+    await expect(doneButton).toBeEnabled();
+    await expect(page.getByLabel("Issue text from Codex")).toHaveValue("# Add session UI\n\nMake sessions clearer.");
+    await doneButton.click();
+
+    await expect.poll(() => stepPayloads.length).toBe(2);
+    expect(stepPayloads[0]).toEqual({
+      issue: "# Add session UI\n\nMake sessions clearer."
+    });
+    expect(stepPayloads[1]).toEqual({});
+  });
+
+  test("codex thread capture runs even before a Codex workflow step", async ({ page }) => {
+    const codexSessions = await mockCodexPromptSessions(page, [
+      nonCodexStepSessionPayload
+    ]);
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+
+    await expect.poll(() => codexSessions.terminalStarts[nonCodexStepSessionId]).toBe(1);
+    await expect.poll(() => codexSessions.terminalInputs[nonCodexStepSessionId].length).toBe(6);
+    expect(codexSessions.terminalInputs[nonCodexStepSessionId]).toEqual(codexShellSubmitSequence);
+  });
+
+  test("switching sessions keeps each Codex terminal alive", async ({ page }) => {
+    const codexSessions = await mockTwoCodexPromptSessions(page);
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+
+    await expect.poll(() => codexSessions.terminalStarts[codexPromptSessionId]).toBe(1);
+    await expect.poll(() => codexSessions.terminalInputs[codexPromptSessionId].length).toBe(7);
+    expect(codexSessions.terminalInputs[codexPromptSessionId].slice(0, 6)).toEqual(codexShellSubmitSequence);
+    expect(codexSessions.terminalInputs[codexPromptSessionId][6]).toContain(codexPromptText);
+
+    await page.getByRole("button", { name: /01-03-40/u }).click();
+    await expect(page.getByRole("heading", { name: secondCodexPromptSessionId })).toBeVisible();
+    await expect.poll(() => codexSessions.terminalStarts[secondCodexPromptSessionId]).toBe(1);
+    await expect.poll(() => codexSessions.terminalInputs[secondCodexPromptSessionId].length).toBe(7);
+    expect(codexSessions.terminalInputs[secondCodexPromptSessionId].slice(0, 6)).toEqual(codexShellSubmitSequence);
+    expect(codexSessions.terminalInputs[secondCodexPromptSessionId][6]).toContain(secondCodexPromptText);
+
+    await page.getByRole("button", { name: /01-02-39/u }).click();
+    await expect(page.getByRole("heading", { name: codexPromptSessionId })).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(codexSessions.terminalStarts[codexPromptSessionId]).toBe(1);
+    expect(codexSessions.terminalStarts[secondCodexPromptSessionId]).toBe(1);
+  });
+
+  test("session creation is disabled after three active sessions", async ({ page }) => {
+    await mockCodexPromptSessions(page, [
+      codexPromptSessionPayload,
+      secondCodexPromptSessionPayload,
+      thirdCodexPromptSessionPayload
+    ]);
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByText("3/3 active")).toBeVisible();
+    await expect(page.getByRole("button", { name: "New Session" })).toBeDisabled();
+  });
+
+  test("abandoning a session closes its terminal and removes it from the visible list", async ({ page }) => {
+    const codexSessions = await mockTwoCodexPromptSessions(page);
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect.poll(() => codexSessions.terminalStarts[codexPromptSessionId]).toBe(1);
+
+    await page.getByRole("button", { name: "Abandon" }).click();
+    await expect.poll(() => codexSessions.terminalDeletes[codexPromptSessionId]).toBe(1);
+    await expect(page.getByRole("button", { name: /01-02-39/u })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: secondCodexPromptSessionId })).toBeVisible();
   });
 });

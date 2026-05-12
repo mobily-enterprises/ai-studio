@@ -142,7 +142,7 @@ function registerRoutes(
       }
     },
     async function (request, reply) {
-      const response = getTargetAppDoctorService(app).closeTerminal(request.params.sessionId);
+      const response = await getTargetAppDoctorService(app).closeTerminal(request.params.sessionId);
       reply.code(200).send(response);
     }
   );
