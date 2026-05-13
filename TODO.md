@@ -1,9 +1,12 @@
 TOMORROW:
-STOP skipping of "Issue created"
-Strange initial button as soon as it's in "Plan execution", improve that part in general
+X STOP skipping of "Issue created"
+X Strange initial button as soon as it's in "Plan execution", improve that part in general
+
+
 Rubbish characters in plan when grabbing from codex outputo
 Ability to step back so that user can do multiple deslops (give choice) and from user check to plan fine tuning (new item, just after plan execution)
 Allowing user testing (run build and server, open browser); 
+
 
 LATER:
 Allow "testing" (run build and server) even outside todo (button?)

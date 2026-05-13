@@ -609,8 +609,8 @@ const codexIssueCreatedPayload = {
   currentStepAction: {
     stepId: "plan_made",
     kind: "codex_output",
-    buttonLabel: "Create plan",
-    description: "Create and save the implementation plan.",
+    buttonLabel: "Save plan",
+    description: "Save the approved implementation plan.",
     input: {
       extract: "plan",
       formatHint: "markdown",

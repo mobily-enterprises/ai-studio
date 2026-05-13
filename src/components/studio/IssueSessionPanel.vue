@@ -134,9 +134,9 @@
                 <v-chip size="x-small" variant="tonal">{{ step.kind }}</v-chip>
               </div>
 
-              <div v-if="step.id === selectedSession.currentStep" class="studio-issue-sessions__step-action">
+              <div v-if="step.id === displayCurrentStepId" class="studio-issue-sessions__step-action">
                 <v-textarea
-                  v-if="selectedSession.prompt && !isCodexPromptInjection"
+                  v-if="!issueCreatedHoldActive && selectedSession.prompt && !isCodexPromptInjection"
                   :model-value="selectedSession.prompt"
                   label="Prompt"
                   variant="outlined"
@@ -146,7 +146,7 @@
                   class="studio-issue-sessions__monospace"
                 />
 
-                <template v-if="isCodexOutputStep && codexOutputFormVisible">
+                <template v-if="!issueCreatedHoldActive && isCodexOutputStep && codexOutputFormVisible">
                   <template
                     v-for="output in codexEditableOutputs"
                     :key="codexOutputDraftKeyFor(output)"
@@ -171,12 +171,12 @@
                   </template>
                 </template>
 
-                <p v-else-if="isCodexOutputStep" class="studio-issue-sessions__waiting text-caption mb-0">
+                <p v-else-if="!issueCreatedHoldActive && isCodexOutputStep" class="studio-issue-sessions__waiting text-caption mb-0">
                   {{ codexWaitingMessage }}
                 </p>
 
                 <v-textarea
-                  v-else-if="isTextStep && selectedStepInput.multiline"
+                  v-else-if="!issueCreatedHoldActive && isTextStep && selectedStepInput.multiline"
                   v-model="stepInputValues[selectedStepInput.name]"
                   :label="selectedStepInput.label"
                   :placeholder="selectedStepInput.placeholder || ''"
@@ -186,7 +186,7 @@
                 />
 
                 <v-text-field
-                  v-else-if="isTextStep"
+                  v-else-if="!issueCreatedHoldActive && isTextStep"
                   v-model="stepInputValues[selectedStepInput.name]"
                   :label="selectedStepInput.label"
                   :placeholder="selectedStepInput.placeholder || ''"
@@ -208,7 +208,7 @@
 
                 <div v-else class="studio-issue-sessions__action-stack">
                   <v-alert
-                    v-if="issueCreatedNotice"
+                    v-if="issueCreatedHoldActive && issueCreatedNotice"
                     color="success"
                     density="comfortable"
                     variant="tonal"
@@ -412,7 +412,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { html as renderDiffHtml } from "diff2html";
 import "diff2html/bundles/css/diff2html.min.css";
 import {
@@ -462,6 +462,7 @@ const codexTerminalOutputBySessionId = ref({});
 const codexOutputDraftByKey = ref({});
 const codexOutputSourceByKey = ref({});
 const expandedFactKeys = ref({});
+const issueCreatedHoldBySessionId = ref({});
 const abandonDialogOpen = ref(false);
 const abandonSessionId = ref("");
 const diffDialogOpen = ref(false);
@@ -525,6 +526,18 @@ const selectedSessionNeedsSetupTerminal = computed(() => {
   return selectedSession.value?.currentStep === "dependencies_installed";
 });
 
+const issueCreatedHoldActive = computed(() => {
+  const sessionId = selectedSessionId.value || "";
+  return Boolean(sessionId && issueCreatedHoldBySessionId.value[sessionId] && issueCreatedNotice.value);
+});
+
+const displayCurrentStepId = computed(() => {
+  if (issueCreatedHoldActive.value) {
+    return "issue_created";
+  }
+  return selectedSession.value?.currentStep || "";
+});
+
 const hasCodexPromptHandoff = computed(() => {
   return selectedSession.value?.codex?.mode === "inject_prompt";
 });
@@ -542,11 +555,18 @@ const isCodexOutputStep = computed(() => {
 });
 
 const hasManualCodexPromptAction = computed(() => {
-  return shouldUseManualIssueSessionCodexPrompt(selectedSession.value || {}) &&
+  return !issueCreatedHoldActive.value &&
+    shouldUseManualIssueSessionCodexPrompt(selectedSession.value || {}) &&
     !codexOutputFormVisible.value;
 });
 
 const manualCodexPromptButtonLabel = computed(() => {
+  if (selectedSession.value?.currentStep === "issue_drafted") {
+    return "Get Codex to create issue text";
+  }
+  if (selectedSession.value?.currentStep === "plan_made") {
+    return "Get Codex to create plan";
+  }
   return issueSessionCodexPromptActionLabel(selectedSession.value || {});
 });
 
@@ -607,6 +627,12 @@ const codexOutputFormVisible = computed(() => {
   return hasAnyEditableCodexOutput.value || hasCodexOutputDraftEntry.value;
 });
 
+const selectedStepNeedsCodexOutputPrompt = computed(() => {
+  return isCodexOutputStep.value &&
+    !selectedSession.value?.prompt &&
+    !hasAnyEditableCodexOutput.value;
+});
+
 const requiredCodexOutputsFilled = computed(() => {
   const requiredOutputs = codexEditableOutputs.value.filter((output) => output.required !== false);
   return requiredOutputs.length > 0 &&
@@ -614,8 +640,14 @@ const requiredCodexOutputsFilled = computed(() => {
 });
 
 const codexWaitingMessage = computed(() => {
-  if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
+  if (selectedStepNeedsCodexOutputPrompt.value && selectedSession.value?.currentStep === "plan_made") {
+    return "Codex will create an implementation plan based on the issue.";
+  }
+  if (selectedStepNeedsCodexOutputPrompt.value) {
     return "Run this step to ask Codex for the required output.";
+  }
+  if (selectedSession.value?.currentStep === "issue_drafted") {
+    return "Codex will create a comprehensive issue.";
   }
   const labels = codexEditableOutputs.value
     .map((output) => String(output.label || output.field || "output").trim().toLowerCase())
@@ -692,11 +724,14 @@ const canRunAction = computed(() => {
   if (!selectedStepAction.value || isTerminalSession.value || issueSessionBusy.value) {
     return false;
   }
+  if (issueCreatedHoldActive.value) {
+    return true;
+  }
   if (selectedSessionNeedsSetupTerminal.value) {
     return false;
   }
   if (isCodexOutputStep.value) {
-    if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
+    if (selectedStepNeedsCodexOutputPrompt.value) {
       return true;
     }
     return requiredCodexOutputsFilled.value;
@@ -709,24 +744,30 @@ const canRunAction = computed(() => {
 });
 
 const showCurrentActionButton = computed(() => {
+  if (issueCreatedHoldActive.value) {
+    return true;
+  }
   if (isChoiceStep.value) {
     return false;
   }
   if (!isCodexOutputStep.value) {
     return true;
   }
-  if (!selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
+  if (selectedStepNeedsCodexOutputPrompt.value) {
     return true;
   }
   return requiredCodexOutputsFilled.value;
 });
 
 const currentActionButtonLabel = computed(() => {
+  if (issueCreatedHoldActive.value) {
+    return "Go to next step";
+  }
   if (selectedSessionNeedsSetupTerminal.value) {
     return "Installing dependencies";
   }
-  if (issueCreatedNotice.value && !selectedSession.value?.prompt && !hasAnyEditableCodexOutput.value) {
-    return "Continue to plan";
+  if (selectedStepNeedsCodexOutputPrompt.value && selectedSession.value?.currentStep === "plan_made") {
+    return "Get Codex to create plan";
   }
   if (isCodexOutputStep.value && codexEditableOutputs.value.some((output) => output.field === "issue")) {
     return "Create issue";
@@ -836,13 +877,16 @@ function canAbandonSessionFromChip(session = {}) {
 }
 
 function stepState(step) {
+  if (issueCreatedHoldActive.value && step.id === "issue_created") {
+    return "current";
+  }
   if (completedStepIds.value.has(step.id)) {
     return "done";
   }
-  if ((selectedSession.value?.errors || []).length && step.id === selectedSession.value?.currentStep) {
+  if ((selectedSession.value?.errors || []).length && step.id === displayCurrentStepId.value) {
     return "blocked";
   }
-  if (step.id === selectedSession.value?.currentStep) {
+  if (step.id === displayCurrentStepId.value) {
     return "current";
   }
   return "pending";
@@ -921,9 +965,14 @@ function forgetTerminalSession(sessionId) {
     [sessionId]: _promptInjectionRequest,
     ...remainingPromptInjectionRequests
   } = promptInjectionRequestBySessionId.value;
+  const {
+    [sessionId]: _issueCreatedHold,
+    ...remainingIssueCreatedHolds
+  } = issueCreatedHoldBySessionId.value;
   terminalSessionById.value = remainingTerminalSessions;
   codexTerminalOutputBySessionId.value = remainingTerminalOutputs;
   promptInjectionRequestBySessionId.value = remainingPromptInjectionRequests;
+  issueCreatedHoldBySessionId.value = remainingIssueCreatedHolds;
 }
 
 function pruneTerminalSessions() {
@@ -940,6 +989,9 @@ function pruneTerminalSessions() {
   );
   promptInjectionRequestBySessionId.value = Object.fromEntries(
     Object.entries(promptInjectionRequestBySessionId.value).filter(([sessionId]) => sessionIds.has(sessionId))
+  );
+  issueCreatedHoldBySessionId.value = Object.fromEntries(
+    Object.entries(issueCreatedHoldBySessionId.value).filter(([sessionId]) => sessionIds.has(sessionId))
   );
 }
 
@@ -972,7 +1024,39 @@ function shouldRunImmediateNextStep(response) {
   return response.currentStepAction?.kind === "automatic" && hasNoInput(response.currentStepAction) && !response.codex;
 }
 
+function shouldHoldIssueCreatedReceipt(previousResponse, nextResponse) {
+  return previousResponse?.currentStep === "issue_created" &&
+    nextResponse?.currentStep === "plan_made" &&
+    Boolean(nextResponse?.issueUrl) &&
+    Array.isArray(nextResponse?.completedSteps) &&
+    nextResponse.completedSteps.includes("issue_created");
+}
+
+function holdIssueCreatedReceipt(sessionId) {
+  if (!sessionId) {
+    return;
+  }
+  issueCreatedHoldBySessionId.value = {
+    ...issueCreatedHoldBySessionId.value,
+    [sessionId]: true
+  };
+}
+
+function acknowledgeIssueCreatedReceipt() {
+  const sessionId = selectedSessionId.value || "";
+  if (!sessionId) {
+    return;
+  }
+  const {
+    [sessionId]: _issueCreatedHold,
+    ...remainingIssueCreatedHolds
+  } = issueCreatedHoldBySessionId.value;
+  issueCreatedHoldBySessionId.value = remainingIssueCreatedHolds;
+}
+
 async function runCodexOutputStep() {
+  const sessionId = selectedSessionId.value || "";
+  const shouldRequestGeneratedPrompt = selectedStepNeedsCodexOutputPrompt.value;
   const payload = Object.fromEntries(codexEditableOutputs.value
     .map((output) => [
       String(output.field || "").trim(),
@@ -981,7 +1065,11 @@ async function runCodexOutputStep() {
     .filter(([field]) => Boolean(field)));
   if (!Object.keys(payload).length) {
     if (!selectedSession.value?.prompt) {
-      rememberTerminalSession(await runSelectedStep());
+      const response = await runSelectedStep();
+      rememberTerminalSession(response);
+      if (shouldRequestGeneratedPrompt && response?.prompt) {
+        void requestCodexPromptInjection(response);
+      }
     }
     return;
   }
@@ -989,7 +1077,11 @@ async function runCodexOutputStep() {
   const response = await runSelectedStep(payload);
   rememberTerminalSession(response);
   if (shouldRunImmediateNextStep(response)) {
-    rememberTerminalSession(await runSelectedStep());
+    const nextResponse = await runSelectedStep();
+    rememberTerminalSession(nextResponse);
+    if (shouldHoldIssueCreatedReceipt(response, nextResponse)) {
+      holdIssueCreatedReceipt(sessionId);
+    }
   }
 }
 
@@ -1083,8 +1175,8 @@ async function acceptReviewedChanges() {
   }
 }
 
-function requestCodexPromptInjection() {
-  const session = selectedSession.value || {};
+async function requestCodexPromptInjection(sessionOverride = null) {
+  const session = sessionOverride || selectedSession.value || {};
   const sessionId = session.sessionId || "";
   if (!sessionId || selectedSessionTerminalBlocked.value) {
     copyStatus.value = selectedSessionTerminalBlocked.value
@@ -1093,6 +1185,7 @@ function requestCodexPromptInjection() {
     return;
   }
   rememberTerminalSession(session);
+  await nextTick();
   promptInjectionRequestBySessionId.value = {
     ...promptInjectionRequestBySessionId.value,
     [sessionId]: `${Date.now()}:${Math.random().toString(36).slice(2)}`
@@ -1101,6 +1194,10 @@ function requestCodexPromptInjection() {
 }
 
 function runCurrentAction() {
+  if (issueCreatedHoldActive.value) {
+    acknowledgeIssueCreatedReceipt();
+    return;
+  }
   if (isCodexOutputStep.value) {
     void runCodexOutputStep();
     return;
@@ -1564,7 +1661,13 @@ onMounted(() => {
 }
 
 .studio-issue-sessions__waiting {
-  color: rgb(var(--v-theme-on-surface-variant));
+  background: rgba(var(--v-theme-primary), 0.08);
+  border: 1px solid rgba(var(--v-theme-primary), 0.2);
+  border-radius: 8px;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 0.875rem !important;
+  font-weight: 550;
+  padding: 0.45rem 0.65rem;
 }
 
 .studio-issue-sessions__monospace :deep(textarea) {
