@@ -45,12 +45,14 @@ describe("issue session view model", () => {
     const structuredHandoff = {
       prompt: "Draft the issue.",
       codex: {
-        expectedOutputs: [
-          { field: "issue" },
-          { field: "" }
-        ],
         mode: "inject_prompt",
-        promptField: "prompt"
+        promptField: "prompt",
+        responseContract: {
+          fields: [
+            { field: "issue", extract: "issue_text" },
+            { field: "", extract: "ignored" }
+          ]
+        }
       }
     };
     const sideEffectHandoff = {
@@ -63,7 +65,7 @@ describe("issue session view model", () => {
       }
     };
 
-    expect(issueSessionCodexExpectedOutputs(structuredHandoff)).toEqual([{ field: "issue" }]);
+    expect(issueSessionCodexExpectedOutputs(structuredHandoff)).toEqual([{ field: "issue", extract: "issue_text" }]);
     expect(shouldAutoInjectIssueSessionCodexPrompt(structuredHandoff)).toBe(false);
     expect(shouldUseManualIssueSessionCodexPrompt(structuredHandoff)).toBe(true);
     expect(shouldAutoInjectIssueSessionCodexPrompt(sideEffectHandoff)).toBe(true);
@@ -76,10 +78,9 @@ describe("issue session view model", () => {
     })).toBe(false);
   });
 
-  it("uses JSKIT response contract fields before legacy expected outputs", () => {
+  it("uses JSKIT response contract fields as the only Codex output contract", () => {
     expect(issueSessionCodexExpectedOutputs({
       codex: {
-        expectedOutputs: [{ field: "legacy", extract: "legacy" }],
         responseContract: {
           fields: [
             { field: "issueTitle", extract: "issue_title", options: [{ label: "Bug", value: "bug" }] },

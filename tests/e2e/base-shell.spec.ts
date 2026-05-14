@@ -531,28 +531,28 @@ const codexPromptSessionPayload = {
   codex: {
     mode: "inject_prompt",
     promptField: "prompt",
-    expectedOutput: {
-      extract: "issue_text",
-      field: "issue",
-      formatHint: "markdown"
-    },
-    expectedOutputs: [
-      {
-        extract: "issue_title",
-        field: "issueTitle",
-        formatHint: "text",
-        label: "Issue title",
-        required: true
-      },
-      {
-        extract: "issue_text",
-        field: "issue",
-        formatHint: "markdown",
-        label: "Issue body",
-        multiline: true,
-        required: true
-      }
-    ]
+    responseContract: {
+      fields: [
+        {
+          extract: "issue_title",
+          field: "issueTitle",
+          formatHint: "text",
+          label: "Issue title",
+          required: true
+        },
+        {
+          extract: "issue_text",
+          field: "issue",
+          formatHint: "markdown",
+          label: "Issue body",
+          multiline: true,
+          required: true
+        }
+      ],
+      kind: "fields",
+      missingMarkerBehavior: "manual_or_resend",
+      required: true
+    }
   },
   prompt: codexPromptText,
   receipts: [],
@@ -641,26 +641,25 @@ const codexIssueCreatedPayload = {
     }
   },
   codex: {
-    expectedOutput: {
-      extract: "plan",
-      field: "plan",
-      formatHint: "markdown",
-      label: "Plan",
-      multiline: true,
-      required: true
-    },
-    expectedOutputs: [
-      {
-        extract: "plan",
-        field: "plan",
-        formatHint: "markdown",
-        label: "Plan",
-        multiline: true,
-        required: true
-      }
-    ],
     mode: "inject_prompt",
-    promptField: "prompt"
+    promptActionLabel: "Get Codex to create plan",
+    promptIntroText: "Codex will create an implementation plan based on the issue.",
+    promptField: "prompt",
+    responseContract: {
+      fields: [
+        {
+          extract: "plan",
+          field: "plan",
+          formatHint: "markdown",
+          label: "Plan",
+          multiline: true,
+          required: true
+        }
+      ],
+      kind: "fields",
+      missingMarkerBehavior: "manual_or_resend",
+      required: true
+    }
   },
   issueUrl: "https://github.com/merc/example-target-app/issues/123",
   status: "running"
@@ -767,8 +766,6 @@ const deepUiPromptedSessionPayload = {
   sessionId: deepUiPromptSessionId,
   codex: {
     autoInject: true,
-    expectedOutput: null,
-    expectedOutputs: [],
     mode: "inject_prompt",
     promptActionLabel: "Run Deep UI check",
     promptField: "prompt"
@@ -811,7 +808,10 @@ const reviewDeslopStepDefinitions = [
     displayGroupLabel: "Review/deslop",
     label: "Review/deslop",
     kind: "user_check",
-    description: "Accept a review/deslop pass or request another one."
+    description: "Accept a review/deslop pass or request another one.",
+    submitOptions: {
+      reviewFindingsRemaining: false
+    }
   },
   {
     id: "automated_checks_run",
@@ -835,6 +835,9 @@ const reviewDeslopAcceptedPayload = {
     kind: "user_check",
     label: "I am done",
     requiresExplicitRun: false,
+    submitOptions: {
+      reviewFindingsRemaining: false
+    },
     stepId: "review_changes_accepted",
     utilityActions: [
       {
@@ -932,7 +935,14 @@ const userCheckAction = {
   kind: "user_check",
   label: "Save user check",
   requiresExplicitRun: false,
-  stepId: "user_check_completed"
+  stepId: "user_check_completed",
+  utilityActions: [
+    {
+      id: "session_app_test",
+      kind: "app_test",
+      label: "Test app"
+    }
+  ]
 };
 const userCheckSessionPayload = {
   ok: true,
@@ -1029,26 +1039,24 @@ const reworkStartedSessionPayload = {
     stepId: "plan_made"
   },
   codex: {
-    expectedOutput: {
-      extract: "plan",
-      field: "plan",
-      formatHint: "markdown",
-      label: "Plan",
-      multiline: true,
-      required: true
-    },
-    expectedOutputs: [
-      {
-        extract: "plan",
-        field: "plan",
-        formatHint: "markdown",
-        label: "Plan",
-        multiline: true,
-        required: true
-      }
-    ],
     mode: "inject_prompt",
-    promptActionLabel: "Get Codex to create revised plan"
+    promptActionLabel: "Get Codex to create revised plan",
+    promptIntroText: "Codex will create a revised implementation plan based on the rework notes.",
+    responseContract: {
+      fields: [
+        {
+          extract: "plan",
+          field: "plan",
+          formatHint: "markdown",
+          label: "Plan",
+          multiline: true,
+          required: true
+        }
+      ],
+      kind: "fields",
+      missingMarkerBehavior: "manual_or_resend",
+      required: true
+    }
   }
 };
 
@@ -2173,6 +2181,10 @@ test.describe("studio startup navigation", () => {
 
     await page.goto(`${BASE_URL}/home`);
     await expectSessionsRoute(page);
+    const activeUserCheckStep = page.locator(".studio-issue-sessions__step").filter({
+      hasText: "Goal: User check"
+    });
+    await expect(activeUserCheckStep.getByRole("button", { name: "Test app" })).toBeVisible();
     await page.getByRole("button", { name: "Failed" }).click();
 
     await expect.poll(() => stepPayloads.length).toBe(1);

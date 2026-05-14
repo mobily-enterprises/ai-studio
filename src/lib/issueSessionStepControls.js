@@ -32,15 +32,26 @@ function buildActiveStepControls({
   );
   const canClick = !blocked && !busy && !terminalBlocked && !codexWorking;
   const isCodexPromptStep = actionKind === "codex_prompt";
+  const codexPromptInjectionPending = codexPromptInjectionReady && !codexPromptAlreadyRequested;
   const codexPromptPending = automationMode === "codex_prompt" && !codexPromptAlreadyRequested;
   const codexOutputPromptPending = (
     (automationMode === "codex_output_prompt" && selectedStepNeedsCodexOutputPrompt) ||
     (isCodexOutputStep && codexPromptInjectionReady && !codexOutputFormVisible)
   ) && !codexPromptAlreadyRequested;
   const automaticStepPending = automationMode === "immediate";
+  const manualNoInputStepPending = Boolean(actionKind) &&
+    automationMode === "manual" &&
+    selectedStepInputType === "none" &&
+    actionKind !== "user_check";
   const showExecuteStep = !hasForm &&
     !blocked &&
-    (codexPromptPending || codexOutputPromptPending || automaticStepPending);
+    (
+      codexPromptInjectionPending ||
+      codexPromptPending ||
+      codexOutputPromptPending ||
+      automaticStepPending ||
+      manualNoInputStepPending
+    );
   const showGoNext = !hasForm &&
     !blocked &&
     !showExecuteStep &&

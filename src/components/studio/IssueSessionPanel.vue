@@ -313,13 +313,13 @@
 
                 <div v-else-if="isChoiceStep" class="studio-issue-sessions__choice-row">
                   <v-btn
-                    v-if="isUserCheckStep"
+                    v-if="appTestUtilityAction"
                     color="primary"
                     variant="tonal"
                     :prepend-icon="mdiPlayCircleOutline"
                     @click="launchSessionAppTest"
                   >
-                    Test app
+                    {{ appTestUtilityAction.label || "Test app" }}
                   </v-btn>
                   <v-btn
                     v-for="option in selectedStepInput.options || []"
@@ -408,14 +408,6 @@
                       @click="goToNextStep"
                     >
                       Go to next step
-                    </v-btn>
-                    <v-btn
-                      v-if="selectedSession.prompt && !isCodexPromptInjection"
-                      variant="tonal"
-                      :prepend-icon="mdiContentCopy"
-                      @click="copyText(selectedSession.prompt, 'Prompt')"
-                    >
-                      Copy Prompt
                     </v-btn>
                   </div>
                   <p
@@ -741,11 +733,15 @@ const {
   stepInputValues
 } = useIssueSessions();
 
-const REVIEW_DESLOP_STEP_IDS = Object.freeze([
-  "review_prompt_rendered",
-  "review_changes_accepted"
-]);
 const REVIEW_DESLOP_MORE_FINDINGS = "Run another review/deslop pass. Ask the user which important findings they want fixed before editing, then fix only the findings the user selects.";
+const CODEX_OUTPUT_SESSION_FIELD_BY_MARKER = Object.freeze({
+  issue_category: "issueCategory",
+  issue_details: "issueDetails",
+  issue_text: "issueText",
+  issue_title: "issueTitle",
+  plan: "planText",
+  ui_impact: "uiImpact"
+});
 
 const orderedStepDefinitions = computed(() => {
   return groupedStepDefinitions(stepDefinitions.value || []);
@@ -799,10 +795,6 @@ const selectedSessionNeedsSetupTerminal = computed(() => {
   return selectedStepAutomationMode.value === "terminal";
 });
 
-const isUserCheckStep = computed(() => {
-  return selectedSession.value?.currentStep === "user_check_completed";
-});
-
 const displayCurrentStepId = computed(() => {
   return displayStepIdFor(selectedSession.value?.currentStep || "");
 });
@@ -837,18 +829,11 @@ const hasManualCodexPromptAction = computed(() => {
 });
 
 const manualCodexPromptButtonLabel = computed(() => {
-  if (selectedSession.value?.currentStep === "issue_drafted") {
-    return "Get Codex to create issue text";
-  }
-  if (selectedSession.value?.currentStep === "plan_made") {
-    const label = issueSessionCodexPromptActionLabel(selectedSession.value || {});
-    return label === "Submit prompt to Codex" ? "Get Codex to create plan" : label;
-  }
   return issueSessionCodexPromptActionLabel(selectedSession.value || {});
 });
 
 const isReviewDeslopStep = computed(() => {
-  return REVIEW_DESLOP_STEP_IDS.includes(selectedSession.value?.currentStep || "");
+  return selectedCodexResponseContract.value.kind === "deslop_result";
 });
 
 const selectedDeslopAutomation = computed(() => {
@@ -879,7 +864,7 @@ const reviewDeslopFindings = computed(() => {
 });
 
 const reviewDeslopNeedsUserDecision = computed(() => {
-  return selectedSession.value?.currentStep === "review_changes_accepted" &&
+  return isReviewDeslopStep.value &&
     selectedDeslopAutomation.value?.status === "awaiting_user";
 });
 
@@ -999,6 +984,11 @@ const diffUtilityAction = computed(() => {
   return actions.find((action) => action?.kind === "diff") || null;
 });
 
+const appTestUtilityAction = computed(() => {
+  const actions = selectedStepAction.value?.utilityActions || [];
+  return actions.find((action) => action?.kind === "app_test") || null;
+});
+
 const activeAlternateActions = computed(() => {
   const actions = selectedStepAction.value?.alternateActions || [];
   const errorCodes = new Set((selectedSession.value?.errors || []).map((error) => error?.code).filter(Boolean));
@@ -1020,7 +1010,7 @@ const exclusiveTextAlternateActions = computed(() => {
 
 const secondaryTextAlternateActions = computed(() => {
   return activeTextAlternateActions.value.filter((action) => {
-    return action.presentation !== "exclusive" && action.id !== "request_another_review_pass";
+    return action.presentation !== "exclusive" && !isReviewAgainAction(action);
   });
 });
 
@@ -1133,31 +1123,20 @@ const requiredCodexOutputsFilled = computed(() => {
 
 const codexWaitingMessage = computed(() => {
   if (selectedCodexPromptAlreadyRequested.value) {
-    if (selectedSession.value?.currentStep === "issue_details_gathered") {
-      return "Please respond and finalise things with Codex";
-    }
     if (selectedCodexOutputRecoveryVisible.value) {
       return "Codex finished without the required marked output.";
+    }
+    if (selectedSession.value?.codex?.promptWaitingText) {
+      return selectedSession.value.codex.promptWaitingText;
     }
     const labels = codexEditableOutputs.value
       .map((output) => String(output.label || output.field || "output").trim().toLowerCase())
       .filter(Boolean);
     return `Waiting for Codex ${labels.length ? labels.join(" and ") : "output"}.`;
   }
-  if (selectedStepNeedsCodexOutputPrompt.value && selectedSession.value?.currentStep === "plan_made") {
-    if (String(selectedSession.value?.activeCycle || "001") !== "001") {
-      return "Codex will create a revised implementation plan based on the rework notes.";
-    }
-    return "Codex will create an implementation plan based on the issue.";
-  }
   if (selectedStepNeedsCodexOutputPrompt.value) {
-    if (selectedSession.value?.currentStep === "issue_details_gathered") {
-      return "Codex will gather issue details and classify the issue.";
-    }
-    return "Run this step to ask Codex for the required output.";
-  }
-  if (selectedSession.value?.currentStep === "issue_drafted") {
-    return "Codex will create a comprehensive issue.";
+    return selectedSession.value?.codex?.promptIntroText ||
+      "Run this step to ask Codex for the required output.";
   }
   const labels = codexEditableOutputs.value
     .map((output) => String(output.label || output.field || "output").trim().toLowerCase())
@@ -1169,7 +1148,7 @@ const codexPromptRequestedMessage = computed(() => {
   if (!selectedCodexPromptAlreadyRequested.value || codexOutputFormVisible.value) {
     return "";
   }
-  if (selectedSession.value?.currentStep === "issue_details_gathered") {
+  if (selectedSession.value?.codex?.promptWaitingText) {
     return "";
   }
   if (selectedCodexCompletion.value?.status === "interrupted") {
@@ -1227,25 +1206,8 @@ function storedCodexOutputDetails(output = {}) {
 function storedCodexOutputValue(output = {}) {
   const session = selectedSession.value || {};
   const extract = String(output.extract || "").trim();
-  if (session.currentStep === "issue_drafted" && extract === "issue_title") {
-    return String(session.issueTitle || "").trim();
-  }
-  if (session.currentStep === "issue_drafted" && extract === "issue_text") {
-    return String(session.issueText || "").trim();
-  }
-  if (session.currentStep === "issue_details_gathered" && extract === "issue_category") {
-    return String(session.issueCategory || "").trim();
-  }
-  if (session.currentStep === "issue_details_gathered" && extract === "ui_impact") {
-    return String(session.uiImpact || "").trim();
-  }
-  if (session.currentStep === "issue_details_gathered" && extract === "issue_details") {
-    return String(session.issueDetails || "").trim();
-  }
-  if (session.currentStep === "plan_made" && extract === "plan") {
-    return String(session.planText || "").trim();
-  }
-  return "";
+  const sessionField = CODEX_OUTPUT_SESSION_FIELD_BY_MARKER[extract] || "";
+  return sessionField ? String(session[sessionField] || "").trim() : "";
 }
 
 function codexOutputDraftValue(output = {}) {
@@ -1382,9 +1344,6 @@ const currentActionButtonLabel = computed(() => {
 });
 
 const executeStepButtonLabel = computed(() => {
-  if (selectedSession.value?.currentStep === "pr_finalized") {
-    return currentActionButtonLabel.value || "Merge PR";
-  }
   if (isCodexOutputStep.value && isCodexPromptInjection.value && !codexOutputFormVisible.value) {
     return manualCodexPromptButtonLabel.value;
   }
@@ -1494,29 +1453,14 @@ function alternateActionLabel(action = {}) {
 }
 
 function alternateActionTitle(action = {}) {
-  if (action.id === "request_another_review_pass") {
-    return "Need another review pass?";
-  }
-  if (action.id === "close_without_merge") {
-    return "Finish without merging?";
-  }
   return String(action.title || action.label || "Optional path").trim();
 }
 
 function alternateActionHelp(action = {}) {
-  if (action.id === "request_another_review_pass") {
-    return "Use this only when important review findings remain. Studio will record these notes and loop back to Codex review.";
-  }
-  if (action.id === "close_without_merge") {
-    return "Leave the PR open, record the reason, and remove the session worktree without merging.";
-  }
   return String(action.helpText || "Provide the extra context required for this alternate path.").trim();
 }
 
 function alternateActionPlaceholder(action = {}) {
-  if (action.id === "request_another_review_pass") {
-    return "List the specific findings Codex still needs to address.";
-  }
   return String(action.input?.placeholder || "").trim();
 }
 
@@ -1539,6 +1483,33 @@ function alternateActionPayload(action = {}) {
     ...submitOptions,
     ...(inputName ? { [inputName]: value } : {})
   };
+}
+
+function isReviewAgainAction(action = {}) {
+  return action.submitOptions?.reviewFindingsRemaining === true;
+}
+
+function defaultStepPayload() {
+  const submitOptions = selectedStepAction.value?.submitOptions;
+  return submitOptions && typeof submitOptions === "object" && !Array.isArray(submitOptions)
+    ? { ...submitOptions }
+    : {};
+}
+
+function deslopReviewAgainPayload() {
+  const action = activeAlternateActions.value.find(isReviewAgainAction);
+  if (!action) {
+    return null;
+  }
+  const inputName = String(action.input?.name || "").trim();
+  return {
+    ...(action.submitOptions || {}),
+    ...(inputName ? { [inputName]: REVIEW_DESLOP_MORE_FINDINGS } : {})
+  };
+}
+
+function sessionHasDeslopContract(session = {}) {
+  return session?.codex?.responseContract?.kind === "deslop_result";
 }
 
 function clearAlternateActionDraft(action = {}) {
@@ -1602,7 +1573,7 @@ function codexPromptRequestSignature(session = {}) {
 }
 
 function reviewDeslopTerminalWatchSignature(session = {}) {
-  if (!session?.sessionId || !REVIEW_DESLOP_STEP_IDS.includes(session.currentStep || "")) {
+  if (!session?.sessionId || !sessionHasDeslopContract(session)) {
     return "";
   }
   return [
@@ -1841,6 +1812,11 @@ function stepIsRepeatableGroupStart(step = {}) {
   return stepIsRepeatable(step) && step.id === firstRepeatableStepId.value;
 }
 
+function activeStepReceivesReworkRequest() {
+  return displayCurrentStepId.value === firstRepeatableStepId.value ||
+    selectedStepAction.value?.input?.extract === "plan";
+}
+
 function stepBadges(step = {}) {
   const badges = [];
   if (stepIsSkipped(step)) {
@@ -1894,7 +1870,7 @@ function stepState(step) {
 const currentStepActionNotice = computed(() => {
   const action = selectedStepAction.value || {};
   if (
-    selectedSession.value?.currentStep === "plan_made" &&
+    activeStepReceivesReworkRequest() &&
     String(selectedSession.value?.activeCycle || "001") !== "001" &&
     activeCycleReworkRequestText.value
   ) {
@@ -2301,11 +2277,11 @@ function handledPromptSignature(sessionId, signature) {
 
 function sessionNeedsCodexOutputPrompt(session = {}) {
   const action = session.currentStepAction || {};
-  const expectedOutputs = issueSessionCodexExpectedOutputs(session);
+  const outputFields = issueSessionCodexExpectedOutputs(session);
   return Boolean(
     action.automation?.mode === "codex_output_prompt" &&
     session.codex?.mode === "inject_prompt" &&
-    expectedOutputs.some((output) => output?.field) &&
+    outputFields.some((output) => output?.field) &&
     !session.prompt
   );
 }
@@ -2343,12 +2319,17 @@ async function rerunDeslopAfterResolution(sessionId) {
   if (!sessionId || selectedSessionId.value !== sessionId || issueSessionBusy.value) {
     return;
   }
-  const acceptedResponse = await runSelectedStep({
-    reviewFindings: REVIEW_DESLOP_MORE_FINDINGS,
-    reviewFindingsRemaining: true
-  });
+  const reviewAgainPayload = deslopReviewAgainPayload();
+  if (!reviewAgainPayload) {
+    setDeslopAutomation(sessionId, {
+      findings: [],
+      status: "waiting_for_summary"
+    });
+    return;
+  }
+  const acceptedResponse = await runSelectedStep(reviewAgainPayload);
   await handleStepResponse(acceptedResponse);
-  if (acceptedResponse?.ok === false || acceptedResponse?.currentStep !== "review_prompt_rendered") {
+  if (acceptedResponse?.ok === false || !sessionHasDeslopContract(acceptedResponse)) {
     return;
   }
   const promptResponse = await runSelectedStep();
@@ -2384,7 +2365,7 @@ async function handleFinishedDeslopPrompt() {
     return;
   }
 
-  if (session.currentStep !== "review_changes_accepted") {
+  if (selectedStepAction.value?.kind !== "user_check") {
     return;
   }
 
@@ -2464,7 +2445,6 @@ async function autoStartCodexPromptStep(session = selectedSession.value) {
     return;
   }
   const key = autoStartCodexPromptStepKey(session);
-  const stepId = session.currentStep || "";
   autoStartedCodexPromptStepKeys.value = {
     ...autoStartedCodexPromptStepKeys.value,
     [key]: true
@@ -2479,7 +2459,7 @@ async function autoStartCodexPromptStep(session = selectedSession.value) {
     return;
   }
   await handleStepResponse(response);
-  if (stepId === "review_prompt_rendered") {
+  if (sessionHasDeslopContract(response)) {
     setDeslopAutomation(response.sessionId || session.sessionId, {
       findings: [],
       handledSignature: "",
@@ -2755,8 +2735,8 @@ async function goToNextStep() {
   if (!activeStepControls.value.canGoNext) {
     return;
   }
-  const payload = selectedSession.value?.currentStep === "review_changes_accepted"
-    ? { reviewFindingsRemaining: false }
+  const payload = Object.keys(defaultStepPayload()).length
+    ? defaultStepPayload()
     : codexPromptStepResultPayload(selectedSessionId.value);
   autoStepStartSuppressedSessionId.value = selectedSession.value?.sessionId || "";
   const response = await runSelectedStep(payload);
@@ -2781,10 +2761,9 @@ async function executeCurrentStep() {
     await runCodexOutputStep();
     return;
   }
-  const stepId = selectedSession.value?.currentStep || "";
-  const response = await runSelectedStep(stepId === "pr_finalized" ? { mergePr: true } : {});
+  const response = await runSelectedStep(defaultStepPayload());
   await handleStepResponse(response);
-  if (stepId === "review_prompt_rendered" && response?.ok !== false) {
+  if (response?.codex?.responseContract?.kind === "deslop_result" && response?.ok !== false) {
     setDeslopAutomation(response.sessionId || selectedSessionId.value, {
       findings: [],
       handledSignature: "",

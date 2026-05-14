@@ -84,12 +84,7 @@ function issueSessionCodexExpectedOutputs(session = {}) {
   if (Array.isArray(contractFields) && contractFields.length > 0) {
     return contractFields.filter((output) => output?.field && output?.extract);
   }
-  const outputs = session?.codex?.expectedOutputs;
-  if (Array.isArray(outputs) && outputs.length > 0) {
-    return outputs.filter((output) => output?.field);
-  }
-  const output = session?.codex?.expectedOutput;
-  return output?.field ? [output] : [];
+  return [];
 }
 
 function hasIssueSessionCodexPrompt(session = {}) {

@@ -15,6 +15,19 @@ describe("issue session step controls", () => {
     });
   });
 
+  it("shows execute step for an unsubmitted JSKIT Codex handoff on a user-check step", () => {
+    expect(buildActiveStepControls({
+      actionKind: "user_check",
+      codexPromptInjectionReady: true,
+      selectedSessionId: "session-1",
+      selectedStepInputType: "none"
+    })).toMatchObject({
+      canExecuteStep: true,
+      showExecuteStep: true,
+      showGoNext: false
+    });
+  });
+
   it("shows go next for a non-form Codex prompt step after Codex is idle", () => {
     expect(buildActiveStepControls({
       actionKind: "codex_prompt",
@@ -59,6 +72,19 @@ describe("issue session step controls", () => {
       actionKind: "automatic",
       automationMode: "immediate",
       selectedSessionId: "session-1"
+    })).toMatchObject({
+      canExecuteStep: true,
+      showExecuteStep: true,
+      showGoNext: false
+    });
+  });
+
+  it("shows execute step for explicit no-input manual actions", () => {
+    expect(buildActiveStepControls({
+      actionKind: "automatic",
+      automationMode: "manual",
+      selectedSessionId: "session-1",
+      selectedStepInputType: "none"
     })).toMatchObject({
       canExecuteStep: true,
       showExecuteStep: true,
