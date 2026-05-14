@@ -15,6 +15,7 @@ function buildActiveStepControls({
   selectedSessionNeedsSetupTerminal = false,
   selectedStepInputType = "none",
   selectedStepNeedsCodexOutputPrompt = false,
+  requiredCompletionMissing = false,
   terminalBlocked = false
 } = {}) {
   const hasForm = Boolean(
@@ -42,6 +43,7 @@ function buildActiveStepControls({
   const showGoNext = !hasForm &&
     !blocked &&
     !showExecuteStep &&
+    !requiredCompletionMissing &&
     (
       isCodexPromptStep ||
       (actionKind === "user_check" && selectedStepInputType === "none")

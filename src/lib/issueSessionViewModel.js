@@ -80,6 +80,10 @@ function issueSessionCodexPrompt(session = {}) {
 }
 
 function issueSessionCodexExpectedOutputs(session = {}) {
+  const contractFields = session?.codex?.responseContract?.fields;
+  if (Array.isArray(contractFields) && contractFields.length > 0) {
+    return contractFields.filter((output) => output?.field && output?.extract);
+  }
   const outputs = session?.codex?.expectedOutputs;
   if (Array.isArray(outputs) && outputs.length > 0) {
     return outputs.filter((output) => output?.field);

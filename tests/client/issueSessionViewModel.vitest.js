@@ -75,6 +75,22 @@ describe("issue session view model", () => {
     })).toBe(false);
   });
 
+  it("uses JSKIT response contract fields before legacy expected outputs", () => {
+    expect(issueSessionCodexExpectedOutputs({
+      codex: {
+        expectedOutputs: [{ field: "legacy", extract: "legacy" }],
+        responseContract: {
+          fields: [
+            { field: "issueTitle", extract: "issue_title" },
+            { field: "", extract: "ignored" }
+          ]
+        }
+      }
+    })).toEqual([
+      { field: "issueTitle", extract: "issue_title" }
+    ]);
+  });
+
   it("derives display labels from session fields", () => {
     expect(shortIssueSessionId("2026-05-12_13-07-36")).toBe("05-12_13-07-36");
     expect(issueSessionTitleFromIssueText("# Add reports\n\nBody")).toBe("Add reports");

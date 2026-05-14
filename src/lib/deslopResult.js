@@ -113,8 +113,8 @@ function parseDeslopResultBlock(block = "") {
   return findings;
 }
 
-function parseDeslopResult(output = "") {
-  return parseDeslopResultBlock(extractMarkedOutput(output, DESLOP_RESULT_MARKER));
+function parseDeslopResult(output = "", marker = DESLOP_RESULT_MARKER) {
+  return parseDeslopResultBlock(extractMarkedOutput(output, marker || DESLOP_RESULT_MARKER));
 }
 
 function deslopFindingsByPriority(findings = [], priorities = AUTO_RESOLVE_PRIORITIES) {

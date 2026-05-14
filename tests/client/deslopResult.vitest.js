@@ -72,6 +72,23 @@ describe("deslop result parsing", () => {
       .toEqual(["Fix A", "Fix B"]);
   });
 
+  it("can use the JSKIT-provided deslop marker name", () => {
+    const findings = parseDeslopResult([
+      "[review_result]",
+      "priority: medium",
+      "category: maintainability",
+      "title: Remove duplication",
+      "[/review_result]"
+    ].join("\n"), "review_result");
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        priority: "medium",
+        title: "Remove duplication"
+      })
+    ]);
+  });
+
   it("parses a low-priority no-op summary from Codex terminal output", () => {
     const findings = parseDeslopResult([
       "• [deslop_result]",

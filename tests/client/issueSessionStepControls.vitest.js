@@ -26,6 +26,18 @@ describe("issue session step controls", () => {
     });
   });
 
+  it("hides go next when a required Codex completion marker is missing", () => {
+    expect(buildActiveStepControls({
+      actionKind: "codex_prompt",
+      codexPromptAlreadyRequested: true,
+      requiredCompletionMissing: true,
+      selectedSessionId: "session-1"
+    })).toMatchObject({
+      canGoNext: false,
+      showGoNext: false
+    });
+  });
+
   it("hides go next while Codex is working", () => {
     expect(buildActiveStepControls({
       actionKind: "codex_prompt",
