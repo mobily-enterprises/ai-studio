@@ -270,6 +270,30 @@ describe("codex output extraction", () => {
     expect(extractMarkedOutput(parseWindow, "plan")).toBe("Update nine.md to contain nine!!.");
   });
 
+  it("prefers the retained terminal snapshot over stale numeric prompt offsets", () => {
+    const snapshot = [
+      "old output",
+      "retained tail"
+    ].join("\n");
+    const retainedOutput = [
+      "retained tail",
+      "• [jskit_step_result]",
+      "status: complete",
+      "step: plan_executed",
+      "summary: Created the requested file.",
+      "[/jskit_step_result]"
+    ].join("\n");
+
+    const parseWindow = outputAfterPromptStart({
+      output: retainedOutput,
+      prompt: "Execute the plan.",
+      promptOutputSnapshot: snapshot,
+      promptStart: 50
+    });
+
+    expect(extractMarkedOutput(parseWindow, "jskit_step_result")).toContain("step: plan_executed");
+  });
+
   it("does not reuse old marked output while waiting for a new post-prompt answer", () => {
     const snapshot = [
       "[plan]",

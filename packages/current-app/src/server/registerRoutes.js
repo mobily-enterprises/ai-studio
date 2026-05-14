@@ -378,6 +378,29 @@ function registerRoutes(
   );
 
   router.register(
+    "GET",
+    `${routeBase}/issue-sessions/:sessionId/codex-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "issue-sessions"],
+        summary: "Read a Codex terminal snapshot for a JSKIT issue session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalCurrentAppRequest(request, reply)) {
+        return;
+      }
+      const response = await getCurrentAppService(app).readCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
     "DELETE",
     `${routeBase}/issue-sessions/:sessionId/codex-terminal/:terminalSessionId`,
     {

@@ -246,17 +246,17 @@ function outputAfterPromptStart({
   promptStart = null
 } = {}) {
   const source = String(output || "");
-  const start = Number(promptStart);
-  if (Number.isInteger(start) && start >= 0 && start < source.length) {
-    return removeEchoedPromptFromWindow(source.slice(start), prompt);
-  }
-
   const snapshot = String(promptOutputSnapshot || "");
   if (snapshot) {
     const overlapLength = suffixPrefixOverlapLength(snapshot, source);
     if (overlapLength > 0) {
       return removeEchoedPromptFromWindow(source.slice(overlapLength), prompt);
     }
+  }
+
+  const start = Number(promptStart);
+  if (Number.isInteger(start) && start >= 0 && start < source.length) {
+    return removeEchoedPromptFromWindow(source.slice(start), prompt);
   }
 
   const promptText = String(prompt || "");

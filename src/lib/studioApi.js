@@ -174,6 +174,10 @@ async function closeIssueSessionCodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
 }
 
+async function readIssueSessionCodexTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.get(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
 async function closeIssueSessionStepTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(issueSessionStepTerminalEndpoint(sessionId, terminalSessionId));
 }
@@ -278,6 +282,7 @@ export {
   readBootstrapStatus,
   readCurrentApp,
   readIssueSession,
+  readIssueSessionCodexTerminal,
   readIssueSessionDiff,
   readTargetAppStatus,
   resolveStudioGate,

@@ -19,6 +19,7 @@ import {
 import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
+  readTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -1300,6 +1301,13 @@ function createService({ appRoot = "" } = {}) {
     async subscribeCodexTerminal(sessionId, terminalSessionId, subscriber) {
       const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
       return withCodexThreadState(subscribeTerminalSession(terminalSessionId, subscriber, {
+        namespace: terminalNamespace(sessionId)
+      }), codexThreadId);
+    },
+
+    async readCodexTerminal(sessionId, terminalSessionId) {
+      const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
+      return withCodexThreadState(readTerminalSession(terminalSessionId, {
         namespace: terminalNamespace(sessionId)
       }), codexThreadId);
     },

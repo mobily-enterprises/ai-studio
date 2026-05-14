@@ -357,6 +357,16 @@
                       {{ codexPromptResendButtonLabel }}
                     </v-btn>
                     <v-btn
+                      v-if="showReviewDeslopNoFindingsEscapeButton"
+                      color="primary"
+                      variant="tonal"
+                      :disabled="issueSessionBusy"
+                      :prepend-icon="mdiCheckCircleOutline"
+                      @click="continueReviewDeslopWithoutFindings"
+                    >
+                      Continue with no findings
+                    </v-btn>
+                    <v-btn
                       v-if="hasManualCodexPromptAction && !activeStepControls.showExecuteStep"
                       color="primary"
                       variant="tonal"
@@ -503,7 +513,7 @@
             :prompt-injection-request-key="promptInjectionRequestKeyFor(terminalSession)"
             :show-prompt-action="!shouldUseManualIssueSessionCodexPrompt(terminalSession)"
             :visible="terminalSession.sessionId === selectedSessionId"
-            @input="recordCodexTerminalInput(terminalSession.sessionId)"
+            @input="recordCodexTerminalInput(terminalSession.sessionId, $event)"
             @output="recordCodexTerminalOutput(terminalSession.sessionId, $event)"
             @prompt-injected="recordCodexPromptInjected(terminalSession.sessionId, $event)"
             @session-update="applyIssueSessionUpdate"
@@ -660,7 +670,10 @@ import {
   deslopFindingsByPriority,
   parseDeslopResult
 } from "@/lib/deslopResult.js";
-import { readIssueSessionDiff } from "@/lib/studioApi.js";
+import {
+  readIssueSessionCodexTerminal,
+  readIssueSessionDiff
+} from "@/lib/studioApi.js";
 import {
   canUseIssueSessionTerminal,
   isAbandonedIssueSession,
@@ -675,6 +688,10 @@ import {
   shortIssueSessionId
 } from "@/lib/issueSessionViewModel.js";
 import { buildActiveStepControls } from "@/lib/issueSessionStepControls.js";
+import {
+  buildIssueSessionCodexPromptSignature,
+  shouldAutoRunCodexPromptHandoff
+} from "@/lib/issueSessionPromptAutomation.js";
 
 const copyStatus = ref("");
 const codexTerminalOutputBySessionId = ref({});
@@ -709,6 +726,9 @@ const autoStartedCodexPromptStepKeys = ref({});
 const autoAdvancedCodexPromptBySignature = ref({});
 const autoStepStartSuppressedStepKey = ref("");
 const codexCompletionWatchersBySignature = new Map();
+const terminalSnapshotSyncPromises = new Map();
+
+let terminalSnapshotSyncTimer = null;
 
 const {
   abandonSelectedSession,
@@ -734,6 +754,7 @@ const {
 } = useIssueSessions();
 
 const REVIEW_DESLOP_MORE_FINDINGS = "Run another review/deslop pass. Ask the user which important findings they want fixed before editing, then fix only the findings the user selects.";
+const TERMINAL_SNAPSHOT_SYNC_INTERVAL_MS = 500;
 const CODEX_RESULT_ERROR_CODES = new Set([
   "codex_result_marker_missing",
   "codex_result_required",
@@ -887,6 +908,12 @@ const showReviewDeslopResolveButton = computed(() => {
   }
   return reviewDeslopNeedsUserDecision.value &&
     reviewDeslopFindings.value.length > 0;
+});
+
+const showReviewDeslopNoFindingsEscapeButton = computed(() => {
+  return isReviewDeslopStep.value &&
+    !activeStepCodexWorking.value &&
+    selectedDeslopAutomation.value?.status === "waiting_for_summary";
 });
 
 const canRunReviewDeslopResolve = computed(() => {
@@ -1299,6 +1326,30 @@ const selectedCodexTerminalOutputForExtraction = computed(() => {
   });
 });
 
+const selectedTerminalSnapshotSyncNeeded = computed(() => {
+  const session = selectedSession.value || {};
+  if (
+    !session.sessionId ||
+    !hasCodexPromptHandoff.value ||
+    selectedSessionTerminalBlocked.value ||
+    issueSessionBusy.value ||
+    isClosedIssueSession(session) ||
+    !codexTerminalSessionIdFor(session.sessionId)
+  ) {
+    return false;
+  }
+  if (isCodexOutputStep.value && !codexOutputFormVisible.value) {
+    return Boolean(session.prompt || selectedCodexTerminalOutput.value || selectedCodexPromptAlreadyRequested.value);
+  }
+  if (isReviewDeslopStep.value && selectedCodexPromptAlreadyRequested.value) {
+    return true;
+  }
+  if (selectedStepAction.value?.kind === "codex_prompt" && session.prompt) {
+    return true;
+  }
+  return selectedCodexPromptAutoAdvances.value && selectedCodexPromptAlreadyRequested.value;
+});
+
 const terminalSessions = computed(() => {
   const listedSessionIds = (issueSessions.value || []).map((session) => session.sessionId);
   const orderedSessionIds = [...new Set([
@@ -1603,15 +1654,12 @@ function escapeRegExp(value) {
 
 function codexPromptRequestSignature(session = {}) {
   const prompt = codexPromptTextForSession(session);
-  if (!session?.sessionId || !prompt) {
-    return "";
-  }
-  return [
-    session.sessionId,
-    session.currentStep || "",
-    textHash(prompt),
-    prompt.length
-  ].join(":");
+  return buildIssueSessionCodexPromptSignature({
+    activeCycle: session?.activeCycle || "",
+    currentReviewPass: session?.currentReviewPass || "",
+    prompt,
+    sessionId: session?.sessionId || ""
+  });
 }
 
 function reviewDeslopTerminalWatchSignature(session = {}) {
@@ -2011,12 +2059,9 @@ async function launchSessionAppTest() {
   if (!selectedSession.value?.sessionId) {
     return;
   }
-  const popupWindow = window.open("", "_blank");
   sessionAppTestVisible.value = true;
   await nextTick();
-  await sessionAppTestTerminalRef.value?.start?.({
-    popupWindow
-  });
+  await sessionAppTestTerminalRef.value?.start?.();
 }
 
 function runChoiceStep(value) {
@@ -2207,21 +2252,41 @@ function pruneTerminalSessions() {
   );
 }
 
-function recordCodexTerminalOutput(sessionId, output) {
-  const nextOutput = String(output || "");
-  const previousOutput = codexTerminalOutputBySessionId.value[sessionId] || "";
-  let signature = promptInjectionSignatureBySessionId.value[sessionId] || "";
-  if (!signature) {
-    signature = ensureReviewDeslopTerminalWatch(sessionId, {
-      output: previousOutput,
-      outputStart: previousOutput.length
-    });
+function codexTerminalSessionIdFor(sessionId) {
+  const terminalSession = terminalSessionById.value[sessionId] || {};
+  return String(
+    terminalSession.codexTerminalSessionId ||
+    terminalSession.terminalSessionId ||
+    terminalSession.terminalId ||
+    terminalSession.id ||
+    ""
+  ).trim();
+}
+
+function rememberCodexTerminalSnapshot(sessionId, snapshot = {}) {
+  if (!sessionId || snapshot?.ok === false) {
+    return false;
   }
-  codexTerminalOutputBySessionId.value = {
-    ...codexTerminalOutputBySessionId.value,
-    [sessionId]: nextOutput
-  };
+  const terminalId = String(snapshot.id || "").trim();
+  rememberTerminalSession({
+    ...(terminalSessionById.value[sessionId] || {}),
+    ...(selectedSession.value?.sessionId === sessionId ? selectedSession.value : {}),
+    codexTerminalCommandPreview: snapshot.commandPreview || "",
+    codexTerminalSessionId: terminalId || codexTerminalSessionIdFor(sessionId),
+    codexTerminalStatus: snapshot.status || "",
+    sessionId
+  });
+  return true;
+}
+
+function reconcileCodexTerminalOutputForParsing(sessionId, output) {
+  const nextOutput = String(output || "");
+  if (!sessionId) {
+    return;
+  }
   recoverCodexPromptCompletionFromOutput(sessionId, nextOutput);
+  const session = promptSignatureSessionForId(sessionId);
+  const signature = promptInjectionSignatureForSession(session);
   codexCompletionWatchersBySignature.get(signature)?.observeOutput(nextOutput);
   if (
     sessionId === selectedSessionId.value &&
@@ -2230,6 +2295,83 @@ function recordCodexTerminalOutput(sessionId, output) {
   ) {
     void handleFinishedDeslopPrompt();
   }
+}
+
+function applyCodexTerminalSnapshot(sessionId, snapshot = {}) {
+  if (!rememberCodexTerminalSnapshot(sessionId, snapshot)) {
+    return false;
+  }
+  const nextOutput = String(snapshot.output || "");
+  const previousOutput = codexTerminalOutputBySessionId.value[sessionId] || "";
+  if (nextOutput !== previousOutput) {
+    codexTerminalOutputBySessionId.value = {
+      ...codexTerminalOutputBySessionId.value,
+      [sessionId]: nextOutput
+    };
+  }
+  reconcileCodexTerminalOutputForParsing(sessionId, nextOutput);
+  return true;
+}
+
+async function syncCodexTerminalSnapshotForParsing(sessionId = selectedSessionId.value) {
+  const terminalSessionId = codexTerminalSessionIdFor(sessionId);
+  if (!sessionId || !terminalSessionId) {
+    return false;
+  }
+  const key = `${sessionId}:${terminalSessionId}`;
+  if (terminalSnapshotSyncPromises.has(key)) {
+    return terminalSnapshotSyncPromises.get(key);
+  }
+  const promise = (async () => {
+    try {
+      const snapshot = await readIssueSessionCodexTerminal(sessionId, terminalSessionId);
+      return applyCodexTerminalSnapshot(sessionId, snapshot);
+    } catch {
+      return false;
+    } finally {
+      terminalSnapshotSyncPromises.delete(key);
+    }
+  })();
+  terminalSnapshotSyncPromises.set(key, promise);
+  return promise;
+}
+
+function clearTerminalSnapshotSyncTimer() {
+  if (!terminalSnapshotSyncTimer) {
+    return;
+  }
+  window.clearTimeout(terminalSnapshotSyncTimer);
+  terminalSnapshotSyncTimer = null;
+}
+
+function scheduleTerminalSnapshotSync() {
+  if (terminalSnapshotSyncTimer || !selectedTerminalSnapshotSyncNeeded.value) {
+    return;
+  }
+  terminalSnapshotSyncTimer = window.setTimeout(async () => {
+    terminalSnapshotSyncTimer = null;
+    if (!selectedTerminalSnapshotSyncNeeded.value) {
+      return;
+    }
+    await syncCodexTerminalSnapshotForParsing();
+    scheduleTerminalSnapshotSync();
+  }, TERMINAL_SNAPSHOT_SYNC_INTERVAL_MS);
+}
+
+function recordCodexTerminalOutput(sessionId, output) {
+  const nextOutput = String(output || "");
+  const previousOutput = codexTerminalOutputBySessionId.value[sessionId] || "";
+  if (!promptInjectionSignatureBySessionId.value[sessionId]) {
+    ensureReviewDeslopTerminalWatch(sessionId, {
+      output: previousOutput,
+      outputStart: previousOutput.length
+    });
+  }
+  codexTerminalOutputBySessionId.value = {
+    ...codexTerminalOutputBySessionId.value,
+    [sessionId]: nextOutput
+  };
+  reconcileCodexTerminalOutputForParsing(sessionId, nextOutput);
 }
 
 function recordCodexTerminalInput(sessionId) {
@@ -2500,10 +2642,7 @@ function sessionHasCodexOutputPromptToInject(session = {}) {
   return Boolean(
     action.automation?.mode === "codex_output_prompt" &&
     action.kind === "codex_output" &&
-    session.codex?.mode === "inject_prompt" &&
-    session.codex?.autoInject === true &&
-    codexPromptTextForSession(session) &&
-    !sessionPromptAlreadyInjected(session)
+    sessionHasAutoInjectableCodexPrompt(session)
   );
 }
 
@@ -2512,10 +2651,26 @@ function sessionHasCodexPromptToInject(session = {}) {
   return Boolean(
     action.automation?.mode === "codex_prompt" &&
     action.kind === "codex_prompt" &&
+    sessionHasAutoInjectableCodexPrompt(session)
+  );
+}
+
+function sessionHasAutoInjectableCodexPrompt(session = {}) {
+  return Boolean(
     session.codex?.mode === "inject_prompt" &&
     session.codex?.autoInject === true &&
     codexPromptTextForSession(session) &&
     !sessionPromptAlreadyInjected(session)
+  );
+}
+
+function sessionHasDetachedCodexPromptToInject(session = {}) {
+  const action = session.currentStepAction || {};
+  const automationMode = String(action.automation?.mode || "");
+  return Boolean(
+    sessionHasAutoInjectableCodexPrompt(session) &&
+    automationMode !== "codex_prompt" &&
+    automationMode !== "codex_output_prompt"
   );
 }
 
@@ -2667,22 +2822,37 @@ function suppressAutoStepStartFor(session = {}) {
 
 function shouldAutoStartCodexPromptStep(session = selectedSession.value) {
   const action = session?.currentStepAction || {};
-  return Boolean(
+  const prompt = codexPromptTextForSession(session);
+  const baseReady = Boolean(
     session?.sessionId &&
     session.sessionId === selectedSessionId.value &&
     action.automation?.mode === "codex_prompt" &&
     session.codex?.autoInject === true &&
-    (!session.prompt || sessionHasCodexPromptToInject(session)) &&
     !selectedSessionTerminalBlocked.value &&
     !issueSessionBusy.value &&
     !isClosedIssueSession(session) &&
-    !shouldAutoSkipConditionalStep(session) &&
-    !autoStartedCodexPromptStepKeys.value[autoStartCodexPromptStepKey(session)]
+    !shouldAutoSkipConditionalStep(session)
   );
+  if (!baseReady) {
+    return false;
+  }
+  if (sessionHasCodexPromptToInject(session)) {
+    return true;
+  }
+  return shouldAutoRunCodexPromptHandoff({
+    alreadyStarted: Boolean(autoStartedCodexPromptStepKeys.value[autoStartCodexPromptStepKey(session)]),
+    baseReady,
+    hasPrompt: Boolean(prompt),
+    hasPromptToInject: false
+  });
 }
 
 async function autoStartCodexPromptStep(session = selectedSession.value) {
   if (!shouldAutoStartCodexPromptStep(session)) {
+    return;
+  }
+  if (sessionHasCodexPromptToInject(session)) {
+    await requestCodexPromptInjection(session);
     return;
   }
   const key = autoStartCodexPromptStepKey(session);
@@ -2690,10 +2860,6 @@ async function autoStartCodexPromptStep(session = selectedSession.value) {
     ...autoStartedCodexPromptStepKeys.value,
     [key]: true
   };
-  if (sessionHasCodexPromptToInject(session)) {
-    await requestCodexPromptInjection(session);
-    return;
-  }
   const response = await runSelectedStep();
   if (!response || response.ok === false) {
     const {
@@ -2714,20 +2880,34 @@ async function autoStartCodexPromptStep(session = selectedSession.value) {
 }
 
 function shouldAutoStartCodexOutputStep(session = selectedSession.value) {
-  return Boolean(
+  const baseReady = Boolean(
     session?.sessionId &&
     session.sessionId === selectedSessionId.value &&
-    (sessionNeedsCodexOutputPrompt(session) || sessionHasCodexOutputPromptToInject(session)) &&
     session.codex?.autoInject === true &&
     !selectedSessionTerminalBlocked.value &&
     !issueSessionBusy.value &&
-    !isClosedIssueSession(session) &&
-    !autoStartedCodexOutputStepKeys.value[autoStartCodexPromptStepKey(session)]
+    !isClosedIssueSession(session)
   );
+  if (!baseReady) {
+    return false;
+  }
+  if (sessionHasCodexOutputPromptToInject(session)) {
+    return true;
+  }
+  return shouldAutoRunCodexPromptHandoff({
+    alreadyStarted: Boolean(autoStartedCodexOutputStepKeys.value[autoStartCodexPromptStepKey(session)]),
+    baseReady,
+    hasPrompt: !sessionNeedsCodexOutputPrompt(session),
+    hasPromptToInject: false
+  });
 }
 
 async function autoStartCodexOutputStep(session = selectedSession.value) {
   if (!shouldAutoStartCodexOutputStep(session)) {
+    return;
+  }
+  if (sessionHasCodexOutputPromptToInject(session)) {
+    await requestCodexPromptInjection(session);
     return;
   }
   const key = autoStartCodexPromptStepKey(session);
@@ -2735,10 +2915,6 @@ async function autoStartCodexOutputStep(session = selectedSession.value) {
     ...autoStartedCodexOutputStepKeys.value,
     [key]: true
   };
-  if (sessionHasCodexOutputPromptToInject(session)) {
-    await requestCodexPromptInjection(session);
-    return;
-  }
   const response = await runSelectedStep({}, {
     includeStepInput: false
   });
@@ -2753,6 +2929,31 @@ async function autoStartCodexOutputStep(session = selectedSession.value) {
   await handleStepResponse(response, {
     forcePromptInjection: true
   });
+}
+
+function shouldAutoInjectDetachedCodexPrompt(session = selectedSession.value) {
+  return Boolean(
+    session?.sessionId &&
+    session.sessionId === selectedSessionId.value &&
+    sessionHasDetachedCodexPromptToInject(session) &&
+    !selectedSessionTerminalBlocked.value &&
+    !issueSessionBusy.value &&
+    !isClosedIssueSession(session)
+  );
+}
+
+async function autoInjectDetachedCodexPrompt(session = selectedSession.value) {
+  if (!shouldAutoInjectDetachedCodexPrompt(session)) {
+    return;
+  }
+  await requestCodexPromptInjection(session);
+  if (sessionHasDeslopContract(session)) {
+    setDeslopAutomation(session.sessionId, {
+      findings: [],
+      handledSignature: "",
+      status: "reviewing"
+    });
+  }
 }
 
 async function autoAdvanceFinishedCodexPrompt() {
@@ -2836,6 +3037,7 @@ async function runAutomaticStepHandlers(session = selectedSession.value) {
   }
   await autoSkipConditionalStep(session);
   await autoRunImmediateSessionStep(session);
+  await autoInjectDetachedCodexPrompt(session);
   await autoStartCodexOutputStep(session);
   await autoStartCodexPromptStep(session);
   await autoAdvanceFinishedCodexPrompt();
@@ -2977,6 +3179,22 @@ async function resolveReviewDeslopFindings() {
   await askCodexToResolveDeslopFindings(reviewDeslopFindings.value, {
     status: "resolving_user"
   });
+}
+
+async function continueReviewDeslopWithoutFindings() {
+  if (!showReviewDeslopNoFindingsEscapeButton.value) {
+    return;
+  }
+  const sessionId = selectedSessionId.value || "";
+  if (sessionId) {
+    setDeslopAutomation(sessionId, {
+      findings: [],
+      handledSignature: handledPromptSignature(sessionId, selectedActivePromptSignature.value || ""),
+      status: "awaiting_user"
+    });
+  }
+  const response = await runSelectedStep(defaultStepPayload());
+  await handleStepResponse(response);
 }
 
 async function goToNextStep() {
@@ -3186,6 +3404,18 @@ watch(issueSessions, () => {
   pruneTerminalSessions();
 });
 
+watch(selectedTerminalSnapshotSyncNeeded, (needed) => {
+  if (!needed) {
+    clearTerminalSnapshotSyncTimer();
+    return;
+  }
+  void syncCodexTerminalSnapshotForParsing().then(() => {
+    scheduleTerminalSnapshotSync();
+  });
+}, {
+  immediate: true
+});
+
 watch(extractedCodexOutputEntries, (entries) => {
   let nextDrafts = codexOutputDraftByKey.value;
   let nextSources = codexOutputSourceByKey.value;
@@ -3239,6 +3469,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearTerminalSnapshotSyncTimer();
   for (const watcher of codexCompletionWatchersBySignature.values()) {
     watcher.dispose();
   }

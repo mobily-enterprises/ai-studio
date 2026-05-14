@@ -129,6 +129,7 @@ import {
   extractCodexThreadId,
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
+import { terminalInputHasUserText } from "@/lib/terminalInput.js";
 import "@xterm/xterm/css/xterm.css";
 
 const props = defineProps({
@@ -566,6 +567,7 @@ function applyTerminalSnapshot(session = {}) {
   terminalStatus.value = session.status || terminalStatus.value || "";
   terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
   writeTerminalOutput(session.output);
+  emitTerminalSessionState();
 }
 
 function handleTerminalSocketMessage(rawMessage) {
@@ -701,6 +703,7 @@ async function startTerminalOnce() {
     terminalStartedAt = Date.now();
     terminalStatus.value = session.status || "running";
     terminalCommandPreview.value = session.commandPreview || "";
+    emitTerminalSessionState();
     void setupTerminalUi().then((ready) => {
       if (ready) {
         terminalFitAddon?.fit();
@@ -720,6 +723,19 @@ async function startTerminalOnce() {
   }
 }
 
+function emitTerminalSessionState(extra = {}) {
+  if (!sessionId.value || !terminalSessionId.value) {
+    return;
+  }
+  emit("session-update", {
+    codexTerminalCommandPreview: terminalCommandPreview.value,
+    codexTerminalSessionId: terminalSessionId.value,
+    codexTerminalStatus: terminalStatus.value,
+    sessionId: sessionId.value,
+    ...extra
+  });
+}
+
 async function sendTerminalData(data, {
   source = "program"
 } = {}) {
@@ -735,7 +751,7 @@ async function sendTerminalData(data, {
       data: input,
       type: "input"
     }));
-    if (source === "user") {
+    if (source === "user" && terminalInputHasUserText(input)) {
       emit("input", input);
     }
     if (input.includes("\r") && codexTrustPromptLooksActive(terminalLatestOutput)) {
@@ -1221,6 +1237,15 @@ watch(codexPrompt, (nextPrompt, previousPrompt) => {
   }
   autoPromptInjected.value = false;
   handledPromptInjectionRequestKey = "";
+});
+
+watch(() => [
+  props.session?.codexThreadId || "",
+  props.session?.needsThreadCapture === true
+], () => {
+  applyCodexThreadState(props.session || {});
+}, {
+  immediate: true
 });
 
 watch(() => props.visible, async (visible) => {
