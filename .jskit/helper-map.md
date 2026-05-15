@@ -235,6 +235,12 @@ Root package: jskit-ai-studio
 - src/components/ShellLayout.vue
     - default (default, default)
 
+- src/components/studio/AppBootupDoctorScreen.vue
+    - default (default, default)
+
+- src/components/studio/AppSetupDoctorScreen.vue
+    - default (default, default)
+
 - src/components/studio/AppTestLauncher.vue
     - default (default, default)
 
@@ -242,6 +248,9 @@ Root package: jskit-ai-studio
     - default (default, default)
 
 - src/components/studio/ArchivedIssueSessions.vue
+    - default (default, default)
+
+- src/components/studio/BootupDoctorScreen.vue
     - default (default, default)
 
 - src/components/studio/CodexSessionTerminal.vue
@@ -360,13 +369,7 @@ Root package: jskit-ai-studio
 - src/lib/terminalInput.js
     - terminalInputHasUserText (function, export)
 
-- src/pages/app-bootup.vue
-    - default (default, default)
-
-- src/pages/app-setup.vue
-    - default (default, default)
-
-- src/pages/bootup.vue
+- src/pages/bootup-setup.vue
     - default (default, default)
 
 - src/pages/home.vue

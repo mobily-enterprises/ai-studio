@@ -898,6 +898,26 @@
         ]
       },
       {
+        "path": "src/components/studio/AppBootupDoctorScreen.vue",
+        "exports": [
+          {
+            "name": "default",
+            "kind": "default",
+            "role": "default"
+          }
+        ]
+      },
+      {
+        "path": "src/components/studio/AppSetupDoctorScreen.vue",
+        "exports": [
+          {
+            "name": "default",
+            "kind": "default",
+            "role": "default"
+          }
+        ]
+      },
+      {
         "path": "src/components/studio/AppTestLauncher.vue",
         "exports": [
           {
@@ -919,6 +939,16 @@
       },
       {
         "path": "src/components/studio/ArchivedIssueSessions.vue",
+        "exports": [
+          {
+            "name": "default",
+            "kind": "default",
+            "role": "default"
+          }
+        ]
+      },
+      {
+        "path": "src/components/studio/BootupDoctorScreen.vue",
         "exports": [
           {
             "name": "default",
@@ -1433,27 +1463,7 @@
         ]
       },
       {
-        "path": "src/pages/app-bootup.vue",
-        "exports": [
-          {
-            "name": "default",
-            "kind": "default",
-            "role": "default"
-          }
-        ]
-      },
-      {
-        "path": "src/pages/app-setup.vue",
-        "exports": [
-          {
-            "name": "default",
-            "kind": "default",
-            "role": "default"
-          }
-        ]
-      },
-      {
-        "path": "src/pages/bootup.vue",
+        "path": "src/pages/bootup-setup.vue",
         "exports": [
           {
             "name": "default",
