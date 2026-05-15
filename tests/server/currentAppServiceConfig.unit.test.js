@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  APP_TEST_HOST_DOCKER_CONFIG,
   APP_TEST_TESTRUN_COMMAND_CONFIG,
+  appTestTerminalArgs,
   resolveAppTestConfig
 } from "../../packages/current-app/src/server/service.js";
 
@@ -24,6 +26,7 @@ test("app-test config defaults to a single build-and-server test run command", a
   await withTemporaryRoot(async (root) => {
     const config = await resolveAppTestConfig(root);
     assert.equal(config.commandSource, "legacy_split_commands");
+    assert.equal(config.hostDocker, false);
     assert.equal(config.testrunCommand, "npm run build;npm run server");
     assert.equal(config.preferredPort, 4100);
   });
@@ -42,9 +45,36 @@ test("app-test config reads testrun_command from .jskit config", async () => {
 
     const config = await resolveAppTestConfig(root);
     assert.equal(config.commandSource, APP_TEST_TESTRUN_COMMAND_CONFIG);
+    assert.equal(config.hostDocker, false);
     assert.equal(config.testrunCommand, "npm run build;npm run server -- --bypass-localhost-check");
     assert.equal(config.buildCommand, "");
     assert.equal(config.serverCommand, "");
+  });
+});
+
+test("app-test config can opt into host Docker passthrough", async () => {
+  await withTemporaryRoot(async (root) => {
+    await mkdir(path.join(root, ".jskit", "config"), {
+      recursive: true
+    });
+    await writeFile(path.join(root, APP_TEST_HOST_DOCKER_CONFIG), "1\n", "utf8");
+
+    const config = await resolveAppTestConfig(root);
+    assert.equal(config.hostDocker, true);
+    assert.equal(config.hostDockerSource, APP_TEST_HOST_DOCKER_CONFIG);
+
+    const args = appTestTerminalArgs({
+      containerName: "app-test",
+      hostDocker: config.hostDocker,
+      port: 4100,
+      targetRoot: root,
+      terminalId: "terminal",
+      testrunCommand: "npm run server",
+      workdir: root
+    });
+    assert.ok(args.includes("DOCKER_HOST=unix:///var/run/docker.sock"));
+    assert.ok(args.includes("/var/run/docker.sock:/var/run/docker.sock"));
+    assert.match(args.at(-1), /docker_group_args="--groups \$docker_sock_gid"/);
   });
 });
 

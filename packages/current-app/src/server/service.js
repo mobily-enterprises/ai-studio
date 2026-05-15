@@ -38,6 +38,7 @@ const DEFAULT_APP_TEST_PORT = 4100;
 const APP_TEST_CONFIG_DIR = ".jskit/config";
 const APP_TEST_TESTRUN_COMMAND_CONFIG = `${APP_TEST_CONFIG_DIR}/testrun_command`;
 const APP_TEST_SERVER_PORT_CONFIG = `${APP_TEST_CONFIG_DIR}/server_port`;
+const APP_TEST_HOST_DOCKER_CONFIG = `${APP_TEST_CONFIG_DIR}/devel_app_test_host_docker`;
 const TERMINAL_NAMESPACE = "current-app-codex";
 const TERMINAL_NAMESPACE_PREFIX = `${TERMINAL_NAMESPACE}:`;
 const STEP_TERMINAL_NAMESPACE = "current-app-session-step";
@@ -118,6 +119,23 @@ function hostUserIdentityEnvArgs() {
     `JSKIT_HOST_UID=${process.getuid()}`,
     "-e",
     `JSKIT_HOST_GID=${process.getgid()}`
+  ];
+}
+
+function isEnabledConfigValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return Boolean(normalized) && !["0", "false", "no", "off"].includes(normalized);
+}
+
+function appTestHostDockerArgs(enabled = false) {
+  if (!enabled) {
+    return [];
+  }
+  return [
+    "-e",
+    "DOCKER_HOST=unix:///var/run/docker.sock",
+    "-v",
+    "/var/run/docker.sock:/var/run/docker.sock"
   ];
 }
 
@@ -433,18 +451,22 @@ function normalizePreferredPort(value) {
 }
 
 async function resolveAppTestConfig(appRoot) {
-  const [testrunCommandConfig, portValue] = await Promise.all([
+  const [testrunCommandConfig, hostDockerValue, portValue] = await Promise.all([
     readOptionalConfigFile(appRoot, APP_TEST_TESTRUN_COMMAND_CONFIG, ""),
+    readOptionalConfigFile(appRoot, APP_TEST_HOST_DOCKER_CONFIG, ""),
     readOptionalConfigFile(
       appRoot,
       APP_TEST_SERVER_PORT_CONFIG,
       await readOptionalConfigFile(appRoot, "config/server_port", String(DEFAULT_APP_TEST_PORT))
     )
   ]);
+  const hostDocker = isEnabledConfigValue(hostDockerValue);
   if (testrunCommandConfig) {
     return {
       buildCommand: "",
       commandSource: APP_TEST_TESTRUN_COMMAND_CONFIG,
+      hostDocker,
+      hostDockerSource: hostDocker ? APP_TEST_HOST_DOCKER_CONFIG : "",
       preferredPort: normalizePreferredPort(portValue),
       serverCommand: "",
       testrunCommand: testrunCommandConfig
@@ -458,6 +480,8 @@ async function resolveAppTestConfig(appRoot) {
   return {
     buildCommand,
     commandSource: "legacy_split_commands",
+    hostDocker,
+    hostDockerSource: hostDocker ? APP_TEST_HOST_DOCKER_CONFIG : "",
     preferredPort: normalizePreferredPort(portValue),
     serverCommand,
     testrunCommand: `${buildCommand};${serverCommand}`
@@ -517,7 +541,14 @@ function appTestScript({
     "mkdir -p /tmp/studio-home /tmp/npm-cache",
     "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
     "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
-    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" --clear-groups env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
+    "  docker_group_args=\"--clear-groups\"",
+    "  if [ -S /var/run/docker.sock ]; then",
+    "    docker_sock_gid=\"$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)\"",
+    "    if [ -n \"$docker_sock_gid\" ]; then",
+    "      docker_group_args=\"--groups $docker_sock_gid\"",
+    "    fi",
+    "  fi",
+    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" $docker_group_args env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
     "fi",
     `exec env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`
   ].join("\n");
@@ -525,6 +556,7 @@ function appTestScript({
 
 function appTestTerminalArgs({
   containerName,
+  hostDocker = false,
   port,
   sessionId = "",
   targetRoot,
@@ -556,6 +588,7 @@ function appTestTerminalArgs({
     `${targetRoot}:/workspace`,
     "-v",
     `${targetRoot}:${targetRoot}`,
+    ...appTestHostDockerArgs(hostDocker),
     ...hostUserIdentityEnvArgs(),
     "-w",
     workdir,
@@ -974,6 +1007,8 @@ async function startAppTestTerminalForRoot({
     appUrl,
     buildCommand: config.buildCommand,
     commandSource: config.commandSource,
+    hostDocker: config.hostDocker,
+    hostDockerSource: config.hostDockerSource,
     port,
     runRoot: runRootPath,
     scope: sessionId ? "session" : "target",
@@ -989,6 +1024,7 @@ async function startAppTestTerminalForRoot({
         sessionId,
         terminalId: id
       }),
+      hostDocker: config.hostDocker,
       port,
       sessionId,
       targetRoot: inspectionRoot,
@@ -1432,7 +1468,9 @@ function createService({ appRoot = "" } = {}) {
 }
 
 export {
+  APP_TEST_HOST_DOCKER_CONFIG,
   APP_TEST_TESTRUN_COMMAND_CONFIG,
+  appTestTerminalArgs,
   createService,
   inspectCurrentApp,
   resolveAppTestConfig,
