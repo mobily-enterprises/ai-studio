@@ -168,12 +168,12 @@ const attachmentStatus = ref("");
 let terminalInstance = null;
 let terminalFitAddon = null;
 let terminalDataDisposable = null;
-let terminalFocusDisposable = null;
-let terminalBlurDisposable = null;
 let terminalSelectionDisposable = null;
 let terminalFocusInHandler = null;
 let terminalFocusOutHandler = null;
+let terminalDocumentFocusInHandler = null;
 let terminalOutsidePointerHandler = null;
+let terminalWindowBlurHandler = null;
 let terminalResizeHandler = null;
 let terminalSocket = null;
 let terminalSocketOpenPromise = null;
@@ -356,14 +356,6 @@ function disposeTerminalUi() {
     terminalDataDisposable.dispose();
     terminalDataDisposable = null;
   }
-  if (terminalFocusDisposable) {
-    terminalFocusDisposable.dispose();
-    terminalFocusDisposable = null;
-  }
-  if (terminalBlurDisposable) {
-    terminalBlurDisposable.dispose();
-    terminalBlurDisposable = null;
-  }
   if (terminalSelectionDisposable) {
     terminalSelectionDisposable.dispose();
     terminalSelectionDisposable = null;
@@ -376,9 +368,17 @@ function disposeTerminalUi() {
     terminalHost.value?.removeEventListener("focusout", terminalFocusOutHandler);
     terminalFocusOutHandler = null;
   }
+  if (terminalDocumentFocusInHandler) {
+    document.removeEventListener("focusin", terminalDocumentFocusInHandler, true);
+    terminalDocumentFocusInHandler = null;
+  }
   if (terminalOutsidePointerHandler) {
     document.removeEventListener("pointerdown", terminalOutsidePointerHandler, true);
     terminalOutsidePointerHandler = null;
+  }
+  if (terminalWindowBlurHandler) {
+    window.removeEventListener("blur", terminalWindowBlurHandler);
+    terminalWindowBlurHandler = null;
   }
   if (terminalResizeHandler) {
     window.removeEventListener("resize", terminalResizeHandler);
@@ -435,22 +435,24 @@ async function setupTerminalUi() {
         source: "user"
       });
     });
-    terminalFocusDisposable = terminalInstance.onFocus(() => {
-      terminalFocused.value = true;
-    });
-    terminalBlurDisposable = terminalInstance.onBlur(() => {
-      window.setTimeout(syncTerminalFocus, 0);
-    });
     terminalFocusInHandler = () => {
       terminalFocused.value = true;
     };
     terminalFocusOutHandler = () => {
       window.setTimeout(syncTerminalFocus, 0);
     };
+    terminalDocumentFocusInHandler = () => {
+      window.setTimeout(syncTerminalFocus, 0);
+    };
     terminalOutsidePointerHandler = handleDocumentPointerDown;
+    terminalWindowBlurHandler = () => {
+      terminalFocused.value = false;
+    };
     terminalHost.value.addEventListener("focusin", terminalFocusInHandler);
     terminalHost.value.addEventListener("focusout", terminalFocusOutHandler);
+    document.addEventListener("focusin", terminalDocumentFocusInHandler, true);
     document.addEventListener("pointerdown", terminalOutsidePointerHandler, true);
+    window.addEventListener("blur", terminalWindowBlurHandler);
     terminalSelectionDisposable = terminalInstance.onSelectionChange(() => {
       updateTerminalSelection();
     });
