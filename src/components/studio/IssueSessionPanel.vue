@@ -283,6 +283,18 @@
                       variant="outlined"
                       @update:model-value="setCodexOutputDraft(output, $event)"
                     />
+                    <StudioPlanReview
+                      v-else-if="codexOutputIsPlan(output)"
+                      :model-value="codexOutputDraftValue(output)"
+                      :label="codexOutputLabel(output)"
+                      :show-submit="activeStepControls.showFormSubmit"
+                      :submit-disabled="!activeStepControls.canSubmitForm"
+                      :submit-label="currentActionButtonLabel"
+                      :submit-loading="issueSessionBusy"
+                      placeholder="Paste or edit the approved plan."
+                      @update:model-value="setCodexOutputDraft(output, $event)"
+                      @submit="submitCurrentForm"
+                    />
                     <v-textarea
                       v-else-if="codexOutputIsMultiline(output)"
                       :model-value="codexOutputDraftValue(output)"
@@ -330,6 +342,18 @@
                     </v-btn>
                   </div>
                 </div>
+
+                <StudioPlanReview
+                  v-else-if="isTextStep && selectedTextInputIsPlan"
+                  v-model="stepInputValues[selectedStepInput.name]"
+                  :label="selectedStepInput.label"
+                  :placeholder="selectedStepInput.placeholder || 'Paste or edit the approved plan.'"
+                  :show-submit="activeStepControls.showFormSubmit"
+                  :submit-disabled="!activeStepControls.canSubmitForm"
+                  :submit-label="currentActionButtonLabel"
+                  :submit-loading="issueSessionBusy"
+                  @submit="submitCurrentForm"
+                />
 
                 <v-textarea
                   v-else-if="isTextStep && selectedStepInput.multiline"
@@ -752,6 +776,7 @@ import CodexSessionTerminal from "@/components/studio/CodexSessionTerminal.vue";
 import AppTestTerminal from "@/components/studio/AppTestTerminal.vue";
 import IssueSessionStepTerminal from "@/components/studio/IssueSessionStepTerminal.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
+import StudioPlanReview from "@/components/studio/StudioPlanReview.vue";
 import { useIssueSessions } from "@/composables/useIssueSessions.js";
 import {
   extractMarkedOutputBlocks,
@@ -930,6 +955,10 @@ const selectedSessionTerminalBlocked = computed(() => {
 
 const selectedStepAutomationMode = computed(() => {
   return String(selectedStepAction.value?.automation?.mode || "manual").trim() || "manual";
+});
+
+const selectedTextInputIsPlan = computed(() => {
+  return selectedStepInput.value?.extract === "plan" || selectedStepInput.value?.name === "plan";
 });
 
 const selectedSessionNeedsSetupTerminal = computed(() => {
@@ -1655,6 +1684,10 @@ function codexOutputHasOptions(output = {}) {
 
 function codexOutputIsMultiline(output = {}) {
   return output.multiline === true || output.formatHint === "markdown";
+}
+
+function codexOutputIsPlan(output = {}) {
+  return output.extract === "plan" || output.field === "plan";
 }
 
 function alternateActionKey(action = {}) {
