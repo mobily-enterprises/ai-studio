@@ -1203,7 +1203,8 @@ function createService({ appRoot = "" } = {}) {
         preconditions: response.preconditions || details.preconditions || [],
         prompt: response.prompt || details.prompt || "",
         stepDefinitions: response.stepDefinitions || details.stepDefinitions || [],
-        status: response.status || details.status
+        status: response.status || details.status,
+        warnings: response.warnings || details.warnings || []
       };
       if (CLOSED_SESSION_STATUSES.has(String(result.status || ""))) {
         await closeTerminalSessionsForNamespace(terminalNamespace(sessionId));

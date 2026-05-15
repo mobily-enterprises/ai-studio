@@ -47,11 +47,24 @@
           New Session
         </v-chip>
       </div>
-      <div v-if="canTestSelectedSessionWorktree" class="studio-issue-sessions__strip-action">
+      <div
+        v-if="canReviewSelectedSessionDiff || canTestSelectedSessionWorktree"
+        class="studio-issue-sessions__strip-actions"
+      >
         <v-btn
+          v-if="canReviewSelectedSessionDiff"
           color="primary"
-          variant="tonal"
-          size="small"
+          variant="flat"
+          :prepend-icon="mdiFileCompare"
+          :disabled="diffLoading"
+          @click="openDiffDialog"
+        >
+          Review diff
+        </v-btn>
+        <v-btn
+          v-if="canTestSelectedSessionWorktree"
+          color="primary"
+          variant="flat"
           :prepend-icon="mdiPlayCircleOutline"
           @click="launchSessionAppTest"
         >
@@ -148,6 +161,7 @@
           <v-spacer />
           <v-btn variant="text" @click="closeDiffDialog">Close</v-btn>
           <v-btn
+            v-if="diffUtilityAction"
             color="primary"
             variant="flat"
             :disabled="!diffPayload?.hasChanges || diffLoading"
@@ -256,6 +270,16 @@
                   :key="error.code || error.message"
                   :error="error"
                 />
+
+                <v-alert
+                  v-for="warning in selectedSession.warnings || []"
+                  :key="warning.code || warning.message"
+                  type="warning"
+                  density="compact"
+                  variant="tonal"
+                >
+                  {{ warning.message || warning }}
+                </v-alert>
 
                 <v-textarea
                   v-if="selectedSession.prompt && !isCodexPromptInjection"
@@ -409,7 +433,29 @@
                   </div>
                 </div>
 
-                <div v-else-if="isChoiceStep" class="studio-issue-sessions__choice-row">
+                <div v-if="isChoiceStep" class="studio-issue-sessions__choice-row">
+                  <div
+                    v-if="showUserCheckWorktreeActions"
+                    class="studio-issue-sessions__user-check-actions"
+                  >
+                    <v-btn
+                      color="primary"
+                      variant="flat"
+                      :prepend-icon="mdiFileCompare"
+                      :disabled="diffLoading"
+                      @click="openDiffDialog"
+                    >
+                      Review diff
+                    </v-btn>
+                    <v-btn
+                      color="primary"
+                      variant="flat"
+                      :prepend-icon="mdiPlayCircleOutline"
+                      @click="launchSessionAppTest"
+                    >
+                      Test worktree
+                    </v-btn>
+                  </div>
                   <v-btn
                     v-for="option in selectedStepInput.options || []"
                     :key="option.value"
@@ -1185,9 +1231,19 @@ const diffUtilityAction = computed(() => {
   return actions.find((action) => action?.kind === "diff") || null;
 });
 
+const canReviewSelectedSessionDiff = computed(() => {
+  const session = selectedSession.value || {};
+  return Boolean(session.sessionId && session.worktreeReady === true && !isClosedIssueSession(session));
+});
+
 const canTestSelectedSessionWorktree = computed(() => {
   const session = selectedSession.value || {};
   return Boolean(session.sessionId && session.worktreeReady === true && !isClosedIssueSession(session));
+});
+
+const showUserCheckWorktreeActions = computed(() => {
+  return selectedStepAction.value?.kind === "user_check" &&
+    (canReviewSelectedSessionDiff.value || canTestSelectedSessionWorktree.value);
 });
 
 const showSessionTerminalSwitcher = computed(() => {
@@ -3234,10 +3290,6 @@ function clearAutoStepStartSuppression() {
   autoStepStartSuppressedStepKey.value = "";
 }
 
-function suppressAutoStepStartFor(session = {}) {
-  autoStepStartSuppressedStepKey.value = autoStartCodexPromptStepKey(session);
-}
-
 function shouldAutoStartCodexPromptStep(session = selectedSession.value) {
   const action = session?.currentStepAction || {};
   const prompt = codexPromptTextForSession(session);
@@ -3654,12 +3706,8 @@ async function goToNextStep() {
   const response = await runSelectedStep(payload);
   if (!response) {
     clearAutoStepStartSuppression();
-  } else {
-    suppressAutoStepStartFor(response);
   }
-  await handleStepResponse(response, {
-    runAutomaticFollowUps: false
-  });
+  await handleStepResponse(response);
 }
 
 async function executeCurrentStep() {
@@ -4083,11 +4131,26 @@ onBeforeUnmount(() => {
   padding-bottom: 0.125rem;
 }
 
-.studio-issue-sessions__strip-action {
+.studio-issue-sessions__strip-actions {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
-  min-height: 2.25rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+}
+
+.studio-issue-sessions__strip-actions :deep(.v-btn),
+.studio-issue-sessions__user-check-actions :deep(.v-btn) {
+  min-height: 2.35rem;
+}
+
+.studio-issue-sessions__user-check-actions {
+  align-items: center;
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .studio-issue-sessions__tab {
