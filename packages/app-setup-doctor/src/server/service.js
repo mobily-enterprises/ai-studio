@@ -25,6 +25,10 @@ import {
   buildGithubRepoCreateOrLinkScript
 } from "../../../../server/lib/githubRepoSetupScript.js";
 import {
+  gitSafeDirectoryArgs,
+  gitToolchainMountArgs
+} from "../../../../server/lib/gitToolchainMounts.js";
+import {
   shellScript
 } from "../../../../server/lib/shellScript.js";
 
@@ -141,6 +145,7 @@ function buildToolchainArgs(commandArgs, {
     "HOME=/home/studio",
     "-v",
     `${targetRoot}:/workspace`,
+    ...gitToolchainMountArgs(targetRoot),
     "-w",
     "/workspace",
     ...extraArgs,
@@ -156,8 +161,8 @@ function buildTerminalArgs(commandArgs, options = {}) {
   });
 }
 
-function gitArgs(args) {
-  return ["git", "-c", "safe.directory=/workspace", ...args];
+function gitArgs(targetRoot, args) {
+  return ["git", ...gitSafeDirectoryArgs(targetRoot), ...args];
 }
 
 async function runToolchain(commandArgs, {
@@ -178,7 +183,7 @@ async function runDocker(args, options = {}) {
 }
 
 async function runGit(targetRoot, args, options = {}) {
-  return runToolchain(gitArgs(args), {
+  return runToolchain(gitArgs(targetRoot, args), {
     targetRoot,
     ...options
   });

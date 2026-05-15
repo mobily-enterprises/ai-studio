@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  writeFile
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +23,11 @@ import {
 import {
   terminalInputValidator
 } from "../../packages/target-app-doctor/src/server/inputSchemas.js";
+import {
+  gitSafeDirectoryArgs,
+  gitToolchainMountArgs,
+  linkedGitMetadataMountSource
+} from "../../server/lib/gitToolchainMounts.js";
 
 function assertShellScriptSurvivesWhitespaceCollapse(script) {
   const flattened = script.replace(/\s+/gu, " ");
@@ -58,6 +68,30 @@ test("Target App Doctor repair commands stay explicit", () => {
   assert.match(ghRepair.commandPreview, /--private/u);
   assert.match(ghRepair.commandPreview, /git rev-parse --verify HEAD/u);
   assert.equal(repoNameFromTargetRoot(targetRoot), "Example-Target-App");
+});
+
+test("Target App Doctor toolchain mounts linked worktree Git metadata", async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "jskit-target-doctor-linked-worktree-"));
+  const worktreeRoot = path.join(repoRoot, ".jskit", "sessions", "active", "example", "worktree");
+  const gitDir = path.join(repoRoot, ".git", "worktrees", "example");
+  const gitMetadataRoot = path.join(repoRoot, ".git");
+
+  await mkdir(worktreeRoot, { recursive: true });
+  await mkdir(gitDir, { recursive: true });
+  await writeFile(path.join(worktreeRoot, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+
+  assert.equal(linkedGitMetadataMountSource(worktreeRoot), gitMetadataRoot);
+  assert.deepEqual(gitToolchainMountArgs(worktreeRoot), [
+    "-v",
+    `${gitMetadataRoot}:${gitMetadataRoot}`
+  ]);
+  assert.deepEqual(gitSafeDirectoryArgs(worktreeRoot), [
+    "-c",
+    "safe.directory=/workspace",
+    "-c",
+    `safe.directory=${worktreeRoot}`
+  ]);
+  assert.match(gitInitRepair(worktreeRoot).commandPreview, new RegExp(`${gitMetadataRoot}:${gitMetadataRoot}`));
 });
 
 test("Target App Doctor GitHub repo repair links existing repos and only pushes when commits exist", () => {

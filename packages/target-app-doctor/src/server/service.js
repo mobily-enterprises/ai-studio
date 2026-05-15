@@ -19,6 +19,10 @@ import {
 import {
   buildGithubRepoCreateOrLinkScript
 } from "../../../../server/lib/githubRepoSetupScript.js";
+import {
+  gitSafeDirectoryArgs,
+  gitToolchainMountArgs
+} from "../../../../server/lib/gitToolchainMounts.js";
 
 const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
 const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
@@ -91,6 +95,7 @@ function buildToolchainArgs(commandArgs, {
     "HOME=/home/studio",
     "-v",
     `${targetRoot}:/workspace`,
+    ...gitToolchainMountArgs(targetRoot),
     "-w",
     "/workspace",
     ...extraArgs,
@@ -106,8 +111,8 @@ function buildTerminalArgs(commandArgs, options = {}) {
   });
 }
 
-function gitArgs(args) {
-  return ["git", "-c", "safe.directory=/workspace", ...args];
+function gitArgs(targetRoot, args) {
+  return ["git", ...gitSafeDirectoryArgs(targetRoot), ...args];
 }
 
 async function runToolchain(commandArgs, {
@@ -122,7 +127,7 @@ async function runToolchain(commandArgs, {
 }
 
 async function runGit(targetRoot, args, options = {}) {
-  return runToolchain(gitArgs(args), {
+  return runToolchain(gitArgs(targetRoot, args), {
     targetRoot,
     ...options
   });
