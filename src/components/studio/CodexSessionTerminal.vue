@@ -201,7 +201,8 @@ const CODEX_BOOT_TIMEOUT_MS = 12000;
 const CODEX_KEY_PAUSE_MS = 180;
 const PROMPT_INJECTION_RETRY_MS = 350;
 const PROMPT_INJECTION_RETRY_TIMEOUT_MS = 15000;
-const MAX_TERMINAL_OUTPUT_LENGTH = 2 * 1024 * 1024;
+const CODEX_TERMINAL_SCROLLBACK_LINES = 50000;
+const MAX_TERMINAL_OUTPUT_LENGTH = 16 * 1024 * 1024;
 const TERMINAL_OUTPUT_EMIT_INTERVAL_MS = 120;
 
 const sessionId = computed(() => props.session?.sessionId || "");
@@ -417,6 +418,7 @@ async function setupTerminalUi() {
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
+      scrollback: CODEX_TERMINAL_SCROLLBACK_LINES,
       theme: {
         background: "#101216",
         foreground: "#f5f7fb"

@@ -19,6 +19,8 @@
     "build": "vite build",
     "build:all": "vite build",
     "build:home": "VITE_SURFACE=home vite build",
+    "jskit:provision-session": "bash scripts/devel-provision-jskit-ai-studio-session.sh",
+    "jskit:finalization-guard": "bash scripts/devel-check-sibling-repos-before-finalize.sh",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "node --test",

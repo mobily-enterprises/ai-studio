@@ -252,7 +252,7 @@
                 </v-alert>
 
                 <StudioErrorNotice
-                  v-for="error in selectedSessionErrors"
+                  v-for="error in selectedSession.errors || []"
                   :key="error.code || error.message"
                   :error="error"
                 />
@@ -807,7 +807,6 @@ const diffBodyElement = ref(null);
 const sessionAppTestTerminalRef = ref(null);
 const sessionAppTestVisible = ref(false);
 const activeSessionTerminalView = ref("codex");
-const fakeSessionErrorEnabled = ref(readFakeSessionErrorEnabled());
 const terminalSessionById = ref({});
 const promptInjectionRequestBySessionId = ref({});
 const promptInjectionSignatureBySessionId = ref({});
@@ -855,7 +854,6 @@ const {
 } = useIssueSessions();
 
 const REVIEW_DESLOP_MORE_FINDINGS = "Run another review/deslop pass. Ask the user which important findings they want fixed before editing, then fix only the findings the user selects.";
-const FAKE_SESSION_ERROR_STORAGE_KEY = "jskit:studio:fake-session-error";
 const FIRST_REWINDABLE_STEP_ID = "dependencies_installed";
 const CYCLE_REWIND_TARGET_STEP_ID = "plan_made";
 const CYCLE_REWIND_STEP_IDS = new Set([
@@ -896,26 +894,6 @@ const sessionFactItems = computed(() => {
       ...fact,
       icon: sessionFactIcon(fact.icon)
     }));
-});
-
-const selectedSessionErrors = computed(() => {
-  const errors = Array.isArray(selectedSession.value?.errors) ? selectedSession.value.errors : [];
-  if (!fakeSessionErrorEnabled.value || !selectedSession.value?.sessionId) {
-    return errors;
-  }
-  return [
-    ...errors,
-    {
-      code: "studio_fake_error_preview",
-      details: [
-        "This is a temporary local UI preview error.",
-        "It is controlled by localStorage and does not mutate the JSKIT session."
-      ].join("\n"),
-      message: "This manufactured error lets you inspect the session error presentation without breaking a real workflow.",
-      repairCommand: `localStorage.removeItem("${FAKE_SESSION_ERROR_STORAGE_KEY}"); location.reload();`,
-      title: "Preview error styling"
-    }
-  ];
 });
 
 const completedStepIds = computed(() => new Set(selectedSession.value?.completedSteps || []));
@@ -1608,13 +1586,6 @@ const executeStepButtonLabel = computed(() => {
 
 function shortSessionId(sessionId) {
   return shortIssueSessionId(sessionId);
-}
-
-function readFakeSessionErrorEnabled() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return window.localStorage.getItem(FAKE_SESSION_ERROR_STORAGE_KEY) === "1";
 }
 
 function sessionFactIcon(icon) {

@@ -4,6 +4,8 @@ coverage/
 test-results/
 .jskit/WORKBOARD.md
 .jskit/verification/
+.jskit/config/devel_*
+.jskit/config/devel_sibling_roots/
 .env
 .env.*
 !.env.example
