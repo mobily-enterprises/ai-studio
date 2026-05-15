@@ -81,6 +81,7 @@ const terminalCommandPreview = ref("");
 const terminalError = ref("");
 const terminalExitCode = ref(null);
 const terminalStarting = ref(false);
+const terminalClosedByUser = ref(false);
 
 let terminalInstance = null;
 let terminalFitAddon = null;
@@ -105,6 +106,7 @@ const canRunSetupTerminal = computed(() => (
 const terminalExited = computed(() => terminalStatus.value === "exited");
 const canRetry = computed(() => canRunSetupTerminal.value && (
   Boolean(terminalError.value) ||
+  terminalClosedByUser.value ||
   (terminalExited.value && terminalExitCode.value !== 0)
 ));
 
@@ -243,6 +245,7 @@ function handleTerminalSocketMessage(rawMessage) {
     terminalStatus.value = session.status || terminalStatus.value || "";
     terminalExitCode.value = session.status === "exited" ? session.exitCode ?? null : null;
     terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
+    terminalError.value = String(session.closeError || terminalError.value || "");
     writeTerminalOutput(session.output || "");
     if (session.status === "exited") {
       scheduleFinished(session.exitCode);
@@ -258,6 +261,7 @@ function handleTerminalSocketMessage(rawMessage) {
   if (message?.type === "status") {
     terminalStatus.value = message.status || terminalStatus.value || "";
     terminalExitCode.value = message.status === "exited" ? message.exitCode ?? null : null;
+    terminalError.value = String(message.closeError || terminalError.value || "");
     if (message.status === "exited") {
       scheduleFinished(message.exitCode);
     }
@@ -329,6 +333,7 @@ async function startTerminal() {
       return false;
     }
     try {
+      terminalClosedByUser.value = false;
       const session = await startIssueSessionStepTerminal(sessionId.value);
       if (session?.ok === false) {
         throw new Error(session.error || session.errors?.[0]?.message || "Setup terminal failed to start.");
@@ -378,6 +383,8 @@ async function closeTerminal() {
   terminalSessionId.value = "";
   terminalStatus.value = "";
   terminalExitCode.value = null;
+  terminalClosedByUser.value = true;
+  terminalError.value = terminalError.value || "Setup terminal is closed. Retry when you are ready to install dependencies again.";
   closeTerminalSocket();
   if (existingTerminalId && sessionId.value) {
     await closeIssueSessionStepTerminal(sessionId.value, existingTerminalId).catch(() => null);
@@ -389,6 +396,7 @@ async function restartTerminal() {
   terminalLatestOutput = "";
   terminalOutputOffset = 0;
   finishedEmittedForTerminalId = "";
+  terminalClosedByUser.value = false;
   terminalInstance?.reset?.();
   await startTerminal();
 }
@@ -410,6 +418,7 @@ watch(sessionId, () => {
   terminalLatestOutput = "";
   terminalOutputOffset = 0;
   finishedEmittedForTerminalId = "";
+  terminalClosedByUser.value = false;
   terminalInstance?.reset?.();
   closeTerminalSocket();
 });

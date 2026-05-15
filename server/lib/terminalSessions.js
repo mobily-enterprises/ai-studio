@@ -35,6 +35,7 @@ function isRunningSession(session = {}) {
 function terminalSessionResponse(session) {
   return {
     ok: true,
+    closeError: session.closeError || "",
     id: session.id,
     commandPreview: session.commandPreview,
     exitCode: session.exitCode,
@@ -101,7 +102,18 @@ async function runCloseHook(session, reason) {
       status: session.status
     });
   } catch (error) {
-    session.output = trimBuffer(`${session.output}\r\n[terminal cleanup failed] ${String(error?.message || error)}\r\n`);
+    const message = String(error?.message || error || "Terminal finalization failed.");
+    const chunk = `\r\n[studio] Terminal finalization failed: ${message}\r\n`;
+    session.closeError = message;
+    session.output = trimBuffer(`${session.output}${chunk}`);
+    sendToSubscribers(session, {
+      chunk,
+      type: "output"
+    });
+    sendToSubscribers(session, {
+      error: message,
+      type: "error"
+    });
   }
 }
 
@@ -183,13 +195,22 @@ function startTerminalSession({
 
   terminal.onExit(({ exitCode }) => {
     session.exitCode = exitCode;
-    session.status = "exited";
+    session.status = "closing";
     sendToSubscribers(session, {
       exitCode,
       status: session.status,
       type: "status"
     });
-    void runCloseHook(session, "exit");
+    void (async () => {
+      await runCloseHook(session, "exit");
+      session.status = "exited";
+      sendToSubscribers(session, {
+        closeError: session.closeError || "",
+        exitCode,
+        status: session.status,
+        type: "status"
+      });
+    })();
   });
 
   sessions.set(id, session);

@@ -283,27 +283,19 @@
                       variant="outlined"
                       @update:model-value="setCodexOutputDraft(output, $event)"
                     />
-                    <StudioPlanReview
-                      v-else-if="codexOutputIsPlan(output)"
+                    <StudioLongTextReview
+                      v-else-if="codexOutputUsesLongTextReview(output)"
                       :model-value="codexOutputDraftValue(output)"
                       :label="codexOutputLabel(output)"
+                      :content-label="longTextContentLabel(output)"
+                      :placeholder="longTextPlaceholder(output)"
+                      :review-button-label="longTextReviewButtonLabel(output)"
                       :show-submit="activeStepControls.showFormSubmit"
                       :submit-disabled="!activeStepControls.canSubmitForm"
                       :submit-label="currentActionButtonLabel"
                       :submit-loading="issueSessionBusy"
-                      placeholder="Paste or edit the approved plan."
                       @update:model-value="setCodexOutputDraft(output, $event)"
                       @submit="submitCurrentForm"
-                    />
-                    <v-textarea
-                      v-else-if="codexOutputIsMultiline(output)"
-                      :model-value="codexOutputDraftValue(output)"
-                      :label="codexOutputLabel(output)"
-                      variant="outlined"
-                      auto-grow
-                      rows="7"
-                      class="studio-issue-sessions__monospace"
-                      @update:model-value="setCodexOutputDraft(output, $event)"
                     />
                     <v-text-field
                       v-else
@@ -343,11 +335,13 @@
                   </div>
                 </div>
 
-                <StudioPlanReview
-                  v-else-if="isTextStep && selectedTextInputIsPlan"
+                <StudioLongTextReview
+                  v-else-if="isTextStep && selectedTextInputUsesLongTextReview"
                   v-model="stepInputValues[selectedStepInput.name]"
                   :label="selectedStepInput.label"
-                  :placeholder="selectedStepInput.placeholder || 'Paste or edit the approved plan.'"
+                  :content-label="longTextContentLabel(selectedStepInput)"
+                  :placeholder="longTextPlaceholder(selectedStepInput)"
+                  :review-button-label="longTextReviewButtonLabel(selectedStepInput)"
                   :show-submit="activeStepControls.showFormSubmit"
                   :submit-disabled="!activeStepControls.canSubmitForm"
                   :submit-label="currentActionButtonLabel"
@@ -776,7 +770,7 @@ import CodexSessionTerminal from "@/components/studio/CodexSessionTerminal.vue";
 import AppTestTerminal from "@/components/studio/AppTestTerminal.vue";
 import IssueSessionStepTerminal from "@/components/studio/IssueSessionStepTerminal.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
-import StudioPlanReview from "@/components/studio/StudioPlanReview.vue";
+import StudioLongTextReview from "@/components/studio/StudioLongTextReview.vue";
 import { useIssueSessions } from "@/composables/useIssueSessions.js";
 import {
   extractMarkedOutputBlocks,
@@ -879,6 +873,7 @@ const {
 } = useIssueSessions();
 
 const REVIEW_DESLOP_MORE_FINDINGS = "Run another review/deslop pass. Ask the user which important findings they want fixed before editing, then fix only the findings the user selects.";
+const INITIAL_ISSUE_PROMPT_STEP_ID = "issue_prompt_rendered";
 const FIRST_REWINDABLE_STEP_ID = "dependencies_installed";
 const CYCLE_REWIND_TARGET_STEP_ID = "plan_made";
 const CYCLE_REWIND_STEP_IDS = new Set([
@@ -957,8 +952,9 @@ const selectedStepAutomationMode = computed(() => {
   return String(selectedStepAction.value?.automation?.mode || "manual").trim() || "manual";
 });
 
-const selectedTextInputIsPlan = computed(() => {
-  return selectedStepInput.value?.extract === "plan" || selectedStepInput.value?.name === "plan";
+const selectedTextInputUsesLongTextReview = computed(() => {
+  return selectedSession.value?.currentStep !== INITIAL_ISSUE_PROMPT_STEP_ID &&
+    fieldUsesLongTextReview(selectedStepInput.value || {});
 });
 
 const selectedSessionNeedsSetupTerminal = computed(() => {
@@ -1686,8 +1682,40 @@ function codexOutputIsMultiline(output = {}) {
   return output.multiline === true || output.formatHint === "markdown";
 }
 
-function codexOutputIsPlan(output = {}) {
-  return output.extract === "plan" || output.field === "plan";
+function codexOutputUsesLongTextReview(output = {}) {
+  return fieldUsesLongTextReview(output);
+}
+
+function fieldUsesLongTextReview(field = {}) {
+  return field.multiline === true || field.formatHint === "markdown";
+}
+
+function longTextContentLabel(field = {}) {
+  const extract = String(field.extract || "").trim();
+  if (extract === "issue_text") {
+    return "issue body";
+  }
+  if (extract === "issue_details") {
+    return "issue details";
+  }
+  if (extract === "plan") {
+    return "plan";
+  }
+  const label = String(field.label || field.field || field.name || "text").trim()
+    .replace(/^approved\s+/iu, "")
+    .replace(/\s+from\s+codex$/iu, "");
+  return label || "text";
+}
+
+function longTextPlaceholder(field = {}) {
+  if (field.placeholder) {
+    return field.placeholder;
+  }
+  return `Paste or edit the approved ${longTextContentLabel(field)}.`;
+}
+
+function longTextReviewButtonLabel(field = {}) {
+  return `Review full ${longTextContentLabel(field)}`;
 }
 
 function alternateActionKey(action = {}) {

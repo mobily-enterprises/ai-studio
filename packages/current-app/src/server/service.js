@@ -102,6 +102,13 @@ function stableHash(value) {
     .slice(0, 12);
 }
 
+function responseErrorMessage(response = {}, fallback = "Request failed.") {
+  const error = Array.isArray(response.errors) ? response.errors[0] : null;
+  const message = String(error?.message || response.error || fallback);
+  const repairCommand = String(error?.repairCommand || "");
+  return repairCommand ? `${message}\nRepair: ${repairCommand}` : message;
+}
+
 function codexContainerName({ sessionId, terminalId }) {
   return `jskit-ai-studio-codex-${stableHash(sessionId)}-${stableHash(terminalId)}`;
 }
@@ -1370,11 +1377,14 @@ function createService({ appRoot = "" } = {}) {
         namespaceLimitPrefix: STEP_TERMINAL_NAMESPACE_PREFIX,
         onClose: async ({ exitCode }) => {
           if (exitCode === 0) {
-            await adoptDependenciesInstalled({
+            const response = await adoptDependenciesInstalled({
               message: `Installed Node dependencies in ${worktreePath}.`,
               sessionId,
               targetRoot: inspectionRoot
             });
+            if (response?.ok === false) {
+              throw new Error(responseErrorMessage(response, "Session dependency finalization failed."));
+            }
           }
         },
         reuseRunning: true

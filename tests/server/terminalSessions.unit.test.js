@@ -5,6 +5,7 @@ import {
   closeTerminalSession,
   closeTerminalSessionsForNamespacePrefix,
   countRunningTerminalSessions,
+  readTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -103,6 +104,97 @@ test("terminal sessions stream PTY output to subscribers", async () => {
     await assert.doesNotReject(waitFor(() => messages.some((message) =>
       message.type === "output" && String(message.chunk || "").includes("echo:hello")
     )));
+    subscription.unsubscribe();
+  } finally {
+    await closeTerminalSessionsForNamespacePrefix(namespace);
+  }
+});
+
+test("terminal sessions report exited after close hooks finish", async () => {
+  const namespace = `terminal-close-hook-test-${crypto.randomUUID()}`;
+  let finishCloseHook;
+  const closeHookFinished = new Promise((resolve) => {
+    finishCloseHook = resolve;
+  });
+  const messages = [];
+
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      "setTimeout(() => process.exit(0), 50);"
+    ],
+    command: process.execPath,
+    commandPreview: "node delayed exit",
+    namespace,
+    onClose: async () => {
+      await closeHookFinished;
+    }
+  });
+
+  try {
+    const subscription = subscribeTerminalSession(session.id, (message) => {
+      messages.push(message);
+    }, {
+      namespace
+    });
+    assert.equal(subscription.ok, true);
+
+    await waitFor(() => messages.some((message) =>
+      message.type === "status" && message.status === "closing"
+    ));
+    assert.equal(readTerminalSession(session.id, { namespace }).status, "closing");
+    assert.equal(messages.some((message) => message.type === "status" && message.status === "exited"), false);
+
+    finishCloseHook();
+
+    await waitFor(() => messages.some((message) =>
+      message.type === "status" && message.status === "exited"
+    ));
+    assert.equal(readTerminalSession(session.id, { namespace }).status, "exited");
+    subscription.unsubscribe();
+  } finally {
+    await closeTerminalSessionsForNamespacePrefix(namespace);
+  }
+});
+
+test("terminal sessions surface close hook failures", async () => {
+  const namespace = `terminal-close-hook-failure-test-${crypto.randomUUID()}`;
+  const messages = [];
+
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      "setTimeout(() => process.exit(0), 50);"
+    ],
+    command: process.execPath,
+    commandPreview: "node failed finalizer",
+    namespace,
+    onClose: async () => {
+      throw new Error("adoption failed");
+    }
+  });
+
+  try {
+    const subscription = subscribeTerminalSession(session.id, (message) => {
+      messages.push(message);
+    }, {
+      namespace
+    });
+    assert.equal(subscription.ok, true);
+
+    await waitFor(() => messages.some((message) =>
+      message.type === "error" && String(message.error || "").includes("adoption failed")
+    ));
+    await waitFor(() => messages.some((message) =>
+      message.type === "status" &&
+      message.status === "exited" &&
+      String(message.closeError || "").includes("adoption failed")
+    ));
+
+    const snapshot = readTerminalSession(session.id, { namespace });
+    assert.equal(snapshot.status, "exited");
+    assert.match(snapshot.closeError, /adoption failed/);
+    assert.match(snapshot.output, /Terminal finalization failed: adoption failed/);
     subscription.unsubscribe();
   } finally {
     await closeTerminalSessionsForNamespacePrefix(namespace);
