@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -131,12 +132,24 @@ function appTestHostDockerArgs(enabled = false) {
   if (!enabled) {
     return [];
   }
-  return [
+  const args = [
     "-e",
     "DOCKER_HOST=unix:///var/run/docker.sock",
+    "-e",
+    "JSKIT_STUDIO_SKIP_STALE_TERMINAL_CLEANUP=1",
     "-v",
     "/var/run/docker.sock:/var/run/docker.sock"
   ];
+  if (typeof process.getuid === "function" && typeof process.getgid === "function") {
+    args.push("--user", `${process.getuid()}:${process.getgid()}`);
+  }
+  try {
+    const socketStats = statSync("/var/run/docker.sock");
+    args.push("--group-add", String(socketStats.gid));
+  } catch {
+    // Leave Docker readiness checks to report the missing socket clearly.
+  }
+  return args;
 }
 
 function terminalNamespace(sessionId) {
@@ -539,7 +552,7 @@ function appTestScript({
   return [
     "set -e",
     "mkdir -p /tmp/studio-home /tmp/npm-cache",
-    "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
     "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
     "  docker_group_args=\"--clear-groups\"",
     "  if [ -S /var/run/docker.sock ]; then",

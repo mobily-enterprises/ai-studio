@@ -40,6 +40,11 @@ const STATIC_GLOBAL_UI_PATHS = Object.freeze([
   "/manifest.webmanifest"
 ]);
 
+function isTruthyEnvValue(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return Boolean(normalized) && !["0", "false", "no", "off"].includes(normalized);
+}
+
 function toRequestPathname(urlValue) {
   const rawUrl = String(urlValue || "").trim() || "/";
   try {
@@ -391,9 +396,13 @@ async function createServer(options = {}) {
       }
     }
   });
-  await cleanupStaleStudioTerminals({
-    logger: app.log
-  });
+  if (isTruthyEnvValue(process.env.JSKIT_STUDIO_SKIP_STALE_TERMINAL_CLEANUP)) {
+    app.log.warn("Skipping stale Studio terminal cleanup for this process.");
+  } else {
+    await cleanupStaleStudioTerminals({
+      logger: app.log
+    });
+  }
   await app.register(fastifyWebsocket);
 
   app.addHook("onClose", async () => {

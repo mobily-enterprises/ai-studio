@@ -73,8 +73,11 @@ test("app-test config can opt into host Docker passthrough", async () => {
       workdir: root
     });
     assert.ok(args.includes("DOCKER_HOST=unix:///var/run/docker.sock"));
+    assert.ok(args.includes("JSKIT_STUDIO_SKIP_STALE_TERMINAL_CLEANUP=1"));
     assert.ok(args.includes("/var/run/docker.sock:/var/run/docker.sock"));
+    assert.ok(args.includes("--user"));
     assert.match(args.at(-1), /docker_group_args="--groups \$docker_sock_gid"/);
+    assert.match(args.at(-1), /\$\(id -u\)" = "0"/);
   });
 });
 
