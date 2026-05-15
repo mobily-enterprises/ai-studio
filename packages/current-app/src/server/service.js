@@ -29,6 +29,9 @@ import {
 import {
   STUDIO_DAEMON_PID_LABEL
 } from "../../../../server/lib/studioTerminalLabels.js";
+import {
+  gitToolchainMountArgs
+} from "../../../../server/lib/gitToolchainMounts.js";
 
 const execFileAsync = promisify(execFile);
 const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
@@ -597,6 +600,7 @@ function appTestTerminalArgs({
     `jskit-ai-studio.target=${stableHash(targetRoot)}`,
     "-p",
     `127.0.0.1:${port}:${port}`,
+    ...gitToolchainMountArgs(targetRoot),
     "-v",
     `${targetRoot}:/workspace`,
     "-v",

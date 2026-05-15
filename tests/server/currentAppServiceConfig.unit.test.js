@@ -81,6 +81,34 @@ test("app-test config can opt into host Docker passthrough", async () => {
   });
 });
 
+test("app-test terminal mounts linked worktree owner roots", async () => {
+  await withTemporaryRoot(async (root) => {
+    const worktreeRoot = path.join(root, ".jskit", "sessions", "active", "example", "worktree");
+    const gitDir = path.join(root, ".git", "worktrees", "example");
+
+    await mkdir(worktreeRoot, {
+      recursive: true
+    });
+    await mkdir(gitDir, {
+      recursive: true
+    });
+    await writeFile(path.join(worktreeRoot, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+
+    const args = appTestTerminalArgs({
+      containerName: "app-test",
+      port: 4100,
+      targetRoot: worktreeRoot,
+      terminalId: "terminal",
+      testrunCommand: "npm run server",
+      workdir: worktreeRoot
+    });
+
+    assert.ok(args.includes(`${root}:${root}`));
+    assert.ok(args.includes(`${worktreeRoot}:/workspace`));
+    assert.ok(args.includes(`${worktreeRoot}:${worktreeRoot}`));
+  });
+});
+
 test("app-test config keeps legacy split command files as fallback", async () => {
   await withTemporaryRoot(async (root) => {
     await mkdir(path.join(root, "config"), {
