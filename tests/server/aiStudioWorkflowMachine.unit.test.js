@@ -1,0 +1,319 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  AiStudioSessionRuntime,
+  DEFAULT_AI_STUDIO_WORKFLOW,
+  WorkflowMachine
+} from "../../server/lib/aiStudio/index.js";
+
+async function withTemporaryRoot(callback) {
+  const root = await mkdtemp(path.join(tmpdir(), "ai-studio-slice-2-"));
+  try {
+    return await callback(root);
+  } finally {
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
+}
+
+test("ai-studio runtime session view exposes workflow steps, current actions, and next state", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+
+    const session = await runtime.createSession({
+      sessionId: "workflow_view"
+    });
+
+    assert.equal(session.workflowId, DEFAULT_AI_STUDIO_WORKFLOW.id);
+    assert.equal(session.currentStep, "session_created");
+    assert.deepEqual(session.completedSteps, []);
+    assert.equal(session.next.visible, true);
+    assert.equal(session.next.enabled, true);
+    assert.equal(session.next.stepId, "worktree_created");
+    assert.equal(session.stepDefinitions[0].status, "current");
+    assert.equal(session.stepDefinitions[1].label, "Create worktree");
+    assert.deepEqual(session.actions, []);
+  });
+});
+
+test("ai-studio runtime advance records completed steps and moves to the next workflow step", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      sessionId: "advance_flow"
+    });
+
+    const afterFirstAdvance = await runtime.advance("advance_flow");
+    assert.equal(afterFirstAdvance.currentStep, "worktree_created");
+    assert.deepEqual(afterFirstAdvance.completedSteps, ["session_created"]);
+    assert.equal(afterFirstAdvance.stepDefinitions[0].status, "done");
+    assert.equal(afterFirstAdvance.stepDefinitions[1].status, "current");
+    assert.equal(afterFirstAdvance.next.stepId, "dependencies_installed");
+
+    const afterSecondAdvance = await runtime.advance("advance_flow");
+    assert.equal(afterSecondAdvance.currentStep, "dependencies_installed");
+    assert.deepEqual(afterSecondAdvance.completedSteps, [
+      "session_created",
+      "worktree_created"
+    ]);
+  });
+});
+
+test("ai-studio runtime shows current-step actions from the workflow", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      sessionId: "disabled_actions"
+    });
+
+    const session = await runtime.advance("disabled_actions");
+    assert.equal(session.currentStep, "worktree_created");
+    assert.deepEqual(session.actions, [
+      {
+        disabledReason: "",
+        enabled: true,
+        id: "create_worktree",
+        label: "Create worktree",
+        type: "command",
+        visible: true
+      }
+    ]);
+  });
+});
+
+test("ai-studio runtime runAction records the action result without advancing", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const calls = [];
+    const runtime = new AiStudioSessionRuntime({
+      actionHandlers: {
+        create_worktree: async ({ action, input, session }) => {
+          calls.push({
+            actionId: action.id,
+            input,
+            stepId: session.currentStep
+          });
+          return {
+            message: "Created unit-test worktree.",
+            status: "completed"
+          };
+        }
+      },
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "worktree_created",
+      sessionId: "run_action"
+    });
+
+    const afterAction = await runtime.runAction("run_action", "create_worktree", {
+      dryRun: true
+    });
+
+    assert.equal(afterAction.currentStep, "worktree_created");
+    assert.deepEqual(afterAction.completedSteps, []);
+    assert.deepEqual(calls, [
+      {
+        actionId: "create_worktree",
+        input: {
+          dryRun: true
+        },
+        stepId: "worktree_created"
+      }
+    ]);
+    assert.deepEqual(afterAction.actionResult, {
+      actionId: "create_worktree",
+      actionLabel: "Create worktree",
+      actionType: "command",
+      at: "2026-05-16T01:02:03.000Z",
+      input: {
+        dryRun: true
+      },
+      message: "Created unit-test worktree.",
+      status: "completed",
+      stepId: "worktree_created"
+    });
+    assert.deepEqual(await runtime.store.readCommandLog("run_action"), [
+      {
+        actionId: "create_worktree",
+        actionLabel: "Create worktree",
+        actionType: "command",
+        at: "2026-05-16T01:02:03.000Z",
+        kind: "action",
+        status: "completed",
+        stepId: "worktree_created"
+      }
+    ]);
+  });
+});
+
+test("ai-studio runtime rejects actions that are not available on the current step", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "worktree_created",
+      sessionId: "wrong_action"
+    });
+
+    await assert.rejects(
+      () => runtime.runAction("wrong_action", "install_dependencies"),
+      {
+        code: "ai_studio_action_not_available"
+      }
+    );
+  });
+});
+
+test("ai-studio runtime keeps disabled actions visible and rejects execution with the disabled reason", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot,
+      workflow: {
+        id: "disabled_action",
+        steps: [
+          {
+            actions: [
+              {
+                enabledWhen: ["metadata:ready"],
+                id: "blocked_action",
+                label: "Blocked action"
+              }
+            ],
+            id: "first",
+            label: "First"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "disabled_action"
+    });
+
+    const session = await runtime.getSession("disabled_action");
+    assert.deepEqual(session.actions, [
+      {
+        disabledReason: "Waiting for metadata: ready.",
+        enabled: false,
+        id: "blocked_action",
+        label: "Blocked action",
+        type: "command",
+        visible: true
+      }
+    ]);
+    await assert.rejects(
+      () => runtime.runAction("disabled_action", "blocked_action"),
+      {
+        code: "ai_studio_action_disabled",
+        message: "Waiting for metadata: ready."
+      }
+    );
+  });
+});
+
+test("ai-studio runtime blocks advance when workflow next conditions are not met", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const workflow = {
+      id: "conditioned",
+      steps: [
+        {
+          id: "first",
+          label: "First",
+          next: {
+            enabledWhen: ["metadata:ready"]
+          }
+        },
+        {
+          id: "second",
+          label: "Second"
+        }
+      ]
+    };
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot,
+      workflow
+    });
+    await runtime.createSession({
+      sessionId: "conditioned"
+    });
+
+    const blocked = await runtime.getSession("conditioned");
+    assert.equal(blocked.currentStep, "first");
+    assert.equal(blocked.next.visible, true);
+    assert.equal(blocked.next.enabled, false);
+    assert.equal(blocked.next.disabledReason, "Waiting for metadata: ready.");
+    await assert.rejects(
+      () => runtime.advance("conditioned"),
+      /Waiting for metadata: ready/u
+    );
+
+    await runtime.store.writeMetadataValue("conditioned", "ready", "yes");
+    const advanced = await runtime.advance("conditioned");
+    assert.equal(advanced.currentStep, "second");
+    assert.deepEqual(advanced.completedSteps, ["first"]);
+  });
+});
+
+test("ai-studio runtime validates initial workflow steps", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    const session = await runtime.createSession({
+      initialStep: "plan_made",
+      sessionId: "starts_at_plan"
+    });
+    assert.equal(session.currentStep, "plan_made");
+
+    await assert.rejects(
+      () => runtime.createSession({
+        initialStep: "not_a_step",
+        sessionId: "bad_initial_step"
+      }),
+      /Unknown AI Studio workflow step/u
+    );
+  });
+});
+
+test("ai-studio workflow rejects duplicate action ids inside a step", () => {
+  assert.throws(
+    () => new WorkflowMachine({
+      workflow: {
+        id: "bad_actions",
+        steps: [
+          {
+            actions: [
+              {
+                id: "same",
+                label: "First"
+              },
+              {
+                id: "same",
+                label: "Second"
+              }
+            ],
+            id: "first",
+            label: "First"
+          }
+        ]
+      }
+    }),
+    /Duplicate AI Studio workflow action id/u
+  );
+});

@@ -1,0 +1,1364 @@
+# AI Studio Rebuild Plan
+
+This plan describes the clean rebuild from JSKIT-specific Studio into a general `ai-studio` product.
+
+The past does not exist for this plan:
+
+- No legacy session support.
+- No compatibility wrappers.
+- No migration commands.
+- No old `.jskit/sessions` behavior in the new runtime.
+- No hidden fallbacks to JSKIT-specific behavior.
+
+The new product is a checklist-driven AI coding studio. The core owns workflow state. Target adapters own project-specific reality.
+
+## Non-Negotiable Goals
+
+- Rename the product concept to `ai-studio`.
+- Move session state management out of JSKIT.
+- Create a clear class-based runtime that is easy to read.
+- Make JSKIT the first target adapter, not the state machine.
+- Make it easy to create adapters for Python, C++, web apps, and other project types.
+- Keep the checklist experience.
+- Keep prompt-driven Codex workflows.
+- Keep deterministic buttons for deterministic work.
+- Make every Studio button map to a runtime action.
+- Keep buttons visible on their step and disabled until runnable.
+- Keep target-specific behavior behind adapter boundaries.
+
+## Command Line Scope
+
+There is no command-line product surface in this rebuild.
+
+This means:
+
+- Do not create an `ai-studio` binary.
+- Do not create `ai-studio session ...` commands.
+- Do not design the workflow around copy/paste CLI usage.
+- Do not add CLI-specific tests.
+- Do not keep CLI placeholders in slices.
+- Do not describe CLI completion as an acceptance requirement.
+
+The runtime still needs a clean programmatic API because Studio must call it. That API is not a CLI. It is the internal contract between Studio UI, adapters, and durable session state. If a command line is ever added later, it must be designed as new work after this rebuild. The current rebuild must not carry command-line files, placeholders, acceptance criteria, or tests.
+
+## Hard Testing Rule
+
+- Do not write e2e tests.
+- Do not run e2e tests.
+- Do write tests for core behavior.
+- All tests must be fast.
+- Tests should focus on state transitions, action availability, adapter contracts, prompt rendering, and session file behavior.
+- Prefer unit tests and small integration tests that run without browsers, external services, long-lived servers, or real GitHub/network calls.
+- Mock adapters, command runners, clocks, and providers where needed.
+- If a behavior requires a slow external system to verify, split out the pure decision logic and test that fast path instead.
+
+## Product Shape
+
+AI Studio has three layers:
+
+1. Core runtime
+2. Target adapters
+3. Studio UI
+
+The core runtime decides:
+
+- What session exists.
+- What step is current.
+- What steps are completed.
+- What actions exist on the current step.
+- Whether each action is enabled.
+- Why each disabled action is disabled.
+- Whether `Next` is available.
+- What prompts are rendered.
+- What artifacts are expected.
+- What durable session files exist.
+
+Target adapters decide:
+
+- What kind of project this is.
+- How to inspect the project.
+- How dependencies are installed.
+- What build/test/check commands exist.
+- How to start the app if applicable.
+- What files are important.
+- What target-specific context goes into prompts.
+- How deterministic target commands are executed.
+
+The UI decides:
+
+- How to render the checklist.
+- How to render buttons, editors, terminals, and status.
+- How to send runtime actions.
+- How to display disabled reasons.
+
+The UI must not own workflow state.
+
+## Bootup, App Bootup, And App Setup
+
+The existing product has confusingly similar concepts:
+
+- Bootup
+- App Bootup
+- App Setup
+
+These must be considered deliberately during the rebuild. Do not blindly port them.
+
+The rebuild must decide:
+
+- Which of these are product-level AI Studio startup concerns.
+- Which are target-project setup concerns.
+- Which are adapter responsibilities.
+- Which are obsolete once target adapters exist.
+- Which screens should remain visible to users.
+- Which concepts should be renamed.
+- Which checks belong before session creation.
+- Which checks belong inside a session step.
+
+Hard rule:
+
+- Do not carry over Bootup, App Bootup, or App Setup as-is.
+- Do not preserve confusing names just because they exist today.
+- Rebuild them around the new architecture and adapter boundary.
+
+Checklist:
+
+- [ ] Inventory current Bootup behavior.
+- [ ] Inventory current App Bootup behavior.
+- [ ] Inventory current App Setup behavior.
+- [ ] Decide which behavior belongs to AI Studio itself.
+- [ ] Decide which behavior belongs to target adapters.
+- [ ] Decide which behavior belongs inside the checklist workflow.
+- [ ] Rename surviving concepts clearly.
+- [ ] Remove obsolete concepts rather than preserving them.
+
+## Target Architecture
+
+### Core Runtime Class
+
+Create a new class:
+
+```ts
+class AiStudioSessionRuntime {
+  constructor({ store, adapter, workflow, promptPack, clock, logger }) {}
+
+  createSession(input) {}
+  getSession(sessionId) {}
+  listSessions() {}
+  runAction(sessionId, actionId, input) {}
+  advance(sessionId) {}
+  rewind(sessionId, stepId) {}
+  abandon(sessionId) {}
+  finish(sessionId) {}
+}
+```
+
+The runtime should be boring, explicit, and readable. Prefer direct methods over clever generic abstractions.
+
+### Target Adapter Interface
+
+Create an adapter contract similar to:
+
+```ts
+interface TargetAdapter {
+  id: string;
+  label: string;
+
+  detect(targetRoot): Promise<AdapterDetection>;
+  inspect(targetRoot): Promise<ProjectFacts>;
+  getPromptContext(context): Promise<Record<string, string>>;
+  listCommands(context): Promise<AdapterCommand[]>;
+  runCommand(commandId, context): Promise<ActionResult>;
+  getEditableArtifacts(context): Promise<EditableArtifact[]>;
+}
+```
+
+Adapters must be easy to write. A useful adapter should not require understanding the whole runtime.
+
+### Workflow Model
+
+A workflow step should be explicit:
+
+```ts
+{
+  id: "plan_executed",
+  label: "Execute plan",
+  description: "Codex executes the accepted plan.",
+  actions: [
+    {
+      id: "execute_plan",
+      label: "Execute plan",
+      type: "prompt",
+      promptId: "execute_plan"
+    }
+  ],
+  next: {
+    visible: true,
+    enabledWhen: ["action_sent:execute_plan"]
+  }
+}
+```
+
+Action types:
+
+- `prompt`: render a prompt and send or expose it.
+- `command`: run deterministic code.
+- `editor`: open an editable artifact.
+- `terminal`: open a terminal-backed operation.
+- `next`: advance the state machine.
+
+## Phase 1: Product Reset
+
+Goal: Establish the new product boundary and naming without trying to preserve old runtime behavior.
+
+Instructions:
+
+- Create the new `ai-studio` runtime namespace.
+- Decide the new session root.
+- Use `.ai-studio/sessions/active/<session_id>/`.
+- Treat JSKIT as an adapter name, not the product name.
+- Remove JSKIT-specific assumptions from new core files.
+- Do not add compatibility paths.
+- Do not read old session roots.
+
+Checklist:
+
+- [ ] New product name is `ai-studio` in new runtime code.
+- [ ] New sessions are stored under `.ai-studio/`.
+- [ ] New runtime code does not import JSKIT session runtime.
+- [ ] New runtime code does not reference old session roots.
+- [ ] JSKIT appears only as an adapter concept.
+- [ ] Documentation states that new sessions are clean `ai-studio` sessions.
+
+Acceptance:
+
+- A new session can be created in `.ai-studio/sessions/active/`.
+- The new session has no dependency on old JSKIT session state.
+
+## Phase 2: Session Store
+
+Goal: Build a simple durable store for session state.
+
+Instructions:
+
+- Create a session store module.
+- Store each session as a directory.
+- Store single-value metadata as plain files under `metadata/`.
+- Store real user-facing artifacts as real files.
+- Use JSON only for structured machine data.
+- Do not create fake `.md` sentinel files.
+- Reserve `.md` for real artifacts such as issue and PR bodies.
+
+Recommended session layout:
+
+```text
+.ai-studio/
+  sessions/
+    active/
+      <session_id>/
+        session.json
+        current_step
+        status
+        metadata/
+        artifacts/
+        prompts/
+        command-log.jsonl
+```
+
+Checklist:
+
+- [ ] Session root creation is centralized.
+- [ ] Session ID validation is centralized.
+- [ ] Status read/write is centralized.
+- [ ] Current step read/write is centralized.
+- [ ] Metadata read/write helpers exist.
+- [ ] Artifact read/write helpers exist.
+- [ ] Command logging helper exists.
+- [ ] No fake markdown sentinel files are used.
+
+Acceptance:
+
+- A developer can inspect a session directory and understand its state without reading UI code.
+
+## Phase 3: Workflow State Machine
+
+Goal: Replace scattered state rules with a clear class-based state machine.
+
+Instructions:
+
+- Create a `WorkflowMachine` or equivalent class.
+- Give it the workflow definition and current session facts.
+- Make it compute the session view.
+- Make transitions explicit.
+- Keep `Next` as the only way to complete a step unless a step explicitly auto-advances.
+- Do not let action success implicitly advance unless the workflow says so.
+
+The machine must compute:
+
+- current step
+- completed steps
+- visible actions
+- enabled actions
+- disabled reasons
+- next visibility
+- next enabled state
+- next disabled reason
+
+Checklist:
+
+- [ ] Workflow steps are declared in one place.
+- [ ] Step order is declared in one place.
+- [ ] Current step resolution is deterministic.
+- [ ] `runAction()` records action results but does not advance by default.
+- [ ] `advance()` records step completion.
+- [ ] Disabled reasons are generated by the runtime.
+- [ ] UI does not duplicate transition rules.
+
+Acceptance:
+
+- Reading the state machine file explains how the workflow progresses.
+- Studio sees action availability directly from the runtime session view.
+
+## Phase 4: Core Action Model
+
+Goal: Make every button a first-class action.
+
+Instructions:
+
+- Define an action registry per step.
+- Every action must have:
+  - id
+  - label
+  - type
+  - enabled conditions
+  - disabled reason
+  - runtime handler
+- Keep action handlers small.
+- Prompt actions render prompts.
+- Command actions run deterministic commands.
+- Editor actions expose editable artifacts.
+
+Checklist:
+
+- [ ] `Create worktree` is an action.
+- [ ] `Run npm install` or adapter equivalent is an action.
+- [ ] `Send prompt` is an action.
+- [ ] `Create issue file` is an action.
+- [ ] `Create issue on GH` is an action.
+- [ ] `Make plan` is an action.
+- [ ] `Execute plan` is an action.
+- [ ] `Run deep UI check` is an action.
+- [ ] `Run deslop` is an action.
+- [ ] `Resolve deslop` is an action.
+- [ ] `Run automated checks` is an action.
+- [ ] `Update blueprint` is an adapter-provided action when supported.
+- [ ] `Commit changes` is an action.
+- [ ] `Create PR file` is an action.
+- [ ] `Create PR on GH` is an action.
+- [ ] `Prepare for merge` is a prompt action.
+- [ ] `Merge` is a command action.
+- [ ] `Sync main checkout` is a command action.
+- [ ] `Finish` is an action.
+
+Acceptance:
+
+- Every Studio button maps directly to a runtime action.
+- No button has hidden UI-only workflow behavior.
+
+## Phase 5: Default Checklist Workflow
+
+Goal: Recreate the current checklist as the first clean `ai-studio` workflow.
+
+Instructions:
+
+- Keep the checklist shape.
+- Remove JSKIT-only wording from core labels.
+- Put target-specific wording in adapter prompt context.
+- Keep `Next` visible where the user expects it.
+- Disable actions rather than hiding them when conditions are unmet.
+
+Default workflow:
+
+- Create session
+- Create worktree
+- Install dependencies
+- Define issue and create file
+- Edit and submit issue
+- Make plan
+- Execute plan
+- Run deep UI check
+- Run review/deslop
+- Run automated checks
+- Accept changes
+- Update project knowledge
+- Commit changes
+- Create PR file
+- Edit and create PR
+- Merge PR
+- Sync main checkout
+- Finish session
+
+Checklist:
+
+- [ ] Each step has a stable id.
+- [ ] Each step has a user-facing label.
+- [ ] Each step has zero or more actions.
+- [ ] Each step has a `Next` rule.
+- [ ] Each action has enabled conditions.
+- [ ] Each disabled action has a useful reason.
+- [ ] Prompt steps do not auto-complete after prompt send.
+- [ ] Command steps only auto-advance when explicitly configured.
+
+Acceptance:
+
+- The UI checklist can be rendered entirely from workflow/session data.
+
+## Phase 6: Prompt System
+
+Goal: Split prompts into core workflow prompts and adapter-specific context.
+
+Instructions:
+
+- Create prompt packs.
+- Keep shared workflow intent in shared prompts.
+- Put language/framework/tool instructions in adapter context.
+- Render prompts from structured context.
+- Keep prompt files readable.
+- Keep prompt injection markers outside user-visible terminal output.
+
+Prompt inputs:
+
+- session id
+- target root
+- worktree path
+- current step
+- issue file path
+- PR file path
+- issue URL
+- PR URL
+- adapter id
+- adapter facts
+- available commands
+- project constraints
+
+Checklist:
+
+- [ ] Shared prompt renderer exists.
+- [ ] Prompt pack lookup exists.
+- [ ] Adapter context injection exists.
+- [ ] Prompt previews work through the runtime.
+- [ ] Prompt actions can be sent by Studio.
+- [ ] Terminal output filter still hides injected prompt bodies.
+
+Acceptance:
+
+- The same workflow step can render different prompts for JSKIT, Python, and C++ projects.
+
+## Phase 7: Target Adapter System
+
+Goal: Make adapters easy to write and hard to misuse.
+
+Instructions:
+
+- Create an adapter base contract.
+- Create small helper types for commands, facts, artifacts, and capabilities.
+- Provide clear examples.
+- Keep adapters stateless where possible.
+- Put target command execution behind adapter methods.
+- Keep workflow decisions out of adapters.
+
+Adapter capabilities:
+
+- dependencies
+- build
+- test
+- lint
+- app start
+- UI check
+- project knowledge file
+- package scripts
+- issue provider
+- PR provider
+
+Checklist:
+
+- [ ] Adapter detection API exists.
+- [ ] Adapter inspection API exists.
+- [ ] Adapter command listing API exists.
+- [ ] Adapter command execution API exists.
+- [ ] Adapter prompt context API exists.
+- [ ] Adapter artifact API exists.
+- [ ] Adapter capability flags exist.
+- [ ] Missing capabilities disable relevant actions with clear reasons.
+
+Acceptance:
+
+- A new adapter can be implemented by reading one interface file and one example adapter.
+
+## Phase 8: JSKIT Adapter
+
+Goal: Move current JSKIT behavior into the first adapter.
+
+Instructions:
+
+- Create `JskitTargetAdapter`.
+- It should detect JSKIT projects.
+- It should inspect `.jskit` project files.
+- It should expose package scripts.
+- It should provide JSKIT-specific prompt context.
+- It should own helper-map behavior.
+- It should own blueprint behavior.
+- It should own JSKIT-specific readiness checks.
+- It should not own workflow transitions.
+
+Checklist:
+
+- [ ] Detect JSKIT app roots.
+- [ ] Read app blueprint path.
+- [ ] Read helper map path.
+- [ ] Discover package manager.
+- [ ] Discover package scripts.
+- [ ] Install dependencies.
+- [ ] Run app checks.
+- [ ] Run UI checks where supported.
+- [ ] Update blueprint.
+- [ ] Provide JSKIT prompt context.
+- [ ] Return disabled reasons for unavailable JSKIT capabilities.
+
+Acceptance:
+
+- A JSKIT project can complete the full default workflow through the new adapter.
+
+## Phase 9: C++ Adapter
+
+Goal: Prove the product is not JSKIT-specific.
+
+Instructions:
+
+- Create `CppTargetAdapter`.
+- Start with CMake support.
+- Detect `CMakeLists.txt`.
+- Inspect common build directories.
+- Provide configure, build, and test commands.
+- Do not assume npm, package.json, browser UI, or JSKIT files.
+- Generate C++-specific prompt context.
+
+Initial C++ behavior:
+
+- Configure: `cmake -S . -B build`
+- Build: `cmake --build build`
+- Test: `ctest --test-dir build`
+
+Checklist:
+
+- [ ] Detect CMake projects.
+- [ ] Identify build directory.
+- [ ] Expose configure command.
+- [ ] Expose build command.
+- [ ] Expose test command.
+- [ ] Capture compiler output.
+- [ ] Include compiler/build context in prompts.
+- [ ] Disable UI-only actions when not applicable.
+- [ ] Keep issue/plan/PR workflow intact.
+
+Acceptance:
+
+- A C++ CMake project can use AI Studio to define work, plan, execute, build/test, create PR, and finish.
+
+## Phase 10: Python Adapter
+
+Goal: Add a second non-JSKIT adapter for script/library/server projects.
+
+Instructions:
+
+- Create `PythonTargetAdapter`.
+- Detect Python projects.
+- Support common tools without assuming all are present.
+- Prefer explicit detection over guesses.
+- Expose dependency, test, lint, and run commands when available.
+
+Detection examples:
+
+- `pyproject.toml`
+- `requirements.txt`
+- `uv.lock`
+- `poetry.lock`
+- `pytest.ini`
+
+Checklist:
+
+- [ ] Detect Python project root.
+- [ ] Detect dependency manager.
+- [ ] Expose install command.
+- [ ] Expose test command.
+- [ ] Expose lint command if configured.
+- [ ] Expose run command if obvious.
+- [ ] Include Python environment context in prompts.
+- [ ] Disable unavailable commands with reasons.
+
+Acceptance:
+
+- A Python project can complete the workflow without any npm assumptions.
+
+## Phase 11: Web App Adapter Family
+
+Goal: Support generic Vue and React apps without depending on JSKIT.
+
+Instructions:
+
+- Create a web adapter or adapter family.
+- Detect `package.json`.
+- Detect framework where practical.
+- Expose package scripts.
+- Provide app start command.
+- Provide build/test/lint commands.
+- Keep JSKIT behavior out of this adapter.
+
+Checklist:
+
+- [ ] Detect package manager.
+- [ ] Detect Vue where obvious.
+- [ ] Detect React where obvious.
+- [ ] Expose install command.
+- [ ] Expose dev/start command.
+- [ ] Expose build command.
+- [ ] Expose test command.
+- [ ] Expose lint command.
+- [ ] Provide browser/UI check capability when app start exists.
+- [ ] Include framework context in prompts.
+
+Acceptance:
+
+- A non-JSKIT Vue or React project can use the workflow naturally.
+
+## Phase 12: No Command Line Surface
+
+Goal: Keep the rebuild focused on Studio and the runtime API.
+
+Instructions:
+
+- Do not add a command-line interface.
+- Do not add an `ai-studio` binary.
+- Do not add `ai-studio session ...` commands.
+- Do not add command-line renderers for checklist state, actions, prompts, or disabled reasons.
+- Do not add command-line tests.
+- Keep the runtime API clean enough that Studio can call it directly.
+- Keep command execution behind runtime actions and adapters.
+
+Checklist:
+
+- [ ] No CLI files exist for the new runtime.
+- [ ] No package binary is added for `ai-studio`.
+- [ ] No slice depends on command-line usage.
+- [ ] Runtime actions are callable from code.
+- [ ] Studio can render current step, actions, disabled reasons, and `Next` from runtime data.
+- [ ] Prompt-producing actions return Studio handoff data through the runtime.
+
+Acceptance:
+
+- The product can be completed through Studio without any command-line product surface.
+
+## Phase 13: Studio UI Refactor
+
+Goal: Make Studio a thin UI over the new runtime.
+
+Instructions:
+
+- UI should render the session view returned by the runtime.
+- UI should not infer workflow rules.
+- UI should not decide action availability.
+- UI should not know adapter internals.
+- Buttons should be rendered from actions.
+- Buttons should remain visible on their step and disabled when unavailable.
+
+Checklist:
+
+- [ ] Checklist renders from runtime step data.
+- [ ] Current step renders from runtime state.
+- [ ] Buttons render from runtime action data.
+- [ ] Disabled state comes from runtime.
+- [ ] Disabled reason can be displayed.
+- [ ] `Next` comes from runtime.
+- [ ] Editors open runtime-declared editable artifacts.
+- [ ] Terminal actions call runtime action ids.
+- [ ] Prompt actions use runtime prompt payloads.
+
+Acceptance:
+
+- Adding a new adapter does not require changing workflow UI logic.
+
+## Phase 14: Artifact Editors
+
+Goal: Make editing issue, PR, blueprint, and future artifacts generic.
+
+Instructions:
+
+- Create an artifact editor model.
+- Runtime returns editable artifacts for the current step.
+- Adapter can provide extra editable artifacts.
+- Core artifacts should include issue and PR files.
+- JSKIT adapter can provide blueprint editing.
+
+Checklist:
+
+- [ ] Generic artifact editor component exists.
+- [ ] Runtime exposes editable artifacts.
+- [ ] Issue editor uses artifact model.
+- [ ] PR editor uses artifact model.
+- [ ] Blueprint editor uses adapter artifact model.
+- [ ] Save writes through runtime/store.
+- [ ] Missing artifacts disable editor actions.
+
+Acceptance:
+
+- The UI does not need a custom editor path for every new adapter artifact.
+
+## Phase 15: GitHub Provider
+
+Goal: Keep issue and PR operations deterministic but provider-separated.
+
+Instructions:
+
+- Create a provider boundary for GitHub issue/PR operations.
+- Keep `gh` command behavior behind this provider.
+- Core workflow can ask for issue/PR operations.
+- Provider performs deterministic commands and records URLs.
+- `issue_url` and `pr_url` remain durable facts.
+
+Checklist:
+
+- [ ] Create issue operation exists.
+- [ ] Create PR operation exists.
+- [ ] Merge PR operation exists.
+- [ ] Close issue operation exists where needed.
+- [ ] Comment operation exists where needed.
+- [ ] Provider records URLs in session metadata.
+- [ ] Provider reports command failures clearly.
+
+Acceptance:
+
+- Issue/PR actions are not tangled with target adapters or UI code.
+
+## Phase 16: Terminal Integration
+
+Goal: Preserve the working prompt-injection terminal behavior.
+
+Instructions:
+
+- Keep prompt marker filtering.
+- Make prompt sending available to every prompt action.
+- Keep visible short sentence plus hidden full prompt behavior.
+- Block prompt buttons while terminal activity is active.
+- Keep deterministic command actions separate from Codex prompt actions.
+
+Checklist:
+
+- [ ] Prompt action can inject into terminal.
+- [ ] Full prompt is hidden from terminal display.
+- [ ] Short visible sentence remains visible.
+- [ ] Terminal replay still honors hidden markers.
+- [ ] Prompt buttons disable while Codex is active.
+- [ ] Deterministic command buttons disable while commands run.
+
+Acceptance:
+
+- Prompt injection works on fresh sessions and resumed terminal output.
+
+## Phase 17: Configuration Model
+
+Goal: Let projects configure adapter behavior without bloating the core.
+
+Instructions:
+
+- Define an optional `ai-studio.config.*` format.
+- Keep config small.
+- Use config to override adapter choices.
+- Do not require config for common projects.
+- Do not put workflow state in config.
+
+Possible config:
+
+```json
+{
+  "adapter": "cpp-cmake",
+  "commands": {
+    "build": "cmake --build build",
+    "test": "ctest --test-dir build"
+  }
+}
+```
+
+Checklist:
+
+- [ ] Config discovery exists.
+- [ ] Config validation exists.
+- [ ] Adapter override exists.
+- [ ] Command override exists.
+- [ ] Invalid config gives clear errors.
+- [ ] Runtime state is not stored in config.
+
+Acceptance:
+
+- A project with unusual commands can still use AI Studio without code changes.
+
+## Phase 18: Documentation For Adapter Authors
+
+Goal: Make adapter creation approachable.
+
+Instructions:
+
+- Write an adapter author guide.
+- Include a minimal adapter.
+- Include a real adapter example.
+- Explain each method.
+- Explain disabled reasons.
+- Explain command logging.
+- Explain prompt context.
+
+Checklist:
+
+- [ ] Adapter author guide exists.
+- [ ] Minimal adapter example exists.
+- [ ] JSKIT adapter is documented.
+- [ ] C++ adapter is documented.
+- [ ] Python adapter is documented.
+- [ ] Prompt context examples exist.
+- [ ] Command result examples exist.
+
+Acceptance:
+
+- A competent developer can write a basic adapter in one sitting.
+
+## Phase 19: Quality Bar
+
+Goal: Keep the rewrite understandable and maintainable.
+
+Instructions:
+
+- Prefer boring code.
+- Prefer explicit state transitions.
+- Avoid clever generalization until two adapters prove the need.
+- Keep files small enough to read.
+- Keep core and adapter concerns separate.
+- Make disabled reasons explainable.
+- Keep tests fast enough that developers actually run them.
+- Do not add browser-driven or full-stack e2e tests.
+
+Checklist:
+
+- [ ] Core runtime has no target-specific imports.
+- [ ] Adapters do not mutate workflow state directly.
+- [ ] UI does not duplicate workflow rules.
+- [ ] Prompt rendering is centralized.
+- [ ] Command execution is logged.
+- [ ] Session files are inspectable.
+- [ ] State transitions are easy to trace.
+- [ ] No hidden compatibility fallbacks exist.
+- [ ] Core state-machine tests are fast.
+- [ ] Adapter contract tests use fake command runners.
+- [ ] Prompt rendering tests do not start terminals.
+- [ ] No e2e tests exist.
+
+Acceptance:
+
+- A new engineer can trace a button click from UI to runtime to session file in under ten minutes.
+
+## Phase 20: First Complete Vertical Slice
+
+Goal: Build one end-to-end path before broadening everything.
+
+Instructions:
+
+- Pick one adapter first.
+- JSKIT is the practical first adapter because it preserves known behavior.
+- Build only enough core to complete one full session.
+- Then add C++ to prove the adapter boundary.
+
+Checklist:
+
+- [ ] Create session.
+- [ ] Inspect target.
+- [ ] Create worktree or equivalent.
+- [ ] Install dependencies or mark unavailable.
+- [ ] Define issue.
+- [ ] Create issue file.
+- [ ] Edit issue.
+- [ ] Create GitHub issue.
+- [ ] Make plan.
+- [ ] Execute plan.
+- [ ] Run checks.
+- [ ] Commit changes.
+- [ ] Create PR file.
+- [ ] Edit PR.
+- [ ] Create PR.
+- [ ] Prepare for merge.
+- [ ] Merge.
+- [ ] Sync checkout if applicable.
+- [ ] Finish session.
+
+Acceptance:
+
+- The first adapter can complete the workflow through Studio.
+
+## Execution Slices
+
+These slices are the delivery plan. Do them in order. Do not start a later slice until the current slice meets its acceptance criteria. Each slice should leave the codebase in a coherent state.
+
+### SLICE 1: Core Skeleton And Session Store
+
+Goal: Create the new `ai-studio` runtime shell and durable session store with no JSKIT dependency.
+
+Instructions:
+
+- Create the new runtime package/module namespace.
+- Create `.ai-studio/sessions/active/<session_id>/`.
+- Implement session creation, session lookup, session listing, status storage, current-step storage, metadata storage, artifact storage, and command logging.
+- Keep the API small and boring.
+- Do not add adapters yet.
+- Do not connect Studio UI yet.
+
+Checklist:
+
+- [x] `AiStudioSessionRuntime` class exists.
+- [x] Session store class/module exists.
+- [x] New sessions write to `.ai-studio/sessions/active/`.
+- [x] `session.json` or equivalent core manifest exists.
+- [x] `current_step` is readable and writable.
+- [x] `status` is readable and writable.
+- [x] `metadata/` helpers exist.
+- [x] `artifacts/` helpers exist.
+- [x] Command log helper exists.
+- [x] No JSKIT imports exist in the new core.
+- [x] Fast tests cover session creation and state file reads/writes.
+
+Acceptance:
+
+- A local script or fast unit test can create a new `ai-studio` session and read it back.
+- The session directory is understandable by inspection.
+
+### SLICE 2: Workflow Machine And Session View
+
+Goal: Build the class-based state machine and a runtime session view.
+
+Instructions:
+
+- Define the default checklist workflow.
+- Implement current-step resolution.
+- Implement completed-step recording.
+- Implement `Next` visibility and enabled-state computation.
+- Implement action visibility and enabled-state computation.
+- Include disabled reasons in the session view.
+- Keep the workflow definition explicit.
+
+Checklist:
+
+- [x] Workflow definition file exists.
+- [x] Workflow step ids are stable.
+- [x] Workflow step labels are user-facing.
+- [x] `WorkflowMachine` or equivalent class exists.
+- [x] `getSession()` returns current step.
+- [x] `getSession()` returns completed steps.
+- [x] `getSession()` returns visible actions.
+- [x] `getSession()` returns disabled reasons.
+- [x] `getSession()` returns `Next` state.
+- [x] `advance()` records step completion.
+- [x] Fast tests cover basic transitions and disabled states.
+
+Acceptance:
+
+- A session can move through several steps using only `advance()`.
+- The returned session view contains enough data to render the checklist and buttons.
+
+### SLICE 3: Action Runner And Studio Contract
+
+Goal: Make every workflow button a runtime-addressable Studio action.
+
+Instructions:
+
+- Implement `runAction(sessionId, actionId, input)`.
+- Do not add a command-line interface.
+- Do not add an `ai-studio` binary.
+- Do not add `ai-studio session ...` commands.
+- Do not wire real target commands yet.
+- Use fake/no-op action handlers where needed to prove the contract.
+- The runtime session view must show current step, actions, disabled reasons, and `Next`.
+- Studio is the only product surface for these actions in this rebuild.
+
+Checklist:
+
+- [x] `runAction()` exists.
+- [x] `runAction()` accepts session id, action id, and input.
+- [x] `runAction()` records action results.
+- [x] `runAction()` does not advance by default.
+- [x] Runtime action results include action id, step id, status, and message.
+- [x] Runtime rejects actions that are not on the current step.
+- [x] Runtime rejects disabled actions with a useful reason.
+- [x] Runtime does not hide current-step actions merely because they are disabled.
+- [x] Fast tests cover action lookup and unavailable-action errors.
+
+Acceptance:
+
+- The full checklist can be inspected from the runtime session view.
+- A fake action can be run through `runAction()` without Studio UI.
+
+### SLICE 4: Prompt Rendering And Terminal Contract
+
+Goal: Make prompt actions real while preserving the hidden full-prompt terminal behavior.
+
+Instructions:
+
+- Implement prompt pack loading.
+- Implement prompt rendering from structured session context.
+- Implement Studio prompt handoff shape.
+- Preserve the marker-based terminal output filtering.
+- Keep prompt sending separate from `Next`.
+
+Checklist:
+
+- [ ] Prompt pack directory exists.
+- [ ] Shared prompt renderer exists.
+- [ ] Prompt context object is explicit.
+- [ ] Prompt actions render prompt text.
+- [ ] Studio can receive prompt handoff data.
+- [ ] Hidden prompt markers are still filtered from terminal output.
+- [ ] Prompt buttons are disabled while terminal activity is active.
+- [ ] Fast tests cover prompt rendering and marker filtering.
+
+Acceptance:
+
+- A prompt action can be rendered and handed to Codex without advancing the workflow.
+
+### SLICE 5: Adapter Contract And Fake Adapter
+
+Goal: Prove the adapter boundary before porting JSKIT.
+
+Instructions:
+
+- Define the adapter interface.
+- Create a fake adapter used by tests and local development.
+- Keep workflow state out of the adapter.
+- Make adapter facts appear in prompt context.
+- Make adapter capabilities affect action disabled reasons.
+
+Checklist:
+
+- [ ] Adapter interface exists.
+- [ ] Adapter detection result type exists.
+- [ ] Adapter project facts type exists.
+- [ ] Adapter command type exists.
+- [ ] Adapter action result type exists.
+- [ ] Fake adapter exists.
+- [ ] Runtime can load one adapter.
+- [ ] Adapter facts appear in session view.
+- [ ] Adapter facts appear in rendered prompts.
+- [ ] Fast tests cover adapter capability gating.
+
+Acceptance:
+
+- The runtime can complete a toy workflow using a fake adapter.
+
+### SLICE 6: JSKIT Adapter, Setup Through Issue
+
+Goal: Implement the first real adapter enough to create a JSKIT session, set up the worktree, define an issue, create issue files, edit them, and create the GitHub issue.
+
+Instructions:
+
+- Create `JskitTargetAdapter`.
+- Detect JSKIT projects.
+- Implement worktree creation through adapter actions or capabilities.
+- Implement dependency install through adapter actions.
+- Implement JSKIT prompt context.
+- Implement issue file and GitHub issue flow through the new core.
+- Keep issue submission from auto-advancing; user must press `Next`.
+
+Checklist:
+
+- [ ] JSKIT adapter detects target root.
+- [ ] JSKIT adapter exposes setup facts.
+- [ ] Worktree setup action exists.
+- [ ] Dependency install action exists.
+- [ ] Issue prompt action exists.
+- [ ] Issue file prompt action exists.
+- [ ] Issue editor action exists.
+- [ ] GitHub issue creation action exists.
+- [ ] `issue_url` is stored as durable session metadata.
+- [ ] `Next` enables only after issue submission.
+- [ ] Fast tests cover JSKIT capability mapping with fake command runners.
+
+Acceptance:
+
+- A JSKIT project can reach the step after issue submission through Studio using the new runtime.
+
+### SLICE 7: JSKIT Plan Through Commit
+
+Goal: Complete the middle JSKIT workflow from planning through accepted committed changes.
+
+Instructions:
+
+- Implement make-plan prompt action.
+- Implement execute-plan prompt action.
+- Implement deep UI check prompt action where supported.
+- Implement deslop and resolve-deslop prompt actions.
+- Implement automated checks action.
+- Implement accept/review decision behavior.
+- Implement blueprint update action through JSKIT adapter.
+- Implement commit changes action.
+
+Checklist:
+
+- [ ] Make-plan action exists.
+- [ ] Execute-plan action exists.
+- [ ] Deep UI check action exists.
+- [ ] Deslop action exists.
+- [ ] Resolve deslop action exists.
+- [ ] Automated checks action exists.
+- [ ] Accept changes behavior exists.
+- [ ] Blueprint update action exists only when adapter supports it.
+- [ ] Commit changes action exists.
+- [ ] Accepted commit metadata is stored.
+- [ ] Fast tests cover action availability and deterministic command handling.
+
+Acceptance:
+
+- A JSKIT project can progress from plan creation to committed accepted changes.
+
+### SLICE 8: JSKIT PR, Merge, Sync, Finish
+
+Goal: Complete the JSKIT endgame using the new runtime.
+
+Instructions:
+
+- Implement PR file prompt action.
+- Implement PR artifact editor.
+- Implement GitHub PR creation.
+- Store `pr_url` as the durable PR fact.
+- Implement prepare-for-merge prompt action.
+- Implement merge as a deterministic command action.
+- Implement sync-main-checkout as a deterministic command action.
+- Implement finish action.
+- Keep buttons visible and disabled until their conditions are met.
+
+Checklist:
+
+- [ ] PR file prompt action exists.
+- [ ] PR editor action exists.
+- [ ] GitHub PR creation action exists.
+- [ ] `pr_url` is stored.
+- [ ] Prepare-for-merge action requires `pr_url`.
+- [ ] Merge action requires `pr_url`.
+- [ ] Successful merge writes PR outcome.
+- [ ] Sync-main-checkout requires `pr_url` and merged outcome.
+- [ ] Finish archives/removes session worktree as designed.
+- [ ] Fast tests cover PR state, merge result handling, and sync gating.
+
+Acceptance:
+
+- A JSKIT project can complete the full workflow through Studio with the new runtime.
+
+### SLICE 9: Studio UI Runtime Wiring
+
+Goal: Make Studio a thin renderer over the new runtime session view.
+
+Instructions:
+
+- Replace UI-specific workflow inference with runtime-provided session view fields.
+- Render checklist from runtime steps.
+- Render buttons from runtime actions.
+- Render disabled state and disabled reasons from runtime data.
+- Keep editors generic where possible.
+- Keep prompt terminal integration working.
+
+Checklist:
+
+- [ ] Studio reads new runtime session view.
+- [ ] Checklist renders from runtime data.
+- [ ] Current step renders from runtime data.
+- [ ] Buttons render from runtime actions.
+- [ ] Disabled buttons remain visible.
+- [ ] Disabled reasons are available to display.
+- [ ] `Next` renders from runtime data.
+- [ ] Prompt injection uses runtime prompt payloads.
+- [ ] Artifact editors use runtime artifact descriptors.
+- [ ] Fast component-level tests cover view-model mapping without browser e2e.
+
+Acceptance:
+
+- The JSKIT full workflow can be driven through Studio using the new runtime.
+
+### SLICE 10: C++ Adapter Vertical Slice
+
+Goal: Prove AI Studio works for the C++ project case without npm, package.json, JSKIT, browser UI, or blueprint assumptions.
+
+Instructions:
+
+- Create `CppTargetAdapter`.
+- Detect CMake projects.
+- Expose configure, build, and test commands.
+- Add C++ prompt context.
+- Disable unsupported web/JSKIT-only actions with clear reasons.
+- Keep the issue, plan, execute, check, PR, merge workflow intact.
+
+Checklist:
+
+- [ ] CMake project detection exists.
+- [ ] Configure command exists.
+- [ ] Build command exists.
+- [ ] Test command exists.
+- [ ] Compiler/build output is captured.
+- [ ] C++ prompt context exists.
+- [ ] No npm assumptions are used.
+- [ ] No JSKIT assumptions are used.
+- [ ] Unsupported actions show disabled reasons.
+- [ ] Fast tests cover C++ adapter detection and command mapping.
+
+Acceptance:
+
+- A C++ CMake project can complete a meaningful workflow through Studio.
+
+### SLICE 11: Python Adapter Vertical Slice
+
+Goal: Add Python support without weakening the adapter boundary.
+
+Instructions:
+
+- Create `PythonTargetAdapter`.
+- Detect common Python project files.
+- Detect dependency manager where possible.
+- Expose install, test, lint, and run commands when available.
+- Add Python prompt context.
+- Keep unavailable commands disabled with reasons.
+
+Checklist:
+
+- [ ] `pyproject.toml` detection exists.
+- [ ] `requirements.txt` detection exists.
+- [ ] `uv.lock` detection exists.
+- [ ] `poetry.lock` detection exists.
+- [ ] Install command mapping exists.
+- [ ] Test command mapping exists.
+- [ ] Lint command mapping exists when configured.
+- [ ] Python prompt context exists.
+- [ ] Fast tests cover detection and command mapping.
+
+Acceptance:
+
+- A Python project can complete the core workflow without npm assumptions.
+
+### SLICE 12: Generic Web Adapter Vertical Slice
+
+Goal: Support non-JSKIT Vue and React apps.
+
+Instructions:
+
+- Create a generic web adapter or adapter family.
+- Detect package manager.
+- Detect framework where practical.
+- Expose install, dev, build, test, and lint commands from package scripts.
+- Add generic web prompt context.
+- Keep JSKIT blueprint/helper-map behavior out of this adapter.
+
+Checklist:
+
+- [ ] Package manager detection exists.
+- [ ] Vue detection exists where obvious.
+- [ ] React detection exists where obvious.
+- [ ] Install command mapping exists.
+- [ ] Dev/start command mapping exists.
+- [ ] Build command mapping exists.
+- [ ] Test command mapping exists.
+- [ ] Lint command mapping exists.
+- [ ] Generic web prompt context exists.
+- [ ] Fast tests cover package-script mapping.
+
+Acceptance:
+
+- A non-JSKIT Vue or React project can complete the core workflow naturally.
+
+### SLICE 13: Adapter Author Documentation
+
+Goal: Make adapter creation easy for other developers.
+
+Instructions:
+
+- Write the adapter author guide.
+- Include the minimal fake adapter.
+- Include JSKIT, C++, Python, and web examples.
+- Document disabled reasons.
+- Document prompt context.
+- Document command result shapes.
+- Document fast-test expectations.
+
+Checklist:
+
+- [ ] Adapter author guide exists.
+- [ ] Minimal adapter example exists.
+- [ ] JSKIT adapter example is documented.
+- [ ] C++ adapter example is documented.
+- [ ] Python adapter example is documented.
+- [ ] Web adapter example is documented.
+- [ ] Fast testing guidance is documented.
+- [ ] No e2e testing guidance is included.
+
+Acceptance:
+
+- A competent developer can create a basic adapter without reading Studio UI code.
+
+## Implementation Order
+
+Use the execution slices above as the primary plan. This shorter order is only a quick dependency reminder:
+
+- [ ] Create session store.
+- [ ] Create workflow definition model.
+- [ ] Create runtime class.
+- [ ] Create action model.
+- [ ] Create prompt renderer.
+- [ ] Create JSKIT adapter.
+- [ ] Wire Studio to runtime session view.
+- [ ] Render checklist from runtime.
+- [ ] Render buttons from runtime.
+- [ ] Wire terminal prompt injection.
+- [ ] Wire issue/PR artifact editors.
+- [ ] Complete JSKIT vertical slice.
+- [ ] Create C++ adapter.
+- [ ] Complete C++ vertical slice.
+- [ ] Create Python adapter.
+- [ ] Create generic web adapter.
+- [ ] Write adapter author docs.
+
+## Decisions To Make Early
+
+- [ ] Runtime language and package boundary.
+- [ ] Session directory shape.
+- [ ] Workflow definition file format.
+- [ ] Prompt pack directory shape.
+- [ ] Adapter discovery rules.
+- [ ] Whether GitHub provider is core or pluggable from day one.
+- [ ] Whether worktrees are core or adapter capability.
+- [ ] What Bootup, App Bootup, and App Setup become in the new architecture.
+- [ ] How to represent unavailable steps.
+- [ ] How to show disabled reasons in Studio.
+
+## Decisions To Delay
+
+- [ ] Marketplace-style adapter loading.
+- [ ] Multiple workflow templates.
+- [ ] Non-GitHub providers.
+- [ ] Remote execution.
+- [ ] Multi-agent coordination.
+- [ ] Complex project graph support.
+- [ ] Generated adapter scaffolding.
+
+## Definition Of Done
+
+The rebuild is successful when:
+
+- [ ] The product is named `ai-studio`.
+- [ ] The state machine lives in AI Studio core.
+- [ ] JSKIT is only an adapter.
+- [ ] At least one non-JSKIT adapter works end to end.
+- [ ] The checklist remains intact.
+- [ ] Every button maps to a runtime action.
+- [ ] Buttons remain visible and disabled when unavailable.
+- [ ] Prompts adapt to the target environment.
+- [ ] No npm assumptions exist outside web/JSKIT adapters.
+- [ ] No JSKIT assumptions exist in the core runtime.
+- [ ] A developer can add a simple adapter without reading UI code.

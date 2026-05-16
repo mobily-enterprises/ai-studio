@@ -1,0 +1,326 @@
+import {
+  AI_STUDIO_SESSION_STATUS
+} from "./sessionStore.js";
+import {
+  aiStudioError,
+  normalizeText
+} from "./core.js";
+import { deepFreeze } from "./deepFreeze.js";
+import {
+  DEFAULT_AI_STUDIO_WORKFLOW
+} from "./workflow.js";
+
+function normalizeConditionList(value) {
+  return Array.isArray(value)
+    ? value.map(normalizeText).filter(Boolean)
+    : [];
+}
+
+function normalizeAction(action = {}, stepId = "") {
+  const id = normalizeText(action.id);
+  if (!id) {
+    throw aiStudioError(`AI Studio workflow step ${stepId} has an action without an id.`, "ai_studio_workflow_action_id_missing");
+  }
+  return {
+    disabledReason: normalizeText(action.disabledReason),
+    enabledWhen: normalizeConditionList(action.enabledWhen),
+    id,
+    label: normalizeText(action.label || id),
+    type: normalizeText(action.type || "command"),
+    visible: action.visible !== false
+  };
+}
+
+function normalizeNext(next = {}) {
+  return {
+    disabledReason: normalizeText(next.disabledReason),
+    enabledWhen: normalizeConditionList(next.enabledWhen),
+    label: normalizeText(next.label || "Next"),
+    visible: next.visible !== false
+  };
+}
+
+function normalizeActions(actions = [], stepId = "") {
+  const seenActionIds = new Set();
+  return (Array.isArray(actions) ? actions : []).map((action) => {
+    const normalizedAction = normalizeAction(action, stepId);
+    if (seenActionIds.has(normalizedAction.id)) {
+      throw aiStudioError(
+        `Duplicate AI Studio workflow action id in step ${stepId}: ${normalizedAction.id}`,
+        "ai_studio_duplicate_workflow_action"
+      );
+    }
+    seenActionIds.add(normalizedAction.id);
+    return normalizedAction;
+  });
+}
+
+function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
+  const id = normalizeText(step.id);
+  if (!id) {
+    throw aiStudioError(`AI Studio workflow step ${index + 1} is missing an id.`, "ai_studio_workflow_step_id_missing");
+  }
+  if (seenStepIds.has(id)) {
+    throw aiStudioError(`Duplicate AI Studio workflow step id: ${id}`, "ai_studio_duplicate_workflow_step");
+  }
+  seenStepIds.add(id);
+  return {
+    actions: normalizeActions(step.actions, id),
+    description: normalizeText(step.description),
+    id,
+    index,
+    label: normalizeText(step.label || id),
+    next: normalizeNext(step.next)
+  };
+}
+
+function normalizeWorkflow(workflow = DEFAULT_AI_STUDIO_WORKFLOW) {
+  const rawSteps = Array.isArray(workflow.steps) ? workflow.steps : [];
+  if (rawSteps.length === 0) {
+    throw aiStudioError("AI Studio workflow must contain at least one step.", "ai_studio_empty_workflow");
+  }
+  const seenStepIds = new Set();
+  return deepFreeze({
+    id: normalizeText(workflow.id || "default"),
+    steps: rawSteps.map((step, index) => normalizeStep(step, index, seenStepIds))
+  });
+}
+
+function publicStepDefinition(step, status) {
+  return {
+    description: step.description,
+    done: status === "done",
+    id: step.id,
+    index: step.index,
+    label: step.label,
+    status
+  };
+}
+
+function publicAction(action, state) {
+  return {
+    disabledReason: state.disabledReason,
+    enabled: state.enabled,
+    id: action.id,
+    label: action.label,
+    type: action.type,
+    visible: true
+  };
+}
+
+function publicCurrentStepDefinition(step) {
+  return {
+    actions: step.actions.map((action) => ({
+      id: action.id,
+      label: action.label,
+      type: action.type,
+      visible: action.visible
+    })),
+    description: step.description,
+    id: step.id,
+    index: step.index,
+    label: step.label,
+    next: {
+      label: step.next.label,
+      visible: step.next.visible
+    }
+  };
+}
+
+function conditionMet() {
+  return {
+    met: true,
+    reason: ""
+  };
+}
+
+function conditionMissing(reason) {
+  return {
+    met: false,
+    reason
+  };
+}
+
+function enabledState() {
+  return {
+    disabledReason: "",
+    enabled: true
+  };
+}
+
+function disabledState(reason) {
+  return {
+    disabledReason: normalizeText(reason),
+    enabled: false
+  };
+}
+
+function hiddenNext(label, disabledReason) {
+  return {
+    disabledReason,
+    enabled: false,
+    label,
+    stepId: "",
+    visible: false
+  };
+}
+
+function defaultActionReadiness() {
+  return enabledState();
+}
+
+class WorkflowMachine {
+  constructor({
+    actionReadiness = defaultActionReadiness,
+    workflow = DEFAULT_AI_STUDIO_WORKFLOW
+  } = {}) {
+    this.workflow = normalizeWorkflow(workflow);
+    this.steps = this.workflow.steps;
+    this.stepById = new Map(this.steps.map((step) => [step.id, step]));
+    this.actionReadiness = typeof actionReadiness === "function"
+      ? actionReadiness
+      : defaultActionReadiness;
+  }
+
+  firstStepId() {
+    return this.steps[0].id;
+  }
+
+  assertStepId(stepId) {
+    const normalizedStepId = normalizeText(stepId);
+    if (!this.stepById.has(normalizedStepId)) {
+      throw aiStudioError(`Unknown AI Studio workflow step: ${normalizedStepId || "(empty)"}`, "ai_studio_unknown_workflow_step");
+    }
+    return normalizedStepId;
+  }
+
+  stepAfter(stepId) {
+    const step = this.stepById.get(normalizeText(stepId));
+    return step ? this.steps[step.index + 1] || null : null;
+  }
+
+  completedStepIds(rawSession = {}) {
+    const completed = new Set((Array.isArray(rawSession.completedSteps) ? rawSession.completedSteps : []).map(normalizeText));
+    return this.steps
+      .filter((step) => completed.has(step.id))
+      .map((step) => step.id);
+  }
+
+  currentStepForSession(rawSession = {}) {
+    const completed = new Set(this.completedStepIds(rawSession));
+    const storedStepId = normalizeText(rawSession.currentStep);
+    if (this.stepById.has(storedStepId) && !completed.has(storedStepId)) {
+      return this.stepById.get(storedStepId);
+    }
+    return this.steps.find((step) => !completed.has(step.id)) || null;
+  }
+
+  checkCondition(condition, rawSession = {}) {
+    const name = normalizeText(condition);
+    if (!name || name === "always") {
+      return conditionMet();
+    }
+    if (name === "session:active") {
+      return rawSession.status === AI_STUDIO_SESSION_STATUS.ACTIVE
+        ? conditionMet()
+        : conditionMissing("Session is not active.");
+    }
+    if (name.startsWith("metadata:")) {
+      const metadataName = name.slice("metadata:".length);
+      return normalizeText(rawSession.metadata?.[metadataName])
+        ? conditionMet()
+        : conditionMissing(`Waiting for metadata: ${metadataName}.`);
+    }
+    if (name.startsWith("completed:")) {
+      const stepId = name.slice("completed:".length);
+      return this.completedStepIds(rawSession).includes(stepId)
+        ? conditionMet()
+        : conditionMissing(`Waiting for step completion: ${stepId}.`);
+    }
+    return conditionMissing(`Unknown condition: ${name}.`);
+  }
+
+  checkRequirements(requirements = [], rawSession = {}, fallbackReason = "") {
+    for (const requirement of requirements) {
+      const result = this.checkCondition(requirement, rawSession);
+      if (!result.met) {
+        return disabledState(fallbackReason || result.reason);
+      }
+    }
+    return enabledState();
+  }
+
+  actionStateForSession(step, action, rawSession = {}) {
+    const workflowState = this.checkRequirements(action.enabledWhen, rawSession, action.disabledReason);
+    if (!workflowState.enabled) {
+      return workflowState;
+    }
+    const runtimeState = this.actionReadiness({
+      action,
+      session: rawSession,
+      step
+    }) || {};
+    if (runtimeState.enabled === false) {
+      return disabledState(runtimeState.disabledReason || "Action is not available.");
+    }
+    return enabledState();
+  }
+
+  visibleActionsForStep(step, rawSession = {}) {
+    return step.actions
+      .filter((action) => action.visible)
+      .map((action) => publicAction(action, this.actionStateForSession(step, action, rawSession)));
+  }
+
+  nextStateForStep(currentStep, rawSession = {}) {
+    if (!currentStep) {
+      return hiddenNext("Next", "No current step.");
+    }
+    const followingStep = this.stepAfter(currentStep.id);
+    if (!followingStep) {
+      return hiddenNext(currentStep.next.label, "No next step.");
+    }
+    if (!currentStep.next.visible) {
+      return hiddenNext(currentStep.next.label, "");
+    }
+
+    const state = this.checkRequirements(currentStep.next.enabledWhen, rawSession, currentStep.next.disabledReason);
+    return {
+      disabledReason: state.disabledReason,
+      enabled: state.enabled,
+      label: currentStep.next.label,
+      stepId: followingStep.id,
+      visible: true
+    };
+  }
+
+  stepDefinitionsForSession(currentStep, completedSteps) {
+    const completed = new Set(completedSteps);
+    return this.steps.map((step) => {
+      const status = completed.has(step.id)
+        ? "done"
+        : step.id === currentStep?.id ? "current" : "pending";
+      return publicStepDefinition(step, status);
+    });
+  }
+
+  buildSessionView(rawSession = {}) {
+    const completedSteps = this.completedStepIds(rawSession);
+    const currentStep = this.currentStepForSession(rawSession);
+    return {
+      ...rawSession,
+      actions: currentStep ? this.visibleActionsForStep(currentStep, rawSession) : [],
+      completedSteps,
+      currentStep: currentStep?.id || "",
+      currentStepDefinition: currentStep ? publicCurrentStepDefinition(currentStep) : null,
+      next: this.nextStateForStep(currentStep, rawSession),
+      stepDefinitions: this.stepDefinitionsForSession(currentStep, completedSteps),
+      workflowId: this.workflow.id
+    };
+  }
+}
+
+export {
+  WorkflowMachine,
+  normalizeWorkflow
+};
