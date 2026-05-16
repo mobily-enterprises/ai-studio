@@ -115,7 +115,7 @@ function registerRoutes(
       }
       const response = await getTerminalService(app).uploadCodexAttachment(
         request.params.sessionId,
-        request.input.body || {}
+        requestBodyObject(request)
       );
       reply.code(response?.ok === false ? 400 : 200).send(response);
     }
@@ -139,7 +139,7 @@ function registerRoutes(
       }
       const response = await getTerminalService(app).saveCodexThread(
         request.params.sessionId,
-        request.input.body || {}
+        requestBodyObject(request)
       );
       reply.code(response?.ok === false ? 400 : 200).send(response);
     }
@@ -163,7 +163,7 @@ function registerRoutes(
       }
       const response = await getTerminalService(app).saveCodexPromptHandoff(
         request.params.sessionId,
-        request.input.body || {}
+        requestBodyObject(request)
       );
       reply.code(response?.ok === false ? 400 : 200).send(response);
     }

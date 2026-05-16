@@ -28,15 +28,18 @@ import {
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
-  STUDIO_DAEMON_PID_LABEL
-} from "../../../../server/lib/studioTerminalLabels.js";
+  STUDIO_DAEMON_PID_LABEL,
+  STUDIO_HOST_GID_ENV,
+  STUDIO_HOST_UID_ENV,
+  STUDIO_TEMP_DIR_NAME,
+  STUDIO_TOOLCHAIN_IMAGE as TOOLCHAIN_IMAGE,
+  STUDIO_TOOL_HOME_VOLUME as TOOL_HOME_VOLUME
+} from "../../../../server/lib/studioRuntimeIdentity.js";
 import {
   gitToolchainMountArgs
 } from "../../../../server/lib/gitToolchainMounts.js";
 
 const execFileAsync = promisify(execFile);
-const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
-const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
 const DEFAULT_APP_TEST_BUILD_COMMAND = "npm run build";
 const DEFAULT_APP_TEST_SERVER_COMMAND = "npm run server";
 const DEFAULT_APP_TEST_PORT = 4100;
@@ -73,7 +76,7 @@ const MAX_OPEN_ISSUE_SESSIONS = 3;
 const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 const ATTACHMENT_CONTAINER_ROOT = "/studio-attachments";
-const ATTACHMENT_HOST_ROOT = path.join(tmpdir(), "jskit-ai-studio", "attachments", STUDIO_DAEMON_ID);
+const ATTACHMENT_HOST_ROOT = path.join(tmpdir(), STUDIO_TEMP_DIR_NAME, "attachments", STUDIO_DAEMON_ID);
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_TTL_MS = 30 * 60 * 1000;
 const attachmentCleanupTimers = new Map();
@@ -125,7 +128,7 @@ function responseErrorMessage(response = {}, fallback = "Request failed.") {
 }
 
 function codexContainerName({ sessionId, terminalId }) {
-  return `jskit-ai-studio-codex-${stableHash(sessionId)}-${stableHash(terminalId)}`;
+  return `ai-studio-codex-${stableHash(sessionId)}-${stableHash(terminalId)}`;
 }
 
 function normalizeCodexThreadId(value) {
@@ -142,9 +145,9 @@ function hostUserIdentityEnvArgs() {
   }
   return [
     "-e",
-    `JSKIT_HOST_UID=${process.getuid()}`,
+    `${STUDIO_HOST_UID_ENV}=${process.getuid()}`,
     "-e",
-    `JSKIT_HOST_GID=${process.getgid()}`
+    `${STUDIO_HOST_GID_ENV}=${process.getgid()}`
   ];
 }
 
@@ -364,10 +367,10 @@ function codexStartupScript(codexThreadId = "") {
     : `codex ${codexOptions}`;
   return [
     "set -e",
-    "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "if [ -n \"${AI_STUDIO_HOST_UID:-}\" ] && [ -n \"${AI_STUDIO_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
     "  mkdir -p /home/studio/.codex /home/studio/.config",
-    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /home/studio/.codex /home/studio/.config",
-    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" --clear-groups env HOME=/home/studio ${codexCommand}`,
+    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /home/studio/.codex /home/studio/.config",
+    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" --clear-groups env HOME=/home/studio ${codexCommand}`,
     "fi",
     `exec env HOME=/home/studio ${codexCommand}`
   ].join("\n");
@@ -388,17 +391,17 @@ function codexTerminalArgs({
     "--name",
     containerName,
     "--label",
-    "jskit-ai-studio.kind=codex-terminal",
+    "ai-studio.kind=codex-terminal",
     "--label",
-    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    `ai-studio.daemon=${STUDIO_DAEMON_ID}`,
     "--label",
     `${STUDIO_DAEMON_PID_LABEL}=${process.pid}`,
     "--label",
-    `jskit-ai-studio.session=${sessionId}`,
+    `ai-studio.session=${sessionId}`,
     "--label",
-    `jskit-ai-studio.terminal=${terminalId}`,
+    `ai-studio.terminal=${terminalId}`,
     "--label",
-    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    `ai-studio.target=${stableHash(targetRoot)}`,
     "-v",
     `${TOOL_HOME_VOLUME}:/home/studio`,
     "-e",
@@ -432,9 +435,9 @@ function dependencyInstallScript() {
   return [
     "set -e",
     "mkdir -p /tmp/studio-home /tmp/npm-cache",
-    "if [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
-    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
-    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" --clear-groups env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(installCommand)}`,
+    "if [ -n \"${AI_STUDIO_HOST_UID:-}\" ] && [ -n \"${AI_STUDIO_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
+    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" --clear-groups env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(installCommand)}`,
     "fi",
     `exec env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(installCommand)}`
   ].join("\n");
@@ -451,17 +454,17 @@ function dependencyInstallTerminalArgs({
     "--rm",
     "-it",
     "--label",
-    "jskit-ai-studio.kind=session-step-terminal",
+    "ai-studio.kind=session-step-terminal",
     "--label",
-    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    `ai-studio.daemon=${STUDIO_DAEMON_ID}`,
     "--label",
     `${STUDIO_DAEMON_PID_LABEL}=${process.pid}`,
     "--label",
-    `jskit-ai-studio.session=${sessionId}`,
+    `ai-studio.session=${sessionId}`,
     "--label",
-    `jskit-ai-studio.terminal=${terminalId}`,
+    `ai-studio.terminal=${terminalId}`,
     "--label",
-    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    `ai-studio.target=${stableHash(targetRoot)}`,
     "-v",
     `${targetRoot}:/workspace`,
     "-v",
@@ -478,11 +481,11 @@ function dependencyInstallTerminalArgs({
 
 function appTestContainerName({ sessionId = "", terminalId }) {
   const scope = sessionId ? stableHash(sessionId) : "target";
-  return `jskit-ai-studio-app-test-${scope}-${stableHash(terminalId)}`;
+  return `ai-studio-app-test-${scope}-${stableHash(terminalId)}`;
 }
 
 function npmScriptContainerName({ terminalId }) {
-  return `jskit-ai-studio-npm-script-target-${stableHash(terminalId)}`;
+  return `ai-studio-npm-script-target-${stableHash(terminalId)}`;
 }
 
 async function readOptionalConfigFile(appRoot, relativePath, fallback) {
@@ -624,8 +627,8 @@ function appTestScript({
   return [
     "set -e",
     "mkdir -p /tmp/studio-home /tmp/npm-cache",
-    "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
-    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
+    "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${AI_STUDIO_HOST_UID:-}\" ] && [ -n \"${AI_STUDIO_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
     "  docker_group_args=\"--clear-groups\"",
     "  if [ -S /var/run/docker.sock ]; then",
     "    docker_sock_gid=\"$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)\"",
@@ -633,7 +636,7 @@ function appTestScript({
     "      docker_group_args=\"--groups $docker_sock_gid\"",
     "    fi",
     "  fi",
-    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" $docker_group_args env HOME=/tmp/studio-home GH_CONFIG_DIR=/home/studio/.config/gh npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
+    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" $docker_group_args env HOME=/tmp/studio-home GH_CONFIG_DIR=/home/studio/.config/gh npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
     "fi",
     `exec env HOME=/tmp/studio-home GH_CONFIG_DIR=/home/studio/.config/gh npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`
   ].join("\n");
@@ -656,17 +659,17 @@ function appTestTerminalArgs({
     "--name",
     containerName,
     "--label",
-    "jskit-ai-studio.kind=app-test-terminal",
+    "ai-studio.kind=app-test-terminal",
     "--label",
-    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    `ai-studio.daemon=${STUDIO_DAEMON_ID}`,
     "--label",
     `${STUDIO_DAEMON_PID_LABEL}=${process.pid}`,
     "--label",
-    `jskit-ai-studio.session=${sessionId || "target"}`,
+    `ai-studio.session=${sessionId || "target"}`,
     "--label",
-    `jskit-ai-studio.terminal=${terminalId}`,
+    `ai-studio.terminal=${terminalId}`,
     "--label",
-    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    `ai-studio.target=${stableHash(targetRoot)}`,
     "-p",
     `127.0.0.1:${port}:${port}`,
     ...gitToolchainMountArgs(targetRoot),
@@ -707,8 +710,8 @@ function npmScriptStartupScript(scriptName = "") {
   return [
     "set -e",
     "mkdir -p /tmp/studio-home /tmp/npm-cache",
-    "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${JSKIT_HOST_UID:-}\" ] && [ -n \"${JSKIT_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
-    "  chown -R \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
+    "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${AI_STUDIO_HOST_UID:-}\" ] && [ -n \"${AI_STUDIO_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
+    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
     "  docker_group_args=\"--clear-groups\"",
     "  if [ -S /var/run/docker.sock ]; then",
     "    docker_sock_gid=\"$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)\"",
@@ -716,7 +719,7 @@ function npmScriptStartupScript(scriptName = "") {
     "      docker_group_args=\"--groups $docker_sock_gid\"",
     "    fi",
     "  fi",
-    `  exec setpriv --reuid "$JSKIT_HOST_UID" --regid "$JSKIT_HOST_GID" $docker_group_args env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
+    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" $docker_group_args env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
     "fi",
     `exec env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`
   ].join("\n");
@@ -737,17 +740,17 @@ function npmScriptTerminalArgs({
     "--name",
     containerName,
     "--label",
-    "jskit-ai-studio.kind=npm-script-terminal",
+    "ai-studio.kind=npm-script-terminal",
     "--label",
-    `jskit-ai-studio.daemon=${STUDIO_DAEMON_ID}`,
+    `ai-studio.daemon=${STUDIO_DAEMON_ID}`,
     "--label",
     `${STUDIO_DAEMON_PID_LABEL}=${process.pid}`,
     "--label",
-    "jskit-ai-studio.session=target",
+    "ai-studio.session=target",
     "--label",
-    `jskit-ai-studio.terminal=${terminalId}`,
+    `ai-studio.terminal=${terminalId}`,
     "--label",
-    `jskit-ai-studio.target=${stableHash(targetRoot)}`,
+    `ai-studio.target=${stableHash(targetRoot)}`,
     ...gitToolchainMountArgs(targetRoot),
     "-v",
     `${targetRoot}:/workspace`,

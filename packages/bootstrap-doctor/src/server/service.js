@@ -16,16 +16,18 @@ import {
 import {
   createReadyStatusCache
 } from "../../../../server/lib/doctorStatusCache.js";
+import {
+  STUDIO_TOOLCHAIN_IMAGE as TOOLCHAIN_IMAGE,
+  STUDIO_TOOL_HOME_VOLUME as TOOL_HOME_VOLUME
+} from "../../../../server/lib/studioRuntimeIdentity.js";
 
-const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
 const TOOLCHAIN_DOCKERFILE = "tooling/bootstrap/Dockerfile";
 const TOOLCHAIN_CONTEXT = "tooling/bootstrap";
-const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
-const MYSQL_CONTAINER = "jskit-ai-studio-mysql";
+const MYSQL_CONTAINER = "ai-studio-bootstrap-mysql";
 const MYSQL_IMAGE = "mysql:8.4";
-const MYSQL_ROOT_PASSWORD = "jskit_studio_root";
-const MYSQL_VOLUME = "jskit_ai_studio_mysql_data";
-const MYSQL_PROBE_DATABASE = "jskit_ai_studio_bootstrap_probe";
+const MYSQL_ROOT_PASSWORD = "ai_studio_bootstrap_root";
+const MYSQL_VOLUME = "ai_studio_bootstrap_mysql_data";
+const MYSQL_PROBE_DATABASE = "ai_studio_bootstrap_probe";
 const MYSQL_PROBE_TABLE = "capability_probe";
 const REQUIRED_GH_SCOPES = ["repo", "read:org", "gist", "workflow"];
 const TERMINAL_NAMESPACE = "bootstrap-doctor";

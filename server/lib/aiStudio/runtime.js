@@ -65,7 +65,7 @@ async function defaultActionHandler(context = {}) {
     return context.runtime.renderPromptAction(context);
   }
   if (context.action?.type === "command") {
-    return context.runtime.runAdapterCommandAction(context);
+    throw commandActionRequiresTerminalError(context.action);
   }
   if (context.action?.type === "finish") {
     return context.runtime.finishSessionAction(context);
@@ -87,6 +87,13 @@ function actionDisabledError(action) {
   return aiStudioError(
     action.disabledReason || `Action ${action.id} is disabled.`,
     "ai_studio_action_disabled"
+  );
+}
+
+function commandActionRequiresTerminalError(action) {
+  return aiStudioError(
+    `Command action ${action.label || action.id} must run in the command terminal.`,
+    "ai_studio_command_requires_terminal"
   );
 }
 
@@ -279,23 +286,14 @@ class AiStudioSessionRuntime {
     };
   }
 
-  async runAdapterCommandAction({
+  async runAdapterFinishAction({
     action,
     input = {},
     session
   } = {}) {
-    return this.runAdapterCommand({
-      action,
-      input,
-      session
-    });
-  }
-
-  async runAdapterCommand({
-    action,
-    input = {},
-    session
-  } = {}) {
+    if (action?.type !== "finish") {
+      throw commandActionRequiresTerminalError(action);
+    }
     return this.adapter.runCommand(action.id, {
       action,
       input,
@@ -310,7 +308,7 @@ class AiStudioSessionRuntime {
     input = {},
     session
   } = {}) {
-    const result = await this.runAdapterCommand({
+    const result = await this.runAdapterFinishAction({
       action,
       input,
       session
@@ -337,6 +335,9 @@ class AiStudioSessionRuntime {
     }
     if (!action.enabled) {
       throw actionDisabledError(action);
+    }
+    if (action.type === "command") {
+      throw commandActionRequiresTerminalError(action);
     }
 
     const handlerResult = await this.actionHandler(action.id)({

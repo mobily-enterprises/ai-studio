@@ -2,6 +2,10 @@ import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/s
 
 import { projectTypeInputValidator } from "./inputSchemas.js";
 import {
+  ACTION_READ_PROJECT_TYPE,
+  ACTION_SAVE_PROJECT_TYPE
+} from "./actions.js";
+import {
   requireLocalStudioRequest
 } from "../../../../server/lib/localStudioRequest.js";
 
@@ -11,10 +15,6 @@ function aiStudioStatusCode(response) {
     return 400;
   }
   return response?.ok === false ? 400 : 200;
-}
-
-function getProjectService(app) {
-  return app.make("feature.ai-studio-project.service");
 }
 
 function requireLocalAiStudioRequest(request, reply) {
@@ -62,7 +62,10 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getProjectService(app).readProjectType();
+      const response = await request.executeAction({
+        actionId: ACTION_READ_PROJECT_TYPE,
+        input: {}
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -83,7 +86,10 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getProjectService(app).saveProjectType(requestBodyObject(request));
+      const response = await request.executeAction({
+        actionId: ACTION_SAVE_PROJECT_TYPE,
+        input: requestBodyObject(request)
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );

@@ -288,9 +288,17 @@ function registerSessionStepTerminalWebSocketRoute(app, runtimeApp) {
   );
 }
 
-function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
+function registerAiStudioTerminalWebSocketRoute(
+  app,
+  runtimeApp,
+  {
+    routePath,
+    subscribeMethod,
+    writeMethod
+  } = {}
+) {
   app.get(
-    "/api/ai-studio/sessions/:sessionId/codex-terminal/:terminalSessionId/ws",
+    routePath,
     { websocket: true },
     (socket, request) => {
       let subscription = null;
@@ -334,7 +342,7 @@ function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
           if (message?.type !== "input") {
             return;
           }
-          const response = service.writeCodexTerminal(sessionId, terminalSessionId, message.data);
+          const response = service[writeMethod](sessionId, terminalSessionId, message.data);
           if (response?.ok === false) {
             sendSocketJson(socket, {
               error: response.error || "Terminal input failed.",
@@ -352,7 +360,7 @@ function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
       socket.on("close", closeSubscription);
       socket.on("error", closeSubscription);
 
-      void service.subscribeCodexTerminal(sessionId, terminalSessionId, (message) => {
+      void service[subscribeMethod](sessionId, terminalSessionId, (message) => {
         sendSocketJson(socket, message);
       }).then((result) => {
         if (result?.ok === false) {
@@ -371,87 +379,20 @@ function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
   );
 }
 
+function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
+  registerAiStudioTerminalWebSocketRoute(app, runtimeApp, {
+    routePath: "/api/ai-studio/sessions/:sessionId/codex-terminal/:terminalSessionId/ws",
+    subscribeMethod: "subscribeCodexTerminal",
+    writeMethod: "writeCodexTerminal"
+  });
+}
+
 function registerAiStudioCommandTerminalWebSocketRoute(app, runtimeApp) {
-  app.get(
-    "/api/ai-studio/sessions/:sessionId/command-terminal/:terminalSessionId/ws",
-    { websocket: true },
-    (socket, request) => {
-      let subscription = null;
-      let closed = false;
-
-      const closeSubscription = () => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-        subscription?.unsubscribe?.();
-        subscription = null;
-      };
-
-      const closeWithError = (code, error) => {
-        sendSocketJson(socket, {
-          error,
-          type: "error"
-        });
-        socket.close(code, error);
-      };
-
-      if (!isLocalStudioRequest(request)) {
-        closeWithError(1008, "Open Studio on localhost or 127.0.0.1.");
-        return;
-      }
-
-      let service;
-      try {
-        service = runtimeApp.make("feature.ai-studio-terminals.service");
-      } catch (error) {
-        closeWithError(1011, String(error?.message || error || "AI Studio terminal service is unavailable."));
-        return;
-      }
-      const sessionId = String(request.params?.sessionId || "");
-      const terminalSessionId = String(request.params?.terminalSessionId || "");
-
-      socket.on("message", async (rawMessage) => {
-        try {
-          const message = JSON.parse(rawMessage.toString());
-          if (message?.type !== "input") {
-            return;
-          }
-          const response = service.writeCommandTerminal(sessionId, terminalSessionId, message.data);
-          if (response?.ok === false) {
-            sendSocketJson(socket, {
-              error: response.error || "Terminal input failed.",
-              type: "error"
-            });
-          }
-        } catch (error) {
-          sendSocketJson(socket, {
-            error: String(error?.message || error || "Terminal input failed."),
-            type: "error"
-          });
-        }
-      });
-
-      socket.on("close", closeSubscription);
-      socket.on("error", closeSubscription);
-
-      void service.subscribeCommandTerminal(sessionId, terminalSessionId, (message) => {
-        sendSocketJson(socket, message);
-      }).then((result) => {
-        if (result?.ok === false) {
-          closeWithError(1008, result.error || "Terminal session not found.");
-          return;
-        }
-        subscription = result;
-        sendSocketJson(socket, {
-          session: publicTerminalSnapshot(result),
-          type: "snapshot"
-        });
-      }).catch((error) => {
-        closeWithError(1011, String(error?.message || error || "Terminal stream failed."));
-      });
-    }
-  );
+  registerAiStudioTerminalWebSocketRoute(app, runtimeApp, {
+    routePath: "/api/ai-studio/sessions/:sessionId/command-terminal/:terminalSessionId/ws",
+    subscribeMethod: "subscribeCommandTerminal",
+    writeMethod: "writeCommandTerminal"
+  });
 }
 
 function registerAppTestTerminalWebSocketRoute(app, runtimeApp) {
@@ -660,7 +601,7 @@ async function createServer(options = {}) {
   app.get("/api/health", async () => {
     return {
       ok: true,
-      app: "jskit-ai-studio"
+      app: "ai-studio"
     };
   });
   const runtimeEnv = resolveRuntimeEnv();
@@ -802,12 +743,12 @@ async function startServer(options = {}) {
       return;
     }
     closing = true;
-    app.log.info({ signal }, "Stopping jskit-ai-studio server.");
+    app.log.info({ signal }, "Stopping ai-studio server.");
     try {
       await app.close();
       process.exitCode = 0;
     } catch (error) {
-      app.log.error({ error }, "Failed to stop jskit-ai-studio server cleanly.");
+      app.log.error({ error }, "Failed to stop ai-studio server cleanly.");
       process.exitCode = 1;
     }
   };

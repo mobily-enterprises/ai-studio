@@ -23,9 +23,11 @@ import {
   gitSafeDirectoryArgs,
   gitToolchainMountArgs
 } from "../../../../server/lib/gitToolchainMounts.js";
+import {
+  STUDIO_TOOLCHAIN_IMAGE as TOOLCHAIN_IMAGE,
+  STUDIO_TOOL_HOME_VOLUME as TOOL_HOME_VOLUME
+} from "../../../../server/lib/studioRuntimeIdentity.js";
 
-const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
-const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
 const REQUIRED_GH_SCOPES = ["repo", "read:org", "gist", "workflow"];
 const TERMINAL_NAMESPACE = "target-app-doctor";
 

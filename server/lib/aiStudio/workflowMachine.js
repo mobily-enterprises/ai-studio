@@ -26,7 +26,9 @@ function normalizeAction(action = {}, stepId = "") {
     adapterCapability: normalizeText(action.adapterCapability),
     advanceOnSuccess: action.advanceOnSuccess === true,
     disabledReason: normalizeText(action.disabledReason),
+    disabledWhenReason: normalizeText(action.disabledWhenReason || action.disabledReason),
     disabledWhen: normalizeConditionList(action.disabledWhen),
+    enabledWhenReason: normalizeText(action.enabledWhenReason || action.disabledReason),
     enabledWhen: normalizeConditionList(action.enabledWhen),
     id,
     label: normalizeText(action.label || id),
@@ -259,6 +261,13 @@ class WorkflowMachine {
         ? conditionMet()
         : conditionMissing(`Waiting for metadata: ${metadataName}.`);
     }
+    if (name.startsWith("artifact:")) {
+      const artifactName = name.slice("artifact:".length);
+      const artifact = session.artifactReadiness?.[artifactName];
+      return artifact?.nonEmpty
+        ? conditionMet()
+        : conditionMissing(`Waiting for artifact: ${artifactName}.`);
+    }
     if (name.startsWith("completed:")) {
       const stepId = name.slice("completed:".length);
       return this.completedStepIds(session).includes(stepId)
@@ -279,11 +288,11 @@ class WorkflowMachine {
   }
 
   actionStateForSession(step, action, session = {}) {
-    const disabledStateForAction = this.checkBlockingConditions(action.disabledWhen, session, action.disabledReason);
+    const disabledStateForAction = this.checkBlockingConditions(action.disabledWhen, session, action.disabledWhenReason);
     if (!disabledStateForAction.enabled) {
       return disabledStateForAction;
     }
-    const workflowState = this.checkRequirements(action.enabledWhen, session, action.disabledReason);
+    const workflowState = this.checkRequirements(action.enabledWhen, session, action.enabledWhenReason);
     if (!workflowState.enabled) {
       return workflowState;
     }

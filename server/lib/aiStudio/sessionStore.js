@@ -20,6 +20,7 @@ const AI_STUDIO_SESSION_STATUS = deepFreeze({
 });
 const AI_STUDIO_SESSION_STATUSES = new Set(Object.values(AI_STUDIO_SESSION_STATUS));
 const ACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const ARTIFACT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
@@ -312,6 +313,25 @@ function createAiStudioSessionStore({
     return await readTextIfExists(artifactFilePath(sessionPaths, relativePath));
   }
 
+  async function readArtifactReadiness(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const names = sortedFileNames(
+      await readDirectoryEntries(sessionPaths.artifactsRoot),
+      (name) => ARTIFACT_NAME_PATTERN.test(name)
+    );
+    const entries = await Promise.all(names.map(async (name) => {
+      const text = await readTextIfExists(artifactFilePath(sessionPaths, name));
+      return [
+        name,
+        {
+          exists: true,
+          nonEmpty: Boolean(normalizeText(text))
+        }
+      ];
+    }));
+    return Object.fromEntries(entries);
+  }
+
   async function artifactExists(sessionId, relativePath) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     return pathExists(artifactFilePath(sessionPaths, relativePath));
@@ -405,17 +425,19 @@ function createAiStudioSessionStore({
 
   async function readSession(sessionId) {
     const sessionPaths = await ensureSessionRoot(sessionId);
-    const [manifest, status, currentStep, metadata, completedSteps, actionResults] = await Promise.all([
+    const [manifest, status, currentStep, metadata, completedSteps, artifactReadiness, actionResults] = await Promise.all([
       readManifest(sessionPaths.sessionId),
       readStatus(sessionPaths.sessionId),
       readCurrentStep(sessionPaths.sessionId),
       readMetadata(sessionPaths.sessionId),
       readCompletedSteps(sessionPaths.sessionId),
+      readArtifactReadiness(sessionPaths.sessionId),
       readActionResults(sessionPaths.sessionId)
     ]);
     return {
       actionResults,
       actionsRoot: sessionPaths.actionsRoot,
+      artifactReadiness,
       artifactsRoot: sessionPaths.artifactsRoot,
       commandLogPath: sessionPaths.commandLogPath,
       completedSteps,
@@ -508,6 +530,7 @@ function createAiStudioSessionStore({
     listSessions,
     paths,
     readArtifact,
+    readArtifactReadiness,
     readActionResult,
     readActionResults,
     readCommandLog,

@@ -65,19 +65,30 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Define the issue and create the local issue files.",
       id: "issue_file_created",
-      label: "Define issue and create file"
+      label: "Define issue and create file",
+      next: {
+        disabledReason: "Create the issue file before continuing.",
+        enabledWhen: ["artifact:issue_title", "artifact:issue.md"]
+      }
     },
     {
       actions: [
         {
           disabledReason: "The GitHub issue already exists; edit it on GitHub instead.",
           disabledWhen: ["metadata:issue_url"],
+          enabledWhen: ["artifact:issue_title", "artifact:issue.md"],
+          enabledWhenReason: "Create the issue file before editing.",
           id: "edit_issue",
           label: "Edit issue",
           type: "editor"
         },
         {
           adapterCapability: "create_issue_on_gh",
+          disabledReason: "Create the issue file before submitting it to GitHub.",
+          disabledWhen: ["metadata:issue_url"],
+          disabledWhenReason: "The GitHub issue already exists.",
+          enabledWhen: ["artifact:issue_title", "artifact:issue.md"],
+          enabledWhenReason: "Create the issue file before submitting it to GitHub.",
           id: "create_issue_on_gh",
           label: "Create issue on GH",
           type: "command"
@@ -219,19 +230,30 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Create the local pull request file.",
       id: "pr_file_created",
-      label: "Create PR file"
+      label: "Create PR file",
+      next: {
+        disabledReason: "Create the pull request file before continuing.",
+        enabledWhen: ["artifact:pull_request.md"]
+      }
     },
     {
       actions: [
         {
           disabledReason: "The GitHub pull request already exists; edit it on GitHub instead.",
           disabledWhen: ["metadata:pr_url"],
+          enabledWhen: ["artifact:pull_request.md"],
+          enabledWhenReason: "Create the pull request file before editing.",
           id: "edit_pr",
           label: "Edit PR",
           type: "editor"
         },
         {
           adapterCapability: "create_pr_on_gh",
+          disabledReason: "Create the pull request file before creating the GitHub pull request.",
+          disabledWhen: ["metadata:pr_url"],
+          disabledWhenReason: "The GitHub pull request already exists.",
+          enabledWhen: ["artifact:pull_request.md"],
+          enabledWhenReason: "Create the pull request file before creating the GitHub pull request.",
           id: "create_pr_on_gh",
           label: "Create PR on GH",
           type: "command"

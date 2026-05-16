@@ -2,6 +2,10 @@ import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/s
 
 import { artifactsInputValidator } from "./inputSchemas.js";
 import {
+  ACTION_READ_ARTIFACTS,
+  ACTION_SAVE_ARTIFACTS
+} from "./actions.js";
+import {
   requireLocalStudioRequest
 } from "../../../../server/lib/localStudioRequest.js";
 
@@ -16,14 +20,15 @@ function aiStudioStatusCode(response, { missingStatus = 404 } = {}) {
   return response?.ok === false ? 400 : 200;
 }
 
-function getArtifactsService(app) {
-  return app.make("feature.ai-studio-artifacts.service");
-}
-
 function requireLocalAiStudioRequest(request, reply) {
   return requireLocalStudioRequest(request, reply, {
     message: "AI Studio artifact routes only accept loopback Studio requests."
   });
+}
+
+function requestBodyObject(request) {
+  const body = request.input?.body || request.body || {};
+  return body && typeof body === "object" && !Array.isArray(body) ? body : {};
 }
 
 function registerRoutes(
@@ -60,7 +65,12 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getArtifactsService(app).readArtifacts(request.params.sessionId);
+      const response = await request.executeAction({
+        actionId: ACTION_READ_ARTIFACTS,
+        input: {
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -81,10 +91,13 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getArtifactsService(app).saveArtifacts(
-        request.params.sessionId,
-        request.input.body || {}
-      );
+      const response = await request.executeAction({
+        actionId: ACTION_SAVE_ARTIFACTS,
+        input: {
+          ...requestBodyObject(request),
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );

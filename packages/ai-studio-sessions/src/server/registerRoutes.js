@@ -1,6 +1,14 @@
 import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/shared/surface";
 
 import {
+  ACTION_ABANDON_SESSION,
+  ACTION_ADVANCE_SESSION,
+  ACTION_CREATE_SESSION,
+  ACTION_INSPECT_SESSION,
+  ACTION_LIST_SESSIONS,
+  ACTION_RUN_SESSION_ACTION
+} from "./actions.js";
+import {
   requireLocalStudioRequest
 } from "../../../../server/lib/localStudioRequest.js";
 
@@ -12,14 +20,14 @@ function aiStudioStatusCode(response, { missingStatus = 404 } = {}) {
   if (code.startsWith("ai_studio_invalid") || code === "ai_studio_project_type_missing") {
     return 400;
   }
-  if (code === "ai_studio_action_disabled" || code === "ai_studio_step_not_ready") {
+  if (
+    code === "ai_studio_action_disabled" ||
+    code === "ai_studio_command_requires_terminal" ||
+    code === "ai_studio_step_not_ready"
+  ) {
     return 409;
   }
   return response?.ok === false ? 400 : 200;
-}
-
-function getSessionService(app) {
-  return app.make("feature.ai-studio-sessions.service");
 }
 
 function requireLocalAiStudioRequest(request, reply) {
@@ -67,7 +75,10 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).listSessions();
+      const response = await request.executeAction({
+        actionId: ACTION_LIST_SESSIONS,
+        input: {}
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -87,7 +98,10 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).createSession();
+      const response = await request.executeAction({
+        actionId: ACTION_CREATE_SESSION,
+        input: {}
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -107,7 +121,12 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).inspectSession(request.params.sessionId);
+      const response = await request.executeAction({
+        actionId: ACTION_INSPECT_SESSION,
+        input: {
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -127,11 +146,14 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).runSessionAction(
-        request.params.sessionId,
-        request.params.actionId,
-        requestBodyObject(request)
-      );
+      const response = await request.executeAction({
+        actionId: ACTION_RUN_SESSION_ACTION,
+        input: {
+          actionId: request.params.actionId,
+          input: requestBodyObject(request),
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -151,7 +173,12 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).advanceSession(request.params.sessionId);
+      const response = await request.executeAction({
+        actionId: ACTION_ADVANCE_SESSION,
+        input: {
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );
@@ -171,7 +198,12 @@ function registerRoutes(
       if (!requireLocalAiStudioRequest(request, reply)) {
         return;
       }
-      const response = await getSessionService(app).abandonSession(request.params.sessionId);
+      const response = await request.executeAction({
+        actionId: ACTION_ABANDON_SESSION,
+        input: {
+          sessionId: request.params.sessionId
+        }
+      });
       reply.code(aiStudioStatusCode(response)).send(response);
     }
   );

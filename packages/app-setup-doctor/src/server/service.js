@@ -32,11 +32,15 @@ import {
 import {
   shellScript
 } from "../../../../server/lib/shellScript.js";
+import {
+  STUDIO_HOST_GID_ENV,
+  STUDIO_HOST_UID_ENV,
+  STUDIO_TOOLCHAIN_IMAGE as TOOLCHAIN_IMAGE,
+  STUDIO_TOOL_HOME_VOLUME as TOOL_HOME_VOLUME
+} from "../../../../server/lib/studioRuntimeIdentity.js";
 
-const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
-const TOOL_HOME_VOLUME = "jskit_ai_studio_tool_home";
-const MYSQL_CONTAINER = "jskit-ai-studio-mysql";
-const MYSQL_ROOT_PASSWORD = "jskit_studio_root";
+const MYSQL_CONTAINER = "ai-studio-bootstrap-mysql";
+const MYSQL_ROOT_PASSWORD = "ai_studio_bootstrap_root";
 const TERMINAL_NAMESPACE = "app-setup-doctor";
 const CONFIG_IMPORT_FILES = [
   "eslint.config.mjs",
@@ -117,9 +121,9 @@ function hostUserIdentityEnvArgs() {
   }
   return [
     "-e",
-    `JSKIT_HOST_UID=${process.getuid()}`,
+    `${STUDIO_HOST_UID_ENV}=${process.getuid()}`,
     "-e",
-    `JSKIT_HOST_GID=${process.getgid()}`
+    `${STUDIO_HOST_GID_ENV}=${process.getgid()}`
   ];
 }
 
@@ -525,13 +529,13 @@ function gitCheckpointScript() {
   return shellScript([
     "set -e",
     "set -x",
-    ": \"${JSKIT_HOST_UID:=0}\"",
-    ": \"${JSKIT_HOST_GID:=0}\"",
-    "as_host() { setpriv --reuid \"$JSKIT_HOST_UID\" --regid \"$JSKIT_HOST_GID\" --clear-groups \"$@\"; }",
+    ": \"${AI_STUDIO_HOST_UID:=0}\"",
+    ": \"${AI_STUDIO_HOST_GID:=0}\"",
+    "as_host() { setpriv --reuid \"$AI_STUDIO_HOST_UID\" --regid \"$AI_STUDIO_HOST_GID\" --clear-groups \"$@\"; }",
     "set +x",
     "export GIT_PASSWORD=\"$(gh auth token)\"",
     "printf '%s\\n' '#!/bin/sh' 'case \"$1\" in' '*Username*) printf \"%s\\\\n\" \"x-access-token\" ;;' '*) printf \"%s\\\\n\" \"$GIT_PASSWORD\" ;;' 'esac' > /tmp/jskit-git-askpass",
-    "chown \"$JSKIT_HOST_UID:$JSKIT_HOST_GID\" /tmp/jskit-git-askpass",
+    "chown \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/jskit-git-askpass",
     "chmod 700 /tmp/jskit-git-askpass",
     "export GIT_ASKPASS=/tmp/jskit-git-askpass",
     "export GIT_TERMINAL_PROMPT=0",

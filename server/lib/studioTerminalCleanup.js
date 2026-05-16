@@ -2,13 +2,14 @@ import { execFile } from "node:child_process";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
-  STUDIO_DAEMON_PID_LABEL
-} from "./studioTerminalLabels.js";
+  STUDIO_DAEMON_PID_LABEL,
+  STUDIO_TOOLCHAIN_IMAGE,
+  studioDockerLabel
+} from "./studioRuntimeIdentity.js";
 
 const execFileAsync = promisify(execFile);
-const STUDIO_CODEX_CONTAINER_LABEL = "jskit-ai-studio.kind=codex-terminal";
-const STUDIO_APP_TEST_CONTAINER_LABEL = "jskit-ai-studio.kind=app-test-terminal";
-const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
+const STUDIO_CODEX_CONTAINER_LABEL = studioDockerLabel("kind", "codex-terminal");
+const STUDIO_APP_TEST_CONTAINER_LABEL = studioDockerLabel("kind", "app-test-terminal");
 const STALE_PROCESS_GRACE_MS = 500;
 const MISSING_DOCKER_LABEL_VALUE = "<no value>";
 
@@ -39,7 +40,7 @@ function parseProcessRows(output = "") {
 function isStudioToolchainDockerRun(command = "") {
   const normalizedCommand = String(command || "");
   return /\bdocker\s+run\b/u.test(normalizedCommand) &&
-    normalizedCommand.includes(TOOLCHAIN_IMAGE);
+    normalizedCommand.includes(STUDIO_TOOLCHAIN_IMAGE);
 }
 
 function normalizeProcessId(value = "") {
