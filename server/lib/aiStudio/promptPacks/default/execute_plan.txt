@@ -1,0 +1,20 @@
+Execute the accepted plan for this AI Studio session.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+Adapter facts:
+{{adapter.facts.json}}
+
+Adapter prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Make the requested code changes directly in the workspace. Keep the work scoped to the session goal and report what changed when finished.

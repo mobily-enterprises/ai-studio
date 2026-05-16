@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   AiStudioSessionRuntime,
   DEFAULT_AI_STUDIO_WORKFLOW,
+  FakeTargetAdapter,
   WorkflowMachine
 } from "../../server/lib/aiStudio/index.js";
 
@@ -74,6 +75,11 @@ test("ai-studio runtime advance records completed steps and moves to the next wo
 test("ai-studio runtime shows current-step actions from the workflow", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          create_worktree: true
+        }
+      }),
       targetRoot
     });
     await runtime.createSession({
@@ -84,6 +90,7 @@ test("ai-studio runtime shows current-step actions from the workflow", async () 
     assert.equal(session.currentStep, "worktree_created");
     assert.deepEqual(session.actions, [
       {
+        adapterCapability: "create_worktree",
         disabledReason: "",
         enabled: true,
         id: "create_worktree",
@@ -112,6 +119,11 @@ test("ai-studio runtime runAction records the action result without advancing", 
           };
         }
       },
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          create_worktree: true
+        }
+      }),
       clock: () => new Date("2026-05-16T01:02:03.000Z"),
       targetRoot
     });
@@ -158,6 +170,75 @@ test("ai-studio runtime runAction records the action result without advancing", 
         stepId: "worktree_created"
       }
     ]);
+  });
+});
+
+test("ai-studio runtime prompt actions render Codex handoff data without advancing", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "plan_made",
+      sessionId: "prompt_action"
+    });
+
+    const afterAction = await runtime.runAction("prompt_action", "make_plan", {
+      scope: "unit test"
+    });
+
+    assert.equal(afterAction.currentStep, "plan_made");
+    assert.deepEqual(afterAction.completedSteps, []);
+    assert.equal(afterAction.actionResult.status, "prompt_ready");
+    assert.equal(afterAction.actionResult.promptId, "make_plan");
+    assert.match(afterAction.actionResult.prompt, /Create the implementation plan/u);
+    assert.match(afterAction.actionResult.prompt, /"scope": "unit test"/u);
+    assert.equal(afterAction.actionResult.codexPromptHandoff.kind, "codex_prompt_handoff");
+    assert.equal(afterAction.actionResult.codexPromptHandoff.codex.mode, "inject_prompt");
+    assert.equal(afterAction.actionResult.codexPromptHandoff.prompt, afterAction.actionResult.prompt);
+    assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /Make plan/u);
+    assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /\[\[JSKIT_STUDIO_CONTEXT_START\]\]/u);
+  });
+});
+
+test("ai-studio runtime disables prompt actions while the terminal is active", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          create_worktree: true
+        }
+      }),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "plan_made",
+      metadata: {
+        terminal_active: "true"
+      },
+      sessionId: "terminal_active"
+    });
+
+    const session = await runtime.getSession("terminal_active");
+    assert.deepEqual(session.actions, [
+      {
+        disabledReason: "Codex terminal is active.",
+        enabled: false,
+        id: "make_plan",
+        label: "Make plan",
+        promptId: "make_plan",
+        type: "prompt",
+        visible: true
+      }
+    ]);
+    await assert.rejects(
+      () => runtime.runAction("terminal_active", "make_plan"),
+      {
+        code: "ai_studio_action_disabled",
+        message: "Codex terminal is active."
+      }
+    );
   });
 });
 

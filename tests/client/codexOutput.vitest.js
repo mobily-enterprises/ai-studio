@@ -3,7 +3,9 @@ import {
   codexTrustPromptLooksActive,
   extractCodexThreadId,
   isCodexThreadId,
-  stripTerminalControlSequences
+  stripStudioContextBlocksForDisplay,
+  stripTerminalControlSequences,
+  wrapPromptWithStudioContext
 } from "../../src/lib/codexOutput.js";
 
 describe("codexOutput terminal utilities", () => {
@@ -29,5 +31,15 @@ describe("codexOutput terminal utilities", () => {
       "123e4567-e89b-12d3-a456-426614174000"
     ].join("\n"))).toBe("123e4567-e89b-12d3-a456-426614174000");
     expect(isCodexThreadId("v0.130.0")).toBe(false);
+  });
+
+  it("hides marked Studio prompt context from terminal display", () => {
+    const terminalInput = wrapPromptWithStudioContext(
+      "This is the long prompt body.",
+      "Create the issue file."
+    );
+
+    expect(terminalInput).toContain("[[JSKIT_STUDIO_CONTEXT_START]]");
+    expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Create the issue file.\n\n");
   });
 });

@@ -79,6 +79,10 @@ function assertAiStudioSessionStatus(status) {
   return normalizedStatus;
 }
 
+function pathIsInsideRoot(candidatePath, rootPath) {
+  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${path.sep}`);
+}
+
 function resolveSafeChildPath(root, relativePath, {
   code = "ai_studio_invalid_relative_path",
   label = "relative path"
@@ -89,7 +93,7 @@ function resolveSafeChildPath(root, relativePath, {
   }
   const normalizedRoot = path.resolve(root);
   const resolvedPath = path.resolve(normalizedRoot, normalizedRelativePath);
-  if (resolvedPath !== normalizedRoot && !resolvedPath.startsWith(`${normalizedRoot}${path.sep}`)) {
+  if (!pathIsInsideRoot(resolvedPath, normalizedRoot)) {
     throw aiStudioError(`Invalid ai-studio ${label}: ${normalizedRelativePath}`, code);
   }
   return resolvedPath;
@@ -205,11 +209,11 @@ function createClockNow(clock) {
   return () => new Date();
 }
 
-async function createAvailableSessionId(paths, now) {
+async function createAvailableSessionId(rootPaths, now) {
   const baseSessionId = timestampForSessionId(now);
   for (let index = 0; index < 1000; index += 1) {
     const sessionId = index === 0 ? baseSessionId : `${baseSessionId}_${index + 1}`;
-    if (!await fileExists(path.join(paths.activeSessionsRoot, sessionId))) {
+    if (!await fileExists(path.join(rootPaths.activeSessionsRoot, sessionId))) {
       return sessionId;
     }
   }

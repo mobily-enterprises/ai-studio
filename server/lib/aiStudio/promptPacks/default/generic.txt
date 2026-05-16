@@ -1,0 +1,32 @@
+You are working inside AI Studio.
+
+Run the requested workflow action.
+
+Action:
+- id: {{action.id}}
+- label: {{action.label}}
+- prompt: {{action.promptId}}
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- status: {{session.status}}
+- target root: {{session.targetRoot}}
+
+Session metadata:
+{{session.metadata.json}}
+
+Adapter:
+- id: {{adapter.id}}
+- label: {{adapter.label}}
+
+Adapter facts:
+{{adapter.facts.json}}
+
+Adapter prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Respond in the terminal with the work completed, any files changed, and any remaining blockers.

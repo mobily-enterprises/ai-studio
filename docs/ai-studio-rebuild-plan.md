@@ -1014,14 +1014,14 @@ Instructions:
 
 Checklist:
 
-- [ ] Prompt pack directory exists.
-- [ ] Shared prompt renderer exists.
-- [ ] Prompt context object is explicit.
-- [ ] Prompt actions render prompt text.
-- [ ] Studio can receive prompt handoff data.
-- [ ] Hidden prompt markers are still filtered from terminal output.
-- [ ] Prompt buttons are disabled while terminal activity is active.
-- [ ] Fast tests cover prompt rendering and marker filtering.
+- [x] Prompt pack directory exists.
+- [x] Shared prompt renderer exists.
+- [x] Prompt context object is explicit.
+- [x] Prompt actions render prompt text.
+- [x] Studio can receive prompt handoff data.
+- [x] Hidden prompt markers are still filtered from terminal output.
+- [x] Prompt buttons are disabled while terminal activity is active.
+- [x] Fast tests cover prompt rendering and marker filtering.
 
 Acceptance:
 
@@ -1041,16 +1041,16 @@ Instructions:
 
 Checklist:
 
-- [ ] Adapter interface exists.
-- [ ] Adapter detection result type exists.
-- [ ] Adapter project facts type exists.
-- [ ] Adapter command type exists.
-- [ ] Adapter action result type exists.
-- [ ] Fake adapter exists.
-- [ ] Runtime can load one adapter.
-- [ ] Adapter facts appear in session view.
-- [ ] Adapter facts appear in rendered prompts.
-- [ ] Fast tests cover adapter capability gating.
+- [x] Adapter interface exists.
+- [x] Adapter detection result type exists.
+- [x] Adapter project facts type exists.
+- [x] Adapter command type exists.
+- [x] Adapter action result type exists.
+- [x] Fake adapter exists.
+- [x] Runtime can load one adapter.
+- [x] Adapter facts appear in session view.
+- [x] Adapter facts appear in rendered prompts.
+- [x] Fast tests cover adapter capability gating.
 
 Acceptance:
 
@@ -1072,17 +1072,17 @@ Instructions:
 
 Checklist:
 
-- [ ] JSKIT adapter detects target root.
-- [ ] JSKIT adapter exposes setup facts.
-- [ ] Worktree setup action exists.
-- [ ] Dependency install action exists.
-- [ ] Issue prompt action exists.
-- [ ] Issue file prompt action exists.
-- [ ] Issue editor action exists.
-- [ ] GitHub issue creation action exists.
-- [ ] `issue_url` is stored as durable session metadata.
-- [ ] `Next` enables only after issue submission.
-- [ ] Fast tests cover JSKIT capability mapping with fake command runners.
+- [x] JSKIT adapter detects target root.
+- [x] JSKIT adapter exposes setup facts.
+- [x] Worktree setup action exists.
+- [x] Dependency install action exists.
+- [x] Issue prompt action exists.
+- [x] Issue file prompt action exists.
+- [x] Issue editor action exists.
+- [x] GitHub issue creation action exists.
+- [x] `issue_url` is stored as durable session metadata.
+- [x] `Next` enables only after issue submission.
+- [x] Fast tests cover JSKIT capability mapping with fake command runners.
 
 Acceptance:
 

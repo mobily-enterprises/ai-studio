@@ -1,0 +1,20 @@
+Create the implementation plan for this AI Studio session.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+Adapter facts:
+{{adapter.facts.json}}
+
+Adapter prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Write a clear, ordered plan in the terminal. Do not modify files while creating the plan.

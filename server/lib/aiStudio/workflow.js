@@ -11,6 +11,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "create_worktree",
           id: "create_worktree",
           label: "Create worktree",
           type: "command"
@@ -23,6 +24,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "install_dependencies",
           id: "install_dependencies",
           label: "Install dependencies",
           type: "command"
@@ -35,13 +37,17 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "send_issue_prompt",
           id: "send_issue_prompt",
           label: "Send prompt",
+          promptId: "send_issue_prompt",
           type: "prompt"
         },
         {
+          adapterCapability: "create_issue_file",
           id: "create_issue_file",
           label: "Create issue file",
+          promptId: "create_issue_file",
           type: "prompt"
         }
       ],
@@ -52,11 +58,13 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "edit_issue",
           id: "edit_issue",
           label: "Edit issue",
           type: "editor"
         },
         {
+          adapterCapability: "create_issue_on_gh",
           id: "create_issue_on_gh",
           label: "Create issue on GH",
           type: "command"
@@ -64,13 +72,17 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Review the issue files and submit the GitHub issue.",
       id: "issue_submitted",
-      label: "Edit and submit issue"
+      label: "Edit and submit issue",
+      next: {
+        enabledWhen: ["metadata:issue_url"]
+      }
     },
     {
       actions: [
         {
           id: "make_plan",
           label: "Make plan",
+          promptId: "make_plan",
           type: "prompt"
         }
       ],
@@ -83,6 +95,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "execute_plan",
           label: "Execute plan",
+          promptId: "execute_plan",
           type: "prompt"
         }
       ],
@@ -95,6 +108,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "run_deep_ui_check",
           label: "Run deep UI check",
+          promptId: "run_deep_ui_check",
           type: "prompt"
         }
       ],
@@ -107,11 +121,13 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "run_deslop",
           label: "Run deslop",
+          promptId: "run_deslop",
           type: "prompt"
         },
         {
           id: "resolve_deslop",
           label: "Resolve deslop",
+          promptId: "resolve_deslop",
           type: "prompt"
         }
       ],
@@ -148,6 +164,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "update_project_knowledge",
           label: "Update project knowledge",
+          promptId: "update_project_knowledge",
           type: "prompt"
         }
       ],
@@ -172,6 +189,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "create_pr_file",
           label: "Create PR file",
+          promptId: "create_pr_file",
           type: "prompt"
         }
       ],
@@ -201,6 +219,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           id: "prepare_for_merge",
           label: "Prepare for merge",
+          promptId: "prepare_for_merge",
           type: "prompt"
         },
         {

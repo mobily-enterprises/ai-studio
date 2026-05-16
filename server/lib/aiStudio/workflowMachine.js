@@ -21,12 +21,15 @@ function normalizeAction(action = {}, stepId = "") {
   if (!id) {
     throw aiStudioError(`AI Studio workflow step ${stepId} has an action without an id.`, "ai_studio_workflow_action_id_missing");
   }
+  const type = normalizeText(action.type || "command");
   return {
+    adapterCapability: normalizeText(action.adapterCapability),
     disabledReason: normalizeText(action.disabledReason),
     enabledWhen: normalizeConditionList(action.enabledWhen),
     id,
     label: normalizeText(action.label || id),
-    type: normalizeText(action.type || "command"),
+    promptId: type === "prompt" ? normalizeText(action.promptId || id) : "",
+    type,
     visible: action.visible !== false
   };
 }
@@ -42,7 +45,8 @@ function normalizeNext(next = {}) {
 
 function normalizeActions(actions = [], stepId = "") {
   const seenActionIds = new Set();
-  return (Array.isArray(actions) ? actions : []).map((action) => {
+  const normalizedActions = [];
+  for (const action of Array.isArray(actions) ? actions : []) {
     const normalizedAction = normalizeAction(action, stepId);
     if (seenActionIds.has(normalizedAction.id)) {
       throw aiStudioError(
@@ -51,8 +55,9 @@ function normalizeActions(actions = [], stepId = "") {
       );
     }
     seenActionIds.add(normalizedAction.id);
-    return normalizedAction;
-  });
+    normalizedActions.push(normalizedAction);
+  }
+  return normalizedActions;
 }
 
 function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
@@ -99,23 +104,31 @@ function publicStepDefinition(step, status) {
 
 function publicAction(action, state) {
   return {
+    ...publicActionDefinition(action),
     disabledReason: state.disabledReason,
-    enabled: state.enabled,
+    enabled: state.enabled
+  };
+}
+
+function publicActionDefinition(action) {
+  const definition = {
     id: action.id,
     label: action.label,
     type: action.type,
-    visible: true
+    visible: action.visible
   };
+  if (action.adapterCapability) {
+    definition.adapterCapability = action.adapterCapability;
+  }
+  if (action.promptId) {
+    definition.promptId = action.promptId;
+  }
+  return definition;
 }
 
 function publicCurrentStepDefinition(step) {
   return {
-    actions: step.actions.map((action) => ({
-      id: action.id,
-      label: action.label,
-      type: action.type,
-      visible: action.visible
-    })),
+    actions: step.actions.map(publicActionDefinition),
     description: step.description,
     id: step.id,
     index: step.index,
@@ -240,11 +253,11 @@ class WorkflowMachine {
     return conditionMissing(`Unknown condition: ${name}.`);
   }
 
-  checkRequirements(requirements = [], rawSession = {}, fallbackReason = "") {
+  checkRequirements(requirements = [], rawSession = {}, disabledReasonOverride = "") {
     for (const requirement of requirements) {
       const result = this.checkCondition(requirement, rawSession);
       if (!result.met) {
-        return disabledState(fallbackReason || result.reason);
+        return disabledState(disabledReasonOverride || result.reason);
       }
     }
     return enabledState();

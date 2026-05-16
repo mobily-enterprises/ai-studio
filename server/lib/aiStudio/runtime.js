@@ -3,15 +3,72 @@ import {
   createAiStudioSessionStore
 } from "./sessionStore.js";
 import {
+  TargetAdapter,
+  adapterView
+} from "./adapter.js";
+import {
   aiStudioError,
   normalizeText
 } from "./core.js";
+import {
+  STUDIO_CONTEXT_END_MARKER,
+  STUDIO_CONTEXT_START_MARKER,
+  wrapPromptWithStudioContext
+} from "./promptMarkers.js";
+import { PromptRenderer } from "./promptRenderer.js";
 import { DEFAULT_AI_STUDIO_WORKFLOW } from "./workflow.js";
 import { WorkflowMachine } from "./workflowMachine.js";
 
-function defaultActionHandler({ action }) {
+function metadataFlagIsOn(value) {
+  return ["1", "true", "yes", "on"].includes(normalizeText(value).toLowerCase());
+}
+
+function promptActionIsBlocked(action = {}, session = {}) {
+  return action.type === "prompt" && metadataFlagIsOn(session.metadata?.terminal_active);
+}
+
+function actionCapabilityIsMissing(action = {}, session = {}) {
+  const capability = normalizeText(action.adapterCapability);
+  return Boolean(capability) && session.adapter?.facts?.capabilities?.[capability] !== true;
+}
+
+function adapterCapabilityDisabledReason(action = {}, session = {}) {
+  return `${session.adapter?.label || "Target adapter"} does not support capability: ${action.adapterCapability}.`;
+}
+
+function enabledAction() {
   return {
-    message: `Recorded ${action.label}.`,
+    disabledReason: "",
+    enabled: true
+  };
+}
+
+function disabledAction(disabledReason) {
+  return {
+    disabledReason,
+    enabled: false
+  };
+}
+
+function defaultActionReadiness({ action = {}, session = {} } = {}) {
+  if (promptActionIsBlocked(action, session)) {
+    return disabledAction("Codex terminal is active.");
+  }
+  if (actionCapabilityIsMissing(action, session)) {
+    return disabledAction(adapterCapabilityDisabledReason(action, session));
+  }
+  return enabledAction();
+}
+
+async function defaultActionHandler(context = {}) {
+  if (context.action?.type === "prompt") {
+    return context.runtime.renderPromptAction(context);
+  }
+  if (context.action?.type === "command") {
+    return context.runtime.runAdapterCommandAction(context);
+  }
+  return {
+    message: `Recorded ${context.action?.label || "action"}.`,
     status: "completed"
   };
 }
@@ -34,9 +91,20 @@ function currentAction(session, actionId) {
   return session.actions.find((action) => action.id === actionId) || null;
 }
 
+function composeActionReadiness(defaultReadiness, extraReadiness) {
+  return (context) => {
+    const defaultState = defaultReadiness(context);
+    if (!defaultState.enabled || typeof extraReadiness !== "function") {
+      return defaultState;
+    }
+    return extraReadiness(context) || defaultState;
+  };
+}
+
 function actionResultRecord(action, session, input, handlerResult = {}) {
   const result = handlerResult || {};
   return {
+    ...result,
     actionLabel: action.label,
     actionType: action.type,
     input,
@@ -57,11 +125,42 @@ function actionLogEntry(action, session, actionResult) {
   };
 }
 
+async function writeActionResultEffects(store, sessionId, result = {}) {
+  for (const [name, value] of Object.entries(result.metadata || {})) {
+    await store.writeMetadataValue(sessionId, name, value);
+  }
+  for (const [relativePath, text] of Object.entries(result.artifacts || {})) {
+    await store.writeArtifact(sessionId, relativePath, text);
+  }
+}
+
+function buildCodexPromptHandoff(action, renderedPrompt) {
+  const visiblePrompt = action.label || "Run Codex prompt.";
+  return {
+    codex: {
+      mode: "inject_prompt",
+      promptField: "prompt"
+    },
+    kind: "codex_prompt_handoff",
+    markers: {
+      end: STUDIO_CONTEXT_END_MARKER,
+      start: STUDIO_CONTEXT_START_MARKER
+    },
+    prompt: renderedPrompt.prompt,
+    promptId: renderedPrompt.promptId,
+    terminalInput: wrapPromptWithStudioContext(renderedPrompt.prompt, visiblePrompt),
+    visiblePrompt
+  };
+}
+
 class AiStudioSessionRuntime {
   constructor({
+    actionReadiness = undefined,
     actionHandlers = {},
+    adapter = new TargetAdapter(),
     clock = undefined,
     defaultHandler = defaultActionHandler,
+    promptRenderer = new PromptRenderer(),
     store = undefined,
     targetRoot = process.cwd(),
     workflow = DEFAULT_AI_STUDIO_WORKFLOW
@@ -72,7 +171,10 @@ class AiStudioSessionRuntime {
     this.defaultHandler = typeof defaultHandler === "function"
       ? defaultHandler
       : defaultActionHandler;
+    this.adapter = adapter;
+    this.promptRenderer = promptRenderer;
     this.workflowMachine = new WorkflowMachine({
+      actionReadiness: composeActionReadiness(defaultActionReadiness, actionReadiness),
       workflow
     });
     this.store = store || createAiStudioSessionStore({
@@ -89,21 +191,99 @@ class AiStudioSessionRuntime {
       ...input,
       initialStep
     });
-    return this.workflowMachine.buildSessionView(session);
+    return this.sessionView(session);
   }
 
   async getSession(sessionId) {
-    return this.workflowMachine.buildSessionView(await this.store.readSession(sessionId));
+    return this.sessionView(await this.store.readSession(sessionId));
   }
 
   async listSessions() {
-    return (await this.store.listSessions()).map((session) => {
-      return this.workflowMachine.buildSessionView(session);
-    });
+    return Promise.all((await this.store.listSessions()).map((session) => this.sessionView(session)));
   }
 
   actionHandler(actionId) {
     return this.actionHandlers[actionId] || this.defaultHandler;
+  }
+
+  async sessionView(session) {
+    return this.workflowMachine.buildSessionView({
+      ...session,
+      adapter: await this.adapterViewForSession(session)
+    });
+  }
+
+  async adapterViewForSession(session) {
+    const context = {
+      runtime: this,
+      session,
+      store: this.store,
+      targetRoot: session.targetRoot
+    };
+    const detection = await this.adapter.detect(context);
+    if (detection.detected === false) {
+      return adapterView({
+        adapter: this.adapter,
+        detection
+      });
+    }
+
+    const facts = await this.adapter.inspect({
+      ...context,
+      detection
+    });
+    const commands = await this.adapter.listCommands({
+      ...context,
+      detection,
+      facts
+    });
+    const promptContext = await this.adapter.getPromptContext({
+      ...context,
+      commands,
+      detection,
+      facts
+    });
+    return adapterView({
+      adapter: this.adapter,
+      commands,
+      detection,
+      facts,
+      promptContext
+    });
+  }
+
+  async renderPromptAction({
+    action,
+    input = {},
+    session
+  } = {}) {
+    const renderedPrompt = await this.promptRenderer.renderPrompt({
+      action,
+      input,
+      session
+    });
+    return {
+      codexPromptHandoff: buildCodexPromptHandoff(action, renderedPrompt),
+      message: `Rendered ${action.label}.`,
+      prompt: renderedPrompt.prompt,
+      promptContext: renderedPrompt.context,
+      promptId: renderedPrompt.promptId,
+      status: "prompt_ready"
+    };
+  }
+
+  async runAdapterCommandAction({
+    action,
+    input = {},
+    session
+  } = {}) {
+    return this.adapter.runCommand(action.id, {
+      action,
+      input,
+      runtime: this,
+      session,
+      store: this.store
+    });
   }
 
   async runAction(sessionId, actionId, input = {}) {
@@ -129,6 +309,7 @@ class AiStudioSessionRuntime {
       action.id,
       actionResultRecord(action, session, input, handlerResult)
     );
+    await writeActionResultEffects(this.store, session.sessionId, handlerResult);
     await this.store.appendCommandLogEntry(
       session.sessionId,
       actionLogEntry(action, session, actionResult)
