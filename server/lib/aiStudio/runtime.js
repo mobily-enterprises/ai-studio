@@ -1,4 +1,5 @@
 import {
+  AI_STUDIO_SESSION_STATUS,
   assertSafeActionId,
   createAiStudioSessionStore
 } from "./sessionStore.js";
@@ -66,6 +67,9 @@ async function defaultActionHandler(context = {}) {
   if (context.action?.type === "command") {
     return context.runtime.runAdapterCommandAction(context);
   }
+  if (context.action?.type === "finish") {
+    return context.runtime.finishSessionAction(context);
+  }
   return {
     message: `Recorded ${context.action?.label || "action"}.`,
     status: "completed"
@@ -130,6 +134,9 @@ async function writeActionResultEffects(store, sessionId, result = {}) {
   }
   for (const [relativePath, text] of Object.entries(result.artifacts || {})) {
     await store.writeArtifact(sessionId, relativePath, text);
+  }
+  if (result.sessionStatus) {
+    await store.writeStatus(sessionId, result.sessionStatus);
   }
 }
 
@@ -276,6 +283,18 @@ class AiStudioSessionRuntime {
     input = {},
     session
   } = {}) {
+    return this.runAdapterCommand({
+      action,
+      input,
+      session
+    });
+  }
+
+  async runAdapterCommand({
+    action,
+    input = {},
+    session
+  } = {}) {
     return this.adapter.runCommand(action.id, {
       action,
       input,
@@ -283,6 +302,29 @@ class AiStudioSessionRuntime {
       session,
       store: this.store
     });
+  }
+
+  async finishSessionAction({
+    action,
+    input = {},
+    session
+  } = {}) {
+    const result = await this.runAdapterCommand({
+      action,
+      input,
+      session
+    });
+    if (result.status !== "completed") {
+      return result;
+    }
+    return {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        session_finished: "yes"
+      },
+      sessionStatus: AI_STUDIO_SESSION_STATUS.FINISHED
+    };
   }
 
   async runAction(sessionId, actionId, input = {}) {

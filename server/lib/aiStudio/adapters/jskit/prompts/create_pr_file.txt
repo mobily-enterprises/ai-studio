@@ -1,0 +1,20 @@
+Create the local pull request file for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Write the reviewed pull request body to the session PR artifact. Keep it focused on the accepted issue, implementation summary, tests run, and any remaining risk.

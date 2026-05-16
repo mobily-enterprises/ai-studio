@@ -1142,16 +1142,16 @@ Instructions:
 
 Checklist:
 
-- [ ] PR file prompt action exists.
-- [ ] PR editor action exists.
-- [ ] GitHub PR creation action exists.
-- [ ] `pr_url` is stored.
-- [ ] Prepare-for-merge action requires `pr_url`.
-- [ ] Merge action requires `pr_url`.
-- [ ] Successful merge writes PR outcome.
-- [ ] Sync-main-checkout requires `pr_url` and merged outcome.
-- [ ] Finish archives/removes session worktree as designed.
-- [ ] Fast tests cover PR state, merge result handling, and sync gating.
+- [x] PR file prompt action exists.
+- [x] PR editor action exists.
+- [x] GitHub PR creation action exists.
+- [x] `pr_url` is stored.
+- [x] Prepare-for-merge action requires `pr_url`.
+- [x] Merge action requires `pr_url`.
+- [x] Successful merge writes PR outcome.
+- [x] Sync-main-checkout requires `pr_url` and merged outcome.
+- [x] Finish delegates target cleanup and marks the session finished.
+- [x] Fast tests cover PR state, merge result handling, sync gating, and finish status.
 
 Acceptance:
 
@@ -1305,6 +1305,74 @@ Acceptance:
 
 - A competent developer can create a basic adapter without reading Studio UI code.
 
+### SLICE 14: Remove Legacy Studio Session Workflow
+
+Goal: Delete the old JSKIT-specific Studio session workflow after the new runtime is wired and proven.
+
+Instructions:
+
+- Remove old issue-session workflow state code.
+- Remove old UI workflow inference.
+- Remove old prompt-generation paths.
+- Remove old deterministic command dispatch paths that duplicate runtime actions.
+- Remove old `.jskit/sessions` Studio workflow assumptions.
+- Remove dead endpoints and client API calls replaced by the new runtime.
+- Do not keep compatibility routes.
+- Do not keep legacy fallback behavior.
+- Do not keep migration helpers.
+- Keep only code that is still used by the new runtime, adapters, terminal, or current Studio UI.
+
+Checklist:
+
+- [ ] Old issue-session state machine code is deleted.
+- [ ] Old issue-session button mapping code is deleted.
+- [ ] Old issue-session prompt construction code is deleted.
+- [ ] Old issue-session command execution code is deleted.
+- [ ] Old `.jskit/sessions` Studio workflow reads are deleted.
+- [ ] Replaced API routes are deleted.
+- [ ] Replaced client API helpers are deleted.
+- [ ] Dead view-model branches are deleted.
+- [ ] No compatibility routes remain.
+- [ ] No legacy fallback executor remains.
+- [ ] Fast tests cover the new runtime path that replaced deleted code.
+
+Acceptance:
+
+- Studio uses one workflow system: the new AI Studio runtime.
+- Searching the codebase does not reveal an alternate legacy issue-session workflow path.
+
+### SLICE 15: Final Audit And Simplification
+
+Goal: Make the rebuilt Studio feel like one coherent product, with no leftover legacy vocabulary or unnecessary complexity.
+
+Instructions:
+
+- Search for stale JSKIT product naming outside adapter-owned code.
+- Search for old Bootup, App Bootup, and App Setup concepts.
+- Search for old session roots, compatibility language, and fallback behavior.
+- Remove dead files, dead tests, and unused exports.
+- Simplify names that still describe implementation history instead of product behavior.
+- Keep the runtime, adapters, UI, and tests easy to read.
+- Run fast tests only.
+- Do not add e2e tests.
+
+Checklist:
+
+- [ ] No stale JSKIT product naming remains outside JSKIT adapter code.
+- [ ] No old session root behavior remains.
+- [ ] No compatibility or migration behavior remains.
+- [ ] No duplicate workflow state remains.
+- [ ] Bootup/App Bootup/App Setup concepts are either renamed clearly or deleted.
+- [ ] Dead files are deleted.
+- [ ] Unused exports are deleted.
+- [ ] Tests describe current behavior, not legacy history.
+- [ ] Fast test suite passes.
+- [ ] Documentation matches the final architecture.
+
+Acceptance:
+
+- A new engineer can trace Studio from UI button to runtime action to adapter behavior to session file without encountering legacy workflow code.
+
 ## Implementation Order
 
 Use the execution slices above as the primary plan. This shorter order is only a quick dependency reminder:
@@ -1326,6 +1394,8 @@ Use the execution slices above as the primary plan. This shorter order is only a
 - [ ] Create Python adapter.
 - [ ] Create generic web adapter.
 - [ ] Write adapter author docs.
+- [ ] Delete legacy Studio session workflow.
+- [ ] Run final audit and simplification pass.
 
 ## Decisions To Make Early
 
@@ -1364,4 +1434,5 @@ The rebuild is successful when:
 - [ ] Prompts adapt to the target environment.
 - [ ] No npm assumptions exist outside web/JSKIT adapters.
 - [ ] No JSKIT assumptions exist in the core runtime.
+- [ ] No legacy issue-session workflow remains.
 - [ ] A developer can add a simple adapter without reading UI code.

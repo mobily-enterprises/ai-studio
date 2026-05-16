@@ -200,6 +200,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "create_pr_file",
           id: "create_pr_file",
           label: "Create PR file",
           promptId: "create_pr_file",
@@ -213,11 +214,13 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "edit_pr",
           id: "edit_pr",
           label: "Edit PR",
           type: "editor"
         },
         {
+          adapterCapability: "create_pr_on_gh",
           id: "create_pr_on_gh",
           label: "Create PR on GH",
           type: "command"
@@ -225,17 +228,27 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Review and create the GitHub pull request.",
       id: "pr_created",
-      label: "Edit and create PR"
+      label: "Edit and create PR",
+      next: {
+        disabledReason: "Create the pull request before continuing.",
+        enabledWhen: ["metadata:pr_url"]
+      }
     },
     {
       actions: [
         {
+          adapterCapability: "prepare_for_merge",
+          disabledReason: "Create the pull request before preparing for merge.",
+          enabledWhen: ["metadata:pr_url"],
           id: "prepare_for_merge",
           label: "Prepare for merge",
           promptId: "prepare_for_merge",
           type: "prompt"
         },
         {
+          adapterCapability: "merge_pr",
+          disabledReason: "Create the pull request before merging.",
+          enabledWhen: ["metadata:pr_url"],
           id: "merge_pr",
           label: "Merge",
           type: "command"
@@ -248,6 +261,9 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "sync_main_checkout",
+          disabledReason: "Merge the pull request before syncing the main checkout.",
+          enabledWhen: ["metadata:pr_url", "metadata:pr_merged"],
           id: "sync_main_checkout",
           label: "Sync main checkout",
           type: "command"
@@ -260,9 +276,12 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "finish_session",
+          disabledReason: "Create the pull request before finishing the session.",
+          enabledWhen: ["metadata:pr_url"],
           id: "finish_session",
           label: "Finish",
-          type: "command"
+          type: "finish"
         }
       ],
       description: "Congratulations. Finish the session.",

@@ -48,12 +48,19 @@ const JSKIT_BASE_CAPABILITIES = Object.freeze({
   commit_changes: true,
   create_issue_file: true,
   create_issue_on_gh: true,
+  create_pr_file: true,
+  create_pr_on_gh: true,
   create_worktree: true,
+  edit_pr: true,
   edit_issue: true,
+  finish_session: true,
   install_dependencies: true,
+  merge_pr: true,
+  prepare_for_merge: true,
   run_automated_checks: true,
   run_deep_ui_check: true,
-  send_issue_prompt: true
+  send_issue_prompt: true,
+  sync_main_checkout: true
 });
 
 const JSKIT_BLUEPRINT_CAPABILITIES = Object.freeze({
@@ -89,6 +96,22 @@ const JSKIT_COMMANDS = Object.freeze([
   {
     id: "commit_changes",
     label: "Commit changes"
+  },
+  {
+    id: "create_pr_on_gh",
+    label: "Create PR on GH"
+  },
+  {
+    id: "merge_pr",
+    label: "Merge PR"
+  },
+  {
+    id: "sync_main_checkout",
+    label: "Sync main checkout"
+  },
+  {
+    id: "finish_session",
+    label: "Finish session"
   }
 ]);
 

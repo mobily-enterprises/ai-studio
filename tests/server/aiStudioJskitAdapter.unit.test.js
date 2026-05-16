@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  AI_STUDIO_SESSION_STATUS,
   AiStudioSessionRuntime,
   JskitTargetAdapter
 } from "../../server/lib/aiStudio/index.js";
@@ -73,11 +74,18 @@ test("jskit adapter detects a JSKIT target and exposes setup facts", async () =>
       commit_changes: true,
       create_issue_file: true,
       create_issue_on_gh: true,
+      create_pr_file: true,
+      create_pr_on_gh: true,
       create_worktree: true,
+      edit_pr: true,
       edit_issue: true,
+      finish_session: true,
       install_dependencies: true,
+      merge_pr: true,
+      prepare_for_merge: true,
       run_automated_checks: true,
       run_deep_ui_check: true,
+      sync_main_checkout: true,
       update_project_knowledge: true,
       send_issue_prompt: true
     });
@@ -87,7 +95,11 @@ test("jskit adapter detects a JSKIT target and exposes setup facts", async () =>
       "create_issue_on_gh",
       "run_automated_checks",
       "accept_changes",
-      "commit_changes"
+      "commit_changes",
+      "create_pr_on_gh",
+      "merge_pr",
+      "sync_main_checkout",
+      "finish_session"
     ]);
   });
 });
@@ -332,6 +344,200 @@ test("jskit adapter runs middle-workflow commands and stores accepted commit met
       "run_automated_checks",
       "accept_changes",
       "commit_changes"
+    ]);
+  });
+});
+
+test("jskit adapter creates PR metadata and gates merge preparation on pr_url", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createJskitProject(targetRoot);
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new JskitTargetAdapter({
+        commandRunner: async ({ commandId }) => {
+          if (commandId === "create_pr_on_gh") {
+            return {
+              message: "Created GitHub pull request.",
+              metadata: {
+                pr_url: "https://github.com/example/repo/pull/24"
+              },
+              status: "completed"
+            };
+          }
+          return {
+            message: `Unexpected command ${commandId}.`,
+            status: "blocked"
+          };
+        }
+      }),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "pr_created",
+      sessionId: "jskit_pr"
+    });
+
+    const beforePr = await runtime.getSession("jskit_pr");
+    assert.equal(beforePr.next.enabled, false);
+    assert.equal(beforePr.next.disabledReason, "Create the pull request before continuing.");
+    assert.deepEqual(beforePr.actions.map((action) => {
+      return {
+        enabled: action.enabled,
+        id: action.id
+      };
+    }), [
+      {
+        enabled: true,
+        id: "edit_pr"
+      },
+      {
+        enabled: true,
+        id: "create_pr_on_gh"
+      }
+    ]);
+
+    const afterPr = await runtime.runAction("jskit_pr", "create_pr_on_gh");
+
+    assert.equal(afterPr.metadata.pr_url, "https://github.com/example/repo/pull/24");
+    assert.equal(afterPr.next.enabled, true);
+    assert.equal(afterPr.next.stepId, "pr_merged");
+    assert.equal(await runtime.store.readMetadataValue("jskit_pr", "pr_url"), "https://github.com/example/repo/pull/24");
+
+    await runtime.createSession({
+      initialStep: "pr_merged",
+      sessionId: "jskit_prepare_without_pr"
+    });
+    const mergeWithoutPr = await runtime.getSession("jskit_prepare_without_pr");
+    assert.deepEqual(mergeWithoutPr.actions.map((action) => {
+      return {
+        disabledReason: action.disabledReason,
+        enabled: action.enabled,
+        id: action.id
+      };
+    }), [
+      {
+        disabledReason: "Create the pull request before preparing for merge.",
+        enabled: false,
+        id: "prepare_for_merge"
+      },
+      {
+        disabledReason: "Create the pull request before merging.",
+        enabled: false,
+        id: "merge_pr"
+      }
+    ]);
+  });
+});
+
+test("jskit adapter merges PRs, gates sync on merge metadata, and finishes sessions", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createJskitProject(targetRoot);
+    const calls = [];
+    const commandResponses = {
+      finish_session: {
+        message: "Finished JSKIT session cleanup.",
+        metadata: {
+          cleanup_done: "yes"
+        },
+        status: "completed"
+      },
+      merge_pr: {
+        message: "Merged pull request.",
+        metadata: {
+          pr_merged: "yes"
+        },
+        status: "completed"
+      },
+      sync_main_checkout: {
+        message: "Synced main checkout.",
+        metadata: {
+          main_checkout_synced: "yes"
+        },
+        status: "completed"
+      }
+    };
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new JskitTargetAdapter({
+        commandRunner: async ({ commandId }) => {
+          calls.push(commandId);
+          return commandResponses[commandId] || {
+            message: `Unexpected command ${commandId}.`,
+            status: "blocked"
+          };
+        }
+      }),
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "pr_merged",
+      metadata: {
+        pr_url: "https://github.com/example/repo/pull/24"
+      },
+      sessionId: "jskit_merge"
+    });
+    const mergeStep = await runtime.getSession("jskit_merge");
+    assert.deepEqual(mergeStep.actions.map((action) => {
+      return {
+        enabled: action.enabled,
+        id: action.id
+      };
+    }), [
+      {
+        enabled: true,
+        id: "prepare_for_merge"
+      },
+      {
+        enabled: true,
+        id: "merge_pr"
+      }
+    ]);
+
+    const afterPrepare = await runtime.runAction("jskit_merge", "prepare_for_merge");
+    assert.equal(afterPrepare.actionResult.promptId, "prepare_for_merge");
+    assert.match(afterPrepare.actionResult.prompt, /Prepare the JSKIT pull request for merge/u);
+
+    const afterMerge = await runtime.runAction("jskit_merge", "merge_pr");
+    assert.equal(afterMerge.metadata.pr_merged, "yes");
+
+    await runtime.createSession({
+      initialStep: "main_checkout_synced",
+      metadata: {
+        pr_url: "https://github.com/example/repo/pull/24"
+      },
+      sessionId: "jskit_sync_blocked"
+    });
+    const syncBlocked = await runtime.getSession("jskit_sync_blocked");
+    assert.equal(syncBlocked.actions[0].enabled, false);
+    assert.equal(syncBlocked.actions[0].disabledReason, "Merge the pull request before syncing the main checkout.");
+
+    await runtime.createSession({
+      initialStep: "main_checkout_synced",
+      metadata: {
+        pr_merged: "yes",
+        pr_url: "https://github.com/example/repo/pull/24"
+      },
+      sessionId: "jskit_sync"
+    });
+    const afterSync = await runtime.runAction("jskit_sync", "sync_main_checkout");
+    assert.equal(afterSync.metadata.main_checkout_synced, "yes");
+
+    await runtime.createSession({
+      initialStep: "session_finished",
+      metadata: {
+        pr_url: "https://github.com/example/repo/pull/24"
+      },
+      sessionId: "jskit_finish"
+    });
+    const afterFinish = await runtime.runAction("jskit_finish", "finish_session");
+    assert.equal(afterFinish.status, AI_STUDIO_SESSION_STATUS.FINISHED);
+    assert.equal(afterFinish.metadata.cleanup_done, "yes");
+    assert.equal(afterFinish.metadata.session_finished, "yes");
+    assert.equal(afterFinish.actionResult.sessionStatus, AI_STUDIO_SESSION_STATUS.FINISHED);
+    assert.deepEqual(calls, [
+      "merge_pr",
+      "sync_main_checkout",
+      "finish_session"
     ]);
   });
 });
