@@ -1,34 +1,31 @@
 import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
 
-import {
-  createService,
-  resolveAiStudioTargetRoot
-} from "./service.js";
+import { createService } from "./service.js";
 import { featureActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
 
-class AiStudioProvider {
-  static id = "feature.ai-studio";
+class AiStudioTerminalsProvider {
+  static id = "feature.ai-studio-terminals";
 
-  static dependsOn = ["runtime.actions"];
+  static dependsOn = [
+    "runtime.actions",
+    "feature.ai-studio-project"
+  ];
 
   register(app) {
     if (
       !app ||
-      typeof app.singleton !== "function" ||
       typeof app.service !== "function" ||
       typeof app.actions !== "function"
     ) {
-      throw new Error("AiStudioProvider requires application singleton()/service()/actions().");
+      throw new Error("AiStudioTerminalsProvider requires application service()/actions().");
     }
 
-    const targetRoot = resolveAiStudioTargetRoot();
-
     app.service(
-      "feature.ai-studio.service",
-      (_scope) => {
+      "feature.ai-studio-terminals.service",
+      (scope) => {
         return createService({
-          targetRoot
+          projectService: scope.make("feature.ai-studio-project.service")
         });
       }
     );
@@ -37,7 +34,7 @@ class AiStudioProvider {
       withActionDefaults(featureActions, {
         domain: "feature",
         dependencies: {
-          featureService: "feature.ai-studio.service"
+          featureService: "feature.ai-studio-terminals.service"
         }
       })
     );
@@ -51,4 +48,4 @@ class AiStudioProvider {
   }
 }
 
-export { AiStudioProvider };
+export { AiStudioTerminalsProvider };

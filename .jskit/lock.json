@@ -143,13 +143,13 @@
       "installedAt": "2026-05-11T10:00:00.000Z",
       "migrationSyncVersion": "0.1.0"
     },
-    "@local/ai-studio": {
-      "packageId": "@local/ai-studio",
+    "@local/ai-studio-project": {
+      "packageId": "@local/ai-studio-project",
       "version": "0.1.0",
       "source": {
         "type": "app-local-package",
-        "packagePath": "packages/ai-studio",
-        "descriptorPath": "packages/ai-studio/package.descriptor.mjs"
+        "packagePath": "packages/ai-studio-project",
+        "descriptorPath": "packages/ai-studio-project/package.descriptor.mjs"
       },
       "managed": {
         "packageJson": {
@@ -163,7 +163,73 @@
         "migrations": []
       },
       "options": {},
-      "installedAt": "2026-05-16T15:21:19.242Z"
+      "installedAt": "2026-05-16T15:39:11.046Z"
+    },
+    "@local/ai-studio-sessions": {
+      "packageId": "@local/ai-studio-sessions",
+      "version": "0.1.0",
+      "source": {
+        "type": "app-local-package",
+        "packagePath": "packages/ai-studio-sessions",
+        "descriptorPath": "packages/ai-studio-sessions/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {},
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {},
+        "vite": {},
+        "files": [],
+        "migrations": []
+      },
+      "options": {},
+      "installedAt": "2026-05-16T15:39:17.312Z"
+    },
+    "@local/ai-studio-artifacts": {
+      "packageId": "@local/ai-studio-artifacts",
+      "version": "0.1.0",
+      "source": {
+        "type": "app-local-package",
+        "packagePath": "packages/ai-studio-artifacts",
+        "descriptorPath": "packages/ai-studio-artifacts/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {},
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {},
+        "vite": {},
+        "files": [],
+        "migrations": []
+      },
+      "options": {},
+      "installedAt": "2026-05-16T15:39:20.952Z"
+    },
+    "@local/ai-studio-terminals": {
+      "packageId": "@local/ai-studio-terminals",
+      "version": "0.1.0",
+      "source": {
+        "type": "app-local-package",
+        "packagePath": "packages/ai-studio-terminals",
+        "descriptorPath": "packages/ai-studio-terminals/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {},
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {},
+        "vite": {},
+        "files": [],
+        "migrations": []
+      },
+      "options": {},
+      "installedAt": "2026-05-16T15:39:24.717Z"
     }
   }
 }

@@ -1,17 +1,19 @@
 export default Object.freeze({
   packageVersion: 1,
-  packageId: "@local/ai-studio",
+  packageId: "@local/ai-studio-artifacts",
   version: "0.1.0",
   kind: "runtime",
-  description: "Owns the AI Studio workflow, sessions, artifacts, adapters, and terminals.",
+  description: "Owns AI Studio editable artifact and draft file policy.",
   dependsOn: [
-    "@jskit-ai/kernel"
+    "@jskit-ai/kernel",
+    "@local/ai-studio-project"
   ],
   capabilities: {
     provides: [
-      "feature.ai-studio"
+      "feature.ai-studio-artifacts"
     ],
     requires: [
+      "feature.ai-studio-project",
       "runtime.actions"
     ]
   },
@@ -19,8 +21,8 @@ export default Object.freeze({
     server: {
       providers: [
         {
-          entrypoint: "src/server/AiStudioProvider.js",
-          export: "AiStudioProvider"
+          entrypoint: "src/server/AiStudioArtifactsProvider.js",
+          export: "AiStudioArtifactsProvider"
         }
       ]
     },
@@ -33,16 +35,16 @@ export default Object.freeze({
       surfaces: [
         {
           subpath: "./server/registerRoutes",
-          summary: "Registers AI Studio project type, session, artifact, and terminal routes."
+          summary: "Registers editable artifact read/write routes."
         },
         {
           subpath: "./server/service",
-          summary: "Owns AI Studio workflow orchestration and terminal lifecycle behavior."
+          summary: "Owns issue and pull request draft artifact policy."
         }
       ],
       containerTokens: {
         server: [
-          "feature.ai-studio.service"
+          "feature.ai-studio-artifacts.service"
         ],
         client: []
       }

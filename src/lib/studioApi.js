@@ -84,7 +84,11 @@ async function readCurrentApp() {
   return studioHttpClient.get(CURRENT_APP_ENDPOINT);
 }
 
-async function saveCurrentAppProjectType(projectType) {
+async function readAiStudioProjectType() {
+  return studioHttpClient.get(PROJECT_TYPE_ENDPOINT);
+}
+
+async function saveAiStudioProjectType(projectType) {
   return studioHttpClient.put(PROJECT_TYPE_ENDPOINT, {
     projectType
   });
@@ -428,11 +432,18 @@ async function resolveStudioGate() {
     });
   }
 
-  const currentApp = await readCurrentApp();
-  if (currentApp?.projectType?.ready !== true) {
+  const [currentApp, projectResponse] = await Promise.all([
+    readCurrentApp(),
+    readAiStudioProjectType()
+  ]);
+  const projectType = projectResponse?.projectType || {};
+  if (projectType.ready !== true) {
     return rememberStudioGate({
       bootstrap,
-      currentApp,
+      currentApp: {
+        ...currentApp,
+        projectType
+      },
       route: "/home",
       targetApp
     });
@@ -502,6 +513,7 @@ export {
   npmScriptTerminalEndpoint,
   npmScriptTerminalWebSocketUrl,
   readAppSetupStatus,
+  readAiStudioProjectType,
   readBootstrapStatus,
   readCurrentApp,
   readAiStudioSession,
@@ -528,7 +540,7 @@ export {
   saveIssueSessionPullRequestDraft,
   saveIssueSessionCodexPromptHandoff,
   saveIssueSessionCodexThread,
-  saveCurrentAppProjectType,
+  saveAiStudioProjectType,
   saveStarredNpmScripts,
   startCurrentAppTestTerminal,
   startAiStudioCodexTerminal,

@@ -1,0 +1,125 @@
+import {
+  AI_STUDIO_SESSION_STATUS
+} from "../../../../server/lib/aiStudio/index.js";
+
+const MAX_OPEN_AI_STUDIO_SESSIONS = 3;
+const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
+
+function aiStudioErrorResponse(error, fallback = "AI Studio session request failed.") {
+  return {
+    errors: [
+      {
+        code: String(error?.code || "ai_studio_session_request_failed"),
+        message: String(error?.message || error || fallback)
+      }
+    ],
+    ok: false,
+    projectType: error?.projectType || null
+  };
+}
+
+async function aiStudioResult(operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    return aiStudioErrorResponse(error);
+  }
+}
+
+function isOpenAiStudioSession(session = {}) {
+  return !CLOSED_SESSION_STATUSES.has(String(session.status || ""));
+}
+
+function sessionLimits(sessions = []) {
+  return {
+    maxOpenSessions: MAX_OPEN_AI_STUDIO_SESSIONS,
+    openSessionCount: sessions.filter(isOpenAiStudioSession).length
+  };
+}
+
+function sessionListResponse(sessions = []) {
+  return {
+    limits: sessionLimits(sessions),
+    ok: true,
+    sessions
+  };
+}
+
+function createService({
+  projectService,
+  terminalService
+} = {}) {
+  if (!projectService) {
+    throw new TypeError("createService requires feature.ai-studio-project.service.");
+  }
+
+  return Object.freeze({
+    async advanceSession(sessionId) {
+      return aiStudioResult(async () => {
+        const runtime = await projectService.createRuntime();
+        return runtime.advance(sessionId);
+      });
+    },
+
+    async abandonSession(sessionId) {
+      return aiStudioResult(async () => {
+        const runtime = await projectService.createRuntime();
+        await runtime.store.writeStatus(sessionId, AI_STUDIO_SESSION_STATUS.ABANDONED);
+        await terminalService?.closeSessionTerminals?.(sessionId);
+        return runtime.getSession(sessionId);
+      });
+    },
+
+    async createSession() {
+      return aiStudioResult(async () => {
+        const projectType = await projectService.requireProjectType();
+        const runtime = await projectService.createRuntime();
+        const existingSessions = await runtime.listSessions();
+        const limits = sessionLimits(existingSessions);
+        if (limits.openSessionCount >= limits.maxOpenSessions) {
+          return {
+            errors: [
+              {
+                code: "open_session_limit",
+                message: `Studio allows up to ${limits.maxOpenSessions} active sessions at once. Finish or abandon one before creating another.`
+              }
+            ],
+            limits,
+            ok: false,
+            sessions: existingSessions,
+            status: "blocked"
+          };
+        }
+        return runtime.createSession({
+          metadata: {
+            adapter_id: projectType.adapter?.id || projectType.projectType,
+            project_type: projectType.projectType
+          }
+        });
+      });
+    },
+
+    async inspectSession(sessionId) {
+      return aiStudioResult(async () => {
+        const runtime = await projectService.createRuntime();
+        return runtime.getSession(sessionId);
+      });
+    },
+
+    async listSessions() {
+      return aiStudioResult(async () => {
+        const runtime = await projectService.createRuntime();
+        return sessionListResponse(await runtime.listSessions());
+      });
+    },
+
+    async runSessionAction(sessionId, actionId, input = {}) {
+      return aiStudioResult(async () => {
+        const runtime = await projectService.createRuntime();
+        return runtime.runAction(sessionId, actionId, input);
+      });
+    }
+  });
+}
+
+export { createService };

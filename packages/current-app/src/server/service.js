@@ -33,12 +33,6 @@ import {
 import {
   gitToolchainMountArgs
 } from "../../../../server/lib/gitToolchainMounts.js";
-import {
-  AI_STUDIO_SESSION_STATUS,
-  AiStudioSessionRuntime,
-  createAiStudioAdapterRegistry,
-  createAiStudioProjectTypeStore
-} from "../../../../server/lib/aiStudio/index.js";
 
 const execFileAsync = promisify(execFile);
 const TOOLCHAIN_IMAGE = "jskit-ai-studio-toolchain:0.1.0";
@@ -48,30 +42,6 @@ const DEFAULT_APP_TEST_SERVER_COMMAND = "npm run server";
 const DEFAULT_APP_TEST_PORT = 4100;
 const APP_TEST_CONFIG_DIR = ".jskit/config";
 const APP_BLUEPRINT_RELATIVE_PATH = ".jskit/APP_BLUEPRINT.md";
-const AI_STUDIO_ISSUE_BODY_ARTIFACT = "issue.md";
-const AI_STUDIO_ISSUE_TITLE_ARTIFACT = "issue_title";
-const AI_STUDIO_PULL_REQUEST_ARTIFACT = "pull_request.md";
-const AI_STUDIO_EDITABLE_ARTIFACTS = Object.freeze({
-  [AI_STUDIO_ISSUE_BODY_ARTIFACT]: Object.freeze({
-    blockedMetadata: "issue_url",
-    blockedMessage: "The GitHub issue already exists; edit it on GitHub instead.",
-    editorActionId: "edit_issue",
-    requiredMessage: "Issue body is required."
-  }),
-  [AI_STUDIO_ISSUE_TITLE_ARTIFACT]: Object.freeze({
-    blockedMetadata: "issue_url",
-    blockedMessage: "The GitHub issue already exists; edit it on GitHub instead.",
-    editorActionId: "edit_issue",
-    metadataName: "issue_title",
-    requiredMessage: "Issue title is required."
-  }),
-  [AI_STUDIO_PULL_REQUEST_ARTIFACT]: Object.freeze({
-    blockedMetadata: "pr_url",
-    blockedMessage: "The GitHub pull request already exists; edit it on GitHub instead.",
-    editorActionId: "edit_pr",
-    requiredMessage: "Pull request body is required."
-  })
-});
 const PULL_REQUEST_DRAFT_FILE = "pull_request.md";
 const APP_TEST_TESTRUN_COMMAND_CONFIG = `${APP_TEST_CONFIG_DIR}/testrun_command`;
 const APP_TEST_SERVER_PORT_CONFIG = `${APP_TEST_CONFIG_DIR}/server_port`;
@@ -88,9 +58,6 @@ const TERMINAL_NAMESPACE = "current-app-codex";
 const TERMINAL_NAMESPACE_PREFIX = `${TERMINAL_NAMESPACE}:`;
 const STEP_TERMINAL_NAMESPACE = "current-app-session-step";
 const STEP_TERMINAL_NAMESPACE_PREFIX = `${STEP_TERMINAL_NAMESPACE}:`;
-const AI_STUDIO_CODEX_TERMINAL_NAMESPACE = "current-app-ai-studio-codex";
-const AI_STUDIO_CODEX_TERMINAL_NAMESPACE_PREFIX = `${AI_STUDIO_CODEX_TERMINAL_NAMESPACE}:`;
-const AI_STUDIO_COMMAND_TERMINAL_NAMESPACE = "current-app-ai-studio-command";
 const APP_TEST_TERMINAL_NAMESPACE = "current-app-test";
 const APP_TEST_TERMINAL_NAMESPACE_PREFIX = `${APP_TEST_TERMINAL_NAMESPACE}:`;
 const NPM_SCRIPT_TERMINAL_NAMESPACE = "current-app-npm-script";
@@ -157,26 +124,6 @@ function responseErrorMessage(response = {}, fallback = "Request failed.") {
   return repairCommand ? `${message}\nRepair: ${repairCommand}` : message;
 }
 
-function aiStudioErrorResponse(error, fallback = "AI Studio request failed.") {
-  return {
-    errors: [
-      {
-        code: String(error?.code || "ai_studio_request_failed"),
-        message: String(error?.message || error || fallback)
-      }
-    ],
-    ok: false
-  };
-}
-
-async function aiStudioResult(operation) {
-  try {
-    return await operation();
-  } catch (error) {
-    return aiStudioErrorResponse(error);
-  }
-}
-
 function codexContainerName({ sessionId, terminalId }) {
   return `jskit-ai-studio-codex-${stableHash(sessionId)}-${stableHash(terminalId)}`;
 }
@@ -236,14 +183,6 @@ function terminalNamespace(sessionId) {
 
 function stepTerminalNamespace(sessionId) {
   return `${STEP_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
-}
-
-function aiStudioCodexTerminalNamespace(sessionId) {
-  return `${AI_STUDIO_CODEX_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
-}
-
-function aiStudioCommandTerminalNamespace(sessionId) {
-  return `${AI_STUDIO_COMMAND_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
 }
 
 function appTestTerminalNamespace(sessionId = "") {
@@ -313,14 +252,6 @@ function decoratedIssueSessionList(response = {}, activeSessions = []) {
   return {
     ...response,
     limits: issueSessionLimits(activeSessions),
-    sessions
-  };
-}
-
-function aiStudioSessionListResponse(sessions = []) {
-  return {
-    limits: issueSessionLimits(sessions),
-    ok: true,
     sessions
   };
 }
@@ -1631,661 +1562,33 @@ async function startNpmScriptTerminalForRoot({
   });
 }
 
-function projectTypeErrorCode(status = "") {
-  return {
-    missing: "ai_studio_project_type_missing",
-    unimplemented: "ai_studio_project_type_unimplemented",
-    unknown: "ai_studio_unknown_project_type"
-  }[status] || "ai_studio_project_type_invalid";
-}
-
-function projectTypeMessage(status = "", projectType = "") {
-  if (status === "missing") {
-    return "Choose an AI Studio project type before using project-specific tools.";
-  }
-  if (status === "unknown") {
-    return `Unknown AI Studio project type: ${projectType}.`;
-  }
-  if (status === "unimplemented") {
-    return `AI Studio project type is not implemented yet: ${projectType}.`;
-  }
-  return "AI Studio project type is not ready.";
-}
-
-function projectTypeBlockedResponse(projectType = {}) {
-  return {
-    errors: [
-      {
-        code: projectType.errorCode || projectTypeErrorCode(projectType.status),
-        message: projectType.message || projectTypeMessage(projectType.status, projectType.projectType)
-      }
-    ],
-    ok: false,
-    projectType,
-    status: "blocked"
-  };
-}
-
-function aiStudioActionById(session = {}, actionId = "") {
-  return (Array.isArray(session.actions) ? session.actions : [])
-    .find((action) => action.id === actionId) || null;
-}
-
-function aiStudioArtifactPath(session = {}, artifactName = "") {
-  return session.artifactsRoot && artifactName ? path.join(session.artifactsRoot, artifactName) : "";
-}
-
-function aiStudioEditableArtifactNames() {
-  return Object.keys(AI_STUDIO_EDITABLE_ARTIFACTS)
-    .sort((left, right) => left.localeCompare(right));
-}
-
-function aiStudioArtifactErrorResponse(session = {}, code = "", message = "") {
-  return {
-    ...session,
-    errors: [
-      {
-        code,
-        message
-      }
-    ],
-    ok: false
-  };
-}
-
-function aiStudioArtifactPolicy(artifactName = "") {
-  return AI_STUDIO_EDITABLE_ARTIFACTS[String(artifactName || "").trim()] || null;
-}
-
-function aiStudioArtifactState(session = {}, artifactName = "") {
-  const policy = aiStudioArtifactPolicy(artifactName);
-  if (!policy) {
-    return {
-      disabledReason: `Artifact is not editable: ${artifactName}`,
-      editable: false
-    };
-  }
-  const action = aiStudioActionById(session, policy.editorActionId);
-  if (!action || action.type !== "editor") {
-    return {
-      disabledReason: `Editor action ${policy.editorActionId} is not available on this AI Studio step.`,
-      editable: false
-    };
-  }
-  if (policy.blockedMetadata && session.metadata?.[policy.blockedMetadata]) {
-    return {
-      disabledReason: policy.blockedMessage,
-      editable: false
-    };
-  }
-  if (action.enabled !== true) {
-    return {
-      disabledReason: action.disabledReason || `Editor action ${policy.editorActionId} is disabled.`,
-      editable: false
-    };
-  }
-  return {
-    disabledReason: "",
-    editable: true
-  };
-}
-
-function normalizeAiStudioArtifactInput(input = {}) {
-  const rawArtifacts = normalizePlainObject(input.artifacts);
-  const artifactEntries = Object.entries(rawArtifacts)
-    .map(([name, value]) => [
-      String(name || "").trim(),
-      String(value || "").trim()
-    ])
-    .filter(([name]) => Boolean(name));
-  return Object.fromEntries(artifactEntries);
-}
-
-function aiStudioArtifactsResponse(session = {}, artifacts = {}) {
-  const editableArtifacts = aiStudioEditableArtifactNames();
-  const artifactStates = Object.fromEntries(editableArtifacts.map((artifactName) => {
-    return [artifactName, aiStudioArtifactState(session, artifactName)];
-  }));
-  const artifactPaths = Object.fromEntries(editableArtifacts.map((artifactName) => {
-    return [artifactName, aiStudioArtifactPath(session, artifactName)];
-  }));
-  return {
-    ...session,
-    artifactPaths,
-    artifacts,
-    artifactStates,
-    editableArtifacts,
-    ok: true
-  };
-}
-
-async function readAiStudioEditableArtifacts(runtime, session = {}) {
-  const artifactEntries = await Promise.all(aiStudioEditableArtifactNames().map(async (artifactName) => {
-    return [artifactName, await runtime.store.readArtifact(session.sessionId, artifactName)];
-  }));
-  return Object.fromEntries(artifactEntries);
-}
-
-function aiStudioTerminalWorkdir(session = {}) {
-  return path.resolve(
-    String(session.metadata?.worktree_path || session.worktree || session.targetRoot || "").trim()
-  );
-}
-
-function aiStudioCodexState(session = {}) {
-  const metadata = session.metadata || {};
-  const codexThreadId = normalizeCodexThreadId(metadata.codex_thread_id);
-  return {
-    codexPromptHandoffOutputStart: normalizeCodexPromptHandoffOutputStart(metadata.codex_prompt_handoff_output_start),
-    codexPromptHandoffSignature: normalizeCodexPromptHandoffSignature(
-      session.sessionId,
-      metadata.codex_prompt_handoff_signature
-    ),
-    codexThreadId,
-    needsThreadCapture: !codexThreadId,
-    threadProbe: CODEX_THREAD_PROBE
-  };
-}
-
-function withAiStudioCodexState(response = {}, session = {}) {
-  return {
-    ...response,
-    ...aiStudioCodexState(session)
-  };
-}
-
-async function writeAiStudioActionTerminalResult({
-  action = {},
-  exitCode,
-  input = {},
-  runtime,
-  session = {},
-  spec = {}
-} = {}) {
-  const completed = exitCode === 0;
-  const metadata = completed ? spec.successMetadata || {} : {};
-  const message = completed
-    ? spec.successMessage || `${action.label || action.id} completed.`
-    : spec.failureMessage || `${action.label || action.id} failed with exit code ${exitCode}.`;
-  const actionResult = await runtime.store.writeActionResult(
-    session.sessionId,
-    action.id,
-    {
-      actionLabel: action.label,
-      actionType: action.type,
-      artifacts: {},
-      input,
-      message,
-      metadata,
-      status: completed ? "completed" : "blocked",
-      stepId: session.currentStep
-    }
-  );
-  if (completed) {
-    await Promise.all(Object.entries(metadata).map(([name, value]) => {
-      return runtime.store.writeMetadataValue(session.sessionId, name, value);
-    }));
-  }
-  await runtime.store.appendCommandLogEntry(session.sessionId, {
-    actionId: action.id,
-    actionLabel: action.label,
-    actionType: action.type,
-    kind: "terminal-action",
-    status: actionResult.status,
-    stepId: session.currentStep
-  });
-}
-
 function createService({ appRoot = "" } = {}) {
   const inspectionRoot = resolveCurrentAppRoot(appRoot);
-  const adapterRegistry = createAiStudioAdapterRegistry();
-  const projectTypeStore = createAiStudioProjectTypeStore({
-    targetRoot: inspectionRoot
-  });
-
-  async function currentProjectTypeState() {
-    const projectType = await projectTypeStore.readProjectType();
-    const definition = adapterRegistry.projectTypeDefinition(projectType);
-    const status = projectType
-      ? definition
-        ? definition.enabled
-          ? "ready"
-          : "unimplemented"
-        : "unknown"
-      : "missing";
-    const ready = status === "ready";
-    return {
-      adapter: ready
-        ? {
-            id: definition.id,
-            label: definition.label
-          }
-        : null,
-      availableProjectTypes: adapterRegistry.availableProjectTypes(),
-      errorCode: ready ? "" : projectTypeErrorCode(status),
-      message: ready ? "" : (definition?.disabledReason || projectTypeMessage(status, projectType)),
-      path: projectTypeStore.path,
-      projectType,
-      ready,
-      status
-    };
-  }
-
-  async function requireCurrentProjectType() {
-    const projectType = await currentProjectTypeState();
-    if (!projectType.ready) {
-      const error = new Error(projectType.message);
-      error.code = projectType.errorCode;
-      error.projectType = projectType;
-      throw error;
-    }
-    return projectType;
-  }
-
-  async function createAiStudioRuntime() {
-    const projectType = await requireCurrentProjectType();
-    const adapter = await adapterRegistry.createAdapter(projectType.projectType);
-    return new AiStudioSessionRuntime({
-      adapter,
-      targetRoot: inspectionRoot
-    });
-  }
 
   return Object.freeze({
     async inspectCurrentApp(input = {}, options = {}) {
       void options;
-      const [inspection, projectType] = await Promise.all([
-        inspectCurrentApp(inspectionRoot, {
-          includeGit: input?.includeGit !== false
-        }),
-        currentProjectTypeState()
-      ]);
-      return {
-        ...inspection,
-        projectType
-      };
-    },
-
-    async saveProjectType(input = {}) {
-      return aiStudioResult(async () => {
-        const projectType = String(input?.projectType || "").trim();
-        adapterRegistry.requireImplementedProjectType(projectType);
-        await projectTypeStore.writeProjectType(projectType);
-        return {
-          ok: true,
-          projectType: await currentProjectTypeState()
-        };
+      return inspectCurrentApp(inspectionRoot, {
+        includeGit: input?.includeGit !== false
       });
     },
 
     async listNpmScripts() {
-      const projectType = await currentProjectTypeState();
-      if (!projectType.ready) {
-        return projectTypeBlockedResponse(projectType);
-      }
       return inspectNpmScripts(inspectionRoot);
     },
 
     async saveStarredNpmScripts(input = {}) {
-      const projectType = await currentProjectTypeState();
-      if (!projectType.ready) {
-        return projectTypeBlockedResponse(projectType);
-      }
       return saveStarredNpmScripts(inspectionRoot, input);
     },
 
     async resetStarredNpmScripts() {
-      const projectType = await currentProjectTypeState();
-      if (!projectType.ready) {
-        return projectTypeBlockedResponse(projectType);
-      }
       return resetStarredNpmScripts(inspectionRoot);
     },
 
     async startNpmScriptTerminal(input = {}) {
-      const projectType = await currentProjectTypeState();
-      if (!projectType.ready) {
-        return projectTypeBlockedResponse(projectType);
-      }
       return startNpmScriptTerminalForRoot({
         inspectionRoot,
         scriptName: input?.scriptName
-      });
-    },
-
-    async listAiStudioSessions() {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        return aiStudioSessionListResponse(await aiStudioRuntime.listSessions());
-      });
-    },
-
-    async createAiStudioSession() {
-      return aiStudioResult(async () => {
-        const projectType = await requireCurrentProjectType();
-        const aiStudioRuntime = await createAiStudioRuntime();
-        const existingSessions = await aiStudioRuntime.listSessions();
-        const limits = issueSessionLimits(existingSessions);
-        if (limits.openSessionCount >= limits.maxOpenSessions) {
-          return {
-            errors: [
-              {
-                code: "open_session_limit",
-                message: `Studio allows up to ${limits.maxOpenSessions} active sessions at once. Finish or abandon one before creating another.`
-              }
-            ],
-            limits,
-            ok: false,
-            sessions: existingSessions,
-            status: "blocked"
-          };
-        }
-        return aiStudioRuntime.createSession({
-          metadata: {
-            adapter_id: projectType.adapter?.id || projectType.projectType,
-            project_type: projectType.projectType
-          }
-        });
-      });
-    },
-
-    async inspectAiStudioSession(sessionId) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        return aiStudioRuntime.getSession(sessionId);
-      });
-    },
-
-    async runAiStudioSessionAction(sessionId, actionId, input = {}) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        return aiStudioRuntime.runAction(sessionId, actionId, input);
-      });
-    },
-
-    async advanceAiStudioSession(sessionId) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        return aiStudioRuntime.advance(sessionId);
-      });
-    },
-
-    async abandonAiStudioSession(sessionId) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        await aiStudioRuntime.store.writeStatus(sessionId, AI_STUDIO_SESSION_STATUS.ABANDONED);
-        await closeTerminalSessionsForNamespace(aiStudioCodexTerminalNamespace(sessionId));
-        await closeTerminalSessionsForNamespace(aiStudioCommandTerminalNamespace(sessionId));
-        await closeTerminalSessionsForNamespace(terminalNamespace(sessionId));
-        await closeTerminalSessionsForNamespace(stepTerminalNamespace(sessionId));
-        await closeTerminalSessionsForNamespace(appTestTerminalNamespace(sessionId));
-        return aiStudioRuntime.getSession(sessionId);
-      });
-    },
-
-    async startAiStudioCodexTerminal(sessionId) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        const session = await aiStudioRuntime.getSession(sessionId);
-        const workdir = aiStudioTerminalWorkdir(session);
-        const workspacePath = containerWorkspacePath(inspectionRoot, workdir);
-        if (!workspacePath) {
-          return {
-            ok: false,
-            error: "AI Studio Codex workdir is outside the target root."
-          };
-        }
-
-        await prepareAttachmentRoot();
-        const namespace = aiStudioCodexTerminalNamespace(sessionId);
-        return withAiStudioCodexState(startTerminalSession({
-          args: ({ id }) => codexTerminalArgs({
-            codexThreadId: normalizeCodexThreadId(session.metadata?.codex_thread_id),
-            containerName: codexContainerName({
-              sessionId,
-              terminalId: id
-            }),
-            sessionId,
-            targetRoot: inspectionRoot,
-            terminalId: id,
-            worktree: workdir
-          }),
-          command: "docker",
-          commandPreview: ({ args }) => dockerCommand(args),
-          cwd: inspectionRoot,
-          maxRunning: MAX_OPEN_ISSUE_SESSIONS,
-          namespace,
-          namespaceLimitPrefix: AI_STUDIO_CODEX_TERMINAL_NAMESPACE_PREFIX,
-          onClose: async ({ id }) => {
-            await removeDockerContainer(codexContainerName({
-              sessionId,
-              terminalId: id
-            }));
-            await cleanupCodexAttachments(inspectionRoot, sessionId);
-          },
-          reuseRunning: true
-        }), session);
-      });
-    },
-
-    async startAiStudioCommandTerminal(sessionId, input = {}) {
-      return aiStudioResult(async () => {
-        const actionId = String(input?.actionId || "").trim();
-        const aiStudioRuntime = await createAiStudioRuntime();
-        const session = await aiStudioRuntime.getSession(sessionId);
-        const action = aiStudioActionById(session, actionId);
-        if (!action) {
-          return {
-            ok: false,
-            error: `Action ${actionId || "(empty)"} is not available on this AI Studio step.`
-          };
-        }
-        if (action.type !== "command") {
-          return {
-            ok: false,
-            error: `Action ${action.label || action.id} does not run in the command terminal.`
-          };
-        }
-        if (action.enabled !== true) {
-          return {
-            ok: false,
-            error: action.disabledReason || `Action ${action.label || action.id} is disabled.`
-          };
-        }
-
-        const commandInput = input?.input && typeof input.input === "object" && !Array.isArray(input.input)
-          ? input.input
-          : {};
-        const spec = await aiStudioRuntime.adapter.createCommandTerminalSpec(action.id, {
-          action,
-          input: commandInput,
-          runtime: aiStudioRuntime,
-          session,
-          store: aiStudioRuntime.store
-        });
-        if (spec?.ok === false) {
-          return {
-            ok: false,
-            error: spec.message || `Command ${action.label || action.id} cannot start.`
-          };
-        }
-
-        return startTerminalSession({
-          args: spec.args || [],
-          command: spec.command,
-          commandPreview: spec.commandPreview,
-          cwd: spec.cwd || inspectionRoot,
-          maxRunning: 1,
-          metadata: {
-            actionId: action.id,
-            actionLabel: action.label,
-            sessionId
-          },
-          namespace: aiStudioCommandTerminalNamespace(sessionId),
-          namespaceLimitPrefix: aiStudioCommandTerminalNamespace(sessionId),
-          onClose: async ({ exitCode }) => {
-            await writeAiStudioActionTerminalResult({
-              action,
-              exitCode,
-              input: commandInput,
-              runtime: aiStudioRuntime,
-              session,
-              spec
-            });
-          },
-          reuseRunning: true
-        });
-      });
-    },
-
-    async uploadAiStudioCodexAttachment(sessionId, input = {}) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        await aiStudioRuntime.getSession(sessionId);
-        const fileName = sanitizeAttachmentFileName(input?.fileName);
-        const data = decodeAttachmentData(input?.dataBase64);
-        if (!data || data.length < 1) {
-          return {
-            ok: false,
-            error: "Attachment data is invalid."
-          };
-        }
-        if (data.length > MAX_ATTACHMENT_BYTES) {
-          return {
-            ok: false,
-            error: `Attachment is too large. Maximum size is ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB.`
-          };
-        }
-
-        const attachmentId = crypto.randomUUID();
-        const hostDirectory = attachmentHostDirectory(inspectionRoot, sessionId, attachmentId);
-        const hostPath = path.join(hostDirectory, fileName);
-        await mkdir(hostDirectory, {
-          recursive: true
-        });
-        await writeFile(hostPath, data);
-        scheduleAttachmentCleanup(inspectionRoot, sessionId, attachmentId);
-
-        return {
-          ok: true,
-          attachmentId,
-          containerPath: attachmentContainerPath(inspectionRoot, sessionId, attachmentId, fileName),
-          contentType: String(input?.contentType || ""),
-          expiresInMs: ATTACHMENT_TTL_MS,
-          fileName,
-          size: data.length
-        };
-      });
-    },
-
-    async saveAiStudioCodexThread(sessionId, input = {}) {
-      return aiStudioResult(async () => {
-        const normalizedThreadId = normalizeCodexThreadId(input?.threadId);
-        if (!normalizedThreadId) {
-          return {
-            ok: false,
-            error: "Invalid Codex thread id."
-          };
-        }
-        const aiStudioRuntime = await createAiStudioRuntime();
-        await aiStudioRuntime.getSession(sessionId);
-        await aiStudioRuntime.store.writeMetadataValue(sessionId, "codex_thread_id", normalizedThreadId);
-        return {
-          ok: true,
-          codexThreadId: normalizedThreadId
-        };
-      });
-    },
-
-    async saveAiStudioCodexPromptHandoff(sessionId, input = {}) {
-      return aiStudioResult(async () => {
-        const normalizedSignature = normalizeCodexPromptHandoffSignature(sessionId, input?.signature);
-        if (!normalizedSignature) {
-          return {
-            ok: false,
-            error: "Invalid Codex prompt handoff."
-          };
-        }
-        const aiStudioRuntime = await createAiStudioRuntime();
-        await aiStudioRuntime.getSession(sessionId);
-        const outputStart = normalizeCodexPromptHandoffOutputStart(input?.outputStart);
-        await Promise.all([
-          aiStudioRuntime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", normalizedSignature),
-          aiStudioRuntime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
-        ]);
-        return {
-          ok: true,
-          codexPromptHandoffOutputStart: outputStart,
-          codexPromptHandoffSignature: normalizedSignature
-        };
-      });
-    },
-
-    async readAiStudioArtifacts(sessionId) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        const session = await aiStudioRuntime.getSession(sessionId);
-        return aiStudioArtifactsResponse(
-          session,
-          await readAiStudioEditableArtifacts(aiStudioRuntime, session)
-        );
-      });
-    },
-
-    async saveAiStudioArtifacts(sessionId, input = {}) {
-      return aiStudioResult(async () => {
-        const aiStudioRuntime = await createAiStudioRuntime();
-        const session = await aiStudioRuntime.getSession(sessionId);
-        const artifacts = normalizeAiStudioArtifactInput(input);
-        if (Object.keys(artifacts).length < 1) {
-          return aiStudioArtifactErrorResponse(
-            session,
-            "ai_studio_artifacts_required",
-            "At least one editable artifact is required."
-          );
-        }
-        for (const [artifactName, artifactText] of Object.entries(artifacts)) {
-          const policy = aiStudioArtifactPolicy(artifactName);
-          if (!policy) {
-            return aiStudioArtifactErrorResponse(
-              session,
-              "ai_studio_artifact_not_editable",
-              `Artifact is not editable: ${artifactName}`
-            );
-          }
-          const state = aiStudioArtifactState(session, artifactName);
-          if (!state.editable) {
-            return aiStudioArtifactErrorResponse(
-              session,
-              "ai_studio_artifact_edit_not_available",
-              state.disabledReason
-            );
-          }
-          if (!artifactText) {
-            return aiStudioArtifactErrorResponse(
-              session,
-              "ai_studio_artifact_required",
-              policy.requiredMessage || `Artifact text is required: ${artifactName}`
-            );
-          }
-        }
-
-        await Promise.all(Object.entries(artifacts).flatMap(([artifactName, artifactText]) => {
-          const writes = [
-            aiStudioRuntime.store.writeArtifact(sessionId, artifactName, `${artifactText}\n`)
-          ];
-          const metadataName = aiStudioArtifactPolicy(artifactName)?.metadataName;
-          if (metadataName) {
-            writes.push(aiStudioRuntime.store.writeMetadataValue(sessionId, metadataName, artifactText));
-          }
-          return writes;
-        }));
-
-        const updatedSession = await aiStudioRuntime.getSession(sessionId);
-        return aiStudioArtifactsResponse(
-          updatedSession,
-          await readAiStudioEditableArtifacts(aiStudioRuntime, updatedSession)
-        );
       });
     },
 
@@ -2952,39 +2255,11 @@ function createService({ appRoot = "" } = {}) {
       }), codexThreadId);
     },
 
-    async subscribeAiStudioCodexTerminal(sessionId, terminalSessionId, subscriber) {
-      const aiStudioRuntime = await createAiStudioRuntime();
-      const session = await aiStudioRuntime.getSession(sessionId);
-      return withAiStudioCodexState(subscribeTerminalSession(terminalSessionId, subscriber, {
-        namespace: aiStudioCodexTerminalNamespace(sessionId)
-      }), session);
-    },
-
     async readCodexTerminal(sessionId, terminalSessionId) {
       const codexThreadId = await readCodexThreadId(inspectionRoot, sessionId);
       return withCodexThreadState(readTerminalSession(terminalSessionId, {
         namespace: terminalNamespace(sessionId)
       }), codexThreadId);
-    },
-
-    async readAiStudioCodexTerminal(sessionId, terminalSessionId) {
-      const aiStudioRuntime = await createAiStudioRuntime();
-      const session = await aiStudioRuntime.getSession(sessionId);
-      return withAiStudioCodexState(readTerminalSession(terminalSessionId, {
-        namespace: aiStudioCodexTerminalNamespace(sessionId)
-      }), session);
-    },
-
-    subscribeAiStudioCommandTerminal(sessionId, terminalSessionId, subscriber) {
-      return subscribeTerminalSession(terminalSessionId, subscriber, {
-        namespace: aiStudioCommandTerminalNamespace(sessionId)
-      });
-    },
-
-    readAiStudioCommandTerminal(sessionId, terminalSessionId) {
-      return readTerminalSession(terminalSessionId, {
-        namespace: aiStudioCommandTerminalNamespace(sessionId)
-      });
     },
 
     async subscribeSessionStepTerminal(sessionId, terminalSessionId, subscriber) {
@@ -3017,18 +2292,6 @@ function createService({ appRoot = "" } = {}) {
       });
     },
 
-    writeAiStudioCodexTerminal(sessionId, terminalSessionId, data) {
-      return writeTerminalSession(terminalSessionId, data, {
-        namespace: aiStudioCodexTerminalNamespace(sessionId)
-      });
-    },
-
-    writeAiStudioCommandTerminal(sessionId, terminalSessionId, data) {
-      return writeTerminalSession(terminalSessionId, data, {
-        namespace: aiStudioCommandTerminalNamespace(sessionId)
-      });
-    },
-
     writeSessionStepTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
         namespace: stepTerminalNamespace(sessionId)
@@ -3056,18 +2319,6 @@ function createService({ appRoot = "" } = {}) {
     closeCodexTerminal(sessionId, terminalSessionId) {
       return closeTerminalSession(terminalSessionId, {
         namespace: terminalNamespace(sessionId)
-      });
-    },
-
-    closeAiStudioCodexTerminal(sessionId, terminalSessionId) {
-      return closeTerminalSession(terminalSessionId, {
-        namespace: aiStudioCodexTerminalNamespace(sessionId)
-      });
-    },
-
-    closeAiStudioCommandTerminal(sessionId, terminalSessionId) {
-      return closeTerminalSession(terminalSessionId, {
-        namespace: aiStudioCommandTerminalNamespace(sessionId)
       });
     },
 

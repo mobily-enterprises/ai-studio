@@ -1,17 +1,6 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 
-const aiStudioArtifactsInputValidator = deepFreeze({
-  schema: createSchema({
-    artifacts: {
-      type: "object",
-      additionalProperties: true,
-      required: true
-    }
-  }),
-  mode: "patch"
-});
-
 const codexAttachmentInputValidator = deepFreeze({
   schema: createSchema({
     contentType: {
@@ -61,7 +50,6 @@ const codexThreadInputValidator = deepFreeze({
 });
 
 export {
-  aiStudioArtifactsInputValidator,
   codexAttachmentInputValidator,
   codexPromptHandoffInputValidator,
   codexThreadInputValidator

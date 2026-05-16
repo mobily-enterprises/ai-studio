@@ -35,8 +35,9 @@ import { computed, onMounted, ref } from "vue";
 import ProjectTypeSetup from "@/components/studio/ProjectTypeSetup.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
+  readAiStudioProjectType,
   readCurrentApp,
-  saveCurrentAppProjectType
+  saveAiStudioProjectType
 } from "@/lib/studioApi.js";
 
 const emit = defineEmits(["ready", "missing", "error"]);
@@ -53,7 +54,14 @@ async function loadCurrentApp() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    currentApp.value = await readCurrentApp();
+    const [app, projectResponse] = await Promise.all([
+      readCurrentApp(),
+      readAiStudioProjectType()
+    ]);
+    currentApp.value = {
+      ...app,
+      projectType: projectResponse?.projectType || {}
+    };
     if (currentApp.value?.projectType?.ready === true) {
       emit("ready", currentApp.value);
     } else {
@@ -72,7 +80,7 @@ async function saveProjectType(projectTypeId) {
   savingType.value = String(projectTypeId || "");
   errorMessage.value = "";
   try {
-    await saveCurrentAppProjectType(projectTypeId);
+    await saveAiStudioProjectType(projectTypeId);
     await loadCurrentApp();
   } catch (error) {
     errorMessage.value = String(error?.message || error || "Project type could not be saved.");

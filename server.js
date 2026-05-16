@@ -320,9 +320,9 @@ function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
 
       let service;
       try {
-        service = runtimeApp.make("feature.ai-studio.service");
+        service = runtimeApp.make("feature.ai-studio-terminals.service");
       } catch (error) {
-        closeWithError(1011, String(error?.message || error || "AI Studio service is unavailable."));
+        closeWithError(1011, String(error?.message || error || "AI Studio terminal service is unavailable."));
         return;
       }
       const sessionId = String(request.params?.sessionId || "");
@@ -403,9 +403,9 @@ function registerAiStudioCommandTerminalWebSocketRoute(app, runtimeApp) {
 
       let service;
       try {
-        service = runtimeApp.make("feature.ai-studio.service");
+        service = runtimeApp.make("feature.ai-studio-terminals.service");
       } catch (error) {
-        closeWithError(1011, String(error?.message || error || "AI Studio service is unavailable."));
+        closeWithError(1011, String(error?.message || error || "AI Studio terminal service is unavailable."));
         return;
       }
       const sessionId = String(request.params?.sessionId || "");

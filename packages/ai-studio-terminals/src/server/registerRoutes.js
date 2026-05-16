@@ -1,0 +1,265 @@
+import { resolveScopedApiBasePath, normalizeSurfaceId } from "@jskit-ai/kernel/shared/surface";
+
+import {
+  codexAttachmentInputValidator,
+  codexPromptHandoffInputValidator,
+  codexThreadInputValidator
+} from "./inputSchemas.js";
+import {
+  requireLocalStudioRequest
+} from "../../../../server/lib/localStudioRequest.js";
+
+function aiStudioStatusCode(response, { missingStatus = 404 } = {}) {
+  const code = response?.errors?.[0]?.code || "";
+  if (code === "ai_studio_session_not_found") {
+    return missingStatus;
+  }
+  if (code.startsWith("ai_studio_invalid") || code === "ai_studio_project_type_missing") {
+    return 400;
+  }
+  return response?.ok === false ? 400 : 200;
+}
+
+function getTerminalService(app) {
+  return app.make("feature.ai-studio-terminals.service");
+}
+
+function requireLocalAiStudioRequest(request, reply) {
+  return requireLocalStudioRequest(request, reply, {
+    message: "AI Studio terminal routes only accept loopback Studio requests."
+  });
+}
+
+function requestBodyObject(request) {
+  const body = request.input?.body || request.body || {};
+  return body && typeof body === "object" && !Array.isArray(body) ? body : {};
+}
+
+function registerRoutes(
+  app,
+  {
+    routeSurface = "",
+    routeRelativePath = ""
+  } = {}
+) {
+  if (!app || typeof app.make !== "function") {
+    throw new Error("registerRoutes requires application make().");
+  }
+
+  const router = app.make("jskit.http.router");
+  const normalizedRouteSurface = normalizeSurfaceId(routeSurface);
+  const routeBase = resolveScopedApiBasePath({
+    routeBase: "/",
+    relativePath: routeRelativePath,
+    strictParams: false
+  });
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/command-terminal`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Start an AI Studio command terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).startCommandTerminal(
+        request.params.sessionId,
+        requestBodyObject(request)
+      );
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/codex-terminal`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Start an AI Studio Codex terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).startCodexTerminal(request.params.sessionId);
+      reply.code(aiStudioStatusCode(response)).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/codex-attachments`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Upload a temporary Codex attachment for an AI Studio session."
+      },
+      body: codexAttachmentInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).uploadCodexAttachment(
+        request.params.sessionId,
+        request.input.body || {}
+      );
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/codex-thread`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Persist the active Codex thread for an AI Studio session."
+      },
+      body: codexThreadInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).saveCodexThread(
+        request.params.sessionId,
+        request.input.body || {}
+      );
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/codex-prompt-handoff`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Persist the active Codex prompt handoff for an AI Studio session."
+      },
+      body: codexPromptHandoffInputValidator
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).saveCodexPromptHandoff(
+        request.params.sessionId,
+        request.input.body || {}
+      );
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "GET",
+    `${routeBase}/sessions/:sessionId/codex-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Read an AI Studio Codex terminal snapshot."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).readCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "DELETE",
+    `${routeBase}/sessions/:sessionId/codex-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Close an AI Studio Codex terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).closeCodexTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(200).send(response);
+    }
+  );
+
+  router.register(
+    "GET",
+    `${routeBase}/sessions/:sessionId/command-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Read an AI Studio command terminal snapshot."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).readCommandTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "DELETE",
+    `${routeBase}/sessions/:sessionId/command-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Close an AI Studio command terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).closeCommandTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(200).send(response);
+    }
+  );
+}
+
+export { registerRoutes };
