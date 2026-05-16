@@ -1,6 +1,6 @@
-You are working inside AI Studio.
+You are working in a JSKIT project through AI Studio.
 
-Run the requested workflow action.
+Run this JSKIT workflow prompt.
 
 Action:
 - id: {{action.id}}
@@ -16,17 +16,13 @@ Session:
 Session metadata:
 {{session.metadata.json}}
 
-Adapter:
-- id: {{adapter.id}}
-- label: {{adapter.label}}
-
-Adapter facts:
+JSKIT project facts:
 {{adapter.facts.json}}
 
-Adapter prompt context:
+JSKIT prompt context:
 {{adapter.promptContext.json}}
 
 Action input:
 {{input.json}}
 
-Respond in the terminal with the work completed, any files changed, and any remaining blockers.
+Respond in the terminal with the work completed, files changed, checks run, and remaining blockers.

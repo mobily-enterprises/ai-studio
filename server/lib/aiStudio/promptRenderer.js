@@ -1,12 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   aiStudioError,
   normalizeText
 } from "./core.js";
 
-const DEFAULT_PROMPT_PACK_ROOT = fileURLToPath(new URL("./promptPacks/default", import.meta.url));
 const DEFAULT_PROMPT_ID = "generic";
 const PROMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TEMPLATE_TOKEN_PATTERN = /\{\{([A-Za-z0-9_.-]+)\}\}/gu;
@@ -43,6 +41,14 @@ function stableJson(value) {
 
 function promptTemplatePath(promptPackRoot, promptId) {
   return path.join(promptPackRoot, `${assertPromptId(promptId)}.txt`);
+}
+
+function assertPromptPackRoot(promptPackRoot) {
+  const normalizedPromptPackRoot = normalizeText(promptPackRoot);
+  if (!normalizedPromptPackRoot) {
+    throw aiStudioError("AI Studio prompt renderer requires a prompt pack root.", "ai_studio_prompt_pack_root_missing");
+  }
+  return path.resolve(normalizedPromptPackRoot);
 }
 
 function fileWasMissing(error) {
@@ -150,9 +156,9 @@ function renderPromptTemplate(template, context) {
 
 class PromptRenderer {
   constructor({
-    promptPackRoot = DEFAULT_PROMPT_PACK_ROOT
+    promptPackRoot = ""
   } = {}) {
-    this.promptPackRoot = path.resolve(promptPackRoot);
+    this.promptPackRoot = assertPromptPackRoot(promptPackRoot);
   }
 
   async renderPrompt({
@@ -175,7 +181,6 @@ class PromptRenderer {
 }
 
 export {
-  DEFAULT_PROMPT_PACK_ROOT,
   PromptRenderer,
   promptContextForAction,
   renderPromptTemplate

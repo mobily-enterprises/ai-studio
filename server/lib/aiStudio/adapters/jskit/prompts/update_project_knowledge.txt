@@ -1,0 +1,20 @@
+Update the JSKIT project knowledge artifact.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Update the JSKIT project knowledge file referenced in the prompt context. Preserve useful existing information, remove stale claims, and keep the result concise enough to be maintained.

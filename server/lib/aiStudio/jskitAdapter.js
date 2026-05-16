@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   TargetAdapter,
   adapterActionResult,
@@ -9,6 +10,7 @@ import {
   adapterProjectFacts
 } from "./adapter.js";
 import { normalizeText } from "./core.js";
+import { PromptRenderer } from "./promptRenderer.js";
 
 const JSKIT_MARKERS = Object.freeze([
   {
@@ -38,13 +40,29 @@ const JSKIT_MARKERS = Object.freeze([
   }
 ]);
 
-const JSKIT_CAPABILITIES = Object.freeze({
+const JSKIT_BLUEPRINT_RELATIVE_PATH = ".jskit/APP_BLUEPRINT.md";
+const JSKIT_PROMPT_PACK_ROOT = fileURLToPath(new URL("./adapters/jskit/prompts", import.meta.url));
+
+const JSKIT_BASE_CAPABILITIES = Object.freeze({
+  accept_changes: true,
+  commit_changes: true,
   create_issue_file: true,
   create_issue_on_gh: true,
   create_worktree: true,
   edit_issue: true,
   install_dependencies: true,
+  run_automated_checks: true,
+  run_deep_ui_check: true,
   send_issue_prompt: true
+});
+
+const JSKIT_BLUEPRINT_CAPABILITIES = Object.freeze({
+  update_project_knowledge: true
+});
+
+const JSKIT_CAPABILITIES = Object.freeze({
+  ...JSKIT_BASE_CAPABILITIES,
+  ...JSKIT_BLUEPRINT_CAPABILITIES
 });
 
 const JSKIT_COMMANDS = Object.freeze([
@@ -59,6 +77,18 @@ const JSKIT_COMMANDS = Object.freeze([
   {
     id: "create_issue_on_gh",
     label: "Create issue on GH"
+  },
+  {
+    id: "run_automated_checks",
+    label: "Run automated checks"
+  },
+  {
+    id: "accept_changes",
+    label: "Accept changes"
+  },
+  {
+    id: "commit_changes",
+    label: "Commit changes"
   }
 ]);
 
@@ -113,9 +143,31 @@ function setupSummary(markers) {
     : `Missing JSKIT markers: ${missingMarkerLabels(markers).join(", ")}`;
 }
 
-function jskitPromptContext({ markers = [], packageJson = {}, targetRoot = "" } = {}) {
+function jskitCapabilities({ blueprintExists = false, detected = false } = {}) {
+  if (!detected) {
+    return {};
+  }
+  return {
+    ...JSKIT_BASE_CAPABILITIES,
+    ...(blueprintExists ? JSKIT_BLUEPRINT_CAPABILITIES : {})
+  };
+}
+
+function jskitPromptContext({
+  blueprintExists = false,
+  blueprintPath = "",
+  markers = [],
+  packageJson = {},
+  targetRoot = ""
+} = {}) {
+  const resolvedBlueprintPath = blueprintPath || (targetRoot
+    ? path.join(targetRoot, JSKIT_BLUEPRINT_RELATIVE_PATH)
+    : JSKIT_BLUEPRINT_RELATIVE_PATH);
   return {
     adapter: "jskit",
+    blueprint_exists: String(Boolean(blueprintExists)),
+    blueprint_path: normalizeText(resolvedBlueprintPath),
+    blueprint_relative_path: JSKIT_BLUEPRINT_RELATIVE_PATH,
     package_name: normalizeText(packageJson.name),
     scripts: packageScripts(packageJson).join(", "),
     target_root: normalizeText(targetRoot),
@@ -123,12 +175,23 @@ function jskitPromptContext({ markers = [], packageJson = {}, targetRoot = "" } 
   };
 }
 
-function jskitFacts({ markers = [], packageJson = {}, targetRoot = "" } = {}) {
+function jskitFacts({
+  blueprintExists = false,
+  blueprintPath = "",
+  markers = [],
+  packageJson = {},
+  targetRoot = ""
+} = {}) {
   const detected = allMarkersExist(markers);
   return adapterProjectFacts({
-    capabilities: detected ? JSKIT_CAPABILITIES : {},
+    capabilities: jskitCapabilities({
+      blueprintExists,
+      detected
+    }),
     commands: detected ? JSKIT_COMMANDS : [],
     promptContext: jskitPromptContext({
+      blueprintExists,
+      blueprintPath,
       markers,
       packageJson,
       targetRoot
@@ -146,22 +209,30 @@ function notConfiguredCommandRunner({ commandId }) {
 
 class JskitTargetAdapter extends TargetAdapter {
   constructor({
-    commandRunner = notConfiguredCommandRunner
+    commandRunner = notConfiguredCommandRunner,
+    promptRenderer = new PromptRenderer({
+      promptPackRoot: JSKIT_PROMPT_PACK_ROOT
+    })
   } = {}) {
     super({
       id: "jskit",
       label: "JSKIT target adapter"
     });
     this.commandRunner = commandRunner;
+    this.promptRenderer = promptRenderer;
   }
 
   async projectInspection(targetRoot) {
     const resolvedTargetRoot = path.resolve(targetRoot);
-    const [markers, packageJson] = await Promise.all([
+    const blueprintPath = path.join(resolvedTargetRoot, JSKIT_BLUEPRINT_RELATIVE_PATH);
+    const [markers, packageJson, blueprintExists] = await Promise.all([
       inspectMarkers(resolvedTargetRoot),
-      readJsonIfExists(path.join(resolvedTargetRoot, "package.json"))
+      readJsonIfExists(path.join(resolvedTargetRoot, "package.json")),
+      pathExists(blueprintPath)
     ]);
     return {
+      blueprintExists,
+      blueprintPath,
       markers,
       packageJson,
       targetRoot: resolvedTargetRoot
@@ -200,11 +271,24 @@ class JskitTargetAdapter extends TargetAdapter {
     });
     return adapterActionResult(result);
   }
+
+  async renderPrompt({
+    action,
+    input = {},
+    session
+  } = {}) {
+    return this.promptRenderer.renderPrompt({
+      action,
+      input,
+      session
+    });
+  }
 }
 
 export {
   JSKIT_CAPABILITIES,
   JSKIT_COMMANDS,
   JSKIT_MARKERS,
+  JSKIT_PROMPT_PACK_ROOT,
   JskitTargetAdapter
 };

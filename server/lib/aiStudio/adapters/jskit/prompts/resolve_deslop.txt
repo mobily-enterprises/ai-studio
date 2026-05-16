@@ -1,0 +1,20 @@
+Resolve the remaining review/deslop findings for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Address the outstanding review findings directly. Keep the fix focused, rerun only fast relevant checks, and report what remains unresolved.

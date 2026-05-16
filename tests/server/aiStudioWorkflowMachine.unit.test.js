@@ -192,7 +192,7 @@ test("ai-studio runtime prompt actions render Codex handoff data without advanci
     assert.deepEqual(afterAction.completedSteps, []);
     assert.equal(afterAction.actionResult.status, "prompt_ready");
     assert.equal(afterAction.actionResult.promptId, "make_plan");
-    assert.match(afterAction.actionResult.prompt, /Create the implementation plan/u);
+    assert.match(afterAction.actionResult.prompt, /Run the AI Studio prompt action: Make plan/u);
     assert.match(afterAction.actionResult.prompt, /"scope": "unit test"/u);
     assert.equal(afterAction.actionResult.codexPromptHandoff.kind, "codex_prompt_handoff");
     assert.equal(afterAction.actionResult.codexPromptHandoff.codex.mode, "inject_prompt");

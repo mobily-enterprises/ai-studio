@@ -1,4 +1,4 @@
-Execute the accepted plan for this AI Studio session.
+Execute the accepted plan for this JSKIT project.
 
 Session:
 - id: {{session.id}}
@@ -8,10 +8,10 @@ Session:
 Known session metadata:
 {{session.metadata.json}}
 
-Adapter facts:
+JSKIT project facts:
 {{adapter.facts.json}}
 
-Adapter prompt context:
+JSKIT prompt context:
 {{adapter.promptContext.json}}
 
 Action input:

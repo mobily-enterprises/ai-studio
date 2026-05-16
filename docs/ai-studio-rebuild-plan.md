@@ -414,14 +414,16 @@ Acceptance:
 
 ## Phase 6: Prompt System
 
-Goal: Split prompts into core workflow prompts and adapter-specific context.
+Goal: Make prompt actions real while letting each adapter own the full prompt text.
 
 Instructions:
 
-- Create prompt packs.
-- Keep shared workflow intent in shared prompts.
-- Put language/framework/tool instructions in adapter context.
-- Render prompts from structured context.
+- Create adapter-owned prompt packs.
+- Do not keep a core default prompt pack.
+- Let adapters decide the full structure and wording of each prompt.
+- Let adapters use a shared template helper when it is useful.
+- Runtime prompt actions ask the active adapter to render the prompt.
+- Keep prompt rendering separate from `Next`.
 - Keep prompt files readable.
 - Keep prompt injection markers outside user-visible terminal output.
 
@@ -442,9 +444,9 @@ Prompt inputs:
 
 Checklist:
 
-- [ ] Shared prompt renderer exists.
-- [ ] Prompt pack lookup exists.
-- [ ] Adapter context injection exists.
+- [ ] Adapter prompt rendering API exists.
+- [ ] Adapter-owned prompt pack lookup exists.
+- [ ] Prompt template helper exists for adapters that want files.
 - [ ] Prompt previews work through the runtime.
 - [ ] Prompt actions can be sent by Studio.
 - [ ] Terminal output filter still hides injected prompt bodies.
@@ -1006,16 +1008,17 @@ Goal: Make prompt actions real while preserving the hidden full-prompt terminal 
 
 Instructions:
 
-- Implement prompt pack loading.
-- Implement prompt rendering from structured session context.
-- Implement Studio prompt handoff shape.
+- Implement adapter-owned prompt rendering.
+- Implement prompt pack loading as an adapter helper.
+- Implement Studio prompt handoff shape in the runtime.
 - Preserve the marker-based terminal output filtering.
 - Keep prompt sending separate from `Next`.
 
 Checklist:
 
-- [x] Prompt pack directory exists.
-- [x] Shared prompt renderer exists.
+- [x] Adapter-owned prompt pack directory exists.
+- [x] Prompt renderer helper exists for adapters.
+- [x] Runtime asks the adapter for full prompt text.
 - [x] Prompt context object is explicit.
 - [x] Prompt actions render prompt text.
 - [x] Studio can receive prompt handoff data.
@@ -1105,17 +1108,17 @@ Instructions:
 
 Checklist:
 
-- [ ] Make-plan action exists.
-- [ ] Execute-plan action exists.
-- [ ] Deep UI check action exists.
-- [ ] Deslop action exists.
-- [ ] Resolve deslop action exists.
-- [ ] Automated checks action exists.
-- [ ] Accept changes behavior exists.
-- [ ] Blueprint update action exists only when adapter supports it.
-- [ ] Commit changes action exists.
-- [ ] Accepted commit metadata is stored.
-- [ ] Fast tests cover action availability and deterministic command handling.
+- [x] Make-plan action exists.
+- [x] Execute-plan action exists.
+- [x] Deep UI check action exists.
+- [x] Deslop action exists.
+- [x] Resolve deslop action exists.
+- [x] Automated checks action exists.
+- [x] Accept changes behavior exists.
+- [x] Blueprint update action exists only when adapter supports it.
+- [x] Commit changes action exists.
+- [x] Accepted commit metadata is stored.
+- [x] Fast tests cover action availability and deterministic command handling.
 
 Acceptance:
 

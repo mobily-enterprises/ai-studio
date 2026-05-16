@@ -1,0 +1,17 @@
+Help define the GitHub issue for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Clarify the requested issue until it is scoped enough to create a concise issue title and issue body. Do not modify files.

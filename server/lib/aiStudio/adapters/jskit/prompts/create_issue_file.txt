@@ -1,0 +1,20 @@
+Create the local issue files for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Write the reviewed issue body to the session issue artifact and write the issue title to the matching title artifact. Keep the issue focused on the scoped work.

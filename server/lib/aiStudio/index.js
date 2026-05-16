@@ -5,6 +5,7 @@ export {
   adapterActionResult,
   adapterCommand,
   adapterDetection,
+  adapterPromptResult,
   adapterProjectFacts,
   adapterView
 } from "./adapter.js";
@@ -22,7 +23,6 @@ export {
   wrapPromptWithStudioContext
 } from "./promptMarkers.js";
 export {
-  DEFAULT_PROMPT_PACK_ROOT,
   PromptRenderer,
   promptContextForAction,
   renderPromptTemplate

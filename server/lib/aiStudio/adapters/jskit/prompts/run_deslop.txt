@@ -1,0 +1,20 @@
+Run the review/deslop pass for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Review the current work for bugs, regressions, unclear code, weak tests, and unnecessary complexity. Report findings clearly and make direct fixes when the issue is unambiguous.

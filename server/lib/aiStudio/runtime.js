@@ -15,7 +15,6 @@ import {
   STUDIO_CONTEXT_START_MARKER,
   wrapPromptWithStudioContext
 } from "./promptMarkers.js";
-import { PromptRenderer } from "./promptRenderer.js";
 import { DEFAULT_AI_STUDIO_WORKFLOW } from "./workflow.js";
 import { WorkflowMachine } from "./workflowMachine.js";
 
@@ -135,7 +134,7 @@ async function writeActionResultEffects(store, sessionId, result = {}) {
 }
 
 function buildCodexPromptHandoff(action, renderedPrompt) {
-  const visiblePrompt = action.label || "Run Codex prompt.";
+  const visiblePrompt = renderedPrompt.visiblePrompt || action.label || "Run Codex prompt.";
   return {
     codex: {
       mode: "inject_prompt",
@@ -160,7 +159,6 @@ class AiStudioSessionRuntime {
     adapter = new TargetAdapter(),
     clock = undefined,
     defaultHandler = defaultActionHandler,
-    promptRenderer = new PromptRenderer(),
     store = undefined,
     targetRoot = process.cwd(),
     workflow = DEFAULT_AI_STUDIO_WORKFLOW
@@ -172,7 +170,6 @@ class AiStudioSessionRuntime {
       ? defaultHandler
       : defaultActionHandler;
     this.adapter = adapter;
-    this.promptRenderer = promptRenderer;
     this.workflowMachine = new WorkflowMachine({
       actionReadiness: composeActionReadiness(defaultActionReadiness, actionReadiness),
       workflow
@@ -257,10 +254,12 @@ class AiStudioSessionRuntime {
     input = {},
     session
   } = {}) {
-    const renderedPrompt = await this.promptRenderer.renderPrompt({
+    const renderedPrompt = await this.adapter.renderPrompt({
       action,
       input,
-      session
+      runtime: this,
+      session,
+      store: this.store
     });
     return {
       codexPromptHandoff: buildCodexPromptHandoff(action, renderedPrompt),

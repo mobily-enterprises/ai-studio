@@ -106,6 +106,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "run_deep_ui_check",
           id: "run_deep_ui_check",
           label: "Run deep UI check",
           promptId: "run_deep_ui_check",
@@ -138,6 +139,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "run_automated_checks",
           id: "run_automated_checks",
           label: "Run automated checks",
           type: "command"
@@ -150,6 +152,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "accept_changes",
           id: "accept_changes",
           label: "Accept changes",
           type: "command"
@@ -157,11 +160,16 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Accept the finished work for commit.",
       id: "changes_accepted",
-      label: "Accept changes"
+      label: "Accept changes",
+      next: {
+        disabledReason: "Accept changes before continuing.",
+        enabledWhen: ["metadata:changes_accepted"]
+      }
     },
     {
       actions: [
         {
+          adapterCapability: "update_project_knowledge",
           id: "update_project_knowledge",
           label: "Update project knowledge",
           promptId: "update_project_knowledge",
@@ -175,6 +183,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "commit_changes",
           id: "commit_changes",
           label: "Commit changes",
           type: "command"
@@ -182,7 +191,11 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Commit the accepted changes.",
       id: "changes_committed",
-      label: "Commit changes"
+      label: "Commit changes",
+      next: {
+        disabledReason: "Commit changes before continuing.",
+        enabledWhen: ["metadata:accepted_commit"]
+      }
     },
     {
       actions: [

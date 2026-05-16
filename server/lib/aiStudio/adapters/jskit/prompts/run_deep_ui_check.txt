@@ -1,0 +1,20 @@
+Run a focused deep UI check for this JSKIT project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+JSKIT project facts:
+{{adapter.facts.json}}
+
+JSKIT prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Inspect the user-facing JSKIT app behavior carefully. Fix clear UI defects directly when the project supports it, and report what you changed or why no change was needed.

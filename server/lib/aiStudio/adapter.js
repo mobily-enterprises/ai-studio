@@ -77,6 +77,15 @@ function adapterActionResult(input = {}) {
   };
 }
 
+function adapterPromptResult(input = {}) {
+  return {
+    context: isPlainObject(input.context) ? input.context : {},
+    prompt: normalizeText(input.prompt),
+    promptId: normalizeText(input.promptId),
+    visiblePrompt: normalizeText(input.visiblePrompt)
+  };
+}
+
 function adapterProjectFacts(input = {}) {
   return {
     capabilities: normalizeCapabilityMap(input.capabilities),
@@ -137,6 +146,23 @@ class TargetAdapter {
     });
   }
 
+  async renderPrompt({
+    action = {},
+    input = {}
+  } = {}) {
+    const promptId = normalizeText(action.promptId || action.id);
+    return adapterPromptResult({
+      prompt: [
+        `Run the AI Studio prompt action: ${normalizeText(action.label || promptId)}.`,
+        "",
+        "Action input:",
+        JSON.stringify(input, null, 2)
+      ].join("\n"),
+      promptId,
+      visiblePrompt: action.label || promptId
+    });
+  }
+
   async getEditableArtifacts() {
     return [];
   }
@@ -151,7 +177,8 @@ class FakeTargetAdapter extends TargetAdapter {
     facts = {},
     id = "fake",
     label = "Fake adapter",
-    promptContext = {}
+    promptContext = {},
+    promptResults = {}
   } = {}) {
     super({
       id,
@@ -163,6 +190,7 @@ class FakeTargetAdapter extends TargetAdapter {
     this.detection = detection;
     this.facts = facts;
     this.promptContext = promptContext;
+    this.promptResults = promptResults;
   }
 
   async detect() {
@@ -192,6 +220,45 @@ class FakeTargetAdapter extends TargetAdapter {
       message: `Fake adapter ran ${normalizedCommandId}.`
     });
   }
+
+  async renderPrompt({
+    action = {},
+    input = {},
+    session = {}
+  } = {}) {
+    const promptId = normalizeText(action.promptId || action.id);
+    const promptResult = this.promptResults[promptId];
+    if (promptResult) {
+      return adapterPromptResult({
+        promptId,
+        visiblePrompt: action.label || promptId,
+        ...promptResult
+      });
+    }
+    const context = {
+      action,
+      adapter: session.adapter || {},
+      input,
+      session
+    };
+    return adapterPromptResult({
+      context,
+      prompt: [
+        `Fake adapter prompt for ${promptId}.`,
+        "",
+        "Adapter facts:",
+        JSON.stringify(session.adapter?.facts || {}, null, 2),
+        "",
+        "Adapter prompt context:",
+        JSON.stringify(session.adapter?.promptContext || {}, null, 2),
+        "",
+        "Action input:",
+        JSON.stringify(input, null, 2)
+      ].join("\n"),
+      promptId,
+      visiblePrompt: action.label || promptId
+    });
+  }
 }
 
 export {
@@ -200,6 +267,7 @@ export {
   adapterActionResult,
   adapterCommand,
   adapterDetection,
+  adapterPromptResult,
   adapterProjectFacts,
   adapterView
 };
