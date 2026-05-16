@@ -12,6 +12,9 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       actions: [
         {
           adapterCapability: "create_worktree",
+          advanceOnSuccess: true,
+          disabledReason: "Worktree already exists.",
+          disabledWhen: ["metadata:worktree_path"],
           id: "create_worktree",
           label: "Create worktree",
           type: "command"
@@ -19,12 +22,19 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Create the isolated worktree or target-specific working area.",
       id: "worktree_created",
-      label: "Create worktree"
+      label: "Create worktree",
+      next: {
+        disabledReason: "Create the worktree before continuing.",
+        enabledWhen: ["metadata:worktree_path"]
+      }
     },
     {
       actions: [
         {
           adapterCapability: "install_dependencies",
+          advanceOnSuccess: true,
+          disabledReason: "Dependencies are already installed.",
+          disabledWhen: ["metadata:dependencies_installed"],
           id: "install_dependencies",
           label: "Install dependencies",
           type: "command"
@@ -32,19 +42,21 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Install target dependencies when the adapter requires them.",
       id: "dependencies_installed",
-      label: "Install dependencies"
+      label: "Install dependencies",
+      next: {
+        disabledReason: "Install dependencies before continuing.",
+        enabledWhen: ["metadata:dependencies_installed"]
+      }
     },
     {
       actions: [
         {
-          adapterCapability: "send_issue_prompt",
           id: "send_issue_prompt",
           label: "Send prompt",
           promptId: "send_issue_prompt",
           type: "prompt"
         },
         {
-          adapterCapability: "create_issue_file",
           id: "create_issue_file",
           label: "Create issue file",
           promptId: "create_issue_file",
@@ -58,7 +70,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "edit_issue",
+          disabledReason: "The GitHub issue already exists; edit it on GitHub instead.",
+          disabledWhen: ["metadata:issue_url"],
           id: "edit_issue",
           label: "Edit issue",
           type: "editor"
@@ -106,7 +119,6 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "run_deep_ui_check",
           id: "run_deep_ui_check",
           label: "Run deep UI check",
           promptId: "run_deep_ui_check",
@@ -169,7 +181,6 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "update_project_knowledge",
           id: "update_project_knowledge",
           label: "Update project knowledge",
           promptId: "update_project_knowledge",
@@ -200,7 +211,6 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "create_pr_file",
           id: "create_pr_file",
           label: "Create PR file",
           promptId: "create_pr_file",
@@ -214,7 +224,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "edit_pr",
+          disabledReason: "The GitHub pull request already exists; edit it on GitHub instead.",
+          disabledWhen: ["metadata:pr_url"],
           id: "edit_pr",
           label: "Edit PR",
           type: "editor"
@@ -237,7 +248,6 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
-          adapterCapability: "prepare_for_merge",
           disabledReason: "Create the pull request before preparing for merge.",
           enabledWhen: ["metadata:pr_url"],
           id: "prepare_for_merge",

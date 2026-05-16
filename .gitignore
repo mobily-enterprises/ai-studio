@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 test-results/
+.ai-studio/sessions/
 .jskit/WORKBOARD.md
 .jskit/verification/
 .jskit/config/devel_*

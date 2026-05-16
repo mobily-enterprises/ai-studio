@@ -24,7 +24,9 @@ function normalizeAction(action = {}, stepId = "") {
   const type = normalizeText(action.type || "command");
   return {
     adapterCapability: normalizeText(action.adapterCapability),
+    advanceOnSuccess: action.advanceOnSuccess === true,
     disabledReason: normalizeText(action.disabledReason),
+    disabledWhen: normalizeConditionList(action.disabledWhen),
     enabledWhen: normalizeConditionList(action.enabledWhen),
     id,
     label: normalizeText(action.label || id),
@@ -127,6 +129,9 @@ function publicActionDefinition(action) {
     type: action.type,
     visible: action.visible
   };
+  if (action.advanceOnSuccess) {
+    definition.advanceOnSuccess = true;
+  }
   if (action.adapterCapability) {
     definition.adapterCapability = action.adapterCapability;
   }
@@ -274,6 +279,10 @@ class WorkflowMachine {
   }
 
   actionStateForSession(step, action, session = {}) {
+    const disabledStateForAction = this.checkBlockingConditions(action.disabledWhen, session, action.disabledReason);
+    if (!disabledStateForAction.enabled) {
+      return disabledStateForAction;
+    }
     const workflowState = this.checkRequirements(action.enabledWhen, session, action.disabledReason);
     if (!workflowState.enabled) {
       return workflowState;
@@ -285,6 +294,16 @@ class WorkflowMachine {
     }) || {};
     if (runtimeState.enabled === false) {
       return disabledState(runtimeState.disabledReason || "Action is not available.");
+    }
+    return enabledState();
+  }
+
+  checkBlockingConditions(conditions = [], session = {}, disabledReasonOverride = "") {
+    for (const condition of conditions) {
+      const result = this.checkCondition(condition, session);
+      if (result.met) {
+        return disabledState(disabledReasonOverride || `Blocked by condition: ${condition}.`);
+      }
     }
     return enabledState();
   }

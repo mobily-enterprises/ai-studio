@@ -12,45 +12,49 @@
       </div>
     </header>
 
-    <div class="studio-session-history__controls">
-      <v-sheet class="studio-session-history__tabs" rounded="lg" border>
-        <v-tabs
-          v-model="selectedArchive"
-          color="primary"
-          density="comfortable"
-          grow
-        >
-          <v-tab
-            v-for="tab in archiveTabs"
-            :key="tab.value"
-            :value="tab.value"
+    <ProjectTypeGate>
+      <template #default>
+        <div class="studio-session-history__controls">
+          <v-sheet class="studio-session-history__tabs" rounded="lg" border>
+            <v-tabs
+              v-model="selectedArchive"
+              color="primary"
+              density="comfortable"
+              grow
+            >
+              <v-tab
+                v-for="tab in archiveTabs"
+                :key="tab.value"
+                :value="tab.value"
+              >
+                {{ tab.label }}
+              </v-tab>
+            </v-tabs>
+          </v-sheet>
+
+          <v-btn
+            class="studio-session-history__refresh"
+            :loading="archiveLoading"
+            :prepend-icon="mdiRefresh"
+            size="small"
+            variant="tonal"
+            @click="refreshArchive"
           >
-            {{ tab.label }}
-          </v-tab>
-        </v-tabs>
-      </v-sheet>
+            Refresh
+          </v-btn>
+        </div>
 
-      <v-btn
-        class="studio-session-history__refresh"
-        :loading="archiveLoading"
-        :prepend-icon="mdiRefresh"
-        size="small"
-        variant="tonal"
-        @click="refreshArchive"
-      >
-        Refresh
-      </v-btn>
-    </div>
-
-    <ArchivedIssueSessions
-      ref="archiveSessions"
-      :key="selectedArchive"
-      :archive="selectedArchiveConfig.archive"
-      :empty-text="selectedArchiveConfig.emptyText"
-      :empty-title="selectedArchiveConfig.emptyTitle"
-      :show-refresh="false"
-      @loading-changed="archiveLoading = $event"
-    />
+        <ArchivedIssueSessions
+          ref="archiveSessions"
+          :key="selectedArchive"
+          :archive="selectedArchiveConfig.archive"
+          :empty-text="selectedArchiveConfig.emptyText"
+          :empty-title="selectedArchiveConfig.emptyTitle"
+          :show-refresh="false"
+          @loading-changed="archiveLoading = $event"
+        />
+      </template>
+    </ProjectTypeGate>
   </section>
 </template>
 
@@ -59,6 +63,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { mdiRefresh } from "@mdi/js";
 import ArchivedIssueSessions from "@/components/studio/ArchivedIssueSessions.vue";
+import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 
 const archiveTabs = [
   {

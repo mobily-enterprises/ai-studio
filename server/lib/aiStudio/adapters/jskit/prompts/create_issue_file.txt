@@ -4,6 +4,7 @@ Session:
 - id: {{session.id}}
 - current step: {{session.currentStep}}
 - target root: {{session.targetRoot}}
+- artifacts root: {{session.artifactsRoot}}
 
 Known session metadata:
 {{session.metadata.json}}
@@ -17,4 +18,10 @@ JSKIT prompt context:
 Action input:
 {{input.json}}
 
-Write the reviewed issue body to the session issue artifact and write the issue title to the matching title artifact. Keep the issue focused on the scoped work.
+Write the reviewed issue title to:
+{{session.artifactsRoot}}/issue_title
+
+Write the reviewed issue body to:
+{{session.artifactsRoot}}/issue.md
+
+Keep the issue focused on the scoped work.

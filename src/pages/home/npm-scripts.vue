@@ -1,11 +1,16 @@
 <template>
   <section class="generated-ui-screen generated-ui-screen--app studio-npm-scripts">
-    <NpmScriptsPanel />
+    <ProjectTypeGate>
+      <template #default>
+        <NpmScriptsPanel />
+      </template>
+    </ProjectTypeGate>
   </section>
 </template>
 
 <script setup>
 import NpmScriptsPanel from "@/components/studio/NpmScriptsPanel.vue";
+import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 </script>
 
 <style scoped>

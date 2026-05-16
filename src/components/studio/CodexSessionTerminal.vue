@@ -111,10 +111,15 @@ import {
 } from "@mdi/js";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
+  aiStudioCodexTerminalWebSocketUrl,
+  closeAiStudioCodexTerminal,
   closeIssueSessionCodexTerminal,
   issueSessionCodexTerminalWebSocketUrl,
+  saveAiStudioCodexThread,
   saveIssueSessionCodexThread,
+  startAiStudioCodexTerminal,
   startIssueSessionCodexTerminal,
+  uploadAiStudioCodexAttachment,
   uploadIssueSessionCodexAttachment
 } from "@/lib/studioApi.js";
 import {
@@ -211,6 +216,7 @@ const MAX_TERMINAL_OUTPUT_LENGTH = 16 * 1024 * 1024;
 const TERMINAL_OUTPUT_EMIT_INTERVAL_MS = 120;
 
 const sessionId = computed(() => props.session?.sessionId || "");
+const usesAiStudioEndpoints = computed(() => Boolean(props.session?.workflowId));
 
 function runtimeCodexPromptHandoff(session = {}) {
   const actionResultHandoff = session?.actionResult?.codexPromptHandoff;
@@ -681,6 +687,36 @@ function closeTerminalSocket() {
   }
 }
 
+function codexTerminalWebSocketUrl(sessionIdValue, terminalSessionIdValue) {
+  return usesAiStudioEndpoints.value
+    ? aiStudioCodexTerminalWebSocketUrl(sessionIdValue, terminalSessionIdValue)
+    : issueSessionCodexTerminalWebSocketUrl(sessionIdValue, terminalSessionIdValue);
+}
+
+function startCodexTerminal(sessionIdValue) {
+  return usesAiStudioEndpoints.value
+    ? startAiStudioCodexTerminal(sessionIdValue)
+    : startIssueSessionCodexTerminal(sessionIdValue);
+}
+
+function closeCodexTerminal(sessionIdValue, terminalSessionIdValue) {
+  return usesAiStudioEndpoints.value
+    ? closeAiStudioCodexTerminal(sessionIdValue, terminalSessionIdValue)
+    : closeIssueSessionCodexTerminal(sessionIdValue, terminalSessionIdValue);
+}
+
+function uploadCodexAttachment(sessionIdValue, file) {
+  return usesAiStudioEndpoints.value
+    ? uploadAiStudioCodexAttachment(sessionIdValue, file)
+    : uploadIssueSessionCodexAttachment(sessionIdValue, file);
+}
+
+function saveCodexThread(sessionIdValue, threadId) {
+  return usesAiStudioEndpoints.value
+    ? saveAiStudioCodexThread(sessionIdValue, threadId)
+    : saveIssueSessionCodexThread(sessionIdValue, threadId);
+}
+
 function clearTerminalReconnect() {
   if (!terminalReconnectTimer) {
     return;
@@ -782,7 +818,7 @@ async function connectTerminalSocket() {
   terminalStatus.value = terminalStatus.value || "connecting";
   terminalSocketOpenPromise = new Promise((resolve) => {
     let settled = false;
-    const socket = new WebSocket(issueSessionCodexTerminalWebSocketUrl(sessionId.value, terminalSessionId.value));
+    const socket = new WebSocket(codexTerminalWebSocketUrl(sessionId.value, terminalSessionId.value));
     terminalSocket = socket;
 
     const settle = (ready) => {
@@ -854,7 +890,7 @@ async function startTerminalOnce() {
   terminalStarting.value = true;
   terminalError.value = "";
   try {
-    const session = await startIssueSessionCodexTerminal(sessionId.value);
+    const session = await startCodexTerminal(sessionId.value);
     if (session?.ok === false) {
       throw new Error(session.error || session.errors?.[0]?.message || "Codex terminal failed to start.");
     }
@@ -960,7 +996,7 @@ async function injectAttachmentPath(containerPath) {
 }
 
 async function uploadDroppedAttachment(file) {
-  const attachment = await uploadIssueSessionCodexAttachment(sessionId.value, file);
+  const attachment = await uploadCodexAttachment(sessionId.value, file);
   if (attachment?.ok === false) {
     throw new Error(attachment.error || attachment.errors?.[0]?.message || "Attachment upload failed.");
   }
@@ -1041,7 +1077,7 @@ async function captureCodexThreadFromOutput(output) {
   }
 
   codexThreadSavePromise = (async () => {
-    const response = await saveIssueSessionCodexThread(sessionId.value, threadId);
+    const response = await saveCodexThread(sessionId.value, threadId);
     if (response?.ok === false) {
       throw new Error(response.error || response.errors?.[0]?.message || "Codex thread id could not be saved.");
     }
@@ -1293,7 +1329,7 @@ async function closeTerminal() {
   const existingTerminalId = terminalSessionId.value;
   detachTerminal();
   if (existingTerminalId && sessionId.value) {
-    await closeIssueSessionCodexTerminal(sessionId.value, existingTerminalId).catch(() => null);
+    await closeCodexTerminal(sessionId.value, existingTerminalId).catch(() => null);
   }
 }
 

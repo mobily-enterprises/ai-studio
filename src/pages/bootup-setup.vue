@@ -16,50 +16,54 @@
         <h1 id="bootup-setup-title" class="bootup-setup__title">Bootup/Setup</h1>
       </header>
 
-      <div class="bootup-setup__tabs">
-        <v-tabs
-          :model-value="activeTab"
-          aria-label="Bootup setup sections"
-          color="primary"
-          density="comfortable"
-          show-arrows
-          @update:model-value="selectTab"
-        >
-          <v-tab
-            v-for="tab in tabs"
-            :id="tabId(tab.value)"
-            :key="tab.value"
-            :aria-controls="panelId(tab.value)"
-            :value="tab.value"
-          >
-            {{ tab.label }}
-          </v-tab>
-        </v-tabs>
-      </div>
+      <ProjectTypeGate>
+        <template #default>
+          <div class="bootup-setup__tabs">
+            <v-tabs
+              :model-value="activeTab"
+              aria-label="Bootup setup sections"
+              color="primary"
+              density="comfortable"
+              show-arrows
+              @update:model-value="selectTab"
+            >
+              <v-tab
+                v-for="tab in tabs"
+                :id="tabId(tab.value)"
+                :key="tab.value"
+                :aria-controls="panelId(tab.value)"
+                :value="tab.value"
+              >
+                {{ tab.label }}
+              </v-tab>
+            </v-tabs>
+          </div>
 
-      <div
-        :id="panelId(activeTab)"
-        class="bootup-setup__panel"
-        role="tabpanel"
-        tabindex="0"
-        :aria-labelledby="tabId(activeTab)"
-      >
-        <BootupDoctorScreen
-          v-if="activeTab === 'bootup'"
-          :gate="initialGate"
-          @select-tab="selectTab"
-        />
-        <AppBootupDoctorScreen
-          v-else-if="activeTab === 'app-bootup'"
-          :gate="initialGate"
-          @select-tab="selectTab"
-        />
-        <AppSetupDoctorScreen
-          v-else-if="activeTab === 'app-setup'"
-          :gate="initialGate"
-          @select-tab="selectTab"
-        />
-      </div>
+          <div
+            :id="panelId(activeTab)"
+            class="bootup-setup__panel"
+            role="tabpanel"
+            tabindex="0"
+            :aria-labelledby="tabId(activeTab)"
+          >
+            <BootupDoctorScreen
+              v-if="activeTab === 'bootup'"
+              :gate="initialGate"
+              @select-tab="selectTab"
+            />
+            <AppBootupDoctorScreen
+              v-else-if="activeTab === 'app-bootup'"
+              :gate="initialGate"
+              @select-tab="selectTab"
+            />
+            <AppSetupDoctorScreen
+              v-else-if="activeTab === 'app-setup'"
+              :gate="initialGate"
+              @select-tab="selectTab"
+            />
+          </div>
+        </template>
+      </ProjectTypeGate>
     </section>
   </ShellLayout>
 </template>
@@ -68,6 +72,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ShellLayout from "@/components/ShellLayout.vue";
+import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 
 import AppBootupDoctorScreen from "../components/studio/AppBootupDoctorScreen.vue";
 import AppSetupDoctorScreen from "../components/studio/AppSetupDoctorScreen.vue";

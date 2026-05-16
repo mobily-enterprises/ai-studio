@@ -24,6 +24,19 @@
             :class="`studio-ai-sessions__status-dot--${session.status}`"
           />
           <span>{{ shortSessionId(session.sessionId) }}</span>
+          <v-btn
+            v-if="session.sessionId === selectedSessionId"
+            class="studio-ai-sessions__tab-abandon"
+            density="compact"
+            :disabled="commandBusy || isSelectedSessionClosed"
+            :icon="mdiClose"
+            :loading="abandonCommand.isRunning"
+            size="x-small"
+            title="Abandon session"
+            variant="text"
+            aria-label="Abandon session"
+            @click.stop="abandonSelectedSession"
+          />
         </v-chip>
 
         <v-btn
@@ -38,18 +51,6 @@
           New Session
         </v-btn>
       </div>
-
-      <v-btn
-        v-if="selectedSession"
-        color="error"
-        variant="text"
-        :disabled="commandBusy || isSelectedSessionClosed"
-        :loading="abandonCommand.isRunning"
-        :prepend-icon="mdiClose"
-        @click="abandonSelectedSession"
-      >
-        Abandon
-      </v-btn>
     </div>
 
     <v-progress-linear
@@ -119,6 +120,16 @@
             </div>
 
             <v-alert
+              v-if="actionResultMessage"
+              :type="actionResultType"
+              variant="tonal"
+              density="compact"
+              class="studio-ai-sessions__notice"
+            >
+              {{ actionResultMessage }}
+            </v-alert>
+
+            <v-alert
               v-if="currentStepDisabledReason"
               type="info"
               variant="tonal"
@@ -127,28 +138,6 @@
             >
               {{ currentStepDisabledReason }}
             </v-alert>
-
-            <v-sheet
-              v-if="activePromptHandoff"
-              rounded="lg"
-              border
-              class="studio-ai-sessions__prompt"
-            >
-              <div>
-                <p class="studio-ai-sessions__prompt-label">Prompt ready</p>
-                <p class="studio-ai-sessions__prompt-text">
-                  {{ activePromptHandoff.visiblePrompt || "Prompt ready for Codex." }}
-                </p>
-              </div>
-              <v-btn
-                color="primary"
-                variant="tonal"
-                :prepend-icon="mdiContentCopy"
-                @click="copyPromptHandoff"
-              >
-                Copy Prompt
-              </v-btn>
-            </v-sheet>
 
             <p v-if="copyStatus" class="text-caption text-medium-emphasis mb-0">
               {{ copyStatus }}
@@ -165,23 +154,54 @@
           @copy="copyText"
         />
       </aside>
+
+      <section class="studio-ai-sessions__terminals">
+        <AiStudioCommandTerminal
+          :action="commandTerminalAction"
+          :session="selectedSession"
+          :start-request-key="commandTerminalStartKey"
+          @finished="handleCommandTerminalFinished"
+          @running-changed="commandTerminalRunning = $event"
+        />
+
+        <CodexSessionTerminal
+          :prompt-injection-request-key="codexPromptInjectionKey"
+          :prompt-override="codexPromptOverride"
+          :session="selectedSession"
+          @prompt-injected="handleCodexPromptInjected"
+          @prompt-injection-failed="handleCodexPromptInjectionFailed"
+          @session-update="handleCodexSessionUpdate"
+        />
+      </section>
     </div>
+
+    <AiStudioDraftEditorDialog
+      v-model="draftEditorOpen"
+      v-model:body-text="draftEditorBody"
+      v-model:issue-title="draftEditorIssueTitle"
+      :error="draftEditorError"
+      :kind="draftEditorKind"
+      :loading="draftEditorLoading"
+      :saving="draftEditorSaving"
+      @save="saveDraftEditor"
+    />
   </v-sheet>
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { useList } from "@jskit-ai/users-web/client/composables/useList";
 import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
-import { useView } from "@jskit-ai/users-web/client/composables/useView";
 import {
   mdiArrowRight,
   mdiClose,
-  mdiContentCopy,
   mdiPlus
 } from "@mdi/js";
+import AiStudioCommandTerminal from "@/components/studio/AiStudioCommandTerminal.vue";
+import AiStudioDraftEditorDialog from "@/components/studio/AiStudioDraftEditorDialog.vue";
+import CodexSessionTerminal from "@/components/studio/CodexSessionTerminal.vue";
 import IssueSessionFacts from "@/components/studio/issue-session/IssueSessionFacts.vue";
 import IssueSessionTimeline from "@/components/studio/issue-session/IssueSessionTimeline.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
@@ -199,7 +219,6 @@ import {
   SELECTED_SESSION_STORAGE_KEY,
   aiStudioActionPath,
   aiStudioSessionPath,
-  aiStudioSessionQueryKey,
   aiStudioSessionsQueryKey,
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
@@ -215,6 +234,15 @@ import {
   shortAiStudioSessionId as shortSessionId,
   visibleAiStudioSessions
 } from "@/lib/aiStudioSessionPanelModel.js";
+import {
+  readAiStudioArtifacts,
+  saveAiStudioArtifacts,
+  saveAiStudioCodexPromptHandoff
+} from "@/lib/studioApi.js";
+
+const ISSUE_BODY_ARTIFACT = "issue.md";
+const ISSUE_TITLE_ARTIFACT = "issue_title";
+const PULL_REQUEST_ARTIFACT = "pull_request.md";
 
 const emit = defineEmits(["title-change"]);
 
@@ -225,7 +253,19 @@ const sessionSelection = useStoredSelection({
 const selectedSessionId = sessionSelection.selectedId;
 const activeActionId = ref("");
 const copyStatus = ref("");
-const latestPromptHandoff = ref(null);
+const codexPromptInjectionKey = ref("");
+const codexPromptOverride = ref("");
+const commandTerminalAction = ref(null);
+const commandTerminalRunning = ref(false);
+const commandTerminalStartKey = ref("");
+const draftEditorBody = ref("");
+const draftEditorError = ref("");
+const draftEditorIssueTitle = ref("");
+const draftEditorKind = ref("issue");
+const draftEditorLoading = ref(false);
+const draftEditorOpen = ref(false);
+const draftEditorSaving = ref(false);
+const pendingCommandAdvanceOnSuccess = ref(false);
 
 const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
   surface: AI_STUDIO_SURFACE_ID
@@ -239,19 +279,6 @@ const sessionList = useList({
   placementSource: "ai-studio.sessions.list",
   queryKeyFactory: aiStudioSessionsQueryKey,
   selectItems: (payload) => Array.isArray(payload?.sessions) ? payload.sessions : [],
-  surfaceId: AI_STUDIO_SURFACE_ID
-});
-
-const selectedSessionView = useView({
-  access: "never",
-  apiUrlTemplate: `${AI_STUDIO_SESSIONS_API_SUFFIX}/:recordId`,
-  fallbackLoadError: "AI Studio session could not be loaded.",
-  includeRecordIdInQueryKey: true,
-  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-  placementSource: "ai-studio.sessions.view",
-  queryKeyFactory: aiStudioSessionQueryKey,
-  readEnabled: computed(() => Boolean(selectedSessionId.value)),
-  routeRecordId: selectedSessionId,
   surfaceId: AI_STUDIO_SURFACE_ID
 });
 
@@ -292,8 +319,20 @@ const runActionCommand = useCommand({
     error: "AI Studio action could not run.",
     success: "AI Studio action completed."
   },
-  onRunSuccess: async (response) => {
-    latestPromptHandoff.value = aiStudioPromptHandoffFromSession(response);
+  onRunSuccess: async (response, { context } = {}) => {
+    const promptHandoff = aiStudioPromptHandoffFromSession(response);
+    if (promptHandoff?.prompt) {
+      codexPromptOverride.value = promptHandoff.prompt;
+      codexPromptInjectionKey.value = `${context.sessionId}:${context.actionId}:${Date.now()}`;
+      await refreshSessionData();
+      return;
+    }
+    if (actionShouldAdvance(response, context)) {
+      await advanceCommand.run({
+        sessionId: context.sessionId
+      });
+      return;
+    }
     await refreshSessionData();
   },
   ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -316,7 +355,7 @@ const advanceCommand = useCommand({
     success: "AI Studio session advanced."
   },
   onRunSuccess: async () => {
-    latestPromptHandoff.value = null;
+    codexPromptOverride.value = "";
     await refreshSessionData();
   },
   ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -340,7 +379,7 @@ const abandonCommand = useCommand({
   },
   onRunSuccess: async () => {
     sessionSelection.clear();
-    latestPromptHandoff.value = null;
+    codexPromptOverride.value = "";
     await sessionList.reload();
   },
   ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -358,7 +397,7 @@ const selectedListSession = computed(() => {
 });
 
 const selectedSession = computed(() => {
-  return enrichAiStudioSessionForDisplay(selectedSessionView.record || selectedListSession.value || null);
+  return enrichAiStudioSessionForDisplay(selectedListSession.value);
 });
 
 const currentActions = computed(() => {
@@ -373,13 +412,15 @@ const commandBusy = computed(() => Boolean(
   createSessionCommand.isRunning ||
   runActionCommand.isRunning ||
   advanceCommand.isRunning ||
-  abandonCommand.isRunning
+  abandonCommand.isRunning ||
+  commandTerminalRunning.value ||
+  draftEditorLoading.value ||
+  draftEditorSaving.value
 ));
 
-const pageLoading = computed(() => Boolean(sessionList.isLoading || selectedSessionView.isLoading));
+const pageLoading = computed(() => Boolean(sessionList.isLoading));
 const pageError = computed(() => {
   return sessionList.loadError ||
-    selectedSessionView.loadError ||
     commandMessage(createSessionCommand, "error") ||
     commandMessage(runActionCommand, "error") ||
     commandMessage(advanceCommand, "error") ||
@@ -414,8 +455,30 @@ const sessionFacts = computed(() => {
   return aiStudioSessionFacts(selectedSession.value || {});
 });
 
-const activePromptHandoff = computed(() => {
-  return latestPromptHandoff.value || aiStudioPromptHandoffFromSession(selectedSession.value);
+const latestActionResult = computed(() => {
+  if (selectedSession.value?.actionResult) {
+    return selectedSession.value.actionResult;
+  }
+  const actionResults = Array.isArray(selectedSession.value?.actionResults)
+    ? selectedSession.value.actionResults
+    : [];
+  return actionResults
+    .filter((result) => result.stepId === selectedSession.value?.currentStep)
+    .slice()
+    .sort((left, right) => String(left.at || "").localeCompare(String(right.at || "")))
+    .at(-1) || null;
+});
+
+const actionResultMessage = computed(() => String(latestActionResult.value?.message || ""));
+const actionResultType = computed(() => {
+  const status = String(latestActionResult.value?.status || "");
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "blocked" || status === "failed") {
+    return "warning";
+  }
+  return "info";
 });
 
 const currentStepDisabledReason = computed(() => {
@@ -424,13 +487,28 @@ const currentStepDisabledReason = computed(() => {
 
 async function refreshSessionData() {
   await sessionList.reload();
-  if (selectedSessionId.value) {
-    await selectedSessionView.refresh();
-  }
+}
+
+function actionShouldAdvance(response = {}, context = {}) {
+  return context.advanceOnSuccess === true &&
+    response.actionResult?.status === "completed" &&
+    response.next?.visible === true &&
+    response.next?.enabled === true;
+}
+
+function errorMessageFromResponse(response = {}, fallback = "AI Studio request failed.") {
+  return String(response?.errors?.[0]?.message || response?.error || fallback);
 }
 
 function selectSession(sessionId = "") {
-  latestPromptHandoff.value = null;
+  activeActionId.value = "";
+  codexPromptInjectionKey.value = "";
+  codexPromptOverride.value = "";
+  commandTerminalAction.value = null;
+  commandTerminalRunning.value = false;
+  commandTerminalStartKey.value = "";
+  draftEditorOpen.value = false;
+  pendingCommandAdvanceOnSuccess.value = false;
   sessionSelection.select(sessionId);
 }
 
@@ -438,15 +516,77 @@ async function runAction(action = {}) {
   if (!selectedSessionId.value || !action.id || commandBusy.value || action.enabled !== true) {
     return;
   }
-  activeActionId.value = action.id;
   copyStatus.value = "";
+  if (action.type === "command") {
+    commandTerminalAction.value = action;
+    pendingCommandAdvanceOnSuccess.value = action.advanceOnSuccess === true;
+    commandTerminalStartKey.value = `${selectedSessionId.value}:${action.id}:${Date.now()}`;
+    return;
+  }
+  if (action.type === "editor") {
+    await openDraftEditor(action);
+    return;
+  }
+  activeActionId.value = action.id;
   try {
     await runActionCommand.run({
       actionId: action.id,
+      advanceOnSuccess: action.advanceOnSuccess === true,
       sessionId: selectedSessionId.value
     });
   } finally {
     activeActionId.value = "";
+  }
+}
+
+async function openDraftEditor(action = {}) {
+  draftEditorKind.value = action.id === "edit_pr" ? "pull-request" : "issue";
+  draftEditorError.value = "";
+  draftEditorOpen.value = true;
+  draftEditorLoading.value = true;
+  try {
+    const response = await readAiStudioArtifacts(selectedSessionId.value);
+    if (response?.ok === false) {
+      draftEditorError.value = errorMessageFromResponse(response, "Draft could not be loaded.");
+      return;
+    }
+    const artifacts = response.artifacts || {};
+    draftEditorIssueTitle.value = String(artifacts[ISSUE_TITLE_ARTIFACT] || "");
+    draftEditorBody.value = draftEditorKind.value === "issue"
+      ? String(artifacts[ISSUE_BODY_ARTIFACT] || "")
+      : String(artifacts[PULL_REQUEST_ARTIFACT] || "");
+  } catch (error) {
+    draftEditorError.value = String(error?.message || error || "Draft could not be loaded.");
+  } finally {
+    draftEditorLoading.value = false;
+  }
+}
+
+async function saveDraftEditor() {
+  if (!selectedSessionId.value || draftEditorSaving.value) {
+    return;
+  }
+  draftEditorError.value = "";
+  draftEditorSaving.value = true;
+  try {
+    const response = draftEditorKind.value === "issue"
+      ? await saveAiStudioArtifacts(selectedSessionId.value, {
+          [ISSUE_BODY_ARTIFACT]: draftEditorBody.value,
+          [ISSUE_TITLE_ARTIFACT]: draftEditorIssueTitle.value
+        })
+      : await saveAiStudioArtifacts(selectedSessionId.value, {
+          [PULL_REQUEST_ARTIFACT]: draftEditorBody.value
+        });
+    if (response?.ok === false) {
+      draftEditorError.value = errorMessageFromResponse(response, "Draft could not be saved.");
+      return;
+    }
+    copyStatus.value = "Draft saved.";
+    await refreshSessionData();
+  } catch (error) {
+    draftEditorError.value = String(error?.message || error || "Draft could not be saved.");
+  } finally {
+    draftEditorSaving.value = false;
   }
 }
 
@@ -477,12 +617,40 @@ async function copyText(value, label = "Value") {
   }
 }
 
-async function copyPromptHandoff() {
-  const handoff = activePromptHandoff.value || {};
-  await copyText(
-    handoff.terminalInput || handoff.prompt || "",
-    handoff.visiblePrompt || "Prompt"
-  );
+async function handleCommandTerminalFinished(event = {}) {
+  commandTerminalRunning.value = false;
+  activeActionId.value = "";
+  await refreshSessionData();
+  await nextTick();
+  if (
+    event.sessionId === selectedSessionId.value &&
+    Number(event.exitCode) === 0 &&
+    pendingCommandAdvanceOnSuccess.value &&
+    currentNext.value?.visible === true &&
+    currentNext.value?.enabled === true
+  ) {
+    pendingCommandAdvanceOnSuccess.value = false;
+    await goNext();
+  }
+}
+
+async function handleCodexPromptInjected(event = {}) {
+  const sessionId = String(event.sessionId || selectedSessionId.value || "");
+  if (sessionId) {
+    await saveAiStudioCodexPromptHandoff(sessionId, {
+      outputStart: Number(event.outputStart || 0),
+      signature: `${sessionId}:${Date.now()}`
+    }).catch(() => null);
+  }
+  copyStatus.value = "Prompt sent to Codex.";
+}
+
+function handleCodexPromptInjectionFailed(event = {}) {
+  copyStatus.value = String(event.error || "Prompt injection failed.");
+}
+
+async function handleCodexSessionUpdate() {
+  await refreshSessionData();
 }
 
 watch(sessions, (nextSessions) => {
@@ -528,7 +696,12 @@ watch(selectedSessionTitle, (title) => {
 }
 
 .studio-ai-sessions__tab {
+  align-items: center;
   max-width: 18rem;
+}
+
+.studio-ai-sessions__tab-abandon {
+  margin-left: 0.3rem;
 }
 
 .studio-ai-sessions__status-dot {
@@ -604,30 +777,11 @@ watch(selectedSessionTitle, (title) => {
   margin-top: 0.35rem;
 }
 
-.studio-ai-sessions__prompt {
-  align-items: center;
-  display: flex;
+.studio-ai-sessions__terminals {
+  display: grid;
   gap: 0.75rem;
-  justify-content: space-between;
-  margin-top: 0.35rem;
-  padding: 0.62rem;
-}
-
-.studio-ai-sessions__prompt-label {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.68rem;
-  font-weight: 750;
-  letter-spacing: 0.02em;
-  line-height: 1.1;
-  margin: 0 0 0.15rem;
-  text-transform: uppercase;
-}
-
-.studio-ai-sessions__prompt-text {
-  font-size: 0.86rem;
-  font-weight: 620;
-  line-height: 1.28;
-  margin: 0;
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 @media (max-width: 980px) {
@@ -638,8 +792,7 @@ watch(selectedSessionTitle, (title) => {
 
 @media (max-width: 640px) {
   .studio-ai-sessions__toolbar,
-  .studio-ai-sessions__heading,
-  .studio-ai-sessions__prompt {
+  .studio-ai-sessions__heading {
     align-items: stretch;
     flex-direction: column;
   }

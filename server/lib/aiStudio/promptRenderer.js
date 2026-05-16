@@ -96,24 +96,32 @@ function normalizePromptContext(context = {}) {
     input: context.input ?? {},
     product: normalizeText(context.product || "ai-studio"),
     session: {
+      artifactsRoot: normalizeText(context.session?.artifactsRoot),
       completedSteps: Array.isArray(context.session?.completedSteps) ? context.session.completedSteps : [],
       currentStep: normalizeText(context.session?.currentStep),
       id: normalizeText(context.session?.id),
+      metadataRoot: normalizeText(context.session?.metadataRoot),
       metadata: isPlainObject(context.session?.metadata) ? context.session.metadata : {},
+      sessionRoot: normalizeText(context.session?.sessionRoot),
       status: normalizeText(context.session?.status),
-      targetRoot: normalizeText(context.session?.targetRoot)
+      targetRoot: normalizeText(context.session?.targetRoot),
+      worktreePath: normalizeText(context.session?.metadata?.worktree_path || context.session?.worktree)
     }
   };
 }
 
 function sessionPromptContext(session = {}) {
   return {
+    artifactsRoot: session.artifactsRoot,
     completedSteps: session.completedSteps,
     currentStep: session.currentStep,
     id: session.sessionId || session.id,
+    metadataRoot: session.metadataRoot,
     metadata: session.metadata,
+    sessionRoot: session.sessionRoot,
     status: session.status,
-    targetRoot: session.targetRoot
+    targetRoot: session.targetRoot,
+    worktree: session.worktree
   };
 }
 
@@ -132,12 +140,16 @@ function promptTemplateTokens(contextInput) {
     "context.json": stableJson(context),
     "input.json": stableJson(context.input),
     "product": context.product,
+    "session.artifactsRoot": context.session.artifactsRoot,
     "session.completedSteps.json": stableJson(context.session.completedSteps),
     "session.currentStep": context.session.currentStep,
     "session.id": context.session.id,
+    "session.metadataRoot": context.session.metadataRoot,
     "session.metadata.json": stableJson(context.session.metadata),
+    "session.sessionRoot": context.session.sessionRoot,
     "session.status": context.session.status,
-    "session.targetRoot": context.session.targetRoot
+    "session.targetRoot": context.session.targetRoot,
+    "session.worktreePath": context.session.worktreePath
   };
 }
 

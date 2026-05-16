@@ -142,6 +142,28 @@
       "options": {},
       "installedAt": "2026-05-11T10:00:00.000Z",
       "migrationSyncVersion": "0.1.0"
+    },
+    "@local/ai-studio": {
+      "packageId": "@local/ai-studio",
+      "version": "0.1.0",
+      "source": {
+        "type": "app-local-package",
+        "packagePath": "packages/ai-studio",
+        "descriptorPath": "packages/ai-studio/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {},
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {},
+        "vite": {},
+        "files": [],
+        "migrations": []
+      },
+      "options": {},
+      "installedAt": "2026-05-16T15:21:19.242Z"
     }
   }
 }

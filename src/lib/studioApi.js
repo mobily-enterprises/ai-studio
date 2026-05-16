@@ -25,7 +25,13 @@ const CURRENT_APP_ENDPOINT = resolveScopedApiBasePath({
   strictParams: false
 });
 
-const AI_STUDIO_SESSIONS_ENDPOINT = `${CURRENT_APP_ENDPOINT}/ai-studio/sessions`;
+const AI_STUDIO_ENDPOINT = resolveScopedApiBasePath({
+  routeBase: "/",
+  relativePath: "ai-studio",
+  strictParams: false
+});
+
+const AI_STUDIO_SESSIONS_ENDPOINT = `${AI_STUDIO_ENDPOINT}/sessions`;
 const ISSUE_SESSIONS_ENDPOINT = `${CURRENT_APP_ENDPOINT}/issue-sessions`;
 const BOOTSTRAP_TERMINAL_ENDPOINT = `${BOOTSTRAP_ENDPOINT}/terminal`;
 const TARGET_APP_TERMINAL_ENDPOINT = `${TARGET_APP_ENDPOINT}/terminal`;
@@ -36,6 +42,7 @@ const APP_SETUP_STREAM_ENDPOINT = `${APP_SETUP_ENDPOINT}/stream`;
 const CURRENT_APP_TEST_TERMINAL_ENDPOINT = `${CURRENT_APP_ENDPOINT}/app-test-terminal`;
 const NPM_SCRIPTS_ENDPOINT = `${CURRENT_APP_ENDPOINT}/npm-scripts`;
 const NPM_SCRIPT_TERMINAL_ENDPOINT = `${CURRENT_APP_ENDPOINT}/npm-script-terminal`;
+const PROJECT_TYPE_ENDPOINT = `${AI_STUDIO_ENDPOINT}/project-type`;
 
 const studioHttpClient = createTransientRetryHttpClient({
   credentials: "include",
@@ -75,6 +82,12 @@ async function readAppSetupStatus() {
 
 async function readCurrentApp() {
   return studioHttpClient.get(CURRENT_APP_ENDPOINT);
+}
+
+async function saveCurrentAppProjectType(projectType) {
+  return studioHttpClient.put(PROJECT_TYPE_ENDPOINT, {
+    projectType
+  });
 }
 
 async function readNpmScripts() {
@@ -160,6 +173,16 @@ function issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId = "") {
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
 }
 
+function aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = `${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-terminal`;
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
+function aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = `${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/command-terminal`;
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
 function issueSessionStepTerminalEndpoint(sessionId, terminalSessionId = "") {
   const base = `${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/step-terminal`;
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
@@ -191,6 +214,14 @@ function issueSessionCodexTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
 
+function aiStudioCodexTerminalWebSocketUrl(sessionId, terminalSessionId) {
+  return resolveWebSocketUrl(`${aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
+function aiStudioCommandTerminalWebSocketUrl(sessionId, terminalSessionId) {
+  return resolveWebSocketUrl(`${aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
 function issueSessionStepTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${issueSessionStepTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
@@ -209,6 +240,17 @@ function issueSessionAppTestTerminalWebSocketUrl(sessionId, terminalSessionId) {
 
 async function startIssueSessionCodexTerminal(sessionId) {
   return studioHttpClient.post(issueSessionCodexTerminalEndpoint(sessionId), {});
+}
+
+async function startAiStudioCodexTerminal(sessionId) {
+  return studioHttpClient.post(aiStudioCodexTerminalEndpoint(sessionId), {});
+}
+
+async function startAiStudioCommandTerminal(sessionId, actionId, input = {}) {
+  return studioHttpClient.post(aiStudioCommandTerminalEndpoint(sessionId), {
+    actionId,
+    input
+  });
 }
 
 async function startIssueSessionStepTerminal(sessionId) {
@@ -233,8 +275,24 @@ async function closeIssueSessionCodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
 }
 
+async function closeAiStudioCodexTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function closeAiStudioCommandTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId));
+}
+
 async function readIssueSessionCodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.get(issueSessionCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function readAiStudioCodexTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.get(aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId));
+}
+
+async function readAiStudioCommandTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.get(aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId));
 }
 
 async function closeIssueSessionStepTerminal(sessionId, terminalSessionId) {
@@ -259,6 +317,16 @@ async function createAiStudioSession() {
 
 async function readAiStudioSession(sessionId) {
   return studioHttpClient.get(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}`);
+}
+
+async function readAiStudioArtifacts(sessionId) {
+  return studioHttpClient.get(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/artifacts`);
+}
+
+async function saveAiStudioArtifacts(sessionId, artifacts = {}) {
+  return studioHttpClient.put(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/artifacts`, {
+    artifacts
+  });
 }
 
 async function runAiStudioSessionAction(sessionId, actionId, input = {}) {
@@ -299,8 +367,23 @@ async function uploadIssueSessionCodexAttachment(sessionId, file) {
   });
 }
 
+async function uploadAiStudioCodexAttachment(sessionId, file) {
+  const arrayBuffer = await file.arrayBuffer();
+  return studioHttpClient.post(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-attachments`, {
+    contentType: String(file.type || ""),
+    dataBase64: arrayBufferToBase64(arrayBuffer),
+    fileName: String(file.name || "attachment")
+  });
+}
+
 async function saveIssueSessionCodexThread(sessionId, threadId) {
   return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-thread`, {
+    threadId
+  });
+}
+
+async function saveAiStudioCodexThread(sessionId, threadId) {
+  return studioHttpClient.post(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-thread`, {
     threadId
   });
 }
@@ -310,6 +393,16 @@ async function saveIssueSessionCodexPromptHandoff(sessionId, {
   signature = ""
 } = {}) {
   return studioHttpClient.post(`${ISSUE_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-prompt-handoff`, {
+    outputStart: String(Math.max(0, Number(outputStart || 0))),
+    signature
+  });
+}
+
+async function saveAiStudioCodexPromptHandoff(sessionId, {
+  outputStart = 0,
+  signature = ""
+} = {}) {
+  return studioHttpClient.post(`${AI_STUDIO_SESSIONS_ENDPOINT}/${encodeURIComponent(sessionId)}/codex-prompt-handoff`, {
     outputStart: String(Math.max(0, Number(outputStart || 0))),
     signature
   });
@@ -331,6 +424,16 @@ async function resolveStudioGate() {
       bootstrap,
       route: "/bootup-setup",
       tab: "app-bootup",
+      targetApp
+    });
+  }
+
+  const currentApp = await readCurrentApp();
+  if (currentApp?.projectType?.ready !== true) {
+    return rememberStudioGate({
+      bootstrap,
+      currentApp,
+      route: "/home",
       targetApp
     });
   }
@@ -366,12 +469,19 @@ export {
   ISSUE_SESSIONS_ENDPOINT,
   NPM_SCRIPT_TERMINAL_ENDPOINT,
   NPM_SCRIPTS_ENDPOINT,
+  PROJECT_TYPE_ENDPOINT,
   TARGET_APP_ENDPOINT,
   TARGET_APP_STREAM_ENDPOINT,
   TARGET_APP_TERMINAL_ENDPOINT,
   abandonAiStudioSession,
   abandonIssueSession,
   advanceAiStudioSession,
+  aiStudioCodexTerminalEndpoint,
+  aiStudioCodexTerminalWebSocketUrl,
+  aiStudioCommandTerminalEndpoint,
+  aiStudioCommandTerminalWebSocketUrl,
+  closeAiStudioCodexTerminal,
+  closeAiStudioCommandTerminal,
   closeIssueSessionCodexTerminal,
   closeCurrentAppTestTerminal,
   closeIssueSessionAppTestTerminal,
@@ -395,6 +505,9 @@ export {
   readBootstrapStatus,
   readCurrentApp,
   readAiStudioSession,
+  readAiStudioCodexTerminal,
+  readAiStudioCommandTerminal,
+  readAiStudioArtifacts,
   readIssueSession,
   readIssueSessionBlueprint,
   readIssueSessionCodexTerminal,
@@ -407,17 +520,24 @@ export {
   rewindIssueSession,
   runAiStudioSessionAction,
   runIssueSessionStep,
+  saveAiStudioCodexPromptHandoff,
+  saveAiStudioCodexThread,
+  saveAiStudioArtifacts,
   saveIssueSessionBlueprint,
   saveIssueSessionIssueDraft,
   saveIssueSessionPullRequestDraft,
   saveIssueSessionCodexPromptHandoff,
   saveIssueSessionCodexThread,
+  saveCurrentAppProjectType,
   saveStarredNpmScripts,
   startCurrentAppTestTerminal,
+  startAiStudioCodexTerminal,
+  startAiStudioCommandTerminal,
   startIssueSessionAppTestTerminal,
   startIssueSessionCodexTerminal,
   startIssueSessionStepTerminal,
   startNpmScriptTerminal,
   studioHttpClient,
+  uploadAiStudioCodexAttachment,
   uploadIssueSessionCodexAttachment
 };

@@ -1,89 +1,52 @@
 <template>
   <section class="generated-ui-screen generated-ui-screen--app studio-screen d-flex flex-column ga-3">
     <v-alert
-      v-if="currentAppError"
+      v-if="pageError"
       type="error"
       variant="tonal"
       border="start"
       class="studio-screen__alert"
     >
-      {{ currentAppError }}
+      {{ pageError }}
     </v-alert>
 
-    <v-progress-linear
-      v-if="(gateLoading || currentAppLoading) && !currentApp"
-      color="primary"
-      height="6"
-      indeterminate
-      rounded
-    />
-
-    <IssueSessionPanel v-if="currentApp" @title-change="emitPageTitle" />
-
-    <v-sheet
-      v-if="!gateLoading && !currentAppLoading && !currentApp && !currentAppError"
-      rounded="lg"
-      border
-      class="studio-screen__panel"
+    <ProjectTypeGate
+      @error="handleProjectTypeError"
+      @missing="handleProjectTypeMissing"
+      @ready="handleProjectTypeReady"
     >
-      <h2 class="text-subtitle-1 mb-2">Current app unavailable</h2>
-      <p class="text-body-2 text-medium-emphasis mb-0">
-        The inspection endpoint did not return project metadata.
-      </p>
-    </v-sheet>
+      <template #default>
+        <IssueSessionPanel @title-change="emitPageTitle" />
+      </template>
+    </ProjectTypeGate>
   </section>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import {
-  readCurrentApp
-} from "@/lib/studioApi.js";
+import { onBeforeUnmount, ref } from "vue";
 import IssueSessionPanel from "@/components/studio/IssueSessionPanel.vue";
+import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 
-const gateLoading = ref(false);
-const currentApp = ref(null);
-const currentAppLoading = ref(false);
-const currentAppError = ref("");
+const pageError = ref("");
 const emit = defineEmits(["page-title-change"]);
 
 function emitPageTitle(title = "") {
   emit("page-title-change", String(title || "").trim());
 }
 
-async function loadCurrentApp() {
-  currentAppLoading.value = true;
-  currentAppError.value = "";
+function handleProjectTypeReady() {
+  pageError.value = "";
+}
+
+function handleProjectTypeMissing() {
+  pageError.value = "";
+  emitPageTitle("Choose project type");
+}
+
+function handleProjectTypeError(error) {
+  pageError.value = String(error || "");
   emitPageTitle();
-  try {
-    currentApp.value = await readCurrentApp();
-    if (!currentApp.value) {
-      emitPageTitle();
-    }
-  } catch (loadError) {
-    currentApp.value = null;
-    currentAppError.value = String(loadError?.message || loadError || "Current app inspection failed.");
-    emitPageTitle();
-  } finally {
-    currentAppLoading.value = false;
-  }
 }
-
-async function loadHome() {
-  gateLoading.value = true;
-  currentAppError.value = "";
-  try {
-    await loadCurrentApp();
-  } catch (loadError) {
-    currentAppError.value = String(loadError?.message || loadError || "Current app inspection failed.");
-  } finally {
-    gateLoading.value = false;
-  }
-}
-
-onMounted(() => {
-  void loadHome();
-});
 
 onBeforeUnmount(() => {
   emitPageTitle();

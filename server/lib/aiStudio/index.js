@@ -10,11 +10,9 @@ export {
   adapterView
 } from "./adapter.js";
 export {
-  JSKIT_CAPABILITIES,
-  JSKIT_COMMANDS,
-  JSKIT_MARKERS,
-  JskitTargetAdapter
-} from "./jskitAdapter.js";
+  AI_STUDIO_PROJECT_TYPES,
+  createAiStudioAdapterRegistry
+} from "./adapters/registry.js";
 export {
   STUDIO_CONTEXT_END_MARKER,
   STUDIO_CONTEXT_INSTRUCTIONS,
@@ -28,6 +26,11 @@ export {
   renderPromptTemplate
 } from "./promptRenderer.js";
 export { DEFAULT_AI_STUDIO_WORKFLOW } from "./workflow.js";
+export {
+  AI_STUDIO_PROJECT_TYPE_FILE,
+  createAiStudioProjectTypeStore,
+  projectTypePath
+} from "./projectType.js";
 export {
   WorkflowMachine,
   normalizeWorkflow

@@ -199,6 +199,13 @@ class TargetAdapter {
     });
   }
 
+  async createCommandTerminalSpec(commandId) {
+    return {
+      ok: false,
+      message: `Command ${assertCommandId(commandId)} does not have a terminal runner.`
+    };
+  }
+
   async renderPrompt({
     action = {},
     input = {}

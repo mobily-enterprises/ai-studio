@@ -1,5 +1,5 @@
 const AI_STUDIO_SURFACE_ID = "home";
-const AI_STUDIO_SESSIONS_API_SUFFIX = "/studio/current-app/ai-studio/sessions";
+const AI_STUDIO_SESSIONS_API_SUFFIX = "/ai-studio/sessions";
 const DEFAULT_MAX_OPEN_SESSIONS = 3;
 const SELECTED_SESSION_STORAGE_KEY = "jskit-ai-studio:selected-ai-studio-session-id";
 
@@ -11,10 +11,6 @@ const LOCAL_STUDIO_COMMAND_OPTIONS = Object.freeze({
 
 function aiStudioSessionsQueryKey(surfaceId, ownershipFilter) {
   return ["ai-studio", surfaceId, ownershipFilter, "sessions"];
-}
-
-function aiStudioSessionQueryKey(surfaceId, ownershipFilter) {
-  return ["ai-studio", surfaceId, ownershipFilter, "session"];
 }
 
 function encodePathSegment(value = "") {
@@ -43,7 +39,6 @@ export {
   SELECTED_SESSION_STORAGE_KEY,
   aiStudioActionPath,
   aiStudioSessionPath,
-  aiStudioSessionQueryKey,
   aiStudioSessionsQueryKey,
   commandInputFromContext
 };
