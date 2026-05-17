@@ -29,6 +29,16 @@ function createService({ projectService } = {}) {
       };
     },
 
+    async closeSessionNonCodexTerminals(sessionId) {
+      await Promise.all([
+        appReview.closeAllForSession(sessionId),
+        command.closeAllForSession(sessionId)
+      ]);
+      return {
+        ok: true
+      };
+    },
+
     closeCodexTerminal(sessionId, terminalSessionId) {
       return codex.closeTerminal(sessionId, terminalSessionId);
     },

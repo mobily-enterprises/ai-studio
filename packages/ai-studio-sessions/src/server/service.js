@@ -122,7 +122,7 @@ function createService({
       return sessionResult(async () => {
         const runtime = await projectService.createRuntime();
         const session = await runtime.rewind(sessionId, stepId);
-        await terminalService?.closeSessionTerminals?.(sessionId);
+        await terminalService?.closeSessionNonCodexTerminals?.(sessionId);
         return session;
       });
     }

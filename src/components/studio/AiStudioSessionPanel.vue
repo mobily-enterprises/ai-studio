@@ -601,7 +601,7 @@ function handleDiffBodyClick(event) {
   align-items: flex-start;
   display: grid;
   gap: 0.9rem;
-  grid-template-columns: minmax(22rem, 0.95fr) minmax(24rem, 1.05fr);
+  grid-template-columns: minmax(18rem, 0.7fr) minmax(30rem, 1.3fr);
   min-height: 0;
 }
 
