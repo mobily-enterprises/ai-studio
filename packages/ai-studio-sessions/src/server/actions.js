@@ -2,7 +2,8 @@ import {
   sessionActionInputValidator,
   sessionCreateInputValidator,
   sessionIdInputValidator,
-  sessionListInputValidator
+  sessionListInputValidator,
+  sessionRewindInputValidator
 } from "./inputSchemas.js";
 
 const ACTION_LIST_SESSIONS = "feature.ai-studio-sessions.list";
@@ -12,6 +13,7 @@ const ACTION_INSPECT_SESSION_DIFF = "feature.ai-studio-sessions.diff.inspect";
 const ACTION_RUN_SESSION_ACTION = "feature.ai-studio-sessions.action.run";
 const ACTION_ADVANCE_SESSION = "feature.ai-studio-sessions.advance";
 const ACTION_ABANDON_SESSION = "feature.ai-studio-sessions.abandon";
+const ACTION_REWIND_SESSION = "feature.ai-studio-sessions.rewind";
 
 const featureActions = Object.freeze([
   {
@@ -129,6 +131,24 @@ const featureActions = Object.freeze([
     }
   },
   {
+    id: ACTION_REWIND_SESSION,
+    version: 1,
+    kind: "command",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: sessionRewindInputValidator,
+    output: null,
+    idempotency: "optional",
+    audit: {
+      actionName: ACTION_REWIND_SESSION
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.rewindSession(input.sessionId, input.stepId);
+    }
+  },
+  {
     id: ACTION_ABANDON_SESSION,
     version: 1,
     kind: "command",
@@ -155,6 +175,7 @@ export {
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
   ACTION_LIST_SESSIONS,
+  ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION,
   featureActions
 };

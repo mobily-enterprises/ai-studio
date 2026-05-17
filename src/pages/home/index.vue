@@ -66,6 +66,8 @@ onBeforeUnmount(() => {
 .studio-screen {
   margin-inline: auto;
   max-width: min(96rem, calc(100vw - 2rem));
+  min-height: 0;
+  width: 100%;
 }
 
 .studio-screen__title {
@@ -85,5 +87,30 @@ onBeforeUnmount(() => {
     max-width: 100%;
   }
 
+}
+
+@media (min-width: 981px) {
+  .studio-screen {
+    height:
+      calc(
+        100dvh
+        - var(--v-layout-top, 0px)
+        - var(--v-layout-bottom, 0px)
+        - 1.75rem
+        - env(safe-area-inset-bottom, 0px)
+      );
+    overflow: hidden;
+  }
+
+  .studio-screen :deep(.project-type-gate) {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .studio-screen :deep(.project-type-gate > .studio-ai-sessions) {
+    flex: 1 1 auto;
+  }
 }
 </style>

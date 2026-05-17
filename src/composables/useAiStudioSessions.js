@@ -201,6 +201,32 @@ function useAiStudioSessions({
     writeMethod: "POST"
   });
 
+  const rewindCommand = useCommand({
+    access: "never",
+    apiSuffix: AI_STUDIO_SESSIONS_API_SUFFIX,
+    buildRawPayload: (_model, { context }) => ({
+      stepId: String(context?.stepId || "")
+    }),
+    buildCommandOptions: (_payload, { context }) => ({
+      method: "POST",
+      options: LOCAL_STUDIO_COMMAND_OPTIONS,
+      path: aiStudioSessionPath(sessionsApiPath.value, context?.sessionId, "/rewind")
+    }),
+    fallbackRunError: "AI Studio session could not rewind.",
+    messages: {
+      error: "AI Studio session could not rewind.",
+      success: "AI Studio session rewound."
+    },
+    onRunSuccess: async () => {
+      clearSessionTransientState();
+      await refreshSessionData();
+    },
+    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+    placementSource: "ai-studio.sessions.rewind",
+    surfaceId: AI_STUDIO_SURFACE_ID,
+    writeMethod: "POST"
+  });
+
   const abandonCommand = useCommand({
     access: "never",
     apiSuffix: AI_STUDIO_SESSIONS_API_SUFFIX,
@@ -246,6 +272,7 @@ function useAiStudioSessions({
     createSessionCommand.isRunning ||
     runActionCommand.isRunning ||
     advanceCommand.isRunning ||
+    rewindCommand.isRunning ||
     abandonCommand.isRunning ||
     codexTerminalBusy.value ||
     commandTerminalRunning.value ||
@@ -299,6 +326,7 @@ function useAiStudioSessions({
       commandMessage(createSessionCommand, "error") ||
       commandMessage(runActionCommand, "error") ||
       commandMessage(advanceCommand, "error") ||
+      commandMessage(rewindCommand, "error") ||
       commandMessage(abandonCommand, "error") ||
       "";
   });
@@ -380,6 +408,23 @@ function useAiStudioSessions({
     commandTerminalStartKey.value = "";
   }
 
+  function clearSessionTransientState() {
+    activeActionId.value = "";
+    appReviewTerminalStartKey.value = "";
+    appReviewTerminalVisible.value = false;
+    appReviewUrl.value = "";
+    codexPromptInjectionKey.value = "";
+    codexPromptOverride.value = "";
+    codexTerminalBusy.value = false;
+    clearCommandTerminal();
+    diffDialogOpen.value = false;
+    diffError.value = "";
+    diffPayload.value = null;
+    draftEditorOpen.value = false;
+    pendingCommandAdvanceOnSuccess.value = false;
+    pendingCommandStartedAt.value = 0;
+  }
+
   function actionShouldAdvance(response = {}, context = {}) {
     return context.advanceOnSuccess === true &&
       response.actionResult?.status === "completed" &&
@@ -418,23 +463,10 @@ function useAiStudioSessions({
   }
 
   function selectSession(sessionId = "") {
-    activeActionId.value = "";
     abandonDialogOpen.value = false;
     abandonDialogSessionId.value = "";
     abandonDialogSessionTitle.value = "";
-    appReviewTerminalStartKey.value = "";
-    appReviewTerminalVisible.value = false;
-    appReviewUrl.value = "";
-    codexPromptInjectionKey.value = "";
-    codexPromptOverride.value = "";
-    codexTerminalBusy.value = false;
-    clearCommandTerminal();
-    draftEditorOpen.value = false;
-    diffDialogOpen.value = false;
-    diffError.value = "";
-    diffPayload.value = null;
-    pendingCommandAdvanceOnSuccess.value = false;
-    pendingCommandStartedAt.value = 0;
+    clearSessionTransientState();
     sessionSelection.select(sessionId);
   }
 
@@ -567,6 +599,17 @@ function useAiStudioSessions({
       sessionId: selectedSessionId.value
     });
     clearCommandTerminal();
+  }
+
+  async function rewindToStep(step = {}) {
+    const stepId = String(step.rewindStepId || step.id || "");
+    if (!selectedSessionId.value || commandBusy.value || step.canRewind !== true || !stepId) {
+      return;
+    }
+    await rewindCommand.run({
+      sessionId: selectedSessionId.value,
+      stepId
+    });
   }
 
   function handleCommandTerminalClosed() {
@@ -773,6 +816,8 @@ function useAiStudioSessions({
     requestAbandonSelectedSession,
     reviewDiffDisabled,
     reviewDiffTitle,
+    rewindCommand,
+    rewindToStep,
     runAppReview,
     runAppReviewDisabled,
     runAppReviewTitle,

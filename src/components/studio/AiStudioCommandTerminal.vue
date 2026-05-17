@@ -406,4 +406,27 @@ onBeforeUnmount(() => {
     height: min(58vh, 28rem);
   }
 }
+
+@media (min-width: 981px) {
+  .ai-command-terminal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .ai-command-terminal__body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .ai-command-terminal__host {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+  }
+}
 </style>

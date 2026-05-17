@@ -16,6 +16,14 @@ function normalizeConditionList(value) {
     : [];
 }
 
+function normalizeRewindCleanup(cleanup = {}) {
+  return {
+    actionResults: normalizeConditionList(cleanup.actionResults),
+    artifacts: normalizeConditionList(cleanup.artifacts),
+    metadata: normalizeConditionList(cleanup.metadata)
+  };
+}
+
 function normalizeAction(action = {}, stepId = "") {
   const id = normalizeText(action.id);
   if (!id) {
@@ -80,7 +88,9 @@ function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
     id,
     index,
     label: normalizeText(step.label || id),
-    next: normalizeNext(step.next)
+    next: normalizeNext(step.next),
+    rewindCleanup: normalizeRewindCleanup(step.rewindCleanup),
+    rewindable: step.rewindable !== false
   };
 }
 
@@ -103,6 +113,7 @@ function publicStepDefinition(step, status) {
     id: step.id,
     index: step.index,
     label: step.label,
+    rewindable: step.rewindable,
     status
   };
 }
@@ -262,6 +273,11 @@ class WorkflowMachine {
   stepAfter(stepId) {
     const step = this.stepById.get(normalizeText(stepId));
     return step ? this.steps[step.index + 1] || null : null;
+  }
+
+  stepsFrom(stepId) {
+    const step = this.stepById.get(normalizeText(stepId));
+    return step ? this.steps.slice(step.index) : [];
   }
 
   completedStepIds(session = {}) {
@@ -424,6 +440,44 @@ class WorkflowMachine {
       next: this.nextStateForStep(currentStep, session),
       stepDefinitions: this.stepDefinitionsForSession(currentStep, completedSteps),
       workflowId: this.workflow.id
+    };
+  }
+
+  rewindPlanForSession(session = {}, stepId = "") {
+    const targetStep = this.stepById.get(normalizeText(stepId));
+    if (!targetStep) {
+      throw aiStudioError(`Unknown AI Studio rewind step: ${normalizeText(stepId) || "(empty)"}`, "ai_studio_unknown_rewind_step");
+    }
+    if (!targetStep.rewindable) {
+      throw aiStudioError(`AI Studio step cannot be rewound: ${targetStep.label}`, "ai_studio_step_not_rewindable");
+    }
+
+    const completed = new Set(this.completedStepIds(session));
+    if (!completed.has(targetStep.id)) {
+      throw aiStudioError(`AI Studio step has not been completed: ${targetStep.label}`, "ai_studio_rewind_step_not_completed");
+    }
+
+    const affectedSteps = this.stepsFrom(targetStep.id);
+    const completedStepIds = affectedSteps
+      .map((step) => step.id)
+      .filter((affectedStepId) => completed.has(affectedStepId));
+    const cleanup = affectedSteps.reduce((plan, step) => {
+      plan.actionResults.push(...step.rewindCleanup.actionResults);
+      plan.artifacts.push(...step.rewindCleanup.artifacts);
+      plan.metadata.push(...step.rewindCleanup.metadata);
+      return plan;
+    }, {
+      actionResults: [],
+      artifacts: [],
+      metadata: []
+    });
+
+    return {
+      actionResultIds: Array.from(new Set(cleanup.actionResults)),
+      artifactNames: Array.from(new Set(cleanup.artifacts)),
+      completedStepIds,
+      metadataNames: Array.from(new Set(cleanup.metadata)),
+      targetStepId: targetStep.id
     };
   }
 }

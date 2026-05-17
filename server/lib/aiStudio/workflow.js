@@ -4,6 +4,7 @@ const CREATE_ISSUE_FILE_ACTION_ID = "create_issue_file";
 const ISSUE_BODY_ARTIFACT = "issue.md";
 const ISSUE_FILE_STEP_ID = "issue_file_created";
 const ISSUE_TITLE_ARTIFACT = "issue_title";
+const PULL_REQUEST_ARTIFACT = "pull_request.md";
 const SEND_ISSUE_PROMPT_ACTION_ID = "send_issue_prompt";
 const ISSUE_FILES_READY_CONDITION = `artifacts:${ISSUE_TITLE_ARTIFACT},${ISSUE_BODY_ARTIFACT}`;
 const ISSUE_PROMPT_HAS_REQUEST_CONDITION = `action-input:${SEND_ISSUE_PROMPT_ACTION_ID}.issueRequest`;
@@ -16,7 +17,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       description: "Create the AI Studio session.",
       id: "session_created",
-      label: "Create session"
+      label: "Create session",
+      rewindable: false
     },
     {
       actions: [
@@ -35,7 +37,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Create the worktree before continuing.",
         enabledWhen: ["metadata:worktree_path"]
-      }
+      },
+      rewindable: false
     },
     {
       actions: [
@@ -54,6 +57,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Install dependencies before continuing.",
         enabledWhen: ["metadata:dependencies_installed"]
+      },
+      rewindCleanup: {
+        actionResults: ["install_dependencies"],
+        metadata: ["dependencies_installed", "dependencies_path"]
       }
     },
     {
@@ -81,6 +88,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Discuss and finalise issue before continuing.",
         enabledWhen: [ISSUE_TITLE_READY_CONDITION, ISSUE_BODY_READY_CONDITION]
+      },
+      rewindCleanup: {
+        actionResults: [SEND_ISSUE_PROMPT_ACTION_ID, CREATE_ISSUE_FILE_ACTION_ID],
+        artifacts: [ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT]
       }
     },
     {
@@ -111,6 +122,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       label: "Edit and submit issue",
       next: {
         enabledWhen: ["metadata:issue_url"]
+      },
+      rewindCleanup: {
+        actionResults: ["create_issue_on_gh"],
+        metadata: ["issue_url", "issue_number", "issue_title"]
       }
     },
     {
@@ -124,7 +139,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Ask Codex to create the implementation plan.",
       id: "plan_made",
-      label: "Make plan"
+      label: "Make plan",
+      rewindCleanup: {
+        actionResults: ["make_plan"]
+      }
     },
     {
       actions: [
@@ -137,7 +155,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Ask Codex to execute the plan.",
       id: "plan_executed",
-      label: "Execute plan"
+      label: "Execute plan",
+      rewindCleanup: {
+        actionResults: ["execute_plan"]
+      }
     },
     {
       actions: [
@@ -150,7 +171,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Run the deeper UI review when the target supports it.",
       id: "deep_ui_check_run",
-      label: "Run deep UI check"
+      label: "Run deep UI check",
+      rewindCleanup: {
+        actionResults: ["run_deep_ui_check"]
+      }
     },
     {
       actions: [
@@ -169,7 +193,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Run the review/deslop prompts.",
       id: "review_run",
-      label: "Run review/deslop"
+      label: "Run review/deslop",
+      rewindCleanup: {
+        actionResults: ["run_deslop", "resolve_deslop"]
+      }
     },
     {
       actions: [
@@ -186,6 +213,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Run automated checks successfully before continuing.",
         enabledWhen: ["metadata:automated_checks_passed"]
+      },
+      rewindCleanup: {
+        actionResults: ["run_automated_checks"],
+        metadata: ["automated_checks_passed"]
       }
     },
     {
@@ -205,7 +236,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Update adapter-supported project knowledge.",
       id: "project_knowledge_updated",
-      label: "Update project knowledge"
+      label: "Update project knowledge",
+      rewindCleanup: {
+        actionResults: ["update_project_knowledge"]
+      }
     },
     {
       actions: [
@@ -222,6 +256,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Commit and push changes before continuing.",
         enabledWhen: ["metadata:accepted_commit"]
+      },
+      rewindCleanup: {
+        actionResults: ["commit_changes"],
+        metadata: ["accepted_commit", "branch_pushed"]
       }
     },
     {
@@ -239,6 +277,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Create the pull request file before continuing.",
         enabledWhen: ["artifact:pull_request.md"]
+      },
+      rewindCleanup: {
+        actionResults: ["create_pr_file"],
+        artifacts: [PULL_REQUEST_ARTIFACT]
       }
     },
     {
@@ -270,6 +312,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       next: {
         disabledReason: "Create the pull request before continuing.",
         enabledWhen: ["metadata:pr_url"]
+      },
+      rewindCleanup: {
+        actionResults: ["create_pr_on_gh"],
+        metadata: ["pr_url"]
       }
     },
     {
@@ -293,7 +339,11 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Prepare and merge the pull request.",
       id: "pr_merged",
-      label: "Merge PR"
+      label: "Merge PR",
+      rewindCleanup: {
+        actionResults: ["prepare_for_merge", "merge_pr"],
+        metadata: ["pr_merged"]
+      }
     },
     {
       actions: [
@@ -308,7 +358,11 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Sync the main checkout after a successful merge.",
       id: "main_checkout_synced",
-      label: "Sync main checkout"
+      label: "Sync main checkout",
+      rewindCleanup: {
+        actionResults: ["sync_main_checkout"],
+        metadata: ["main_checkout_synced"]
+      }
     },
     {
       actions: [
@@ -326,6 +380,9 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       label: "Congratulations!",
       next: {
         visible: false
+      },
+      rewindCleanup: {
+        actionResults: ["finish_session"]
       }
     }
   ]

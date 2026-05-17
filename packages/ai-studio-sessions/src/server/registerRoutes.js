@@ -7,6 +7,7 @@ import {
   ACTION_INSPECT_SESSION_DIFF,
   ACTION_INSPECT_SESSION,
   ACTION_LIST_SESSIONS,
+  ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION
 } from "./actions.js";
 import {
@@ -184,6 +185,33 @@ function registerRoutes(
         actionId: ACTION_ADVANCE_SESSION,
         input: {
           sessionId: request.params.sessionId
+        }
+      });
+      reply.code(aiStudioStatusCode(response)).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
+    `${routeBase}/sessions/:sessionId/rewind`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-sessions"],
+        summary: "Rewind an AI Studio session."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const body = requestBodyObject(request);
+      const response = await request.executeAction({
+        actionId: ACTION_REWIND_SESSION,
+        input: {
+          sessionId: request.params.sessionId,
+          stepId: body.stepId
         }
       });
       reply.code(aiStudioStatusCode(response)).send(response);

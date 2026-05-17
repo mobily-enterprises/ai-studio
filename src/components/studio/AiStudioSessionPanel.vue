@@ -88,6 +88,7 @@
         <AiStudioSessionTimeline
           :busy="commandBusy"
           :steps="timelineSteps"
+          @rewind="rewindToStep"
         >
           <template #current-step>
             <form
@@ -472,6 +473,7 @@ const {
   requestAbandonSelectedSession,
   reviewDiffDisabled,
   reviewDiffTitle,
+  rewindToStep,
   runAppReview,
   runAppReviewDisabled,
   runAppReviewTitle,
@@ -600,10 +602,12 @@ function handleDiffBodyClick(event) {
   display: grid;
   gap: 0.9rem;
   grid-template-columns: minmax(22rem, 0.95fr) minmax(24rem, 1.05fr);
+  min-height: 0;
 }
 
 .studio-ai-sessions__main,
 .studio-ai-sessions__terminals {
+  min-height: 0;
   min-width: 0;
 }
 
@@ -735,8 +739,7 @@ function handleDiffBodyClick(event) {
 }
 
 .studio-ai-sessions__terminals {
-  position: sticky;
-  top: 0.75rem;
+  position: relative;
 }
 
 .studio-ai-sessions__command-overlay {
@@ -763,6 +766,32 @@ function handleDiffBodyClick(event) {
   .studio-ai-sessions__terminals {
     position: relative;
     top: auto;
+  }
+}
+
+@media (min-width: 981px) {
+  .studio-ai-sessions {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .studio-ai-sessions__layout {
+    align-items: stretch;
+    height: 100%;
+  }
+
+  .studio-ai-sessions__main {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 0.25rem;
+    scrollbar-gutter: stable;
+  }
+
+  .studio-ai-sessions__terminals {
+    align-self: stretch;
+    display: grid;
+    overflow: hidden;
   }
 }
 

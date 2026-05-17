@@ -63,23 +63,25 @@ function enrichAiStudioSessionForDisplay(session = null) {
 
 function buildAiStudioTimelineSteps(session = {}) {
   const currentStepId = String(session?.currentStep || "");
+  const sessionIsOpen = isOpenAiStudioSession(session || {});
   return (session?.stepDefinitions || []).map((step, fallbackIndex) => {
     const status = String(step.status || "");
     const current = status === "current" || step.id === currentStepId;
     const done = status === "done" || step.done === true;
     const description = String(step.description || "");
+    const canRewind = sessionIsOpen && done && !current && step.rewindable !== false;
     return {
       badges: [],
-      canExpand: done && !current && Boolean(description),
-      canRewind: false,
+      canExpand: done && !current && (Boolean(description) || canRewind),
+      canRewind,
       current,
       description,
       done,
       id: step.id,
       index: Number.isFinite(Number(step.index)) ? Number(step.index) : fallbackIndex,
       label: step.label || step.id,
-      rewindLabel: "",
-      rewindStepId: "",
+      rewindLabel: step.label || step.id,
+      rewindStepId: step.id,
       state: current ? "current" : done ? "done" : "pending",
       title: description || undefined
     };

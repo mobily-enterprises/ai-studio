@@ -116,6 +116,15 @@ function createService({
         const runtime = await projectService.createRuntime();
         return runtime.runAction(sessionId, actionId, input);
       });
+    },
+
+    async rewindSession(sessionId, stepId) {
+      return sessionResult(async () => {
+        const runtime = await projectService.createRuntime();
+        const session = await runtime.rewind(sessionId, stepId);
+        await terminalService?.closeSessionTerminals?.(sessionId);
+        return session;
+      });
     }
   });
 }

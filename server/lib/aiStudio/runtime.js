@@ -386,6 +386,28 @@ class AiStudioSessionRuntime {
     await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
     return this.getSession(session.sessionId);
   }
+
+  async rewind(sessionId, stepId) {
+    const session = await this.getSession(sessionId);
+    if (session.status !== AI_STUDIO_SESSION_STATUS.ACTIVE) {
+      throw aiStudioError("Closed AI Studio sessions cannot be rewound.", "ai_studio_closed_session_rewind");
+    }
+
+    const plan = this.workflowMachine.rewindPlanForSession(session, stepId);
+    await Promise.all([
+      this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
+      this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
+      this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
+      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames)
+    ]);
+    await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
+    await this.store.appendCommandLogEntry(session.sessionId, {
+      fromStepId: session.currentStep,
+      kind: "rewind",
+      toStepId: plan.targetStepId
+    });
+    return this.getSession(session.sessionId);
+  }
 }
 
 export {

@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -281,6 +281,17 @@ function createAiStudioSessionStore({
     return normalizeText(await readTextIfExists(metadataFilePath(sessionPaths, name)));
   }
 
+  async function deleteMetadataValue(sessionId, name) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(metadataFilePath(sessionPaths, name), {
+      force: true
+    });
+  }
+
+  async function deleteMetadataValues(sessionId, names = []) {
+    await Promise.all(names.map((name) => deleteMetadataValue(sessionId, name)));
+  }
+
   async function readMetadata(sessionId) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     const names = sortedFileNames(
@@ -308,6 +319,17 @@ function createAiStudioSessionStore({
   async function readArtifact(sessionId, relativePath) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     return await readTextIfExists(artifactFilePath(sessionPaths, relativePath));
+  }
+
+  async function deleteArtifact(sessionId, relativePath) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(artifactFilePath(sessionPaths, relativePath), {
+      force: true
+    });
+  }
+
+  async function deleteArtifacts(sessionId, relativePaths = []) {
+    await Promise.all(relativePaths.map((relativePath) => deleteArtifact(sessionId, relativePath)));
   }
 
   async function readArtifactReadiness(sessionId) {
@@ -384,6 +406,17 @@ function createAiStudioSessionStore({
     }
   }
 
+  async function deleteActionResult(sessionId, actionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(actionResultFilePath(sessionPaths, actionId), {
+      force: true
+    });
+  }
+
+  async function deleteActionResults(sessionId, actionIds = []) {
+    await Promise.all(actionIds.map((actionId) => deleteActionResult(sessionId, actionId)));
+  }
+
   async function readActionResults(sessionId) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     const actionNames = sortedFileNames(await readDirectoryEntries(sessionPaths.actionsRoot), isSafeActionId);
@@ -408,6 +441,17 @@ function createAiStudioSessionStore({
   async function readCompletedSteps(sessionId) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     return sortedFileNames(await readDirectoryEntries(sessionPaths.stepsRoot), isSafeStepId);
+  }
+
+  async function deleteCompletedStep(sessionId, stepId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(completedStepFilePath(sessionPaths, stepId), {
+      force: true
+    });
+  }
+
+  async function deleteCompletedSteps(sessionId, stepIds = []) {
+    await Promise.all(stepIds.map((stepId) => deleteCompletedStep(sessionId, stepId)));
   }
 
   async function readManifest(sessionId) {
@@ -524,6 +568,14 @@ function createAiStudioSessionStore({
     appendCommandLogEntry,
     artifactExists,
     createSession,
+    deleteActionResult,
+    deleteActionResults,
+    deleteArtifact,
+    deleteArtifacts,
+    deleteCompletedStep,
+    deleteCompletedSteps,
+    deleteMetadataValue,
+    deleteMetadataValues,
     listSessions,
     paths,
     readArtifact,

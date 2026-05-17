@@ -1553,6 +1553,33 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (min-width: 981px) {
+  .codex-terminal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .codex-terminal__body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .codex-terminal__stage {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .codex-terminal__host {
+    height: 100%;
+    min-height: 0;
+  }
+}
+
 @media (min-width: 701px) {
   .codex-terminal__collapse {
     display: none;
