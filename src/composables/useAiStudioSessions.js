@@ -35,6 +35,9 @@ import {
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
 import {
+  readAiStudioSessionDiff
+} from "@/lib/aiStudioSessionApi.js";
+import {
   aiStudioActionIcon as actionIcon,
   aiStudioPromptHandoffFromSession,
   aiStudioSessionFacts,
@@ -56,6 +59,7 @@ function displayableActionResultMessage(result = {}) {
 }
 
 const CREATE_PULL_REQUEST_FILE_ACTION_ID = "create_pr_file";
+const ACCEPT_CHANGES_STEP_ID = "changes_accepted";
 const PULL_REQUEST_FILE_STEP_ID = "pr_file_created";
 
 function useAiStudioSessions({
@@ -76,9 +80,16 @@ function useAiStudioSessions({
   const codexPromptInjectionKey = ref("");
   const codexPromptOverride = ref("");
   const codexTerminalBusy = ref(false);
+  const appReviewTerminalStartKey = ref("");
+  const appReviewTerminalVisible = ref(false);
+  const appReviewUrl = ref("");
   const commandTerminalAction = ref(null);
   const commandTerminalRunning = ref(false);
   const commandTerminalStartKey = ref("");
+  const diffDialogOpen = ref(false);
+  const diffError = ref("");
+  const diffLoading = ref(false);
+  const diffPayload = ref(null);
   const draftEditorBody = ref("");
   const draftEditorError = ref("");
   const draftEditorIssueTitle = ref("");
@@ -254,6 +265,33 @@ function useAiStudioSessions({
   const currentActions = computed(() => {
     return issueFileStep.visibleActions(baseCurrentActions.value);
   });
+  const worktreeReady = computed(() => Boolean(selectedSession.value?.metadata?.worktree_path));
+  const acceptChangesUtilitiesVisible = computed(() => {
+    return selectedSession.value?.currentStep === ACCEPT_CHANGES_STEP_ID && !issueFileStep.formVisible.value;
+  });
+  const reviewDiffDisabled = computed(() => commandBusy.value || diffLoading.value || !worktreeReady.value);
+  const reviewDiffTitle = computed(() => {
+    if (!worktreeReady.value) {
+      return "Create the worktree before reviewing changes.";
+    }
+    return "Review changes in the session worktree.";
+  });
+  const runAppReviewDisabled = computed(() => {
+    return commandBusy.value || appReviewTerminalVisible.value || !worktreeReady.value;
+  });
+  const runAppReviewTitle = computed(() => {
+    if (!worktreeReady.value) {
+      return "Create the worktree before running the app.";
+    }
+    if (appReviewTerminalVisible.value) {
+      return "The app review terminal is already open.";
+    }
+    return "Run the session worktree for user review.";
+  });
+  const openAppReviewDisabled = computed(() => !appReviewUrl.value);
+  const openAppReviewTitle = computed(() => {
+    return appReviewUrl.value || "Run the app before opening it.";
+  });
   const commandTerminalVisible = computed(() => Boolean(commandTerminalAction.value || commandTerminalRunning.value));
   const pageLoading = computed(() => Boolean(sessionList.isLoading));
   const pageError = computed(() => {
@@ -384,11 +422,17 @@ function useAiStudioSessions({
     abandonDialogOpen.value = false;
     abandonDialogSessionId.value = "";
     abandonDialogSessionTitle.value = "";
+    appReviewTerminalStartKey.value = "";
+    appReviewTerminalVisible.value = false;
+    appReviewUrl.value = "";
     codexPromptInjectionKey.value = "";
     codexPromptOverride.value = "";
     codexTerminalBusy.value = false;
     clearCommandTerminal();
     draftEditorOpen.value = false;
+    diffDialogOpen.value = false;
+    diffError.value = "";
+    diffPayload.value = null;
     pendingCommandAdvanceOnSuccess.value = false;
     pendingCommandStartedAt.value = 0;
     sessionSelection.select(sessionId);
@@ -422,6 +466,46 @@ function useAiStudioSessions({
     } finally {
       activeActionId.value = "";
     }
+  }
+
+  async function openDiffDialog() {
+    if (!selectedSessionId.value || reviewDiffDisabled.value) {
+      return;
+    }
+    diffDialogOpen.value = true;
+    diffError.value = "";
+    diffLoading.value = true;
+    diffPayload.value = null;
+    try {
+      const response = await readAiStudioSessionDiff(selectedSessionId.value);
+      diffPayload.value = response;
+      if (response?.ok === false) {
+        diffError.value = resolveResponseErrorMessage(response, "Diff inspection failed.");
+      }
+    } catch (error) {
+      diffError.value = String(error?.message || error || "Diff inspection failed.");
+    } finally {
+      diffLoading.value = false;
+    }
+  }
+
+  function closeDiffDialog() {
+    diffDialogOpen.value = false;
+  }
+
+  function runAppReview() {
+    if (!selectedSessionId.value || runAppReviewDisabled.value) {
+      return;
+    }
+    appReviewTerminalVisible.value = true;
+    appReviewTerminalStartKey.value = `${selectedSessionId.value}:app-review:${Date.now()}`;
+  }
+
+  function openAppReview() {
+    if (!appReviewUrl.value || typeof window === "undefined") {
+      return;
+    }
+    window.open(appReviewUrl.value, "_blank", "noopener");
   }
 
   async function openDraftEditor(action = {}) {
@@ -489,6 +573,12 @@ function useAiStudioSessions({
     clearCommandTerminal();
   }
 
+  function handleAppReviewTerminalClosed() {
+    appReviewTerminalStartKey.value = "";
+    appReviewTerminalVisible.value = false;
+    appReviewUrl.value = "";
+  }
+
   function requestAbandonSelectedSession() {
     if (!selectedSessionId.value || commandBusy.value || isSelectedSessionClosed.value) {
       return;
@@ -544,6 +634,10 @@ function useAiStudioSessions({
     await refreshAfterCommandTerminalSettled({
       actionId: commandTerminalAction.value?.id || ""
     });
+  }
+
+  function handleAppReviewTerminalStarted(event = {}) {
+    appReviewUrl.value = String(event.appUrl || event.metadata?.appUrl || "");
   }
 
   async function handleCodexPromptInjected(event = {}) {
@@ -621,8 +715,13 @@ function useAiStudioSessions({
     advanceCommand,
     aiStudioSessionStatusColor,
     aiStudioSessionStatusLabel,
+    acceptChangesUtilitiesVisible,
+    appReviewTerminalStartKey,
+    appReviewTerminalVisible,
+    appReviewUrl,
     canCreateSession,
     cancelAbandonSession,
+    closeDiffDialog,
     codexPromptInjectionKey,
     codexPromptOverride,
     commandBusy,
@@ -637,6 +736,10 @@ function useAiStudioSessions({
     currentActions,
     currentNext,
     currentStepDisabledReason,
+    diffDialogOpen,
+    diffError,
+    diffLoading,
+    diffPayload,
     draftEditorBody,
     draftEditorError,
     draftEditorIssueTitle,
@@ -652,6 +755,8 @@ function useAiStudioSessions({
     handleCommandTerminalClosed,
     handleCommandTerminalFinished,
     handleCommandTerminalRunningChanged,
+    handleAppReviewTerminalClosed,
+    handleAppReviewTerminalStarted,
     issueRequestCanSubmit: issueFileStep.canSubmit,
     issueRequestError: issueFileStep.requestError,
     issueRequestFormVisible: issueFileStep.formVisible,
@@ -661,7 +766,16 @@ function useAiStudioSessions({
     isSelectedSessionClosed,
     pageError,
     pageLoading,
+    openAppReview,
+    openAppReviewDisabled,
+    openAppReviewTitle,
+    openDiffDialog,
     requestAbandonSelectedSession,
+    reviewDiffDisabled,
+    reviewDiffTitle,
+    runAppReview,
+    runAppReviewDisabled,
+    runAppReviewTitle,
     runAction,
     runActionCommand,
     saveDraftEditor,

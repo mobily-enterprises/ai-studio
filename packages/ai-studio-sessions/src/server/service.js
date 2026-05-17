@@ -4,6 +4,7 @@ import {
 import {
   aiStudioResult
 } from "../../../../server/lib/aiStudio/serverResponses.js";
+import { inspectSessionDiff } from "./sessionDiff.js";
 
 const MAX_OPEN_AI_STUDIO_SESSIONS = 3;
 const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
@@ -93,6 +94,13 @@ function createService({
       return sessionResult(async () => {
         const runtime = await projectService.createRuntime();
         return runtime.getSession(sessionId);
+      });
+    },
+
+    async inspectSessionDiff(sessionId) {
+      return sessionResult(async () => {
+        const runtime = await projectService.createRuntime();
+        return inspectSessionDiff(await runtime.getSession(sessionId));
       });
     },
 

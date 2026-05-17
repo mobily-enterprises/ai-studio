@@ -10,6 +10,9 @@ import {
 import {
   createJskitAiStudioCommandTerminalSpec
 } from "./commandTerminalSpecs.js";
+import {
+  createJskitAppReviewTerminalSpec
+} from "./appReviewTerminal.js";
 export {
   DEFAULT_TARGET_SCRIPT_NAMES,
   createJskitTargetScriptTerminalSpec,
@@ -21,12 +24,8 @@ export {
 
 const JSKIT_AI_STUDIO_COMMANDS = deepFreeze([
   {
-    id: "accept_changes",
-    label: "Accept changes"
-  },
-  {
     id: "commit_changes",
-    label: "Commit changes"
+    label: "Commit and push changes"
   },
   {
     id: "create_issue_on_gh",
@@ -63,9 +62,11 @@ const JSKIT_AI_STUDIO_COMMANDS = deepFreeze([
 ]);
 
 function createJskitTargetAdapter({
+  appReviewTerminalSpecFactory = createJskitAppReviewTerminalSpec,
   commandTerminalSpecFactory = createJskitAiStudioCommandTerminalSpec
 } = {}) {
   return new JskitTargetAdapter({
+    appReviewTerminalSpecFactory,
     commandTerminalSpecFactory,
     commands: JSKIT_AI_STUDIO_COMMANDS
   });
@@ -73,6 +74,7 @@ function createJskitTargetAdapter({
 
 export {
   createJskitTargetAdapter,
+  createJskitAppReviewTerminalSpec,
   createJskitAiStudioCommandTerminalSpec,
   JSKIT_CONFIG_FIELDS,
   JSKIT_MARKERS,

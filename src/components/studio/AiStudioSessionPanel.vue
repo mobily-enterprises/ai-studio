@@ -122,6 +122,42 @@
             </form>
 
             <div v-else class="studio-ai-sessions__actions">
+              <template v-if="acceptChangesUtilitiesVisible">
+                <v-btn
+                  color="primary"
+                  variant="flat"
+                  :disabled="reviewDiffDisabled"
+                  :loading="diffLoading"
+                  :prepend-icon="mdiFileCompare"
+                  :title="reviewDiffTitle"
+                  @click="openDiffDialog"
+                >
+                  Review diff
+                </v-btn>
+
+                <v-btn
+                  color="primary"
+                  variant="flat"
+                  :disabled="runAppReviewDisabled"
+                  :prepend-icon="mdiPlayCircleOutline"
+                  :title="runAppReviewTitle"
+                  @click="runAppReview"
+                >
+                  Run app
+                </v-btn>
+
+                <v-btn
+                  color="primary"
+                  variant="tonal"
+                  :disabled="openAppReviewDisabled"
+                  :prepend-icon="mdiOpenInNew"
+                  :title="openAppReviewTitle"
+                  @click="openAppReview"
+                >
+                  Open app
+                </v-btn>
+              </template>
+
               <v-btn
                 v-for="action in currentActions"
                 :key="action.id"
@@ -210,6 +246,21 @@
             @running-changed="handleCommandTerminalRunningChanged"
           />
         </div>
+
+        <div
+          v-if="appReviewTerminalVisible"
+          class="studio-ai-sessions__command-overlay"
+        >
+          <AiStudioCommandTerminal
+            class="studio-ai-sessions__command-terminal"
+            terminal-kind="app-review"
+            title="App review terminal"
+            :session="selectedSession"
+            :start-request-key="appReviewTerminalStartKey"
+            @closed="handleAppReviewTerminalClosed"
+            @started="handleAppReviewTerminalStarted"
+          />
+        </div>
       </section>
     </div>
 
@@ -223,6 +274,68 @@
       :saving="draftEditorSaving"
       @save="saveDraftEditor"
     />
+
+    <v-dialog v-model="diffDialogOpen" max-width="min(94vw, 72rem)">
+      <v-card class="studio-ai-sessions__diff-dialog">
+        <v-card-title class="studio-ai-sessions__diff-title">
+          <span>Review changes</span>
+          <v-chip
+            v-if="diffPayload"
+            :color="diffPayload.hasChanges ? 'primary' : 'default'"
+            size="small"
+            variant="tonal"
+          >
+            {{ diffPayload.hasChanges ? "Changes found" : "No changes" }}
+          </v-chip>
+        </v-card-title>
+
+        <v-card-text
+          ref="diffBodyElement"
+          class="studio-ai-sessions__diff-body"
+          @click="handleDiffBodyClick"
+        >
+          <StudioErrorNotice
+            v-if="diffError"
+            title="Diff could not load"
+            :error="diffError"
+            compact
+            class="mb-3"
+          />
+
+          <v-progress-linear
+            v-if="diffLoading"
+            color="primary"
+            indeterminate
+            class="mb-3"
+          />
+
+          <pre
+            v-if="diffPayload?.gitStatus"
+            class="studio-ai-sessions__diff-status"
+          >{{ diffPayload.gitStatus }}</pre>
+
+          <!-- eslint-disable-next-line vue/no-v-html -- Diff2Html escapes git diff content before rendering. -->
+          <div
+            v-if="renderedDiff"
+            class="studio-ai-sessions__diff-rendered"
+            v-html="renderedDiff"
+          />
+
+          <v-alert
+            v-else-if="!diffLoading && !diffError"
+            type="info"
+            variant="tonal"
+          >
+            No diff is available for this session worktree.
+          </v-alert>
+        </v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeDiffDialog">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-dialog
       v-model="abandonDialogOpen"
@@ -265,10 +378,16 @@
 </template>
 
 <script setup>
+import { computed, ref } from "vue";
+import { html as renderDiffHtml } from "diff2html";
+import "diff2html/bundles/css/diff2html.min.css";
 import {
   mdiAlertCircleOutline,
   mdiArrowRight,
   mdiClose,
+  mdiFileCompare,
+  mdiOpenInNew,
+  mdiPlayCircleOutline,
   mdiPlus,
   mdiSend
 } from "@mdi/js";
@@ -296,8 +415,12 @@ const {
   advanceCommand,
   aiStudioSessionStatusColor,
   aiStudioSessionStatusLabel,
+  acceptChangesUtilitiesVisible,
+  appReviewTerminalStartKey,
+  appReviewTerminalVisible,
   canCreateSession,
   cancelAbandonSession,
+  closeDiffDialog,
   codexPromptInjectionKey,
   codexPromptOverride,
   commandBusy,
@@ -312,6 +435,10 @@ const {
   currentActions,
   currentNext,
   currentStepDisabledReason,
+  diffDialogOpen,
+  diffError,
+  diffLoading,
+  diffPayload,
   draftEditorBody,
   draftEditorError,
   draftEditorIssueTitle,
@@ -327,6 +454,8 @@ const {
   handleCommandTerminalClosed,
   handleCommandTerminalFinished,
   handleCommandTerminalRunningChanged,
+  handleAppReviewTerminalClosed,
+  handleAppReviewTerminalStarted,
   issueRequestCanSubmit,
   issueRequestError,
   issueRequestFormVisible,
@@ -334,9 +463,18 @@ const {
   issueRequestSubmitTitle,
   issueRequestText,
   isSelectedSessionClosed,
+  openAppReview,
+  openAppReviewDisabled,
+  openAppReviewTitle,
+  openDiffDialog,
   pageError,
   pageLoading,
   requestAbandonSelectedSession,
+  reviewDiffDisabled,
+  reviewDiffTitle,
+  runAppReview,
+  runAppReviewDisabled,
+  runAppReviewTitle,
   runAction,
   runActionCommand,
   saveDraftEditor,
@@ -354,6 +492,53 @@ const {
     emit("title-change", title);
   }
 });
+
+const diffBodyElement = ref(null);
+
+const combinedDiff = computed(() => {
+  const payload = diffPayload.value || {};
+  return [payload.stagedDiff, payload.unstagedDiff, payload.untrackedDiff]
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean)
+    .join("\n");
+});
+
+const renderedDiff = computed(() => {
+  if (!combinedDiff.value) {
+    return "";
+  }
+  return renderDiffHtml(combinedDiff.value, {
+    drawFileList: true,
+    matching: "lines",
+    outputFormat: "side-by-side"
+  });
+});
+
+function handleDiffBodyClick(event) {
+  const clickedElement = event.target instanceof Element ? event.target : null;
+  const link = clickedElement?.closest("a");
+  const diffBody = diffBodyElement.value?.$el || diffBodyElement.value;
+  if (!link || !diffBody?.contains(link)) {
+    return;
+  }
+
+  const href = String(link.getAttribute("href") || "");
+  if (!href.startsWith("#")) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const target = document.getElementById(href.slice(1));
+  if (target && diffBody.contains(target)) {
+    target.scrollIntoView({
+      block: "start",
+      behavior: "smooth"
+    });
+  }
+}
 </script>
 
 <style scoped>
@@ -472,6 +657,65 @@ const {
 
 .studio-ai-sessions__notice {
   margin-top: 0.35rem;
+}
+
+.studio-ai-sessions__diff-dialog {
+  max-height: 90vh;
+}
+
+.studio-ai-sessions__diff-title {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.studio-ai-sessions__diff-body {
+  max-height: 72vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.studio-ai-sessions__diff-status {
+  background: rgba(var(--v-theme-surface-variant), 0.55);
+  border: 1px solid rgba(var(--v-border-color), 0.3);
+  border-radius: 8px;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  margin: 0 0 0.75rem;
+  overflow: auto;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.studio-ai-sessions__diff-rendered {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.studio-ai-sessions__diff-rendered :deep(.d2h-wrapper) {
+  color: #1f2937;
+}
+
+.studio-ai-sessions__diff-rendered :deep(.d2h-file-wrapper) {
+  border-color: rgba(var(--v-border-color), 0.34);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.studio-ai-sessions__diff-rendered :deep(.d2h-file-header) {
+  border-radius: 8px 8px 0 0;
+}
+
+.studio-ai-sessions__diff-rendered :deep(.d2h-files-diff),
+.studio-ai-sessions__diff-rendered :deep(.d2h-file-side-diff) {
+  min-width: 0;
+}
+
+.studio-ai-sessions__diff-rendered :deep(.d2h-file-side-diff) {
+  overflow-x: auto;
 }
 
 .studio-ai-sessions__abandon-dialog {

@@ -185,25 +185,14 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       label: "Run automated checks",
       next: {
         disabledReason: "Run automated checks successfully before continuing.",
-        visibleWhen: ["metadata:automated_checks_passed"]
+        enabledWhen: ["metadata:automated_checks_passed"]
       }
     },
     {
-      actions: [
-        {
-          adapterCapability: "accept_changes",
-          id: "accept_changes",
-          label: "Accept changes",
-          type: "command"
-        }
-      ],
-      description: "Accept the finished work for commit.",
+      actions: [],
+      description: "Review the finished work before commit.",
       id: "changes_accepted",
-      label: "Accept changes",
-      next: {
-        disabledReason: "Accept changes before continuing.",
-        enabledWhen: ["metadata:changes_accepted"]
-      }
+      label: "Review changes"
     },
     {
       actions: [
@@ -223,15 +212,15 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         {
           adapterCapability: "commit_changes",
           id: "commit_changes",
-          label: "Commit changes",
+          label: "Commit and push changes",
           type: "command"
         }
       ],
-      description: "Commit the accepted changes.",
+      description: "Commit the accepted changes and push the session branch.",
       id: "changes_committed",
-      label: "Commit changes",
+      label: "Commit and push changes",
       next: {
-        disabledReason: "Commit changes before continuing.",
+        disabledReason: "Commit and push changes before continuing.",
         enabledWhen: ["metadata:accepted_commit"]
       }
     },
@@ -265,11 +254,11 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         },
         {
           adapterCapability: "create_pr_on_gh",
-          disabledReason: "Create the pull request file before creating the GitHub pull request.",
+          disabledReason: "Commit and push changes before creating the GitHub pull request.",
           disabledWhen: ["metadata:pr_url"],
           disabledWhenReason: "The GitHub pull request already exists.",
-          enabledWhen: ["artifact:pull_request.md"],
-          enabledWhenReason: "Create the pull request file before creating the GitHub pull request.",
+          enabledWhen: ["artifact:pull_request.md", "metadata:branch_pushed"],
+          enabledWhenReason: "Commit and push changes before creating the GitHub pull request.",
           id: "create_pr_on_gh",
           label: "Create PR on GH",
           type: "command"

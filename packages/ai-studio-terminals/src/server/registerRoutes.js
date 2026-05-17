@@ -49,6 +49,26 @@ function registerRoutes(
 
   router.register(
     "POST",
+    `${routeBase}/sessions/:sessionId/app-review-terminal`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Start an AI Studio app review terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).startAppReviewTerminal(request.params.sessionId);
+      reply.code(response?.ok === false ? 400 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "POST",
     `${routeBase}/sessions/:sessionId/command-terminal`,
     {
       auth: "public",
@@ -168,6 +188,52 @@ function registerRoutes(
         }
       });
       reply.code(aiStudioStatusCode(response)).send(response);
+    }
+  );
+
+  router.register(
+    "GET",
+    `${routeBase}/sessions/:sessionId/app-review-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Read an AI Studio app review terminal snapshot."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).readAppReviewTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(response?.ok === false ? 404 : 200).send(response);
+    }
+  );
+
+  router.register(
+    "DELETE",
+    `${routeBase}/sessions/:sessionId/app-review-terminal/:terminalSessionId`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-terminals"],
+        summary: "Close an AI Studio app review terminal."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await getTerminalService(app).closeAppReviewTerminal(
+        request.params.sessionId,
+        request.params.terminalSessionId
+      );
+      reply.code(200).send(response);
     }
   );
 

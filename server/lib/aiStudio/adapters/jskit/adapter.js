@@ -245,6 +245,7 @@ function jskitFacts({
 
 class JskitTargetAdapter extends TargetAdapter {
   constructor({
+    appReviewTerminalSpecFactory = null,
     commandTerminalSpecFactory = null,
     commands = [],
     promptRenderer = new PromptRenderer({
@@ -257,6 +258,9 @@ class JskitTargetAdapter extends TargetAdapter {
     });
     this.commandTerminalSpecFactory = typeof commandTerminalSpecFactory === "function"
       ? commandTerminalSpecFactory
+      : null;
+    this.appReviewTerminalSpecFactory = typeof appReviewTerminalSpecFactory === "function"
+      ? appReviewTerminalSpecFactory
       : null;
     this.commands = normalizeJskitCommands(commands);
     this.promptRenderer = promptRenderer;
@@ -334,6 +338,20 @@ class JskitTargetAdapter extends TargetAdapter {
     return this.commandTerminalSpecFactory({
       commandId,
       context,
+      targetRoot: context.session?.targetRoot || context.targetRoot || ""
+    });
+  }
+
+  async createAppReviewTerminalSpec(context = {}) {
+    if (!this.appReviewTerminalSpecFactory) {
+      return {
+        ok: false,
+        message: "JSKIT app review terminal is not available."
+      };
+    }
+    return this.appReviewTerminalSpecFactory({
+      context,
+      session: context.session || {},
       targetRoot: context.session?.targetRoot || context.targetRoot || ""
     });
   }

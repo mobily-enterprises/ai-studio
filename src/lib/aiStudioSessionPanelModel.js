@@ -10,6 +10,7 @@ import {
   mdiProgressCheck,
   mdiRobotOutline,
   mdiSourceBranch,
+  mdiSourceCommit,
   mdiSync
 } from "@mdi/js";
 import {
@@ -133,6 +134,9 @@ function aiStudioActionIcon(action = {}) {
   }
   if (action.id === "run_automated_checks") {
     return mdiPlay;
+  }
+  if (action.id === "commit_changes") {
+    return mdiSourceCommit;
   }
   return mdiCodeBraces;
 }

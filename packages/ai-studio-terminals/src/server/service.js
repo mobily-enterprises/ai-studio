@@ -1,3 +1,4 @@
+import { createAppReviewTerminalController } from "./appReviewTerminal.js";
 import { createCodexTerminalController } from "./codexTerminal.js";
 import { createCommandTerminalController } from "./commandTerminal.js";
 
@@ -12,10 +13,14 @@ function createService({ projectService } = {}) {
   const command = createCommandTerminalController({
     projectService
   });
+  const appReview = createAppReviewTerminalController({
+    projectService
+  });
 
   return Object.freeze({
     async closeSessionTerminals(sessionId) {
       await Promise.all([
+        appReview.closeAllForSession(sessionId),
         codex.closeAllForSession(sessionId),
         command.closeAllForSession(sessionId)
       ]);
@@ -32,12 +37,20 @@ function createService({ projectService } = {}) {
       return command.closeTerminal(sessionId, terminalSessionId);
     },
 
+    closeAppReviewTerminal(sessionId, terminalSessionId) {
+      return appReview.closeTerminal(sessionId, terminalSessionId);
+    },
+
     readCodexTerminal(sessionId, terminalSessionId) {
       return codex.readTerminal(sessionId, terminalSessionId);
     },
 
     readCommandTerminal(sessionId, terminalSessionId) {
       return command.readTerminal(sessionId, terminalSessionId);
+    },
+
+    readAppReviewTerminal(sessionId, terminalSessionId) {
+      return appReview.readTerminal(sessionId, terminalSessionId);
     },
 
     saveCodexPromptHandoff(sessionId, input = {}) {
@@ -56,12 +69,20 @@ function createService({ projectService } = {}) {
       return command.startTerminal(sessionId, input);
     },
 
+    startAppReviewTerminal(sessionId) {
+      return appReview.startTerminal(sessionId);
+    },
+
     subscribeCodexTerminal(sessionId, terminalSessionId, subscriber) {
       return codex.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
 
     subscribeCommandTerminal(sessionId, terminalSessionId, subscriber) {
       return command.subscribeTerminal(sessionId, terminalSessionId, subscriber);
+    },
+
+    subscribeAppReviewTerminal(sessionId, terminalSessionId, subscriber) {
+      return appReview.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
 
     uploadCodexAttachment(sessionId, input = {}) {
@@ -74,6 +95,10 @@ function createService({ projectService } = {}) {
 
     writeCommandTerminal(sessionId, terminalSessionId, data) {
       return command.writeTerminal(sessionId, terminalSessionId, data);
+    },
+
+    writeAppReviewTerminal(sessionId, terminalSessionId, data) {
+      return appReview.writeTerminal(sessionId, terminalSessionId, data);
     }
   });
 }

@@ -1,5 +1,4 @@
 import {
-  acceptChangesTerminalSpec,
   commitChangesTerminalSpec,
   runAutomatedChecksTerminalSpec
 } from "./commandTerminal/workflowCommands.js";
@@ -15,7 +14,6 @@ import {
 } from "./commandTerminal/worktreeCommands.js";
 
 const COMMAND_TERMINAL_SPECS = Object.freeze({
-  accept_changes: acceptChangesTerminalSpec,
   commit_changes: commitChangesTerminalSpec,
   create_issue_on_gh: createIssueOnGhTerminalSpec,
   create_pr_on_gh: createPrOnGhTerminalSpec,

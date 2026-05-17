@@ -2,9 +2,9 @@
   <v-sheet rounded="lg" class="ai-command-terminal">
     <div class="ai-command-terminal__bar">
       <div>
-        <div class="ai-command-terminal__title">Command terminal</div>
+        <div class="ai-command-terminal__title">{{ terminalTitle }}</div>
         <div class="ai-command-terminal__subtitle">
-          {{ activeActionLabel || "Run adapter commands here." }}
+          {{ terminalSubtitle }}
         </div>
       </div>
       <div class="ai-command-terminal__actions">
@@ -75,8 +75,11 @@ import {
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import { useStudioTerminal } from "@/composables/useStudioTerminal.js";
 import {
+  aiStudioAppReviewTerminalWebSocketUrl,
   aiStudioCommandTerminalWebSocketUrl,
+  closeAiStudioAppReviewTerminal,
   closeAiStudioCommandTerminal,
+  startAiStudioAppReviewTerminal,
   startAiStudioCommandTerminal
 } from "@/lib/aiStudioSessionApi.js";
 
@@ -92,10 +95,18 @@ const props = defineProps({
   startRequestKey: {
     type: [String, Number],
     default: ""
+  },
+  terminalKind: {
+    type: String,
+    default: "command"
+  },
+  title: {
+    type: String,
+    default: ""
   }
 });
 
-const emit = defineEmits(["closed", "finished", "running-changed"]);
+const emit = defineEmits(["closed", "finished", "running-changed", "started"]);
 
 const terminalClosedByUser = ref(false);
 const expanded = ref(true);
@@ -109,6 +120,19 @@ const FINISHED_TERMINAL_HOLD_MS = 500;
 const sessionId = computed(() => props.session?.sessionId || "");
 const actionId = computed(() => props.action?.id || "");
 const activeActionLabel = computed(() => props.action?.label || "");
+const appReviewTerminal = computed(() => props.terminalKind === "app-review");
+const terminalTitle = computed(() => props.title || (appReviewTerminal.value ? "App review terminal" : "Command terminal"));
+const terminalSubtitle = computed(() => {
+  if (appReviewTerminal.value) {
+    return "Run the session worktree for user review.";
+  }
+  return activeActionLabel.value || "Run adapter commands here.";
+});
+const startFailureMessage = computed(() => {
+  return appReviewTerminal.value
+    ? "App review terminal failed to start."
+    : "Command terminal failed to start.";
+});
 
 const {
   applyTerminalSession,
@@ -130,13 +154,15 @@ const {
 } = useStudioTerminal({
   onStatusUpdate: handleTerminalStatusUpdate,
   webSocketUrl(terminalId) {
-    return aiStudioCommandTerminalWebSocketUrl(sessionId.value, terminalId);
+    return appReviewTerminal.value
+      ? aiStudioAppReviewTerminalWebSocketUrl(sessionId.value, terminalId)
+      : aiStudioCommandTerminalWebSocketUrl(sessionId.value, terminalId);
   }
 });
 
 const canRetry = computed(() => Boolean(
   sessionId.value &&
-  actionId.value &&
+  (appReviewTerminal.value || actionId.value) &&
   (
     terminalError.value ||
     terminalClosedByUser.value ||
@@ -180,7 +206,7 @@ function handleTerminalStatusUpdate({
 }
 
 async function startTerminal() {
-  if (!sessionId.value || !actionId.value) {
+  if (!sessionId.value || (!appReviewTerminal.value && !actionId.value)) {
     return false;
   }
   if (terminalStartPromise) {
@@ -197,9 +223,11 @@ async function startTerminal() {
     }
     try {
       terminalClosedByUser.value = false;
-      const session = await startAiStudioCommandTerminal(sessionId.value, actionId.value);
+      const session = appReviewTerminal.value
+        ? await startAiStudioAppReviewTerminal(sessionId.value)
+        : await startAiStudioCommandTerminal(sessionId.value, actionId.value);
       if (session?.ok === false) {
-        throw new Error(session.error || session.errors?.[0]?.message || "Command terminal failed to start.");
+        throw new Error(session.error || session.errors?.[0]?.message || startFailureMessage.value);
       }
       const nextTerminalSessionId = session.id || "";
       if (nextTerminalSessionId && nextTerminalSessionId !== terminalSessionId.value) {
@@ -210,10 +238,16 @@ async function startTerminal() {
       applyTerminalSession(session, {
         fallbackStatus: "running"
       });
+      emit("started", {
+        appUrl: session.metadata?.appUrl || "",
+        metadata: session.metadata || {},
+        sessionId: sessionId.value,
+        terminalSessionId: terminalSessionId.value
+      });
       emitRunningState();
       return connectTerminalSocket();
     } catch (error) {
-      terminalError.value = String(error?.message || error || "Command terminal failed to start.");
+      terminalError.value = String(error?.message || error || startFailureMessage.value);
       return false;
     } finally {
       terminalStarting.value = false;
@@ -237,7 +271,10 @@ async function closeTerminal({
   emitRunningState();
   closeTerminalSocket();
   if (existingTerminalId && sessionId.value) {
-    await closeAiStudioCommandTerminal(sessionId.value, existingTerminalId).catch(() => null);
+    const closeTerminalRequest = appReviewTerminal.value
+      ? closeAiStudioAppReviewTerminal
+      : closeAiStudioCommandTerminal;
+    await closeTerminalRequest(sessionId.value, existingTerminalId).catch(() => null);
   }
   if (emitClosed) {
     emit("closed");

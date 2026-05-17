@@ -4,6 +4,7 @@ import {
   ACTION_ABANDON_SESSION,
   ACTION_ADVANCE_SESSION,
   ACTION_CREATE_SESSION,
+  ACTION_INSPECT_SESSION_DIFF,
   ACTION_INSPECT_SESSION,
   ACTION_LIST_SESSIONS,
   ACTION_RUN_SESSION_ACTION
@@ -104,6 +105,31 @@ function registerRoutes(
       }
       const response = await request.executeAction({
         actionId: ACTION_INSPECT_SESSION,
+        input: {
+          sessionId: request.params.sessionId
+        }
+      });
+      reply.code(aiStudioStatusCode(response)).send(response);
+    }
+  );
+
+  router.register(
+    "GET",
+    `${routeBase}/sessions/:sessionId/diff`,
+    {
+      auth: "public",
+      surface: normalizedRouteSurface,
+      meta: {
+        tags: ["studio", "ai-studio-sessions"],
+        summary: "Inspect an AI Studio session worktree diff."
+      }
+    },
+    async function (request, reply) {
+      if (!requireLocalAiStudioRequest(request, reply)) {
+        return;
+      }
+      const response = await request.executeAction({
+        actionId: ACTION_INSPECT_SESSION_DIFF,
         input: {
           sessionId: request.params.sessionId
         }

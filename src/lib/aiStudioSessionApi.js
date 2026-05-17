@@ -21,12 +21,25 @@ function aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId = "") {
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
 }
 
+function aiStudioAppReviewTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = aiStudioSessionEndpoint(sessionId, "/app-review-terminal");
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
 function aiStudioCodexTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
 
 function aiStudioCommandTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
+function aiStudioAppReviewTerminalWebSocketUrl(sessionId, terminalSessionId) {
+  return resolveWebSocketUrl(`${aiStudioAppReviewTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
+async function readAiStudioSessionDiff(sessionId) {
+  return studioHttpClient.get(aiStudioSessionEndpoint(sessionId, "/diff"));
 }
 
 async function startAiStudioCodexTerminal(sessionId) {
@@ -44,17 +57,30 @@ async function startAiStudioCommandTerminal(sessionId, actionId, input = {}) {
   });
 }
 
+async function startAiStudioAppReviewTerminal(sessionId) {
+  return studioHttpClient.post(aiStudioAppReviewTerminalEndpoint(sessionId), {});
+}
+
 async function closeAiStudioCommandTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId));
 }
 
+async function closeAiStudioAppReviewTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(aiStudioAppReviewTerminalEndpoint(sessionId, terminalSessionId));
+}
+
 export {
+  aiStudioAppReviewTerminalEndpoint,
+  aiStudioAppReviewTerminalWebSocketUrl,
   aiStudioCodexTerminalEndpoint,
   aiStudioCodexTerminalWebSocketUrl,
   aiStudioCommandTerminalEndpoint,
   aiStudioCommandTerminalWebSocketUrl,
+  closeAiStudioAppReviewTerminal,
   closeAiStudioCodexTerminal,
   closeAiStudioCommandTerminal,
+  readAiStudioSessionDiff,
+  startAiStudioAppReviewTerminal,
   startAiStudioCodexTerminal,
   startAiStudioCommandTerminal
 };

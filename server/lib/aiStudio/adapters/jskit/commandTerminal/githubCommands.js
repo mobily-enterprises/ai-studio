@@ -49,6 +49,8 @@ function createPrOnGhScript(session = {}) {
   const prUrlPath = metadataPath(session, "pr_url");
   const branch = normalizeText(session.metadata?.branch);
   const baseBranch = normalizeText(session.metadata?.base_branch) || "main";
+  const quotedBaseBranch = shellQuote(baseBranch);
+  const quotedBranch = shellQuote(branch);
   return [
     "set -e",
     requiredFileScript(prBodyPath, "pull request artifact"),
@@ -59,8 +61,30 @@ function createPrOnGhScript(session = {}) {
     "if [ -z \"$PR_TITLE\" ]; then",
     `  PR_TITLE="AI Studio session ${session.sessionId}"`,
     "fi",
+    `EXPECTED_BRANCH=${quotedBranch}`,
+    `BASE_BRANCH=${quotedBaseBranch}`,
+    "CURRENT_BRANCH=\"$(git branch --show-current)\"",
+    "if [ \"$CURRENT_BRANCH\" != \"$EXPECTED_BRANCH\" ]; then",
+    "  printf '[studio] Worktree is on branch %s, expected %s.\\n' \"$CURRENT_BRANCH\" \"$EXPECTED_BRANCH\" >&2",
+    "  exit 1",
+    "fi",
+    "git fetch origin \"$BASE_BRANCH\"",
+    "BASE_REF=\"origin/$BASE_BRANCH\"",
+    "if ! git rev-parse --verify \"$BASE_REF\" >/dev/null 2>&1; then",
+    "  printf '[studio] Cannot resolve base branch %s.\\n' \"$BASE_BRANCH\" >&2",
+    "  exit 1",
+    "fi",
+    "COMMITS_AHEAD=\"$(git rev-list --count \"$BASE_REF\"..HEAD)\"",
+    "if [ \"$COMMITS_AHEAD\" = \"0\" ]; then",
+    "  printf '[studio] No commits exist between %s and %s. Commit and push changes before creating the pull request.\\n' \"$BASE_REF\" \"$EXPECTED_BRANCH\" >&2",
+    "  exit 1",
+    "fi",
+    "if ! git ls-remote --exit-code --heads origin \"$EXPECTED_BRANCH\" >/dev/null 2>&1; then",
+    "  printf '[studio] Branch %s is not pushed to origin. Run Commit and push changes before creating the pull request.\\n' \"$EXPECTED_BRANCH\" >&2",
+    "  exit 1",
+    "fi",
     "printf '[studio] Creating GitHub pull request: %s\\n' \"$PR_TITLE\"",
-    `PR_URL="$(gh pr create --base ${shellQuote(baseBranch)} --head ${shellQuote(branch)} --title "$PR_TITLE" --body-file ${shellQuote(prBodyPath)})"`,
+    `PR_URL="$(gh pr create --base ${quotedBaseBranch} --head ${quotedBranch} --title "$PR_TITLE" --body-file ${shellQuote(prBodyPath)})"`,
     "printf '%s\\n' \"$PR_URL\"",
     writeMetadataLineScript(prUrlPath, "\"$PR_URL\"")
   ].join("\n");

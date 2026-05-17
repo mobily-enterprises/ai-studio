@@ -8,6 +8,7 @@ import {
 const ACTION_LIST_SESSIONS = "feature.ai-studio-sessions.list";
 const ACTION_CREATE_SESSION = "feature.ai-studio-sessions.create";
 const ACTION_INSPECT_SESSION = "feature.ai-studio-sessions.inspect";
+const ACTION_INSPECT_SESSION_DIFF = "feature.ai-studio-sessions.diff.inspect";
 const ACTION_RUN_SESSION_ACTION = "feature.ai-studio-sessions.action.run";
 const ACTION_ADVANCE_SESSION = "feature.ai-studio-sessions.advance";
 const ACTION_ABANDON_SESSION = "feature.ai-studio-sessions.abandon";
@@ -67,6 +68,24 @@ const featureActions = Object.freeze([
     async execute(input, context, deps) {
       void context;
       return deps.featureService.inspectSession(input.sessionId);
+    }
+  },
+  {
+    id: ACTION_INSPECT_SESSION_DIFF,
+    version: 1,
+    kind: "query",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: sessionIdInputValidator,
+    output: null,
+    idempotency: "none",
+    audit: {
+      actionName: ACTION_INSPECT_SESSION_DIFF
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.inspectSessionDiff(input.sessionId);
     }
   },
   {
@@ -134,6 +153,7 @@ export {
   ACTION_ADVANCE_SESSION,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
+  ACTION_INSPECT_SESSION_DIFF,
   ACTION_LIST_SESSIONS,
   ACTION_RUN_SESSION_ACTION,
   featureActions

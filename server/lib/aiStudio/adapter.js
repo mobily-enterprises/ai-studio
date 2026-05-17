@@ -181,6 +181,13 @@ class TargetAdapter {
     };
   }
 
+  async createAppReviewTerminalSpec() {
+    return {
+      ok: false,
+      message: `${this.label} does not provide an app review terminal.`
+    };
+  }
+
   async finishSession() {
     return adapterActionResult({
       message: "Finished AI Studio session."
