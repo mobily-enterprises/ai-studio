@@ -43,7 +43,8 @@ function normalizeNext(next = {}) {
     disabledReason: normalizeText(next.disabledReason),
     enabledWhen: normalizeConditionList(next.enabledWhen),
     label: normalizeText(next.label || "Next"),
-    visible: next.visible !== false
+    visible: next.visible !== false,
+    visibleWhen: normalizeConditionList(next.visibleWhen)
   };
 }
 
@@ -386,6 +387,11 @@ class WorkflowMachine {
     }
     if (!currentStep.next.visible) {
       return hiddenNext(currentStep.next.label, "");
+    }
+
+    const visibilityState = this.checkRequirements(currentStep.next.visibleWhen, session, currentStep.next.disabledReason);
+    if (!visibilityState.enabled) {
+      return hiddenNext(currentStep.next.label, visibilityState.disabledReason);
     }
 
     const state = this.checkRequirements(currentStep.next.enabledWhen, session, currentStep.next.disabledReason);

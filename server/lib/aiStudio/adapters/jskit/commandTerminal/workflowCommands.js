@@ -52,7 +52,7 @@ async function runAutomatedChecksTerminalSpec({ session = {} } = {}) {
     commandPreview: "npm run build",
     label: "Run automated checks",
     metadata: {
-      automated_checks_run: "yes"
+      automated_checks_passed: "yes"
     },
     script: runAutomatedChecksScript(),
     session

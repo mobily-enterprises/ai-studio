@@ -79,7 +79,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       id: ISSUE_FILE_STEP_ID,
       label: "Define issue and create file",
       next: {
-        disabledReason: "Create the issue file before continuing.",
+        disabledReason: "Discuss and finalise issue before continuing.",
         enabledWhen: [ISSUE_TITLE_READY_CONDITION, ISSUE_BODY_READY_CONDITION]
       }
     },
@@ -182,7 +182,11 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       ],
       description: "Run the adapter-provided automated checks.",
       id: "automated_checks_run",
-      label: "Run automated checks"
+      label: "Run automated checks",
+      next: {
+        disabledReason: "Run automated checks successfully before continuing.",
+        visibleWhen: ["metadata:automated_checks_passed"]
+      }
     },
     {
       actions: [

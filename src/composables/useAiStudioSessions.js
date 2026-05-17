@@ -50,6 +50,11 @@ function resolveResponseErrorMessage(response = {}, fallback = "AI Studio reques
   return String(response?.errors?.[0]?.message || response?.error || fallback);
 }
 
+function displayableActionResultMessage(result = {}) {
+  const message = String(result?.message || "");
+  return /^Rendered\b/u.test(message) ? "" : message;
+}
+
 const CREATE_PULL_REQUEST_FILE_ACTION_ID = "create_pr_file";
 const PULL_REQUEST_FILE_STEP_ID = "pr_file_created";
 
@@ -288,7 +293,7 @@ function useAiStudioSessions({
       .sort((left, right) => String(left.at || "").localeCompare(String(right.at || "")))
       .at(-1) || null;
   });
-  const actionResultMessage = computed(() => String(latestActionResult.value?.message || ""));
+  const actionResultMessage = computed(() => displayableActionResultMessage(latestActionResult.value));
   const actionResultType = computed(() => {
     const status = String(latestActionResult.value?.status || "");
     if (status === "completed") {

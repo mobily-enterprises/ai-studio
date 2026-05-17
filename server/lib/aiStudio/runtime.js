@@ -284,7 +284,6 @@ class AiStudioSessionRuntime {
     });
     return {
       codexPromptHandoff: buildCodexPromptHandoff(renderedPrompt),
-      message: `Rendered ${action.label}.`,
       prompt: renderedPrompt.prompt,
       promptContext: renderedPrompt.context,
       promptId: renderedPrompt.promptId,
