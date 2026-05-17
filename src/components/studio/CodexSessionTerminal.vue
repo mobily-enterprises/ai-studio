@@ -113,10 +113,9 @@ import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
   aiStudioCodexTerminalWebSocketUrl,
   closeAiStudioCodexTerminal,
-  saveAiStudioCodexThread,
-  startAiStudioCodexTerminal,
-  uploadAiStudioCodexAttachment
+  startAiStudioCodexTerminal
 } from "@/lib/aiStudioSessionApi.js";
+import { useAiStudioCodexCommands } from "@/composables/useAiStudioCodexCommands.js";
 import { writeClipboardText } from "@/lib/clipboard.js";
 import {
   codexTrustPromptLooksActive,
@@ -148,6 +147,7 @@ const props = defineProps({
   }
 });
 const emit = defineEmits(["input", "output", "prompt-injected", "prompt-injection-failed", "session-update"]);
+const codexCommands = useAiStudioCodexCommands();
 
 const terminalHost = ref(null);
 const terminalSessionId = ref("");
@@ -566,11 +566,11 @@ function closeCodexTerminal(sessionIdValue, terminalSessionIdValue) {
 }
 
 function uploadCodexAttachment(sessionIdValue, file) {
-  return uploadAiStudioCodexAttachment(sessionIdValue, file);
+  return codexCommands.uploadAttachment(sessionIdValue, file);
 }
 
 function saveCodexThread(sessionIdValue, threadId) {
-  return saveAiStudioCodexThread(sessionIdValue, threadId);
+  return codexCommands.saveThread(sessionIdValue, threadId);
 }
 
 function clearTerminalReconnect() {

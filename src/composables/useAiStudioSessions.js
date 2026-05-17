@@ -3,6 +3,8 @@ import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibil
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { useList } from "@jskit-ai/users-web/client/composables/useList";
 import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useAiStudioCodexCommands } from "@/composables/useAiStudioCodexCommands.js";
+import { useAiStudioSessionArtifacts } from "@/composables/useAiStudioSessionArtifacts.js";
 import { useStoredSelection } from "@/composables/useStoredSelection.js";
 import { writeClipboardText } from "@/lib/clipboard.js";
 import {
@@ -33,12 +35,6 @@ import {
   shortAiStudioSessionId as shortSessionId,
   visibleAiStudioSessions
 } from "@/lib/aiStudioSessionPanelModel.js";
-import {
-  readAiStudioArtifacts,
-  saveAiStudioArtifacts,
-  saveAiStudioCodexPromptHandoff
-} from "@/lib/aiStudioSessionApi.js";
-
 const ISSUE_BODY_ARTIFACT = "issue.md";
 const ISSUE_TITLE_ARTIFACT = "issue_title";
 const PULL_REQUEST_ARTIFACT = "pull_request.md";
@@ -76,6 +72,8 @@ function useAiStudioSessions({
   const draftEditorSaving = ref(false);
   const pendingCommandAdvanceOnSuccess = ref(false);
   const pendingCommandStartedAt = ref(0);
+  const codexCommands = useAiStudioCodexCommands();
+  const sessionArtifacts = useAiStudioSessionArtifacts();
 
   const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
     surface: AI_STUDIO_SURFACE_ID
@@ -399,16 +397,16 @@ function useAiStudioSessions({
     draftEditorOpen.value = true;
     draftEditorLoading.value = true;
     try {
-      const response = await readAiStudioArtifacts(selectedSessionId.value);
+      const response = await sessionArtifacts.readArtifacts(selectedSessionId.value);
       if (response?.ok === false) {
         draftEditorError.value = resolveResponseErrorMessage(response, "Draft could not be loaded.");
         return;
       }
-      const artifacts = response.artifacts || {};
-      draftEditorIssueTitle.value = String(artifacts[ISSUE_TITLE_ARTIFACT] || "");
+      const draftArtifacts = response.artifacts || {};
+      draftEditorIssueTitle.value = String(draftArtifacts[ISSUE_TITLE_ARTIFACT] || "");
       draftEditorBody.value = draftEditorKind.value === "issue"
-        ? String(artifacts[ISSUE_BODY_ARTIFACT] || "")
-        : String(artifacts[PULL_REQUEST_ARTIFACT] || "");
+        ? String(draftArtifacts[ISSUE_BODY_ARTIFACT] || "")
+        : String(draftArtifacts[PULL_REQUEST_ARTIFACT] || "");
     } catch (error) {
       draftEditorError.value = String(error?.message || error || "Draft could not be loaded.");
     } finally {
@@ -424,11 +422,11 @@ function useAiStudioSessions({
     draftEditorSaving.value = true;
     try {
       const response = draftEditorKind.value === "issue"
-        ? await saveAiStudioArtifacts(selectedSessionId.value, {
+        ? await sessionArtifacts.saveArtifacts(selectedSessionId.value, {
             [ISSUE_BODY_ARTIFACT]: draftEditorBody.value,
             [ISSUE_TITLE_ARTIFACT]: draftEditorIssueTitle.value
           })
-        : await saveAiStudioArtifacts(selectedSessionId.value, {
+        : await sessionArtifacts.saveArtifacts(selectedSessionId.value, {
             [PULL_REQUEST_ARTIFACT]: draftEditorBody.value
           });
       if (response?.ok === false) {
@@ -518,7 +516,7 @@ function useAiStudioSessions({
   async function handleCodexPromptInjected(event = {}) {
     const sessionId = String(event.sessionId || selectedSessionId.value || "");
     if (sessionId) {
-      await saveAiStudioCodexPromptHandoff(sessionId, {
+      await codexCommands.savePromptHandoff(sessionId, {
         outputStart: Number(event.outputStart || 0),
         signature: `${sessionId}:${Date.now()}`
       }).catch(() => null);

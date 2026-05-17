@@ -253,5 +253,9 @@ export {
   adapterDetection,
   adapterPromptResult,
   adapterProjectFacts,
-  adapterView
+  adapterView,
+  normalizeStringMap,
+  promptIdForAction,
+  promptJson,
+  visiblePromptForAction
 };

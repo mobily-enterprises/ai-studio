@@ -7,28 +7,12 @@ import {
   adapterCommand,
   adapterDetection,
   adapterProjectFacts,
-  adapterPromptResult
+  adapterPromptResult,
+  normalizeStringMap,
+  promptIdForAction,
+  promptJson,
+  visiblePromptForAction
 } from "./adapter.js";
-
-function normalizeStringMap(value = {}) {
-  return Object.fromEntries(
-    Object.entries(value && typeof value === "object" && !Array.isArray(value) ? value : {})
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [normalizeText(key), normalizeText(entry)])
-  );
-}
-
-function promptIdForAction(action = {}) {
-  return normalizeText(action.promptId || action.id);
-}
-
-function visiblePromptForAction(action = {}, promptId = "") {
-  return normalizeText(action.label || promptId);
-}
-
-function promptJson(value = {}) {
-  return JSON.stringify(value ?? {}, null, 2);
-}
 
 function fakePromptContext({
   action = {},

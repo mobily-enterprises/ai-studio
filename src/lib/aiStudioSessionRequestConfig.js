@@ -23,6 +23,26 @@ function aiStudioActionPath(sessionsApiPath = "", sessionId = "", actionId = "")
   return aiStudioSessionPath(sessionsApiPath, sessionId, `/actions/${encodePathSegment(actionId)}`);
 }
 
+function aiStudioArtifactsPath(sessionsApiPath = "", sessionId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, "/artifacts");
+}
+
+function aiStudioCodexPromptHandoffPath(sessionsApiPath = "", sessionId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, "/codex-prompt-handoff");
+}
+
+function aiStudioCodexAttachmentPath(sessionsApiPath = "", sessionId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, "/codex-attachments");
+}
+
+function aiStudioCodexThreadPath(sessionsApiPath = "", sessionId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, "/codex-thread");
+}
+
+function aiStudioArtifactsQueryKey(surfaceId, ownershipFilter, sessionId = "") {
+  return ["ai-studio", surfaceId, ownershipFilter, "session-artifacts", encodePathSegment(sessionId)];
+}
+
 function commandInputFromContext(context = {}) {
   return context?.input && typeof context.input === "object" && !Array.isArray(context.input)
     ? context.input
@@ -36,6 +56,11 @@ export {
   LOCAL_STUDIO_COMMAND_OPTIONS,
   SELECTED_SESSION_STORAGE_KEY,
   aiStudioActionPath,
+  aiStudioArtifactsPath,
+  aiStudioArtifactsQueryKey,
+  aiStudioCodexAttachmentPath,
+  aiStudioCodexPromptHandoffPath,
+  aiStudioCodexThreadPath,
   aiStudioSessionPath,
   aiStudioSessionsQueryKey,
   commandInputFromContext

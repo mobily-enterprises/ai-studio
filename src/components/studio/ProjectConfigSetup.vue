@@ -42,7 +42,7 @@
               density="compact"
               hide-details="auto"
               :label="field.label"
-              :type="field.type === 'path' ? 'text' : field.type"
+              :type="textFieldInputType(field)"
               variant="outlined"
             />
           </template>
@@ -103,6 +103,10 @@ function valueForField(field = {}) {
   return field.type === "boolean" ? false : "";
 }
 
+function textFieldInputType(field = {}) {
+  return field.type === "string" || field.type === "path" ? "text" : field.type;
+}
+
 function resetFormValues() {
   const knownFieldIds = new Set(fields.value.map((field) => field.id));
   for (const key of Object.keys(formValues)) {
@@ -141,7 +145,7 @@ watch(
   color: rgba(var(--v-theme-on-surface), 0.62);
   font-size: 0.72rem;
   font-weight: 750;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   line-height: 1.1;
   margin: 0;
   text-transform: uppercase;
