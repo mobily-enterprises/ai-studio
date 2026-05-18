@@ -45,6 +45,41 @@ export {
   normalizeWorkflow
 } from "./workflowMachine.js";
 export {
+  AI_STUDIO_WORKFLOW_COMMANDS,
+  AI_STUDIO_WORKFLOW_SESSION_ACTION_CAPABILITIES,
+  AiStudioDescribedWorkflowTargetAdapter,
+  AiStudioWorkflowTargetAdapter,
+  aiStudioWorkflowCapabilities,
+  createAiStudioWorkflowCommandTerminalSpec,
+  normalizeWorkflowCommands
+} from "./workflowAdapter.js";
+export {
+  DEFAULT_REVIEW_PORT,
+  createAiStudioAppReviewTerminalSpec,
+  findAvailableReviewPort
+} from "./appReviewTerminal.js";
+export {
+  adapterScriptNameFromInput,
+  createAiStudioTargetScriptTerminalSpec,
+  targetScriptError
+} from "./targetScriptTerminal.js";
+export {
+  AI_STUDIO_RUNTIME_HOST_ALIAS,
+  RUNTIME_CONTAINER_KIND,
+  RUNTIME_CONTAINER_KIND_LABEL,
+  createRuntimeContainerCheck,
+  createRuntimeContainerDoctorEntries,
+  createRuntimeContainerRepair,
+  createRuntimeContainerTerminalAction,
+  normalizeRuntimeContainerDescriptor,
+  runtimeContainerCommandPreview,
+  runtimeContainerName,
+  runtimeContainerNetworkDockerArgs,
+  runtimeContainerRunArgs,
+  runtimeContainerStartScript,
+  runtimeNetworkName
+} from "./runtimeContainers.js";
+export {
   AI_STUDIO_INITIAL_STEP,
   AI_STUDIO_SESSION_SCHEMA_VERSION,
   AI_STUDIO_SESSION_STATUS,

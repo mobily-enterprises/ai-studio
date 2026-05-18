@@ -13,15 +13,14 @@ import {
   dockerCommand
 } from "../../../shellCommands.js";
 import {
-  JSKIT_MARIADB_CONTAINER,
+  createJskitMariaDbRuntimeContainer,
   JSKIT_MARIADB_HOST,
-  JSKIT_MARIADB_ROOT_PASSWORD,
-  mariaDbCapabilitySql,
   readDatabaseHostFromDotEnv,
-  startJskitMariaDbRepair,
-  startJskitMariaDbScript,
   targetWantsJskitMariaDb
 } from "./setupMariaDbRuntime.js";
+import {
+  createRuntimeContainerDoctorEntries
+} from "../../runtimeContainers.js";
 import {
   createJskitProjectSetupTerminalActions,
   createJskitProjectSetupChecks
@@ -111,85 +110,6 @@ function missingJskitToolchainCheck({
   });
 }
 
-async function checkJskitMariaDbCapability(targetRoot = "", toolkit) {
-  if (!await targetWantsJskitMariaDb(targetRoot, toolkit)) {
-    return passCheck({
-      id: "jskit-mariadb",
-      label: "JSKIT MariaDB",
-      expected: "Managed MariaDB is required only when the JSKIT target declares a MySQL-compatible runtime.",
-      observed: "No JSKIT MySQL-compatible runtime package detected.",
-      explanation: "This target does not currently need the JSKIT managed MariaDB runtime."
-    });
-  }
-
-  const databaseHost = await readDatabaseHostFromDotEnv(targetRoot);
-  if (databaseHost !== JSKIT_MARIADB_HOST) {
-    return passCheck({
-      id: "jskit-mariadb",
-      label: "JSKIT MariaDB",
-      expected: `Managed MariaDB is required only when .env declares DB_HOST=${JSKIT_MARIADB_HOST}.`,
-      observed: databaseHost
-        ? `.env declares DB_HOST=${databaseHost}.`
-        : ".env does not declare DB_HOST yet.",
-      explanation: "The Runtime services check validates whichever database endpoint .env selects."
-    });
-  }
-
-  const ping = await toolkit.runDocker([
-    "exec",
-    JSKIT_MARIADB_CONTAINER,
-    "mariadb-admin",
-    "ping",
-    "-uroot",
-    `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
-    "--silent"
-  ], {
-    timeout: 12_000
-  });
-
-  if (!ping.ok) {
-    return failCheck({
-      id: "jskit-mariadb",
-      label: "JSKIT MariaDB",
-      expected: "Managed JSKIT MariaDB is reachable.",
-      observed: ping.output,
-      explanation: "Start the JSKIT managed MariaDB container before database setup checks run.",
-      repair: startJskitMariaDbRepair()
-    });
-  }
-
-  const probe = await toolkit.runDocker([
-    "exec",
-    JSKIT_MARIADB_CONTAINER,
-    "mariadb",
-    "-uroot",
-    `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
-    "-e",
-    mariaDbCapabilitySql()
-  ], {
-    timeout: 15_000
-  });
-
-  if (!probe.ok) {
-    return failCheck({
-      id: "jskit-mariadb",
-      label: "JSKIT MariaDB",
-      expected: "Managed JSKIT MariaDB can create/drop a temporary probe database.",
-      observed: probe.output,
-      explanation: "The JSKIT MariaDB container is reachable, but Studio could not prove DDL rights.",
-      repair: startJskitMariaDbRepair()
-    });
-  }
-
-  return passCheck({
-    id: "jskit-mariadb",
-    label: "JSKIT MariaDB",
-    expected: "Managed JSKIT MariaDB can create/drop a temporary probe database.",
-    observed: "Probe database and table created and dropped successfully.",
-    explanation: "The JSKIT managed MariaDB runtime is ready for target database setup."
-  });
-}
-
 function createJskitSetupDoctorPlugin({
   configEnvironment = {},
   startTerminalSession,
@@ -213,14 +133,18 @@ function createJskitSetupDoctorPlugin({
     label: "Build JSKIT toolchain",
     script: buildJskitToolchainScript
   });
-  const startMariaDbTerminal = toolkit.shellTerminalAction({
-    actionId: "start-jskit-mariadb",
-    autoRun: true,
-    commandPreview: () => startJskitMariaDbRepair().commandPreview,
-    cwd: ({ targetRoot = "" } = {}) => studioRoot || targetRoot,
-    env: configEnvironment,
-    label: "Start JSKIT MariaDB",
-    script: startJskitMariaDbScript
+  const mariaDbContainer = createJskitMariaDbRuntimeContainer({
+    required: async (context = {}) => {
+      const checkTargetRoot = context.targetRoot || targetRoot;
+      return await targetWantsJskitMariaDb(checkTargetRoot, toolkit) &&
+        await readDatabaseHostFromDotEnv(checkTargetRoot) === JSKIT_MARIADB_HOST;
+    }
+  });
+  const runtimeContainers = createRuntimeContainerDoctorEntries(toolkit, [
+    mariaDbContainer
+  ], {
+    adapterId: "jskit",
+    targetRoot
   });
 
   return toolkit.plugin({
@@ -230,6 +154,7 @@ function createJskitSetupDoctorPlugin({
     checks() {
       let jskitToolchainReady = false;
       const projectSetupChecks = createJskitProjectSetupChecks(toolkit);
+      const [mariaDbContainerCheck] = runtimeContainers.checks;
       const nodeCheck = toolkit.toolchainCommandCheck({
         id: "node",
         label: "Node",
@@ -319,9 +244,7 @@ function createJskitSetupDoctorPlugin({
           expected: "Managed JSKIT MariaDB is ready when the target declares a MySQL-compatible runtime.",
           id: "jskit-mariadb",
           label: "JSKIT MariaDB",
-          run({ targetRoot = "" } = {}) {
-            return checkJskitMariaDbCapability(targetRoot, toolkit);
-          }
+          run: mariaDbContainerCheck.run
         },
         projectSetupChecks.runtimeServices,
         projectSetupChecks.verificationCommand
@@ -329,7 +252,7 @@ function createJskitSetupDoctorPlugin({
     },
     terminalActions(context = {}) {
       return [
-        startMariaDbTerminal,
+        ...runtimeContainers.terminalActions,
         buildToolchainTerminal,
         ...createJskitProjectSetupTerminalActions({
           targetRoot: context.targetRoot || targetRoot,

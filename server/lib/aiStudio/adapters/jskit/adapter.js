@@ -1,22 +1,16 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  TargetAdapter,
-  adapterActionResult,
-  adapterCommand,
-  adapterDetection,
   adapterProjectFacts
 } from "../../adapter.js";
 import {
-  aiStudioError,
-  isMissingPathError,
-  normalizeText,
-  pathExists
+  AiStudioDescribedWorkflowTargetAdapter,
+  inspectDescribedProject
+} from "../../workflowAdapter.js";
+import {
+  normalizeText
 } from "../../core.js";
 import { deepFreeze } from "../../deepFreeze.js";
-import { PromptRenderer } from "../../promptRenderer.js";
 import {
   createJskitTargetScriptTerminalSpec,
   inspectJskitCurrentApp,
@@ -25,9 +19,6 @@ import {
 import {
   createJskitSetupDoctorPlugin
 } from "./setupDoctorPlugin.js";
-import {
-  runJskitSessionAction
-} from "./githubSessionActions.js";
 
 const JSKIT_MARKERS = deepFreeze([
   {
@@ -59,10 +50,6 @@ const JSKIT_MARKERS = deepFreeze([
 
 const JSKIT_BLUEPRINT_RELATIVE_PATH = ".jskit/APP_BLUEPRINT.md";
 const JSKIT_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
-const JSKIT_SESSION_ACTION_CAPABILITIES = deepFreeze([
-  "use_existing_issue",
-  "use_existing_pr"
-]);
 const JSKIT_CONFIG_FIELDS = deepFreeze([
   {
     defaultValue: "none",
@@ -108,46 +95,6 @@ const JSKIT_CONFIG_FIELDS = deepFreeze([
   }
 ]);
 
-function commandCapabilities(commands = []) {
-  return Object.fromEntries(commands.map((command) => [command.id, true]));
-}
-
-function normalizeJskitCommands(commands = []) {
-  return commands
-    .map(adapterCommand)
-    .sort((left, right) => left.id.localeCompare(right.id));
-}
-
-async function readJsonIfExists(filePath) {
-  let text = "";
-  try {
-    text = await readFile(filePath, "utf8");
-  } catch (error) {
-    if (!isMissingPathError(error)) {
-      throw error;
-    }
-    return {};
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw aiStudioError(
-      `Invalid JSON in JSKIT project file: ${filePath}`,
-      "ai_studio_invalid_jskit_json"
-    );
-  }
-}
-
-async function inspectMarkers(targetRoot) {
-  return Promise.all(JSKIT_MARKERS.map(async (marker) => {
-    return {
-      ...marker,
-      exists: await pathExists(path.join(targetRoot, marker.relativePath))
-    };
-  }));
-}
-
 function allMarkersExist(markers) {
   return markers.every((marker) => marker.exists);
 }
@@ -172,12 +119,9 @@ function setupSummary(markers) {
 }
 
 function jskitAdapterCapabilities({
-  commands = []
+  adapter = null
 } = {}) {
-  return {
-    ...commandCapabilities(commands),
-    ...Object.fromEntries(JSKIT_SESSION_ACTION_CAPABILITIES.map((capability) => [capability, true]))
-  };
+  return adapter?.workflowCapabilities() || {};
 }
 
 function jskitPromptContext({
@@ -203,6 +147,7 @@ function jskitPromptContext({
 }
 
 function jskitFacts({
+  adapter = null,
   blueprintExists = false,
   commands = [],
   blueprintPath = "",
@@ -212,7 +157,7 @@ function jskitFacts({
 } = {}) {
   return adapterProjectFacts({
     capabilities: jskitAdapterCapabilities({
-      commands
+      adapter
     }),
     commands,
     promptContext: jskitPromptContext({
@@ -226,179 +171,51 @@ function jskitFacts({
   });
 }
 
-class JskitTargetAdapter extends TargetAdapter {
+async function inspectJskitProject(targetRoot) {
+  return inspectDescribedProject(targetRoot, {
+    extra: async ({ exists, pathFor }) => {
+      const blueprintPath = pathFor(JSKIT_BLUEPRINT_RELATIVE_PATH);
+      return {
+        blueprintExists: await exists(JSKIT_BLUEPRINT_RELATIVE_PATH),
+        blueprintPath
+      };
+    },
+    markers: JSKIT_MARKERS,
+    packageJson: {
+      defaultValue: {},
+      invalidJsonCode: "ai_studio_invalid_jskit_json",
+      invalidJsonMessage: (filePath) => `Invalid JSON in JSKIT project file: ${filePath}`
+    }
+  });
+}
+
+class JskitTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
   constructor({
     appReviewTerminalSpecFactory = null,
     commandTerminalSpecFactory = null,
-    commands = [],
-    promptRenderer = new PromptRenderer({
-      promptPackRoot: JSKIT_PROMPT_PACK_ROOT
-    })
+    commands = []
   } = {}) {
     super({
-      id: "jskit",
-      label: "JSKIT target adapter"
-    });
-    this.commandTerminalSpecFactory = typeof commandTerminalSpecFactory === "function"
-      ? commandTerminalSpecFactory
-      : null;
-    this.appReviewTerminalSpecFactory = typeof appReviewTerminalSpecFactory === "function"
-      ? appReviewTerminalSpecFactory
-      : null;
-    this.commands = normalizeJskitCommands(commands);
-    this.promptRenderer = promptRenderer;
-  }
-
-  async projectInspection(targetRoot) {
-    const resolvedTargetRoot = path.resolve(targetRoot);
-    const blueprintPath = path.join(resolvedTargetRoot, JSKIT_BLUEPRINT_RELATIVE_PATH);
-    const [markers, packageJson, blueprintExists] = await Promise.all([
-      inspectMarkers(resolvedTargetRoot),
-      readJsonIfExists(path.join(resolvedTargetRoot, "package.json")),
-      pathExists(blueprintPath)
-    ]);
-    return {
-      blueprintExists,
-      blueprintPath,
-      markers,
-      packageJson,
-      targetRoot: resolvedTargetRoot
-    };
-  }
-
-  async detect({ targetRoot } = {}) {
-    void targetRoot;
-    return adapterDetection({
-      detected: true,
-      reason: ""
-    });
-  }
-
-  async inspect({ targetRoot } = {}) {
-    return jskitFacts({
-      ...await this.projectInspection(targetRoot || process.cwd()),
-      commands: this.commands
-    });
-  }
-
-  async getPromptContext({ facts = {}, targetRoot } = {}) {
-    if (facts.promptContext) {
-      return facts.promptContext;
-    }
-    return jskitPromptContext(await this.projectInspection(targetRoot || process.cwd()));
-  }
-
-  async listCommands({ facts = {} } = {}) {
-    return (facts.commands || this.commands).map(adapterCommand);
-  }
-
-  async getSetupDoctorPlugins(context = {}) {
-    return [
-      createJskitSetupDoctorPlugin(context)
-    ];
-  }
-
-  async getConfigFields() {
-    return JSKIT_CONFIG_FIELDS;
-  }
-
-  async getDefaultConfig() {
-    return {
-      jskit_database_runtime: "none",
-      jskit_tenancy_mode: "none"
-    };
-  }
-
-  async createCommandTerminalSpec(commandId, context = {}) {
-    if (!this.commandTerminalSpecFactory) {
-      return {
-        ok: false,
-        message: `JSKIT command ${commandId} does not have a terminal runner.`
-      };
-    }
-    return this.commandTerminalSpecFactory({
-      commandId,
-      context,
-      targetRoot: context.session?.targetRoot || context.targetRoot || ""
-    });
-  }
-
-  async createAppReviewTerminalSpec(context = {}) {
-    if (!this.appReviewTerminalSpecFactory) {
-      return {
-        ok: false,
-        message: "JSKIT app review terminal is not available."
-      };
-    }
-    return this.appReviewTerminalSpecFactory({
-      context,
-      session: context.session || {},
-      targetRoot: context.session?.targetRoot || context.targetRoot || ""
-    });
-  }
-
-  async runSessionAction({
-    action = {},
-    input = {},
-    session = {}
-  } = {}) {
-    return runJskitSessionAction(action.id, {
-      input,
-      session,
-      targetRoot: session.targetRoot || process.cwd()
-    });
-  }
-
-  async renderPrompt({
-    action,
-    config = {},
-    input = {},
-    session
-  } = {}) {
-    return this.promptRenderer.renderPrompt({
-      action,
-      config,
-      input,
-      session
-    });
-  }
-
-  async finishSession() {
-    return adapterActionResult({
-      message: "Finished AI Studio session.",
-      metadata: {
-        session_finished: "yes"
+      appReviewTerminalSpecFactory,
+      commandTerminalSpecFactory,
+      commands,
+      configFields: JSKIT_CONFIG_FIELDS,
+      currentAppInspector: inspectJskitCurrentApp,
+      defaultConfig: {
+        jskit_database_runtime: "none",
+        jskit_tenancy_mode: "none"
       },
-      status: "completed"
-    });
-  }
-
-  async inspectCurrentApp({
-    config = {},
-    includeGit = true,
-    targetRoot = ""
-  } = {}) {
-    void config;
-    return inspectJskitCurrentApp(targetRoot || process.cwd(), {
-      includeGit
-    });
-  }
-
-  async listCurrentAppTargetScripts({
-    config = {},
-    targetRoot = ""
-  } = {}) {
-    void config;
-    return inspectJskitTargetScripts(targetRoot || process.cwd());
-  }
-
-  async createCurrentAppTargetScriptTerminalSpec({
-    config = {},
-    input = {},
-    targetRoot = ""
-  } = {}) {
-    return createJskitTargetScriptTerminalSpec(targetRoot || process.cwd(), input, {
-      config
+      id: "jskit",
+      label: "JSKIT target adapter",
+      projectFacts: jskitFacts,
+      projectInspection: inspectJskitProject,
+      promptContext: jskitPromptContext,
+      promptPackRoot: JSKIT_PROMPT_PACK_ROOT,
+      setupDoctorPlugins: (context) => [
+        createJskitSetupDoctorPlugin(context)
+      ],
+      targetScriptTerminalSpecFactory: createJskitTargetScriptTerminalSpec,
+      targetScriptsInspector: inspectJskitTargetScripts
     });
   }
 }
@@ -407,5 +224,6 @@ export {
   JSKIT_MARKERS,
   JSKIT_CONFIG_FIELDS,
   JSKIT_PROMPT_PACK_ROOT,
-  JskitTargetAdapter
+  JskitTargetAdapter,
+  inspectJskitProject
 };

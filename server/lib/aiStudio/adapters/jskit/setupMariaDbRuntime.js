@@ -8,17 +8,22 @@ import {
   dockerCommand,
   shellQuote
 } from "../../../shellCommands.js";
+import {
+  AI_STUDIO_RUNTIME_HOST_ALIAS,
+  createRuntimeContainerRepair,
+  runtimeContainerName,
+  runtimeContainerNetworkDockerArgs,
+  runtimeContainerStartScript
+} from "../../runtimeContainers.js";
 
-const JSKIT_MARIADB_CONTAINER = "ai-studio-jskit-mariadb";
+const JSKIT_MARIADB_CONTAINER_ID = "jskit-mariadb";
 const JSKIT_MARIADB_HOST = "ai-studio-mariadb";
 const JSKIT_MARIADB_HOST_PORT = "13306";
 const JSKIT_MARIADB_IMAGE = "mariadb:12.0.2";
-const JSKIT_MARIADB_NETWORK = "ai-studio-jskit";
 const JSKIT_MARIADB_ROOT_PASSWORD = "ai_studio_jskit_root";
-const JSKIT_MARIADB_VOLUME = "ai_studio_jskit_mariadb_data";
 const JSKIT_MARIADB_PROBE_DATABASE = "ai_studio_jskit_probe";
 const JSKIT_MARIADB_PROBE_TABLE = "capability_probe";
-const JSKIT_HOST_DATABASE_HOST = "ai-studio-host";
+const JSKIT_HOST_DATABASE_HOST = AI_STUDIO_RUNTIME_HOST_ALIAS;
 
 function packageDependencyNames(packageJson = {}) {
   const sections = [
@@ -59,98 +64,101 @@ function mariaDbCapabilitySql() {
   ].join("; ");
 }
 
-function managedMariaDbRunArgs(maskPassword = false) {
-  const password = maskPassword ? "*****" : JSKIT_MARIADB_ROOT_PASSWORD;
+function jskitDatabaseDockerArgs(databaseHost = "", targetRoot = "") {
+  if (String(databaseHost || "").trim() === JSKIT_MARIADB_HOST) {
+    return runtimeContainerNetworkDockerArgs(targetRoot);
+  }
   return [
-    "run",
-    "-d",
-    "--name",
-    JSKIT_MARIADB_CONTAINER,
-    "--network",
-    JSKIT_MARIADB_NETWORK,
-    "--network-alias",
-    JSKIT_MARIADB_HOST,
-    "-p",
-    `127.0.0.1:${JSKIT_MARIADB_HOST_PORT}:3306`,
-    "-e",
-    `MARIADB_ROOT_PASSWORD=${password}`,
-    "-v",
-    `${JSKIT_MARIADB_VOLUME}:/var/lib/mysql`,
-    "--health-cmd",
-    `mariadb-admin ping -uroot -p${password} --silent`,
-    "--health-interval",
-    "5s",
-    "--health-timeout",
-    "3s",
-    "--health-retries",
-    "20",
-    JSKIT_MARIADB_IMAGE
-  ];
-}
-
-function jskitDatabaseDockerArgs(databaseHost = "") {
-  const args = [
     "--add-host",
     `${JSKIT_HOST_DATABASE_HOST}:host-gateway`
   ];
-  if (String(databaseHost || "").trim() === JSKIT_MARIADB_HOST) {
-    return [
-      "--network",
-      JSKIT_MARIADB_NETWORK,
-      ...args
-    ];
-  }
-  return args;
 }
 
-function startJskitMariaDbRepair() {
-  return createDoctorRepair({
-    actionId: "start-jskit-mariadb",
-    autoRun: true,
-    command: [
-      `${dockerCommand(["network", "create", JSKIT_MARIADB_NETWORK])} || true`,
-      dockerCommand(["volume", "create", JSKIT_MARIADB_VOLUME]),
-      dockerCommand(managedMariaDbRunArgs(true)),
-      `docker exec ${JSKIT_MARIADB_CONTAINER} mariadb-admin ping -uroot -p***** --silent`
-    ].join("\n"),
-    kind: "terminal",
-    label: "Start JSKIT MariaDB"
+function jskitDatabaseDockerArgsForTarget(databaseHost = "", targetRoot = "") {
+  return jskitDatabaseDockerArgs(databaseHost, targetRoot);
+}
+
+function createJskitMariaDbRuntimeContainer({
+  required = true
+} = {}) {
+  return {
+    aliases: [
+      JSKIT_MARIADB_HOST
+    ],
+    checkId: "jskit-mariadb",
+    env: {
+      MARIADB_ROOT_PASSWORD: JSKIT_MARIADB_ROOT_PASSWORD
+    },
+    expected: "Managed JSKIT MariaDB is ready when the target declares a MySQL-compatible runtime.",
+    health: {
+      command: [
+        "mariadb-admin",
+        "ping",
+        "-uroot",
+        `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
+        "--silent"
+      ],
+      interval: "5s",
+      retries: 20,
+      timeout: "3s"
+    },
+    id: JSKIT_MARIADB_CONTAINER_ID,
+    image: JSKIT_MARIADB_IMAGE,
+    label: "JSKIT MariaDB",
+    notRequiredExplanation: "Managed MariaDB starts only when the JSKIT target selects the Studio-managed database endpoint.",
+    ports: [
+      {
+        container: 3306,
+        host: "127.0.0.1",
+        hostPort: JSKIT_MARIADB_HOST_PORT
+      }
+    ],
+    readyCheck: {
+      command: [
+        "mariadb",
+        "-uroot",
+        `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
+        "-e",
+        mariaDbCapabilitySql()
+      ],
+      expected: "Managed JSKIT MariaDB can create/drop a temporary probe database.",
+      explanation: "The MariaDB container is reachable, but Studio could not prove DDL rights.",
+      observed: "Probe database and table created and dropped successfully."
+    },
+    readyExplanation: "The JSKIT managed MariaDB runtime is ready for target database setup.",
+    required,
+    secretEnv: [
+      "MARIADB_ROOT_PASSWORD"
+    ],
+    volumes: [
+      {
+        id: "data",
+        target: "/var/lib/mysql"
+      }
+    ]
+  };
+}
+
+function jskitMariaDbContainerName(targetRoot = "") {
+  return runtimeContainerName({
+    adapterId: "jskit",
+    containerId: JSKIT_MARIADB_CONTAINER_ID,
+    targetRoot
   });
 }
 
-function startJskitMariaDbScript() {
-  return [
-    "set -e",
-    `MARIADB_ROOT_PASSWORD=${shellQuote(JSKIT_MARIADB_ROOT_PASSWORD)}`,
-    `MARIADB_CONTAINER=${shellQuote(JSKIT_MARIADB_CONTAINER)}`,
-    `MARIADB_NETWORK=${shellQuote(JSKIT_MARIADB_NETWORK)}`,
-    `MARIADB_HOST=${shellQuote(JSKIT_MARIADB_HOST)}`,
-    `echo '$ ${dockerCommand(["network", "create", JSKIT_MARIADB_NETWORK])} || true'`,
-    `docker network create ${shellQuote(JSKIT_MARIADB_NETWORK)} >/dev/null 2>&1 || true`,
-    `echo '$ ${dockerCommand(["volume", "create", JSKIT_MARIADB_VOLUME])}'`,
-    `docker volume create ${shellQuote(JSKIT_MARIADB_VOLUME)}`,
-    `if ! docker inspect ${shellQuote(JSKIT_MARIADB_CONTAINER)} >/dev/null 2>&1; then`,
-    `  echo '$ ${dockerCommand(managedMariaDbRunArgs(true))}'`,
-    `  docker run -d --name ${shellQuote(JSKIT_MARIADB_CONTAINER)} --network "$MARIADB_NETWORK" --network-alias "$MARIADB_HOST" -p ${shellQuote(`127.0.0.1:${JSKIT_MARIADB_HOST_PORT}:3306`)} -e MARIADB_ROOT_PASSWORD="$MARIADB_ROOT_PASSWORD" -v ${shellQuote(`${JSKIT_MARIADB_VOLUME}:/var/lib/mysql`)} --health-cmd "mariadb-admin ping -uroot -p$MARIADB_ROOT_PASSWORD --silent" --health-interval 5s --health-timeout 3s --health-retries 20 ${shellQuote(JSKIT_MARIADB_IMAGE)}`,
-    "else",
-    `  if [ "$(docker inspect ${shellQuote(JSKIT_MARIADB_CONTAINER)} --format '{{.State.Running}}')" != "true" ]; then`,
-    `    echo '$ ${dockerCommand(["start", JSKIT_MARIADB_CONTAINER])}'`,
-    `    docker start ${shellQuote(JSKIT_MARIADB_CONTAINER)}`,
-    "  fi",
-    `  if ! docker inspect ${shellQuote(JSKIT_MARIADB_CONTAINER)} --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$MARIADB_NETWORK\""; then`,
-    "    docker network connect --alias \"$MARIADB_HOST\" \"$MARIADB_NETWORK\" \"$MARIADB_CONTAINER\" || true",
-    "  fi",
-    "fi",
-    "for attempt in $(seq 1 40); do",
-    `  echo '$ docker exec ${JSKIT_MARIADB_CONTAINER} mariadb-admin ping -uroot -p***** --silent'`,
-    `  if docker exec ${shellQuote(JSKIT_MARIADB_CONTAINER)} mariadb-admin ping -uroot -p"$MARIADB_ROOT_PASSWORD" --silent; then`,
-    "    exit 0",
-    "  fi",
-    "  sleep 1.5",
-    "done",
-    "echo 'Timed out waiting for JSKIT MariaDB to accept connections.' >&2",
-    "exit 1"
-  ].join("\n");
+function startJskitMariaDbRepair(targetRoot = "") {
+  return createRuntimeContainerRepair(createJskitMariaDbRuntimeContainer(), {
+    adapterId: "jskit",
+    targetRoot
+  });
+}
+
+function startJskitMariaDbScript(targetRoot = "") {
+  return runtimeContainerStartScript(createJskitMariaDbRuntimeContainer(), {
+    adapterId: "jskit",
+    targetRoot
+  });
 }
 
 function escapeMariaDbIdentifier(value) {
@@ -171,12 +179,12 @@ function validateDatabaseName(value) {
   };
 }
 
-function createManagedDatabaseDockerArgs(databaseName) {
+function createManagedDatabaseDockerArgs(databaseName, targetRoot = "") {
   const escaped = escapeMariaDbIdentifier(databaseName);
   return [
     "exec",
     "-it",
-    JSKIT_MARIADB_CONTAINER,
+    jskitMariaDbContainerName(targetRoot),
     "mariadb",
     "-uroot",
     `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
@@ -185,11 +193,11 @@ function createManagedDatabaseDockerArgs(databaseName) {
   ];
 }
 
-function createManagedDatabaseRepair(databaseName) {
+function createManagedDatabaseRepair(databaseName, targetRoot = "") {
   return createDoctorRepair({
     actionId: "terminal-create-app-db",
     autoRun: true,
-    command: dockerCommand(createManagedDatabaseDockerArgs(databaseName)),
+    command: dockerCommand(createManagedDatabaseDockerArgs(databaseName, targetRoot)),
     fields: [
       {
         defaultValue: databaseName,
@@ -203,11 +211,11 @@ function createManagedDatabaseRepair(databaseName) {
   });
 }
 
-function managedMariaDbAccessInstructions(databaseName = "") {
+function managedMariaDbAccessInstructions(databaseName = "", targetRoot = "") {
   const database = String(databaseName || "").trim();
   const databaseArg = database ? ` ${shellQuote(database)}` : "";
   return [
-    `Container: docker exec -it ${JSKIT_MARIADB_CONTAINER} mariadb -uroot -p${databaseArg}`,
+    `Container: docker exec -it ${jskitMariaDbContainerName(targetRoot)} mariadb -uroot -p${databaseArg}`,
     `Host: mariadb -h 127.0.0.1 -P ${JSKIT_MARIADB_HOST_PORT} -uroot -p${databaseArg}`
   ].join("\n");
 }
@@ -256,12 +264,15 @@ async function readDatabaseHostFromDotEnv(targetRoot = "") {
 }
 
 export {
+  createJskitMariaDbRuntimeContainer,
   createManagedDatabaseDockerArgs,
   createManagedDatabaseRepair,
   databaseHostFromEnvText,
   jskitDatabaseDockerArgs,
+  jskitDatabaseDockerArgsForTarget,
+  jskitMariaDbContainerName,
   JSKIT_HOST_DATABASE_HOST,
-  JSKIT_MARIADB_CONTAINER,
+  JSKIT_MARIADB_CONTAINER_ID,
   JSKIT_MARIADB_HOST,
   JSKIT_MARIADB_HOST_PORT,
   JSKIT_MARIADB_ROOT_PASSWORD,

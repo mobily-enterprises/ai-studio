@@ -19,6 +19,9 @@
     "build:all": "vite build",
     "build:home": "VITE_SURFACE=home vite build",
     "preview": "vite preview",
+    "docs:dev": "vitepress dev docs/site",
+    "docs:build": "vitepress build docs/site",
+    "docs:preview": "vitepress preview docs/site",
     "lint": "eslint .",
     "test": "node --test tests/server/*.test.js",
     "test:client": "vitest run tests/client",
@@ -68,6 +71,7 @@
     "@vitejs/plugin-vue": "^5.2.1",
     "eslint": "^9.39.1",
     "vite": "^6.1.0",
+    "vitepress": "^1.6.4",
     "vitest": "^4.0.18"
   }
 }

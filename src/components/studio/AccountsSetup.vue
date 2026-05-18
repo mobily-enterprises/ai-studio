@@ -86,7 +86,7 @@
           <v-btn
             color="primary"
             variant="flat"
-            :disabled="authBusy || logoutBusy"
+            :disabled="loginDisabled(account)"
             :loading="activeSessionFor(account.id)?.status === 'authenticating'"
             @click="startBrowserAuth(account.id)"
           >
@@ -96,7 +96,7 @@
             v-if="account.id === 'codex'"
             color="primary"
             variant="tonal"
-            :disabled="authBusy || logoutBusy"
+            :disabled="loginDisabled(account)"
             @click="startDeviceAuth"
           >
             Use code login
@@ -243,6 +243,14 @@ function activeSessionFor(accountId) {
   return activeSessions[accountId] || null;
 }
 
+function accountFor(accountId) {
+  return accountRows.value.find((account) => account.id === accountId) || null;
+}
+
+function loginDisabled(account = {}) {
+  return authBusy.value || logoutBusy.value || account.connected === true;
+}
+
 function prepareBrowserWindow(accountId) {
   try {
     const browserWindow = window.open("about:blank", "_blank");
@@ -289,6 +297,9 @@ async function refreshStatus() {
 
 async function startAuth(accountId, mode = "browser") {
   localError.value = "";
+  if (accountFor(accountId)?.connected === true) {
+    return;
+  }
   prepareBrowserWindow(accountId);
   try {
     const session = await accounts.startAuth(accountId, mode);

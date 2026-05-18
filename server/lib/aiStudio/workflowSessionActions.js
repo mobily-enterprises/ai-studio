@@ -4,10 +4,10 @@ import { promisify } from "node:util";
 
 import {
   adapterActionResult
-} from "../../adapter.js";
+} from "./adapter.js";
 import {
   normalizeText
-} from "../../core.js";
+} from "./core.js";
 
 const execFileAsync = promisify(execFile);
 const GITHUB_COMMAND_TIMEOUT_MS = 30_000;
@@ -176,17 +176,17 @@ async function useExistingPrSessionAction({
   });
 }
 
-const JSKIT_SESSION_ACTIONS = Object.freeze({
+const AI_STUDIO_WORKFLOW_SESSION_ACTIONS = Object.freeze({
   use_existing_issue: useExistingIssueSessionAction,
   use_existing_pr: useExistingPrSessionAction,
   use_new_branch: useNewBranchSessionAction
 });
 
-async function runJskitSessionAction(actionId, context = {}) {
-  const runAction = JSKIT_SESSION_ACTIONS[normalizeText(actionId)];
+async function runAiStudioWorkflowSessionAction(actionId, context = {}) {
+  const runAction = AI_STUDIO_WORKFLOW_SESSION_ACTIONS[normalizeText(actionId)];
   if (!runAction) {
     return adapterActionResult({
-      message: `JSKIT session action is not implemented: ${normalizeText(actionId) || "(unknown)"}`,
+      message: `AI Studio workflow action is not implemented: ${normalizeText(actionId) || "(unknown)"}`,
       status: "blocked"
     });
   }
@@ -197,5 +197,5 @@ async function runJskitSessionAction(actionId, context = {}) {
 }
 
 export {
-  runJskitSessionAction
+  runAiStudioWorkflowSessionAction
 };

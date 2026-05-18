@@ -18,9 +18,9 @@ import {
   createManagedDatabaseRepair,
   jskitDatabaseDockerArgs,
   JSKIT_HOST_DATABASE_HOST,
-  JSKIT_MARIADB_CONTAINER,
   JSKIT_MARIADB_HOST,
   JSKIT_MARIADB_ROOT_PASSWORD,
+  jskitMariaDbContainerName,
   managedMariaDbAccessInstructions,
   startJskitMariaDbRepair,
   validateDatabaseName
@@ -504,7 +504,7 @@ async function checkRuntimeServices(targetRoot, context, toolkit) {
       repair: seedRepair,
       repairs: [
         seedRepair,
-        startJskitMariaDbRepair()
+        startJskitMariaDbRepair(targetRoot)
       ]
     });
   }
@@ -558,10 +558,11 @@ async function checkManagedMariaDb(env, database, targetRoot, toolkit) {
       repair: managedDatabaseEnvRepair(targetRoot, toolkit)
     });
   }
+  const containerName = jskitMariaDbContainerName(targetRoot);
 
   const ping = await toolkit.runDocker([
     "exec",
-    JSKIT_MARIADB_CONTAINER,
+    containerName,
     "mariadb-admin",
     "ping",
     "-uroot",
@@ -578,13 +579,13 @@ async function checkManagedMariaDb(env, database, targetRoot, toolkit) {
       expected: "Studio-managed JSKIT MariaDB is reachable.",
       observed: ping.output,
       explanation: "Start the JSKIT managed MariaDB runtime before database apps can proceed.",
-      repair: startJskitMariaDbRepair()
+      repair: startJskitMariaDbRepair(targetRoot)
     });
   }
 
   const schema = await toolkit.runDocker([
     "exec",
-    JSKIT_MARIADB_CONTAINER,
+    containerName,
     "mariadb",
     "-uroot",
     `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
@@ -603,14 +604,14 @@ async function checkManagedMariaDb(env, database, targetRoot, toolkit) {
       expected: `${database.databaseName} exists in Studio-managed JSKIT MariaDB.`,
       observed: schema.output || "Database not found.",
       explanation: "Create the app database before Studio starts workflow sessions for this target.",
-      repair: createManagedDatabaseRepair(database.databaseName)
+      repair: createManagedDatabaseRepair(database.databaseName, targetRoot)
     });
   }
 
   if (database.user) {
     const appLogin = await toolkit.runDocker([
       "exec",
-      JSKIT_MARIADB_CONTAINER,
+      containerName,
       "mariadb",
       `-u${database.user}`,
       database.password ? `-p${database.password}` : "",
@@ -640,7 +641,7 @@ async function checkManagedMariaDb(env, database, targetRoot, toolkit) {
       database.user
         ? `${database.databaseName} exists and ${database.user} can connect.`
         : `${database.databaseName} exists in Studio-managed JSKIT MariaDB.`,
-      managedMariaDbAccessInstructions(database.databaseName)
+      managedMariaDbAccessInstructions(database.databaseName, targetRoot)
     ].join("\n"),
     explanation: "The target project's database dependency has a reachable database."
   });
@@ -661,7 +662,7 @@ async function checkExternalDatabase(database, targetRoot, toolkit) {
       "-e",
       "SELECT 1;"
     ],
-    extraArgs: jskitDatabaseDockerArgs(database.host),
+    extraArgs: jskitDatabaseDockerArgs(database.host, targetRoot),
     image: JSKIT_TOOLCHAIN_IMAGE,
     targetRoot,
     timeout: 15_000
@@ -765,12 +766,12 @@ function createDatabaseTerminalAction(targetRoot, toolkit) {
     autoRun: true,
     args: ({ input = {} } = {}) => {
       const validation = validateDatabaseName(input.databaseName);
-      return createManagedDatabaseDockerArgs(validation.databaseName);
+      return createManagedDatabaseDockerArgs(validation.databaseName, targetRoot);
     },
     commandPreview: ({ input = {} } = {}) => {
       const validation = validateDatabaseName(input.databaseName);
       return validation.ok
-        ? createManagedDatabaseRepair(validation.databaseName).commandPreview
+        ? createManagedDatabaseRepair(validation.databaseName, targetRoot).commandPreview
         : "docker exec <mariadb-container> mariadb -e <create database>";
     },
     cwd: targetRoot,

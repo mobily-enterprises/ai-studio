@@ -8,8 +8,9 @@ import {
   deepFreeze
 } from "../../deepFreeze.js";
 import {
-  createJskitAiStudioCommandTerminalSpec
-} from "./commandTerminalSpecs.js";
+  AI_STUDIO_WORKFLOW_COMMANDS,
+  createAiStudioWorkflowCommandTerminalSpec
+} from "../../workflowAdapter.js";
 import {
   createJskitAppReviewTerminalSpec
 } from "./appReviewTerminal.js";
@@ -18,52 +19,15 @@ export {
   createJskitTargetScriptTerminalSpec,
   inspectJskitCurrentApp,
   inspectJskitTargetScripts,
-  targetScriptCommandPreview,
-  targetScriptTerminalArgs
+  targetScriptCommandPreview
 } from "./currentApp.js";
 
-const JSKIT_AI_STUDIO_COMMANDS = deepFreeze([
-  {
-    id: "commit_changes",
-    label: "Commit and push changes"
-  },
-  {
-    id: "create_issue_on_gh",
-    label: "Create issue on GH"
-  },
-  {
-    id: "create_pr_on_gh",
-    label: "Create PR on GH"
-  },
-  {
-    id: "create_worktree",
-    label: "Create worktree"
-  },
-  {
-    id: "finish_session",
-    label: "Finish session"
-  },
-  {
-    id: "install_dependencies",
-    label: "Install dependencies"
-  },
-  {
-    id: "merge_pr",
-    label: "Merge PR"
-  },
-  {
-    id: "run_automated_checks",
-    label: "Run automated checks"
-  },
-  {
-    id: "sync_main_checkout",
-    label: "Sync main checkout"
-  }
-]);
+const JSKIT_AI_STUDIO_COMMANDS = deepFreeze(AI_STUDIO_WORKFLOW_COMMANDS);
+const createJskitAiStudioCommandTerminalSpec = createAiStudioWorkflowCommandTerminalSpec;
 
 function createJskitTargetAdapter({
   appReviewTerminalSpecFactory = createJskitAppReviewTerminalSpec,
-  commandTerminalSpecFactory = createJskitAiStudioCommandTerminalSpec
+  commandTerminalSpecFactory = null
 } = {}) {
   return new JskitTargetAdapter({
     appReviewTerminalSpecFactory,
