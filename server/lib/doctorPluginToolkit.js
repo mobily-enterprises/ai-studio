@@ -314,6 +314,7 @@ function createDoctorPluginToolkit({
   function terminalAction({
     actionId = "",
     args = [],
+    autoRun = false,
     command = "bash",
     commandPreview = "",
     cwd = "",
@@ -336,6 +337,7 @@ function createDoctorPluginToolkit({
       repair(context = {}) {
         return createDoctorRepair({
           actionId,
+          autoRun,
           command: preview(context),
           fields: resolveOption(fields, context) || [],
           input: resolveOption(input, context),

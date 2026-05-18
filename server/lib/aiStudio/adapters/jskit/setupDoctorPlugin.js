@@ -58,6 +58,7 @@ function buildJskitToolchainScript() {
 function buildJskitToolchainRepair() {
   return createDoctorRepair({
     actionId: "build-jskit-toolchain",
+    autoRun: true,
     command: dockerCommand(buildJskitToolchainArgs()),
     kind: "terminal",
     label: "Build JSKIT toolchain"
@@ -205,6 +206,7 @@ function createJskitSetupDoctorPlugin({
   });
   const buildToolchainTerminal = toolkit.shellTerminalAction({
     actionId: "build-jskit-toolchain",
+    autoRun: true,
     commandPreview: () => buildJskitToolchainRepair().commandPreview,
     cwd: ({ targetRoot = "" } = {}) => studioRoot || targetRoot,
     env: configEnvironment,
@@ -213,6 +215,7 @@ function createJskitSetupDoctorPlugin({
   });
   const startMariaDbTerminal = toolkit.shellTerminalAction({
     actionId: "start-jskit-mariadb",
+    autoRun: true,
     commandPreview: () => startJskitMariaDbRepair().commandPreview,
     cwd: ({ targetRoot = "" } = {}) => studioRoot || targetRoot,
     env: configEnvironment,

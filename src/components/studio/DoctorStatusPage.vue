@@ -31,7 +31,7 @@
           :loading="isLoading"
           :prepend-icon="mdiRefresh"
           class="studio-screen__action-button"
-          @click="refreshDoctorStatus"
+          @click="refreshDoctorStatusForUser"
         >
           Refresh
         </v-btn>
@@ -46,6 +46,19 @@
       class="studio-screen__alert"
     >
       {{ displayError }}
+    </v-alert>
+
+    <v-alert
+      v-if="automaticRepairMessage || automaticRepairError"
+      :type="automaticRepairError ? 'error' : 'info'"
+      variant="tonal"
+      border="start"
+      class="studio-screen__alert"
+    >
+      <div class="d-flex flex-column ga-2">
+        <span>{{ automaticRepairError || automaticRepairMessage }}</span>
+        <pre v-if="automaticRepairError && automaticRepairLog" class="doctor-status__command mb-0">{{ automaticRepairLog }}</pre>
+      </div>
     </v-alert>
 
     <v-progress-linear
@@ -241,7 +254,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiCheckCircle,
@@ -258,6 +271,10 @@ const props = defineProps({
   alwaysRepairCheckIds: {
     type: Array,
     default: () => []
+  },
+  autoRepairEnabled: {
+    type: Boolean,
+    default: false
   },
   blockedLabel: {
     type: String,
@@ -336,9 +353,13 @@ const props = defineProps({
 const emit = defineEmits(["continue", "refresh", "status-updated"]);
 
 const actionInFlight = ref("");
+const automaticRepairError = ref("");
+const automaticRepairMessage = ref("");
+const automaticRepairRunning = ref(false);
 const confirmRepair = ref(null);
 const repairFieldValues = ref({});
 const repairRunning = ref(false);
+const attemptedAutomaticRepairs = new Set();
 
 const {
   liveStatus,
@@ -364,11 +385,14 @@ const {
   copyTerminalSelection,
   openTerminal,
   sendCtrlC,
+  terminalCloseError,
   terminalCommandPreview,
   terminalCopyStatus,
   terminalDialogOpen,
   terminalError,
+  terminalExitCode,
   terminalHost,
+  terminalOutput,
   terminalSelectedText,
   terminalSessionId,
   terminalStatus,
@@ -404,6 +428,12 @@ function handleContinue() {
   if (props.continueEmits) {
     emit("continue");
   }
+}
+
+function refreshDoctorStatusForUser() {
+  automaticRepairError.value = "";
+  automaticRepairMessage.value = "";
+  refreshDoctorStatus();
 }
 
 const checks = computed(() => {
@@ -448,6 +478,14 @@ const summary = computed(() => {
 
 const checking = computed(() => {
   return summary.value.state === "checking";
+});
+
+const automaticRepairLog = computed(() => {
+  const output = String(terminalOutput.value || "").trim();
+  if (!output) {
+    return "";
+  }
+  return output.length > 4000 ? output.slice(output.length - 4000) : output;
 });
 
 const summaryIcon = computed(() => {
@@ -528,6 +566,63 @@ function repairCommandPreview(check) {
 
 function repairRequiresInput(repair) {
   return Array.isArray(repair?.fields) && repair.fields.length > 0;
+}
+
+function automaticRepairInputs(repair) {
+  const inputs = repair?.input && typeof repair.input === "object" && !Array.isArray(repair.input)
+    ? { ...repair.input }
+    : {};
+  for (const field of Array.isArray(repair?.fields) ? repair.fields : []) {
+    const value = String(field.defaultValue || "").trim();
+    if (field.required && !value) {
+      return null;
+    }
+    inputs[field.id] = value;
+  }
+  return inputs;
+}
+
+function automaticRepairKey(check, repair, inputs) {
+  return [
+    check?.id || "",
+    repair?.actionId || "",
+    JSON.stringify(inputs || {})
+  ].join(":");
+}
+
+function automaticRepairCandidate(check, repair) {
+  if (repair?.autoRun !== true || repair?.kind !== "terminal" || !repair?.actionId) {
+    return null;
+  }
+  const inputs = automaticRepairInputs(repair);
+  if (inputs === null) {
+    return null;
+  }
+  const key = automaticRepairKey(check, repair, inputs);
+  if (attemptedAutomaticRepairs.has(key)) {
+    return null;
+  }
+  return {
+    check,
+    inputs,
+    key,
+    repair
+  };
+}
+
+function firstAutomaticRepair() {
+  for (const check of checks.value) {
+    if (!["blocked", "fail", "hard-stop"].includes(check?.status)) {
+      continue;
+    }
+    for (const repair of checkRepairs(check)) {
+      const candidate = automaticRepairCandidate(check, repair);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+  return null;
 }
 
 function quotePreviewValue(value) {
@@ -628,6 +723,8 @@ async function executeConfirmedRepair() {
   confirmRepair.value = null;
   repairFieldValues.value = {};
   actionInFlight.value = actionId;
+  automaticRepairError.value = "";
+  automaticRepairMessage.value = "";
   repairRunning.value = true;
   try {
     await openTerminal({
@@ -639,6 +736,77 @@ async function executeConfirmedRepair() {
     repairRunning.value = false;
   }
 }
+
+async function runAutomaticRepair() {
+  if (ready.value) {
+    automaticRepairMessage.value = "";
+    automaticRepairError.value = "";
+    return;
+  }
+
+  if (!props.autoRepairEnabled ||
+    isLoading.value ||
+    streamRunning.value ||
+    automaticRepairError.value ||
+    automaticRepairRunning.value ||
+    repairDialogOpen.value ||
+    terminalDialogOpen.value ||
+    actionInFlight.value) {
+    return;
+  }
+
+  const candidate = firstAutomaticRepair();
+  if (!candidate) {
+    automaticRepairMessage.value = "";
+    return;
+  }
+
+  attemptedAutomaticRepairs.add(candidate.key);
+  actionInFlight.value = candidate.repair.actionId;
+  automaticRepairRunning.value = true;
+  automaticRepairError.value = "";
+  automaticRepairMessage.value = `Running automatic repair: ${candidate.repair.label || candidate.repair.actionId}`;
+
+  try {
+    const session = await openTerminal({
+      inputs: candidate.inputs,
+      repair: candidate.repair,
+      visible: false,
+      waitForExit: true
+    });
+    const exitCode = Number.isInteger(session?.exitCode) ? session.exitCode : terminalExitCode.value;
+    const closeError = session?.closeError || terminalCloseError.value || "";
+    if (session?.ok === false || exitCode !== 0 || closeError) {
+      automaticRepairError.value = [
+        `Automatic repair failed: ${candidate.repair.label || candidate.repair.actionId}`,
+        closeError || terminalError.value || (Number.isInteger(exitCode) ? `Exit code ${exitCode}.` : "")
+      ].filter(Boolean).join(" ");
+      return;
+    }
+  } finally {
+    actionInFlight.value = "";
+    automaticRepairRunning.value = false;
+  }
+}
+
+watch(
+  () => [
+    props.autoRepairEnabled,
+    ready.value,
+    isLoading.value,
+    streamRunning.value,
+    automaticRepairRunning.value,
+    terminalDialogOpen.value,
+    actionInFlight.value,
+    checks.value.map((check) => `${check.id}:${check.status}`).join("|")
+  ],
+  () => {
+    void runAutomaticRepair();
+  },
+  {
+    immediate: true
+  }
+);
 
 </script>
 

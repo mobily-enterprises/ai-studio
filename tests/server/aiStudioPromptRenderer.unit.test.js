@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -128,9 +128,47 @@ test("ai-studio prompt renderer applies target overrides with the rendered origi
         ].join("\n")
       );
       assert.equal(rendered.promptOverridePath, path.join(overrideRoot, "make_plan.txt"));
-      const readme = await readFile(path.join(targetRoot, ".ai-studio", "prompts", "README.md"), "utf8");
-      assert.match(readme, /\{\{originalPrompt\}\}/u);
-      assert.match(readme, /\.ai-studio\/prompts\/<adapter-id>\/<prompt-id>\.txt/u);
+      await assert.rejects(
+        access(path.join(targetRoot, ".ai-studio", "prompts", "README.md")),
+        /ENOENT/u
+      );
+    });
+  });
+});
+
+test("ai-studio prompt renderer does not create target files when no override exists", async () => {
+  await withTemporaryRoot(async (promptPackRoot) => {
+    await withTemporaryRoot(async (targetRoot) => {
+      await writeFile(
+        path.join(promptPackRoot, "make_plan.txt"),
+        "Built-in {{action.label}} for {{session.id}}.",
+        "utf8"
+      );
+      const renderer = new PromptRenderer({
+        promptPackRoot
+      });
+
+      const rendered = await renderer.renderPrompt({
+        action: {
+          id: "make_plan",
+          label: "Make plan",
+          type: "prompt"
+        },
+        session: {
+          adapter: {
+            id: "jskit",
+            label: "JSKIT"
+          },
+          sessionId: "prompt_session",
+          targetRoot
+        }
+      });
+
+      assert.equal(rendered.prompt, "Built-in Make plan for prompt_session.");
+      await assert.rejects(
+        access(path.join(targetRoot, ".ai-studio", "prompts")),
+        /ENOENT/u
+      );
     });
   });
 });

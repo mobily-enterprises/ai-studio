@@ -548,10 +548,9 @@ async function prepareTargetRoot() {
   }
 
   await removeGeneratedSessionState();
-  const status = await git(["status", "--porcelain=v1"]);
-  if (status) {
-    throw new Error(`Live e2e target must be clean before tests run:\n${status}`);
-  }
+  await assertTargetClean("before tests run");
+  await syncTargetMainCheckout();
+  await assertTargetClean("after syncing main");
 }
 
 async function assertGithubCliReady() {
@@ -570,6 +569,23 @@ async function removeGeneratedSessionState() {
     recursive: true
   });
   await git(["worktree", "prune"]).catch(() => "");
+  if (targetRoot) {
+    await syncTargetMainCheckout().catch(() => "");
+  }
+}
+
+async function assertTargetClean(reason: string) {
+  const status = await git(["status", "--porcelain=v1"]);
+  if (status) {
+    throw new Error(`Live e2e target must be clean ${reason}:\n${status}`);
+  }
+}
+
+async function syncTargetMainCheckout() {
+  await git(["switch", "main"]);
+  await git(["pull", "--ff-only", "origin", "main"], {
+    timeout: 120_000
+  });
 }
 
 async function removeGeneratedWorktrees() {

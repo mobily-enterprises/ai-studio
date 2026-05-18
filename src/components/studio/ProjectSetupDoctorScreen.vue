@@ -7,6 +7,7 @@
     :loading="loading"
     :error="errorMessage"
     :stream-enabled="streamEnabled"
+    auto-repair-enabled
     :stream-auto-start="streamAutoStart"
     :stream-endpoint="PROJECT_SETUP_STREAM_ENDPOINT"
     :terminal-endpoint="PROJECT_SETUP_TERMINAL_ENDPOINT"

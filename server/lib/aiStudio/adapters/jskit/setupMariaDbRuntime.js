@@ -106,6 +106,7 @@ function jskitDatabaseDockerArgs(databaseHost = "") {
 function startJskitMariaDbRepair() {
   return createDoctorRepair({
     actionId: "start-jskit-mariadb",
+    autoRun: true,
     command: [
       `${dockerCommand(["network", "create", JSKIT_MARIADB_NETWORK])} || true`,
       dockerCommand(["volume", "create", JSKIT_MARIADB_VOLUME]),
@@ -187,6 +188,7 @@ function createManagedDatabaseDockerArgs(databaseName) {
 function createManagedDatabaseRepair(databaseName) {
   return createDoctorRepair({
     actionId: "terminal-create-app-db",
+    autoRun: true,
     command: dockerCommand(createManagedDatabaseDockerArgs(databaseName)),
     fields: [
       {

@@ -187,6 +187,7 @@ function gitInitTerminalArgs(targetRoot) {
 function gitInitRepair(targetRoot) {
   return createRepair({
     actionId: "terminal-git-init",
+    autoRun: true,
     command: dockerCommand(gitInitTerminalArgs(targetRoot)),
     label: "Initialize Git"
   });
@@ -206,6 +207,7 @@ function ghRepoCreateTerminalArgs(targetRoot) {
 function ghRepoCreateRepair(targetRoot) {
   return createRepair({
     actionId: "terminal-gh-create-repo",
+    autoRun: true,
     command: dockerCommand(ghRepoCreateTerminalArgs(targetRoot)),
     label: "Create/link GitHub repo"
   });
@@ -273,6 +275,7 @@ function gitCheckpointRepair({
 } = {}) {
   return createRepair({
     actionId: includeInitialCommit ? CREATE_GIT_CHECKPOINT_ACTION : PUSH_GIT_CHECKPOINT_ACTION,
+    autoRun: true,
     command: gitCheckpointCommandPreview({
       includeInitialCommit
     }),

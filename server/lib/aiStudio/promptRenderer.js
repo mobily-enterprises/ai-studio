@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   aiStudioError,
@@ -14,58 +14,6 @@ const DEFAULT_PROMPT_ID = "generic";
 const PROMPT_OVERRIDES_DIR = "prompts";
 const PROMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TEMPLATE_TOKEN_PATTERN = /\{\{([A-Za-z0-9_.-]+)\}\}/gu;
-const PROMPT_OVERRIDE_README = `# AI Studio Prompt Overrides
-
-This directory is intentionally not managed by the Studio UI.
-
-Agents and advanced users may override AI Studio prompts by creating files here:
-
-\`\`\`text
-.ai-studio/prompts/<adapter-id>/<prompt-id>.txt
-\`\`\`
-
-For the JSKIT adapter, examples include:
-
-\`\`\`text
-.ai-studio/prompts/jskit/make_plan.txt
-.ai-studio/prompts/jskit/run_deslop.txt
-.ai-studio/prompts/jskit/create_pr_file.txt
-\`\`\`
-
-The filename must be the prompt id plus \`.txt\`. Prompt ids use letters,
-numbers, underscores, and hyphens.
-
-Override templates use AI Studio's normal token syntax:
-
-\`\`\`text
-{{context.json}}
-{{config.json}}
-{{adapter.promptContext.json}}
-{{session.targetRoot}}
-{{session.worktreePath}}
-{{session.metadata.json}}
-\`\`\`
-
-Override templates also get the fully rendered built-in prompt:
-
-\`\`\`text
-{{originalPrompt}}
-{{prompt.original}}
-\`\`\`
-
-A common override shape is:
-
-\`\`\`text
-{{originalPrompt}}
-
-Additional local instructions:
-- Keep this target's project conventions in mind.
-- Do not introduce unrelated technology.
-\`\`\`
-
-Unknown tokens fail prompt rendering. To disable an override, delete or rename
-the override file.
-`;
 
 function assertPromptId(promptId) {
   const normalizedPromptId = normalizeText(promptId);
@@ -122,28 +70,6 @@ function assertPromptPackRoot(promptPackRoot) {
   return path.resolve(normalizedPromptPackRoot);
 }
 
-async function ensurePromptOverridesReadme(targetRoot = "") {
-  const overrideRoot = promptOverrideRoot(targetRoot);
-  if (!overrideRoot) {
-    return "";
-  }
-  await mkdir(overrideRoot, {
-    recursive: true
-  });
-  const readmePath = path.join(overrideRoot, "README.md");
-  try {
-    await writeFile(readmePath, PROMPT_OVERRIDE_README, {
-      encoding: "utf8",
-      flag: "wx"
-    });
-  } catch (error) {
-    if (error?.code !== "EEXIST") {
-      throw error;
-    }
-  }
-  return readmePath;
-}
-
 async function readPromptTemplate(promptPackRoot, promptId) {
   const requestedPromptId = assertPromptId(promptId || DEFAULT_PROMPT_ID);
   try {
@@ -162,7 +88,6 @@ async function readPromptOverrideTemplate(context) {
   if (!targetRoot || !adapterId) {
     return null;
   }
-  await ensurePromptOverridesReadme(targetRoot);
   const filePath = promptOverrideTemplatePath({
     adapterId,
     promptId: context.action.promptId || DEFAULT_PROMPT_ID,

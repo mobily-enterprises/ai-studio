@@ -47,4 +47,10 @@ const props = defineProps({
 :deep(button) {
   min-height: 48px;
 }
+
+:deep(.v-btn--active) {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+  font-weight: 700;
+}
 </style>

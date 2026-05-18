@@ -151,6 +151,7 @@ function gitInitRepair(targetRoot) {
 
   return createRepair({
     actionId: "terminal-git-init",
+    autoRun: true,
     command: dockerCommand(args),
     label: "Initialize Git"
   });
@@ -170,6 +171,7 @@ function ghRepoCreateRepair(targetRoot) {
 
   return createRepair({
     actionId: "terminal-gh-create-repo",
+    autoRun: true,
     command: dockerCommand(args),
     label: "Create/link GitHub repo"
   });

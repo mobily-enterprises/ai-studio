@@ -1,5 +1,6 @@
 function createDoctorRepair({
   actionId,
+  autoRun = false,
   command,
   fields = [],
   input,
@@ -8,6 +9,7 @@ function createDoctorRepair({
 }) {
   const repair = {
     actionId,
+    autoRun: autoRun === true,
     commandPreview: command,
     fields,
     kind,

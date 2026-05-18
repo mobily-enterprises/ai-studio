@@ -8,7 +8,7 @@
     />
 
     <v-progress-linear
-      v-if="showLoadingBar"
+      v-if="showLoadingBar || redirectingToSetup"
       color="primary"
       height="6"
       indeterminate
@@ -60,6 +60,7 @@
 
 <script setup>
 import { computed, proxyRefs, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
@@ -102,6 +103,7 @@ const props = defineProps({
 
 const savingConfig = ref(false);
 const savingType = ref("");
+const setupGateChecked = ref(false);
 const setupGate = ref({
   message: "",
   ready: false,
@@ -109,6 +111,8 @@ const setupGate = ref({
 });
 const setupLoading = ref(false);
 const setupError = ref("");
+const route = useRoute();
+const router = useRouter();
 
 const setupChecks = [
   {
@@ -261,6 +265,27 @@ const needsSetup = computed(() => {
     props.requireSetup === true &&
     setupGate.value.ready !== true;
 });
+const protectedRouteNeedsProjectSetup = computed(() => {
+  return targetProject.value &&
+    props.requireSetup === true &&
+    (
+      projectType.value?.ready !== true ||
+      projectConfig.value?.ready !== true
+    );
+});
+const onSetupRoute = computed(() => route.path === "/setup");
+const redirectingToSetup = computed(() => {
+  if (onSetupRoute.value || props.requireSetup !== true) {
+    return false;
+  }
+  if (protectedRouteNeedsProjectSetup.value) {
+    return true;
+  }
+  if (props.configureProject === true) {
+    return false;
+  }
+  return setupGateChecked.value && needsSetup.value && !setupError.value;
+});
 const loading = computed(() => Boolean(
   targetProjectView.isLoading ||
   projectTypeView.isLoading ||
@@ -313,6 +338,7 @@ async function loadTargetProject() {
 async function loadSetupGate() {
   if (props.requireSetup !== true || !projectReady.value) {
     setupError.value = "";
+    setupGateChecked.value = false;
     setupLoading.value = false;
     setupGate.value = {
       message: "",
@@ -323,6 +349,7 @@ async function loadSetupGate() {
   }
 
   setupLoading.value = true;
+  setupGateChecked.value = false;
   setupError.value = "";
 
   try {
@@ -334,6 +361,7 @@ async function loadSetupGate() {
           ready: false,
           tab: check.tab
         };
+        setupGateChecked.value = true;
         return;
       }
     }
@@ -343,6 +371,7 @@ async function loadSetupGate() {
       ready: true,
       tab: ""
     };
+    setupGateChecked.value = true;
   } catch (error) {
     setupError.value = String(error?.message || error || "Setup readiness could not load.");
     setupGate.value = {
@@ -350,9 +379,17 @@ async function loadSetupGate() {
       ready: false,
       tab: "studio-setup"
     };
+    setupGateChecked.value = true;
   } finally {
     setupLoading.value = false;
   }
+}
+
+function redirectToSetup() {
+  if (!redirectingToSetup.value) {
+    return;
+  }
+  void router.replace(setupRoute.value);
 }
 
 async function saveProjectType(projectTypeId) {
@@ -382,6 +419,15 @@ watch([projectReady, () => props.requireSetup], () => {
 }, {
   immediate: true
 });
+
+watch(
+  () => [
+    redirectingToSetup.value,
+    setupRoute.value.query.tab
+  ],
+  redirectToSetup,
+  { immediate: true }
+);
 
 watch([targetProject, () => props.configureProject, setupSatisfied], ([project, configureProject]) => {
   if (!project) {

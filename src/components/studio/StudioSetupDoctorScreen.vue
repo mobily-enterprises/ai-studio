@@ -6,6 +6,7 @@
     :loading="loading"
     :error="errorMessage"
     stream-enabled
+    auto-repair-enabled
     :stream-endpoint="STUDIO_SETUP_STREAM_ENDPOINT"
     :stream-auto-start="streamAutoStart"
     :terminal-endpoint="STUDIO_SETUP_TERMINAL_ENDPOINT"

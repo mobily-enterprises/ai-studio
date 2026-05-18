@@ -110,6 +110,7 @@ function scaffoldEnvArgs(targetRoot) {
 function scaffoldTerminalAction(targetRoot, toolkit) {
   return toolkit.toolchainTerminalAction({
     actionId: "terminal-scaffold-jskit",
+    autoRun: true,
     commandArgs: (context = {}) => ["bash", "-lc", scaffoldScript(context.config)],
     commandPreview: (context = {}) => scaffoldCommandPreview(context.config),
     extraArgs: (context = {}) => scaffoldEnvArgs(context.targetRoot || targetRoot),
@@ -139,6 +140,7 @@ function npmInstallScript() {
 function npmInstallTerminalAction(targetRoot, toolkit) {
   return toolkit.toolchainTerminalAction({
     actionId: "terminal-npm-install",
+    autoRun: true,
     commandArgs: ["bash", "-lc", npmInstallScript()],
     extraArgs: writableHostUserDockerArgs(),
     image: JSKIT_TOOLCHAIN_IMAGE,
@@ -188,6 +190,7 @@ function databaseEnvWriteScript(targetRoot, {
 function seedDatabaseEnvTerminalAction(targetRoot, toolkit) {
   return toolkit.shellTerminalAction({
     actionId: "terminal-seed-jskit-db-env",
+    autoRun: true,
     commandPreview: "seed JSKIT database .env defaults",
     cwd: targetRoot,
     label: "Seed database .env",
@@ -204,6 +207,7 @@ function seedDatabaseEnvRepair(targetRoot, toolkit) {
 function managedDatabaseEnvTerminalAction(targetRoot, toolkit) {
   return toolkit.shellTerminalAction({
     actionId: "terminal-use-managed-jskit-db-env",
+    autoRun: true,
     commandPreview: "write Studio-managed MariaDB .env defaults",
     cwd: targetRoot,
     label: "Use Studio-managed MariaDB .env",
@@ -758,6 +762,7 @@ function createJskitProjectSetupChecks(toolkit) {
 function createDatabaseTerminalAction(targetRoot, toolkit) {
   return toolkit.dockerTerminalAction({
     actionId: "terminal-create-app-db",
+    autoRun: true,
     args: ({ input = {} } = {}) => {
       const validation = validateDatabaseName(input.databaseName);
       return createManagedDatabaseDockerArgs(validation.databaseName);

@@ -50,7 +50,6 @@ function createService({
   return Object.freeze({
     async advanceSession(sessionId) {
       return sessionResult(async () => {
-        await assertAiStudioSetupReady(setupServices);
         const runtime = await projectService.createRuntime();
         return runtime.advance(sessionId);
       });

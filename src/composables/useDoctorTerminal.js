@@ -16,6 +16,9 @@ function useDoctorTerminal({
   const terminalStatus = ref("");
   const terminalTitle = ref("Terminal");
   const terminalCommandPreview = ref("");
+  const terminalCloseError = ref("");
+  const terminalExitCode = ref(null);
+  const terminalOutput = ref("");
   const terminalSelectedText = ref("");
   const terminalCopyStatus = ref("");
 
@@ -28,6 +31,7 @@ function useDoctorTerminal({
   let terminalAutoCopyTimer = null;
   let terminalOutputOffset = 0;
   let terminalAutoCopiedText = "";
+  let terminalSettledNotified = false;
 
   const notifyTerminalSettled = typeof onTerminalSettled === "function"
     ? onTerminalSettled
@@ -35,6 +39,20 @@ function useDoctorTerminal({
 
   function terminalUrl(path = "") {
     return `${terminalEndpoint()}${path}`;
+  }
+
+  function notifyTerminalSettledOnce(session = null) {
+    if (terminalSettledNotified) {
+      return;
+    }
+    terminalSettledNotified = true;
+    notifyTerminalSettled(session);
+  }
+
+  function wait(milliseconds) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, milliseconds);
+    });
   }
 
   async function copyTerminalText(value, label) {
@@ -169,16 +187,23 @@ function useDoctorTerminal({
 
     try {
       const session = await studioHttpClient.get(terminalUrl(`/${encodeURIComponent(terminalSessionId.value)}`));
+      terminalCloseError.value = session.closeError || "";
+      terminalExitCode.value = Number.isInteger(session.exitCode) ? session.exitCode : null;
+      terminalOutput.value = session.output || "";
       terminalStatus.value = session.status || "";
       terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
       writeTerminalOutput(session.output);
-      if (session.status === "exited" && terminalPollTimer) {
-        window.clearInterval(terminalPollTimer);
-        terminalPollTimer = null;
-        notifyTerminalSettled();
+      if (session.status === "exited") {
+        if (terminalPollTimer) {
+          window.clearInterval(terminalPollTimer);
+          terminalPollTimer = null;
+        }
+        notifyTerminalSettledOnce(session);
       }
+      return session;
     } catch (pollError) {
       terminalError.value = String(pollError?.message || pollError || "Terminal polling failed.");
+      return null;
     }
   }
 
@@ -202,34 +227,65 @@ function useDoctorTerminal({
 
   async function openTerminal({
     inputs = {},
-    repair
+    repair,
+    visible = true,
+    waitForExit = false
   }) {
-    terminalDialogOpen.value = true;
+    terminalDialogOpen.value = visible;
     terminalError.value = "";
+    terminalCloseError.value = "";
     terminalCopyStatus.value = "";
+    terminalExitCode.value = null;
+    terminalOutput.value = "";
     terminalSelectedText.value = "";
     terminalAutoCopiedText = "";
+    terminalSettledNotified = false;
     terminalTitle.value = repair?.label || "Terminal";
     terminalCommandPreview.value = repair?.commandPreview || "";
     terminalSessionId.value = "";
     terminalStatus.value = "starting";
+    disposeTerminalUi();
 
     try {
-      await setupTerminalUi();
+      if (visible) {
+        await setupTerminalUi();
+      }
       const session = await studioHttpClient.post(terminalEndpoint(), {
         actionId: repair.actionId,
         inputs
       });
+      if (session.ok === false) {
+        throw new Error(session.error || "Terminal start failed.");
+      }
       terminalSessionId.value = session.id || "";
       terminalStatus.value = session.status || "running";
       terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
+      terminalCloseError.value = session.closeError || "";
+      terminalExitCode.value = Number.isInteger(session.exitCode) ? session.exitCode : null;
+      terminalOutput.value = session.output || "";
       writeTerminalOutput(session.output);
+      if (waitForExit) {
+        let currentSession = session;
+        while (terminalSessionId.value && currentSession?.status !== "exited") {
+          await wait(750);
+          currentSession = await pollTerminal();
+          if (!currentSession) {
+            break;
+          }
+        }
+        return currentSession || session;
+      }
       terminalPollTimer = window.setInterval(() => {
         void pollTerminal();
       }, 750);
       await pollTerminal();
+      return session;
     } catch (openError) {
       terminalError.value = String(openError?.message || openError || "Terminal start failed.");
+      return {
+        error: terminalError.value,
+        ok: false
+      };
     }
   }
 
@@ -242,7 +298,7 @@ function useDoctorTerminal({
       await studioHttpClient.delete(terminalUrl(`/${encodeURIComponent(sessionId)}`)).catch(() => null);
     }
     disposeTerminalUi();
-    notifyTerminalSettled();
+    notifyTerminalSettledOnce();
   }
 
   onBeforeUnmount(() => {
@@ -254,11 +310,14 @@ function useDoctorTerminal({
     copyTerminalSelection,
     openTerminal,
     sendCtrlC,
+    terminalCloseError,
     terminalCommandPreview,
     terminalCopyStatus,
     terminalDialogOpen,
     terminalError,
+    terminalExitCode,
     terminalHost,
+    terminalOutput,
     terminalSelectedText,
     terminalSessionId,
     terminalStatus,

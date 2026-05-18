@@ -6,6 +6,7 @@
     :loading="loading"
     :error="errorMessage"
     :stream-enabled="streamEnabled"
+    auto-repair-enabled
     :stream-auto-start="streamAutoStart"
     :stream-endpoint="ADAPTER_SETUP_STREAM_ENDPOINT"
     :terminal-endpoint="ADAPTER_SETUP_TERMINAL_ENDPOINT"

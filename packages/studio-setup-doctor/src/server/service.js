@@ -90,6 +90,7 @@ function manualDockerRepair() {
 function buildToolchainRepair() {
   return createRepair({
     actionId: "build-toolchain",
+    autoRun: true,
     command: commandPreview([
       "build",
       "-t",
