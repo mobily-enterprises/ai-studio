@@ -510,7 +510,7 @@ function checkRepairs(check) {
 
 function visibleCheckRepairs(check) {
   const repairs = checkRepairs(check);
-  if (["blocked", "fail"].includes(check?.status)) {
+  if (["blocked", "fail", "hard-stop"].includes(check?.status)) {
     return repairs;
   }
   return props.alwaysRepairCheckIds.includes(check?.id) ? repairs : [];

@@ -10,6 +10,7 @@ import {
 const CREATE_ISSUE_FILE_ACTION_ID = "create_issue_file";
 const ISSUE_FILE_STEP_ID = "issue_file_created";
 const SEND_ISSUE_PROMPT_ACTION_ID = "send_issue_prompt";
+const USE_EXISTING_ISSUE_ACTION_ID = "use_existing_issue";
 
 function actionById(session = {}, actionId = "") {
   const normalizedActionId = String(actionId || "");
@@ -28,6 +29,10 @@ function issueRequestFromSession(session = {}) {
 
 function issueFilesAreReady(session = {}) {
   return artifactIsReady(session, ISSUE_TITLE_ARTIFACT) && artifactIsReady(session, ISSUE_BODY_ARTIFACT);
+}
+
+function issueIsSelected(session = {}) {
+  return Boolean(String(session?.metadata?.issue_url || "").trim());
 }
 
 function isIssueFileStep(session = {}) {
@@ -51,8 +56,10 @@ function useAiStudioIssueFileStep({
     return Boolean(latestAiStudioActionResult(selectedSession.value, CREATE_ISSUE_FILE_ACTION_ID));
   });
   const filesReady = computed(() => issueFilesAreReady(selectedSession.value));
+  const existingIssueSelected = computed(() => issueIsSelected(selectedSession.value));
   const formVisible = computed(() => {
     return isIssueFileStep(selectedSession.value) &&
+      !existingIssueSelected.value &&
       !filesReady.value &&
       !sentIssueRequest.value;
   });
@@ -91,7 +98,10 @@ function useAiStudioIssueFileStep({
       return actions;
     }
     if (formVisible.value) {
-      return [];
+      return actions.filter((action) => action.id === USE_EXISTING_ISSUE_ACTION_ID);
+    }
+    if (existingIssueSelected.value) {
+      return actions;
     }
     return actions.filter((action) => action.id !== SEND_ISSUE_PROMPT_ACTION_ID);
   }

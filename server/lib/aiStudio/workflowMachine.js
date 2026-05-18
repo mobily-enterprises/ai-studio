@@ -20,8 +20,34 @@ function normalizeRewindCleanup(cleanup = {}) {
   return {
     actionResults: normalizeConditionList(cleanup.actionResults),
     artifacts: normalizeConditionList(cleanup.artifacts),
-    metadata: normalizeConditionList(cleanup.metadata)
+    metadata: normalizeRewindMetadataCleanup(cleanup.metadata)
   };
+}
+
+function normalizeRewindMetadataCleanup(entries = []) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return {
+          name: normalizeText(entry),
+          unlessMetadataName: "",
+          unlessMetadataValue: ""
+        };
+      }
+      return {
+        name: normalizeText(entry?.name),
+        unlessMetadataName: normalizeText(entry?.unlessMetadata?.name),
+        unlessMetadataValue: normalizeText(entry?.unlessMetadata?.value)
+      };
+    })
+    .filter((entry) => entry.name);
+}
+
+function metadataCleanupApplies(entry = {}, session = {}) {
+  if (!entry.unlessMetadataName) {
+    return true;
+  }
+  return normalizeText(session.metadata?.[entry.unlessMetadataName]) !== entry.unlessMetadataValue;
 }
 
 function normalizeArtifactField(field = {}, actionId = "") {
@@ -60,6 +86,40 @@ function normalizeArtifactFields(fields = [], actionId = "") {
   return normalizedFields;
 }
 
+function normalizeInputField(field = {}, actionId = "") {
+  const name = normalizeText(field.name);
+  if (!name) {
+    throw aiStudioError(
+      `AI Studio action ${actionId} has an input field without a name.`,
+      "ai_studio_workflow_input_field_name_missing"
+    );
+  }
+  return {
+    label: normalizeText(field.label || name),
+    name,
+    placeholder: normalizeText(field.placeholder),
+    required: field.required !== false,
+    requiredMessage: normalizeText(field.requiredMessage)
+  };
+}
+
+function normalizeInputFields(fields = [], actionId = "") {
+  const seenFieldNames = new Set();
+  const normalizedFields = [];
+  for (const field of Array.isArray(fields) ? fields : []) {
+    const normalizedField = normalizeInputField(field, actionId);
+    if (seenFieldNames.has(normalizedField.name)) {
+      throw aiStudioError(
+        `Duplicate AI Studio input field in action ${actionId}: ${normalizedField.name}`,
+        "ai_studio_duplicate_workflow_input_field"
+      );
+    }
+    seenFieldNames.add(normalizedField.name);
+    normalizedFields.push(normalizedField);
+  }
+  return normalizedFields;
+}
+
 function normalizeAction(action = {}, stepId = "") {
   const id = normalizeText(action.id);
   if (!id) {
@@ -75,7 +135,9 @@ function normalizeAction(action = {}, stepId = "") {
     disabledWhen: normalizeConditionList(action.disabledWhen),
     enabledWhenReason: normalizeText(action.enabledWhenReason || action.disabledReason),
     enabledWhen: normalizeConditionList(action.enabledWhen),
+    hrefMetadata: normalizeText(action.hrefMetadata),
     id,
+    inputFields: normalizeInputFields(action.inputFields, id),
     label: normalizeText(action.label || id),
     promptId: type === "prompt" ? normalizeText(action.promptId || id) : "",
     type,
@@ -189,8 +251,16 @@ function publicActionDefinition(action) {
   if (action.promptId) {
     definition.promptId = action.promptId;
   }
+  if (action.hrefMetadata) {
+    definition.hrefMetadata = action.hrefMetadata;
+  }
   if (action.artifactFields.length > 0) {
     definition.artifactFields = action.artifactFields.map((field) => ({
+      ...field
+    }));
+  }
+  if (action.inputFields.length > 0) {
+    definition.inputFields = action.inputFields.map((field) => ({
       ...field
     }));
   }
@@ -354,6 +424,17 @@ class WorkflowMachine {
         ? conditionMet()
         : conditionMissing(`Waiting for metadata: ${metadataName}.`);
     }
+    if (name.startsWith("any:")) {
+      const conditions = name
+        .slice("any:".length)
+        .split(";")
+        .map(normalizeText)
+        .filter(Boolean);
+      if (conditions.some((candidate) => this.checkCondition(candidate, session).met)) {
+        return conditionMet();
+      }
+      return conditionMissing(`Waiting for one of: ${conditions.join("; ")}.`);
+    }
     if (name.startsWith("artifact:")) {
       const artifactName = name.slice("artifact:".length);
       const artifact = session.artifactReadiness?.[artifactName];
@@ -506,7 +587,7 @@ class WorkflowMachine {
     const cleanup = affectedSteps.reduce((plan, step) => {
       plan.actionResults.push(...step.rewindCleanup.actionResults);
       plan.artifacts.push(...step.rewindCleanup.artifacts);
-      plan.metadata.push(...step.rewindCleanup.metadata);
+      plan.metadata.push(...step.rewindCleanup.metadata.filter((entry) => metadataCleanupApplies(entry, session)));
       return plan;
     }, {
       actionResults: [],
@@ -518,7 +599,7 @@ class WorkflowMachine {
       actionResultIds: Array.from(new Set(cleanup.actionResults)),
       artifactNames: Array.from(new Set(cleanup.artifacts)),
       completedStepIds,
-      metadataNames: Array.from(new Set(cleanup.metadata)),
+      metadataNames: Array.from(new Set(cleanup.metadata.map((entry) => entry.name))),
       targetStepId: targetStep.id
     };
   }

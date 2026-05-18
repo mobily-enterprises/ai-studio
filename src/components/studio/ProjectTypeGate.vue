@@ -306,6 +306,8 @@ async function loadTargetProject() {
 
 async function loadSetupGate() {
   if (props.requireSetup !== true || !projectReady.value) {
+    setupError.value = "";
+    setupLoading.value = false;
     setupGate.value = {
       message: "",
       ready: props.requireSetup !== true,

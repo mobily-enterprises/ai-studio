@@ -8,10 +8,12 @@ import {
 } from "../sessionHooks.js";
 import {
   isGitWorktree,
+  metadataPath,
   normalizeText,
   readCurrentBranch,
   readCurrentCommit,
-  shellQuote
+  shellQuote,
+  writeMetadataLineScript
 } from "./shared.js";
 
 function worktreeMetadata({
@@ -41,6 +43,7 @@ function createWorktreeBranch(session = {}) {
 
 function createWorktreeScript({
   branch = "",
+  session = {},
   targetRoot = "",
   worktreePath = ""
 } = {}) {
@@ -48,6 +51,15 @@ function createWorktreeScript({
   const quotedBranchRef = shellQuote(`refs/heads/${branch}`);
   const quotedTargetRoot = shellQuote(targetRoot);
   const quotedWorktreePath = shellQuote(worktreePath);
+  const workSource = normalizeText(session.metadata?.work_source) || "new_branch";
+  const sourcePrNumber = normalizeText(session.metadata?.source_pr_number);
+  const sourcePrHeadRef = normalizeText(session.metadata?.source_pr_head_ref);
+  const sourcePrHeadRepo = normalizeText(session.metadata?.source_pr_head_repo);
+  const sourcePrUrl = normalizeText(session.metadata?.source_pr_url);
+  const requestedUpdateMode = normalizeText(session.metadata?.source_pr_update_mode);
+  const sourcePrUpdateModePath = metadataPath(session, "source_pr_update_mode");
+  const prSourcePath = metadataPath(session, "pr_source");
+  const prUrlPath = metadataPath(session, "pr_url");
   return [
     "set -e",
     `printf '[studio] Preparing worktree %s\\n' ${quotedWorktreePath}`,
@@ -64,6 +76,47 @@ function createWorktreeScript({
     "    exit 1",
     "  fi",
     "fi",
+    ...(workSource === "existing_pr" ? [
+      `SOURCE_PR_NUMBER=${shellQuote(sourcePrNumber)}`,
+      `SOURCE_PR_HEAD_REF=${shellQuote(sourcePrHeadRef)}`,
+      `SOURCE_PR_HEAD_REPO=${shellQuote(sourcePrHeadRepo)}`,
+      `SOURCE_PR_URL=${shellQuote(sourcePrUrl)}`,
+      `REQUESTED_UPDATE_MODE=${shellQuote(requestedUpdateMode)}`,
+      "if [ -z \"$SOURCE_PR_NUMBER\" ]; then",
+      "  printf '[studio] Existing PR metadata is incomplete. Abandon this session and start again.\\n' >&2",
+      "  exit 1",
+      "fi",
+      "PR_FETCH_REF=\"refs/remotes/ai-studio/pr/$SOURCE_PR_NUMBER\"",
+      "printf '[studio] Fetching PR #%s\\n' \"$SOURCE_PR_NUMBER\"",
+      `git -C ${quotedTargetRoot} fetch origin "pull/$SOURCE_PR_NUMBER/head:$PR_FETCH_REF"`,
+      `if git -C ${quotedTargetRoot} show-ref --verify --quiet ${quotedBranchRef}; then`,
+      `  git -C ${quotedTargetRoot} worktree add ${quotedWorktreePath} ${quotedBranch}`,
+      "else",
+      `  git -C ${quotedTargetRoot} worktree add -b ${quotedBranch} ${quotedWorktreePath} "$PR_FETCH_REF"`,
+      "fi",
+      "if [ \"$REQUESTED_UPDATE_MODE\" = \"direct\" ]; then",
+      "  if [ -z \"$SOURCE_PR_HEAD_REF\" ] || [ -z \"$SOURCE_PR_HEAD_REPO\" ]; then",
+      "    printf '[studio] Existing PR push target is incomplete; this session will create a replacement PR.\\n'",
+      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "replacement")}`,
+      "    rm -f " + shellQuote(prUrlPath),
+      "    exit 0",
+      "  fi",
+      "  PR_HEAD_REMOTE=\"ai-studio-pr-head\"",
+      `  git -C ${quotedWorktreePath} remote remove "$PR_HEAD_REMOTE" >/dev/null 2>&1 || true`,
+      `  git -C ${quotedWorktreePath} remote add "$PR_HEAD_REMOTE" "https://github.com/$SOURCE_PR_HEAD_REPO.git"`,
+      `  if git -C ${quotedWorktreePath} push --dry-run "$PR_HEAD_REMOTE" "HEAD:refs/heads/$SOURCE_PR_HEAD_REF"; then`,
+      "    printf '[studio] Existing PR can be updated directly.\\n'",
+      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "direct")}`,
+      `    ${writeMetadataLineScript(prSourcePath, "existing")}`,
+      `    ${writeMetadataLineScript(prUrlPath, "\"$SOURCE_PR_URL\"")}`,
+      "  else",
+      "    printf '[studio] Existing PR cannot be pushed directly; this session will create a replacement PR.\\n'",
+      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "replacement")}`,
+      "    rm -f " + shellQuote(prUrlPath),
+      "  fi",
+      "fi",
+      "exit 0"
+    ] : []),
     `if git -C ${quotedTargetRoot} show-ref --verify --quiet ${quotedBranchRef}; then`,
     `  git -C ${quotedTargetRoot} worktree add ${quotedWorktreePath} ${quotedBranch}`,
     "else",
@@ -102,9 +155,17 @@ async function createWorktreeTerminalSpec({
     readCurrentBranch(resolvedTargetRoot),
     readCurrentCommit(resolvedTargetRoot)
   ]);
+  const workSource = normalizeText(session.metadata?.work_source) || "new_branch";
+  const metadataBaseBranch = workSource === "existing_pr"
+    ? normalizeText(session.metadata?.source_pr_base_ref) || baseBranch
+    : baseBranch;
+  const metadataBaseCommit = workSource === "existing_pr"
+    ? normalizeText(session.metadata?.source_pr_head_sha) || baseCommit
+    : baseCommit;
   return {
     args: ["-lc", createWorktreeScript({
       branch,
+      session,
       targetRoot: resolvedTargetRoot,
       worktreePath
     })],
@@ -114,8 +175,8 @@ async function createWorktreeTerminalSpec({
     ok: true,
     successMessage: `Created worktree ${worktreePath} on branch ${branch}.`,
     successMetadata: worktreeMetadata({
-      baseBranch,
-      baseCommit,
+      baseBranch: metadataBaseBranch,
+      baseCommit: metadataBaseCommit,
       branch,
       worktreePath
     })

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -80,5 +80,38 @@ test("AI Studio project service reports unknown and unimplemented project types 
     });
     assert.equal(unimplemented.ok, false);
     assert.equal(unimplemented.errors[0].code, "ai_studio_project_type_unimplemented");
+  });
+});
+
+test("AI Studio project service loads invalid saved config as editable not ready state", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const service = createService({
+      targetRoot
+    });
+
+    await service.saveProjectType({
+      projectType: "jskit"
+    });
+    await mkdir(path.join(targetRoot, ".ai-studio", "config"), {
+      recursive: true
+    });
+    await writeFile(path.join(targetRoot, ".ai-studio", "config", "github_pr_merge_method"), "merge\n", "utf8");
+    await writeFile(path.join(targetRoot, ".ai-studio", "config", "enable_recursive_ai_studio_opening"), "false\n", "utf8");
+    await writeFile(path.join(targetRoot, ".ai-studio", "config", "recursive_ai_studio_local_jskit_ai_root"), "\n", "utf8");
+    await writeFile(path.join(targetRoot, ".ai-studio", "config", "jskit_database_runtime"), "mysql\n", "utf8");
+    await writeFile(path.join(targetRoot, ".ai-studio", "config", "jskit_tenancy_mode"), "single\n", "utf8");
+
+    const config = await service.readProjectConfig();
+    assert.equal(config.ok, true);
+    assert.equal(config.config.ready, false);
+    assert.match(config.config.message, /no longer valid/u);
+    assert.equal(config.config.values.jskit_tenancy_mode, "none");
+    assert.deepEqual(config.config.invalid.map((field) => field.fieldId), [
+      "jskit_tenancy_mode"
+    ]);
+    assert.match(
+      config.config.fieldValues.jskit_tenancy_mode.invalid.message,
+      /none, personal, workspaces/u
+    );
   });
 });

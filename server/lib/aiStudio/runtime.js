@@ -70,6 +70,9 @@ async function defaultActionHandler(context = {}) {
   if (context.action?.type === "finish") {
     return context.runtime.finishSessionAction(context);
   }
+  if (context.action?.type === "adapter") {
+    return context.runtime.runAdapterSessionAction(context);
+  }
   return {
     message: `Recorded ${context.action?.label || "action"}.`,
     status: "completed"
@@ -304,6 +307,21 @@ class AiStudioSessionRuntime {
     }
     return this.adapter.finishSession({
       action,
+      input,
+      runtime: this,
+      session,
+      store: this.store
+    });
+  }
+
+  async runAdapterSessionAction({
+    action,
+    input = {},
+    session
+  } = {}) {
+    return this.adapter.runSessionAction({
+      action,
+      config: this.projectConfig,
       input,
       runtime: this,
       session,

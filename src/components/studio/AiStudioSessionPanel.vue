@@ -119,6 +119,20 @@
                 >
                   Send prompt
                 </v-btn>
+
+                <v-btn
+                  v-for="action in currentActions"
+                  :key="action.id"
+                  color="primary"
+                  variant="tonal"
+                  :disabled="commandBusy || action.enabled !== true"
+                  :loading="runActionCommand.isRunning && activeActionId === action.id"
+                  :prepend-icon="actionIcon(action)"
+                  :title="action.disabledReason || action.label"
+                  @click="runAction(action)"
+                >
+                  {{ action.label }}
+                </v-btn>
               </div>
             </form>
 
@@ -239,8 +253,9 @@
         >
           <AiStudioCommandTerminal
             class="studio-ai-sessions__command-terminal"
-            :action="commandTerminalAction"
-            :session="selectedSession"
+          :action="commandTerminalAction"
+          :action-input="commandTerminalInput"
+          :session="selectedSession"
             :start-request-key="commandTerminalStartKey"
             @closed="handleCommandTerminalClosed"
             @finished="handleCommandTerminalFinished"
@@ -275,6 +290,52 @@
       :title="draftEditorTitle"
       @save="saveDraftEditor"
     />
+
+    <v-dialog
+      v-model="inputDialogOpen"
+      max-width="520"
+      persistent
+    >
+      <v-card>
+        <v-card-title>{{ inputDialogTitle }}</v-card-title>
+        <v-card-text class="studio-ai-sessions__input-dialog-body">
+          <StudioErrorNotice
+            v-if="inputDialogError"
+            title="Action needs attention"
+            :error="inputDialogError"
+            compact
+          />
+
+          <v-text-field
+            v-for="field in inputDialogFields"
+            :key="field.name"
+            v-model="inputDialogValues[field.name]"
+            :disabled="inputDialogSubmitting"
+            :label="field.label"
+            :placeholder="field.placeholder || undefined"
+            variant="outlined"
+          />
+        </v-card-text>
+        <v-card-actions class="studio-ai-sessions__input-dialog-actions">
+          <v-btn
+            variant="text"
+            :disabled="inputDialogSubmitting"
+            @click="closeInputDialog"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :disabled="inputDialogSaveDisabled"
+            :loading="inputDialogSubmitting"
+            @click="submitInputDialog"
+          >
+            Continue
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-dialog v-model="diffDialogOpen" max-width="min(94vw, 72rem)">
       <v-card class="studio-ai-sessions__diff-dialog">
@@ -426,6 +487,7 @@ const {
   codexPromptOverride,
   commandBusy,
   commandTerminalAction,
+  commandTerminalInput,
   commandTerminalStartKey,
   commandTerminalVisible,
   confirmAbandonSession,
@@ -463,6 +525,14 @@ const {
   issueRequestSubmitting,
   issueRequestSubmitTitle,
   issueRequestText,
+  closeInputDialog,
+  inputDialogError,
+  inputDialogFields,
+  inputDialogOpen,
+  inputDialogSaveDisabled,
+  inputDialogSubmitting,
+  inputDialogTitle,
+  inputDialogValues,
   isSelectedSessionClosed,
   openAppReview,
   openAppReviewDisabled,
@@ -488,6 +558,7 @@ const {
   sessionFacts,
   sessions,
   shortSessionId,
+  submitInputDialog,
   timelineSteps
 } = useAiStudioSessions({
   onTitleChange(title) {
@@ -661,6 +732,16 @@ function handleDiffBodyClick(event) {
 
 .studio-ai-sessions__notice {
   margin-top: 0.35rem;
+}
+
+.studio-ai-sessions__input-dialog-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.studio-ai-sessions__input-dialog-actions {
+  justify-content: flex-end;
+  padding: 0 1rem 1rem;
 }
 
 .studio-ai-sessions__diff-dialog {

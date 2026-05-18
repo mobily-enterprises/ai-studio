@@ -26,6 +26,9 @@ import {
   createJskitSetupDoctorPlugin
 } from "./setupDoctorPlugin.js";
 import {
+  runJskitSessionAction
+} from "./githubSessionActions.js";
+import {
   ENABLE_RECURSIVE_AI_STUDIO_OPENING_CONFIG,
   RECURSIVE_AI_STUDIO_COMPANION_ROOT_CONFIG,
   recursiveAiStudioOpeningEnabled
@@ -61,6 +64,10 @@ const JSKIT_MARKERS = deepFreeze([
 
 const JSKIT_BLUEPRINT_RELATIVE_PATH = ".jskit/APP_BLUEPRINT.md";
 const JSKIT_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
+const JSKIT_SESSION_ACTION_CAPABILITIES = deepFreeze([
+  "use_existing_issue",
+  "use_existing_pr"
+]);
 const JSKIT_CONFIG_FIELDS = deepFreeze([
   {
     defaultValue: false,
@@ -195,7 +202,10 @@ function setupSummary(markers) {
 function jskitAdapterCapabilities({
   commands = []
 } = {}) {
-  return commandCapabilities(commands);
+  return {
+    ...commandCapabilities(commands),
+    ...Object.fromEntries(JSKIT_SESSION_ACTION_CAPABILITIES.map((capability) => [capability, true]))
+  };
 }
 
 function jskitPromptContext({
@@ -358,6 +368,18 @@ class JskitTargetAdapter extends TargetAdapter {
       context,
       session: context.session || {},
       targetRoot: context.session?.targetRoot || context.targetRoot || ""
+    });
+  }
+
+  async runSessionAction({
+    action = {},
+    input = {},
+    session = {}
+  } = {}) {
+    return runJskitSessionAction(action.id, {
+      input,
+      session,
+      targetRoot: session.targetRoot || process.cwd()
     });
   }
 

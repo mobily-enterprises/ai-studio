@@ -88,6 +88,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  actionInput: {
+    type: Object,
+    default: () => ({})
+  },
   session: {
     type: Object,
     default: null
@@ -225,7 +229,7 @@ async function startTerminal() {
       terminalClosedByUser.value = false;
       const session = appReviewTerminal.value
         ? await startAiStudioAppReviewTerminal(sessionId.value)
-        : await startAiStudioCommandTerminal(sessionId.value, actionId.value);
+        : await startAiStudioCommandTerminal(sessionId.value, actionId.value, props.actionInput || {});
       if (session?.ok === false) {
         throw new Error(session.error || session.errors?.[0]?.message || startFailureMessage.value);
       }

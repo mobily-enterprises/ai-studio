@@ -125,6 +125,43 @@ function normalizeConfigValue(value, field) {
   return normalizeText(value);
 }
 
+function isSavedConfigValueError(error) {
+  return error?.code === "ai_studio_invalid_boolean_config" ||
+    error?.code === "ai_studio_invalid_select_config";
+}
+
+function invalidSavedConfigValue({
+  defaultValue,
+  error,
+  filePath,
+  rawValue
+}) {
+  return {
+    defaultValue,
+    filePath,
+    invalid: {
+      code: error.code,
+      message: error.message,
+      rawValue: normalizeText(rawValue)
+    },
+    saved: true,
+    value: defaultValue
+  };
+}
+
+function configReadinessMessage({
+  invalid = [],
+  missing = []
+} = {}) {
+  if (invalid.length) {
+    return "Some saved config values are no longer valid. Review and save the configuration.";
+  }
+  if (missing.length) {
+    return "Save these values before Studio prepares the target project.";
+  }
+  return "";
+}
+
 function normalizeConfigField(field = {}, {
   sectionId = "general",
   sectionLabel = "Studio"
@@ -379,10 +416,25 @@ function createAiStudioProjectConfigStore({
       const filePath = configValuePath(paths.configRoot, field.id);
       const saved = await pathExists(filePath);
       const rawValue = saved ? await readConfigFile(filePath) : normalizedDefinition.defaults[field.id];
-      const value = normalizeConfigValue(rawValue, field);
+      const defaultValue = normalizedDefinition.defaults[field.id];
+      let value = defaultValue;
+      try {
+        value = normalizeConfigValue(rawValue, field);
+      } catch (error) {
+        if (saved && isSavedConfigValueError(error)) {
+          return [field.id, invalidSavedConfigValue({
+            defaultValue,
+            error,
+            filePath,
+            rawValue
+          })];
+        }
+        throw error;
+      }
       return [field.id, {
-        defaultValue: normalizedDefinition.defaults[field.id],
+        defaultValue,
         filePath,
+        invalid: null,
         saved,
         value
       }];
@@ -393,6 +445,14 @@ function createAiStudioProjectConfigStore({
       .filter(([, state]) => !state.saved)
       .map(([fieldId]) => fieldId)
       .sort((left, right) => left.localeCompare(right));
+    const invalid = entries
+      .filter(([, state]) => state.invalid)
+      .map(([fieldId, state]) => ({
+        fieldId,
+        filePath: state.filePath,
+        ...state.invalid
+      }))
+      .sort((left, right) => left.fieldId.localeCompare(right.fieldId));
 
     return {
       configRoot: paths.configRoot,
@@ -400,8 +460,13 @@ function createAiStudioProjectConfigStore({
       fields: normalizedDefinition.fields,
       fieldValues,
       helperPath: paths.helperPath,
+      invalid,
+      message: configReadinessMessage({
+        invalid,
+        missing
+      }),
       missing,
-      ready: missing.length === 0,
+      ready: missing.length === 0 && invalid.length === 0,
       runtimeRoot: paths.runtimeRoot,
       sections: normalizedDefinition.sections,
       values

@@ -23,13 +23,14 @@
               color="primary"
               density="compact"
               hide-details="auto"
+              :error-messages="fieldErrorMessages(field)"
               :label="field.label"
             />
             <v-select
               v-else-if="field.type === 'select'"
               v-model="formValues[field.id]"
               density="compact"
-              hide-details="auto"
+              :error-messages="fieldErrorMessages(field)"
               item-title="label"
               item-value="value"
               :items="field.options"
@@ -40,7 +41,7 @@
               v-else
               v-model="formValues[field.id]"
               density="compact"
-              hide-details="auto"
+              :error-messages="fieldErrorMessages(field)"
               :label="field.label"
               :type="textFieldInputType(field)"
               variant="outlined"
@@ -88,6 +89,9 @@ const sections = computed(() => {
   return Array.isArray(props.state?.sections) ? props.state.sections : [];
 });
 const message = computed(() => {
+  if (props.state?.message) {
+    return props.state.message;
+  }
   return props.state?.ready === true
     ? "Project configuration is saved."
     : "Save these values before Studio prepares the target project.";
@@ -105,6 +109,11 @@ function valueForField(field = {}) {
 
 function textFieldInputType(field = {}) {
   return field.type === "string" || field.type === "path" ? "text" : field.type;
+}
+
+function fieldErrorMessages(field = {}) {
+  const invalid = props.state?.fieldValues?.[field.id]?.invalid;
+  return invalid?.message ? [invalid.message] : [];
 }
 
 function resetFormValues() {

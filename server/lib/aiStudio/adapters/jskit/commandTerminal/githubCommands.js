@@ -21,6 +21,7 @@ function createIssueOnGhScript(session = {}) {
   const issueBodyPath = artifactPath(session, "issue.md");
   const issueUrlPath = metadataPath(session, "issue_url");
   const issueNumberPath = metadataPath(session, "issue_number");
+  const issueSourcePath = metadataPath(session, "issue_source");
   const storedIssueTitlePath = metadataPath(session, "issue_title");
   return [
     "set -e",
@@ -35,6 +36,7 @@ function createIssueOnGhScript(session = {}) {
     `ISSUE_URL="$(gh issue create --title "$ISSUE_TITLE" --body-file ${shellQuote(issueBodyPath)})"`,
     "printf '%s\\n' \"$ISSUE_URL\"",
     writeMetadataLineScript(issueUrlPath, "\"$ISSUE_URL\""),
+    writeMetadataLineScript(issueSourcePath, "created"),
     writeMetadataLineScript(storedIssueTitlePath, "\"$ISSUE_TITLE\""),
     "ISSUE_NUMBER=\"$(printf '%s\\n' \"$ISSUE_URL\" | sed -n 's#.*/issues/\\([0-9][0-9]*\\).*#\\1#p' | head -n 1)\"",
     "if [ -n \"$ISSUE_NUMBER\" ]; then",
@@ -47,6 +49,8 @@ function createPrOnGhScript(session = {}) {
   const prBodyPath = artifactPath(session, "pull_request.md");
   const issueTitlePath = metadataPath(session, "issue_title");
   const prUrlPath = metadataPath(session, "pr_url");
+  const prSourcePath = metadataPath(session, "pr_source");
+  const sourcePrUrl = normalizeText(session.metadata?.source_pr_url);
   const branch = normalizeText(session.metadata?.branch);
   const baseBranch = normalizeText(session.metadata?.base_branch) || "main";
   const quotedBaseBranch = shellQuote(baseBranch);
@@ -83,10 +87,18 @@ function createPrOnGhScript(session = {}) {
     "  printf '[studio] Branch %s is not pushed to origin. Run Commit and push changes before creating the pull request.\\n' \"$EXPECTED_BRANCH\" >&2",
     "  exit 1",
     "fi",
+    `SOURCE_PR_URL=${shellQuote(sourcePrUrl)}`,
+    "PR_BODY_FILE=" + shellQuote(prBodyPath),
+    "if [ -n \"$SOURCE_PR_URL\" ]; then",
+    "  PR_BODY_FILE=\"$(mktemp)\"",
+    `  cat ${shellQuote(prBodyPath)} > "$PR_BODY_FILE"`,
+    "  printf '\\n\\nContinues existing pull request: %s\\n' \"$SOURCE_PR_URL\" >> \"$PR_BODY_FILE\"",
+    "fi",
     "printf '[studio] Creating GitHub pull request: %s\\n' \"$PR_TITLE\"",
-    `PR_URL="$(gh pr create --base ${quotedBaseBranch} --head ${quotedBranch} --title "$PR_TITLE" --body-file ${shellQuote(prBodyPath)})"`,
+    `PR_URL="$(gh pr create --base ${quotedBaseBranch} --head ${quotedBranch} --title "$PR_TITLE" --body-file "$PR_BODY_FILE")"`,
     "printf '%s\\n' \"$PR_URL\"",
-    writeMetadataLineScript(prUrlPath, "\"$PR_URL\"")
+    writeMetadataLineScript(prUrlPath, "\"$PR_URL\""),
+    writeMetadataLineScript(prSourcePath, sourcePrUrl ? "replacement" : "created")
   ].join("\n");
 }
 

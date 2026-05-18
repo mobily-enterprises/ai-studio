@@ -19,7 +19,13 @@ function commitChangesScript(session = {}) {
   const commitPath = metadataPath(session, "accepted_commit");
   const pushedPath = metadataPath(session, "branch_pushed");
   const issueTitlePath = metadataPath(session, "issue_title");
-  const baseBranch = normalizeText(session.metadata?.base_branch) || "main";
+  const directExistingPr = normalizeText(session.metadata?.work_source) === "existing_pr" &&
+    normalizeText(session.metadata?.source_pr_update_mode) === "direct";
+  const baseBranch = normalizeText(session.metadata?.base_branch) ||
+    normalizeText(session.metadata?.source_pr_base_ref) ||
+    "main";
+  const sourcePrHeadRef = normalizeText(session.metadata?.source_pr_head_ref);
+  const sourcePrHeadRepo = normalizeText(session.metadata?.source_pr_head_repo);
   return [
     "set -e",
     `COMMIT_TITLE="$(cat ${shellQuote(issueTitlePath)} 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')"`,
@@ -47,10 +53,25 @@ function commitChangesScript(session = {}) {
     "  exit 1",
     "fi",
     "ACCEPTED_COMMIT=\"$(git rev-parse --verify HEAD)\"",
-    "printf '[studio] Pushing branch %s\\n' \"$CURRENT_BRANCH\"",
-    "git push -u origin \"$CURRENT_BRANCH\"",
+    ...(directExistingPr ? [
+      `SOURCE_PR_HEAD_REF=${shellQuote(sourcePrHeadRef)}`,
+      `SOURCE_PR_HEAD_REPO=${shellQuote(sourcePrHeadRepo)}`,
+      "if [ -z \"$SOURCE_PR_HEAD_REF\" ] || [ -z \"$SOURCE_PR_HEAD_REPO\" ]; then",
+      "  printf '[studio] Existing PR push target is missing.\\n' >&2",
+      "  exit 1",
+      "fi",
+      "PR_HEAD_REMOTE=\"ai-studio-pr-head\"",
+      "git remote remove \"$PR_HEAD_REMOTE\" >/dev/null 2>&1 || true",
+      "git remote add \"$PR_HEAD_REMOTE\" \"https://github.com/$SOURCE_PR_HEAD_REPO.git\"",
+      "printf '[studio] Pushing changes to existing PR branch %s/%s\\n' \"$SOURCE_PR_HEAD_REPO\" \"$SOURCE_PR_HEAD_REF\"",
+      "git push \"$PR_HEAD_REMOTE\" \"HEAD:refs/heads/$SOURCE_PR_HEAD_REF\"",
+      writeMetadataLineScript(pushedPath, "\"$SOURCE_PR_HEAD_REF\"")
+    ] : [
+      "printf '[studio] Pushing branch %s\\n' \"$CURRENT_BRANCH\"",
+      "git push -u origin \"$CURRENT_BRANCH\"",
+      writeMetadataLineScript(pushedPath, "\"$CURRENT_BRANCH\"")
+    ]),
     writeMetadataLineScript(commitPath, "\"$ACCEPTED_COMMIT\""),
-    writeMetadataLineScript(pushedPath, "\"$CURRENT_BRANCH\""),
     "printf '[studio] Committed %s\\n' \"$ACCEPTED_COMMIT\""
   ].join("\n");
 }

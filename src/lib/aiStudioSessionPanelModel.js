@@ -56,6 +56,10 @@ function enrichAiStudioSessionForDisplay(session = null) {
     issueUrl: session.issueUrl || metadata.issue_url || "",
     prUrl: session.prUrl || metadata.pr_url || "",
     pullRequestPath: session.pullRequestPath || metadata.pull_request_path || "",
+    sourcePrTitle: metadata.source_pr_title || "",
+    sourcePrUpdateMode: metadata.source_pr_update_mode || "",
+    sourcePrUrl: metadata.source_pr_url || "",
+    workSource: metadata.work_source || "",
     worktree,
     worktreeReady: session.worktreeReady === true || Boolean(worktree)
   };
@@ -125,7 +129,10 @@ function aiStudioActionIcon(action = {}) {
   if (action.type === "editor") {
     return mdiPencilOutline;
   }
-  if (["create_issue_on_gh", "create_pr_on_gh", "merge_pr"].includes(action.id)) {
+  if (["create_issue_on_gh", "create_pr_on_gh", "merge_pr", "open_pr"].includes(action.id)) {
+    return mdiGithub;
+  }
+  if (["use_existing_issue", "use_existing_pr"].includes(action.id)) {
     return mdiGithub;
   }
   if (["create_worktree", "install_dependencies", "sync_main_checkout"].includes(action.id)) {

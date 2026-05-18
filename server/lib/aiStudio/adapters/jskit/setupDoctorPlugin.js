@@ -249,7 +249,7 @@ function createJskitSetupDoctorPlugin({
       const mariaDbClientCheck = toolkit.toolchainCommandCheck({
         id: "mariadb-client",
         label: "MariaDB client",
-        commandArgs: ["mariadb", "--version"],
+        commandArgs: ["bash", "-lc", "command -v mariadb && mariadb --version"],
         expected: "MariaDB CLI runs inside the JSKIT adapter toolchain.",
         explanation: "JSKIT Project Setup uses the MariaDB CLI to validate whichever database endpoint .env selects.",
         image: JSKIT_TOOLCHAIN_IMAGE,

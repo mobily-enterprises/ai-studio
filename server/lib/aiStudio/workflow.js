@@ -10,6 +10,8 @@ const ISSUE_FILES_READY_CONDITION = `artifacts:${ISSUE_TITLE_ARTIFACT},${ISSUE_B
 const ISSUE_PROMPT_HAS_REQUEST_CONDITION = `action-input:${SEND_ISSUE_PROMPT_ACTION_ID}.issueRequest`;
 const ISSUE_TITLE_READY_CONDITION = `artifact:${ISSUE_TITLE_ARTIFACT}`;
 const ISSUE_BODY_READY_CONDITION = `artifact:${ISSUE_BODY_ARTIFACT}`;
+const ISSUE_READY_CONDITION = `any:metadata:issue_url;${ISSUE_FILES_READY_CONDITION}`;
+const PR_READY_CONDITION = `any:metadata:pr_url;artifact:${PULL_REQUEST_ARTIFACT}`;
 
 const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
   id: "default",
@@ -23,7 +25,44 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          disabledReason: "Work source is already selected.",
+          disabledWhen: ["metadata:work_source"],
+          id: "use_new_branch",
+          label: "Use new branch",
+          type: "adapter"
+        },
+        {
+          adapterCapability: "use_existing_pr",
+          disabledReason: "Work source is already selected.",
+          disabledWhen: ["metadata:work_source"],
+          id: "use_existing_pr",
+          inputFields: [
+            {
+              label: "PR URL or number",
+              name: "prRef",
+              placeholder: "123, #123, or https://github.com/org/repo/pull/123",
+              requiredMessage: "PR URL or number is required."
+            }
+          ],
+          label: "Use existing PR",
+          type: "adapter"
+        }
+      ],
+      description: "Choose whether this session starts from a new branch or an existing pull request.",
+      id: "work_source_selected",
+      label: "Choose work source",
+      next: {
+        disabledReason: "Choose a work source before continuing.",
+        enabledWhen: ["metadata:work_source"]
+      },
+      rewindable: false
+    },
+    {
+      actions: [
+        {
           adapterCapability: "create_worktree",
+          enabledWhen: ["metadata:work_source"],
+          enabledWhenReason: "Choose a work source before creating the worktree.",
           disabledReason: "Worktree already exists.",
           disabledWhen: ["metadata:worktree_path"],
           id: "create_worktree",
@@ -66,32 +105,51 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          disabledReason: "An existing issue is already selected.",
+          disabledWhen: ["metadata:issue_url"],
           id: SEND_ISSUE_PROMPT_ACTION_ID,
           label: "Send prompt",
           promptId: SEND_ISSUE_PROMPT_ACTION_ID,
           type: "prompt"
         },
         {
-          disabledReason: "Issue file already exists.",
-          disabledWhen: [ISSUE_FILES_READY_CONDITION],
+          disabledReason: "Issue is already selected or issue files already exist.",
+          disabledWhen: ["metadata:issue_url", ISSUE_FILES_READY_CONDITION],
           enabledWhen: [ISSUE_PROMPT_HAS_REQUEST_CONDITION],
           enabledWhenReason: "Send the issue prompt before creating the issue file.",
           id: CREATE_ISSUE_FILE_ACTION_ID,
           label: "Create issue file",
           promptId: CREATE_ISSUE_FILE_ACTION_ID,
           type: "prompt"
+        },
+        {
+          adapterCapability: "use_existing_issue",
+          disabledReason: "An existing issue is already selected.",
+          disabledWhen: ["metadata:issue_url"],
+          id: "use_existing_issue",
+          inputFields: [
+            {
+              label: "Issue URL or number",
+              name: "issueRef",
+              placeholder: "123, #123, or https://github.com/org/repo/issues/123",
+              requiredMessage: "Issue URL or number is required."
+            }
+          ],
+          label: "Use existing issue",
+          type: "adapter"
         }
       ],
-      description: "Define the issue and create the local issue files.",
+      description: "Define a new issue or select an existing GitHub issue.",
       id: ISSUE_FILE_STEP_ID,
-      label: "Define issue and create file",
+      label: "Define or select issue",
       next: {
         disabledReason: "Discuss and finalise issue before continuing.",
-        enabledWhen: [ISSUE_TITLE_READY_CONDITION, ISSUE_BODY_READY_CONDITION]
+        enabledWhen: [ISSUE_READY_CONDITION]
       },
       rewindCleanup: {
-        actionResults: [SEND_ISSUE_PROMPT_ACTION_ID, CREATE_ISSUE_FILE_ACTION_ID],
-        artifacts: [ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT]
+        actionResults: [SEND_ISSUE_PROMPT_ACTION_ID, CREATE_ISSUE_FILE_ACTION_ID, "use_existing_issue"],
+        artifacts: [ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT],
+        metadata: ["issue_url", "issue_number", "issue_title", "issue_source"]
       }
     },
     {
@@ -285,7 +343,9 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
           id: "create_pr_file",
           label: "Create PR file",
           promptId: "create_pr_file",
-          type: "prompt"
+          type: "prompt",
+          disabledWhen: ["metadata:pr_url"],
+          disabledReason: "The GitHub pull request already exists."
         }
       ],
       description: "Create the local pull request file.",
@@ -293,7 +353,7 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       label: "Create PR file",
       next: {
         disabledReason: "Create the pull request file before continuing.",
-        enabledWhen: ["artifact:pull_request.md"]
+        enabledWhen: [PR_READY_CONDITION]
       },
       rewindCleanup: {
         actionResults: ["create_pr_file"],
@@ -302,6 +362,13 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     },
     {
       actions: [
+        {
+          enabledWhen: ["metadata:pr_url"],
+          hrefMetadata: "pr_url",
+          id: "open_pr",
+          label: "Open PR",
+          type: "link"
+        },
         {
           artifactFields: [
             {
@@ -341,7 +408,24 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       },
       rewindCleanup: {
         actionResults: ["create_pr_on_gh"],
-        metadata: ["pr_url"]
+        metadata: [
+          {
+            name: "pr_url",
+            unlessMetadata: {
+              name: "pr_source",
+              value: "existing"
+            }
+          },
+          "pr_number",
+          "pr_title",
+          {
+            name: "pr_source",
+            unlessMetadata: {
+              name: "pr_source",
+              value: "existing"
+            }
+          }
+        ]
       }
     },
     {

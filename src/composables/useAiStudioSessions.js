@@ -77,6 +77,26 @@ function normalizeDraftEditorFields(fields = []) {
     .filter(Boolean);
 }
 
+function normalizeActionInputField(field = {}) {
+  const name = String(field?.name || "").trim();
+  if (!name) {
+    return null;
+  }
+  return {
+    label: String(field.label || name).trim(),
+    name,
+    placeholder: String(field.placeholder || "").trim(),
+    required: field.required !== false,
+    requiredMessage: String(field.requiredMessage || "").trim()
+  };
+}
+
+function normalizeActionInputFields(fields = []) {
+  return (Array.isArray(fields) ? fields : [])
+    .map(normalizeActionInputField)
+    .filter(Boolean);
+}
+
 function draftEditorValuesFromArtifacts(fields = [], artifacts = {}) {
   return Object.fromEntries(fields.map((field) => [
     field.name,
@@ -117,6 +137,7 @@ function useAiStudioSessions({
   const appReviewTerminalVisible = ref(false);
   const appReviewUrl = ref("");
   const commandTerminalAction = ref(null);
+  const commandTerminalInput = ref({});
   const commandTerminalRunning = ref(false);
   const commandTerminalStartKey = ref("");
   const diffDialogOpen = ref(false);
@@ -131,6 +152,11 @@ function useAiStudioSessions({
   const draftEditorSaving = ref(false);
   const draftEditorTitle = ref("Edit draft");
   const draftEditorValues = ref({});
+  const inputDialogAction = ref(null);
+  const inputDialogError = ref("");
+  const inputDialogOpen = ref(false);
+  const inputDialogSubmitting = ref(false);
+  const inputDialogValues = ref({});
   const pendingCommandAdvanceOnSuccess = ref(false);
   const pendingCommandStartedAt = ref(0);
   let artifactReadinessRefreshInFlight = false;
@@ -311,7 +337,8 @@ function useAiStudioSessions({
     codexTerminalBusy.value ||
     commandTerminalRunning.value ||
     draftEditorLoading.value ||
-    draftEditorSaving.value
+    draftEditorSaving.value ||
+    inputDialogSubmitting.value
   ));
   const issueFileStep = useAiStudioIssueFileStep({
     activeActionId,
@@ -438,9 +465,21 @@ function useAiStudioSessions({
 
   function clearCommandTerminal() {
     commandTerminalAction.value = null;
+    commandTerminalInput.value = {};
     commandTerminalRunning.value = false;
     commandTerminalStartKey.value = "";
   }
+
+  const inputDialogFields = computed(() => normalizeActionInputFields(inputDialogAction.value?.inputFields));
+  const inputDialogTitle = computed(() => String(inputDialogAction.value?.label || "Provide details"));
+  const inputDialogSaveDisabled = computed(() => {
+    if (inputDialogSubmitting.value || commandBusy.value || inputDialogFields.value.length < 1) {
+      return true;
+    }
+    return inputDialogFields.value.some((field) => {
+      return field.required && !String(inputDialogValues.value?.[field.name] || "").trim();
+    });
+  });
 
   function clearSessionTransientState() {
     activeActionId.value = "";
@@ -459,6 +498,11 @@ function useAiStudioSessions({
     draftEditorOpen.value = false;
     draftEditorTitle.value = "Edit draft";
     draftEditorValues.value = {};
+    inputDialogAction.value = null;
+    inputDialogError.value = "";
+    inputDialogOpen.value = false;
+    inputDialogSubmitting.value = false;
+    inputDialogValues.value = {};
     pendingCommandAdvanceOnSuccess.value = false;
     pendingCommandStartedAt.value = 0;
   }
@@ -513,9 +557,18 @@ function useAiStudioSessions({
       return;
     }
     copyStatus.value = "";
+    if (normalizeActionInputFields(action.inputFields).length > 0) {
+      openInputDialog(action);
+      return;
+    }
+    if (action.type === "link") {
+      openActionLink(action);
+      return;
+    }
     if (action.type === "command") {
       const commandStartedAt = Date.now();
       commandTerminalAction.value = action;
+      commandTerminalInput.value = {};
       pendingCommandAdvanceOnSuccess.value = action.advanceOnSuccess === true;
       pendingCommandStartedAt.value = commandStartedAt;
       commandTerminalStartKey.value = `${selectedSessionId.value}:${action.id}:${commandStartedAt}`;
@@ -534,6 +587,60 @@ function useAiStudioSessions({
         sessionId: selectedSessionId.value
       });
     } finally {
+      activeActionId.value = "";
+    }
+  }
+
+  function openActionLink(action = {}) {
+    const metadataName = String(action.hrefMetadata || "").trim();
+    const href = metadataName ? String(selectedSession.value?.metadata?.[metadataName] || "") : "";
+    if (href && typeof window !== "undefined") {
+      window.open(href, "_blank", "noopener");
+    }
+  }
+
+  function openInputDialog(action = {}) {
+    const fields = normalizeActionInputFields(action.inputFields);
+    inputDialogAction.value = action;
+    inputDialogError.value = "";
+    inputDialogValues.value = Object.fromEntries(fields.map((field) => [field.name, ""]));
+    inputDialogOpen.value = true;
+  }
+
+  function closeInputDialog() {
+    if (inputDialogSubmitting.value) {
+      return;
+    }
+    inputDialogAction.value = null;
+    inputDialogError.value = "";
+    inputDialogOpen.value = false;
+    inputDialogValues.value = {};
+  }
+
+  async function submitInputDialog() {
+    const action = inputDialogAction.value;
+    if (!selectedSessionId.value || !action?.id || inputDialogSaveDisabled.value) {
+      return;
+    }
+    inputDialogError.value = "";
+    inputDialogSubmitting.value = true;
+    activeActionId.value = action.id;
+    try {
+      await runActionCommand.run({
+        actionId: action.id,
+        advanceOnSuccess: action.advanceOnSuccess === true,
+        input: {
+          ...inputDialogValues.value
+        },
+        sessionId: selectedSessionId.value
+      });
+      inputDialogOpen.value = false;
+      inputDialogAction.value = null;
+      inputDialogValues.value = {};
+    } catch (error) {
+      inputDialogError.value = String(error?.message || error || "Action failed.");
+    } finally {
+      inputDialogSubmitting.value = false;
       activeActionId.value = "";
     }
   }
@@ -805,10 +912,12 @@ function useAiStudioSessions({
     canCreateSession,
     cancelAbandonSession,
     closeDiffDialog,
+    closeInputDialog,
     codexPromptInjectionKey,
     codexPromptOverride,
     commandBusy,
     commandTerminalAction,
+    commandTerminalInput,
     commandTerminalRunning,
     commandTerminalStartKey,
     commandTerminalVisible,
@@ -846,6 +955,13 @@ function useAiStudioSessions({
     issueRequestSubmitting: issueFileStep.submitting,
     issueRequestSubmitTitle: issueFileStep.submitTitle,
     issueRequestText: issueFileStep.requestText,
+    inputDialogError,
+    inputDialogFields,
+    inputDialogOpen,
+    inputDialogSaveDisabled,
+    inputDialogSubmitting,
+    inputDialogTitle,
+    inputDialogValues,
     isSelectedSessionClosed,
     pageError,
     pageLoading,
@@ -872,6 +988,7 @@ function useAiStudioSessions({
     sessionFacts,
     sessions,
     shortSessionId,
+    submitInputDialog,
     timelineSteps,
     copyText
   };

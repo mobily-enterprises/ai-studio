@@ -110,6 +110,8 @@ function buildAiStudioSessionFacts(session = {}, stepDefinitions = []) {
   const blueprintPath = firstText(session.blueprintPath);
   const pullRequestPath = firstText(session.pullRequestPath);
   const prOutcome = session.prOutcome && typeof session.prOutcome === "object" ? session.prOutcome : null;
+  const workSource = firstText(session.workSource);
+  const sourcePrLink = parseGithubSessionLink(session.sourcePrUrl, "pr");
 
   return [
     {
@@ -155,6 +157,15 @@ function buildAiStudioSessionFacts(session = {}, stepDefinitions = []) {
       label: "Branch",
       value: session.branch || "",
       visible: Boolean(session.branch)
+    },
+    {
+      detail: firstText(session.sourcePrTitle, session.sourcePrUpdateMode),
+      href: session.sourcePrUrl || "",
+      icon: "github",
+      key: "work-source",
+      label: "Work Source",
+      value: workSource === "existing_pr" ? sourcePrLink.label : "New branch",
+      visible: Boolean(workSource)
     },
     {
       detail: issueTitle,

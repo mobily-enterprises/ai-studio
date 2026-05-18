@@ -188,6 +188,15 @@ class TargetAdapter {
     };
   }
 
+  async runSessionAction({
+    action = {}
+  } = {}) {
+    return adapterActionResult({
+      message: `${this.label} does not provide action ${normalizeText(action.id) || "(unknown)"}.`,
+      status: "blocked"
+    });
+  }
+
   async finishSession() {
     return adapterActionResult({
       message: "Finished AI Studio session."
