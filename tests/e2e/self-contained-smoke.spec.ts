@@ -163,6 +163,49 @@ async function mockReadyStudioShell(page: Page) {
       }
     ],
     [
+      "/api/studio/current-app/setup-readiness",
+      {
+        currentStage: null,
+        message: "",
+        ready: true,
+        stages: [
+          {
+            checks: [],
+            ok: true,
+            ready: true
+          },
+          {
+            accounts: [
+              {
+                connected: true,
+                id: "codex",
+                label: "Codex",
+                status: "connected"
+              },
+              {
+                connected: true,
+                id: "github",
+                label: "GitHub",
+                status: "connected"
+              }
+            ],
+            ok: true,
+            ready: true
+          },
+          {
+            checks: [],
+            ok: true,
+            ready: true
+          },
+          {
+            ok: true,
+            ready: true,
+            stages: []
+          }
+        ]
+      }
+    ],
+    [
       "/api/studio/current-app",
       {
         adapter: {

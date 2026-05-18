@@ -1,0 +1,4 @@
+Authentication: Laravel built-in
+
+Use the official Laravel starter kit's built-in authentication scaffolding when a starter kit is selected.
+Keep guards, middleware, password reset, email verification, validation, policies, and tests aligned with Laravel conventions and the generated starter files.

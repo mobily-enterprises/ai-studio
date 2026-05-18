@@ -11,6 +11,10 @@ import {
   JSKIT_AI_STUDIO_COMMANDS,
   createJskitTargetAdapter
 } from "../../server/lib/aiStudio/adapters/jskit/index.js";
+import {
+  jskitAutomatedChecksHook,
+  jskitCodeIndexHook
+} from "../../server/lib/aiStudio/adapters/jskit/adapter.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
 async function writeProjectFile(root, relativePath, text = "") {
@@ -80,6 +84,7 @@ test("jskit adapter exposes selected-project facts, commands, and prompt context
     assert.equal(facts.promptContext.blueprint_path, path.join(targetRoot, ".jskit/APP_BLUEPRINT.md"));
     assert.equal(facts.promptContext.valid_jskit_markers, "true");
     assert.deepEqual(Object.keys(facts.capabilities).sort(), capabilityIds());
+    assert.equal(facts.capabilities.update_code_index, true);
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
   });
 });
@@ -361,5 +366,22 @@ test("jskit command actions expose terminal specs instead of direct runners", as
         targetRoot
       }
     ]);
+  });
+});
+
+test("jskit validation hooks expose code index and verification commands", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createJskitProject(targetRoot);
+
+    const codeIndex = await jskitCodeIndexHook({
+      worktreePath: targetRoot
+    });
+    const checks = await jskitAutomatedChecksHook({
+      worktreePath: targetRoot
+    });
+
+    assert.equal(codeIndex.commandPreview, "npx --no-install jskit helper-map update");
+    assert.equal(codeIndex.metadata.code_index_path, ".jskit/helper-map.md");
+    assert.equal(checks.commandPreview, "npx --no-install jskit app verify");
   });
 });

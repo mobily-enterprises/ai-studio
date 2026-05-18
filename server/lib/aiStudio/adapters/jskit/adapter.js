@@ -7,8 +7,16 @@ import {
   shellQuote
 } from "../../../shellCommands.js";
 import {
+  packageBinCommand,
+  packageScript,
+  readPackageJson,
   runScriptCommand
 } from "../../nodePackage.js";
+import {
+  AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
+  AI_STUDIO_VERIFY_SCRIPT_NAME,
+  packageManagerScriptCommand
+} from "../../codeIndexCommands.js";
 import {
   commandLineScript,
   nodeInstallWorkflowHook,
@@ -183,19 +191,60 @@ function jskitFacts({
 }
 
 async function jskitAutomatedChecksHook({ worktreePath = "" } = {}) {
-  const { packageManager } = await nodePackageManagerInspectionExtra({
-    targetRoot: worktreePath
-  });
-  const buildCommand = runScriptCommand(packageManager.name, "build");
+  const [packageJson, { packageManager }] = await Promise.all([
+    readPackageJson(worktreePath),
+    nodePackageManagerInspectionExtra({
+      targetRoot: worktreePath
+    })
+  ]);
+  const command = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_VERIFY_SCRIPT_NAME
+  }) || (packageScript(packageJson || {}, "verify:local")
+    ? runScriptCommand(packageManager.name, "verify:local")
+    : packageScript(packageJson || {}, "verify")
+      ? runScriptCommand(packageManager.name, "verify")
+      : packageBinCommand(packageManager.name, "jskit", ["app", "verify"]));
   return {
-    commandPreview: buildCommand,
+    command,
+    commandPreview: command,
     metadata: {
       automated_checks_package_manager: packageManager.name
     },
     script: commandLineScript([
-      "printf '[studio] Running JSKIT production build.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(buildCommand)}`,
-      buildCommand
+      "printf '[studio] Running JSKIT verification.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
+      command
+    ])
+  };
+}
+
+async function jskitCodeIndexHook({ worktreePath = "" } = {}) {
+  const [packageJson, { packageManager }] = await Promise.all([
+    readPackageJson(worktreePath),
+    nodePackageManagerInspectionExtra({
+      targetRoot: worktreePath
+    })
+  ]);
+  const packageScriptCommand = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+  });
+  const command = packageScriptCommand || packageBinCommand(packageManager.name, "jskit", ["helper-map", "update"]);
+  return {
+    command,
+    commandPreview: command,
+    metadata: {
+      code_index_command_source: packageScriptCommand ? "package-script" : "jskit-helper-map",
+      code_index_package_manager: packageManager.name,
+      code_index_path: ".jskit/helper-map.md"
+    },
+    script: commandLineScript([
+      "printf '[studio] Updating JSKIT code index.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
+      command
     ])
   };
 }
@@ -249,7 +298,8 @@ class JskitTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       targetScriptsInspector: inspectJskitTargetScripts,
       workflowCommandHooks: {
         automatedChecks: jskitAutomatedChecksHook,
-        installDependencies: nodeInstallWorkflowHook
+        installDependencies: nodeInstallWorkflowHook,
+        updateCodeIndex: jskitCodeIndexHook
       }
     });
   }
@@ -260,6 +310,7 @@ export {
   JSKIT_CONFIG_FIELDS,
   JSKIT_PROMPT_PACK_ROOT,
   JskitTargetAdapter,
+  jskitCodeIndexHook,
   jskitAutomatedChecksHook,
   inspectJskitProject
 };

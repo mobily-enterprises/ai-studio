@@ -1,0 +1,4 @@
+Teams: enabled
+
+Use the Laravel starter kit's generated team support when a starter kit is selected.
+Keep team membership, authorization, invitations, current-team state, route protection, and tests aligned with the generated files.

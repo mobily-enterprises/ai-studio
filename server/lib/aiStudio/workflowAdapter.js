@@ -64,6 +64,10 @@ const AI_STUDIO_WORKFLOW_COMMANDS = deepFreeze([
   {
     id: "sync_main_checkout",
     label: "Sync main checkout"
+  },
+  {
+    id: "update_code_index",
+    label: "Update code index"
   }
 ]);
 

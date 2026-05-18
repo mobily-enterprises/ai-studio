@@ -1,0 +1,5 @@
+Authentication: WorkOS AuthKit
+
+Use the Laravel starter kit's WorkOS AuthKit scaffolding when a starter kit is selected.
+Keep auth flows, middleware, environment variables, callbacks, team/org assumptions, and tests aligned with the generated WorkOS files.
+Do not invent WorkOS configuration values; expose required environment variables clearly.

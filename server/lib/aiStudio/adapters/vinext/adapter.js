@@ -26,6 +26,7 @@ import {
   hasVinextScript,
   packageScript,
   packageBinCommand,
+  readPackageJson,
   scriptNames,
   scriptUsesVinext
 } from "./packageManager.js";
@@ -39,6 +40,13 @@ import {
   projectMarkerExists,
   projectRouterIsPresent
 } from "../../nodeWebProject.js";
+import {
+  AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
+  AI_STUDIO_VERIFY_SCRIPT_NAME,
+  DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  javascriptCodeIndexCommand,
+  packageManagerScriptCommand
+} from "../../codeIndexCommands.js";
 
 const VINEXT_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
 
@@ -248,6 +256,25 @@ async function vinextAutomatedChecksHook({ worktreePath = "" } = {}) {
   const { packageManager } = await nodePackageManagerInspectionExtra({
     targetRoot: worktreePath
   });
+  const packageJson = await readPackageJson(worktreePath);
+  const verifyCommand = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_VERIFY_SCRIPT_NAME
+  });
+  if (verifyCommand) {
+    return {
+      commandPreview: verifyCommand,
+      metadata: {
+        automated_checks_package_manager: packageManager.name
+      },
+      script: commandLineScript([
+        "printf '[studio] Running Vinext verification.\\n'",
+        `printf '[studio] $ %s\\n\\n' ${shellQuote(verifyCommand)}`,
+        verifyCommand
+      ])
+    };
+  }
   const checkCommand = packageBinCommand(packageManager.name, "vinext", ["check"]);
   const buildCommand = packageBinCommand(packageManager.name, "vinext", ["build"]);
   return {
@@ -262,6 +289,33 @@ async function vinextAutomatedChecksHook({ worktreePath = "" } = {}) {
       "printf '\\n[studio] Running Vinext production build.\\n'",
       `printf '[studio] $ %s\\n\\n' ${shellQuote(buildCommand)}`,
       buildCommand
+    ])
+  };
+}
+
+async function vinextCodeIndexHook({ worktreePath = "" } = {}) {
+  const { packageManager } = await nodePackageManagerInspectionExtra({
+    targetRoot: worktreePath
+  });
+  const packageJson = await readPackageJson(worktreePath);
+  const packageScriptCommand = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+  });
+  const indexCommand = packageScriptCommand || javascriptCodeIndexCommand();
+  const commandPreview = packageScriptCommand || `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`;
+  return {
+    commandPreview,
+    metadata: {
+      code_index_command_source: packageScriptCommand ? "package-script" : "javascript-indexer",
+      code_index_package_manager: packageManager.name,
+      code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
+    },
+    script: commandLineScript([
+      "printf '[studio] Updating Vinext code index.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(commandPreview)}`,
+      indexCommand
     ])
   };
 }
@@ -294,7 +348,8 @@ class VinextTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       targetScriptsInspector: inspectVinextTargetScripts,
       workflowCommandHooks: {
         automatedChecks: vinextAutomatedChecksHook,
-        installDependencies: nodeInstallWorkflowHook
+        installDependencies: nodeInstallWorkflowHook,
+        updateCodeIndex: vinextCodeIndexHook
       }
     });
   }

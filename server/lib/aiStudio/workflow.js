@@ -276,22 +276,37 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
     {
       actions: [
         {
+          adapterCapability: "update_code_index",
+          id: "update_code_index",
+          label: "Update code index",
+          type: "command"
+        },
+        {
           adapterCapability: "run_automated_checks",
+          enabledWhen: ["metadata:code_index_updated"],
+          enabledWhenReason: "Update the code index before running automated checks.",
           id: "run_automated_checks",
           label: "Run automated checks",
           type: "command"
         }
       ],
-      description: "Run the adapter-provided automated checks.",
-      id: "automated_checks_run",
-      label: "Run automated checks",
+      description: "Update the adapter-provided code index and run automated checks.",
+      id: "project_validated",
+      label: "Validate project",
       next: {
-        disabledReason: "Run automated checks successfully before continuing.",
-        enabledWhen: ["metadata:automated_checks_passed"]
+        disabledReason: "Update the code index and run automated checks successfully before continuing.",
+        enabledWhen: ["metadata:code_index_updated", "metadata:automated_checks_passed"]
       },
       rewindCleanup: {
-        actionResults: ["run_automated_checks"],
-        metadata: ["automated_checks_passed"]
+        actionResults: ["update_code_index", "run_automated_checks"],
+        metadata: [
+          "code_index_command_source",
+          "code_index_package_manager",
+          "code_index_path",
+          "code_index_updated",
+          "automated_checks_package_manager",
+          "automated_checks_passed"
+        ]
       }
     },
     {

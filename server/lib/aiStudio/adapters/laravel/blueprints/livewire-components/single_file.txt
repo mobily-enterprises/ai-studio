@@ -1,0 +1,4 @@
+Livewire components: single-file
+
+Use the Laravel installer default Livewire component style.
+Keep Livewire behavior close to the generated starter conventions, and do not split components into class/template pairs unless the project already does.

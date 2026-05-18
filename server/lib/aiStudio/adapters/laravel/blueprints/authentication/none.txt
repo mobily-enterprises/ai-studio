@@ -1,0 +1,4 @@
+Authentication: none
+
+Seed official starter kits without authentication scaffolding.
+Do not add login, registration, password reset, teams, roles, protected routes, or auth middleware unless the user explicitly asks for them.

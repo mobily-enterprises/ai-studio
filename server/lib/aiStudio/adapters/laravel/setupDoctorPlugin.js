@@ -45,10 +45,13 @@ import {
   hasComposerDependency
 } from "./composerPackage.js";
 import {
+  LARAVEL_AUTHENTICATION_CONFIG,
   LARAVEL_BOOST_CONFIG,
   LARAVEL_CUSTOM_STARTER_CONFIG,
+  LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
   LARAVEL_PACKAGE_MANAGER_CONFIG,
   LARAVEL_STARTER_KIT_CONFIG,
+  LARAVEL_TEAMS_CONFIG,
   LARAVEL_TESTING_CONFIG
 } from "./constants.js";
 import {
@@ -66,7 +69,10 @@ import {
 const LARAVEL_TOOLCHAIN_DOCKERFILE = "tooling/adapters/laravel/Dockerfile";
 const LARAVEL_TOOLCHAIN_CONTEXT = "tooling/adapters/laravel";
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const AUTHENTICATION_OPTIONS = new Set(["laravel", "workos", "none"]);
 const STARTER_KITS = new Set(["none", "react", "vue", "svelte", "livewire", "custom"]);
+const LIVEWIRE_COMPONENTS = new Set(["single_file", "class"]);
+const TEAMS_OPTIONS = new Set(["none", "teams"]);
 const TESTING_FRAMEWORKS = new Set(["pest", "phpunit"]);
 const BOOST_OPTIONS = new Set(["none", "boost"]);
 const LARAVEL_MARKERS = Object.freeze([
@@ -85,8 +91,20 @@ function selectedPackageManager(config = {}) {
   return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, PACKAGE_MANAGERS, "npm");
 }
 
+function selectedAuthentication(config = {}) {
+  return selectedConfigValue(config, LARAVEL_AUTHENTICATION_CONFIG, AUTHENTICATION_OPTIONS, "laravel");
+}
+
 function selectedStarterKit(config = {}) {
   return selectedConfigValue(config, LARAVEL_STARTER_KIT_CONFIG, STARTER_KITS, "none");
+}
+
+function selectedLivewireComponents(config = {}) {
+  return selectedConfigValue(config, LARAVEL_LIVEWIRE_COMPONENTS_CONFIG, LIVEWIRE_COMPONENTS, "single_file");
+}
+
+function selectedTeams(config = {}) {
+  return selectedConfigValue(config, LARAVEL_TEAMS_CONFIG, TEAMS_OPTIONS, "none");
 }
 
 function selectedTestingFramework(config = {}) {
@@ -101,9 +119,17 @@ function selectedCustomStarter(config = {}) {
   return configTextValue(config, LARAVEL_CUSTOM_STARTER_CONFIG);
 }
 
+function officialLaravelStarterKit(config = {}) {
+  return !["none", "custom"].includes(selectedStarterKit(config));
+}
+
 function laravelSeedConfigError(config = {}) {
   if (selectedStarterKit(config) === "custom" && !selectedCustomStarter(config)) {
     return "laravel_custom_starter must be set when the Laravel starter kit is custom.";
+  }
+  const [starterOptionProblem = ""] = starterOptionProblems(config);
+  if (starterOptionProblem) {
+    return starterOptionProblem;
   }
   return "";
 }
@@ -149,6 +175,22 @@ function laravelNewStarterFlags(config = {}) {
   return [`--${starter}`];
 }
 
+function laravelNewStarterOptionFlags(config = {}) {
+  if (!officialLaravelStarterKit(config)) {
+    return [];
+  }
+
+  const authentication = selectedAuthentication(config);
+  return [
+    authentication === "workos" ? "--workos" : "",
+    authentication === "none" ? "--no-authentication" : "",
+    selectedTeams(config) === "teams" ? "--teams" : "",
+    selectedStarterKit(config) === "livewire" && selectedLivewireComponents(config) === "class"
+      ? "--livewire-class-components"
+      : ""
+  ].filter(Boolean);
+}
+
 function laravelNewFlags(config = {}) {
   const testing = selectedTestingFramework(config);
   return [
@@ -158,7 +200,8 @@ function laravelNewFlags(config = {}) {
     testing === "phpunit" ? "--phpunit" : "--pest",
     laravelNewPackageManagerFlag(selectedPackageManager(config)),
     selectedBoostOption(config) === "boost" ? "--boost" : "--no-boost",
-    ...laravelNewStarterFlags(config)
+    ...laravelNewStarterFlags(config),
+    ...laravelNewStarterOptionFlags(config)
   ];
 }
 
@@ -258,6 +301,19 @@ async function checkPackageManagerToolchain(toolkit, targetRoot, config = {}) {
   });
 }
 
+function missingLaravelToolchainCheck({
+  expected = "",
+  id = "",
+  label = ""
+} = {}) {
+  return missingAdapterToolchainCheck({
+    buildRepair: buildLaravelToolchainRepair(),
+    expected,
+    id,
+    label
+  });
+}
+
 function checkCustomStarterConfig(config = {}) {
   if (selectedStarterKit(config) !== "custom") {
     return passCheck({
@@ -284,6 +340,51 @@ function checkCustomStarterConfig(config = {}) {
     expected: "laravel_custom_starter contains the package or repository for laravel new --using.",
     observed: "laravel_starter_kit is custom, but laravel_custom_starter is blank.",
     explanation: "Studio will not silently seed a plain Laravel app when the selected configuration asks for a custom starter."
+  });
+}
+
+function starterOptionProblems(config = {}) {
+  const starter = selectedStarterKit(config);
+  const authentication = selectedAuthentication(config);
+  const livewireComponents = selectedLivewireComponents(config);
+  const teams = selectedTeams(config);
+  const officialStarter = officialLaravelStarterKit(config);
+  return [
+    authentication !== "laravel" && !officialStarter
+      ? "Authentication provider selection requires an official React, Vue, Svelte, or Livewire starter kit."
+      : "",
+    teams === "teams" && !officialStarter
+      ? "Team support requires an official React, Vue, Svelte, or Livewire starter kit."
+      : "",
+    teams === "teams" && authentication === "none"
+      ? "Team support requires authentication scaffolding."
+      : "",
+    livewireComponents === "class" && starter !== "livewire"
+      ? "Livewire class components require the Livewire starter kit."
+      : "",
+    livewireComponents === "class" && authentication !== "laravel"
+      ? "Livewire class components require Laravel built-in authentication."
+      : ""
+  ].filter(Boolean);
+}
+
+function checkStarterOptionsConfig(config = {}) {
+  const problems = starterOptionProblems(config);
+  if (problems.length) {
+    return failCheck({
+      id: "laravel-starter-options",
+      label: "Starter options",
+      expected: "Starter option config is compatible with the selected Laravel starter kit.",
+      observed: problems.join("\n"),
+      explanation: "Studio will not pass Laravel installer flags that the selected starter kit cannot apply cleanly."
+    });
+  }
+  return passCheck({
+    id: "laravel-starter-options",
+    label: "Starter options",
+    expected: "Starter option config is compatible with the selected Laravel starter kit.",
+    observed: "Starter option config is compatible.",
+    explanation: "Laravel seeding can pass the selected authentication, teams, and Livewire component options."
   });
 }
 
@@ -596,11 +697,73 @@ function createLaravelSetupDoctorPlugin({
           label: "Package manager command",
           run: () => toolchainReady
             ? checkPackageManagerToolchain(toolkit, checkTargetRoot, context.config || {})
-            : missingAdapterToolchainCheck({
-                buildRepair: buildLaravelToolchainRepair(),
+            : missingLaravelToolchainCheck({
                 expected: "The selected package manager runs inside the Laravel toolchain.",
                 id: "laravel-package-manager-toolchain",
                 label: "Package manager command"
+              })
+        },
+        {
+          expected: "PHP runs inside the Laravel toolchain.",
+          id: "laravel-php-toolchain",
+          label: "PHP",
+          run: () => toolchainReady
+            ? toolkit.toolchainCommandCheck({
+                commandArgs: ["php", "--version"],
+                expected: "PHP runs inside the Laravel toolchain.",
+                explanation: "Laravel setup, Artisan commands, tests, and launch targets require PHP.",
+                id: "laravel-php-toolchain",
+                image: LARAVEL_TOOLCHAIN_IMAGE,
+                label: "PHP",
+                repair: buildLaravelToolchainRepair(),
+                validate: (output) => /^PHP\s+/u.test(output.trim())
+              }).run()
+            : missingLaravelToolchainCheck({
+                expected: "PHP runs inside the Laravel toolchain.",
+                id: "laravel-php-toolchain",
+                label: "PHP"
+              })
+        },
+        {
+          expected: "Composer runs inside the Laravel toolchain.",
+          id: "laravel-composer-toolchain",
+          label: "Composer",
+          run: () => toolchainReady
+            ? toolkit.toolchainCommandCheck({
+                commandArgs: ["composer", "--version"],
+                expected: "Composer runs inside the Laravel toolchain.",
+                explanation: "Laravel setup and dependency installation require Composer.",
+                id: "laravel-composer-toolchain",
+                image: LARAVEL_TOOLCHAIN_IMAGE,
+                label: "Composer",
+                repair: buildLaravelToolchainRepair(),
+                validate: (output) => /Composer/iu.test(output)
+              }).run()
+            : missingLaravelToolchainCheck({
+                expected: "Composer runs inside the Laravel toolchain.",
+                id: "laravel-composer-toolchain",
+                label: "Composer"
+              })
+        },
+        {
+          expected: "Laravel installer runs inside the Laravel toolchain.",
+          id: "laravel-installer-toolchain",
+          label: "Laravel installer",
+          run: () => toolchainReady
+            ? toolkit.toolchainCommandCheck({
+                commandArgs: ["laravel", "--version"],
+                expected: "Laravel installer runs inside the Laravel toolchain.",
+                explanation: "Laravel setup seeds empty target directories through laravel new.",
+                id: "laravel-installer-toolchain",
+                image: LARAVEL_TOOLCHAIN_IMAGE,
+                label: "Laravel installer",
+                repair: buildLaravelToolchainRepair(),
+                validate: (output) => /Laravel Installer/iu.test(output)
+              }).run()
+            : missingLaravelToolchainCheck({
+                expected: "Laravel installer runs inside the Laravel toolchain.",
+                id: "laravel-installer-toolchain",
+                label: "Laravel installer"
               })
         },
         {
@@ -608,6 +771,12 @@ function createLaravelSetupDoctorPlugin({
           id: "laravel-custom-starter",
           label: "Custom starter",
           run: () => checkCustomStarterConfig(context.config || {})
+        },
+        {
+          expected: "Starter option config is compatible with the selected Laravel starter kit.",
+          id: "laravel-starter-options",
+          label: "Starter options",
+          run: () => checkStarterOptionsConfig(context.config || {})
         },
         ...containers.checks,
         {

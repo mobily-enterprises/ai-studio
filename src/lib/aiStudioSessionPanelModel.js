@@ -135,7 +135,7 @@ function aiStudioActionIcon(action = {}) {
   if (["use_existing_issue", "use_existing_pr"].includes(action.id)) {
     return mdiGithub;
   }
-  if (["create_worktree", "install_dependencies", "sync_main_checkout"].includes(action.id)) {
+  if (["create_worktree", "install_dependencies", "sync_main_checkout", "update_code_index"].includes(action.id)) {
     return mdiSync;
   }
   if (action.type === "finish") {

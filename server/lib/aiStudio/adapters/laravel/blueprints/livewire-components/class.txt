@@ -1,0 +1,4 @@
+Livewire components: class components
+
+Use class-based Livewire components when the Livewire starter kit is selected.
+Keep component classes, templates, validation, authorization, events, and tests aligned with the generated class component structure.

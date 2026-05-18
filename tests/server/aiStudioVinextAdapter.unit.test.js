@@ -71,6 +71,7 @@ test("vinext adapter exposes project facts, commands, and prompt context", async
     assert.equal(facts.promptContext.valid_vinext_markers, "true");
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
+    assert.equal(facts.capabilities.update_code_index, true);
     assert.equal(facts.capabilities.run_automated_checks, true);
   });
 });

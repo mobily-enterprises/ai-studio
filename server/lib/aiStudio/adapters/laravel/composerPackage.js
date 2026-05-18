@@ -5,6 +5,7 @@ import {
   shellQuote
 } from "../../../shellCommands.js";
 import {
+  aiStudioError,
   isPlainObject,
   normalizeText
 } from "../../core.js";
@@ -20,13 +21,20 @@ async function fileExists(filePath = "") {
 
 async function readComposerJson(root = "") {
   const composerJsonPath = path.join(root, "composer.json");
+  let text = "";
   try {
-    return JSON.parse(await readFile(composerJsonPath, "utf8"));
+    text = await readFile(composerJsonPath, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") {
       return null;
     }
     throw error;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw aiStudioError(`Invalid JSON in Laravel composer file: ${composerJsonPath}`, "ai_studio_invalid_laravel_composer_json");
   }
 }
 

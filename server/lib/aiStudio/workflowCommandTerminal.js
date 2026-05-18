@@ -17,7 +17,8 @@ import {
   createWorktreePath,
   createWorktreeTerminalSpec,
   installDependenciesTerminalSpec,
-  runAutomatedChecksTerminalSpec
+  runAutomatedChecksTerminalSpec,
+  updateCodeIndexTerminalSpec
 } from "./workflowCommandTerminal/worktreeDependencies.js";
 
 const COMMAND_TERMINAL_SPECS = Object.freeze({
@@ -28,7 +29,8 @@ const COMMAND_TERMINAL_SPECS = Object.freeze({
   install_dependencies: installDependenciesTerminalSpec,
   merge_pr: mergePrTerminalSpec,
   run_automated_checks: runAutomatedChecksTerminalSpec,
-  sync_main_checkout: syncMainCheckoutTerminalSpec
+  sync_main_checkout: syncMainCheckoutTerminalSpec,
+  update_code_index: updateCodeIndexTerminalSpec
 });
 
 async function createAiStudioWorkflowCommandTerminalSpec({

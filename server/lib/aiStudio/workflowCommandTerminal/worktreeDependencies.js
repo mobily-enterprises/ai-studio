@@ -237,10 +237,45 @@ async function runAutomatedChecksTerminalSpec({
   });
 }
 
+async function updateCodeIndexTerminalSpec({
+  context = {},
+  hooks = {},
+  session = {},
+  targetRoot = ""
+} = {}) {
+  const worktreePath = normalizeText(session.metadata?.worktree_path);
+  const hookResult = await requiredHookCommand({
+    hookContext: {
+      context,
+      session,
+      targetRoot,
+      worktreePath
+    },
+    hookName: "updateCodeIndex",
+    hooks,
+    missingMessage: "The selected adapter does not provide a code index command."
+  });
+  if (!hookResult.ok) {
+    return hookResult;
+  }
+  const command = hookResult.command;
+  return worktreeCommandSpec({
+    commandPreview: command.commandPreview,
+    label: "Update code index",
+    metadata: {
+      code_index_updated: "yes",
+      ...command.metadata
+    },
+    script: command.script,
+    session
+  });
+}
+
 export {
   createWorktreeBranch,
   createWorktreePath,
   createWorktreeTerminalSpec,
   installDependenciesTerminalSpec,
-  runAutomatedChecksTerminalSpec
+  runAutomatedChecksTerminalSpec,
+  updateCodeIndexTerminalSpec
 };

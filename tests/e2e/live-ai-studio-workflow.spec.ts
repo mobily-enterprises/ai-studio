@@ -158,15 +158,20 @@ test.describe("live AI Studio session workflow", () => {
       enabled: ["Run deslop", "Resolve deslop", "Next"]
     });
 
-    await goNextToStep(page, "automated_checks_run");
-    await assertChecklistControls(page, "automated_checks_run", {
-      disabled: ["Next"],
-      enabled: ["Run automated checks"]
+    await goNextToStep(page, "project_validated");
+    await assertChecklistControls(page, "project_validated", {
+      disabled: ["Run automated checks", "Next"],
+      enabled: ["Update code index"]
     });
 
+    await markMetadataAndReload(page, "code_index_updated", "yes");
+    await assertChecklistControls(page, "project_validated", {
+      disabled: ["Next"],
+      enabled: ["Update code index", "Run automated checks"]
+    });
     await markMetadataAndReload(page, "automated_checks_passed", "yes");
-    await assertChecklistControls(page, "automated_checks_run", {
-      enabled: ["Run automated checks", "Next"]
+    await assertChecklistControls(page, "project_validated", {
+      enabled: ["Update code index", "Run automated checks", "Next"]
     });
 
     await goNextToStep(page, "changes_accepted");
@@ -293,9 +298,10 @@ test.describe("live AI Studio session workflow", () => {
     await goNextToStep(page, "plan_executed");
     await goNextToStep(page, "deep_ui_check_run");
     await goNextToStep(page, "review_run");
-    await goNextToStep(page, "automated_checks_run");
+    await goNextToStep(page, "project_validated");
 
     await writeWorktreeFile(page, `e2e-fixtures/${runId}-new-pr.txt`, `New PR path ${runId}\n`);
+    await runCommandAndWaitForMetadata(page, "Update code index", "code_index_updated", UI_COMMAND_TIMEOUT_MS);
     await runCommandAndWaitForMetadata(page, "Run automated checks", "automated_checks_passed", UI_COMMAND_TIMEOUT_MS);
     await goNextToStep(page, "changes_accepted");
     await reviewDiff(page, `${runId}-new-pr.txt`);
@@ -364,7 +370,8 @@ test.describe("live AI Studio session workflow", () => {
     await goNextToStep(page, "plan_executed");
     await goNextToStep(page, "deep_ui_check_run");
     await goNextToStep(page, "review_run");
-    await goNextToStep(page, "automated_checks_run");
+    await goNextToStep(page, "project_validated");
+    await markMetadata(page, "code_index_updated", "yes");
     await markMetadata(page, "automated_checks_passed", "yes");
     await page.reload({
       waitUntil: "networkidle"

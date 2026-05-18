@@ -24,6 +24,9 @@ import {
   laravelDatabaseEnvWriteScript
 } from "../../server/lib/aiStudio/adapters/laravel/databaseRuntime.js";
 import {
+  readComposerJson
+} from "../../server/lib/aiStudio/adapters/laravel/composerPackage.js";
+import {
   createLaravelSetupDoctorPlugin,
   laravelNewCommand
 } from "../../server/lib/aiStudio/adapters/laravel/setupDoctorPlugin.js";
@@ -115,15 +118,20 @@ test("laravel adapter exposes project facts, commands, defaults, and prompt cont
     assert.equal(facts.promptContext.valid_laravel_markers, "true");
     assert.match(facts.promptContext.environment_blueprint, /Database runtime: SQLite/u);
     assert.match(facts.promptContext.environment_blueprint, /Starter kit: none/u);
+    assert.match(facts.promptContext.environment_blueprint, /Authentication: Laravel built-in/u);
     assert.match(facts.promptContext.environment_blueprint, /Testing: Pest/u);
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
+    assert.equal(facts.capabilities.update_code_index, true);
     assert.equal(facts.capabilities.run_automated_checks, true);
 
     const defaults = await adapter.getDefaultConfig();
+    assert.equal(defaults.laravel_authentication, "laravel");
     assert.equal(defaults.laravel_database_runtime, "sqlite");
+    assert.equal(defaults.laravel_livewire_components, "single_file");
     assert.equal(defaults.laravel_package_manager, "npm");
     assert.equal(defaults.laravel_starter_kit, "none");
+    assert.equal(defaults.laravel_teams, "none");
     assert.equal(defaults.laravel_testing, "pest");
   });
 });
@@ -137,9 +145,12 @@ test("laravel adapter composes prompt blueprints from independent config choices
       config: {
         values: {
           laravel_boost: "boost",
+          laravel_authentication: "workos",
           laravel_database_runtime: "postgres",
+          laravel_livewire_components: "single_file",
           laravel_package_manager: "bun",
           laravel_starter_kit: "react",
+          laravel_teams: "teams",
           laravel_testing: "phpunit"
         }
       },
@@ -147,12 +158,46 @@ test("laravel adapter composes prompt blueprints from independent config choices
     });
 
     assert.equal(facts.promptContext.database_runtime, "postgres");
+    assert.equal(facts.promptContext.seed_authentication, "workos");
     assert.equal(facts.promptContext.seed_package_manager, "bun");
     assert.equal(facts.promptContext.seed_starter_kit, "react");
+    assert.equal(facts.promptContext.seed_teams, "teams");
     assert.match(facts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
     assert.match(facts.promptContext.environment_blueprint, /Starter kit: React/u);
+    assert.match(facts.promptContext.environment_blueprint, /Authentication: WorkOS AuthKit/u);
+    assert.match(facts.promptContext.environment_blueprint, /Teams: enabled/u);
     assert.match(facts.promptContext.environment_blueprint, /Testing: PHPUnit/u);
     assert.match(facts.promptContext.environment_blueprint, /Laravel Boost: installed/u);
+  });
+});
+
+test("laravel adapter reports malformed composer.json instead of hiding it", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createLaravelProject(targetRoot);
+    await writeProjectFile(targetRoot, "composer.json", "{ not json\n");
+    const adapter = createLaravelTargetAdapter();
+
+    await assert.rejects(
+      () => adapter.inspect({
+        targetRoot
+      }),
+      {
+        code: "ai_studio_invalid_laravel_composer_json"
+      }
+    );
+  });
+});
+
+test("laravel composer reader preserves filesystem read errors", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await mkdir(path.join(targetRoot, "composer.json"));
+
+    await assert.rejects(
+      () => readComposerJson(targetRoot),
+      {
+        code: "EISDIR"
+      }
+    );
   });
 });
 
@@ -232,6 +277,7 @@ test("laravel launch target describes Artisan serve and uses the Laravel toolcha
       "npm run build",
       "php artisan serve --host=0.0.0.0 --port 4199"
     ]);
+    assert.equal(descriptor.metadata.commandSource, "artisan");
     assert.equal(descriptor.metadata.mode, "built");
 
     const spec = await createLaravelLaunchTargetTerminalSpec({
@@ -257,6 +303,30 @@ test("laravel launch target describes Artisan serve and uses the Laravel toolcha
   });
 });
 
+test("laravel launch target passes AI Studio port through Composer serve scripts", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createLaravelProject(targetRoot, {
+      composer: {
+        scripts: {
+          serve: "php artisan serve"
+        }
+      }
+    });
+
+    const descriptor = await createLaravelLaunchDescriptor({
+      mode: "serve",
+      port: 4311,
+      targetRoot,
+      worktreePath: targetRoot
+    });
+
+    assert.deepEqual(descriptor.commands.map((command) => command.command), [
+      "composer run serve -- --host=0.0.0.0 --port 4311"
+    ]);
+    assert.equal(descriptor.metadata.commandSource, "composer");
+  });
+});
+
 test("laravel setup checks selected package manager inside the Laravel toolchain", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const dockerCalls = [];
@@ -267,14 +337,24 @@ test("laravel setup checks selected package manager inside the Laravel toolchain
     };
     const plugin = createLaravelSetupDoctorPlugin({
       runCommand: async (command, args) => {
+        const joinedArgs = args.join(" ");
+        const output = args.includes("{{.Id}}")
+          ? "sha256:toolchain"
+          : joinedArgs.includes("php --version")
+            ? "PHP 8.4.1"
+            : joinedArgs.includes("composer --version")
+              ? "Composer version 2.8.0"
+              : joinedArgs.includes("laravel --version")
+                ? "Laravel Installer 5.15.0"
+                : "1.3.14";
         dockerCalls.push({
           args,
           command
         });
         return {
           ok: true,
-          output: args.includes("{{.Id}}") ? "sha256:toolchain" : "1.3.14",
-          stdout: args.includes("{{.Id}}") ? "sha256:toolchain" : "1.3.14"
+          output,
+          stdout: output
         };
       },
       targetRoot
@@ -292,12 +372,30 @@ test("laravel setup checks selected package manager inside the Laravel toolchain
       config,
       targetRoot
     });
+    const phpResult = await checks.find((check) => check.id === "laravel-php-toolchain").run({
+      config,
+      targetRoot
+    });
+    const composerResult = await checks.find((check) => check.id === "laravel-composer-toolchain").run({
+      config,
+      targetRoot
+    });
+    const installerResult = await checks.find((check) => check.id === "laravel-installer-toolchain").run({
+      config,
+      targetRoot
+    });
 
     assert.equal(toolchainResult.status, "pass");
     assert.equal(packageManagerResult.status, "pass");
+    assert.equal(phpResult.status, "pass");
+    assert.equal(composerResult.status, "pass");
+    assert.equal(installerResult.status, "pass");
     assert.equal(dockerCalls[1].command, "docker");
     assert.match(dockerCalls[1].args.join(" "), /bun --version/u);
     assert.ok(dockerCalls[1].args.includes(LARAVEL_TOOLCHAIN_IMAGE));
+    assert.match(dockerCalls[2].args.join(" "), /php --version/u);
+    assert.match(dockerCalls[3].args.join(" "), /composer --version/u);
+    assert.match(dockerCalls[4].args.join(" "), /laravel --version/u);
   });
 });
 
@@ -306,9 +404,12 @@ test("laravel setup seeds empty targets and selected database environment", asyn
     const config = {
       values: {
         laravel_boost: "none",
+        laravel_authentication: "workos",
         laravel_database_runtime: "postgres",
+        laravel_livewire_components: "single_file",
         laravel_package_manager: "pnpm",
         laravel_starter_kit: "react",
+        laravel_teams: "teams",
         laravel_testing: "phpunit"
       }
     };
@@ -323,6 +424,17 @@ test("laravel setup seeds empty targets and selected database environment", asyn
     assert.match(command, /--pnpm/u);
     assert.match(command, /--no-boost/u);
     assert.match(command, /--react/u);
+    assert.match(command, /--workos/u);
+    assert.match(command, /--teams/u);
+    assert.match(laravelNewCommand({
+      config: {
+        values: {
+          laravel_authentication: "laravel",
+          laravel_livewire_components: "class",
+          laravel_starter_kit: "livewire"
+        }
+      }
+    }), /--livewire-class-components/u);
     assert.match(laravelNewCommand({
       config: {
         values: {
@@ -374,6 +486,35 @@ test("laravel setup validates custom starter before seeding", async () => {
 
     assert.equal(result.status, "fail");
     assert.match(result.observed, /laravel_custom_starter is blank/u);
+  });
+});
+
+test("laravel setup rejects incompatible starter option config", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const plugin = createLaravelSetupDoctorPlugin({
+      targetRoot
+    });
+    const config = {
+      values: {
+        laravel_authentication: "none",
+        laravel_starter_kit: "none",
+        laravel_teams: "teams"
+      }
+    };
+    const starterOptionsCheck = plugin.checks({
+      config,
+      targetRoot
+    }).find((check) => check.id === "laravel-starter-options");
+
+    const result = await starterOptionsCheck.run({
+      config,
+      targetRoot
+    });
+
+    assert.equal(result.status, "fail");
+    assert.match(result.observed, /Authentication provider selection requires an official/u);
+    assert.match(result.observed, /Team support requires an official/u);
+    assert.match(result.observed, /Team support requires authentication scaffolding/u);
   });
 });
 

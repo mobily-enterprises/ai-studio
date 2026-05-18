@@ -355,6 +355,49 @@ test("ai-studio runtime blocks advance when workflow next conditions are not met
   });
 });
 
+test("ai-studio project validation requires code index and automated checks", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          run_automated_checks: true,
+          update_code_index: true
+        }
+      }),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "project_validated",
+      sessionId: "project_validated"
+    });
+
+    const beforeIndex = await runtime.getSession("project_validated");
+    assert.equal(beforeIndex.next.enabled, false);
+    assert.deepEqual(beforeIndex.actions.map((action) => ({
+      enabled: action.enabled,
+      id: action.id
+    })), [
+      {
+        enabled: true,
+        id: "update_code_index"
+      },
+      {
+        enabled: false,
+        id: "run_automated_checks"
+      }
+    ]);
+
+    await runtime.store.writeMetadataValue("project_validated", "code_index_updated", "yes");
+    const afterIndex = await runtime.getSession("project_validated");
+    assert.equal(afterIndex.next.enabled, false);
+    assert.equal(afterIndex.actions[1].enabled, true);
+
+    await runtime.store.writeMetadataValue("project_validated", "automated_checks_passed", "yes");
+    const afterChecks = await runtime.getSession("project_validated");
+    assert.equal(afterChecks.next.enabled, true);
+  });
+});
+
 test("ai-studio runtime validates initial workflow steps", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({

@@ -52,8 +52,9 @@ async function createLaravelLaunchDescriptor({
   const packageManager = await detectPackageManager(worktreePath, packageJson || {});
   const hasBuildScript = packageScript(packageJson || {}, "build");
   const buildCommand = hasBuildScript ? runScriptCommand(packageManager.name, "build") : "";
-  const serverCommand = composerScript(composerJson || {}, "serve")
-    ? "composer run serve"
+  const hasServeScript = Boolean(composerScript(composerJson || {}, "serve"));
+  const serverCommand = hasServeScript
+    ? `composer run serve -- --host=0.0.0.0 --port ${port}`
     : `php artisan serve --host=0.0.0.0 --port ${port}`;
 
   return {
@@ -77,7 +78,7 @@ async function createLaravelLaunchDescriptor({
     }),
     metadata: {
       buildCommand: mode === "built" ? buildCommand : "",
-      commandSource: "artisan",
+      commandSource: hasServeScript ? "composer" : "artisan",
       mode,
       packageManager: packageManager.name,
       serverCommand

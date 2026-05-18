@@ -36,6 +36,13 @@ import {
   projectMarkerExists
 } from "../../nodeWebProject.js";
 import {
+  AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
+  AI_STUDIO_VERIFY_SCRIPT_NAME,
+  DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  javascriptCodeIndexCommand,
+  packageManagerScriptCommand
+} from "../../codeIndexCommands.js";
+import {
   NEXTJS_DATABASE_RUNTIME_CONFIG,
   NEXTJS_DATA_LAYER_CONFIG,
   NEXTJS_PACKAGE_MANAGER_CONFIG,
@@ -460,9 +467,13 @@ async function nextjsAutomatedChecksHook({ worktreePath = "" } = {}) {
     targetRoot: worktreePath
   });
   const packageJson = await readPackageJson(worktreePath);
-  const buildCommand = packageScript(packageJson || {}, "build")
+  const buildCommand = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_VERIFY_SCRIPT_NAME
+  }) || (packageScript(packageJson || {}, "build")
     ? runScriptCommand(packageManager.name, "build")
-    : packageBinCommand(packageManager.name, "next", ["build"]);
+    : packageBinCommand(packageManager.name, "next", ["build"]));
   return {
     commandPreview: buildCommand,
     metadata: {
@@ -472,6 +483,32 @@ async function nextjsAutomatedChecksHook({ worktreePath = "" } = {}) {
       "printf '[studio] Running Next.js production build.\\n'",
       `printf '[studio] $ %s\\n\\n' ${shellQuote(buildCommand)}`,
       buildCommand
+    ])
+  };
+}
+
+async function nextjsCodeIndexHook({ worktreePath = "" } = {}) {
+  const { packageManager } = await nodePackageManagerInspectionExtra({
+    targetRoot: worktreePath
+  });
+  const packageJson = await readPackageJson(worktreePath);
+  const packageScriptCommand = packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+  });
+  const indexCommand = packageScriptCommand || javascriptCodeIndexCommand();
+  return {
+    commandPreview: packageScriptCommand || `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`,
+    metadata: {
+      code_index_command_source: packageScriptCommand ? "package-script" : "javascript-indexer",
+      code_index_package_manager: packageManager.name,
+      code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
+    },
+    script: commandLineScript([
+      "printf '[studio] Updating Next.js code index.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(packageScriptCommand || `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`)}`,
+      indexCommand
     ])
   };
 }
@@ -514,7 +551,8 @@ class NextjsTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       targetScriptsInspector: inspectNextjsTargetScripts,
       workflowCommandHooks: {
         automatedChecks: nextjsAutomatedChecksHook,
-        installDependencies: nodeInstallWorkflowHook
+        installDependencies: nodeInstallWorkflowHook,
+        updateCodeIndex: nextjsCodeIndexHook
       }
     });
   }

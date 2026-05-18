@@ -204,11 +204,11 @@ const deepUiSkipStepDefinitions = [
     description: "Start the review pass."
   },
   {
-    id: "automated_checks_run",
+    id: "project_validated",
     index: 14,
-    label: "Automated checks",
-    kind: "codex_prompt",
-    description: "Run checks after review/deslop."
+    label: "Validate project",
+    kind: "command",
+    description: "Update code index and run checks after review/deslop."
   }
 ];
 const deepUiSkipSessionPayload = {
@@ -392,11 +392,11 @@ const reviewDeslopStepDefinitions = [
     }
   },
   {
-    id: "automated_checks_run",
+    id: "project_validated",
     index: 15,
-    label: "Automated checks",
-    kind: "codex_prompt",
-    description: "Run checks after review/deslop."
+    label: "Validate project",
+    kind: "command",
+    description: "Update code index and run checks after review/deslop."
   }
 ];
 const reviewDeslopAcceptedPayload = {
@@ -469,14 +469,13 @@ const reviewDeslopNextPromptPayload = {
 };
 const reviewDeslopUnexpectedAdvancedPayload = {
   ...reviewDeslopNextPromptPayload,
-  currentStep: "automated_checks_run",
+  currentStep: "project_validated",
   currentStepAction: {
-    buttonLabel: "Run automated checks",
+    buttonLabel: "Update code index",
     input: { type: "none" },
-    kind: "codex_prompt",
-    automation: { mode: "codex_prompt" },
-    label: "Run automated checks",
-    stepId: "automated_checks_run"
+    kind: "command",
+    label: "Update code index",
+    stepId: "project_validated"
   }
 };
 

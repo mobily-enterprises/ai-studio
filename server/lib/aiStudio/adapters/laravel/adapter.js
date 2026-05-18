@@ -26,6 +26,13 @@ import {
   nodePackageManagerInspectionExtra
 } from "../../nodeWebProject.js";
 import {
+  AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
+  AI_STUDIO_VERIFY_SCRIPT_NAME,
+  DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  packageManagerScriptCommand,
+  phpCodeIndexCommand
+} from "../../codeIndexCommands.js";
+import {
   detectPackageManager,
   installCommand,
   packageScript,
@@ -46,12 +53,15 @@ import {
   readComposerJson
 } from "./composerPackage.js";
 import {
+  LARAVEL_AUTHENTICATION_CONFIG,
   LARAVEL_BOOST_CONFIG,
   LARAVEL_CUSTOM_STARTER_CONFIG,
   LARAVEL_DATABASE_RUNTIME_CONFIG,
+  LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
   LARAVEL_PACKAGE_MANAGER_CONFIG,
   LARAVEL_PROJECT_KNOWLEDGE_RELATIVE_PATH,
   LARAVEL_STARTER_KIT_CONFIG,
+  LARAVEL_TEAMS_CONFIG,
   LARAVEL_TESTING_CONFIG
 } from "./constants.js";
 import {
@@ -73,7 +83,10 @@ import {
 const LARAVEL_BLUEPRINT_ROOT = fileURLToPath(new URL("./blueprints", import.meta.url));
 const LARAVEL_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
 const LARAVEL_PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const LARAVEL_AUTHENTICATION_OPTIONS = new Set(["laravel", "workos", "none"]);
 const LARAVEL_STARTER_KITS = new Set(["none", "react", "vue", "svelte", "livewire", "custom"]);
+const LARAVEL_LIVEWIRE_COMPONENTS = new Set(["single_file", "class"]);
+const LARAVEL_TEAMS_OPTIONS = new Set(["none", "teams"]);
 const LARAVEL_TESTING_FRAMEWORKS = new Set(["pest", "phpunit"]);
 const LARAVEL_BOOST_OPTIONS = new Set(["none", "boost"]);
 const blueprintFile = createAdapterBlueprintReader(LARAVEL_BLUEPRINT_ROOT);
@@ -213,6 +226,61 @@ const LARAVEL_CONFIG_FIELDS = deepFreeze([
     type: "string"
   },
   {
+    defaultValue: "laravel",
+    description: "Authentication scaffolding selected when Studio seeds an official Laravel starter kit.",
+    id: LARAVEL_AUTHENTICATION_CONFIG,
+    label: "Authentication",
+    options: [
+      {
+        label: "Laravel built-in",
+        value: "laravel"
+      },
+      {
+        label: "WorkOS AuthKit",
+        value: "workos"
+      },
+      {
+        label: "None",
+        value: "none"
+      }
+    ],
+    type: "select"
+  },
+  {
+    defaultValue: "none",
+    description: "Whether Studio asks the Laravel installer to add team support to official starter kits.",
+    id: LARAVEL_TEAMS_CONFIG,
+    label: "Teams",
+    options: [
+      {
+        label: "No teams",
+        value: "none"
+      },
+      {
+        label: "Teams",
+        value: "teams"
+      }
+    ],
+    type: "select"
+  },
+  {
+    defaultValue: "single_file",
+    description: "Livewire component style used when Studio seeds the official Livewire starter kit.",
+    id: LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
+    label: "Livewire components",
+    options: [
+      {
+        label: "Single-file",
+        value: "single_file"
+      },
+      {
+        label: "Class components",
+        value: "class"
+      }
+    ],
+    type: "select"
+  },
+  {
     defaultValue: "pest",
     description: "Testing framework selected when Studio seeds a Laravel app.",
     id: LARAVEL_TESTING_CONFIG,
@@ -252,8 +320,20 @@ function selectedPackageManager(config = {}) {
   return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, LARAVEL_PACKAGE_MANAGERS, "npm");
 }
 
+function selectedAuthentication(config = {}) {
+  return selectedConfigValue(config, LARAVEL_AUTHENTICATION_CONFIG, LARAVEL_AUTHENTICATION_OPTIONS, "laravel");
+}
+
 function selectedStarterKit(config = {}) {
   return selectedConfigValue(config, LARAVEL_STARTER_KIT_CONFIG, LARAVEL_STARTER_KITS, "none");
+}
+
+function selectedLivewireComponents(config = {}) {
+  return selectedConfigValue(config, LARAVEL_LIVEWIRE_COMPONENTS_CONFIG, LARAVEL_LIVEWIRE_COMPONENTS, "single_file");
+}
+
+function selectedTeams(config = {}) {
+  return selectedConfigValue(config, LARAVEL_TEAMS_CONFIG, LARAVEL_TEAMS_OPTIONS, "none");
 }
 
 function selectedTestingFramework(config = {}) {
@@ -274,6 +354,9 @@ async function laravelBlueprintSections(config = {}) {
   return [
     await blueprintFile("database-runtime", selectedLaravelDatabaseRuntime(config)),
     await blueprintFile("starter-kit", starterKit),
+    await blueprintFile("authentication", selectedAuthentication(config)),
+    await blueprintFile("teams", selectedTeams(config)),
+    await blueprintFile("livewire-components", selectedLivewireComponents(config)),
     await blueprintFile("testing", selectedTestingFramework(config)),
     await blueprintFile("boost", selectedBoostOption(config)),
     [
@@ -363,6 +446,7 @@ async function laravelPromptContext({
     adapter: "laravel",
     artisan_exists: String(markerExists(markers, "artisan")),
     automated_check_command: "php artisan test",
+    authentication: selectedAuthentication(config),
     boost: selectedBoostOption(config),
     composer_dependencies: composerDependencyNames(composerJson || {}).join(", "),
     composer_name: composerProjectName(composerJson || {}),
@@ -375,11 +459,14 @@ async function laravelPromptContext({
     package_name: composerProjectName(composerJson || {}) || normalizeText(packageJson?.name),
     project_knowledge_path: knowledgePath,
     project_knowledge_relative_path: LARAVEL_PROJECT_KNOWLEDGE_RELATIVE_PATH,
+    seed_authentication: selectedAuthentication(config),
     seed_boost: selectedBoostOption(config),
     seed_custom_starter: selectedCustomStarter(config),
     seed_database_runtime: databaseRuntime,
+    seed_livewire_components: selectedLivewireComponents(config),
     seed_package_manager: selectedPackageManager(config),
     seed_starter_kit: selectedStarterKit(config),
+    seed_teams: selectedTeams(config),
     seed_testing: selectedTestingFramework(config),
     target_root: normalizeText(targetRoot),
     test_script: composerScript(composerJson || {}, "test"),
@@ -468,13 +555,20 @@ async function laravelAutomatedChecksHook({ context = {}, worktreePath = "" } = 
     readPackageJson(worktreePath)
   ]);
   const packageManager = await detectPackageManager(worktreePath, packageJson || {});
+  const adapterVerifyCommand = composerScript(composerJson || {}, AI_STUDIO_VERIFY_SCRIPT_NAME)
+    ? composerRunCommand(AI_STUDIO_VERIFY_SCRIPT_NAME)
+    : packageManagerScriptCommand({
+      packageJson: packageJson || {},
+      packageManager,
+      scriptName: AI_STUDIO_VERIFY_SCRIPT_NAME
+    });
   const phpCommand = composerScript(composerJson || {}, "test")
     ? composerRunCommand("test")
     : phpArtisanCommand(["test"]);
   const frontendBuild = packageScript(packageJson || {}, "build")
     ? runScriptCommand(packageManager.name, "build")
     : "";
-  const command = [
+  const command = adapterVerifyCommand || [
     frontendBuild,
     phpCommand
   ].filter(Boolean).join(" && ");
@@ -487,6 +581,46 @@ async function laravelAutomatedChecksHook({ context = {}, worktreePath = "" } = 
     script: commandLineScript([
       "printf '[studio] Running Laravel checks.\\n'",
       `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
+      dockerToolchainScript(command, {
+        config: context.config || {},
+        targetRoot: worktreePath
+      })
+    ])
+  };
+}
+
+async function laravelCodeIndexHook({ context = {}, worktreePath = "" } = {}) {
+  const [composerJson, packageJson] = await Promise.all([
+    readComposerJson(worktreePath),
+    readPackageJson(worktreePath)
+  ]);
+  const packageManager = await detectPackageManager(worktreePath, packageJson || {});
+  const composerIndexCommand = composerScript(composerJson || {}, AI_STUDIO_CODE_INDEX_SCRIPT_NAME)
+    ? composerRunCommand(AI_STUDIO_CODE_INDEX_SCRIPT_NAME)
+    : "";
+  const packageScriptCommand = composerIndexCommand ? "" : packageManagerScriptCommand({
+    packageJson: packageJson || {},
+    packageManager,
+    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+  });
+  const command = composerIndexCommand || packageScriptCommand || phpCodeIndexCommand();
+  const commandPreview = composerIndexCommand ||
+    packageScriptCommand ||
+    `php # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`;
+  return {
+    commandPreview,
+    metadata: {
+      code_index_command_source: composerIndexCommand
+        ? "composer-script"
+        : packageScriptCommand
+          ? "package-script"
+          : "php-indexer",
+      code_index_package_manager: composerIndexCommand ? "composer" : packageManager.name,
+      code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
+    },
+    script: commandLineScript([
+      "printf '[studio] Updating Laravel/PHP code index.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(commandPreview)}`,
       dockerToolchainScript(command, {
         config: context.config || {},
         targetRoot: worktreePath
@@ -508,11 +642,14 @@ class LaravelTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       configFields: LARAVEL_CONFIG_FIELDS,
       currentAppInspector: inspectLaravelCurrentApp,
       defaultConfig: {
+        [LARAVEL_AUTHENTICATION_CONFIG]: "laravel",
         [LARAVEL_BOOST_CONFIG]: "none",
         [LARAVEL_CUSTOM_STARTER_CONFIG]: "",
         [LARAVEL_DATABASE_RUNTIME_CONFIG]: "sqlite",
+        [LARAVEL_LIVEWIRE_COMPONENTS_CONFIG]: "single_file",
         [LARAVEL_PACKAGE_MANAGER_CONFIG]: "npm",
         [LARAVEL_STARTER_KIT_CONFIG]: "none",
+        [LARAVEL_TEAMS_CONFIG]: "none",
         [LARAVEL_TESTING_CONFIG]: "pest"
       },
       id: "laravel",
@@ -530,7 +667,8 @@ class LaravelTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       targetScriptsInspector: inspectLaravelTargetScripts,
       workflowCommandHooks: {
         automatedChecks: laravelAutomatedChecksHook,
-        installDependencies: laravelInstallWorkflowHook
+        installDependencies: laravelInstallWorkflowHook,
+        updateCodeIndex: laravelCodeIndexHook
       }
     });
   }
