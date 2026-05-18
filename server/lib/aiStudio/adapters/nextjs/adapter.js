@@ -6,12 +6,14 @@ import {
   shellQuote
 } from "../../../shellCommands.js";
 import {
-  normalizeText
-} from "../../core.js";
-import {
   AiStudioDescribedWorkflowTargetAdapter,
   inspectDescribedProject
 } from "../../workflowAdapter.js";
+import {
+  configTextValue,
+  configValues,
+  selectedConfigValue
+} from "../../configValues.js";
 import { deepFreeze } from "../../deepFreeze.js";
 import {
   dependencyNames,
@@ -279,15 +281,6 @@ const NEXTJS_CONFIG_FIELDS = deepFreeze([
   }
 ]);
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
-function selectedConfigValue(config = {}, fieldId = "", allowedValues = new Set(), fallback = "") {
-  const value = normalizeText(configValues(config)[fieldId] || fallback);
-  return allowedValues.has(value) ? value : fallback;
-}
-
 function selectedDataLayer(config = {}) {
   return selectedConfigValue(config, NEXTJS_DATA_LAYER_CONFIG, NEXTJS_DATA_LAYERS, "prisma");
 }
@@ -313,7 +306,7 @@ function selectedSeedStyling(config = {}) {
 }
 
 function selectedSeedImportAlias(config = {}) {
-  return normalizeText(configValues(config)[NEXTJS_SEED_IMPORT_ALIAS_CONFIG] || "@/*") || "@/*";
+  return configTextValue(config, NEXTJS_SEED_IMPORT_ALIAS_CONFIG, "@/*") || "@/*";
 }
 
 async function blueprintFile(section = "", value = "") {

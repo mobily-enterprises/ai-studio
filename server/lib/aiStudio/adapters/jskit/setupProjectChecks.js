@@ -14,6 +14,9 @@ import {
   shellScript
 } from "../../../shellScript.js";
 import {
+  selectedConfigValue
+} from "../../configValues.js";
+import {
   createManagedDatabaseDockerArgs,
   createManagedDatabaseRepair,
   jskitDatabaseDockerArgs,
@@ -51,13 +54,8 @@ const DATABASE_ENV_KEYS = Object.freeze([
   "DB_PASSWORD"
 ]);
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
 function selectedJskitTenancyMode(config = {}) {
-  const mode = String(configValues(config)[JSKIT_TENANCY_MODE_CONFIG] || "none").trim();
-  return JSKIT_CREATE_APP_TENANCY_MODES.has(mode) ? mode : "none";
+  return selectedConfigValue(config, JSKIT_TENANCY_MODE_CONFIG, JSKIT_CREATE_APP_TENANCY_MODES, "none");
 }
 
 function repoNameFromTargetRoot(targetRoot) {

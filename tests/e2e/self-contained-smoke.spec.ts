@@ -1,4 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+const targetRoot = "/workspace/example-target-app";
+const savedProjectConfigValues = {
+  github_pr_merge_method: "merge",
+  jskit_database_runtime: "none",
+  jskit_tenancy_mode: "none"
+};
 
 test("home loads through a self-contained mocked Studio shell", async ({ page }) => {
   await mockReadyStudioShell(page);
@@ -9,36 +16,110 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await expect(page.getByRole("link", { name: "Setup", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Target Scripts", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "New Session" })).toBeVisible();
+  await expect(page).toHaveURL(/\/home$/u);
 });
 
 async function mockReadyStudioShell(page: Page) {
-  await page.route("**/api/ai-studio/project-type", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+  let projectConfigResolved = false;
+  let markProjectConfigResolved = () => undefined;
+  const projectConfigReady = new Promise<void>((resolve) => {
+    markProjectConfigResolved = () => {
+      if (projectConfigResolved) {
+        return;
+      }
+      projectConfigResolved = true;
+      resolve();
+    };
+  });
+  const apiPayloads = new Map<string, unknown>([
+    [
+      "/api/bootstrap",
+      {
+        app: {
+          features: {
+            assistantEnabled: false,
+            assistantRequiredPermission: "",
+            socialEnabled: false,
+            socialFederationEnabled: false
+          }
+        },
+        profile: null,
+        requestMeta: {
+          hasRequest: false
+        },
+        session: {
+          authenticated: false,
+          oauthDefaultProvider: null,
+          oauthProviders: []
+        },
+        surfaceAccess: {},
+        userSettings: null
+      }
+    ],
+    [
+      "/api/ai-studio/project-type",
+      {
         ok: true,
         projectType: {
-          id: "jskit",
-          ready: true
+          adapter: {
+            id: "jskit",
+            label: "JSKIT target adapter"
+          },
+          availableProjectTypes: [
+            {
+              enabled: true,
+              id: "jskit",
+              label: "JSKIT AI"
+            }
+          ],
+          errorCode: "",
+          message: "",
+          path: `${targetRoot}/.ai-studio/project_type`,
+          projectType: "jskit",
+          ready: true,
+          status: "ready"
         }
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/ai-studio/project-config", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
-        config: {},
-        ok: true,
-        ready: true
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/ai-studio/accounts", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+      }
+    ],
+    [
+      "/api/ai-studio/project-config",
+      {
+        config: {
+          adapter: {
+            id: "jskit",
+            label: "JSKIT target adapter"
+          },
+          configRoot: `${targetRoot}/.ai-studio/config`,
+          defaults: savedProjectConfigValues,
+          fields: [],
+          fieldValues: Object.fromEntries(
+            Object.entries(savedProjectConfigValues).map(([fieldId, value]) => [
+              fieldId,
+              {
+                defaultValue: value,
+                filePath: `${targetRoot}/.ai-studio/config/${fieldId}`,
+                invalid: null,
+                saved: true,
+                value
+              }
+            ])
+          ),
+          helperPath: `${targetRoot}/.ai-studio/runtime/ai-studio-config.sh`,
+          invalid: [],
+          message: "",
+          missing: [],
+          projectType: "jskit",
+          ready: true,
+          runtimeRoot: `${targetRoot}/.ai-studio/runtime`,
+          sections: [],
+          values: savedProjectConfigValues
+        },
+        ok: true
+      }
+    ],
+    [
+      "/api/ai-studio/accounts",
+      {
         accounts: [
           {
             connected: true,
@@ -55,47 +136,35 @@ async function mockReadyStudioShell(page: Page) {
         ],
         ok: true,
         ready: true
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/studio/studio-setup", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+      }
+    ],
+    [
+      "/api/studio/studio-setup",
+      {
         checks: [],
         ok: true,
         ready: true
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/studio/adapter-setup", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+      }
+    ],
+    [
+      "/api/studio/adapter-setup",
+      {
         checks: [],
         ok: true,
         ready: true
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/studio/project-setup", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+      }
+    ],
+    [
+      "/api/studio/project-setup",
+      {
         ok: true,
         ready: true,
         stages: []
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/studio/current-app", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+      }
+    ],
+    [
+      "/api/studio/current-app",
+      {
         adapter: {
           id: "jskit",
           label: "JSKIT"
@@ -107,15 +176,13 @@ async function mockReadyStudioShell(page: Page) {
           isRepo: true
         },
         ok: true,
-        rootPath: "/workspace/example-target-app"
-      }),
-      contentType: "application/json"
-    });
-  });
-
-  await page.route("**/api/ai-studio/sessions", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify({
+        ready: true,
+        rootPath: targetRoot
+      }
+    ],
+    [
+      "/api/ai-studio/sessions",
+      {
         limits: {
           maxOpenSessions: 3,
           openSessionCount: 0
@@ -123,8 +190,34 @@ async function mockReadyStudioShell(page: Page) {
         ok: true,
         sessions: [],
         stepDefinitions: []
-      }),
-      contentType: "application/json"
-    });
+      }
+    ]
+  ]);
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const method = request.method().toUpperCase();
+
+    if (method !== "GET" || !apiPayloads.has(url.pathname)) {
+      throw new Error(`Self-contained smoke spec does not mock ${method} ${url.pathname}.`);
+    }
+
+    if (url.pathname === "/api/studio/current-app") {
+      await projectConfigReady;
+    }
+
+    await fulfillJson(route, apiPayloads.get(url.pathname));
+
+    if (url.pathname === "/api/ai-studio/project-config") {
+      markProjectConfigResolved();
+    }
+  });
+}
+
+async function fulfillJson(route: Route, payload: unknown) {
+  await route.fulfill({
+    body: JSON.stringify(payload),
+    contentType: "application/json"
   });
 }

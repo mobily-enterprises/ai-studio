@@ -22,6 +22,10 @@ import {
   missingAdapterToolchainCheck
 } from "../../adapterToolchains.js";
 import {
+  configTextValue,
+  selectedConfigValue
+} from "../../configValues.js";
+import {
   createRuntimeContainerDoctorEntries
 } from "../../runtimeContainers.js";
 import {
@@ -68,15 +72,6 @@ const LARAVEL_MARKERS = Object.freeze([
   "routes/web.php"
 ]);
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
-function selectedConfigValue(config = {}, fieldId = "", allowedValues = new Set(), fallback = "") {
-  const value = String(configValues(config)[fieldId] || fallback).trim();
-  return allowedValues.has(value) ? value : fallback;
-}
-
 function selectedPackageManager(config = {}) {
   return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, PACKAGE_MANAGERS, "npm");
 }
@@ -94,7 +89,7 @@ function selectedBoostOption(config = {}) {
 }
 
 function selectedCustomStarter(config = {}) {
-  return String(configValues(config)[LARAVEL_CUSTOM_STARTER_CONFIG] || "").trim();
+  return configTextValue(config, LARAVEL_CUSTOM_STARTER_CONFIG);
 }
 
 function buildLaravelToolchainRepair() {

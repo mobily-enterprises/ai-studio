@@ -102,7 +102,9 @@ function useAccountAuthSessions(
   }
 
   async function pollAuthSessions() {
-    const sessions = Object.values(activeSessions).filter((session) => session?.id);
+    const sessions = Object.values(activeSessions).filter((session) => {
+      return session?.id && session.status === "authenticating";
+    });
     if (!sessions.length) {
       stopPolling();
       return;
@@ -116,7 +118,6 @@ function useAccountAuthSessions(
         await refreshStatus();
       } else if (nextSession.status === "failed") {
         closePreparedWindow(nextSession.account?.id);
-        forgetSession(nextSession);
         await refreshStatus();
       }
     }

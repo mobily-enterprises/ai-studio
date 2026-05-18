@@ -10,6 +10,10 @@ import {
 import {
   normalizeText
 } from "../../core.js";
+import {
+  configValues,
+  selectedConfigValue
+} from "../../configValues.js";
 import { deepFreeze } from "../../deepFreeze.js";
 import {
   AiStudioDescribedWorkflowTargetAdapter,
@@ -241,15 +245,6 @@ const LARAVEL_CONFIG_FIELDS = deepFreeze([
     type: "select"
   }
 ]);
-
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
-function selectedConfigValue(config = {}, fieldId = "", allowedValues = new Set(), fallback = "") {
-  const value = normalizeText(configValues(config)[fieldId] || fallback);
-  return allowedValues.has(value) ? value : fallback;
-}
 
 function selectedPackageManager(config = {}) {
   return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, LARAVEL_PACKAGE_MANAGERS, "npm");

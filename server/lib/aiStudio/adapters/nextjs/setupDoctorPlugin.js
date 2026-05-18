@@ -19,6 +19,10 @@ import {
   createRuntimeContainerDoctorEntries
 } from "../../runtimeContainers.js";
 import {
+  configTextValue,
+  selectedConfigValue
+} from "../../configValues.js";
+import {
   detectPackageManager,
   hasDependency
 } from "../../nodePackage.js";
@@ -56,22 +60,12 @@ const SEED_LINTERS = new Set(["eslint", "biome", "none"]);
 const SEED_SOURCE_LAYOUTS = new Set(["src", "root"]);
 const SEED_STYLING = new Set(["tailwind", "none"]);
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
 function selectedPackageManager(config = {}) {
-  const packageManager = String(configValues(config)[NEXTJS_PACKAGE_MANAGER_CONFIG] || "npm").trim();
-  return PACKAGE_MANAGERS.has(packageManager) ? packageManager : "npm";
-}
-
-function selectedSeedValue(config = {}, fieldId = "", allowedValues = new Set(), fallback = "") {
-  const value = String(configValues(config)[fieldId] || fallback).trim();
-  return allowedValues.has(value) ? value : fallback;
+  return selectedConfigValue(config, NEXTJS_PACKAGE_MANAGER_CONFIG, PACKAGE_MANAGERS, "npm");
 }
 
 function selectedSeedImportAlias(config = {}) {
-  return String(configValues(config)[NEXTJS_SEED_IMPORT_ALIAS_CONFIG] || "@/*").trim() || "@/*";
+  return configTextValue(config, NEXTJS_SEED_IMPORT_ALIAS_CONFIG, "@/*") || "@/*";
 }
 
 function createNextAppUseFlag(packageManager = "npm") {
@@ -84,11 +78,11 @@ function createNextAppUseFlag(packageManager = "npm") {
 }
 
 function createNextAppSeedFlags(config = {}) {
-  const language = selectedSeedValue(config, NEXTJS_SEED_LANGUAGE_CONFIG, SEED_LANGUAGES, "typescript");
-  const styling = selectedSeedValue(config, NEXTJS_SEED_STYLING_CONFIG, SEED_STYLING, "tailwind");
-  const linter = selectedSeedValue(config, NEXTJS_SEED_LINTER_CONFIG, SEED_LINTERS, "eslint");
-  const sourceLayout = selectedSeedValue(config, NEXTJS_SEED_SOURCE_LAYOUT_CONFIG, SEED_SOURCE_LAYOUTS, "src");
-  const bundler = selectedSeedValue(config, NEXTJS_SEED_BUNDLER_CONFIG, SEED_BUNDLERS, "turbopack");
+  const language = selectedConfigValue(config, NEXTJS_SEED_LANGUAGE_CONFIG, SEED_LANGUAGES, "typescript");
+  const styling = selectedConfigValue(config, NEXTJS_SEED_STYLING_CONFIG, SEED_STYLING, "tailwind");
+  const linter = selectedConfigValue(config, NEXTJS_SEED_LINTER_CONFIG, SEED_LINTERS, "eslint");
+  const sourceLayout = selectedConfigValue(config, NEXTJS_SEED_SOURCE_LAYOUT_CONFIG, SEED_SOURCE_LAYOUTS, "src");
+  const bundler = selectedConfigValue(config, NEXTJS_SEED_BUNDLER_CONFIG, SEED_BUNDLERS, "turbopack");
   const linterFlag = {
     biome: "--biome",
     eslint: "--eslint",

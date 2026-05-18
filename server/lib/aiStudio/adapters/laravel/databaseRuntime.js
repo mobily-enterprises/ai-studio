@@ -12,6 +12,9 @@ import {
   shellQuote
 } from "../../../shellCommands.js";
 import {
+  selectedConfigValue
+} from "../../configValues.js";
+import {
   LARAVEL_DATABASE_RUNTIME_CONFIG
 } from "./constants.js";
 
@@ -24,13 +27,8 @@ const LARAVEL_MYSQL_ROOT_PASSWORD = "laravel_root_password";
 const LARAVEL_MARIADB_HOST = "laravel-mariadb";
 const LARAVEL_MARIADB_ROOT_PASSWORD = "laravel_root_password";
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
 function selectedLaravelDatabaseRuntime(config = {}) {
-  const runtime = String(configValues(config)[LARAVEL_DATABASE_RUNTIME_CONFIG] || "sqlite").trim();
-  return LARAVEL_DATABASE_RUNTIMES.has(runtime) ? runtime : "sqlite";
+  return selectedConfigValue(config, LARAVEL_DATABASE_RUNTIME_CONFIG, LARAVEL_DATABASE_RUNTIMES, "sqlite");
 }
 
 function laravelDatabaseNameFromTargetRoot(targetRoot = "") {

@@ -12,6 +12,9 @@ import {
   shellQuote
 } from "../../../shellCommands.js";
 import {
+  selectedConfigValue
+} from "../../configValues.js";
+import {
   NEXTJS_DATABASE_RUNTIME_CONFIG
 } from "./constants.js";
 
@@ -24,13 +27,8 @@ const NEXTJS_MYSQL_HOST = "nextjs-mysql";
 const NEXTJS_MYSQL_HOST_PORT = "13307";
 const NEXTJS_MYSQL_ROOT_PASSWORD = "nextjs_root_password";
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
 function selectedNextjsDatabaseRuntime(config = {}) {
-  const runtime = String(configValues(config)[NEXTJS_DATABASE_RUNTIME_CONFIG] || "postgres").trim();
-  return NEXTJS_DATABASE_RUNTIMES.has(runtime) ? runtime : "postgres";
+  return selectedConfigValue(config, NEXTJS_DATABASE_RUNTIME_CONFIG, NEXTJS_DATABASE_RUNTIMES, "postgres");
 }
 
 function databaseNameFromTargetRoot(targetRoot = "") {

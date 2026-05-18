@@ -2,6 +2,12 @@ import {
   createAiStudioWebLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
+  selectedConfigValue
+} from "../../configValues.js";
+import {
+  VINEXT_REVIEW_MODE_CONFIG
+} from "./constants.js";
+import {
   detectPackageManager,
   packageBinCommand,
   readPackageJson
@@ -16,6 +22,20 @@ function vinextLaunchTarget(id, label) {
     id,
     label
   };
+}
+
+function reviewMode(config = {}) {
+  return selectedConfigValue(config, VINEXT_REVIEW_MODE_CONFIG, new Set(["development", "production"]), "production");
+}
+
+function launchTargetIdForMode(mode = "production") {
+  return mode === "development" ? "dev" : "built";
+}
+
+function reviewLaunchTarget(mode = "production") {
+  return mode === "development"
+    ? vinextLaunchTarget("dev", "Run dev version")
+    : vinextLaunchTarget("built", "Build and run built version");
 }
 
 async function listVinextLaunchTargets({
@@ -69,6 +89,27 @@ async function createVinextLaunchDescriptor({
   };
 }
 
+async function createVinextReviewDescriptor({
+  config = {},
+  port,
+  worktreePath = ""
+} = {}) {
+  const descriptor = await createVinextLaunchDescriptor({
+    mode: reviewMode(config),
+    port,
+    worktreePath
+  });
+  return {
+    ...descriptor,
+    commands: descriptor.commands.map((entry) => entry.command === descriptor.metadata.serverCommand
+      ? {
+          ...entry,
+          label: "Starting Vinext review server."
+        }
+      : entry)
+  };
+}
+
 function createVinextLaunchTargetTerminalSpec({
   context = {},
   launchTargetId = "",
@@ -94,8 +135,41 @@ function createVinextLaunchTargetTerminalSpec({
   });
 }
 
+async function createVinextAppReviewTerminalSpec({
+  context = {},
+  session = {},
+  targetRoot = ""
+} = {}) {
+  const config = context.config || session.config || {};
+  const mode = reviewMode(config);
+  const spec = await createAiStudioWebLaunchTargetTerminalSpec({
+    adapterId: "vinext",
+    launchTarget: reviewLaunchTarget(mode),
+    resolveLaunch: ({ port, worktreePath }) => createVinextReviewDescriptor({
+      config,
+      port,
+      worktreePath
+    }),
+    session,
+    targetRoot
+  });
+  if (!spec.ok) {
+    return spec;
+  }
+  return {
+    ...spec,
+    metadata: {
+      ...spec.metadata,
+      appUrl: spec.metadata.targetUrl,
+      launchTargetId: spec.metadata.launchTargetId || launchTargetIdForMode(mode)
+    }
+  };
+}
+
 export {
+  createVinextAppReviewTerminalSpec,
   createVinextLaunchTargetTerminalSpec,
   createVinextLaunchDescriptor,
+  createVinextReviewDescriptor,
   listVinextLaunchTargets
 };

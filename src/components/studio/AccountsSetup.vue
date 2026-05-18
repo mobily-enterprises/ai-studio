@@ -19,7 +19,7 @@
           variant="tonal"
           :loading="accounts.isLoading"
           :prepend-icon="mdiRefresh"
-          @click="refreshStatus"
+          @click="authSessions.refreshStatus"
         >
           Refresh
         </v-btn>

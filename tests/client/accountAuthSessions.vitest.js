@@ -83,6 +83,55 @@ describe("account auth sessions", () => {
     expect(authSessions.authBusy).toBe(false);
   });
 
+  it("keeps failed auth sessions visible and stops polling them", async () => {
+    const accounts = fakeAccounts({
+      readAuthSession: async () => ({
+        account: {
+          id: "github",
+          label: "GitHub"
+        },
+        id: "auth-1",
+        output: "GitHub login failed because the token expired.",
+        status: "failed",
+        terminalStatus: "exited"
+      }),
+      startAuth: async () => ({
+        account: {
+          id: "github",
+          label: "GitHub"
+        },
+        id: "auth-1",
+        status: "authenticating"
+      })
+    });
+    const scheduler = fakeScheduler();
+    const authSessions = useAccountAuthSessions(accounts, {
+      accountRows: ref([
+        {
+          connected: false,
+          id: "github"
+        }
+      ]),
+      browserWindow: fakeBrowserWindow(),
+      clearIntervalFn: scheduler.clearInterval,
+      setIntervalFn: scheduler.setInterval
+    });
+
+    await authSessions.startBrowserAuth("github");
+    await authSessions.pollAuthSessions();
+    await authSessions.pollAuthSessions();
+
+    expect(accounts.readAuthSession).toHaveBeenCalledTimes(1);
+    expect(accounts.refresh).toHaveBeenCalledTimes(1);
+    expect(authSessions.activeSessionFor("github")).toMatchObject({
+      id: "auth-1",
+      output: "GitHub login failed because the token expired.",
+      status: "failed"
+    });
+    expect(authSessions.authBusy).toBe(false);
+    expect(scheduler.clearInterval).toHaveBeenCalledWith(1001);
+  });
+
   it("does not start login for an already connected account", async () => {
     const accounts = fakeAccounts();
     const authSessions = useAccountAuthSessions(accounts, {
