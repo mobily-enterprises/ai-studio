@@ -3,10 +3,9 @@ import { useAiStudioCodexCommands } from "@/composables/useAiStudioCodexCommands
 import {
   aiStudioPromptHandoffFromSession
 } from "@/lib/aiStudioSessionPanelModel.js";
-
-function booleanValue(value) {
-  return typeof value === "function" ? Boolean(value()) : Boolean(unref(value));
-}
+import {
+  readRefOrGetterBoolean
+} from "@/lib/vueRefOrGetterValue.js";
 
 function useAiStudioSessionCodexHandoff({
   refreshSessionData,
@@ -34,7 +33,7 @@ function useAiStudioSessionCodexHandoff({
   }
 
   async function refreshPromptedArtifactReadiness() {
-    if (!booleanValue(waitingForPromptedArtifact) || readinessRefreshInFlight.value) {
+    if (!readRefOrGetterBoolean(waitingForPromptedArtifact) || readinessRefreshInFlight.value) {
       return;
     }
 
@@ -81,7 +80,7 @@ function useAiStudioSessionCodexHandoff({
 
     const wasBusy = busy.value;
     const isBusy = event.busy === true;
-    if (!wasBusy || isBusy || !booleanValue(waitingForPromptedArtifact)) {
+    if (!wasBusy || isBusy || !readRefOrGetterBoolean(waitingForPromptedArtifact)) {
       busy.value = isBusy;
       return;
     }

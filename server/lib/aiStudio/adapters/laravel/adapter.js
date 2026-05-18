@@ -3,16 +3,11 @@ import { fileURLToPath } from "node:url";
 
 import {
   dockerCommand,
-  hostUserDockerArgs,
-  shellQuote
+  hostUserDockerArgs
 } from "../../../shellCommands.js";
 import {
   normalizeText
 } from "../../core.js";
-import {
-  configValues,
-  selectedConfigValue
-} from "../../configValues.js";
 import {
   createAdapterBlueprintReader
 } from "../../adapterBlueprints.js";
@@ -22,8 +17,8 @@ import {
   inspectDescribedProject
 } from "../../workflowAdapter.js";
 import {
-  commandLineScript,
-  nodePackageManagerInspectionExtra
+  nodePackageManagerInspectionExtra,
+  studioCommandScript
 } from "../../nodeWebProject.js";
 import {
   AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
@@ -53,17 +48,20 @@ import {
   readComposerJson
 } from "./composerPackage.js";
 import {
-  LARAVEL_AUTHENTICATION_CONFIG,
-  LARAVEL_BOOST_CONFIG,
-  LARAVEL_CUSTOM_STARTER_CONFIG,
-  LARAVEL_DATABASE_RUNTIME_CONFIG,
-  LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
-  LARAVEL_PACKAGE_MANAGER_CONFIG,
-  LARAVEL_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  LARAVEL_STARTER_KIT_CONFIG,
-  LARAVEL_TEAMS_CONFIG,
-  LARAVEL_TESTING_CONFIG
+  LARAVEL_PROJECT_KNOWLEDGE_RELATIVE_PATH
 } from "./constants.js";
+import {
+  LARAVEL_CONFIG_FIELDS,
+  LARAVEL_DEFAULT_CONFIG,
+  selectedLaravelAuthentication as selectedAuthentication,
+  selectedLaravelBoostOption as selectedBoostOption,
+  selectedLaravelCustomStarter as selectedCustomStarter,
+  selectedLaravelLivewireComponents as selectedLivewireComponents,
+  selectedLaravelPackageManager as selectedPackageManager,
+  selectedLaravelStarterKit as selectedStarterKit,
+  selectedLaravelTeams as selectedTeams,
+  selectedLaravelTestingFramework as selectedTestingFramework
+} from "./config.js";
 import {
   createLaravelTargetScriptTerminalSpec,
   inspectLaravelCurrentApp,
@@ -82,13 +80,6 @@ import {
 
 const LARAVEL_BLUEPRINT_ROOT = fileURLToPath(new URL("./blueprints", import.meta.url));
 const LARAVEL_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
-const LARAVEL_PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const LARAVEL_AUTHENTICATION_OPTIONS = new Set(["laravel", "workos", "none"]);
-const LARAVEL_STARTER_KITS = new Set(["none", "react", "vue", "svelte", "livewire", "custom"]);
-const LARAVEL_LIVEWIRE_COMPONENTS = new Set(["single_file", "class"]);
-const LARAVEL_TEAMS_OPTIONS = new Set(["none", "teams"]);
-const LARAVEL_TESTING_FRAMEWORKS = new Set(["pest", "phpunit"]);
-const LARAVEL_BOOST_OPTIONS = new Set(["none", "boost"]);
 const blueprintFile = createAdapterBlueprintReader(LARAVEL_BLUEPRINT_ROOT);
 
 const LARAVEL_MARKERS = deepFreeze([
@@ -133,220 +124,6 @@ const LARAVEL_MARKERS = deepFreeze([
     relativePath: "package.json"
   }
 ]);
-
-const LARAVEL_CONFIG_FIELDS = deepFreeze([
-  {
-    defaultValue: "npm",
-    description: "Node package manager used when Studio seeds Laravel frontend assets.",
-    id: LARAVEL_PACKAGE_MANAGER_CONFIG,
-    label: "Frontend package manager",
-    options: [
-      {
-        label: "npm",
-        value: "npm"
-      },
-      {
-        label: "pnpm",
-        value: "pnpm"
-      },
-      {
-        label: "Yarn",
-        value: "yarn"
-      },
-      {
-        label: "Bun",
-        value: "bun"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "sqlite",
-    description: "Database runtime used by seeded Laravel .env values and setup checks.",
-    id: LARAVEL_DATABASE_RUNTIME_CONFIG,
-    label: "Database runtime",
-    options: [
-      {
-        label: "SQLite",
-        value: "sqlite"
-      },
-      {
-        label: "PostgreSQL",
-        value: "postgres"
-      },
-      {
-        label: "MySQL",
-        value: "mysql"
-      },
-      {
-        label: "MariaDB",
-        value: "mariadb"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "none",
-    description: "Starter kit passed to the Laravel installer when Studio seeds a new app.",
-    id: LARAVEL_STARTER_KIT_CONFIG,
-    label: "Starter kit",
-    options: [
-      {
-        label: "None",
-        value: "none"
-      },
-      {
-        label: "React",
-        value: "react"
-      },
-      {
-        label: "Vue",
-        value: "vue"
-      },
-      {
-        label: "Svelte",
-        value: "svelte"
-      },
-      {
-        label: "Livewire",
-        value: "livewire"
-      },
-      {
-        label: "Custom package",
-        value: "custom"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "",
-    description: "Packagist package or repository passed to laravel new --using when the custom starter kit is selected.",
-    id: LARAVEL_CUSTOM_STARTER_CONFIG,
-    label: "Custom starter",
-    type: "string"
-  },
-  {
-    defaultValue: "laravel",
-    description: "Authentication scaffolding selected when Studio seeds an official Laravel starter kit.",
-    id: LARAVEL_AUTHENTICATION_CONFIG,
-    label: "Authentication",
-    options: [
-      {
-        label: "Laravel built-in",
-        value: "laravel"
-      },
-      {
-        label: "WorkOS AuthKit",
-        value: "workos"
-      },
-      {
-        label: "None",
-        value: "none"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "none",
-    description: "Whether Studio asks the Laravel installer to add team support to official starter kits.",
-    id: LARAVEL_TEAMS_CONFIG,
-    label: "Teams",
-    options: [
-      {
-        label: "No teams",
-        value: "none"
-      },
-      {
-        label: "Teams",
-        value: "teams"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "single_file",
-    description: "Livewire component style used when Studio seeds the official Livewire starter kit.",
-    id: LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
-    label: "Livewire components",
-    options: [
-      {
-        label: "Single-file",
-        value: "single_file"
-      },
-      {
-        label: "Class components",
-        value: "class"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "pest",
-    description: "Testing framework selected when Studio seeds a Laravel app.",
-    id: LARAVEL_TESTING_CONFIG,
-    label: "Testing",
-    options: [
-      {
-        label: "Pest",
-        value: "pest"
-      },
-      {
-        label: "PHPUnit",
-        value: "phpunit"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "none",
-    description: "Whether Studio asks the Laravel installer to add Laravel Boost during seeding.",
-    id: LARAVEL_BOOST_CONFIG,
-    label: "Laravel Boost",
-    options: [
-      {
-        label: "None",
-        value: "none"
-      },
-      {
-        label: "Install Boost",
-        value: "boost"
-      }
-    ],
-    type: "select"
-  }
-]);
-
-function selectedPackageManager(config = {}) {
-  return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, LARAVEL_PACKAGE_MANAGERS, "npm");
-}
-
-function selectedAuthentication(config = {}) {
-  return selectedConfigValue(config, LARAVEL_AUTHENTICATION_CONFIG, LARAVEL_AUTHENTICATION_OPTIONS, "laravel");
-}
-
-function selectedStarterKit(config = {}) {
-  return selectedConfigValue(config, LARAVEL_STARTER_KIT_CONFIG, LARAVEL_STARTER_KITS, "none");
-}
-
-function selectedLivewireComponents(config = {}) {
-  return selectedConfigValue(config, LARAVEL_LIVEWIRE_COMPONENTS_CONFIG, LARAVEL_LIVEWIRE_COMPONENTS, "single_file");
-}
-
-function selectedTeams(config = {}) {
-  return selectedConfigValue(config, LARAVEL_TEAMS_CONFIG, LARAVEL_TEAMS_OPTIONS, "none");
-}
-
-function selectedTestingFramework(config = {}) {
-  return selectedConfigValue(config, LARAVEL_TESTING_CONFIG, LARAVEL_TESTING_FRAMEWORKS, "pest");
-}
-
-function selectedBoostOption(config = {}) {
-  return selectedConfigValue(config, LARAVEL_BOOST_CONFIG, LARAVEL_BOOST_OPTIONS, "none");
-}
-
-function selectedCustomStarter(config = {}) {
-  return normalizeText(configValues(config)[LARAVEL_CUSTOM_STARTER_CONFIG]);
-}
 
 async function laravelBlueprintSections(config = {}) {
   const starterKit = selectedStarterKit(config);
@@ -578,14 +355,14 @@ async function laravelAutomatedChecksHook({ context = {}, worktreePath = "" } = 
     metadata: {
       automated_checks_package_manager: packageManager.name
     },
-    script: commandLineScript([
-      "printf '[studio] Running Laravel checks.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
-      dockerToolchainScript(command, {
+    script: studioCommandScript({
+      command: dockerToolchainScript(command, {
         config: context.config || {},
         targetRoot: worktreePath
-      })
-    ])
+      }),
+      commandPreview: command,
+      intro: "Running Laravel checks."
+    })
   };
 }
 
@@ -618,14 +395,14 @@ async function laravelCodeIndexHook({ context = {}, worktreePath = "" } = {}) {
       code_index_package_manager: composerIndexCommand ? "composer" : packageManager.name,
       code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
     },
-    script: commandLineScript([
-      "printf '[studio] Updating Laravel/PHP code index.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(commandPreview)}`,
-      dockerToolchainScript(command, {
+    script: studioCommandScript({
+      command: dockerToolchainScript(command, {
         config: context.config || {},
         targetRoot: worktreePath
-      })
-    ])
+      }),
+      commandPreview,
+      intro: "Updating Laravel/PHP code index."
+    })
   };
 }
 
@@ -641,17 +418,7 @@ class LaravelTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       commands,
       configFields: LARAVEL_CONFIG_FIELDS,
       currentAppInspector: inspectLaravelCurrentApp,
-      defaultConfig: {
-        [LARAVEL_AUTHENTICATION_CONFIG]: "laravel",
-        [LARAVEL_BOOST_CONFIG]: "none",
-        [LARAVEL_CUSTOM_STARTER_CONFIG]: "",
-        [LARAVEL_DATABASE_RUNTIME_CONFIG]: "sqlite",
-        [LARAVEL_LIVEWIRE_COMPONENTS_CONFIG]: "single_file",
-        [LARAVEL_PACKAGE_MANAGER_CONFIG]: "npm",
-        [LARAVEL_STARTER_KIT_CONFIG]: "none",
-        [LARAVEL_TEAMS_CONFIG]: "none",
-        [LARAVEL_TESTING_CONFIG]: "pest"
-      },
+      defaultConfig: () => ({ ...LARAVEL_DEFAULT_CONFIG }),
       id: "laravel",
       label: "Laravel target adapter",
       projectFacts: laravelFacts,

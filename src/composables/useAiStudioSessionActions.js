@@ -26,13 +26,12 @@ import {
   aiStudioSessionPath,
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
+import {
+  readRefOrGetterBoolean
+} from "@/lib/vueRefOrGetterValue.js";
 
 const CREATE_PULL_REQUEST_FILE_ACTION_ID = "create_pr_file";
 const PULL_REQUEST_FILE_STEP_ID = "pr_file_created";
-
-function booleanValue(value) {
-  return typeof value === "function" ? Boolean(value()) : Boolean(unref(value));
-}
 
 function displayableActionResultMessage(result = {}) {
   const message = String(result?.message || "");
@@ -218,7 +217,7 @@ function useAiStudioSessionActions({
   }
 
   async function runAction(action = {}) {
-    if (!unref(selectedSessionId) || !action.id || booleanValue(commandBusy) || action.enabled !== true) {
+    if (!unref(selectedSessionId) || !action.id || readRefOrGetterBoolean(commandBusy) || action.enabled !== true) {
       return;
     }
     clearCopyStatus();
@@ -261,7 +260,7 @@ function useAiStudioSessionActions({
   }
 
   async function goNext() {
-    if (!unref(selectedSessionId) || booleanValue(commandBusy) || currentNext.value?.enabled !== true) {
+    if (!unref(selectedSessionId) || readRefOrGetterBoolean(commandBusy) || currentNext.value?.enabled !== true) {
       return;
     }
     await advanceCommand.run({
@@ -272,7 +271,7 @@ function useAiStudioSessionActions({
 
   async function rewindToStep(step = {}) {
     const stepId = String(step.rewindStepId || step.id || "");
-    if (!unref(selectedSessionId) || booleanValue(commandBusy) || step.canRewind !== true || !stepId) {
+    if (!unref(selectedSessionId) || readRefOrGetterBoolean(commandBusy) || step.canRewind !== true || !stepId) {
       return;
     }
     await rewindCommand.run({

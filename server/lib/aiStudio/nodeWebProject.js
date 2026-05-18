@@ -4,6 +4,9 @@ import {
   readPackageJson
 } from "./nodePackage.js";
 import {
+  shellQuote
+} from "../shellCommands.js";
+import {
   adapterProjectFacts
 } from "./adapter.js";
 import {
@@ -193,6 +196,19 @@ function commandLineScript(lines = []) {
   ].join("\n");
 }
 
+function studioCommandScript({
+  command = "",
+  commandPreview = "",
+  intro = ""
+} = {}) {
+  const preview = normalizeText(commandPreview || command);
+  return commandLineScript([
+    intro ? `printf '[studio] %s\\n' ${shellQuote(intro)}` : "",
+    preview ? `printf '[studio] $ %s\\n\\n' ${shellQuote(preview)}` : "",
+    command
+  ].filter(Boolean));
+}
+
 async function nodeInstallWorkflowHook({ worktreePath = "" } = {}) {
   const packageJson = await readPackageJson(worktreePath);
   const packageManager = await detectPackageManager(worktreePath, packageJson || {});
@@ -215,5 +231,6 @@ export {
   nodePackageManagerInspectionExtra,
   projectMarkerExists,
   projectRouterIsPresent,
-  projectRouterMode
+  projectRouterMode,
+  studioCommandScript
 };

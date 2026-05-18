@@ -6,10 +6,12 @@ import {
 } from "../shellCommands.js";
 import {
   isPlainObject,
-  normalizeText
 } from "./core.js";
+import {
+  DEFAULT_NODE_PACKAGE_MANAGER,
+  normalizeNodePackageManagerSpec
+} from "./nodePackageManagers.js";
 
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const LOCKFILE_PACKAGE_MANAGERS = Object.freeze([
   ["pnpm-lock.yaml", "pnpm"],
   ["yarn.lock", "yarn"],
@@ -20,9 +22,7 @@ const LOCKFILE_PACKAGE_MANAGERS = Object.freeze([
 ]);
 
 function normalizePackageManagerName(value = "") {
-  const normalized = normalizeText(value).toLowerCase();
-  const candidate = normalized.split("@")[0].split(" ")[0].split("/")[0];
-  return PACKAGE_MANAGERS.has(candidate) ? candidate : "";
+  return normalizeNodePackageManagerSpec(value);
 }
 
 async function fileExists(filePath = "") {
@@ -106,12 +106,12 @@ async function detectPackageManager(root = "", packageJson = null) {
   }
   return {
     lockfile: "",
-    name: "npm",
+    name: DEFAULT_NODE_PACKAGE_MANAGER,
     source: "default"
   };
 }
 
-function installCommand(packageManager = "npm") {
+function installCommand(packageManager = DEFAULT_NODE_PACKAGE_MANAGER) {
   if (packageManager === "pnpm") {
     return "corepack pnpm install";
   }
@@ -124,7 +124,7 @@ function installCommand(packageManager = "npm") {
   return "npm install --foreground-scripts --no-audit --no-fund";
 }
 
-function runScriptCommand(packageManager = "npm", scriptName = "", extraArgs = []) {
+function runScriptCommand(packageManager = DEFAULT_NODE_PACKAGE_MANAGER, scriptName = "", extraArgs = []) {
   const quotedScript = shellQuote(scriptName);
   const quotedExtra = extraArgs.map(shellQuote).join(" ");
   if (packageManager === "pnpm") {
@@ -139,7 +139,7 @@ function runScriptCommand(packageManager = "npm", scriptName = "", extraArgs = [
   return ["npm run", quotedScript, quotedExtra ? `-- ${quotedExtra}` : ""].filter(Boolean).join(" ");
 }
 
-function packageBinCommand(packageManager = "npm", bin = "", args = []) {
+function packageBinCommand(packageManager = DEFAULT_NODE_PACKAGE_MANAGER, bin = "", args = []) {
   const quotedBin = shellQuote(bin);
   const quotedArgs = args.map(shellQuote).join(" ");
   if (packageManager === "pnpm") {
@@ -154,7 +154,7 @@ function packageBinCommand(packageManager = "npm", bin = "", args = []) {
   return ["npx --no-install", quotedBin, quotedArgs].filter(Boolean).join(" ");
 }
 
-function packageManagerAvailabilityScript(packageManager = "npm") {
+function packageManagerAvailabilityScript(packageManager = DEFAULT_NODE_PACKAGE_MANAGER) {
   if (packageManager === "pnpm") {
     return "command -v corepack >/dev/null 2>&1 && corepack pnpm --version";
   }

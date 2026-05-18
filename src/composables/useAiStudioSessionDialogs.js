@@ -19,10 +19,9 @@ import {
   LOCAL_STUDIO_COMMAND_OPTIONS,
   aiStudioSessionPath
 } from "@/lib/aiStudioSessionRequestConfig.js";
-
-function booleanValue(value) {
-  return typeof value === "function" ? Boolean(value()) : Boolean(unref(value));
-}
+import {
+  readRefOrGetterBoolean
+} from "@/lib/vueRefOrGetterValue.js";
 
 function useAiStudioSessionDialogs({
   activeActionId,
@@ -110,7 +109,7 @@ function useAiStudioSessionDialogs({
   const inputDialogFields = computed(() => normalizeActionInputFields(inputDialogAction.value?.inputFields));
   const inputDialogTitle = computed(() => String(inputDialogAction.value?.label || "Provide details"));
   const inputDialogSaveDisabled = computed(() => {
-    if (inputDialogSubmitting.value || booleanValue(commandBusy) || inputDialogFields.value.length < 1) {
+    if (inputDialogSubmitting.value || readRefOrGetterBoolean(commandBusy) || inputDialogFields.value.length < 1) {
       return true;
     }
     return requiredActionInputMissing(inputDialogFields.value, inputDialogValues.value);
@@ -129,7 +128,7 @@ function useAiStudioSessionDialogs({
   }
 
   function requestAbandonSelectedSession() {
-    if (!unref(selectedSessionId) || booleanValue(commandBusy) || unref(isSelectedSessionClosed)) {
+    if (!unref(selectedSessionId) || readRefOrGetterBoolean(commandBusy) || unref(isSelectedSessionClosed)) {
       return;
     }
     abandonDialogSessionId.value = unref(selectedSessionId);
@@ -145,7 +144,7 @@ function useAiStudioSessionDialogs({
   }
 
   async function confirmAbandonSession() {
-    if (!abandonDialogSessionId.value || booleanValue(commandBusy) || abandonCommand.isRunning) {
+    if (!abandonDialogSessionId.value || readRefOrGetterBoolean(commandBusy) || abandonCommand.isRunning) {
       return;
     }
     await abandonCommand.run({

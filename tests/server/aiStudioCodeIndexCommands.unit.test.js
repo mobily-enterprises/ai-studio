@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import {
   DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  javascriptAdapterCodeIndexCommand,
   javascriptCodeIndexCommand,
   packageManagerScriptCommand,
   phpCodeIndexCommand
@@ -101,4 +102,35 @@ test("package-manager code-index command uses the project script when it exists"
     }),
     ""
   );
+});
+
+test("javascript adapter code-index command centralizes package script fallback metadata", () => {
+  const packageScriptIndex = javascriptAdapterCodeIndexCommand({
+    packageJson: {
+      scripts: {
+        "ai-studio:index": "custom-index"
+      }
+    },
+    packageManager: {
+      name: "pnpm"
+    }
+  });
+  assert.equal(packageScriptIndex.command, "corepack pnpm run ai-studio:index");
+  assert.equal(packageScriptIndex.commandPreview, "corepack pnpm run ai-studio:index");
+  assert.deepEqual(packageScriptIndex.metadata, {
+    code_index_command_source: "package-script",
+    code_index_package_manager: "pnpm",
+    code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
+  });
+
+  const fallbackIndex = javascriptAdapterCodeIndexCommand({
+    packageJson: {},
+    packageManager: "npm"
+  });
+  assert.equal(
+    fallbackIndex.commandPreview,
+    `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`
+  );
+  assert.equal(fallbackIndex.metadata.code_index_command_source, "javascript-indexer");
+  assert.match(fallbackIndex.command, /^AI_STUDIO_CODE_INDEX_PATH=.* node --input-type=module/u);
 });

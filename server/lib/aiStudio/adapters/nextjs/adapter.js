@@ -2,17 +2,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  shellQuote
-} from "../../../shellCommands.js";
-import {
   AiStudioDescribedWorkflowTargetAdapter,
   inspectDescribedProject
 } from "../../workflowAdapter.js";
-import {
-  configTextValue,
-  configValues,
-  selectedConfigValue
-} from "../../configValues.js";
 import {
   createAdapterBlueprintReader
 } from "../../adapterBlueprints.js";
@@ -27,33 +19,33 @@ import {
   scriptNames
 } from "../../nodePackage.js";
 import {
-  commandLineScript,
   createNodeWebProjectReadiness,
   nodeWebAdapterFacts,
   nodeWebPromptContextBase,
   nodeInstallWorkflowHook,
   nodePackageManagerInspectionExtra,
-  projectMarkerExists
+  projectMarkerExists,
+  studioCommandScript
 } from "../../nodeWebProject.js";
 import {
-  AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
   AI_STUDIO_VERIFY_SCRIPT_NAME,
-  DEFAULT_CODE_INDEX_RELATIVE_PATH,
-  javascriptCodeIndexCommand,
+  javascriptAdapterCodeIndexCommand,
   packageManagerScriptCommand
 } from "../../codeIndexCommands.js";
 import {
-  NEXTJS_DATABASE_RUNTIME_CONFIG,
-  NEXTJS_DATA_LAYER_CONFIG,
-  NEXTJS_PACKAGE_MANAGER_CONFIG,
-  NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  NEXTJS_SEED_BUNDLER_CONFIG,
-  NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
-  NEXTJS_SEED_LANGUAGE_CONFIG,
-  NEXTJS_SEED_LINTER_CONFIG,
-  NEXTJS_SEED_SOURCE_LAYOUT_CONFIG,
-  NEXTJS_SEED_STYLING_CONFIG
+  NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH
 } from "./constants.js";
+import {
+  NEXTJS_CONFIG_FIELDS,
+  NEXTJS_DEFAULT_CONFIG,
+  selectedNextjsDataLayer as selectedDataLayer,
+  selectedNextjsSeedBundler as selectedSeedBundler,
+  selectedNextjsSeedImportAlias as selectedSeedImportAlias,
+  selectedNextjsSeedLanguage as selectedSeedLanguage,
+  selectedNextjsSeedLinter as selectedSeedLinter,
+  selectedNextjsSeedSourceLayout as selectedSeedSourceLayout,
+  selectedNextjsSeedStyling as selectedSeedStyling
+} from "./config.js";
 import {
   createNextjsTargetScriptTerminalSpec,
   inspectNextjsCurrentApp,
@@ -68,12 +60,6 @@ import {
 
 const NEXTJS_BLUEPRINT_ROOT = fileURLToPath(new URL("./blueprints", import.meta.url));
 const NEXTJS_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
-const NEXTJS_SEED_BUNDLERS = new Set(["turbopack", "webpack"]);
-const NEXTJS_DATA_LAYERS = new Set(["none", "prisma", "drizzle"]);
-const NEXTJS_SEED_LANGUAGES = new Set(["typescript", "javascript"]);
-const NEXTJS_SEED_LINTERS = new Set(["eslint", "biome", "none"]);
-const NEXTJS_SEED_SOURCE_LAYOUTS = new Set(["src", "root"]);
-const NEXTJS_SEED_STYLING = new Set(["tailwind", "none"]);
 const blueprintFile = createAdapterBlueprintReader(NEXTJS_BLUEPRINT_ROOT);
 
 const NEXTJS_MARKERS = deepFreeze([
@@ -123,200 +109,6 @@ const NEXTJS_MARKERS = deepFreeze([
     relativePath: "tsconfig.json"
   }
 ]);
-
-const NEXTJS_CONFIG_FIELDS = deepFreeze([
-  {
-    defaultValue: "npm",
-    description: "Package manager to use when Studio seeds a new Next.js app.",
-    id: NEXTJS_PACKAGE_MANAGER_CONFIG,
-    label: "Seed package manager",
-    options: [
-      {
-        label: "npm",
-        value: "npm"
-      },
-      {
-        label: "pnpm",
-        value: "pnpm"
-      },
-      {
-        label: "Yarn",
-        value: "yarn"
-      },
-      {
-        label: "Bun",
-        value: "bun"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "typescript",
-    description: "Language mode used when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_LANGUAGE_CONFIG,
-    label: "Seed language",
-    options: [
-      {
-        label: "TypeScript",
-        value: "typescript"
-      },
-      {
-        label: "JavaScript",
-        value: "javascript"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "tailwind",
-    description: "Styling scaffold used when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_STYLING_CONFIG,
-    label: "Seed styling",
-    options: [
-      {
-        label: "Tailwind CSS",
-        value: "tailwind"
-      },
-      {
-        label: "None",
-        value: "none"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "eslint",
-    description: "Linter scaffold used when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_LINTER_CONFIG,
-    label: "Seed linter",
-    options: [
-      {
-        label: "ESLint",
-        value: "eslint"
-      },
-      {
-        label: "Biome",
-        value: "biome"
-      },
-      {
-        label: "None",
-        value: "none"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "src",
-    description: "Project source layout used when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_SOURCE_LAYOUT_CONFIG,
-    label: "Seed source layout",
-    options: [
-      {
-        label: "src/app",
-        value: "src"
-      },
-      {
-        label: "app at root",
-        value: "root"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "turbopack",
-    description: "Bundler preference used when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_BUNDLER_CONFIG,
-    label: "Seed bundler",
-    options: [
-      {
-        label: "Turbopack",
-        value: "turbopack"
-      },
-      {
-        label: "Webpack",
-        value: "webpack"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "@/*",
-    description: "Import alias passed to create-next-app when Studio seeds a new Next.js app.",
-    id: NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
-    label: "Seed import alias",
-    type: "string"
-  },
-  {
-    defaultValue: "postgres",
-    description: "Optional AI Studio-managed database runtime for local setup, target scripts, and launch targets.",
-    id: NEXTJS_DATABASE_RUNTIME_CONFIG,
-    label: "Database runtime",
-    options: [
-      {
-        label: "None",
-        value: "none"
-      },
-      {
-        label: "PostgreSQL",
-        value: "postgres"
-      },
-      {
-        label: "MySQL",
-        value: "mysql"
-      }
-    ],
-    type: "select"
-  },
-  {
-    defaultValue: "prisma",
-    description: "Application data-access convention included in Next.js prompts.",
-    id: NEXTJS_DATA_LAYER_CONFIG,
-    label: "Data layer",
-    options: [
-      {
-        label: "None",
-        value: "none"
-      },
-      {
-        label: "Prisma",
-        value: "prisma"
-      },
-      {
-        label: "Drizzle",
-        value: "drizzle"
-      }
-    ],
-    type: "select"
-  }
-]);
-
-function selectedDataLayer(config = {}) {
-  return selectedConfigValue(config, NEXTJS_DATA_LAYER_CONFIG, NEXTJS_DATA_LAYERS, "prisma");
-}
-
-function selectedSeedBundler(config = {}) {
-  return selectedConfigValue(config, NEXTJS_SEED_BUNDLER_CONFIG, NEXTJS_SEED_BUNDLERS, "turbopack");
-}
-
-function selectedSeedLanguage(config = {}) {
-  return selectedConfigValue(config, NEXTJS_SEED_LANGUAGE_CONFIG, NEXTJS_SEED_LANGUAGES, "typescript");
-}
-
-function selectedSeedLinter(config = {}) {
-  return selectedConfigValue(config, NEXTJS_SEED_LINTER_CONFIG, NEXTJS_SEED_LINTERS, "eslint");
-}
-
-function selectedSeedSourceLayout(config = {}) {
-  return selectedConfigValue(config, NEXTJS_SEED_SOURCE_LAYOUT_CONFIG, NEXTJS_SEED_SOURCE_LAYOUTS, "src");
-}
-
-function selectedSeedStyling(config = {}) {
-  return selectedConfigValue(config, NEXTJS_SEED_STYLING_CONFIG, NEXTJS_SEED_STYLING, "tailwind");
-}
-
-function selectedSeedImportAlias(config = {}) {
-  return configTextValue(config, NEXTJS_SEED_IMPORT_ALIAS_CONFIG, "@/*") || "@/*";
-}
 
 async function nextjsBlueprintSections(config = {}) {
   const databaseRuntime = selectedNextjsDatabaseRuntime(config);
@@ -380,7 +172,6 @@ async function nextjsPromptContext({
   const knowledgePath = targetRoot
     ? path.join(targetRoot, NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH)
     : NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH;
-  const values = configValues(config);
   const databaseRuntime = selectedNextjsDatabaseRuntime(config);
   const dataLayer = selectedDataLayer(config);
   const environmentBlueprint = await nextjsEnvironmentBlueprint(config);
@@ -415,12 +206,12 @@ async function nextjsPromptContext({
     environment_blueprint: environmentBlueprint,
     next_config_exists: String(nextConfigExists(markers)),
     next_dependency: String(hasDependency(packageJson || {}, "next")),
-    seed_bundler: selectedSeedBundler(values),
-    seed_import_alias: selectedSeedImportAlias(values),
-    seed_language: selectedSeedLanguage(values),
-    seed_linter: selectedSeedLinter(values),
-    seed_source_layout: selectedSeedSourceLayout(values),
-    seed_styling: selectedSeedStyling(values),
+    seed_bundler: selectedSeedBundler(config),
+    seed_import_alias: selectedSeedImportAlias(config),
+    seed_language: selectedSeedLanguage(config),
+    seed_linter: selectedSeedLinter(config),
+    seed_source_layout: selectedSeedSourceLayout(config),
+    seed_styling: selectedSeedStyling(config),
     start_script: packageScript(packageJson || {}, "start")
   };
 }
@@ -479,11 +270,10 @@ async function nextjsAutomatedChecksHook({ worktreePath = "" } = {}) {
     metadata: {
       automated_checks_package_manager: packageManager.name
     },
-    script: commandLineScript([
-      "printf '[studio] Running Next.js production build.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(buildCommand)}`,
-      buildCommand
-    ])
+    script: studioCommandScript({
+      command: buildCommand,
+      intro: "Running Next.js production build."
+    })
   };
 }
 
@@ -492,24 +282,18 @@ async function nextjsCodeIndexHook({ worktreePath = "" } = {}) {
     targetRoot: worktreePath
   });
   const packageJson = await readPackageJson(worktreePath);
-  const packageScriptCommand = packageManagerScriptCommand({
+  const codeIndexCommand = javascriptAdapterCodeIndexCommand({
     packageJson: packageJson || {},
-    packageManager,
-    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+    packageManager
   });
-  const indexCommand = packageScriptCommand || javascriptCodeIndexCommand();
   return {
-    commandPreview: packageScriptCommand || `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`,
-    metadata: {
-      code_index_command_source: packageScriptCommand ? "package-script" : "javascript-indexer",
-      code_index_package_manager: packageManager.name,
-      code_index_path: DEFAULT_CODE_INDEX_RELATIVE_PATH
-    },
-    script: commandLineScript([
-      "printf '[studio] Updating Next.js code index.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(packageScriptCommand || `node --input-type=module # writes ${DEFAULT_CODE_INDEX_RELATIVE_PATH}`)}`,
-      indexCommand
-    ])
+    commandPreview: codeIndexCommand.commandPreview,
+    metadata: codeIndexCommand.metadata,
+    script: studioCommandScript({
+      command: codeIndexCommand.command,
+      commandPreview: codeIndexCommand.commandPreview,
+      intro: "Updating Next.js code index."
+    })
   };
 }
 
@@ -525,17 +309,7 @@ class NextjsTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       commands,
       configFields: NEXTJS_CONFIG_FIELDS,
       currentAppInspector: inspectNextjsCurrentApp,
-      defaultConfig: {
-        [NEXTJS_DATABASE_RUNTIME_CONFIG]: "postgres",
-        [NEXTJS_DATA_LAYER_CONFIG]: "prisma",
-        [NEXTJS_PACKAGE_MANAGER_CONFIG]: "npm",
-        [NEXTJS_SEED_BUNDLER_CONFIG]: "turbopack",
-        [NEXTJS_SEED_IMPORT_ALIAS_CONFIG]: "@/*",
-        [NEXTJS_SEED_LANGUAGE_CONFIG]: "typescript",
-        [NEXTJS_SEED_LINTER_CONFIG]: "eslint",
-        [NEXTJS_SEED_SOURCE_LAYOUT_CONFIG]: "src",
-        [NEXTJS_SEED_STYLING_CONFIG]: "tailwind"
-      },
+      defaultConfig: () => ({ ...NEXTJS_DEFAULT_CONFIG }),
       id: "nextjs",
       label: "Next.js target adapter",
       projectFacts: nextjsFacts,

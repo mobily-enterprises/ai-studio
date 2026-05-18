@@ -24,6 +24,10 @@ function readCodeIndexScript(fileName) {
 const JAVASCRIPT_CODE_INDEX_SOURCE = readCodeIndexScript("javascript.mjs");
 const PHP_CODE_INDEX_SOURCE = readCodeIndexScript("php.php");
 
+function packageManagerName(packageManager = {}) {
+  return normalizeText(packageManager?.name || packageManager) || "npm";
+}
+
 function packageManagerScriptCommand({
   packageJson = {},
   packageManager = {},
@@ -33,7 +37,7 @@ function packageManagerScriptCommand({
   if (!normalizedScriptName || !packageScript(packageJson || {}, normalizedScriptName)) {
     return "";
   }
-  return runScriptCommand(normalizeText(packageManager?.name || packageManager) || "npm", normalizedScriptName);
+  return runScriptCommand(packageManagerName(packageManager), normalizedScriptName);
 }
 
 function heredocCommand({
@@ -65,6 +69,30 @@ function javascriptCodeIndexCommand({
   });
 }
 
+function javascriptAdapterCodeIndexCommand({
+  outputPath = DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  packageJson = {},
+  packageManager = {}
+} = {}) {
+  const packageScriptCommand = packageManagerScriptCommand({
+    packageJson,
+    packageManager,
+    scriptName: AI_STUDIO_CODE_INDEX_SCRIPT_NAME
+  });
+  const commandPreview = packageScriptCommand || `node --input-type=module # writes ${outputPath}`;
+  return {
+    command: packageScriptCommand || javascriptCodeIndexCommand({
+      outputPath
+    }),
+    commandPreview,
+    metadata: {
+      code_index_command_source: packageScriptCommand ? "package-script" : "javascript-indexer",
+      code_index_package_manager: packageManagerName(packageManager),
+      code_index_path: outputPath
+    }
+  };
+}
+
 function phpCodeIndexCommand({
   outputPath = DEFAULT_CODE_INDEX_RELATIVE_PATH
 } = {}) {
@@ -82,6 +110,7 @@ export {
   AI_STUDIO_CODE_INDEX_SCRIPT_NAME,
   AI_STUDIO_VERIFY_SCRIPT_NAME,
   DEFAULT_CODE_INDEX_RELATIVE_PATH,
+  javascriptAdapterCodeIndexCommand,
   javascriptCodeIndexCommand,
   packageManagerScriptCommand,
   phpCodeIndexCommand

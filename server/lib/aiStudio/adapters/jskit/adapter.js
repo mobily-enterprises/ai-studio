@@ -4,9 +4,6 @@ import {
   adapterProjectFacts
 } from "../../adapter.js";
 import {
-  shellQuote
-} from "../../../shellCommands.js";
-import {
   packageBinCommand,
   packageScript,
   readPackageJson,
@@ -18,9 +15,9 @@ import {
   packageManagerScriptCommand
 } from "../../codeIndexCommands.js";
 import {
-  commandLineScript,
   nodeInstallWorkflowHook,
-  nodePackageManagerInspectionExtra
+  nodePackageManagerInspectionExtra,
+  studioCommandScript
 } from "../../nodeWebProject.js";
 import {
   AiStudioDescribedWorkflowTargetAdapter,
@@ -212,11 +209,10 @@ async function jskitAutomatedChecksHook({ worktreePath = "" } = {}) {
     metadata: {
       automated_checks_package_manager: packageManager.name
     },
-    script: commandLineScript([
-      "printf '[studio] Running JSKIT verification.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
-      command
-    ])
+    script: studioCommandScript({
+      command,
+      intro: "Running JSKIT verification."
+    })
   };
 }
 
@@ -241,11 +237,10 @@ async function jskitCodeIndexHook({ worktreePath = "" } = {}) {
       code_index_package_manager: packageManager.name,
       code_index_path: ".jskit/helper-map.md"
     },
-    script: commandLineScript([
-      "printf '[studio] Updating JSKIT code index.\\n'",
-      `printf '[studio] $ %s\\n\\n' ${shellQuote(command)}`,
-      command
-    ])
+    script: studioCommandScript({
+      command,
+      intro: "Updating JSKIT code index."
+    })
   };
 }
 

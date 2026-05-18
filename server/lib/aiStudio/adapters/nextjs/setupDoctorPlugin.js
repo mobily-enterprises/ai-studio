@@ -24,10 +24,6 @@ import {
   parseEnvText
 } from "../../envFiles.js";
 import {
-  configTextValue,
-  selectedConfigValue
-} from "../../configValues.js";
-import {
   detectPackageManager,
   hasDependency
 } from "../../nodePackage.js";
@@ -35,14 +31,14 @@ import {
   checkNodePackageManagerToolchain
 } from "../../nodePackageDoctor.js";
 import {
-  NEXTJS_PACKAGE_MANAGER_CONFIG,
-  NEXTJS_SEED_BUNDLER_CONFIG,
-  NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
-  NEXTJS_SEED_LANGUAGE_CONFIG,
-  NEXTJS_SEED_LINTER_CONFIG,
-  NEXTJS_SEED_SOURCE_LAYOUT_CONFIG,
-  NEXTJS_SEED_STYLING_CONFIG
-} from "./constants.js";
+  selectedNextjsPackageManager as selectedPackageManager,
+  selectedNextjsSeedBundler,
+  selectedNextjsSeedImportAlias,
+  selectedNextjsSeedLanguage,
+  selectedNextjsSeedLinter,
+  selectedNextjsSeedSourceLayout,
+  selectedNextjsSeedStyling
+} from "./config.js";
 import {
   createNextjsRuntimeContainers,
   expectedNextjsDatabaseUrl,
@@ -58,21 +54,6 @@ const ROUTER_MARKERS = Object.freeze([
   "src/pages"
 ]);
 
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const SEED_BUNDLERS = new Set(["turbopack", "webpack"]);
-const SEED_LANGUAGES = new Set(["typescript", "javascript"]);
-const SEED_LINTERS = new Set(["eslint", "biome", "none"]);
-const SEED_SOURCE_LAYOUTS = new Set(["src", "root"]);
-const SEED_STYLING = new Set(["tailwind", "none"]);
-
-function selectedPackageManager(config = {}) {
-  return selectedConfigValue(config, NEXTJS_PACKAGE_MANAGER_CONFIG, PACKAGE_MANAGERS, "npm");
-}
-
-function selectedSeedImportAlias(config = {}) {
-  return configTextValue(config, NEXTJS_SEED_IMPORT_ALIAS_CONFIG, "@/*") || "@/*";
-}
-
 function createNextAppUseFlag(packageManager = "npm") {
   return {
     bun: "--use-bun",
@@ -83,11 +64,11 @@ function createNextAppUseFlag(packageManager = "npm") {
 }
 
 function createNextAppSeedFlags(config = {}) {
-  const language = selectedConfigValue(config, NEXTJS_SEED_LANGUAGE_CONFIG, SEED_LANGUAGES, "typescript");
-  const styling = selectedConfigValue(config, NEXTJS_SEED_STYLING_CONFIG, SEED_STYLING, "tailwind");
-  const linter = selectedConfigValue(config, NEXTJS_SEED_LINTER_CONFIG, SEED_LINTERS, "eslint");
-  const sourceLayout = selectedConfigValue(config, NEXTJS_SEED_SOURCE_LAYOUT_CONFIG, SEED_SOURCE_LAYOUTS, "src");
-  const bundler = selectedConfigValue(config, NEXTJS_SEED_BUNDLER_CONFIG, SEED_BUNDLERS, "turbopack");
+  const language = selectedNextjsSeedLanguage(config);
+  const styling = selectedNextjsSeedStyling(config);
+  const linter = selectedNextjsSeedLinter(config);
+  const sourceLayout = selectedNextjsSeedSourceLayout(config);
+  const bundler = selectedNextjsSeedBundler(config);
   const linterFlag = {
     biome: "--biome",
     eslint: "--eslint",
@@ -103,7 +84,7 @@ function createNextAppSeedFlags(config = {}) {
     sourceLayout === "root" ? "--no-src-dir" : "--src-dir",
     bundler === "webpack" ? "--webpack" : "--turbopack",
     "--import-alias",
-    selectedSeedImportAlias(config),
+    selectedNextjsSeedImportAlias(config),
     "--disable-git"
   ];
 }

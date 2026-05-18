@@ -1,4 +1,4 @@
-import { computed, ref, unref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
@@ -11,10 +11,9 @@ import {
   aiStudioLaunchTargetsPath,
   aiStudioLaunchTargetsQueryKey
 } from "@/lib/aiStudioSessionRequestConfig.js";
-
-function valueOf(value) {
-  return typeof value === "function" ? value() : unref(value);
-}
+import {
+  readRefOrGetterValue
+} from "@/lib/vueRefOrGetterValue.js";
 
 function browserCanOpenTarget(target = {}) {
   return String(target.kind || "url") === "url" && Boolean(String(target.href || "").trim());
@@ -30,7 +29,7 @@ function useAiStudioLaunchControls({
   const terminalRunning = ref(false);
   const terminalVisible = ref(false);
 
-  const selectedSession = computed(() => valueOf(session) || null);
+  const selectedSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(selectedSession.value?.sessionId || ""));
   const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
     surface: AI_STUDIO_SURFACE_ID
@@ -85,7 +84,7 @@ function useAiStudioLaunchControls({
     sessionId.value &&
       (launchTargets.value.length > 0 || openTarget.value.available || launchTargetsResource.loadError.value)
   ));
-  const launchButtonsDisabled = computed(() => Boolean(valueOf(busy) || terminalRunning.value));
+  const launchButtonsDisabled = computed(() => Boolean(readRefOrGetterValue(busy) || terminalRunning.value));
   const openDisabled = computed(() => {
     return Boolean(
       launchButtonsDisabled.value ||
@@ -98,7 +97,7 @@ function useAiStudioLaunchControls({
     if (terminalRunning.value) {
       return "Wait for the launch terminal to finish.";
     }
-    if (valueOf(busy)) {
+    if (readRefOrGetterValue(busy)) {
       return "Wait for the current Studio action to finish.";
     }
     if (!browserCanOpenTarget(openTarget.value)) {

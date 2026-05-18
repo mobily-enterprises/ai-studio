@@ -21,10 +21,6 @@ import {
   missingAdapterToolchainCheck
 } from "../../adapterToolchains.js";
 import {
-  configTextValue,
-  selectedConfigValue
-} from "../../configValues.js";
-import {
   writableHostUserDockerArgs
 } from "../../dockerRuntime.js";
 import {
@@ -45,15 +41,15 @@ import {
   hasComposerDependency
 } from "./composerPackage.js";
 import {
-  LARAVEL_AUTHENTICATION_CONFIG,
-  LARAVEL_BOOST_CONFIG,
-  LARAVEL_CUSTOM_STARTER_CONFIG,
-  LARAVEL_LIVEWIRE_COMPONENTS_CONFIG,
-  LARAVEL_PACKAGE_MANAGER_CONFIG,
-  LARAVEL_STARTER_KIT_CONFIG,
-  LARAVEL_TEAMS_CONFIG,
-  LARAVEL_TESTING_CONFIG
-} from "./constants.js";
+  selectedLaravelAuthentication as selectedAuthentication,
+  selectedLaravelBoostOption as selectedBoostOption,
+  selectedLaravelCustomStarter as selectedCustomStarter,
+  selectedLaravelLivewireComponents as selectedLivewireComponents,
+  selectedLaravelPackageManager as selectedPackageManager,
+  selectedLaravelStarterKit as selectedStarterKit,
+  selectedLaravelTeams as selectedTeams,
+  selectedLaravelTestingFramework as selectedTestingFramework
+} from "./config.js";
 import {
   createLaravelRuntimeContainers,
   laravelDatabaseEnvLines,
@@ -68,13 +64,6 @@ import {
 
 const LARAVEL_TOOLCHAIN_DOCKERFILE = "tooling/adapters/laravel/Dockerfile";
 const LARAVEL_TOOLCHAIN_CONTEXT = "tooling/adapters/laravel";
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const AUTHENTICATION_OPTIONS = new Set(["laravel", "workos", "none"]);
-const STARTER_KITS = new Set(["none", "react", "vue", "svelte", "livewire", "custom"]);
-const LIVEWIRE_COMPONENTS = new Set(["single_file", "class"]);
-const TEAMS_OPTIONS = new Set(["none", "teams"]);
-const TESTING_FRAMEWORKS = new Set(["pest", "phpunit"]);
-const BOOST_OPTIONS = new Set(["none", "boost"]);
 const LARAVEL_MARKERS = Object.freeze([
   "artisan",
   "bootstrap/app.php",
@@ -86,38 +75,6 @@ const LARAVEL_WRITABLE_DOCKER_ENV = Object.freeze({
   COMPOSER_CACHE_DIR: "/tmp/composer-cache",
   npm_config_cache: "/tmp/npm-cache"
 });
-
-function selectedPackageManager(config = {}) {
-  return selectedConfigValue(config, LARAVEL_PACKAGE_MANAGER_CONFIG, PACKAGE_MANAGERS, "npm");
-}
-
-function selectedAuthentication(config = {}) {
-  return selectedConfigValue(config, LARAVEL_AUTHENTICATION_CONFIG, AUTHENTICATION_OPTIONS, "laravel");
-}
-
-function selectedStarterKit(config = {}) {
-  return selectedConfigValue(config, LARAVEL_STARTER_KIT_CONFIG, STARTER_KITS, "none");
-}
-
-function selectedLivewireComponents(config = {}) {
-  return selectedConfigValue(config, LARAVEL_LIVEWIRE_COMPONENTS_CONFIG, LIVEWIRE_COMPONENTS, "single_file");
-}
-
-function selectedTeams(config = {}) {
-  return selectedConfigValue(config, LARAVEL_TEAMS_CONFIG, TEAMS_OPTIONS, "none");
-}
-
-function selectedTestingFramework(config = {}) {
-  return selectedConfigValue(config, LARAVEL_TESTING_CONFIG, TESTING_FRAMEWORKS, "pest");
-}
-
-function selectedBoostOption(config = {}) {
-  return selectedConfigValue(config, LARAVEL_BOOST_CONFIG, BOOST_OPTIONS, "none");
-}
-
-function selectedCustomStarter(config = {}) {
-  return configTextValue(config, LARAVEL_CUSTOM_STARTER_CONFIG);
-}
 
 function officialLaravelStarterKit(config = {}) {
   return !["none", "custom"].includes(selectedStarterKit(config));

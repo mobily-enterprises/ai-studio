@@ -269,6 +269,12 @@ function useCodexTerminalSessionLifecycle({
     void ensureTerminalReady();
   }
 
+  async function handleMountedTerminalReady() {
+    await nextTick();
+    startTerminalWhenReady();
+    onMountedReady?.();
+  }
+
   watch(sessionId, async (nextSessionId, previousSessionId) => {
     if (previousSessionId && previousSessionId !== nextSessionId) {
       detachTerminal();
@@ -305,11 +311,7 @@ function useCodexTerminalSessionLifecycle({
   onMounted(() => {
     componentMounted.value = true;
     expanded.value = defaultExpanded?.() ?? true;
-    void nextTick().then(() => {
-      startTerminalWhenReady();
-      onMountedReady?.();
-    });
-    onMountedReady?.();
+    void handleMountedTerminalReady();
   });
 
   onBeforeUnmount(() => {

@@ -19,8 +19,21 @@ function selectedConfigValue(config = {}, fieldId = "", allowedValues = new Set(
   return allowedValues.has(value) ? value : fallback;
 }
 
+function configOptionValues(options = []) {
+  return new Set(options.map((option) => option.value));
+}
+
+function defaultConfigFromFields(fields = []) {
+  return Object.fromEntries(fields.map((field) => [
+    field.id,
+    field.defaultValue || ""
+  ]));
+}
+
 export {
+  configOptionValues,
   configTextValue,
   configValues,
+  defaultConfigFromFields,
   selectedConfigValue
 };

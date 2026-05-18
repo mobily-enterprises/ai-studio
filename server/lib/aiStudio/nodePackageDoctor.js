@@ -5,21 +5,18 @@ import {
 import {
   packageManagerAvailabilityScript
 } from "./nodePackage.js";
-
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+import {
+  DEFAULT_NODE_PACKAGE_MANAGER,
+  nodePackageManagerDisplayName,
+  normalizeNodePackageManager
+} from "./nodePackageManagers.js";
 
 function normalizePackageManager(value = "") {
-  const name = String(value || "").trim().toLowerCase();
-  return PACKAGE_MANAGERS.has(name) ? name : "npm";
+  return normalizeNodePackageManager(value, DEFAULT_NODE_PACKAGE_MANAGER);
 }
 
-function packageManagerDisplayName(packageManager = "npm") {
-  return {
-    bun: "Bun",
-    npm: "npm",
-    pnpm: "pnpm",
-    yarn: "Yarn"
-  }[normalizePackageManager(packageManager)];
+function packageManagerDisplayName(packageManager = DEFAULT_NODE_PACKAGE_MANAGER) {
+  return nodePackageManagerDisplayName(packageManager);
 }
 
 async function checkNodePackageManagerToolchain(toolkit, {

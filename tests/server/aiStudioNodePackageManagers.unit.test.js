@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  LARAVEL_PACKAGE_MANAGER_CONFIG
+} from "../../server/lib/aiStudio/adapters/laravel/constants.js";
+import {
+  LARAVEL_CONFIG_FIELDS,
+  selectedLaravelPackageManager
+} from "../../server/lib/aiStudio/adapters/laravel/config.js";
+import {
+  NEXTJS_PACKAGE_MANAGER_CONFIG
+} from "../../server/lib/aiStudio/adapters/nextjs/constants.js";
+import {
+  NEXTJS_CONFIG_FIELDS,
+  selectedNextjsPackageManager
+} from "../../server/lib/aiStudio/adapters/nextjs/config.js";
+import {
+  normalizePackageManager,
+  packageManagerDisplayName
+} from "../../server/lib/aiStudio/nodePackageDoctor.js";
+import {
+  NODE_PACKAGE_MANAGER_OPTIONS,
+  nodePackageManagerDisplayName,
+  normalizeNodePackageManager,
+  normalizeNodePackageManagerSpec
+} from "../../server/lib/aiStudio/nodePackageManagers.js";
+
+function configField(fields = [], id = "") {
+  return fields.find((field) => field.id === id);
+}
+
+test("node package manager vocabulary exposes shared values, labels, and normalization", () => {
+  assert.deepEqual(NODE_PACKAGE_MANAGER_OPTIONS, [
+    {
+      label: "npm",
+      value: "npm"
+    },
+    {
+      label: "pnpm",
+      value: "pnpm"
+    },
+    {
+      label: "Yarn",
+      value: "yarn"
+    },
+    {
+      label: "Bun",
+      value: "bun"
+    }
+  ]);
+  assert.equal(normalizeNodePackageManager("YARN", "npm"), "yarn");
+  assert.equal(normalizeNodePackageManager("pnpm@9", "npm"), "npm");
+  assert.equal(normalizeNodePackageManagerSpec("pnpm@9.12.1"), "pnpm");
+  assert.equal(normalizeNodePackageManagerSpec("unknown@1.0.0"), "");
+  assert.equal(nodePackageManagerDisplayName("bun"), "Bun");
+  assert.equal(nodePackageManagerDisplayName("unknown"), "npm");
+});
+
+test("node package doctor reuses shared package manager normalization and display names", () => {
+  assert.equal(normalizePackageManager("BUN"), "bun");
+  assert.equal(normalizePackageManager("bun@1.2.3"), "npm");
+  assert.equal(packageManagerDisplayName("yarn"), "Yarn");
+  assert.equal(packageManagerDisplayName("unknown"), "npm");
+});
+
+test("adapter package manager config fields derive from shared node package manager options", () => {
+  assert.strictEqual(
+    configField(NEXTJS_CONFIG_FIELDS, NEXTJS_PACKAGE_MANAGER_CONFIG).options,
+    NODE_PACKAGE_MANAGER_OPTIONS
+  );
+  assert.strictEqual(
+    configField(LARAVEL_CONFIG_FIELDS, LARAVEL_PACKAGE_MANAGER_CONFIG).options,
+    NODE_PACKAGE_MANAGER_OPTIONS
+  );
+  assert.equal(selectedNextjsPackageManager({
+    values: {
+      [NEXTJS_PACKAGE_MANAGER_CONFIG]: "bun"
+    }
+  }), "bun");
+  assert.equal(selectedLaravelPackageManager({
+    values: {
+      [LARAVEL_PACKAGE_MANAGER_CONFIG]: "pnpm"
+    }
+  }), "pnpm");
+  assert.equal(selectedNextjsPackageManager({
+    values: {
+      [NEXTJS_PACKAGE_MANAGER_CONFIG]: "bun@1.2.3"
+    }
+  }), "npm");
+});

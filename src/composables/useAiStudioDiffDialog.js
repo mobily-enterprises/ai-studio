@@ -6,10 +6,9 @@ import {
 import {
   resolveResponseErrorMessage
 } from "@/lib/aiStudioResponseErrors.js";
-
-function booleanValue(value) {
-  return typeof value === "function" ? Boolean(value()) : Boolean(unref(value));
-}
+import {
+  readRefOrGetterBoolean
+} from "@/lib/vueRefOrGetterValue.js";
 
 function useAiStudioDiffDialog({
   canOpen,
@@ -21,7 +20,7 @@ function useAiStudioDiffDialog({
   const diffPayload = ref(null);
 
   async function openDiffDialog() {
-    if (!unref(selectedSessionId) || !booleanValue(canOpen)) {
+    if (!unref(selectedSessionId) || !readRefOrGetterBoolean(canOpen)) {
       return;
     }
     diffDialogOpen.value = true;

@@ -1,10 +1,9 @@
 import { computed, ref, watch } from "vue";
+import {
+  readRefOrGetterValue
+} from "@/lib/vueRefOrGetterValue.js";
 
 const REPAIRABLE_STATUSES = Object.freeze(["blocked", "fail", "hard-stop"]);
-
-function readValue(value) {
-  return typeof value === "function" ? value() : value;
-}
 
 function quotePreviewValue(value) {
   return String(value).replace(/["\\]/gu, "\\$&");
@@ -110,10 +109,10 @@ function useDoctorRepairs({
 
   const displayChecks = computed(() => {
     if (!automaticRepairRunning.value || !automaticRepair.value?.checkId) {
-      return readValue(checks);
+      return readRefOrGetterValue(checks);
     }
 
-    return readValue(checks).map((check) => {
+    return readRefOrGetterValue(checks).map((check) => {
       if (check.id !== automaticRepair.value.checkId) {
         return check;
       }
@@ -130,7 +129,7 @@ function useDoctorRepairs({
   });
 
   const automaticRepairLog = computed(() => {
-    const output = String(readValue(terminalOutput) || "").trim();
+    const output = String(readRefOrGetterValue(terminalOutput) || "").trim();
     if (!output) {
       return "";
     }
@@ -147,7 +146,7 @@ function useDoctorRepairs({
     if (REPAIRABLE_STATUSES.includes(check?.status)) {
       return repairs;
     }
-    return readValue(alwaysRepairCheckIds).includes(check?.id) ? repairs : [];
+    return readRefOrGetterValue(alwaysRepairCheckIds).includes(check?.id) ? repairs : [];
   }
 
   function repairCommandPreview(check) {
@@ -181,7 +180,7 @@ function useDoctorRepairs({
   }
 
   function firstAutomaticRepair() {
-    for (const check of readValue(checks)) {
+    for (const check of readRefOrGetterValue(checks)) {
       if (!REPAIRABLE_STATUSES.includes(check?.status)) {
         continue;
       }
@@ -266,18 +265,18 @@ function useDoctorRepairs({
   }
 
   async function runAutomaticRepair() {
-    if (readValue(ready)) {
+    if (readRefOrGetterValue(ready)) {
       clearRepairMessages();
       return;
     }
 
-    if (!readValue(autoRepairEnabled) ||
-      readValue(isLoading) ||
-      readValue(streamRunning) ||
+    if (!readRefOrGetterValue(autoRepairEnabled) ||
+      readRefOrGetterValue(isLoading) ||
+      readRefOrGetterValue(streamRunning) ||
       automaticRepairError.value ||
       automaticRepairRunning.value ||
       repairDialogOpen.value ||
-      readValue(terminalDialogOpen) ||
+      readRefOrGetterValue(terminalDialogOpen) ||
       actionInFlight.value) {
       return;
     }
@@ -304,12 +303,14 @@ function useDoctorRepairs({
         visible: false,
         waitForExit: true
       });
-      const exitCode = Number.isInteger(session?.exitCode) ? session.exitCode : readValue(terminalExitCode);
-      const closeError = session?.closeError || readValue(terminalCloseError) || "";
+      const exitCode = Number.isInteger(session?.exitCode) ? session.exitCode : readRefOrGetterValue(terminalExitCode);
+      const closeError = session?.closeError || readRefOrGetterValue(terminalCloseError) || "";
       if (session?.ok === false || exitCode !== 0 || closeError) {
         automaticRepairError.value = [
           `Automatic repair failed: ${candidate.repair.label || candidate.repair.actionId}`,
-          closeError || readValue(terminalError) || (Number.isInteger(exitCode) ? `Exit code ${exitCode}.` : "")
+          closeError ||
+            readRefOrGetterValue(terminalError) ||
+            (Number.isInteger(exitCode) ? `Exit code ${exitCode}.` : "")
         ].filter(Boolean).join(" ");
       }
     } finally {
@@ -320,14 +321,14 @@ function useDoctorRepairs({
 
   watch(
     () => [
-      readValue(autoRepairEnabled),
-      readValue(ready),
-      readValue(isLoading),
-      readValue(streamRunning),
+      readRefOrGetterValue(autoRepairEnabled),
+      readRefOrGetterValue(ready),
+      readRefOrGetterValue(isLoading),
+      readRefOrGetterValue(streamRunning),
       automaticRepairRunning.value,
-      readValue(terminalDialogOpen),
+      readRefOrGetterValue(terminalDialogOpen),
       actionInFlight.value,
-      readValue(checks).map((check) => `${check.id}:${check.status}`).join("|")
+      readRefOrGetterValue(checks).map((check) => `${check.id}:${check.status}`).join("|")
     ],
     () => {
       void runAutomaticRepair();

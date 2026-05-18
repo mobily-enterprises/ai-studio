@@ -2,10 +2,9 @@ import { computed, nextTick, ref, unref } from "vue";
 import {
   latestAiStudioActionResult
 } from "@/lib/aiStudioActionResults.js";
-
-function valueOf(value) {
-  return typeof value === "function" ? value() : unref(value);
-}
+import {
+  readRefOrGetterValue
+} from "@/lib/vueRefOrGetterValue.js";
 
 function useAiStudioSessionCommandTerminal({
   currentNext = () => null,
@@ -49,11 +48,11 @@ function useAiStudioSessionCommandTerminal({
     await refreshSessionData();
     await nextTick();
 
-    const result = latestAiStudioActionResult(valueOf(selectedSession), actionId, {
+    const result = latestAiStudioActionResult(readRefOrGetterValue(selectedSession), actionId, {
       since: pendingStartedAt.value
     });
     const commandSucceeded = Number(exitCode) === 0 || result?.status === "completed";
-    const next = valueOf(currentNext);
+    const next = readRefOrGetterValue(currentNext);
     if (
       commandSucceeded &&
       pendingAdvanceOnSuccess.value &&
