@@ -1,26 +1,6 @@
-Run deep UI check
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Run a focused deep UI check for this JSKIT project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-JSKIT project facts:
-{{adapter.facts.json}}
-
-JSKIT prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Inspect the user-facing JSKIT app behavior carefully. Fix clear UI defects directly when the project supports it, and report what you modified or why no edit was needed.
-[[AI_STUDIO_CONTEXT_END]]
+JSKIT-specific deep UI guidance:
+- Inspect the JSKIT app UI through the actual workflow surfaces affected by the change.
+- Pay attention to generated screens, provider-backed resource state, command feedback, setup/account panels, responsive layout, disabled states, and terminal/workflow panels.
+- Fix clear UI defects directly when they are in scope and report anything that remains blocked.

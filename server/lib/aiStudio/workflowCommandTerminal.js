@@ -20,8 +20,6 @@ import {
 const execFileAsync = promisify(execFile);
 const GIT_COMMAND_TIMEOUT_MS = 30_000;
 const GIT_OUTPUT_BUFFER_BYTES = 1024 * 1024;
-const DEFAULT_INSTALL_COMMAND = "NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_YES=true npm_config_audit=false npm_config_fund=false npm_config_yes=true npm install --foreground-scripts --no-audit --no-fund";
-const DEFAULT_AUTOMATED_CHECK_COMMAND = "npm run build";
 
 function commandOutput(error = {}) {
   return normalizeText(`${error.stdout || ""}\n${error.stderr || ""}`) ||
@@ -390,9 +388,10 @@ function normalizeHookCommandResult(result = {}, fallback = {}) {
     }, fallback);
   }
   const command = normalizeText(result.command || fallback.command);
-  const script = normalizeText(result.script) || commandScript(command, {
+  const explicitScript = normalizeText(result.script);
+  const script = explicitScript || (command ? commandScript(command, {
     intro: result.intro || fallback.intro
-  });
+  }) : "");
   return {
     command,
     commandPreview: normalizeText(result.commandPreview || fallback.commandPreview || command),
@@ -404,15 +403,30 @@ function normalizeHookCommandResult(result = {}, fallback = {}) {
   };
 }
 
-async function resolveHookCommand({
-  fallback = {},
+async function requiredHookCommand({
   hookContext = {},
   hookName = "",
-  hooks = {}
+  hooks = {},
+  missingMessage = ""
 } = {}) {
   const hook = hooks?.[hookName];
-  const result = typeof hook === "function" ? await hook(hookContext) : {};
-  return normalizeHookCommandResult(result, fallback);
+  if (typeof hook !== "function") {
+    return {
+      ok: false,
+      message: missingMessage || `Adapter command hook ${hookName} is not configured.`
+    };
+  }
+  const command = normalizeHookCommandResult(await hook(hookContext));
+  if (!command.script) {
+    return {
+      ok: false,
+      message: `Adapter command hook ${hookName} did not provide a command.`
+    };
+  }
+  return {
+    command,
+    ok: true
+  };
 }
 
 async function installDependenciesTerminalSpec({
@@ -434,16 +448,7 @@ async function installDependenciesTerminalSpec({
       message: `Session worktree is not ready: ${worktreePath}`
     };
   }
-  const command = await resolveHookCommand({
-    fallback: {
-      command: DEFAULT_INSTALL_COMMAND,
-      commandPreview: "npm install --foreground-scripts --no-audit --no-fund",
-      intro: `Installing dependencies in ${worktreePath}`,
-      metadata: {
-        dependencies_installed: "yes",
-        dependencies_path: worktreePath
-      }
-    },
+  const hookResult = await requiredHookCommand({
     hookContext: {
       context,
       session,
@@ -451,8 +456,13 @@ async function installDependenciesTerminalSpec({
       worktreePath
     },
     hookName: "installDependencies",
-    hooks
+    hooks,
+    missingMessage: "The selected adapter does not provide a dependency install command."
   });
+  if (!hookResult.ok) {
+    return hookResult;
+  }
+  const command = hookResult.command;
   return {
     args: ["-lc", command.script],
     command: "bash",
@@ -544,15 +554,7 @@ async function runAutomatedChecksTerminalSpec({
   targetRoot = ""
 } = {}) {
   const worktreePath = normalizeText(session.metadata?.worktree_path);
-  const command = await resolveHookCommand({
-    fallback: {
-      command: DEFAULT_AUTOMATED_CHECK_COMMAND,
-      commandPreview: DEFAULT_AUTOMATED_CHECK_COMMAND,
-      intro: "Running automated checks.",
-      metadata: {
-        automated_checks_passed: "yes"
-      }
-    },
+  const hookResult = await requiredHookCommand({
     hookContext: {
       context,
       session,
@@ -560,8 +562,13 @@ async function runAutomatedChecksTerminalSpec({
       worktreePath
     },
     hookName: "automatedChecks",
-    hooks
+    hooks,
+    missingMessage: "The selected adapter does not provide an automated checks command."
   });
+  if (!hookResult.ok) {
+    return hookResult;
+  }
+  const command = hookResult.command;
   return worktreeCommandSpec({
     commandPreview: command.commandPreview,
     label: "Run automated checks",
@@ -805,7 +812,5 @@ async function createAiStudioWorkflowCommandTerminalSpec({
 export {
   createAiStudioWorkflowCommandTerminalSpec,
   createWorktreeBranch,
-  createWorktreePath,
-  DEFAULT_AUTOMATED_CHECK_COMMAND,
-  DEFAULT_INSTALL_COMMAND
+  createWorktreePath
 };

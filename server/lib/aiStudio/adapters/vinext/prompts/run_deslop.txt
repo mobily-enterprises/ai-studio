@@ -1,26 +1,6 @@
-Run deslop
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Run the review/deslop pass for this Vinext project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Vinext project facts:
-{{adapter.facts.json}}
-
-Vinext prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Review the current work for bugs, regressions, unclear code, weak tests, unnecessary complexity, and Vinext compatibility risk. Report findings clearly and make direct fixes when the issue is unambiguous.
-[[AI_STUDIO_CONTEXT_END]]
+Vinext-specific review/deslop guidance:
+- Review Vinext compatibility, migration state, Next-compatible routing, Vite behavior, Cloudflare runtime assumptions, package scripts, and package-manager usage.
+- Remove unclear or duplicated code when the fix is obvious and scoped.
+- Keep compatibility claims and adapter facts truthful to the actual project state.

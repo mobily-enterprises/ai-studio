@@ -1,32 +1,11 @@
-Make plan
-
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
+{{systemStandard}}
 
 Create the implementation plan for this Next.js project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Next.js project facts:
-{{adapter.facts.json}}
-
-Next.js prompt context:
-{{adapter.promptContext.json}}
-
-Next.js project config:
-{{config.json}}
 
 Next.js selected blueprint:
 {{adapter.promptContext.environment_blueprint}}
 
-Action input:
-{{input.json}}
-
-Return a clear, ordered plan as your normal Codex response. Account for App Router vs Pages Router, Server Components vs Client Components, package scripts, and the project's existing application state. If nextjs_database_runtime is not "none", plan around DATABASE_URL in .env.local and keep database access in server-only code such as route handlers, Server Actions, or server components. Do not modify files while creating the plan.
-[[AI_STUDIO_CONTEXT_END]]
+Next.js-specific planning guidance:
+- Account for App Router vs Pages Router, Server Components vs Client Components, route handlers, Server Actions, package scripts, and the existing application state.
+- If the selected database runtime is not `none`, plan around `DATABASE_URL` in `.env.local` and keep database access in server-only code.
+- Include the focused verification path needed for the selected stack.

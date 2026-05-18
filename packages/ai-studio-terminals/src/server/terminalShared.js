@@ -32,12 +32,17 @@ function launchTargetTerminalNamespace(sessionId) {
   return `${LAUNCH_TARGET_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
 }
 
+function sessionTerminalCwd(session = {}, projectService = {}) {
+  return String(session.targetRoot || projectService.targetRoot || "").trim();
+}
+
 export {
   CODEX_TERMINAL_NAMESPACE_PREFIX,
   aiStudioResult,
   codexTerminalNamespace,
   commandTerminalNamespace,
   launchTargetTerminalNamespace,
+  sessionTerminalCwd,
   dockerCommand,
   normalizePlainObject,
   shellQuote,

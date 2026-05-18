@@ -1,30 +1,6 @@
-Create PR file
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Create the local pull request file for this Vinext project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- artifacts root: {{session.artifactsRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Vinext project facts:
-{{adapter.facts.json}}
-
-Vinext prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Write the reviewed pull request body to:
-{{session.artifactsRoot}}/pull_request.md
-
-Keep it focused on the accepted issue, implementation summary, checks run, Vinext compatibility, and any remaining risk.
-[[AI_STUDIO_CONTEXT_END]]
+Vinext-specific pull-request-file guidance:
+- Summarize the accepted issue, implementation, routing/config/scripts touched, Vinext migration or compatibility impact, and verification performed.
+- Call out Vite behavior, Cloudflare runtime assumptions, package scripts, and remaining Vinext risks when relevant.
+- Keep the pull request body focused on what a reviewer needs to merge safely.

@@ -1,0 +1,5 @@
+Laravel Boost: installed
+
+Laravel Boost is selected during seeding.
+Use Boost-provided project guidelines and tools when present, but do not assume they exist until repository files confirm installation.
+Keep generated code aligned with the installed Laravel version and package set.

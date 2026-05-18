@@ -1,0 +1,5 @@
+Testing: PHPUnit
+
+Use PHPUnit for PHP tests.
+Place feature tests under tests/Feature and unit tests under tests/Unit.
+Use Laravel testing helpers, factories, RefreshDatabase where appropriate, and focused assertions around HTTP responses, validation, authorization, and persistence.

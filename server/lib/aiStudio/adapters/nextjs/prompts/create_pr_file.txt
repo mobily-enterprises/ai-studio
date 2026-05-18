@@ -1,36 +1,9 @@
-Create PR file
-
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Create the local pull request file for this Next.js project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- artifacts root: {{session.artifactsRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Next.js project facts:
-{{adapter.facts.json}}
-
-Next.js prompt context:
-{{adapter.promptContext.json}}
-
-Next.js project config:
-{{config.json}}
+{{systemStandard}}
 
 Next.js selected blueprint:
 {{adapter.promptContext.environment_blueprint}}
 
-Action input:
-{{input.json}}
-
-Write the reviewed pull request body to:
-{{session.artifactsRoot}}/pull_request.md
-
-Keep it focused on the accepted issue, implementation summary, checks run, Next.js routing and runtime behavior, and any remaining risk.
-[[AI_STUDIO_CONTEXT_END]]
+Next.js-specific pull-request-file guidance:
+- Summarize the accepted issue, implementation, routes/components/config touched, selected blueprint impact, and verification performed.
+- Call out server/client boundary changes, environment variables, database/runtime changes, package scripts, and remaining Next.js risks when relevant.
+- Keep the pull request body focused on what a reviewer needs to merge safely.

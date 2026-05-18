@@ -1,0 +1,5 @@
+Starter kit: Svelte
+
+Use Laravel's Svelte starter kit conventions.
+Treat Svelte UI as an Inertia application in resources/js, with Laravel routes and controllers serving pages.
+Keep server validation and authorization in Laravel; pass page props through Laravel controllers.

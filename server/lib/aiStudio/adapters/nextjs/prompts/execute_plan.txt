@@ -1,32 +1,9 @@
-Execute plan
-
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Execute the accepted plan for this Next.js project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Next.js project facts:
-{{adapter.facts.json}}
-
-Next.js prompt context:
-{{adapter.promptContext.json}}
-
-Next.js project config:
-{{config.json}}
+{{systemStandard}}
 
 Next.js selected blueprint:
 {{adapter.promptContext.environment_blueprint}}
 
-Action input:
-{{input.json}}
-
-Make the requested code edits directly in the workspace. Preserve Next.js routing conventions, prefer existing package scripts and dependencies, and keep the work scoped to the session goal. If a managed database is selected, use DATABASE_URL from .env.local, install any needed database client or ORM deliberately, and keep secrets and database calls out of Client Components.
-[[AI_STUDIO_CONTEXT_END]]
+Next.js-specific implementation guidance:
+- Preserve the project's routing convention, file organization, package manager, lint/build scripts, and selected blueprint.
+- Keep client-only code, server-only code, route handlers, Server Actions, and environment access in the correct runtime boundary.
+- If database support is selected, use `DATABASE_URL` through server-only code and avoid leaking secrets to client components.

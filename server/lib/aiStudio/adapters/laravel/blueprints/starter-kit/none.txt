@@ -1,0 +1,5 @@
+Starter kit: none
+
+Start from the standard Laravel skeleton.
+Use Blade, routes, controllers, Eloquent, migrations, and Vite only as the task requires.
+Do not invent authentication scaffolding unless the user asks for login, accounts, teams, roles, or protected areas.

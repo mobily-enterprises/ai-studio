@@ -1,26 +1,6 @@
-Execute plan
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Execute the accepted plan for this JSKIT project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-JSKIT project facts:
-{{adapter.facts.json}}
-
-JSKIT prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Make the requested code edits directly in the workspace. Keep the work scoped to the session goal and report what you modified when finished.
-[[AI_STUDIO_CONTEXT_END]]
+JSKIT-specific implementation guidance:
+- Preserve existing JSKIT provider boundaries, command/action contracts, CRUD/resource conventions, generated-client patterns, and package ownership.
+- Use established JSKIT helpers and generated structures before adding new abstractions.
+- Keep metadata, capabilities, setup checks, and UI behavior aligned with the implementation.

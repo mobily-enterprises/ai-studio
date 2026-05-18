@@ -85,7 +85,7 @@ function normalizeLaunchTargets(targets = []) {
 }
 
 function aiStudioWorkflowCapabilities({
-  commands = AI_STUDIO_WORKFLOW_COMMANDS,
+  commands = [],
   extraCapabilities = []
 } = {}) {
   return {
@@ -98,7 +98,7 @@ function aiStudioWorkflowCapabilities({
 class AiStudioWorkflowTargetAdapter extends TargetAdapter {
   constructor({
     commandTerminalSpecFactory = null,
-    commands = AI_STUDIO_WORKFLOW_COMMANDS,
+    commands = [],
     id = "generic",
     label = "Generic target"
   } = {}) {
@@ -253,7 +253,7 @@ async function inspectDescribedProject(targetRoot, {
 class AiStudioDescribedWorkflowTargetAdapter extends AiStudioWorkflowTargetAdapter {
   constructor({
     commandTerminalSpecFactory = null,
-    commands = AI_STUDIO_WORKFLOW_COMMANDS,
+    commands = [],
     configFields = [],
     currentAppInspector = null,
     defaultConfig = {},

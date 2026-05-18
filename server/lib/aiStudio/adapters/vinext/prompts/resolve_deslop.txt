@@ -1,26 +1,6 @@
-Resolve deslop
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Resolve the remaining review/deslop findings for this Vinext project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Vinext project facts:
-{{adapter.facts.json}}
-
-Vinext prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Address the outstanding review findings directly. Keep the fix focused, rerun only fast relevant checks, and report what remains unresolved.
-[[AI_STUDIO_CONTEXT_END]]
+Vinext-specific deslop-resolution guidance:
+- Resolve outstanding findings while preserving Vinext compatibility and the current migration state.
+- Keep routing, package scripts, Vite behavior, Cloudflare runtime boundaries, and adapter metadata internally consistent.
+- Re-run only the focused fast checks that prove the resolved findings.

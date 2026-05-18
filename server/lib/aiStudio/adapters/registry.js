@@ -7,6 +7,9 @@ import {
   JSKIT_ADAPTER_MANIFEST
 } from "./jskit/manifest.js";
 import {
+  LARAVEL_ADAPTER_MANIFEST
+} from "./laravel/manifest.js";
+import {
   NEXTJS_ADAPTER_MANIFEST
 } from "./nextjs/manifest.js";
 import {
@@ -36,6 +39,7 @@ const PLANNED_ADAPTER_MANIFESTS = deepFreeze([
 
 const DEFAULT_ADAPTER_MANIFESTS = deepFreeze([
   JSKIT_ADAPTER_MANIFEST,
+  LARAVEL_ADAPTER_MANIFEST,
   NEXTJS_ADAPTER_MANIFEST,
   VINEXT_ADAPTER_MANIFEST,
   ...PLANNED_ADAPTER_MANIFESTS

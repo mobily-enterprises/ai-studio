@@ -1,0 +1,5 @@
+Starter kit: custom
+
+Respect the selected custom starter package.
+Inspect the generated conventions before adding new features.
+Do not assume the starter behaves like the official React, Vue, Svelte, or Livewire kits unless the files prove it.

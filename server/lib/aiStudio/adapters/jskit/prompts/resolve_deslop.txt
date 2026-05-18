@@ -1,26 +1,6 @@
-Resolve deslop
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Resolve the remaining review/deslop findings for this JSKIT project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-JSKIT project facts:
-{{adapter.facts.json}}
-
-JSKIT prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Address the outstanding review findings directly. Keep the fix focused, rerun only fast relevant checks, and report what remains unresolved.
-[[AI_STUDIO_CONTEXT_END]]
+JSKIT-specific deslop-resolution guidance:
+- Resolve outstanding findings without broadening the issue.
+- Keep provider, command, CRUD/resource, generated surface, setup, and blueprint behavior internally consistent.
+- Re-run only the focused fast checks that prove the resolved findings.

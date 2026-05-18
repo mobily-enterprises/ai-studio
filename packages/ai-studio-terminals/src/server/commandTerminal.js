@@ -9,7 +9,8 @@ import {
 import {
   aiStudioResult,
   commandTerminalNamespace,
-  normalizePlainObject
+  normalizePlainObject,
+  sessionTerminalCwd
 } from "./terminalShared.js";
 import {
   COMMAND_RESULT_ENV,
@@ -21,10 +22,6 @@ import {
 function actionById(session = {}, actionId = "") {
   return (Array.isArray(session.actions) ? session.actions : [])
     .find((action) => action.id === actionId) || null;
-}
-
-function terminalCwd(session = {}, projectService = {}) {
-  return String(session.targetRoot || projectService.targetRoot || "").trim();
 }
 
 async function writeActionTerminalResult({
@@ -168,7 +165,7 @@ function createCommandTerminalController({ projectService } = {}) {
             error: action.disabledReason || `Action ${action.label || action.id} is disabled.`
           };
         }
-        const cwd = terminalCwd(session, projectService);
+        const cwd = sessionTerminalCwd(session, projectService);
         if (!cwd) {
           return {
             ok: false,

@@ -1,26 +1,6 @@
-Run deep UI check
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Run a focused deep UI check for this Vinext project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Vinext project facts:
-{{adapter.facts.json}}
-
-Vinext prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Inspect the user-facing Vinext app behavior carefully. Fix clear UI defects directly when the project supports it, preserve routing conventions, and report what you modified or why no edit was needed.
-[[AI_STUDIO_CONTEXT_END]]
+Vinext-specific deep UI guidance:
+- Inspect the user-facing Vinext behavior affected by the change.
+- Check Next-compatible routing, responsive layout, loading/error states, client/server boundaries, Vite behavior, and Cloudflare runtime assumptions.
+- Fix clear UI defects directly when they are in scope and report compatibility or migration blockers.

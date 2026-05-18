@@ -1,32 +1,9 @@
-Run deep UI check
-
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Run a focused deep UI check for this Next.js project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Next.js project facts:
-{{adapter.facts.json}}
-
-Next.js prompt context:
-{{adapter.promptContext.json}}
-
-Next.js project config:
-{{config.json}}
+{{systemStandard}}
 
 Next.js selected blueprint:
 {{adapter.promptContext.environment_blueprint}}
 
-Action input:
-{{input.json}}
-
-Inspect the user-facing Next.js app behavior carefully. Fix clear UI defects directly when the project supports it, preserve routing conventions and Server/Client Component boundaries, and report what you modified or why no edit was needed.
-[[AI_STUDIO_CONTEXT_END]]
+Next.js-specific deep UI guidance:
+- Inspect the user-facing Next.js behavior affected by the change.
+- Check routing, loading/error states, responsive layout, form behavior, data fetching boundaries, and Server Component vs Client Component usage.
+- Fix clear UI defects directly when they are in scope and report anything blocked by runtime or environment setup.

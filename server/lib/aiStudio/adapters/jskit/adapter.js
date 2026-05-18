@@ -4,6 +4,17 @@ import {
   adapterProjectFacts
 } from "../../adapter.js";
 import {
+  shellQuote
+} from "../../../shellCommands.js";
+import {
+  runScriptCommand
+} from "../../nodePackage.js";
+import {
+  commandLineScript,
+  nodeInstallWorkflowHook,
+  nodePackageManagerInspectionExtra
+} from "../../nodeWebProject.js";
+import {
   AiStudioDescribedWorkflowTargetAdapter,
   inspectDescribedProject
 } from "../../workflowAdapter.js";
@@ -171,6 +182,24 @@ function jskitFacts({
   });
 }
 
+async function jskitAutomatedChecksHook({ worktreePath = "" } = {}) {
+  const { packageManager } = await nodePackageManagerInspectionExtra({
+    targetRoot: worktreePath
+  });
+  const buildCommand = runScriptCommand(packageManager.name, "build");
+  return {
+    commandPreview: buildCommand,
+    metadata: {
+      automated_checks_package_manager: packageManager.name
+    },
+    script: commandLineScript([
+      "printf '[studio] Running JSKIT production build.\\n'",
+      `printf '[studio] $ %s\\n\\n' ${shellQuote(buildCommand)}`,
+      buildCommand
+    ])
+  };
+}
+
 async function inspectJskitProject(targetRoot) {
   return inspectDescribedProject(targetRoot, {
     extra: async ({ exists, pathFor }) => {
@@ -217,7 +246,11 @@ class JskitTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       launchTargetTerminalSpecFactory,
       launchTargets,
       targetScriptTerminalSpecFactory: createJskitTargetScriptTerminalSpec,
-      targetScriptsInspector: inspectJskitTargetScripts
+      targetScriptsInspector: inspectJskitTargetScripts,
+      workflowCommandHooks: {
+        automatedChecks: jskitAutomatedChecksHook,
+        installDependencies: nodeInstallWorkflowHook
+      }
     });
   }
 }
@@ -227,5 +260,6 @@ export {
   JSKIT_CONFIG_FIELDS,
   JSKIT_PROMPT_PACK_ROOT,
   JskitTargetAdapter,
+  jskitAutomatedChecksHook,
   inspectJskitProject
 };

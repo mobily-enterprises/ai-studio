@@ -1,26 +1,6 @@
-Run deslop
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Run the review/deslop pass for this JSKIT project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-JSKIT project facts:
-{{adapter.facts.json}}
-
-JSKIT prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Review the current work for bugs, regressions, unclear code, weak tests, and unnecessary complexity. Report findings clearly and make direct fixes when the issue is unambiguous.
-[[AI_STUDIO_CONTEXT_END]]
+JSKIT-specific review/deslop guidance:
+- Review provider boundaries, command/action wiring, CRUD/resource contracts, generated client usage, setup/check metadata, and app blueprint updates.
+- Remove unclear or duplicated code when the fix is obvious and scoped.
+- Keep JSKIT capabilities and UI state truthful to the runtime behavior.

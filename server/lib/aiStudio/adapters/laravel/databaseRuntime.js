@@ -1,0 +1,233 @@
+import {
+  createRuntimeContainerRepair,
+  runtimeContainerName,
+  runtimeContainerNetworkDockerArgs
+} from "../../runtimeContainers.js";
+import {
+  createManagedDatabaseRuntimeContainer,
+  managedDatabaseConnection,
+  managedDatabaseNameFromTargetRoot
+} from "../../managedDatabases.js";
+import {
+  shellQuote
+} from "../../../shellCommands.js";
+import {
+  LARAVEL_DATABASE_RUNTIME_CONFIG
+} from "./constants.js";
+
+const LARAVEL_DATABASE_RUNTIMES = new Set(["sqlite", "postgres", "mysql", "mariadb"]);
+const LARAVEL_POSTGRES_HOST = "laravel-postgres";
+const LARAVEL_POSTGRES_PASSWORD = "laravel_password";
+const LARAVEL_POSTGRES_USER = "laravel";
+const LARAVEL_MYSQL_HOST = "laravel-mysql";
+const LARAVEL_MYSQL_ROOT_PASSWORD = "laravel_root_password";
+const LARAVEL_MARIADB_HOST = "laravel-mariadb";
+const LARAVEL_MARIADB_ROOT_PASSWORD = "laravel_root_password";
+
+function configValues(config = {}) {
+  return config?.values && typeof config.values === "object" ? config.values : config;
+}
+
+function selectedLaravelDatabaseRuntime(config = {}) {
+  const runtime = String(configValues(config)[LARAVEL_DATABASE_RUNTIME_CONFIG] || "sqlite").trim();
+  return LARAVEL_DATABASE_RUNTIMES.has(runtime) ? runtime : "sqlite";
+}
+
+function laravelDatabaseNameFromTargetRoot(targetRoot = "") {
+  return managedDatabaseNameFromTargetRoot(targetRoot, {
+    fallback: "laravel_app"
+  });
+}
+
+function laravelDatabaseConnection(runtime = "sqlite", targetRoot = "") {
+  if (runtime === "postgres") {
+    return managedDatabaseConnection({
+      adapterId: "laravel",
+      databaseNameFallback: "laravel_app",
+      host: LARAVEL_POSTGRES_HOST,
+      password: LARAVEL_POSTGRES_PASSWORD,
+      runtime,
+      targetRoot,
+      username: LARAVEL_POSTGRES_USER
+    });
+  }
+  if (runtime === "mysql") {
+    return managedDatabaseConnection({
+      adapterId: "laravel",
+      databaseNameFallback: "laravel_app",
+      host: LARAVEL_MYSQL_HOST,
+      rootPassword: LARAVEL_MYSQL_ROOT_PASSWORD,
+      runtime,
+      targetRoot
+    });
+  }
+  if (runtime === "mariadb") {
+    return managedDatabaseConnection({
+      adapterId: "laravel",
+      databaseNameFallback: "laravel_app",
+      host: LARAVEL_MARIADB_HOST,
+      rootPassword: LARAVEL_MARIADB_ROOT_PASSWORD,
+      runtime,
+      targetRoot
+    });
+  }
+  return managedDatabaseConnection({
+    adapterId: "laravel",
+    runtime: "sqlite",
+    targetRoot
+  });
+}
+
+function createLaravelRuntimeContainers({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  const runtime = selectedLaravelDatabaseRuntime(config);
+  if (runtime === "postgres") {
+    return [
+      createManagedDatabaseRuntimeContainer({
+        adapterId: "laravel",
+        checkId: "laravel-postgres",
+        databaseNameFallback: "laravel_app",
+        host: LARAVEL_POSTGRES_HOST,
+        label: "Laravel PostgreSQL",
+        password: LARAVEL_POSTGRES_PASSWORD,
+        runtime,
+        targetRoot,
+        username: LARAVEL_POSTGRES_USER
+      })
+    ];
+  }
+  if (runtime === "mysql") {
+    return [
+      createManagedDatabaseRuntimeContainer({
+        adapterId: "laravel",
+        checkId: "laravel-mysql",
+        databaseNameFallback: "laravel_app",
+        host: LARAVEL_MYSQL_HOST,
+        label: "Laravel MySQL",
+        rootPassword: LARAVEL_MYSQL_ROOT_PASSWORD,
+        runtime,
+        targetRoot
+      })
+    ];
+  }
+  if (runtime === "mariadb") {
+    return [
+      createManagedDatabaseRuntimeContainer({
+        adapterId: "laravel",
+        checkId: "laravel-mariadb",
+        databaseNameFallback: "laravel_app",
+        host: LARAVEL_MARIADB_HOST,
+        label: "Laravel MariaDB",
+        rootPassword: LARAVEL_MARIADB_ROOT_PASSWORD,
+        runtime,
+        targetRoot
+      })
+    ];
+  }
+  return [];
+}
+
+function laravelRuntimeContainerName({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  const runtime = selectedLaravelDatabaseRuntime(config);
+  if (!["postgres", "mysql", "mariadb"].includes(runtime)) {
+    return "";
+  }
+  return runtimeContainerName({
+    adapterId: "laravel",
+    containerId: `laravel-${runtime}`,
+    targetRoot
+  });
+}
+
+function laravelRuntimeDockerArgs({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  return selectedLaravelDatabaseRuntime(config) === "sqlite"
+    ? []
+    : runtimeContainerNetworkDockerArgs(targetRoot);
+}
+
+function startLaravelRuntimeRepair({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  const [container] = createLaravelRuntimeContainers({
+    config,
+    targetRoot
+  });
+  return container
+    ? createRuntimeContainerRepair(container, {
+        adapterId: "laravel",
+        targetRoot
+      })
+    : null;
+}
+
+function laravelDatabaseEnvLines({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  const runtime = selectedLaravelDatabaseRuntime(config);
+  if (runtime === "sqlite") {
+    return [
+      "DB_CONNECTION=sqlite"
+    ];
+  }
+  const connection = laravelDatabaseConnection(runtime, targetRoot);
+  const driver = runtime === "postgres" ? "pgsql" : runtime;
+  return [
+    `DB_CONNECTION=${driver}`,
+    `DB_HOST=${connection.host}`,
+    `DB_PORT=${connection.port}`,
+    `DB_DATABASE=${connection.database}`,
+    `DB_USERNAME=${connection.username}`,
+    `DB_PASSWORD=${connection.password}`
+  ];
+}
+
+function laravelDatabaseEnvWriteScript({
+  config = {},
+  targetRoot = ""
+} = {}) {
+  const runtime = selectedLaravelDatabaseRuntime(config);
+  const lines = laravelDatabaseEnvLines({
+    config,
+    targetRoot
+  });
+  return [
+    "set -e",
+    "env_file=.env",
+    "touch \"$env_file\"",
+    "tmp_file=\"$(mktemp)\"",
+    "grep -Ev '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD)=' \"$env_file\" > \"$tmp_file\" || true",
+    "mv \"$tmp_file\" \"$env_file\"",
+    ...lines.map((line) => `printf '%s\\n' ${shellQuote(line)} >> "$env_file"`),
+    ...(runtime === "sqlite" ? [
+      "mkdir -p database",
+      "touch database/database.sqlite"
+    ] : []),
+    "echo 'Wrote Laravel database settings for AI Studio-managed runtime.'"
+  ].join("\n");
+}
+
+export {
+  LARAVEL_DATABASE_RUNTIMES,
+  LARAVEL_MARIADB_HOST,
+  LARAVEL_MYSQL_HOST,
+  LARAVEL_POSTGRES_HOST,
+  createLaravelRuntimeContainers,
+  laravelDatabaseConnection,
+  laravelDatabaseEnvLines,
+  laravelDatabaseEnvWriteScript,
+  laravelDatabaseNameFromTargetRoot,
+  laravelRuntimeContainerName,
+  laravelRuntimeDockerArgs,
+  selectedLaravelDatabaseRuntime,
+  startLaravelRuntimeRepair
+};

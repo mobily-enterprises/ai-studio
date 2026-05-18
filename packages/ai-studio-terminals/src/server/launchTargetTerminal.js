@@ -8,7 +8,8 @@ import {
 } from "../../../../server/lib/terminalSessions.js";
 import {
   aiStudioResult,
-  launchTargetTerminalNamespace
+  launchTargetTerminalNamespace,
+  sessionTerminalCwd
 } from "./terminalShared.js";
 
 const LAUNCH_METADATA = Object.freeze({
@@ -19,10 +20,6 @@ const LAUNCH_METADATA = Object.freeze({
   openLabel: "launch_target_open_label",
   startedAt: "launch_target_started_at"
 });
-
-function terminalCwd(session = {}, projectService = {}) {
-  return String(session.targetRoot || projectService.targetRoot || "").trim();
-}
 
 function normalizeLaunchTargetId(value = "") {
   return String(value || "").trim();
@@ -176,7 +173,7 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
     async startTerminal(sessionId, input = {}) {
       return aiStudioResult(async () => {
         const context = await createLaunchContext(projectService, sessionId);
-        const cwd = terminalCwd(context.session, projectService);
+        const cwd = sessionTerminalCwd(context.session, projectService);
         if (!cwd) {
           return {
             ok: false,

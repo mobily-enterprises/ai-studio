@@ -1,0 +1,32 @@
+Make plan
+
+[[AI_STUDIO_CONTEXT_START]]
+AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
+
+Create the implementation plan for this Laravel project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+Laravel project facts:
+{{adapter.facts.json}}
+
+Laravel prompt context:
+{{adapter.promptContext.json}}
+
+Laravel project config:
+{{config.json}}
+
+Laravel selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+Action input:
+{{input.json}}
+
+Return a clear, ordered plan as your normal Codex response. Account for Laravel routing, controllers, requests, policies, models, migrations, seeders, tests, frontend assets, Composer scripts, and the selected database runtime. Do not modify files while creating the plan.
+[[AI_STUDIO_CONTEXT_END]]

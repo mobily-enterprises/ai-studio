@@ -77,6 +77,118 @@ test("ai-studio prompt renderer falls back to the generic prompt", async () => {
   });
 });
 
+test("ai-studio prompt renderer makes the system standard available to adapter prompts", async () => {
+  await withTemporaryRoot(async (promptPackRoot) => {
+    await withTemporaryRoot(async (systemPromptPackRoot) => {
+      await writeFile(
+        path.join(promptPackRoot, "make_plan.txt"),
+        [
+          "{{systemStandard}}",
+          "",
+          "Adapter guidance for {{adapter.id}}."
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        path.join(systemPromptPackRoot, "make_plan.txt"),
+        "System standard for {{action.label}} and {{session.id}}.",
+        "utf8"
+      );
+      const renderer = new PromptRenderer({
+        promptPackRoot,
+        systemPromptPackRoot
+      });
+
+      const rendered = await renderer.renderPrompt({
+        action: {
+          id: "make_plan",
+          label: "Make plan",
+          type: "prompt"
+        },
+        session: {
+          adapter: {
+            id: "nextjs",
+            label: "Next.js"
+          },
+          sessionId: "prompt_session"
+        }
+      });
+
+      assert.equal(rendered.systemStandard, "System standard for Make plan and prompt_session.");
+      assert.equal(
+        rendered.prompt,
+        [
+          "System standard for Make plan and prompt_session.",
+          "",
+          "Adapter guidance for nextjs."
+        ].join("\n")
+      );
+    });
+  });
+});
+
+test("ai-studio prompt overrides can include the rendered system standard", async () => {
+  await withTemporaryRoot(async (promptPackRoot) => {
+    await withTemporaryRoot(async (systemPromptPackRoot) => {
+      await withTemporaryRoot(async (targetRoot) => {
+        await writeFile(
+          path.join(promptPackRoot, "make_plan.txt"),
+          "Adapter prompt includes {{systemStandard}}.",
+          "utf8"
+        );
+        await writeFile(
+          path.join(systemPromptPackRoot, "make_plan.txt"),
+          "Shared standard for {{session.id}}",
+          "utf8"
+        );
+        const overrideRoot = path.join(targetRoot, ".ai-studio", "prompts", "jskit");
+        await mkdir(overrideRoot, {
+          recursive: true
+        });
+        await writeFile(
+          path.join(overrideRoot, "make_plan.txt"),
+          [
+            "Custom wrapper.",
+            "{{systemStandard}}",
+            "{{originalPrompt}}"
+          ].join("\n"),
+          "utf8"
+        );
+        const renderer = new PromptRenderer({
+          promptPackRoot,
+          systemPromptPackRoot
+        });
+
+        const rendered = await renderer.renderPrompt({
+          action: {
+            id: "make_plan",
+            label: "Make plan",
+            type: "prompt"
+          },
+          session: {
+            adapter: {
+              id: "jskit",
+              label: "JSKIT"
+            },
+            sessionId: "prompt_session",
+            targetRoot
+          }
+        });
+
+        assert.equal(rendered.originalPrompt, "Adapter prompt includes Shared standard for prompt_session.");
+        assert.equal(
+          rendered.prompt,
+          [
+            "Custom wrapper.",
+            "Shared standard for prompt_session",
+            "Adapter prompt includes Shared standard for prompt_session."
+          ].join("\n")
+        );
+      });
+    });
+  });
+});
+
 test("ai-studio prompt renderer applies target overrides with the rendered original prompt", async () => {
   await withTemporaryRoot(async (promptPackRoot) => {
     await withTemporaryRoot(async (targetRoot) => {

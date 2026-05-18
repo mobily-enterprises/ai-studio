@@ -1,0 +1,5 @@
+Starter kit: React
+
+Use Laravel's React starter kit conventions.
+Treat React UI as an Inertia application in resources/js, with Laravel routes and controllers serving pages.
+Keep server validation and authorization in Laravel; pass typed page props to React components.

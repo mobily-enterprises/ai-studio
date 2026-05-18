@@ -1,0 +1,4 @@
+Laravel Boost: none
+
+Do not assume Laravel Boost is installed.
+Use the repository's actual files, Composer packages, tests, and Laravel version as the source of truth.

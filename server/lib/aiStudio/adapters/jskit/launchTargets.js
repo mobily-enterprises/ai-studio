@@ -65,13 +65,13 @@ function normalizePort(value) {
 }
 
 async function resolveBuiltLaunchConfig(worktreePath) {
-  const [legacySingleCommand, hostDockerValue, portValue] = await Promise.all([
+  const [configuredBuiltCommand, hostDockerValue, portValue] = await Promise.all([
     readOptionalConfigFile(worktreePath, BUILT_LAUNCH_COMMAND_CONFIG, ""),
     readOptionalConfigFile(worktreePath, LAUNCH_HOST_DOCKER_CONFIG, ""),
     readOptionalConfigFile(worktreePath, BUILT_LAUNCH_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
   const hostDocker = enabledConfigValue(hostDockerValue);
-  if (legacySingleCommand) {
+  if (configuredBuiltCommand) {
     return {
       buildCommand: "",
       commandSource: BUILT_LAUNCH_COMMAND_CONFIG,
@@ -79,7 +79,7 @@ async function resolveBuiltLaunchConfig(worktreePath) {
       hostDockerSource: hostDocker ? LAUNCH_HOST_DOCKER_CONFIG : "",
       preferredPort: normalizePort(portValue),
       serverCommand: "",
-      testrunCommand: legacySingleCommand
+      testrunCommand: configuredBuiltCommand
     };
   }
 
@@ -89,7 +89,7 @@ async function resolveBuiltLaunchConfig(worktreePath) {
   ]);
   return {
     buildCommand,
-    commandSource: "fallback_split_commands",
+    commandSource: "default_build_and_server_commands",
     hostDocker,
     hostDockerSource: hostDocker ? LAUNCH_HOST_DOCKER_CONFIG : "",
     preferredPort: normalizePort(portValue),

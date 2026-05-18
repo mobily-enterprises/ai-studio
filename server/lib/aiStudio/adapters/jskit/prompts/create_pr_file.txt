@@ -1,30 +1,6 @@
-Create PR file
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Create the local pull request file for this JSKIT project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- artifacts root: {{session.artifactsRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-JSKIT project facts:
-{{adapter.facts.json}}
-
-JSKIT prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Write the reviewed pull request body to:
-{{session.artifactsRoot}}/pull_request.md
-
-Keep it focused on the accepted issue, implementation summary, checks run, and any remaining risk.
-[[AI_STUDIO_CONTEXT_END]]
+JSKIT-specific pull-request-file guidance:
+- Summarize the accepted issue, implementation, JSKIT provider/command/CRUD or UI surfaces changed, and verification performed.
+- Call out package scripts, app blueprint changes, setup checks, and remaining framework risks when relevant.
+- Keep the pull request body focused on what a reviewer needs to merge safely.

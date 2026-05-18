@@ -1,26 +1,6 @@
-Execute plan
+{{systemStandard}}
 
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-Execute the accepted plan for this Vinext project.
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Vinext project facts:
-{{adapter.facts.json}}
-
-Vinext prompt context:
-{{adapter.promptContext.json}}
-
-Action input:
-{{input.json}}
-
-Make the requested code edits directly in the workspace. Preserve Next-compatible routing conventions, prefer existing package scripts and dependencies, and keep the work scoped to the session goal.
-[[AI_STUDIO_CONTEXT_END]]
+Vinext-specific implementation guidance:
+- Preserve Next-compatible routing, package scripts, package-manager choice, Vinext migration state, Vite behavior, and Cloudflare runtime boundaries.
+- Keep changes compatible with Vinext rather than relying on unsupported Next.js runtime behavior.
+- Run focused Vinext checks or builds when they are relevant and available.

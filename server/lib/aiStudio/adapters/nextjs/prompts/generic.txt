@@ -1,42 +1,9 @@
-Run {{action.label}}
-
-[[AI_STUDIO_CONTEXT_START]]
-AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
-
-You are working in a Next.js project through AI Studio.
-
-Run this Next.js workflow prompt.
-
-Action:
-- id: {{action.id}}
-- label: {{action.label}}
-- prompt: {{action.promptId}}
-
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- status: {{session.status}}
-- target root: {{session.targetRoot}}
-
-Session metadata:
-{{session.metadata.json}}
-
-Next.js project facts:
-{{adapter.facts.json}}
-
-Next.js prompt context:
-{{adapter.promptContext.json}}
-
-Next.js project config:
-{{config.json}}
+{{systemStandard}}
 
 Next.js selected blueprint:
 {{adapter.promptContext.environment_blueprint}}
 
-Action input:
-{{input.json}}
-
-Respect the selected Next.js config values when they apply. If a managed database is selected, use DATABASE_URL from .env.local and keep database work server-side.
-
-In your normal Codex response, report the work completed, files modified, checks run, and remaining blockers. Do not run shell commands just to display this response.
-[[AI_STUDIO_CONTEXT_END]]
+Next.js-specific guidance:
+- Treat this as a Next.js project using the selected blueprint above.
+- Respect App Router vs Pages Router, Server Components vs Client Components, route handlers, Server Actions, package scripts, and deployment/runtime boundaries.
+- If a database runtime is selected, keep secrets in environment configuration and keep database access in server-only code.

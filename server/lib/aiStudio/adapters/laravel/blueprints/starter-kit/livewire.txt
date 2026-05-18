@@ -1,0 +1,5 @@
+Starter kit: Livewire
+
+Use Laravel's Livewire starter kit conventions.
+Prefer Livewire components for interactive UI and Blade for templates.
+Keep validation, persistence, authorization, and component state in Laravel/PHP unless the app already uses a JavaScript frontend.
