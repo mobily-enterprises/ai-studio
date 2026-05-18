@@ -12,11 +12,8 @@
       <article
         v-for="projectType in projectTypes"
         :key="projectType.id"
-        :class="[
-          'project-type-setup__option',
-          projectType.enabled === true ? 'project-type-setup__option--enabled' : 'project-type-setup__option--disabled'
-        ]"
-        :title="projectType.disabledReason || projectType.label"
+        class="project-type-setup__option"
+        :title="projectType.label"
       >
         <div class="project-type-setup__option-top">
           <div>
@@ -24,12 +21,12 @@
             <h3 class="project-type-setup__option-title">{{ projectType.label }}</h3>
           </div>
           <v-chip
-            :color="projectType.enabled === true ? 'success' : 'warning'"
+            color="success"
             density="comfortable"
             size="small"
             variant="tonal"
           >
-            {{ projectType.enabled === true ? "Ready" : "Planned" }}
+            Ready
           </v-chip>
         </div>
 
@@ -44,7 +41,7 @@
           </div>
           <div>
             <dt>Best for</dt>
-            <dd>{{ projectType.bestFor || projectType.disabledReason || "Project-specific AI Studio workflows." }}</dd>
+            <dd>{{ projectType.bestFor || "Project-specific AI Studio workflows." }}</dd>
           </div>
           <div>
             <dt>End result</dt>
@@ -87,7 +84,7 @@
           <v-btn
             color="primary"
             variant="flat"
-            :disabled="saving || projectType.enabled !== true"
+            :disabled="saving"
             :loading="savingType === projectType.id"
             @click="emit('select', projectType.id)"
           >
@@ -132,13 +129,12 @@ const projectTypes = computed(() => {
           ...projectType,
           techStack: Array.isArray(projectType.techStack) ? projectType.techStack : []
         }))
+        .filter((projectType) => projectType.enabled === true)
     : [];
 });
 
-function fallbackSummary(projectType = {}) {
-  return projectType.enabled === true
-    ? "A configured AI Studio adapter for this project type."
-    : projectType.disabledReason || "This adapter is planned but not implemented yet.";
+function fallbackSummary() {
+  return "A configured AI Studio adapter for this project type.";
 }
 </script>
 
@@ -196,10 +192,6 @@ function fallbackSummary(projectType = {}) {
   gap: 0.8rem;
   min-height: 100%;
   padding: 1rem;
-}
-
-.project-type-setup__option--disabled {
-  opacity: 0.72;
 }
 
 .project-type-setup__option-top,

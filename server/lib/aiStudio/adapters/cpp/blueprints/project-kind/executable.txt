@@ -1,0 +1,3 @@
+Project kind: executable
+
+Treat the main deliverable as a runnable program. Keep command-line behavior, process exit codes, input validation, logging, and testable core logic separated from the thin `main()` entry point.

@@ -1,0 +1,9 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific review/deslop guidance:
+- Review build manifests, target definitions, headers, source files, ownership/lifetime, error handling, const-correctness, portability, and tests.
+- Remove unclear or duplicated code when the fix is obvious and scoped.
+- Keep generated or seeded project structure consistent with the selected blueprint.

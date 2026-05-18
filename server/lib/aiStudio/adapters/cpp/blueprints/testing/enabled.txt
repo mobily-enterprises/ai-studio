@@ -1,0 +1,3 @@
+Testing: enabled
+
+Use the selected build system's native test entry point: CTest for CMake, `make test` for Make when a test target exists, and `meson test` for Meson. Keep test output actionable and make failures deterministic.

@@ -1,0 +1,9 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific guidance:
+- Treat this as a native C++ project using the selected blueprint above.
+- Respect the detected build manifest, compiler constraints, public headers, source layout, and test entry points.
+- Pay special attention to memory safety, ownership, object lifetimes, threading, portability, and deterministic tests.

@@ -1,0 +1,3 @@
+Build system: Make
+
+Use the existing Makefile as the authoritative build contract. Preserve target names, flags, and generated-output directories. Add small, readable targets when needed, but avoid replacing an established Make workflow with another build system unless the issue explicitly asks for that.

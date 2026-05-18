@@ -1,0 +1,9 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific project-knowledge guidance:
+- Update the project knowledge artifact referenced by the adapter prompt context.
+- Preserve useful facts about build system, targets, source/header layout, selected C++ standard, testing entry points, compiler assumptions, and code-index location.
+- Remove stale claims and keep the artifact concise enough to maintain.

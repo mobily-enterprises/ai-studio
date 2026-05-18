@@ -1,0 +1,9 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific merge-preparation guidance:
+- Use the recorded PR URL and inspect only what is needed to decide whether the native-code work is mergeable.
+- Resolve local merge blockers, failing configure/build/test checks, unsafe ownership/lifetime changes, or build-manifest inconsistencies when they are clearly in scope.
+- Report whether the PR is ready and which C++ checks or risks remain.

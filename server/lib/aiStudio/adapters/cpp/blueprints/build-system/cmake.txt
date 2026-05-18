@@ -1,0 +1,3 @@
+Build system: CMake
+
+Use CMake as the authoritative build manifest. Prefer target-based CMake with explicit `add_library`, `add_executable`, `target_link_libraries`, `target_include_directories`, and per-target compile features. Keep generated files in `build/`, enable `compile_commands.json`, and avoid hard-coded local machine paths.

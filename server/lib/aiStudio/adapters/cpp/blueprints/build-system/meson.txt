@@ -1,0 +1,3 @@
+Build system: Meson
+
+Use Meson as the authoritative build manifest. Keep `meson.build` declarative, prefer target-specific dependencies and include directories, and run builds through `meson setup`, `meson compile`, and `meson test`.

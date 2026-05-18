@@ -1,0 +1,3 @@
+Project kind: library
+
+Treat the main deliverable as reusable library code. Keep public headers deliberate, private implementation details out of the public API, and tests focused on observable behavior through the public interface.

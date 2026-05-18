@@ -7,6 +7,9 @@ import {
   JSKIT_ADAPTER_MANIFEST
 } from "./jskit/manifest.js";
 import {
+  CPP_ADAPTER_MANIFEST
+} from "./cpp/manifest.js";
+import {
   LARAVEL_ADAPTER_MANIFEST
 } from "./laravel/manifest.js";
 import {
@@ -16,18 +19,12 @@ import {
   VINEXT_ADAPTER_MANIFEST
 } from "./vinext/manifest.js";
 
-const PLANNED_ADAPTER_MANIFESTS = deepFreeze([
+const DISABLED_ADAPTER_MANIFESTS = deepFreeze([
   {
     disabledReason: "Python adapter is not implemented yet.",
     enabled: false,
     id: "python",
     label: "Python"
-  },
-  {
-    disabledReason: "C++ adapter is not implemented yet.",
-    enabled: false,
-    id: "cpp",
-    label: "C++"
   },
   {
     disabledReason: "Generic web adapter is not implemented yet.",
@@ -39,10 +36,11 @@ const PLANNED_ADAPTER_MANIFESTS = deepFreeze([
 
 const DEFAULT_ADAPTER_MANIFESTS = deepFreeze([
   JSKIT_ADAPTER_MANIFEST,
+  CPP_ADAPTER_MANIFEST,
   LARAVEL_ADAPTER_MANIFEST,
   NEXTJS_ADAPTER_MANIFEST,
   VINEXT_ADAPTER_MANIFEST,
-  ...PLANNED_ADAPTER_MANIFESTS
+  ...DISABLED_ADAPTER_MANIFESTS
 ]);
 
 function publicProjectType(definition = {}) {
@@ -94,7 +92,9 @@ function createAiStudioAdapterRegistry({
   const definitionsById = new Map(definitions.map((definition) => [definition.id, definition]));
 
   function availableProjectTypes() {
-    return definitions.map(publicProjectType);
+    return definitions
+      .filter((definition) => definition.enabled === true)
+      .map(publicProjectType);
   }
 
   function projectTypeDefinition(projectType) {

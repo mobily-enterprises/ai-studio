@@ -1,0 +1,9 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific deep behavior check guidance:
+- If the C++ project exposes a UI, CLI, service, or executable behavior, inspect the user-visible behavior affected by the change.
+- Check command-line arguments, process output, exit codes, error handling, file/network side effects, and deterministic behavior.
+- Fix clear behavior defects directly when they are in scope and report anything blocked by runtime or environment setup.

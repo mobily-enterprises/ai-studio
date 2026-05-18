@@ -1,0 +1,10 @@
+{{systemStandard}}
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific implementation guidance:
+- Preserve the existing build system, source/header organization, warning posture, and selected C++ standard.
+- Keep ownership, lifetime, RAII, error handling, const-correctness, and API boundaries explicit.
+- Prefer clear, boring C++ over clever templates/macros unless the surrounding code already uses that style.
+- Run focused compile/build/test commands that prove the changed behavior.

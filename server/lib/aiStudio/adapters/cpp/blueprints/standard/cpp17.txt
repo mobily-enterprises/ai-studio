@@ -1,0 +1,3 @@
+C++ standard: C++17
+
+Write portable C++17. Prefer standard-library facilities available in C++17, avoid compiler-specific extensions unless the project already depends on them, and keep ABI/API changes explicit.

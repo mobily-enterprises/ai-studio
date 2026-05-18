@@ -1,0 +1,11 @@
+{{systemStandard}}
+
+Create the implementation plan for this C++ project.
+
+C++ selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
+
+C++-specific planning guidance:
+- Identify the build system, targets, source/header files, tests, and expected verification commands before editing.
+- Plan around ownership/lifetime, public API boundaries, ABI impact, threading, portability, and failure modes.
+- Keep the plan focused enough to execute with targeted native-code checks.

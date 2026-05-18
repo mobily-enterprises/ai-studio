@@ -10,18 +10,20 @@
       {{ pageError }}
     </v-alert>
 
-    <ProjectTypeGate
-      :configure-project="configureProject"
-      @error="handleProjectTypeError"
-      @missing="handleProjectTypeMissing"
-      @ready="handleProjectTypeReady"
-    >
-      <template #default>
-        <SetupReadinessGate>
-          <AiStudioSessionPanel @title-change="emitPageTitle" />
-        </SetupReadinessGate>
-      </template>
-    </ProjectTypeGate>
+    <div class="studio-screen__gate-scroll">
+      <ProjectTypeGate
+        :configure-project="configureProject"
+        @error="handleProjectTypeError"
+        @missing="handleProjectTypeMissing"
+        @ready="handleProjectTypeReady"
+      >
+        <template #default>
+          <SetupReadinessGate>
+            <AiStudioSessionPanel @title-change="emitPageTitle" />
+          </SetupReadinessGate>
+        </template>
+      </ProjectTypeGate>
+    </div>
   </section>
 </template>
 
@@ -105,18 +107,24 @@ onBeforeUnmount(() => {
     overflow: hidden;
   }
 
-  .studio-screen :deep(.project-type-gate) {
+  .studio-screen__gate-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .studio-screen__gate-scroll :deep(.project-type-gate) {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
     min-height: 0;
   }
 
-  .studio-screen :deep(.project-type-gate > .setup-readiness-gate) {
+  .studio-screen__gate-scroll :deep(.project-type-gate > .setup-readiness-gate) {
     flex: 1 1 auto;
   }
 
-  .studio-screen :deep(.project-type-gate .studio-ai-sessions) {
+  .studio-screen__gate-scroll :deep(.project-type-gate .studio-ai-sessions) {
     flex: 1 1 auto;
   }
 }

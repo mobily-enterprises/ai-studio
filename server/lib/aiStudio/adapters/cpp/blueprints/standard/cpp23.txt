@@ -1,0 +1,3 @@
+C++ standard: C++23
+
+Write portable C++23. Use new standard facilities only when they are supported by the configured compiler/toolchain and they materially improve clarity, correctness, or maintainability.
