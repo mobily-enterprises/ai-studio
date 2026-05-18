@@ -9,19 +9,11 @@ import {
   runScriptCommand
 } from "../../nodePackage.js";
 import {
-  NEXTJS_REVIEW_MODE_CONFIG
-} from "./constants.js";
-import {
   nextjsRuntimeDockerArgs
 } from "./databaseRuntime.js";
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
-function reviewMode(config = {}) {
-  const mode = String(configValues(config)[NEXTJS_REVIEW_MODE_CONFIG] || "production").trim();
-  return mode === "development" ? "development" : "production";
+function launchModeForTarget(launchTargetId = "") {
+  return launchTargetId === "dev" ? "development" : "production";
 }
 
 function nextCommandOrPackageScript(packageJson = {}, packageManagerName = "npm", {
@@ -54,22 +46,15 @@ async function listNextjsLaunchTargets({
   ];
 }
 
-function configForLaunchTarget(config = {}, launchTargetId = "") {
-  return {
-    ...configValues(config),
-    [NEXTJS_REVIEW_MODE_CONFIG]: launchTargetId === "dev" ? "development" : "production"
-  };
-}
-
-async function createNextjsReviewDescriptor({
+async function createNextjsLaunchDescriptor({
   config = {},
+  mode = "production",
   port,
   targetRoot = "",
   worktreePath = ""
 } = {}) {
   const packageJson = await readPackageJson(worktreePath);
   const packageManager = await detectPackageManager(worktreePath, packageJson || {});
-  const mode = reviewMode(config);
   const buildCommand = nextCommandOrPackageScript(packageJson || {}, packageManager.name, {
     scriptName: "build"
   });
@@ -95,7 +80,7 @@ async function createNextjsReviewDescriptor({
         : null,
       {
         command: serverCommand,
-        label: "Starting Next.js review server.",
+        label: "Starting Next.js launch server.",
         networkEnv: true
       }
     ].filter(Boolean),
@@ -126,23 +111,24 @@ function createNextjsLaunchTargetTerminalSpec({
       message: `Unknown Next.js launch target: ${launchTargetId || "(empty)"}.`
     };
   }
-  const reviewTargetRoot = targetRoot || session.targetRoot || "";
+  const launchTargetRoot = targetRoot || session.targetRoot || "";
   return createAiStudioLaunchTargetTerminalSpec({
     adapterId: "nextjs",
     launchTarget: context.launchTarget || nextjsLaunchTarget(launchTargetId, launchTargetId),
-    resolveLaunch: ({ port, worktreePath }) => createNextjsReviewDescriptor({
-      config: configForLaunchTarget(context.config || session.config || {}, launchTargetId),
+    resolveLaunch: ({ port, worktreePath }) => createNextjsLaunchDescriptor({
+      config: context.config || session.config || {},
+      mode: launchModeForTarget(launchTargetId),
       port,
-      targetRoot: reviewTargetRoot,
+      targetRoot: launchTargetRoot,
       worktreePath
     }),
     session,
-    targetRoot: reviewTargetRoot
+    targetRoot: launchTargetRoot
   });
 }
 
 export {
   createNextjsLaunchTargetTerminalSpec,
-  createNextjsReviewDescriptor,
+  createNextjsLaunchDescriptor,
   listNextjsLaunchTargets
 };

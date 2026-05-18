@@ -1,5 +1,10 @@
 FROM node:22-bookworm
 
+ARG BUN_VERSION=1.3.14
+ARG PNPM_VERSION=11.1.2
+ARG YARN_VERSION=1.22.22
+
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update \
@@ -32,8 +37,18 @@ RUN mkdir -p /etc/apt/keyrings \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @openai/codex @playwright/test@1.59.1 \
+RUN corepack enable \
+  && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
+  && corepack prepare "yarn@${YARN_VERSION}" --activate
+
+RUN npm install -g "bun@${BUN_VERSION}" @openai/codex @playwright/test@1.59.1 \
   && playwright install --with-deps chromium \
+  && node --version \
+  && npm --version \
+  && corepack --version \
+  && corepack pnpm --version \
+  && corepack yarn --version \
+  && bun --version \
   && chmod -R 0777 /ms-playwright
 
 WORKDIR /workspace

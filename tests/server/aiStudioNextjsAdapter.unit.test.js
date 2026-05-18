@@ -11,12 +11,13 @@ import {
 } from "../../server/lib/aiStudio/adapters/registry.js";
 import {
   NEXTJS_AI_STUDIO_COMMANDS,
+  createNextjsLaunchDescriptor,
   createNextjsLaunchTargetTerminalSpec,
-  createNextjsReviewDescriptor,
   createNextjsTargetAdapter
 } from "../../server/lib/aiStudio/adapters/nextjs/index.js";
 import {
   expectedNextjsDatabaseUrl,
+  nextjsDatabaseEnvWriteScript,
   nextjsRuntimeDockerArgs
 } from "../../server/lib/aiStudio/adapters/nextjs/databaseRuntime.js";
 import {
@@ -73,13 +74,16 @@ function commandIds() {
 test("nextjs adapter is registered as an implemented project type", async () => {
   const registry = createAiStudioAdapterRegistry();
   const projectTypes = registry.availableProjectTypes();
+  const nextjsProjectType = projectTypes.find((type) => type.id === "nextjs");
 
-  assert.deepEqual(projectTypes.find((type) => type.id === "nextjs"), {
-    disabledReason: "",
-    enabled: true,
-    id: "nextjs",
-    label: "Next.js"
-  });
+  assert.equal(nextjsProjectType.disabledReason, "");
+  assert.equal(nextjsProjectType.enabled, true);
+  assert.equal(nextjsProjectType.id, "nextjs");
+  assert.equal(nextjsProjectType.label, "Next.js");
+  assert.match(nextjsProjectType.description, /React framework/u);
+  assert.match(nextjsProjectType.outcome, /seed or inspect/u);
+  assert.equal(nextjsProjectType.projectUrl, "https://nextjs.org");
+  assert.ok(nextjsProjectType.techStack.includes("React"));
   assert.equal((await registry.createAdapter("nextjs")).id, "nextjs");
 });
 
@@ -235,10 +239,8 @@ test("nextjs launch target describes Next.js commands and uses the shared termin
   await withTemporaryRoot(async (targetRoot) => {
     await createNextjsProject(targetRoot);
 
-    const descriptor = await createNextjsReviewDescriptor({
-      config: {
-        nextjs_review_mode: "production"
-      },
+    const descriptor = await createNextjsLaunchDescriptor({
+      mode: "production",
       port: 4199,
       targetRoot,
       worktreePath: targetRoot
@@ -308,6 +310,47 @@ test("nextjs setup plugin seeds empty targets without overwriting existing app f
     });
     assert.equal(occupiedResult.status, "hard-stop");
     assert.equal(occupiedResult.repair, null);
+  });
+});
+
+test("nextjs setup checks the selected package manager in the managed toolchain", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const dockerCalls = [];
+    const config = {
+      values: {
+        nextjs_package_manager: "bun"
+      }
+    };
+    const plugin = createNextjsSetupDoctorPlugin({
+      runCommand: async (command, args) => {
+        dockerCalls.push({
+          args,
+          command
+        });
+        return {
+          ok: true,
+          output: "1.3.14"
+        };
+      },
+      targetRoot
+    });
+    const checks = plugin.checks({
+      config,
+      targetRoot
+    });
+    const packageManagerToolchainCheck = checks.find((check) => check.id === "nextjs-package-manager-toolchain");
+
+    assert.ok(packageManagerToolchainCheck);
+    assert.ok(checks.findIndex((check) => check.id === "nextjs-package-manager-toolchain") < checks.findIndex((check) => check.id === "nextjs-package-json"));
+
+    const result = await packageManagerToolchainCheck.run({
+      config,
+      targetRoot
+    });
+
+    assert.equal(result.status, "pass");
+    assert.equal(dockerCalls[0].command, "docker");
+    assert.match(dockerCalls[0].args.join(" "), /bun --version/u);
   });
 });
 
@@ -402,6 +445,58 @@ test("nextjs adapter declares optional managed database runtime without owning o
         targetRoot
       }),
       runtimeContainerNetworkDockerArgs(targetRoot)
+    );
+  });
+});
+
+test("nextjs setup provisions the selected managed database runtime", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createNextjsProject(targetRoot);
+    const plugin = createNextjsSetupDoctorPlugin({
+      targetRoot
+    });
+
+    const mysqlConfig = {
+      values: {
+        nextjs_database_runtime: "mysql"
+      }
+    };
+    const mysqlChecks = plugin.checks({
+      config: mysqlConfig,
+      targetRoot
+    });
+    assert.ok(mysqlChecks.some((check) => check.id === "nextjs-mysql"));
+    assert.ok(!mysqlChecks.some((check) => check.id === "nextjs-postgres"));
+
+    const mysqlEnvCheck = mysqlChecks.find((check) => check.id === "nextjs-database-env");
+    const mysqlEnvResult = await mysqlEnvCheck.run({
+      config: mysqlConfig,
+      targetRoot
+    });
+    assert.equal(mysqlEnvResult.status, "blocked");
+    assert.equal(mysqlEnvResult.repairs[1].actionId, "start-runtime-container-nextjs-mysql");
+    assert.equal(
+      expectedNextjsDatabaseUrl("mysql", targetRoot),
+      `mysql://root:nextjs_root_password@nextjs-mysql:3306/${path.basename(targetRoot).replace(/[^A-Za-z0-9_]+/gu, "_")}`
+    );
+
+    const noneConfig = {
+      values: {
+        nextjs_database_runtime: "none"
+      }
+    };
+    const noneChecks = plugin.checks({
+      config: noneConfig,
+      targetRoot
+    });
+    assert.ok(!noneChecks.some((check) => check.id === "nextjs-mysql"));
+    assert.ok(!noneChecks.some((check) => check.id === "nextjs-postgres"));
+    assert.equal(
+      nextjsDatabaseEnvWriteScript({
+        config: noneConfig,
+        targetRoot
+      }).includes("DATABASE_URL="),
+      false
     );
   });
 });

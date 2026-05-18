@@ -54,9 +54,9 @@ function targetScriptStartupScript(command = "", {
   ].join("\n");
   return [
     "set -e",
-    "mkdir -p /tmp/studio-home /tmp/npm-cache",
+    "mkdir -p /tmp/studio-home",
     "if [ \"$(id -u)\" = \"0\" ] && [ -n \"${AI_STUDIO_HOST_UID:-}\" ] && [ -n \"${AI_STUDIO_HOST_GID:-}\" ] && command -v setpriv >/dev/null 2>&1; then",
-    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/studio-home /tmp/npm-cache",
+    "  chown -R \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/studio-home",
     "  docker_group_args=\"--clear-groups\"",
     "  if [ -S /var/run/docker.sock ]; then",
     "    docker_sock_gid=\"$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)\"",
@@ -64,9 +64,9 @@ function targetScriptStartupScript(command = "", {
     "      docker_group_args=\"--groups $docker_sock_gid\"",
     "    fi",
     "  fi",
-    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" $docker_group_args env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`,
+    `  exec setpriv --reuid "$AI_STUDIO_HOST_UID" --regid "$AI_STUDIO_HOST_GID" $docker_group_args env HOME=/tmp/studio-home bash -lc ${shellQuote(runCommand)}`,
     "fi",
-    `exec env HOME=/tmp/studio-home npm_config_cache=/tmp/npm-cache bash -lc ${shellQuote(runCommand)}`
+    `exec env HOME=/tmp/studio-home bash -lc ${shellQuote(runCommand)}`
   ].join("\n");
 }
 

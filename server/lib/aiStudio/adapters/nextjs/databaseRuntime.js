@@ -93,7 +93,7 @@ function createNextjsPostgresRuntimeContainer(targetRoot = "") {
         hostPort: NEXTJS_POSTGRES_HOST_PORT
       }
     ],
-    readyExplanation: "The managed PostgreSQL runtime is ready for Next.js scripts and app review.",
+    readyExplanation: "The managed PostgreSQL runtime is ready for Next.js scripts and launch targets.",
     secretEnv: [
       "POSTGRES_PASSWORD"
     ],
@@ -140,7 +140,7 @@ function createNextjsMysqlRuntimeContainer(targetRoot = "") {
         hostPort: NEXTJS_MYSQL_HOST_PORT
       }
     ],
-    readyExplanation: "The managed MySQL runtime is ready for Next.js scripts and app review.",
+    readyExplanation: "The managed MySQL runtime is ready for Next.js scripts and launch targets.",
     secretEnv: [
       "MYSQL_ROOT_PASSWORD"
     ],

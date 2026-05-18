@@ -42,11 +42,21 @@ const DEFAULT_ADAPTER_MANIFESTS = deepFreeze([
 ]);
 
 function publicProjectType(definition = {}) {
+  const techStack = Array.isArray(definition.techStack)
+    ? definition.techStack.map(normalizeText).filter(Boolean)
+    : [];
   return {
+    bestFor: normalizeText(definition.bestFor),
+    description: normalizeText(definition.description),
     disabledReason: normalizeText(definition.disabledReason),
     enabled: definition.enabled === true,
     id: normalizeText(definition.id),
-    label: normalizeText(definition.label || definition.id)
+    label: normalizeText(definition.label || definition.id),
+    outcome: normalizeText(definition.outcome),
+    projectUrl: normalizeText(definition.projectUrl),
+    projectUrlLabel: normalizeText(definition.projectUrlLabel),
+    summary: normalizeText(definition.summary),
+    techStack
   };
 }
 

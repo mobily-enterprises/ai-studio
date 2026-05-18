@@ -347,7 +347,6 @@ async function startTerminal() {
         fallbackStatus: "running"
       });
       emit("started", {
-        appUrl: session.metadata?.appUrl || "",
         metadata: session.metadata || {},
         sessionId: sessionId.value,
         terminalSessionId: terminalSessionId.value

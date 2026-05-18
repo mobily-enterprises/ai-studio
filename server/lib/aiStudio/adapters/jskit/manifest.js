@@ -8,10 +8,24 @@ async function createJskitAdapter() {
 }
 
 const JSKIT_ADAPTER_MANIFEST = deepFreeze({
+  bestFor: "Production CRUD and operations apps where AI Studio can lean on JSKIT conventions, providers, commands, generated surfaces, and built-in setup checks.",
   createAdapter: createJskitAdapter,
+  description: "JSKIT AI is the full-stack application framework behind JSKIT projects: a structured Node/Vue platform with provider modules, generated CRUD flows, command actions, shared runtime services, and framework-aware project setup.",
   enabled: true,
   id: "jskit",
-  label: "JSKIT"
+  label: "JSKIT AI",
+  outcome: "Studio prepares a JSKIT application with its provider layout, package scripts, database/runtime expectations, app blueprint, adapter-specific prompts, and verification path ready for Codex-driven work.",
+  projectUrl: "https://www.npmjs.com/package/@jskit-ai/jskit-cli",
+  projectUrlLabel: "Open JSKIT AI package",
+  summary: "A batteries-included full-stack app framework for structured, agent-assisted product work.",
+  techStack: [
+    "Node.js",
+    "Vue",
+    "Vuetify",
+    "JSKIT providers",
+    "JSON REST resources",
+    "Docker toolchain"
+  ]
 });
 
 export {

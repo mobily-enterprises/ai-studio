@@ -17,10 +17,10 @@ const DEFAULT_BUILT_LAUNCH_BUILD_COMMAND = "npm run build";
 const DEFAULT_BUILT_LAUNCH_SERVER_COMMAND = "npm run server";
 const DEFAULT_DEV_SERVER_COMMAND = "npm run dev -- --host 0.0.0.0 --port \"$PORT\"";
 const DEFAULT_LAUNCH_PORT = 4100;
+const BUILT_LAUNCH_COMMAND_CONFIG = ".jskit/config/testrun_command";
+const BUILT_LAUNCH_PORT_CONFIG = ".jskit/config/server_port_for_user_review";
 const DEV_SERVER_COMMAND_CONFIG = "config/dev_server_command";
-const REVIEW_COMMAND_CONFIG = ".jskit/config/testrun_command";
-const REVIEW_PORT_CONFIG = ".jskit/config/server_port_for_user_review";
-const REVIEW_HOST_DOCKER_CONFIG = ".jskit/config/devel_app_test_host_docker";
+const LAUNCH_HOST_DOCKER_CONFIG = ".jskit/config/devel_app_test_host_docker";
 
 function enabledConfigValue(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -64,22 +64,22 @@ function normalizePort(value) {
     : DEFAULT_LAUNCH_PORT;
 }
 
-async function resolveReviewConfig(worktreePath) {
-  const [reviewCommand, hostDockerValue, portValue] = await Promise.all([
-    readOptionalConfigFile(worktreePath, REVIEW_COMMAND_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_HOST_DOCKER_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
+async function resolveBuiltLaunchConfig(worktreePath) {
+  const [legacySingleCommand, hostDockerValue, portValue] = await Promise.all([
+    readOptionalConfigFile(worktreePath, BUILT_LAUNCH_COMMAND_CONFIG, ""),
+    readOptionalConfigFile(worktreePath, LAUNCH_HOST_DOCKER_CONFIG, ""),
+    readOptionalConfigFile(worktreePath, BUILT_LAUNCH_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
   const hostDocker = enabledConfigValue(hostDockerValue);
-  if (reviewCommand) {
+  if (legacySingleCommand) {
     return {
       buildCommand: "",
-      commandSource: REVIEW_COMMAND_CONFIG,
+      commandSource: BUILT_LAUNCH_COMMAND_CONFIG,
       hostDocker,
-      hostDockerSource: hostDocker ? REVIEW_HOST_DOCKER_CONFIG : "",
+      hostDockerSource: hostDocker ? LAUNCH_HOST_DOCKER_CONFIG : "",
       preferredPort: normalizePort(portValue),
       serverCommand: "",
-      testrunCommand: reviewCommand
+      testrunCommand: legacySingleCommand
     };
   }
 
@@ -91,24 +91,25 @@ async function resolveReviewConfig(worktreePath) {
     buildCommand,
     commandSource: "fallback_split_commands",
     hostDocker,
-    hostDockerSource: hostDocker ? REVIEW_HOST_DOCKER_CONFIG : "",
+    hostDockerSource: hostDocker ? LAUNCH_HOST_DOCKER_CONFIG : "",
     preferredPort: normalizePort(portValue),
     serverCommand,
     testrunCommand: `${buildCommand};${serverCommand}`
   };
 }
 
-async function resolveDevReviewConfig(worktreePath) {
+async function resolveDevLaunchConfig(worktreePath) {
   const [devCommand, hostDockerValue, portValue] = await Promise.all([
     readOptionalConfigFile(worktreePath, DEV_SERVER_COMMAND_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_HOST_DOCKER_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
+    readOptionalConfigFile(worktreePath, LAUNCH_HOST_DOCKER_CONFIG, ""),
+    readOptionalConfigFile(worktreePath, BUILT_LAUNCH_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
+  const hostDocker = enabledConfigValue(hostDockerValue);
   return {
     commandSource: devCommand ? DEV_SERVER_COMMAND_CONFIG : "package_json_dev_script",
     devCommand: devCommand || DEFAULT_DEV_SERVER_COMMAND,
-    hostDocker: enabledConfigValue(hostDockerValue),
-    hostDockerSource: enabledConfigValue(hostDockerValue) ? REVIEW_HOST_DOCKER_CONFIG : "",
+    hostDocker,
+    hostDockerSource: hostDocker ? LAUNCH_HOST_DOCKER_CONFIG : "",
     preferredPort: normalizePort(portValue)
   };
 }
@@ -148,7 +149,7 @@ async function listJskitLaunchTargets({
     hasDevCommandConfig
   ] = await Promise.all([
     readPackageJsonScripts(worktreePath),
-    configFileHasValue(worktreePath, REVIEW_COMMAND_CONFIG),
+    configFileHasValue(worktreePath, BUILT_LAUNCH_COMMAND_CONFIG),
     configFileHasValue(worktreePath, "config/build_command"),
     configFileHasValue(worktreePath, "config/server_command"),
     configFileHasValue(worktreePath, DEV_SERVER_COMMAND_CONFIG)
@@ -164,7 +165,7 @@ async function listJskitLaunchTargets({
   return launchTargets;
 }
 
-async function createJskitReviewDescriptor({
+async function createJskitBuiltLaunchDescriptor({
   config,
   databaseHost = "",
   targetRoot = "",
@@ -187,7 +188,7 @@ async function createJskitReviewDescriptor({
   };
 }
 
-async function createJskitDevReviewDescriptor({
+async function createJskitDevLaunchDescriptor({
   config,
   databaseHost = "",
   targetRoot = "",
@@ -239,39 +240,40 @@ async function createJskitLaunchTargetTerminalSpec({
     };
   }
 
-  const reviewTargetRoot = targetRoot || session.targetRoot || "";
+  const launchTargetRoot = targetRoot || session.targetRoot || "";
   const [databaseHost, config] = await Promise.all([
     readDatabaseHostFromDotEnv(worktreePath),
     launchTargetId === "dev"
-      ? resolveDevReviewConfig(worktreePath)
-      : resolveReviewConfig(worktreePath)
+      ? resolveDevLaunchConfig(worktreePath)
+      : resolveBuiltLaunchConfig(worktreePath)
   ]);
   const descriptorFactory = launchTargetId === "dev"
-    ? createJskitDevReviewDescriptor
-    : createJskitReviewDescriptor;
+    ? createJskitDevLaunchDescriptor
+    : createJskitBuiltLaunchDescriptor;
 
   return createAiStudioLaunchTargetTerminalSpec({
     adapterId: "jskit",
     image: JSKIT_TOOLCHAIN_IMAGE,
     launchTarget,
     preferredPort: config.preferredPort,
-    resolveLaunch: ({ worktreePath: reviewWorktreePath }) => descriptorFactory({
+    resolveLaunch: ({ worktreePath: launchWorktreePath }) => descriptorFactory({
       config,
       databaseHost,
-      targetRoot: reviewTargetRoot,
-      worktreePath: reviewWorktreePath
+      targetRoot: launchTargetRoot,
+      worktreePath: launchWorktreePath
     }),
     session,
-    targetRoot: reviewTargetRoot
+    targetRoot: launchTargetRoot
   });
 }
 
 export {
   createJskitLaunchTargetTerminalSpec,
-  createJskitReviewDescriptor,
+  createJskitBuiltLaunchDescriptor,
+  createJskitDevLaunchDescriptor,
   listJskitLaunchTargets,
+  BUILT_LAUNCH_COMMAND_CONFIG,
+  BUILT_LAUNCH_PORT_CONFIG,
   DEV_SERVER_COMMAND_CONFIG,
-  REVIEW_COMMAND_CONFIG,
-  REVIEW_HOST_DOCKER_CONFIG,
-  REVIEW_PORT_CONFIG
+  LAUNCH_HOST_DOCKER_CONFIG
 };

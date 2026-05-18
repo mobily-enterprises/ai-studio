@@ -506,7 +506,7 @@ function createRuntimeContainerCheck(toolkit, descriptor = {}, {
           label: spec.label,
           expected: descriptor.expected || `${spec.label} container is running and healthy.`,
           observed: runtime.output,
-          explanation: descriptor.explanation || "Start the declared runtime container before Studio runs target setup or app review commands.",
+          explanation: descriptor.explanation || "Start the declared runtime container before Studio runs target setup or launch-target commands.",
           repair
         });
       }

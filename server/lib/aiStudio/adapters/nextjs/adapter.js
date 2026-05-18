@@ -36,7 +36,6 @@ import {
   NEXTJS_DATA_LAYER_CONFIG,
   NEXTJS_PACKAGE_MANAGER_CONFIG,
   NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  NEXTJS_REVIEW_MODE_CONFIG,
   NEXTJS_SEED_BUNDLER_CONFIG,
   NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
   NEXTJS_SEED_LANGUAGE_CONFIG,
@@ -115,23 +114,6 @@ const NEXTJS_MARKERS = deepFreeze([
 ]);
 
 const NEXTJS_CONFIG_FIELDS = deepFreeze([
-  {
-    defaultValue: "production",
-    description: "Use production build/start for app review by default; development mode uses next dev.",
-    id: NEXTJS_REVIEW_MODE_CONFIG,
-    label: "Next.js review mode",
-    options: [
-      {
-        label: "Production",
-        value: "production"
-      },
-      {
-        label: "Development",
-        value: "development"
-      }
-    ],
-    type: "select"
-  },
   {
     defaultValue: "npm",
     description: "Package manager to use when Studio seeds a new Next.js app.",
@@ -255,7 +237,7 @@ const NEXTJS_CONFIG_FIELDS = deepFreeze([
   },
   {
     defaultValue: "postgres",
-    description: "Optional AI Studio-managed database runtime for local setup, target scripts, and app review.",
+    description: "Optional AI Studio-managed database runtime for local setup, target scripts, and launch targets.",
     id: NEXTJS_DATABASE_RUNTIME_CONFIG,
     label: "Database runtime",
     options: [
@@ -526,7 +508,6 @@ class NextjsTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
         [NEXTJS_DATABASE_RUNTIME_CONFIG]: "postgres",
         [NEXTJS_DATA_LAYER_CONFIG]: "prisma",
         [NEXTJS_PACKAGE_MANAGER_CONFIG]: "npm",
-        [NEXTJS_REVIEW_MODE_CONFIG]: "production",
         [NEXTJS_SEED_BUNDLER_CONFIG]: "turbopack",
         [NEXTJS_SEED_IMPORT_ALIAS_CONFIG]: "@/*",
         [NEXTJS_SEED_LANGUAGE_CONFIG]: "typescript",
@@ -560,7 +541,6 @@ export {
   NEXTJS_MARKERS,
   NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH,
   NEXTJS_PROMPT_PACK_ROOT,
-  NEXTJS_REVIEW_MODE_CONFIG,
   NextjsTargetAdapter,
   inspectNextjsProject,
   routerMode,

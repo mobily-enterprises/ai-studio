@@ -2,21 +2,13 @@ import {
   createAiStudioLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
-  VINEXT_REVIEW_MODE_CONFIG
-} from "./constants.js";
-import {
   detectPackageManager,
   packageBinCommand,
   readPackageJson
 } from "./packageManager.js";
 
-function configValues(config = {}) {
-  return config?.values && typeof config.values === "object" ? config.values : config;
-}
-
-function reviewMode(config = {}) {
-  const mode = String(configValues(config)[VINEXT_REVIEW_MODE_CONFIG] || "production").trim();
-  return mode === "development" ? "development" : "production";
+function launchModeForTarget(launchTargetId = "") {
+  return launchTargetId === "dev" ? "development" : "production";
 }
 
 function vinextLaunchTarget(id, label) {
@@ -39,21 +31,13 @@ async function listVinextLaunchTargets({
   ];
 }
 
-function configForLaunchTarget(config = {}, launchTargetId = "") {
-  return {
-    ...configValues(config),
-    [VINEXT_REVIEW_MODE_CONFIG]: launchTargetId === "dev" ? "development" : "production"
-  };
-}
-
-async function createVinextReviewDescriptor({
-  config = {},
+async function createVinextLaunchDescriptor({
+  mode = "production",
   port,
   worktreePath = ""
 } = {}) {
   const packageJson = await readPackageJson(worktreePath);
   const packageManager = await detectPackageManager(worktreePath, packageJson || {});
-  const mode = reviewMode(config);
   const buildCommand = packageBinCommand(packageManager.name, "vinext", ["build"]);
   const serverCommand = mode === "development"
     ? packageBinCommand(packageManager.name, "vinext", ["dev", "--hostname", "0.0.0.0", "--port", String(port)])
@@ -70,7 +54,7 @@ async function createVinextReviewDescriptor({
         : null,
       {
         command: serverCommand,
-        label: "Starting Vinext review server.",
+        label: "Starting Vinext launch server.",
         networkEnv: true
       }
     ].filter(Boolean),
@@ -100,8 +84,8 @@ function createVinextLaunchTargetTerminalSpec({
   return createAiStudioLaunchTargetTerminalSpec({
     adapterId: "vinext",
     launchTarget: context.launchTarget || vinextLaunchTarget(launchTargetId, launchTargetId),
-    resolveLaunch: ({ port, worktreePath }) => createVinextReviewDescriptor({
-      config: configForLaunchTarget(context.config || session.config || {}, launchTargetId),
+    resolveLaunch: ({ port, worktreePath }) => createVinextLaunchDescriptor({
+      mode: launchModeForTarget(launchTargetId),
       port,
       worktreePath
     }),
@@ -112,6 +96,6 @@ function createVinextLaunchTargetTerminalSpec({
 
 export {
   createVinextLaunchTargetTerminalSpec,
-  createVinextReviewDescriptor,
+  createVinextLaunchDescriptor,
   listVinextLaunchTargets
 };

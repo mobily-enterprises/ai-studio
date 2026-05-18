@@ -23,6 +23,9 @@ import {
   hasDependency
 } from "../../nodePackage.js";
 import {
+  checkNodePackageManagerToolchain
+} from "../../nodePackageDoctor.js";
+import {
   NEXTJS_PACKAGE_MANAGER_CONFIG,
   NEXTJS_SEED_BUNDLER_CONFIG,
   NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
@@ -292,6 +295,23 @@ async function checkPackageManager(toolkit, targetRoot) {
   });
 }
 
+async function setupPackageManager(toolkit, targetRoot, config = {}) {
+  const packageJson = await readTargetPackageJson(toolkit, targetRoot);
+  if (packageJson) {
+    return (await detectPackageManager(targetRoot, packageJson)).name;
+  }
+  return selectedPackageManager(config);
+}
+
+async function checkPackageManagerToolchain(toolkit, targetRoot, config = {}) {
+  return checkNodePackageManagerToolchain(toolkit, {
+    id: "nextjs-package-manager-toolchain",
+    label: "Package manager command",
+    packageManager: await setupPackageManager(toolkit, targetRoot, config),
+    targetRoot
+  });
+}
+
 function parseEnvText(text = "") {
   const values = {};
   for (const line of String(text || "").split(/\r?\n/u)) {
@@ -368,7 +388,7 @@ async function checkDatabaseEnv(toolkit, targetRoot, config = {}) {
     label: "Database environment",
     expected: ".env.local declares the DATABASE_URL for the selected managed database.",
     observed: "DATABASE_URL matches the selected AI Studio-managed database.",
-    explanation: "Next.js scripts and app review terminals can attach to the managed database runtime."
+    explanation: "Next.js scripts and launch-target terminals can attach to the managed database runtime."
   });
 }
 
@@ -385,6 +405,7 @@ function runtimeContainerEntries(toolkit, context = {}, fallbackTargetRoot = "")
 
 function createNextjsSetupDoctorPlugin({
   configEnvironment = {},
+  runCommand,
   startTerminalSession,
   studioRoot = "",
   targetRoot = "",
@@ -392,6 +413,7 @@ function createNextjsSetupDoctorPlugin({
 } = {}) {
   const toolkit = createDoctorPluginToolkit({
     startTerminalSession,
+    runCommand,
     studioRoot,
     targetRoot,
     terminalEnv: configEnvironment,
@@ -417,6 +439,12 @@ function createNextjsSetupDoctorPlugin({
       const checkTargetRoot = context.targetRoot || targetRoot;
       const containers = runtimeContainerEntries(toolkit, context, targetRoot);
       return [
+        {
+          expected: "The selected package manager runs inside the managed base toolchain.",
+          id: "nextjs-package-manager-toolchain",
+          label: "Package manager command",
+          run: () => checkPackageManagerToolchain(toolkit, checkTargetRoot, context.config || {})
+        },
         {
           expected: "A readable package.json exists in the target project.",
           id: "nextjs-package-json",

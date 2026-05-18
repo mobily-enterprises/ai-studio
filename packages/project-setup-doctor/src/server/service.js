@@ -22,9 +22,6 @@ import {
   startDoctorPluginTerminal
 } from "../../../../server/lib/doctorPlugins.js";
 import {
-  buildGithubRepoCreateOrLinkScript
-} from "../../../../server/lib/githubRepoSetupScript.js";
-import {
   isGithubRemoteUrl,
   repoSlugFromRemoteUrl
 } from "../../../../server/lib/githubRemote.js";
@@ -32,11 +29,7 @@ import {
   linkedGitMetadataMountSource
 } from "../../../../server/lib/gitToolchainMounts.js";
 import {
-  shellScript
-} from "../../../../server/lib/shellScript.js";
-import {
   blockedDoctorCheck as blockedCheck,
-  createDoctorRepair as createRepair,
   doctorCheckPassed as checkPassed,
   formatDoctorList as formatList,
   hardStopDoctorCheck as hardStopCheck,
@@ -44,37 +37,37 @@ import {
   pendingDoctorCheck as pendingCheck
 } from "../../../../server/lib/doctorCheckItems.js";
 import {
-  buildDoctorTerminalArgs
-} from "../../../../server/lib/doctorToolchain.js";
-import {
   AI_STUDIO_STATE_DIR
 } from "../../../../server/lib/aiStudio/sessionStore.js";
 import {
-  dockerCommand,
-  hostUserDockerArgs,
-  hostUserIdentityEnvArgs,
-  shellQuote
-} from "../../../../server/lib/shellCommands.js";
-import {
-  runDoctorGh as runGh,
-  runDoctorGit as runGit
-} from "../../../../server/lib/doctorToolchainCommands.js";
+  CREATE_GIT_CHECKPOINT_ACTION_ID,
+  PUSH_GIT_CHECKPOINT_ACTION_ID,
+  ghRepoCreateRepair,
+  ghRepoCreateScript,
+  gitCheckpointRepair,
+  gitCheckpointScript,
+  gitInitRepair,
+  githubBranchRefApiPath,
+  hostWritableWorkspaceDockerArgs,
+  linkGithubRemoteRepair,
+  readGitLocalHead,
+  readGitOriginRemote,
+  readGitRepositoryShape,
+  readGitStatus,
+  readGithubRepository,
+  readRemoteBranchShaWithGh,
+  readRemoteBranchShaWithGit,
+  remoteHeadIsAncestorOfLocalHead,
+  startGhCreateRepoTerminal as startSharedGhCreateRepoTerminal,
+  startGitCheckpointTerminal as startSharedGitCheckpointTerminal,
+  startGitInitTerminal as startSharedGitInitTerminal,
+  startLinkGithubRemoteTerminal as startSharedLinkGithubRemoteTerminal
+} from "../../../../server/lib/setupDoctorGit.js";
 
 const TERMINAL_NAMESPACE = "project-setup-doctor";
-const CREATE_GIT_CHECKPOINT_ACTION = "terminal-git-checkpoint";
-const PUSH_GIT_CHECKPOINT_ACTION = "terminal-git-push-checkpoint";
-const DEFAULT_CHECKPOINT_COMMIT_MESSAGE = "Initial project setup";
 const STUDIO_OWNED_BOOTSTRAP_ENTRIES = new Set([
   AI_STUDIO_STATE_DIR
 ]);
-
-function workspaceWriteDockerArgs() {
-  return [
-    ...hostUserDockerArgs(),
-    "-e",
-    "HOME=/tmp/studio-home"
-  ];
-}
 
 function appendPendingChecks(stages, checks, startIndex) {
   return [
@@ -131,6 +124,12 @@ function terminalRepairActionIds(status = {}) {
     .map((repair) => repair.actionId));
 }
 
+function projectGitInitRepair(targetRoot) {
+  return gitInitRepair(targetRoot, {
+    extraArgs: hostWritableWorkspaceDockerArgs()
+  });
+}
+
 async function pluginTerminalActionIsAvailable({
   actionId = "",
   setupRuntime = {},
@@ -147,12 +146,6 @@ async function pluginTerminalActionIsAvailable({
   return terminalRepairActionIds(status).has(actionId);
 }
 
-function repoNameFromTargetRoot(targetRoot) {
-  return String(path.basename(targetRoot) || "ai-studio-target")
-    .replace(/[^A-Za-z0-9_.-]+/gu, "-")
-    .replace(/^-+|-+$/gu, "") || "ai-studio-target";
-}
-
 async function listMeaningfulEntries(targetRoot) {
   const ignored = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
   const entries = await readdir(targetRoot, {
@@ -164,169 +157,6 @@ async function listMeaningfulEntries(targetRoot) {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function gitInitScript() {
-  return shellScript([
-    "set -e",
-    "set -x",
-    "git -c safe.directory=/workspace init",
-    "git -c safe.directory=/workspace branch -M main"
-  ]);
-}
-
-function buildSetupTerminalArgs(commandArgs, options = {}) {
-  return buildDoctorTerminalArgs(commandArgs, options);
-}
-
-function gitInitTerminalArgs(targetRoot) {
-  return buildSetupTerminalArgs(["bash", "-lc", gitInitScript()], {
-    extraArgs: workspaceWriteDockerArgs(),
-    targetRoot
-  });
-}
-
-function gitInitRepair(targetRoot) {
-  return createRepair({
-    actionId: "terminal-git-init",
-    autoRun: true,
-    command: dockerCommand(gitInitTerminalArgs(targetRoot)),
-    label: "Initialize Git"
-  });
-}
-
-function ghRepoCreateScript(repoName) {
-  return buildGithubRepoCreateOrLinkScript(repoName);
-}
-
-function ghRepoCreateTerminalArgs(targetRoot) {
-  return buildSetupTerminalArgs(["bash", "-lc", ghRepoCreateScript(repoNameFromTargetRoot(targetRoot))], {
-    extraArgs: ["-e", "GH_PROMPT_DISABLED=1"],
-    targetRoot
-  });
-}
-
-function ghRepoCreateRepair(targetRoot) {
-  return createRepair({
-    actionId: "terminal-gh-create-repo",
-    autoRun: true,
-    command: dockerCommand(ghRepoCreateTerminalArgs(targetRoot)),
-    label: "Create/link GitHub repo"
-  });
-}
-
-function linkRemoteRepair() {
-  return createRepair({
-    actionId: "terminal-link-github-remote",
-    command: "git remote add origin <url>",
-    fields: [
-      {
-        id: "url",
-        label: "GitHub remote URL",
-        placeholder: "https://github.com/owner/repo.git",
-        required: true,
-        type: "text"
-      }
-    ],
-    label: "Link existing repo"
-  });
-}
-
-function gitCheckpointScript() {
-  return shellScript([
-    "set -e",
-    "set -x",
-    ": \"${AI_STUDIO_HOST_UID:=0}\"",
-    ": \"${AI_STUDIO_HOST_GID:=0}\"",
-    "as_host() { setpriv --reuid \"$AI_STUDIO_HOST_UID\" --regid \"$AI_STUDIO_HOST_GID\" --clear-groups \"$@\"; }",
-    "set +x",
-    "export GIT_PASSWORD=\"$(gh auth token)\"",
-    "printf '%s\\n' '#!/bin/sh' 'case \"$1\" in' '*Username*) printf \"%s\\\\n\" \"x-access-token\" ;;' '*) printf \"%s\\\\n\" \"$GIT_PASSWORD\" ;;' 'esac' > /tmp/ai-studio-git-askpass",
-    "chown \"$AI_STUDIO_HOST_UID:$AI_STUDIO_HOST_GID\" /tmp/ai-studio-git-askpass",
-    "chmod 700 /tmp/ai-studio-git-askpass",
-    "export GIT_ASKPASS=/tmp/ai-studio-git-askpass",
-    "export GIT_TERMINAL_PROMPT=0",
-    "set -x",
-    "as_host git -c safe.directory=/workspace status --short",
-    "if ! as_host git -c safe.directory=/workspace rev-parse --verify HEAD >/dev/null 2>&1; then if [ \"${AI_STUDIO_CHECKPOINT_ALLOW_CREATE:-0}\" != \"1\" ]; then echo 'No local commit exists to push.'; exit 1; fi; if [ -z \"$(as_host git -c safe.directory=/workspace status --porcelain=v1)\" ]; then echo 'No files to checkpoint and no commits exist.'; exit 1; fi; as_host git -c safe.directory=/workspace add .; as_host git -c safe.directory=/workspace commit -m \"$AI_STUDIO_COMMIT_MESSAGE\"; fi",
-    "branch=\"$(as_host git -c safe.directory=/workspace branch --show-current)\"",
-    "if [ -z \"$branch\" ]; then echo 'No current branch.'; exit 1; fi",
-    "as_host git -c safe.directory=/workspace -c credential.helper= push -u origin HEAD",
-    "as_host git -c safe.directory=/workspace status --short",
-    "as_host git -c safe.directory=/workspace -c credential.helper= ls-remote origin \"refs/heads/$branch\""
-  ]);
-}
-
-function gitCheckpointCommandPreview({
-  commitMessage = "<commitMessage>",
-  includeInitialCommit = true
-} = {}) {
-  const commands = ["git status --short"];
-  if (includeInitialCommit) {
-    commands.push(
-      "git add .",
-      `git commit -m "${commitMessage}"`
-    );
-  }
-  commands.push("git push -u origin HEAD");
-  return commands.join("\n");
-}
-
-function gitCheckpointRepair({
-  includeInitialCommit = true
-} = {}) {
-  return createRepair({
-    actionId: includeInitialCommit ? CREATE_GIT_CHECKPOINT_ACTION : PUSH_GIT_CHECKPOINT_ACTION,
-    autoRun: true,
-    command: gitCheckpointCommandPreview({
-      includeInitialCommit
-    }),
-    fields: includeInitialCommit ? [
-      {
-        defaultValue: DEFAULT_CHECKPOINT_COMMIT_MESSAGE,
-        id: "commitMessage",
-        label: "Commit message",
-        required: true,
-        type: "text"
-      }
-    ] : [],
-    label: includeInitialCommit ? "Create and push checkpoint" : "Push checkpoint"
-  });
-}
-
-function validateCommitMessage(value) {
-  const commitMessage = String(value || "").trim();
-  if (!commitMessage) {
-    return {
-      error: "Commit message is required.",
-      ok: false
-    };
-  }
-  return {
-    commitMessage,
-    ok: true
-  };
-}
-
-function githubBranchRefApiPath(repoSlug, branch) {
-  const branchPath = String(branch || "")
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-  return `repos/${repoSlug}/git/ref/heads/${branchPath}`;
-}
-
-function validateGithubRemoteInput(input = {}) {
-  const url = String(input.url || "").trim();
-  if (!isGithubRemoteUrl(url)) {
-    return {
-      error: "Remote URL must be a GitHub HTTPS or SSH URL.",
-      ok: false
-    };
-  }
-  return {
-    ok: true,
-    url
-  };
-}
 
 async function checkDirectory(targetRoot, context) {
   try {
@@ -418,11 +248,15 @@ async function checkGitReady(targetRoot, context) {
       expected: "A non-bare Git repository exists with a named branch.",
       observed: "No .git directory.",
       explanation: "Initialize Git before Studio creates or links a remote repository.",
-      repair: gitInitRepair(targetRoot)
+      repair: projectGitInitRepair(targetRoot)
     });
   }
 
-  const inside = await runGit(targetRoot, ["rev-parse", "--is-inside-work-tree"]);
+  const {
+    bare,
+    branch,
+    inside
+  } = await readGitRepositoryShape(targetRoot);
   if (!inside.ok || inside.stdout !== "true") {
     return hardStopCheck({
       id: "git-ready",
@@ -432,11 +266,6 @@ async function checkGitReady(targetRoot, context) {
       explanation: "The .git directory exists, but Git does not recognize the target as a normal work tree."
     });
   }
-
-  const [bare, branch] = await Promise.all([
-    runGit(targetRoot, ["rev-parse", "--is-bare-repository"]),
-    runGit(targetRoot, ["branch", "--show-current"])
-  ]);
 
   if (bare.stdout === "true") {
     return hardStopCheck({
@@ -469,7 +298,7 @@ async function checkGitReady(targetRoot, context) {
 }
 
 async function checkRemoteReady(targetRoot, context) {
-  const result = await runGit(targetRoot, ["remote", "get-url", "origin"]);
+  const result = await readGitOriginRemote(targetRoot);
   if (!result.ok || !result.stdout) {
     return blockedCheck({
       id: "remote-ready",
@@ -479,7 +308,7 @@ async function checkRemoteReady(targetRoot, context) {
       explanation: "Create or link a GitHub repository before target-specific setup begins.",
       repairs: [
         ghRepoCreateRepair(targetRoot),
-        linkRemoteRepair()
+        linkGithubRemoteRepair()
       ]
     });
   }
@@ -495,15 +324,7 @@ async function checkRemoteReady(targetRoot, context) {
   }
 
   const repoSlug = repoSlugFromRemoteUrl(result.stdout);
-  const repoResult = await runGh(targetRoot, [
-    "repo",
-    "view",
-    repoSlug,
-    "--json",
-    "nameWithOwner,url,defaultBranchRef"
-  ], {
-    timeout: 20_000
-  });
+  const repoResult = await readGithubRepository(targetRoot, result.stdout);
 
   if (!repoResult.ok) {
     return hardStopCheck({
@@ -515,43 +336,23 @@ async function checkRemoteReady(targetRoot, context) {
     });
   }
 
-  let repoInfo = null;
-  try {
-    repoInfo = JSON.parse(repoResult.stdout);
-  } catch (error) {
-    return hardStopCheck({
-      id: "remote-ready",
-      label: "Remote ready",
-      expected: "gh returns repository metadata.",
-      observed: String(error?.message || error),
-      explanation: "Studio could not parse gh repository metadata."
-    });
-  }
-
   context.originUrl = result.stdout;
-  context.remoteDefaultBranch = repoInfo?.defaultBranchRef?.name || "";
+  context.remoteDefaultBranch = repoResult.repoInfo?.defaultBranchRef?.name || "";
   return passCheck({
     id: "remote-ready",
     label: "Remote ready",
     expected: "origin points at an accessible GitHub repository.",
     observed: [
-      repoInfo?.nameWithOwner || repoSlug,
-      repoInfo?.url || result.stdout,
+      repoResult.repoInfo?.nameWithOwner || repoSlug,
+      repoResult.repoInfo?.url || result.stdout,
       context.remoteDefaultBranch ? `default: ${context.remoteDefaultBranch}` : "remote has no default branch yet"
     ].join("\n"),
     explanation: "gh can inspect the repository Studio will use for issues and PRs."
   });
 }
 
-async function remoteHeadIsAncestorOfLocalHead(targetRoot, remoteSha) {
-  const result = await runGit(targetRoot, ["merge-base", "--is-ancestor", remoteSha, "HEAD"], {
-    timeout: 15_000
-  });
-  return result.ok;
-}
-
 async function checkRemoteSync(targetRoot, context) {
-  const localHead = await runGit(targetRoot, ["rev-parse", "--verify", "HEAD"]);
+  const localHead = await readGitLocalHead(targetRoot);
   const hasLocalHead = localHead.ok && Boolean(localHead.stdout);
   const remoteBranch = context.remoteDefaultBranch;
 
@@ -585,10 +386,8 @@ async function checkRemoteSync(targetRoot, context) {
     });
   }
 
-  const remoteHead = await runGit(targetRoot, ["ls-remote", "origin", `refs/heads/${remoteBranch}`], {
-    timeout: 20_000
-  });
-  const remoteSha = remoteHead.stdout.split(/\s+/u)[0] || "";
+  const remoteHead = await readRemoteBranchShaWithGit(targetRoot, remoteBranch);
+  const remoteSha = remoteHead.sha;
 
   if (!remoteHead.ok || !remoteSha) {
     return hardStopCheck({
@@ -630,9 +429,7 @@ async function checkRemoteSync(targetRoot, context) {
 }
 
 async function checkGitCheckpoint(targetRoot, context) {
-  const status = await runGit(targetRoot, ["status", "--porcelain=v1"], {
-    timeout: 15_000
-  });
+  const status = await readGitStatus(targetRoot);
 
   if (!status.ok) {
     return hardStopCheck({
@@ -644,9 +441,7 @@ async function checkGitCheckpoint(targetRoot, context) {
     });
   }
 
-  const localHead = await runGit(targetRoot, ["rev-parse", "--verify", "HEAD"], {
-    timeout: 15_000
-  });
+  const localHead = await readGitLocalHead(targetRoot);
   if (!localHead.ok || !localHead.stdout) {
     const observed = [
       localHead.output || "No local commits exist.",
@@ -664,9 +459,7 @@ async function checkGitCheckpoint(targetRoot, context) {
 
   const branchResult = context?.branch
     ? { ok: true, stdout: context.branch }
-    : await runGit(targetRoot, ["branch", "--show-current"], {
-      timeout: 15_000
-    });
+    : await readGitRepositoryShape(targetRoot).then((shape) => shape.branch);
   const branch = String(branchResult.stdout || "").trim();
   if (!branchResult.ok || !branch) {
     return hardStopCheck({
@@ -689,15 +482,8 @@ async function checkGitCheckpoint(targetRoot, context) {
     });
   }
 
-  const remoteHead = await runGh(targetRoot, [
-    "api",
-    githubBranchRefApiPath(repoSlug, branch),
-    "--jq",
-    ".object.sha"
-  ], {
-    timeout: 20_000
-  });
-  const remoteSha = remoteHead.stdout.trim();
+  const remoteHead = await readRemoteBranchShaWithGh(targetRoot, repoSlug, branch);
+  const remoteSha = remoteHead.sha;
   if (!remoteHead.ok || !remoteSha) {
     return blockedCheck({
       id: "git-checkpoint",
@@ -858,66 +644,28 @@ async function inspectProjectSetup(options = {}) {
   return runCoreSetupChecks(options);
 }
 
-function startDockerTerminal({
-  args,
-  commandPreview,
-  env = {},
-  targetRoot
-}) {
-  return startTerminalSession({
-    args,
-    command: "docker",
-    commandPreview,
-    cwd: targetRoot,
-    env,
-    namespace: TERMINAL_NAMESPACE
-  });
-}
-
 function startGitInitTerminal(targetRoot, env = {}) {
-  return startDockerTerminal({
-    args: gitInitTerminalArgs(targetRoot),
-    commandPreview: gitInitRepair(targetRoot).commandPreview,
+  return startSharedGitInitTerminal({
     env,
+    extraArgs: hostWritableWorkspaceDockerArgs(),
+    namespace: TERMINAL_NAMESPACE,
     targetRoot
   });
 }
 
 function startGhCreateRepoTerminal(targetRoot, env = {}) {
-  return startDockerTerminal({
-    args: ghRepoCreateTerminalArgs(targetRoot),
-    commandPreview: ghRepoCreateRepair(targetRoot).commandPreview,
+  return startSharedGhCreateRepoTerminal({
     env,
+    namespace: TERMINAL_NAMESPACE,
     targetRoot
   });
 }
 
 function startLinkRemoteTerminal(targetRoot, input = {}, env = {}) {
-  const validation = validateGithubRemoteInput(input);
-  if (!validation.ok) {
-    return {
-      error: validation.error,
-      ok: false
-    };
-  }
-  const script = shellScript([
-    "set -e",
-    "set -x",
-    "git -c safe.directory=/workspace remote add origin \"$AI_STUDIO_REMOTE_URL\"",
-    "git -c safe.directory=/workspace remote get-url origin"
-  ]);
-  const args = buildSetupTerminalArgs(["bash", "-lc", script], {
-    extraArgs: [
-      ...workspaceWriteDockerArgs(),
-      "-e",
-      `AI_STUDIO_REMOTE_URL=${validation.url}`
-    ],
-    targetRoot
-  });
-  return startDockerTerminal({
-    args,
-    commandPreview: `git remote add origin ${shellQuote(validation.url)}`,
+  return startSharedLinkGithubRemoteTerminal({
     env,
+    input,
+    namespace: TERMINAL_NAMESPACE,
     targetRoot
   });
 }
@@ -925,37 +673,11 @@ function startLinkRemoteTerminal(targetRoot, input = {}, env = {}) {
 function startGitCheckpointTerminal(targetRoot, input = {}, env = {}, {
   allowCreate = true
 } = {}) {
-  const commitMessage = allowCreate
-    ? validateCommitMessage(input.commitMessage)
-    : {
-        commitMessage: DEFAULT_CHECKPOINT_COMMIT_MESSAGE,
-        ok: true
-      };
-  if (!commitMessage.ok) {
-    return {
-      error: commitMessage.error,
-      ok: false
-    };
-  }
-  const args = buildSetupTerminalArgs(["bash", "-lc", gitCheckpointScript()], {
-    extraArgs: [
-      ...hostUserIdentityEnvArgs(),
-      "-e",
-      "GH_PROMPT_DISABLED=1",
-      "-e",
-      `AI_STUDIO_CHECKPOINT_ALLOW_CREATE=${allowCreate ? "1" : "0"}`,
-      "-e",
-      `AI_STUDIO_COMMIT_MESSAGE=${commitMessage.commitMessage}`
-    ],
-    targetRoot
-  });
-  return startDockerTerminal({
-    args,
-    commandPreview: gitCheckpointCommandPreview({
-      commitMessage: commitMessage.commitMessage,
-      includeInitialCommit: allowCreate
-    }),
+  return startSharedGitCheckpointTerminal({
+    allowCreate,
     env,
+    input,
+    namespace: TERMINAL_NAMESPACE,
     targetRoot
   });
 }
@@ -1044,12 +766,12 @@ function createService({
       if (actionId === "terminal-link-github-remote") {
         return startLinkRemoteTerminal(resolvedTargetRoot, inputs, setupRuntime.configEnvironment);
       }
-      if (actionId === CREATE_GIT_CHECKPOINT_ACTION) {
+      if (actionId === CREATE_GIT_CHECKPOINT_ACTION_ID) {
         return startGitCheckpointTerminal(resolvedTargetRoot, inputs, setupRuntime.configEnvironment, {
           allowCreate: true
         });
       }
-      if (actionId === PUSH_GIT_CHECKPOINT_ACTION) {
+      if (actionId === PUSH_GIT_CHECKPOINT_ACTION_ID) {
         return startGitCheckpointTerminal(resolvedTargetRoot, inputs, setupRuntime.configEnvironment, {
           allowCreate: false
         });

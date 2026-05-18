@@ -13,7 +13,7 @@ import {
 } from "../../workflowAdapter.js";
 import {
   createVinextLaunchTargetTerminalSpec,
-  createVinextReviewDescriptor,
+  createVinextLaunchDescriptor,
   listVinextLaunchTargets
 } from "./launchTargets.js";
 
@@ -24,8 +24,7 @@ export {
   inspectVinextTargetScripts
 } from "./currentApp.js";
 export {
-  VINEXT_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  VINEXT_REVIEW_MODE_CONFIG
+  VINEXT_PROJECT_KNOWLEDGE_RELATIVE_PATH
 } from "./constants.js";
 
 const VINEXT_AI_STUDIO_COMMANDS = deepFreeze(AI_STUDIO_WORKFLOW_COMMANDS);
@@ -46,8 +45,8 @@ function createVinextTargetAdapter({
 
 export {
   createVinextAiStudioCommandTerminalSpec,
+  createVinextLaunchDescriptor,
   createVinextLaunchTargetTerminalSpec,
-  createVinextReviewDescriptor,
   createVinextTargetAdapter,
   listVinextLaunchTargets,
   VINEXT_AI_STUDIO_COMMANDS,

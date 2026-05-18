@@ -81,7 +81,10 @@ function useAiStudioLaunchControls({
     kind: "url",
     label: "Open browser"
   });
-  const visible = computed(() => Boolean(sessionId.value && (launchTargets.value.length > 0 || openTarget.value.available)));
+  const visible = computed(() => Boolean(
+    sessionId.value &&
+      (launchTargets.value.length > 0 || openTarget.value.available || launchTargetsResource.loadError.value)
+  ));
   const launchButtonsDisabled = computed(() => Boolean(valueOf(busy) || terminalRunning.value));
   const openDisabled = computed(() => {
     return Boolean(

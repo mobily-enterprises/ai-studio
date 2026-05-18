@@ -18,6 +18,15 @@ test("AI Studio project service saves project type and plain-file configuration"
     assert.equal(missingType.ok, true);
     assert.equal(missingType.projectType.ready, false);
     assert.equal(missingType.projectType.status, "missing");
+    const projectTypes = missingType.projectType.availableProjectTypes;
+    const jskitProjectType = projectTypes.find((type) => type.id === "jskit");
+    const nextjsProjectType = projectTypes.find((type) => type.id === "nextjs");
+    const vinextProjectType = projectTypes.find((type) => type.id === "vinext");
+    assert.equal(jskitProjectType.label, "JSKIT AI");
+    assert.match(jskitProjectType.description, /full-stack application framework/u);
+    assert.equal(jskitProjectType.projectUrl, "https://www.npmjs.com/package/@jskit-ai/jskit-cli");
+    assert.equal(nextjsProjectType.projectUrl, "https://nextjs.org");
+    assert.equal(vinextProjectType.projectUrl, "https://github.com/cloudflare/vinext");
 
     const savedType = await service.saveProjectType({
       projectType: "jskit"

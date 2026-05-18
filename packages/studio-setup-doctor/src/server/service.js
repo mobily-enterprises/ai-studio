@@ -30,6 +30,9 @@ import {
 import {
   buildDoctorToolchainArgs
 } from "../../../../server/lib/doctorToolchain.js";
+import {
+  packageManagerAvailabilityScript
+} from "../../../../server/lib/aiStudio/nodePackage.js";
 
 const TOOLCHAIN_DOCKERFILE = "tooling/studio-setup/Dockerfile";
 const TOOLCHAIN_CONTEXT = "tooling/studio-setup";
@@ -308,6 +311,108 @@ function createStudioRuntimeDoctorPlugin({
             const result = await checkToolchainImage(dockerReady);
             toolchainReady = result.status === "pass";
             return result;
+          }
+        },
+        {
+          id: "node",
+          label: "Node.js",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "node",
+                label: "Node.js",
+                commandArgs: ["node", "--version"],
+                expected: "Node.js runs inside the managed base toolchain.",
+                explanation: "Studio uses Node.js for JavaScript and TypeScript project setup, scripts, and framework CLIs.",
+                isValid: (output) => /^v\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("node", "Node.js");
+          }
+        },
+        {
+          id: "npm",
+          label: "npm",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "npm",
+                label: "npm",
+                commandArgs: ["bash", "-lc", packageManagerAvailabilityScript("npm")],
+                expected: "npm runs inside the managed base toolchain.",
+                explanation: "npm is the baseline Node package manager and backs npx-based project seed commands.",
+                isValid: (output) => /^\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("npm", "npm");
+          }
+        },
+        {
+          id: "corepack",
+          label: "Corepack",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "corepack",
+                label: "Corepack",
+                commandArgs: ["bash", "-lc", "command -v corepack >/dev/null 2>&1 && corepack --version"],
+                expected: "Corepack runs inside the managed base toolchain.",
+                explanation: "Studio uses Corepack to run pnpm and Yarn consistently in Node project worktrees.",
+                isValid: (output) => /^\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("corepack", "Corepack");
+          }
+        },
+        {
+          id: "pnpm",
+          label: "pnpm",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "pnpm",
+                label: "pnpm",
+                commandArgs: ["bash", "-lc", packageManagerAvailabilityScript("pnpm")],
+                expected: "pnpm runs through Corepack inside the managed base toolchain.",
+                explanation: "Adapters can select pnpm without owning package-manager installation.",
+                isValid: (output) => /^\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("pnpm", "pnpm");
+          }
+        },
+        {
+          id: "yarn",
+          label: "Yarn",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "yarn",
+                label: "Yarn",
+                commandArgs: ["bash", "-lc", packageManagerAvailabilityScript("yarn")],
+                expected: "Yarn runs through Corepack inside the managed base toolchain.",
+                explanation: "Adapters can select Yarn without owning package-manager installation.",
+                isValid: (output) => /^\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("yarn", "Yarn");
+          }
+        },
+        {
+          id: "bun",
+          label: "Bun",
+          run() {
+            return toolchainReady
+              ? checkToolchainCommand({
+                id: "bun",
+                label: "Bun",
+                commandArgs: ["bash", "-lc", packageManagerAvailabilityScript("bun")],
+                expected: "Bun runs inside the managed base toolchain.",
+                explanation: "Adapters can select Bun without owning package-manager installation.",
+                isValid: (output) => /^\d+\./u.test(output.trim()),
+                repair: buildToolchainRepair()
+              })
+              : missingToolchainCheck("bun", "Bun");
           }
         },
         {

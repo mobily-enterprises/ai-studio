@@ -10,8 +10,7 @@ import {
 } from "../../workflowAdapter.js";
 import { deepFreeze } from "../../deepFreeze.js";
 import {
-  VINEXT_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  VINEXT_REVIEW_MODE_CONFIG
+  VINEXT_PROJECT_KNOWLEDGE_RELATIVE_PATH
 } from "./constants.js";
 import {
   createVinextTargetScriptTerminalSpec,
@@ -101,25 +100,7 @@ const VINEXT_MARKERS = deepFreeze([
   }
 ]);
 
-const VINEXT_CONFIG_FIELDS = deepFreeze([
-  {
-    defaultValue: "production",
-    description: "Use production build/start for app review by default; development mode uses vinext dev.",
-    id: VINEXT_REVIEW_MODE_CONFIG,
-    label: "Vinext review mode",
-    options: [
-      {
-        label: "Production",
-        value: "production"
-      },
-      {
-        label: "Development",
-        value: "development"
-      }
-    ],
-    type: "select"
-  }
-]);
+const VINEXT_CONFIG_FIELDS = deepFreeze([]);
 
 function viteConfigExists(markers = []) {
   return projectMarkerExists(markers, "vite_config_ts") || projectMarkerExists(markers, "vite_config_js");
@@ -297,9 +278,7 @@ class VinextTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       commands,
       configFields: VINEXT_CONFIG_FIELDS,
       currentAppInspector: inspectVinextCurrentApp,
-      defaultConfig: {
-        [VINEXT_REVIEW_MODE_CONFIG]: "production"
-      },
+      defaultConfig: {},
       id: "vinext",
       label: "Vinext target adapter",
       projectFacts: vinextFacts,
@@ -326,7 +305,6 @@ export {
   VINEXT_MARKERS,
   VINEXT_PROJECT_KNOWLEDGE_RELATIVE_PATH,
   VINEXT_PROMPT_PACK_ROOT,
-  VINEXT_REVIEW_MODE_CONFIG,
   VinextTargetAdapter,
   inspectVinextProject,
   routerMode,

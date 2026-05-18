@@ -13,7 +13,7 @@ import {
 } from "../../workflowAdapter.js";
 import {
   createNextjsLaunchTargetTerminalSpec,
-  createNextjsReviewDescriptor,
+  createNextjsLaunchDescriptor,
   listNextjsLaunchTargets
 } from "./launchTargets.js";
 
@@ -28,7 +28,6 @@ export {
   NEXTJS_DATA_LAYER_CONFIG,
   NEXTJS_PACKAGE_MANAGER_CONFIG,
   NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH,
-  NEXTJS_REVIEW_MODE_CONFIG,
   NEXTJS_SEED_BUNDLER_CONFIG,
   NEXTJS_SEED_IMPORT_ALIAS_CONFIG,
   NEXTJS_SEED_LANGUAGE_CONFIG,
@@ -55,8 +54,8 @@ function createNextjsTargetAdapter({
 
 export {
   createNextjsAiStudioCommandTerminalSpec,
+  createNextjsLaunchDescriptor,
   createNextjsLaunchTargetTerminalSpec,
-  createNextjsReviewDescriptor,
   createNextjsTargetAdapter,
   listNextjsLaunchTargets,
   NEXTJS_AI_STUDIO_COMMANDS,
