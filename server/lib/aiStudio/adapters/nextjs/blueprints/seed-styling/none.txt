@@ -1,0 +1,5 @@
+Styling: none
+
+No styling framework is selected during seed.
+Use plain CSS modules, global CSS, or minimal inline styles according to the existing project.
+Do not add Tailwind, Sass, or component styling libraries unless the issue explicitly asks for them.

@@ -1,0 +1,138 @@
+<template>
+  <div class="studio-ai-sessions__toolbar">
+    <div class="studio-ai-sessions__tabs">
+      <v-chip
+        v-for="sessionItem in toolbar.sessions"
+        :key="sessionItem.sessionId"
+        :color="sessionItem.sessionId === selectedSessionId ? 'primary' : 'default'"
+        :variant="sessionItem.sessionId === selectedSessionId ? 'flat' : 'tonal'"
+        class="studio-ai-sessions__tab"
+        size="large"
+        @click="toolbar.selectSession(sessionItem.sessionId)"
+      >
+        <span
+          class="studio-ai-sessions__status-dot"
+          :class="`studio-ai-sessions__status-dot--${sessionItem.status}`"
+        />
+        <span>{{ toolbar.shortSessionId(sessionItem.sessionId) }}</span>
+        <v-btn
+          v-if="sessionItem.sessionId === selectedSessionId"
+          class="studio-ai-sessions__tab-abandon"
+          density="compact"
+          :disabled="busy || selectionClosed"
+          :icon="mdiClose"
+          :loading="abandon.command.isRunning"
+          size="x-small"
+          title="Abandon session"
+          variant="text"
+          aria-label="Abandon session"
+          @click.stop="abandon.request"
+        />
+      </v-chip>
+
+      <v-btn
+        color="primary"
+        variant="tonal"
+        :disabled="!toolbar.canCreateSession || busy"
+        :loading="toolbar.createSessionCommand.isRunning"
+        :prepend-icon="mdiPlus"
+        :title="toolbar.createSessionTitle"
+        @click="toolbar.createSessionCommand.run()"
+      >
+        New Session
+      </v-btn>
+    </div>
+
+    <AiStudioLaunchControls
+      :busy="busy"
+      :session="session"
+    />
+  </div>
+</template>
+
+<script setup>
+import {
+  mdiClose,
+  mdiPlus
+} from "@mdi/js";
+import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
+
+defineProps({
+  abandon: {
+    default: () => ({}),
+    type: Object
+  },
+  busy: {
+    default: false,
+    type: Boolean
+  },
+  selectedSessionId: {
+    default: "",
+    type: String
+  },
+  selectionClosed: {
+    default: false,
+    type: Boolean
+  },
+  session: {
+    default: null,
+    type: Object
+  },
+  toolbar: {
+    default: () => ({}),
+    type: Object
+  }
+});
+</script>
+
+<style scoped>
+.studio-ai-sessions__toolbar {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.studio-ai-sessions__tabs {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.studio-ai-sessions__tab {
+  align-items: center;
+  max-width: 18rem;
+}
+
+.studio-ai-sessions__tab-abandon {
+  margin-left: 0.3rem;
+}
+
+.studio-ai-sessions__status-dot {
+  background: rgb(var(--v-theme-primary));
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.52rem;
+  margin-right: 0.42rem;
+  width: 0.52rem;
+}
+
+.studio-ai-sessions__status-dot--abandoned,
+.studio-ai-sessions__status-dot--failed {
+  background: rgb(var(--v-theme-error));
+}
+
+.studio-ai-sessions__status-dot--finished {
+  background: rgb(var(--v-theme-success));
+}
+
+@media (max-width: 640px) {
+  .studio-ai-sessions__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+</style>

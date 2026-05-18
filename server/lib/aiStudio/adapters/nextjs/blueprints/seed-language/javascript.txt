@@ -1,0 +1,5 @@
+Seed language: JavaScript
+
+Prefer JavaScript and JSX files for new application code.
+Do not introduce TypeScript-only files or config unless the issue explicitly asks for TypeScript.
+Use clear runtime validation where typed boundaries would otherwise protect user input or database data.

@@ -12,10 +12,9 @@ import {
   createAiStudioWorkflowCommandTerminalSpec
 } from "../../workflowAdapter.js";
 import {
-  createJskitAppReviewTerminalSpec,
   createJskitLaunchTargetTerminalSpec,
   listJskitLaunchTargets
-} from "./appReviewTerminal.js";
+} from "./launchTargets.js";
 export {
   DEFAULT_TARGET_SCRIPT_NAMES,
   createJskitTargetScriptTerminalSpec,
@@ -28,13 +27,11 @@ const JSKIT_AI_STUDIO_COMMANDS = deepFreeze(AI_STUDIO_WORKFLOW_COMMANDS);
 const createJskitAiStudioCommandTerminalSpec = createAiStudioWorkflowCommandTerminalSpec;
 
 function createJskitTargetAdapter({
-  appReviewTerminalSpecFactory = createJskitAppReviewTerminalSpec,
   commandTerminalSpecFactory = null,
   launchTargetTerminalSpecFactory = createJskitLaunchTargetTerminalSpec,
   launchTargets = listJskitLaunchTargets
 } = {}) {
   return new JskitTargetAdapter({
-    appReviewTerminalSpecFactory,
     commandTerminalSpecFactory,
     launchTargetTerminalSpecFactory,
     launchTargets,
@@ -44,7 +41,6 @@ function createJskitTargetAdapter({
 
 export {
   createJskitTargetAdapter,
-  createJskitAppReviewTerminalSpec,
   createJskitAiStudioCommandTerminalSpec,
   createJskitLaunchTargetTerminalSpec,
   listJskitLaunchTargets,

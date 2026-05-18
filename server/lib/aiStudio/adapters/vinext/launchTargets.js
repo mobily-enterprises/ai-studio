@@ -1,7 +1,4 @@
 import {
-  createAiStudioAppReviewTerminalSpec
-} from "../../appReviewTerminal.js";
-import {
   createAiStudioLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
@@ -113,25 +110,7 @@ function createVinextLaunchTargetTerminalSpec({
   });
 }
 
-function createVinextAppReviewTerminalSpec({
-  context = {},
-  session = {},
-  targetRoot = ""
-} = {}) {
-  return createAiStudioAppReviewTerminalSpec({
-    adapterId: "vinext",
-    resolveReview: ({ port, worktreePath }) => createVinextReviewDescriptor({
-      config: context.config || session.config || {},
-      port,
-      worktreePath
-    }),
-    session,
-    targetRoot
-  });
-}
-
 export {
-  createVinextAppReviewTerminalSpec,
   createVinextLaunchTargetTerminalSpec,
   createVinextReviewDescriptor,
   listVinextLaunchTargets

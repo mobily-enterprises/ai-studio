@@ -1,0 +1,5 @@
+Seed language: TypeScript
+
+Prefer TypeScript files for new application code.
+Use typed route handlers, server functions, component props, and database access modules.
+Keep type definitions close to the code that owns them unless a shared domain type is clearly needed.

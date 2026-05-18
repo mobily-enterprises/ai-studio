@@ -533,7 +533,7 @@ function createRuntimeContainerCheck(toolkit, descriptor = {}, {
           `Network: ${runtimeNetworkName(spec.targetRoot)}`,
           `Aliases: ${spec.aliases.join(", ")}`
         ].filter(Boolean).join("\n"),
-        explanation: descriptor.readyExplanation || "AI Studio can attach setup, script, and app-review containers to this runtime container network."
+        explanation: descriptor.readyExplanation || "AI Studio can attach setup, script, and launch-target containers to this runtime container network."
       });
     }
   };

@@ -1,7 +1,4 @@
 import {
-  createAiStudioAppReviewTerminalSpec
-} from "../../appReviewTerminal.js";
-import {
   createAiStudioLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
@@ -144,27 +141,7 @@ function createNextjsLaunchTargetTerminalSpec({
   });
 }
 
-function createNextjsAppReviewTerminalSpec({
-  context = {},
-  session = {},
-  targetRoot = ""
-} = {}) {
-  const reviewTargetRoot = targetRoot || session.targetRoot || "";
-  return createAiStudioAppReviewTerminalSpec({
-    adapterId: "nextjs",
-    resolveReview: ({ port, worktreePath }) => createNextjsReviewDescriptor({
-      config: context.config || session.config || {},
-      port,
-      targetRoot: reviewTargetRoot,
-      worktreePath
-    }),
-    session,
-    targetRoot: reviewTargetRoot
-  });
-}
-
 export {
-  createNextjsAppReviewTerminalSpec,
   createNextjsLaunchTargetTerminalSpec,
   createNextjsReviewDescriptor,
   listNextjsLaunchTargets

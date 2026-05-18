@@ -1,0 +1,8 @@
+Database runtime: PostgreSQL
+
+The selected managed database is PostgreSQL.
+Use DATABASE_URL from .env.local for server-side database access.
+When using Prisma, configure the datasource provider as postgresql and keep migrations under prisma/migrations.
+When using Drizzle, use the PostgreSQL dialect and a PostgreSQL driver such as pg or postgres.
+Do not hard-code the host, port, user, password, or database name in application code.
+Do not expose DATABASE_URL to Client Components or browser bundles.

@@ -3,9 +3,6 @@ import path from "node:path";
 import { loadAppConfigFromAppRoot } from "@jskit-ai/kernel/server/support";
 
 import {
-  createAiStudioAppReviewTerminalSpec
-} from "../../appReviewTerminal.js";
-import {
   createAiStudioLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
@@ -16,10 +13,10 @@ import {
   readDatabaseHostFromDotEnv
 } from "./setupMariaDbRuntime.js";
 
-const DEFAULT_REVIEW_BUILD_COMMAND = "npm run build";
-const DEFAULT_REVIEW_SERVER_COMMAND = "npm run server";
+const DEFAULT_BUILT_LAUNCH_BUILD_COMMAND = "npm run build";
+const DEFAULT_BUILT_LAUNCH_SERVER_COMMAND = "npm run server";
 const DEFAULT_DEV_SERVER_COMMAND = "npm run dev -- --host 0.0.0.0 --port \"$PORT\"";
-const DEFAULT_REVIEW_PORT = 4100;
+const DEFAULT_LAUNCH_PORT = 4100;
 const DEV_SERVER_COMMAND_CONFIG = "config/dev_server_command";
 const REVIEW_COMMAND_CONFIG = ".jskit/config/testrun_command";
 const REVIEW_PORT_CONFIG = ".jskit/config/server_port_for_user_review";
@@ -64,14 +61,14 @@ function normalizePort(value) {
   const port = Number.parseInt(String(value || ""), 10);
   return Number.isInteger(port) && port >= 1024 && port <= 65535
     ? port
-    : DEFAULT_REVIEW_PORT;
+    : DEFAULT_LAUNCH_PORT;
 }
 
 async function resolveReviewConfig(worktreePath) {
   const [reviewCommand, hostDockerValue, portValue] = await Promise.all([
     readOptionalConfigFile(worktreePath, REVIEW_COMMAND_CONFIG, ""),
     readOptionalConfigFile(worktreePath, REVIEW_HOST_DOCKER_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_REVIEW_PORT))
+    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
   const hostDocker = enabledConfigValue(hostDockerValue);
   if (reviewCommand) {
@@ -87,8 +84,8 @@ async function resolveReviewConfig(worktreePath) {
   }
 
   const [buildCommand, serverCommand] = await Promise.all([
-    readOptionalConfigFile(worktreePath, "config/build_command", DEFAULT_REVIEW_BUILD_COMMAND),
-    readOptionalConfigFile(worktreePath, "config/server_command", DEFAULT_REVIEW_SERVER_COMMAND)
+    readOptionalConfigFile(worktreePath, "config/build_command", DEFAULT_BUILT_LAUNCH_BUILD_COMMAND),
+    readOptionalConfigFile(worktreePath, "config/server_command", DEFAULT_BUILT_LAUNCH_SERVER_COMMAND)
   ]);
   return {
     buildCommand,
@@ -105,7 +102,7 @@ async function resolveDevReviewConfig(worktreePath) {
   const [devCommand, hostDockerValue, portValue] = await Promise.all([
     readOptionalConfigFile(worktreePath, DEV_SERVER_COMMAND_CONFIG, ""),
     readOptionalConfigFile(worktreePath, REVIEW_HOST_DOCKER_CONFIG, ""),
-    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_REVIEW_PORT))
+    readOptionalConfigFile(worktreePath, REVIEW_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
   return {
     commandSource: devCommand ? DEV_SERVER_COMMAND_CONFIG : "package_json_dev_script",
@@ -212,37 +209,6 @@ async function createJskitDevReviewDescriptor({
   };
 }
 
-async function createJskitAppReviewTerminalSpec({
-  session = {},
-  targetRoot = ""
-} = {}) {
-  const worktreePath = String(session.metadata?.worktree_path || "").trim();
-  if (!worktreePath) {
-    return {
-      ok: false,
-      message: "Create the worktree before running the app."
-    };
-  }
-  const [config, databaseHost] = await Promise.all([
-    resolveReviewConfig(worktreePath),
-    readDatabaseHostFromDotEnv(worktreePath)
-  ]);
-  const reviewTargetRoot = targetRoot || session.targetRoot || "";
-  return createAiStudioAppReviewTerminalSpec({
-    adapterId: "jskit",
-    image: JSKIT_TOOLCHAIN_IMAGE,
-    preferredPort: config.preferredPort,
-    resolveReview: ({ worktreePath: reviewWorktreePath }) => createJskitReviewDescriptor({
-      config,
-      databaseHost,
-      targetRoot: reviewTargetRoot,
-      worktreePath: reviewWorktreePath
-    }),
-    session,
-    targetRoot: reviewTargetRoot
-  });
-}
-
 async function createJskitLaunchTargetTerminalSpec({
   context = {},
   launchTargetId = "",
@@ -302,7 +268,6 @@ async function createJskitLaunchTargetTerminalSpec({
 
 export {
   createJskitLaunchTargetTerminalSpec,
-  createJskitAppReviewTerminalSpec,
   createJskitReviewDescriptor,
   listJskitLaunchTargets,
   DEV_SERVER_COMMAND_CONFIG,

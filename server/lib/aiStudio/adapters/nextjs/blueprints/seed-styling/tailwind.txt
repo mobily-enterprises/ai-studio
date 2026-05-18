@@ -1,0 +1,5 @@
+Styling: Tailwind CSS
+
+Use Tailwind CSS utilities and the generated global stylesheet as the default styling approach.
+Avoid adding a second styling system unless the issue explicitly asks for it.
+Keep component class names readable and factor repeated UI patterns only when repetition becomes meaningful.

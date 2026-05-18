@@ -1,0 +1,5 @@
+Linter: none
+
+No linter is selected during seed.
+Do not add lint configuration or lint scripts unless the issue explicitly asks for them.
+Still keep code simple, consistently formatted, and easy to review.

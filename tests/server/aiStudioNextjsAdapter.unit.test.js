@@ -11,7 +11,7 @@ import {
 } from "../../server/lib/aiStudio/adapters/registry.js";
 import {
   NEXTJS_AI_STUDIO_COMMANDS,
-  createNextjsAppReviewTerminalSpec,
+  createNextjsLaunchTargetTerminalSpec,
   createNextjsReviewDescriptor,
   createNextjsTargetAdapter
 } from "../../server/lib/aiStudio/adapters/nextjs/index.js";
@@ -100,6 +100,11 @@ test("nextjs adapter exposes project facts, commands, and prompt context", async
     assert.equal(facts.promptContext.database_runtime, "postgres");
     assert.equal(facts.promptContext.data_layer, "prisma");
     assert.match(facts.promptContext.data_layer_blueprint, /Data layer: Prisma/u);
+    assert.match(facts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
+    assert.match(facts.promptContext.environment_blueprint, /Data layer: Prisma/u);
+    assert.match(facts.promptContext.environment_blueprint, /Seed language: TypeScript/u);
+    assert.match(facts.promptContext.environment_blueprint, /Source layout: src\/app/u);
+    assert.match(facts.promptContext.environment_blueprint, /Styling: Tailwind CSS/u);
     assert.equal(facts.promptContext.next_dependency, "true");
     assert.equal(facts.promptContext.seed_language, "typescript");
     assert.equal(facts.promptContext.seed_source_layout, "src");
@@ -117,25 +122,50 @@ test("nextjs adapter exposes project facts, commands, and prompt context", async
   });
 });
 
-test("nextjs adapter loads the selected data-layer blueprint into prompt context", async () => {
+test("nextjs adapter composes prompt blueprints from independent config choices", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     await createNextjsProject(targetRoot);
     const adapter = createNextjsTargetAdapter();
 
-    const facts = await adapter.inspect({
+    const mysqlPrismaFacts = await adapter.inspect({
       config: {
         values: {
-          nextjs_data_layer: "drizzle",
+          nextjs_data_layer: "prisma",
           nextjs_database_runtime: "mysql"
         }
       },
       targetRoot
     });
 
-    assert.equal(facts.promptContext.database_runtime, "mysql");
-    assert.equal(facts.promptContext.data_layer, "drizzle");
-    assert.match(facts.promptContext.data_layer_blueprint, /Data layer: Drizzle/u);
-    assert.match(facts.promptContext.data_layer_blueprint, /drizzle\.config\.ts/u);
+    assert.equal(mysqlPrismaFacts.promptContext.database_runtime, "mysql");
+    assert.equal(mysqlPrismaFacts.promptContext.data_layer, "prisma");
+    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /Database runtime: MySQL/u);
+    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /Data layer: Prisma/u);
+    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /provider as mysql/u);
+
+    const postgresDrizzleFacts = await adapter.inspect({
+      config: {
+        values: {
+          nextjs_data_layer: "drizzle",
+          nextjs_database_runtime: "postgres",
+          nextjs_seed_bundler: "webpack",
+          nextjs_seed_linter: "biome",
+          nextjs_seed_source_layout: "root",
+          nextjs_seed_styling: "none"
+        }
+      },
+      targetRoot
+    });
+
+    assert.equal(postgresDrizzleFacts.promptContext.database_runtime, "postgres");
+    assert.equal(postgresDrizzleFacts.promptContext.data_layer, "drizzle");
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Data layer: Drizzle/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /PostgreSQL dialect/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Bundler: Webpack/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Linter: Biome/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Source layout: root app/u);
+    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Styling: none/u);
   });
 });
 
@@ -165,8 +195,9 @@ test("nextjs prompt actions use the Next.js prompt pack", async () => {
     assert.match(afterPrompt.actionResult.prompt, /Create the implementation plan for this Next\.js project/u);
     assert.match(afterPrompt.actionResult.prompt, /nextjs_database_runtime/u);
     assert.match(afterPrompt.actionResult.prompt, /DATABASE_URL/u);
-    assert.match(afterPrompt.actionResult.prompt, /Next\.js data layer blueprint:\nData layer: Prisma/u);
-    assert.doesNotMatch(afterPrompt.actionResult.prompt, /adapter\.promptContext\.data_layer_blueprint/u);
+    assert.match(afterPrompt.actionResult.prompt, /Next\.js selected blueprint:\nDatabase runtime: PostgreSQL/u);
+    assert.match(afterPrompt.actionResult.prompt, /Data layer: Prisma/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /adapter\.promptContext\.environment_blueprint/u);
     assert.match(afterPrompt.actionResult.prompt, /example-nextjs-app/u);
   });
 });
@@ -200,7 +231,7 @@ test("nextjs current-app scripts describe commands while Studio owns terminal ex
   });
 });
 
-test("nextjs app review describes Next.js commands and uses the shared review terminal", async () => {
+test("nextjs launch target describes Next.js commands and uses the shared terminal", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     await createNextjsProject(targetRoot);
 
@@ -219,7 +250,8 @@ test("nextjs app review describes Next.js commands and uses the shared review te
     ]);
     assert.equal(descriptor.metadata.mode, "production");
 
-    const spec = await createNextjsAppReviewTerminalSpec({
+    const spec = await createNextjsLaunchTargetTerminalSpec({
+      launchTargetId: "built",
       session: {
         metadata: {
           worktree_path: targetRoot
@@ -233,8 +265,9 @@ test("nextjs app review describes Next.js commands and uses the shared review te
     assert.equal(spec.ok, true);
     assert.equal(spec.command, "docker");
     assert.equal(spec.metadata.adapterId, "nextjs");
+    assert.equal(spec.metadata.launchTargetId, "built");
     assert.equal(spec.metadata.mode, "production");
-    assert.match(spec.metadata.appUrl, /^http:\/\/127\.0\.0\.1:\d+\//u);
+    assert.match(spec.metadata.targetUrl, /^http:\/\/127\.0\.0\.1:\d+\//u);
   });
 });
 

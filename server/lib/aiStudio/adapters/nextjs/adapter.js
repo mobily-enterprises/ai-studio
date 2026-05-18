@@ -56,10 +56,15 @@ import {
   selectedNextjsDatabaseRuntime
 } from "./databaseRuntime.js";
 
+const NEXTJS_BLUEPRINT_ROOT = fileURLToPath(new URL("./blueprints", import.meta.url));
 const NEXTJS_PROMPT_PACK_ROOT = fileURLToPath(new URL("./prompts", import.meta.url));
-const NEXTJS_DATA_LAYER_BLUEPRINT_ROOT = fileURLToPath(new URL("./blueprints/data-layer", import.meta.url));
+const NEXTJS_SEED_BUNDLERS = new Set(["turbopack", "webpack"]);
 const NEXTJS_DATA_LAYERS = new Set(["none", "prisma", "drizzle"]);
-const dataLayerBlueprintCache = new Map();
+const NEXTJS_SEED_LANGUAGES = new Set(["typescript", "javascript"]);
+const NEXTJS_SEED_LINTERS = new Set(["eslint", "biome", "none"]);
+const NEXTJS_SEED_SOURCE_LAYOUTS = new Set(["src", "root"]);
+const NEXTJS_SEED_STYLING = new Set(["tailwind", "none"]);
+const blueprintCache = new Map();
 
 const NEXTJS_MARKERS = deepFreeze([
   {
@@ -296,20 +301,75 @@ function configValues(config = {}) {
   return config?.values && typeof config.values === "object" ? config.values : config;
 }
 
-function selectedDataLayer(config = {}) {
-  const dataLayer = normalizeText(configValues(config)[NEXTJS_DATA_LAYER_CONFIG] || "prisma");
-  return NEXTJS_DATA_LAYERS.has(dataLayer) ? dataLayer : "prisma";
+function selectedConfigValue(config = {}, fieldId = "", allowedValues = new Set(), fallback = "") {
+  const value = normalizeText(configValues(config)[fieldId] || fallback);
+  return allowedValues.has(value) ? value : fallback;
 }
 
-async function dataLayerBlueprint(dataLayer = "none") {
-  const selected = NEXTJS_DATA_LAYERS.has(dataLayer) ? dataLayer : "none";
-  if (!dataLayerBlueprintCache.has(selected)) {
-    dataLayerBlueprintCache.set(
-      selected,
-      readFile(path.join(NEXTJS_DATA_LAYER_BLUEPRINT_ROOT, `${selected}.txt`), "utf8")
+function selectedDataLayer(config = {}) {
+  return selectedConfigValue(config, NEXTJS_DATA_LAYER_CONFIG, NEXTJS_DATA_LAYERS, "prisma");
+}
+
+function selectedSeedBundler(config = {}) {
+  return selectedConfigValue(config, NEXTJS_SEED_BUNDLER_CONFIG, NEXTJS_SEED_BUNDLERS, "turbopack");
+}
+
+function selectedSeedLanguage(config = {}) {
+  return selectedConfigValue(config, NEXTJS_SEED_LANGUAGE_CONFIG, NEXTJS_SEED_LANGUAGES, "typescript");
+}
+
+function selectedSeedLinter(config = {}) {
+  return selectedConfigValue(config, NEXTJS_SEED_LINTER_CONFIG, NEXTJS_SEED_LINTERS, "eslint");
+}
+
+function selectedSeedSourceLayout(config = {}) {
+  return selectedConfigValue(config, NEXTJS_SEED_SOURCE_LAYOUT_CONFIG, NEXTJS_SEED_SOURCE_LAYOUTS, "src");
+}
+
+function selectedSeedStyling(config = {}) {
+  return selectedConfigValue(config, NEXTJS_SEED_STYLING_CONFIG, NEXTJS_SEED_STYLING, "tailwind");
+}
+
+function selectedSeedImportAlias(config = {}) {
+  return normalizeText(configValues(config)[NEXTJS_SEED_IMPORT_ALIAS_CONFIG] || "@/*") || "@/*";
+}
+
+async function blueprintFile(section = "", value = "") {
+  const cacheKey = `${section}/${value}`;
+  if (!blueprintCache.has(cacheKey)) {
+    blueprintCache.set(
+      cacheKey,
+      readFile(path.join(NEXTJS_BLUEPRINT_ROOT, section, `${value}.txt`), "utf8")
     );
   }
-  return dataLayerBlueprintCache.get(selected);
+  return blueprintCache.get(cacheKey);
+}
+
+async function nextjsBlueprintSections(config = {}) {
+  const databaseRuntime = selectedNextjsDatabaseRuntime(config);
+  const seedImportAlias = selectedSeedImportAlias(config);
+  return [
+    await blueprintFile("database-runtime", databaseRuntime),
+    await blueprintFile("data-layer", selectedDataLayer(config)),
+    await blueprintFile("seed-language", selectedSeedLanguage(config)),
+    await blueprintFile("seed-source-layout", selectedSeedSourceLayout(config)),
+    await blueprintFile("seed-styling", selectedSeedStyling(config)),
+    await blueprintFile("seed-linter", selectedSeedLinter(config)),
+    await blueprintFile("seed-bundler", selectedSeedBundler(config)),
+    [
+      "Import alias",
+      "",
+      `Use ${seedImportAlias} as the configured import alias when adding new imports or paths.`,
+      "Keep tsconfig/jsconfig path aliases and generated imports aligned with this value."
+    ].join("\n")
+  ];
+}
+
+async function nextjsEnvironmentBlueprint(config = {}) {
+  return (await nextjsBlueprintSections(config))
+    .map((section) => String(section || "").trim())
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 }
 
 function nextConfigExists(markers = []) {
@@ -350,6 +410,7 @@ async function nextjsPromptContext({
   const values = configValues(config);
   const databaseRuntime = selectedNextjsDatabaseRuntime(config);
   const dataLayer = selectedDataLayer(config);
+  const environmentBlueprint = await nextjsEnvironmentBlueprint(config);
   return {
     ...nodeWebPromptContextBase({
       adapterId: "nextjs",
@@ -377,15 +438,16 @@ async function nextjsPromptContext({
     database_runtime: databaseRuntime,
     database_url_variable: databaseRuntime === "none" ? "" : "DATABASE_URL",
     data_layer: dataLayer,
-    data_layer_blueprint: await dataLayerBlueprint(dataLayer),
+    data_layer_blueprint: await blueprintFile("data-layer", dataLayer),
+    environment_blueprint: environmentBlueprint,
     next_config_exists: String(nextConfigExists(markers)),
     next_dependency: String(hasDependency(packageJson || {}, "next")),
-    seed_bundler: normalizeText(values[NEXTJS_SEED_BUNDLER_CONFIG] || "turbopack"),
-    seed_import_alias: normalizeText(values[NEXTJS_SEED_IMPORT_ALIAS_CONFIG] || "@/*"),
-    seed_language: normalizeText(values[NEXTJS_SEED_LANGUAGE_CONFIG] || "typescript"),
-    seed_linter: normalizeText(values[NEXTJS_SEED_LINTER_CONFIG] || "eslint"),
-    seed_source_layout: normalizeText(values[NEXTJS_SEED_SOURCE_LAYOUT_CONFIG] || "src"),
-    seed_styling: normalizeText(values[NEXTJS_SEED_STYLING_CONFIG] || "tailwind"),
+    seed_bundler: selectedSeedBundler(values),
+    seed_import_alias: selectedSeedImportAlias(values),
+    seed_language: selectedSeedLanguage(values),
+    seed_linter: selectedSeedLinter(values),
+    seed_source_layout: selectedSeedSourceLayout(values),
+    seed_styling: selectedSeedStyling(values),
     start_script: packageScript(packageJson || {}, "start")
   };
 }

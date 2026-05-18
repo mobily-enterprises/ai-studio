@@ -1,0 +1,5 @@
+Linter: ESLint
+
+Use the generated ESLint setup for lintable code style and framework rules.
+Prefer fixing lint findings directly over disabling rules.
+Only add new lint dependencies or configuration when the issue requires a broader linting convention.

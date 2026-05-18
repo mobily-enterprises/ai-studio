@@ -54,11 +54,6 @@ export {
   normalizeWorkflowCommands
 } from "./workflowAdapter.js";
 export {
-  DEFAULT_REVIEW_PORT,
-  createAiStudioAppReviewTerminalSpec,
-  findAvailableReviewPort
-} from "./appReviewTerminal.js";
-export {
   DEFAULT_LAUNCH_TARGET_PORT,
   createAiStudioLaunchTargetTerminalSpec,
   findAvailableLaunchTargetPort

@@ -1,0 +1,5 @@
+Bundler: Webpack
+
+The seeded app is configured for Webpack.
+Webpack-specific config is acceptable when needed.
+Do not introduce Turbopack-only assumptions unless the project configuration changes.

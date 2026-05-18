@@ -1,0 +1,5 @@
+Source layout: root app
+
+The app is seeded with app/ at the project root.
+Prefer app/ for App Router routes and lib, db, or components for shared modules.
+Do not create src/ unless the issue explicitly asks to change the project layout.

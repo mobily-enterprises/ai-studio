@@ -12,11 +12,10 @@ import {
   createAiStudioWorkflowCommandTerminalSpec
 } from "../../workflowAdapter.js";
 import {
-  createNextjsAppReviewTerminalSpec,
   createNextjsLaunchTargetTerminalSpec,
   createNextjsReviewDescriptor,
   listNextjsLaunchTargets
-} from "./appReviewTerminal.js";
+} from "./launchTargets.js";
 
 export {
   DEFAULT_TARGET_SCRIPT_NAMES,
@@ -42,13 +41,11 @@ const NEXTJS_AI_STUDIO_COMMANDS = deepFreeze(AI_STUDIO_WORKFLOW_COMMANDS);
 const createNextjsAiStudioCommandTerminalSpec = createAiStudioWorkflowCommandTerminalSpec;
 
 function createNextjsTargetAdapter({
-  appReviewTerminalSpecFactory = createNextjsAppReviewTerminalSpec,
   commandTerminalSpecFactory = null,
   launchTargetTerminalSpecFactory = createNextjsLaunchTargetTerminalSpec,
   launchTargets = listNextjsLaunchTargets
 } = {}) {
   return new NextjsTargetAdapter({
-    appReviewTerminalSpecFactory,
     commandTerminalSpecFactory,
     launchTargetTerminalSpecFactory,
     launchTargets,
@@ -58,7 +55,6 @@ function createNextjsTargetAdapter({
 
 export {
   createNextjsAiStudioCommandTerminalSpec,
-  createNextjsAppReviewTerminalSpec,
   createNextjsLaunchTargetTerminalSpec,
   createNextjsReviewDescriptor,
   createNextjsTargetAdapter,

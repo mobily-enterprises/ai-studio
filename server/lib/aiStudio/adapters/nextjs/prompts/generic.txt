@@ -30,8 +30,8 @@ Next.js prompt context:
 Next.js project config:
 {{config.json}}
 
-Next.js data layer blueprint:
-{{adapter.promptContext.data_layer_blueprint}}
+Next.js selected blueprint:
+{{adapter.promptContext.environment_blueprint}}
 
 Action input:
 {{input.json}}

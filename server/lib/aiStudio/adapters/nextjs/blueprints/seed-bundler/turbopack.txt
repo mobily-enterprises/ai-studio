@@ -1,0 +1,5 @@
+Bundler: Turbopack
+
+The seeded app is configured for Turbopack.
+Prefer scripts and config that preserve Turbopack compatibility.
+Do not switch to Webpack-only behavior unless a dependency or issue requirement makes that necessary.

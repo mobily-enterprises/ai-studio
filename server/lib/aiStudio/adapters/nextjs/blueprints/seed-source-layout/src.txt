@@ -1,0 +1,5 @@
+Source layout: src/app
+
+The app is seeded with source code under src/.
+Prefer src/app for App Router routes and src/lib, src/db, or src/components for shared modules.
+Keep generated paths and import aliases aligned with the src layout.
