@@ -116,6 +116,8 @@ import {
   startAiStudioCodexTerminal
 } from "@/lib/aiStudioSessionApi.js";
 import { useAiStudioCodexCommands } from "@/composables/useAiStudioCodexCommands.js";
+import { useCodexTerminalAttachments } from "@/composables/useCodexTerminalAttachments.js";
+import { useCodexTerminalSocket } from "@/composables/useCodexTerminalSocket.js";
 import { writeClipboardText } from "@/lib/clipboard.js";
 import {
   codexTrustPromptLooksActive,
@@ -173,9 +175,6 @@ const componentMounted = ref(false);
 const codexThreadId = ref("");
 const codexThreadCaptureRequired = ref(false);
 const codexThreadCaptureStarted = ref(false);
-const attachmentDragDepth = ref(0);
-const attachmentUploading = ref(false);
-const attachmentStatus = ref("");
 
 let terminalInstance = null;
 let terminalFitAddon = null;
@@ -187,9 +186,6 @@ let terminalDocumentFocusInHandler = null;
 let terminalOutsidePointerHandler = null;
 let terminalWindowBlurHandler = null;
 let terminalResizeHandler = null;
-let terminalSocket = null;
-let terminalSocketOpenPromise = null;
-let terminalReconnectTimer = null;
 let terminalOutputEmitTimer = null;
 let codexIdleTimer = null;
 let terminalSetupPromise = null;
@@ -256,13 +252,49 @@ const codexPrompt = computed(() => {
 });
 const manualPromptInjectionRequestKey = computed(() => String(props.promptInjectionRequestKey || ""));
 const terminalExited = computed(() => terminalStatus.value === "exited");
-const attachmentDragActive = computed(() => attachmentDragDepth.value > 0);
 const showTerminalStartPanel = computed(() => (
   canUseTerminal.value &&
   componentMounted.value &&
   !terminalStarting.value &&
   (!terminalSessionId.value || terminalExited.value)
 ));
+const terminalSocket = useCodexTerminalSocket({
+  canUseTerminal,
+  componentMounted,
+  isTerminalSessionNotFound: terminalSessionNotFound,
+  onConnected() {
+    terminalError.value = "";
+  },
+  onError(error) {
+    terminalError.value = error;
+  },
+  onMessage: handleTerminalSocketMessage,
+  onMissingTerminal() {
+    void recoverMissingTerminal();
+  },
+  sessionId,
+  terminalSessionId,
+  terminalStatus,
+  webSocketUrl: aiStudioCodexTerminalWebSocketUrl
+});
+const {
+  attachmentDragActive,
+  attachmentStatus,
+  attachmentUploading,
+  clearAttachmentStatus,
+  handleAttachmentDragEnter,
+  handleAttachmentDragLeave,
+  handleAttachmentDragOver,
+  handleAttachmentDrop,
+  resetAttachmentDragState
+} = useCodexTerminalAttachments({
+  ensureTerminalReady,
+  focusTerminal,
+  sendTerminalData,
+  sessionId,
+  uploadAttachment: (currentSessionId, file) => codexCommands.uploadAttachment(currentSessionId, file)
+});
+
 function defaultExpanded() {
   if (typeof window === "undefined" || !window.matchMedia) {
     return true;
@@ -449,7 +481,7 @@ function scheduleTerminalOutputEmit() {
 function disposeTerminalUi() {
   flushTerminalOutputEmit();
   clearCodexBusy();
-  closeTerminalSocket();
+  terminalSocket.closeSocket();
   if (terminalDataDisposable) {
     terminalDataDisposable.dispose();
     terminalDataDisposable = null;
@@ -599,46 +631,6 @@ function appendTerminalOutput(chunk) {
   scheduleTerminalOutputEmit();
 }
 
-function closeTerminalSocket() {
-  clearTerminalReconnect();
-  const socket = terminalSocket;
-  terminalSocket = null;
-  terminalSocketOpenPromise = null;
-  if (socket && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
-    socket.close();
-  }
-}
-
-function clearTerminalReconnect() {
-  if (!terminalReconnectTimer) {
-    return;
-  }
-  window.clearTimeout(terminalReconnectTimer);
-  terminalReconnectTimer = null;
-}
-
-function scheduleTerminalReconnect() {
-  if (
-    terminalReconnectTimer ||
-    !componentMounted.value ||
-    !canUseTerminal.value ||
-    !terminalSessionId.value ||
-    terminalStatus.value === "exited"
-  ) {
-    return;
-  }
-  terminalReconnectTimer = window.setTimeout(async () => {
-    terminalReconnectTimer = null;
-    if (!terminalSessionId.value || terminalSocket || terminalStatus.value === "exited") {
-      return;
-    }
-    const connected = await connectTerminalSocket();
-    if (!connected && terminalSessionId.value && terminalStatus.value === "disconnected") {
-      scheduleTerminalReconnect();
-    }
-  }, 1200);
-}
-
 function applyTerminalSnapshot(session = {}) {
   applyCodexThreadState(session);
   const persistedOutputStart = Number(session.codexPromptHandoffOutputStart);
@@ -699,66 +691,6 @@ function terminalSessionNotFound(error = "") {
   return String(error || "").toLowerCase().includes("terminal session not found");
 }
 
-async function connectTerminalSocket() {
-  if (!terminalSessionId.value || !sessionId.value) {
-    return false;
-  }
-  if (terminalSocket?.readyState === WebSocket.OPEN) {
-    return true;
-  }
-  if (terminalSocketOpenPromise) {
-    return terminalSocketOpenPromise;
-  }
-
-  terminalStatus.value = terminalStatus.value || "connecting";
-  terminalSocketOpenPromise = new Promise((resolve) => {
-    let settled = false;
-    const socket = new WebSocket(aiStudioCodexTerminalWebSocketUrl(sessionId.value, terminalSessionId.value));
-    terminalSocket = socket;
-
-    const settle = (ready) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve(ready);
-    };
-
-    socket.addEventListener("open", () => {
-      clearTerminalReconnect();
-      terminalError.value = "";
-      settle(true);
-    });
-
-    socket.addEventListener("message", (event) => {
-      handleTerminalSocketMessage(event.data);
-    });
-
-    socket.addEventListener("error", () => {
-      terminalError.value = "Terminal stream failed.";
-      settle(false);
-    });
-
-    socket.addEventListener("close", (event) => {
-      if (terminalSocket === socket) {
-        terminalSocket = null;
-      }
-      terminalSocketOpenPromise = null;
-      settle(false);
-      if (terminalSessionNotFound(event.reason)) {
-        void recoverMissingTerminal();
-        return;
-      }
-      if (terminalStatus.value !== "exited") {
-        terminalStatus.value = terminalSessionId.value ? "disconnected" : "";
-        scheduleTerminalReconnect();
-      }
-    });
-  });
-
-  return terminalSocketOpenPromise;
-}
-
 async function ensureTerminalReady() {
   if (!canUseTerminal.value) {
     terminalError.value = "Create the session worktree before starting Codex.";
@@ -801,7 +733,7 @@ async function startTerminalOnce() {
         writeTerminalOutput(terminalLatestOutput);
       }
     });
-    if (!(await connectTerminalSocket())) {
+    if (!(await terminalSocket.connect())) {
       throw new Error("Terminal stream failed to connect.");
     }
     void ensureCodexThreadReady({ forceRetry: true });
@@ -835,13 +767,7 @@ async function sendTerminalData(data, {
   }
   const input = String(data || "");
   try {
-    if (!(await connectTerminalSocket()) || terminalSocket?.readyState !== WebSocket.OPEN) {
-      throw new Error("Terminal stream is not connected.");
-    }
-    terminalSocket.send(JSON.stringify({
-      data: input,
-      type: "input"
-    }));
+    await terminalSocket.send(input);
     if (source === "user" && input.includes("\u0003")) {
       clearCodexBusy();
     } else if (source === "user" && input.includes("\r")) {
@@ -858,79 +784,6 @@ async function sendTerminalData(data, {
   } catch (sendError) {
     terminalError.value = String(sendError?.message || sendError || "Terminal input failed.");
     return false;
-  }
-}
-
-function filesFromDropEvent(event) {
-  return Array.from(event?.dataTransfer?.files || []).filter((file) => file && file.size >= 0);
-}
-
-function handleAttachmentDragEnter(event) {
-  const hasFiles = filesFromDropEvent(event).length > 0 ||
-    Array.from(event?.dataTransfer?.types || []).includes("Files");
-  if (!hasFiles) {
-    return;
-  }
-  attachmentDragDepth.value += 1;
-  if (event?.dataTransfer) {
-    event.dataTransfer.dropEffect = "copy";
-  }
-}
-
-function handleAttachmentDragOver(event) {
-  if (event?.dataTransfer) {
-    event.dataTransfer.dropEffect = "copy";
-  }
-}
-
-function handleAttachmentDragLeave() {
-  attachmentDragDepth.value = Math.max(0, attachmentDragDepth.value - 1);
-}
-
-async function injectAttachmentPath(containerPath) {
-  const normalizedPath = String(containerPath || "").trim();
-  if (!normalizedPath) {
-    return false;
-  }
-  return sendTerminalData(`\u001b[200~[${normalizedPath}] \u001b[201~`);
-}
-
-async function uploadDroppedAttachment(file) {
-  const attachment = await codexCommands.uploadAttachment(sessionId.value, file);
-  if (attachment?.ok === false) {
-    throw new Error(attachment.error || attachment.errors?.[0]?.message || "Attachment upload failed.");
-  }
-  if (!(await injectAttachmentPath(attachment.containerPath))) {
-    throw new Error("Attachment path could not be sent to Codex.");
-  }
-  return attachment;
-}
-
-async function handleAttachmentDrop(event) {
-  attachmentDragDepth.value = 0;
-  const files = filesFromDropEvent(event);
-  if (!files.length) {
-    return;
-  }
-  attachmentUploading.value = true;
-  attachmentStatus.value = "";
-  try {
-    if (!(await ensureTerminalReady())) {
-      return;
-    }
-    const uploaded = [];
-    for (const file of files) {
-      uploaded.push(await uploadDroppedAttachment(file));
-    }
-    const label = uploaded.length === 1
-      ? uploaded[0].fileName
-      : `${uploaded.length} files`;
-    attachmentStatus.value = `${label} attached. Press Enter in Codex when ready.`;
-    focusTerminal();
-  } catch (error) {
-    attachmentStatus.value = String(error?.message || error || "Attachment upload failed.");
-  } finally {
-    attachmentUploading.value = false;
   }
 }
 
@@ -1247,7 +1100,7 @@ async function recoverMissingTerminal() {
 
   terminalRecoveryPromise = (async () => {
     const recoveredSessionId = sessionId.value;
-    closeTerminalSocket();
+    terminalSocket.closeSocket();
     terminalSessionId.value = "";
     terminalStatus.value = "";
     terminalCommandPreview.value = "";
@@ -1316,8 +1169,8 @@ watch(sessionId, async (nextSessionId, previousSessionId) => {
   }
   autoPromptInjected.value = false;
   handledPromptInjectionRequestKey = "";
-  attachmentDragDepth.value = 0;
-  attachmentStatus.value = "";
+  resetAttachmentDragState();
+  clearAttachmentStatus();
   expanded.value = defaultExpanded();
   startTerminalWhenReady();
 });
