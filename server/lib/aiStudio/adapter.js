@@ -3,6 +3,10 @@ import {
   isPlainObject,
   normalizeText
 } from "./core.js";
+import {
+  promptContextForAction,
+  renderPromptWithOverrides
+} from "./promptRenderer.js";
 
 const ADAPTER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const COMMAND_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
@@ -77,8 +81,10 @@ function adapterActionResult(input = {}) {
 function adapterPromptResult(input = {}) {
   return {
     context: isPlainObject(input.context) ? input.context : {},
+    originalPrompt: normalizeText(input.originalPrompt),
     prompt: normalizeText(input.prompt),
-    promptId: normalizeText(input.promptId)
+    promptId: normalizeText(input.promptId),
+    promptOverridePath: normalizeText(input.promptOverridePath)
   };
 }
 
@@ -206,12 +212,22 @@ class TargetAdapter {
   async renderPrompt({
     action = {},
     config = {},
-    input = {}
+    input = {},
+    session = {}
   } = {}) {
-    void config;
     const promptId = promptIdForAction(action);
+    const context = promptContextForAction({
+      action,
+      config,
+      input,
+      session
+    });
     return adapterPromptResult({
-      prompt: defaultPromptText(action, input),
+      context,
+      ...await renderPromptWithOverrides({
+        context,
+        originalPrompt: defaultPromptText(action, input)
+      }),
       promptId
     });
   }

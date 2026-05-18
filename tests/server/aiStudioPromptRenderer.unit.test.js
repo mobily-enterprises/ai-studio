@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -74,6 +74,64 @@ test("ai-studio prompt renderer falls back to the generic prompt", async () => {
     });
 
     assert.equal(rendered.prompt, "Generic Missing specific prompt for example_step.");
+  });
+});
+
+test("ai-studio prompt renderer applies target overrides with the rendered original prompt", async () => {
+  await withTemporaryRoot(async (promptPackRoot) => {
+    await withTemporaryRoot(async (targetRoot) => {
+      await writeFile(
+        path.join(promptPackRoot, "make_plan.txt"),
+        "Built-in {{action.label}} for {{session.id}} in {{session.targetRoot}}.",
+        "utf8"
+      );
+      const overrideRoot = path.join(targetRoot, ".ai-studio", "prompts", "jskit");
+      await mkdir(overrideRoot, {
+        recursive: true
+      });
+      await writeFile(
+        path.join(overrideRoot, "make_plan.txt"),
+        [
+          "Custom wrapper.",
+          "{{originalPrompt}}",
+          "Also use {{prompt.original}}"
+        ].join("\n"),
+        "utf8"
+      );
+      const renderer = new PromptRenderer({
+        promptPackRoot
+      });
+
+      const rendered = await renderer.renderPrompt({
+        action: {
+          id: "make_plan",
+          label: "Make plan",
+          type: "prompt"
+        },
+        session: {
+          adapter: {
+            id: "jskit",
+            label: "JSKIT"
+          },
+          sessionId: "prompt_session",
+          targetRoot
+        }
+      });
+
+      assert.equal(rendered.originalPrompt, `Built-in Make plan for prompt_session in ${targetRoot}.`);
+      assert.equal(
+        rendered.prompt,
+        [
+          "Custom wrapper.",
+          `Built-in Make plan for prompt_session in ${targetRoot}.`,
+          `Also use Built-in Make plan for prompt_session in ${targetRoot}.`
+        ].join("\n")
+      );
+      assert.equal(rendered.promptOverridePath, path.join(overrideRoot, "make_plan.txt"));
+      const readme = await readFile(path.join(targetRoot, ".ai-studio", "prompts", "README.md"), "utf8");
+      assert.match(readme, /\{\{originalPrompt\}\}/u);
+      assert.match(readme, /\.ai-studio\/prompts\/<adapter-id>\/<prompt-id>\.txt/u);
+    });
   });
 });
 

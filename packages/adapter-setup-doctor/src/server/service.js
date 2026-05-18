@@ -47,7 +47,6 @@ import {
   shellQuote
 } from "../../../../server/lib/shellCommands.js";
 
-const REQUIRED_GH_SCOPES = ["repo", "read:org", "gist", "workflow"];
 const TERMINAL_NAMESPACE = "adapter-setup-doctor";
 
 function gitArgs(targetRoot, args) {
@@ -173,33 +172,6 @@ function ghRepoCreateRepair(targetRoot) {
     actionId: "terminal-gh-create-repo",
     command: dockerCommand(args),
     label: "Create/link GitHub repo"
-  });
-}
-
-function ghLoginCommandArgs() {
-  return [
-    "gh",
-    "auth",
-    "login",
-    "--hostname",
-    "github.com",
-    "--git-protocol",
-    "https",
-    "--web",
-    "--scopes",
-    REQUIRED_GH_SCOPES.join(",")
-  ];
-}
-
-function ghLoginRepair(targetRoot) {
-  const args = buildDoctorTerminalArgs(ghLoginCommandArgs(), {
-    targetRoot
-  });
-
-  return createRepair({
-    actionId: "terminal-gh-login",
-    command: dockerCommand(args),
-    label: "Log in to GitHub"
   });
 }
 
@@ -524,31 +496,6 @@ async function checkGitRemote(targetRoot, gitReady) {
   });
 }
 
-async function checkGitHubAuth(targetRoot) {
-  const [statusResult, userResult] = await Promise.all([
-    runGh(targetRoot, ["auth", "status", "--hostname", "github.com"]),
-    runGh(targetRoot, ["api", "user", "--jq", ".login"])
-  ]);
-  if (!statusResult.ok || !userResult.ok || !userResult.stdout) {
-    return failCheck({
-      id: "github-auth",
-      label: "GitHub CLI auth",
-      expected: "gh is authenticated and can call the GitHub API.",
-      observed: [statusResult.output, userResult.output].filter(Boolean).join("\n"),
-      explanation: "Studio needs GitHub API access before creating issues, branches, PRs, or merge flows.",
-      repair: ghLoginRepair(targetRoot)
-    });
-  }
-
-  return passCheck({
-    id: "github-auth",
-    label: "GitHub CLI auth",
-    expected: "gh is authenticated and can call the GitHub API.",
-    observed: userResult.stdout,
-    explanation: "GitHub CLI can call the GitHub API from the managed toolchain."
-  });
-}
-
 async function checkGitHubRepository(targetRoot, remoteCheck) {
   const remoteUrl = remoteCheck.status === "pass" ? String(remoteCheck.observed || "").trim() : "";
   if (!remoteUrl) {
@@ -580,8 +527,7 @@ async function checkGitHubRepository(targetRoot, remoteCheck) {
       label: "GitHub repository",
       expected: "gh repo view works for the target remote.",
       observed: result.output,
-      explanation: "GitHub CLI cannot resolve this target repository.",
-      repair: ghLoginRepair(targetRoot)
+      explanation: "GitHub CLI cannot resolve this target repository. Reconnect GitHub in the Accounts step if authentication expired."
     });
   }
 
@@ -628,8 +574,7 @@ async function checkGitHubIssuePrAccess(targetRoot, repoCheck, remoteCheck) {
       label: "GitHub issues and PRs",
       expected: "gh can list issues and pull requests for the target repo.",
       observed: [issueResult.output, prResult.output].filter(Boolean).join("\n"),
-      explanation: "Studio needs issue and PR API access for the next workflow stage.",
-      repair: ghLoginRepair(targetRoot)
+      explanation: "Studio needs issue and PR API access for the next workflow stage. Reconnect GitHub in the Accounts step if authentication expired."
     });
   }
 
@@ -717,18 +662,6 @@ function startGitIdentityTerminal(targetRoot, inputs = {}) {
   return startDockerTerminal({
     args,
     commandPreview: dockerCommand(args),
-    targetRoot
-  });
-}
-
-function startGhLoginTerminal(targetRoot) {
-  const repair = ghLoginRepair(targetRoot);
-  const args = buildDoctorTerminalArgs(ghLoginCommandArgs(), {
-    targetRoot
-  });
-  return startDockerTerminal({
-    args,
-    commandPreview: repair.commandPreview,
     targetRoot
   });
 }
@@ -843,12 +776,6 @@ async function inspectAdapterSetup({
         observed
       }),
       blockedCheck({
-        id: "github-auth",
-        label: "GitHub CLI auth",
-        expected: "gh is authenticated and can call the GitHub API.",
-        observed
-      }),
-      blockedCheck({
         id: "github-repository",
         label: "GitHub repository",
         expected: "Target origin resolves to a GitHub repository.",
@@ -901,11 +828,6 @@ async function inspectAdapterSetup({
     label: "Git remote",
     run: () => checkGitRemote(normalizedTargetRoot, gitReady)
   });
-  const githubAuth = await runTargetStep(emit, {
-    id: "github-auth",
-    label: "GitHub CLI auth",
-    run: () => checkGitHubAuth(normalizedTargetRoot)
-  });
   const githubRepository = await runTargetStep(emit, {
     id: "github-repository",
     label: "GitHub repository",
@@ -924,7 +846,6 @@ async function inspectAdapterSetup({
     gitIdentity,
     gitStatus,
     gitRemote,
-    githubAuth,
     githubRepository,
     githubIssuesPrs
   ];
@@ -986,10 +907,6 @@ function createService({
 
       if (actionId === "terminal-git-identity") {
         return startGitIdentityTerminal(resolvedTargetRoot, input.inputs || {});
-      }
-
-      if (actionId === "terminal-gh-login") {
-        return startGhLoginTerminal(resolvedTargetRoot);
       }
 
       return {

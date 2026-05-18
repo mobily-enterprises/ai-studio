@@ -103,6 +103,143 @@ test.describe("live AI Studio session workflow", () => {
     await expectButtonHidden(page, "Next");
   });
 
+  test("switches from issue request form to create-file controls after the issue prompt is recorded", async ({ page }) => {
+    await createNewBranchSessionAtIssueStep(page);
+    await expect(page.getByLabel("Issue request")).toBeVisible();
+    await expectButtonEnabled(page, "Use existing issue");
+    await expectButtonHidden(page, "Create issue file");
+    await expectButtonHidden(page, "Next");
+
+    await recordIssuePromptRequest(page, `Define a tiny issue for ${runId}.`);
+
+    await expect(page.getByLabel("Issue request")).toHaveCount(0);
+    await expectButtonEnabled(page, "Create issue file");
+    await expectButtonEnabled(page, "Use existing issue");
+    await expectButtonDisabled(page, "Next");
+  });
+
+  test("shows the expected controls at each checklist step", async ({ page }) => {
+    const issue = await createFixtureIssue("checklist-contract-issue");
+
+    await createNewBranchSessionAtIssueStep(page);
+    await assertChecklistControls(page, "issue_file_created", {
+      enabled: ["Use existing issue"],
+      hidden: ["Create issue file", "Next"]
+    });
+
+    await useExistingIssue(page, issue.url);
+    await assertChecklistControls(page, "issue_file_created", {
+      disabled: ["Send prompt", "Create issue file", "Use existing issue"],
+      enabled: ["Next"]
+    });
+
+    await goNextToStep(page, "issue_submitted");
+    await assertChecklistControls(page, "issue_submitted", {
+      disabled: ["Edit issue", "Create issue on GH"],
+      enabled: ["Next"]
+    });
+
+    await goNextToStep(page, "plan_made");
+    await assertChecklistControls(page, "plan_made", {
+      enabled: ["Make plan", "Next"]
+    });
+
+    await goNextToStep(page, "plan_executed");
+    await assertChecklistControls(page, "plan_executed", {
+      enabled: ["Execute plan", "Next"]
+    });
+
+    await goNextToStep(page, "deep_ui_check_run");
+    await assertChecklistControls(page, "deep_ui_check_run", {
+      enabled: ["Run deep UI check", "Next"]
+    });
+
+    await goNextToStep(page, "review_run");
+    await assertChecklistControls(page, "review_run", {
+      enabled: ["Run deslop", "Resolve deslop", "Next"]
+    });
+
+    await goNextToStep(page, "automated_checks_run");
+    await assertChecklistControls(page, "automated_checks_run", {
+      disabled: ["Next"],
+      enabled: ["Run automated checks"]
+    });
+
+    await markMetadataAndReload(page, "automated_checks_passed", "yes");
+    await assertChecklistControls(page, "automated_checks_run", {
+      enabled: ["Run automated checks", "Next"]
+    });
+
+    await goNextToStep(page, "changes_accepted");
+    await assertChecklistControls(page, "changes_accepted", {
+      disabled: ["Open app"],
+      enabled: ["Review diff", "Run app", "Next"]
+    });
+
+    await goNextToStep(page, "project_knowledge_updated");
+    await assertChecklistControls(page, "project_knowledge_updated", {
+      enabled: ["Update project knowledge", "Next"]
+    });
+
+    await goNextToStep(page, "changes_committed");
+    await assertChecklistControls(page, "changes_committed", {
+      disabled: ["Next"],
+      enabled: ["Commit and push changes"]
+    });
+
+    await markMetadataAndReload(page, "accepted_commit", "0000000000000000000000000000000000000000");
+    await markMetadataAndReload(page, "branch_pushed", "ai-studio/live-e2e-checklist");
+    await assertChecklistControls(page, "changes_committed", {
+      enabled: ["Commit and push changes", "Next"]
+    });
+
+    await goNextToStep(page, "pr_file_created");
+    await assertChecklistControls(page, "pr_file_created", {
+      disabled: ["Next"],
+      enabled: ["Create PR file"]
+    });
+
+    await writePullRequestArtifact(page, `# ${fixtureTitle("checklist-pr")}\n\nChecklist contract draft.\n`);
+    await assertChecklistControls(page, "pr_file_created", {
+      enabled: ["Create PR file", "Next"]
+    });
+
+    await goNextToStep(page, "pr_created");
+    await assertChecklistControls(page, "pr_created", {
+      disabled: ["Open PR", "Next"],
+      enabled: ["Edit PR", "Create PR on GH"]
+    });
+
+    await markMetadataAndReload(page, "pr_url", "https://github.com/mercmobily/studio-ai-e2e-repo/pull/999999");
+    await markMetadataAndReload(page, "pr_source", "created");
+    await assertChecklistControls(page, "pr_created", {
+      disabled: ["Edit PR", "Create PR on GH"],
+      enabled: ["Open PR", "Next"]
+    });
+
+    await goNextToStep(page, "pr_merged");
+    await assertChecklistControls(page, "pr_merged", {
+      enabled: ["Prepare for merge", "Merge", "Next"]
+    });
+
+    await goNextToStep(page, "main_checkout_synced");
+    await assertChecklistControls(page, "main_checkout_synced", {
+      disabled: ["Sync main checkout"],
+      enabled: ["Next"]
+    });
+
+    await markMetadataAndReload(page, "pr_merged", "yes");
+    await assertChecklistControls(page, "main_checkout_synced", {
+      enabled: ["Sync main checkout", "Next"]
+    });
+
+    await goNextToStep(page, "session_finished");
+    await assertChecklistControls(page, "session_finished", {
+      enabled: ["Finish"],
+      hidden: ["Next"]
+    });
+  });
+
   test("selects an existing issue and disables issue-creation actions", async ({ page }) => {
     const issue = await createFixtureIssue("existing-issue");
 
@@ -768,6 +905,27 @@ async function expectButtonHidden(page: Page, name: string) {
   });
 }
 
+async function assertChecklistControls(page: Page, stepId: string, {
+  disabled = [],
+  enabled = [],
+  hidden = []
+}: {
+  disabled?: string[];
+  enabled?: string[];
+  hidden?: string[];
+}) {
+  await expectStep(page, stepId);
+  for (const label of enabled) {
+    await expectButtonEnabled(page, label);
+  }
+  for (const label of disabled) {
+    await expectButtonDisabled(page, label);
+  }
+  for (const label of hidden) {
+    await expectButtonHidden(page, label);
+  }
+}
+
 async function runCommandAndWaitForMetadata(page: Page, buttonLabel: string, metadataName: string, timeout = UI_COMMAND_TIMEOUT_MS) {
   await clickButton(page, buttonLabel);
   await expectSessionMetadataContains(page, metadataName, "", timeout);
@@ -778,6 +936,39 @@ async function awaitSessions(page: Page) {
   const response = await page.request.get(`${baseUrl}/api/ai-studio/sessions?limit=20`);
   expect(response.ok()).toBe(true);
   return response.json();
+}
+
+async function runSessionAction(page: Page, actionId: string, input: Record<string, unknown> = {}) {
+  const session = await latestSession(page);
+  const response = await page.request.post(
+    `${baseUrl}/api/ai-studio/sessions/${encodeURIComponent(session.sessionId)}/actions/${encodeURIComponent(actionId)}`,
+    {
+      data: input
+    }
+  );
+  expect(response.ok()).toBe(true);
+  const payload = await response.json();
+  expect(payload.sessionId).toBe(session.sessionId);
+  expect(payload.actionResult?.actionId).toBe(actionId);
+  return payload as AiStudioSession;
+}
+
+async function recordIssuePromptRequest(page: Page, issueRequest: string) {
+  await runSessionAction(page, "send_issue_prompt", {
+    issueRequest
+  });
+  await page.reload({
+    waitUntil: "networkidle"
+  });
+  await expect.poll(async () => {
+    const session = await latestSession(page);
+    return Boolean((session.actionResults || []).find((result) => {
+      return result.actionId === "send_issue_prompt" &&
+        (result.input as { issueRequest?: string } | undefined)?.issueRequest === issueRequest;
+    }));
+  }, {
+    timeout: 30_000
+  }).toBe(true);
 }
 
 async function onlyActiveSession(page: Page): Promise<AiStudioSession> {
@@ -882,6 +1073,14 @@ async function markMetadata(page: Page, name: string, value: string) {
     recursive: true
   });
   await writeFile(path.join(session.metadataRoot, name), `${value}\n`, "utf8");
+}
+
+async function markMetadataAndReload(page: Page, name: string, value: string) {
+  await markMetadata(page, name, value);
+  await page.reload({
+    waitUntil: "networkidle"
+  });
+  await expectSessionMetadata(page, name, value, 30_000);
 }
 
 async function writeWorktreeFile(page: Page, relativePath: string, contents: string) {

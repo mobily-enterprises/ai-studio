@@ -79,6 +79,7 @@ import {
   projectConfigQueryKey,
   projectTypeQueryKey,
   readAdapterSetupStatus,
+  readAccountsStatus,
   readProjectSetupStatus,
   readStudioSetupStatus,
   targetProjectQueryKey
@@ -114,6 +115,11 @@ const setupChecks = [
     label: "Studio Setup",
     read: readStudioSetupStatus,
     tab: "studio-setup"
+  },
+  {
+    label: "Accounts",
+    read: readAccountsStatus,
+    tab: "accounts"
   },
   {
     label: "Adapter Setup",

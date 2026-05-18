@@ -1,0 +1,51 @@
+import { createSchema } from "json-rest-schema";
+import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
+
+const accountsReadInputValidator = deepFreeze({
+  schema: createSchema({}),
+  mode: "patch"
+});
+
+const accountAuthStartInputValidator = deepFreeze({
+  schema: createSchema({
+    accountId: {
+      type: "string",
+      required: true,
+      minLength: 1
+    },
+    mode: {
+      type: "string",
+      required: false
+    }
+  }),
+  mode: "patch"
+});
+
+const accountIdInputValidator = deepFreeze({
+  schema: createSchema({
+    accountId: {
+      type: "string",
+      required: true,
+      minLength: 1
+    }
+  }),
+  mode: "patch"
+});
+
+const accountAuthSessionInputValidator = deepFreeze({
+  schema: createSchema({
+    sessionId: {
+      type: "string",
+      required: true,
+      minLength: 1
+    }
+  }),
+  mode: "patch"
+});
+
+export {
+  accountIdInputValidator,
+  accountAuthSessionInputValidator,
+  accountAuthStartInputValidator,
+  accountsReadInputValidator
+};

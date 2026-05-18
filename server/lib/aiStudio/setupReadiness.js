@@ -9,6 +9,11 @@ const SETUP_STAGES = Object.freeze([
     serviceName: "studioSetupService"
   },
   {
+    id: "accounts",
+    label: "Accounts",
+    serviceName: "accountSetupService"
+  },
+  {
     id: "adapter-setup",
     label: "Adapter Setup",
     serviceName: "adapterSetupService"

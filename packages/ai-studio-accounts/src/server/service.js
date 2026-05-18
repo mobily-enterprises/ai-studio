@@ -1,0 +1,499 @@
+import path from "node:path";
+import process from "node:process";
+import stripAnsi from "strip-ansi";
+
+import {
+  closeTerminalSession,
+  readTerminalSession,
+  startTerminalSession,
+  writeTerminalSession
+} from "../../../../server/lib/terminalSessions.js";
+import {
+  buildDoctorTerminalArgs,
+  buildDoctorToolchainArgs
+} from "../../../../server/lib/doctorToolchain.js";
+import {
+  aiStudioResult
+} from "../../../../server/lib/aiStudio/serverResponses.js";
+import {
+  AI_STUDIO_TARGET_ROOT_ENV
+} from "../../../../server/lib/studioRuntimeIdentity.js";
+import {
+  dockerCommand,
+  runHostCommand
+} from "../../../../server/lib/shellCommands.js";
+
+const ACCOUNT_AUTH_NAMESPACE = "ai-studio-accounts";
+const BROWSER_AUTH_MODE = "browser";
+const DEVICE_AUTH_MODE = "device";
+const REQUIRED_GITHUB_SCOPES = Object.freeze(["repo", "read:org", "gist", "workflow"]);
+
+const ACCOUNT_DEFINITIONS = Object.freeze({
+  codex: Object.freeze({
+    id: "codex",
+    label: "Codex",
+    required: true
+  }),
+  github: Object.freeze({
+    id: "github",
+    label: "GitHub",
+    required: true
+  })
+});
+
+function resolveAiStudioAccountsRoot(targetRoot) {
+  const configuredRoot = String(targetRoot || process.env[AI_STUDIO_TARGET_ROOT_ENV] || "").trim();
+  return path.resolve(configuredRoot || process.cwd());
+}
+
+function accountsResult(operation) {
+  return aiStudioResult(operation, {
+    fallbackCode: "ai_studio_accounts_request_failed",
+    fallbackMessage: "AI Studio accounts request failed."
+  });
+}
+
+function cleanOutput(output = "") {
+  return stripAnsi(String(output || ""));
+}
+
+function normalizedAccountId(value = "") {
+  const accountId = String(value || "").trim().toLowerCase();
+  return ACCOUNT_DEFINITIONS[accountId] ? accountId : "";
+}
+
+function normalizedAuthMode(accountId, mode = "") {
+  const requestedMode = String(mode || "").trim().toLowerCase();
+  if (accountId === "codex" && requestedMode === DEVICE_AUTH_MODE) {
+    return DEVICE_AUTH_MODE;
+  }
+  return BROWSER_AUTH_MODE;
+}
+
+function ghLoginCommandArgs() {
+  return [
+    "gh",
+    "auth",
+    "login",
+    "--hostname",
+    "github.com",
+    "--git-protocol",
+    "https",
+    "--web",
+    "--scopes",
+    REQUIRED_GITHUB_SCOPES.join(",")
+  ];
+}
+
+function codexLoginCommandArgs(mode = BROWSER_AUTH_MODE) {
+  return mode === DEVICE_AUTH_MODE
+    ? ["codex", "login", "--device-auth"]
+    : ["codex", "login"];
+}
+
+function logoutCommandArgs(accountId) {
+  return accountId === "github"
+    ? ["gh", "auth", "logout", "--hostname", "github.com"]
+    : ["codex", "logout"];
+}
+
+function terminalArgsForAuth(accountId, mode) {
+  if (accountId === "github") {
+    return buildDoctorTerminalArgs(ghLoginCommandArgs());
+  }
+
+  const extraArgs = mode === BROWSER_AUTH_MODE ? ["--network", "host"] : [];
+  return buildDoctorTerminalArgs(codexLoginCommandArgs(mode), {
+    extraArgs
+  });
+}
+
+function statusArgs(commandArgs) {
+  return buildDoctorToolchainArgs(commandArgs);
+}
+
+function firstMatchingUrl(output = "", predicate = () => true) {
+  const matches = cleanOutput(output).match(/https:\/\/[^\s"'<>]+/gu) || [];
+  for (const match of matches) {
+    const url = match.replace(/[),.;]+$/u, "");
+    if (predicate(url)) {
+      return url;
+    }
+  }
+  return "";
+}
+
+function parseGithubUserCode(output = "") {
+  const normalizedOutput = cleanOutput(output);
+  const labelledMatch = normalizedOutput.match(/one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/iu);
+  if (labelledMatch) {
+    return labelledMatch[1].toUpperCase();
+  }
+  return normalizedOutput.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/u)?.[1]?.toUpperCase() || "";
+}
+
+function parseCodexUserCode(output = "") {
+  return cleanOutput(output).match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/u)?.[1]?.toUpperCase() || "";
+}
+
+function parseAuthOutput({
+  accountId,
+  mode,
+  output
+} = {}) {
+  if (accountId === "github") {
+    return {
+      authUrl: firstMatchingUrl(output, (url) => url.includes("github.com/")),
+      userCode: parseGithubUserCode(output)
+    };
+  }
+
+  if (mode === DEVICE_AUTH_MODE) {
+    return {
+      authUrl: firstMatchingUrl(output, (url) => url.includes("openai.com/") || url.includes("chatgpt.com/")),
+      userCode: parseCodexUserCode(output)
+    };
+  }
+
+  return {
+    authUrl: firstMatchingUrl(output, (url) => url.includes("openai.com/") || url.includes("chatgpt.com/")),
+    userCode: ""
+  };
+}
+
+function shouldPressEnterForBrowserFlow(output = "") {
+  return /press\s+enter/iu.test(cleanOutput(output));
+}
+
+function accountDisconnected({
+  id,
+  label,
+  message,
+  observed = ""
+}) {
+  return {
+    connected: false,
+    id,
+    label,
+    message,
+    observed,
+    required: true,
+    status: "not_connected"
+  };
+}
+
+function accountConnected({
+  id,
+  label,
+  message,
+  observed = "",
+  username = ""
+}) {
+  return {
+    connected: true,
+    id,
+    label,
+    message,
+    observed,
+    required: true,
+    status: "connected",
+    username
+  };
+}
+
+async function runToolchain(commandArgs, options = {}) {
+  return runHostCommand("docker", statusArgs(commandArgs), {
+    timeout: options.timeout || 20_000
+  });
+}
+
+async function readGithubStatus() {
+  const [statusResult, userResult] = await Promise.all([
+    runToolchain(["gh", "auth", "status", "--hostname", "github.com"]),
+    runToolchain(["gh", "api", "user", "--jq", ".login"])
+  ]);
+  const output = [statusResult.output, userResult.output].filter(Boolean).join("\n");
+  const missingScopes = REQUIRED_GITHUB_SCOPES.filter((scope) => !output.includes(scope));
+
+  if (!statusResult.ok || !userResult.ok || !userResult.stdout || missingScopes.length > 0) {
+    const scopeMessage = missingScopes.length
+      ? ` Missing scopes: ${missingScopes.join(", ")}.`
+      : "";
+    return accountDisconnected({
+      id: "github",
+      label: "GitHub",
+      message: `GitHub CLI is not authenticated for Studio.${scopeMessage}`,
+      observed: output
+    });
+  }
+
+  return accountConnected({
+    id: "github",
+    label: "GitHub",
+    message: "GitHub CLI is authenticated for Studio.",
+    observed: output,
+    username: userResult.stdout
+  });
+}
+
+async function readCodexStatus() {
+  const result = await runToolchain(["codex", "login", "status"]);
+
+  if (!result.ok) {
+    return accountDisconnected({
+      id: "codex",
+      label: "Codex",
+      message: "Codex is not authenticated for Studio.",
+      observed: result.output
+    });
+  }
+
+  return accountConnected({
+    id: "codex",
+    label: "Codex",
+    message: "Codex is authenticated for Studio.",
+    observed: result.output
+  });
+}
+
+function blockedReason(accounts = []) {
+  const firstMissingAccount = accounts.find((account) => account.required && account.connected !== true);
+  return firstMissingAccount ? firstMissingAccount.message : "";
+}
+
+function authError(code, message, extra = {}) {
+  return {
+    ...extra,
+    code,
+    error: message,
+    errors: [
+      {
+        code,
+        message
+      }
+    ],
+    ok: false
+  };
+}
+
+function authSessionStatus({
+  account = null,
+  terminal = null
+} = {}) {
+  if (account?.connected) {
+    return "connected";
+  }
+  if (terminal?.status === "exited") {
+    return "failed";
+  }
+  return "authenticating";
+}
+
+function publicAuthSession({
+  account,
+  mode,
+  parsed,
+  terminal
+} = {}) {
+  return {
+    account,
+    authUrl: parsed.authUrl,
+    commandPreview: terminal.commandPreview,
+    exitCode: terminal.exitCode,
+    id: terminal.id,
+    mode,
+    ok: true,
+    output: terminal.output,
+    status: authSessionStatus({
+      account,
+      terminal
+    }),
+    terminalStatus: terminal.status,
+    userCode: parsed.userCode
+  };
+}
+
+function createService({
+  targetRoot = ""
+} = {}) {
+  const resolvedTargetRoot = resolveAiStudioAccountsRoot(targetRoot);
+  const authSessions = new Map();
+
+  function authMetadata(sessionId = "") {
+    return authSessions.get(sessionId) || null;
+  }
+
+  async function accountStatus(accountId) {
+    if (accountId === "github") {
+      return readGithubStatus();
+    }
+    if (accountId === "codex") {
+      return readCodexStatus();
+    }
+    throw new Error(`Unknown account: ${accountId}`);
+  }
+
+  async function accountsStatus() {
+    const accounts = await Promise.all([
+      readCodexStatus(),
+      readGithubStatus()
+    ]);
+    const ready = accounts.every((account) => account.required !== true || account.connected === true);
+
+    return {
+      accounts,
+      blockedReason: ready ? "" : blockedReason(accounts),
+      ok: true,
+      ready,
+      targetRoot: resolvedTargetRoot,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  function maybeContinueBrowserFlow(sessionId, terminal, parsed) {
+    const metadata = authMetadata(sessionId);
+    if (!metadata || metadata.enterSent) {
+      return;
+    }
+    if (!parsed.authUrl && !parsed.userCode) {
+      return;
+    }
+    if (!shouldPressEnterForBrowserFlow(terminal.output)) {
+      return;
+    }
+
+    writeTerminalSession(sessionId, "\r", {
+      namespace: ACCOUNT_AUTH_NAMESPACE
+    });
+    metadata.enterSent = true;
+  }
+
+  async function readSessionWithAccount(sessionId) {
+    const metadata = authMetadata(sessionId);
+    if (!metadata) {
+      return authError("unknown_auth_session", "Account auth session not found.");
+    }
+
+    const terminal = readTerminalSession(sessionId, {
+      namespace: ACCOUNT_AUTH_NAMESPACE
+    });
+    if (terminal.ok === false) {
+      return terminal;
+    }
+
+    const parsed = parseAuthOutput({
+      accountId: metadata.accountId,
+      mode: metadata.mode,
+      output: terminal.output
+    });
+    maybeContinueBrowserFlow(sessionId, terminal, parsed);
+
+    const account = terminal.status === "exited"
+      ? await accountStatus(metadata.accountId)
+      : {
+          connected: false,
+          id: metadata.accountId,
+          label: ACCOUNT_DEFINITIONS[metadata.accountId].label,
+          required: true,
+          status: "authenticating"
+        };
+
+    return publicAuthSession({
+      account,
+      mode: metadata.mode,
+      parsed,
+      terminal
+    });
+  }
+
+  function startAuthTerminal(accountId, mode) {
+    const args = terminalArgsForAuth(accountId, mode);
+    const terminal = startTerminalSession({
+      args,
+      command: "docker",
+      commandPreview: dockerCommand(args),
+      cwd: resolvedTargetRoot,
+      maxRunning: 1,
+      namespace: ACCOUNT_AUTH_NAMESPACE
+    });
+    if (terminal.ok === false) {
+      return terminal;
+    }
+
+    authSessions.set(terminal.id, {
+      accountId,
+      enterSent: false,
+      mode,
+      startedAt: new Date().toISOString()
+    });
+    return terminal;
+  }
+
+  return Object.freeze({
+    async getStatus() {
+      return accountsResult(accountsStatus);
+    },
+
+    async startAuth(input = {}) {
+      return accountsResult(async () => {
+        const accountId = normalizedAccountId(input.accountId);
+        if (!accountId) {
+          return authError("unknown_account", "Unknown account.");
+        }
+
+        const mode = normalizedAuthMode(accountId, input.mode);
+        const terminal = startAuthTerminal(accountId, mode);
+        if (terminal.ok === false) {
+          return terminal;
+        }
+
+        return readSessionWithAccount(terminal.id);
+      });
+    },
+
+    async readAuthSession(sessionId) {
+      return accountsResult(() => readSessionWithAccount(String(sessionId || "")));
+    },
+
+    async logout(input = {}) {
+      return accountsResult(async () => {
+        const accountId = normalizedAccountId(input.accountId);
+        if (!accountId) {
+          return authError("unknown_account", "Unknown account.");
+        }
+
+        const result = await runToolchain(logoutCommandArgs(accountId), {
+          timeout: 30_000
+        });
+        const account = await accountStatus(accountId);
+        return {
+          account,
+          ok: result.ok,
+          output: result.output
+        };
+      });
+    },
+
+    async cancelAuthSession(sessionId) {
+      return accountsResult(async () => {
+        const id = String(sessionId || "");
+        const result = await closeTerminalSession(id, {
+          namespace: ACCOUNT_AUTH_NAMESPACE
+        });
+        authSessions.delete(id);
+        return {
+          ...result,
+          ok: true
+        };
+      });
+    }
+  });
+}
+
+export {
+  ACCOUNT_AUTH_NAMESPACE,
+  REQUIRED_GITHUB_SCOPES,
+  createService,
+  ghLoginCommandArgs,
+  resolveAiStudioAccountsRoot
+};

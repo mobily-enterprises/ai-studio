@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   aiStudioError,
@@ -6,10 +6,66 @@ import {
   isPlainObject,
   normalizeText
 } from "./core.js";
+import {
+  AI_STUDIO_STATE_DIR
+} from "./sessionStore.js";
 
 const DEFAULT_PROMPT_ID = "generic";
+const PROMPT_OVERRIDES_DIR = "prompts";
 const PROMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TEMPLATE_TOKEN_PATTERN = /\{\{([A-Za-z0-9_.-]+)\}\}/gu;
+const PROMPT_OVERRIDE_README = `# AI Studio Prompt Overrides
+
+This directory is intentionally not managed by the Studio UI.
+
+Agents and advanced users may override AI Studio prompts by creating files here:
+
+\`\`\`text
+.ai-studio/prompts/<adapter-id>/<prompt-id>.txt
+\`\`\`
+
+For the JSKIT adapter, examples include:
+
+\`\`\`text
+.ai-studio/prompts/jskit/make_plan.txt
+.ai-studio/prompts/jskit/run_deslop.txt
+.ai-studio/prompts/jskit/create_pr_file.txt
+\`\`\`
+
+The filename must be the prompt id plus \`.txt\`. Prompt ids use letters,
+numbers, underscores, and hyphens.
+
+Override templates use AI Studio's normal token syntax:
+
+\`\`\`text
+{{context.json}}
+{{config.json}}
+{{adapter.promptContext.json}}
+{{session.targetRoot}}
+{{session.worktreePath}}
+{{session.metadata.json}}
+\`\`\`
+
+Override templates also get the fully rendered built-in prompt:
+
+\`\`\`text
+{{originalPrompt}}
+{{prompt.original}}
+\`\`\`
+
+A common override shape is:
+
+\`\`\`text
+{{originalPrompt}}
+
+Additional local instructions:
+- Keep this target's project conventions in mind.
+- Do not introduce unrelated technology.
+\`\`\`
+
+Unknown tokens fail prompt rendering. To disable an override, delete or rename
+the override file.
+`;
 
 function assertPromptId(promptId) {
   const normalizedPromptId = normalizeText(promptId);
@@ -41,12 +97,51 @@ function promptTemplatePath(promptPackRoot, promptId) {
   return path.join(promptPackRoot, `${assertPromptId(promptId)}.txt`);
 }
 
+function promptOverrideRoot(targetRoot = "") {
+  const normalizedTargetRoot = normalizeText(targetRoot);
+  return normalizedTargetRoot
+    ? path.join(path.resolve(normalizedTargetRoot), AI_STUDIO_STATE_DIR, PROMPT_OVERRIDES_DIR)
+    : "";
+}
+
+function promptOverrideTemplatePath({
+  adapterId = "",
+  promptId = "",
+  targetRoot = ""
+} = {}) {
+  const overrideRoot = promptOverrideRoot(targetRoot);
+  const normalizedAdapterId = assertPromptId(adapterId);
+  return path.join(overrideRoot, normalizedAdapterId, `${assertPromptId(promptId)}.txt`);
+}
+
 function assertPromptPackRoot(promptPackRoot) {
   const normalizedPromptPackRoot = normalizeText(promptPackRoot);
   if (!normalizedPromptPackRoot) {
     throw aiStudioError("AI Studio prompt renderer requires a prompt pack root.", "ai_studio_prompt_pack_root_missing");
   }
   return path.resolve(normalizedPromptPackRoot);
+}
+
+async function ensurePromptOverridesReadme(targetRoot = "") {
+  const overrideRoot = promptOverrideRoot(targetRoot);
+  if (!overrideRoot) {
+    return "";
+  }
+  await mkdir(overrideRoot, {
+    recursive: true
+  });
+  const readmePath = path.join(overrideRoot, "README.md");
+  try {
+    await writeFile(readmePath, PROMPT_OVERRIDE_README, {
+      encoding: "utf8",
+      flag: "wx"
+    });
+  } catch (error) {
+    if (error?.code !== "EEXIST") {
+      throw error;
+    }
+  }
+  return readmePath;
 }
 
 async function readPromptTemplate(promptPackRoot, promptId) {
@@ -58,6 +153,31 @@ async function readPromptTemplate(promptPackRoot, promptId) {
       throw error;
     }
     return readPromptTemplate(promptPackRoot, DEFAULT_PROMPT_ID);
+  }
+}
+
+async function readPromptOverrideTemplate(context) {
+  const targetRoot = context.session.targetRoot;
+  const adapterId = context.adapter.id;
+  if (!targetRoot || !adapterId) {
+    return null;
+  }
+  await ensurePromptOverridesReadme(targetRoot);
+  const filePath = promptOverrideTemplatePath({
+    adapterId,
+    promptId: context.action.promptId || DEFAULT_PROMPT_ID,
+    targetRoot
+  });
+  try {
+    return {
+      filePath,
+      template: await readFile(filePath, "utf8")
+    };
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -154,14 +274,44 @@ function promptTemplateTokens(contextInput) {
   };
 }
 
-function renderPromptTemplate(template, context) {
-  const tokens = promptTemplateTokens(context);
+function promptOverrideTokens(originalPrompt = "") {
+  return {
+    originalPrompt: String(originalPrompt || ""),
+    "prompt.original": String(originalPrompt || "")
+  };
+}
+
+function renderPromptTemplate(template, context, extraTokens = {}) {
+  const tokens = {
+    ...promptTemplateTokens(context),
+    ...extraTokens
+  };
   return String(template || "").replace(TEMPLATE_TOKEN_PATTERN, (match, tokenName) => {
     if (!Object.hasOwn(tokens, tokenName)) {
       throw aiStudioError(`Unknown AI Studio prompt token: ${tokenName}`, "ai_studio_unknown_prompt_token");
     }
     return tokens[tokenName];
   }).trim();
+}
+
+async function renderPromptWithOverrides({
+  context = {},
+  originalPrompt = ""
+} = {}) {
+  const normalizedContext = normalizePromptContext(context);
+  const normalizedOriginalPrompt = String(originalPrompt || "");
+  const override = await readPromptOverrideTemplate(normalizedContext);
+  return {
+    originalPrompt: normalizedOriginalPrompt,
+    prompt: override
+      ? renderPromptTemplate(
+          override.template,
+          normalizedContext,
+          promptOverrideTokens(normalizedOriginalPrompt)
+        )
+      : normalizedOriginalPrompt,
+    promptOverridePath: override?.filePath || ""
+  };
 }
 
 class PromptRenderer {
@@ -184,9 +334,14 @@ class PromptRenderer {
       session
     });
     const template = await readPromptTemplate(this.promptPackRoot, context.action.promptId || DEFAULT_PROMPT_ID);
+    const originalPrompt = renderPromptTemplate(template, context);
+    const renderedPrompt = await renderPromptWithOverrides({
+      context,
+      originalPrompt
+    });
     return {
       context,
-      prompt: renderPromptTemplate(template, context),
+      ...renderedPrompt,
       promptId: context.action.promptId
     };
   }
@@ -195,5 +350,6 @@ class PromptRenderer {
 export {
   PromptRenderer,
   promptContextForAction,
-  renderPromptTemplate
+  renderPromptTemplate,
+  renderPromptWithOverrides
 };

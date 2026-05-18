@@ -50,6 +50,10 @@
               v-if="activeTab === 'studio-setup'"
               @select-tab="selectTab"
             />
+            <AccountsSetup
+              v-else-if="activeTab === 'accounts'"
+              @continue="selectTab('adapter-setup')"
+            />
             <AdapterSetupDoctorScreen
               v-else-if="activeTab === 'adapter-setup'"
               @select-tab="selectTab"
@@ -69,6 +73,7 @@
 import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ShellLayout from "@/components/ShellLayout.vue";
+import AccountsSetup from "@/components/studio/AccountsSetup.vue";
 import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 
 import AdapterSetupDoctorScreen from "../components/studio/AdapterSetupDoctorScreen.vue";
@@ -77,6 +82,7 @@ import StudioSetupDoctorScreen from "../components/studio/StudioSetupDoctorScree
 
 const tabs = [
   { label: "Studio Setup", value: "studio-setup" },
+  { label: "Accounts", value: "accounts" },
   { label: "Adapter Setup", value: "adapter-setup" },
   { label: "Project Setup", value: "project-setup" }
 ];

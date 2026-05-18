@@ -28,13 +28,11 @@ import {
   passDoctorCheck as passCheck
 } from "../../../../server/lib/doctorCheckItems.js";
 import {
-  buildDoctorTerminalArgs,
   buildDoctorToolchainArgs
 } from "../../../../server/lib/doctorToolchain.js";
 
 const TOOLCHAIN_DOCKERFILE = "tooling/studio-setup/Dockerfile";
 const TOOLCHAIN_CONTEXT = "tooling/studio-setup";
-const REQUIRED_GH_SCOPES = ["repo", "read:org", "gist", "workflow"];
 const TERMINAL_NAMESPACE = "studio-setup-doctor";
 
 const isStudioSetupReady = areDoctorChecksReady;
@@ -80,18 +78,6 @@ function startBashTerminal({
   });
 }
 
-function startDockerTerminal({
-  args,
-  commandPreview
-}) {
-  return startTerminalSession({
-    args,
-    command: "docker",
-    commandPreview,
-    namespace: TERMINAL_NAMESPACE
-  });
-}
-
 function manualDockerRepair() {
   return createRepair({
     actionId: "manual-docker",
@@ -114,131 +100,6 @@ function buildToolchainRepair() {
     ]),
     label: "Build managed base toolchain"
   });
-}
-
-function ghLoginCommandArgs() {
-  return [
-    "gh",
-    "auth",
-    "login",
-    "--hostname",
-    "github.com",
-    "--git-protocol",
-    "https",
-    "--web",
-    "--scopes",
-    REQUIRED_GH_SCOPES.join(",")
-  ];
-}
-
-function ghLoginRepair() {
-  const args = buildDoctorTerminalArgs(ghLoginCommandArgs());
-  return createRepair({
-    actionId: "terminal-gh-login",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Log in to GitHub"
-  });
-}
-
-function ghReauthScript() {
-  return [
-    "gh auth logout --hostname github.com",
-    `exec ${commandPreview(ghLoginCommandArgs())}`
-  ].join("\n");
-}
-
-function ghReauthRepair() {
-  const args = buildDoctorTerminalArgs(["bash", "-lc", ghReauthScript()]);
-
-  return createRepair({
-    actionId: "terminal-gh-reauth",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Re-authenticate GitHub"
-  });
-}
-
-function codexBrowserLoginCommandArgs() {
-  return [
-    "codex",
-    "login"
-  ];
-}
-
-function codexDeviceLoginCommandArgs() {
-  return [
-    "codex",
-    "login",
-    "--device-auth"
-  ];
-}
-
-function codexReauthScript(commandArgs) {
-  return [
-    "codex logout || true",
-    `exec ${commandPreview(commandArgs)}`
-  ].join("\n");
-}
-
-function codexLoginRepair() {
-  const args = buildDoctorTerminalArgs(codexBrowserLoginCommandArgs(), ["--network", "host"]);
-
-  return createRepair({
-    actionId: "terminal-codex-login",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Log in to Codex with browser"
-  });
-}
-
-function codexDeviceLoginRepair() {
-  const args = buildDoctorTerminalArgs(codexDeviceLoginCommandArgs());
-
-  return createRepair({
-    actionId: "terminal-codex-device-login",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Log in to Codex with device code"
-  });
-}
-
-function codexReauthRepair() {
-  const script = codexReauthScript(codexBrowserLoginCommandArgs());
-  const args = buildDoctorTerminalArgs(["bash", "-lc", script], ["--network", "host"]);
-
-  return createRepair({
-    actionId: "terminal-codex-reauth",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Re-authenticate Codex with browser"
-  });
-}
-
-function codexDeviceReauthRepair() {
-  const script = codexReauthScript(codexDeviceLoginCommandArgs());
-  const args = buildDoctorTerminalArgs(["bash", "-lc", script]);
-
-  return createRepair({
-    actionId: "terminal-codex-device-reauth",
-    command: commandPreview(args),
-    kind: "terminal",
-    label: "Re-authenticate Codex with device code"
-  });
-}
-
-function codexLoginRepairs(hostNetworkReady) {
-  return [
-    hostNetworkReady ? codexLoginRepair() : null,
-    codexDeviceLoginRepair()
-  ].filter(Boolean);
-}
-
-function codexReauthRepairs(hostNetworkReady) {
-  return [
-    hostNetworkReady ? codexReauthRepair() : null,
-    codexDeviceReauthRepair()
-  ].filter(Boolean);
 }
 
 function resolveStudioRoot(studioRoot) {
@@ -392,108 +253,6 @@ async function checkToolchainCommand({
   });
 }
 
-async function checkHostNetwork(toolchainReady) {
-  if (!toolchainReady) {
-    return {
-      ok: false,
-      output: "Managed base toolchain image is missing."
-    };
-  }
-
-  const result = await runDocker(buildDoctorToolchainArgs([
-    "bash",
-    "-lc",
-    "true"
-  ], ["--network", "host"]), {
-    timeout: 20000
-  });
-
-  return {
-    ok: result.ok,
-    output: result.output || (result.ok ? "Docker host networking is available." : "Docker host networking is unavailable.")
-  };
-}
-
-async function checkGitHubAuth(toolchainReady) {
-  if (!toolchainReady) {
-    return missingToolchainCheck("gh-auth", "GitHub login");
-  }
-
-  const result = await runDocker(buildDoctorToolchainArgs([
-    "gh",
-    "auth",
-    "status",
-    "--hostname",
-    "github.com"
-  ]), {
-    timeout: 20000
-  });
-  const output = result.output;
-  const missingScopes = REQUIRED_GH_SCOPES.filter((scope) => !output.includes(scope));
-
-  if (!result.ok || missingScopes.length > 0) {
-    return failCheck({
-      id: "gh-auth",
-      label: "GitHub login",
-      expected: `Logged in to github.com with scopes ${REQUIRED_GH_SCOPES.join(", ")}.`,
-      observed: output,
-      explanation: "Studio needs GH authenticated inside the managed base toolchain to inspect remotes and run deploy flows later.",
-      repair: ghLoginRepair()
-    });
-  }
-
-  return passCheck({
-    id: "gh-auth",
-    label: "GitHub login",
-    expected: `Logged in to github.com with scopes ${REQUIRED_GH_SCOPES.join(", ")}.`,
-    observed: output,
-    explanation: "GH is authenticated inside the managed base toolchain.",
-    repair: ghReauthRepair()
-  });
-}
-
-async function checkCodexAuth(toolchainReady, hostNetwork) {
-  if (!toolchainReady) {
-    return missingToolchainCheck("codex-auth", "Codex login");
-  }
-
-  const result = await runDocker(buildDoctorToolchainArgs(["codex", "login", "status"]), {
-    timeout: 20000
-  });
-
-  if (!result.ok) {
-    const repairs = codexLoginRepairs(hostNetwork.ok);
-
-    return failCheck({
-      id: "codex-auth",
-      label: "Codex login",
-      expected: "Codex login status succeeds inside the managed base toolchain.",
-      observed: [
-        result.output,
-        `Docker host networking: ${hostNetwork.ok ? "available" : hostNetwork.output}`
-      ].filter(Boolean).join("\n"),
-      explanation: "Codex must be logged in before Studio can orchestrate local implementation sessions. Browser login uses Docker host networking when available; device-code login remains the fallback.",
-      repair: repairs[0],
-      repairs
-    });
-  }
-
-  const repairs = codexReauthRepairs(hostNetwork.ok);
-
-  return passCheck({
-    id: "codex-auth",
-    label: "Codex login",
-    expected: "Codex login status succeeds inside the managed base toolchain.",
-    observed: [
-      result.output,
-      `Docker host networking: ${hostNetwork.ok ? "available" : hostNetwork.output}`
-    ].filter(Boolean).join("\n"),
-    explanation: "Codex is authenticated inside the managed base toolchain.",
-    repair: repairs[0],
-    repairs
-  });
-}
-
 async function inspectStudioSetup({
   emit = null,
   plugins = []
@@ -522,10 +281,6 @@ function createStudioRuntimeDoctorPlugin({
     checks() {
       let dockerReady = false;
       let toolchainReady = false;
-      let hostNetwork = {
-        ok: false,
-        output: ""
-      };
 
       return [
         {
@@ -550,7 +305,6 @@ function createStudioRuntimeDoctorPlugin({
           async run() {
             const result = await checkToolchainImage(dockerReady);
             toolchainReady = result.status === "pass";
-            hostNetwork = await checkHostNetwork(toolchainReady);
             return result;
           }
         },
@@ -627,13 +381,6 @@ function createStudioRuntimeDoctorPlugin({
           }
         },
         {
-          id: "gh-auth",
-          label: "GitHub login",
-          run() {
-            return checkGitHubAuth(toolchainReady);
-          }
-        },
-        {
           id: "codex",
           label: "Codex CLI",
           run() {
@@ -671,13 +418,6 @@ function createStudioRuntimeDoctorPlugin({
               : missingToolchainCheck("codex-sandbox", "Codex sandbox");
           }
         },
-        {
-          id: "codex-auth",
-          label: "Codex login",
-          run() {
-            return checkCodexAuth(toolchainReady, hostNetwork);
-          }
-        }
       ];
     },
 
@@ -689,56 +429,6 @@ function createStudioRuntimeDoctorPlugin({
           commandPreview: buildToolchainRepair().commandPreview,
           cwd: studioRoot,
           script: buildToolchainScript()
-        });
-      }
-
-      if (actionId === "terminal-gh-login") {
-        const args = buildDoctorTerminalArgs(ghLoginCommandArgs());
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
-        });
-      }
-
-      if (actionId === "terminal-gh-reauth") {
-        const args = buildDoctorTerminalArgs(["bash", "-lc", ghReauthScript()]);
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
-        });
-      }
-
-      if (actionId === "terminal-codex-login") {
-        const args = buildDoctorTerminalArgs(codexBrowserLoginCommandArgs(), ["--network", "host"]);
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
-        });
-      }
-
-      if (actionId === "terminal-codex-device-login") {
-        const args = buildDoctorTerminalArgs(codexDeviceLoginCommandArgs());
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
-        });
-      }
-
-      if (actionId === "terminal-codex-reauth") {
-        const script = codexReauthScript(codexBrowserLoginCommandArgs());
-        const args = buildDoctorTerminalArgs(["bash", "-lc", script], ["--network", "host"]);
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
-        });
-      }
-
-      if (actionId === "terminal-codex-device-reauth") {
-        const script = codexReauthScript(codexDeviceLoginCommandArgs());
-        const args = buildDoctorTerminalArgs(["bash", "-lc", script]);
-        return startDockerTerminal({
-          args,
-          commandPreview: commandPreview(args)
         });
       }
 
@@ -810,9 +500,6 @@ function createService({ studioRoot = "" } = {}) {
 
 export {
   TOOLCHAIN_IMAGE,
-  codexBrowserLoginCommandArgs,
-  codexDeviceLoginCommandArgs,
-  codexLoginRepairs,
   resolveStudioRoot,
   isStudioSetupReady,
   createService

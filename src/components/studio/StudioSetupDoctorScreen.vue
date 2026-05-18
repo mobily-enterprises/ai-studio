@@ -13,10 +13,9 @@
     ready-label="Studio Setup ready"
     blocked-title="Studio Setup blocked"
     ready-title="Studio Setup ready"
-    continue-label="Continue to Adapter Setup"
+    continue-label="Continue to Accounts"
     continue-emits
-    :always-repair-check-ids="['gh-auth', 'codex-auth']"
-    @continue="emit('select-tab', 'adapter-setup')"
+    @continue="emit('select-tab', 'accounts')"
     @refresh="loadStudioSetup"
     @status-updated="handleStudioSetupUpdated"
   />
@@ -41,7 +40,7 @@ const streamAutoStart = ref(false);
 
 const lede = computed(() => {
   if (studioSetup.value?.ready) {
-    return "Machine runtime is ready. You can rerun checks or re-authenticate managed tools here.";
+    return "Machine runtime is ready. Continue to connect Codex and GitHub.";
   }
   return "Machine runtime must be ready before Studio can operate on the target project.";
 });

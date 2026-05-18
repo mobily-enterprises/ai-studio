@@ -30,6 +30,7 @@ import DoctorStatusPage from "./DoctorStatusPage.vue";
 import {
   PROJECT_SETUP_STREAM_ENDPOINT,
   PROJECT_SETUP_TERMINAL_ENDPOINT,
+  readAccountsStatus,
   readStudioSetupStatus,
   readAdapterSetupStatus
 } from "../../lib/studioGateApi.js";
@@ -44,7 +45,7 @@ const streamAutoStart = ref(true);
 
 const lede = computed(() => {
   if (loading.value && !streamEnabled.value) {
-    return "Checking Studio Setup and Adapter Setup before Project Setup runs.";
+    return "Checking Studio Setup, Accounts, and Adapter Setup before Project Setup runs.";
   }
   if (projectSetup.value?.ready) {
     return `Project Setup is ready for: ${projectSetup.value.targetRoot || "current directory"}`;
@@ -63,6 +64,13 @@ async function loadProjectSetup({ autoStart = true } = {}) {
 
     if (studioSetup?.ready !== true) {
       emit("select-tab", "studio-setup");
+      return;
+    }
+
+    const accounts = await readAccountsStatus();
+
+    if (accounts?.ready !== true) {
+      emit("select-tab", "accounts");
       return;
     }
 

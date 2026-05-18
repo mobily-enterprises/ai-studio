@@ -166,6 +166,29 @@
       "installedAt": "2026-05-16T15:39:11.046Z",
       "migrationSyncVersion": "0.1.0"
     },
+    "@local/ai-studio-accounts": {
+      "packageId": "@local/ai-studio-accounts",
+      "version": "0.1.0",
+      "source": {
+        "type": "app-local-package",
+        "packagePath": "packages/ai-studio-accounts",
+        "descriptorPath": "packages/ai-studio-accounts/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {},
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {},
+        "vite": {},
+        "files": [],
+        "migrations": []
+      },
+      "options": {},
+      "installedAt": "2026-05-18T00:00:00.000Z",
+      "migrationSyncVersion": "0.1.0"
+    },
     "@local/ai-studio-sessions": {
       "packageId": "@local/ai-studio-sessions",
       "version": "0.1.0",

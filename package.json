@@ -27,6 +27,7 @@
     "test": "node --test tests/server/*.test.js",
     "test:client": "vitest run tests/client",
     "test:e2e": "playwright test tests/e2e",
+    "test:e2e:live": "npm run build && AI_STUDIO_LIVE_E2E=1 playwright test tests/e2e/live-ai-studio-workflow.spec.ts",
     "verify": "jskit app verify && npm run --if-present verify:app",
     "release": "jskit app release",
     "jskit:update": "jskit app update-packages"
@@ -39,6 +40,7 @@
     "@jskit-ai/shell-web": "0.1.79",
     "@jskit-ai/users-web": "0.1.95",
     "@local/adapter-setup-doctor": "file:packages/adapter-setup-doctor",
+    "@local/ai-studio-accounts": "file:packages/ai-studio-accounts",
     "@local/ai-studio-artifacts": "file:packages/ai-studio-artifacts",
     "@local/ai-studio-project": "file:packages/ai-studio-project",
     "@local/ai-studio-sessions": "file:packages/ai-studio-sessions",
