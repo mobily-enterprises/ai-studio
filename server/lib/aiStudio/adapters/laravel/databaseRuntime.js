@@ -9,16 +9,25 @@ import {
   managedDatabaseNameFromTargetRoot
 } from "../../managedDatabases.js";
 import {
-  shellQuote
-} from "../../../shellCommands.js";
-import {
   selectedConfigValue
 } from "../../configValues.js";
+import {
+  envFileWriteScript,
+  envValuesFromLines
+} from "../../adapterHelpers/setupEnvFiles.js";
 import {
   LARAVEL_DATABASE_RUNTIME_CONFIG
 } from "./constants.js";
 
 const LARAVEL_DATABASE_RUNTIMES = new Set(["sqlite", "postgres", "mysql", "mariadb"]);
+const LARAVEL_DATABASE_ENV_KEYS = Object.freeze([
+  "DB_CONNECTION",
+  "DB_HOST",
+  "DB_PORT",
+  "DB_DATABASE",
+  "DB_USERNAME",
+  "DB_PASSWORD"
+]);
 const LARAVEL_POSTGRES_HOST = "laravel-postgres";
 const LARAVEL_POSTGRES_HOST_PORT = "15433";
 const LARAVEL_POSTGRES_PASSWORD = "laravel_password";
@@ -205,13 +214,12 @@ function laravelDatabaseEnvWriteScript({
     targetRoot
   });
   return [
-    "set -e",
-    "env_file=.env",
-    "touch \"$env_file\"",
-    "tmp_file=\"$(mktemp)\"",
-    "grep -Ev '^(DB_CONNECTION|DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|DB_PASSWORD)=' \"$env_file\" > \"$tmp_file\" || true",
-    "mv \"$tmp_file\" \"$env_file\"",
-    ...lines.map((line) => `printf '%s\\n' ${shellQuote(line)} >> "$env_file"`),
+    envFileWriteScript({
+      relativePath: ".env",
+      removeKeys: LARAVEL_DATABASE_ENV_KEYS,
+      replaceExisting: true,
+      values: envValuesFromLines(lines)
+    }),
     ...(runtime === "sqlite" ? [
       "mkdir -p database",
       "touch database/database.sqlite"

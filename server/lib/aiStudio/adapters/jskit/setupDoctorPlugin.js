@@ -1,17 +1,15 @@
 import {
-  createDoctorRepair,
-  failDoctorCheck as failCheck,
-  passDoctorCheck as passCheck
-} from "../../../doctorCheckItems.js";
-import {
   createDoctorPluginToolkit
 } from "../../../doctorPluginToolkit.js";
 import {
   STUDIO_BASE_TOOLCHAIN_IMAGE
 } from "../../../studioRuntimeIdentity.js";
 import {
-  dockerCommand
-} from "../../../shellCommands.js";
+  adapterToolchainBuildRepair,
+  adapterToolchainBuildScript,
+  checkAdapterToolchainImage,
+  missingAdapterToolchainCheck
+} from "../../adapterToolchains.js";
 import {
   createJskitMariaDbRuntimeContainer,
   JSKIT_MARIADB_HOST,
@@ -32,66 +30,33 @@ import {
 const JSKIT_TOOLCHAIN_DOCKERFILE = "tooling/adapters/jskit/Dockerfile";
 const JSKIT_TOOLCHAIN_CONTEXT = "tooling/adapters/jskit";
 
-function buildJskitToolchainArgs() {
-  return [
-    "build",
-    "-t",
-    JSKIT_TOOLCHAIN_IMAGE,
-    "--build-arg",
-    `AI_STUDIO_BASE_IMAGE=${STUDIO_BASE_TOOLCHAIN_IMAGE}`,
-    "-f",
-    JSKIT_TOOLCHAIN_DOCKERFILE,
-    JSKIT_TOOLCHAIN_CONTEXT
-  ];
-}
-
 function buildJskitToolchainScript() {
-  const args = buildJskitToolchainArgs();
-  return [
-    "set -e",
-    `echo '$ ${dockerCommand(args)}'`,
-    dockerCommand(args)
-  ].join("\n");
+  return adapterToolchainBuildScript({
+    baseImage: STUDIO_BASE_TOOLCHAIN_IMAGE,
+    context: JSKIT_TOOLCHAIN_CONTEXT,
+    dockerfile: JSKIT_TOOLCHAIN_DOCKERFILE,
+    image: JSKIT_TOOLCHAIN_IMAGE
+  });
 }
 
 function buildJskitToolchainRepair() {
-  return createDoctorRepair({
+  return adapterToolchainBuildRepair({
     actionId: "build-jskit-toolchain",
-    autoRun: true,
-    command: dockerCommand(buildJskitToolchainArgs()),
-    kind: "terminal",
+    baseImage: STUDIO_BASE_TOOLCHAIN_IMAGE,
+    context: JSKIT_TOOLCHAIN_CONTEXT,
+    dockerfile: JSKIT_TOOLCHAIN_DOCKERFILE,
+    image: JSKIT_TOOLCHAIN_IMAGE,
     label: "Build JSKIT toolchain"
   });
 }
 
 async function checkJskitToolchainImage(toolkit) {
-  const result = await toolkit.runDocker([
-    "image",
-    "inspect",
-    JSKIT_TOOLCHAIN_IMAGE,
-    "--format",
-    "{{.Id}}"
-  ], {
-    timeout: 12_000
-  });
-
-  if (!result.ok) {
-    return failCheck({
-      id: "jskit-toolchain-image",
-      label: "JSKIT toolchain image",
-      expected: `${JSKIT_TOOLCHAIN_IMAGE} exists locally.`,
-      observed: result.output,
-      explanation: "Build the JSKIT adapter toolchain before running JSKIT setup commands.",
-      repair: buildJskitToolchainRepair()
-    });
-  }
-
-  return passCheck({
+  return checkAdapterToolchainImage(toolkit, {
+    buildRepair: buildJskitToolchainRepair(),
+    explanation: "Build the JSKIT adapter toolchain before running JSKIT setup commands.",
     id: "jskit-toolchain-image",
+    image: JSKIT_TOOLCHAIN_IMAGE,
     label: "JSKIT toolchain image",
-    expected: `${JSKIT_TOOLCHAIN_IMAGE} exists locally.`,
-    observed: result.output,
-    explanation: "The JSKIT adapter toolchain image is present."
   });
 }
 
@@ -100,13 +65,11 @@ function missingJskitToolchainCheck({
   id = "",
   label = ""
 } = {}) {
-  return failCheck({
+  return missingAdapterToolchainCheck({
+    buildRepair: buildJskitToolchainRepair(),
     id,
     label,
-    expected,
-    observed: "JSKIT toolchain image is missing.",
-    explanation: "Build the JSKIT adapter toolchain image first.",
-    repair: buildJskitToolchainRepair()
+    expected
   });
 }
 

@@ -9,16 +9,20 @@ import {
   managedDatabaseNameFromTargetRoot
 } from "../../managedDatabases.js";
 import {
-  shellQuote
-} from "../../../shellCommands.js";
-import {
   selectedConfigValue
 } from "../../configValues.js";
+import {
+  envFileWriteScript,
+  envValuesFromLines
+} from "../../adapterHelpers/setupEnvFiles.js";
 import {
   NEXTJS_DATABASE_RUNTIME_CONFIG
 } from "./constants.js";
 
 const NEXTJS_DATABASE_RUNTIMES = new Set(["none", "postgres", "mysql"]);
+const NEXTJS_DATABASE_ENV_KEYS = Object.freeze([
+  "DATABASE_URL"
+]);
 const NEXTJS_POSTGRES_HOST = "nextjs-postgres";
 const NEXTJS_POSTGRES_HOST_PORT = "15432";
 const NEXTJS_POSTGRES_PASSWORD = "nextjs_password";
@@ -178,13 +182,12 @@ function nextjsDatabaseEnvWriteScript({
     targetRoot
   });
   return [
-    "set -e",
-    "env_file=.env.local",
-    "touch \"$env_file\"",
-    "tmp_file=\"$(mktemp)\"",
-    "grep -Ev '^(DATABASE_URL)=' \"$env_file\" > \"$tmp_file\" || true",
-    "mv \"$tmp_file\" \"$env_file\"",
-    ...lines.map((line) => `printf '%s\\n' ${shellQuote(line)} >> "$env_file"`),
+    envFileWriteScript({
+      relativePath: ".env.local",
+      removeKeys: NEXTJS_DATABASE_ENV_KEYS,
+      replaceExisting: true,
+      values: envValuesFromLines(lines)
+    }),
     "echo 'Wrote Next.js database settings for AI Studio-managed runtime.'"
   ].join("\n");
 }

@@ -1,11 +1,4 @@
-import path from "node:path";
-import { readFile } from "node:fs/promises";
-
 import {
-  createDoctorRepair
-} from "../../../doctorCheckItems.js";
-import {
-  dockerCommand,
   shellQuote
 } from "../../../shellCommands.js";
 import {
@@ -14,6 +7,18 @@ import {
   runtimeContainerName,
   runtimeContainerNetworkDockerArgs
 } from "../../runtimeContainers.js";
+import {
+  readDatabaseHostFromEnvFile
+} from "../../adapterHelpers/setupDatabaseConnections.js";
+import {
+  defaultValidateDatabaseName as validateDatabaseName,
+  mariaDbCreateDatabaseDockerArgs,
+  mariaDbCreateDatabaseRepair
+} from "../../adapterHelpers/setupMariaDbChecks.js";
+import {
+  allDependencyNames,
+  readTargetPackageJson
+} from "../../adapterHelpers/setupNodePackages.js";
 
 const JSKIT_MARIADB_CONTAINER_ID = "jskit-mariadb";
 const JSKIT_MARIADB_HOST = "ai-studio-mariadb";
@@ -24,33 +29,13 @@ const JSKIT_MARIADB_PROBE_DATABASE = "ai_studio_jskit_probe";
 const JSKIT_MARIADB_PROBE_TABLE = "capability_probe";
 const JSKIT_HOST_DATABASE_HOST = AI_STUDIO_RUNTIME_HOST_ALIAS;
 
-function packageDependencyNames(packageJson = {}) {
-  const sections = [
-    packageJson.dependencies,
-    packageJson.devDependencies,
-    packageJson.optionalDependencies,
-    packageJson.peerDependencies
-  ];
-  return new Set(sections.flatMap((section) => {
-    return section && typeof section === "object" && !Array.isArray(section)
-      ? Object.keys(section)
-      : [];
-  }));
-}
-
 async function targetWantsJskitMariaDb(targetRoot = "", toolkit) {
-  const packageJsonResult = await toolkit.readTargetJson("package.json", {
-    targetRoot
-  });
   const lockJsonResult = await toolkit.readTargetJson(".jskit/lock.json", {
     targetRoot
   });
-  const packageJson = packageJsonResult.ok ? packageJsonResult.value : {};
+  const packageJson = await readTargetPackageJson(targetRoot, toolkit) || {};
   const lockJson = lockJsonResult.ok ? lockJsonResult.value : {};
-  const names = new Set([
-    ...packageDependencyNames(packageJson),
-    ...Object.keys(lockJson?.installedPackages || {})
-  ]);
+  const names = allDependencyNames(packageJson, lockJson?.installedPackages || {});
   return [...names].some((name) => name.includes("database-runtime-mysql"));
 }
 
@@ -153,53 +138,19 @@ function startJskitMariaDbRepair(targetRoot = "") {
   });
 }
 
-function escapeMariaDbIdentifier(value) {
-  return String(value).replaceAll("`", "``");
-}
-
-function validateDatabaseName(value) {
-  const databaseName = String(value || "").trim();
-  if (!/^[A-Za-z0-9_]+$/u.test(databaseName)) {
-    return {
-      databaseName,
-      ok: false
-    };
-  }
-  return {
-    databaseName,
-    ok: true
-  };
-}
-
 function createManagedDatabaseDockerArgs(databaseName, targetRoot = "") {
-  const escaped = escapeMariaDbIdentifier(databaseName);
-  return [
-    "exec",
-    "-it",
-    jskitMariaDbContainerName(targetRoot),
-    "mariadb",
-    "-uroot",
-    `-p${JSKIT_MARIADB_ROOT_PASSWORD}`,
-    "-e",
-    `CREATE DATABASE IF NOT EXISTS \`${escaped}\`; SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${databaseName}';`
-  ];
+  return mariaDbCreateDatabaseDockerArgs({
+    containerName: jskitMariaDbContainerName(targetRoot),
+    databaseName,
+    rootPassword: JSKIT_MARIADB_ROOT_PASSWORD
+  });
 }
 
 function createManagedDatabaseRepair(databaseName, targetRoot = "") {
-  return createDoctorRepair({
-    actionId: "terminal-create-app-db",
-    autoRun: true,
-    command: dockerCommand(createManagedDatabaseDockerArgs(databaseName, targetRoot)),
-    fields: [
-      {
-        defaultValue: databaseName,
-        id: "databaseName",
-        label: "Database name",
-        required: true,
-        type: "text"
-      }
-    ],
-    label: "Create app database"
+  return mariaDbCreateDatabaseRepair({
+    containerName: jskitMariaDbContainerName(targetRoot),
+    databaseName,
+    rootPassword: JSKIT_MARIADB_ROOT_PASSWORD
   });
 }
 
@@ -212,54 +163,16 @@ function managedMariaDbAccessInstructions(databaseName = "", targetRoot = "") {
   ].join("\n");
 }
 
-function parseDotEnvValue(line = "", key = "") {
-  const match = new RegExp(`^${key}=(.*)$`, "u").exec(String(line || "").trim());
-  if (!match) {
-    return "";
-  }
-  const rawValue = match[1].trim();
-  if ((rawValue.startsWith("\"") && rawValue.endsWith("\"")) || (rawValue.startsWith("'") && rawValue.endsWith("'"))) {
-    return rawValue.slice(1, -1);
-  }
-  return rawValue;
-}
-
-function databaseHostFromUrl(url = "") {
-  try {
-    return new URL(url).hostname || "";
-  } catch {
-    return "";
-  }
-}
-
-function databaseHostFromEnvText(text = "") {
-  let databaseUrl = "";
-  for (const line of String(text || "").split(/\r?\n/u)) {
-    const host = parseDotEnvValue(line, "DB_HOST");
-    if (host) {
-      return host;
-    }
-    databaseUrl ||= parseDotEnvValue(line, "DATABASE_URL");
-  }
-  return databaseHostFromUrl(databaseUrl);
-}
-
 async function readDatabaseHostFromDotEnv(targetRoot = "") {
-  try {
-    return databaseHostFromEnvText(await readFile(path.join(targetRoot, ".env"), "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return "";
-    }
-    throw error;
-  }
+  return readDatabaseHostFromEnvFile(targetRoot, {
+    relativePath: ".env"
+  });
 }
 
 export {
   createJskitMariaDbRuntimeContainer,
   createManagedDatabaseDockerArgs,
   createManagedDatabaseRepair,
-  databaseHostFromEnvText,
   jskitDatabaseDockerArgs,
   jskitDatabaseDockerArgsForTarget,
   jskitMariaDbContainerName,

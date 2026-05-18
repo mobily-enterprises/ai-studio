@@ -24,18 +24,18 @@ import {
   writableHostUserDockerArgs
 } from "../../dockerRuntime.js";
 import {
-  parseEnvText
-} from "../../envFiles.js";
-import {
   createRuntimeContainerDoctorEntries
 } from "../../runtimeContainers.js";
+import {
+  checkExactEnvValues,
+  envValuesFromLines
+} from "../../adapterHelpers/setupEnvFiles.js";
 import {
   checkNodePackageManagerToolchain
 } from "../../nodePackageDoctor.js";
 import {
-  detectPackageManager,
-  readPackageJson
-} from "../../nodePackage.js";
+  selectedNodePackageManager
+} from "../../adapterHelpers/setupNodeWebChecks.js";
 import {
   composerDependencyNames,
   hasComposerDependency
@@ -241,11 +241,9 @@ async function checkLaravelToolchainImage(toolkit) {
 }
 
 async function setupPackageManager(toolkit, targetRoot, config = {}) {
-  const packageJson = await readPackageJson(targetRoot);
-  if (packageJson) {
-    return (await detectPackageManager(targetRoot, packageJson)).name;
-  }
-  return selectedPackageManager(config);
+  return selectedNodePackageManager(toolkit, targetRoot, {
+    fallback: selectedPackageManager(config)
+  });
 }
 
 async function checkPackageManagerToolchain(toolkit, targetRoot, config = {}) {
@@ -427,13 +425,6 @@ async function checkLaravelDependency(toolkit, targetRoot) {
   });
 }
 
-async function readDotEnv(toolkit, targetRoot) {
-  const envFile = await toolkit.readTargetFile(".env", {
-    targetRoot
-  });
-  return envFile.ok ? parseEnvText(envFile.value) : {};
-}
-
 function seedDatabaseEnvRepair(targetRoot, config, toolkit) {
   return toolkit.shellTerminalAction({
     actionId: "terminal-seed-laravel-db-env",
@@ -456,38 +447,24 @@ async function checkDatabaseEnv(toolkit, targetRoot, config = {}) {
     config,
     targetRoot
   });
-  const expected = Object.fromEntries(expectedLines.map((line) => {
-    const index = line.indexOf("=");
-    return [line.slice(0, index), line.slice(index + 1)];
-  }));
-  const env = await readDotEnv(toolkit, targetRoot);
-  const missing = Object.entries(expected)
-    .filter(([key, value]) => env[key] !== value)
-    .map(([key]) => key);
-  if (missing.length) {
-    const seedRepair = seedDatabaseEnvRepair(targetRoot, config, toolkit);
-    return blockedCheck({
-      id: "laravel-database-env",
-      label: "Database environment",
-      expected: ".env declares Laravel DB_* values for the selected database runtime.",
-      observed: `Mismatched keys: ${missing.join(", ")}`,
-      explanation: "Laravel reads database settings from .env; Studio needs those values to match the selected managed runtime.",
-      repair: seedRepair,
-      repairs: [
-        seedRepair,
-        startLaravelRuntimeRepair({
-          config,
-          targetRoot
-        })
-      ].filter(Boolean)
-    });
-  }
-  return passCheck({
+  const seedRepair = seedDatabaseEnvRepair(targetRoot, config, toolkit);
+  return checkExactEnvValues(toolkit, {
+    expected: ".env declares Laravel DB_* values for the selected database runtime.",
+    expectedValues: envValuesFromLines(expectedLines),
+    explanation: "Laravel reads database settings from .env; Studio needs those values to match the selected managed runtime.",
     id: "laravel-database-env",
     label: "Database environment",
-    expected: ".env declares Laravel DB_* values for the selected database runtime.",
-    observed: "Laravel database environment matches the selected runtime.",
-    explanation: "Laravel setup, scripts, and launch targets can use the selected database runtime."
+    passObserved: "Laravel database environment matches the selected runtime.",
+    relativePath: ".env",
+    repair: seedRepair,
+    repairs: [
+      seedRepair,
+      startLaravelRuntimeRepair({
+        config,
+        targetRoot
+      })
+    ].filter(Boolean),
+    targetRoot
   });
 }
 

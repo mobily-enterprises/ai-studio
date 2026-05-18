@@ -21,15 +21,21 @@ import {
   writableHostUserDockerArgs
 } from "../../dockerRuntime.js";
 import {
-  parseEnvText
-} from "../../envFiles.js";
-import {
-  detectPackageManager,
-  hasDependency
-} from "../../nodePackage.js";
-import {
   checkNodePackageManagerToolchain
 } from "../../nodePackageDoctor.js";
+import {
+  checkExactEnvValues
+} from "../../adapterHelpers/setupEnvFiles.js";
+import {
+  readTargetPackageJson
+} from "../../adapterHelpers/setupNodePackages.js";
+import {
+  checkNodePackageManager,
+  checkNodeWebRouterMarkers,
+  nodePackageUsesNext,
+  packageDependencySummary,
+  selectedNodePackageManager
+} from "../../adapterHelpers/setupNodeWebChecks.js";
 import {
   selectedNextjsPackageManager as selectedPackageManager,
   selectedNextjsSeedBundler,
@@ -46,13 +52,6 @@ import {
   selectedNextjsDatabaseRuntime,
   startNextjsRuntimeRepair
 } from "./databaseRuntime.js";
-
-const ROUTER_MARKERS = Object.freeze([
-  "app",
-  "src/app",
-  "pages",
-  "src/pages"
-]);
 
 function createNextAppUseFlag(packageManager = "npm") {
   return {
@@ -148,27 +147,6 @@ function createNextAppRepair(config = {}) {
   });
 }
 
-async function readTargetPackageJson(toolkit, targetRoot) {
-  const result = await toolkit.readTargetJson("package.json", {
-    targetRoot
-  });
-  return result.ok ? result.value : null;
-}
-
-async function existingRouterMarkers(toolkit, targetRoot) {
-  const markers = await Promise.all(ROUTER_MARKERS.map(async (relativePath) => {
-    return await toolkit.targetFileExists(relativePath, {
-      targetRoot
-    }) ? relativePath : "";
-  }));
-  return markers.filter(Boolean).sort((left, right) => left.localeCompare(right));
-}
-
-function packageUsesNext(packageJson = {}) {
-  return hasDependency(packageJson, "next") ||
-    Object.values(packageJson?.scripts || {}).some((script) => /\bnext\b/u.test(String(script || "")));
-}
-
 async function checkPackageJson(toolkit, targetRoot, context = {}) {
   const result = await toolkit.readTargetJson("package.json", {
     targetRoot
@@ -202,28 +180,8 @@ async function checkPackageJson(toolkit, targetRoot, context = {}) {
   });
 }
 
-async function checkRouterMarkers(toolkit, targetRoot) {
-  const markers = await existingRouterMarkers(toolkit, targetRoot);
-  if (markers.length === 0) {
-    return failCheck({
-      id: "nextjs-router",
-      label: "Router files",
-      expected: "An app/, src/app/, pages/, or src/pages/ router directory exists.",
-      observed: "No Next.js router directory was found.",
-      explanation: "Next.js projects use App Router and/or Pages Router directories."
-    });
-  }
-  return passCheck({
-    id: "nextjs-router",
-    label: "Router files",
-    expected: "An app/, src/app/, pages/, or src/pages/ router directory exists.",
-    observed: markers.join(", "),
-    explanation: "The target has a router layout Next.js can inspect."
-  });
-}
-
 async function checkNextDependency(toolkit, targetRoot) {
-  const packageJson = await readTargetPackageJson(toolkit, targetRoot);
+  const packageJson = await readTargetPackageJson(targetRoot, toolkit);
   if (!packageJson) {
     return failCheck({
       id: "nextjs-dependency",
@@ -233,7 +191,7 @@ async function checkNextDependency(toolkit, targetRoot) {
       explanation: "Seed or restore package.json before Next.js dependency checks run."
     });
   }
-  if (packageUsesNext(packageJson)) {
+  if (nodePackageUsesNext(packageJson)) {
     return passCheck({
       id: "nextjs-dependency",
       label: "Next.js dependency",
@@ -246,31 +204,15 @@ async function checkNextDependency(toolkit, targetRoot) {
     id: "nextjs-dependency",
     label: "Next.js dependency",
     expected: "package.json declares next or a Next.js package script.",
-    observed: `Dependencies: ${Object.keys(packageJson.dependencies || {}).join(", ") || "none"}`,
+    observed: `Dependencies: ${packageDependencySummary(packageJson)}`,
     explanation: "This package is not recognisable as a Next.js project."
   });
 }
 
-async function checkPackageManager(toolkit, targetRoot) {
-  const packageJson = await readTargetPackageJson(toolkit, targetRoot) || {};
-  const packageManager = await detectPackageManager(targetRoot, packageJson);
-  return passCheck({
-    id: "nextjs-package-manager",
-    label: "Package manager",
-    expected: "Studio can identify the package manager used by the target.",
-    observed: packageManager.lockfile
-      ? `${packageManager.name} via ${packageManager.lockfile}`
-      : `${packageManager.name} via ${packageManager.source}`,
-    explanation: "Next.js workflow commands will use this package manager for install and CLI execution."
-  });
-}
-
 async function setupPackageManager(toolkit, targetRoot, config = {}) {
-  const packageJson = await readTargetPackageJson(toolkit, targetRoot);
-  if (packageJson) {
-    return (await detectPackageManager(targetRoot, packageJson)).name;
-  }
-  return selectedPackageManager(config);
+  return selectedNodePackageManager(toolkit, targetRoot, {
+    fallback: selectedPackageManager(config)
+  });
 }
 
 async function checkPackageManagerToolchain(toolkit, targetRoot, config = {}) {
@@ -280,13 +222,6 @@ async function checkPackageManagerToolchain(toolkit, targetRoot, config = {}) {
     packageManager: await setupPackageManager(toolkit, targetRoot, config),
     targetRoot
   });
-}
-
-async function readDotEnvLocal(toolkit, targetRoot) {
-  const envFile = await toolkit.readTargetFile(".env.local", {
-    targetRoot
-  });
-  return envFile.ok ? parseEnvText(envFile.value) : {};
 }
 
 function seedDatabaseEnvRepair(targetRoot, config, toolkit) {
@@ -318,31 +253,27 @@ async function checkDatabaseEnv(toolkit, targetRoot, config = {}) {
     });
   }
   const expected = expectedNextjsDatabaseUrl(runtime, targetRoot);
-  const env = await readDotEnvLocal(toolkit, targetRoot);
-  if (env.DATABASE_URL !== expected) {
-    const seedRepair = seedDatabaseEnvRepair(targetRoot, config, toolkit);
-    return blockedCheck({
-      id: "nextjs-database-env",
-      label: "Database environment",
-      expected: ".env.local declares the DATABASE_URL for the selected managed database.",
-      observed: env.DATABASE_URL ? "DATABASE_URL points somewhere else." : "DATABASE_URL is missing.",
-      explanation: "Next.js apps conventionally read database connection strings from environment variables; Studio needs the target to point at the managed runtime container.",
-      repair: seedRepair,
-      repairs: [
-        seedRepair,
-        startNextjsRuntimeRepair({
-          config,
-          targetRoot
-        })
-      ].filter(Boolean)
-    });
-  }
-  return passCheck({
+  const seedRepair = seedDatabaseEnvRepair(targetRoot, config, toolkit);
+  return checkExactEnvValues(toolkit, {
+    expected: ".env.local declares the DATABASE_URL for the selected managed database.",
+    expectedValues: {
+      DATABASE_URL: expected
+    },
+    explanation: "Next.js apps conventionally read database connection strings from environment variables; Studio needs the target to point at the managed runtime container.",
     id: "nextjs-database-env",
     label: "Database environment",
-    expected: ".env.local declares the DATABASE_URL for the selected managed database.",
-    observed: "DATABASE_URL matches the selected AI Studio-managed database.",
-    explanation: "Next.js scripts and launch-target terminals can attach to the managed database runtime."
+    missingObserved: "DATABASE_URL is missing or points somewhere else.",
+    passObserved: "DATABASE_URL matches the selected AI Studio-managed database.",
+    relativePath: ".env.local",
+    repair: seedRepair,
+    repairs: [
+      seedRepair,
+      startNextjsRuntimeRepair({
+        config,
+        targetRoot
+      })
+    ].filter(Boolean),
+    targetRoot
   });
 }
 
@@ -413,7 +344,12 @@ function createNextjsSetupDoctorPlugin({
           expected: "An app/, src/app/, pages/, or src/pages/ router directory exists.",
           id: "nextjs-router",
           label: "Router files",
-          run: () => checkRouterMarkers(toolkit, checkTargetRoot)
+          run: () => checkNodeWebRouterMarkers(toolkit, checkTargetRoot, {
+            explanation: "Next.js projects use App Router and/or Pages Router directories.",
+            id: "nextjs-router",
+            label: "Router files",
+            missingObserved: "No Next.js router directory was found."
+          })
         },
         {
           expected: "package.json declares next or a Next.js package script.",
@@ -425,7 +361,11 @@ function createNextjsSetupDoctorPlugin({
           expected: "Studio can identify the package manager used by the target.",
           id: "nextjs-package-manager",
           label: "Package manager",
-          run: () => checkPackageManager(toolkit, checkTargetRoot)
+          run: () => checkNodePackageManager(toolkit, checkTargetRoot, {
+            explanation: "Next.js workflow commands will use this package manager for install and CLI execution.",
+            id: "nextjs-package-manager",
+            label: "Package manager"
+          })
         },
         {
           expected: "Next.js database environment matches the selected managed database.",
