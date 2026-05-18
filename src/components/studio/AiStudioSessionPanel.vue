@@ -253,9 +253,9 @@
         >
           <AiStudioCommandTerminal
             class="studio-ai-sessions__command-terminal"
-          :action="commandTerminalAction"
-          :action-input="commandTerminalInput"
-          :session="selectedSession"
+            :action="commandTerminalAction"
+            :action-input="commandTerminalInput"
+            :session="selectedSession"
             :start-request-key="commandTerminalStartKey"
             @closed="handleCommandTerminalClosed"
             @finished="handleCommandTerminalFinished"
