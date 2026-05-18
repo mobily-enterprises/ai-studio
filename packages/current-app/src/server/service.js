@@ -6,7 +6,6 @@ import {
   writeFile
 } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
 
 import {
   closeTerminalSession,
@@ -23,8 +22,8 @@ import {
   readAiStudioSetupReadiness
 } from "../../../../server/lib/aiStudio/setupReadiness.js";
 import {
-  AI_STUDIO_TARGET_ROOT_ENV
-} from "../../../../server/lib/studioRuntimeIdentity.js";
+  resolveStudioTargetRoot
+} from "../../../../server/lib/studioRoots.js";
 import {
   shellQuote
 } from "../../../../server/lib/shellCommands.js";
@@ -38,8 +37,9 @@ const TARGET_SCRIPT_TERMINAL_NAMESPACE_PREFIX = `${TARGET_SCRIPT_TERMINAL_NAMESP
 const PROJECT_SCRIPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 function resolveCurrentAppRoot(appRoot) {
-  const configuredRoot = String(appRoot || process.env[AI_STUDIO_TARGET_ROOT_ENV] || "").trim();
-  return path.resolve(configuredRoot || process.cwd());
+  return resolveStudioTargetRoot({
+    explicitRoot: appRoot
+  });
 }
 
 function targetScriptTerminalNamespace() {

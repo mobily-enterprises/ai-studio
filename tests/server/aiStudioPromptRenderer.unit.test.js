@@ -50,7 +50,7 @@ test("ai-studio prompt renderer renders explicit session context into prompt tem
     assert.equal(rendered.promptId, "make_plan");
     assert.match(rendered.prompt, /Action make_plan for prompt_session/u);
     assert.match(rendered.prompt, /Target: \/workspace\/example/u);
-    assert.match(rendered.prompt, /"a_first": "first",\n  "issue_url": "https:\/\/github\.test\/example\/issues\/1",\n  "z_last": "last"/u);
+    assert.match(rendered.prompt, /"a_first": "first",\n {2}"issue_url": "https:\/\/github\.test\/example\/issues\/1",\n {2}"z_last": "last"/u);
     assert.match(rendered.prompt, /"dryRun": true/u);
   });
 });

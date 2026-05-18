@@ -25,7 +25,7 @@ class AiStudioProjectProvider {
 
     app.service(
       "feature.ai-studio-project.service",
-      (_scope) => {
+      () => {
         return createService({
           targetRoot
         });

@@ -1,0 +1,26 @@
+Make plan
+
+[[AI_STUDIO_CONTEXT_START]]
+AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
+
+Create the implementation plan for this Next.js project.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+Next.js project facts:
+{{adapter.facts.json}}
+
+Next.js prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Return a clear, ordered plan as your normal Codex response. Account for App Router vs Pages Router, Next.js routing and runtime limits, package scripts, and the project's existing application state. Do not modify files while creating the plan.
+[[AI_STUDIO_CONTEXT_END]]

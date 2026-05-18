@@ -1,0 +1,11 @@
+const NEXTJS_DATABASE_RUNTIME_CONFIG = "nextjs_database_runtime";
+const NEXTJS_PACKAGE_MANAGER_CONFIG = "nextjs_package_manager";
+const NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH = ".ai-studio/project-knowledge/nextjs.md";
+const NEXTJS_REVIEW_MODE_CONFIG = "nextjs_review_mode";
+
+export {
+  NEXTJS_DATABASE_RUNTIME_CONFIG,
+  NEXTJS_PACKAGE_MANAGER_CONFIG,
+  NEXTJS_PROJECT_KNOWLEDGE_RELATIVE_PATH,
+  NEXTJS_REVIEW_MODE_CONFIG
+};

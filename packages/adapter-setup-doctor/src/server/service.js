@@ -27,18 +27,13 @@ import {
   repoSlugFromRemoteUrl
 } from "../../../../server/lib/githubRemote.js";
 import {
-  gitSafeDirectoryArgs
-} from "../../../../server/lib/gitToolchainMounts.js";
-import {
   createDoctorRepair as createRepair,
-  doctorCheckItem as checkItem,
   failDoctorCheck as failCheck,
   manualDoctorRepair as manualRepair,
   passDoctorCheck as passCheck
 } from "../../../../server/lib/doctorCheckItems.js";
 import {
-  buildDoctorTerminalArgs,
-  buildDoctorToolchainArgs
+  buildDoctorTerminalArgs
 } from "../../../../server/lib/doctorToolchain.js";
 import {
   dockerCommand,
@@ -46,37 +41,12 @@ import {
   runHostCommand,
   shellQuote
 } from "../../../../server/lib/shellCommands.js";
+import {
+  runDoctorGh as runGh,
+  runDoctorGit as runGit
+} from "../../../../server/lib/doctorToolchainCommands.js";
 
 const TERMINAL_NAMESPACE = "adapter-setup-doctor";
-
-function gitArgs(targetRoot, args) {
-  return ["git", ...gitSafeDirectoryArgs(targetRoot), ...args];
-}
-
-async function runToolchain(commandArgs, {
-  targetRoot,
-  timeout = 20000
-} = {}) {
-  return runHostCommand("docker", buildDoctorToolchainArgs(commandArgs, {
-    targetRoot
-  }), {
-    timeout
-  });
-}
-
-async function runGit(targetRoot, args, options = {}) {
-  return runToolchain(gitArgs(targetRoot, args), {
-    targetRoot,
-    ...options
-  });
-}
-
-async function runGh(targetRoot, args, options = {}) {
-  return runToolchain(["gh", ...args], {
-    targetRoot,
-    ...options
-  });
-}
 
 function blockedCheck({
   id,

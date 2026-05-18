@@ -1,5 +1,3 @@
-import path from "node:path";
-import process from "node:process";
 import stripAnsi from "strip-ansi";
 
 import {
@@ -16,8 +14,8 @@ import {
   aiStudioResult
 } from "../../../../server/lib/aiStudio/serverResponses.js";
 import {
-  AI_STUDIO_TARGET_ROOT_ENV
-} from "../../../../server/lib/studioRuntimeIdentity.js";
+  resolveStudioTargetRoot
+} from "../../../../server/lib/studioRoots.js";
 import {
   dockerCommand,
   runHostCommand
@@ -42,8 +40,9 @@ const ACCOUNT_DEFINITIONS = Object.freeze({
 });
 
 function resolveAiStudioAccountsRoot(targetRoot) {
-  const configuredRoot = String(targetRoot || process.env[AI_STUDIO_TARGET_ROOT_ENV] || "").trim();
-  return path.resolve(configuredRoot || process.cwd());
+  return resolveStudioTargetRoot({
+    explicitRoot: targetRoot
+  });
 }
 
 function accountsResult(operation) {

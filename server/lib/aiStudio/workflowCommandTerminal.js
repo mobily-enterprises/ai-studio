@@ -7,6 +7,13 @@ import {
   shellQuote
 } from "../shellCommands.js";
 import {
+  artifactFilePath,
+  metadataFilePath,
+  removeMetadataScript,
+  requiredArtifactScript,
+  writeMetadataScript
+} from "./workflowCommandEffects.js";
+import {
   normalizeText,
   pathExists
 } from "./core.js";
@@ -76,28 +83,6 @@ async function isGitWorktree(worktreePath) {
     return false;
   }
   return gitCommandSucceeds(worktreePath, ["rev-parse", "--is-inside-work-tree"]);
-}
-
-function metadataPath(session = {}, name = "") {
-  return session.metadataRoot && name ? path.join(session.metadataRoot, name) : "";
-}
-
-function artifactPath(session = {}, relativePath = "") {
-  return session.artifactsRoot && relativePath ? path.join(session.artifactsRoot, relativePath) : "";
-}
-
-function writeMetadataLineScript(name = "", valueExpression = "") {
-  return `printf '%s\\n' ${valueExpression} > ${shellQuote(name)}`;
-}
-
-function requiredFileScript(filePath = "", label = "file") {
-  const quotedFilePath = shellQuote(filePath);
-  return [
-    `if [ ! -s ${quotedFilePath} ]; then`,
-    `  printf '[studio] Missing ${label}: %s\\n' ${quotedFilePath} >&2`,
-    "  exit 1",
-    "fi"
-  ].join("\n");
 }
 
 function completedMetadataSpec({
@@ -185,9 +170,6 @@ function createWorktreeScript({
   const sourcePrHeadRepo = normalizeText(session.metadata?.source_pr_head_repo);
   const sourcePrUrl = normalizeText(session.metadata?.source_pr_url);
   const requestedUpdateMode = normalizeText(session.metadata?.source_pr_update_mode);
-  const sourcePrUpdateModePath = metadataPath(session, "source_pr_update_mode");
-  const prSourcePath = metadataPath(session, "pr_source");
-  const prUrlPath = metadataPath(session, "pr_url");
   return [
     "set -e",
     `printf '[studio] Preparing worktree %s\\n' ${quotedWorktreePath}`,
@@ -225,8 +207,8 @@ function createWorktreeScript({
       "if [ \"$REQUESTED_UPDATE_MODE\" = \"direct\" ]; then",
       "  if [ -z \"$SOURCE_PR_HEAD_REF\" ] || [ -z \"$SOURCE_PR_HEAD_REPO\" ]; then",
       "    printf '[studio] Existing PR push target is incomplete; this session will create a replacement PR.\\n'",
-      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "replacement")}`,
-      "    rm -f " + shellQuote(prUrlPath),
+      `    ${writeMetadataScript(session, "source_pr_update_mode", "replacement")}`,
+      `    ${removeMetadataScript(session, "pr_url")}`,
       "    exit 0",
       "  fi",
       "  PR_HEAD_REMOTE=\"ai-studio-pr-head\"",
@@ -234,13 +216,13 @@ function createWorktreeScript({
       `  git -C ${quotedWorktreePath} remote add "$PR_HEAD_REMOTE" "https://github.com/$SOURCE_PR_HEAD_REPO.git"`,
       `  if git -C ${quotedWorktreePath} push --dry-run "$PR_HEAD_REMOTE" "HEAD:refs/heads/$SOURCE_PR_HEAD_REF"; then`,
       "    printf '[studio] Existing PR can be updated directly.\\n'",
-      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "direct")}`,
-      `    ${writeMetadataLineScript(prSourcePath, "existing")}`,
-      `    ${writeMetadataLineScript(prUrlPath, "\"$SOURCE_PR_URL\"")}`,
+      `    ${writeMetadataScript(session, "source_pr_update_mode", "direct")}`,
+      `    ${writeMetadataScript(session, "pr_source", "existing")}`,
+      `    ${writeMetadataScript(session, "pr_url", "\"$SOURCE_PR_URL\"")}`,
       "  else",
       "    printf '[studio] Existing PR cannot be pushed directly; this session will create a replacement PR.\\n'",
-      `    ${writeMetadataLineScript(sourcePrUpdateModePath, "replacement")}`,
-      "    rm -f " + shellQuote(prUrlPath),
+      `    ${writeMetadataScript(session, "source_pr_update_mode", "replacement")}`,
+      `    ${removeMetadataScript(session, "pr_url")}`,
       "  fi",
       "fi",
       "exit 0"
@@ -403,9 +385,7 @@ async function installDependenciesTerminalSpec({
 }
 
 function commitChangesScript(session = {}) {
-  const commitPath = metadataPath(session, "accepted_commit");
-  const pushedPath = metadataPath(session, "branch_pushed");
-  const issueTitlePath = metadataPath(session, "issue_title");
+  const issueTitlePath = metadataFilePath(session, "issue_title");
   const directExistingPr = normalizeText(session.metadata?.work_source) === "existing_pr" &&
     normalizeText(session.metadata?.source_pr_update_mode) === "direct";
   const baseBranch = normalizeText(session.metadata?.base_branch) ||
@@ -452,13 +432,13 @@ function commitChangesScript(session = {}) {
       "git remote add \"$PR_HEAD_REMOTE\" \"https://github.com/$SOURCE_PR_HEAD_REPO.git\"",
       "printf '[studio] Pushing changes to existing PR branch %s/%s\\n' \"$SOURCE_PR_HEAD_REPO\" \"$SOURCE_PR_HEAD_REF\"",
       "git push \"$PR_HEAD_REMOTE\" \"HEAD:refs/heads/$SOURCE_PR_HEAD_REF\"",
-      writeMetadataLineScript(pushedPath, "\"$SOURCE_PR_HEAD_REF\"")
+      writeMetadataScript(session, "branch_pushed", "\"$SOURCE_PR_HEAD_REF\"")
     ] : [
       "printf '[studio] Pushing branch %s\\n' \"$CURRENT_BRANCH\"",
       "git push -u origin \"$CURRENT_BRANCH\"",
-      writeMetadataLineScript(pushedPath, "\"$CURRENT_BRANCH\"")
+      writeMetadataScript(session, "branch_pushed", "\"$CURRENT_BRANCH\"")
     ]),
-    writeMetadataLineScript(commitPath, "\"$ACCEPTED_COMMIT\""),
+    writeMetadataScript(session, "accepted_commit", "\"$ACCEPTED_COMMIT\""),
     "printf '[studio] Committed %s\\n' \"$ACCEPTED_COMMIT\""
   ].join("\n");
 }
@@ -510,16 +490,12 @@ async function runAutomatedChecksTerminalSpec({
 }
 
 function createIssueOnGhScript(session = {}) {
-  const issueTitlePath = artifactPath(session, "issue_title");
-  const issueBodyPath = artifactPath(session, "issue.md");
-  const issueUrlPath = metadataPath(session, "issue_url");
-  const issueNumberPath = metadataPath(session, "issue_number");
-  const issueSourcePath = metadataPath(session, "issue_source");
-  const storedIssueTitlePath = metadataPath(session, "issue_title");
+  const issueTitlePath = artifactFilePath(session, "issue_title");
+  const issueBodyPath = artifactFilePath(session, "issue.md");
   return [
     "set -e",
-    requiredFileScript(issueTitlePath, "issue title artifact"),
-    requiredFileScript(issueBodyPath, "issue body artifact"),
+    requiredArtifactScript(session, "issue_title", "issue title artifact"),
+    requiredArtifactScript(session, "issue.md", "issue body artifact"),
     `ISSUE_TITLE="$(head -n 1 ${shellQuote(issueTitlePath)} | sed 's/[[:space:]]*$//')"`,
     "if [ -z \"$ISSUE_TITLE\" ]; then",
     "  printf '[studio] Issue title is empty.\\n' >&2",
@@ -528,21 +504,19 @@ function createIssueOnGhScript(session = {}) {
     "printf '[studio] Creating GitHub issue: %s\\n' \"$ISSUE_TITLE\"",
     `ISSUE_URL="$(gh issue create --title "$ISSUE_TITLE" --body-file ${shellQuote(issueBodyPath)})"`,
     "printf '%s\\n' \"$ISSUE_URL\"",
-    writeMetadataLineScript(issueUrlPath, "\"$ISSUE_URL\""),
-    writeMetadataLineScript(issueSourcePath, "created"),
-    writeMetadataLineScript(storedIssueTitlePath, "\"$ISSUE_TITLE\""),
+    writeMetadataScript(session, "issue_url", "\"$ISSUE_URL\""),
+    writeMetadataScript(session, "issue_source", "created"),
+    writeMetadataScript(session, "issue_title", "\"$ISSUE_TITLE\""),
     "ISSUE_NUMBER=\"$(printf '%s\\n' \"$ISSUE_URL\" | sed -n 's#.*/issues/\\([0-9][0-9]*\\).*#\\1#p' | head -n 1)\"",
     "if [ -n \"$ISSUE_NUMBER\" ]; then",
-    `  ${writeMetadataLineScript(issueNumberPath, "\"$ISSUE_NUMBER\"")}`,
+    `  ${writeMetadataScript(session, "issue_number", "\"$ISSUE_NUMBER\"")}`,
     "fi"
   ].join("\n");
 }
 
 function createPrOnGhScript(session = {}) {
-  const prBodyPath = artifactPath(session, "pull_request.md");
-  const issueTitlePath = metadataPath(session, "issue_title");
-  const prUrlPath = metadataPath(session, "pr_url");
-  const prSourcePath = metadataPath(session, "pr_source");
+  const prBodyPath = artifactFilePath(session, "pull_request.md");
+  const issueTitlePath = metadataFilePath(session, "issue_title");
   const sourcePrUrl = normalizeText(session.metadata?.source_pr_url);
   const branch = normalizeText(session.metadata?.branch);
   const baseBranch = normalizeText(session.metadata?.base_branch) || "main";
@@ -550,7 +524,7 @@ function createPrOnGhScript(session = {}) {
   const quotedBranch = shellQuote(branch);
   return [
     "set -e",
-    requiredFileScript(prBodyPath, "pull request artifact"),
+    requiredArtifactScript(session, "pull_request.md", "pull request artifact"),
     `PR_TITLE="$(cat ${shellQuote(issueTitlePath)} 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')"`,
     "if [ -z \"$PR_TITLE\" ]; then",
     `  PR_TITLE="$(grep -m 1 -v '^[[:space:]]*$' ${shellQuote(prBodyPath)} | sed 's/^#*[[:space:]]*//' | sed 's/[[:space:]]*$//')"`,
@@ -590,8 +564,8 @@ function createPrOnGhScript(session = {}) {
     "printf '[studio] Creating GitHub pull request: %s\\n' \"$PR_TITLE\"",
     `PR_URL="$(gh pr create --base ${quotedBaseBranch} --head ${quotedBranch} --title "$PR_TITLE" --body-file "$PR_BODY_FILE")"`,
     "printf '%s\\n' \"$PR_URL\"",
-    writeMetadataLineScript(prUrlPath, "\"$PR_URL\""),
-    writeMetadataLineScript(prSourcePath, sourcePrUrl ? "replacement" : "created")
+    writeMetadataScript(session, "pr_url", "\"$PR_URL\""),
+    writeMetadataScript(session, "pr_source", sourcePrUrl ? "replacement" : "created")
   ].join("\n");
 }
 
@@ -601,7 +575,6 @@ function mergePrScript({
   session = {}
 } = {}) {
   const prUrl = normalizeText(session.metadata?.pr_url);
-  const prMergedPath = metadataPath(session, "pr_merged");
   const mergeFlag = {
     merge: "--merge",
     rebase: "--rebase",
@@ -612,20 +585,19 @@ function mergePrScript({
     beforeMergeScript,
     `printf '[studio] Merging pull request %s\\n' ${shellQuote(prUrl)}`,
     `gh pr merge ${shellQuote(prUrl)} ${mergeFlag}`,
-    writeMetadataLineScript(prMergedPath, "yes")
+    writeMetadataScript(session, "pr_merged", "yes")
   ].filter(Boolean).join("\n");
 }
 
 function syncMainCheckoutScript(session = {}, targetRoot = "") {
   const baseBranch = normalizeText(session.metadata?.base_branch) || "main";
-  const mainCheckoutSyncedPath = metadataPath(session, "main_checkout_synced");
   return [
     "set -e",
     `printf '[studio] Syncing main checkout %s to %s\\n' ${shellQuote(targetRoot)} ${shellQuote(baseBranch)}`,
     `git -C ${shellQuote(targetRoot)} fetch origin ${shellQuote(baseBranch)}`,
     `git -C ${shellQuote(targetRoot)} checkout ${shellQuote(baseBranch)}`,
     `git -C ${shellQuote(targetRoot)} pull --ff-only origin ${shellQuote(baseBranch)}`,
-    writeMetadataLineScript(mainCheckoutSyncedPath, "yes")
+    writeMetadataScript(session, "main_checkout_synced", "yes")
   ].join("\n");
 }
 

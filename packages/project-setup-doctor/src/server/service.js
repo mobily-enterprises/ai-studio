@@ -29,7 +29,6 @@ import {
   repoSlugFromRemoteUrl
 } from "../../../../server/lib/githubRemote.js";
 import {
-  gitSafeDirectoryArgs,
   linkedGitMetadataMountSource
 } from "../../../../server/lib/gitToolchainMounts.js";
 import {
@@ -45,8 +44,7 @@ import {
   pendingDoctorCheck as pendingCheck
 } from "../../../../server/lib/doctorCheckItems.js";
 import {
-  buildDoctorTerminalArgs,
-  buildDoctorToolchainArgs
+  buildDoctorTerminalArgs
 } from "../../../../server/lib/doctorToolchain.js";
 import {
   AI_STUDIO_STATE_DIR
@@ -55,9 +53,12 @@ import {
   dockerCommand,
   hostUserDockerArgs,
   hostUserIdentityEnvArgs,
-  runHostCommand,
   shellQuote
 } from "../../../../server/lib/shellCommands.js";
+import {
+  runDoctorGh as runGh,
+  runDoctorGit as runGit
+} from "../../../../server/lib/doctorToolchainCommands.js";
 
 const TERMINAL_NAMESPACE = "project-setup-doctor";
 const CREATE_GIT_CHECKPOINT_ACTION = "terminal-git-checkpoint";
@@ -73,37 +74,6 @@ function workspaceWriteDockerArgs() {
     "-e",
     "HOME=/tmp/studio-home"
   ];
-}
-
-function gitArgs(targetRoot, args) {
-  return ["git", ...gitSafeDirectoryArgs(targetRoot), ...args];
-}
-
-async function runToolchain(commandArgs, {
-  extraArgs = [],
-  targetRoot,
-  timeout = 20_000
-} = {}) {
-  return runHostCommand("docker", buildDoctorToolchainArgs(commandArgs, {
-    extraArgs,
-    targetRoot
-  }), {
-    timeout
-  });
-}
-
-async function runGit(targetRoot, args, options = {}) {
-  return runToolchain(gitArgs(targetRoot, args), {
-    targetRoot,
-    ...options
-  });
-}
-
-async function runGh(targetRoot, args, options = {}) {
-  return runToolchain(["gh", ...args], {
-    targetRoot,
-    ...options
-  });
 }
 
 function appendPendingChecks(stages, checks, startIndex) {

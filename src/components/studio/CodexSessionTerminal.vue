@@ -609,26 +609,6 @@ function closeTerminalSocket() {
   }
 }
 
-function codexTerminalWebSocketUrl(sessionIdValue, terminalSessionIdValue) {
-  return aiStudioCodexTerminalWebSocketUrl(sessionIdValue, terminalSessionIdValue);
-}
-
-function startCodexTerminal(sessionIdValue) {
-  return startAiStudioCodexTerminal(sessionIdValue);
-}
-
-function closeCodexTerminal(sessionIdValue, terminalSessionIdValue) {
-  return closeAiStudioCodexTerminal(sessionIdValue, terminalSessionIdValue);
-}
-
-function uploadCodexAttachment(sessionIdValue, file) {
-  return codexCommands.uploadAttachment(sessionIdValue, file);
-}
-
-function saveCodexThread(sessionIdValue, threadId) {
-  return codexCommands.saveThread(sessionIdValue, threadId);
-}
-
 function clearTerminalReconnect() {
   if (!terminalReconnectTimer) {
     return;
@@ -667,9 +647,9 @@ function applyTerminalSnapshot(session = {}) {
     persistedOutputStart >= 0 &&
     codexPrompt.value
   ) {
-    addPromptEchoFilter({
+    promptEchoFilters.add({
       outputStart: persistedOutputStart,
-      prompt: codexPrompt.value
+      prompt: wrapPromptWithStudioContext(codexPrompt.value)
     });
   }
   terminalStatus.value = session.status || terminalStatus.value || "";
@@ -733,7 +713,7 @@ async function connectTerminalSocket() {
   terminalStatus.value = terminalStatus.value || "connecting";
   terminalSocketOpenPromise = new Promise((resolve) => {
     let settled = false;
-    const socket = new WebSocket(codexTerminalWebSocketUrl(sessionId.value, terminalSessionId.value));
+    const socket = new WebSocket(aiStudioCodexTerminalWebSocketUrl(sessionId.value, terminalSessionId.value));
     terminalSocket = socket;
 
     const settle = (ready) => {
@@ -805,7 +785,7 @@ async function startTerminalOnce() {
   terminalStarting.value = true;
   terminalError.value = "";
   try {
-    const session = await startCodexTerminal(sessionId.value);
+    const session = await startAiStudioCodexTerminal(sessionId.value);
     if (session?.ok === false) {
       throw new Error(session.error || session.errors?.[0]?.message || "Codex terminal failed to start.");
     }
@@ -916,7 +896,7 @@ async function injectAttachmentPath(containerPath) {
 }
 
 async function uploadDroppedAttachment(file) {
-  const attachment = await uploadCodexAttachment(sessionId.value, file);
+  const attachment = await codexCommands.uploadAttachment(sessionId.value, file);
   if (attachment?.ok === false) {
     throw new Error(attachment.error || attachment.errors?.[0]?.message || "Attachment upload failed.");
   }
@@ -997,7 +977,7 @@ async function captureCodexThreadFromOutput(output) {
   }
 
   codexThreadSavePromise = (async () => {
-    const response = await saveCodexThread(sessionId.value, threadId);
+    const response = await codexCommands.saveThread(sessionId.value, threadId);
     if (response?.ok === false) {
       throw new Error(response.error || response.errors?.[0]?.message || "Codex thread id could not be saved.");
     }
@@ -1252,7 +1232,7 @@ async function closeTerminal() {
   const existingTerminalId = terminalSessionId.value;
   detachTerminal();
   if (existingTerminalId && sessionId.value) {
-    await closeCodexTerminal(sessionId.value, existingTerminalId).catch(() => null);
+    await closeAiStudioCodexTerminal(sessionId.value, existingTerminalId).catch(() => null);
   }
 }
 

@@ -25,9 +25,9 @@ test("ai-studio runtime session view exposes workflow steps, current actions, an
     assert.deepEqual(session.completedSteps, []);
     assert.equal(session.next.visible, true);
     assert.equal(session.next.enabled, true);
-    assert.equal(session.next.stepId, "worktree_created");
+    assert.equal(session.next.stepId, "work_source_selected");
     assert.equal(session.stepDefinitions[0].status, "current");
-    assert.equal(session.stepDefinitions[1].label, "Create worktree");
+    assert.equal(session.stepDefinitions[1].label, "Choose work source");
     assert.deepEqual(session.actions, []);
   });
 });
@@ -43,19 +43,19 @@ test("ai-studio runtime advance records completed steps and moves to the next wo
     });
 
     const afterFirstAdvance = await runtime.advance("advance_flow");
-    assert.equal(afterFirstAdvance.currentStep, "worktree_created");
+    assert.equal(afterFirstAdvance.currentStep, "work_source_selected");
     assert.deepEqual(afterFirstAdvance.completedSteps, ["session_created"]);
     assert.equal(afterFirstAdvance.stepDefinitions[0].status, "done");
     assert.equal(afterFirstAdvance.stepDefinitions[1].status, "current");
-    assert.equal(afterFirstAdvance.next.stepId, "dependencies_installed");
+    assert.equal(afterFirstAdvance.next.stepId, "worktree_created");
     assert.equal(afterFirstAdvance.next.enabled, false);
 
-    await runtime.store.writeMetadataValue("advance_flow", "worktree_path", targetRoot);
+    await runtime.store.writeMetadataValue("advance_flow", "work_source", "new_branch");
     const afterSecondAdvance = await runtime.advance("advance_flow");
-    assert.equal(afterSecondAdvance.currentStep, "dependencies_installed");
+    assert.equal(afterSecondAdvance.currentStep, "worktree_created");
     assert.deepEqual(afterSecondAdvance.completedSteps, [
       "session_created",
-      "worktree_created"
+      "work_source_selected"
     ]);
   });
 });
@@ -74,6 +74,8 @@ test("ai-studio runtime shows current-step actions from the workflow", async () 
       sessionId: "disabled_actions"
     });
 
+    await runtime.advance("disabled_actions");
+    await runtime.store.writeMetadataValue("disabled_actions", "work_source", "new_branch");
     const session = await runtime.advance("disabled_actions");
     assert.equal(session.currentStep, "worktree_created");
     assert.deepEqual(session.actions, [
@@ -160,6 +162,9 @@ test("ai-studio runtime rejects command actions because terminals own command ex
     });
     await runtime.createSession({
       initialStep: "worktree_created",
+      metadata: {
+        work_source: "new_branch"
+      },
       sessionId: "command_action"
     });
 

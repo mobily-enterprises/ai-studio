@@ -164,5 +164,5 @@ test("Adapter Setup blocks dependent checks when target directory is unavailable
   assert.equal(status.ready, false);
   assert.equal(status.checks.find((check) => check.id === "target-directory")?.status, "fail");
   assert.equal(status.checks.find((check) => check.id === "git-repository")?.observed, "Target directory is not ready.");
-  assert.equal(status.checks.find((check) => check.id === "github-auth")?.observed, "Target directory is not ready.");
+  assert.equal(status.checks.find((check) => check.id === "github-issues-prs")?.observed, "Target directory is not ready.");
 });

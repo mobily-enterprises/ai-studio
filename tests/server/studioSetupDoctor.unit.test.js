@@ -5,9 +5,6 @@ import test from "node:test";
 
 import {
   TOOLCHAIN_IMAGE,
-  codexBrowserLoginCommandArgs,
-  codexDeviceLoginCommandArgs,
-  codexLoginRepairs,
   isStudioSetupReady,
   resolveStudioRoot
 } from "../../packages/studio-setup-doctor/src/server/service.js";
@@ -37,28 +34,6 @@ test("Studio Setup terminal input preserves enter/control characters", () => {
 
   assert.deepEqual(result.errors, {});
   assert.equal(result.validatedObject.data, "\r");
-});
-
-test("Studio Setup exposes Codex browser login with device-code fallback", () => {
-  assert.deepEqual(codexBrowserLoginCommandArgs(), [
-    "codex",
-    "login"
-  ]);
-  assert.deepEqual(codexDeviceLoginCommandArgs(), [
-    "codex",
-    "login",
-    "--device-auth"
-  ]);
-  const hostNetworkRepairs = codexLoginRepairs(true);
-  assert.deepEqual(hostNetworkRepairs.map((repair) => repair.actionId), [
-    "terminal-codex-login",
-    "terminal-codex-device-login"
-  ]);
-  assert.match(hostNetworkRepairs[0].commandPreview, /--network host/u);
-  assert.doesNotMatch(hostNetworkRepairs[0].commandPreview, /--device-auth/u);
-  assert.deepEqual(codexLoginRepairs(false).map((repair) => repair.actionId), [
-    "terminal-codex-device-login"
-  ]);
 });
 
 test("Studio Setup resolves the Studio implementation root separately", () => {

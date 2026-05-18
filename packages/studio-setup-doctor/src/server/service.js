@@ -1,5 +1,3 @@
-import path from "node:path";
-import process from "node:process";
 import {
   dockerCommand,
   runDocker
@@ -19,9 +17,11 @@ import {
   startDoctorPluginTerminal
 } from "../../../../server/lib/doctorPlugins.js";
 import {
-  AI_STUDIO_APP_ROOT_ENV,
   STUDIO_BASE_TOOLCHAIN_IMAGE as TOOLCHAIN_IMAGE
 } from "../../../../server/lib/studioRuntimeIdentity.js";
+import {
+  resolveStudioAppRoot
+} from "../../../../server/lib/studioRoots.js";
 import {
   createDoctorRepair,
   failDoctorCheck as failCheck,
@@ -104,8 +104,9 @@ function buildToolchainRepair() {
 }
 
 function resolveStudioRoot(studioRoot) {
-  const configuredRoot = String(studioRoot || process.env[AI_STUDIO_APP_ROOT_ENV] || "").trim();
-  return path.resolve(configuredRoot || process.cwd());
+  return resolveStudioAppRoot({
+    explicitRoot: studioRoot
+  });
 }
 
 async function checkDocker() {

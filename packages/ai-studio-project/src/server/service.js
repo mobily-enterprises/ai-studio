@@ -1,6 +1,3 @@
-import path from "node:path";
-import process from "node:process";
-
 import {
   AiStudioSessionRuntime,
   createAiStudioAdapterRegistry,
@@ -12,12 +9,13 @@ import {
   aiStudioResult
 } from "../../../../server/lib/aiStudio/serverResponses.js";
 import {
-  AI_STUDIO_TARGET_ROOT_ENV
-} from "../../../../server/lib/studioRuntimeIdentity.js";
+  resolveStudioTargetRoot
+} from "../../../../server/lib/studioRoots.js";
 
 function resolveAiStudioTargetRoot(targetRoot) {
-  const configuredRoot = String(targetRoot || process.env[AI_STUDIO_TARGET_ROOT_ENV] || "").trim();
-  return path.resolve(configuredRoot || process.cwd());
+  return resolveStudioTargetRoot({
+    explicitRoot: targetRoot
+  });
 }
 
 function projectResult(operation) {

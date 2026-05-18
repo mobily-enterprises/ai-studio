@@ -10,6 +10,12 @@ import {
 import {
   useAiStudioIssueFileStep
 } from "@/composables/useAiStudioIssueFileStep.js";
+import {
+  useAiStudioDiffDialog
+} from "@/composables/useAiStudioDiffDialog.js";
+import {
+  useAiStudioDraftEditor
+} from "@/composables/useAiStudioDraftEditor.js";
 import { useAiStudioSessionArtifacts } from "@/composables/useAiStudioSessionArtifacts.js";
 import { useStoredSelection } from "@/composables/useStoredSelection.js";
 import {
@@ -33,8 +39,10 @@ import {
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
 import {
-  readAiStudioSessionDiff
-} from "@/lib/aiStudioSessionApi.js";
+  emptyActionInputValues,
+  normalizeActionInputFields,
+  requiredActionInputMissing
+} from "@/lib/aiStudioActionInputModel.js";
 import {
   aiStudioActionIcon as actionIcon,
   aiStudioPromptHandoffFromSession,
@@ -47,68 +55,9 @@ import {
   shortAiStudioSessionId as shortSessionId,
   visibleAiStudioSessions
 } from "@/lib/aiStudioSessionPanelModel.js";
-function resolveResponseErrorMessage(response = {}, fallback = "AI Studio request failed.") {
-  return String(response?.errors?.[0]?.message || response?.error || fallback);
-}
-
 function displayableActionResultMessage(result = {}) {
   const message = String(result?.message || "");
   return /^Rendered\b/u.test(message) ? "" : message;
-}
-
-function normalizeDraftEditorField(field = {}) {
-  const name = String(field?.name || "").trim();
-  if (!name) {
-    return null;
-  }
-  const kind = String(field.kind || "textarea").trim();
-  return {
-    kind: kind === "text" ? "text" : "textarea",
-    label: String(field.label || name).trim(),
-    name,
-    required: field.required !== false,
-    requiredMessage: String(field.requiredMessage || "").trim()
-  };
-}
-
-function normalizeDraftEditorFields(fields = []) {
-  return (Array.isArray(fields) ? fields : [])
-    .map(normalizeDraftEditorField)
-    .filter(Boolean);
-}
-
-function normalizeActionInputField(field = {}) {
-  const name = String(field?.name || "").trim();
-  if (!name) {
-    return null;
-  }
-  return {
-    label: String(field.label || name).trim(),
-    name,
-    placeholder: String(field.placeholder || "").trim(),
-    required: field.required !== false,
-    requiredMessage: String(field.requiredMessage || "").trim()
-  };
-}
-
-function normalizeActionInputFields(fields = []) {
-  return (Array.isArray(fields) ? fields : [])
-    .map(normalizeActionInputField)
-    .filter(Boolean);
-}
-
-function draftEditorValuesFromArtifacts(fields = [], artifacts = {}) {
-  return Object.fromEntries(fields.map((field) => [
-    field.name,
-    String(artifacts?.[field.name] || "")
-  ]));
-}
-
-function artifactsFromDraftEditorValues(fields = [], values = {}) {
-  return Object.fromEntries(fields.map((field) => [
-    field.name,
-    String(values?.[field.name] || "")
-  ]));
 }
 
 const CREATE_PULL_REQUEST_FILE_ACTION_ID = "create_pr_file";
@@ -140,18 +89,6 @@ function useAiStudioSessions({
   const commandTerminalInput = ref({});
   const commandTerminalRunning = ref(false);
   const commandTerminalStartKey = ref("");
-  const diffDialogOpen = ref(false);
-  const diffError = ref("");
-  const diffLoading = ref(false);
-  const diffPayload = ref(null);
-  const draftEditorAction = ref(null);
-  const draftEditorError = ref("");
-  const draftEditorFields = ref([]);
-  const draftEditorLoading = ref(false);
-  const draftEditorOpen = ref(false);
-  const draftEditorSaving = ref(false);
-  const draftEditorTitle = ref("Edit draft");
-  const draftEditorValues = ref({});
   const inputDialogAction = ref(null);
   const inputDialogError = ref("");
   const inputDialogOpen = ref(false);
@@ -162,6 +99,25 @@ function useAiStudioSessions({
   let artifactReadinessRefreshInFlight = false;
   const codexCommands = useAiStudioCodexCommands();
   const sessionArtifacts = useAiStudioSessionArtifacts();
+  const {
+    clear: clearDraftEditor,
+    draftEditorError,
+    draftEditorFields,
+    draftEditorLoading,
+    draftEditorOpen,
+    draftEditorSaving,
+    draftEditorTitle,
+    draftEditorValues,
+    openDraftEditor,
+    saveDraftEditor
+  } = useAiStudioDraftEditor({
+    onSaved() {
+      copyStatus.value = "Draft saved.";
+    },
+    refreshSessionData,
+    selectedSessionId,
+    sessionArtifacts
+  });
 
   const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
     surface: AI_STUDIO_SURFACE_ID
@@ -354,6 +310,18 @@ function useAiStudioSessions({
     return issueFileStep.visibleActions(baseCurrentActions.value);
   });
   const worktreeReady = computed(() => Boolean(selectedSession.value?.metadata?.worktree_path));
+  const {
+    clearDiffDialog,
+    closeDiffDialog,
+    diffDialogOpen,
+    diffError,
+    diffLoading,
+    diffPayload,
+    openDiffDialog
+  } = useAiStudioDiffDialog({
+    canOpen: () => !reviewDiffDisabled.value,
+    selectedSessionId
+  });
   const acceptChangesUtilitiesVisible = computed(() => {
     return selectedSession.value?.currentStep === ACCEPT_CHANGES_STEP_ID && !issueFileStep.formVisible.value;
   });
@@ -476,9 +444,7 @@ function useAiStudioSessions({
     if (inputDialogSubmitting.value || commandBusy.value || inputDialogFields.value.length < 1) {
       return true;
     }
-    return inputDialogFields.value.some((field) => {
-      return field.required && !String(inputDialogValues.value?.[field.name] || "").trim();
-    });
+    return requiredActionInputMissing(inputDialogFields.value, inputDialogValues.value);
   });
 
   function clearSessionTransientState() {
@@ -490,14 +456,8 @@ function useAiStudioSessions({
     codexPromptOverride.value = "";
     codexTerminalBusy.value = false;
     clearCommandTerminal();
-    diffDialogOpen.value = false;
-    diffError.value = "";
-    diffPayload.value = null;
-    draftEditorAction.value = null;
-    draftEditorFields.value = [];
-    draftEditorOpen.value = false;
-    draftEditorTitle.value = "Edit draft";
-    draftEditorValues.value = {};
+    clearDiffDialog();
+    clearDraftEditor();
     inputDialogAction.value = null;
     inputDialogError.value = "";
     inputDialogOpen.value = false;
@@ -603,7 +563,7 @@ function useAiStudioSessions({
     const fields = normalizeActionInputFields(action.inputFields);
     inputDialogAction.value = action;
     inputDialogError.value = "";
-    inputDialogValues.value = Object.fromEntries(fields.map((field) => [field.name, ""]));
+    inputDialogValues.value = emptyActionInputValues(fields);
     inputDialogOpen.value = true;
   }
 
@@ -645,31 +605,6 @@ function useAiStudioSessions({
     }
   }
 
-  async function openDiffDialog() {
-    if (!selectedSessionId.value || reviewDiffDisabled.value) {
-      return;
-    }
-    diffDialogOpen.value = true;
-    diffError.value = "";
-    diffLoading.value = true;
-    diffPayload.value = null;
-    try {
-      const response = await readAiStudioSessionDiff(selectedSessionId.value);
-      diffPayload.value = response;
-      if (response?.ok === false) {
-        diffError.value = resolveResponseErrorMessage(response, "Diff inspection failed.");
-      }
-    } catch (error) {
-      diffError.value = String(error?.message || error || "Diff inspection failed.");
-    } finally {
-      diffLoading.value = false;
-    }
-  }
-
-  function closeDiffDialog() {
-    diffDialogOpen.value = false;
-  }
-
   function runAppReview() {
     if (!selectedSessionId.value || runAppReviewDisabled.value) {
       return;
@@ -683,59 +618,6 @@ function useAiStudioSessions({
       return;
     }
     window.open(appReviewUrl.value, "_blank", "noopener");
-  }
-
-  async function openDraftEditor(action = {}) {
-    const actionId = String(action.id || "").trim();
-    draftEditorAction.value = action;
-    draftEditorFields.value = normalizeDraftEditorFields(action.artifactFields);
-    draftEditorTitle.value = String(action.label || "Edit draft");
-    draftEditorValues.value = {};
-    draftEditorError.value = "";
-    draftEditorOpen.value = true;
-    draftEditorLoading.value = true;
-    try {
-      const response = await sessionArtifacts.readArtifacts(selectedSessionId.value, actionId);
-      if (response?.ok === false) {
-        draftEditorError.value = resolveResponseErrorMessage(response, "Draft could not be loaded.");
-        return;
-      }
-      const fields = normalizeDraftEditorFields(response.artifactFields);
-      draftEditorFields.value = fields.length ? fields : draftEditorFields.value;
-      draftEditorValues.value = draftEditorValuesFromArtifacts(
-        draftEditorFields.value,
-        response.artifacts || {}
-      );
-    } catch (error) {
-      draftEditorError.value = String(error?.message || error || "Draft could not be loaded.");
-    } finally {
-      draftEditorLoading.value = false;
-    }
-  }
-
-  async function saveDraftEditor() {
-    if (!selectedSessionId.value || draftEditorSaving.value) {
-      return;
-    }
-    draftEditorError.value = "";
-    draftEditorSaving.value = true;
-    try {
-      const response = await sessionArtifacts.saveArtifacts(
-        selectedSessionId.value,
-        draftEditorAction.value?.id || "",
-        artifactsFromDraftEditorValues(draftEditorFields.value, draftEditorValues.value)
-      );
-      if (response?.ok === false) {
-        draftEditorError.value = resolveResponseErrorMessage(response, "Draft could not be saved.");
-        return;
-      }
-      copyStatus.value = "Draft saved.";
-      await refreshSessionData();
-    } catch (error) {
-      draftEditorError.value = String(error?.message || error || "Draft could not be saved.");
-    } finally {
-      draftEditorSaving.value = false;
-    }
   }
 
   async function goNext() {

@@ -79,26 +79,6 @@ function assertAiStudioSessionStatus(status) {
   return normalizedStatus;
 }
 
-function pathIsInsideRoot(candidatePath, rootPath) {
-  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${path.sep}`);
-}
-
-function resolveSafeChildPath(root, relativePath, {
-  code = "ai_studio_invalid_relative_path",
-  label = "relative path"
-} = {}) {
-  const normalizedRelativePath = normalizeText(relativePath);
-  if (!normalizedRelativePath || path.isAbsolute(normalizedRelativePath)) {
-    throw aiStudioError(`Invalid ai-studio ${label}: ${normalizedRelativePath || "(empty)"}`, code);
-  }
-  const normalizedRoot = path.resolve(root);
-  const resolvedPath = path.resolve(normalizedRoot, normalizedRelativePath);
-  if (!pathIsInsideRoot(resolvedPath, normalizedRoot)) {
-    throw aiStudioError(`Invalid ai-studio ${label}: ${normalizedRelativePath}`, code);
-  }
-  return resolvedPath;
-}
-
 async function readTextIfExists(filePath) {
   try {
     return await readFile(filePath, "utf8");
@@ -214,11 +194,16 @@ function metadataFilePath(sessionPaths, name) {
   return path.join(sessionPaths.metadataRoot, assertSafeMetadataName(name));
 }
 
-function artifactFilePath(sessionPaths, relativePath) {
-  return resolveSafeChildPath(sessionPaths.artifactsRoot, relativePath, {
-    code: "ai_studio_invalid_artifact_path",
-    label: "artifact path"
-  });
+function assertSafeArtifactName(name) {
+  const normalizedName = normalizeText(name);
+  if (!ARTIFACT_NAME_PATTERN.test(normalizedName)) {
+    throw aiStudioError(`Invalid ai-studio artifact name: ${normalizedName || "(empty)"}`, "ai_studio_invalid_artifact_path");
+  }
+  return normalizedName;
+}
+
+function artifactFilePath(sessionPaths, name) {
+  return path.join(sessionPaths.artifactsRoot, assertSafeArtifactName(name));
 }
 
 function actionResultFilePath(sessionPaths, actionId) {

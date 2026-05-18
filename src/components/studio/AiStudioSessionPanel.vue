@@ -376,12 +376,13 @@
             class="studio-ai-sessions__diff-status"
           >{{ diffPayload.gitStatus }}</pre>
 
-          <!-- eslint-disable-next-line vue/no-v-html -- Diff2Html escapes git diff content before rendering. -->
+          <!-- eslint-disable vue/no-v-html -- Diff2Html escapes git diff content before rendering. -->
           <div
             v-if="renderedDiff"
             class="studio-ai-sessions__diff-rendered"
             v-html="renderedDiff"
           />
+          <!-- eslint-enable vue/no-v-html -->
 
           <v-alert
             v-else-if="!diffLoading && !diffError"

@@ -30,6 +30,13 @@ function readySetupServices() {
         };
       }
     },
+    accountSetupService: {
+      async getStatus() {
+        return {
+          ready: true
+        };
+      }
+    },
     projectSetupService: {
       async getStatus() {
         return {
@@ -100,7 +107,7 @@ function fakeProjectService({
 
 function fakeAdapter() {
   return {
-    async createCurrentAppTargetScriptTerminalSpec(_context = {}) {
+    async createCurrentAppTargetScriptTerminalSpec() {
       return {
         args: ["-lc", "printf adapter"],
         command: "bash",

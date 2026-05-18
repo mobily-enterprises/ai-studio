@@ -1,0 +1,26 @@
+Prepare for merge
+
+[[AI_STUDIO_CONTEXT_START]]
+AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.
+
+Prepare the Next.js pull request for merge.
+
+Session:
+- id: {{session.id}}
+- current step: {{session.currentStep}}
+- target root: {{session.targetRoot}}
+
+Known session metadata:
+{{session.metadata.json}}
+
+Next.js project facts:
+{{adapter.facts.json}}
+
+Next.js prompt context:
+{{adapter.promptContext.json}}
+
+Action input:
+{{input.json}}
+
+Use the recorded PR URL from session metadata. Check the PR state, resolve merge blockers that can be fixed locally, keep changes scoped, and report whether the PR is ready to merge.
+[[AI_STUDIO_CONTEXT_END]]
