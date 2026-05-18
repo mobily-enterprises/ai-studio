@@ -8,8 +8,8 @@ import {
 } from "../../server/lib/aiStudio/index.js";
 import {
   VINEXT_AI_STUDIO_COMMANDS,
-  createVinextAppReviewTerminalSpec,
-  createVinextReviewDescriptor,
+  createVinextLaunchDescriptor,
+  createVinextLaunchTargetTerminalSpec,
   createVinextTargetAdapter
 } from "../../server/lib/aiStudio/adapters/vinext/index.js";
 import {
@@ -124,14 +124,12 @@ test("vinext current-app scripts describe commands while Studio owns terminal ex
   });
 });
 
-test("vinext app review describes Vinext commands and uses the shared review terminal", async () => {
+test("vinext launch target describes Vinext commands and uses the shared launch terminal", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     await createVinextProject(targetRoot);
 
-    const descriptor = await createVinextReviewDescriptor({
-      config: {
-        vinext_review_mode: "production"
-      },
+    const descriptor = await createVinextLaunchDescriptor({
+      mode: "production",
       port: 4199,
       worktreePath: targetRoot
     });
@@ -142,7 +140,8 @@ test("vinext app review describes Vinext commands and uses the shared review ter
     ]);
     assert.equal(descriptor.metadata.mode, "production");
 
-    const spec = await createVinextAppReviewTerminalSpec({
+    const spec = await createVinextLaunchTargetTerminalSpec({
+      launchTargetId: "built",
       session: {
         metadata: {
           worktree_path: targetRoot
@@ -156,8 +155,9 @@ test("vinext app review describes Vinext commands and uses the shared review ter
     assert.equal(spec.ok, true);
     assert.equal(spec.command, "docker");
     assert.equal(spec.metadata.adapterId, "vinext");
+    assert.equal(spec.metadata.launchTargetId, "built");
     assert.equal(spec.metadata.mode, "production");
-    assert.match(spec.metadata.appUrl, /^http:\/\/127\.0\.0\.1:\d+\//u);
+    assert.match(spec.metadata.targetUrl, /^http:\/\/127\.0\.0\.1:\d+\//u);
   });
 });
 

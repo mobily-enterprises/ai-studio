@@ -86,9 +86,9 @@
           <v-btn
             color="primary"
             variant="flat"
-            :disabled="loginDisabled(account)"
-            :loading="activeSessionFor(account.id)?.status === 'authenticating'"
-            @click="startBrowserAuth(account.id)"
+            :disabled="authSessions.loginDisabled(account)"
+            :loading="authSessions.activeSessionFor(account.id)?.status === 'authenticating'"
+            @click="authSessions.startBrowserAuth(account.id)"
           >
             {{ account.id === "github" ? "Auth GitHub" : "Auth Codex" }}
           </v-btn>
@@ -96,34 +96,34 @@
             v-if="account.id === 'codex'"
             color="primary"
             variant="tonal"
-            :disabled="loginDisabled(account)"
-            @click="startDeviceAuth"
+            :disabled="authSessions.loginDisabled(account)"
+            @click="authSessions.startDeviceAuth"
           >
             Use code login
           </v-btn>
           <v-btn
             color="warning"
             variant="tonal"
-            :disabled="authBusy || !account.connected"
-            :loading="logoutAccountId === account.id"
-            @click="logoutAccount(account.id)"
+            :disabled="authSessions.authBusy || !account.connected"
+            :loading="authSessions.logoutAccountId === account.id"
+            @click="authSessions.logoutAccount(account.id)"
           >
             Logout
           </v-btn>
         </div>
 
         <div
-          v-if="activeSessionFor(account.id)"
+          v-if="authSessions.activeSessionFor(account.id)"
           class="accounts-setup__session"
         >
           <div
-            v-if="activeSessionFor(account.id)?.userCode"
+            v-if="authSessions.activeSessionFor(account.id)?.userCode"
             class="accounts-setup__code-block"
           >
             <p class="accounts-setup__code-label">One-time code</p>
-            <p class="accounts-setup__code">{{ activeSessionFor(account.id).userCode }}</p>
+            <p class="accounts-setup__code">{{ authSessions.activeSessionFor(account.id).userCode }}</p>
             <p
-              v-if="activeSessionFor(account.id)?.mode === 'device'"
+              v-if="authSessions.activeSessionFor(account.id)?.mode === 'device'"
               class="accounts-setup__code-help"
             >
               Enable code login in ChatGPT settings or workspace permissions, then enter this code on the login page.
@@ -132,33 +132,33 @@
 
           <div class="accounts-setup__session-actions">
             <v-btn
-              v-if="activeSessionFor(account.id)?.authUrl"
+              v-if="authSessions.activeSessionFor(account.id)?.authUrl"
               color="primary"
               variant="tonal"
-              @click="openAuthUrl(activeSessionFor(account.id))"
+              @click="authSessions.openAuthUrl(authSessions.activeSessionFor(account.id))"
             >
               Open browser
             </v-btn>
             <v-btn
               variant="tonal"
-              :disabled="activeSessionFor(account.id)?.terminalStatus !== 'running'"
-              @click="cancelSession(activeSessionFor(account.id))"
+              :disabled="authSessions.activeSessionFor(account.id)?.terminalStatus !== 'running'"
+              @click="authSessions.cancelSession(authSessions.activeSessionFor(account.id))"
             >
               Cancel
             </v-btn>
           </div>
 
           <p class="accounts-setup__session-status">
-            {{ sessionStatusMessage(activeSessionFor(account.id)) }}
+            {{ sessionStatusMessage(authSessions.activeSessionFor(account.id)) }}
           </p>
 
           <details
-            v-if="activeSessionFor(account.id)?.status === 'failed'"
+            v-if="authSessions.activeSessionFor(account.id)?.status === 'failed'"
             class="accounts-setup__logs"
             open
           >
             <summary>Show login logs</summary>
-            <pre>{{ activeSessionFor(account.id).output }}</pre>
+            <pre>{{ authSessions.activeSessionFor(account.id).output }}</pre>
           </details>
         </div>
       </v-sheet>
@@ -167,25 +167,18 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiCheckCircle,
   mdiRefresh
 } from "@mdi/js";
 import { useAiStudioAccounts } from "@/composables/useAiStudioAccounts.js";
+import { useAccountAuthSessions } from "@/composables/useAccountAuthSessions.js";
 
 const emit = defineEmits(["continue"]);
 
 const accounts = useAiStudioAccounts();
-const activeSessions = reactive({});
-const openedUrls = new Set();
-const preparedBrowserWindows = new Map();
-const localError = ref("");
-const logoutAccountId = ref("");
-
-let pollTimer = null;
-
 const status = computed(() => accounts.status || null);
 const statusReady = computed(() => status.value?.ready === true);
 const accountRows = computed(() => {
@@ -209,18 +202,10 @@ const accountRows = computed(() => {
         }
       ];
 });
-const errorMessage = computed(() => {
-  if (localError.value || accounts.loadError) {
-    return localError.value || accounts.loadError;
-  }
-  return accounts.startAuthCommand.messageType === "error"
-    ? accounts.startAuthCommand.message
-    : "";
+const authSessions = useAccountAuthSessions(accounts, {
+  accountRows
 });
-const authBusy = computed(() => {
-  return Object.values(activeSessions).some((session) => session?.status === "authenticating");
-});
-const logoutBusy = computed(() => Boolean(logoutAccountId.value));
+const errorMessage = computed(() => authSessions.errorMessage);
 
 function accountStatusMessage(account = {}) {
   return account.connected ? `${account.label} is connected.` : `${account.label} is not connected.`;
@@ -239,165 +224,12 @@ function sessionStatusMessage(session = {}) {
   return "Starting login and waiting for the browser URL.";
 }
 
-function activeSessionFor(accountId) {
-  return activeSessions[accountId] || null;
-}
-
-function accountFor(accountId) {
-  return accountRows.value.find((account) => account.id === accountId) || null;
-}
-
-function loginDisabled(account = {}) {
-  return authBusy.value || logoutBusy.value || account.connected === true;
-}
-
-function prepareBrowserWindow(accountId) {
-  try {
-    const browserWindow = window.open("about:blank", "_blank");
-    if (browserWindow) {
-      browserWindow.opener = null;
-      preparedBrowserWindows.set(accountId, browserWindow);
-    }
-  } catch {
-    preparedBrowserWindows.delete(accountId);
-  }
-}
-
-function openAuthUrl(session = {}) {
-  const url = String(session.authUrl || "");
-  if (!url) {
-    return;
-  }
-
-  const openKey = `${session.id}:${url}`;
-  const preparedWindow = preparedBrowserWindows.get(session.account?.id || "");
-  if (!openedUrls.has(openKey) && preparedWindow && !preparedWindow.closed) {
-    preparedWindow.location.href = url;
-    openedUrls.add(openKey);
-    return;
-  }
-  if (!openedUrls.has(openKey)) {
-    window.open(url, "_blank", "noopener");
-    openedUrls.add(openKey);
-  }
-}
-
-function rememberAuthSession(session = {}) {
-  const accountId = session.account?.id || session.account || "";
-  if (!accountId || !session.id) {
-    return;
-  }
-  activeSessions[accountId] = session;
-  openAuthUrl(session);
-}
-
-async function refreshStatus() {
-  await accounts.refresh();
-}
-
-async function startAuth(accountId, mode = "browser") {
-  localError.value = "";
-  if (accountFor(accountId)?.connected === true) {
-    return;
-  }
-  prepareBrowserWindow(accountId);
-  try {
-    const session = await accounts.startAuth(accountId, mode);
-    if (!session?.id) {
-      throw new Error("Login did not return an auth session.");
-    }
-    rememberAuthSession(session);
-    startPolling();
-  } catch (error) {
-    preparedBrowserWindows.get(accountId)?.close?.();
-    preparedBrowserWindows.delete(accountId);
-    localError.value = String(error?.message || error || "Login could not start.");
-  }
-}
-
-async function logoutAccount(accountId) {
-  localError.value = "";
-  logoutAccountId.value = String(accountId || "");
-  try {
-    await accounts.logout(accountId);
-    await refreshStatus();
-  } catch (error) {
-    localError.value = String(error?.message || error || "Logout failed.");
-  } finally {
-    logoutAccountId.value = "";
-  }
-}
-
-async function startBrowserAuth(accountId) {
-  await startAuth(accountId, "browser");
-}
-
-async function startDeviceAuth() {
-  await startAuth("codex", "device");
-}
-
-async function pollAuthSessions() {
-  const sessions = Object.values(activeSessions).filter((session) => session?.id);
-  if (!sessions.length) {
-    stopPolling();
-    return;
-  }
-
-  for (const session of sessions) {
-    const nextSession = await accounts.readAuthSession(session.id);
-    rememberAuthSession(nextSession);
-    if (nextSession.status === "connected") {
-      delete activeSessions[nextSession.account.id];
-      preparedBrowserWindows.delete(nextSession.account.id);
-      await refreshStatus();
-    } else if (nextSession.status === "failed") {
-      preparedBrowserWindows.get(nextSession.account?.id)?.close?.();
-      preparedBrowserWindows.delete(nextSession.account?.id);
-      await refreshStatus();
-    }
-  }
-
-  if (!Object.values(activeSessions).some((session) => session?.status === "authenticating")) {
-    stopPolling();
-  }
-}
-
-function startPolling() {
-  if (pollTimer) {
-    return;
-  }
-  pollTimer = window.setInterval(() => {
-    void pollAuthSessions().catch((error) => {
-      localError.value = String(error?.message || error || "Login polling failed.");
-    });
-  }, 1000);
-}
-
-function stopPolling() {
-  if (!pollTimer) {
-    return;
-  }
-  window.clearInterval(pollTimer);
-  pollTimer = null;
-}
-
-async function cancelSession(session = {}) {
-  if (!session.id) {
-    return;
-  }
-  await accounts.cancelAuthSession(session.id).catch(() => null);
-  if (session.account?.id) {
-    delete activeSessions[session.account.id];
-  }
-  await refreshStatus();
-}
-
 onMounted(() => {
-  void refreshStatus();
+  void authSessions.refreshStatus();
 });
 
 onBeforeUnmount(() => {
-  stopPolling();
+  authSessions.stopPolling();
 });
 </script>
 

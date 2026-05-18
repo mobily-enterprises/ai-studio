@@ -88,13 +88,19 @@ function useAiStudioLaunchControls({
   const launchButtonsDisabled = computed(() => Boolean(valueOf(busy) || terminalRunning.value));
   const openDisabled = computed(() => {
     return Boolean(
-      valueOf(busy) ||
+      launchButtonsDisabled.value ||
       openTargetCommand.isRunning ||
       !openTarget.value.available ||
       !browserCanOpenTarget(openTarget.value)
     );
   });
   const openTitle = computed(() => {
+    if (terminalRunning.value) {
+      return "Wait for the launch terminal to finish.";
+    }
+    if (valueOf(busy)) {
+      return "Wait for the current Studio action to finish.";
+    }
     if (!browserCanOpenTarget(openTarget.value)) {
       return openTarget.value.disabledReason || "Run a launch target first.";
     }

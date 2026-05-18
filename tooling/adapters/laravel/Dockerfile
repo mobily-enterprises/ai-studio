@@ -1,8 +1,10 @@
 ARG AI_STUDIO_BASE_IMAGE=ai-studio-base-toolchain:0.1.0
+ARG DEBIAN_FRONTEND=noninteractive
 
 FROM composer:2 AS composer
 
 FROM ${AI_STUDIO_BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
 
 ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV COMPOSER_HOME=/opt/composer
@@ -35,8 +37,9 @@ RUN mkdir -p /etc/apt/keyrings \
   && mkdir -p "${COMPOSER_HOME}" \
   && chmod -R 0777 "${COMPOSER_HOME}" \
   && composer global require laravel/installer \
-  && php --version \
-  && composer --version \
-  && laravel --version
+  && ln -sf "${COMPOSER_HOME}/vendor/bin/laravel" /usr/local/bin/laravel \
+  && bash -lc "php --version" \
+  && bash -lc "composer --version" \
+  && bash -lc "laravel --version"
 
 WORKDIR /workspace

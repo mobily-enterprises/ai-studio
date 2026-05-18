@@ -312,6 +312,7 @@ test("laravel setup seeds empty targets and selected database environment", asyn
     });
 
     assert.match(command, /laravel new "\$app_dir"/u);
+    assert.match(command, /--no-ansi/u);
     assert.match(command, /--database=sqlite/u);
     assert.match(command, /--phpunit/u);
     assert.match(command, /--pnpm/u);

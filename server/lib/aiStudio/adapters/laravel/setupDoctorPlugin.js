@@ -142,6 +142,7 @@ function laravelNewFlags(config = {}) {
   const testing = selectedTestingFramework(config);
   return [
     "--no-interaction",
+    "--no-ansi",
     "--database=sqlite",
     testing === "phpunit" ? "--phpunit" : "--pest",
     laravelNewPackageManagerFlag(selectedPackageManager(config)),

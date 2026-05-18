@@ -31,6 +31,7 @@ async function checkNodePackageManagerToolchain(toolkit, {
 } = {}) {
   const name = normalizePackageManager(packageManager);
   const displayName = packageManagerDisplayName(name);
+  const toolchainLabel = image || "the managed base toolchain image";
   const result = await toolkit.runToolchain([
     "bash",
     "-lc",
@@ -45,16 +46,16 @@ async function checkNodePackageManagerToolchain(toolkit, {
     return failCheck({
       id,
       label,
-      expected: `${displayName} is available inside the managed base toolchain image.`,
+      expected: `${displayName} is available inside ${toolchainLabel}.`,
       observed: result.output || `${displayName} did not run.`,
-      explanation: "AI Studio runs Node project setup, install, scripts, and launch-target commands inside the managed base toolchain image."
+      explanation: `AI Studio runs Node project setup, install, scripts, and launch-target commands inside ${toolchainLabel}.`
     });
   }
 
   return passCheck({
     id,
     label,
-    expected: `${displayName} is available inside the managed base toolchain image.`,
+    expected: `${displayName} is available inside ${toolchainLabel}.`,
     observed: result.output,
     explanation: "The selected Node package manager is available where Studio runs target commands."
   });
