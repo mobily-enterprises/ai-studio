@@ -308,14 +308,21 @@ function runtimeContainerRunArgs(spec, {
   ];
 }
 
+function displayCommandLine(command = "", {
+  indent = ""
+} = {}) {
+  return `${indent}printf '%s\\n' ${shellQuote(`$ ${command}`)}`;
+}
+
 function volumeCreateLines(spec) {
   return spec.volumes
     .filter((volume) => !volume.source)
     .flatMap((volume) => {
       const volumeName = volumeSource(spec, volume);
+      const command = dockerCommand(["volume", "create", volumeName]);
       return [
-        `echo '$ ${dockerCommand(["volume", "create", volumeName])}'`,
-        `${dockerCommand(["volume", "create", volumeName])} >/dev/null`
+        displayCommandLine(command),
+        `${command} >/dev/null`
       ];
     });
 }
@@ -359,15 +366,21 @@ function runtimeContainerStartScript(descriptor = {}, {
   });
   return [
     "set -e",
-    `echo '$ ${dockerCommand(["network", "create", runtimeNetworkName(spec.targetRoot)])} || true'`,
+    displayCommandLine(`${dockerCommand(["network", "create", runtimeNetworkName(spec.targetRoot)])} || true`),
     `${dockerCommand(["network", "create", runtimeNetworkName(spec.targetRoot)])} >/dev/null 2>&1 || true`,
     ...volumeCreateLines(spec),
     `if ! docker inspect ${shellQuote(spec.containerName)} >/dev/null 2>&1; then`,
-    `  echo '$ ${dockerCommand(runtimeContainerRunArgs(spec, { maskSecrets: true }))}'`,
+    displayCommandLine(dockerCommand(runtimeContainerRunArgs(spec, {
+      maskSecrets: true
+    })), {
+      indent: "  "
+    }),
     `  ${dockerCommand(runtimeContainerRunArgs(spec))}`,
     "else",
     `  if [ "$(docker inspect ${shellQuote(spec.containerName)} --format '{{.State.Running}}')" != "true" ]; then`,
-    `    echo '$ ${dockerCommand(["start", spec.containerName])}'`,
+    displayCommandLine(dockerCommand(["start", spec.containerName]), {
+      indent: "    "
+    }),
     `    docker start ${shellQuote(spec.containerName)}`,
     "  fi",
     ...networkConnectLines(spec),

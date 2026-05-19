@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -6,10 +7,12 @@ import {
   runtimeContainerCommandPreview,
   runtimeContainerName,
   runtimeContainerNetworkDockerArgs,
+  runtimeContainerStartScript,
   runtimeNetworkName
 } from "../../server/lib/aiStudio/runtimeContainers.js";
 import {
   JSKIT_MARIADB_HOST,
+  createJskitMariaDbRuntimeContainer,
   jskitDatabaseDockerArgsForTarget,
   startJskitMariaDbRepair
 } from "../../server/lib/aiStudio/adapters/jskit/setupMariaDbRuntime.js";
@@ -148,5 +151,22 @@ test("jskit declares MariaDB through the generic runtime container layer", async
       runtimeContainerNetworkDockerArgs(targetRoot)[1],
       runtimeNetworkName(targetRoot)
     );
+  });
+});
+
+test("runtime container start script safely displays shell-quoted commands", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const script = runtimeContainerStartScript(createJskitMariaDbRuntimeContainer(), {
+      adapterId: "jskit",
+      targetRoot
+    });
+    const syntax = spawnSync("bash", ["-n"], {
+      encoding: "utf8",
+      input: script
+    });
+
+    assert.equal(syntax.status, 0, syntax.stderr);
+    assert.match(script, /printf '%s\\n'/u);
+    assert.doesNotMatch(script, /echo '\\$ docker run/u);
   });
 });
