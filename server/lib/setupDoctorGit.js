@@ -34,9 +34,14 @@ const GIT_INIT_ACTION_ID = "terminal-git-init";
 const GH_CREATE_REPO_ACTION_ID = "terminal-gh-create-repo";
 const LINK_GITHUB_REMOTE_ACTION_ID = "terminal-link-github-remote";
 const GIT_IDENTITY_ACTION_ID = "terminal-git-identity";
+const ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID = "terminal-add-ai-studio-gitignore-rules";
 const CREATE_GIT_CHECKPOINT_ACTION_ID = "terminal-git-checkpoint";
 const PUSH_GIT_CHECKPOINT_ACTION_ID = "terminal-git-push-checkpoint";
 const DEFAULT_CHECKPOINT_COMMIT_MESSAGE = "Initial project setup";
+const AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS = Object.freeze([
+  ".ai-studio/sessions/",
+  ".ai-studio/runtime/"
+]);
 
 function repoNameFromTargetRoot(targetRoot) {
   return String(path.basename(targetRoot) || "ai-studio-target")
@@ -190,6 +195,36 @@ function validateGitIdentityInputs(inputs = {}) {
     name,
     ok: true
   };
+}
+
+function addAiStudioGitignoreRulesCommandPreview() {
+  return [
+    "touch .gitignore",
+    ...AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.map((pattern) => {
+      return `grep -qxF ${shellQuote(pattern)} .gitignore || printf '%s\\n' ${shellQuote(pattern)} >> .gitignore`;
+    })
+  ].join("\n");
+}
+
+function addAiStudioGitignoreRulesScript() {
+  return shellScript([
+    "set -e",
+    "set -x",
+    "touch .gitignore",
+    ...AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.map((pattern) => {
+      return `grep -qxF ${shellQuote(pattern)} .gitignore || printf '%s\\n' ${shellQuote(pattern)} >> .gitignore`;
+    }),
+    "cat .gitignore"
+  ]);
+}
+
+function addAiStudioGitignoreRulesRepair() {
+  return createRepair({
+    actionId: ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID,
+    autoRun: true,
+    command: addAiStudioGitignoreRulesCommandPreview(),
+    label: "Add AI Studio ignore rules"
+  });
 }
 
 function gitCheckpointScript() {
@@ -396,6 +431,25 @@ function startGitIdentityTerminal({
   return startSetupDoctorDockerTerminal({
     args,
     commandPreview: dockerCommand(args),
+    namespace,
+    targetRoot
+  });
+}
+
+function startAddAiStudioGitignoreRulesTerminal({
+  env = {},
+  extraArgs = hostWritableWorkspaceDockerArgs(),
+  namespace,
+  targetRoot
+} = {}) {
+  const args = setupDoctorTerminalArgs(["bash", "-lc", addAiStudioGitignoreRulesScript()], {
+    extraArgs,
+    targetRoot
+  });
+  return startSetupDoctorDockerTerminal({
+    args,
+    commandPreview: addAiStudioGitignoreRulesCommandPreview(),
+    env,
     namespace,
     targetRoot
   });
@@ -618,6 +672,8 @@ async function readRemoteBranchShaWithGh(targetRoot, repoSlug, branch) {
 }
 
 export {
+  ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID,
+  AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS,
   CREATE_GIT_CHECKPOINT_ACTION_ID,
   DEFAULT_CHECKPOINT_COMMIT_MESSAGE,
   GH_CREATE_REPO_ACTION_ID,
@@ -625,6 +681,9 @@ export {
   GIT_INIT_ACTION_ID,
   LINK_GITHUB_REMOTE_ACTION_ID,
   PUSH_GIT_CHECKPOINT_ACTION_ID,
+  addAiStudioGitignoreRulesCommandPreview,
+  addAiStudioGitignoreRulesRepair,
+  addAiStudioGitignoreRulesScript,
   ghRepoCreateRepair,
   ghRepoCreateScript,
   ghRepoCreateTerminalArgs,
@@ -652,6 +711,7 @@ export {
   remoteHeadIsAncestorOfLocalHead,
   repoNameFromTargetRoot,
   setupDoctorTerminalArgs,
+  startAddAiStudioGitignoreRulesTerminal,
   startGhCreateRepoTerminal,
   startGitCheckpointTerminal,
   startGitIdentityTerminal,

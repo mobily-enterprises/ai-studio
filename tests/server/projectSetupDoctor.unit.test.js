@@ -10,6 +10,10 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID,
+  AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS
+} from "../../server/lib/setupDoctorGit.js";
+import {
   ghRepoCreateScript,
   gitCheckpointScript,
   githubBranchRefApiPath,
@@ -47,6 +51,10 @@ async function createLinkedWorktree() {
   runGit(repoRoot, ["commit", "-m", "Initial commit"]);
   runGit(repoRoot, ["worktree", "add", "-b", "studio-test", worktreeRoot]);
   return worktreeRoot;
+}
+
+async function createGitRepository(root) {
+  runGit(root, ["init", "-b", "main"]);
 }
 
 test("Project Setup hard-stops when a non-git directory already has files", async () => {
@@ -109,6 +117,43 @@ test("Project Setup admits linked Git worktrees before Git safety checks", async
   assert.equal(status.stages.find((stage) => stage.id === "directory")?.status, "pass");
   assert.match(status.stages.find((stage) => stage.id === "directory")?.observed || "", /linked Git metadata/u);
   assert.notEqual(status.currentStageId, "directory");
+});
+
+test("Project Setup blocks before remote setup when AI Studio ignore rules are missing", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-ignore-missing-"));
+  await createGitRepository(targetRoot);
+
+  const status = await inspectProjectSetup({
+    targetRoot
+  });
+
+  const ignoreStage = status.stages.find((stage) => stage.id === "ai-studio-gitignore");
+  assert.equal(status.currentStageId, "ai-studio-gitignore");
+  assert.equal(ignoreStage?.status, "blocked");
+  assert.equal(ignoreStage?.repair?.actionId, ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID);
+  for (const pattern of AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS) {
+    assert.match(ignoreStage?.observed || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+    assert.match(ignoreStage?.repair?.commandPreview || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+  }
+  assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "pending");
+});
+
+test("Project Setup continues to remote setup when AI Studio ignore rules are present", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-ignore-present-"));
+  await createGitRepository(targetRoot);
+  await writeFile(
+    path.join(targetRoot, ".gitignore"),
+    `${AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.join("\n")}\n`,
+    "utf8"
+  );
+
+  const status = await inspectProjectSetup({
+    targetRoot
+  });
+
+  assert.equal(status.stages.find((stage) => stage.id === "ai-studio-gitignore")?.status, "pass");
+  assert.equal(status.currentStageId, "remote-ready");
+  assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "blocked");
 });
 
 test("Project Setup GitHub repo repair links existing repos and only pushes when commits exist", () => {

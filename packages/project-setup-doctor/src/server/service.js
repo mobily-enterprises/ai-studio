@@ -2,6 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import {
   access,
   lstat,
+  readFile,
   readdir
 } from "node:fs/promises";
 import path from "node:path";
@@ -40,8 +41,11 @@ import {
   AI_STUDIO_STATE_DIR
 } from "../../../../server/lib/aiStudio/sessionStore.js";
 import {
+  ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID,
+  AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS,
   CREATE_GIT_CHECKPOINT_ACTION_ID,
   PUSH_GIT_CHECKPOINT_ACTION_ID,
+  addAiStudioGitignoreRulesRepair,
   ghRepoCreateRepair,
   ghRepoCreateScript,
   gitCheckpointRepair,
@@ -58,6 +62,7 @@ import {
   readRemoteBranchShaWithGh,
   readRemoteBranchShaWithGit,
   remoteHeadIsAncestorOfLocalHead,
+  startAddAiStudioGitignoreRulesTerminal as startSharedAddAiStudioGitignoreRulesTerminal,
   startGhCreateRepoTerminal as startSharedGhCreateRepoTerminal,
   startGitCheckpointTerminal as startSharedGitCheckpointTerminal,
   startGitInitTerminal as startSharedGitInitTerminal,
@@ -132,6 +137,14 @@ function projectGitInitRepair(targetRoot) {
   return gitInitRepair(targetRoot, {
     extraArgs: hostWritableWorkspaceDockerArgs()
   });
+}
+
+function missingAiStudioGitignorePatterns(gitignoreText = "") {
+  const lines = new Set(String(gitignoreText || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean));
+  return AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.filter((pattern) => !lines.has(pattern));
 }
 
 async function pluginTerminalActionIsAvailable({
@@ -298,6 +311,43 @@ async function checkGitReady(targetRoot, context) {
     expected: "A non-bare Git repository exists with a named branch.",
     observed: `Branch: ${branch.stdout}`,
     explanation: "Git has the minimum local shape Studio needs."
+  });
+}
+
+async function checkAiStudioGitignore(targetRoot) {
+  let gitignoreText = "";
+  try {
+    gitignoreText = await readFile(path.join(targetRoot, ".gitignore"), "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      return hardStopCheck({
+        id: "ai-studio-gitignore",
+        label: "AI Studio ignore rules",
+        expected: "Target .gitignore can be read before checkpointing.",
+        observed: String(error?.message || error),
+        explanation: "Studio cannot prove local runtime state is excluded from Git until .gitignore is readable."
+      });
+    }
+  }
+
+  const missingPatterns = missingAiStudioGitignorePatterns(gitignoreText);
+  if (missingPatterns.length) {
+    return blockedCheck({
+      id: "ai-studio-gitignore",
+      label: "AI Studio ignore rules",
+      expected: "Target .gitignore excludes AI Studio session and runtime state.",
+      observed: `Missing .gitignore entries:\n${formatList(missingPatterns)}`,
+      explanation: "Add these ignore rules before checkpointing so Studio-owned volatile state is not committed.",
+      repair: addAiStudioGitignoreRulesRepair()
+    });
+  }
+
+  return passCheck({
+    id: "ai-studio-gitignore",
+    label: "AI Studio ignore rules",
+    expected: "Target .gitignore excludes AI Studio session and runtime state.",
+    observed: "Required AI Studio local-state entries are present in .gitignore.",
+    explanation: "Studio session and runtime files are protected from broad Git add operations."
   });
 }
 
@@ -551,6 +601,12 @@ function genericSetupChecks(targetRoot, context) {
       run: () => checkGitReady(targetRoot, context)
     },
     {
+      expected: "Target .gitignore excludes AI Studio session and runtime state.",
+      id: "ai-studio-gitignore",
+      label: "AI Studio ignore rules",
+      run: () => checkAiStudioGitignore(targetRoot)
+    },
+    {
       expected: "origin points at an accessible GitHub repository.",
       id: "remote-ready",
       label: "Remote ready",
@@ -674,6 +730,14 @@ function startLinkRemoteTerminal(targetRoot, input = {}, env = {}) {
   });
 }
 
+function startAiStudioGitignoreTerminal(targetRoot, env = {}) {
+  return startSharedAddAiStudioGitignoreRulesTerminal({
+    env,
+    namespace: TERMINAL_NAMESPACE,
+    targetRoot
+  });
+}
+
 function startGitCheckpointTerminal(targetRoot, input = {}, env = {}, {
   allowCreate = true
 } = {}) {
@@ -784,6 +848,9 @@ function createService({
       }
       if (actionId === "terminal-link-github-remote") {
         return startLinkRemoteTerminal(resolvedTargetRoot, inputs, setupRuntime.configEnvironment);
+      }
+      if (actionId === ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID) {
+        return startAiStudioGitignoreTerminal(resolvedTargetRoot, setupRuntime.configEnvironment);
       }
       if (actionId === CREATE_GIT_CHECKPOINT_ACTION_ID) {
         return startGitCheckpointTerminal(resolvedTargetRoot, inputs, setupRuntime.configEnvironment, {
