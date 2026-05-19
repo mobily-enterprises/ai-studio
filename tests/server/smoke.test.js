@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createServer } from "../../server.js";
+import { createServer, startServer } from "../../server.js";
 import { resolveRuntimeEnv } from "../../server/lib/runtimeEnv.js";
 
 async function withTemporaryPackageRoot(packageName, callback) {
@@ -77,6 +77,21 @@ test("GET /api/health returns built-in health response", async () => {
   assert.equal(response.json().ok, true);
 
   await app.close();
+});
+
+test("started server publishes home as the browser entry URL", async () => {
+  const app = await startServer({
+    host: "127.0.0.1",
+    strictPort: false
+  });
+
+  try {
+    const url = new URL(app.aiStudioUrl);
+    assert.equal(url.hostname, "127.0.0.1");
+    assert.equal(url.pathname, "/home");
+  } finally {
+    await app.close();
+  }
 });
 
 test("current-app route reports the selected target root before project type setup", async () => {

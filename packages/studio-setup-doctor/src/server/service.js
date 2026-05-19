@@ -9,7 +9,7 @@ import {
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
-  createReadyStatusCache
+  createRepositoryReadyStatusCache
 } from "../../../../server/lib/doctorStatusCache.js";
 import {
   areDoctorChecksReady,
@@ -544,9 +544,20 @@ function createStudioRuntimeDoctorPlugin({
   });
 }
 
-function createService({ studioRoot = "" } = {}) {
+function refreshRequested(input = {}) {
+  return input?.refresh === true || input?.refresh === "true" || input?.refresh === "1";
+}
+
+function createService({
+  studioRoot = "",
+  targetRoot = ""
+} = {}) {
   const resolvedStudioRoot = resolveStudioRoot(studioRoot);
-  const readyStatusCache = createReadyStatusCache();
+  const readyStatusCache = createRepositoryReadyStatusCache({
+    doctorId: "studio-setup",
+    studioRoot: resolvedStudioRoot,
+    targetRoot: targetRoot || resolvedStudioRoot
+  });
   const plugins = [
     createStudioRuntimeDoctorPlugin({
       studioRoot: resolvedStudioRoot
@@ -554,17 +565,28 @@ function createService({ studioRoot = "" } = {}) {
   ];
 
   return Object.freeze({
-    async getStatus() {
-      const cachedStatus = readyStatusCache.read();
-      if (cachedStatus) {
-        return cachedStatus;
+    async getStatus(input = {}) {
+      if (!refreshRequested(input)) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
       }
       return readyStatusCache.remember(await inspectStudioSetup({
         plugins
       }));
     },
 
-    async streamStatus({ emit } = {}) {
+    async streamStatus({
+      emit,
+      refresh = false
+    } = {}) {
+      if (!refreshRequested({ refresh })) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
+      }
       return readyStatusCache.remember(await inspectStudioSetup({
         emit,
         plugins

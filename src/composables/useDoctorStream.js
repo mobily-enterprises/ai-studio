@@ -34,6 +34,13 @@ function cloneStatus(status = null, statusItemsKey = "checks") {
   };
 }
 
+function withRefreshQuery(endpoint, refresh = false) {
+  if (!refresh) {
+    return endpoint;
+  }
+  return `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=true`;
+}
+
 function useDoctorStream({
   onRefresh = null,
   onStatusUpdated = null,
@@ -86,14 +93,15 @@ function useDoctorStream({
   }
 
   function startDoctorStream({
-    force = false
+    force = false,
+    refresh = false
   } = {}) {
-    const endpoint = String(streamEndpoint() || "");
+    const endpoint = withRefreshQuery(String(streamEndpoint() || ""), refresh);
     if (!endpoint || !streamEnabled()) {
       return false;
     }
     if (typeof EventSource !== "function") {
-      refreshFallback();
+      refreshFallback({ refresh });
       return false;
     }
     if (!force && eventSource && streamRunning.value && eventSourceEndpoint === endpoint) {
@@ -194,8 +202,8 @@ function useDoctorStream({
   }
 
   function refreshDoctorStatus() {
-    if (!startDoctorStream({ force: true })) {
-      refreshFallback();
+    if (!startDoctorStream({ force: true, refresh: true })) {
+      refreshFallback({ refresh: true });
     }
   }
 

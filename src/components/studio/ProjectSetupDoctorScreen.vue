@@ -32,6 +32,7 @@ import {
   PROJECT_SETUP_STREAM_ENDPOINT,
   PROJECT_SETUP_TERMINAL_ENDPOINT,
   readAccountsStatus,
+  readProjectSetupStatus,
   readStudioSetupStatus,
   readAdapterSetupStatus
 } from "../../lib/studioGateApi.js";
@@ -54,7 +55,10 @@ const lede = computed(() => {
   return `Checking Project Setup for: ${projectSetup.value?.targetRoot || "current directory"}`;
 });
 
-async function loadProjectSetup({ autoStart = true } = {}) {
+async function loadProjectSetup({
+  autoStart = true,
+  refresh = false
+} = {}) {
   loading.value = true;
   errorMessage.value = "";
   streamEnabled.value = false;
@@ -79,6 +83,13 @@ async function loadProjectSetup({ autoStart = true } = {}) {
 
     if (adapterSetup?.ready !== true) {
       emit("select-tab", "adapter-setup");
+      return;
+    }
+
+    if (refresh && typeof EventSource !== "function") {
+      projectSetup.value = await readProjectSetupStatus({
+        refresh: true
+      });
       return;
     }
 

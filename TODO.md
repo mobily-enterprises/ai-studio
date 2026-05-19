@@ -13,3 +13,9 @@ X Allow running of npm scripts, and even picking which scripts are available
 X Make a config screen, one file per config
 Put app online using dokku
 Command for mobile for jskit-ai adapter
+
+
+we need to rename ai-studio into vibe-armor. So: 1) Where we had aiStudio, we should have vibeArmor 2) Where
+  we had ai-studio we should have vibe-armor Basically the software is now called Vibe Armor, this is V0: no
+  back compatibility, no notes in the code that it's "now called this way", the code needs to look like it was
+  ALWAYS calle vibe-armor from day 0.

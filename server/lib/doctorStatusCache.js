@@ -1,4 +1,11 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+
 const DEFAULT_READY_STATUS_CACHE_TTL_MS = 120_000;
+const READY_STATUS_RECORD_SCHEMA_VERSION = 1;
 
 function createReadyStatusCache({
   ttlMs = DEFAULT_READY_STATUS_CACHE_TTL_MS
@@ -34,6 +41,191 @@ function createReadyStatusCache({
   });
 }
 
+function missingPath(error) {
+  return error?.code === "ENOENT" || error?.code === "ENOTDIR";
+}
+
+function normalizeCacheRoot(root) {
+  return path.resolve(String(root || process.cwd()));
+}
+
+function safeCacheId(id = "") {
+  const safe = String(id || "doctor")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  return safe || "doctor";
+}
+
+function defaultDoctorStatusStateRoot({
+  env = process.env,
+  home = os.homedir()
+} = {}) {
+  if (String(env.AI_STUDIO_DOCTOR_STATUS_ROOT || "").trim()) {
+    return normalizeCacheRoot(env.AI_STUDIO_DOCTOR_STATUS_ROOT);
+  }
+  if (String(env.XDG_STATE_HOME || "").trim()) {
+    return path.join(normalizeCacheRoot(env.XDG_STATE_HOME), "ai-studio", "doctor-status");
+  }
+  if (String(env.LOCALAPPDATA || "").trim()) {
+    return path.join(normalizeCacheRoot(env.LOCALAPPDATA), "AI Studio", "doctor-status");
+  }
+
+  return path.join(normalizeCacheRoot(home || process.cwd()), ".local", "state", "ai-studio", "doctor-status");
+}
+
+function readyStatusCacheIdentity({
+  doctorId = "",
+  studioRoot = "",
+  targetRoot = ""
+} = {}) {
+  return {
+    doctorId: String(doctorId || "doctor").trim() || "doctor",
+    studioRoot: studioRoot ? normalizeCacheRoot(studioRoot) : "",
+    targetRoot: normalizeCacheRoot(targetRoot)
+  };
+}
+
+function readyStatusCacheKey(identity) {
+  return JSON.stringify({
+    doctorId: identity.doctorId,
+    studioRoot: identity.studioRoot,
+    targetRoot: identity.targetRoot
+  });
+}
+
+function readyStatusCachePath({
+  doctorId = "",
+  stateRoot = "",
+  studioRoot = "",
+  targetRoot = ""
+} = {}) {
+  const identity = readyStatusCacheIdentity({
+    doctorId,
+    studioRoot,
+    targetRoot
+  });
+  const cacheKey = readyStatusCacheKey(identity);
+  const hash = createHash("sha256").update(cacheKey).digest("hex").slice(0, 32);
+  return {
+    cacheKey,
+    filePath: path.join(
+      normalizeCacheRoot(stateRoot || defaultDoctorStatusStateRoot()),
+      `${safeCacheId(identity.doctorId)}-${hash}.json`
+    ),
+    identity
+  };
+}
+
+function warnReadyStatusCache(operation, filePath, error) {
+  console.warn(
+    `AI Studio doctor ready cache ${operation} failed for ${filePath}: ${String(error?.message || error)}`
+  );
+}
+
+async function readReadyStatusRecord(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch (error) {
+    if (missingPath(error)) {
+      return null;
+    }
+    warnReadyStatusCache("read", filePath, error);
+    return null;
+  }
+}
+
+function recordReadyStatus(record, cacheKey) {
+  if (
+    record?.schemaVersion !== READY_STATUS_RECORD_SCHEMA_VERSION ||
+    record?.cacheKey !== cacheKey ||
+    record?.status?.ready !== true
+  ) {
+    return null;
+  }
+  return record.status;
+}
+
+async function writeReadyStatusRecord(filePath, record) {
+  await mkdir(path.dirname(filePath), {
+    recursive: true
+  });
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
+  );
+  await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await rename(tempPath, filePath);
+}
+
+function createRepositoryReadyStatusCache({
+  doctorId = "",
+  stateRoot = "",
+  studioRoot = "",
+  targetRoot = ""
+} = {}) {
+  let cached = null;
+  const {
+    cacheKey,
+    filePath,
+    identity
+  } = readyStatusCachePath({
+    doctorId,
+    stateRoot,
+    studioRoot,
+    targetRoot
+  });
+
+  async function read() {
+    if (cached?.ready === true) {
+      return cached;
+    }
+
+    const status = recordReadyStatus(await readReadyStatusRecord(filePath), cacheKey);
+    if (status) {
+      cached = status;
+    }
+    return status;
+  }
+
+  async function remember(status) {
+    if (status?.ready === true) {
+      cached = status;
+      try {
+        await writeReadyStatusRecord(filePath, {
+          cacheKey,
+          identity,
+          schemaVersion: READY_STATUS_RECORD_SCHEMA_VERSION,
+          status,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (error) {
+        warnReadyStatusCache("write", filePath, error);
+      }
+      return status;
+    }
+
+    cached = null;
+    try {
+      await rm(filePath, {
+        force: true
+      });
+    } catch (error) {
+      warnReadyStatusCache("clear", filePath, error);
+    }
+    return status;
+  }
+
+  return Object.freeze({
+    filePath,
+    read,
+    remember
+  });
+}
+
 export {
-  createReadyStatusCache
+  createReadyStatusCache,
+  createRepositoryReadyStatusCache,
+  defaultDoctorStatusStateRoot
 };

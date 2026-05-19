@@ -27,6 +27,15 @@ const STUDIO_SETUP_STREAM_ENDPOINT = `${STUDIO_SETUP_ENDPOINT}/stream`;
 const ADAPTER_SETUP_STREAM_ENDPOINT = `${ADAPTER_SETUP_ENDPOINT}/stream`;
 const PROJECT_SETUP_STREAM_ENDPOINT = `${PROJECT_SETUP_ENDPOINT}/stream`;
 
+function withRefreshQuery(endpoint, {
+  refresh = false
+} = {}) {
+  if (!refresh) {
+    return endpoint;
+  }
+  return `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=true`;
+}
+
 function projectTypeQueryKey(surfaceId, ownershipFilter) {
   return ["ai-studio", surfaceId, ownershipFilter, "project-type"];
 }
@@ -43,20 +52,20 @@ function accountsQueryKey(surfaceId, ownershipFilter) {
   return ["ai-studio", surfaceId, ownershipFilter, "accounts"];
 }
 
-async function readAccountsStatus() {
-  return studioHttpClient.get(ACCOUNTS_ENDPOINT);
+async function readAccountsStatus(options = {}) {
+  return studioHttpClient.get(withRefreshQuery(ACCOUNTS_ENDPOINT, options));
 }
 
-async function readStudioSetupStatus() {
-  return studioHttpClient.get(STUDIO_SETUP_ENDPOINT);
+async function readStudioSetupStatus(options = {}) {
+  return studioHttpClient.get(withRefreshQuery(STUDIO_SETUP_ENDPOINT, options));
 }
 
-async function readAdapterSetupStatus() {
-  return studioHttpClient.get(ADAPTER_SETUP_ENDPOINT);
+async function readAdapterSetupStatus(options = {}) {
+  return studioHttpClient.get(withRefreshQuery(ADAPTER_SETUP_ENDPOINT, options));
 }
 
-async function readProjectSetupStatus() {
-  return studioHttpClient.get(PROJECT_SETUP_ENDPOINT);
+async function readProjectSetupStatus(options = {}) {
+  return studioHttpClient.get(withRefreshQuery(PROJECT_SETUP_ENDPOINT, options));
 }
 
 async function readSetupReadinessStatus() {

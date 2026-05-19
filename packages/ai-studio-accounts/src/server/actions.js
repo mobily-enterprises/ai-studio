@@ -26,9 +26,8 @@ const featureActions = Object.freeze([
     },
     observability: {},
     async execute(input, context, deps) {
-      void input;
       void context;
-      return deps.featureService.getStatus();
+      return deps.featureService.getStatus(input);
     }
   },
   {

@@ -67,6 +67,22 @@ async function mockProtectedRouteReady(page) {
 
 async function mockBootstrapBlocked(page) {
   await mockProjectGateReady(page);
+  await page.route("**/api/studio/current-app/setup-readiness", async (route) => {
+    await fulfillJson(route, setupReadinessPayload({
+      currentStage: {
+        id: "studio-setup",
+        label: "Studio Setup"
+      },
+      message: "Studio Setup is not ready.",
+      ready: false,
+      stages: [
+        blockedBootstrapPayload,
+        readyAccountsPayload,
+        readyTargetAppPayload,
+        readyAppSetupPayload
+      ]
+    }));
+  });
   await page.route("**/api/studio/studio-setup", async (route) => {
     await fulfillJson(route, blockedBootstrapPayload);
   });

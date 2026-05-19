@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
-  createReadyStatusCache
+  createReadyStatusCache,
+  createRepositoryReadyStatusCache
 } from "../../server/lib/doctorStatusCache.js";
 
 test("ready status cache reuses only recent ready statuses", () => {
@@ -46,4 +50,57 @@ test("ready status cache clears when a non-ready status is observed", () => {
 
   assert.equal(cache.remember(blockedStatus), blockedStatus);
   assert.equal(cache.read(), null);
+});
+
+test("repository ready status cache persists ready statuses per doctor and target root", async () => {
+  const stateRoot = await mkdtemp(path.join(tmpdir(), "ai-studio-doctor-cache-"));
+
+  try {
+    const targetRoot = path.join(stateRoot, "target");
+    const readyStatus = {
+      checks: [],
+      ready: true,
+      updatedAt: "2026-05-19T00:00:00.000Z"
+    };
+    const cache = createRepositoryReadyStatusCache({
+      doctorId: "project-setup",
+      stateRoot,
+      targetRoot
+    });
+
+    assert.equal(await cache.read(), null);
+    assert.equal(await cache.remember(readyStatus), readyStatus);
+
+    const restored = createRepositoryReadyStatusCache({
+      doctorId: "project-setup",
+      stateRoot,
+      targetRoot
+    });
+    assert.deepEqual(await restored.read(), readyStatus);
+
+    const otherDoctor = createRepositoryReadyStatusCache({
+      doctorId: "adapter-setup",
+      stateRoot,
+      targetRoot
+    });
+    assert.equal(await otherDoctor.read(), null);
+
+    const blockedStatus = {
+      checks: [],
+      ready: false
+    };
+    assert.equal(await restored.remember(blockedStatus), blockedStatus);
+
+    const cleared = createRepositoryReadyStatusCache({
+      doctorId: "project-setup",
+      stateRoot,
+      targetRoot
+    });
+    assert.equal(await cleared.read(), null);
+  } finally {
+    await rm(stateRoot, {
+      force: true,
+      recursive: true
+    });
+  }
 });

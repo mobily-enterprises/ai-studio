@@ -16,7 +16,7 @@ import {
   runDoctorStep
 } from "../../../../server/lib/doctorStream.js";
 import {
-  createReadyStatusCache
+  createRepositoryReadyStatusCache
 } from "../../../../server/lib/doctorStatusCache.js";
 import {
   isGithubRemoteUrl,
@@ -75,6 +75,10 @@ function isAdapterSetupReady(checks) {
 
 function normalizeRoot(root) {
   return path.resolve(String(root || process.cwd()));
+}
+
+function refreshRequested(input = {}) {
+  return input?.refresh === true || input?.refresh === "true" || input?.refresh === "1";
 }
 
 function pathIsInside(parentPath, childPath) {
@@ -691,13 +695,19 @@ function createService({
 } = {}) {
   const resolvedStudioRoot = normalizeRoot(studioRoot);
   const resolvedTargetRoot = normalizeRoot(targetRoot);
-  const readyStatusCache = createReadyStatusCache();
+  const readyStatusCache = createRepositoryReadyStatusCache({
+    doctorId: "adapter-setup",
+    studioRoot: resolvedStudioRoot,
+    targetRoot: resolvedTargetRoot
+  });
 
   return Object.freeze({
-    async getStatus() {
-      const cachedStatus = readyStatusCache.read();
-      if (cachedStatus) {
-        return cachedStatus;
+    async getStatus(input = {}) {
+      if (!refreshRequested(input)) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
       }
       return readyStatusCache.remember(await inspectAdapterSetup({
         projectService,
@@ -706,7 +716,16 @@ function createService({
       }));
     },
 
-    async streamStatus({ emit } = {}) {
+    async streamStatus({
+      emit,
+      refresh = false
+    } = {}) {
+      if (!refreshRequested({ refresh })) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
+      }
       return readyStatusCache.remember(await inspectAdapterSetup({
         emit,
         projectService,

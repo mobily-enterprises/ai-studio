@@ -251,8 +251,8 @@ const {
   streamError,
   streamRunning
 } = useDoctorStream({
-  onRefresh() {
-    emit("refresh");
+  onRefresh(options = {}) {
+    emit("refresh", options);
   },
   onStatusUpdated(status) {
     emit("status-updated", status);

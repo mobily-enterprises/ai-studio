@@ -142,7 +142,7 @@ function browserUrlForListenAddress(address = "") {
   if (["0.0.0.0", "[::]"].includes(url.hostname)) {
     url.hostname = "127.0.0.1";
   }
-  return `${url.origin}/`;
+  return `${url.origin}/home`;
 }
 
 function registerTerminalWebSocketRoute(

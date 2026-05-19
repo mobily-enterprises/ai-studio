@@ -11,6 +11,9 @@ import {
   buildDoctorToolchainArgs
 } from "../../../../server/lib/doctorToolchain.js";
 import {
+  createRepositoryReadyStatusCache
+} from "../../../../server/lib/doctorStatusCache.js";
+import {
   aiStudioResult
 } from "../../../../server/lib/aiStudio/serverResponses.js";
 import {
@@ -50,6 +53,10 @@ function accountsResult(operation) {
     fallbackCode: "ai_studio_accounts_request_failed",
     fallbackMessage: "AI Studio accounts request failed."
   });
+}
+
+function refreshRequested(input = {}) {
+  return input?.refresh === true || input?.refresh === "true" || input?.refresh === "1";
 }
 
 function cleanOutput(output = "") {
@@ -200,13 +207,15 @@ function accountConnected({
   };
 }
 
-async function runToolchain(commandArgs, options = {}) {
+async function runDefaultToolchain(commandArgs, options = {}) {
   return runHostCommand("docker", statusArgs(commandArgs), {
     timeout: options.timeout || 20_000
   });
 }
 
-async function readGithubStatus() {
+async function readGithubStatus({
+  runToolchain = runDefaultToolchain
+} = {}) {
   const [statusResult, userResult] = await Promise.all([
     runToolchain(["gh", "auth", "status", "--hostname", "github.com"]),
     runToolchain(["gh", "api", "user", "--jq", ".login"])
@@ -235,7 +244,9 @@ async function readGithubStatus() {
   });
 }
 
-async function readCodexStatus() {
+async function readCodexStatus({
+  runToolchain = runDefaultToolchain
+} = {}) {
   const result = await runToolchain(["codex", "login", "status"]);
 
   if (!result.ok) {
@@ -313,10 +324,17 @@ function publicAuthSession({
 }
 
 function createService({
+  readyStatusCacheRoot = "",
+  runToolchain = runDefaultToolchain,
   targetRoot = ""
 } = {}) {
   const resolvedTargetRoot = resolveAiStudioAccountsRoot(targetRoot);
   const authSessions = new Map();
+  const readyStatusCache = createRepositoryReadyStatusCache({
+    doctorId: "accounts",
+    stateRoot: readyStatusCacheRoot,
+    targetRoot: resolvedTargetRoot
+  });
 
   function authMetadata(sessionId = "") {
     return authSessions.get(sessionId) || null;
@@ -324,18 +342,26 @@ function createService({
 
   async function accountStatus(accountId) {
     if (accountId === "github") {
-      return readGithubStatus();
+      return readGithubStatus({
+        runToolchain
+      });
     }
     if (accountId === "codex") {
-      return readCodexStatus();
+      return readCodexStatus({
+        runToolchain
+      });
     }
     throw new Error(`Unknown account: ${accountId}`);
   }
 
   async function accountsStatus() {
     const accounts = await Promise.all([
-      readCodexStatus(),
-      readGithubStatus()
+      readCodexStatus({
+        runToolchain
+      }),
+      readGithubStatus({
+        runToolchain
+      })
     ]);
     const ready = accounts.every((account) => account.required !== true || account.connected === true);
 
@@ -429,8 +455,16 @@ function createService({
   }
 
   return Object.freeze({
-    async getStatus() {
-      return accountsResult(accountsStatus);
+    async getStatus(input = {}) {
+      return accountsResult(async () => {
+        if (!refreshRequested(input)) {
+          const cachedStatus = await readyStatusCache.read();
+          if (cachedStatus) {
+            return cachedStatus;
+          }
+        }
+        return readyStatusCache.remember(await accountsStatus());
+      });
     },
 
     async startAuth(input = {}) {
@@ -465,6 +499,11 @@ function createService({
           timeout: 30_000
         });
         const account = await accountStatus(accountId);
+        if (result.ok && account.connected !== true) {
+          await readyStatusCache.remember({
+            ready: false
+          });
+        }
         return {
           account,
           ok: result.ok,

@@ -6,6 +6,10 @@ const statusQueryInputValidator = deepFreeze({
     verbose: {
       type: "boolean",
       required: false
+    },
+    refresh: {
+      type: "boolean",
+      required: false
     }
   }),
   mode: "patch"

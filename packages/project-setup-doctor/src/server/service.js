@@ -14,7 +14,7 @@ import {
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
-  createReadyStatusCache
+  createRepositoryReadyStatusCache
 } from "../../../../server/lib/doctorStatusCache.js";
 import {
   listDoctorPluginChecks,
@@ -84,6 +84,10 @@ function assertUniqueCheckIds(checks) {
     }
     seen.add(check.id);
   }
+}
+
+function refreshRequested(input = {}) {
+  return input?.refresh === true || input?.refresh === "true" || input?.refresh === "1";
 }
 
 function finalizeStatus({
@@ -689,7 +693,11 @@ function createService({
 } = {}) {
   const resolvedTargetRoot = path.resolve(String(targetRoot || process.cwd()));
   const resolvedStudioRoot = path.resolve(String(studioRoot || process.cwd()));
-  const readyStatusCache = createReadyStatusCache();
+  const readyStatusCache = createRepositoryReadyStatusCache({
+    doctorId: "project-setup",
+    studioRoot: resolvedStudioRoot,
+    targetRoot: resolvedTargetRoot
+  });
 
   async function loadAdapterSetupRuntime() {
     if (!projectService || typeof projectService.createRuntime !== "function") {
@@ -725,10 +733,12 @@ function createService({
   }
 
   return Object.freeze({
-    async getStatus() {
-      const cachedStatus = readyStatusCache.read();
-      if (cachedStatus) {
-        return cachedStatus;
+    async getStatus(input = {}) {
+      if (!refreshRequested(input)) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
       }
       const setupRuntime = await loadAdapterSetupRuntime();
       return readyStatusCache.remember(await inspectProjectSetup({
@@ -740,7 +750,16 @@ function createService({
       }));
     },
 
-    async streamStatus({ emit } = {}) {
+    async streamStatus({
+      emit,
+      refresh = false
+    } = {}) {
+      if (!refreshRequested({ refresh })) {
+        const cachedStatus = await readyStatusCache.read();
+        if (cachedStatus) {
+          return cachedStatus;
+        }
+      }
       const setupRuntime = await loadAdapterSetupRuntime();
       return readyStatusCache.remember(await inspectProjectSetup({
         config: setupRuntime.config,

@@ -31,6 +31,7 @@ import {
   ADAPTER_SETUP_STREAM_ENDPOINT,
   ADAPTER_SETUP_TERMINAL_ENDPOINT,
   readAccountsStatus,
+  readAdapterSetupStatus,
   readStudioSetupStatus
 } from "../../lib/studioGateApi.js";
 
@@ -53,7 +54,10 @@ const lede = computed(() => {
   return `Checking Adapter Setup for: ${adapterSetup.value?.targetRoot || "current directory"}`;
 });
 
-async function loadAdapterSetup({ autoStart = true } = {}) {
+async function loadAdapterSetup({
+  autoStart = true,
+  refresh = false
+} = {}) {
   loading.value = true;
   errorMessage.value = "";
   streamEnabled.value = false;
@@ -71,6 +75,13 @@ async function loadAdapterSetup({ autoStart = true } = {}) {
 
     if (accounts?.ready !== true) {
       emit("select-tab", "accounts");
+      return;
+    }
+
+    if (refresh && typeof EventSource !== "function") {
+      adapterSetup.value = await readAdapterSetupStatus({
+        refresh: true
+      });
       return;
     }
 

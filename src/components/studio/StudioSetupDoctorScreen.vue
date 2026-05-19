@@ -46,12 +46,16 @@ const lede = computed(() => {
   return "Machine runtime must be ready before Studio can operate on the target project.";
 });
 
-async function loadStudioSetup() {
+async function loadStudioSetup({
+  refresh = false
+} = {}) {
   loading.value = true;
   errorMessage.value = "";
 
   try {
-    studioSetup.value = await readStudioSetupStatus();
+    studioSetup.value = await readStudioSetupStatus({
+      refresh
+    });
   } catch (error) {
     errorMessage.value = String(error?.message || error || "Studio Setup check failed.");
   } finally {

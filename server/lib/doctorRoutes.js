@@ -22,6 +22,10 @@ function sendServiceResponse(reply, response, {
   reply.code(response?.ok === false ? failureStatus : 200).send(response);
 }
 
+function requestQuery(request) {
+  return request?.input?.query || request?.query || {};
+}
+
 function registerDoctorRoutes(
   app,
   {
@@ -86,7 +90,8 @@ function registerDoctorRoutes(
       meta: {
         tags,
         summary: streamSummary
-      }
+      },
+      query: queryValidator
     },
     async function (request, reply) {
       if (!requireLocalDoctorRequest(request, reply, localRequestMessage)) {
@@ -94,6 +99,7 @@ function registerDoctorRoutes(
       }
       await sendDoctorEventStream(reply, ({ emit }) => {
         return service().streamStatus({
+          ...requestQuery(request),
           emit
         });
       });

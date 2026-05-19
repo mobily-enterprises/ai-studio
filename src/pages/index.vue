@@ -15,7 +15,7 @@ import { useRouter } from "vue-router";
 const router = useRouter();
 
 onMounted(async () => {
-  await router.replace("/setup");
+  await router.replace("/home");
 });
 </script>
 

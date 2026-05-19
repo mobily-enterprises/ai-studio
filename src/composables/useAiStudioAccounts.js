@@ -1,4 +1,4 @@
-import { computed, proxyRefs } from "vue";
+import { computed, proxyRefs, ref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
@@ -22,12 +22,14 @@ function accountsResourceQueryKey() {
 }
 
 function useAiStudioAccounts() {
+  const forceRefresh = ref(false);
   const statusResource = useEndpointResource({
     client: studioHttpClient,
     enabled: true,
     fallbackLoadError: "Account status could not load.",
     path: ACCOUNTS_ENDPOINT,
     queryKey: accountsResourceQueryKey(),
+    readQuery: computed(() => forceRefresh.value ? { refresh: true } : null),
     refreshOnPull: true
   });
 
@@ -74,12 +76,21 @@ function useAiStudioAccounts() {
     });
   }
 
+  async function refresh() {
+    forceRefresh.value = true;
+    try {
+      return await statusResource.reload();
+    } finally {
+      forceRefresh.value = false;
+    }
+  }
+
   return proxyRefs({
     cancelAuthSession,
     isLoading: statusResource.isLoading,
     loadError: statusResource.loadError,
     readAuthSession,
-    refresh: statusResource.reload,
+    refresh,
     logout,
     startAuth,
     startAuthCommand,
