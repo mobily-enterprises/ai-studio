@@ -1,0 +1,6 @@
+{{systemStandard}}
+
+Generic Node web app deep UI guidance:
+- Use detected client-library and framework hints to locate the real UI entrypoints, routes, components, and build/dev scripts.
+- Check the user-facing behavior affected by the change, including responsive layout, loading/error states, forms, navigation, and browser console issues.
+- Fix clear UI defects directly when they are scoped and report runtime gaps when no launch script is available.

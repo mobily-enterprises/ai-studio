@@ -1,0 +1,17 @@
+{{systemStandard}}
+
+Generic Node web app context:
+- Client library: {{adapter.promptContext.client_library_label}} ({{adapter.promptContext.client_library_source}})
+- Detected client libraries: {{adapter.promptContext.detected_client_libraries}}
+- Framework hints: {{adapter.promptContext.framework_hints}}
+- Source locations: {{adapter.promptContext.source_locations}}
+- Entrypoint files: {{adapter.promptContext.entrypoint_files}}
+- Config files: {{adapter.promptContext.config_files}}
+- Package scripts: {{adapter.promptContext.package_scripts}}
+- Preferred automated check: {{adapter.promptContext.automated_check_script}}
+
+Generic Node web guidance:
+- Treat package.json, lockfiles, existing scripts, and detected source layout as the project contract.
+- Do not assume a specific framework when the adapter facts are ambiguous; inspect before changing framework boundaries.
+- Preserve the selected client-library context and avoid introducing a second frontend stack unless the requested change requires it.
+- Prefer existing package scripts for install, dev, build, test, lint, preview, and verification.

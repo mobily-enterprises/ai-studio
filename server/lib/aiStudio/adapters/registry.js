@@ -16,6 +16,9 @@ import {
   NEXTJS_ADAPTER_MANIFEST
 } from "./nextjs/manifest.js";
 import {
+  GENERIC_NODE_WEB_ADAPTER_MANIFEST
+} from "./node-web/manifest.js";
+import {
   VINEXT_ADAPTER_MANIFEST
 } from "./vinext/manifest.js";
 
@@ -25,12 +28,6 @@ const DISABLED_ADAPTER_MANIFESTS = deepFreeze([
     enabled: false,
     id: "python",
     label: "Python"
-  },
-  {
-    disabledReason: "Generic web adapter is not implemented yet.",
-    enabled: false,
-    id: "web",
-    label: "Generic web"
   }
 ]);
 
@@ -39,6 +36,7 @@ const DEFAULT_ADAPTER_MANIFESTS = deepFreeze([
   CPP_ADAPTER_MANIFEST,
   LARAVEL_ADAPTER_MANIFEST,
   NEXTJS_ADAPTER_MANIFEST,
+  GENERIC_NODE_WEB_ADAPTER_MANIFEST,
   VINEXT_ADAPTER_MANIFEST,
   ...DISABLED_ADAPTER_MANIFESTS
 ]);

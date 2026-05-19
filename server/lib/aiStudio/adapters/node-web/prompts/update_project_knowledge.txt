@@ -1,0 +1,6 @@
+{{systemStandard}}
+
+Generic Node web app project-knowledge guidance:
+- Update the project knowledge artifact referenced by the adapter prompt context.
+- Preserve useful facts about package manager, module format, client library, framework hints, source locations, config files, scripts, and verification commands.
+- Remove stale claims and keep unknowns explicit rather than guessing.

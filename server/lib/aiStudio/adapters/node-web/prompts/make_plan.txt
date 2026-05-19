@@ -1,0 +1,17 @@
+{{systemStandard}}
+
+Create the implementation plan for this generic Node web app.
+
+Generic Node web app context:
+- Client library: {{adapter.promptContext.client_library_label}} ({{adapter.promptContext.client_library_source}})
+- Detected client libraries: {{adapter.promptContext.detected_client_libraries}}
+- Framework hints: {{adapter.promptContext.framework_hints}}
+- Source locations: {{adapter.promptContext.source_locations}}
+- Entrypoint files: {{adapter.promptContext.entrypoint_files}}
+- Config files: {{adapter.promptContext.config_files}}
+- Package scripts: {{adapter.promptContext.package_scripts}}
+
+Planning guidance:
+- First identify the actual framework, router, build tool, state layer, and test setup from files and package metadata.
+- Keep the plan scoped to the existing app shape rather than replacing it with a guessed framework convention.
+- Include the focused verification path using available package scripts.

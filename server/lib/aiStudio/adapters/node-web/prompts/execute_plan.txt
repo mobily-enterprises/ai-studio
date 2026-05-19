@@ -1,0 +1,14 @@
+{{systemStandard}}
+
+Generic Node web app context:
+- Client library: {{adapter.promptContext.client_library_label}} ({{adapter.promptContext.client_library_source}})
+- Framework hints: {{adapter.promptContext.framework_hints}}
+- Source locations: {{adapter.promptContext.source_locations}}
+- Config files: {{adapter.promptContext.config_files}}
+- Package scripts: {{adapter.promptContext.package_scripts}}
+
+Implementation guidance:
+- Preserve the existing package manager, module format, source layout, build tool, and scripts.
+- Inspect local conventions before adding files; unknown Node web apps often encode framework behavior in project-specific structure.
+- Keep browser-only code, server-only code, API handlers, and environment access in the boundaries already used by the app.
+- Run the narrowest relevant package script that proves the change.

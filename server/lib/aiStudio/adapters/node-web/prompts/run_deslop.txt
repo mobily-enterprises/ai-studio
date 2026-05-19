@@ -1,0 +1,6 @@
+{{systemStandard}}
+
+Generic Node web app review guidance:
+- Review against the actual package metadata, source layout, client library, framework hints, and package scripts.
+- Flag guessed framework conventions, duplicated stacks, unverified runtime assumptions, and checks that do not match package.json.
+- Fix clear scoped issues directly and preserve existing project conventions.

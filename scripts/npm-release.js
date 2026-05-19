@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import process from "node:process";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_BUMP_TYPE = "patch";
-const DEFAULT_REGISTRY = "https://registry.npmjs.org/";
-const VALID_BUMP_TYPES = new Set(["major", "minor", "patch"]);
+const DEFAULT_ACCESS = "public";
+const DEFAULT_BUMP = "patch";
+const DEFAULT_REGISTRY = "https://registry.npmjs.org";
+const DEFAULT_TAG = "latest";
+const VALID_BUMPS = new Set(["major", "minor", "patch"]);
 
 function log(message) {
   process.stdout.write(`[release] ${message}\n`);
@@ -19,45 +22,18 @@ function fail(message) {
   process.exit(1);
 }
 
-function run(command, args, {
-  check = true,
-  quiet = false
-} = {}) {
+function run(command, args, { check = true, quiet = false } = {}) {
   const result = spawnSync(command, args, {
     cwd: ROOT,
     encoding: "utf8",
-    stdio: quiet ? ["ignore", "pipe", "pipe"] : "inherit"
+    stdio: quiet ? ["ignore", "pipe", "pipe"] : ["ignore", "inherit", "inherit"]
   });
+
   if (check && result.status !== 0) {
     process.exit(result.status || 1);
   }
+
   return result;
-}
-
-function optionValue(args, optionName) {
-  const inlinePrefix = `${optionName}=`;
-  const inline = args.find((arg) => arg.startsWith(inlinePrefix));
-  if (inline) {
-    return inline.slice(inlinePrefix.length).trim();
-  }
-  const index = args.indexOf(optionName);
-  return index >= 0 ? String(args[index + 1] || "").trim() : "";
-}
-
-function withoutReleaseOptions(args) {
-  const filtered = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--bump") {
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith("--bump=") || arg === "--no-bump") {
-      continue;
-    }
-    filtered.push(arg);
-  }
-  return filtered;
 }
 
 function readPackageJson() {
@@ -68,23 +44,157 @@ function packageSpec(packageJson) {
   return `${packageJson.name}@${packageJson.version}`;
 }
 
-function versionExists(spec, registry) {
-  const publishedVersion = run("npm", ["view", spec, "version", "--registry", registry], {
-    check: false,
-    quiet: true
+function normalizeRegistryUrl(registry) {
+  const value = String(registry || "").trim();
+  const withScheme = /^[a-z]+:\/\//iu.test(value) ? value : `https://${value}`;
+  return withScheme.replace(/\/+$/u, "");
+}
+
+function parseValueArg(argv, index, optionName) {
+  const value = String(argv[index + 1] || "").trim();
+  if (!value) {
+    throw new Error(`${optionName} requires a value.`);
+  }
+  return value;
+}
+
+function parseArgs(argv) {
+  const options = {
+    access: DEFAULT_ACCESS,
+    bump: DEFAULT_BUMP,
+    dryRun: false,
+    help: false,
+    registry: DEFAULT_REGISTRY,
+    tag: DEFAULT_TAG
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--help" || arg === "help") {
+      options.help = true;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+
+    if (arg === "--access") {
+      options.access = parseValueArg(argv, index, "--access");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--access=")) {
+      options.access = arg.slice("--access=".length).trim();
+      continue;
+    }
+
+    if (arg === "--bump") {
+      options.bump = parseValueArg(argv, index, "--bump");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--bump=")) {
+      options.bump = arg.slice("--bump=".length).trim();
+      continue;
+    }
+
+    if (arg === "--registry") {
+      options.registry = parseValueArg(argv, index, "--registry");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--registry=")) {
+      options.registry = arg.slice("--registry=".length).trim();
+      continue;
+    }
+
+    if (arg === "--tag") {
+      options.tag = parseValueArg(argv, index, "--tag");
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--tag=")) {
+      options.tag = arg.slice("--tag=".length).trim();
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  options.registry = normalizeRegistryUrl(options.registry);
+  if (!options.access) {
+    throw new Error("Missing --access value.");
+  }
+  if (!VALID_BUMPS.has(options.bump)) {
+    throw new Error(`Invalid --bump value "${options.bump}". Use patch, minor, or major.`);
+  }
+  if (!options.tag) {
+    throw new Error("Missing --tag value.");
+  }
+
+  return options;
+}
+
+function packageScope(packageName) {
+  const match = /^(@[^/]+)\//u.exec(String(packageName || ""));
+  return match?.[1] || "";
+}
+
+function createNpmUserConfig({ packageName, registry, token }) {
+  const normalizedToken = String(token || "").trim();
+  if (!normalizedToken) {
+    fail(authHelp(registry));
+  }
+
+  const registryUrl = new URL(registry);
+  const registryWithSlash = `${registryUrl.origin}${registryUrl.pathname}`.replace(/\/+$/u, "/");
+  const authHost = `${registryUrl.host}${registryUrl.pathname}`.replace(/\/+$/u, "");
+  const scope = packageScope(packageName);
+  const directory = mkdtempSync(path.join(os.tmpdir(), "vibe-armor-npmrc-"));
+  const configPath = path.join(directory, "npmrc");
+  const lines = [
+    scope ? `${scope}:registry=${registryWithSlash}` : "",
+    `registry=${registryWithSlash}`,
+    `//${authHost}/:_authToken=${normalizedToken}`
+  ].filter(Boolean);
+
+  writeFileSync(configPath, `${lines.join("\n")}\n`, {
+    encoding: "utf8",
+    mode: 0o600
   });
-  if (publishedVersion.status === 0 && String(publishedVersion.stdout || "").trim()) {
-    return true;
-  }
-  if (publishedVersion.status !== 0 && !String(publishedVersion.stderr || "").includes("E404")) {
-    fail(`could not check whether ${spec} is already published:\n${String(publishedVersion.stderr || "").trim()}`);
-  }
-  return false;
+
+  return {
+    cleanup() {
+      rmSync(directory, {
+        force: true,
+        recursive: true
+      });
+    },
+    path: configPath
+  };
+}
+
+function authHelp(registry) {
+  return [
+    `NPM_TOKEN is required to publish to ${registry}.`,
+    "Create a granular npm token with read/write access to this package.",
+    "Enable the token's Bypass 2FA option so npm publish cannot prompt for OTP.",
+    "Then run:",
+    "  export NPM_TOKEN=npm_xxx",
+    "  npm run release"
+  ].join("\n");
 }
 
 function printHelp() {
   process.stdout.write([
-    "Publish the current package version to npm.",
+    "Bump the package version and publish to npm.",
     "",
     "Usage:",
     "  npm run release",
@@ -93,108 +203,87 @@ function printHelp() {
     "  npm run release -- --bump minor",
     "",
     "Auth:",
-    "  Uses npm's normal auth: NODE_AUTH_TOKEN or an npm auth token in ~/.npmrc.",
-    "  To create a token, open https://www.npmjs.com/settings/<npm-user>/tokens",
-    "  and create an Automation token or a granular token with publish access.",
+    "  Requires NPM_TOKEN.",
+    "  Create a granular npm token with read/write package access.",
+    "  Enable the token's Bypass 2FA option to avoid npm's interactive publish prompt.",
     "",
     "Notes:",
     "  Stock npm does not support `npm release`; use `npm run release`.",
-    "  If the current package version is already published, release bumps patch by default.",
-    "  Pass --bump patch|minor|major to choose the automatic bump type."
+    "  Release bumps patch by default before publishing.",
+    "  Pass --bump patch|minor|major to choose the bump type."
   ].join("\n"));
   process.stdout.write("\n");
 }
 
-function authHelp(registry) {
-  return [
-    `npm auth is not ready for ${registry}.`,
-    "Create an npm access token at https://www.npmjs.com/settings/<npm-user>/tokens.",
-    "Use an Automation token, or a granular token with publish access to this package.",
-    "Then either:",
-    "  export NODE_AUTH_TOKEN=npm_xxx",
-    `  npm config set //${new URL(registry).host}/:_authToken npm_xxx`
-  ].join("\n");
+function assertCleanWorktree() {
+  const gitRoot = run("git", ["rev-parse", "--show-toplevel"], {
+    check: false,
+    quiet: true
+  });
+  if (gitRoot.status !== 0) {
+    return;
+  }
+
+  const status = run("git", ["status", "--porcelain"], {
+    quiet: true
+  });
+  if (String(status.stdout || "").trim()) {
+    fail("worktree is not clean. Commit or stash changes before releasing; release creates the version bump itself.");
+  }
 }
 
-const args = process.argv.slice(2);
-if (args.includes("--help") || args.includes("help")) {
+function bumpPackageVersion(bump) {
+  log(`bumping ${bump} version.`);
+  run("npm", ["version", bump, "--no-git-tag-version"]);
+  return readPackageJson();
+}
+
+let options;
+try {
+  options = parseArgs(process.argv.slice(2));
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+
+if (options.help) {
   printHelp();
   process.exit(0);
 }
 
 let packageJson = readPackageJson();
-const registry = optionValue(args, "--registry") || DEFAULT_REGISTRY;
-const bumpType = optionValue(args, "--bump") || DEFAULT_BUMP_TYPE;
-const dryRun = args.includes("--dry-run");
-const noBump = args.includes("--no-bump");
-
-if (!VALID_BUMP_TYPES.has(bumpType)) {
-  fail(`invalid --bump value "${bumpType}". Use patch, minor, or major.`);
-}
-
 if (packageJson.private) {
   fail("package.json is private; refusing to publish.");
 }
 
 log(`preparing ${packageSpec(packageJson)}`);
+if (options.dryRun) {
+  log(`dry-run mode would bump ${options.bump} version and publish to ${options.registry} with tag ${options.tag}.`);
+  log("dry-run complete. No files changed or published.");
+  process.exit(0);
+}
 
-const gitRoot = run("git", ["rev-parse", "--show-toplevel"], {
-  check: false,
-  quiet: true
+assertCleanWorktree();
+
+const npmConfig = createNpmUserConfig({
+  packageName: packageJson.name,
+  registry: options.registry,
+  token: process.env.NPM_TOKEN
 });
-if (gitRoot.status === 0) {
-  const status = run("git", ["status", "--porcelain"], {
-    quiet: true
-  });
-  if (String(status.stdout || "").trim()) {
-    fail("worktree is not clean. Commit or stash changes before publishing.");
-  }
 
-  const branch = run("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-    quiet: true
-  });
-  if (String(branch.stdout || "").trim() !== "main") {
-    fail(`current branch is "${String(branch.stdout || "").trim()}". Switch to main before publishing.`);
-  }
+try {
+  packageJson = bumpPackageVersion(options.bump);
+  run("npm", [
+    "publish",
+    "--access",
+    options.access,
+    "--registry",
+    options.registry,
+    "--tag",
+    options.tag,
+    "--userconfig",
+    npmConfig.path
+  ]);
+  log(`published ${packageSpec(packageJson)}.`);
+} finally {
+  npmConfig.cleanup();
 }
-
-if (!dryRun) {
-  const whoami = run("npm", ["whoami", "--registry", registry], {
-    check: false,
-    quiet: true
-  });
-  if (whoami.status !== 0) {
-    fail(authHelp(registry));
-  }
-  log(`npm auth ok as ${String(whoami.stdout || "").trim()}`);
-}
-
-if (versionExists(packageSpec(packageJson), registry)) {
-  if (noBump) {
-    fail(`${packageSpec(packageJson)} is already published.`);
-  }
-
-  if (dryRun) {
-    log(`${packageSpec(packageJson)} is already published; dry-run mode would bump ${bumpType} before publishing.`);
-  } else {
-    log(`${packageSpec(packageJson)} is already published; bumping ${bumpType} version.`);
-    run("npm", ["version", bumpType, "--no-git-tag-version"]);
-    packageJson = readPackageJson();
-    log(`bumped to ${packageSpec(packageJson)}`);
-    if (versionExists(packageSpec(packageJson), registry)) {
-      fail(`${packageSpec(packageJson)} is already published after bumping. Bump again or choose --bump minor|major.`);
-    }
-  }
-}
-
-const publishArgs = [
-  "publish",
-  "--access",
-  "public",
-  "--registry",
-  registry,
-  ...withoutReleaseOptions(args)
-];
-
-run("npm", publishArgs);
-log(`published ${packageSpec(packageJson)}.`);

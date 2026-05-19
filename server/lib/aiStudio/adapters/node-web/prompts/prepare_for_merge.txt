@@ -1,0 +1,6 @@
+{{systemStandard}}
+
+Generic Node web app merge-preparation guidance:
+- Inspect only what is needed to decide whether the PR is mergeable in this package.json-based app.
+- Resolve local merge blockers, failing focused checks, package-script issues, or source-layout inconsistencies when clearly in scope.
+- Report remaining risks when framework behavior could not be verified locally.
