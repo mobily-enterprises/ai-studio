@@ -63,6 +63,14 @@ function aiStudioLaunchTerminalPath(sessionsApiPath = "", sessionId = "", termin
   );
 }
 
+function aiStudioShellTerminalPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
+  return aiStudioSessionPath(
+    sessionsApiPath,
+    sessionId,
+    terminalSessionId ? `/shell-terminal/${encodePathSegment(terminalSessionId)}` : "/shell-terminal"
+  );
+}
+
 function aiStudioArtifactsQueryKey(surfaceId, ownershipFilter, sessionId = "", actionId = "") {
   const key = [
     "ai-studio",
@@ -112,6 +120,7 @@ export {
   aiStudioLaunchTargetsQueryKey,
   aiStudioLaunchTerminalPath,
   aiStudioSessionPath,
+  aiStudioShellTerminalPath,
   aiStudioSessionsQueryKey,
   commandInputFromContext
 };

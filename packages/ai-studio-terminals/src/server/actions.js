@@ -4,11 +4,13 @@ import {
   codexThreadActionInputValidator,
   commandTerminalActionInputValidator,
   launchTargetActionInputValidator,
-  openLaunchTargetActionInputValidator
+  openLaunchTargetActionInputValidator,
+  shellTerminalActionInputValidator
 } from "./inputSchemas.js";
 
 const ACTION_START_COMMAND_TERMINAL = "feature.ai-studio-terminals.command-terminal.start";
 const ACTION_START_LAUNCH_TARGET_TERMINAL = "feature.ai-studio-terminals.launch-target-terminal.start";
+const ACTION_START_SHELL_TERMINAL = "feature.ai-studio-terminals.shell-terminal.start";
 const ACTION_OPEN_LAUNCH_TARGET = "feature.ai-studio-terminals.launch-target.open";
 const ACTION_UPLOAD_CODEX_ATTACHMENT = "feature.ai-studio-terminals.codex-attachment.upload";
 const ACTION_SAVE_CODEX_THREAD = "feature.ai-studio-terminals.codex-thread.save";
@@ -33,6 +35,26 @@ const featureActions = Object.freeze([
       return deps.featureService.startCommandTerminal(input.sessionId, {
         actionId: input.actionId,
         input: input.input
+      });
+    }
+  },
+  {
+    id: ACTION_START_SHELL_TERMINAL,
+    version: 1,
+    kind: "command",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: shellTerminalActionInputValidator,
+    output: null,
+    idempotency: "optional",
+    audit: {
+      actionName: ACTION_START_SHELL_TERMINAL
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.startShellTerminal(input.sessionId, {
+        target: input.target
       });
     }
   },
@@ -136,6 +158,7 @@ export {
   ACTION_SAVE_CODEX_THREAD,
   ACTION_START_COMMAND_TERMINAL,
   ACTION_START_LAUNCH_TARGET_TERMINAL,
+  ACTION_START_SHELL_TERMINAL,
   ACTION_UPLOAD_CODEX_ATTACHMENT,
   featureActions
 };

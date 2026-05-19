@@ -26,6 +26,11 @@ function aiStudioLaunchTerminalEndpoint(sessionId, terminalSessionId = "") {
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
 }
 
+function aiStudioShellTerminalEndpoint(sessionId, terminalSessionId = "") {
+  const base = aiStudioSessionEndpoint(sessionId, "/shell-terminal");
+  return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
+}
+
 function aiStudioCodexTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
@@ -36,6 +41,10 @@ function aiStudioCommandTerminalWebSocketUrl(sessionId, terminalSessionId) {
 
 function aiStudioLaunchTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(`${aiStudioLaunchTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
+}
+
+function aiStudioShellTerminalWebSocketUrl(sessionId, terminalSessionId) {
+  return resolveWebSocketUrl(`${aiStudioShellTerminalEndpoint(sessionId, terminalSessionId)}/ws`);
 }
 
 async function readAiStudioSessionDiff(sessionId) {
@@ -54,6 +63,7 @@ export {
   aiStudioCodexTerminalWebSocketUrl,
   aiStudioCommandTerminalWebSocketUrl,
   aiStudioLaunchTerminalWebSocketUrl,
+  aiStudioShellTerminalWebSocketUrl,
   closeAiStudioCodexTerminal,
   readAiStudioSessionDiff,
   startAiStudioCodexTerminal

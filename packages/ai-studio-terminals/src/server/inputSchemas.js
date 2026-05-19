@@ -67,6 +67,15 @@ const launchTargetFields = {
   }
 };
 
+const shellTerminalFields = {
+  target: {
+    type: "string",
+    enum: ["worktree", "main"],
+    noTrim: false,
+    required: true
+  }
+};
+
 const codexAttachmentInputValidator = deepFreeze({
   schema: createSchema(codexAttachmentFields),
   mode: "patch"
@@ -132,6 +141,19 @@ const launchTargetActionInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const shellTerminalInputValidator = deepFreeze({
+  schema: createSchema(shellTerminalFields),
+  mode: "patch"
+});
+
+const shellTerminalActionInputValidator = deepFreeze({
+  schema: createSchema({
+    ...shellTerminalFields,
+    sessionId: sessionIdField
+  }),
+  mode: "patch"
+});
+
 const openLaunchTargetActionInputValidator = deepFreeze({
   schema: createSchema({
     sessionId: sessionIdField
@@ -150,5 +172,7 @@ export {
   commandTerminalInputValidator,
   launchTargetActionInputValidator,
   launchTargetInputValidator,
-  openLaunchTargetActionInputValidator
+  openLaunchTargetActionInputValidator,
+  shellTerminalActionInputValidator,
+  shellTerminalInputValidator
 };

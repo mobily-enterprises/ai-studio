@@ -27,6 +27,9 @@ import {
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
 import {
+  aiStudioSessionWorktreePath
+} from "@/lib/aiStudioSessionPaths.js";
+import {
   readRefOrGetterBoolean
 } from "@/lib/vueRefOrGetterValue.js";
 
@@ -151,7 +154,7 @@ function useAiStudioSessionActions({
   const currentActions = computed(() => {
     return issueFileStep.visibleActions(baseCurrentActions.value);
   });
-  const worktreeReady = computed(() => Boolean(selectedSession.value?.metadata?.worktree_path));
+  const worktreeReady = computed(() => Boolean(aiStudioSessionWorktreePath(selectedSession.value || {})));
   const latestActionResult = computed(() => {
     if (selectedSession.value?.actionResult) {
       return selectedSession.value.actionResult;

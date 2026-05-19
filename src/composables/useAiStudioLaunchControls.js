@@ -14,6 +14,9 @@ import {
 import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
+import {
+  aiStudioSessionWorktreePath
+} from "@/lib/aiStudioSessionPaths.js";
 
 const LAUNCH_BROWSER_WINDOW_FEATURES = "popup,width=1400,height=900,left=80,top=60";
 
@@ -65,8 +68,7 @@ function openLaunchBrowserTarget(target = {}, session = {}, browserWindow = null
 }
 
 function launchTargetWorktreePath(session = {}) {
-  const metadata = session.metadata || {};
-  return String(metadata.worktree_path || metadata.worktree || session.worktree || "").trim();
+  return aiStudioSessionWorktreePath(session);
 }
 
 function useAiStudioLaunchControls({

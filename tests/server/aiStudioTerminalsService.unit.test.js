@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import test from "node:test";
@@ -15,7 +16,14 @@ import {
   codexTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/codexTerminal.js";
 import {
-  STUDIO_BASE_TOOLCHAIN_IMAGE
+  resolveShellTerminalCwd,
+  shellTerminalArgs
+} from "../../packages/ai-studio-terminals/src/server/shellTerminal.js";
+import {
+  STUDIO_BASE_TOOLCHAIN_IMAGE,
+  STUDIO_TOOL_HOME_BIN_PATH,
+  STUDIO_TOOL_HOME_NPM_PREFIX,
+  STUDIO_TOOL_HOME_PATH
 } from "../../server/lib/studioRuntimeIdentity.js";
 import {
   runtimeNetworkName
@@ -104,6 +112,58 @@ test("AI Studio Codex terminal joins the target runtime network before the image
   assert.notEqual(networkIndex, -1);
   assert.deepEqual(args.slice(networkIndex, networkIndex + 2), ["--network", runtimeNetworkName(targetRoot)]);
   assert.ok(networkIndex < args.indexOf(STUDIO_BASE_TOOLCHAIN_IMAGE));
+
+  const startupScript = args.at(-1);
+  assert.ok(startupScript.includes(`export HOME=${STUDIO_TOOL_HOME_PATH}`));
+  assert.ok(startupScript.includes(`export NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`));
+  assert.ok(startupScript.includes(`export PATH=${STUDIO_TOOL_HOME_BIN_PATH}:$PATH`));
+  assert.match(startupScript, /chown -R "\$AI_STUDIO_HOST_UID:\$AI_STUDIO_HOST_GID" "\$HOME"/u);
+  assert.ok(args.includes(`NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`));
+});
+
+test("AI Studio shell terminal joins the target runtime network before the image", () => {
+  const targetRoot = "/workspace/project";
+  const worktree = "/workspace/project/.ai-studio/sessions/active/unit/worktree";
+  const args = shellTerminalArgs({
+    containerName: "ai-studio-shell-unit",
+    env: {
+      AI_STUDIO_CONFIG_DIR: "/workspace/project/.ai-studio/config"
+    },
+    sessionId: "unit-session",
+    target: "worktree",
+    targetRoot,
+    terminalId: "unit-terminal",
+    workdir: worktree
+  });
+
+  const networkIndex = args.indexOf("--network");
+  assert.notEqual(networkIndex, -1);
+  assert.deepEqual(args.slice(networkIndex, networkIndex + 2), ["--network", runtimeNetworkName(targetRoot)]);
+  assert.ok(networkIndex < args.indexOf(STUDIO_BASE_TOOLCHAIN_IMAGE));
+  assert.deepEqual(args.slice(args.indexOf("-w"), args.indexOf("-w") + 2), ["-w", worktree]);
+  assert.deepEqual(args.slice(args.indexOf("--hostname"), args.indexOf("--hostname") + 2), [
+    "--hostname",
+    "ai-studio-worktree"
+  ]);
+  assert.ok(args.includes("AI_STUDIO_CONFIG_DIR=/workspace/project/.ai-studio/config"));
+  assert.ok(args.includes("TERM=xterm-256color"));
+  assert.ok(args.includes("COLORTERM=truecolor"));
+  assert.ok(args.includes("FORCE_COLOR=1"));
+  assert.ok(args.includes("USER=studio"));
+  assert.ok(args.includes("AI_STUDIO_PROJECT_ROOT=/workspace/project"));
+  assert.ok(args.includes(`AI_STUDIO_SHELL_WORKDIR=${worktree}`));
+  assert.ok(args.some((arg) => String(arg).startsWith("AI_STUDIO_SHELL_PROMPT=\\[\\e[38;5;39m\\]studio")));
+  assert.ok(args.some((arg) => String(arg).startsWith("PS1=\\[\\e[38;5;39m\\]studio")));
+
+  const startupScript = args.at(-1);
+  assert.ok(startupScript.includes(`export HOME=${STUDIO_TOOL_HOME_PATH}`));
+  assert.ok(startupScript.includes(`export NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`));
+  assert.ok(startupScript.includes(`export PATH=${STUDIO_TOOL_HOME_BIN_PATH}:$PATH`));
+  assert.ok(startupScript.includes("PROMPT_DIRTRIM=4"));
+  assert.ok(startupScript.includes("alias ls='ls --color=auto'"));
+  assert.ok(startupScript.includes("PS1=\"${AI_STUDIO_SHELL_PROMPT:-\\w \\$ }\""));
+  assert.match(startupScript, /chown -R "\$AI_STUDIO_HOST_UID:\$AI_STUDIO_HOST_GID" "\$HOME"/u);
+  assert.match(startupScript, /setpriv .* bash --rcfile \/tmp\/ai-studio-shell\.bashrc -i/u);
 });
 
 test("AI Studio command terminal records action results and metadata after success", async () => {
@@ -253,5 +313,107 @@ test("AI Studio command terminal refuses prompt actions and disabled command act
     });
     assert.equal(disabled.ok, false);
     assert.match(disabled.error, /does not support capability/u);
+  });
+});
+
+test("AI Studio shell terminal resolves only declared session targets", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const worktreePath = path.join(targetRoot, ".ai-studio", "sessions", "active", "shell_success", "worktree");
+    const session = {
+      metadata: {
+        worktree_path: worktreePath
+      },
+      targetRoot
+    };
+    await mkdir(worktreePath, {
+      recursive: true
+    });
+
+    const worktree = await resolveShellTerminalCwd({
+      projectService: {
+        targetRoot
+      },
+      session,
+      target: "worktree"
+    });
+    assert.equal(worktree.ok, true);
+    assert.equal(worktree.cwd, worktreePath);
+
+    const main = await resolveShellTerminalCwd({
+      projectService: {
+        targetRoot
+      },
+      session,
+      target: "main"
+    });
+    assert.equal(main.ok, true);
+    assert.equal(main.cwd, path.resolve(targetRoot));
+
+    const outside = await resolveShellTerminalCwd({
+      projectService: {
+        targetRoot
+      },
+      session: {
+        metadata: {
+          worktree_path: "/tmp/outside"
+        },
+        targetRoot
+      },
+      target: "worktree"
+    });
+    assert.equal(outside.ok, false);
+    assert.match(outside.error, /outside the target root/u);
+  });
+});
+
+test("AI Studio shell terminal blocks unavailable worktree targets", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const missingWorktree = await resolveShellTerminalCwd({
+      projectService: {
+        targetRoot
+      },
+      session: {
+        metadata: {},
+        targetRoot
+      },
+      target: "worktree"
+    });
+    assert.equal(missingWorktree.ok, false);
+    assert.match(missingWorktree.error, /Create the session worktree/u);
+  });
+});
+
+test("AI Studio shell terminal service rejects invalid targets before Docker startup", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new UnitCommandAdapter(),
+      targetRoot,
+      workflow: {
+        id: "unit-shell-invalid",
+        steps: [
+          {
+            id: "unit_step",
+            label: "Unit step"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "shell_invalid"
+    });
+    const service = createService({
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        }
+      }
+    });
+
+    const invalid = await service.startShellTerminal("shell_invalid", {
+      target: "/tmp"
+    });
+    assert.equal(invalid.ok, false);
+    assert.match(invalid.error, /worktree or main/u);
   });
 });

@@ -22,6 +22,9 @@ import {
 import {
   DEFAULT_MAX_OPEN_SESSIONS
 } from "@/lib/aiStudioSessionRequestConfig.js";
+import {
+  aiStudioSessionWorktreePath
+} from "@/lib/aiStudioSessionPaths.js";
 
 function sessionOrderKey(session = {}) {
   return String(session.createdAt || session.manifest?.createdAt || session.sessionId || "");
@@ -48,7 +51,7 @@ function enrichAiStudioSessionForDisplay(session = null) {
     return null;
   }
   const metadata = session.metadata || {};
-  const worktree = metadata.worktree_path || metadata.worktree || session.worktree || "";
+  const worktree = aiStudioSessionWorktreePath(session);
   return {
     ...session,
     branch: session.branch || metadata.branch || metadata.session_branch || "",

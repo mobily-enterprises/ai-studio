@@ -43,10 +43,16 @@
       </v-btn>
     </div>
 
-    <AiStudioLaunchControls
-      :busy="busy"
-      :session="session"
-    />
+    <div class="studio-ai-sessions__tools">
+      <AiStudioLaunchControls
+        :busy="busy"
+        :session="session"
+      />
+      <AiStudioShellControls
+        :busy="busy"
+        :session="session"
+      />
+    </div>
   </div>
 </template>
 
@@ -56,6 +62,7 @@ import {
   mdiPlus
 } from "@mdi/js";
 import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
+import AiStudioShellControls from "@/components/studio/AiStudioShellControls.vue";
 
 defineProps({
   abandon: {
@@ -102,6 +109,15 @@ defineProps({
   min-width: 0;
 }
 
+.studio-ai-sessions__tools {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .studio-ai-sessions__tab {
   align-items: center;
   max-width: 18rem;
@@ -144,6 +160,10 @@ defineProps({
   .studio-ai-sessions__toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .studio-ai-sessions__tools {
+    justify-content: flex-start;
   }
 }
 </style>

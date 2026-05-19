@@ -3,7 +3,8 @@ import {
   codexPromptHandoffInputValidator,
   codexThreadInputValidator,
   commandTerminalInputValidator,
-  launchTargetInputValidator
+  launchTargetInputValidator,
+  shellTerminalInputValidator
 } from "./inputSchemas.js";
 import {
   ACTION_OPEN_LAUNCH_TARGET,
@@ -11,6 +12,7 @@ import {
   ACTION_SAVE_CODEX_THREAD,
   ACTION_START_COMMAND_TERMINAL,
   ACTION_START_LAUNCH_TARGET_TERMINAL,
+  ACTION_START_SHELL_TERMINAL,
   ACTION_UPLOAD_CODEX_ATTACHMENT
 } from "./actions.js";
 import { createAiStudioFeatureRoutes } from "../../../../server/lib/aiStudio/featureRoutes.js";
@@ -58,6 +60,13 @@ function registerRoutes(
     body: commandTerminalInputValidator,
     buildInput: bodyWithSessionId(routes),
     summary: "Start an AI Studio command terminal."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/shell-terminal", {
+    actionId: ACTION_START_SHELL_TERMINAL,
+    body: shellTerminalInputValidator,
+    buildInput: bodyWithSessionId(routes),
+    summary: "Start an AI Studio shell terminal."
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/codex-terminal", {
@@ -109,6 +118,14 @@ function registerRoutes(
     read: (sessionId, terminalSessionId) => terminalService().readCommandTerminal(sessionId, terminalSessionId),
     readSummary: "Read an AI Studio command terminal snapshot.",
     closeSummary: "Close an AI Studio command terminal."
+  });
+
+  registerTerminalSnapshotRoutes(routes, {
+    close: (sessionId, terminalSessionId) => terminalService().closeShellTerminal(sessionId, terminalSessionId),
+    path: "/sessions/:sessionId/shell-terminal/:terminalSessionId",
+    read: (sessionId, terminalSessionId) => terminalService().readShellTerminal(sessionId, terminalSessionId),
+    readSummary: "Read an AI Studio shell terminal snapshot.",
+    closeSummary: "Close an AI Studio shell terminal."
   });
 }
 

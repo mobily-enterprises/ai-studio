@@ -94,6 +94,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  shellTarget: {
+    type: String,
+    default: ""
+  },
   startRequestKey: {
     type: [String, Number],
     default: ""

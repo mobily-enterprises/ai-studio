@@ -1,6 +1,7 @@
 import { createCodexTerminalController } from "./codexTerminal.js";
 import { createCommandTerminalController } from "./commandTerminal.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
+import { createShellTerminalController } from "./shellTerminal.js";
 
 function createService({ projectService } = {}) {
   if (!projectService) {
@@ -16,13 +17,17 @@ function createService({ projectService } = {}) {
   const launchTarget = createLaunchTargetTerminalController({
     projectService
   });
+  const shell = createShellTerminalController({
+    projectService
+  });
 
   return Object.freeze({
     async closeSessionTerminals(sessionId) {
       await Promise.all([
         launchTarget.closeAllForSession(sessionId),
         codex.closeAllForSession(sessionId),
-        command.closeAllForSession(sessionId)
+        command.closeAllForSession(sessionId),
+        shell.closeAllForSession(sessionId)
       ]);
       return {
         ok: true
@@ -32,7 +37,8 @@ function createService({ projectService } = {}) {
     async closeSessionNonCodexTerminals(sessionId) {
       await Promise.all([
         launchTarget.closeAllForSession(sessionId),
-        command.closeAllForSession(sessionId)
+        command.closeAllForSession(sessionId),
+        shell.closeAllForSession(sessionId)
       ]);
       return {
         ok: true
@@ -51,6 +57,10 @@ function createService({ projectService } = {}) {
       return launchTarget.closeTerminal(sessionId, terminalSessionId);
     },
 
+    closeShellTerminal(sessionId, terminalSessionId) {
+      return shell.closeTerminal(sessionId, terminalSessionId);
+    },
+
     readCodexTerminal(sessionId, terminalSessionId) {
       return codex.readTerminal(sessionId, terminalSessionId);
     },
@@ -61,6 +71,10 @@ function createService({ projectService } = {}) {
 
     readLaunchTargetTerminal(sessionId, terminalSessionId) {
       return launchTarget.readTerminal(sessionId, terminalSessionId);
+    },
+
+    readShellTerminal(sessionId, terminalSessionId) {
+      return shell.readTerminal(sessionId, terminalSessionId);
     },
 
     launchTargetStatus(sessionId) {
@@ -91,6 +105,10 @@ function createService({ projectService } = {}) {
       return launchTarget.startTerminal(sessionId, input);
     },
 
+    startShellTerminal(sessionId, input = {}) {
+      return shell.startTerminal(sessionId, input);
+    },
+
     subscribeCodexTerminal(sessionId, terminalSessionId, subscriber) {
       return codex.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
@@ -101,6 +119,10 @@ function createService({ projectService } = {}) {
 
     subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber) {
       return launchTarget.subscribeTerminal(sessionId, terminalSessionId, subscriber);
+    },
+
+    subscribeShellTerminal(sessionId, terminalSessionId, subscriber) {
+      return shell.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
 
     uploadCodexAttachment(sessionId, input = {}) {
@@ -117,6 +139,10 @@ function createService({ projectService } = {}) {
 
     writeLaunchTargetTerminal(sessionId, terminalSessionId, data) {
       return launchTarget.writeTerminal(sessionId, terminalSessionId, data);
+    },
+
+    writeShellTerminal(sessionId, terminalSessionId, data) {
+      return shell.writeTerminal(sessionId, terminalSessionId, data);
     }
   });
 }

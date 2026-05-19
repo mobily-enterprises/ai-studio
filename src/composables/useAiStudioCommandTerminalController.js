@@ -5,14 +5,16 @@ import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
 import { useStudioTerminal } from "@/composables/useStudioTerminal.js";
 import {
   aiStudioCommandTerminalWebSocketUrl,
-  aiStudioLaunchTerminalWebSocketUrl
+  aiStudioLaunchTerminalWebSocketUrl,
+  aiStudioShellTerminalWebSocketUrl
 } from "@/lib/aiStudioSessionApi.js";
 import {
   AI_STUDIO_SESSIONS_API_SUFFIX,
   AI_STUDIO_SURFACE_ID,
   LOCAL_STUDIO_COMMAND_OPTIONS,
   aiStudioCommandTerminalPath,
-  aiStudioLaunchTerminalPath
+  aiStudioLaunchTerminalPath,
+  aiStudioShellTerminalPath
 } from "@/lib/aiStudioSessionRequestConfig.js";
 
 const FINISHED_TERMINAL_HOLD_MS = 500;
@@ -32,25 +34,36 @@ function useAiStudioCommandTerminalController(props, emit) {
   const activeActionLabel = computed(() => props.action?.label || "");
   const launchTargetId = computed(() => props.launchTarget?.id || "");
   const launchTargetLabel = computed(() => props.launchTarget?.label || "");
+  const shellTarget = computed(() => props.shellTarget || "");
   const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
     surface: AI_STUDIO_SURFACE_ID
   }));
   const launchTerminal = computed(() => props.terminalKind === "launch");
+  const shellTerminal = computed(() => props.terminalKind === "shell");
   const terminalTitle = computed(() => {
     if (props.title) {
       return props.title;
     }
-    return launchTerminal.value ? "Launch terminal" : "Command terminal";
+    if (launchTerminal.value) {
+      return "Launch terminal";
+    }
+    return shellTerminal.value ? "Shell terminal" : "Command terminal";
   });
   const terminalSubtitle = computed(() => {
     if (launchTerminal.value) {
       return launchTargetLabel.value || "Run a launch target.";
     }
+    if (shellTerminal.value) {
+      return shellTarget.value === "main" ? "Main repo" : "Session worktree";
+    }
     return activeActionLabel.value || "Run adapter commands here.";
   });
   const startFailureMessage = computed(() => {
-    return launchTerminal.value
-      ? "Launch terminal failed to start."
+    if (launchTerminal.value) {
+      return "Launch terminal failed to start.";
+    }
+    return shellTerminal.value
+      ? "Shell terminal failed to start."
       : "Command terminal failed to start.";
   });
   const canStartTerminal = computed(() => {
@@ -58,6 +71,7 @@ function useAiStudioCommandTerminalController(props, emit) {
       sessionId.value &&
       (
         (launchTerminal.value && launchTargetId.value) ||
+        (shellTerminal.value && shellTarget.value) ||
         actionId.value
       )
     );
@@ -70,6 +84,9 @@ function useAiStudioCommandTerminalController(props, emit) {
   } = {}) {
     if (terminalKind === "launch") {
       return aiStudioLaunchTerminalPath(sessionsApiPath.value, selectedSessionId, selectedTerminalSessionId);
+    }
+    if (terminalKind === "shell") {
+      return aiStudioShellTerminalPath(sessionsApiPath.value, selectedSessionId, selectedTerminalSessionId);
     }
     return aiStudioCommandTerminalPath(sessionsApiPath.value, selectedSessionId, selectedTerminalSessionId);
   }
@@ -92,6 +109,11 @@ function useAiStudioCommandTerminalController(props, emit) {
         return {
           actionId: String(context.actionId || ""),
           input: context.actionInput || {}
+        };
+      }
+      if (context.terminalKind === "shell") {
+        return {
+          target: String(context.shellTarget || "")
         };
       }
       return {};
@@ -131,6 +153,9 @@ function useAiStudioCommandTerminalController(props, emit) {
     webSocketUrl(terminalId) {
       if (launchTerminal.value) {
         return aiStudioLaunchTerminalWebSocketUrl(sessionId.value, terminalId);
+      }
+      if (shellTerminal.value) {
+        return aiStudioShellTerminalWebSocketUrl(sessionId.value, terminalId);
       }
       return aiStudioCommandTerminalWebSocketUrl(sessionId.value, terminalId);
     }
@@ -236,6 +261,7 @@ function useAiStudioCommandTerminalController(props, emit) {
         actionInput: props.actionInput || {},
         launchTargetId: launchTargetId.value,
         sessionId: sessionId.value,
+        shellTarget: shellTarget.value,
         terminalKind: props.terminalKind
       });
       if (session?.ok === false) {
@@ -288,18 +314,9 @@ function useAiStudioCommandTerminalController(props, emit) {
   async function closeTerminal({
     emitClosed = true
   } = {}) {
-    const existingTerminalId = terminalSessionId.value;
-    resetTerminalSessionState();
     terminalClosedByUser.value = true;
     emitRunningState();
-    closeTerminalSocket();
-    if (existingTerminalId && sessionId.value) {
-      await closeTerminalCommand.run({
-        sessionId: sessionId.value,
-        terminalKind: props.terminalKind,
-        terminalSessionId: existingTerminalId
-      }).catch(() => null);
-    }
+    await closeCurrentServerTerminalSession(sessionId.value);
     if (emitClosed) {
       emit("closed");
     }
@@ -313,6 +330,20 @@ function useAiStudioCommandTerminalController(props, emit) {
     finishedEmittedForTerminalId = "";
     terminalClosedByUser.value = false;
     await startTerminal();
+  }
+
+  function closeCurrentServerTerminalSession(selectedSessionId = sessionId.value) {
+    const existingTerminalId = terminalSessionId.value;
+    resetTerminalSessionState();
+    closeTerminalSocket();
+    if (!existingTerminalId || !selectedSessionId) {
+      return Promise.resolve(null);
+    }
+    return closeTerminalCommand.run({
+      sessionId: selectedSessionId,
+      terminalKind: props.terminalKind,
+      terminalSessionId: existingTerminalId
+    }).catch(() => null);
   }
 
   function toggleExpanded() {
@@ -334,14 +365,13 @@ function useAiStudioCommandTerminalController(props, emit) {
     immediate: true
   });
 
-  watch(sessionId, () => {
-    resetTerminalSessionState();
+  watch(sessionId, (_nextSessionId, previousSessionId) => {
+    void closeCurrentServerTerminalSession(previousSessionId);
     resetTerminalDisplay();
     handledStartRequestKey = "";
     pendingStartRequestKey = "";
     finishedEmittedForTerminalId = "";
     terminalClosedByUser.value = false;
-    closeTerminalSocket();
     emitRunningState();
   });
 
@@ -355,6 +385,7 @@ function useAiStudioCommandTerminalController(props, emit) {
   });
 
   onBeforeUnmount(() => {
+    void closeCurrentServerTerminalSession(sessionId.value);
     disposeTerminalUi();
     emit("running-changed", false);
   });

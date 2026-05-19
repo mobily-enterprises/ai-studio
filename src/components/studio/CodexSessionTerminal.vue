@@ -120,6 +120,9 @@ import { useCodexTerminalOutput } from "@/composables/useCodexTerminalOutput.js"
 import { useCodexTerminalSessionLifecycle } from "@/composables/useCodexTerminalSessionLifecycle.js";
 import { useCodexTerminalViewport } from "@/composables/useCodexTerminalViewport.js";
 import { writeClipboardText } from "@/lib/clipboard.js";
+import {
+  aiStudioSessionWorktreePath
+} from "@/lib/aiStudioSessionPaths.js";
 import { terminalInputHasUserText } from "@/lib/terminalInput.js";
 
 const props = defineProps({
@@ -161,13 +164,7 @@ const componentMounted = ref(false);
 let terminalLifecycle = null;
 
 const sessionId = computed(() => props.session?.sessionId || "");
-const sessionWorktree = computed(() => {
-  return String(
-    props.session?.metadata?.worktree_path ||
-    props.session?.worktree ||
-    ""
-  ).trim();
-});
+const sessionWorktree = computed(() => aiStudioSessionWorktreePath(props.session || {}));
 
 function runtimeCodexPromptHandoff(session = {}) {
   const actionResultHandoff = session?.actionResult?.codexPromptHandoff;

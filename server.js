@@ -292,6 +292,20 @@ function registerAiStudioLaunchTargetTerminalWebSocketRoute(app, runtimeApp) {
   });
 }
 
+function registerAiStudioShellTerminalWebSocketRoute(app, runtimeApp) {
+  registerTerminalWebSocketRoute(app, runtimeApp, {
+    routePath: "/api/ai-studio/sessions/:sessionId/shell-terminal/:terminalSessionId/ws",
+    serviceId: "feature.ai-studio-terminals.service",
+    serviceUnavailableMessage: "AI Studio terminal service is unavailable.",
+    subscribe(service, { sessionId, subscriber, terminalSessionId }) {
+      return service.subscribeShellTerminal(sessionId, terminalSessionId, subscriber);
+    },
+    write(service, { data, sessionId, terminalSessionId }) {
+      return service.writeShellTerminal(sessionId, terminalSessionId, data);
+    }
+  });
+}
+
 function registerTargetScriptTerminalWebSocketRoute(app, runtimeApp) {
   registerTerminalWebSocketRoute(app, runtimeApp, {
     routePath: "/api/studio/current-app/target-script-terminal/:terminalSessionId/ws",
@@ -406,6 +420,7 @@ async function createServer(options = {}) {
     registerAiStudioCodexTerminalWebSocketRoute(app, runtime.app);
     registerAiStudioCommandTerminalWebSocketRoute(app, runtime.app);
     registerAiStudioLaunchTargetTerminalWebSocketRoute(app, runtime.app);
+    registerAiStudioShellTerminalWebSocketRoute(app, runtime.app);
     registerTargetScriptTerminalWebSocketRoute(app, runtime.app);
   }
 

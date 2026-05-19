@@ -1,3 +1,6 @@
+import { stat } from "node:fs/promises";
+import path from "node:path";
+
 import {
   aiStudioResult as sharedAiStudioResult,
   normalizePlainObject
@@ -12,6 +15,7 @@ const CODEX_TERMINAL_NAMESPACE = "ai-studio-codex";
 const CODEX_TERMINAL_NAMESPACE_PREFIX = `${CODEX_TERMINAL_NAMESPACE}:`;
 const COMMAND_TERMINAL_NAMESPACE = "ai-studio-command";
 const LAUNCH_TARGET_TERMINAL_NAMESPACE = "ai-studio-launch-target";
+const SHELL_TERMINAL_NAMESPACE = "ai-studio-shell";
 
 function aiStudioResult(operation) {
   return sharedAiStudioResult(operation, {
@@ -32,8 +36,44 @@ function launchTargetTerminalNamespace(sessionId) {
   return `${LAUNCH_TARGET_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
 }
 
+function shellTerminalNamespace(sessionId) {
+  return `${SHELL_TERMINAL_NAMESPACE}:${String(sessionId || "")}`;
+}
+
+async function directoryExists(filePath = "") {
+  try {
+    return (await stat(filePath)).isDirectory();
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function normalizedTerminalPath(value = "") {
+  const normalizedValue = String(value || "").trim();
+  return normalizedValue ? path.resolve(normalizedValue) : "";
+}
+
+function pathInsideOrEqual(rootPath = "", candidatePath = "") {
+  if (!rootPath || !candidatePath) {
+    return false;
+  }
+  const relativePath = path.relative(rootPath, candidatePath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
 function sessionTerminalCwd(session = {}, projectService = {}) {
   return String(session.targetRoot || projectService.targetRoot || "").trim();
+}
+
+function terminalTargetRoot(session = {}, projectService = {}) {
+  return normalizedTerminalPath(session.targetRoot || projectService.targetRoot);
+}
+
+function terminalWorktreePath(session = {}) {
+  return normalizedTerminalPath(session.metadata?.worktree_path || session.metadata?.worktree || session.worktree);
 }
 
 export {
@@ -41,8 +81,13 @@ export {
   aiStudioResult,
   codexTerminalNamespace,
   commandTerminalNamespace,
+  directoryExists,
   launchTargetTerminalNamespace,
+  pathInsideOrEqual,
+  shellTerminalNamespace,
   sessionTerminalCwd,
+  terminalTargetRoot,
+  terminalWorktreePath,
   dockerCommand,
   normalizePlainObject,
   shellQuote,

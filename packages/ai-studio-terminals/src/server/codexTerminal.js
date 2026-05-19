@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -15,11 +14,12 @@ import {
   STUDIO_BASE_TOOLCHAIN_IMAGE,
   STUDIO_CODEX_CONTAINER_PREFIX,
   STUDIO_DAEMON_PID_LABEL,
-  STUDIO_HOST_GID_ENV,
-  STUDIO_HOST_UID_ENV,
-  STUDIO_TOOL_HOME_VOLUME,
   studioDockerLabel
 } from "../../../../server/lib/studioRuntimeIdentity.js";
+import {
+  studioToolHomeDockerArgs,
+  studioUserStartupScript
+} from "../../../../server/lib/studioToolHome.js";
 import {
   hostUserIdentityEnvArgs
 } from "../../../../server/lib/shellCommands.js";
@@ -36,9 +36,11 @@ import {
   CODEX_TERMINAL_NAMESPACE_PREFIX,
   aiStudioResult,
   codexTerminalNamespace,
+  directoryExists,
   dockerCommand,
-  shellQuote,
-  stableHash
+  stableHash,
+  terminalTargetRoot,
+  terminalWorktreePath
 } from "./terminalShared.js";
 import {
   CODEX_ATTACHMENT_CONTAINER_ROOT,
@@ -55,30 +57,9 @@ const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 
-async function directoryExists(filePath = "") {
-  try {
-    return (await stat(filePath)).isDirectory();
-  } catch (error) {
-    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function terminalWorkdir(session = {}) {
-  const workdir = String(session.metadata?.worktree_path || session.worktree || "").trim();
-  return workdir ? path.resolve(workdir) : "";
-}
-
 function savedCodexWorkdir(session = {}) {
   const workdir = String(session.metadata?.codex_workdir || "").trim();
   return workdir ? path.resolve(workdir) : "";
-}
-
-function terminalTargetRoot(session = {}, projectService = {}) {
-  const targetRoot = String(session.targetRoot || projectService.targetRoot || "").trim();
-  return targetRoot ? path.resolve(targetRoot) : "";
 }
 
 async function terminalTargetRootForSession(projectService, sessionId) {
@@ -126,7 +107,7 @@ function normalizeCodexPromptHandoffOutputStart(value) {
 
 function codexState(session = {}) {
   const metadata = session.metadata || {};
-  const workdir = terminalWorkdir(session);
+  const workdir = terminalWorktreePath(session);
   const codexThreadId = codexThreadIdForWorkdir(session, workdir);
   return {
     codexWorkdir: workdir,
@@ -147,7 +128,7 @@ function codexThreadIdForWorkdir(session = {}, workdir = "") {
     return "";
   }
 
-  const normalizedWorkdir = workdir ? path.resolve(workdir) : terminalWorkdir(session);
+  const normalizedWorkdir = workdir ? path.resolve(workdir) : terminalWorktreePath(session);
   const recordedWorkdir = savedCodexWorkdir(session);
   if (!normalizedWorkdir || !recordedWorkdir || recordedWorkdir !== normalizedWorkdir) {
     return "";
@@ -166,25 +147,16 @@ function withCodexState(response = {}, session = {}) {
 function codexStartupScript(codexThreadId = "") {
   const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
   const codexReasoningConfig = `model_reasoning_effort="${CODEX_SESSION_REASONING_EFFORT}"`;
-  const codexOptions = [
+  const codexCommand = [
+    "codex",
     "--model",
-    shellQuote(CODEX_SESSION_MODEL),
+    CODEX_SESSION_MODEL,
     "-c",
-    shellQuote(codexReasoningConfig),
-    "--dangerously-bypass-approvals-and-sandbox"
-  ].join(" ");
-  const codexCommand = normalizedThreadId
-    ? `codex ${codexOptions} resume ${shellQuote(normalizedThreadId)}`
-    : `codex ${codexOptions}`;
-  return [
-    "set -e",
-    `if [ -n "\${${STUDIO_HOST_UID_ENV}:-}" ] && [ -n "\${${STUDIO_HOST_GID_ENV}:-}" ] && command -v setpriv >/dev/null 2>&1; then`,
-    "  mkdir -p /home/studio/.codex /home/studio/.config",
-    `  chown -R "$${STUDIO_HOST_UID_ENV}:$${STUDIO_HOST_GID_ENV}" /home/studio/.codex /home/studio/.config`,
-    `  exec setpriv --reuid "$${STUDIO_HOST_UID_ENV}" --regid "$${STUDIO_HOST_GID_ENV}" --clear-groups env HOME=/home/studio ${codexCommand}`,
-    "fi",
-    `exec env HOME=/home/studio ${codexCommand}`
-  ].join("\n");
+    codexReasoningConfig,
+    "--dangerously-bypass-approvals-and-sandbox",
+    ...(normalizedThreadId ? ["resume", normalizedThreadId] : [])
+  ];
+  return studioUserStartupScript(codexCommand);
 }
 
 function codexTerminalArgs({
@@ -213,10 +185,7 @@ function codexTerminalArgs({
     studioDockerLabel("terminal", terminalId),
     "--label",
     studioDockerLabel("target", stableHash(targetRoot)),
-    "-v",
-    `${STUDIO_TOOL_HOME_VOLUME}:/home/studio`,
-    "-e",
-    "HOME=/home/studio",
+    ...studioToolHomeDockerArgs(),
     ...hostUserIdentityEnvArgs(),
     "-v",
     `${targetRoot}:/workspace`,
@@ -300,7 +269,7 @@ function createCodexTerminalController({ projectService } = {}) {
         const runtime = await projectService.createRuntime();
         const session = await runtime.getSession(sessionId);
         const targetRoot = terminalTargetRoot(session, projectService);
-        const workdir = terminalWorkdir(session);
+        const workdir = terminalWorktreePath(session);
         if (!targetRoot) {
           return {
             ok: false,
@@ -344,7 +313,7 @@ function createCodexTerminalController({ projectService } = {}) {
             error: "AI Studio Codex target root is not available."
           };
         }
-        const workdir = terminalWorkdir(session);
+        const workdir = terminalWorktreePath(session);
         if (!workdir || !containerWorkspacePath(targetRoot, workdir)) {
           return {
             ok: false,
