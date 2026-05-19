@@ -1,7 +1,6 @@
 import {
   createRuntimeContainerRepair,
-  runtimeContainerName,
-  runtimeContainerNetworkDockerArgs
+  runtimeContainerName
 } from "../../runtimeContainers.js";
 import {
   createManagedDatabaseRuntimeContainer,
@@ -139,15 +138,6 @@ function nextjsRuntimeContainerName({
   return "";
 }
 
-function nextjsRuntimeDockerArgs({
-  config = {},
-  targetRoot = ""
-} = {}) {
-  return selectedNextjsDatabaseRuntime(config) === "none"
-    ? []
-    : runtimeContainerNetworkDockerArgs(targetRoot);
-}
-
 function startNextjsRuntimeRepair({
   config = {},
   targetRoot = ""
@@ -204,7 +194,6 @@ export {
   nextjsDatabaseEnvLines,
   nextjsDatabaseEnvWriteScript,
   nextjsRuntimeContainerName,
-  nextjsRuntimeDockerArgs,
   selectedNextjsDatabaseRuntime,
   startNextjsRuntimeRepair
 };

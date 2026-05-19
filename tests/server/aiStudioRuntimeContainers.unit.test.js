@@ -4,16 +4,17 @@ import test from "node:test";
 
 import {
   createRuntimeContainerCheck,
+  ensureTargetRuntimeNetwork,
   runtimeContainerCommandPreview,
   runtimeContainerName,
   runtimeContainerNetworkDockerArgs,
   runtimeContainerStartScript,
-  runtimeNetworkName
+  runtimeNetworkName,
+  targetRuntimeNetworkDockerArgs,
+  targetRuntimeNetworkEnsureCommand
 } from "../../server/lib/aiStudio/runtimeContainers.js";
 import {
-  JSKIT_MARIADB_HOST,
   createJskitMariaDbRuntimeContainer,
-  jskitDatabaseDockerArgsForTarget,
   managedMariaDbAccessInstructions,
   startJskitMariaDbRepair
 } from "../../server/lib/aiStudio/adapters/jskit/setupMariaDbRuntime.js";
@@ -150,13 +151,66 @@ test("jskit declares MariaDB through the generic runtime container layer", async
       /Host:/u
     );
     assert.deepEqual(
-      jskitDatabaseDockerArgsForTarget(JSKIT_MARIADB_HOST, targetRoot),
+      targetRuntimeNetworkDockerArgs(targetRoot),
       runtimeContainerNetworkDockerArgs(targetRoot)
     );
     assert.equal(
       runtimeContainerNetworkDockerArgs(targetRoot)[1],
       runtimeNetworkName(targetRoot)
     );
+  });
+});
+
+test("target runtime network preparation creates the shared network only when missing", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const networkName = runtimeNetworkName(targetRoot);
+    const calls = [];
+    const result = await ensureTargetRuntimeNetwork(targetRoot, {
+      async runCommand(command, args) {
+        calls.push([command, args]);
+        if (args[1] === "inspect") {
+          return {
+            ok: false,
+            output: "network not found"
+          };
+        }
+        return {
+          ok: true,
+          output: networkName
+        };
+      }
+    });
+
+    assert.equal(result, networkName);
+    assert.deepEqual(calls, [
+      ["docker", ["network", "inspect", networkName]],
+      ["docker", ["network", "create", networkName]]
+    ]);
+
+    calls.length = 0;
+    assert.equal(await ensureTargetRuntimeNetwork(targetRoot, {
+      async runCommand(command, args) {
+        calls.push([command, args]);
+        return {
+          ok: true,
+          output: networkName
+        };
+      }
+    }), networkName);
+    assert.deepEqual(calls, [
+      ["docker", ["network", "inspect", networkName]]
+    ]);
+  });
+});
+
+test("target runtime network shell command tolerates concurrent network creation", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const command = targetRuntimeNetworkEnsureCommand(targetRoot);
+    const networkName = runtimeNetworkName(targetRoot);
+    const inspectCommand = `docker network inspect ${networkName} >/dev/null 2>&1`;
+
+    assert.equal(command.split(" || ").filter((part) => part === inspectCommand).length, 2);
+    assert.ok(command.includes(`docker network create ${networkName} >/dev/null`));
   });
 });
 

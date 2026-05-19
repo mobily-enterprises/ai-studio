@@ -54,7 +54,6 @@ import {
   createLaravelRuntimeContainers,
   laravelDatabaseEnvLines,
   laravelDatabaseEnvWriteScript,
-  laravelRuntimeDockerArgs,
   selectedLaravelDatabaseRuntime,
   startLaravelRuntimeRepair
 } from "./databaseRuntime.js";
@@ -488,10 +487,6 @@ function migrationRepair(targetRoot, config, toolkit) {
     extraArgs: [
       ...writableHostUserDockerArgs({
         env: LARAVEL_WRITABLE_DOCKER_ENV
-      }),
-      ...laravelRuntimeDockerArgs({
-        config,
-        targetRoot
       })
     ],
     image: LARAVEL_TOOLCHAIN_IMAGE,
@@ -533,10 +528,6 @@ async function checkMigrations(toolkit, targetRoot, config = {}) {
     extraArgs: [
       ...writableHostUserDockerArgs({
         env: LARAVEL_WRITABLE_DOCKER_ENV
-      }),
-      ...laravelRuntimeDockerArgs({
-        config,
-        targetRoot
       })
     ],
     image: LARAVEL_TOOLCHAIN_IMAGE,
@@ -593,13 +584,9 @@ function createLaravelSetupDoctorPlugin({
       targetRoot: context.targetRoot || targetRoot
     })],
     commandPreview: (context = {}) => createLaravelAppRepair(context.config).commandPreview,
-    extraArgs: (context = {}) => [
+    extraArgs: () => [
       ...writableHostUserDockerArgs({
         env: LARAVEL_WRITABLE_DOCKER_ENV
-      }),
-      ...laravelRuntimeDockerArgs({
-        config: context.config || {},
-        targetRoot: context.targetRoot || targetRoot
       })
     ],
     image: LARAVEL_TOOLCHAIN_IMAGE,
@@ -769,10 +756,6 @@ function createLaravelSetupDoctorPlugin({
           extraArgs: [
             ...writableHostUserDockerArgs({
               env: LARAVEL_WRITABLE_DOCKER_ENV
-            }),
-            ...laravelRuntimeDockerArgs({
-              config: context.config || {},
-              targetRoot: context.targetRoot || targetRoot
             })
           ],
           image: LARAVEL_TOOLCHAIN_IMAGE,

@@ -27,6 +27,9 @@ import {
 import {
   shellQuote
 } from "../../../../server/lib/shellCommands.js";
+import {
+  ensureTargetRuntimeNetwork
+} from "../../../../server/lib/aiStudio/runtimeContainers.js";
 
 const PROJECT_SCRIPT_SOURCE = "project";
 const ADAPTER_SCRIPT_SOURCE = "adapter";
@@ -563,6 +566,9 @@ function createService({
         }
 
         const namespace = targetScriptTerminalNamespace();
+        if (spec.prepareTargetRuntimeNetwork === true) {
+          await ensureTargetRuntimeNetwork(spec.targetRoot || targetRoot);
+        }
         if (spec.closeExisting !== false) {
           await closeTerminalSessionsForNamespace(namespace);
         }

@@ -14,6 +14,9 @@ import {
   buildDoctorToolchainArgs
 } from "./doctorToolchain.js";
 import {
+  ensureTargetRuntimeNetwork
+} from "./aiStudio/runtimeContainers.js";
+import {
   deepFreeze
 } from "./aiStudio/deepFreeze.js";
 import {
@@ -299,12 +302,18 @@ function createDoctorPluginToolkit({
   async function runToolchain(commandArgs = [], options = {}) {
     const {
       image = "",
+      targetRoot: optionTargetRoot = "",
       timeout,
       ...toolchainOptions
     } = options;
+    const toolchainTargetRoot = textValue(optionTargetRoot || targetRoot);
+    if (toolchainTargetRoot) {
+      await ensureTargetRuntimeNetwork(toolchainTargetRoot);
+    }
     return runDocker(buildDoctorToolchainArgs(commandArgs, {
       ...toolchainOptions,
-      ...(image ? { image } : {})
+      ...(image ? { image } : {}),
+      targetRoot: toolchainTargetRoot
     }), {
       timeout
     });
@@ -322,6 +331,7 @@ function createDoctorPluginToolkit({
     fields = [],
     input,
     label = "",
+    prepare = null,
     validate = null
   } = {}) {
     function preview(context = {}) {
@@ -345,7 +355,7 @@ function createDoctorPluginToolkit({
           label
         });
       },
-      start(context = {}) {
+      async start(context = {}) {
         const validationError = typeof validate === "function"
           ? validationErrorFrom(validate(context), "Terminal action input is invalid.")
           : null;
@@ -354,6 +364,9 @@ function createDoctorPluginToolkit({
         }
         if (typeof startTerminalSession !== "function") {
           return null;
+        }
+        if (typeof prepare === "function") {
+          await prepare(context);
         }
         return startTerminalSession({
           args: textArrayValue(args, context),
@@ -395,15 +408,26 @@ function createDoctorPluginToolkit({
     targetRoot: actionTargetRoot = "",
     ...options
   } = {}) {
+    function toolchainTargetRootForContext(context = {}) {
+      return textValue(resolveOption(actionTargetRoot, context) || targetRootFor(context));
+    }
+
     return dockerTerminalAction({
       ...options,
       args: (context) => {
+        const toolchainTargetRoot = toolchainTargetRootForContext(context);
         const resolvedImage = textValue(resolveOption(image, context));
         return buildDoctorToolchainArgs(textArrayValue(commandArgs, context), {
           extraArgs: textArrayValue(extraArgs, context),
           ...(resolvedImage ? { image: resolvedImage } : {}),
-          targetRoot: textValue(resolveOption(actionTargetRoot, context) || targetRootFor(context))
+          targetRoot: toolchainTargetRoot
         });
+      },
+      prepare: async (context) => {
+        const toolchainTargetRoot = toolchainTargetRootForContext(context);
+        if (toolchainTargetRoot) {
+          await ensureTargetRuntimeNetwork(toolchainTargetRoot);
+        }
       }
     });
   }

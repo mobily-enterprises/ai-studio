@@ -12,9 +12,6 @@ import {
   readComposerJson
 } from "./composerPackage.js";
 import {
-  laravelRuntimeDockerArgs
-} from "./databaseRuntime.js";
-import {
   LARAVEL_TOOLCHAIN_IMAGE
 } from "./toolchainIdentity.js";
 
@@ -39,10 +36,8 @@ async function listLaravelLaunchTargets({
 }
 
 async function createLaravelLaunchDescriptor({
-  config = {},
   mode = "built",
   port,
-  targetRoot = "",
   worktreePath = ""
 } = {}) {
   const [composerJson, packageJson] = await Promise.all([
@@ -72,10 +67,6 @@ async function createLaravelLaunchDescriptor({
         networkEnv: true
       }
     ].filter(Boolean),
-    extraDockerArgs: laravelRuntimeDockerArgs({
-      config,
-      targetRoot
-    }),
     metadata: {
       buildCommand: mode === "built" ? buildCommand : "",
       commandSource: hasServeScript ? "composer" : "artisan",

@@ -71,13 +71,16 @@ export {
   createRuntimeContainerDoctorEntries,
   createRuntimeContainerRepair,
   createRuntimeContainerTerminalAction,
+  ensureTargetRuntimeNetwork,
   normalizeRuntimeContainerDescriptor,
   runtimeContainerCommandPreview,
   runtimeContainerName,
   runtimeContainerNetworkDockerArgs,
   runtimeContainerRunArgs,
   runtimeContainerStartScript,
-  runtimeNetworkName
+  runtimeNetworkName,
+  targetRuntimeNetworkDockerArgs,
+  targetRuntimeNetworkEnsureCommand
 } from "./runtimeContainers.js";
 export {
   AI_STUDIO_INITIAL_STEP,

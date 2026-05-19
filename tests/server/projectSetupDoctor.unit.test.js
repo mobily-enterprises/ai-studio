@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdir,
-  mkdtemp,
   writeFile
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -19,6 +17,7 @@ import {
   githubBranchRefApiPath,
   inspectProjectSetup
 } from "../../packages/project-setup-doctor/src/server/service.js";
+import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
 function assertShellScriptSurvivesWhitespaceCollapse(script) {
   const flattened = script.replace(/\s+/gu, " ");
@@ -39,18 +38,19 @@ function runGit(cwd, args) {
   return result.stdout.trim();
 }
 
-async function createLinkedWorktree() {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-linked-repo-"));
-  const worktreeRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-linked-worktree-"));
-
-  runGit(repoRoot, ["init", "-b", "main"]);
-  runGit(repoRoot, ["config", "user.name", "Studio Test"]);
-  runGit(repoRoot, ["config", "user.email", "studio-test@example.com"]);
-  await writeFile(path.join(repoRoot, "README.md"), "# Test\n", "utf8");
-  runGit(repoRoot, ["add", "README.md"]);
-  runGit(repoRoot, ["commit", "-m", "Initial commit"]);
-  runGit(repoRoot, ["worktree", "add", "-b", "studio-test", worktreeRoot]);
-  return worktreeRoot;
+async function withLinkedWorktree(callback) {
+  return withTemporaryRoot(async (repoRoot) => {
+    return withTemporaryRoot(async (worktreeRoot) => {
+      runGit(repoRoot, ["init", "-b", "main"]);
+      runGit(repoRoot, ["config", "user.name", "Studio Test"]);
+      runGit(repoRoot, ["config", "user.email", "studio-test@example.com"]);
+      await writeFile(path.join(repoRoot, "README.md"), "# Test\n", "utf8");
+      runGit(repoRoot, ["add", "README.md"]);
+      runGit(repoRoot, ["commit", "-m", "Initial commit"]);
+      runGit(repoRoot, ["worktree", "add", "-b", "studio-test", worktreeRoot]);
+      return callback(worktreeRoot);
+    });
+  });
 }
 
 async function createGitRepository(root) {
@@ -58,102 +58,106 @@ async function createGitRepository(root) {
 }
 
 test("Project Setup hard-stops when a non-git directory already has files", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-files-"));
-  await writeFile(path.join(targetRoot, "notes.txt"), "existing work\n", "utf8");
+  await withTemporaryRoot(async (targetRoot) => {
+    await writeFile(path.join(targetRoot, "notes.txt"), "existing work\n", "utf8");
 
-  const status = await inspectProjectSetup({
-    targetRoot
+    const status = await inspectProjectSetup({
+      targetRoot
+    });
+
+    assert.equal(status.ready, false);
+    assert.equal(status.currentStageId, "directory");
+    assert.equal(status.hardStop, true);
+    assert.equal(status.stages[0].status, "hard-stop");
+    assert.match(status.stages[0].observed, /notes\.txt/u);
+    assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.status, "pending");
   });
-
-  assert.equal(status.ready, false);
-  assert.equal(status.currentStageId, "directory");
-  assert.equal(status.hardStop, true);
-  assert.equal(status.stages[0].status, "hard-stop");
-  assert.match(status.stages[0].observed, /notes\.txt/u);
-  assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.status, "pending");
 });
 
 test("Project Setup blocks an empty directory at Git initialization", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-empty-"));
+  await withTemporaryRoot(async (targetRoot) => {
+    const status = await inspectProjectSetup({
+      targetRoot
+    });
 
-  const status = await inspectProjectSetup({
-    targetRoot
+    assert.equal(status.ready, false);
+    assert.equal(status.hardStop, false);
+    assert.equal(status.stages[0].status, "pass");
+    assert.equal(status.currentStageId, "git-ready");
+    assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.status, "blocked");
+    assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.repair?.actionId, "terminal-git-init");
   });
-
-  assert.equal(status.ready, false);
-  assert.equal(status.hardStop, false);
-  assert.equal(status.stages[0].status, "pass");
-  assert.equal(status.currentStageId, "git-ready");
-  assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.status, "blocked");
-  assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.repair?.actionId, "terminal-git-init");
 });
 
 test("Project Setup treats .ai-studio as bootstrap state in an otherwise empty directory", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-configured-empty-"));
-  await mkdir(path.join(targetRoot, ".ai-studio", "config"), {
-    recursive: true
-  });
-  await writeFile(path.join(targetRoot, ".ai-studio", "project_type"), "jskit\n", "utf8");
+  await withTemporaryRoot(async (targetRoot) => {
+    await mkdir(path.join(targetRoot, ".ai-studio", "config"), {
+      recursive: true
+    });
+    await writeFile(path.join(targetRoot, ".ai-studio", "project_type"), "jskit\n", "utf8");
 
-  const status = await inspectProjectSetup({
-    targetRoot
-  });
+    const status = await inspectProjectSetup({
+      targetRoot
+    });
 
-  assert.equal(status.ready, false);
-  assert.equal(status.hardStop, false);
-  assert.equal(status.stages[0].status, "pass");
-  assert.match(status.stages[0].observed, /\.ai-studio/u);
-  assert.equal(status.currentStageId, "git-ready");
-  assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.repair?.actionId, "terminal-git-init");
+    assert.equal(status.ready, false);
+    assert.equal(status.hardStop, false);
+    assert.equal(status.stages[0].status, "pass");
+    assert.match(status.stages[0].observed, /\.ai-studio/u);
+    assert.equal(status.currentStageId, "git-ready");
+    assert.equal(status.stages.find((stage) => stage.id === "git-ready")?.repair?.actionId, "terminal-git-init");
+  });
 });
 
 test("Project Setup admits linked Git worktrees before Git safety checks", async () => {
-  const worktreeRoot = await createLinkedWorktree();
+  await withLinkedWorktree(async (worktreeRoot) => {
+    const status = await inspectProjectSetup({
+      targetRoot: worktreeRoot
+    });
 
-  const status = await inspectProjectSetup({
-    targetRoot: worktreeRoot
+    assert.equal(status.stages.find((stage) => stage.id === "directory")?.status, "pass");
+    assert.match(status.stages.find((stage) => stage.id === "directory")?.observed || "", /linked Git metadata/u);
+    assert.notEqual(status.currentStageId, "directory");
   });
-
-  assert.equal(status.stages.find((stage) => stage.id === "directory")?.status, "pass");
-  assert.match(status.stages.find((stage) => stage.id === "directory")?.observed || "", /linked Git metadata/u);
-  assert.notEqual(status.currentStageId, "directory");
 });
 
 test("Project Setup blocks before remote setup when AI Studio ignore rules are missing", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-ignore-missing-"));
-  await createGitRepository(targetRoot);
+  await withTemporaryRoot(async (targetRoot) => {
+    await createGitRepository(targetRoot);
 
-  const status = await inspectProjectSetup({
-    targetRoot
+    const status = await inspectProjectSetup({
+      targetRoot
+    });
+
+    const ignoreStage = status.stages.find((stage) => stage.id === "ai-studio-gitignore");
+    assert.equal(status.currentStageId, "ai-studio-gitignore");
+    assert.equal(ignoreStage?.status, "blocked");
+    assert.equal(ignoreStage?.repair?.actionId, ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID);
+    for (const pattern of AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS) {
+      assert.match(ignoreStage?.observed || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+      assert.match(ignoreStage?.repair?.commandPreview || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+    }
+    assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "pending");
   });
-
-  const ignoreStage = status.stages.find((stage) => stage.id === "ai-studio-gitignore");
-  assert.equal(status.currentStageId, "ai-studio-gitignore");
-  assert.equal(ignoreStage?.status, "blocked");
-  assert.equal(ignoreStage?.repair?.actionId, ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID);
-  for (const pattern of AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS) {
-    assert.match(ignoreStage?.observed || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
-    assert.match(ignoreStage?.repair?.commandPreview || "", new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
-  }
-  assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "pending");
 });
 
 test("Project Setup continues to remote setup when AI Studio ignore rules are present", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-studio-project-ignore-present-"));
-  await createGitRepository(targetRoot);
-  await writeFile(
-    path.join(targetRoot, ".gitignore"),
-    `${AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.join("\n")}\n`,
-    "utf8"
-  );
+  await withTemporaryRoot(async (targetRoot) => {
+    await createGitRepository(targetRoot);
+    await writeFile(
+      path.join(targetRoot, ".gitignore"),
+      `${AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS.join("\n")}\n`,
+      "utf8"
+    );
 
-  const status = await inspectProjectSetup({
-    targetRoot
+    const status = await inspectProjectSetup({
+      targetRoot
+    });
+
+    assert.equal(status.stages.find((stage) => stage.id === "ai-studio-gitignore")?.status, "pass");
+    assert.equal(status.currentStageId, "remote-ready");
+    assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "blocked");
   });
-
-  assert.equal(status.stages.find((stage) => stage.id === "ai-studio-gitignore")?.status, "pass");
-  assert.equal(status.currentStageId, "remote-ready");
-  assert.equal(status.stages.find((stage) => stage.id === "remote-ready")?.status, "blocked");
 });
 
 test("Project Setup GitHub repo repair links existing repos and only pushes when commits exist", () => {

@@ -7,6 +7,9 @@ import {
   buildDoctorTerminalArgs
 } from "./doctorToolchain.js";
 import {
+  ensureTargetRuntimeNetwork
+} from "./aiStudio/runtimeContainers.js";
+import {
   runDoctorGh as runGh,
   runDoctorGit as runGit
 } from "./doctorToolchainCommands.js";
@@ -311,13 +314,16 @@ function githubBranchRefApiPath(repoSlug, branch) {
   return `repos/${repoSlug}/git/ref/heads/${branchPath}`;
 }
 
-function startSetupDoctorDockerTerminal({
+async function startSetupDoctorDockerTerminal({
   args,
   commandPreview,
   env = {},
   namespace,
   targetRoot
 }) {
+  if (targetRoot) {
+    await ensureTargetRuntimeNetwork(targetRoot);
+  }
   return startTerminalSession({
     args,
     command: "docker",

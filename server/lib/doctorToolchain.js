@@ -4,6 +4,9 @@ import {
   gitToolchainMountArgs
 } from "./gitToolchainMounts.js";
 import {
+  targetRuntimeNetworkDockerArgs
+} from "./aiStudio/runtimeContainers.js";
+import {
   STUDIO_DAEMON_PID_LABEL,
   STUDIO_BASE_TOOLCHAIN_IMAGE,
   STUDIO_TOOL_HOME_VOLUME,
@@ -45,6 +48,7 @@ function buildDoctorToolchainArgs(commandArgs, options = {}) {
     "--label",
     `${STUDIO_DAEMON_PID_LABEL}=${process.pid}`,
     ...workspaceMountArgs,
+    ...(targetRoot ? targetRuntimeNetworkDockerArgs(targetRoot) : []),
     "-w",
     "/workspace",
     ...extraArgs,

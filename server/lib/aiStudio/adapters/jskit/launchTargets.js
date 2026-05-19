@@ -12,7 +12,6 @@ import {
   JSKIT_TOOLCHAIN_IMAGE
 } from "./toolchainIdentity.js";
 import {
-  jskitDatabaseDockerArgsForTarget,
   readDatabaseHostFromDotEnv
 } from "./setupMariaDbRuntime.js";
 
@@ -178,12 +177,10 @@ async function listJskitLaunchTargets({
 async function createJskitBuiltLaunchDescriptor({
   config,
   databaseHost = "",
-  targetRoot = "",
   worktreePath = ""
 } = {}) {
   return {
     command: config.testrunCommand,
-    extraDockerArgs: jskitDatabaseDockerArgsForTarget(databaseHost, targetRoot),
     hostDocker: config.hostDocker,
     metadata: {
       buildCommand: config.buildCommand,
@@ -201,12 +198,10 @@ async function createJskitBuiltLaunchDescriptor({
 async function createJskitDevLaunchDescriptor({
   config,
   databaseHost = "",
-  targetRoot = "",
   worktreePath = ""
 } = {}) {
   return {
     command: config.devCommand,
-    extraDockerArgs: jskitDatabaseDockerArgsForTarget(databaseHost, targetRoot),
     hostDocker: config.hostDocker,
     metadata: {
       commandSource: config.commandSource,

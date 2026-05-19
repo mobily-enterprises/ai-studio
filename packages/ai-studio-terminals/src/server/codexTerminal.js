@@ -29,6 +29,10 @@ import {
   removeDockerContainer
 } from "../../../../server/lib/containerRuntime.js";
 import {
+  ensureTargetRuntimeNetwork,
+  targetRuntimeNetworkDockerArgs
+} from "../../../../server/lib/aiStudio/runtimeContainers.js";
+import {
   CODEX_TERMINAL_NAMESPACE_PREFIX,
   aiStudioResult,
   codexTerminalNamespace,
@@ -220,6 +224,7 @@ function codexTerminalArgs({
     `${targetRoot}:${targetRoot}`,
     "-v",
     `${CODEX_ATTACHMENT_HOST_ROOT}:${CODEX_ATTACHMENT_CONTAINER_ROOT}:ro`,
+    ...targetRuntimeNetworkDockerArgs(targetRoot),
     "-w",
     worktree,
     STUDIO_BASE_TOOLCHAIN_IMAGE,
@@ -362,6 +367,7 @@ function createCodexTerminalController({ projectService } = {}) {
         }
 
         await prepareCodexAttachmentRoot();
+        await ensureTargetRuntimeNetwork(targetRoot);
         const namespace = codexTerminalNamespace(sessionId);
         return withCodexState(startTerminalSession({
           args: ({ id }) => codexTerminalArgs({
@@ -438,4 +444,4 @@ function createCodexTerminalController({ projectService } = {}) {
   });
 }
 
-export { createCodexTerminalController };
+export { codexTerminalArgs, createCodexTerminalController };

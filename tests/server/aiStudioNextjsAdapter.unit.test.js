@@ -17,17 +17,13 @@ import {
 } from "../../server/lib/aiStudio/adapters/nextjs/index.js";
 import {
   expectedNextjsDatabaseUrl,
-  nextjsDatabaseEnvWriteScript,
-  nextjsRuntimeDockerArgs
+  nextjsDatabaseEnvWriteScript
 } from "../../server/lib/aiStudio/adapters/nextjs/databaseRuntime.js";
 import {
   createNextAppCommand,
   createNextAppScript,
   createNextjsSetupDoctorPlugin
 } from "../../server/lib/aiStudio/adapters/nextjs/setupDoctorPlugin.js";
-import {
-  runtimeContainerNetworkDockerArgs
-} from "../../server/lib/aiStudio/runtimeContainers.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
 async function writeProjectFile(root, relativePath, text = "") {
@@ -439,13 +435,6 @@ test("nextjs adapter declares optional managed database runtime without owning o
     assert.equal(
       expectedNextjsDatabaseUrl("postgres", targetRoot),
       `postgresql://nextjs:nextjs_password@nextjs-postgres:5432/${path.basename(targetRoot).replace(/[^A-Za-z0-9_]+/gu, "_")}`
-    );
-    assert.deepEqual(
-      nextjsRuntimeDockerArgs({
-        config,
-        targetRoot
-      }),
-      runtimeContainerNetworkDockerArgs(targetRoot)
     );
   });
 });

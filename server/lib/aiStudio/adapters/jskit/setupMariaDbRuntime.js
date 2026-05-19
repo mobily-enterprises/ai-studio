@@ -4,8 +4,7 @@ import {
 import {
   AI_STUDIO_RUNTIME_HOST_ALIAS,
   createRuntimeContainerRepair,
-  runtimeContainerName,
-  runtimeContainerNetworkDockerArgs
+  runtimeContainerName
 } from "../../runtimeContainers.js";
 import {
   readDatabaseHostFromEnvFile
@@ -45,20 +44,6 @@ function mariaDbCapabilitySql() {
     `DROP TABLE \`${JSKIT_MARIADB_PROBE_DATABASE}\`.\`${JSKIT_MARIADB_PROBE_TABLE}\``,
     `DROP DATABASE \`${JSKIT_MARIADB_PROBE_DATABASE}\``
   ].join("; ");
-}
-
-function jskitDatabaseDockerArgs(databaseHost = "", targetRoot = "") {
-  if (String(databaseHost || "").trim() === JSKIT_MARIADB_HOST) {
-    return runtimeContainerNetworkDockerArgs(targetRoot);
-  }
-  return [
-    "--add-host",
-    `${JSKIT_HOST_DATABASE_HOST}:host-gateway`
-  ];
-}
-
-function jskitDatabaseDockerArgsForTarget(databaseHost = "", targetRoot = "") {
-  return jskitDatabaseDockerArgs(databaseHost, targetRoot);
 }
 
 function createJskitMariaDbRuntimeContainer({
@@ -163,8 +148,6 @@ export {
   createJskitMariaDbRuntimeContainer,
   createManagedDatabaseDockerArgs,
   createManagedDatabaseRepair,
-  jskitDatabaseDockerArgs,
-  jskitDatabaseDockerArgsForTarget,
   jskitMariaDbContainerName,
   JSKIT_HOST_DATABASE_HOST,
   JSKIT_MARIADB_CONTAINER_ID,

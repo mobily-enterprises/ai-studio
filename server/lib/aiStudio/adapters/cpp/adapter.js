@@ -10,6 +10,9 @@ import {
   buildDoctorToolchainArgs
 } from "../../../doctorToolchain.js";
 import {
+  targetRuntimeNetworkEnsureCommand
+} from "../../runtimeContainers.js";
+import {
   adapterProjectFacts
 } from "../../adapter.js";
 import {
@@ -272,7 +275,7 @@ async function inspectCppProject(targetRoot) {
 function dockerToolchainScript(command = "", {
   targetRoot = ""
 } = {}) {
-  return dockerCommand(buildDoctorToolchainArgs(["bash", "-lc", command], {
+  const dockerRun = dockerCommand(buildDoctorToolchainArgs(["bash", "-lc", command], {
     extraArgs: [
       ...hostUserDockerArgs(),
       "-e",
@@ -281,6 +284,9 @@ function dockerToolchainScript(command = "", {
     image: CPP_TOOLCHAIN_IMAGE,
     targetRoot
   }));
+  return targetRoot
+    ? `${targetRuntimeNetworkEnsureCommand(targetRoot)}\n${dockerRun}`
+    : dockerRun;
 }
 
 function buildSystemCommand({

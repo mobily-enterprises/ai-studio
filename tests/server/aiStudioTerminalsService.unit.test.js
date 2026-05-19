@@ -11,6 +11,15 @@ import {
 import {
   createService
 } from "../../packages/ai-studio-terminals/src/server/service.js";
+import {
+  codexTerminalArgs
+} from "../../packages/ai-studio-terminals/src/server/codexTerminal.js";
+import {
+  STUDIO_BASE_TOOLCHAIN_IMAGE
+} from "../../server/lib/studioRuntimeIdentity.js";
+import {
+  runtimeNetworkName
+} from "../../server/lib/aiStudio/runtimeContainers.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
 async function waitForExitedTerminal(service, sessionId, terminalSessionId) {
@@ -79,6 +88,23 @@ class UnitCommandAdapter extends TargetAdapter {
     };
   }
 }
+
+test("AI Studio Codex terminal joins the target runtime network before the image", () => {
+  const targetRoot = "/workspace/project";
+  const args = codexTerminalArgs({
+    codexThreadId: "",
+    containerName: "ai-studio-codex-unit",
+    sessionId: "unit-session",
+    targetRoot,
+    terminalId: "unit-terminal",
+    worktree: "/workspace/project/.ai-studio/sessions/active/unit/worktree"
+  });
+
+  const networkIndex = args.indexOf("--network");
+  assert.notEqual(networkIndex, -1);
+  assert.deepEqual(args.slice(networkIndex, networkIndex + 2), ["--network", runtimeNetworkName(targetRoot)]);
+  assert.ok(networkIndex < args.indexOf(STUDIO_BASE_TOOLCHAIN_IMAGE));
+});
 
 test("AI Studio command terminal records action results and metadata after success", async () => {
   await withTemporaryRoot(async (targetRoot) => {

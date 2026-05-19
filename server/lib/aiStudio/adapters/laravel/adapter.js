@@ -38,6 +38,9 @@ import {
   buildDoctorToolchainArgs
 } from "../../../doctorToolchain.js";
 import {
+  targetRuntimeNetworkEnsureCommand
+} from "../../runtimeContainers.js";
+import {
   composerDependencyNames,
   composerProjectName,
   composerRunCommand,
@@ -68,7 +71,6 @@ import {
   inspectLaravelTargetScripts
 } from "./currentApp.js";
 import {
-  laravelRuntimeDockerArgs,
   selectedLaravelDatabaseRuntime
 } from "./databaseRuntime.js";
 import {
@@ -285,10 +287,9 @@ async function laravelFacts({
 }
 
 function dockerToolchainScript(command = "", {
-  config = {},
   targetRoot = ""
 } = {}) {
-  return dockerCommand(buildDoctorToolchainArgs(["bash", "-lc", command], {
+  const dockerRun = dockerCommand(buildDoctorToolchainArgs(["bash", "-lc", command], {
     extraArgs: [
       ...hostUserDockerArgs(),
       "-e",
@@ -296,15 +297,14 @@ function dockerToolchainScript(command = "", {
       "-e",
       "COMPOSER_CACHE_DIR=/tmp/composer-cache",
       "-e",
-      "npm_config_cache=/tmp/npm-cache",
-      ...laravelRuntimeDockerArgs({
-        config,
-        targetRoot
-      })
+      "npm_config_cache=/tmp/npm-cache"
     ],
     image: LARAVEL_TOOLCHAIN_IMAGE,
     targetRoot
   }));
+  return targetRoot
+    ? `${targetRuntimeNetworkEnsureCommand(targetRoot)}\n${dockerRun}`
+    : dockerRun;
 }
 
 async function laravelInstallWorkflowHook({ worktreePath = "" } = {}) {

@@ -18,7 +18,6 @@ import {
   normalizePlainObject
 } from "../../serverResponses.js";
 import {
-  jskitDatabaseDockerArgsForTarget,
   readDatabaseHostFromDotEnv
 } from "./setupMariaDbRuntime.js";
 import {
@@ -197,7 +196,6 @@ async function createJskitTargetScriptTerminalSpec(targetRoot, input = {}) {
   const databaseHost = await readDatabaseHostFromDotEnv(normalizedTargetRoot);
   return createAiStudioTargetScriptTerminalSpec({
     adapterId: "jskit",
-    extraDockerArgs: jskitDatabaseDockerArgsForTarget(databaseHost, normalizedTargetRoot),
     image: JSKIT_TOOLCHAIN_IMAGE,
     input,
     metadata: {

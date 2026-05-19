@@ -1,7 +1,6 @@
 import {
   createRuntimeContainerRepair,
-  runtimeContainerName,
-  runtimeContainerNetworkDockerArgs
+  runtimeContainerName
 } from "../../runtimeContainers.js";
 import {
   createManagedDatabaseRuntimeContainer,
@@ -157,15 +156,6 @@ function laravelRuntimeContainerName({
   });
 }
 
-function laravelRuntimeDockerArgs({
-  config = {},
-  targetRoot = ""
-} = {}) {
-  return selectedLaravelDatabaseRuntime(config) === "sqlite"
-    ? []
-    : runtimeContainerNetworkDockerArgs(targetRoot);
-}
-
 function startLaravelRuntimeRepair({
   config = {},
   targetRoot = ""
@@ -242,7 +232,6 @@ export {
   laravelDatabaseEnvWriteScript,
   laravelDatabaseNameFromTargetRoot,
   laravelRuntimeContainerName,
-  laravelRuntimeDockerArgs,
   selectedLaravelDatabaseRuntime,
   startLaravelRuntimeRepair
 };

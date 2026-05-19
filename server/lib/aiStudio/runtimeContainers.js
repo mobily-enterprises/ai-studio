@@ -8,6 +8,7 @@ import {
 } from "../doctorCheckItems.js";
 import {
   dockerCommand,
+  runHostCommand,
   shellQuote,
   stableHash
 } from "../shellCommands.js";
@@ -597,6 +598,41 @@ function runtimeContainerNetworkDockerArgs(targetRoot = "", {
   ];
 }
 
+function targetRuntimeNetworkDockerArgs(targetRoot = "") {
+  return runtimeContainerNetworkDockerArgs(targetRoot);
+}
+
+function targetRuntimeNetworkEnsureCommand(targetRoot = "") {
+  const networkName = runtimeNetworkName(targetRoot);
+  const inspectCommand = `${dockerCommand(["network", "inspect", networkName])} >/dev/null 2>&1`;
+  return [
+    inspectCommand,
+    `${dockerCommand(["network", "create", networkName])} >/dev/null`,
+    inspectCommand
+  ].join(" || ");
+}
+
+async function ensureTargetRuntimeNetwork(targetRoot = "", {
+  runCommand = runHostCommand
+} = {}) {
+  const networkName = runtimeNetworkName(targetRoot);
+  const inspect = await runCommand("docker", ["network", "inspect", networkName], {
+    timeout: 5_000
+  });
+  if (inspect.ok) {
+    return networkName;
+  }
+
+  const create = await runCommand("docker", ["network", "create", networkName], {
+    timeout: 10_000
+  });
+  if (create.ok || /already exists/iu.test(create.output)) {
+    return networkName;
+  }
+
+  throw new Error(`Could not prepare AI Studio runtime network ${networkName}: ${create.output || inspect.output}`);
+}
+
 export {
   AI_STUDIO_RUNTIME_HOST_ALIAS,
   RUNTIME_CONTAINER_KIND,
@@ -605,11 +641,14 @@ export {
   createRuntimeContainerDoctorEntries,
   createRuntimeContainerRepair,
   createRuntimeContainerTerminalAction,
+  ensureTargetRuntimeNetwork,
   normalizeRuntimeContainerDescriptor,
   runtimeContainerCommandPreview,
   runtimeContainerName,
   runtimeContainerNetworkDockerArgs,
   runtimeContainerRunArgs,
   runtimeContainerStartScript,
-  runtimeNetworkName
+  runtimeNetworkName,
+  targetRuntimeNetworkDockerArgs,
+  targetRuntimeNetworkEnsureCommand
 };

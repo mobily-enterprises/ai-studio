@@ -14,10 +14,6 @@ import {
   packageScript,
   readPackageJson
 } from "../../nodePackage.js";
-import {
-  nextjsRuntimeDockerArgs
-} from "./databaseRuntime.js";
-
 const DEFAULT_TARGET_SCRIPT_NAMES = Object.freeze([
   "dev",
   "build",
@@ -115,16 +111,10 @@ async function inspectNextjsTargetScripts(appRoot) {
   });
 }
 
-async function createNextjsTargetScriptTerminalSpec(targetRoot, input = {}, {
-  config = {}
-} = {}) {
+async function createNextjsTargetScriptTerminalSpec(targetRoot, input = {}) {
   return createNodeTargetScriptTerminalSpec(targetRoot, input, {
     adapterId: "nextjs",
     defaultScriptNames: DEFAULT_TARGET_SCRIPT_NAMES,
-    extraDockerArgs: nextjsRuntimeDockerArgs({
-      config,
-      targetRoot
-    }),
     syntheticScripts: syntheticNextjsScripts
   });
 }

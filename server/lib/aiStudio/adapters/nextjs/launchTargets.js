@@ -8,10 +8,6 @@ import {
   readPackageJson,
   runScriptCommand
 } from "../../nodePackage.js";
-import {
-  nextjsRuntimeDockerArgs
-} from "./databaseRuntime.js";
-
 function launchModeForTarget(launchTargetId = "") {
   return launchTargetId === "dev" ? "development" : "production";
 }
@@ -47,10 +43,8 @@ async function listNextjsLaunchTargets({
 }
 
 async function createNextjsLaunchDescriptor({
-  config = {},
   mode = "production",
   port,
-  targetRoot = "",
   worktreePath = ""
 } = {}) {
   const packageJson = await readPackageJson(worktreePath);
@@ -84,10 +78,6 @@ async function createNextjsLaunchDescriptor({
         networkEnv: true
       }
     ].filter(Boolean),
-    extraDockerArgs: nextjsRuntimeDockerArgs({
-      config,
-      targetRoot
-    }),
     metadata: {
       buildCommand: mode === "production" ? buildCommand : "",
       commandSource: "next",

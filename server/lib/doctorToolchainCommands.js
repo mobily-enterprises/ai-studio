@@ -5,6 +5,9 @@ import {
   buildDoctorToolchainArgs
 } from "./doctorToolchain.js";
 import {
+  ensureTargetRuntimeNetwork
+} from "./aiStudio/runtimeContainers.js";
+import {
   runHostCommand
 } from "./shellCommands.js";
 
@@ -19,6 +22,9 @@ async function runDoctorToolchain(commandArgs = [], {
   targetRoot,
   timeout = DEFAULT_DOCTOR_COMMAND_TIMEOUT_MS
 } = {}) {
+  if (targetRoot) {
+    await ensureTargetRuntimeNetwork(targetRoot);
+  }
   return runHostCommand("docker", buildDoctorToolchainArgs(commandArgs, {
     extraArgs,
     targetRoot

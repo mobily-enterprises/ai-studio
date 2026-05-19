@@ -20,6 +20,9 @@ import {
 import {
   normalizeText
 } from "./core.js";
+import {
+  targetRuntimeNetworkDockerArgs
+} from "./runtimeContainers.js";
 
 function targetScriptError(code, message, extra = {}) {
   return {
@@ -111,6 +114,7 @@ function targetScriptTerminalArgs({
     `${targetRoot}:/workspace`,
     "-v",
     `${targetRoot}:${targetRoot}`,
+    ...targetRuntimeNetworkDockerArgs(targetRoot),
     ...extraDockerArgs,
     ...hostUserIdentityEnvArgs(),
     "-w",
@@ -199,7 +203,9 @@ async function createAiStudioTargetScriptTerminalSpec({
         terminalId: id
       }));
     },
-    reuseRunning: false
+    prepareTargetRuntimeNetwork: true,
+    reuseRunning: false,
+    targetRoot: normalizedTargetRoot
   };
 }
 

@@ -1,7 +1,6 @@
 import {
   createManagedDatabaseDockerArgs,
   createManagedDatabaseRepair,
-  jskitDatabaseDockerArgs,
   JSKIT_HOST_DATABASE_HOST,
   JSKIT_MARIADB_HOST,
   JSKIT_MARIADB_ROOT_PASSWORD,
@@ -164,7 +163,6 @@ async function checkJskitDatabaseRuntime(toolkit, {
       containerName: jskitMariaDbContainerName(targetRoot),
       createDatabaseRepair: createManagedDatabaseRepair,
       expectedEnv: defaultDatabaseEnv(targetRoot),
-      externalDockerArgs: jskitDatabaseDockerArgs,
       rootPassword: JSKIT_MARIADB_ROOT_PASSWORD,
       startRepair: startJskitMariaDbRepair(targetRoot)
     },

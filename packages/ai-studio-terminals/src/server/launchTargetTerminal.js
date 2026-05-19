@@ -7,6 +7,9 @@ import {
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
+  ensureTargetRuntimeNetwork
+} from "../../../../server/lib/aiStudio/runtimeContainers.js";
+import {
   aiStudioResult,
   launchTargetTerminalNamespace,
   sessionTerminalCwd
@@ -210,6 +213,7 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
           };
         }
 
+        await ensureTargetRuntimeNetwork(context.targetRoot);
         const namespace = launchTargetTerminalNamespace(sessionId);
         const projectConfigEnv = typeof projectService.projectConfigEnvironment === "function"
           ? await projectService.projectConfigEnvironment()

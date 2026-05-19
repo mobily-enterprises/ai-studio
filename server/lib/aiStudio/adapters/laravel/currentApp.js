@@ -24,9 +24,6 @@ import {
   readComposerJson
 } from "./composerPackage.js";
 import {
-  laravelRuntimeDockerArgs
-} from "./databaseRuntime.js";
-import {
   LARAVEL_TOOLCHAIN_IMAGE
 } from "./toolchainIdentity.js";
 
@@ -161,9 +158,7 @@ async function inspectLaravelTargetScripts(appRoot) {
   };
 }
 
-async function createLaravelTargetScriptTerminalSpec(targetRoot, input = {}, {
-  config = {}
-} = {}) {
+async function createLaravelTargetScriptTerminalSpec(targetRoot, input = {}) {
   const normalizedTargetRoot = path.resolve(targetRoot || process.cwd());
   const scriptsResult = await readLaravelTargetScripts(normalizedTargetRoot);
   if (scriptsResult.ok === false) {
@@ -171,10 +166,6 @@ async function createLaravelTargetScriptTerminalSpec(targetRoot, input = {}, {
   }
   return createAiStudioTargetScriptTerminalSpec({
     adapterId: "laravel",
-    extraDockerArgs: laravelRuntimeDockerArgs({
-      config,
-      targetRoot: normalizedTargetRoot
-    }),
     image: LARAVEL_TOOLCHAIN_IMAGE,
     input,
     scripts: scriptsResult.scripts,

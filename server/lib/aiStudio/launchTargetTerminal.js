@@ -27,6 +27,9 @@ import {
 import {
   normalizeText
 } from "./core.js";
+import {
+  targetRuntimeNetworkDockerArgs
+} from "./runtimeContainers.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_WEB_LAUNCH_TARGET_PORT = 4100;
@@ -227,6 +230,7 @@ function launchTargetTerminalArgs({
     `${targetRoot}:/workspace`,
     "-v",
     `${targetRoot}:${targetRoot}`,
+    ...targetRuntimeNetworkDockerArgs(targetRoot),
     ...extraDockerArgs,
     ...hostUserIdentityEnvArgs(),
     "-w",
