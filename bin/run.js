@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const RUNNER_ENTRYPOINT = fileURLToPath(import.meta.url);
+const MODULE_DIR = path.dirname(RUNNER_ENTRYPOINT);
 const SERVER_ENTRYPOINT = path.join(MODULE_DIR, "server.js");
 
 function quoteShellArg(value = "") {
@@ -18,6 +20,27 @@ function quoteAppleScriptString(value = "") {
 function quoteWindowsArg(value = "") {
   const text = String(value);
   return `"${text.replaceAll('"', '\\"')}"`;
+}
+
+function realCliPath(filePath, realpath = realpathSync) {
+  const resolvedPath = path.resolve(String(filePath || ""));
+  try {
+    return realpath(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
+}
+
+function isDirectCliExecution({
+  argv = process.argv,
+  entrypointPath = RUNNER_ENTRYPOINT,
+  realpath = realpathSync
+} = {}) {
+  const cliPath = argv[1];
+  if (!cliPath) {
+    return false;
+  }
+  return realCliPath(cliPath, realpath) === realCliPath(entrypointPath, realpath);
 }
 
 function serverShellCommand({
@@ -250,7 +273,7 @@ async function runLauncher({
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectCliExecution()) {
   runLauncher().then((exitCode) => {
     process.exitCode = exitCode;
   }).catch((error) => {
@@ -261,6 +284,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 
 export {
   SERVER_ENTRYPOINT,
+  isDirectCliExecution,
   launchInNewTerminal,
   quoteShellArg,
   runLauncher,
