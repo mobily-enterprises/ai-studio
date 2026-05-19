@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Run AI Studio against the current project.",
   "bin": {
-    "ai-studio": "bin/run.js"
+    "vibe-armor": "bin/run.js"
   },
   "files": [
     ".jskit/lock.json",

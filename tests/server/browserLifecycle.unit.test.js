@@ -10,13 +10,19 @@ import {
 test("browser lifecycle monitor shuts down after the last client disconnects", async () => {
   const timer = fakeTimer();
   const shutdowns = [];
+  const messages = [];
   const monitor = createBrowserLifecycleMonitor({
     clearTimeoutFn: timer.clearTimeout,
     closeServer: async (reason) => {
       shutdowns.push(reason);
     },
+    logger: {
+      info(message) {
+        messages.push(message);
+      }
+    },
     setTimeoutFn: timer.setTimeout,
-    shutdownDelayMs: 25
+    shutdownDelayMs: 3000
   });
   monitor.enableShutdown();
 
@@ -26,10 +32,17 @@ test("browser lifecycle monitor shuts down after the last client disconnects", a
 
   socket.emit("close");
   assert.equal(monitor.activeClientCount(), 0);
-  assert.equal(timer.pendingDelay(), 25);
+  assert.equal(timer.pendingDelay(), 3000);
+  assert.deepEqual(messages, [
+    "Browser window disconnected. Terminating in 3 seconds..."
+  ]);
 
   await timer.runPending();
   assert.deepEqual(shutdowns, ["browser-lifecycle-disconnected"]);
+  assert.deepEqual(messages, [
+    "Browser window disconnected. Terminating in 3 seconds...",
+    "Closing AI Studio because the browser window disconnected."
+  ]);
 });
 
 test("browser lifecycle monitor cancels shutdown when a client reconnects", async () => {

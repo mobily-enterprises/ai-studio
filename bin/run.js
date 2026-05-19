@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { release as osRelease } from "node:os";
 import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,13 @@ function quoteAppleScriptString(value = "") {
 function quoteWindowsArg(value = "") {
   const text = String(value);
   return `"${text.replaceAll('"', '\\"')}"`;
+}
+
+function windowsCommandLine(command = "", args = []) {
+  return [
+    quoteWindowsArg(command),
+    ...args.map((arg) => quoteWindowsArg(arg))
+  ].join(" ");
 }
 
 function realCliPath(filePath, realpath = realpathSync) {
@@ -46,6 +54,22 @@ function isDirectCliExecution({
 function targetNameFromCwd(cwd = process.cwd(), platform = process.platform) {
   const targetName = platform === "win32" ? path.win32.basename(cwd) : path.basename(cwd);
   return targetName || "target";
+}
+
+function isWslEnvironment({
+  env = process.env,
+  osReleaseText = osRelease(),
+  platform = process.platform
+} = {}) {
+  if (platform !== "linux") {
+    return false;
+  }
+
+  if (String(env.WSL_DISTRO_NAME || env.WSL_INTEROP || "").trim()) {
+    return true;
+  }
+
+  return /\bmicrosoft\b|\bwsl\b/iu.test(String(osReleaseText || ""));
 }
 
 function serverShellCommand({
@@ -108,10 +132,56 @@ function terminalShellScript({
   ].join("\n");
 }
 
+function encodedBashScriptCommand(shellScript = "") {
+  const encodedScript = Buffer.from(String(shellScript || ""), "utf8").toString("base64");
+  return `printf %s ${encodedScript} | base64 -d | bash`;
+}
+
+function wslServerCommandArgs({
+  distroName = "",
+  shellScript = ""
+} = {}) {
+  const normalizedDistroName = String(distroName || "").trim();
+  return [
+    ...(normalizedDistroName ? ["-d", normalizedDistroName] : []),
+    "--",
+    "bash",
+    "-lc",
+    encodedBashScriptCommand(shellScript)
+  ];
+}
+
+function wslTerminalLaunchCandidates({
+  cwd = process.cwd(),
+  env = process.env,
+  shellScript = "",
+  title = `AI Studio - ${targetNameFromCwd(cwd, "linux")}`
+} = {}) {
+  const wslArgs = wslServerCommandArgs({
+    distroName: env.WSL_DISTRO_NAME,
+    shellScript
+  });
+  return [
+    {
+      command: "wt.exe",
+      args: ["new-window", "--title", title, "wsl.exe", ...wslArgs]
+    },
+    {
+      command: "cmd.exe",
+      args: [
+        "/d",
+        "/c",
+        `start ${quoteWindowsArg(title)} ${windowsCommandLine("wsl.exe", wslArgs)}`
+      ]
+    }
+  ];
+}
+
 function terminalLaunchCandidates({
   cwd = process.cwd(),
   env = process.env,
   nodePath = process.execPath,
+  osReleaseText = osRelease(),
   platform = process.platform,
   serverArgs = [],
   serverPath = SERVER_ENTRYPOINT
@@ -162,7 +232,7 @@ function terminalLaunchCandidates({
     ];
   }
 
-  const candidates = [
+  const linuxCandidates = [
     env.TERMINAL
       ? {
           command: env.TERMINAL,
@@ -189,8 +259,21 @@ function terminalLaunchCandidates({
       command: "xterm",
       args: ["-e", "bash", "-lc", shellScript]
     }
-  ];
-  return candidates.filter(Boolean);
+  ].filter(Boolean);
+
+  if (isWslEnvironment({ env, osReleaseText, platform })) {
+    return [
+      ...wslTerminalLaunchCandidates({
+        cwd,
+        env,
+        shellScript,
+        title
+      }),
+      ...linuxCandidates
+    ];
+  }
+
+  return linuxCandidates;
 }
 
 function spawnDetached(command, args = [], options = {}) {
@@ -212,6 +295,7 @@ async function launchInNewTerminal({
   cwd = process.cwd(),
   env = process.env,
   nodePath = process.execPath,
+  osReleaseText = osRelease(),
   platform = process.platform,
   serverArgs = [],
   serverPath = SERVER_ENTRYPOINT
@@ -220,6 +304,7 @@ async function launchInNewTerminal({
     cwd,
     env,
     nodePath,
+    osReleaseText,
     platform,
     serverArgs,
     serverPath
@@ -270,6 +355,7 @@ async function runLauncher({
   cwd = process.cwd(),
   env = process.env,
   nodePath = process.execPath,
+  osReleaseText = osRelease(),
   platform = process.platform,
   serverArgs = process.argv.slice(2),
   serverPath = SERVER_ENTRYPOINT
@@ -279,6 +365,7 @@ async function runLauncher({
       cwd,
       env,
       nodePath,
+      osReleaseText,
       platform,
       serverArgs,
       serverPath
@@ -309,6 +396,7 @@ if (isDirectCliExecution()) {
 export {
   SERVER_ENTRYPOINT,
   isDirectCliExecution,
+  isWslEnvironment,
   launchInNewTerminal,
   quoteShellArg,
   runLauncher,
@@ -316,5 +404,7 @@ export {
   serverWindowsCommand,
   targetNameFromCwd,
   terminalLaunchCandidates,
-  terminalShellScript
+  terminalShellScript,
+  wslServerCommandArgs,
+  wslTerminalLaunchCandidates
 };

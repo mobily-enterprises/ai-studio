@@ -5,6 +5,11 @@ import {
 const BROWSER_LIFECYCLE_WEBSOCKET_PATH = "/api/studio/browser-lifecycle/ws";
 const DEFAULT_BROWSER_LIFECYCLE_SHUTDOWN_DELAY_MS = 3000;
 
+function shutdownDelayLabel(delayMs = DEFAULT_BROWSER_LIFECYCLE_SHUTDOWN_DELAY_MS) {
+  const seconds = Math.max(1, Math.round(Number(delayMs || 0) / 1000));
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
+
 function sendBrowserLifecycleState(socket, monitor) {
   socket.send(JSON.stringify({
     closeBrowserOnDisconnect: monitor.isShutdownEnabled(),
@@ -38,6 +43,7 @@ function createBrowserLifecycleMonitor({
       return;
     }
 
+    logger?.info?.(`Browser window disconnected. Terminating in ${shutdownDelayLabel(shutdownDelayMs)}...`);
     shutdownTimer = setTimeoutFn(async () => {
       shutdownTimer = null;
       if (!shutdownEnabled || serverClosing || clients.size > 0) {
