@@ -6,6 +6,9 @@ import {
   createAiStudioWebLaunchTargetTerminalSpec
 } from "../../launchTargetTerminal.js";
 import {
+  JSKIT_ALLOW_SELF_TARGET_CONFIG
+} from "./adapter.js";
+import {
   JSKIT_TOOLCHAIN_IMAGE
 } from "./toolchainIdentity.js";
 import {
@@ -20,8 +23,7 @@ const DEFAULT_LAUNCH_PORT = 4100;
 const BUILT_LAUNCH_COMMAND_CONFIG = ".jskit/config/testrun_command";
 const BUILT_LAUNCH_PORT_CONFIG = ".jskit/config/server_port_for_user_review";
 const DEV_SERVER_COMMAND_CONFIG = "config/dev_server_command";
-const LAUNCH_HOST_DOCKER_CONFIG = ".jskit/config/devel_app_test_host_docker";
-const RECURSIVE_AI_STUDIO_OPENING_CONFIG = ".ai-studio/config/enable_recursive_ai_studio_opening";
+const JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH = `.ai-studio/config/${JSKIT_ALLOW_SELF_TARGET_CONFIG}`;
 
 function enabledConfigValue(value) {
   const normalized = String(value || "").trim().toLowerCase();
@@ -59,17 +61,11 @@ async function configFileHasValue(root, relativePath) {
 }
 
 async function resolveHostDockerConfig(root) {
-  const [launchHostDockerValue, recursiveAiStudioOpeningValue] = await Promise.all([
-    readOptionalConfigFile(root, LAUNCH_HOST_DOCKER_CONFIG, ""),
-    readOptionalConfigFile(root, RECURSIVE_AI_STUDIO_OPENING_CONFIG, "")
-  ]);
-  const sources = [
-    enabledConfigValue(launchHostDockerValue) ? LAUNCH_HOST_DOCKER_CONFIG : "",
-    enabledConfigValue(recursiveAiStudioOpeningValue) ? RECURSIVE_AI_STUDIO_OPENING_CONFIG : ""
-  ].filter(Boolean);
+  const selfTargetValue = await readOptionalConfigFile(root, JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH, "");
+  const enabled = enabledConfigValue(selfTargetValue);
   return {
-    enabled: sources.length > 0,
-    source: sources.join(", ")
+    enabled,
+    source: enabled ? JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH : ""
   };
 }
 
@@ -289,6 +285,5 @@ export {
   BUILT_LAUNCH_COMMAND_CONFIG,
   BUILT_LAUNCH_PORT_CONFIG,
   DEV_SERVER_COMMAND_CONFIG,
-  LAUNCH_HOST_DOCKER_CONFIG,
-  RECURSIVE_AI_STUDIO_OPENING_CONFIG
+  JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH
 };
