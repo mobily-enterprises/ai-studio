@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import test from "node:test";
@@ -19,6 +19,27 @@ import {
   resolveShellTerminalCwd,
   shellTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/shellTerminal.js";
+import {
+  resolveTerminalToolchainImage
+} from "../../packages/ai-studio-terminals/src/server/terminalToolchainImage.js";
+import {
+  CppTargetAdapter
+} from "../../server/lib/aiStudio/adapters/cpp/adapter.js";
+import {
+  CPP_TOOLCHAIN_IMAGE
+} from "../../server/lib/aiStudio/adapters/cpp/toolchainIdentity.js";
+import {
+  JskitTargetAdapter
+} from "../../server/lib/aiStudio/adapters/jskit/adapter.js";
+import {
+  JSKIT_TOOLCHAIN_IMAGE
+} from "../../server/lib/aiStudio/adapters/jskit/toolchainIdentity.js";
+import {
+  LaravelTargetAdapter
+} from "../../server/lib/aiStudio/adapters/laravel/adapter.js";
+import {
+  LARAVEL_TOOLCHAIN_IMAGE
+} from "../../server/lib/aiStudio/adapters/laravel/toolchainIdentity.js";
 import {
   STUDIO_BASE_TOOLCHAIN_IMAGE,
   STUDIO_TOOL_HOME_BIN_PATH,
@@ -119,6 +140,38 @@ test("AI Studio Codex terminal joins the target runtime network before the image
   assert.ok(startupScript.includes(`export PATH=${STUDIO_TOOL_HOME_BIN_PATH}:$PATH`));
   assert.match(startupScript, /chown -R "\$AI_STUDIO_HOST_UID:\$AI_STUDIO_HOST_GID" "\$HOME"/u);
   assert.ok(args.includes(`NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`));
+
+  const adapterImageArgs = codexTerminalArgs({
+    codexThreadId: "",
+    containerName: "ai-studio-codex-adapter",
+    image: "adapter-toolchain:1.0.0",
+    sessionId: "unit-session",
+    targetRoot,
+    terminalId: "adapter-terminal",
+    worktree: "/workspace/project/.ai-studio/sessions/active/unit/worktree"
+  });
+  assert.ok(adapterImageArgs.indexOf("--network") < adapterImageArgs.indexOf("adapter-toolchain:1.0.0"));
+});
+
+test("AI Studio Codex terminal mounts linked git metadata for worktree roots", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const linkedRepository = path.join(path.dirname(targetRoot), "linked-repository");
+    await mkdir(path.join(linkedRepository, ".git"), {
+      recursive: true
+    });
+    await writeFile(path.join(targetRoot, ".git"), `gitdir: ${path.join(linkedRepository, ".git")}\n`);
+
+    const args = codexTerminalArgs({
+      codexThreadId: "",
+      containerName: "ai-studio-codex-linked-git",
+      sessionId: "unit-session",
+      targetRoot,
+      terminalId: "unit-terminal",
+      worktree: path.join(targetRoot, ".ai-studio", "sessions", "active", "unit", "worktree")
+    });
+
+    assert.ok(args.includes(`${linkedRepository}:${linkedRepository}`));
+  });
 });
 
 test("AI Studio shell terminal joins the target runtime network before the image", () => {
@@ -164,6 +217,71 @@ test("AI Studio shell terminal joins the target runtime network before the image
   assert.ok(startupScript.includes("PS1=\"${AI_STUDIO_SHELL_PROMPT:-\\w \\$ }\""));
   assert.match(startupScript, /chown -R "\$AI_STUDIO_HOST_UID:\$AI_STUDIO_HOST_GID" "\$HOME"/u);
   assert.match(startupScript, /setpriv .* bash --rcfile \/tmp\/ai-studio-shell\.bashrc -i/u);
+});
+
+test("AI Studio terminals use the base image when the adapter does not declare one", async () => {
+  const result = await resolveTerminalToolchainImage({
+    imageExists: async (image) => image === STUDIO_BASE_TOOLCHAIN_IMAGE,
+    runtime: {
+      adapter: new UnitCommandAdapter(),
+      projectConfig: {}
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.image, STUDIO_BASE_TOOLCHAIN_IMAGE);
+  assert.equal(result.label, "managed base toolchain");
+});
+
+test("AI Studio terminals use declared adapter toolchain images", async () => {
+  const result = await resolveTerminalToolchainImage({
+    imageExists: async (image) => image === "adapter-toolchain:1.0.0",
+    runtime: {
+      adapter: {
+        async getTerminalToolchainSpec() {
+          return {
+            image: "adapter-toolchain:1.0.0",
+            label: "Adapter toolchain",
+            setupActionLabel: "Build adapter toolchain"
+          };
+        }
+      },
+      projectConfig: {}
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.image, "adapter-toolchain:1.0.0");
+  assert.equal(result.label, "Adapter toolchain");
+});
+
+test("AI Studio terminals fail clearly when a declared adapter image is missing", async () => {
+  const result = await resolveTerminalToolchainImage({
+    imageExists: async () => false,
+    runtime: {
+      adapter: {
+        async getTerminalToolchainSpec() {
+          return {
+            image: "missing-adapter-toolchain:1.0.0",
+            label: "Missing adapter toolchain",
+            setupActionLabel: "Build missing adapter toolchain"
+          };
+        }
+      },
+      projectConfig: {}
+    }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.image, "missing-adapter-toolchain:1.0.0");
+  assert.match(result.error, /Missing adapter toolchain image missing-adapter-toolchain:1\.0\.0 is missing/u);
+  assert.match(result.error, /Build missing adapter toolchain/u);
+});
+
+test("adapters with managed toolchains declare their terminal toolchain image", async () => {
+  assert.equal((await new JskitTargetAdapter().getTerminalToolchainSpec()).image, JSKIT_TOOLCHAIN_IMAGE);
+  assert.equal((await new LaravelTargetAdapter().getTerminalToolchainSpec()).image, LARAVEL_TOOLCHAIN_IMAGE);
+  assert.equal((await new CppTargetAdapter().getTerminalToolchainSpec()).image, CPP_TOOLCHAIN_IMAGE);
 });
 
 test("AI Studio command terminal records action results and metadata after success", async () => {

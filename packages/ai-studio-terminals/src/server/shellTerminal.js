@@ -9,7 +9,6 @@ import {
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
-  dockerImageExists,
   removeDockerContainer
 } from "../../../../server/lib/containerRuntime.js";
 import {
@@ -40,6 +39,9 @@ import {
   terminalTargetRoot,
   terminalWorktreePath
 } from "./terminalShared.js";
+import {
+  resolveTerminalToolchainImage
+} from "./terminalToolchainImage.js";
 
 const MAX_OPEN_SHELL_TERMINALS = 2;
 const SHELL_TARGET_MAIN = "main";
@@ -165,6 +167,7 @@ function shellStartupScript() {
 function shellTerminalArgs({
   containerName = "",
   env = {},
+  image = STUDIO_BASE_TOOLCHAIN_IMAGE,
   sessionId = "",
   target = "",
   targetRoot = "",
@@ -207,7 +210,7 @@ function shellTerminalArgs({
     ...targetRuntimeNetworkDockerArgs(targetRoot),
     "-w",
     workdir,
-    STUDIO_BASE_TOOLCHAIN_IMAGE,
+    image,
     "bash",
     "-lc",
     shellStartupScript()
@@ -304,11 +307,14 @@ function createShellTerminalController({ projectService } = {}) {
           return cwdResult;
         }
         const targetRoot = terminalTargetRoot(session, projectService);
-        if (!(await dockerImageExists(STUDIO_BASE_TOOLCHAIN_IMAGE))) {
-          return {
-            ok: false,
-            error: `Managed base toolchain image ${STUDIO_BASE_TOOLCHAIN_IMAGE} is missing. Open Setup and run Build managed base toolchain.`
-          };
+        const imageResult = await resolveTerminalToolchainImage({
+          runtime,
+          session,
+          target,
+          targetRoot
+        });
+        if (imageResult.ok === false) {
+          return imageResult;
         }
 
         await ensureTargetRuntimeNetwork(targetRoot);
@@ -325,6 +331,7 @@ function createShellTerminalController({ projectService } = {}) {
               terminalId: id
             }),
             env: projectConfigEnv,
+            image: imageResult.image,
             sessionId,
             target,
             targetRoot,
@@ -332,11 +339,13 @@ function createShellTerminalController({ projectService } = {}) {
             workdir: cwdResult.cwd
           }),
           command: "docker",
-          commandPreview: `${shellCommand} (${shellTargetLabel(target)}) - ${cwdResult.cwd}`,
+          commandPreview: `${shellCommand} (${shellTargetLabel(target)}, ${imageResult.label}) - ${cwdResult.cwd}`,
           cwd: cwdResult.cwd,
           maxRunning: MAX_OPEN_SHELL_TERMINALS,
           metadata: {
             cwd: cwdResult.cwd,
+            image: imageResult.image,
+            imageLabel: imageResult.label,
             sessionId,
             shell: shellCommand,
             target,
@@ -353,6 +362,7 @@ function createShellTerminalController({ projectService } = {}) {
           },
           reuseRunning: (runningSession) => {
             return runningSession.metadata?.target === target &&
+              runningSession.metadata?.image === imageResult.image &&
               runningSession.metadata?.cwd === cwdResult.cwd;
           }
         });

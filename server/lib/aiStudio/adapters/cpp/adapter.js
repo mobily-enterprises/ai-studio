@@ -476,6 +476,11 @@ class CppTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       currentAppInspector: inspectCppCurrentApp,
       defaultConfig: () => ({ ...CPP_DEFAULT_CONFIG }),
       id: "cpp",
+      terminalToolchain: {
+        image: CPP_TOOLCHAIN_IMAGE,
+        label: "C++ toolchain",
+        setupActionLabel: "Build C++ toolchain"
+      },
       label: "C++ target adapter",
       projectFacts: cppFacts,
       projectInspection: inspectCppProject,

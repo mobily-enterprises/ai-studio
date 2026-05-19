@@ -115,6 +115,15 @@ function adapterProjectFacts(input = {}) {
   };
 }
 
+function adapterTerminalToolchainSpec(input = {}) {
+  const image = normalizeText(input.image);
+  return {
+    image,
+    label: normalizeText(input.label || image),
+    setupActionLabel: normalizeText(input.setupActionLabel)
+  };
+}
+
 function emptyTargetScripts() {
   return {
     config: {
@@ -196,6 +205,10 @@ class TargetAdapter {
 
   async getDefaultConfig() {
     return {};
+  }
+
+  async getTerminalToolchainSpec() {
+    return adapterTerminalToolchainSpec();
   }
 
   async createCommandTerminalSpec(commandId) {
@@ -308,6 +321,7 @@ export {
   adapterLaunchTarget,
   adapterPromptResult,
   adapterProjectFacts,
+  adapterTerminalToolchainSpec,
   adapterView,
   normalizeStringMap,
   promptIdForAction,

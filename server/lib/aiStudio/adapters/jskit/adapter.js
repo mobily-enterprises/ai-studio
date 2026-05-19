@@ -35,6 +35,9 @@ import {
 import {
   createJskitSetupDoctorPlugin
 } from "./setupDoctorPlugin.js";
+import {
+  JSKIT_TOOLCHAIN_IMAGE
+} from "./toolchainIdentity.js";
 
 const JSKIT_MARKERS = deepFreeze([
   {
@@ -293,6 +296,11 @@ class JskitTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       currentAppInspector: inspectJskitCurrentApp,
       defaultConfig: JSKIT_DEFAULT_CONFIG,
       id: "jskit",
+      terminalToolchain: {
+        image: JSKIT_TOOLCHAIN_IMAGE,
+        label: "JSKIT toolchain",
+        setupActionLabel: "Build JSKIT toolchain"
+      },
       label: "JSKIT target adapter",
       prepareWorktreeScriptPath: JSKIT_PREPARE_WORKTREE_SCRIPT_PATH,
       projectFacts: jskitFacts,

@@ -7,6 +7,7 @@ export {
   adapterDetection,
   adapterPromptResult,
   adapterProjectFacts,
+  adapterTerminalToolchainSpec,
   adapterView
 } from "./adapter.js";
 export {

@@ -7,7 +7,8 @@ import {
   adapterActionResult,
   adapterCommand,
   adapterDetection,
-  adapterLaunchTarget
+  adapterLaunchTarget,
+  adapterTerminalToolchainSpec
 } from "./adapter.js";
 import {
   aiStudioError,
@@ -277,6 +278,7 @@ class AiStudioDescribedWorkflowTargetAdapter extends AiStudioWorkflowTargetAdapt
     promptRenderer = null,
     prepareWorktreeScriptPath = "",
     setupDoctorPlugins = () => [],
+    terminalToolchain = null,
     launchTargetTerminalSpecFactory = null,
     launchTargets = () => [],
     targetScriptTerminalSpecFactory = null,
@@ -301,6 +303,7 @@ class AiStudioDescribedWorkflowTargetAdapter extends AiStudioWorkflowTargetAdapt
       promptRenderer
     });
     this.setupDoctorPluginsFactory = setupDoctorPlugins;
+    this.terminalToolchainFactory = terminalToolchain;
     this.launchTargetTerminalSpecFactory = typeof launchTargetTerminalSpecFactory === "function"
       ? launchTargetTerminalSpecFactory
       : null;
@@ -354,6 +357,10 @@ class AiStudioDescribedWorkflowTargetAdapter extends AiStudioWorkflowTargetAdapt
 
   async getDefaultConfig() {
     return resolveValue(this.defaultConfig) || {};
+  }
+
+  async getTerminalToolchainSpec(context = {}) {
+    return adapterTerminalToolchainSpec(await resolveValue(this.terminalToolchainFactory, context) || {});
   }
 
   async getWorkflowCommandHooks(context = {}) {

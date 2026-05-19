@@ -21,11 +21,13 @@ import {
   studioUserStartupScript
 } from "../../../../server/lib/studioToolHome.js";
 import {
+  gitToolchainMountArgs
+} from "../../../../server/lib/gitToolchainMounts.js";
+import {
   hostUserIdentityEnvArgs
 } from "../../../../server/lib/shellCommands.js";
 import {
   containerWorkspacePath,
-  dockerImageExists,
   removeDockerContainer
 } from "../../../../server/lib/containerRuntime.js";
 import {
@@ -49,6 +51,9 @@ import {
   prepareCodexAttachmentRoot,
   storeCodexAttachment
 } from "./codexAttachments.js";
+import {
+  resolveTerminalToolchainImage
+} from "./terminalToolchainImage.js";
 
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const CODEX_THREAD_PROBE = "!echo $CODEX_THREAD_ID";
@@ -162,6 +167,7 @@ function codexStartupScript(codexThreadId = "") {
 function codexTerminalArgs({
   codexThreadId,
   containerName,
+  image = STUDIO_BASE_TOOLCHAIN_IMAGE,
   sessionId,
   targetRoot,
   terminalId,
@@ -187,6 +193,7 @@ function codexTerminalArgs({
     studioDockerLabel("target", stableHash(targetRoot)),
     ...studioToolHomeDockerArgs(),
     ...hostUserIdentityEnvArgs(),
+    ...gitToolchainMountArgs(targetRoot),
     "-v",
     `${targetRoot}:/workspace`,
     "-v",
@@ -196,7 +203,7 @@ function codexTerminalArgs({
     ...targetRuntimeNetworkDockerArgs(targetRoot),
     "-w",
     worktree,
-    STUDIO_BASE_TOOLCHAIN_IMAGE,
+    image,
     "bash",
     "-lc",
     codexStartupScript(codexThreadId)
@@ -328,11 +335,14 @@ function createCodexTerminalController({ projectService } = {}) {
             error: `Session worktree directory does not exist: ${workdir}`
           };
         }
-        if (!(await dockerImageExists(STUDIO_BASE_TOOLCHAIN_IMAGE))) {
-          return {
-            ok: false,
-            error: `Managed base toolchain image ${STUDIO_BASE_TOOLCHAIN_IMAGE} is missing. Open Setup and run Build managed base toolchain.`
-          };
+        const imageResult = await resolveTerminalToolchainImage({
+          runtime,
+          session,
+          target: "codex",
+          targetRoot
+        });
+        if (imageResult.ok === false) {
+          return imageResult;
         }
 
         await prepareCodexAttachmentRoot();
@@ -345,6 +355,7 @@ function createCodexTerminalController({ projectService } = {}) {
               sessionId,
               terminalId: id
             }),
+            image: imageResult.image,
             sessionId,
             targetRoot,
             terminalId: id,
@@ -355,6 +366,8 @@ function createCodexTerminalController({ projectService } = {}) {
           cwd: targetRoot,
           maxRunning: MAX_OPEN_CODEX_TERMINALS,
           metadata: {
+            image: imageResult.image,
+            imageLabel: imageResult.label,
             sessionId,
             targetRoot,
             workdir
@@ -370,6 +383,7 @@ function createCodexTerminalController({ projectService } = {}) {
           },
           reuseRunning: (terminalSession) => {
             return terminalSession.metadata?.targetRoot === targetRoot &&
+              terminalSession.metadata?.image === imageResult.image &&
               terminalSession.metadata?.workdir === workdir;
           }
         }), session);

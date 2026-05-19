@@ -421,6 +421,11 @@ class LaravelTargetAdapter extends AiStudioDescribedWorkflowTargetAdapter {
       currentAppInspector: inspectLaravelCurrentApp,
       defaultConfig: () => ({ ...LARAVEL_DEFAULT_CONFIG }),
       id: "laravel",
+      terminalToolchain: {
+        image: LARAVEL_TOOLCHAIN_IMAGE,
+        label: "Laravel toolchain",
+        setupActionLabel: "Build Laravel toolchain"
+      },
       label: "Laravel target adapter",
       prepareWorktreeScriptPath: LARAVEL_PREPARE_WORKTREE_SCRIPT_PATH,
       projectFacts: laravelFacts,
