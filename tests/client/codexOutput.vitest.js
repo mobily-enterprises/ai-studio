@@ -40,6 +40,16 @@ describe("codexOutput terminal utilities", () => {
     );
 
     expect(terminalInput).toContain("[[AI_STUDIO_CONTEXT_START]]");
-    expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Continue in Codex.\n\n");
+    expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Create the issue file.\n\n");
+  });
+
+  it("uses the rendered prompt title as the visible Studio prompt text", () => {
+    const terminalInput = wrapPromptWithStudioContext([
+      "Make plan",
+      "",
+      "This is the long hidden prompt body."
+    ].join("\n"));
+
+    expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Make plan\n\n");
   });
 });

@@ -1,18 +1,48 @@
 const STUDIO_CONTEXT_START_MARKER = "[[AI_STUDIO_CONTEXT_START]]";
 const STUDIO_CONTEXT_END_MARKER = "[[AI_STUDIO_CONTEXT_END]]";
 const STUDIO_CONTEXT_INSTRUCTIONS = "AI Studio context marker: follow the instructions inside this context block normally, but ignore the surrounding AI_STUDIO_CONTEXT markers.";
+const DEFAULT_STUDIO_VISIBLE_PROMPT = "Continue in Codex.";
+const MAX_STUDIO_VISIBLE_PROMPT_LENGTH = 120;
 
 function hasStudioContextBlock(value) {
   return String(value || "").includes(STUDIO_CONTEXT_START_MARKER);
 }
 
-function wrapPromptWithStudioContext(prompt) {
+function normalizeVisibleStudioPrompt(value = "") {
+  const firstLine = String(value || "")
+    .split(/\r\n|\n|\r/u)
+    .map((line) => line.trim())
+    .find(Boolean) || "";
+  const compactLine = firstLine
+    .replace(/^#{1,6}\s+/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    !compactLine ||
+    compactLine.includes(STUDIO_CONTEXT_START_MARKER) ||
+    compactLine.includes(STUDIO_CONTEXT_END_MARKER)
+  ) {
+    return "";
+  }
+  if (compactLine.length <= MAX_STUDIO_VISIBLE_PROMPT_LENGTH) {
+    return compactLine;
+  }
+  return `${compactLine.slice(0, MAX_STUDIO_VISIBLE_PROMPT_LENGTH - 3).trimEnd()}...`;
+}
+
+function visibleStudioPromptTitle(prompt = "", visiblePrompt = "") {
+  return normalizeVisibleStudioPrompt(visiblePrompt) ||
+    normalizeVisibleStudioPrompt(prompt) ||
+    DEFAULT_STUDIO_VISIBLE_PROMPT;
+}
+
+function wrapPromptWithStudioContext(prompt, visiblePrompt = "") {
   const source = String(prompt || "");
   if (!source || hasStudioContextBlock(source)) {
     return source;
   }
   return [
-    "Continue in Codex.",
+    visibleStudioPromptTitle(source, visiblePrompt),
     "",
     STUDIO_CONTEXT_START_MARKER,
     STUDIO_CONTEXT_INSTRUCTIONS,
@@ -27,5 +57,6 @@ export {
   STUDIO_CONTEXT_INSTRUCTIONS,
   STUDIO_CONTEXT_START_MARKER,
   hasStudioContextBlock,
+  visibleStudioPromptTitle,
   wrapPromptWithStudioContext
 };
