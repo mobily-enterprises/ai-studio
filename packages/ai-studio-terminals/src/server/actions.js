@@ -54,6 +54,7 @@ const featureActions = Object.freeze([
     async execute(input, context, deps) {
       void context;
       return deps.featureService.startShellTerminal(input.sessionId, {
+        reuseRunning: input.reuseRunning,
         target: input.target
       });
     }

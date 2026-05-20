@@ -40,7 +40,9 @@
     </v-chip>
 
     <AiStudioFloatingTerminalWindow
+      minimized-width="min(36rem, calc(100vw - 1.5rem))"
       :minimized="terminalMinimized"
+      :storage-key="terminalWindowStorageKey"
       :visible="terminalVisible"
     >
       <template #default="{ startDrag }">
@@ -48,6 +50,7 @@
           class="ai-studio-launch-controls__terminal"
           :ai-fix-available="Boolean(fixCommandFailure)"
           draggable
+          :initial-expanded="!terminalMinimized"
           terminal-kind="launch"
           title="Launch terminal"
           :launch-target="activeLaunchTarget"
@@ -141,6 +144,7 @@ const {
   showOpenTarget,
   startKey,
   terminalMinimized,
+  terminalWindowStorageKey,
   terminalVisible,
   visible
 } = useAiStudioLaunchControls({

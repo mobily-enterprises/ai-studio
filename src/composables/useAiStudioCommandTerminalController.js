@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
@@ -24,7 +24,7 @@ const FINISHED_TERMINAL_HOLD_MS = 500;
 
 function useAiStudioCommandTerminalController(props, emit) {
   const terminalClosedByUser = ref(false);
-  const expanded = ref(true);
+  const expanded = ref(props.initialExpanded !== false);
   const paths = usePaths();
 
   let terminalStartPromise = null;
@@ -172,6 +172,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     closeTerminalSocket,
     connectTerminalSocket,
     disposeTerminalUi,
+    focusTerminal: focusTerminalUi,
     resetTerminalDisplay,
     resetTerminalSessionState,
     sendCtrlC,
@@ -285,7 +286,9 @@ function useAiStudioCommandTerminalController(props, emit) {
     terminalStarting.value = true;
     emitRunningState();
     terminalError.value = "";
-    expanded.value = true;
+    if (props.initialExpanded !== false) {
+      expanded.value = true;
+    }
 
     try {
       if (!terminalHost.value) {
@@ -423,6 +426,15 @@ function useAiStudioCommandTerminalController(props, emit) {
     }
   }
 
+  async function focusTerminal() {
+    if (!expanded.value) {
+      expanded.value = true;
+      emit("expanded-changed", true);
+      await nextTick();
+    }
+    return focusTerminalUi();
+  }
+
   watch(() => props.startRequestKey, async (nextKey) => {
     const normalizedKey = String(nextKey || "");
     if (!normalizedKey) {
@@ -466,6 +478,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     canRetry,
     closeTerminal,
     expanded,
+    focusTerminal,
     restartTerminal,
     requestAiFix,
     sendCtrlC,

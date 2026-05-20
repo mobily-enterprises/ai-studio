@@ -318,11 +318,20 @@ function useStudioTerminal({
     await sendTerminalData("\u0003");
   }
 
+  async function focusTerminal() {
+    if (!(await setupTerminalUi())) {
+      return false;
+    }
+    terminalInstance?.focus?.();
+    return true;
+  }
+
   return {
     applyTerminalSession,
     closeTerminalSocket,
     connectTerminalSocket,
     disposeTerminalUi,
+    focusTerminal,
     resetTerminalDisplay,
     resetTerminalSessionState,
     sendCtrlC,

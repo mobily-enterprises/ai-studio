@@ -41,13 +41,12 @@
           :session="selection.selectedSession"
         />
 
-        <template v-if="sessionMode === 'inspect'">
-          <AiStudioShellControls
-            :busy="interactionBusy"
-            :fix-command-failure="selectedFixCommandFailure"
-            :session="selection.selectedSession"
-          />
-        </template>
+        <AiStudioShellControls
+          :busy="interactionBusy"
+          :fix-command-failure="selectedFixCommandFailure"
+          :session="selection.selectedSession"
+          :show-activator="sessionMode === 'inspect'"
+        />
       </div>
     </Teleport>
 

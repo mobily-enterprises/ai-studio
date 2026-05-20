@@ -17,6 +17,11 @@ import {
 import {
   aiStudioSessionWorktreePath
 } from "@/lib/aiStudioSessionPaths.js";
+import {
+  readLocalStorageJson,
+  stableLocalStorageKeyPart,
+  writeLocalStorageJson
+} from "@/lib/browserLocalStorage.js";
 
 const LAUNCH_BROWSER_WINDOW_FEATURES = "popup,width=1400,height=900,left=80,top=60";
 
@@ -24,18 +29,28 @@ function browserCanOpenTarget(target = {}) {
   return String(target.kind || "url") === "url" && Boolean(String(target.href || "").trim());
 }
 
-function stableLaunchBrowserTargetHash(value = "") {
-  const text = String(value || "");
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (Math.imul(hash, 31) + text.charCodeAt(index)) >>> 0;
-  }
-  return hash.toString(36);
-}
-
 function launchBrowserTargetName(session = {}) {
   const source = session?.targetRoot || session?.worktree || session?.sessionRoot || session?.sessionId || "target";
-  return `ai-studio-launch-${stableLaunchBrowserTargetHash(source)}`;
+  return `ai-studio-launch-${stableLocalStorageKeyPart(source)}`;
+}
+
+function launchTerminalStorageKey(session = {}) {
+  return `ai-studio:floating-terminal:launch:${launchBrowserTargetName(session)}`;
+}
+
+function launchTerminalMinimizedStorageKey(session = {}) {
+  return `${launchTerminalStorageKey(session)}:minimized`;
+}
+
+function readStoredLaunchTerminalMinimized(session = {}) {
+  const state = readLocalStorageJson(launchTerminalMinimizedStorageKey(session), {});
+  return state?.minimized === true;
+}
+
+function writeStoredLaunchTerminalMinimized(session = {}, minimized = false) {
+  writeLocalStorageJson(launchTerminalMinimizedStorageKey(session), {
+    minimized: minimized === true
+  });
 }
 
 function openLaunchBrowserTarget(target = {}, session = {}, browserWindow = null) {
@@ -141,6 +156,7 @@ function useAiStudioLaunchControls({
   const launchTargetsPath = computed(() => {
     return sessionId.value ? aiStudioLaunchTargetsPath(sessionsApiPath.value, sessionId.value) : "";
   });
+  const terminalWindowStorageKey = computed(() => launchTerminalStorageKey(selectedSession.value || {}));
 
   const launchTargetsResource = useEndpointResource({
     enabled: canLoadLaunchTargets,
@@ -216,7 +232,7 @@ function useAiStudioLaunchControls({
     }
     pendingBrowserWindow = openPendingLaunchBrowserWindow(selectedSession.value);
     activeLaunchTarget.value = launchTarget;
-    terminalMinimized.value = false;
+    terminalMinimized.value = readStoredLaunchTerminalMinimized(selectedSession.value || {});
     terminalVisible.value = true;
     startKey.value = `${sessionId.value}:launch:${launchTarget.id}:${Date.now()}`;
   }
@@ -272,6 +288,7 @@ function useAiStudioLaunchControls({
 
   function handleTerminalExpandedChanged(expanded) {
     terminalMinimized.value = expanded !== true;
+    writeStoredLaunchTerminalMinimized(selectedSession.value || {}, terminalMinimized.value);
     if (terminalMinimized.value && typeof document !== "undefined") {
       document.activeElement?.blur?.();
     }
@@ -305,6 +322,7 @@ function useAiStudioLaunchControls({
     startKey,
     terminalMinimized,
     terminalRunning,
+    terminalWindowStorageKey,
     terminalVisible,
     visible
   };

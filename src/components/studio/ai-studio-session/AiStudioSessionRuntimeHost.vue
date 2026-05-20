@@ -305,7 +305,7 @@ watch(() => page.error, emitPageError, {
 }
 
 .studio-ai-sessions__layout--inspect {
-  grid-template-columns: minmax(18rem, 0.7fr) minmax(30rem, 1.3fr);
+  grid-template-columns: minmax(18rem, 0.78fr) minmax(30rem, 1.22fr);
 }
 
 @media (max-width: 980px) {

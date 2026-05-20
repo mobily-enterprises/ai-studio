@@ -123,6 +123,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  initialExpanded: {
+    type: Boolean,
+    default: true
+  },
   launchTarget: {
     type: Object,
     default: null
@@ -169,6 +173,7 @@ const {
   canRetry,
   closeTerminal,
   expanded,
+  focusTerminal,
   requestAiFix,
   restartTerminal,
   sendCtrlC,
@@ -186,6 +191,7 @@ const {
 } = useAiStudioCommandTerminalController(props, emit);
 
 defineExpose({
+  focus: focusTerminal,
   start: startTerminal
 });
 

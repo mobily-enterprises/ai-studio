@@ -20,11 +20,23 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import {
+  readLocalStorageJson,
+  writeLocalStorageJson
+} from "@/lib/browserLocalStorage.js";
 
 const props = defineProps({
+  minimizedWidth: {
+    type: String,
+    default: "min(44rem, calc(100vw - 1.5rem))"
+  },
   minimized: {
     type: Boolean,
     default: false
+  },
+  storageKey: {
+    type: String,
+    default: ""
   },
   visible: {
     type: Boolean,
@@ -37,19 +49,32 @@ const floatingWindowPosition = ref({
   left: 12,
   top: 12
 });
+const floatingWindowDimensions = ref({
+  height: 0,
+  width: 0
+});
 let activeDrag = null;
 let resizeObserver = null;
 let trackingViewport = false;
 
 const floatingWindowStyle = computed(() => {
   if (props.minimized) {
-    return {};
+    return {
+      "--ai-floating-terminal-minimized-width": props.minimizedWidth
+    };
   }
 
-  return {
+  const style = {
     left: `${Math.round(floatingWindowPosition.value.left)}px`,
     top: `${Math.round(floatingWindowPosition.value.top)}px`
   };
+  if (floatingWindowDimensions.value.width > 0) {
+    style.width = `${Math.round(floatingWindowDimensions.value.width)}px`;
+  }
+  if (floatingWindowDimensions.value.height > 0) {
+    style.height = `${Math.round(floatingWindowDimensions.value.height)}px`;
+  }
+  return style;
 });
 
 function viewportSize() {
@@ -69,6 +94,12 @@ function viewportSize() {
 function floatingWindowSize() {
   const viewport = viewportSize();
   const element = floatingWindow.value;
+  if (floatingWindowDimensions.value.width > 0 && floatingWindowDimensions.value.height > 0) {
+    return {
+      height: floatingWindowDimensions.value.height,
+      width: floatingWindowDimensions.value.width
+    };
+  }
   return {
     height: element?.offsetHeight || Math.min(viewport.height - 24, 704),
     width: element?.offsetWidth || Math.min(viewport.width - 24, 1152)
@@ -88,8 +119,54 @@ function clampFloatingWindowPosition(position = {}) {
   };
 }
 
+function validStoredNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function storedFloatingWindowState() {
+  const state = readLocalStorageJson(props.storageKey, null);
+  return state && typeof state === "object" && !Array.isArray(state) ? state : null;
+}
+
+function restoreFloatingWindowState() {
+  const state = storedFloatingWindowState();
+  if (!state) {
+    return false;
+  }
+
+  const width = validStoredNumber(state.width);
+  const height = validStoredNumber(state.height);
+  floatingWindowDimensions.value = {
+    height,
+    width
+  };
+  floatingWindowPosition.value = clampFloatingWindowPosition({
+    left: Number(state.left || 0),
+    top: Number(state.top || 0)
+  });
+  return true;
+}
+
+function saveFloatingWindowState() {
+  if (!props.storageKey || !props.visible || props.minimized) {
+    return;
+  }
+
+  const size = floatingWindowSize();
+  writeLocalStorageJson(props.storageKey, {
+    height: Math.round(size.height),
+    left: Math.round(floatingWindowPosition.value.left),
+    top: Math.round(floatingWindowPosition.value.top),
+    width: Math.round(size.width)
+  });
+}
+
 function placeFloatingWindow() {
   if (!props.visible || props.minimized) {
+    return;
+  }
+  if (restoreFloatingWindowState()) {
     return;
   }
 
@@ -99,6 +176,7 @@ function placeFloatingWindow() {
     left: (viewport.width - size.width) / 2,
     top: (viewport.height - size.height) / 2
   });
+  saveFloatingWindowState();
 }
 
 function startDrag(event) {
@@ -132,6 +210,7 @@ function moveDrag(event) {
 }
 
 function stopDrag() {
+  const wasDragging = Boolean(activeDrag);
   activeDrag = null;
   if (typeof window === "undefined") {
     return;
@@ -139,11 +218,15 @@ function stopDrag() {
   window.removeEventListener("pointermove", moveDrag);
   window.removeEventListener("pointerup", stopDrag);
   window.removeEventListener("pointercancel", stopDrag);
+  if (wasDragging) {
+    saveFloatingWindowState();
+  }
 }
 
 function clampCurrentPosition() {
   if (props.visible && !props.minimized) {
     floatingWindowPosition.value = clampFloatingWindowPosition(floatingWindowPosition.value);
+    saveFloatingWindowState();
   }
 }
 
@@ -172,7 +255,16 @@ function observePanelSize() {
     return;
   }
 
-  resizeObserver = new ResizeObserver(clampCurrentPosition);
+  resizeObserver = new ResizeObserver(() => {
+    const element = floatingWindow.value;
+    if (element) {
+      floatingWindowDimensions.value = {
+        height: element.offsetHeight,
+        width: element.offsetWidth
+      };
+    }
+    clampCurrentPosition();
+  });
   resizeObserver.observe(floatingWindow.value);
 }
 
@@ -244,7 +336,7 @@ onBeforeUnmount(() => {
   position: fixed;
   right: 0.75rem;
   resize: none;
-  width: min(44rem, calc(100vw - 1.5rem));
+  width: var(--ai-floating-terminal-minimized-width, min(44rem, calc(100vw - 1.5rem)));
 }
 
 .ai-floating-terminal-window--minimized .ai-floating-terminal-window__panel :deep(.ai-command-terminal) {

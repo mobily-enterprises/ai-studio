@@ -12,6 +12,10 @@ import {
   createService
 } from "../../packages/ai-studio-terminals/src/server/service.js";
 import {
+  ACTION_START_SHELL_TERMINAL,
+  featureActions as terminalFeatureActions
+} from "../../packages/ai-studio-terminals/src/server/actions.js";
+import {
   codexTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/codexTerminal.js";
 import {
@@ -747,4 +751,42 @@ test("AI Studio shell terminal service rejects invalid targets before Docker sta
     assert.equal(invalid.ok, false);
     assert.match(invalid.error, /worktree or main/u);
   });
+});
+
+test("AI Studio shell terminal action preserves reuseRunning", async () => {
+  const action = terminalFeatureActions.find((item) => item.id === ACTION_START_SHELL_TERMINAL);
+  const calls = [];
+
+  const result = await action.execute({
+    reuseRunning: false,
+    sessionId: "shell_action",
+    target: "worktree"
+  }, {}, {
+    featureService: {
+      startShellTerminal(sessionId, input) {
+        calls.push({
+          input,
+          sessionId
+        });
+        return {
+          id: "terminal-1",
+          ok: true
+        };
+      }
+    }
+  });
+
+  assert.deepEqual(result, {
+    id: "terminal-1",
+    ok: true
+  });
+  assert.deepEqual(calls, [
+    {
+      input: {
+        reuseRunning: false,
+        target: "worktree"
+      },
+      sessionId: "shell_action"
+    }
+  ]);
 });

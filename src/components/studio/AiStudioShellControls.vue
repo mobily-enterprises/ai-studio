@@ -1,6 +1,6 @@
 <template>
   <div v-if="sessionId" class="ai-studio-shell-controls">
-    <v-menu location="bottom end">
+    <v-menu v-if="showActivator" location="bottom end">
       <template #activator="{ props: menuProps }">
         <v-btn
           v-bind="menuProps"
@@ -32,7 +32,9 @@
     </v-menu>
 
     <AiStudioFloatingTerminalWindow
+      minimized-width="min(28rem, calc(100vw - 1.5rem))"
       :minimized="terminalMinimized"
+      :storage-key="shellWindowStorageKey"
       :visible="terminalVisible"
     >
       <template #default="{ startDrag }">
@@ -45,7 +47,7 @@
           <div
             v-if="!terminalMinimized"
             class="ai-studio-shell-controls__tabs"
-            title="Ctrl-Shift-T creates a tab. Alt-1 through Alt-9 switches tabs."
+            title="Alt-N creates a tab. Alt-1 through Alt-9 switches tabs."
             @pointerdown="startDrag"
           >
             <div class="ai-studio-shell-controls__tab-list" @pointerdown.stop>
@@ -79,10 +81,11 @@
             </div>
 
             <v-btn
+              class="ai-studio-shell-controls__new-tab"
               :disabled="!canOpenNewTab"
               :icon="mdiPlus"
-              size="x-small"
-              title="New shell tab"
+              size="small"
+              title="New shell tab (Alt-N)"
               variant="text"
               @pointerdown.stop
               @click="openNewShellTab"
@@ -93,6 +96,7 @@
             <AiStudioCommandTerminal
               v-for="tab in shellTabs"
               :key="tab.id"
+              :ref="(terminalComponent) => setShellTerminalRef(tab.id, terminalComponent)"
               class="ai-studio-shell-controls__terminal"
               :class="{
                 'ai-studio-shell-controls__terminal--active': tab.id === activeShellTabId
@@ -119,7 +123,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   mdiCircleSmall,
   mdiClose,
@@ -133,6 +137,9 @@ import AiStudioFloatingTerminalWindow from "@/components/studio/AiStudioFloating
 import {
   aiStudioSessionWorktreePath
 } from "@/lib/aiStudioSessionPaths.js";
+import {
+  stableLocalStorageKeyPart
+} from "@/lib/browserLocalStorage.js";
 
 const props = defineProps({
   busy: {
@@ -146,12 +153,17 @@ const props = defineProps({
   session: {
     type: Object,
     default: null
+  },
+  showActivator: {
+    type: Boolean,
+    default: true
   }
 });
 
 const activeShellTabId = ref("");
 const shellTabs = ref([]);
 const terminalMinimized = ref(false);
+const shellTerminalRefs = new Map();
 let shellTabSequence = 0;
 let shortcutListenerActive = false;
 
@@ -162,6 +174,10 @@ const canOpenMainShell = computed(() => Boolean(sessionId.value && !menuDisabled
 const canOpenWorktreeShell = computed(() => Boolean(canOpenMainShell.value && worktreePath.value));
 const terminalVisible = computed(() => shellTabs.value.length > 0);
 const activeShellTab = computed(() => shellTabs.value.find((tab) => tab.id === activeShellTabId.value) || null);
+const shellWindowStorageKey = computed(() => {
+  const source = props.session?.targetRoot || props.session?.sessionRoot || sessionId.value;
+  return `ai-studio:floating-terminal:shell:${stableLocalStorageKeyPart(source)}`;
+});
 const canOpenNewTab = computed(() => Boolean(
   activeShellTab.value ||
   canOpenWorktreeShell.value ||
@@ -233,6 +249,7 @@ function createShellTab(target) {
   ];
   activeShellTabId.value = tabId;
   terminalMinimized.value = false;
+  void focusShellTab(tabId);
 }
 
 function openNewShellTab() {
@@ -245,12 +262,14 @@ function selectShellTab(tabId = "") {
   }
   activeShellTabId.value = tabId;
   terminalMinimized.value = false;
+  void focusShellTab(tabId);
 }
 
 function closeShell() {
   shellTabs.value = [];
   activeShellTabId.value = "";
   terminalMinimized.value = false;
+  shellTerminalRefs.clear();
 }
 
 function closeShellTab(tabId = "") {
@@ -268,7 +287,25 @@ function closeShellTab(tabId = "") {
   activeShellTabId.value = fallbackTab?.id || "";
   if (!fallbackTab) {
     terminalMinimized.value = false;
+    return;
   }
+  void focusShellTab(fallbackTab.id);
+}
+
+function setShellTerminalRef(tabId = "", terminalComponent = null) {
+  if (!tabId) {
+    return;
+  }
+  if (terminalComponent) {
+    shellTerminalRefs.set(tabId, terminalComponent);
+    return;
+  }
+  shellTerminalRefs.delete(tabId);
+}
+
+async function focusShellTab(tabId = activeShellTabId.value) {
+  await nextTick();
+  shellTerminalRefs.get(tabId)?.focus?.();
 }
 
 function handleRunningChanged(tabId = "", nextRunning = false) {
@@ -299,6 +336,12 @@ function handleShellShortcut(event) {
 
   const key = String(event.key || "").toLowerCase();
   if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && key === "t") {
+    event.preventDefault();
+    openNewShellTab();
+    return;
+  }
+
+  if (event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey && key === "n") {
     event.preventDefault();
     openNewShellTab();
     return;
@@ -361,7 +404,7 @@ onBeforeUnmount(stopShellShortcuts);
 .ai-studio-shell-controls__window {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0;
   height: 100%;
   min-height: 0;
 }
@@ -374,7 +417,10 @@ onBeforeUnmount(stopShellShortcuts);
   align-items: center;
   background: rgba(var(--v-theme-surface), 0.98);
   border: 1px solid rgba(var(--v-theme-outline), 0.24);
+  border-bottom: 0;
   border-radius: 7px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
   cursor: move;
   display: flex;
   gap: 0.3rem;
@@ -390,10 +436,16 @@ onBeforeUnmount(stopShellShortcuts);
 
 .ai-studio-shell-controls__tab-list {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   gap: 0.25rem;
+  max-width: calc(100% - 2.4rem);
   min-width: 0;
   overflow-x: auto;
+}
+
+.ai-studio-shell-controls__new-tab {
+  flex: 0 0 auto;
+  margin-left: 0.1rem;
 }
 
 .ai-studio-shell-controls__tab {
@@ -449,6 +501,11 @@ onBeforeUnmount(stopShellShortcuts);
   position: relative;
 }
 
+.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal-stack {
+  display: block;
+  position: static;
+}
+
 .ai-studio-shell-controls__terminal {
   height: 100%;
   inset: 0;
@@ -461,5 +518,22 @@ onBeforeUnmount(stopShellShortcuts);
 .ai-studio-shell-controls__terminal--active {
   pointer-events: auto;
   visibility: visible;
+}
+
+.ai-studio-shell-controls__terminal :deep(.ai-command-terminal) {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal {
+  display: none;
+  height: auto;
+  position: static;
+  visibility: visible;
+  width: auto;
+}
+
+.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal--active {
+  display: block;
 }
 </style>
