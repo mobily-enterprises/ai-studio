@@ -249,7 +249,9 @@ function gitCheckpointScript() {
     "if ! as_host git -c safe.directory=/workspace rev-parse --verify HEAD >/dev/null 2>&1; then if [ \"${AI_STUDIO_CHECKPOINT_ALLOW_CREATE:-0}\" != \"1\" ]; then echo 'No local commit exists to push.'; exit 1; fi; if [ -z \"$(as_host git -c safe.directory=/workspace status --porcelain=v1)\" ]; then echo 'No files to checkpoint and no commits exist.'; exit 1; fi; as_host git -c safe.directory=/workspace add .; as_host git -c safe.directory=/workspace commit -m \"$AI_STUDIO_COMMIT_MESSAGE\"; fi",
     "branch=\"$(as_host git -c safe.directory=/workspace branch --show-current)\"",
     "if [ -z \"$branch\" ]; then echo 'No current branch.'; exit 1; fi",
-    "as_host git -c safe.directory=/workspace -c credential.helper= push -u origin HEAD",
+    "remote_ref=\"refs/heads/$branch\"",
+    "printf '[studio] Publishing checkpoint to origin/%s\\n' \"$branch\"",
+    "as_host git -c safe.directory=/workspace -c credential.helper= push -u origin \"HEAD:$remote_ref\"",
     "as_host git -c safe.directory=/workspace status --short",
     "as_host git -c safe.directory=/workspace -c credential.helper= ls-remote origin \"refs/heads/$branch\""
   ]);
@@ -266,7 +268,10 @@ function gitCheckpointCommandPreview({
       `git commit -m "${commitMessage}"`
     );
   }
-  commands.push("git push -u origin HEAD");
+  commands.push(
+    "branch=\"$(git branch --show-current)\"",
+    "git push -u origin \"HEAD:refs/heads/$branch\""
+  );
   return commands.join("\n");
 }
 

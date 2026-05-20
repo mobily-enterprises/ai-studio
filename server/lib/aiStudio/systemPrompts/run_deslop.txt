@@ -23,4 +23,4 @@ Project config:
 Action input:
 {{input.json}}
 
-Review the current work for bugs, behavioral regressions, unclear code, weak tests, unnecessary complexity, and mismatches with the session goal. Lead with concrete findings. Make direct fixes when the issue is clear and scoped. Keep changes focused. Report what you changed, which checks ran, and what remains unresolved.
+Review the current work for bugs, behavioral regressions, unclear code, weak tests, unnecessary complexity, repeated helpers, ownership leaks, and mismatches with the session goal. Lead with concrete findings. Mark findings as [high], [medium] or [low]. Run one subagent per discovered problem, getting it to make targeted changes to fix it. Repeat the whole process (discovery, subagents run), and stop when only [low] issues are reported. At the end, report what you changed, which checks ran, and what remains unresolved.

@@ -67,8 +67,12 @@
     >
       <AiStudioAutopilotView
         v-if="sessionMode === 'autopilot'"
+        :actions="actions"
+        :issue-request="issueRequest"
+        :page="page"
+        :refresh-session-data="sessionData.refreshSessionData"
         :session="selection.selectedSession"
-        @inspect="setSessionMode('inspect')"
+        @update-issue-request-text="issueRequest.text = $event"
       />
 
       <AiStudioSessionWorkspace

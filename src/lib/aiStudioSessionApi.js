@@ -59,12 +59,22 @@ async function closeAiStudioCodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(aiStudioCodexTerminalEndpoint(sessionId, terminalSessionId));
 }
 
+async function startAiStudioCommandTerminal(sessionId, input = {}) {
+  return studioHttpClient.post(aiStudioCommandTerminalEndpoint(sessionId), input);
+}
+
+async function closeAiStudioCommandTerminal(sessionId, terminalSessionId) {
+  return studioHttpClient.delete(aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId));
+}
+
 export {
   aiStudioCodexTerminalWebSocketUrl,
   aiStudioCommandTerminalWebSocketUrl,
   aiStudioLaunchTerminalWebSocketUrl,
   aiStudioShellTerminalWebSocketUrl,
   closeAiStudioCodexTerminal,
+  closeAiStudioCommandTerminal,
   readAiStudioSessionDiff,
-  startAiStudioCodexTerminal
+  startAiStudioCodexTerminal,
+  startAiStudioCommandTerminal
 };

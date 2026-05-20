@@ -21,8 +21,7 @@ test("browser lifecycle monitor shuts down after the last client disconnects", a
         messages.push(message);
       }
     },
-    setTimeoutFn: timer.setTimeout,
-    shutdownDelayMs: 3000
+    setTimeoutFn: timer.setTimeout
   });
   monitor.enableShutdown();
 
@@ -32,15 +31,15 @@ test("browser lifecycle monitor shuts down after the last client disconnects", a
 
   socket.emit("close");
   assert.equal(monitor.activeClientCount(), 0);
-  assert.equal(timer.pendingDelay(), 3000);
+  assert.equal(timer.pendingDelay(), 1000);
   assert.deepEqual(messages, [
-    "Browser window disconnected. Terminating in 3 seconds..."
+    "Browser window disconnected. Terminating in 1 second..."
   ]);
 
   await timer.runPending();
   assert.deepEqual(shutdowns, ["browser-lifecycle-disconnected"]);
   assert.deepEqual(messages, [
-    "Browser window disconnected. Terminating in 3 seconds...",
+    "Browser window disconnected. Terminating in 1 second...",
     "Closing AI Studio because the browser window disconnected."
   ]);
 });

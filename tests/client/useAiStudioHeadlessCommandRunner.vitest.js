@@ -1,0 +1,163 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  useAiStudioHeadlessCommandRunner
+} from "../../src/composables/useAiStudioHeadlessCommandRunner.js";
+
+describe("useAiStudioHeadlessCommandRunner", () => {
+  let originalWebSocket;
+
+  beforeEach(() => {
+    originalWebSocket = globalThis.WebSocket;
+    FakeWebSocket.instances.length = 0;
+    globalThis.WebSocket = FakeWebSocket;
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = originalWebSocket;
+  });
+
+  it("runs a command terminal action and keeps successful output internal", async () => {
+    const closeCommandTerminal = vi.fn(async () => ({
+      ok: true
+    }));
+    const startCommandTerminal = vi.fn(async () => ({
+      commandPreview: "npm install",
+      id: "terminal-1",
+      ok: true,
+      output: "",
+      status: "running"
+    }));
+    const runner = useAiStudioHeadlessCommandRunner({
+      closeCommandTerminal,
+      startCommandTerminal,
+      webSocketUrl: (sessionId, terminalSessionId) => `ws://studio/${sessionId}/${terminalSessionId}`
+    });
+
+    const resultPromise = runner.runCommandAction({
+      action: {
+        id: "install_dependencies",
+        label: "Install dependencies"
+      },
+      input: {
+        packageManager: "npm"
+      },
+      sessionId: "session-1"
+    });
+
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = FakeWebSocket.instances[0];
+    expect(socket.url).toBe("ws://studio/session-1/terminal-1");
+    socket.sendMessage({
+      chunk: "installed\n",
+      type: "output"
+    });
+    socket.sendMessage({
+      exitCode: 0,
+      status: "exited",
+      type: "status"
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      actionId: "install_dependencies",
+      ok: true,
+      output: "installed\n"
+    });
+    expect(startCommandTerminal).toHaveBeenCalledWith("session-1", {
+      actionId: "install_dependencies",
+      input: {
+        packageManager: "npm"
+      }
+    });
+    expect(closeCommandTerminal).toHaveBeenCalledWith("session-1", "terminal-1");
+    expect(runner.running.value).toBe(false);
+  });
+
+  it("returns terminal output when the command exits with an error", async () => {
+    const runner = useAiStudioHeadlessCommandRunner({
+      closeCommandTerminal: vi.fn(async () => ({
+        ok: true
+      })),
+      startCommandTerminal: vi.fn(async () => ({
+        commandPreview: "git worktree add",
+        id: "terminal-2",
+        ok: true,
+        output: "starting\n",
+        status: "running"
+      })),
+      webSocketUrl: () => "ws://studio/session-1/terminal-2"
+    });
+
+    const resultPromise = runner.runCommandAction({
+      action: {
+        id: "create_worktree",
+        label: "Create worktree"
+      },
+      sessionId: "session-1"
+    });
+
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
+    FakeWebSocket.instances[0].sendMessage({
+      chunk: "fatal: branch exists\n",
+      type: "output"
+    });
+    FakeWebSocket.instances[0].sendMessage({
+      exitCode: 1,
+      status: "exited",
+      type: "status"
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      actionId: "create_worktree",
+      error: "Create worktree failed with exit code 1.",
+      exitCode: 1,
+      ok: false,
+      output: "starting\nfatal: branch exists\n"
+    });
+  });
+});
+
+class FakeWebSocket {
+  static CLOSED = 3;
+  static CLOSING = 2;
+  static OPEN = 1;
+  static instances = [];
+
+  constructor(url) {
+    this.listeners = new Map();
+    this.readyState = FakeWebSocket.OPEN;
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(eventName, listener) {
+    const listeners = this.listeners.get(eventName) || [];
+    listeners.push(listener);
+    this.listeners.set(eventName, listeners);
+  }
+
+  close() {
+    if (this.readyState === FakeWebSocket.CLOSED) {
+      return;
+    }
+    this.readyState = FakeWebSocket.CLOSED;
+    this.emit("close", {});
+  }
+
+  sendMessage(message) {
+    this.emit("message", {
+      data: JSON.stringify(message)
+    });
+  }
+
+  emit(eventName, event) {
+    for (const listener of this.listeners.get(eventName) || []) {
+      listener(event);
+    }
+  }
+}

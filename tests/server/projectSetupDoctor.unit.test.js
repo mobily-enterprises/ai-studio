@@ -178,7 +178,8 @@ test("Project Setup checkpoint repair commits and pushes the baseline", () => {
   assert.match(script, /GIT_ASKPASS=\/tmp\/ai-studio-git-askpass/u);
   assert.match(script, /setpriv --reuid "\$AI_STUDIO_HOST_UID" --regid "\$AI_STUDIO_HOST_GID"/u);
   assert.match(script, /as_host git -c safe\.directory=\/workspace commit -m "\$AI_STUDIO_COMMIT_MESSAGE"/u);
-  assert.match(script, /as_host git -c safe\.directory=\/workspace -c credential\.helper= push -u origin HEAD/u);
+  assert.match(script, /remote_ref="refs\/heads\/\$branch"/u);
+  assert.match(script, /as_host git -c safe\.directory=\/workspace -c credential\.helper= push -u origin "HEAD:\$remote_ref"/u);
   assert.match(script, /GIT_TERMINAL_PROMPT=0/u);
   assert.doesNotMatch(script, /Working tree is already clean/u);
   assertShellScriptSurvivesWhitespaceCollapse(script);

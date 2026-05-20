@@ -3,7 +3,7 @@ import {
 } from "./localStudioRequest.js";
 
 const BROWSER_LIFECYCLE_WEBSOCKET_PATH = "/api/studio/browser-lifecycle/ws";
-const DEFAULT_BROWSER_LIFECYCLE_SHUTDOWN_DELAY_MS = 3000;
+const DEFAULT_BROWSER_LIFECYCLE_SHUTDOWN_DELAY_MS = 1000;
 
 function shutdownDelayLabel(delayMs = DEFAULT_BROWSER_LIFECYCLE_SHUTDOWN_DELAY_MS) {
   const seconds = Math.max(1, Math.round(Number(delayMs || 0) / 1000));
