@@ -54,6 +54,7 @@
         :start-request-key="startKey"
         @closed="closeTerminal"
         @fix-requested="handleFixRequested"
+        @ready="handleReady"
         @running-changed="handleRunningChanged"
         @started="handleStarted"
       >
@@ -119,6 +120,7 @@ const {
   activeLaunchTarget,
   closeTerminal,
   handleRunningChanged,
+  handleReady,
   handleStarted,
   loading,
   launchButtonsDisabled,

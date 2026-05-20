@@ -79,11 +79,11 @@ const AI_STUDIO_AUTOPILOT_INTERACTION_STEPS = Object.freeze([
   },
   {
     id: "deep_ui_check_run",
-    label: "Deep UI"
+    label: "UI improvements"
   },
   {
     id: "changes_accepted",
-    label: "Review"
+    label: "Code deslop"
   },
   {
     id: "pr_merged",

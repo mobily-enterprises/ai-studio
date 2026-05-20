@@ -25,6 +25,7 @@ function useStudioTerminal({
   const terminalCommandPreview = ref("");
   const terminalError = ref("");
   const terminalExitCode = ref(null);
+  const terminalMetadata = ref({});
   const terminalOutput = ref("");
   const terminalStarting = ref(false);
 
@@ -133,6 +134,7 @@ function useStudioTerminal({
     terminalCommandPreview.value = "";
     terminalExitCode.value = null;
     terminalError.value = "";
+    terminalMetadata.value = {};
   }
 
   function writeTerminalOutput(output) {
@@ -173,6 +175,11 @@ function useStudioTerminal({
     terminalStatus.value = String(terminalSession.status || fallbackStatus || "");
     terminalExitCode.value = terminalStatus.value === "exited" ? terminalSession.exitCode ?? null : null;
     terminalCommandPreview.value = String(terminalSession.commandPreview || "");
+    terminalMetadata.value = terminalSession.metadata &&
+      typeof terminalSession.metadata === "object" &&
+      !Array.isArray(terminalSession.metadata)
+      ? terminalSession.metadata
+      : {};
     writeTerminalOutput(terminalSession.output || "");
     notifySessionUpdate(terminalSession);
     notifyStatusUpdate({
@@ -199,6 +206,20 @@ function useStudioTerminal({
 
     if (message?.type === "output") {
       appendTerminalOutput(message.chunk);
+      return;
+    }
+
+    if (message?.type === "metadata") {
+      terminalMetadata.value = message.metadata &&
+        typeof message.metadata === "object" &&
+        !Array.isArray(message.metadata)
+        ? message.metadata
+        : {};
+      notifySessionUpdate({
+        id: terminalSessionId.value,
+        metadata: terminalMetadata.value,
+        status: terminalStatus.value
+      });
       return;
     }
 
@@ -303,6 +324,7 @@ function useStudioTerminal({
     terminalExited,
     terminalExitCode,
     terminalHost,
+    terminalMetadata,
     terminalOutput,
     terminalSessionId,
     terminalStarting,

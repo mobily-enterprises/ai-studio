@@ -3,7 +3,8 @@ import path from "node:path";
 import { loadAppConfigFromAppRoot } from "@jskit-ai/kernel/server/support";
 
 import {
-  createAiStudioWebLaunchTargetTerminalSpec
+  createAiStudioWebLaunchTargetTerminalSpec,
+  tcpReadinessProbeCommand
 } from "../../launchTargetTerminal.js";
 import {
   JSKIT_ALLOW_SELF_TARGET_CONFIG
@@ -17,7 +18,9 @@ import {
 
 const DEFAULT_BUILT_LAUNCH_BUILD_COMMAND = "npm run build";
 const DEFAULT_BUILT_LAUNCH_SERVER_COMMAND = "npm run server";
-const DEFAULT_DEV_SERVER_COMMAND = "npm run dev -- --host 0.0.0.0 --port \"$PORT\"";
+const DEFAULT_DEV_BACKEND_COMMAND = "npm run server";
+const DEFAULT_DEV_FRONTEND_COMMAND = "npm run dev -- --host 0.0.0.0 --port \"$PORT\"";
+const DEFAULT_DEV_BACKEND_PORT = 3000;
 const DEFAULT_LAUNCH_PORT = 4100;
 const BUILT_LAUNCH_COMMAND_CONFIG = ".jskit/config/testrun_command";
 const BUILT_LAUNCH_PORT_CONFIG = ".jskit/config/server_port_for_user_review";
@@ -104,19 +107,22 @@ async function resolveBuiltLaunchConfig(worktreePath) {
     hostDockerSource: hostDocker.source,
     preferredPort: normalizePort(portValue),
     serverCommand,
-    testrunCommand: `${buildCommand};${serverCommand}`
+    testrunCommand: `${buildCommand} && ${serverCommand}`
   };
 }
 
 async function resolveDevLaunchConfig(worktreePath) {
-  const [devCommand, hostDocker, portValue] = await Promise.all([
+  const [devCommand, backendCommand, hostDocker, portValue] = await Promise.all([
     readOptionalConfigFile(worktreePath, DEV_SERVER_COMMAND_CONFIG, ""),
+    readOptionalConfigFile(worktreePath, "config/server_command", DEFAULT_DEV_BACKEND_COMMAND),
     resolveHostDockerConfig(worktreePath),
     readOptionalConfigFile(worktreePath, BUILT_LAUNCH_PORT_CONFIG, String(DEFAULT_LAUNCH_PORT))
   ]);
   return {
     commandSource: devCommand ? DEV_SERVER_COMMAND_CONFIG : "package_json_dev_script",
-    devCommand: devCommand || DEFAULT_DEV_SERVER_COMMAND,
+    backendCommand,
+    backendPort: DEFAULT_DEV_BACKEND_PORT,
+    frontendCommand: devCommand || DEFAULT_DEV_FRONTEND_COMMAND,
     hostDocker: hostDocker.enabled,
     hostDockerSource: hostDocker.source,
     preferredPort: normalizePort(portValue)
@@ -140,6 +146,38 @@ function jskitLaunchTarget(id, label) {
     id,
     label
   };
+}
+
+function createJskitDevCommand({
+  backendCommand = DEFAULT_DEV_BACKEND_COMMAND,
+  backendPort = DEFAULT_DEV_BACKEND_PORT,
+  frontendCommand = DEFAULT_DEV_FRONTEND_COMMAND
+} = {}) {
+  return [
+    "set -e",
+    `export AI_STUDIO_JSKIT_BACKEND_PORT=${shellQuotedNumber(backendPort)}`,
+    "cleanup_ai_studio_jskit_dev() {",
+    "  kill \"$ai_studio_jskit_backend_pid\" \"$ai_studio_jskit_frontend_pid\" 2>/dev/null || true",
+    "}",
+    "trap cleanup_ai_studio_jskit_dev EXIT INT TERM",
+    `(export PORT="$AI_STUDIO_JSKIT_BACKEND_PORT"; ${backendCommand}) &`,
+    "ai_studio_jskit_backend_pid=$!",
+    tcpReadinessProbeCommand({
+      marker: "[studio] JSKIT backend is ready.",
+      port: backendPort
+    }),
+    `(export VITE_API_PROXY_TARGET="http://127.0.0.1:$AI_STUDIO_JSKIT_BACKEND_PORT"; ${frontendCommand}) &`,
+    "ai_studio_jskit_frontend_pid=$!",
+    "while kill -0 \"$ai_studio_jskit_backend_pid\" 2>/dev/null && kill -0 \"$ai_studio_jskit_frontend_pid\" 2>/dev/null; do",
+    "  sleep 1",
+    "done",
+    "cleanup_ai_studio_jskit_dev",
+    "wait \"$ai_studio_jskit_backend_pid\" \"$ai_studio_jskit_frontend_pid\""
+  ].join("\n");
+}
+
+function shellQuotedNumber(value) {
+  return JSON.stringify(String(value));
 }
 
 async function listJskitLaunchTargets({
@@ -166,10 +204,10 @@ async function listJskitLaunchTargets({
 
   const launchTargets = [];
   if (hasTestrunCommand || (hasBuildCommandConfig && hasServerCommandConfig) || (scripts.build && scripts.server)) {
-    launchTargets.push(jskitLaunchTarget("built", "Run built version"));
+    launchTargets.push(jskitLaunchTarget("built", "Run built app"));
   }
-  if (hasDevCommandConfig || scripts.dev) {
-    launchTargets.push(jskitLaunchTarget("dev", "Run dev version"));
+  if ((hasDevCommandConfig || scripts.dev) && (hasServerCommandConfig || scripts.server)) {
+    launchTargets.push(jskitLaunchTarget("dev", "Run app"));
   }
   return launchTargets;
 }
@@ -180,7 +218,30 @@ async function createJskitBuiltLaunchDescriptor({
   worktreePath = ""
 } = {}) {
   return {
-    command: config.testrunCommand,
+    commands: config.buildCommand || config.serverCommand
+      ? [
+          config.buildCommand
+            ? {
+                command: config.buildCommand,
+                label: "Building JSKIT app.",
+                networkEnv: false
+              }
+            : null,
+          config.serverCommand
+            ? {
+                command: config.serverCommand,
+                label: "Starting JSKIT app server.",
+                networkEnv: true
+              }
+            : null
+        ].filter(Boolean)
+      : [
+          {
+            command: config.testrunCommand,
+            label: "Starting JSKIT built app.",
+            networkEnv: true
+          }
+        ],
     hostDocker: config.hostDocker,
     metadata: {
       buildCommand: config.buildCommand,
@@ -201,12 +262,18 @@ async function createJskitDevLaunchDescriptor({
   worktreePath = ""
 } = {}) {
   return {
-    command: config.devCommand,
+    command: createJskitDevCommand({
+      backendCommand: config.backendCommand,
+      backendPort: config.backendPort,
+      frontendCommand: config.frontendCommand
+    }),
     hostDocker: config.hostDocker,
     metadata: {
+      backendCommand: config.backendCommand,
+      backendPort: config.backendPort,
       commandSource: config.commandSource,
       databaseHost,
-      devCommand: config.devCommand,
+      frontendCommand: config.frontendCommand,
       hostDocker: config.hostDocker,
       hostDockerSource: config.hostDockerSource,
       mode: "dev"

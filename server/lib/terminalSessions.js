@@ -45,6 +45,21 @@ function terminalSessionResponse(session) {
   };
 }
 
+function applySessionMetadata(session, metadata = {}) {
+  if (!session || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return terminalSessionResponse(session);
+  }
+  session.metadata = {
+    ...(session.metadata || {}),
+    ...metadata
+  };
+  sendToSubscribers(session, {
+    metadata: session.metadata,
+    type: "metadata"
+  });
+  return terminalSessionResponse(session);
+}
+
 function sendToSubscribers(session, message) {
   if (!session?.subscribers?.size) {
     return;
@@ -128,6 +143,7 @@ function startTerminalSession({
   namespace = "default",
   namespaceLimitPrefix = "",
   onClose = null,
+  onOutput = null,
   reuseRunning = false
 }) {
   const sessions = sessionsForNamespace(namespace);
@@ -205,6 +221,24 @@ function startTerminalSession({
       chunk: data,
       type: "output"
     });
+    if (typeof onOutput === "function") {
+      try {
+        onOutput({
+          chunk: data,
+          output: session.output,
+          session: terminalSessionResponse(session),
+          updateMetadata(metadata) {
+            return applySessionMetadata(session, metadata);
+          }
+        });
+      } catch (error) {
+        const message = String(error?.message || error || "Terminal output hook failed.");
+        sendToSubscribers(session, {
+          error: message,
+          type: "error"
+        });
+      }
+    }
   });
 
   terminal.onExit(({ exitCode }) => {

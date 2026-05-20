@@ -40,6 +40,10 @@ function normalizeOpenTarget(value = {}) {
   };
 }
 
+function launchIsReady(metadata = {}) {
+  return metadata.launchReady === true || metadata.launchReady === "true";
+}
+
 function openTargetFromMetadata(metadata = {}) {
   const href = String(metadata[LAUNCH_METADATA.href] || "").trim();
   if (!href) {
@@ -127,6 +131,38 @@ function launchStatusResponse({
           label: "Open browser"
         }
   };
+}
+
+function readinessMarkerFromSpec(spec = {}) {
+  return String(spec.readinessMarker || spec.metadata?.readinessMarker || "").trim();
+}
+
+function launchTerminalIsReady(terminalSession = {}, readinessMarker = "") {
+  if (!readinessMarker) {
+    return true;
+  }
+  return launchIsReady(terminalSession.metadata || {});
+}
+
+async function markLaunchTerminalReady({
+  store,
+  sessionId = "",
+  terminalSession = {},
+  updateMetadata = () => null
+} = {}) {
+  const readyMetadata = {
+    launchReady: true,
+    launchReadyAt: new Date().toISOString()
+  };
+  const updatedSession = updateMetadata(readyMetadata);
+  await writeLaunchMetadata(store, sessionId, {
+    ...terminalSession,
+    metadata: {
+      ...(terminalSession.metadata || {}),
+      ...readyMetadata,
+      ...(updatedSession?.metadata || {})
+    }
+  });
 }
 
 function createLaunchTargetTerminalController({ projectService } = {}) {
@@ -231,6 +267,8 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
           ...(spec.env || {})
         };
         const launchEnvHash = terminalEnvironmentFingerprint(launchEnv);
+        const readinessMarker = readinessMarkerFromSpec(spec);
+        let launchReadyWritten = false;
         const terminalSession = startTerminalSession({
           args: spec.args || [],
           command: spec.command,
@@ -248,13 +286,27 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
           namespace,
           namespaceLimitPrefix: namespace,
           onClose: spec.onClose,
+          onOutput: readinessMarker
+            ? ({ output, session: runningTerminalSession, updateMetadata }) => {
+                if (launchReadyWritten || !String(output || "").includes(readinessMarker)) {
+                  return;
+                }
+                launchReadyWritten = true;
+                void markLaunchTerminalReady({
+                  store: context.store,
+                  sessionId,
+                  terminalSession: runningTerminalSession,
+                  updateMetadata
+                });
+              }
+            : null,
           reuseRunning: (runningSession) => {
             return spec.reuseRunning !== false &&
               runningSession.metadata?.envHash === launchEnvHash &&
               runningSession.metadata?.launchTargetId === launchTarget.id;
           }
         });
-        if (terminalSession?.ok !== false) {
+        if (terminalSession?.ok !== false && launchTerminalIsReady(terminalSession, readinessMarker)) {
           await writeLaunchMetadata(context.store, sessionId, terminalSession);
         }
         return terminalSession;

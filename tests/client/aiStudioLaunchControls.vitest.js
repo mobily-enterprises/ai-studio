@@ -4,7 +4,9 @@ import {
   browserCanOpenTarget,
   launchBrowserTargetName,
   launchTargetWorktreePath,
-  openLaunchBrowserTarget
+  openLaunchBrowserTarget,
+  openPendingLaunchBrowserWindow,
+  openReadyLaunchBrowserTarget
 } from "../../src/composables/useAiStudioLaunchControls.js";
 
 describe("AI Studio launch controls", () => {
@@ -47,6 +49,29 @@ describe("AI Studio launch controls", () => {
     expect(openedWindow.focus).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a pending browser window and navigates it when launch is ready", () => {
+    const browserWindow = fakeBrowserWindow();
+    const session = {
+      targetRoot: "/workspace/customer-app"
+    };
+    const target = {
+      href: "http://127.0.0.1:4100/home",
+      kind: "url"
+    };
+
+    const pendingWindow = openPendingLaunchBrowserWindow(session, browserWindow);
+    const readyWindow = openReadyLaunchBrowserTarget(target, session, pendingWindow);
+
+    expect(browserWindow.open).toHaveBeenCalledWith(
+      "about:blank",
+      launchBrowserTargetName(session),
+      "popup,width=1400,height=900,left=80,top=60"
+    );
+    expect(readyWindow).toBe(pendingWindow);
+    expect(pendingWindow.location.href).toBe(target.href);
+    expect(pendingWindow.focus).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects non-url launch targets", () => {
     const browserWindow = fakeBrowserWindow();
 
@@ -77,7 +102,14 @@ describe("AI Studio launch controls", () => {
 function fakeBrowserWindow() {
   return {
     open: vi.fn(() => ({
+      document: {
+        close: vi.fn(),
+        write: vi.fn()
+      },
       focus: vi.fn(),
+      location: {
+        href: ""
+      },
       opener: {}
     }))
   };

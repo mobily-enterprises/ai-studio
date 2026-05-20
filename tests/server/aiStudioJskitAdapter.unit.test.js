@@ -12,7 +12,8 @@ import {
   JSKIT_ALLOW_SELF_TARGET_CONFIG,
   JSKIT_CONFIG_FIELDS,
   createJskitLaunchTargetTerminalSpec,
-  createJskitTargetAdapter
+  createJskitTargetAdapter,
+  listJskitLaunchTargets
 } from "../../server/lib/aiStudio/adapters/jskit/index.js";
 import {
   JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH
@@ -122,7 +123,8 @@ test("jskit self-target config enables host Docker for recursive Studio launch",
     await Promise.all([
       writeProjectFile(targetRoot, "package.json", JSON.stringify({
         scripts: {
-          dev: "node server.js"
+          dev: "vite",
+          server: "node server.js"
         }
       }, null, 2)),
       writeProjectFile(targetRoot, JSKIT_ALLOW_SELF_TARGET_CONFIG_PATH, "true\n")
@@ -148,6 +150,113 @@ test("jskit self-target config enables host Docker for recursive Studio launch",
     });
     assert.ok(args.includes("DOCKER_HOST=unix:///var/run/docker.sock"));
     assert.ok(args.includes("/var/run/docker.sock:/var/run/docker.sock"));
+  });
+});
+
+test("jskit launch targets expose app and built app actions", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await writeProjectFile(targetRoot, "package.json", JSON.stringify({
+      scripts: {
+        build: "vite build",
+        dev: "vite",
+        server: "node server.js"
+      }
+    }, null, 2));
+
+    const launchTargets = await listJskitLaunchTargets({
+      session: {
+        metadata: {
+          worktree_path: targetRoot
+        }
+      }
+    });
+
+    assert.deepEqual(launchTargets, [
+      {
+        id: "built",
+        label: "Run built app"
+      },
+      {
+        id: "dev",
+        label: "Run app"
+      }
+    ]);
+  });
+});
+
+test("jskit built launch waits for the server readiness marker before opening", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await writeProjectFile(targetRoot, "package.json", JSON.stringify({
+      scripts: {
+        build: "vite build",
+        server: "node server.js"
+      }
+    }, null, 2));
+
+    const spec = await createJskitLaunchTargetTerminalSpec({
+      launchTargetId: "built",
+      session: {
+        metadata: {
+          worktree_path: targetRoot
+        },
+        sessionId: "jskit_built_launch",
+        targetRoot
+      },
+      targetRoot
+    });
+
+    assert.equal(spec.ok, true);
+    assert.match(spec.metadata.readinessMarker, /^\[\[AI_STUDIO_LAUNCH_READY_V1:/u);
+    assert.equal(spec.metadata.launchReady, false);
+    assert.equal(spec.metadata.buildCommand, "npm run build");
+    assert.equal(spec.metadata.serverCommand, "npm run server");
+
+    const args = spec.args({
+      id: "unit-terminal"
+    });
+    const startupScript = args.at(-1);
+    assert.match(startupScript, /npm run build/u);
+    assert.match(startupScript, /npm run server/u);
+    assert.match(startupScript, /AI_STUDIO_LAUNCH_READY_V1/u);
+  });
+});
+
+test("jskit dev launch starts backend and Vite together", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await writeProjectFile(targetRoot, "package.json", JSON.stringify({
+      scripts: {
+        dev: "vite",
+        server: "node server.js"
+      }
+    }, null, 2));
+
+    const spec = await createJskitLaunchTargetTerminalSpec({
+      launchTargetId: "dev",
+      session: {
+        metadata: {
+          worktree_path: targetRoot
+        },
+        sessionId: "jskit_dev_launch",
+        targetRoot
+      },
+      targetRoot
+    });
+
+    assert.equal(spec.ok, true);
+    assert.equal(spec.metadata.backendCommand, "npm run server");
+    assert.equal(spec.metadata.backendPort, 3000);
+    assert.equal(spec.metadata.frontendCommand, "npm run dev -- --host 0.0.0.0 --port \"$PORT\"");
+    assert.match(spec.metadata.readinessMarker, /^\[\[AI_STUDIO_LAUNCH_READY_V1:/u);
+
+    const args = spec.args({
+      id: "unit-terminal"
+    });
+    const startupScript = args.at(-1);
+    assert.match(startupScript, /AI_STUDIO_JSKIT_BACKEND_PORT=\\?"?3000/u);
+    assert.match(startupScript, /npm run server/u);
+    assert.match(startupScript, /VITE_API_PROXY_TARGET="http:\/\/127\.0\.0\.1:\$AI_STUDIO_JSKIT_BACKEND_PORT"/u);
+    assert.match(startupScript, /npm run dev -- --host 0\.0\.0\.0 --port "\$PORT"/u);
+    assert.match(startupScript, /AI_STUDIO_LAUNCH_READY_V1/u);
   });
 });
 

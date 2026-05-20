@@ -110,6 +110,45 @@ test("terminal sessions stream PTY output to subscribers", async () => {
   }
 });
 
+test("terminal sessions can update metadata from output hooks", async () => {
+  const namespace = `terminal-metadata-test-${crypto.randomUUID()}`;
+  const messages = [];
+
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      "setTimeout(() => { console.log('READY_MARKER'); setInterval(() => {}, 1000); }, 25);"
+    ],
+    command: process.execPath,
+    commandPreview: "node ready marker",
+    namespace,
+    onOutput({ output, updateMetadata }) {
+      if (String(output || "").includes("READY_MARKER")) {
+        updateMetadata({
+          ready: true
+        });
+      }
+    }
+  });
+
+  try {
+    const subscription = subscribeTerminalSession(session.id, (message) => {
+      messages.push(message);
+    }, {
+      namespace
+    });
+    assert.equal(subscription.ok, true);
+
+    await waitFor(() => messages.some((message) =>
+      message.type === "metadata" && message.metadata?.ready === true
+    ));
+    assert.equal(readTerminalSession(session.id, { namespace }).metadata.ready, true);
+    subscription.unsubscribe();
+  } finally {
+    await closeTerminalSessionsForNamespacePrefix(namespace);
+  }
+});
+
 test("terminal sessions report exited after close hooks finish", async () => {
   const namespace = `terminal-close-hook-test-${crypto.randomUUID()}`;
   let finishCloseHook;

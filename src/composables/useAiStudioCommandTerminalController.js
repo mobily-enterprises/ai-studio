@@ -31,6 +31,7 @@ function useAiStudioCommandTerminalController(props, emit) {
   let finishedEmittedForTerminalId = "";
   let handledStartRequestKey = "";
   let pendingStartRequestKey = "";
+  let readyEmittedForTerminalId = "";
 
   const sessionId = computed(() => props.session?.sessionId || "");
   const actionId = computed(() => props.action?.id || "");
@@ -152,6 +153,7 @@ function useAiStudioCommandTerminalController(props, emit) {
   });
 
   const terminal = useStudioTerminal({
+    onSessionUpdate: handleTerminalSessionUpdate,
     onStatusUpdate: handleTerminalStatusUpdate,
     webSocketUrl(terminalId) {
       if (launchTerminal.value) {
@@ -178,6 +180,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     terminalExited,
     terminalExitCode,
     terminalHost,
+    terminalMetadata,
     terminalOutput,
     terminalSessionId,
     terminalStarting,
@@ -210,8 +213,28 @@ function useAiStudioCommandTerminalController(props, emit) {
     return status === "running" || status === "closing" || terminalStarting.value;
   }
 
+  function terminalSessionIsLaunchReady(terminalSession = {}) {
+    return launchTerminal.value && terminalSession?.metadata?.launchReady === true;
+  }
+
   function emitRunningState() {
     emit("running-changed", terminalIsRunning());
+  }
+
+  function emitLaunchReady(terminalSession = {}) {
+    if (!terminalSessionIsLaunchReady(terminalSession) || readyEmittedForTerminalId === terminalSession.id) {
+      return;
+    }
+    readyEmittedForTerminalId = terminalSession.id;
+    emit("ready", {
+      metadata: terminalSession.metadata || {},
+      sessionId: sessionId.value,
+      terminalSessionId: terminalSession.id || terminalSessionId.value
+    });
+  }
+
+  function handleTerminalSessionUpdate(terminalSession = {}) {
+    emitLaunchReady(terminalSession);
   }
 
   function scheduleFinished(exitCode, closeError = "") {
@@ -293,6 +316,7 @@ function useAiStudioCommandTerminalController(props, emit) {
         closeTerminalSocket();
         resetTerminalDisplay();
         finishedEmittedForTerminalId = "";
+        readyEmittedForTerminalId = "";
       }
       applyTerminalSession(session, {
         fallbackStatus: "running"
@@ -301,6 +325,10 @@ function useAiStudioCommandTerminalController(props, emit) {
         metadata: session.metadata || {},
         sessionId: sessionId.value,
         terminalSessionId: terminalSessionId.value
+      });
+      emitLaunchReady({
+        id: terminalSessionId.value,
+        metadata: terminalMetadata.value
       });
       emitRunningState();
       return connectTerminalSocket();
@@ -345,6 +373,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     });
     resetTerminalDisplay();
     finishedEmittedForTerminalId = "";
+    readyEmittedForTerminalId = "";
     terminalClosedByUser.value = false;
     await startTerminal();
   }
@@ -409,6 +438,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     handledStartRequestKey = "";
     pendingStartRequestKey = "";
     finishedEmittedForTerminalId = "";
+    readyEmittedForTerminalId = "";
     terminalClosedByUser.value = false;
     emitRunningState();
   });

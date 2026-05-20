@@ -33,6 +33,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_WEB_LAUNCH_TARGET_PORT = 4100;
+const LAUNCH_READY_MARKER_PREFIX = "AI_STUDIO_LAUNCH_READY_V1";
 
 function normalizePort(value, fallback = DEFAULT_WEB_LAUNCH_TARGET_PORT) {
   const port = Number.parseInt(String(value || ""), 10);
@@ -119,6 +120,121 @@ function normalizeLaunchCommands({
       };
     })
     .filter(Boolean);
+}
+
+function launchReadinessMarker({
+  adapterId = "generic",
+  launchTargetId = "",
+  port = "",
+  sessionId = ""
+} = {}) {
+  const markerId = stableHash([
+    adapterId,
+    launchTargetId,
+    port,
+    sessionId
+  ].join(":"));
+  return `[[${LAUNCH_READY_MARKER_PREFIX}:${markerId}]]`;
+}
+
+function tcpReadinessProbeCommand({
+  host = "127.0.0.1",
+  marker = "",
+  port,
+  timeoutSeconds = 90
+} = {}) {
+  const script = [
+    "const net = require('node:net');",
+    "const host = process.argv[1];",
+    "const port = Number(process.argv[2]);",
+    "const marker = process.argv[3];",
+    "const timeoutMs = Number(process.argv[4]) * 1000;",
+    "const deadline = Date.now() + timeoutMs;",
+    "function retry() {",
+    "  if (Date.now() >= deadline) {",
+    "    console.error(`[studio] Launch target did not become ready on ${host}:${port}.`);",
+    "    process.exit(1);",
+    "  }",
+    "  setTimeout(probe, 250);",
+    "}",
+    "function probe() {",
+    "  const socket = net.connect({ host, port });",
+    "  socket.setTimeout(1000);",
+    "  socket.once('connect', () => { socket.end(); console.log(marker); });",
+    "  socket.once('error', retry);",
+    "  socket.once('timeout', () => { socket.destroy(); retry(); });",
+    "}",
+    "probe();"
+  ].join("\n");
+  return [
+    "node",
+    "-e",
+    shellQuote(script),
+    shellQuote(host),
+    shellQuote(String(port)),
+    shellQuote(marker),
+    shellQuote(String(timeoutSeconds))
+  ].join(" ");
+}
+
+function commandWithTcpReadiness({
+  command = "",
+  host = "127.0.0.1",
+  marker = "",
+  port,
+  timeoutSeconds = 90
+} = {}) {
+  return [
+    "{",
+    "  set -e",
+    `  (${command}) &`,
+    "  ai_studio_launch_pid=$!",
+    "  cleanup_ai_studio_launch() {",
+    "    kill \"$ai_studio_launch_pid\" 2>/dev/null || true",
+    "  }",
+    "  trap cleanup_ai_studio_launch EXIT INT TERM",
+    `  ${tcpReadinessProbeCommand({
+      host,
+      marker,
+      port,
+      timeoutSeconds
+    })}`,
+    "  wait \"$ai_studio_launch_pid\"",
+    "}"
+  ].join("\n");
+}
+
+function addReadinessMarkerToLaunchCommands(commands = [], {
+  marker = "",
+  port,
+  waitForReadiness = true
+} = {}) {
+  if (!waitForReadiness || !marker) {
+    return {
+      commands,
+      readinessMarker: ""
+    };
+  }
+  const serverCommandIndex = commands.findLastIndex((entry) => entry.networkEnv);
+  if (serverCommandIndex < 0) {
+    return {
+      commands,
+      readinessMarker: ""
+    };
+  }
+  return {
+    commands: commands.map((entry, index) => index === serverCommandIndex
+      ? {
+          ...entry,
+          command: commandWithTcpReadiness({
+            command: entry.command,
+            marker,
+            port
+          })
+        }
+      : entry),
+    readinessMarker: marker
+  };
 }
 
 function launchCommandLines(commands = []) {
@@ -283,14 +399,26 @@ async function createAiStudioWebLaunchTargetTerminalSpec({
   }
 
   const port = await findAvailableWebLaunchTargetPort(preferredPort);
+  const generatedReadinessMarker = launchReadinessMarker({
+    adapterId,
+    launchTargetId: launchTarget.id,
+    port,
+    sessionId: session.sessionId || ""
+  });
   const launch = await resolveLaunch({
     launchTarget,
     port,
+    readinessMarker: generatedReadinessMarker,
     session,
     targetRoot: resolvedTargetRoot,
     worktreePath
   });
-  const startupCommands = normalizeLaunchCommands(launch);
+  const readiness = addReadinessMarkerToLaunchCommands(normalizeLaunchCommands(launch), {
+    marker: generatedReadinessMarker,
+    port,
+    waitForReadiness: launch.waitForReadiness !== false
+  });
+  const startupCommands = readiness.commands;
   if (startupCommands.length === 0) {
     return {
       ok: false,
@@ -316,6 +444,8 @@ async function createAiStudioWebLaunchTargetTerminalSpec({
     launchTargetLabel: normalizeText(launchTarget.label),
     openTarget,
     port,
+    readinessMarker: readiness.readinessMarker,
+    launchReady: !readiness.readinessMarker,
     runRoot: workdir,
     scope: "session",
     sessionId: session.sessionId || "",
@@ -346,6 +476,7 @@ async function createAiStudioWebLaunchTargetTerminalSpec({
     cwd: resolvedTargetRoot,
     metadata,
     ok: true,
+    readinessMarker: readiness.readinessMarker,
     onClose: async ({ id }) => {
       await removeDockerContainer(launchContainerName({
         adapterId,
@@ -361,5 +492,8 @@ export {
   DEFAULT_WEB_LAUNCH_TARGET_PORT,
   createAiStudioWebLaunchTargetTerminalSpec,
   findAvailableWebLaunchTargetPort,
+  commandWithTcpReadiness,
+  launchReadinessMarker,
+  tcpReadinessProbeCommand,
   webLaunchTargetStartupScript
 };

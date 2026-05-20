@@ -35,12 +35,13 @@
           {{ inspectButtonLabel }}
         </v-btn>
 
+        <AiStudioLaunchControls
+          :busy="false"
+          :fix-command-failure="selectedFixCommandFailure"
+          :session="selection.selectedSession"
+        />
+
         <template v-if="sessionMode === 'inspect'">
-          <AiStudioLaunchControls
-            :busy="interactionBusy"
-            :fix-command-failure="selectedFixCommandFailure"
-            :session="selection.selectedSession"
-          />
           <AiStudioShellControls
             :busy="interactionBusy"
             :fix-command-failure="selectedFixCommandFailure"

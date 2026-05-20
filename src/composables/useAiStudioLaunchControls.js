@@ -67,6 +67,51 @@ function openLaunchBrowserTarget(target = {}, session = {}, browserWindow = null
   return openedWindow;
 }
 
+function openPendingLaunchBrowserWindow(session = {}, browserWindow = null) {
+  const activeWindow = browserWindow || (typeof window !== "undefined" ? window : null);
+  if (!activeWindow?.open) {
+    return null;
+  }
+  const openedWindow = activeWindow.open(
+    "about:blank",
+    launchBrowserTargetName(session),
+    LAUNCH_BROWSER_WINDOW_FEATURES
+  );
+  if (!openedWindow) {
+    return null;
+  }
+
+  try {
+    openedWindow.opener = null;
+    openedWindow.document?.write?.("<!doctype html><title>Starting app</title><body>Starting app...</body>");
+    openedWindow.document?.close?.();
+  } catch {
+    // A reused named browser window can already be cross-origin.
+  }
+  if (typeof openedWindow.focus === "function") {
+    openedWindow.focus();
+  }
+  return openedWindow;
+}
+
+function openReadyLaunchBrowserTarget(target = {}, session = {}, pendingWindow = null) {
+  if (!browserCanOpenTarget(target)) {
+    return null;
+  }
+  if (pendingWindow && pendingWindow.closed !== true) {
+    try {
+      pendingWindow.location.href = target.href;
+      if (typeof pendingWindow.focus === "function") {
+        pendingWindow.focus();
+      }
+      return pendingWindow;
+    } catch {
+      // Fall back to opening the named target below.
+    }
+  }
+  return openLaunchBrowserTarget(target, session);
+}
+
 function launchTargetWorktreePath(session = {}) {
   return aiStudioSessionWorktreePath(session);
 }
@@ -80,6 +125,8 @@ function useAiStudioLaunchControls({
   const startKey = ref("");
   const terminalRunning = ref(false);
   const terminalVisible = ref(false);
+  const openedReadyTerminalIds = new Set();
+  let pendingBrowserWindow = null;
 
   const selectedSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(selectedSession.value?.sessionId || ""));
@@ -166,6 +213,7 @@ function useAiStudioLaunchControls({
     if (!sessionId.value || launchButtonsDisabled.value || launchTarget.available === false || !launchTarget.id) {
       return;
     }
+    pendingBrowserWindow = openPendingLaunchBrowserWindow(selectedSession.value);
     activeLaunchTarget.value = launchTarget;
     terminalVisible.value = true;
     startKey.value = `${sessionId.value}:launch:${launchTarget.id}:${Date.now()}`;
@@ -204,11 +252,24 @@ function useAiStudioLaunchControls({
     await refresh().catch(() => null);
   }
 
+  async function handleReady(payload = {}) {
+    const terminalSessionId = String(payload.terminalSessionId || "");
+    if (!terminalSessionId || openedReadyTerminalIds.has(terminalSessionId)) {
+      return;
+    }
+    openedReadyTerminalIds.add(terminalSessionId);
+    await refresh().catch(() => null);
+    const target = payload.metadata?.openTarget || openTarget.value || {};
+    pendingBrowserWindow = openReadyLaunchBrowserTarget(target, selectedSession.value, pendingBrowserWindow);
+  }
+
   function handleRunningChanged(nextRunning) {
     terminalRunning.value = Boolean(nextRunning);
   }
 
   watch(sessionId, () => {
+    openedReadyTerminalIds.clear();
+    pendingBrowserWindow = null;
     closeTerminal();
   });
 
@@ -216,6 +277,7 @@ function useAiStudioLaunchControls({
     activeLaunchTarget,
     closeTerminal,
     handleRunningChanged,
+    handleReady,
     handleStarted,
     launchButtonsDisabled,
     launchTargets,
@@ -241,5 +303,7 @@ export {
   launchTargetWorktreePath,
   launchBrowserTargetName,
   openLaunchBrowserTarget,
+  openPendingLaunchBrowserWindow,
+  openReadyLaunchBrowserTarget,
   useAiStudioLaunchControls
 };

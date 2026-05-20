@@ -127,7 +127,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(["closed", "finished", "fix-requested", "running-changed", "started"]);
+const emit = defineEmits(["closed", "finished", "fix-requested", "ready", "running-changed", "started"]);
 
 const {
   canRequestAiFix,
