@@ -1,18 +1,33 @@
 <template>
   <div v-if="visible" class="ai-studio-launch-controls">
-    <v-btn
-      v-for="launchTarget in launchTargets"
-      :key="launchTarget.id"
-      color="primary"
-      :disabled="launchButtonsDisabled || launchTarget.available === false"
-      :prepend-icon="mdiPlayCircleOutline"
-      size="small"
-      :title="launchTarget.disabledReason || launchTarget.label"
-      variant="tonal"
-      @click="run(launchTarget)"
-    >
-      {{ launchTarget.label }}
-    </v-btn>
+    <v-menu location="bottom end">
+      <template #activator="{ props: menuProps }">
+        <v-btn
+          v-bind="menuProps"
+          color="primary"
+          :disabled="runMenuDisabled"
+          :loading="loading"
+          :prepend-icon="mdiPlayCircleOutline"
+          size="small"
+          title="Run target"
+          variant="tonal"
+        >
+          Run
+        </v-btn>
+      </template>
+
+      <v-list class="ai-studio-launch-controls__menu" density="compact">
+        <v-list-item
+          v-for="launchTarget in launchTargets"
+          :key="launchTarget.id"
+          :disabled="launchButtonsDisabled || launchTarget.available === false"
+          :prepend-icon="mdiPlayCircleOutline"
+          :subtitle="launchTarget.disabledReason || ''"
+          :title="launchTarget.label"
+          @click="run(launchTarget)"
+        />
+      </v-list>
+    </v-menu>
 
     <v-chip
       v-if="loadError"
@@ -61,6 +76,7 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
 import {
   mdiOpenInNew,
   mdiPlayCircleOutline
@@ -86,6 +102,7 @@ const {
   closeTerminal,
   handleRunningChanged,
   handleStarted,
+  loading,
   launchButtonsDisabled,
   launchTargets,
   loadError,
@@ -103,16 +120,25 @@ const {
   busy: () => props.busy,
   session: () => props.session
 });
+const runMenuDisabled = computed(() => Boolean(
+  launchButtonsDisabled.value ||
+  loading.value ||
+  launchTargets.value.length < 1
+));
 </script>
 
 <style scoped>
 .ai-studio-launch-controls {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
   gap: 0.45rem;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.ai-studio-launch-controls__menu {
+  max-width: min(20rem, 92vw);
+  min-width: min(14rem, 92vw);
 }
 
 .ai-studio-launch-controls__terminal {

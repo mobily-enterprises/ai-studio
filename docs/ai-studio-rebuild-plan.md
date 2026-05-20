@@ -342,8 +342,7 @@ Checklist:
 - [ ] `Make plan` is an action.
 - [ ] `Execute plan` is an action.
 - [ ] `Run deep UI check` is an action.
-- [ ] `Run deslop` is an action.
-- [ ] `Resolve deslop` is an action.
+- [ ] `Run deslop` is an action and owns repeated cleanup until no findings remain.
 - [ ] `Run automated checks` is an action.
 - [ ] `Update blueprint` is an adapter-provided action when supported.
 - [ ] `Commit changes` is an action.
@@ -1095,7 +1094,7 @@ Instructions:
 - Implement make-plan prompt action.
 - Implement execute-plan prompt action.
 - Implement deep UI check prompt action where supported.
-- Implement deslop and resolve-deslop prompt actions.
+- Implement the deslop prompt action.
 - Implement automated checks action.
 - Implement accept/review decision behavior.
 - Implement blueprint update action through JSKIT adapter.
@@ -1106,8 +1105,7 @@ Checklist:
 - [x] Make-plan action exists.
 - [x] Execute-plan action exists.
 - [x] Deep UI check action exists.
-- [x] Deslop action exists.
-- [x] Resolve deslop action exists.
+- [x] Deslop action exists and owns repeated cleanup until no findings remain.
 - [x] Automated checks action exists.
 - [x] Accept changes behavior exists.
 - [x] Blueprint update action exists only when adapter supports it.

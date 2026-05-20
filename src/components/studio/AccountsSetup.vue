@@ -140,6 +140,15 @@
               Open browser
             </v-btn>
             <v-btn
+              v-if="authSessions.activeSessionFor(account.id)?.authUrl"
+              color="primary"
+              variant="tonal"
+              :prepend-icon="mdiContentCopy"
+              @click="authSessions.copyAuthUrl(authSessions.activeSessionFor(account.id))"
+            >
+              Copy auth link
+            </v-btn>
+            <v-btn
               variant="tonal"
               :disabled="authSessions.activeSessionFor(account.id)?.terminalStatus !== 'running'"
               @click="authSessions.cancelSession(authSessions.activeSessionFor(account.id))"
@@ -147,6 +156,13 @@
               Cancel
             </v-btn>
           </div>
+
+          <p
+            v-if="authSessions.authLinkCopyStatus[authSessions.activeSessionFor(account.id)?.id]"
+            class="accounts-setup__copy-status"
+          >
+            {{ authSessions.authLinkCopyStatus[authSessions.activeSessionFor(account.id).id] }}
+          </p>
 
           <p class="accounts-setup__session-status">
             {{ sessionStatusMessage(authSessions.activeSessionFor(account.id)) }}
@@ -171,6 +187,7 @@ import { computed, onBeforeUnmount, onMounted } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiCheckCircle,
+  mdiContentCopy,
   mdiRefresh
 } from "@mdi/js";
 import { useAiStudioAccounts } from "@/composables/useAiStudioAccounts.js";
@@ -269,7 +286,8 @@ onBeforeUnmount(() => {
 .accounts-setup__item-message,
 .accounts-setup__identity,
 .accounts-setup__session-status,
-.accounts-setup__code-help {
+.accounts-setup__code-help,
+.accounts-setup__copy-status {
   color: rgba(var(--v-theme-on-surface), 0.68);
   font-size: 0.9rem;
   line-height: 1.35;

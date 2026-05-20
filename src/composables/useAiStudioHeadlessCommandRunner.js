@@ -93,7 +93,10 @@ function useAiStudioHeadlessCommandRunner({
   startCommandTerminal = startAiStudioCommandTerminal,
   webSocketUrl = aiStudioCommandTerminalWebSocketUrl
 } = {}) {
+  const commandPreview = ref("");
+  const output = ref("");
   const running = ref(false);
+  const status = ref("");
   const lastResult = ref(null);
 
   let activeSocket = null;
@@ -115,6 +118,9 @@ function useAiStudioHeadlessCommandRunner({
 
     running.value = true;
     lastResult.value = null;
+    commandPreview.value = "";
+    output.value = "";
+    status.value = "";
     try {
       const terminalSession = await startCommandTerminal(normalizedSessionId, {
         actionId,
@@ -128,6 +134,7 @@ function useAiStudioHeadlessCommandRunner({
         sessionId: normalizedSessionId,
         terminalSessionId: String(terminalSession.id || "")
       };
+      applyLiveTerminalSnapshot(terminalSession);
       const result = await waitForCommandExit({
         action,
         initialSession: terminalSession,
@@ -147,7 +154,18 @@ function useAiStudioHeadlessCommandRunner({
     } finally {
       await closeActiveTerminal();
       running.value = false;
+      status.value = "";
     }
+  }
+
+  function applyLiveTerminalSnapshot(session = {}) {
+    commandPreview.value = String(session.commandPreview || commandPreview.value);
+    output.value = String(session.output || output.value);
+    status.value = String(session.status || status.value);
+  }
+
+  function appendLiveTerminalOutput(chunk = "") {
+    output.value = `${output.value}${String(chunk || "")}`;
   }
 
   function waitForCommandExit({
@@ -191,6 +209,11 @@ function useAiStudioHeadlessCommandRunner({
       function applySnapshot(session = {}) {
         commandPreview = String(session.commandPreview || commandPreview);
         output = String(session.output || output);
+        applyLiveTerminalSnapshot({
+          commandPreview,
+          output,
+          status: session.status || ""
+        });
         if (terminalHasExited(session)) {
           settle(resultForExit(session.exitCode ?? null, String(session.closeError || "")));
         }
@@ -203,10 +226,13 @@ function useAiStudioHeadlessCommandRunner({
           return;
         }
         if (message.type === "output") {
-          output += String(message.chunk || "");
+          const chunk = String(message.chunk || "");
+          output += chunk;
+          appendLiveTerminalOutput(chunk);
           return;
         }
         if (message.type === "status" && terminalHasExited(message)) {
+          status.value = String(message.status || "");
           settle(resultForExit(message.exitCode ?? null, String(message.closeError || "")));
           return;
         }
@@ -278,9 +304,12 @@ function useAiStudioHeadlessCommandRunner({
 
   return {
     closeActiveTerminal,
+    commandPreview,
     lastResult,
+    output,
     runCommandAction,
-    running
+    running,
+    status
   };
 }
 

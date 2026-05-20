@@ -13,35 +13,40 @@
         :busy="interactionBusy"
         :selected-session-id="selection.selectedSessionId"
         :selection-closed="selection.isClosed"
-        :session="selection.selectedSession"
         :toolbar="toolbar"
       />
+    </div>
 
-      <v-btn-toggle
+    <Teleport
+      defer
+      to="#studio-home-app-bar-actions"
+    >
+      <div
         v-if="selection.selectedSession"
-        :model-value="sessionMode"
-        mandatory
-        density="compact"
-        variant="tonal"
-        class="studio-ai-sessions__mode-actions"
-        @update:model-value="setSessionMode"
+        class="studio-ai-sessions__app-bar-actions"
       >
         <v-btn
-          :prepend-icon="mdiCog"
+          class="studio-ai-sessions__inspect-button"
+          :prepend-icon="inspectButtonIcon"
           size="small"
-          value="autopilot"
+          variant="tonal"
+          @click="toggleInspectMode"
         >
-          Autopilot
+          {{ inspectButtonLabel }}
         </v-btn>
-        <v-btn
-          :prepend-icon="mdiTune"
-          size="small"
-          value="inspect"
-        >
-          Inspect
-        </v-btn>
-      </v-btn-toggle>
-    </div>
+
+        <template v-if="sessionMode === 'inspect'">
+          <AiStudioLaunchControls
+            :busy="interactionBusy"
+            :session="selection.selectedSession"
+          />
+          <AiStudioShellControls
+            :busy="interactionBusy"
+            :session="selection.selectedSession"
+          />
+        </template>
+      </div>
+    </Teleport>
 
     <v-progress-linear
       v-if="page.loading && !selection.selectedSession"
@@ -116,14 +121,16 @@
 import { computed, proxyRefs, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
-  mdiCog,
+  mdiClose,
   mdiTune
 } from "@mdi/js";
+import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
 import AiStudioAutopilotView from "@/components/studio/ai-studio-session/AiStudioAutopilotView.vue";
 import AiStudioSessionDialogs from "@/components/studio/ai-studio-session/AiStudioSessionDialogs.vue";
 import AiStudioSessionTerminals from "@/components/studio/ai-studio-session/AiStudioSessionTerminals.vue";
 import AiStudioSessionToolbar from "@/components/studio/ai-studio-session/AiStudioSessionToolbar.vue";
 import AiStudioSessionWorkspace from "@/components/studio/ai-studio-session/AiStudioSessionWorkspace.vue";
+import AiStudioShellControls from "@/components/studio/AiStudioShellControls.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
   useAiStudioSessionData
@@ -181,6 +188,8 @@ const toolbar = proxyRefs({
 });
 
 const sessionMode = computed(() => route.query.mode === "inspect" ? "inspect" : "autopilot");
+const inspectButtonIcon = computed(() => sessionMode.value === "inspect" ? mdiClose : mdiTune);
+const inspectButtonLabel = computed(() => sessionMode.value === "inspect" ? "Quit inspect" : "Inspect");
 const autopilotBusy = ref(false);
 const autopilotCodexWaiting = ref(false);
 const autopilotCodexTerminalDocked = computed(() => sessionMode.value === "autopilot" && autopilotCodexWaiting.value);
@@ -221,6 +230,10 @@ function setSessionMode(mode = "autopilot") {
   });
 }
 
+function toggleInspectMode() {
+  setSessionMode(sessionMode.value === "inspect" ? "autopilot" : "inspect");
+}
+
 watch(() => selection.selectedSessionId, () => {
   autopilotBusy.value = false;
   autopilotCodexWaiting.value = false;
@@ -241,12 +254,6 @@ watch(() => selection.selectedSessionId, () => {
 .studio-ai-sessions__header {
   display: grid;
   gap: 0.65rem;
-}
-
-.studio-ai-sessions__mode-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.45rem;
 }
 
 .studio-ai-sessions__layout {
@@ -282,6 +289,29 @@ watch(() => selection.selectedSessionId, () => {
     height: 100%;
     min-height: 0;
     overflow: hidden;
+  }
+}
+
+.studio-ai-sessions__app-bar-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.studio-ai-sessions__inspect-button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 600px) {
+  .studio-ai-sessions__app-bar-actions {
+    gap: 0.25rem;
+  }
+
+  .studio-ai-sessions__inspect-button {
+    min-width: 0;
+    padding-inline: 0.55rem;
   }
 }
 </style>

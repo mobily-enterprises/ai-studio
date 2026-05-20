@@ -160,7 +160,7 @@ test.describe("live AI Studio session workflow", () => {
 
     await goNextToStep(page, "review_run");
     await assertChecklistControls(page, "review_run", {
-      enabled: ["Run deslop", "Resolve deslop", "Next"]
+      enabled: ["Run deslop", "Next"]
     });
 
     await goNextToStep(page, "project_validated");

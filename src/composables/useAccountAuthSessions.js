@@ -8,15 +8,15 @@ function useAccountAuthSessions(
     accountRows,
     browserWindow = defaultBrowserWindow(),
     clearIntervalFn,
+    clipboard = defaultClipboard(browserWindow),
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     setIntervalFn
   } = {}
 ) {
   const activeSessions = reactive({});
+  const authLinkCopyStatus = reactive({});
   const localError = ref("");
   const logoutAccountId = ref("");
-  const openedUrls = new Set();
-  const preparedBrowserWindows = new Map();
   const scheduler = createScheduler({
     browserWindow,
     clearIntervalFn,
@@ -64,7 +64,6 @@ function useAccountAuthSessions(
       return;
     }
 
-    prepareBrowserWindow(accountId);
     try {
       const session = await accounts.startAuth(accountId, mode);
       if (!session?.id) {
@@ -73,7 +72,6 @@ function useAccountAuthSessions(
       rememberAuthSession(session);
       startPolling();
     } catch (error) {
-      closePreparedWindow(accountId);
       localError.value = String(error?.message || error || "Login could not start.");
     }
   }
@@ -101,6 +99,27 @@ function useAccountAuthSessions(
     stopPollingIfIdle();
   }
 
+  async function copyAuthUrl(session = {}) {
+    const sessionId = String(session.id || "");
+    const url = String(session.authUrl || "").trim();
+    if (!sessionId || !url) {
+      return false;
+    }
+    if (typeof clipboard?.writeText !== "function") {
+      localError.value = "Auth link could not be copied because clipboard access is unavailable.";
+      return false;
+    }
+
+    try {
+      await clipboard.writeText(url);
+      authLinkCopyStatus[sessionId] = "Auth link copied.";
+      return true;
+    } catch (error) {
+      localError.value = String(error?.message || error || "Auth link could not be copied.");
+      return false;
+    }
+  }
+
   async function pollAuthSessions() {
     const sessions = Object.values(activeSessions).filter((session) => {
       return session?.id && session.status === "authenticating";
@@ -117,7 +136,6 @@ function useAccountAuthSessions(
         forgetSession(nextSession);
         await refreshStatus();
       } else if (nextSession.status === "failed") {
-        closePreparedWindow(nextSession.account?.id);
         await refreshStatus();
       }
     }
@@ -155,36 +173,13 @@ function useAccountAuthSessions(
     return rows.find((account) => account.id === accountId) || null;
   }
 
-  function prepareBrowserWindow(accountId) {
-    try {
-      const preparedWindow = browserWindow?.open?.("about:blank", "_blank");
-      if (preparedWindow) {
-        preparedWindow.opener = null;
-        preparedBrowserWindows.set(accountId, preparedWindow);
-      }
-    } catch {
-      preparedBrowserWindows.delete(accountId);
-    }
-  }
-
   function openAuthUrl(session = {}) {
-    const url = String(session.authUrl || "");
+    const url = String(session.authUrl || "").trim();
     if (!url) {
       return;
     }
 
-    const accountId = session.account?.id || "";
-    const openKey = `${session.id}:${url}`;
-    const preparedWindow = preparedBrowserWindows.get(accountId);
-    if (!openedUrls.has(openKey) && preparedWindow && !preparedWindow.closed) {
-      preparedWindow.location.href = url;
-      openedUrls.add(openKey);
-      return;
-    }
-    if (!openedUrls.has(openKey)) {
-      browserWindow?.open?.(url, "_blank", "noopener");
-      openedUrls.add(openKey);
-    }
+    browserWindow?.open?.(url, "_blank", "noopener");
   }
 
   function rememberAuthSession(session = {}) {
@@ -193,7 +188,6 @@ function useAccountAuthSessions(
       return;
     }
     activeSessions[accountId] = session;
-    openAuthUrl(session);
   }
 
   function forgetSession(session = {}) {
@@ -201,20 +195,18 @@ function useAccountAuthSessions(
     if (!accountId) {
       return;
     }
+    if (session.id) {
+      delete authLinkCopyStatus[session.id];
+    }
     delete activeSessions[accountId];
-    preparedBrowserWindows.delete(accountId);
-  }
-
-  function closePreparedWindow(accountId) {
-    const preparedWindow = preparedBrowserWindows.get(accountId);
-    preparedWindow?.close?.();
-    preparedBrowserWindows.delete(accountId);
   }
 
   return proxyRefs({
     activeSessionFor,
+    authLinkCopyStatus,
     authBusy,
     cancelSession,
+    copyAuthUrl,
     errorMessage,
     localError,
     loginDisabled,
@@ -232,6 +224,10 @@ function useAccountAuthSessions(
 
 function defaultBrowserWindow() {
   return typeof window === "undefined" ? null : window;
+}
+
+function defaultClipboard(browserWindow) {
+  return browserWindow?.navigator?.clipboard || globalThis.navigator?.clipboard || null;
 }
 
 function createScheduler({

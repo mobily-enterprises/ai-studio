@@ -2,7 +2,7 @@
   <section class="studio-autopilot">
     <div class="studio-autopilot__stage">
       <div
-        v-show="issueDiscussion.waiting"
+        v-show="codexWaiting"
         class="studio-autopilot__codex-terminal-stage"
       >
         <div
@@ -11,12 +11,33 @@
         />
         <div class="studio-autopilot__codex-terminal-overlay">
           <strong>Prompt injected into Codex.</strong>
-          <span>Asking Codex to define the issue...</span>
+          <span>{{ codexOverlayText }}</span>
+          <v-btn
+            class="studio-autopilot__stop-button"
+            :prepend-icon="mdiClose"
+            size="small"
+            type="button"
+            variant="tonal"
+            @click="stop"
+          >
+            Stop Autopilot
+          </v-btn>
+        </div>
+      </div>
+
+      <div
+        v-if="commandWaiting"
+        class="studio-autopilot__command-terminal-stage"
+      >
+        <pre class="studio-autopilot__command-terminal-output">{{ commandTerminalText }}</pre>
+        <div class="studio-autopilot__command-terminal-overlay">
+          <strong>Command running.</strong>
+          <span>{{ displayStatusText }}</span>
         </div>
       </div>
 
       <v-progress-circular
-        v-if="!issueDiscussion.waiting && displayRunning"
+        v-if="!codexWaiting && !commandWaiting && displayRunning"
         class="studio-autopilot__cog"
         color="primary"
         indeterminate
@@ -27,14 +48,14 @@
       </v-progress-circular>
 
       <v-icon
-        v-else-if="!issueDiscussion.waiting && failure"
+        v-else-if="!codexWaiting && !commandWaiting && failure"
         color="warning"
         :icon="mdiAlertCircleOutline"
         size="72"
       />
 
       <v-icon
-        v-else-if="!issueDiscussion.waiting"
+        v-else-if="!codexWaiting && !commandWaiting"
         color="primary"
         :icon="mdiCog"
         size="72"
@@ -200,6 +221,41 @@
         {{ issueDiscussion.failure }}
       </v-alert>
 
+      <div
+        v-else-if="readyForDeepUiCheck"
+        class="studio-autopilot__decision"
+      >
+        <v-alert
+          type="info"
+          variant="tonal"
+          density="compact"
+        >
+          The deep UI check can take a long time. Run it now, or skip it and continue to review/deslop.
+        </v-alert>
+
+        <div class="studio-autopilot__actions">
+          <v-btn
+            color="primary"
+            :loading="running"
+            :prepend-icon="mdiPlay"
+            variant="flat"
+            @click="runDeepUiCheck"
+          >
+            Run deep UI check
+          </v-btn>
+
+          <v-btn
+            :disabled="running"
+            :prepend-icon="mdiArrowRight"
+            type="button"
+            variant="tonal"
+            @click="skipDeepUiCheck"
+          >
+            Skip
+          </v-btn>
+        </div>
+      </div>
+
       <div v-else-if="failure" class="studio-autopilot__failure">
         <v-alert
           type="warning"
@@ -208,8 +264,6 @@
         >
           {{ failure.error }}
         </v-alert>
-
-        <pre v-if="failure.output" class="studio-autopilot__output">{{ failure.output }}</pre>
 
         <div class="studio-autopilot__actions">
           <v-btn
@@ -226,7 +280,7 @@
 
       <div v-else class="studio-autopilot__actions">
         <v-btn
-          v-if="!running && !readyForIssue"
+          v-if="!running && !readyForIssue && !readyForDeepUiCheck && !readyForReview"
           class="studio-autopilot__start-button"
           color="primary"
           :disabled="!canStart"
@@ -245,6 +299,7 @@
 import { computed, onMounted, proxyRefs, watch } from "vue";
 import {
   mdiAlertCircleOutline,
+  mdiArrowRight,
   mdiCheck,
   mdiClose,
   mdiCog,
@@ -258,6 +313,9 @@ import {
 import {
   useAiStudioAutopilotIssueDiscussion
 } from "@/composables/useAiStudioAutopilotIssueDiscussion.js";
+import {
+  stripTerminalControlSequences
+} from "@/lib/codexOutput.js";
 
 const emit = defineEmits(["busy-change", "codex-waiting-change"]);
 
@@ -286,14 +344,26 @@ const props = defineProps({
 
 const {
   canStart,
+  canResume,
+  commandOutput,
+  commandPreview,
+  commandRunning,
   failure,
+  readyForDeepUiCheck,
   readyForIssue,
+  readyForReview,
   retry,
+  resume,
+  runDeepUiCheck,
   running,
+  skipDeepUiCheck,
   start,
-  statusText
+  stop,
+  statusText,
+  waitingForCodex
 } = useAiStudioAutopilotController({
   actions: props.actions,
+  codexTerminal: props.codexTerminal,
   refreshSessionData: () => props.refreshSessionData(),
   session: computed(() => props.session)
 });
@@ -312,6 +382,19 @@ const displayRunning = computed(() => Boolean(
   running.value ||
   issueDiscussion.saving
 ));
+const codexWaiting = computed(() => Boolean(
+  issueDiscussion.waiting ||
+  waitingForCodex.value
+));
+const commandWaiting = computed(() => Boolean(commandRunning.value && !codexWaiting.value));
+const codexOverlayText = computed(() => issueDiscussion.waiting
+  ? "Asking Codex to define the issue..."
+  : displayStatusText.value);
+const commandTerminalText = computed(() => {
+  const output = stripTerminalControlSequences(commandOutput.value);
+  const preview = stripTerminalControlSequences(commandPreview.value);
+  return tailCommandText(output || preview || "Starting command...");
+});
 const autopilotBusy = computed(() => Boolean(
   running.value ||
   issueDiscussion.waiting ||
@@ -319,11 +402,20 @@ const autopilotBusy = computed(() => Boolean(
 ));
 
 function emitCodexWaitingState() {
-  emit("codex-waiting-change", Boolean(issueDiscussion.waiting));
+  emit("codex-waiting-change", codexWaiting.value);
 }
 
 function emitBusyState() {
   emit("busy-change", autopilotBusy.value);
+}
+
+function tailCommandText(value = "") {
+  const text = String(value || "");
+  const maxLength = 12000;
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(text.length - maxLength);
 }
 
 function emitAutopilotState() {
@@ -333,7 +425,11 @@ function emitAutopilotState() {
 
 onMounted(emitAutopilotState);
 
-watch(() => issueDiscussion.waiting, () => {
+onMounted(() => {
+  void resume();
+});
+
+watch(codexWaiting, () => {
   emitCodexWaitingState();
 }, {
   flush: "post"
@@ -341,6 +437,14 @@ watch(() => issueDiscussion.waiting, () => {
 
 watch(autopilotBusy, () => {
   emitBusyState();
+}, {
+  flush: "post"
+});
+
+watch(() => props.session?.currentStep || "", () => {
+  if (canResume.value) {
+    void resume();
+  }
 }, {
   flush: "post"
 });
@@ -400,6 +504,18 @@ watch(autopilotBusy, () => {
   width: 100%;
 }
 
+.studio-autopilot__command-terminal-stage {
+  display: grid;
+  height: min(30rem, 58vh);
+  justify-self: center;
+  max-width: min(64rem, 100%);
+  min-height: 18rem;
+  place-items: stretch;
+  position: relative;
+  text-align: left;
+  width: 100%;
+}
+
 .studio-autopilot__codex-terminal-host {
   display: grid;
   min-height: 0;
@@ -420,7 +536,8 @@ watch(autopilotBusy, () => {
   text-align: left;
 }
 
-.studio-autopilot__codex-terminal-overlay {
+.studio-autopilot__codex-terminal-overlay,
+.studio-autopilot__command-terminal-overlay {
   align-items: center;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(20, 30, 46, 0.16);
@@ -436,7 +553,7 @@ watch(autopilotBusy, () => {
   line-height: 1.35;
   max-width: min(26rem, calc(100% - 2rem));
   padding: 1rem 1.25rem;
-  pointer-events: none;
+  pointer-events: auto;
   position: absolute;
   text-align: center;
   top: 50%;
@@ -444,8 +561,38 @@ watch(autopilotBusy, () => {
   width: max-content;
 }
 
-.studio-autopilot__codex-terminal-overlay strong {
+.studio-autopilot__codex-terminal-overlay {
+  pointer-events: auto;
+}
+
+.studio-autopilot__command-terminal-output {
+  align-content: end;
+  background: #101216;
+  border-radius: 8px;
+  color: #f4f7fb;
+  display: grid;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.42;
+  margin: 0;
+  opacity: 0.34;
+  overflow: hidden;
+  padding: 0.85rem;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.studio-autopilot__command-terminal-overlay {
+  pointer-events: none;
+}
+
+.studio-autopilot__codex-terminal-overlay strong,
+.studio-autopilot__command-terminal-overlay strong {
   font-size: 1.1rem;
+}
+
+.studio-autopilot__stop-button {
+  margin-top: 0.3rem;
 }
 
 .studio-autopilot__actions {
@@ -465,6 +612,7 @@ watch(autopilotBusy, () => {
 }
 
 .studio-autopilot__issue-form,
+.studio-autopilot__decision,
 .studio-autopilot__failure {
   display: grid;
   gap: 0.75rem;
@@ -492,21 +640,6 @@ watch(autopilotBusy, () => {
   font-weight: 650;
   line-height: 1.35;
   margin: 0;
-}
-
-.studio-autopilot__output {
-  background: #101216;
-  border-radius: 8px;
-  color: #f5f7fb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
-  line-height: 1.45;
-  margin: 0;
-  max-height: 18rem;
-  overflow: auto;
-  padding: 0.85rem;
-  text-align: left;
-  white-space: pre-wrap;
 }
 
 @keyframes studio-autopilot-cog-spin {

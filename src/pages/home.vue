@@ -86,6 +86,12 @@ watch(
         -->
       </div>
     </template>
+    <template #top-right>
+      <div
+        id="studio-home-app-bar-actions"
+        class="studio-home-shell-actions"
+      />
+    </template>
     <RouterView v-slot="{ Component }">
       <component
         :is="Component"
@@ -146,6 +152,16 @@ watch(
   white-space: nowrap;
 }
 
+.studio-home-shell-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  max-width: min(32rem, 58vw);
+  min-width: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 600px) {
   .studio-home-shell-title {
     font-size: 1.05rem;
@@ -154,7 +170,12 @@ watch(
 
   .studio-home-shell-target-folder {
     font-size: 1.05rem;
-    max-width: calc(100vw - 8.5rem);
+    max-width: calc(100vw - 16rem);
+  }
+
+  .studio-home-shell-actions {
+    gap: 0.25rem;
+    max-width: calc(100vw - 9rem);
   }
 }
 </style>

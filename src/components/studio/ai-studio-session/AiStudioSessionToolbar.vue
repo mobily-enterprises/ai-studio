@@ -42,17 +42,6 @@
         New Session
       </v-btn>
     </div>
-
-    <div class="studio-ai-sessions__tools">
-      <AiStudioLaunchControls
-        :busy="busy"
-        :session="session"
-      />
-      <AiStudioShellControls
-        :busy="busy"
-        :session="session"
-      />
-    </div>
   </div>
 </template>
 
@@ -61,8 +50,6 @@ import {
   mdiClose,
   mdiPlus
 } from "@mdi/js";
-import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
-import AiStudioShellControls from "@/components/studio/AiStudioShellControls.vue";
 
 defineProps({
   abandon: {
@@ -81,10 +68,6 @@ defineProps({
     default: false,
     type: Boolean
   },
-  session: {
-    default: null,
-    type: Object
-  },
   toolbar: {
     default: () => ({}),
     type: Object
@@ -97,7 +80,7 @@ defineProps({
   align-items: center;
   display: flex;
   gap: 0.75rem;
-  justify-content: space-between;
+  justify-content: flex-start;
   min-width: 0;
 }
 
@@ -106,15 +89,6 @@ defineProps({
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
-  min-width: 0;
-}
-
-.studio-ai-sessions__tools {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  justify-content: flex-end;
   min-width: 0;
 }
 
@@ -160,10 +134,6 @@ defineProps({
   .studio-ai-sessions__toolbar {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .studio-ai-sessions__tools {
-    justify-content: flex-start;
   }
 }
 </style>

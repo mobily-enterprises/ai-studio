@@ -27,12 +27,23 @@ function useAiStudioSessionCodexHandoff({
       return false;
     }
 
-    promptOverride.value = promptHandoff.terminalInput || promptHandoff.prompt;
+    promptOverride.value = promptWithSuffix(
+      promptHandoff.terminalInput || promptHandoff.prompt,
+      context.promptSuffix
+    );
     busy.value = true;
     promptInjectionError.value = "";
     promptInjectionKey.value = `${context.sessionId}:${context.actionId}:${Date.now()}`;
     await refreshSessionData();
     return true;
+  }
+
+  function promptWithSuffix(prompt = "", suffix = "") {
+    const normalizedPrompt = String(prompt || "").trim();
+    const normalizedSuffix = String(suffix || "").trim();
+    return normalizedSuffix
+      ? `${normalizedPrompt}\n\n${normalizedSuffix}`
+      : normalizedPrompt;
   }
 
   async function injectPrompt(prompt, {

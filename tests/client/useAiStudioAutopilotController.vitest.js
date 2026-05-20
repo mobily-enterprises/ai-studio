@@ -1,23 +1,79 @@
 import { computed, ref } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISSUE_STEP_ID,
+  REVIEW_CHANGES_STEP_ID,
   useAiStudioAutopilotController
 } from "../../src/composables/useAiStudioAutopilotController.js";
+import {
+  AUTOPILOT_STEP_DONE_MARKER_END,
+  AUTOPILOT_STEP_DONE_MARKER_START
+} from "../../src/lib/aiStudioAutopilotStepMarkers.js";
 
 const STEP_LABELS = Object.freeze({
+  changes_accepted: "Review changes",
+  deep_ui_check_run: "Run deep UI check",
   dependencies_installed: "Install dependencies",
   issue_file_created: "Define or select issue",
+  issue_submitted: "Edit and submit issue",
+  plan_executed: "Execute plan",
+  plan_made: "Make plan",
+  project_validated: "Validate project",
+  review_run: "Run review/deslop",
   session_created: "Create session",
   work_source_selected: "Choose work source",
   worktree_created: "Create worktree"
 });
+
+const NEXT_STEP = Object.freeze({
+  deep_ui_check_run: "review_run",
+  dependencies_installed: ISSUE_STEP_ID,
+  issue_submitted: "plan_made",
+  plan_executed: "deep_ui_check_run",
+  plan_made: "plan_executed",
+  project_validated: REVIEW_CHANGES_STEP_ID,
+  review_run: "project_validated",
+  session_created: "work_source_selected",
+  work_source_selected: "worktree_created",
+  worktree_created: "dependencies_installed"
+});
+
+const COMMAND_METADATA = Object.freeze({
+  create_issue_on_gh: {
+    issue_url: "https://github.com/example/project/issues/123"
+  },
+  create_worktree: {
+    worktree_path: "/tmp/ai-studio-worktree"
+  },
+  install_dependencies: {
+    dependencies_installed: "1"
+  },
+  run_automated_checks: {
+    automated_checks_passed: "1"
+  },
+  update_code_index: {
+    code_index_updated: "1"
+  }
+});
+
+const PROMPT_ACTION_IDS = new Set([
+  "execute_plan",
+  "make_plan",
+  "run_deep_ui_check",
+  "run_deslop"
+]);
 
 describe("useAiStudioAutopilotController", () => {
   let context;
 
   beforeEach(() => {
     context = createAutopilotContext();
+  });
+
+  afterEach(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.clear();
+    }
   });
 
   it("runs setup actions and stops at the issue definition step", async () => {
@@ -68,11 +124,151 @@ describe("useAiStudioAutopilotController", () => {
     ]);
     expect(context.controller.failure.value).toBeNull();
   });
+
+  it("continues from submitted issue through prompts and validation, then stops at review changes", async () => {
+    context.moveToStep("issue_submitted", {
+      issue_body: "## Request\nMake the change.",
+      issue_title: "Make the change"
+    });
+
+    await context.controller.resume();
+
+    expect(context.session.value.currentStep).toBe("deep_ui_check_run");
+    expect(context.controller.readyForDeepUiCheck.value).toBe(true);
+    expect(context.actions.runAction.mock.calls.map(([action]) => action.id)).toEqual([
+      "make_plan",
+      "execute_plan"
+    ]);
+
+    await context.controller.runDeepUiCheck();
+
+    expect(context.session.value.currentStep).toBe(REVIEW_CHANGES_STEP_ID);
+    expect(context.commandRunner.runCommandAction.mock.calls.map(([input]) => input.action.id)).toEqual([
+      "create_issue_on_gh",
+      "update_code_index",
+      "run_automated_checks"
+    ]);
+    expect(context.actions.runAction.mock.calls.map(([action]) => action.id)).toEqual([
+      "make_plan",
+      "execute_plan",
+      "run_deep_ui_check",
+      "run_deslop"
+    ]);
+    expect(context.actions.runAction.mock.calls.every(([, options]) => {
+      return typeof options?.promptSuffix === "string" &&
+        options.promptSuffix.includes(AUTOPILOT_STEP_DONE_MARKER_START);
+    })).toBe(true);
+    expect(context.controller.readyForReview.value).toBe(true);
+    expect(context.controller.failure.value).toBeNull();
+  });
+
+  it("can skip the deep UI check and continue to review changes", async () => {
+    context.moveToStep("deep_ui_check_run");
+
+    await context.controller.resume();
+
+    expect(context.session.value.currentStep).toBe("deep_ui_check_run");
+    expect(context.controller.readyForDeepUiCheck.value).toBe(true);
+
+    await context.controller.skipDeepUiCheck();
+
+    expect(context.session.value.currentStep).toBe(REVIEW_CHANGES_STEP_ID);
+    expect(context.actions.runAction.mock.calls.map(([action]) => action.id)).toEqual([
+      "run_deslop"
+    ]);
+    expect(context.commandRunner.runCommandAction.mock.calls.map(([input]) => input.action.id)).toEqual([
+      "update_code_index",
+      "run_automated_checks"
+    ]);
+    expect(context.controller.failure.value).toBeNull();
+  });
+
+  it("fails cleanly when Codex becomes idle without the completion marker", async () => {
+    context.moveToStep("review_run");
+    context.actions.runAction.mockImplementation(async (action) => {
+      if (action.id === "run_deslop") {
+        context.codexOutput.value = `${context.codexOutput.value}\nReview completed without marker.`;
+      }
+    });
+
+    await context.controller.resume();
+
+    expect(context.session.value.currentStep).toBe("review_run");
+    expect(context.controller.running.value).toBe(false);
+    expect(context.controller.failure.value).toMatchObject({
+      actionId: "run_deslop",
+      error: "The Run deslop step did not complete properly, so Autopilot could not safely continue. Retry will run it again, or switch to Inspect to continue manually.",
+      output: expect.stringContaining("Review completed without marker.")
+    });
+  });
+
+  it("lets the user stop Autopilot while a Codex prompt is pending", async () => {
+    context.moveToStep("review_run");
+    context.actions.runAction.mockImplementation(async (action) => {
+      if (action.id === "run_deslop") {
+        context.codexBusy.value = true;
+        context.codexOutput.value = `${context.codexOutput.value}\nReview still running.`;
+      }
+    });
+
+    const resumePromise = context.controller.resume();
+    await Promise.resolve();
+
+    context.controller.stop();
+    await resumePromise;
+
+    expect(context.session.value.currentStep).toBe("review_run");
+    expect(context.controller.running.value).toBe(false);
+    expect(context.controller.failure.value).toMatchObject({
+      actionLabel: "Autopilot",
+      error: "Autopilot stopped. Use Inspect to continue manually, or Retry to resume Autopilot."
+    });
+  });
+
+  it("waits for Codex to become idle before sending the next prompt", async () => {
+    context.moveToStep("plan_made");
+
+    let firstPrompt = true;
+    context.actions.runAction.mockImplementation(async (action, options = {}) => {
+      if (!PROMPT_ACTION_IDS.has(action.id)) {
+        return;
+      }
+      context.codexOutput.value = `${context.codexOutput.value}\n${stepDoneMarkerFromPromptSuffix(options.promptSuffix)}`;
+      if (firstPrompt) {
+        firstPrompt = false;
+        context.codexBusy.value = true;
+        setTimeout(() => {
+          context.codexBusy.value = false;
+        }, 10);
+      }
+    });
+
+    await context.controller.resume();
+
+    expect(context.session.value.currentStep).toBe("deep_ui_check_run");
+    await context.controller.runDeepUiCheck();
+
+    expect(context.actions.runAction.mock.calls.map(([action]) => action.id)).toEqual([
+      "make_plan",
+      "execute_plan",
+      "run_deep_ui_check",
+      "run_deslop"
+    ]);
+    expect(context.session.value.currentStep).toBe(REVIEW_CHANGES_STEP_ID);
+  });
 });
 
 function createAutopilotContext() {
   const session = ref(sessionForStep("session_created"));
+  const codexBusy = ref(false);
+  const codexOutput = ref("");
+  const promptInjectionError = ref("");
   const commandResults = {
+    create_issue_on_gh: {
+      exitCode: 0,
+      ok: true,
+      output: "created issue"
+    },
     create_worktree: {
       exitCode: 0,
       ok: true,
@@ -82,26 +278,42 @@ function createAutopilotContext() {
       exitCode: 0,
       ok: true,
       output: "installed"
+    },
+    run_automated_checks: {
+      exitCode: 0,
+      ok: true,
+      output: "checked"
+    },
+    update_code_index: {
+      exitCode: 0,
+      ok: true,
+      output: "indexed"
     }
   };
+
+  function moveToStep(stepId, metadata = {}) {
+    session.value = sessionForStep(stepId, {
+      ...session.value.metadata,
+      ...metadata
+    });
+  }
+
   const actions = {
     currentActions: computed(() => session.value.actions),
     currentNext: computed(() => session.value.next),
     goNext: vi.fn(async () => {
-      session.value = sessionForStep(session.value.next.stepId);
+      moveToStep(session.value.next.stepId);
     }),
-    runAction: vi.fn(async (action) => {
+    runAction: vi.fn(async (action, options = {}) => {
       if (action.id === "use_new_branch") {
-        session.value = {
-          ...session.value,
-          metadata: {
-            work_source: "new_branch"
-          },
-          next: {
-            ...session.value.next,
-            enabled: true
-          }
-        };
+        moveToStep(session.value.currentStep, {
+          work_source: "new_branch"
+        });
+        return;
+      }
+
+      if (PROMPT_ACTION_IDS.has(action.id)) {
+        codexOutput.value = `${codexOutput.value}\n${stepDoneMarkerFromPromptSuffix(options.promptSuffix)}`;
       }
     })
   };
@@ -110,13 +322,7 @@ function createAutopilotContext() {
     runCommandAction: vi.fn(async ({ action }) => {
       const result = commandResults[action.id];
       if (result?.ok === true) {
-        session.value = {
-          ...session.value,
-          next: {
-            ...session.value.next,
-            enabled: true
-          }
-        };
+        moveToStep(session.value.currentStep, COMMAND_METADATA[action.id] || {});
       }
       return {
         actionId: action.id,
@@ -130,6 +336,11 @@ function createAutopilotContext() {
   };
   const controller = useAiStudioAutopilotController({
     actions,
+    codexTerminal: {
+      busy: codexBusy,
+      output: codexOutput,
+      promptInjectionError
+    },
     commandRunner,
     refreshSessionData: async () => null,
     session
@@ -137,21 +348,25 @@ function createAutopilotContext() {
 
   return {
     actions,
+    codexBusy,
+    codexOutput,
     commandResults,
     commandRunner,
     controller,
+    moveToStep,
     session
   };
 }
 
-function sessionForStep(stepId) {
+function sessionForStep(stepId, metadata = {}) {
   return {
-    actions: actionsForStep(stepId),
+    actions: actionsForStep(stepId, metadata),
     currentStep: stepId,
     currentStepDefinition: {
       label: STEP_LABELS[stepId]
     },
-    next: nextForStep(stepId),
+    metadata,
+    next: nextForStep(stepId, metadata),
     sessionId: "session-1",
     stepDefinitions: Object.entries(STEP_LABELS).map(([id, label]) => ({
       id,
@@ -160,7 +375,7 @@ function sessionForStep(stepId) {
   };
 }
 
-function actionsForStep(stepId) {
+function actionsForStep(stepId, metadata = {}) {
   if (stepId === "work_source_selected") {
     return [
       {
@@ -173,54 +388,109 @@ function actionsForStep(stepId) {
   }
   if (stepId === "worktree_created") {
     return [
-      {
-        enabled: true,
-        id: "create_worktree",
-        label: "Create worktree",
-        type: "command"
-      }
+      commandAction("create_worktree", "Create worktree")
     ];
   }
   if (stepId === "dependencies_installed") {
     return [
-      {
-        enabled: true,
-        id: "install_dependencies",
-        label: "Install dependencies",
-        type: "command"
-      }
+      commandAction("install_dependencies", "Install dependencies")
+    ];
+  }
+  if (stepId === "issue_submitted") {
+    return [
+      commandAction("create_issue_on_gh", "Create issue on GH")
+    ];
+  }
+  if (stepId === "plan_made") {
+    return [
+      promptAction("make_plan", "Make plan")
+    ];
+  }
+  if (stepId === "plan_executed") {
+    return [
+      promptAction("execute_plan", "Execute plan")
+    ];
+  }
+  if (stepId === "deep_ui_check_run") {
+    return [
+      promptAction("run_deep_ui_check", "Run deep UI check")
+    ];
+  }
+  if (stepId === "review_run") {
+    return [
+      promptAction("run_deslop", "Run deslop")
+    ];
+  }
+  if (stepId === "project_validated") {
+    return [
+      commandAction("update_code_index", "Update code index"),
+      commandAction("run_automated_checks", "Run automated checks", Boolean(metadata.code_index_updated))
     ];
   }
   return [];
 }
 
-function nextForStep(stepId) {
-  if (stepId === ISSUE_STEP_ID) {
+function commandAction(id, label, enabled = true) {
+  return {
+    enabled,
+    id,
+    label,
+    type: "command"
+  };
+}
+
+function promptAction(id, label) {
+  return {
+    enabled: true,
+    id,
+    label,
+    type: "prompt"
+  };
+}
+
+function nextForStep(stepId, metadata = {}) {
+  if (stepId === ISSUE_STEP_ID || stepId === REVIEW_CHANGES_STEP_ID) {
     return {
       enabled: false,
       visible: false
     };
   }
   return {
-    enabled: stepId === "session_created",
+    enabled: nextStepReady(stepId, metadata),
     label: "Next",
-    stepId: nextStepId(stepId),
+    stepId: NEXT_STEP[stepId] || "",
     visible: true
   };
 }
 
-function nextStepId(stepId) {
+function nextStepReady(stepId, metadata = {}) {
   if (stepId === "session_created") {
-    return "work_source_selected";
+    return true;
   }
   if (stepId === "work_source_selected") {
-    return "worktree_created";
+    return Boolean(metadata.work_source);
   }
   if (stepId === "worktree_created") {
-    return "dependencies_installed";
+    return Boolean(metadata.worktree_path);
   }
   if (stepId === "dependencies_installed") {
-    return ISSUE_STEP_ID;
+    return Boolean(metadata.dependencies_installed);
   }
-  return "";
+  if (stepId === "issue_submitted") {
+    return Boolean(metadata.issue_url);
+  }
+  if (stepId === "project_validated") {
+    return Boolean(metadata.code_index_updated && metadata.automated_checks_passed);
+  }
+  return Boolean(NEXT_STEP[stepId]);
+}
+
+function stepDoneMarkerFromPromptSuffix(promptSuffix = "") {
+  const source = String(promptSuffix || "");
+  const start = source.indexOf(AUTOPILOT_STEP_DONE_MARKER_START);
+  const end = source.indexOf(AUTOPILOT_STEP_DONE_MARKER_END, start);
+  if (start < 0 || end < 0) {
+    throw new Error("Autopilot prompt suffix did not contain a completion marker.");
+  }
+  return source.slice(start, end + AUTOPILOT_STEP_DONE_MARKER_END.length);
 }

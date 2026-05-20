@@ -50,10 +50,13 @@ describe("useAiStudioHeadlessCommandRunner", () => {
 
     const socket = FakeWebSocket.instances[0];
     expect(socket.url).toBe("ws://studio/session-1/terminal-1");
+    expect(runner.commandPreview.value).toBe("npm install");
+    expect(runner.status.value).toBe("running");
     socket.sendMessage({
       chunk: "installed\n",
       type: "output"
     });
+    expect(runner.output.value).toBe("installed\n");
     socket.sendMessage({
       exitCode: 0,
       status: "exited",
@@ -73,6 +76,7 @@ describe("useAiStudioHeadlessCommandRunner", () => {
     });
     expect(closeCommandTerminal).toHaveBeenCalledWith("session-1", "terminal-1");
     expect(runner.running.value).toBe(false);
+    expect(runner.status.value).toBe("");
   });
 
   it("returns terminal output when the command exits with an error", async () => {
@@ -106,6 +110,7 @@ describe("useAiStudioHeadlessCommandRunner", () => {
       chunk: "fatal: branch exists\n",
       type: "output"
     });
+    expect(runner.output.value).toBe("starting\nfatal: branch exists\n");
     FakeWebSocket.instances[0].sendMessage({
       exitCode: 1,
       status: "exited",

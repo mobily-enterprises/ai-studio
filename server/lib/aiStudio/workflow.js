@@ -258,19 +258,13 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
           label: "Run deslop",
           promptId: "run_deslop",
           type: "prompt"
-        },
-        {
-          id: "resolve_deslop",
-          label: "Resolve deslop",
-          promptId: "resolve_deslop",
-          type: "prompt"
         }
       ],
-      description: "Run the review/deslop prompts.",
+      description: "Run the review/deslop prompt.",
       id: "review_run",
       label: "Run review/deslop",
       rewindCleanup: {
-        actionResults: ["run_deslop", "resolve_deslop"]
+        actionResults: ["run_deslop"]
       }
     },
     {

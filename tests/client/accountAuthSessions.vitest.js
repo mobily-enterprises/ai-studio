@@ -4,7 +4,7 @@ import { ref } from "vue";
 import { useAccountAuthSessions } from "../../src/composables/useAccountAuthSessions.js";
 
 describe("account auth sessions", () => {
-  it("starts browser auth, reuses the prepared browser window, and records the active session", async () => {
+  it("starts browser auth without opening the link until the user chooses to", async () => {
     const accounts = fakeAccounts({
       startAuth: async () => ({
         account: {
@@ -34,12 +34,19 @@ describe("account auth sessions", () => {
     await authSessions.startBrowserAuth("github");
 
     expect(accounts.startAuth).toHaveBeenCalledWith("github", "browser");
-    expect(browserWindow.open).toHaveBeenCalledTimes(1);
-    expect(browserWindow.open).toHaveBeenCalledWith("about:blank", "_blank");
-    expect(browserWindow.openedWindows[0].location.href).toBe("https://github.com/login/device");
+    expect(browserWindow.open).not.toHaveBeenCalled();
     expect(authSessions.activeSessionFor("github")?.id).toBe("auth-1");
     expect(authSessions.authBusy).toBe(true);
     expect(scheduler.setInterval).toHaveBeenCalledTimes(1);
+
+    authSessions.openAuthUrl(authSessions.activeSessionFor("github"));
+
+    expect(browserWindow.open).toHaveBeenCalledTimes(1);
+    expect(browserWindow.open).toHaveBeenCalledWith(
+      "https://github.com/login/device",
+      "_blank",
+      "noopener"
+    );
   });
 
   it("refreshes status and removes an auth session after it connects", async () => {
@@ -81,6 +88,40 @@ describe("account auth sessions", () => {
     expect(accounts.refresh).toHaveBeenCalledTimes(1);
     expect(authSessions.activeSessionFor("github")).toBeNull();
     expect(authSessions.authBusy).toBe(false);
+  });
+
+  it("copies an auth session URL after the login link is available", async () => {
+    const accounts = fakeAccounts({
+      startAuth: async () => ({
+        account: {
+          id: "codex",
+          label: "Codex"
+        },
+        authUrl: "https://chatgpt.com/auth/codex",
+        id: "auth-codex-1",
+        status: "authenticating",
+        terminalStatus: "running"
+      })
+    });
+    const clipboard = {
+      writeText: vi.fn(async () => undefined)
+    };
+    const authSessions = useAccountAuthSessions(accounts, {
+      accountRows: ref([
+        {
+          connected: false,
+          id: "codex"
+        }
+      ]),
+      browserWindow: fakeBrowserWindow(),
+      clipboard
+    });
+
+    await authSessions.startBrowserAuth("codex");
+    await authSessions.copyAuthUrl(authSessions.activeSessionFor("codex"));
+
+    expect(clipboard.writeText).toHaveBeenCalledWith("https://chatgpt.com/auth/codex");
+    expect(authSessions.authLinkCopyStatus["auth-codex-1"]).toBe("Auth link copied.");
   });
 
   it("keeps failed auth sessions visible and stops polling them", async () => {
@@ -169,7 +210,7 @@ describe("account auth sessions", () => {
     await authSessions.startBrowserAuth("github");
 
     expect(authSessions.errorMessage).toBe("GitHub refused login.");
-    expect(browserWindow.openedWindows[0].close).toHaveBeenCalledTimes(1);
+    expect(browserWindow.open).not.toHaveBeenCalled();
   });
 });
 

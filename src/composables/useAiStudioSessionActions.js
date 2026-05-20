@@ -219,7 +219,7 @@ function useAiStudioSessionActions({
     activeActionId.value = "";
   }
 
-  async function runAction(action = {}) {
+  async function runAction(action = {}, options = {}) {
     if (!unref(selectedSessionId) || !action.id || readRefOrGetterBoolean(commandBusy) || action.enabled !== true) {
       return;
     }
@@ -243,10 +243,14 @@ function useAiStudioSessionActions({
 
     activeActionId.value = action.id;
     try {
-      await runActionCommand.run({
+      const input = options.input && typeof options.input === "object" && !Array.isArray(options.input)
+        ? options.input
+        : issueFileStep.inputForAction(action);
+      return await runActionCommand.run({
         actionId: action.id,
         advanceOnSuccess: action.advanceOnSuccess === true,
-        input: issueFileStep.inputForAction(action),
+        input,
+        promptSuffix: String(options.promptSuffix || ""),
         sessionId: unref(selectedSessionId)
       });
     } finally {
