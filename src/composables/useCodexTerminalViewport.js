@@ -76,6 +76,18 @@ function useCodexTerminalViewport({
     terminalDisplayOutput = "";
   }
 
+  function appendTerminalDisplay(outputChunk) {
+    const chunk = String(outputChunk || "");
+    if (!chunk) {
+      return;
+    }
+    terminalDisplayOutput += chunk;
+    terminalOutputOffset = terminalDisplayOutput.length;
+    if (terminalInstance) {
+      terminalInstance.write(chunk);
+    }
+  }
+
   function writeTerminalDisplay(output) {
     const displayOutput = String(output || "");
     if (!terminalInstance) {
@@ -221,6 +233,7 @@ function useCodexTerminalViewport({
   }
 
   return {
+    appendTerminalDisplay,
     clearTerminalDisplay,
     disposeTerminalUi,
     fitTerminal,

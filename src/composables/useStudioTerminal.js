@@ -35,6 +35,7 @@ function useStudioTerminal({
   let terminalSocketOpenPromise = null;
   let terminalDataDisposable = null;
   let terminalResizeHandler = null;
+  let terminalResizeObserver = null;
   let terminalLatestOutput = "";
   let terminalOutputOffset = 0;
   let terminalSetupPromise = null;
@@ -86,6 +87,12 @@ function useStudioTerminal({
         terminalFitAddon?.fit();
       };
       window.addEventListener("resize", terminalResizeHandler);
+      if (typeof ResizeObserver !== "undefined") {
+        terminalResizeObserver = new ResizeObserver(() => {
+          terminalFitAddon?.fit();
+        });
+        terminalResizeObserver.observe(terminalHost.value);
+      }
       writeTerminalOutput(terminalLatestOutput);
       return true;
     })();
@@ -114,6 +121,8 @@ function useStudioTerminal({
       window.removeEventListener("resize", terminalResizeHandler);
       terminalResizeHandler = null;
     }
+    terminalResizeObserver?.disconnect?.();
+    terminalResizeObserver = null;
     terminalInstance?.dispose?.();
     terminalInstance = null;
     terminalFitAddon = null;

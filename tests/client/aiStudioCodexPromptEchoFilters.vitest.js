@@ -30,4 +30,28 @@ describe("AI Studio Codex prompt echo filters", () => {
 
     expect(filters.apply(`${longPrompt}\nshort answer`)).toBe("Prompt sent.\nshort answer");
   });
+
+  it("tracks whether a prompt echo is still pending", () => {
+    const filters = createCodexPromptEchoFilters();
+    filters.add({
+      outputStart: 0,
+      prompt: "Create the issue file"
+    });
+
+    expect(filters.hasPending()).toBe(true);
+    filters.apply("Create the issue file\nCodex output");
+    expect(filters.hasPending()).toBe(false);
+  });
+
+  it("stops waiting for a prompt echo after enough unrelated output arrives", () => {
+    const filters = createCodexPromptEchoFilters();
+    filters.add({
+      outputStart: 0,
+      prompt: "Create the issue file"
+    });
+
+    filters.apply("Codex output\n".repeat(200));
+
+    expect(filters.hasPending()).toBe(false);
+  });
 });

@@ -117,6 +117,7 @@ function useAiStudioCommandTerminalController(props, emit) {
       }
       if (context.terminalKind === "shell") {
         return {
+          reuseRunning: context.reuseRunning !== false,
           target: String(context.shellTarget || "")
         };
       }
@@ -300,6 +301,7 @@ function useAiStudioCommandTerminalController(props, emit) {
         actionId: actionId.value,
         actionInput: props.actionInput || {},
         launchTargetId: launchTargetId.value,
+        reuseRunning: props.reuseRunning !== false,
         sessionId: sessionId.value,
         shellTarget: shellTarget.value,
         terminalKind: props.terminalKind
@@ -415,6 +417,7 @@ function useAiStudioCommandTerminalController(props, emit) {
 
   function toggleExpanded() {
     expanded.value = !expanded.value;
+    emit("expanded-changed", expanded.value);
     if (expanded.value) {
       void setupTerminalUi();
     }

@@ -75,11 +75,57 @@ function markerObjectText(blockText = "") {
   return source.slice(objectStart, objectEnd + 1);
 }
 
+function normalizeJsonLineBreaksInsideStrings(value = "") {
+  const source = String(value || "");
+  let output = "";
+  let insideString = false;
+  let escaped = false;
+  let skippingLineBreakIndent = false;
+
+  for (const character of source) {
+    if (escaped) {
+      output += character;
+      escaped = false;
+      skippingLineBreakIndent = false;
+      continue;
+    }
+    if (character === "\\" && insideString) {
+      output += character;
+      escaped = true;
+      skippingLineBreakIndent = false;
+      continue;
+    }
+    if (character === "\"") {
+      insideString = !insideString;
+      output += character;
+      skippingLineBreakIndent = false;
+      continue;
+    }
+    if (insideString && (character === "\n" || character === "\r")) {
+      output += " ";
+      skippingLineBreakIndent = true;
+      continue;
+    }
+    if (insideString && skippingLineBreakIndent && /[ \t]/u.test(character)) {
+      continue;
+    }
+    skippingLineBreakIndent = false;
+    output += character;
+  }
+
+  return output;
+}
+
 function parseAutopilotQuestionsBlock(blockText = "") {
+  const jsonText = markerObjectText(blockText);
   try {
-    return normalizeAutopilotQuestionsPayload(JSON.parse(markerObjectText(blockText)));
+    return normalizeAutopilotQuestionsPayload(JSON.parse(jsonText));
   } catch {
-    return null;
+    try {
+      return normalizeAutopilotQuestionsPayload(JSON.parse(normalizeJsonLineBreaksInsideStrings(jsonText)));
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -95,15 +141,17 @@ function autopilotQuestionMarkerSource(output = "") {
 }
 
 function latestAutopilotQuestionsMarker(output = "", {
+  allowAnyRequestId = false,
   requestId = ""
 } = {}) {
   const source = autopilotQuestionMarkerSource(output);
   const expectedRequestId = String(requestId || "").trim();
+  let latestValidMarker = null;
   let searchEnd = source.length;
   while (searchEnd > 0) {
     const start = source.lastIndexOf(AUTOPILOT_QUESTIONS_MARKER_START, searchEnd);
     if (start < 0) {
-      return null;
+      return allowAnyRequestId ? latestValidMarker : null;
     }
 
     const contentStart = start + AUTOPILOT_QUESTIONS_MARKER_START.length;
@@ -113,10 +161,13 @@ function latestAutopilotQuestionsMarker(output = "", {
       if (marker && (!expectedRequestId || marker.requestId === expectedRequestId)) {
         return marker;
       }
+      if (marker && !latestValidMarker) {
+        latestValidMarker = marker;
+      }
     }
     searchEnd = start - 1;
   }
-  return null;
+  return allowAnyRequestId ? latestValidMarker : null;
 }
 
 function autopilotQuestionsMarkerExample(requestId = "request-id") {

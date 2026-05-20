@@ -123,6 +123,7 @@ function useAiStudioLaunchControls({
   const paths = usePaths();
   const activeLaunchTarget = ref(null);
   const startKey = ref("");
+  const terminalMinimized = ref(false);
   const terminalRunning = ref(false);
   const terminalVisible = ref(false);
   const openedReadyTerminalIds = new Set();
@@ -215,6 +216,7 @@ function useAiStudioLaunchControls({
     }
     pendingBrowserWindow = openPendingLaunchBrowserWindow(selectedSession.value);
     activeLaunchTarget.value = launchTarget;
+    terminalMinimized.value = false;
     terminalVisible.value = true;
     startKey.value = `${sessionId.value}:launch:${launchTarget.id}:${Date.now()}`;
   }
@@ -237,6 +239,7 @@ function useAiStudioLaunchControls({
   function closeTerminal() {
     activeLaunchTarget.value = null;
     startKey.value = "";
+    terminalMinimized.value = false;
     terminalRunning.value = false;
     terminalVisible.value = false;
   }
@@ -267,6 +270,13 @@ function useAiStudioLaunchControls({
     terminalRunning.value = Boolean(nextRunning);
   }
 
+  function handleTerminalExpandedChanged(expanded) {
+    terminalMinimized.value = expanded !== true;
+    if (terminalMinimized.value && typeof document !== "undefined") {
+      document.activeElement?.blur?.();
+    }
+  }
+
   watch(sessionId, () => {
     openedReadyTerminalIds.clear();
     pendingBrowserWindow = null;
@@ -278,6 +288,7 @@ function useAiStudioLaunchControls({
     closeTerminal,
     handleRunningChanged,
     handleReady,
+    handleTerminalExpandedChanged,
     handleStarted,
     launchButtonsDisabled,
     launchTargets,
@@ -292,6 +303,7 @@ function useAiStudioLaunchControls({
     run,
     showOpenTarget,
     startKey,
+    terminalMinimized,
     terminalRunning,
     terminalVisible,
     visible

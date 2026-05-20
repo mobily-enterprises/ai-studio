@@ -1,4 +1,4 @@
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   useAiStudioHeadlessCommandRunner
 } from "@/composables/useAiStudioHeadlessCommandRunner.js";
@@ -398,6 +398,7 @@ function useAiStudioAutopilotController({
   const replanFeedback = ref("");
 
   let autopilotPromise = null;
+  let generalQuestionScanLength = 0;
   let stopRequested = false;
 
   const currentStep = computed(() => readSession(session)?.currentStep || "");
@@ -405,6 +406,7 @@ function useAiStudioAutopilotController({
   const commandPreview = computed(() => String(readRefOrGetterValue(commandRunner.commandPreview) || ""));
   const commandResult = computed(() => readRefOrGetterValue(commandRunner.lastResult) || lastCommandResult.value || null);
   const commandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
+  const codexBusy = computed(() => readCodexBusy(codexTerminal));
   const running = computed(() => active.value || commandRunning.value);
   const readyForIssue = computed(() => currentStep.value === ISSUE_STEP_ID);
   const readyForDeepUiCheck = computed(() => {
@@ -418,8 +420,13 @@ function useAiStudioAutopilotController({
     : []);
   const autopilotQuestioning = computed(() => pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
     autopilotQuestions.value.length > 0);
-  const waitingForCodex = computed(() => pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
-    autopilotQuestions.value.length <= 0);
+  const waitingForCodex = computed(() => Boolean(
+    (
+      pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
+      autopilotQuestions.value.length <= 0
+    ) ||
+    codexIsActiveForCurrentStep()
+  ));
   const canSubmitAutopilotQuestionAnswers = computed(() => autopilotQuestioning.value &&
     !running.value &&
     autopilotQuestions.value.every((question) => Boolean(String(question.answer || "").trim())));
@@ -438,7 +445,7 @@ function useAiStudioAutopilotController({
       !currentStepIsStopPoint(currentSession.currentStep) &&
       currentStepCanRunAutopilot(currentSession) &&
       !running.value &&
-      !failure.value
+      (!failure.value || codexIsActiveForCurrentStep())
     );
   });
   const canAcceptReview = computed(() => {
@@ -450,6 +457,9 @@ function useAiStudioAutopilotController({
     return Boolean(readyForFinished.value && !running.value && archiveAction?.enabled === true);
   });
   const statusText = computed(() => {
+    if (codexIsActiveForCurrentStep()) {
+      return `Executing: ${activeStage.value || stepLabel(readSession(session))}`;
+    }
     if (failure.value) {
       return "Attention required";
     }
@@ -540,6 +550,7 @@ function useAiStudioAutopilotController({
       return;
     }
     stopRequested = false;
+    clearFailure();
     await runUntilStopPoint();
   }
 
@@ -872,6 +883,9 @@ function useAiStudioAutopilotController({
         }
         if (pendingPromptResume === PROMPT_WAIT_RESULT.COMPLETED) {
           continue;
+        }
+        if (codexIsActiveForCurrentStep()) {
+          return;
         }
 
         if (currentSession.currentStep === DEEP_UI_CHECK_STEP_ID) {
@@ -1215,6 +1229,9 @@ function useAiStudioAutopilotController({
       }
       const questionMarker = latestAutopilotQuestionsMarker(output, {
         requestId: pending.requestId
+      }) || latestAutopilotQuestionsMarker(output, {
+        allowAnyRequestId: true,
+        requestId: pending.requestId
       });
       if (questionMarker) {
         setAutopilotQuestions(pending, questionMarker);
@@ -1313,12 +1330,115 @@ function useAiStudioAutopilotController({
   }
 
   function clearStalePendingPrompt(currentSession = {}) {
-    const pending = activePrompt.value ||
-      readStoredPendingPrompt(currentSession.sessionId) ||
-      pendingPromptFromSessionMetadata(currentSession);
+    const pending = pendingPromptForSession(currentSession);
     if (pendingPromptWasLeftBehind(pending, currentSession)) {
       clearPendingPrompt(currentSession.sessionId);
     }
+  }
+
+  function pendingPromptForSession(currentSession = {}) {
+    return activePrompt.value ||
+      readStoredPendingPrompt(currentSession.sessionId) ||
+      pendingPromptFromSessionMetadata(currentSession);
+  }
+
+  function pendingPromptForCurrentCodexStep(currentSession = {}, marker = {}) {
+    const stage = currentPromptStage(currentSession);
+    if (!stage) {
+      return null;
+    }
+    return {
+      actionId: stage.actionId,
+      completionToken: createStepCompletionToken(),
+      outputCursor: readCodexOutput(codexTerminal).length,
+      requestId: String(marker.requestId || createRequestId()),
+      sessionId: currentSession.sessionId,
+      startedAt: Date.now(),
+      stepId: currentSession.currentStep
+    };
+  }
+
+  function currentPromptStage(currentSession = {}) {
+    if (!currentSession?.sessionId || currentStepIsStopPoint(currentSession.currentStep)) {
+      return null;
+    }
+    const stage = stageForSession(currentSession);
+    if (!stage?.actionId) {
+      return null;
+    }
+    const action = actionById(readActions(actions), stage.actionId);
+    if (action?.type !== "prompt") {
+      return null;
+    }
+    return {
+      actionId: stage.actionId,
+      label: stage.label || action.label || stepLabel(currentSession),
+      stepId: currentSession.currentStep
+    };
+  }
+
+  function codexIsActiveForCurrentStep() {
+    const currentSession = readSession(session);
+    if (!codexBusy.value || !currentSession?.sessionId) {
+      return false;
+    }
+    const pending = pendingPromptForSession(currentSession);
+    return pendingPromptMatchesSession(pending, currentSession) ||
+      Boolean(currentPromptStage(currentSession));
+  }
+
+  function captureQuestionsFromCurrentCodexOutput() {
+    const currentSession = readSession(session);
+    if (autopilotQuestioning.value || !currentPromptStage(currentSession)) {
+      return false;
+    }
+
+    const output = readCodexOutput(codexTerminal);
+    if (output.length === generalQuestionScanLength) {
+      return false;
+    }
+    generalQuestionScanLength = output.length;
+
+    const pending = pendingPromptForSession(currentSession);
+    const exactMarker = pendingPromptMatchesSession(pending, currentSession)
+      ? latestAutopilotQuestionsMarker(codexOutputAfterCursor(pending), {
+        requestId: pending.requestId
+      })
+      : null;
+    const marker = exactMarker || latestAutopilotQuestionsMarker(output, {
+      allowAnyRequestId: true
+    });
+    if (!marker) {
+      return false;
+    }
+
+    const questionPending = pendingPromptMatchesSession(pending, currentSession)
+      ? pending
+      : pendingPromptForCurrentCodexStep(currentSession, marker);
+    if (!questionPending) {
+      return false;
+    }
+
+    setAutopilotQuestions(questionPending, marker);
+    stopRequested = false;
+    clearFailure();
+    return true;
+  }
+
+  async function reattachToActiveCodexStep() {
+    const currentSession = readSession(session);
+    if (active.value || !codexIsActiveForCurrentStep()) {
+      return;
+    }
+    stopRequested = false;
+    clearFailure();
+    if (captureQuestionsFromCurrentCodexOutput()) {
+      return;
+    }
+    if (!pendingPromptMatchesSession(pendingPromptForSession(currentSession), currentSession)) {
+      return;
+    }
+    await runUntilStopPoint();
   }
 
   async function runTerminalAction(currentSession = {}, action = {}) {
@@ -1347,6 +1467,26 @@ function useAiStudioAutopilotController({
       source: String(result.source || "")
     };
   }
+
+  watch(codexBusy, (busy) => {
+    if (busy) {
+      void reattachToActiveCodexStep();
+    }
+  }, {
+    flush: "post"
+  });
+
+  watch(() => readCodexOutput(codexTerminal), () => {
+    captureQuestionsFromCurrentCodexOutput();
+  }, {
+    flush: "post"
+  });
+
+  watch(() => `${readSession(session)?.sessionId || ""}:${readSession(session)?.currentStep || ""}`, () => {
+    generalQuestionScanLength = 0;
+  }, {
+    flush: "post"
+  });
 
   return {
     acceptChanges,

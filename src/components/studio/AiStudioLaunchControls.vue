@@ -39,42 +39,46 @@
       Launch unavailable
     </v-chip>
 
-    <v-dialog
-      v-model="terminalVisible"
-      max-width="min(92vw, 72rem)"
-      persistent
+    <AiStudioFloatingTerminalWindow
+      :minimized="terminalMinimized"
+      :visible="terminalVisible"
     >
-      <AiStudioCommandTerminal
-        class="ai-studio-launch-controls__terminal"
-        :ai-fix-available="Boolean(fixCommandFailure)"
-        terminal-kind="launch"
-        title="Launch terminal"
-        :launch-target="activeLaunchTarget"
-        :session="session"
-        :start-request-key="startKey"
-        @closed="closeTerminal"
-        @fix-requested="handleFixRequested"
-        @ready="handleReady"
-        @running-changed="handleRunningChanged"
-        @started="handleStarted"
-      >
-        <template #header-actions>
-          <v-btn
-            v-if="showOpenTarget"
-            color="primary"
-            :disabled="openDisabled"
-            :loading="openTargetCommand.isRunning"
-            :prepend-icon="mdiOpenInNew"
-            size="small"
-            :title="openTitle"
-            variant="tonal"
-            @click="open"
-          >
-            {{ openTarget.label || "Open browser" }}
-          </v-btn>
-        </template>
-      </AiStudioCommandTerminal>
-    </v-dialog>
+      <template #default="{ startDrag }">
+        <AiStudioCommandTerminal
+          class="ai-studio-launch-controls__terminal"
+          :ai-fix-available="Boolean(fixCommandFailure)"
+          draggable
+          terminal-kind="launch"
+          title="Launch terminal"
+          :launch-target="activeLaunchTarget"
+          :session="session"
+          :start-request-key="startKey"
+          @closed="closeTerminal"
+          @drag-start="startDrag"
+          @expanded-changed="handleTerminalExpandedChanged"
+          @fix-requested="handleFixRequested"
+          @ready="handleReady"
+          @running-changed="handleRunningChanged"
+          @started="handleStarted"
+        >
+          <template #header-actions>
+            <v-btn
+              v-if="showOpenTarget"
+              color="primary"
+              :disabled="openDisabled"
+              :loading="openTargetCommand.isRunning"
+              :prepend-icon="mdiOpenInNew"
+              size="small"
+              :title="openTitle"
+              variant="tonal"
+              @click="open"
+            >
+              {{ openTarget.label || "Open browser" }}
+            </v-btn>
+          </template>
+        </AiStudioCommandTerminal>
+      </template>
+    </AiStudioFloatingTerminalWindow>
   </div>
 </template>
 
@@ -85,6 +89,7 @@ import {
   mdiPlayCircleOutline
 } from "@mdi/js";
 import AiStudioCommandTerminal from "@/components/studio/AiStudioCommandTerminal.vue";
+import AiStudioFloatingTerminalWindow from "@/components/studio/AiStudioFloatingTerminalWindow.vue";
 import {
   useAiStudioLaunchControls
 } from "@/composables/useAiStudioLaunchControls.js";
@@ -121,6 +126,7 @@ const {
   closeTerminal,
   handleRunningChanged,
   handleReady,
+  handleTerminalExpandedChanged,
   handleStarted,
   loading,
   launchButtonsDisabled,
@@ -134,6 +140,7 @@ const {
   run,
   showOpenTarget,
   startKey,
+  terminalMinimized,
   terminalVisible,
   visible
 } = useAiStudioLaunchControls({
@@ -166,6 +173,6 @@ function handleFixRequested(payload) {
 }
 
 .ai-studio-launch-controls__terminal {
-  height: min(72vh, 44rem);
+  height: 100%;
 }
 </style>

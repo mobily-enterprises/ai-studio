@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
 import {
   useCodexTerminalOutput
 } from "../../src/composables/useCodexTerminalOutput.js";
@@ -31,6 +32,24 @@ describe("useCodexTerminalOutput", () => {
     expect(writeDisplay).toHaveBeenLastCalledWith("first second");
   });
 
+  it("appends raw display chunks when no prompt filter is pending", () => {
+    const appendDisplay = vi.fn();
+    const writeDisplay = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      appendDisplay,
+      writeDisplay
+    });
+
+    terminalOutput.appendTerminalOutput("first ");
+    terminalOutput.appendTerminalOutput("second");
+
+    vi.advanceTimersByTime(80);
+
+    expect(appendDisplay).toHaveBeenCalledTimes(1);
+    expect(appendDisplay).toHaveBeenLastCalledWith("first second");
+    expect(writeDisplay).not.toHaveBeenCalled();
+  });
+
   it("writes snapshots immediately", () => {
     const writeDisplay = vi.fn();
     const terminalOutput = useCodexTerminalOutput({
@@ -41,5 +60,45 @@ describe("useCodexTerminalOutput", () => {
 
     expect(writeDisplay).toHaveBeenCalledTimes(1);
     expect(writeDisplay).toHaveBeenLastCalledWith("snapshot");
+  });
+
+  it("does not render display output while the terminal is headless", () => {
+    const displayActive = ref(false);
+    const writeDisplay = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      displayActive,
+      writeDisplay
+    });
+
+    terminalOutput.appendTerminalOutput("hidden output");
+    vi.advanceTimersByTime(1000);
+
+    expect(writeDisplay).not.toHaveBeenCalled();
+
+    displayActive.value = true;
+    terminalOutput.writeTerminalOutput(terminalOutput.getTerminalOutput());
+
+    expect(writeDisplay).toHaveBeenCalledTimes(1);
+    expect(writeDisplay).toHaveBeenLastCalledWith("hidden output");
+  });
+
+  it("batches output observers with streamed output", () => {
+    const onOutputChanged = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      onOutputChanged,
+      writeDisplay: vi.fn()
+    });
+
+    terminalOutput.appendTerminalOutput("first ");
+    terminalOutput.appendTerminalOutput("second");
+
+    expect(onOutputChanged).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(119);
+    expect(onOutputChanged).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(onOutputChanged).toHaveBeenCalledTimes(1);
+    expect(onOutputChanged).toHaveBeenLastCalledWith("first second");
   });
 });

@@ -42,7 +42,7 @@ import {
   targetToolchainTerminalArgs
 } from "./targetToolchainTerminal.js";
 
-const MAX_OPEN_SHELL_TERMINALS = 2;
+const MAX_OPEN_SHELL_TERMINALS = 9;
 const SHELL_TARGET_MAIN = "main";
 const SHELL_TARGET_WORKTREE = "worktree";
 const SHELL_CONTAINER_COMMAND = "bash";
@@ -278,6 +278,7 @@ function createShellTerminalController({ projectService } = {}) {
         if (cwdResult.ok === false) {
           return cwdResult;
         }
+        const reuseRunning = input?.reuseRunning !== false;
         const targetRoot = terminalTargetRoot(session, projectService);
         const imageResult = await resolveTerminalToolchainImage({
           runtime,
@@ -344,12 +345,14 @@ function createShellTerminalController({ projectService } = {}) {
               terminalId: id
             }));
           },
-          reuseRunning: (runningSession) => {
-            return runningSession.metadata?.target === target &&
-              runningSession.metadata?.envHash === terminalEnvHash &&
-              runningSession.metadata?.image === imageResult.image &&
-              runningSession.metadata?.cwd === cwdResult.cwd;
-          }
+          reuseRunning: reuseRunning
+            ? (runningSession) => {
+              return runningSession.metadata?.target === target &&
+                runningSession.metadata?.envHash === terminalEnvHash &&
+                runningSession.metadata?.image === imageResult.image &&
+                runningSession.metadata?.cwd === cwdResult.cwd;
+            }
+            : false
         });
       });
     },

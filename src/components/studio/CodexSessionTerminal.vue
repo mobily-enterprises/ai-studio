@@ -199,7 +199,9 @@ const codexPrompt = computed(() => {
   return promptField ? String(props.session?.[promptField] || "") : "";
 });
 const manualPromptInjectionRequestKey = computed(() => String(props.promptInjectionRequestKey || ""));
+const terminalDisplayActive = computed(() => props.visible && props.displayMode !== "headless");
 const {
+  appendTerminalDisplay,
   clearTerminalDisplay,
   disposeTerminalUi: disposeTerminalViewport,
   fitTerminal,
@@ -235,6 +237,8 @@ const {
   resetTerminalOutput,
   writeTerminalOutput
 } = useCodexTerminalOutput({
+  appendDisplay: appendTerminalDisplay,
+  displayActive: terminalDisplayActive,
   emitBusyChanged(payload) {
     emit("busy-changed", payload);
   },

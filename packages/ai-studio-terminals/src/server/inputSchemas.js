@@ -93,6 +93,10 @@ const launchTargetFields = {
 };
 
 const shellTerminalFields = {
+  reuseRunning: {
+    type: "boolean",
+    required: false
+  },
   target: {
     type: "string",
     enum: ["worktree", "main"],

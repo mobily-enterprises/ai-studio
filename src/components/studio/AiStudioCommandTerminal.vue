@@ -1,17 +1,35 @@
 <template>
-  <v-sheet rounded="lg" color="surface" class="ai-command-terminal">
-    <div class="ai-command-terminal__bar">
-      <div>
+  <v-sheet
+    rounded="lg"
+    color="surface"
+    class="ai-command-terminal"
+    :class="{
+      'ai-command-terminal--collapsed': !expanded,
+      'ai-command-terminal--launch': terminalKind === 'launch',
+      'ai-command-terminal--shell': terminalKind === 'shell'
+    }"
+  >
+    <div
+      class="ai-command-terminal__bar"
+      :class="{
+        'ai-command-terminal__bar--draggable': draggable
+      }"
+      @pointerdown="startDrag"
+    >
+      <div
+        class="ai-command-terminal__heading"
+      >
         <div class="ai-command-terminal__title">{{ terminalTitle }}</div>
         <div class="ai-command-terminal__subtitle">
           {{ terminalSubtitle }}
         </div>
       </div>
-      <div class="ai-command-terminal__actions">
+      <div class="ai-command-terminal__actions" @pointerdown.stop>
         <slot name="header-actions" />
         <v-btn
           :icon="expanded ? mdiChevronDown : mdiChevronUp"
           size="small"
+          :title="expanded ? 'Minimize terminal' : 'Expand terminal'"
           variant="text"
           @click="toggleExpanded"
         />
@@ -101,9 +119,17 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  draggable: {
+    type: Boolean,
+    default: false
+  },
   launchTarget: {
     type: Object,
     default: null
+  },
+  reuseRunning: {
+    type: Boolean,
+    default: true
   },
   session: {
     type: Object,
@@ -127,7 +153,16 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(["closed", "finished", "fix-requested", "ready", "running-changed", "started"]);
+const emit = defineEmits([
+  "closed",
+  "drag-start",
+  "expanded-changed",
+  "finished",
+  "fix-requested",
+  "ready",
+  "running-changed",
+  "started"
+]);
 
 const {
   canRequestAiFix,
@@ -153,6 +188,13 @@ const {
 defineExpose({
   start: startTerminal
 });
+
+function startDrag(event) {
+  if (!props.draggable || event.button !== 0) {
+    return;
+  }
+  emit("drag-start", event);
+}
 </script>
 
 <style scoped>
@@ -160,6 +202,7 @@ defineExpose({
   color: rgb(var(--v-theme-on-surface));
   min-width: 0;
   padding: 0.75rem;
+  text-align: left;
 }
 
 .ai-command-terminal__bar,
@@ -175,6 +218,17 @@ defineExpose({
   margin-bottom: 0.5rem;
 }
 
+.ai-command-terminal__bar--draggable {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.ai-command-terminal__heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .ai-command-terminal__title {
   font-size: 0.85rem;
   font-weight: 700;
@@ -188,10 +242,12 @@ defineExpose({
 
 .ai-command-terminal__actions {
   align-items: center;
+  cursor: default;
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
   justify-content: flex-end;
+  user-select: auto;
 }
 
 .ai-command-terminal__body {
@@ -208,11 +264,68 @@ defineExpose({
   padding: 0.35rem;
 }
 
+.ai-command-terminal--shell {
+  padding: 0.35rem;
+}
+
+.ai-command-terminal--shell .ai-command-terminal__bar {
+  margin-bottom: 0.3rem;
+}
+
+.ai-command-terminal--shell .ai-command-terminal__body {
+  gap: 0.3rem;
+}
+
+.ai-command-terminal--shell .ai-command-terminal__host {
+  border-width: 1px;
+  padding: 0.18rem;
+}
+
+.ai-command-terminal__host :deep(.xterm) {
+  text-align: left;
+}
+
 .ai-command-terminal__footer span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-command-terminal--collapsed {
+  padding: 0.35rem 0.5rem;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__bar {
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__heading {
+  align-items: baseline;
+  display: flex;
+  gap: 0.45rem;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__title,
+.ai-command-terminal--collapsed .ai-command-terminal__subtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__title {
+  flex: 0 0 auto;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__subtitle {
+  flex: 1 1 auto;
+}
+
+.ai-command-terminal--collapsed .ai-command-terminal__actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
 @media (max-width: 700px) {
@@ -224,6 +337,15 @@ defineExpose({
 
   .ai-command-terminal__host {
     height: min(58vh, 28rem);
+  }
+
+  .ai-command-terminal--collapsed .ai-command-terminal__bar {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .ai-command-terminal--collapsed .ai-command-terminal__footer {
+    flex-direction: row;
   }
 }
 

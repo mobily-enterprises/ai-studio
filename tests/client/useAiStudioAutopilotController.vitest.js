@@ -484,6 +484,82 @@ describe("useAiStudioAutopilotController", () => {
     });
   });
 
+  it("reattaches stopped Autopilot when Codex becomes active for the current prompt step", async () => {
+    const completionToken = `${AUTOPILOT_COMPLETION_TOKEN_PREFIX}1234567890abcdef1234567890abcdef`;
+    context.moveToStep("plan_executed", {
+      codex_prompt_completion_action_id: "execute_plan",
+      codex_prompt_completion_request_id: "stored-request",
+      codex_prompt_completion_started_at: String(Date.now()),
+      codex_prompt_completion_step_id: "plan_executed",
+      codex_prompt_completion_token: completionToken,
+      codex_prompt_handoff_output_start: "0"
+    });
+
+    context.controller.stop();
+
+    expect(context.controller.failure.value).toMatchObject({
+      actionLabel: "Autopilot"
+    });
+
+    context.codexOutput.value = autopilotQuestionsMarker({
+      questions: ["Which auth setup should Codex use?"],
+      requestId: "manual-request"
+    });
+    context.codexBusy.value = true;
+
+    await vi.waitFor(() => {
+      expect(context.controller.autopilotQuestioning.value).toBe(true);
+    });
+    expect(context.controller.autopilotQuestions.value.map((question) => question.text)).toEqual([
+      "Which auth setup should Codex use?"
+    ]);
+    expect(context.controller.failure.value).toBeNull();
+  });
+
+  it("treats an active Codex terminal as current step work even without a pending prompt", async () => {
+    context.moveToStep("plan_executed");
+    context.controller.stop();
+
+    expect(context.controller.failure.value).toMatchObject({
+      actionLabel: "Autopilot"
+    });
+
+    context.codexBusy.value = true;
+
+    await vi.waitFor(() => {
+      expect(context.controller.waitingForCodex.value).toBe(true);
+    });
+    expect(context.controller.statusText.value).toBe("Executing: Execute plan");
+    expect(context.controller.failure.value).toBeNull();
+  });
+
+  it("captures Autopilot questions from the active Codex terminal when no prompt record exists", async () => {
+    context.moveToStep("plan_executed");
+    context.controller.stop();
+
+    context.codexOutput.value = autopilotQuestionsMarker({
+      questions: ["Which auth setup should Codex use?"],
+      requestId: "manual-request"
+    });
+    context.codexBusy.value = true;
+
+    await vi.waitFor(() => {
+      expect(context.controller.autopilotQuestioning.value).toBe(true);
+    });
+    expect(context.controller.autopilotQuestions.value.map((question) => question.text)).toEqual([
+      "Which auth setup should Codex use?"
+    ]);
+    expect(context.controller.failure.value).toBeNull();
+
+    context.controller.autopilotQuestions.value[0].answer = "Keep it public.";
+    context.codexBusy.value = false;
+
+    await context.controller.submitAutopilotQuestionAnswers();
+
+    expect(context.session.value.currentStep).toBe("deep_ui_check_run");
+    expect(context.controller.failure.value).toBeNull();
+  });
+
   it("clears a pending Codex wait when the workflow has already moved on", async () => {
     context.moveToStep("plan_executed");
 

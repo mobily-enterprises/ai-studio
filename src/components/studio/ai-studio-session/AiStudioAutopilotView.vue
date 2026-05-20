@@ -6,7 +6,12 @@
       @rewind="rewindToAutopilotStep"
     />
 
-    <div class="studio-autopilot__stage">
+    <div
+      class="studio-autopilot__stage"
+      :class="{
+        'studio-autopilot__stage--failure': standaloneFailureVisible
+      }"
+    >
       <div
         v-show="codexTerminalVisible"
         class="studio-autopilot__codex-terminal-stage"
@@ -768,6 +773,7 @@ const commandTerminalText = computed(() => {
 });
 const autopilotBusy = computed(() => Boolean(
   running.value ||
+  codexWaiting.value ||
   commandFixSubmitting.value ||
   issueDiscussionWaiting.value ||
   (readyForIssue.value && issueDiscussion.saving)
@@ -786,6 +792,7 @@ const mainStatusVisible = computed(() => Boolean(
 ));
 const standaloneFailureVisible = computed(() => Boolean(
   failure.value &&
+  !codexTerminalVisible.value &&
   !commandTerminalVisible.value &&
   !commandFixActive.value
 ));
@@ -988,6 +995,11 @@ watch(commandTerminalFailed, (failed) => {
   text-align: center;
 }
 
+.studio-autopilot__stage--failure {
+  align-content: start;
+  padding-top: clamp(1.25rem, 7vh, 4rem);
+}
+
 .studio-autopilot__cog :deep(.v-icon) {
   animation: studio-autopilot-cog-spin 1.7s linear infinite;
 }
@@ -1012,7 +1024,7 @@ watch(commandTerminalFailed, (failed) => {
 
 .studio-autopilot__codex-terminal-stage {
   display: grid;
-  justify-self: center;
+  justify-self: end;
   max-width: min(72rem, 100%);
   min-height: 36rem;
   place-items: stretch;

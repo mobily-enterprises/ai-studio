@@ -63,6 +63,63 @@ describe("aiStudioAutopilotStepMarkers", () => {
     });
   });
 
+  it("can extract the latest question marker after a request id changed during manual steering", () => {
+    const output = [
+      AUTOPILOT_QUESTIONS_MARKER_START,
+      JSON.stringify({
+        requestId: "manual-request",
+        questions: [
+          "Should Autopilot continue from the manual Codex run?"
+        ]
+      }),
+      AUTOPILOT_QUESTIONS_MARKER_END
+    ].join("\n");
+
+    expect(latestAutopilotQuestionsMarker(output, {
+      requestId: "stored-request"
+    })).toBeNull();
+    expect(latestAutopilotQuestionsMarker(output, {
+      allowAnyRequestId: true,
+      requestId: "stored-request"
+    })).toEqual({
+      requestId: "manual-request",
+      questions: [
+        {
+          answer: "",
+          id: "q1",
+          text: "Should Autopilot continue from the manual Codex run?"
+        }
+      ]
+    });
+  });
+
+  it("tolerates accidental line breaks inside question strings", () => {
+    const output = [
+      AUTOPILOT_QUESTIONS_MARKER_START,
+      `{
+        "requestId": "request-123",
+        "questions": [
+          "What is the Supabase project URL and
+          publishable key?"
+        ]
+      }`,
+      AUTOPILOT_QUESTIONS_MARKER_END
+    ].join("\n");
+
+    expect(latestAutopilotQuestionsMarker(output, {
+      requestId: "request-123"
+    })).toEqual({
+      requestId: "request-123",
+      questions: [
+        {
+          answer: "",
+          id: "q1",
+          text: "What is the Supabase project URL and publishable key?"
+        }
+      ]
+    });
+  });
+
   it("does not parse the prompt question example as an active question", () => {
     const instruction = stepCompletionTokenInstruction({
       requestId: "request-123",

@@ -21,21 +21,34 @@ function promptEchoReplacement(prompt) {
 }
 
 function promptEchoMatch(output, filter) {
+  if (filter.expired) {
+    return null;
+  }
+  if (filter.match) {
+    const matchStillValid = output.length >= filter.match.end &&
+      output.startsWith(filter.match.candidate, filter.match.start);
+    if (matchStillValid) {
+      return filter.match;
+    }
+    filter.match = null;
+  }
+
   const start = Math.max(0, filter.outputStart);
   if (start > output.length) {
     return null;
   }
 
-  const tail = output.slice(start);
   for (const candidate of filter.candidates) {
     if (output.startsWith(candidate, start)) {
       return {
+        candidate,
         end: start + candidate.length,
         partial: false,
         start
       };
     }
-    if (candidate.startsWith(tail)) {
+    const tailLength = output.length - start;
+    if (tailLength < candidate.length && candidate.startsWith(output.slice(start))) {
       return {
         end: output.length,
         partial: true,
@@ -48,11 +61,15 @@ function promptEchoMatch(output, filter) {
     const matchStart = output.indexOf(candidate, start);
     if (matchStart >= start && matchStart - start <= 1024) {
       return {
+        candidate,
         end: matchStart + candidate.length,
         partial: false,
         start: matchStart
       };
     }
+  }
+  if (output.length - start > filter.longestCandidateLength + 1024) {
+    filter.expired = true;
   }
   return null;
 }
@@ -80,6 +97,7 @@ function createCodexPromptEchoFilters() {
       {
         candidates,
         id: nextFilterId,
+        longestCandidateLength: Math.max(...candidates.map((candidate) => candidate.length)),
         outputStart,
         replacement
       }
@@ -111,6 +129,9 @@ function createCodexPromptEchoFilters() {
       if (!match || match.start < cursor) {
         continue;
       }
+      if (!match.partial) {
+        filter.match = match;
+      }
       displayOutput += source.slice(cursor, match.start);
       if (!match.partial) {
         displayOutput += filter.replacement;
@@ -121,10 +142,15 @@ function createCodexPromptEchoFilters() {
     return displayOutput;
   }
 
+  function hasPending() {
+    return filters.some((filter) => !filter.match && !filter.expired);
+  }
+
   return Object.freeze({
     add,
     apply,
     clear,
+    hasPending,
     remove
   });
 }
