@@ -21,6 +21,10 @@ function aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId = "") {
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
 }
 
+function aiStudioIssueArtifactsEndpoint(sessionId) {
+  return aiStudioSessionEndpoint(sessionId, "/issue-artifacts");
+}
+
 function aiStudioLaunchTerminalEndpoint(sessionId, terminalSessionId = "") {
   const base = aiStudioSessionEndpoint(sessionId, "/launch-terminal");
   return terminalSessionId ? `${base}/${encodeURIComponent(terminalSessionId)}` : base;
@@ -67,14 +71,24 @@ async function closeAiStudioCommandTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(aiStudioCommandTerminalEndpoint(sessionId, terminalSessionId));
 }
 
+async function saveAiStudioIssueArtifacts(sessionId, input = {}) {
+  return studioHttpClient.put(aiStudioIssueArtifactsEndpoint(sessionId), input);
+}
+
+async function clearAiStudioIssueArtifacts(sessionId) {
+  return studioHttpClient.delete(aiStudioIssueArtifactsEndpoint(sessionId));
+}
+
 export {
   aiStudioCodexTerminalWebSocketUrl,
   aiStudioCommandTerminalWebSocketUrl,
   aiStudioLaunchTerminalWebSocketUrl,
   aiStudioShellTerminalWebSocketUrl,
+  clearAiStudioIssueArtifacts,
   closeAiStudioCodexTerminal,
   closeAiStudioCommandTerminal,
   readAiStudioSessionDiff,
+  saveAiStudioIssueArtifacts,
   startAiStudioCodexTerminal,
   startAiStudioCommandTerminal
 };

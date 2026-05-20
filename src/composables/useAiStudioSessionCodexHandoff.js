@@ -14,6 +14,8 @@ function useAiStudioSessionCodexHandoff({
   waitingForPromptedArtifact = () => false
 } = {}) {
   const busy = ref(false);
+  const output = ref("");
+  const promptInjectionError = ref("");
   const promptInjectionKey = ref("");
   const promptOverride = ref("");
   const readinessRefreshInFlight = ref(false);
@@ -27,7 +29,26 @@ function useAiStudioSessionCodexHandoff({
 
     promptOverride.value = promptHandoff.terminalInput || promptHandoff.prompt;
     busy.value = true;
+    promptInjectionError.value = "";
     promptInjectionKey.value = `${context.sessionId}:${context.actionId}:${Date.now()}`;
+    await refreshSessionData();
+    return true;
+  }
+
+  async function injectPrompt(prompt, {
+    requestId = "prompt",
+    sessionId = ""
+  } = {}) {
+    const normalizedPrompt = String(prompt || "").trim();
+    if (!normalizedPrompt) {
+      return false;
+    }
+
+    const targetSessionId = String(sessionId || unref(selectedSessionId) || "").trim();
+    promptOverride.value = normalizedPrompt;
+    busy.value = true;
+    promptInjectionError.value = "";
+    promptInjectionKey.value = `${targetSessionId || "session"}:${requestId}:${Date.now()}`;
     await refreshSessionData();
     return true;
   }
@@ -47,6 +68,8 @@ function useAiStudioSessionCodexHandoff({
 
   function clear() {
     busy.value = false;
+    output.value = "";
+    promptInjectionError.value = "";
     promptInjectionKey.value = "";
     promptOverride.value = "";
     readinessRefreshInFlight.value = false;
@@ -70,7 +93,12 @@ function useAiStudioSessionCodexHandoff({
 
   function handlePromptInjectionFailed(event = {}) {
     busy.value = false;
-    setCopyStatus(String(event.error || "Prompt injection failed."));
+    promptInjectionError.value = String(event.error || "Prompt injection failed.");
+    setCopyStatus(promptInjectionError.value);
+  }
+
+  function handleOutput(nextOutput = "") {
+    output.value = String(nextOutput || "");
   }
 
   async function handleBusyChanged(event = {}) {
@@ -107,7 +135,11 @@ function useAiStudioSessionCodexHandoff({
     busyChanged: handleBusyChanged,
     clear,
     clearPromptOverride,
+    injectPrompt,
+    output,
+    outputReceived: handleOutput,
     promptInjected: handlePromptInjected,
+    promptInjectionError,
     promptInjectionFailed: handlePromptInjectionFailed,
     promptInjectionKey,
     promptOverride,

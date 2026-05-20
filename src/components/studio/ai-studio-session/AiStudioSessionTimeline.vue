@@ -23,6 +23,7 @@
             aria-label="Toggle completed step details"
             class="studio-ai-session-timeline__done-toggle"
             density="compact"
+            :disabled="busy"
             size="x-small"
             variant="text"
             @click.stop="toggleStep(step)"
@@ -84,7 +85,7 @@ import {
   mdiUndoVariant
 } from "@mdi/js";
 
-defineProps({
+const props = defineProps({
   busy: {
     default: false,
     type: Boolean
@@ -103,7 +104,7 @@ function stepIsExpanded(step = {}) {
 }
 
 function toggleStep(step = {}) {
-  if (!step.canExpand) {
+  if (props.busy || !step.canExpand) {
     return;
   }
   expandedStepIds.value = {

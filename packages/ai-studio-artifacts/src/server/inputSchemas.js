@@ -33,6 +33,22 @@ const artifactsInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const issueArtifactsInputValidator = deepFreeze({
+  schema: createSchema({
+    body: {
+      type: "string",
+      noTrim: false,
+      required: true
+    },
+    title: {
+      type: "string",
+      noTrim: false,
+      required: true
+    }
+  }),
+  mode: "patch"
+});
+
 const artifactSaveInputValidator = deepFreeze({
   schema: createSchema({
     actionId: {
@@ -54,8 +70,43 @@ const artifactSaveInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const issueArtifactSaveInputValidator = deepFreeze({
+  schema: createSchema({
+    body: {
+      type: "string",
+      noTrim: false,
+      required: true
+    },
+    sessionId: {
+      type: "string",
+      noTrim: false,
+      required: true
+    },
+    title: {
+      type: "string",
+      noTrim: false,
+      required: true
+    }
+  }),
+  mode: "patch"
+});
+
+const issueArtifactClearInputValidator = deepFreeze({
+  schema: createSchema({
+    sessionId: {
+      type: "string",
+      noTrim: false,
+      required: true
+    }
+  }),
+  mode: "patch"
+});
+
 export {
   artifactReadInputValidator,
   artifactsInputValidator,
-  artifactSaveInputValidator
+  artifactSaveInputValidator,
+  issueArtifactClearInputValidator,
+  issueArtifactsInputValidator,
+  issueArtifactSaveInputValidator
 };

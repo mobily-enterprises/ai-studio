@@ -3,6 +3,7 @@
     rounded="lg"
     class="codex-terminal"
     :class="{
+      'codex-terminal--compact': displayMode === 'compact',
       'codex-terminal--desktop-actionless': true,
       'codex-terminal--focused': terminalFocused,
       'codex-terminal--headless': displayMode === 'headless'
@@ -104,7 +105,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   mdiChevronDown,
   mdiChevronUp,
@@ -453,6 +454,14 @@ watch(() => [
   immediate: true
 });
 
+watch(() => props.displayMode, async (displayMode) => {
+  if (displayMode === "headless") {
+    return;
+  }
+  await nextTick();
+  fitTerminal();
+});
+
 </script>
 
 <style scoped>
@@ -470,6 +479,41 @@ watch(() => [
   pointer-events: none;
   position: absolute;
   width: 0;
+}
+
+.codex-terminal--compact {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.codex-terminal--compact .codex-terminal__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 0;
+}
+
+.codex-terminal--compact .codex-terminal__bar,
+.codex-terminal--compact .codex-terminal__footer,
+.codex-terminal--compact .text-caption {
+  display: none;
+}
+
+.codex-terminal--compact .codex-terminal__stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.codex-terminal--compact .codex-terminal__host {
+  height: 100%;
+  min-height: 0;
 }
 
 .codex-terminal--focused .codex-terminal__host {

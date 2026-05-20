@@ -1,7 +1,10 @@
 <template>
   <section
     class="studio-ai-sessions__terminals"
-    :class="{ 'studio-ai-sessions__terminals--headless': displayMode === 'headless' }"
+    :class="{
+      'studio-ai-sessions__terminals--compact': displayMode === 'compact',
+      'studio-ai-sessions__terminals--headless': displayMode === 'headless'
+    }"
   >
     <CodexSessionTerminal
       :display-mode="displayMode"
@@ -10,6 +13,7 @@
       :session="session"
       :visible="displayMode !== 'headless'"
       @busy-changed="codexTerminal.busyChanged"
+      @output="codexTerminal.outputReceived"
       @prompt-injected="codexTerminal.promptInjected"
       @prompt-injection-failed="codexTerminal.promptInjectionFailed"
       @session-update="codexTerminal.sessionUpdate"
@@ -71,6 +75,12 @@ defineProps({
   pointer-events: none;
   position: absolute;
   width: 0;
+}
+
+.studio-ai-sessions__terminals--compact {
+  height: 30rem;
+  max-width: 64rem;
+  width: 100%;
 }
 
 .studio-ai-sessions__command-overlay {

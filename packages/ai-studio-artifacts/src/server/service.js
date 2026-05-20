@@ -14,6 +14,9 @@ const EMPTY_EDITOR_ACTION = deepFreeze({
   message: "Editor action id is required.",
   ok: false
 });
+const ISSUE_BODY_ARTIFACT = "issue.md";
+const ISSUE_FILE_STEP_ID = "issue_file_created";
+const ISSUE_TITLE_ARTIFACT = "issue_title";
 
 function artifactResult(operation) {
   return aiStudioResult(operation, {
@@ -41,6 +44,39 @@ function artifactErrorResponse(session = {}, code = "", message = "") {
       }
     ],
     ok: false
+  };
+}
+
+function artifactText(value = "") {
+  return `${String(value || "").trim()}\n`;
+}
+
+function issueArtifactInput(input = {}) {
+  return {
+    body: String(input.body || "").trim(),
+    title: String(input.title || "").trim()
+  };
+}
+
+function issueArtifactsWriteState(session = {}) {
+  if (String(session.currentStep || "") !== ISSUE_FILE_STEP_ID) {
+    return {
+      code: "ai_studio_issue_artifacts_step_required",
+      message: "Issue artifacts can only be saved while defining the issue.",
+      ok: false
+    };
+  }
+  if (String(session.metadata?.issue_url || "").trim()) {
+    return {
+      code: "ai_studio_issue_already_selected",
+      message: "An existing GitHub issue is already selected.",
+      ok: false
+    };
+  }
+  return {
+    code: "",
+    message: "",
+    ok: true
   };
 }
 
@@ -169,6 +205,32 @@ function artifactsResponse(session = {}, editor = {}, artifacts = {}) {
   };
 }
 
+function issueArtifactsResponse(session = {}, artifacts = {}) {
+  return {
+    ...session,
+    artifactFields: [
+      {
+        kind: "text",
+        label: "Issue title",
+        metadataName: ISSUE_TITLE_ARTIFACT,
+        name: ISSUE_TITLE_ARTIFACT,
+        required: true,
+        requiredMessage: "Issue title is required."
+      },
+      {
+        kind: "textarea",
+        label: "Issue body",
+        metadataName: "",
+        name: ISSUE_BODY_ARTIFACT,
+        required: true,
+        requiredMessage: "Issue body is required."
+      }
+    ],
+    artifacts,
+    ok: true
+  };
+}
+
 async function readEditableArtifacts(runtime, session = {}, fields = []) {
   const artifactEntries = await Promise.all(artifactNamesForFields(fields).map(async (artifactName) => {
     return [artifactName, await runtime.store.readArtifact(session.sessionId, artifactName)];
@@ -263,6 +325,69 @@ function createService({ projectService } = {}) {
           updatedEditor.ok ? updatedEditor : editor,
           await readEditableArtifacts(runtime, updatedSession, editor.fields)
         );
+      });
+    },
+
+    async saveIssueArtifacts(sessionId, input = {}) {
+      return artifactResult(async () => {
+        const runtime = await projectService.createRuntime();
+        const session = await runtime.getSession(sessionId);
+        const writeState = issueArtifactsWriteState(session);
+        if (!writeState.ok) {
+          return artifactErrorResponse(session, writeState.code, writeState.message);
+        }
+
+        const artifacts = issueArtifactInput(input);
+        if (!artifacts.title) {
+          return artifactErrorResponse(
+            session,
+            "ai_studio_issue_title_required",
+            "Issue title is required."
+          );
+        }
+        if (!artifacts.body) {
+          return artifactErrorResponse(
+            session,
+            "ai_studio_issue_body_required",
+            "Issue body is required."
+          );
+        }
+
+        await Promise.all([
+          runtime.store.writeArtifact(sessionId, ISSUE_TITLE_ARTIFACT, artifactText(artifacts.title)),
+          runtime.store.writeArtifact(sessionId, ISSUE_BODY_ARTIFACT, artifactText(artifacts.body)),
+          runtime.store.writeMetadataValue(sessionId, ISSUE_TITLE_ARTIFACT, artifacts.title)
+        ]);
+
+        const updatedSession = await runtime.getSession(sessionId);
+        return issueArtifactsResponse(updatedSession, {
+          [ISSUE_BODY_ARTIFACT]: artifactText(artifacts.body),
+          [ISSUE_TITLE_ARTIFACT]: artifactText(artifacts.title)
+        });
+      });
+    },
+
+    async clearIssueArtifacts(sessionId) {
+      return artifactResult(async () => {
+        const runtime = await projectService.createRuntime();
+        const session = await runtime.getSession(sessionId);
+        const writeState = issueArtifactsWriteState(session);
+        if (!writeState.ok) {
+          return artifactErrorResponse(session, writeState.code, writeState.message);
+        }
+
+        await Promise.all([
+          runtime.store.deleteArtifacts(sessionId, [
+            ISSUE_BODY_ARTIFACT,
+            ISSUE_TITLE_ARTIFACT
+          ]),
+          runtime.store.deleteMetadataValue(sessionId, ISSUE_TITLE_ARTIFACT)
+        ]);
+
+        return issueArtifactsResponse(await runtime.getSession(sessionId), {
+          [ISSUE_BODY_ARTIFACT]: "",
+          [ISSUE_TITLE_ARTIFACT]: ""
+        });
       });
     }
   });

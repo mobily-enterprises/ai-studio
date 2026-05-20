@@ -76,6 +76,97 @@ test("AI Studio artifacts service reads and saves editable issue artifacts", asy
   });
 });
 
+test("AI Studio artifacts service saves autopilot issue artifacts before issue submission", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          create_issue_on_gh: true
+        }
+      }),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      sessionId: "artifact_autopilot_issue"
+    });
+
+    const service = createService({
+      projectService: projectServiceForRuntime(runtime)
+    });
+
+    const saved = await service.saveIssueArtifacts("artifact_autopilot_issue", {
+      body: "Create a booking dashboard.",
+      title: "Add booking dashboard"
+    });
+
+    assert.equal(saved.ok, true);
+    assert.equal(saved.artifacts.issue_title, "Add booking dashboard\n");
+    assert.equal(saved.artifacts["issue.md"], "Create a booking dashboard.\n");
+    assert.equal(await runtime.store.readArtifact("artifact_autopilot_issue", "issue_title"), "Add booking dashboard\n");
+    assert.equal(await runtime.store.readArtifact("artifact_autopilot_issue", "issue.md"), "Create a booking dashboard.\n");
+    assert.equal(await runtime.store.readMetadataValue("artifact_autopilot_issue", "issue_title"), "Add booking dashboard");
+
+    const updatedSession = await runtime.getSession("artifact_autopilot_issue");
+    assert.equal(updatedSession.next.enabled, true);
+    assert.equal(updatedSession.next.stepId, "issue_submitted");
+  });
+});
+
+test("AI Studio artifacts service clears autopilot issue artifacts before issue submission", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          create_issue_on_gh: true
+        }
+      }),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      sessionId: "artifact_autopilot_issue_clear"
+    });
+    await runtime.store.writeArtifact("artifact_autopilot_issue_clear", "issue_title", "Draft title\n");
+    await runtime.store.writeArtifact("artifact_autopilot_issue_clear", "issue.md", "Draft body\n");
+    await runtime.store.writeMetadataValue("artifact_autopilot_issue_clear", "issue_title", "Draft title");
+
+    const service = createService({
+      projectService: projectServiceForRuntime(runtime)
+    });
+
+    const cleared = await service.clearIssueArtifacts("artifact_autopilot_issue_clear");
+
+    assert.equal(cleared.ok, true);
+    assert.equal(await runtime.store.readArtifact("artifact_autopilot_issue_clear", "issue_title"), "");
+    assert.equal(await runtime.store.readArtifact("artifact_autopilot_issue_clear", "issue.md"), "");
+    assert.equal(await runtime.store.readMetadataValue("artifact_autopilot_issue_clear", "issue_title"), "");
+  });
+});
+
+test("AI Studio artifacts service only saves autopilot issue artifacts at the issue definition step", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_submitted",
+      sessionId: "artifact_autopilot_wrong_step"
+    });
+    const service = createService({
+      projectService: projectServiceForRuntime(runtime)
+    });
+
+    const saved = await service.saveIssueArtifacts("artifact_autopilot_wrong_step", {
+      body: "Body",
+      title: "Title"
+    });
+
+    assert.equal(saved.ok, false);
+    assert.equal(saved.errors[0].code, "ai_studio_issue_artifacts_step_required");
+  });
+});
+
 test("AI Studio artifacts service rejects unknown or empty artifact saves", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({

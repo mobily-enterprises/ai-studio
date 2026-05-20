@@ -133,7 +133,11 @@ function useAiStudioSessionWorkflow({
     },
     codexTerminal: {
       busyChanged: workflow.codexHandoff.busyChanged,
+      injectPrompt: workflow.codexHandoff.injectPrompt,
+      output: workflow.codexHandoff.output,
+      outputReceived: workflow.codexHandoff.outputReceived,
       promptInjected: workflow.codexHandoff.promptInjected,
+      promptInjectionError: workflow.codexHandoff.promptInjectionError,
       promptInjectionFailed: workflow.codexHandoff.promptInjectionFailed,
       promptInjectionKey: workflow.codexHandoff.promptInjectionKey,
       promptOverride: workflow.codexHandoff.promptOverride,

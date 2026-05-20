@@ -1,7 +1,12 @@
-import { artifactsInputValidator } from "./inputSchemas.js";
 import {
+  artifactsInputValidator,
+  issueArtifactsInputValidator
+} from "./inputSchemas.js";
+import {
+  ACTION_CLEAR_ISSUE_ARTIFACTS,
   ACTION_READ_ARTIFACTS,
-  ACTION_SAVE_ARTIFACTS
+  ACTION_SAVE_ARTIFACTS,
+  ACTION_SAVE_ISSUE_ARTIFACTS
 } from "./actions.js";
 import { createAiStudioFeatureRoutes } from "../../../../server/lib/aiStudio/featureRoutes.js";
 
@@ -40,6 +45,28 @@ function registerRoutes(
       };
     },
     summary: "Save editable AI Studio artifacts."
+  });
+
+  routes.actionRoute("PUT", "/sessions/:sessionId/issue-artifacts", {
+    actionId: ACTION_SAVE_ISSUE_ARTIFACTS,
+    body: issueArtifactsInputValidator,
+    buildInput(request) {
+      return {
+        ...routes.requestBody(request),
+        sessionId: request.params.sessionId
+      };
+    },
+    summary: "Save AI Studio issue title and body artifacts."
+  });
+
+  routes.actionRoute("DELETE", "/sessions/:sessionId/issue-artifacts", {
+    actionId: ACTION_CLEAR_ISSUE_ARTIFACTS,
+    buildInput(request) {
+      return {
+        sessionId: request.params.sessionId
+      };
+    },
+    summary: "Clear AI Studio issue title and body artifacts."
   });
 }
 

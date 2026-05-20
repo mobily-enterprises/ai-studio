@@ -10,7 +10,7 @@
 
       <AiStudioSessionToolbar
         :abandon="dialogs.abandon"
-        :busy="page.busy"
+        :busy="interactionBusy"
         :selected-session-id="selection.selectedSessionId"
         :selection-closed="selection.isClosed"
         :session="selection.selectedSession"
@@ -66,33 +66,40 @@
       :class="`studio-ai-sessions__layout--${sessionMode}`"
     >
       <AiStudioAutopilotView
-        v-if="sessionMode === 'autopilot'"
+        v-show="sessionMode === 'autopilot'"
         :actions="actions"
-        :issue-request="issueRequest"
-        :page="page"
+        :codex-terminal="codexTerminal"
+        :page="guardedPage"
         :refresh-session-data="sessionData.refreshSessionData"
         :session="selection.selectedSession"
-        @update-issue-request-text="issueRequest.text = $event"
+        @busy-change="setAutopilotBusy"
+        @codex-waiting-change="setAutopilotCodexWaiting"
       />
 
       <AiStudioSessionWorkspace
-        v-else
+        v-show="sessionMode === 'inspect'"
         :actions="actions"
         :dialogs="dialogs"
         :issue-request="issueRequest"
-        :page="page"
+        :page="guardedPage"
         :review="review"
         :selection="selection"
         :timeline="timeline"
         @update-issue-request-text="issueRequest.text = $event"
       />
 
-      <AiStudioSessionTerminals
-        :codex-terminal="codexTerminal"
-        :command-terminal="commandTerminal"
-        :display-mode="sessionMode === 'inspect' ? 'full' : 'headless'"
-        :session="selection.selectedSession"
-      />
+      <Teleport
+        defer
+        to="#studio-autopilot-codex-terminal-host"
+        :disabled="!autopilotCodexTerminalDocked"
+      >
+        <AiStudioSessionTerminals
+          :codex-terminal="codexTerminal"
+          :command-terminal="commandTerminal"
+          :display-mode="codexTerminalDisplayMode"
+          :session="selection.selectedSession"
+        />
+      </Teleport>
     </div>
 
     <AiStudioSessionDialogs
@@ -106,7 +113,7 @@
 </template>
 
 <script setup>
-import { computed, proxyRefs } from "vue";
+import { computed, proxyRefs, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   mdiCog,
@@ -174,6 +181,31 @@ const toolbar = proxyRefs({
 });
 
 const sessionMode = computed(() => route.query.mode === "inspect" ? "inspect" : "autopilot");
+const autopilotBusy = ref(false);
+const autopilotCodexWaiting = ref(false);
+const autopilotCodexTerminalDocked = computed(() => sessionMode.value === "autopilot" && autopilotCodexWaiting.value);
+const codexTerminalDisplayMode = computed(() => {
+  if (sessionMode.value === "inspect") {
+    return "full";
+  }
+  return autopilotCodexTerminalDocked.value ? "compact" : "headless";
+});
+const interactionBusy = computed(() => Boolean(page.busy || autopilotBusy.value));
+const guardedPage = computed(() => ({
+  busy: interactionBusy.value,
+  copyStatus: page.copyStatus,
+  copyText: page.copyText,
+  error: page.error,
+  loading: page.loading
+}));
+
+function setAutopilotBusy(busy) {
+  autopilotBusy.value = Boolean(busy);
+}
+
+function setAutopilotCodexWaiting(waiting) {
+  autopilotCodexWaiting.value = Boolean(waiting);
+}
 
 function setSessionMode(mode = "autopilot") {
   const query = {
@@ -188,6 +220,11 @@ function setSessionMode(mode = "autopilot") {
     query
   });
 }
+
+watch(() => selection.selectedSessionId, () => {
+  autopilotBusy.value = false;
+  autopilotCodexWaiting.value = false;
+});
 </script>
 
 <style scoped>

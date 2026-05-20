@@ -224,6 +224,8 @@ function extractCodexThreadId(output) {
 }
 
 export {
+  STUDIO_CONTEXT_END_MARKER,
+  STUDIO_CONTEXT_START_MARKER,
   codexTrustPromptLooksActive,
   extractCodexThreadId,
   hasStudioContextBlock,
