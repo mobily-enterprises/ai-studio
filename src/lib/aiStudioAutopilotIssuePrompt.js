@@ -1,17 +1,20 @@
 import {
   AUTOPILOT_ISSUE_MARKER_END,
   AUTOPILOT_ISSUE_MARKER_START,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_END,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_START,
-  issueMarkerExample,
-  issueQuestionsMarkerExample
+  issueMarkerExample
 } from "@/lib/aiStudioAutopilotIssueMarkers.js";
+import {
+  AUTOPILOT_QUESTIONS_MARKER_END,
+  AUTOPILOT_QUESTIONS_MARKER_START,
+  autopilotQuestionAnswersPrompt,
+  autopilotQuestionsMarkerExample
+} from "@/lib/aiStudioAutopilotStepMarkers.js";
 import {
   wrapPromptWithStudioContext
 } from "@/lib/codexOutput.js";
 
 function visibleIssueDraftPrompt() {
-  return `Return ${AUTOPILOT_ISSUE_QUESTIONS_MARKER_START} or ${AUTOPILOT_ISSUE_MARKER_START}.`;
+  return `Return ${AUTOPILOT_QUESTIONS_MARKER_START} or ${AUTOPILOT_ISSUE_MARKER_START}.`;
 }
 
 function issueDraftPromptHeader(requestId = "") {
@@ -27,20 +30,23 @@ function issueDraftPromptHeader(requestId = "") {
     "When honoring an explicit question request, ask the requested number of questions, capped at three.",
     "Do not dismiss an explicit question request as test noise or as unrelated to issue scope.",
     "If no essential questions are needed, produce a concise issue title and a useful Markdown issue body.",
-    "Return exactly one machine-readable block and no other prose.",
     `Use this exact requestId in the JSON: ${String(requestId || "").trim()}`,
     "",
     "If you need clarification, use this format:",
-    issueQuestionsMarkerExample("<requestId>"),
+    "First write a short plain-text sentence and the numbered questions so Inspect users can read them naturally.",
+    "Then append the same questions as this machine-readable block for Autopilot:",
+    autopilotQuestionsMarkerExample("<requestId>"),
     "",
-    `The questions closing marker must be exactly: ${AUTOPILOT_ISSUE_QUESTIONS_MARKER_END}`,
+    `The questions closing marker must be exactly: ${AUTOPILOT_QUESTIONS_MARKER_END}`,
     "",
     "If no clarification is needed, use this format:",
     issueMarkerExample("<requestId>"),
     "",
     `The issue closing marker must be exactly: ${AUTOPILOT_ISSUE_MARKER_END}`,
     "",
-    `Do not return both ${AUTOPILOT_ISSUE_QUESTIONS_MARKER_START} and ${AUTOPILOT_ISSUE_MARKER_START}.`
+    "Return no prose with the issue block.",
+    "",
+    `Do not return both ${AUTOPILOT_QUESTIONS_MARKER_START} and ${AUTOPILOT_ISSUE_MARKER_START}.`
   ].join("\n");
 }
 
@@ -58,31 +64,25 @@ function buildInitialIssueDraftPrompt({
 }
 
 function buildAnsweredIssueDraftPrompt({
-  answers = [],
   questions = [],
   requestId = "",
   requestText = ""
 } = {}) {
-  const questionAnswers = questions.map((question, index) => {
-    const answer = answers[index] ?? question.answer ?? "";
-    return [
-      `Q${index + 1}: ${String(question.text || question || "").trim()}`,
-      `A${index + 1}: ${String(answer || "").trim()}`
-    ].join("\n");
-  }).join("\n\n");
-
   const hiddenPrompt = [
     issueDraftPromptHeader(requestId),
     "",
     "Original user request:",
     String(requestText || "").trim(),
     "",
-    "Clarification answers:",
-    questionAnswers,
-    "",
-    "Use the original request and these answers to continue defining the issue.",
-    "If essential scope is still missing, return another questions block.",
-    "Otherwise return the issue title and body block."
+    autopilotQuestionAnswersPrompt({
+      contextLabel: "Issue definition",
+      continuationLines: [
+        "Use the original request and these answers to continue defining the issue.",
+        "If essential scope is still missing, return another questions block using the format above.",
+        "Otherwise return the issue title and body block."
+      ],
+      questions
+    })
   ].join("\n");
   return wrapPromptWithStudioContext(hiddenPrompt, visibleIssueDraftPrompt());
 }

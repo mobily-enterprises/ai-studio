@@ -480,17 +480,13 @@
         />
         <p>The session is complete.</p>
 
-        <v-btn
-          color="primary"
-          :disabled="!canArchiveSession"
-          :loading="running"
-          :prepend-icon="mdiArchiveOutline"
-          type="button"
+        <AiStudioSessionActionButton
+          v-if="archiveAction"
+          :action="archiveAction"
+          :actions="actions"
+          :busy="page.busy"
           variant="flat"
-          @click="archiveSession"
-        >
-          Archive
-        </v-btn>
+        />
       </div>
 
       <div v-else-if="standaloneFailureVisible" class="studio-autopilot__failure">
@@ -535,7 +531,6 @@
 import { computed, nextTick, onMounted, proxyRefs, ref, watch } from "vue";
 import {
   mdiAlertCircleOutline,
-  mdiArchiveOutline,
   mdiArrowRight,
   mdiCheck,
   mdiCheckCircleOutline,
@@ -553,6 +548,7 @@ import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.v
 import AiStudioAutopilotNavigation from "@/components/studio/ai-studio-session/AiStudioAutopilotNavigation.vue";
 import AiStudioAutopilotQuestionForm from "@/components/studio/ai-studio-session/AiStudioAutopilotQuestionForm.vue";
 import AiStudioHeadlessCommandOutput from "@/components/studio/ai-studio-session/AiStudioHeadlessCommandOutput.vue";
+import AiStudioSessionActionButton from "@/components/studio/ai-studio-session/AiStudioSessionActionButton.vue";
 import {
   useAiStudioAutopilotController
 } from "@/composables/useAiStudioAutopilotController.js";
@@ -565,8 +561,12 @@ import {
 import {
   terminalFailureFixRequest
 } from "@/lib/aiStudioTerminalFailurePrompt.js";
+import {
+  readRefOrGetterValue
+} from "@/lib/vueRefOrGetterValue.js";
 
 const emit = defineEmits(["busy-change", "codex-terminal-dock-change"]);
+const FINISH_SESSION_ACTION_ID = "finish_session";
 
 const props = defineProps({
   actions: {
@@ -625,11 +625,9 @@ const props = defineProps({
 
 const {
   acceptChanges,
-  archiveSession,
   cancelMergeFailure,
   cancelAutopilotQuestions,
   canAcceptReview,
-  canArchiveSession,
   canStart,
   canResume,
   canSubmitAutopilotQuestionAnswers,
@@ -676,6 +674,12 @@ const commandFixActive = ref(false);
 const commandFixInjectionError = ref("");
 const commandFixSubmitting = ref(false);
 const commandFailureNote = ref("");
+const archiveAction = computed(() => {
+  const currentActions = readRefOrGetterValue(props.actions?.currentActions);
+  return Array.isArray(currentActions)
+    ? currentActions.find((action) => action.id === FINISH_SESSION_ACTION_ID) || null
+    : null;
+});
 
 const issueDiscussion = proxyRefs(useAiStudioAutopilotIssueDiscussion({
   actions: props.actions,
@@ -1050,6 +1054,16 @@ watch(commandTerminalFailed, (failed) => {
   display: grid;
   min-height: 0;
   text-align: left;
+}
+
+.studio-autopilot__codex-terminal-stage--ambient {
+  max-width: min(50.4rem, 100%);
+  min-height: 25.2rem;
+}
+
+.studio-autopilot__codex-terminal-stage--ambient .studio-autopilot__codex-terminal-host :deep(.studio-ai-sessions__terminals--compact) {
+  height: 25.2rem;
+  max-width: 50.4rem;
 }
 
 .studio-autopilot__codex-terminal-stage--ambient .studio-autopilot__codex-terminal-host :deep(.studio-ai-sessions__terminals) {

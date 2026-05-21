@@ -16,7 +16,8 @@ describe("aiStudioAutopilotIssuePrompt", () => {
     const visiblePrompt = stripStudioContextBlocksForDisplay(prompt);
 
     expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_V1]]");
-    expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_QUESTIONS_V1]]");
+    expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_QUESTIONS_V1]]");
+    expect(visiblePrompt).not.toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_QUESTIONS_V1]]");
     expect(visiblePrompt).not.toContain("Add booking reports");
     expect(visiblePrompt).not.toContain("Do not inspect AI Studio session internals");
     expect(prompt).toContain("If clarification is needed, ask the minimum useful number of questions, up to three.");
@@ -38,7 +39,8 @@ describe("aiStudioAutopilotIssuePrompt", () => {
     });
     const visiblePrompt = stripStudioContextBlocksForDisplay(prompt);
 
-    expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_QUESTIONS_V1]]");
+    expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_QUESTIONS_V1]]");
+    expect(visiblePrompt).not.toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_QUESTIONS_V1]]");
     expect(visiblePrompt).toContain("[[AI_STUDIO_AUTOPILOT_ISSUE_V1]]");
     expect(visiblePrompt).not.toContain("Admins only.");
     expect(visiblePrompt).not.toContain("Who can see the report?");

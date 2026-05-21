@@ -144,30 +144,46 @@ function latestAutopilotQuestionsMarker(output = "", {
   allowAnyRequestId = false,
   requestId = ""
 } = {}) {
-  const source = autopilotQuestionMarkerSource(output);
+  const records = autopilotQuestionMarkerRecords(output);
   const expectedRequestId = String(requestId || "").trim();
-  let latestValidMarker = null;
-  let searchEnd = source.length;
-  while (searchEnd > 0) {
-    const start = source.lastIndexOf(AUTOPILOT_QUESTIONS_MARKER_START, searchEnd);
+  const matchingRecord = records
+    .filter((record) => !expectedRequestId || record.marker.requestId === expectedRequestId)
+    .at(-1);
+  if (matchingRecord) {
+    return matchingRecord.marker;
+  }
+  return allowAnyRequestId ? records.at(-1)?.marker || null : null;
+}
+
+function autopilotQuestionMarkerRecords(output = "") {
+  const source = autopilotQuestionMarkerSource(output);
+  const records = [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    const start = source.indexOf(AUTOPILOT_QUESTIONS_MARKER_START, cursor);
     if (start < 0) {
-      return allowAnyRequestId ? latestValidMarker : null;
+      return records;
     }
 
     const contentStart = start + AUTOPILOT_QUESTIONS_MARKER_START.length;
     const end = source.indexOf(AUTOPILOT_QUESTIONS_MARKER_END, contentStart);
-    if (end >= 0) {
-      const marker = parseAutopilotQuestionsBlock(source.slice(contentStart, end));
-      if (marker && (!expectedRequestId || marker.requestId === expectedRequestId)) {
-        return marker;
-      }
-      if (marker && !latestValidMarker) {
-        latestValidMarker = marker;
-      }
+    if (end < 0) {
+      return records;
     }
-    searchEnd = start - 1;
+
+    const marker = parseAutopilotQuestionsBlock(source.slice(contentStart, end));
+    if (marker) {
+      records.push({
+        kind: "questions",
+        marker,
+        start
+      });
+      cursor = end + AUTOPILOT_QUESTIONS_MARKER_END.length;
+      continue;
+    }
+    cursor = contentStart;
   }
-  return allowAnyRequestId ? latestValidMarker : null;
+  return records;
 }
 
 function autopilotQuestionsMarkerExample(requestId = "request-id") {
@@ -230,6 +246,27 @@ function autopilotQuestionAnswersInstruction({
   questions = [],
   requestId = ""
 } = {}) {
+  return autopilotQuestionAnswersPrompt({
+    contextLabel: actionLabel || "Current workflow action",
+    continuationLines: [
+      "Continue the same workflow action using these answers.",
+      "If these answers are still not enough, ask another question block.",
+      "If the action is now fully complete, print the completion token.",
+      "",
+      stepCompletionTokenInstruction({
+        requestId,
+        token: completionToken
+      })
+    ],
+    questions
+  });
+}
+
+function autopilotQuestionAnswersPrompt({
+  contextLabel = "",
+  continuationLines = [],
+  questions = []
+} = {}) {
   const answers = (Array.isArray(questions) ? questions : []).map((question, index) => {
     return [
       `Q${index + 1}: ${String(question.text || question.question || question || "").trim()}`,
@@ -239,18 +276,11 @@ function autopilotQuestionAnswersInstruction({
 
   return [
     "AI Studio Autopilot clarification answers:",
-    String(actionLabel || "Current workflow action"),
+    String(contextLabel || "Current Codex task"),
     "",
     answers,
     "",
-    "Continue the same workflow action using these answers.",
-    "If these answers are still not enough, ask another question block.",
-    "If the action is now fully complete, print the completion token.",
-    "",
-    stepCompletionTokenInstruction({
-      requestId,
-      token: completionToken
-    })
+    ...(Array.isArray(continuationLines) ? continuationLines : [continuationLines])
   ].join("\n");
 }
 
@@ -258,6 +288,9 @@ export {
   AUTOPILOT_COMPLETION_TOKEN_PREFIX,
   AUTOPILOT_QUESTIONS_MARKER_END,
   AUTOPILOT_QUESTIONS_MARKER_START,
+  autopilotQuestionAnswersPrompt,
+  autopilotQuestionMarkerRecords,
+  autopilotQuestionsMarkerExample,
   createStepCompletionToken,
   latestAutopilotQuestionsMarker,
   normalizeStepCompletionToken,

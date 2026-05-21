@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   AUTOPILOT_ISSUE_MARKER_END,
   AUTOPILOT_ISSUE_MARKER_START,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_END,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_START,
   issueQuestionMarkerBlocks,
   issueMarkerBlocks,
   latestIssueDefinitionMarker,
   latestIssueMarker,
   latestIssueQuestionMarker
 } from "../../src/lib/aiStudioAutopilotIssueMarkers.js";
+import {
+  AUTOPILOT_QUESTIONS_MARKER_END,
+  AUTOPILOT_QUESTIONS_MARKER_START
+} from "../../src/lib/aiStudioAutopilotStepMarkers.js";
 
 function marker(payload) {
   return [
@@ -21,9 +23,9 @@ function marker(payload) {
 
 function questionsMarker(payload) {
   return [
-    AUTOPILOT_ISSUE_QUESTIONS_MARKER_START,
+    AUTOPILOT_QUESTIONS_MARKER_START,
     JSON.stringify(payload),
-    AUTOPILOT_ISSUE_QUESTIONS_MARKER_END
+    AUTOPILOT_QUESTIONS_MARKER_END
   ].join("\n");
 }
 
@@ -140,10 +142,12 @@ describe("aiStudioAutopilotIssueMarkers", () => {
       {
         questions: [
           {
+            answer: "",
             id: "q1",
             text: "Should reports include cancelled bookings?"
           },
           {
+            answer: "",
             id: "q2",
             text: "Who can see the report?"
           }
@@ -154,10 +158,12 @@ describe("aiStudioAutopilotIssueMarkers", () => {
     expect(latestIssueQuestionMarker(output)).toEqual({
       questions: [
         {
+          answer: "",
           id: "q1",
           text: "Should reports include cancelled bookings?"
         },
         {
+          answer: "",
           id: "q2",
           text: "Who can see the report?"
         }
@@ -168,22 +174,24 @@ describe("aiStudioAutopilotIssueMarkers", () => {
 
   it("extracts terminal-wrapped clarification questions", () => {
     const output = [
-      AUTOPILOT_ISSUE_QUESTIONS_MARKER_START,
+      AUTOPILOT_QUESTIONS_MARKER_START,
       "\n{\n",
       "\"requestId\":\"questions-1\",\n",
       "\"questions\":[\"Should the report include bookings\n",
       "that were cancelled?\",\"Who can see it?\"]\n",
       "}\n",
-      AUTOPILOT_ISSUE_QUESTIONS_MARKER_END
+      AUTOPILOT_QUESTIONS_MARKER_END
     ].join("");
 
     expect(latestIssueQuestionMarker(output)).toEqual({
       questions: [
         {
+          answer: "",
           id: "q1",
-          text: "Should the report include bookings\nthat were cancelled?"
+          text: "Should the report include bookings that were cancelled?"
         },
         {
+          answer: "",
           id: "q2",
           text: "Who can see it?"
         }

@@ -18,10 +18,11 @@ import {
 } from "../../src/lib/aiStudioSessionPanelModel.js";
 
 describe("AI Studio session panel model", () => {
-  it("sorts visible sessions and hides abandoned sessions", () => {
+  it("sorts visible sessions and hides closed sessions", () => {
     expect(visibleAiStudioSessions([
       { sessionId: "2026-05-16_02", status: "active" },
       { sessionId: "2026-05-16_01", status: "abandoned" },
+      { sessionId: "2026-05-16_03", status: "finished" },
       { sessionId: "2026-05-16_00", status: "active" }
     ]).map((session) => session.sessionId)).toEqual([
       "2026-05-16_00",

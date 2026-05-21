@@ -5,10 +5,12 @@ import {
 } from "../../src/composables/useAiStudioAutopilotIssueDiscussion.js";
 import {
   AUTOPILOT_ISSUE_MARKER_END,
-  AUTOPILOT_ISSUE_MARKER_START,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_END,
-  AUTOPILOT_ISSUE_QUESTIONS_MARKER_START
+  AUTOPILOT_ISSUE_MARKER_START
 } from "../../src/lib/aiStudioAutopilotIssueMarkers.js";
+import {
+  AUTOPILOT_QUESTIONS_MARKER_END,
+  AUTOPILOT_QUESTIONS_MARKER_START
+} from "../../src/lib/aiStudioAutopilotStepMarkers.js";
 
 describe("useAiStudioAutopilotIssueDiscussion", () => {
   beforeEach(() => {
@@ -438,9 +440,9 @@ function issueMarker(payload) {
 
 function questionsMarker(payload) {
   return [
-    AUTOPILOT_ISSUE_QUESTIONS_MARKER_START,
+    AUTOPILOT_QUESTIONS_MARKER_START,
     JSON.stringify(payload),
-    AUTOPILOT_ISSUE_QUESTIONS_MARKER_END
+    AUTOPILOT_QUESTIONS_MARKER_END
   ].join("\n");
 }
 

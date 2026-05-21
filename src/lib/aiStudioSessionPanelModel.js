@@ -15,7 +15,6 @@ import {
 } from "@mdi/js";
 import {
   buildAiStudioSessionFacts,
-  isAbandonedAiStudioSession,
   isOpenAiStudioSession,
   shortAiStudioSessionId as formatShortAiStudioSessionId
 } from "@/lib/aiStudioSessionViewModel.js";
@@ -32,7 +31,7 @@ function sessionOrderKey(session = {}) {
 
 function visibleAiStudioSessions(sessions = []) {
   return sessions
-    .filter((session) => !isAbandonedAiStudioSession(session))
+    .filter(isOpenAiStudioSession)
     .sort((left, right) => sessionOrderKey(left).localeCompare(sessionOrderKey(right)));
 }
 
