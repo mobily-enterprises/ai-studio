@@ -87,6 +87,7 @@ function fullRoutePath(routeBase, pathSuffix = "") {
 
 function routeOptions({
   body,
+  bodyLimit,
   meta = {},
   params,
   query,
@@ -106,6 +107,9 @@ function routeOptions({
 
   if (body) {
     options.body = body;
+  }
+  if (bodyLimit) {
+    options.bodyLimit = bodyLimit;
   }
   if (params) {
     options.params = params;

@@ -17,6 +17,7 @@ test("AI Studio feature routes centralize route metadata and action dispatch", a
     routes.actionRoute("POST", "/sessions/:sessionId/action", {
       actionId: "unit.action",
       body: { type: "object" },
+      bodyLimit: 123456,
       buildInput(request) {
         return {
           body: routes.requestBody(request),
@@ -37,6 +38,7 @@ test("AI Studio feature routes centralize route metadata and action dispatch", a
       tags: ["studio", "unit-test"]
     });
     assert.deepEqual(route.options.body, { type: "object" });
+    assert.equal(route.options.bodyLimit, 123456);
 
     const reply = testReply();
     await route.handler({

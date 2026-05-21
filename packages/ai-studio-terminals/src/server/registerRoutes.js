@@ -15,6 +15,9 @@ import {
   ACTION_START_SHELL_TERMINAL,
   ACTION_UPLOAD_CODEX_ATTACHMENT
 } from "./actions.js";
+import {
+  CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES
+} from "./codexAttachments.js";
 import { createAiStudioFeatureRoutes } from "../../../../server/lib/aiStudio/featureRoutes.js";
 
 function getTerminalService(app) {
@@ -78,6 +81,7 @@ function registerRoutes(
   routes.actionRoute("POST", "/sessions/:sessionId/codex-attachments", {
     actionId: ACTION_UPLOAD_CODEX_ATTACHMENT,
     body: codexAttachmentInputValidator,
+    bodyLimit: CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES,
     buildInput: bodyWithSessionId(routes),
     summary: "Upload a temporary Codex attachment for an AI Studio session."
   });

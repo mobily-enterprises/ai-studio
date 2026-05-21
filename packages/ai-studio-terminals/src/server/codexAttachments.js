@@ -17,7 +17,7 @@ const CODEX_ATTACHMENT_HOST_ROOT = path.join(
   "attachments",
   crypto.randomUUID()
 );
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
 const ATTACHMENT_TTL_MS = 30 * 60 * 1000;
 const attachmentCleanupTimers = new Map();
 
@@ -116,12 +116,6 @@ async function storeCodexAttachment({
       error: "Attachment data is invalid."
     };
   }
-  if (data.length > MAX_ATTACHMENT_BYTES) {
-    return {
-      ok: false,
-      error: `Attachment is too large. Maximum size is ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB.`
-    };
-  }
 
   const attachmentId = crypto.randomUUID();
   const hostDirectory = attachmentHostDirectory(targetRoot, sessionId, attachmentId);
@@ -146,6 +140,7 @@ async function storeCodexAttachment({
 export {
   CODEX_ATTACHMENT_CONTAINER_ROOT,
   CODEX_ATTACHMENT_HOST_ROOT,
+  CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES,
   cleanupCodexAttachments,
   prepareCodexAttachmentRoot,
   storeCodexAttachment
