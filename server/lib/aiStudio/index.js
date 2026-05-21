@@ -29,8 +29,25 @@ export {
   wrapPromptWithStudioContext
 } from "./promptMarkers.js";
 export {
+  AUTOPILOT_COMPLETION_TOKEN_PREFIX,
+  AUTOPILOT_QUESTIONS_MARKER_END,
+  AUTOPILOT_QUESTIONS_MARKER_START,
+  createStepCompletionToken,
+  normalizeStepCompletionToken,
+  stepCompletionTokenInstruction
+} from "./autopilotPromptContract.js";
+export {
+  PROMPT_RUN_STATUS,
+  appendPromptRunInstruction,
+  createPromptRun,
+  normalizePromptRun,
+  promptRunBlocksAction,
+  promptRunForCurrentStep
+} from "./promptRun.js";
+export {
   PromptRenderer,
   promptContextForAction,
+  promptSessionBriefing,
   renderPromptTemplate
 } from "./promptRenderer.js";
 export { DEFAULT_AI_STUDIO_WORKFLOW } from "./workflow.js";
@@ -96,6 +113,7 @@ export {
 } from "./runtimeContainers.js";
 export {
   AI_STUDIO_INITIAL_STEP,
+  AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION,
   AI_STUDIO_SESSION_SCHEMA_VERSION,
   AI_STUDIO_SESSION_STATUS,
   AI_STUDIO_STATE_DIR,

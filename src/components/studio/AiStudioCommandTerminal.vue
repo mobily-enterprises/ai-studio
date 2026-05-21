@@ -19,10 +19,16 @@
       <div
         class="ai-command-terminal__heading"
       >
-        <div class="ai-command-terminal__title">{{ terminalTitle }}</div>
-        <div class="ai-command-terminal__subtitle">
-          {{ terminalSubtitle }}
-        </div>
+        <slot
+          name="heading"
+          :subtitle="terminalSubtitle"
+          :title="terminalTitle"
+        >
+          <div class="ai-command-terminal__title">{{ terminalTitle }}</div>
+          <div class="ai-command-terminal__subtitle">
+            {{ terminalSubtitle }}
+          </div>
+        </slot>
       </div>
       <div class="ai-command-terminal__actions" @pointerdown.stop>
         <slot name="header-actions" />

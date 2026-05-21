@@ -93,6 +93,46 @@ test("ai-studio session store reads and writes metadata, artifacts, status, curr
   });
 });
 
+test("ai-studio session store persists a prompt context snapshot", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createAiStudioSessionStore({
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "prompt_context_snapshot"
+    });
+
+    const paths = resolveAiStudioSessionPaths({
+      sessionId: "prompt_context_snapshot",
+      targetRoot
+    });
+    const snapshot = await store.writePromptContextSnapshot("prompt_context_snapshot", {
+      adapter: {
+        id: "fake",
+        label: "Fake adapter",
+        managedServices: [
+          {
+            id: "database",
+            kind: "mysql"
+          }
+        ],
+        promptContext: {
+          database_contract: "Use the managed database."
+        }
+      },
+      createdAt: "2026-05-16T01:02:03.000Z",
+      schemaVersion: 1
+    });
+
+    assert.deepEqual(await store.readPromptContextSnapshot("prompt_context_snapshot"), snapshot);
+    assert.deepEqual((await store.readSession("prompt_context_snapshot")).promptContextSnapshot, snapshot);
+    assert.equal(
+      await readFile(paths.promptContextSnapshotPath, "utf8"),
+      `${JSON.stringify(snapshot, null, 2)}\n`
+    );
+  });
+});
+
 test("ai-studio session store allocates deterministic available ids and lists sessions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createAiStudioSessionStore({

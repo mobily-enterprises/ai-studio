@@ -15,16 +15,16 @@
 
       <v-list class="ai-studio-shell-controls__menu" density="compact">
         <v-list-item
-          :disabled="!canOpenWorktreeShell"
+          :disabled="!canCreateWorktreeShell"
           :prepend-icon="mdiFolderOutline"
-          :subtitle="worktreePath || 'Create the session worktree first.'"
+          :subtitle="worktreeShellMenuSubtitle"
           title="Worktree shell"
           @click="openShell('worktree')"
         />
         <v-list-item
-          :disabled="!canOpenMainShell"
+          :disabled="!canCreateMainShell"
           :prepend-icon="mdiSourceRepository"
-          subtitle="Project root"
+          :subtitle="mainShellMenuSubtitle"
           title="Main repo shell"
           @click="openShell('main')"
         />
@@ -44,54 +44,6 @@
             'ai-studio-shell-controls__window--minimized': terminalMinimized
           }"
         >
-          <div
-            v-if="!terminalMinimized"
-            class="ai-studio-shell-controls__tabs"
-            title="Alt-N creates a tab. Alt-1 through Alt-9 switches tabs."
-            @pointerdown="startDrag"
-          >
-            <div class="ai-studio-shell-controls__tab-list" @pointerdown.stop>
-              <button
-                v-for="(tab, index) in shellTabs"
-                :key="tab.id"
-                type="button"
-                class="ai-studio-shell-controls__tab"
-                :class="{
-                  'ai-studio-shell-controls__tab--active': tab.id === activeShellTabId
-                }"
-                :aria-selected="tab.id === activeShellTabId ? 'true' : 'false'"
-                :title="`Alt-${index + 1}: ${tab.label}`"
-                @click="selectShellTab(tab.id)"
-              >
-                <span>{{ tab.label }}</span>
-                <v-icon
-                  v-if="tab.running"
-                  class="ai-studio-shell-controls__tab-running"
-                  :icon="mdiCircleSmall"
-                  size="18"
-                />
-                <v-icon
-                  :icon="mdiClose"
-                  class="ai-studio-shell-controls__tab-close"
-                  size="15"
-                  title="Close tab"
-                  @click.stop="closeShellTab(tab.id)"
-                />
-              </button>
-            </div>
-
-            <v-btn
-              class="ai-studio-shell-controls__new-tab"
-              :disabled="!canOpenNewTab"
-              :icon="mdiPlus"
-              size="small"
-              title="New shell tab (Alt-N)"
-              variant="text"
-              @pointerdown.stop
-              @click="openNewShellTab"
-            />
-          </div>
-
           <div class="ai-studio-shell-controls__terminal-stack">
             <AiStudioCommandTerminal
               v-for="tab in shellTabs"
@@ -114,7 +66,61 @@
               @expanded-changed="handleTerminalExpandedChanged(tab.id, $event)"
               @fix-requested="handleFixRequested"
               @running-changed="handleRunningChanged(tab.id, $event)"
-            />
+            >
+              <template #heading>
+                <div
+                  v-if="tab.id === activeShellTabId"
+                  class="ai-studio-shell-controls__tabs"
+                  :title="shellTabsShortcutTitle"
+                >
+                  <div
+                    class="ai-studio-shell-controls__tab-list"
+                    role="tablist"
+                    @pointerdown.stop
+                  >
+                    <button
+                      v-for="(shellTab, index) in shellTabs"
+                      :key="shellTab.id"
+                      type="button"
+                      class="ai-studio-shell-controls__tab"
+                      :class="{
+                        'ai-studio-shell-controls__tab--active': shellTab.id === activeShellTabId
+                      }"
+                      :aria-selected="shellTab.id === activeShellTabId ? 'true' : 'false'"
+                      role="tab"
+                      :title="`Alt-${index + 1}: ${shellTab.label}`"
+                      @click="selectShellTab(shellTab.id)"
+                    >
+                      <span>{{ shellTab.label }}</span>
+                      <v-icon
+                        v-if="shellTab.running"
+                        class="ai-studio-shell-controls__tab-running"
+                        :icon="mdiCircleSmall"
+                        size="18"
+                      />
+                      <v-icon
+                        :icon="mdiClose"
+                        class="ai-studio-shell-controls__tab-close"
+                        size="15"
+                        title="Close tab"
+                        @click.stop="closeShellTab(shellTab.id)"
+                      />
+                    </button>
+                  </div>
+
+                  <v-btn
+                    class="ai-studio-shell-controls__new-tab"
+                    :disabled="!canOpenNewTab"
+                    :icon="mdiPlus"
+                    size="small"
+                    :title="newShellTabTitle"
+                    variant="text"
+                    @pointerdown.stop
+                    @click="openNewShellTab"
+                  />
+                </div>
+              </template>
+            </AiStudioCommandTerminal>
           </div>
         </div>
       </template>
@@ -139,6 +145,7 @@ import {
 } from "@/lib/aiStudioSessionPaths.js";
 import {
   consumeShellShortcutEvent,
+  MAX_SHELL_TABS,
   shellShortcutAction
 } from "@/lib/aiStudioShellShortcuts.js";
 import {
@@ -178,28 +185,49 @@ const canOpenMainShell = computed(() => Boolean(sessionId.value && !menuDisabled
 const canOpenWorktreeShell = computed(() => Boolean(canOpenMainShell.value && worktreePath.value));
 const terminalVisible = computed(() => shellTabs.value.length > 0);
 const activeShellTab = computed(() => shellTabs.value.find((tab) => tab.id === activeShellTabId.value) || null);
+const shellTabLimitReached = computed(() => shellTabs.value.length >= MAX_SHELL_TABS);
+const shellTabLimitMessage = `Shell tabs are limited to ${MAX_SHELL_TABS}.`;
+const canCreateMainShell = computed(() => Boolean(!shellTabLimitReached.value && canOpenMainShell.value));
+const canCreateWorktreeShell = computed(() => Boolean(!shellTabLimitReached.value && canOpenWorktreeShell.value));
 const shellWindowStorageKey = computed(() => {
   const source = props.session?.targetRoot || props.session?.sessionRoot || sessionId.value;
   return `ai-studio:floating-terminal:shell:${stableLocalStorageKeyPart(source)}`;
 });
-const canOpenNewTab = computed(() => Boolean(
-  activeShellTab.value ||
-  canOpenWorktreeShell.value ||
-  canOpenMainShell.value
-));
-
-function shellTargetLabel(target = "") {
-  return target === "main" ? "Main" : "Worktree";
-}
+const canOpenNewTab = computed(() => {
+  if (activeShellTab.value?.target) {
+    return targetCanOpen(activeShellTab.value.target);
+  }
+  return canCreateWorktreeShell.value || canCreateMainShell.value;
+});
+const mainShellMenuSubtitle = computed(() => (shellTabLimitReached.value ? shellTabLimitMessage : "Project root"));
+const newShellTabTitle = computed(() => (shellTabLimitReached.value ? shellTabLimitMessage : "New shell tab (Alt-N)"));
+const shellTabsShortcutTitle = `Alt-N creates a tab. Alt-1 through Alt-${MAX_SHELL_TABS} switches tabs.`;
+const worktreeShellMenuSubtitle = computed(() => {
+  if (shellTabLimitReached.value) {
+    return shellTabLimitMessage;
+  }
+  return worktreePath.value || "Create the session worktree first.";
+});
 
 function shellTargetTitle(target = "") {
   return target === "main" ? "Main repo shell" : "Worktree shell";
 }
 
+function pathBasename(path = "") {
+  return String(path || "").replace(/[\\/]+$/u, "").split(/[\\/]/u).filter(Boolean).pop() || "";
+}
+
+function shellTargetPath(target = "") {
+  if (target === "worktree") {
+    return worktreePath.value;
+  }
+  return props.session?.targetRoot || "";
+}
+
 function nextShellTabLabel(target = "") {
-  const targetLabel = shellTargetLabel(target);
-  const tabNumber = shellTabs.value.filter((tab) => tab.target === target).length + 1;
-  return `${targetLabel} ${tabNumber}`;
+  const cwdName = pathBasename(shellTargetPath(target));
+  const terminalLabel = `Terminal ${shellTabSequence + 1}`;
+  return cwdName ? `${terminalLabel} · ${cwdName}` : terminalLabel;
 }
 
 function newShellTabId(target = "") {
@@ -216,21 +244,12 @@ function defaultNewTabTarget() {
 
 function targetCanOpen(target = "") {
   if (target === "worktree") {
-    return canOpenWorktreeShell.value;
+    return canCreateWorktreeShell.value;
   }
-  return target === "main" && canOpenMainShell.value;
+  return target === "main" && canCreateMainShell.value;
 }
 
 function openShell(target) {
-  if (target !== "worktree" && target !== "main") {
-    return;
-  }
-  if (target === "worktree" && !canOpenWorktreeShell.value) {
-    return;
-  }
-  if (target === "main" && !canOpenMainShell.value) {
-    return;
-  }
   createShellTab(target);
 }
 
@@ -238,12 +257,13 @@ function createShellTab(target) {
   if (!targetCanOpen(target)) {
     return;
   }
+  const tabLabel = nextShellTabLabel(target);
   const tabId = newShellTabId(target);
   shellTabs.value = [
     ...shellTabs.value,
     {
       id: tabId,
-      label: nextShellTabLabel(target),
+      label: tabLabel,
       running: false,
       session: props.session,
       startKey: `${tabId}:start`,
@@ -416,37 +436,31 @@ onBeforeUnmount(stopShellShortcuts);
 
 .ai-studio-shell-controls__tabs {
   align-items: center;
-  background: rgba(var(--v-theme-surface), 0.98);
-  border: 1px solid rgba(var(--v-theme-outline), 0.24);
-  border-bottom: 0;
-  border-radius: 7px;
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
   cursor: move;
   display: flex;
   gap: 0.3rem;
-  min-height: 2rem;
+  min-height: 1.9rem;
   min-width: 0;
-  padding: 0.2rem;
   user-select: none;
-}
-
-.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__tabs {
-  display: none;
+  width: 100%;
 }
 
 .ai-studio-shell-controls__tab-list {
+  cursor: default;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   gap: 0.25rem;
-  max-width: calc(100% - 2.4rem);
   min-width: 0;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ai-studio-shell-controls__tab-list::-webkit-scrollbar {
+  display: none;
 }
 
 .ai-studio-shell-controls__new-tab {
   flex: 0 0 auto;
-  margin-left: 0.1rem;
 }
 
 .ai-studio-shell-controls__tab {
@@ -457,13 +471,13 @@ onBeforeUnmount(stopShellShortcuts);
   color: rgba(var(--v-theme-on-surface), 0.74);
   cursor: pointer;
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 4.8rem;
   font: inherit;
   font-size: 0.78rem;
   font-weight: 650;
   gap: 0.1rem;
-  max-width: 12rem;
-  min-width: 0;
+  max-width: 8rem;
+  min-width: 3rem;
   padding: 0.25rem 0.32rem 0.25rem 0.5rem;
 }
 
@@ -519,11 +533,6 @@ onBeforeUnmount(stopShellShortcuts);
 .ai-studio-shell-controls__terminal--active {
   pointer-events: auto;
   visibility: visible;
-}
-
-.ai-studio-shell-controls__terminal :deep(.ai-command-terminal) {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
 }
 
 .ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal {

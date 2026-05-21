@@ -206,6 +206,38 @@ test("AI Studio Codex terminal mounts linked git metadata for worktree roots", a
   });
 });
 
+test("AI Studio Codex prompt handoff records the prompt-run output cursor", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "plan_made",
+      sessionId: "codex_prompt_run"
+    });
+    await runtime.runAction("codex_prompt_run", "make_plan");
+
+    const service = createService({
+      projectService: {
+        createRuntime: async () => runtime
+      }
+    });
+
+    const result = await service.saveCodexPromptHandoff("codex_prompt_run", {
+      outputStart: 42,
+      signature: "codex_prompt_run:unit-signature"
+    });
+
+    assert.equal(result.ok, true);
+    const promptRun = await runtime.store.readPromptRun("codex_prompt_run");
+    assert.equal(promptRun.status, "injected");
+    assert.equal(promptRun.outputStart, 42);
+    const metadata = await runtime.store.readMetadata("codex_prompt_run");
+    assert.equal(metadata.codex_session_briefing_delivered, "yes");
+    assert.match(metadata.codex_session_briefing_delivered_at, /^\d{4}-\d{2}-\d{2}T/u);
+  });
+});
+
 test("AI Studio shell terminal joins the target runtime network before the image", () => {
   const targetRoot = "/workspace/project";
   const worktree = "/workspace/project/.ai-studio/sessions/active/unit/worktree";

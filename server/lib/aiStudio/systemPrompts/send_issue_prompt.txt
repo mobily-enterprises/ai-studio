@@ -11,20 +11,7 @@ Session:
 Session metadata:
 {{session.metadata.json}}
 
-Adapter project facts:
-{{adapter.facts.json}}
-
-Adapter prompt context:
-{{adapter.promptContext.json}}
-
-Managed services:
-{{adapter.managedServices.json}}
-
-Managed service policy:
-{{prompt.managedServicePolicy}}
-
-Project config:
-{{config.json}}
+{{prompt.sessionBriefingReference}}
 
 Action input:
 {{input.json}}

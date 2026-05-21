@@ -10,7 +10,6 @@
         :active="active"
         :autopilot-steps="autopilotNavigationSteps"
         :codex-terminal="codexTerminal"
-        :codex-terminal-host-id="codexTerminalHostId"
         :command-runner="autopilotCommandRunner"
         :diff="dialogs.diff"
         :page="guardedPage"
@@ -20,7 +19,6 @@
         :rewind-to-step="timeline.rewindToStep"
         :session="selection.selectedSession"
         @busy-change="setAutopilotBusy"
-        @codex-terminal-dock-change="setAutopilotCodexTerminalDock"
       />
 
       <AiStudioSessionWorkspace
@@ -35,20 +33,14 @@
         @update-issue-request-text="issueRequest.text = $event"
       />
 
-      <Teleport
-        defer
-        :to="codexTerminalHostSelector"
-        :disabled="!autopilotCodexTerminalDocked"
-      >
-        <AiStudioSessionTerminals
-          :codex-terminal="codexTerminal"
-          :command-terminal="commandTerminal"
-          :display-mode="codexTerminalDisplayMode"
-          :headless-command-terminal="headlessCommandTerminal"
-          :session="selection.selectedSession"
-          :show-command-output="sessionMode === 'inspect'"
-        />
-      </Teleport>
+      <AiStudioSessionTerminals
+        :codex-terminal="codexTerminal"
+        :command-terminal="commandTerminal"
+        :display-mode="codexTerminalDisplayMode"
+        :headless-command-terminal="headlessCommandTerminal"
+        :session="selection.selectedSession"
+        :show-command-output="sessionMode === 'inspect'"
+      />
     </div>
 
     <AiStudioSessionDialogs
@@ -125,9 +117,6 @@ const isSelectedSessionClosed = computed(() => isClosedAiStudioSession(selectedS
 const sessionFacts = computed(() => aiStudioSessionFacts(selectedSession.value || {}));
 const timelineSteps = computed(() => buildAiStudioTimelineSteps(selectedSession.value));
 const autopilotNavigationSteps = computed(() => buildAiStudioAutopilotNavigationSteps(selectedSession.value));
-const codexTerminalHostId = computed(() => `studio-autopilot-codex-terminal-host-${props.sessionId}`);
-const codexTerminalHostSelector = computed(() => `#${codexTerminalHostId.value}`);
-
 const sessionScopedData = {
   canCreateSession: props.sessionData.canCreateSession,
   clearSelectedSession: props.sessionData.clearSelectedSession,
@@ -201,25 +190,12 @@ const headlessCommandTerminal = proxyRefs({
 });
 
 const autopilotBusy = ref(false);
-const autopilotCodexTerminalDock = ref({
-  displayMode: "compact",
-  docked: false
-});
-const autopilotCodexTerminalDocked = computed(() => {
-  return props.active && props.sessionMode === "autopilot" && autopilotCodexTerminalDock.value.docked;
-});
-const autopilotCodexTerminalDisplayMode = computed(() => {
-  return autopilotCodexTerminalDock.value.displayMode === "full" ? "full" : "compact";
-});
 const codexTerminalDisplayMode = computed(() => {
   // Inactive hosts stay mounted headless so Codex output capture remains session-owned.
-  if (!props.active) {
+  if (!props.active || props.sessionMode !== "inspect") {
     return "headless";
   }
-  if (props.sessionMode === "inspect") {
-    return "full";
-  }
-  return autopilotCodexTerminalDocked.value ? autopilotCodexTerminalDisplayMode.value : "headless";
+  return "full";
 });
 const interactionBusy = computed(() => Boolean(page.busy || autopilotBusy.value));
 const guardedPage = computed(() => ({
@@ -232,20 +208,6 @@ const guardedPage = computed(() => ({
 
 function setAutopilotBusy(busy) {
   autopilotBusy.value = Boolean(busy);
-}
-
-function setAutopilotCodexTerminalDock(payload = {}) {
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    autopilotCodexTerminalDock.value = {
-      displayMode: payload.displayMode === "full" ? "full" : "compact",
-      docked: payload.docked === true
-    };
-    return;
-  }
-  autopilotCodexTerminalDock.value = {
-    displayMode: "compact",
-    docked: Boolean(payload)
-  };
 }
 
 function emitBusy() {

@@ -3,15 +3,20 @@ import path from "node:path";
 import process from "node:process";
 import {
   aiStudioError,
+  isPlainObject,
   isMissingPathError,
   normalizeTargetRoot,
   normalizeText,
   pathExists
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
+import {
+  normalizePromptRun
+} from "./promptRun.js";
 
 const AI_STUDIO_STATE_DIR = ".ai-studio";
 const AI_STUDIO_SESSION_SCHEMA_VERSION = 1;
+const AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION = 1;
 const AI_STUDIO_INITIAL_STEP = "session_created";
 const AI_STUDIO_SESSION_STATUS = deepFreeze({
   ABANDONED: "abandoned",
@@ -101,6 +106,23 @@ async function writeJsonFile(filePath, value) {
   await writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function jsonClone(value) {
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
+function normalizePromptContextSnapshot(snapshot = {}) {
+  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.adapter)) {
+    return null;
+  }
+  return {
+    adapter: jsonClone(snapshot.adapter),
+    createdAt: normalizeText(snapshot.createdAt),
+    schemaVersion: snapshot.schemaVersion === AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
+      ? AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
+      : AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
+  };
+}
+
 async function readDirectoryEntries(directoryPath) {
   try {
     return await readdir(directoryPath, {
@@ -162,6 +184,8 @@ function resolveAiStudioSessionPaths({
     currentStepPath: sessionRoot ? path.join(sessionRoot, "current_step") : "",
     manifestPath: sessionRoot ? path.join(sessionRoot, "session.json") : "",
     metadataRoot: sessionRoot ? path.join(sessionRoot, "metadata") : "",
+    promptContextSnapshotPath: sessionRoot ? path.join(sessionRoot, "prompt-context.json") : "",
+    promptRunPath: sessionRoot ? path.join(sessionRoot, "prompt-run.json") : "",
     sessionId: normalizedSessionId,
     sessionRoot,
     sessionsRoot,
@@ -409,6 +433,94 @@ function createAiStudioSessionStore({
     return actionResults.filter(Boolean);
   }
 
+  async function writePromptRun(sessionId, promptRun = {}) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const record = normalizePromptRun(promptRun);
+    if (!record) {
+      throw aiStudioError("Invalid ai-studio prompt run.", "ai_studio_invalid_prompt_run");
+    }
+    await writeJsonFile(sessionPaths.promptRunPath, record);
+    return record;
+  }
+
+  async function readPromptRun(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const promptRunText = await readTextIfExists(sessionPaths.promptRunPath);
+    if (!promptRunText) {
+      return null;
+    }
+    try {
+      const promptRun = normalizePromptRun(JSON.parse(promptRunText));
+      if (!promptRun) {
+        throw new Error("Invalid prompt run.");
+      }
+      return promptRun;
+    } catch {
+      throw aiStudioError(
+        `Invalid ai-studio prompt run: ${sessionPaths.sessionId}`,
+        "ai_studio_invalid_prompt_run"
+      );
+    }
+  }
+
+  async function patchPromptRun(sessionId, patch = {}) {
+    const currentPromptRun = await readPromptRun(sessionId);
+    if (!currentPromptRun) {
+      return null;
+    }
+    return writePromptRun(sessionId, {
+      ...currentPromptRun,
+      ...patch
+    });
+  }
+
+  async function deletePromptRun(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(sessionPaths.promptRunPath, {
+      force: true
+    });
+  }
+
+  async function writePromptContextSnapshot(sessionId, snapshot = {}) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const record = normalizePromptContextSnapshot(snapshot);
+    if (!record) {
+      throw aiStudioError(
+        "Invalid ai-studio prompt context snapshot.",
+        "ai_studio_invalid_prompt_context_snapshot"
+      );
+    }
+    await writeJsonFile(sessionPaths.promptContextSnapshotPath, record);
+    return record;
+  }
+
+  async function readPromptContextSnapshot(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const snapshotText = await readTextIfExists(sessionPaths.promptContextSnapshotPath);
+    if (!snapshotText) {
+      return null;
+    }
+    try {
+      const snapshot = normalizePromptContextSnapshot(JSON.parse(snapshotText));
+      if (!snapshot) {
+        throw new Error("Invalid prompt context snapshot.");
+      }
+      return snapshot;
+    } catch {
+      throw aiStudioError(
+        `Invalid ai-studio prompt context snapshot: ${sessionPaths.sessionId}`,
+        "ai_studio_invalid_prompt_context_snapshot"
+      );
+    }
+  }
+
+  async function deletePromptContextSnapshot(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    await rm(sessionPaths.promptContextSnapshotPath, {
+      force: true
+    });
+  }
+
   async function writeCompletedStep(sessionId, stepId, {
     message = ""
   } = {}) {
@@ -451,14 +563,26 @@ function createAiStudioSessionStore({
 
   async function readSession(sessionId) {
     const sessionPaths = await ensureSessionRoot(sessionId);
-    const [manifest, status, currentStep, metadata, completedSteps, artifactReadiness, actionResults] = await Promise.all([
+    const [
+      manifest,
+      status,
+      currentStep,
+      metadata,
+      completedSteps,
+      artifactReadiness,
+      actionResults,
+      promptRun,
+      promptContextSnapshot
+    ] = await Promise.all([
       readManifest(sessionPaths.sessionId),
       readStatus(sessionPaths.sessionId),
       readCurrentStep(sessionPaths.sessionId),
       readMetadata(sessionPaths.sessionId),
       readCompletedSteps(sessionPaths.sessionId),
       readArtifactReadiness(sessionPaths.sessionId),
-      readActionResults(sessionPaths.sessionId)
+      readActionResults(sessionPaths.sessionId),
+      readPromptRun(sessionPaths.sessionId),
+      readPromptContextSnapshot(sessionPaths.sessionId)
     ]);
     return {
       actionResults,
@@ -471,6 +595,10 @@ function createAiStudioSessionStore({
       manifest,
       metadata,
       metadataRoot: sessionPaths.metadataRoot,
+      promptContextSnapshot,
+      promptContextSnapshotPath: sessionPaths.promptContextSnapshotPath,
+      promptRun,
+      promptRunPath: sessionPaths.promptRunPath,
       sessionId: sessionPaths.sessionId,
       sessionRoot: sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
@@ -561,7 +689,10 @@ function createAiStudioSessionStore({
     deleteCompletedSteps,
     deleteMetadataValue,
     deleteMetadataValues,
+    deletePromptContextSnapshot,
+    deletePromptRun,
     listSessions,
+    patchPromptRun,
     paths,
     readArtifact,
     readArtifactReadiness,
@@ -573,6 +704,8 @@ function createAiStudioSessionStore({
     readManifest,
     readMetadata,
     readMetadataValue,
+    readPromptContextSnapshot,
+    readPromptRun,
     readSession,
     readStatus,
     writeArtifact,
@@ -580,12 +713,15 @@ function createAiStudioSessionStore({
     writeCompletedStep,
     writeCurrentStep,
     writeMetadataValue,
+    writePromptContextSnapshot,
+    writePromptRun,
     writeStatus
   };
 }
 
 export {
   AI_STUDIO_INITIAL_STEP,
+  AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION,
   AI_STUDIO_SESSION_SCHEMA_VERSION,
   AI_STUDIO_SESSION_STATUS,
   AI_STUDIO_STATE_DIR,

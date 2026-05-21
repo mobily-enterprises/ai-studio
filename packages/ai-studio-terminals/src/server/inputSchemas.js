@@ -26,31 +26,6 @@ const codexAttachmentFields = {
 };
 
 const codexPromptHandoffFields = {
-  completionActionId: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
-  completionRequestId: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
-  completionStartedAt: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
-  completionStepId: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
-  completionToken: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
   outputStart: {
     type: "string",
     noTrim: false,

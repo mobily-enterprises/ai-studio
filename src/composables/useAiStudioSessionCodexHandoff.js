@@ -20,7 +20,6 @@ function useAiStudioSessionCodexHandoff({
   const promptOverride = ref("");
   const readinessRefreshInFlight = ref(false);
   const codexCommands = useAiStudioCodexCommands();
-  let pendingCompletionToken = null;
 
   async function startFromActionResponse(response = {}, context = {}) {
     const promptHandoff = aiStudioPromptHandoffFromSession(response);
@@ -28,24 +27,12 @@ function useAiStudioSessionCodexHandoff({
       return false;
     }
 
-    promptOverride.value = promptWithSuffix(
-      promptHandoff.terminalInput || promptHandoff.prompt,
-      context.promptSuffix
-    );
-    pendingCompletionToken = completionTokenFromActionContext(context);
+    promptOverride.value = String(promptHandoff.terminalInput || promptHandoff.prompt || "").trim();
     busy.value = true;
     promptInjectionError.value = "";
     promptInjectionKey.value = `${context.sessionId}:${context.actionId}:${Date.now()}`;
     await refreshSessionData();
     return true;
-  }
-
-  function promptWithSuffix(prompt = "", suffix = "") {
-    const normalizedPrompt = String(prompt || "").trim();
-    const normalizedSuffix = String(suffix || "").trim();
-    return normalizedSuffix
-      ? `${normalizedPrompt}\n\n${normalizedSuffix}`
-      : normalizedPrompt;
   }
 
   async function injectPrompt(prompt, context = {}) {
@@ -57,7 +44,6 @@ function useAiStudioSessionCodexHandoff({
     }
 
     const targetSessionId = String(sessionId || unref(selectedSessionId) || "").trim();
-    pendingCompletionToken = completionTokenFromActionContext(context);
     promptOverride.value = normalizedPrompt;
     busy.value = true;
     promptInjectionError.value = "";
@@ -93,7 +79,6 @@ function useAiStudioSessionCodexHandoff({
   function clear() {
     busy.value = false;
     output.value = "";
-    pendingCompletionToken = null;
     promptInjectionError.value = "";
     promptInjectionKey.value = "";
     promptOverride.value = "";
@@ -104,29 +89,15 @@ function useAiStudioSessionCodexHandoff({
     promptOverride.value = "";
   }
 
-  function completionTokenFromActionContext(context = {}) {
-    const token = String(context.completionToken || "").trim();
-    if (!token) {
-      return null;
-    }
-    return {
-      completionActionId: String(context.completionActionId || context.actionId || "").trim(),
-      completionRequestId: String(context.completionRequestId || token).trim(),
-      completionStartedAt: String(context.completionStartedAt || "").trim(),
-      completionStepId: String(context.completionStepId || "").trim(),
-      completionToken: token
-    };
-  }
-
   async function handlePromptInjected(event = {}) {
     const sessionId = String(event.sessionId || unref(selectedSessionId) || "");
     busy.value = true;
     if (sessionId) {
       await codexCommands.savePromptHandoff(sessionId, {
-        ...(pendingCompletionToken || {}),
         outputStart: Number(event.outputStart || 0),
         signature: `${sessionId}:${Date.now()}`
       }).catch(() => null);
+      await refreshSessionData();
     }
     setCopyStatus("Prompt sent to Codex.");
   }

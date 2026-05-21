@@ -226,10 +226,8 @@ describe("useAiStudioAutopilotController", () => {
       "run_deslop"
     ]);
     expect(context.actions.runAction.mock.calls.every(([, options]) => {
-      return typeof options?.promptSuffix === "string" &&
-        options.promptSuffix.includes("Completion token part 1:") &&
-        options.promptSuffix.includes("Completion token part 2:") &&
-        !options.promptSuffix.includes(options.completionToken);
+      return !Object.hasOwn(options || {}, "promptSuffix") &&
+        !Object.hasOwn(options || {}, "completionToken");
     })).toBe(true);
     expect(context.controller.readyForReview.value).toBe(true);
     expect(context.controller.failure.value).toBeNull();
@@ -367,10 +365,11 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBeNull();
   });
 
-  it("fails cleanly when Codex becomes idle without the completion marker", async () => {
+  it("offers Continue when Codex becomes idle without the completion marker", async () => {
     context.moveToStep("review_run");
     context.actions.runAction.mockImplementation(async (action) => {
       if (action.id === "run_deslop") {
+        context.createPromptRun(action);
         context.codexOutput.value = `${context.codexOutput.value}\nReview completed without marker.`;
       }
     });
@@ -379,20 +378,19 @@ describe("useAiStudioAutopilotController", () => {
 
     expect(context.session.value.currentStep).toBe("review_run");
     expect(context.controller.running.value).toBe(false);
-    expect(context.controller.failure.value).toMatchObject({
-      actionId: "run_deslop",
-      error: "The Run deslop step did not complete properly, so Autopilot could not safely continue. Codex did not print the expected completion token. Retry will run it again, or switch to Inspect to continue manually.",
-      output: expect.stringContaining("Review completed without marker.")
-    });
+    expect(context.controller.promptRunNeedsContinuation.value).toBe(true);
+    expect(context.controller.failure.value).toBeNull();
   });
 
-  it("does not treat the echoed prompt instruction as completion", async () => {
+  it("does not treat echoed completion instructions as completion", async () => {
     context.moveToStep("review_run");
-    context.actions.runAction.mockImplementation(async (action, options = {}) => {
+    context.actions.runAction.mockImplementation(async (action) => {
       if (action.id === "run_deslop") {
+        const promptRun = context.createPromptRun(action);
         context.codexOutput.value = [
           context.codexOutput.value,
-          options.promptSuffix,
+          `Completion token part 1: ${AUTOPILOT_COMPLETION_TOKEN_PREFIX}`,
+          `Completion token part 2: ${promptRun.completionToken.slice(AUTOPILOT_COMPLETION_TOKEN_PREFIX.length)}`,
           "Codex stopped without printing the completion token."
         ].join("\n");
       }
@@ -400,24 +398,22 @@ describe("useAiStudioAutopilotController", () => {
 
     await context.controller.resume();
 
-    expect(context.controller.failure.value).toMatchObject({
-      actionId: "run_deslop",
-      error: "The Run deslop step did not complete properly, so Autopilot could not safely continue. Codex did not print the expected completion token. Retry will run it again, or switch to Inspect to continue manually.",
-      source: "codex"
-    });
+    expect(context.controller.promptRunNeedsContinuation.value).toBe(true);
+    expect(context.controller.failure.value).toBeNull();
   });
 
   it("pauses for Autopilot questions from any Codex prompt action", async () => {
     context.moveToStep("plan_executed");
-    context.actions.runAction.mockImplementation(async (action, options = {}) => {
+    context.actions.runAction.mockImplementation(async (action) => {
       if (action.id === "execute_plan") {
+        const promptRun = context.createPromptRun(action);
         context.codexOutput.value = [
           context.codexOutput.value,
           "I need one detail before continuing:",
           "1. Which database should Codex use?",
           autopilotQuestionsMarker({
             questions: ["Which database should Codex use?"],
-            requestId: options.completionRequestId
+            requestId: promptRun.requestId
           })
         ].join("\n");
       }
@@ -436,11 +432,12 @@ describe("useAiStudioAutopilotController", () => {
 
   it("sends Autopilot question answers back to Codex and continues the same action", async () => {
     context.moveToStep("plan_executed");
-    context.actions.runAction.mockImplementation(async (action, options = {}) => {
+    context.actions.runAction.mockImplementation(async (action) => {
       if (action.id === "execute_plan") {
+        const promptRun = context.createPromptRun(action);
         context.codexOutput.value = `${context.codexOutput.value}\n${autopilotQuestionsMarker({
           questions: ["Which database should Codex use?"],
-          requestId: options.completionRequestId
+          requestId: promptRun.requestId
         })}`;
       }
     });
@@ -468,6 +465,7 @@ describe("useAiStudioAutopilotController", () => {
     context.moveToStep("review_run");
     context.actions.runAction.mockImplementation(async (action) => {
       if (action.id === "run_deslop") {
+        context.createPromptRun(action);
         context.codexBusy.value = true;
         context.codexOutput.value = `${context.codexOutput.value}\nReview still running.`;
       }
@@ -489,13 +487,17 @@ describe("useAiStudioAutopilotController", () => {
 
   it("reattaches stopped Autopilot when Codex becomes active for the current prompt step", async () => {
     const completionToken = `${AUTOPILOT_COMPLETION_TOKEN_PREFIX}1234567890abcdef1234567890abcdef`;
-    context.moveToStep("plan_executed", {
-      codex_prompt_completion_action_id: "execute_plan",
-      codex_prompt_completion_request_id: "stored-request",
-      codex_prompt_completion_started_at: String(Date.now()),
-      codex_prompt_completion_step_id: "plan_executed",
-      codex_prompt_completion_token: completionToken,
-      codex_prompt_handoff_output_start: "0"
+    context.moveToStep("plan_executed", {}, {
+      actionId: "execute_plan",
+      actionLabel: "Execute plan",
+      completionToken,
+      createdAt: new Date().toISOString(),
+      outputStart: 0,
+      promptId: "execute_plan",
+      requestId: "stored-request",
+      sessionId: "session-1",
+      status: "injected",
+      stepId: "plan_executed"
     });
 
     context.controller.stop();
@@ -536,7 +538,7 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBeNull();
   });
 
-  it("captures Autopilot questions from the active Codex terminal when no prompt record exists", async () => {
+  it("leaves active Codex questions alone when no prompt run exists", async () => {
     context.moveToStep("plan_executed");
     context.controller.stop();
 
@@ -546,20 +548,8 @@ describe("useAiStudioAutopilotController", () => {
     });
     context.codexBusy.value = true;
 
-    await vi.waitFor(() => {
-      expect(context.questionExchange.hasQuestions.value).toBe(true);
-    });
-    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
-      "Which auth setup should Codex use?"
-    ]);
-    expect(context.controller.failure.value).toBeNull();
-
-    context.questionExchange.setAnswer("q1", "Keep it public.");
-    context.codexBusy.value = false;
-
-    await context.questionExchange.submitAnswers();
-
-    expect(context.session.value.currentStep).toBe("deep_ui_check_run");
+    await Promise.resolve();
+    expect(context.questionExchange.hasQuestions.value).toBe(false);
     expect(context.controller.failure.value).toBeNull();
   });
 
@@ -571,6 +561,7 @@ describe("useAiStudioAutopilotController", () => {
       if (action.id !== "execute_plan") {
         return;
       }
+      context.createPromptRun(action);
       context.codexBusy.value = true;
       context.codexOutput.value = `${context.codexOutput.value}\nCodex is still reporting.`;
       await new Promise((resolve) => {
@@ -593,15 +584,19 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBeNull();
   });
 
-  it("resumes a pending Codex prompt from persisted session metadata", async () => {
+  it("resumes a pending Codex prompt from the session prompt-run record", async () => {
     const completionToken = `${AUTOPILOT_COMPLETION_TOKEN_PREFIX}1234567890abcdef1234567890abcdef`;
-    context.moveToStep("review_run", {
-      codex_prompt_completion_action_id: "run_deslop",
-      codex_prompt_completion_request_id: "request-123",
-      codex_prompt_completion_started_at: String(Date.now()),
-      codex_prompt_completion_step_id: "review_run",
-      codex_prompt_completion_token: completionToken,
-      codex_prompt_handoff_output_start: "0"
+    context.moveToStep("review_run", {}, {
+      actionId: "run_deslop",
+      actionLabel: "Run deslop",
+      completionToken,
+      createdAt: new Date().toISOString(),
+      outputStart: 0,
+      promptId: "run_deslop",
+      requestId: "request-123",
+      sessionId: "session-1",
+      status: "injected",
+      stepId: "review_run"
     });
     context.codexOutput.value = `Review completed.\n${completionToken}\n`;
 
@@ -619,11 +614,12 @@ describe("useAiStudioAutopilotController", () => {
     context.moveToStep("plan_made");
 
     let firstPrompt = true;
-    context.actions.runAction.mockImplementation(async (action, options = {}) => {
+    context.actions.runAction.mockImplementation(async (action) => {
       if (!PROMPT_ACTION_IDS.has(action.id)) {
         return;
       }
-      context.codexOutput.value = `${context.codexOutput.value}\n${completionTokenFromPromptSuffix(options.promptSuffix)}`;
+      const promptRun = context.createPromptRun(action);
+      context.codexOutput.value = `${context.codexOutput.value}\n${promptRun.completionToken}`;
       if (firstPrompt) {
         firstPrompt = false;
         context.codexBusy.value = true;
@@ -652,6 +648,7 @@ function createAutopilotContext() {
   const session = ref(sessionForStep("session_created"));
   const codexBusy = ref(false);
   const codexOutput = ref("");
+  let promptRunIndex = 0;
   const codexTerminal = {
     busy: codexBusy,
     injectPrompt: vi.fn(async (prompt = "") => {
@@ -709,11 +706,32 @@ function createAutopilotContext() {
     }
   };
 
-  function moveToStep(stepId, metadata = {}) {
+  function moveToStep(stepId, metadata = {}, promptRun = null) {
     session.value = sessionForStep(stepId, {
       ...session.value.metadata,
       ...metadata
-    });
+    }, promptRun);
+  }
+
+  function createPromptRun(action = {}) {
+    promptRunIndex += 1;
+    const promptRun = {
+      actionId: action.id,
+      actionLabel: action.label,
+      completionToken: promptCompletionToken(promptRunIndex),
+      createdAt: new Date().toISOString(),
+      outputStart: codexOutput.value.length,
+      promptId: action.id,
+      requestId: `request-${promptRunIndex}`,
+      sessionId: session.value.sessionId,
+      status: "injected",
+      stepId: session.value.currentStep
+    };
+    session.value = {
+      ...session.value,
+      promptRun
+    };
+    return promptRun;
   }
 
   const actions = {
@@ -725,7 +743,7 @@ function createAutopilotContext() {
     rewindToStep: vi.fn(async (step = {}) => {
       moveToStep(step.rewindStepId || step.id);
     }),
-    runAction: vi.fn(async (action, options = {}) => {
+    runAction: vi.fn(async (action) => {
       if (action.id === "use_new_branch") {
         const metadata = {
           ...session.value.metadata,
@@ -739,11 +757,12 @@ function createAutopilotContext() {
       }
 
       if (PROMPT_ACTION_IDS.has(action.id)) {
-        codexOutput.value = `${codexOutput.value}\n${completionTokenFromPromptSuffix(options.promptSuffix)}`;
+        const promptRun = createPromptRun(action);
+        codexOutput.value = `${codexOutput.value}\n${promptRun.completionToken}`;
         if (action.id === "create_pr_file") {
           moveToStep(session.value.currentStep, {
             pull_request_ready: "1"
-          });
+          }, promptRun);
         }
         return;
       }
@@ -793,13 +812,14 @@ function createAutopilotContext() {
     commandResults,
     commandRunner,
     controller,
+    createPromptRun,
     moveToStep,
     questionExchange,
     session
   };
 }
 
-function sessionForStep(stepId, metadata = {}) {
+function sessionForStep(stepId, metadata = {}, promptRun = null) {
   return {
     actions: actionsForStep(stepId, metadata),
     artifactReadiness: artifactReadinessForMetadata(metadata),
@@ -809,6 +829,7 @@ function sessionForStep(stepId, metadata = {}) {
     },
     metadata,
     next: nextForStep(stepId, metadata),
+    promptRun,
     sessionId: "session-1",
     stepDefinitions: Object.entries(STEP_LABELS).map(([id, label]) => ({
       id,
@@ -989,6 +1010,10 @@ function artifactReadinessForMetadata(metadata = {}) {
       nonEmpty: true
     }
   };
+}
+
+function promptCompletionToken(index = 1) {
+  return `${AUTOPILOT_COMPLETION_TOKEN_PREFIX}${String(index).padStart(32, "0")}`;
 }
 
 function completionTokenFromPromptSuffix(promptSuffix = "") {

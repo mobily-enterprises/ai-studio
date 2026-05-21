@@ -6,12 +6,9 @@ import {
   useAiStudioHeadlessCommandRunner
 } from "@/composables/useAiStudioHeadlessCommandRunner.js";
 import {
-  createStepCompletionToken,
   latestAutopilotQuestionsMarker,
-  normalizeStepCompletionToken,
   outputHasStepCompletionToken,
-  autopilotQuestionAnswersInstruction,
-  stepCompletionTokenInstruction
+  autopilotQuestionAnswersInstruction
 } from "@/lib/aiStudioAutopilotStepMarkers.js";
 import {
   readRefOrGetterValue
@@ -30,7 +27,6 @@ const REPLAN_STEP_ID = "plan_made";
 const MAX_AUTOPILOT_OPERATIONS = 40;
 const PROMPT_IDLE_WITHOUT_OUTPUT_GRACE_MS = 3000;
 const PROMPT_MARKER_POLL_MS = 250;
-const PROMPT_PENDING_STORAGE_KEY_PREFIX = "ai-studio:autopilot:prompt-step:";
 const PROMPT_WAIT_RESULT = Object.freeze({
   COMPLETED: "completed",
   INCOMPLETE: "incomplete",
@@ -181,67 +177,12 @@ function currentStepCanStartAutopilot(session = {}) {
   return currentStepCanRunAutopilot(session) || nextIsReady(session.next);
 }
 
-function browserLocalStorage() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return null;
-  }
-  return window.localStorage;
-}
-
-function promptPendingStorageKey(sessionId = "") {
-  return `${PROMPT_PENDING_STORAGE_KEY_PREFIX}${String(sessionId || "").trim()}`;
-}
-
-function createRequestId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-function readStoredPendingPrompt(sessionId = "") {
-  const storage = browserLocalStorage();
-  if (!storage || !sessionId) {
-    return null;
-  }
-  try {
-    const value = JSON.parse(storage.getItem(promptPendingStorageKey(sessionId)) || "{}");
-    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredPendingPrompt(pending = {}) {
-  const sessionId = String(pending.sessionId || "").trim();
-  const storage = browserLocalStorage();
-  if (!storage || !sessionId) {
-    return;
-  }
-  storage.setItem(promptPendingStorageKey(sessionId), JSON.stringify({
-    actionId: String(pending.actionId || ""),
-    advanceAfterCompletion: pending.advanceAfterCompletion !== false,
-    completionToken: normalizeStepCompletionToken(pending.completionToken),
-    outputCursor: Number.isSafeInteger(pending.outputCursor) ? pending.outputCursor : 0,
-    questionRequestId: String(pending.questionRequestId || ""),
-    questions: Array.isArray(pending.questions) ? pending.questions : [],
-    requestId: String(pending.requestId || ""),
-    sessionId,
-    startedAt: Number.isSafeInteger(pending.startedAt) ? pending.startedAt : 0,
-    stepId: String(pending.stepId || "")
-  }));
-}
-
-function clearStoredPendingPrompt(sessionId = "") {
-  browserLocalStorage()?.removeItem(promptPendingStorageKey(sessionId));
-}
-
-function workflowQuestionOwnerId(pending = {}) {
+function workflowQuestionOwnerId(promptRun = {}) {
   return [
     "workflow",
-    String(pending.sessionId || ""),
-    String(pending.stepId || ""),
-    String(pending.requestId || "")
+    String(promptRun.sessionId || ""),
+    String(promptRun.stepId || ""),
+    String(promptRun.requestId || "")
   ].join(":");
 }
 
@@ -351,48 +292,35 @@ function actionLabelForId(actionId = "") {
   return stage?.label || String(actionId || "Codex");
 }
 
-function missingPromptMarkerError(pending = {}, activeLabel = "", output = "") {
-  const expectedLabel = activeLabel || actionLabelForId(pending.actionId);
-  void output;
-  return `The ${expectedLabel} step did not complete properly, so Autopilot could not safely continue. Codex did not print the expected completion token. Retry will run it again, or switch to Inspect to continue manually.`;
-}
-
-function pendingPromptMatchesSession(pending = {}, session = {}) {
-  return pending?.sessionId === session?.sessionId &&
-    pending?.stepId === session?.currentStep &&
-    Boolean(pending.actionId && normalizeStepCompletionToken(pending.completionToken));
-}
-
-function pendingPromptBelongsToSession(pending = {}, session = {}) {
-  return pending?.sessionId === session?.sessionId &&
-    Boolean(pending.requestId && pending.actionId);
-}
-
-function pendingPromptWasLeftBehind(pending = {}, session = {}) {
-  return pendingPromptBelongsToSession(pending, session) &&
-    Boolean(pending.stepId) &&
-    pending.stepId !== session?.currentStep;
-}
-
-function pendingPromptFromSessionMetadata(session = {}) {
-  const metadata = session?.metadata || {};
-  const completionToken = normalizeStepCompletionToken(metadata.codex_prompt_completion_token);
-  const actionId = String(metadata.codex_prompt_completion_action_id || "").trim();
-  const stepId = String(metadata.codex_prompt_completion_step_id || "").trim();
-  if (!session?.sessionId || !completionToken || !actionId || !stepId) {
+function promptRunForSession(session = {}) {
+  const promptRun = session?.promptRun;
+  if (!promptRun || typeof promptRun !== "object" || Array.isArray(promptRun)) {
     return null;
   }
-  const outputCursor = Number(metadata.codex_prompt_handoff_output_start || 0);
-  const startedAt = Number(metadata.codex_prompt_completion_started_at || 0);
+  if (
+    promptRun.stepId !== session?.currentStep ||
+    !promptRun.actionId ||
+    !promptRun.completionToken ||
+    !promptRun.requestId
+  ) {
+    return null;
+  }
   return {
-    actionId,
-    completionToken,
-    outputCursor: Number.isSafeInteger(outputCursor) && outputCursor >= 0 ? outputCursor : 0,
-    requestId: String(metadata.codex_prompt_completion_request_id || completionToken),
+    ...promptRun,
     sessionId: session.sessionId,
-    startedAt: Number.isSafeInteger(startedAt) && startedAt > 0 ? startedAt : Date.now(),
-    stepId
+    outputCursor: promptRunOutputStart(promptRun)
   };
+}
+
+function promptRunMatchesSession(promptRun = {}, session = {}) {
+  return promptRun?.sessionId === session?.sessionId &&
+    promptRun?.stepId === session?.currentStep &&
+    Boolean(promptRun.actionId && promptRun.completionToken && promptRun.requestId);
+}
+
+function promptRunOutputStart(promptRun = {}) {
+  const outputStart = Number(promptRun.outputStart || 0);
+  return Number.isSafeInteger(outputStart) && outputStart >= 0 ? outputStart : 0;
 }
 
 function useAiStudioAutopilotController({
@@ -405,7 +333,7 @@ function useAiStudioAutopilotController({
 } = {}) {
   const active = ref(false);
   const activeStage = ref("");
-  const activePrompt = ref(null);
+  const activePromptRun = ref(null);
   const deepUiCheckDecision = ref("");
   const failure = ref(null);
   const lastCommandResult = ref(null);
@@ -425,6 +353,7 @@ function useAiStudioAutopilotController({
   const commandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
   const codexBusy = computed(() => readCodexBusy(codexTerminal));
   const running = computed(() => active.value || commandRunning.value || codexQuestions.submitting.value);
+  const currentPromptRun = computed(() => promptRunForSession(readSession(session)));
   const readyForIssue = computed(() => currentStep.value === ISSUE_STEP_ID);
   const readyForDeepUiCheck = computed(() => {
     return currentStep.value === DEEP_UI_CHECK_STEP_ID && !running.value && !failure.value;
@@ -432,12 +361,24 @@ function useAiStudioAutopilotController({
   const readyForFinished = computed(() => currentStep.value === FINISHED_STEP_ID);
   const readyForMerge = computed(() => currentStep.value === MERGE_PR_STEP_ID);
   const readyForReview = computed(() => currentStep.value === REVIEW_CHANGES_STEP_ID);
-  const workflowQuestionActive = computed(() => pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
-    codexQuestions.isOwner(workflowQuestionOwnerId(activePrompt.value)) &&
-    codexQuestions.hasQuestions.value);
+  const workflowQuestionActive = computed(() => {
+    const promptRun = activePromptRun.value || currentPromptRun.value;
+    return promptRunMatchesSession(promptRun, readSession(session)) &&
+      codexQuestions.isOwner(workflowQuestionOwnerId(promptRun)) &&
+      codexQuestions.hasQuestions.value;
+  });
+  const promptRunNeedsContinuation = computed(() => Boolean(
+    currentPromptRun.value &&
+    !codexBusy.value &&
+    !running.value &&
+    !workflowQuestionActive.value &&
+    !failure.value &&
+    !promptRunHasCompletion(currentPromptRun.value)
+  ));
   const waitingForCodex = computed(() => Boolean(
     (
-      pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
+      promptRunMatchesSession(activePromptRun.value || currentPromptRun.value, readSession(session)) &&
+      codexBusy.value &&
       !workflowQuestionActive.value
     ) ||
     codexIsActiveForCurrentStep()
@@ -457,6 +398,7 @@ function useAiStudioAutopilotController({
       !currentStepIsStopPoint(currentSession.currentStep) &&
       currentStepCanRunAutopilot(currentSession) &&
       !running.value &&
+      !promptRunNeedsContinuation.value &&
       (!failure.value || codexIsActiveForCurrentStep())
     );
   });
@@ -477,6 +419,9 @@ function useAiStudioAutopilotController({
     }
     if (workflowQuestionActive.value) {
       return "A few questions first";
+    }
+    if (promptRunNeedsContinuation.value) {
+      return "Codex is waiting to continue";
     }
     if (running.value) {
       return `Executing: ${activeStage.value || stepLabel(readSession(session))}`;
@@ -566,18 +511,77 @@ function useAiStudioAutopilotController({
     await runUntilStopPoint();
   }
 
+  async function continuePromptRun() {
+    const promptRun = activePromptRunForSession(readSession(session));
+    if (!promptRunMatchesSession(promptRun, readSession(session)) || running.value || codexBusy.value) {
+      return false;
+    }
+
+    stopRequested = false;
+    clearFailure();
+    active.value = true;
+    activePromptRun.value = promptRun;
+    activeStage.value = actionLabelForId(promptRun.actionId);
+    try {
+      const injected = await codexTerminal.injectPrompt?.("continue", {
+        requestId: `continue:${promptRun.requestId}`,
+        sessionId: promptRun.sessionId
+      });
+      if (injected === false) {
+        stopWithFailure({
+          actionId: promptRun.actionId,
+          actionLabel: actionLabelForId(promptRun.actionId),
+          error: "Codex did not accept the continue prompt. Switch to Inspect and continue manually.",
+          exitCode: null,
+          ok: false,
+          output: "",
+          source: "codex"
+        });
+        return false;
+      }
+
+      await refreshSessionData();
+      await nextTick();
+      const waitResult = await waitForPromptCompletion(promptRun);
+      if (waitResult === PROMPT_WAIT_RESULT.QUESTIONS) {
+        return true;
+      }
+      if (waitResult !== PROMPT_WAIT_RESULT.COMPLETED) {
+        return false;
+      }
+      clearPromptRunState();
+      clearReplanFeedback({
+        id: promptRun.actionId
+      });
+      if (promptRun.advanceAfterCompletion !== false) {
+        await advanceCurrentStepIfReady();
+      }
+      await runUntilStopPoint();
+      return !failure.value;
+    } catch (error) {
+      stopWithFailure({
+        actionId: promptRun.actionId,
+        actionLabel: actionLabelForId(promptRun.actionId),
+        error: String(error?.message || error || "Codex could not continue."),
+        exitCode: null,
+        ok: false,
+        output: "",
+        source: "codex"
+      });
+      return false;
+    } finally {
+      active.value = false;
+      activeStage.value = "";
+    }
+  }
+
   function stop() {
-    const currentSession = readSession(session);
     stopRequested = true;
     if (commandRunning.value && typeof commandRunner.stopCommandAction === "function") {
       commandRunner.stopCommandAction();
       return;
     }
-    if (currentSession?.sessionId) {
-      clearPendingPrompt(currentSession.sessionId);
-    } else {
-      activePrompt.value = null;
-    }
+    clearPromptRunState();
     activeStage.value = "";
     stopWithFailure(autopilotStoppedFailure());
   }
@@ -670,7 +674,6 @@ function useAiStudioAutopilotController({
     clearFailure();
     active.value = true;
     try {
-      const mergeSession = readSession(session);
       const prepareAction = actionById(readActions(actions), "prepare_for_merge");
       if (!prepareAction) {
         stopWithFailure(missingActionFailure({
@@ -686,7 +689,7 @@ function useAiStudioAutopilotController({
         }));
         return false;
       }
-      await runPromptAction(mergeSession, prepareAction, {
+      await runPromptAction(prepareAction, {
         actionId: prepareAction.id,
         label: prepareAction.label || "Prepare for merge"
       }, {
@@ -847,20 +850,22 @@ function useAiStudioAutopilotController({
           return;
         }
 
-        clearStalePendingPrompt(currentSession);
         if (currentStepIsStopPoint(currentSession.currentStep)) {
           return;
         }
 
-        const pendingPromptResume = await resumePendingPromptIfNeeded(currentSession);
-        if (pendingPromptResume === PROMPT_WAIT_RESULT.QUESTIONS) {
+        const promptRunResume = await resumePromptRunIfNeeded(currentSession);
+        if (promptRunResume === PROMPT_WAIT_RESULT.QUESTIONS) {
           return;
         }
         if (failure.value) {
           return;
         }
-        if (pendingPromptResume === PROMPT_WAIT_RESULT.COMPLETED) {
+        if (promptRunResume === PROMPT_WAIT_RESULT.COMPLETED) {
           continue;
+        }
+        if (promptRunForSession(currentSession)) {
+          return;
         }
         if (codexIsActiveForCurrentStep()) {
           return;
@@ -925,44 +930,36 @@ function useAiStudioAutopilotController({
     return true;
   }
 
-  async function resumePendingPromptIfNeeded(currentSession = {}) {
-    const pending = activePrompt.value ||
-      readStoredPendingPrompt(currentSession.sessionId) ||
-      pendingPromptFromSessionMetadata(currentSession);
-    if (pendingPromptWasLeftBehind(pending, currentSession)) {
-      clearPendingPrompt(currentSession.sessionId);
-      return PROMPT_WAIT_RESULT.INCOMPLETE;
-    }
-    if (!pendingPromptMatchesSession(pending, currentSession)) {
+  async function resumePromptRunIfNeeded(currentSession = {}) {
+    const promptRun = activePromptRunForSession(currentSession);
+    if (!promptRunMatchesSession(promptRun, currentSession)) {
       return PROMPT_WAIT_RESULT.INCOMPLETE;
     }
 
-    activePrompt.value = pending;
-    activeStage.value = String(actionById(readActions(actions), pending.actionId)?.label || stepLabel(currentSession));
-    if (Array.isArray(pending.questions) && pending.questions.length > 0) {
-      startWorkflowQuestionExchange(pending);
+    activePromptRun.value = promptRun;
+    activeStage.value = String(actionById(readActions(actions), promptRun.actionId)?.label || stepLabel(currentSession));
+    if (Array.isArray(promptRun.questions) && promptRun.questions.length > 0) {
+      startWorkflowQuestionExchange(promptRun);
       return PROMPT_WAIT_RESULT.QUESTIONS;
     }
 
-    const waitResult = await waitForPromptCompletion(pending);
+    const questionMarker = latestQuestionMarkerForPromptRun(promptRun);
+    if (questionMarker) {
+      captureWorkflowQuestions(promptRun, questionMarker);
+      return PROMPT_WAIT_RESULT.QUESTIONS;
+    }
+    const waitResult = await waitForPromptCompletion(promptRun);
     if (waitResult === PROMPT_WAIT_RESULT.QUESTIONS) {
       return PROMPT_WAIT_RESULT.QUESTIONS;
     }
     if (waitResult !== PROMPT_WAIT_RESULT.COMPLETED) {
-      clearPendingPrompt(pending.sessionId);
-      if (stopRequested) {
-        return PROMPT_WAIT_RESULT.INCOMPLETE;
-      }
-      if (!failure.value) {
-        stopWithFailure(promptNotCompletedFailure({
-          actionId: pending.actionId,
-          label: activeStage.value
-        }));
-      }
-      return PROMPT_WAIT_RESULT.COMPLETED;
+      return PROMPT_WAIT_RESULT.INCOMPLETE;
     }
 
-    clearPendingPrompt(pending.sessionId);
+    clearPromptRunState();
+    clearReplanFeedback({
+      id: promptRun.actionId
+    });
     await advanceCurrentStepIfReady();
     return PROMPT_WAIT_RESULT.COMPLETED;
   }
@@ -997,7 +994,7 @@ function useAiStudioAutopilotController({
       return;
     }
     if (action.type === "prompt") {
-      await runPromptAction(currentSession, action, stage);
+      await runPromptAction(action, stage);
       return;
     }
 
@@ -1028,58 +1025,42 @@ function useAiStudioAutopilotController({
     };
   }
 
-  async function runPromptAction(currentSession = {}, action = {}, stage = {}, {
+  async function runPromptAction(action = {}, stage = {}, {
     advanceAfterCompletion = true
   } = {}) {
-    const pending = {
-      actionId: action.id,
-      advanceAfterCompletion,
-      completionToken: createStepCompletionToken(),
-      outputCursor: readCodexOutput(codexTerminal).length,
-      requestId: createRequestId(),
-      sessionId: currentSession.sessionId,
-      startedAt: Date.now(),
-      stepId: currentSession.currentStep
-    };
-    activePrompt.value = pending;
-    writeStoredPendingPrompt(pending);
+    const startingStep = currentStep.value;
     try {
       await actions.runAction?.(action, {
-        completionActionId: pending.actionId,
-        completionRequestId: pending.requestId,
-        completionStartedAt: String(pending.startedAt),
-        completionStepId: pending.stepId,
-        completionToken: pending.completionToken,
-        input: promptActionInput(action),
-        promptSuffix: stepCompletionTokenInstruction({
-          requestId: pending.requestId,
-          token: pending.completionToken
-        })
+        input: promptActionInput(action)
       });
       await refreshSessionData();
       await nextTick();
-      const waitResult = await waitForPromptCompletion(pending);
+      const promptRun = activePromptRunForSession(readSession(session));
+      if (!promptRunMatchesSession(promptRun, readSession(session))) {
+        if (currentStep.value !== startingStep) {
+          return;
+        }
+        stopWithFailure(promptNotCompletedFailure(stage));
+        return;
+      }
+      activePromptRun.value = {
+        ...promptRun,
+        advanceAfterCompletion
+      };
+      const waitResult = await waitForPromptCompletion(activePromptRun.value);
       if (waitResult === PROMPT_WAIT_RESULT.QUESTIONS) {
         return;
       }
       if (waitResult !== PROMPT_WAIT_RESULT.COMPLETED) {
-        const promptMovedOn = pendingPromptWasLeftBehind(pending, readSession(session));
-        clearPendingPrompt(pending.sessionId);
-        if (stopRequested || promptMovedOn) {
-          return;
-        }
-        if (!failure.value) {
-          stopWithFailure(promptNotCompletedFailure(stage));
-        }
         return;
       }
-      clearPendingPrompt(pending.sessionId);
+      clearPromptRunState();
       clearReplanFeedback(action);
       if (advanceAfterCompletion) {
         await advanceCurrentStepIfReady();
       }
     } catch (error) {
-      clearPendingPrompt(pending.sessionId);
+      clearPromptRunState();
       stopWithFailure({
         actionId: action.id,
         actionLabel: action.label,
@@ -1092,28 +1073,21 @@ function useAiStudioAutopilotController({
     }
   }
 
-  async function continueAfterWorkflowQuestionAnswers(pending = {}) {
+  async function continueAfterWorkflowQuestionAnswers(promptRun = {}) {
     try {
-      const waitResult = await waitForPromptCompletion(pending);
+      const waitResult = await waitForPromptCompletion(promptRun);
       if (waitResult === PROMPT_WAIT_RESULT.QUESTIONS) {
         return false;
       }
       if (waitResult !== PROMPT_WAIT_RESULT.COMPLETED) {
-        clearPendingPrompt(pending.sessionId);
-        if (!failure.value) {
-          stopWithFailure(promptNotCompletedFailure({
-            actionId: pending.actionId,
-            label: actionLabelForId(pending.actionId)
-          }));
-        }
         return false;
       }
 
-      clearPendingPrompt(pending.sessionId);
+      clearPromptRunState();
       clearReplanFeedback({
-        id: pending.actionId
+        id: promptRun.actionId
       });
-      if (pending.advanceAfterCompletion !== false) {
+      if (promptRun.advanceAfterCompletion !== false) {
         await advanceCurrentStepIfReady();
       }
       active.value = false;
@@ -1144,35 +1118,35 @@ function useAiStudioAutopilotController({
     }
   }
 
-  async function waitForPromptCompletion(pending = {}) {
-    while (pendingPromptMatchesSession(pending, readSession(session))) {
+  async function waitForPromptCompletion(promptRun = {}) {
+    while (promptRunMatchesSession(activePromptRunForSession(readSession(session)), readSession(session))) {
       if (stopRequested) {
         return PROMPT_WAIT_RESULT.INCOMPLETE;
       }
       const promptError = readPromptInjectionError(codexTerminal);
       if (promptError) {
-        stopWithPromptError(pending, promptError);
+        stopWithPromptError(promptRun, promptError);
         return PROMPT_WAIT_RESULT.INCOMPLETE;
       }
 
-      const output = codexOutputAfterCursor(pending);
-      if (outputHasStepCompletionToken(output, pending.completionToken)) {
-        return await waitForCodexIdle(pending)
+      const currentPromptRun = activePromptRunForSession(readSession(session)) || promptRun;
+      const output = codexOutputAfterCursor(currentPromptRun);
+      if (outputHasStepCompletionToken(output, currentPromptRun.completionToken)) {
+        return await waitForCodexIdle(currentPromptRun)
           ? PROMPT_WAIT_RESULT.COMPLETED
           : PROMPT_WAIT_RESULT.INCOMPLETE;
       }
       const questionMarker = latestAutopilotQuestionsMarker(output, {
-        requestId: pending.requestId
+        requestId: currentPromptRun.requestId
       }) || latestAutopilotQuestionsMarker(output, {
         allowAnyRequestId: true,
-        requestId: pending.requestId
+        requestId: currentPromptRun.requestId
       });
       if (questionMarker) {
-        captureWorkflowQuestions(pending, questionMarker);
+        captureWorkflowQuestions(currentPromptRun, questionMarker);
         return PROMPT_WAIT_RESULT.QUESTIONS;
       }
-      if (codexFinishedWithoutMarker(pending, output)) {
-        stopWithMissingPromptMarker(pending, output);
+      if (!readCodexBusy(codexTerminal) && codexFinishedWithoutMarker(currentPromptRun, output)) {
         return PROMPT_WAIT_RESULT.INCOMPLETE;
       }
       await delay(PROMPT_MARKER_POLL_MS);
@@ -1180,24 +1154,24 @@ function useAiStudioAutopilotController({
     return PROMPT_WAIT_RESULT.INCOMPLETE;
   }
 
-  async function waitForCodexIdle(pending = {}) {
-    while (pendingPromptMatchesSession(pending, readSession(session)) && readCodexBusy(codexTerminal)) {
+  async function waitForCodexIdle(promptRun = {}) {
+    while (promptRunMatchesSession(promptRun, readSession(session)) && readCodexBusy(codexTerminal)) {
       if (stopRequested) {
         return false;
       }
       const promptError = readPromptInjectionError(codexTerminal);
       if (promptError) {
-        stopWithPromptError(pending, promptError);
+        stopWithPromptError(promptRun, promptError);
         return false;
       }
       await delay(PROMPT_MARKER_POLL_MS);
     }
-    return pendingPromptMatchesSession(pending, readSession(session));
+    return promptRunMatchesSession(promptRun, readSession(session));
   }
 
-  function stopWithPromptError(pending = {}, promptError = "") {
+  function stopWithPromptError(promptRun = {}, promptError = "") {
     stopWithFailure({
-      actionId: pending.actionId,
+      actionId: promptRun.actionId,
       actionLabel: activeStage.value,
       error: promptError,
       exitCode: null,
@@ -1207,39 +1181,37 @@ function useAiStudioAutopilotController({
     });
   }
 
-  function captureWorkflowQuestions(pending = {}, marker = {}) {
-    const promptWithQuestions = {
-      ...pending,
+  function captureWorkflowQuestions(promptRun = {}, marker = {}) {
+    const promptRunWithQuestions = {
+      ...promptRun,
       outputCursor: readCodexOutput(codexTerminal).length,
       questionRequestId: marker.requestId,
       questions: marker.questions || []
     };
-    activePrompt.value = promptWithQuestions;
-    writeStoredPendingPrompt(promptWithQuestions);
-    startWorkflowQuestionExchange(promptWithQuestions);
+    activePromptRun.value = promptRunWithQuestions;
+    startWorkflowQuestionExchange(promptRunWithQuestions);
   }
 
-  function startWorkflowQuestionExchange(pending = {}) {
-    const questions = Array.isArray(pending.questions) ? pending.questions : [];
+  function startWorkflowQuestionExchange(promptRun = {}) {
+    const questions = Array.isArray(promptRun.questions) ? promptRun.questions : [];
     if (questions.length <= 0) {
       return false;
     }
 
     return codexQuestions.start({
-      contextLabel: actionLabelForId(pending.actionId),
+      contextLabel: actionLabelForId(promptRun.actionId),
       onAnswerChange: (nextQuestions = []) => {
-        activePrompt.value = {
-          ...pendingPromptForSession(readSession(session)),
+        activePromptRun.value = {
+          ...activePromptRunForSession(readSession(session)),
           questions: nextQuestions
         };
-        writeStoredPendingPrompt(activePrompt.value);
       },
       onCancel: () => {
-        clearPendingPrompt(pending.sessionId);
+        clearPromptRunState();
         stopWithFailure({
-          actionId: pending.actionId,
-          actionLabel: actionLabelForId(pending.actionId),
-          error: "Autopilot needs answers before it can continue this Codex step. Retry will run the step again, or switch to Inspect to continue manually.",
+          actionId: promptRun.actionId,
+          actionLabel: actionLabelForId(promptRun.actionId),
+          error: "Autopilot needs answers before it can continue this Codex step. Use Continue after answering in Inspect, or Retry to run the step again.",
           exitCode: null,
           ok: false,
           output: "",
@@ -1247,44 +1219,37 @@ function useAiStudioAutopilotController({
         });
       },
       onSubmitFailed: ({ questions: answeredQuestions = [] } = {}) => {
-        activePrompt.value = {
-          ...pending,
+        activePromptRun.value = {
+          ...promptRun,
           questions: answeredQuestions
         };
-        writeStoredPendingPrompt(activePrompt.value);
       },
       onSubmitted: async ({ prepared = {} } = {}) => {
-        if (prepared.pending) {
-          await continueAfterWorkflowQuestionAnswers(prepared.pending);
+        if (prepared.promptRun) {
+          await continueAfterWorkflowQuestionAnswers(prepared.promptRun);
         }
       },
-      ownerId: workflowQuestionOwnerId(pending),
+      ownerId: workflowQuestionOwnerId(promptRun),
       prepareSubmit: ({ questions: answeredQuestions = [] } = {}) => {
-        const nextPending = {
-          ...pending,
+        const nextPromptRun = {
+          ...promptRun,
           outputCursor: readCodexOutput(codexTerminal).length,
           questions: []
         };
-        activePrompt.value = nextPending;
-        writeStoredPendingPrompt(nextPending);
+        activePromptRun.value = nextPromptRun;
         active.value = true;
-        activeStage.value = actionLabelForId(nextPending.actionId);
+        activeStage.value = actionLabelForId(nextPromptRun.actionId);
         return {
           injectionContext: {
-            completionActionId: nextPending.actionId,
-            completionRequestId: nextPending.requestId,
-            completionStartedAt: String(nextPending.startedAt || Date.now()),
-            completionStepId: nextPending.stepId,
-            completionToken: nextPending.completionToken,
-            requestId: nextPending.requestId,
-            sessionId: nextPending.sessionId
+            requestId: nextPromptRun.requestId,
+            sessionId: nextPromptRun.sessionId
           },
-          pending: nextPending,
+          promptRun: nextPromptRun,
           prompt: autopilotQuestionAnswersInstruction({
             actionLabel: activeStage.value,
-            completionToken: nextPending.completionToken,
+            completionToken: nextPromptRun.completionToken,
             questions: answeredQuestions,
-            requestId: nextPending.requestId
+            requestId: nextPromptRun.requestId
           })
         };
       },
@@ -1292,34 +1257,21 @@ function useAiStudioAutopilotController({
     });
   }
 
-  function codexFinishedWithoutMarker(pending = {}, output = "") {
+  function codexFinishedWithoutMarker(promptRun = {}, output = "") {
     if (readCodexBusy(codexTerminal)) {
       return false;
     }
     if (String(output || "").trim()) {
       return true;
     }
-    const startedAt = Number(pending.startedAt || 0);
-    return Number.isSafeInteger(startedAt) &&
-      startedAt > 0 &&
-      Date.now() - startedAt >= PROMPT_IDLE_WITHOUT_OUTPUT_GRACE_MS;
+    const createdAt = Date.parse(promptRun.createdAt || "");
+    return Number.isFinite(createdAt) &&
+      Date.now() - createdAt >= PROMPT_IDLE_WITHOUT_OUTPUT_GRACE_MS;
   }
 
-  function stopWithMissingPromptMarker(pending = {}, output = "") {
-    stopWithFailure({
-      actionId: pending.actionId,
-      actionLabel: activeStage.value,
-      error: missingPromptMarkerError(pending, activeStage.value, output),
-      exitCode: null,
-      ok: false,
-      output,
-      source: "codex"
-    });
-  }
-
-  function codexOutputAfterCursor(pending = {}) {
+  function codexOutputAfterCursor(promptRun = {}) {
     const output = readCodexOutput(codexTerminal);
-    const cursor = Number(pending.outputCursor || 0);
+    const cursor = promptRunOutputStart(promptRun);
     if (!Number.isSafeInteger(cursor) || cursor <= 0) {
       return output;
     }
@@ -1332,40 +1284,47 @@ function useAiStudioAutopilotController({
     return output.slice(cursor);
   }
 
-  function clearPendingPrompt(sessionId = "") {
-    const pending = activePrompt.value || readStoredPendingPrompt(sessionId);
-    codexQuestions.clearForOwner(workflowQuestionOwnerId(pending || {}));
-    activePrompt.value = null;
-    clearStoredPendingPrompt(sessionId);
+  function clearPromptRunState() {
+    codexQuestions.clearForOwner(workflowQuestionOwnerId(activePromptRun.value || currentPromptRun.value || {}));
+    activePromptRun.value = null;
   }
 
-  function clearStalePendingPrompt(currentSession = {}) {
-    const pending = pendingPromptForSession(currentSession);
-    if (pendingPromptWasLeftBehind(pending, currentSession)) {
-      clearPendingPrompt(currentSession.sessionId);
-    }
-  }
-
-  function pendingPromptForSession(currentSession = {}) {
-    return activePrompt.value ||
-      readStoredPendingPrompt(currentSession.sessionId) ||
-      pendingPromptFromSessionMetadata(currentSession);
-  }
-
-  function pendingPromptForCurrentCodexStep(currentSession = {}, marker = {}) {
-    const stage = currentPromptStage(currentSession);
-    if (!stage) {
+  function activePromptRunForSession(currentSession = {}) {
+    const serverPromptRun = promptRunForSession(currentSession);
+    if (!serverPromptRun) {
       return null;
     }
+    if (!promptRunsAreSame(activePromptRun.value, serverPromptRun)) {
+      return serverPromptRun;
+    }
     return {
-      actionId: stage.actionId,
-      completionToken: createStepCompletionToken(),
-      outputCursor: readCodexOutput(codexTerminal).length,
-      requestId: String(marker.requestId || createRequestId()),
-      sessionId: currentSession.sessionId,
-      startedAt: Date.now(),
-      stepId: currentSession.currentStep
+      ...serverPromptRun,
+      advanceAfterCompletion: activePromptRun.value.advanceAfterCompletion,
+      questions: activePromptRun.value.questions
     };
+  }
+
+  function promptRunsAreSame(left = {}, right = {}) {
+    return Boolean(left && right) &&
+      left.sessionId === right.sessionId &&
+      left.stepId === right.stepId &&
+      left.actionId === right.actionId &&
+      left.requestId === right.requestId &&
+      left.completionToken === right.completionToken;
+  }
+
+  function latestQuestionMarkerForPromptRun(promptRun = {}) {
+    const output = codexOutputAfterCursor(promptRun);
+    return latestAutopilotQuestionsMarker(output, {
+      requestId: promptRun.requestId
+    }) || latestAutopilotQuestionsMarker(output, {
+      allowAnyRequestId: true,
+      requestId: promptRun.requestId
+    });
+  }
+
+  function promptRunHasCompletion(promptRun = {}) {
+    return outputHasStepCompletionToken(codexOutputAfterCursor(promptRun), promptRun.completionToken);
   }
 
   function currentPromptStage(currentSession = {}) {
@@ -1392,14 +1351,14 @@ function useAiStudioAutopilotController({
     if (!codexBusy.value || !currentSession?.sessionId) {
       return false;
     }
-    const pending = pendingPromptForSession(currentSession);
-    return pendingPromptMatchesSession(pending, currentSession) ||
+    return promptRunMatchesSession(activePromptRunForSession(currentSession), currentSession) ||
       Boolean(currentPromptStage(currentSession));
   }
 
   function captureQuestionsFromCurrentCodexOutput() {
     const currentSession = readSession(session);
-    if (workflowQuestionActive.value || !currentPromptStage(currentSession)) {
+    const promptRun = activePromptRunForSession(currentSession);
+    if (workflowQuestionActive.value || !promptRun) {
       return false;
     }
 
@@ -1409,27 +1368,12 @@ function useAiStudioAutopilotController({
     }
     generalQuestionScanLength = output.length;
 
-    const pending = pendingPromptForSession(currentSession);
-    const exactMarker = pendingPromptMatchesSession(pending, currentSession)
-      ? latestAutopilotQuestionsMarker(codexOutputAfterCursor(pending), {
-        requestId: pending.requestId
-      })
-      : null;
-    const marker = exactMarker || latestAutopilotQuestionsMarker(output, {
-      allowAnyRequestId: true
-    });
+    const marker = latestQuestionMarkerForPromptRun(promptRun);
     if (!marker) {
       return false;
     }
 
-    const questionPending = pendingPromptMatchesSession(pending, currentSession)
-      ? pending
-      : pendingPromptForCurrentCodexStep(currentSession, marker);
-    if (!questionPending) {
-      return false;
-    }
-
-    captureWorkflowQuestions(questionPending, marker);
+    captureWorkflowQuestions(promptRun, marker);
     stopRequested = false;
     clearFailure();
     return true;
@@ -1445,7 +1389,7 @@ function useAiStudioAutopilotController({
     if (captureQuestionsFromCurrentCodexOutput()) {
       return;
     }
-    if (!pendingPromptMatchesSession(pendingPromptForSession(currentSession), currentSession)) {
+    if (!promptRunMatchesSession(activePromptRunForSession(currentSession), currentSession)) {
       return;
     }
     await runUntilStopPoint();
@@ -1511,8 +1455,10 @@ function useAiStudioAutopilotController({
     commandPreview,
     commandResult,
     commandRunning,
+    continuePromptRun,
     failure,
     mergeAndSyncMainCheckout,
+    promptRunNeedsContinuation,
     readyForFinished,
     readyForDeepUiCheck,
     readyForIssue,

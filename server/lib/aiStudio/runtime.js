@@ -1,4 +1,5 @@
 import {
+  AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION,
   AI_STUDIO_SESSION_STATUS,
   assertSafeActionId,
   createAiStudioSessionStore
@@ -12,10 +13,18 @@ import {
   normalizeText
 } from "./core.js";
 import {
+  promptSessionBriefing
+} from "./promptRenderer.js";
+import {
   STUDIO_CONTEXT_END_MARKER,
   STUDIO_CONTEXT_START_MARKER,
   wrapPromptWithStudioContext
 } from "./promptMarkers.js";
+import {
+  appendPromptRunInstruction,
+  createPromptRun,
+  promptRunBlocksAction
+} from "./promptRun.js";
 import {
   runtimeContainerManagedServicesPromptFacts,
   runtimeContainerPromptFacts
@@ -29,6 +38,10 @@ function metadataFlagIsOn(value) {
 
 function promptActionIsBlocked(action = {}, session = {}) {
   return action.type === "prompt" && metadataFlagIsOn(session.metadata?.terminal_active);
+}
+
+function promptActionHasUnfinishedRun(action = {}, session = {}) {
+  return action.type === "prompt" && promptRunBlocksAction(action, session);
 }
 
 function actionCapabilityIsMissing(action = {}, session = {}) {
@@ -57,6 +70,9 @@ function disabledAction(disabledReason) {
 function defaultActionReadiness({ action = {}, session = {} } = {}) {
   if (promptActionIsBlocked(action, session)) {
     return disabledAction("Codex terminal is active.");
+  }
+  if (promptActionHasUnfinishedRun(action, session)) {
+    return disabledAction("Codex prompt is waiting to continue.");
   }
   if (actionCapabilityIsMissing(action, session)) {
     return disabledAction(adapterCapabilityDisabledReason(action, session));
@@ -167,8 +183,69 @@ function buildCodexPromptHandoff(renderedPrompt) {
     },
     prompt: renderedPrompt.prompt,
     promptId: renderedPrompt.promptId,
-    terminalInput: wrapPromptWithStudioContext(renderedPrompt.prompt)
+    terminalInput: wrapPromptWithStudioContext(renderedPrompt.prompt, renderedPrompt.visiblePrompt)
   };
+}
+
+function toDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw aiStudioError("Invalid ai-studio clock value.", "ai_studio_invalid_clock");
+  }
+  return date;
+}
+
+function createClockNow(clock) {
+  if (typeof clock === "function") {
+    return () => toDate(clock());
+  }
+  return () => new Date();
+}
+
+function promptContextSnapshotHasAdapter(snapshot = {}) {
+  return Boolean(snapshot && typeof snapshot === "object" && snapshot.adapter && typeof snapshot.adapter === "object");
+}
+
+function createPromptContextSnapshot({
+  adapter,
+  now
+} = {}) {
+  return {
+    adapter,
+    createdAt: now().toISOString(),
+    schemaVersion: AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
+  };
+}
+
+function sessionBriefingIsDelivered(session = {}) {
+  return normalizeText(session.metadata?.codex_session_briefing_delivered) === "yes";
+}
+
+function promptSessionWithStaticContextReferences(session = {}) {
+  return {
+    ...session,
+    promptStaticContextMode: "reference"
+  };
+}
+
+function promptWithSessionBriefing({
+  prompt = "",
+  session = {},
+  sessionBriefingIncluded = false
+} = {}) {
+  if (!sessionBriefingIncluded) {
+    return String(prompt || "").trim();
+  }
+  return [
+    promptSessionBriefing({
+      config: session.config,
+      session
+    }),
+    String(prompt || "").trim()
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 class AiStudioSessionRuntime {
@@ -201,6 +278,7 @@ class AiStudioSessionRuntime {
       clock,
       targetRoot
     });
+    this.now = createClockNow(clock);
   }
 
   async createSession(input = {}) {
@@ -227,13 +305,47 @@ class AiStudioSessionRuntime {
     return this.actionHandlers[actionId] || this.defaultHandler;
   }
 
-  async sessionView(session) {
+  async sessionView(session, {
+    sessionAdapter = undefined
+  } = {}) {
     const sessionWithConfig = {
       ...session,
       config: this.projectConfig,
-      adapter: await this.adapterViewForSession(session)
+      adapter: sessionAdapter || await this.adapterViewForSession(session)
     };
     return this.workflowMachine.buildSessionView(sessionWithConfig);
+  }
+
+  async promptContextSnapshotForSession(session) {
+    const currentSnapshot = promptContextSnapshotHasAdapter(session.promptContextSnapshot)
+      ? session.promptContextSnapshot
+      : await this.store.readPromptContextSnapshot(session.sessionId);
+    if (promptContextSnapshotHasAdapter(currentSnapshot)) {
+      return currentSnapshot;
+    }
+    return this.store.writePromptContextSnapshot(session.sessionId, createPromptContextSnapshot({
+      adapter: session.adapter || await this.adapterViewForSession(session),
+      now: this.now
+    }));
+  }
+
+  async promptSessionForAction(session) {
+    const promptContextSnapshot = await this.promptContextSnapshotForSession(session);
+    return {
+      ...session,
+      adapter: promptContextSnapshot.adapter,
+      promptContextSnapshot
+    };
+  }
+
+  async runActionSessionView(sessionId) {
+    const session = await this.store.readSession(sessionId);
+    const sessionAdapter = promptContextSnapshotHasAdapter(session.promptContextSnapshot)
+      ? session.promptContextSnapshot.adapter
+      : await this.adapterViewForSession(session);
+    return this.sessionView(session, {
+      sessionAdapter
+    });
   }
 
   async adapterViewForSession(session) {
@@ -309,19 +421,40 @@ class AiStudioSessionRuntime {
     input = {},
     session
   } = {}) {
+    const promptSession = await this.promptSessionForAction(session);
+    const sessionBriefingIncluded = !sessionBriefingIsDelivered(promptSession);
+    const actionPromptSession = promptSessionWithStaticContextReferences(promptSession);
     const renderedPrompt = await this.adapter.renderPrompt({
       action,
       config: this.projectConfig,
       input,
       runtime: this,
-      session,
+      session: actionPromptSession,
       store: this.store
     });
-    return {
-      codexPromptHandoff: buildCodexPromptHandoff(renderedPrompt),
+    const promptWithBriefing = promptWithSessionBriefing({
       prompt: renderedPrompt.prompt,
+      session: promptSession,
+      sessionBriefingIncluded
+    });
+    const promptRun = await this.store.writePromptRun(promptSession.sessionId, createPromptRun({
+      action,
+      now: this.now(),
+      promptId: renderedPrompt.promptId,
+      sessionBriefingIncluded,
+      session: promptSession
+    }));
+    const prompt = appendPromptRunInstruction(promptWithBriefing, promptRun);
+    return {
+      codexPromptHandoff: buildCodexPromptHandoff({
+        ...renderedPrompt,
+        prompt,
+        visiblePrompt: action.label || renderedPrompt.promptId
+      }),
+      prompt,
       promptContext: renderedPrompt.context,
       promptId: renderedPrompt.promptId,
+      promptRun,
       status: "prompt_ready"
     };
   }
@@ -386,7 +519,7 @@ class AiStudioSessionRuntime {
 
   async runAction(sessionId, actionId, input = {}) {
     const normalizedActionId = assertSafeActionId(actionId);
-    const session = await this.getSession(sessionId);
+    const session = await this.runActionSessionView(sessionId);
     const action = currentAction(session, normalizedActionId);
     if (!action) {
       throw actionNotAvailableError(session, normalizedActionId);
@@ -417,7 +550,7 @@ class AiStudioSessionRuntime {
     );
 
     return {
-      ...await this.getSession(session.sessionId),
+      ...await this.runActionSessionView(session.sessionId),
       actionResult
     };
   }
@@ -433,6 +566,7 @@ class AiStudioSessionRuntime {
     await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
       message: `Advanced from ${session.currentStep} to ${session.next.stepId}.`
     });
+    await this.store.deletePromptRun(session.sessionId);
     await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
     return this.getSession(session.sessionId);
   }
@@ -448,7 +582,8 @@ class AiStudioSessionRuntime {
       this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
       this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
       this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
-      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames)
+      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames),
+      this.store.deletePromptRun(session.sessionId)
     ]);
     await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
     await this.store.appendCommandLogEntry(session.sessionId, {

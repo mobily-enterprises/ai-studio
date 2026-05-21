@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   consumeShellShortcutEvent,
+  MAX_SHELL_TABS,
   shellShortcutAction
 } from "../../src/lib/aiStudioShellShortcuts.js";
 
@@ -53,6 +54,10 @@ describe("AI Studio shell shortcuts", () => {
     expect(shellShortcutAction(keyboardEvent({
       altKey: true,
       key: "0"
+    }))).toBeNull();
+    expect(shellShortcutAction(keyboardEvent({
+      altKey: true,
+      key: String(MAX_SHELL_TABS + 1)
     }))).toBeNull();
   });
 

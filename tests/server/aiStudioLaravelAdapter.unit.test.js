@@ -227,7 +227,7 @@ test("laravel prompt actions use the Laravel prompt pack", async () => {
     assert.match(afterPrompt.actionResult.prompt, /Create the implementation plan for this Laravel project/u);
     assert.match(afterPrompt.actionResult.prompt, /Database runtime: MariaDB/u);
     assert.match(afterPrompt.actionResult.prompt, /Starter kit: Livewire/u);
-    assert.doesNotMatch(afterPrompt.actionResult.prompt, /adapter\.promptContext\.environment_blueprint/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /\{\{adapter\.promptContext\.environment_blueprint\}\}/u);
     assert.match(afterPrompt.actionResult.prompt, /example\/laravel-app/u);
   });
 });

@@ -1,3 +1,5 @@
+const MAX_SHELL_TABS = 5;
+
 function shellShortcutAction(event = {}) {
   const key = String(event.key || "").toLowerCase();
   const plainAlt = event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey;
@@ -13,10 +15,13 @@ function shellShortcutAction(event = {}) {
     };
   }
   if (plainAlt && /^[1-9]$/u.test(key)) {
-    return {
-      tabIndex: Number(key) - 1,
-      type: "select-tab"
-    };
+    const tabIndex = Number(key) - 1;
+    if (tabIndex < MAX_SHELL_TABS) {
+      return {
+        tabIndex,
+        type: "select-tab"
+      };
+    }
   }
   return null;
 }
@@ -28,5 +33,6 @@ function consumeShellShortcutEvent(event = {}) {
 
 export {
   consumeShellShortcutEvent,
+  MAX_SHELL_TABS,
   shellShortcutAction
 };

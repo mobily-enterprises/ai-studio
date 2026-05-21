@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   PromptRenderer,
+  promptSessionBriefing,
   renderPromptTemplate
 } from "../../server/lib/aiStudio/index.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
+
+const SYSTEM_PROMPT_PACK_ROOT = fileURLToPath(new URL("../../server/lib/aiStudio/systemPrompts", import.meta.url));
 
 test("ai-studio prompt renderer renders explicit session context into prompt templates", async () => {
   await withTemporaryRoot(async (promptPackRoot) => {
@@ -283,6 +287,140 @@ test("ai-studio prompt renderer does not create target files when no override ex
       );
     });
   });
+});
+
+test("execute and deslop standard prompts explicitly point Codex at the generated code index", async () => {
+  const renderer = new PromptRenderer({
+    promptPackRoot: SYSTEM_PROMPT_PACK_ROOT,
+    systemPromptPackRoot: false
+  });
+  const baseSession = {
+    currentStep: "plan_executed",
+    metadata: {
+      code_index_path: ".jskit/helper-map.md"
+    },
+    sessionId: "code_index_prompt",
+    targetRoot: "/workspace/example"
+  };
+
+  const executePlan = await renderer.renderPrompt({
+    action: {
+      id: "execute_plan",
+      label: "Execute plan",
+      promptId: "execute_plan",
+      type: "prompt"
+    },
+    session: baseSession
+  });
+  const runDeslop = await renderer.renderPrompt({
+    action: {
+      id: "run_deslop",
+      label: "Run deslop",
+      promptId: "run_deslop",
+      type: "prompt"
+    },
+    session: {
+      ...baseSession,
+      currentStep: "review_run"
+    }
+  });
+  const makePlan = await renderer.renderPrompt({
+    action: {
+      id: "make_plan",
+      label: "Make plan",
+      promptId: "make_plan",
+      type: "prompt"
+    },
+    session: {
+      ...baseSession,
+      currentStep: "plan_made"
+    }
+  });
+
+  assert.match(executePlan.prompt, /Code index policy:/u);
+  assert.match(executePlan.prompt, /If session metadata includes `code_index_path`, read that generated code index before adding helpers/u);
+  assert.match(executePlan.prompt, /\.jskit\/helper-map\.md/u);
+  assert.match(runDeslop.prompt, /Code index policy:/u);
+  assert.match(runDeslop.prompt, /If session metadata includes `code_index_path`, read that generated code index before reviewing helper-like code/u);
+  assert.match(runDeslop.prompt, /\.jskit\/helper-map\.md/u);
+  assert.doesNotMatch(makePlan.prompt, /Code index policy:/u);
+});
+
+test("ai-studio prompt renderer can mask static context after the session briefing", () => {
+  const rendered = renderPromptTemplate([
+    "Facts: {{adapter.facts.json}}",
+    "Blueprint: {{adapter.promptContext.environment_blueprint}}",
+    "Services: {{adapter.managedServices.json}}",
+    "Policy: {{prompt.managedServicePolicy}}",
+    "Config: {{config.json}}",
+    "Context: {{context.json}}"
+  ].join("\n"), {
+    adapter: {
+      facts: {
+        summary: "Large static project summary"
+      },
+      managedServices: [
+        {
+          label: "Large static database service"
+        }
+      ],
+      promptContext: {
+        environment_blueprint: "Large static environment blueprint"
+      }
+    },
+    config: {
+      framework: "large-static-config"
+    },
+    prompt: {
+      staticContextMode: "reference"
+    },
+    product: "ai-studio",
+    session: {}
+  });
+
+  assert.match(rendered, /AI Studio session briefing/u);
+  assert.match(rendered, /adapter\.promptContext\.environment_blueprint/u);
+  assert.doesNotMatch(rendered, /Large static project summary/u);
+  assert.doesNotMatch(rendered, /Large static database service/u);
+  assert.doesNotMatch(rendered, /Large static environment blueprint/u);
+  assert.doesNotMatch(rendered, /large-static-config/u);
+});
+
+test("ai-studio session briefing contains the static adapter setup once", () => {
+  const briefing = promptSessionBriefing({
+    adapter: {
+      facts: {
+        summary: "Prompt-aware project"
+      },
+      id: "fake",
+      label: "Fake adapter",
+      managedServices: [
+        {
+          label: "Managed database"
+        }
+      ],
+      promptContext: {
+        environment_blueprint: "Static environment blueprint"
+      }
+    },
+    config: {
+      packageManager: "npm"
+    },
+    session: {
+      artifactsRoot: "/workspace/.ai-studio/session/artifacts",
+      metadata: {},
+      sessionId: "briefing_session",
+      targetRoot: "/workspace",
+      worktree: "/workspace/worktree"
+    }
+  });
+
+  assert.match(briefing, /AI Studio session briefing/u);
+  assert.match(briefing, /Prompt-aware project/u);
+  assert.match(briefing, /Static environment blueprint/u);
+  assert.match(briefing, /Managed database/u);
+  assert.match(briefing, /packageManager/u);
+  assert.match(briefing, /code_index_path/u);
 });
 
 test("ai-studio prompt templates reject unknown tokens", () => {

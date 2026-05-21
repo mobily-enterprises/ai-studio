@@ -25,6 +25,8 @@ const MANAGED_SERVICE_POLICY = [
   "Do not inspect Docker, Docker Compose, container names, runtime networks, localhost sockets, getent, mysqladmin, mariadb-admin, pg_isready, or host port probes for normal managed-service work.",
   "If the listed client command cannot connect, report that the managed service is not ready or ask for the missing external detail; do not invent alternate credentials or infrastructure."
 ].join(" ");
+const STATIC_CONTEXT_REFERENCE = "Use the AI Studio session briefing already provided for adapter facts, adapter prompt context, managed services, managed service policy, and project config.";
+const STATIC_CONTEXT_REFERENCE_MODE = "reference";
 
 function assertPromptId(promptId) {
   const normalizedPromptId = normalizeText(promptId);
@@ -50,6 +52,12 @@ function stableValue(value) {
 
 function stableJson(value) {
   return JSON.stringify(stableValue(value), null, 2);
+}
+
+function staticContextMode(value = "") {
+  return normalizeText(value) === STATIC_CONTEXT_REFERENCE_MODE
+    ? STATIC_CONTEXT_REFERENCE_MODE
+    : "inline";
 }
 
 function promptTemplatePath(promptPackRoot, promptId) {
@@ -140,6 +148,11 @@ function promptContextForAction({
 }
 
 function normalizePromptContext(context = {}) {
+  const adapterContext = context.adapter || context.session?.adapter;
+  const promptStaticContextMode = staticContextMode(
+    context.prompt?.staticContextMode ||
+    context.session?.promptStaticContextMode
+  );
   return {
     action: {
       id: normalizeText(context.action?.id),
@@ -148,17 +161,20 @@ function normalizePromptContext(context = {}) {
       type: normalizeText(context.action?.type)
     },
     adapter: {
-      commands: Array.isArray(context.adapter?.commands) ? context.adapter.commands : [],
-      detection: isPlainObject(context.adapter?.detection) ? context.adapter.detection : {},
-      facts: isPlainObject(context.adapter?.facts) ? context.adapter.facts : {},
-      id: normalizeText(context.adapter?.id),
-      label: normalizeText(context.adapter?.label),
-      managedServices: Array.isArray(context.adapter?.managedServices) ? context.adapter.managedServices : [],
-      promptContext: isPlainObject(context.adapter?.promptContext) ? context.adapter.promptContext : {}
+      commands: Array.isArray(adapterContext?.commands) ? adapterContext.commands : [],
+      detection: isPlainObject(adapterContext?.detection) ? adapterContext.detection : {},
+      facts: isPlainObject(adapterContext?.facts) ? adapterContext.facts : {},
+      id: normalizeText(adapterContext?.id),
+      label: normalizeText(adapterContext?.label),
+      managedServices: Array.isArray(adapterContext?.managedServices) ? adapterContext.managedServices : [],
+      promptContext: isPlainObject(adapterContext?.promptContext) ? adapterContext.promptContext : {}
     },
     config: isPlainObject(context.config) ? context.config : {},
     input: context.input ?? {},
     product: normalizeText(context.product || "ai-studio"),
+    prompt: {
+      staticContextMode: promptStaticContextMode
+    },
     session: {
       artifactsRoot: normalizeText(context.session?.artifactsRoot),
       completedSteps: Array.isArray(context.session?.completedSteps) ? context.session.completedSteps : [],
@@ -182,6 +198,7 @@ function sessionPromptContext(session = {}) {
     id: session.sessionId || session.id,
     metadataRoot: session.metadataRoot,
     metadata: session.metadata,
+    promptStaticContextMode: session.promptStaticContextMode,
     sessionRoot: session.sessionRoot,
     status: session.status,
     targetRoot: session.targetRoot,
@@ -189,25 +206,109 @@ function sessionPromptContext(session = {}) {
   };
 }
 
+function staticJsonReference(label = "") {
+  return {
+    aiStudioSessionBriefingReference: normalizeText(label) || STATIC_CONTEXT_REFERENCE
+  };
+}
+
+function staticScalarReference(tokenName = "") {
+  return `See the AI Studio session briefing for ${tokenName}.`;
+}
+
+function contextWithStaticReferences(context = {}) {
+  return {
+    ...context,
+    adapter: {
+      ...context.adapter,
+      commands: staticJsonReference("Adapter commands are in the AI Studio session briefing."),
+      facts: staticJsonReference("Adapter project facts are in the AI Studio session briefing."),
+      managedServices: staticJsonReference("Managed service connection details and policy are in the AI Studio session briefing."),
+      promptContext: staticJsonReference("Adapter prompt context is in the AI Studio session briefing.")
+    },
+    config: staticJsonReference("Project config is in the AI Studio session briefing.")
+  };
+}
+
+function promptSessionBriefingReference() {
+  return [
+    "Session briefing:",
+    STATIC_CONTEXT_REFERENCE,
+    "Do not ask the user to restate those static setup details. If this prompt includes an AI Studio session briefing above, treat that briefing as the source of truth for this Codex session."
+  ].join("\n");
+}
+
+function promptSessionBriefing(contextInput = {}) {
+  const context = normalizePromptContext(contextInput);
+  return [
+    "AI Studio session briefing",
+    "",
+    "This briefing is sent once at the start of this Codex session. Keep using it for later AI Studio prompts in the same session instead of asking for or rediscovering these static setup facts.",
+    "",
+    "Fixed session paths:",
+    `- session id: ${context.session.id}`,
+    `- target root: ${context.session.targetRoot}`,
+    `- worktree path: ${context.session.worktreePath}`,
+    `- artifacts root: ${context.session.artifactsRoot}`,
+    "",
+    "Adapter:",
+    `- id: ${context.adapter.id}`,
+    `- label: ${context.adapter.label}`,
+    "",
+    "Adapter project facts:",
+    stableJson(context.adapter.facts),
+    "",
+    "Adapter prompt context:",
+    stableJson(context.adapter.promptContext),
+    "",
+    "Managed services:",
+    stableJson(context.adapter.managedServices),
+    "",
+    "Managed service policy:",
+    MANAGED_SERVICE_POLICY,
+    "",
+    "Project config:",
+    stableJson(context.config),
+    "",
+    "Code index policy:",
+    "If later session metadata includes `code_index_path`, read that generated code index before adding or reviewing helper-like code. Prefer existing helpers and structures from that index over redefining them."
+  ].join("\n").trim();
+}
+
 function promptTemplateTokens(contextInput) {
   const context = normalizePromptContext(contextInput);
+  const referenceStaticContext = context.prompt.staticContextMode === STATIC_CONTEXT_REFERENCE_MODE;
+  const jsonContext = referenceStaticContext ? contextWithStaticReferences(context) : context;
   return {
     "action.id": context.action.id,
     "action.label": context.action.label,
     "action.promptId": context.action.promptId,
-    "adapter.commands.json": stableJson(context.adapter.commands),
+    "adapter.commands.json": referenceStaticContext
+      ? stableJson(staticJsonReference("Adapter commands are in the AI Studio session briefing."))
+      : stableJson(context.adapter.commands),
     "adapter.detection.json": stableJson(context.adapter.detection),
-    "adapter.facts.json": stableJson(context.adapter.facts),
+    "adapter.facts.json": referenceStaticContext
+      ? stableJson(staticJsonReference("Adapter project facts are in the AI Studio session briefing."))
+      : stableJson(context.adapter.facts),
     "adapter.id": context.adapter.id,
     "adapter.label": context.adapter.label,
-    "adapter.managedServices.json": stableJson(context.adapter.managedServices),
-    "adapter.promptContext.json": stableJson(context.adapter.promptContext),
+    "adapter.managedServices.json": referenceStaticContext
+      ? stableJson(staticJsonReference("Managed service connection details are in the AI Studio session briefing."))
+      : stableJson(context.adapter.managedServices),
+    "adapter.promptContext.json": referenceStaticContext
+      ? stableJson(staticJsonReference("Adapter prompt context is in the AI Studio session briefing."))
+      : stableJson(context.adapter.promptContext),
     "adapter.runtimeContainers.json": stableJson([]),
-    "config.json": stableJson(context.config),
-    "context.json": stableJson(context),
-    "prompt.managedServicePolicy": MANAGED_SERVICE_POLICY,
+    "config.json": referenceStaticContext
+      ? stableJson(staticJsonReference("Project config is in the AI Studio session briefing."))
+      : stableJson(context.config),
+    "context.json": stableJson(jsonContext),
+    "prompt.managedServicePolicy": referenceStaticContext
+      ? "Use the managed service policy from the AI Studio session briefing."
+      : MANAGED_SERVICE_POLICY,
     "input.json": stableJson(context.input),
     "prompt.missingInformationPolicy": MISSING_INFORMATION_POLICY,
+    "prompt.sessionBriefingReference": promptSessionBriefingReference(),
     "product": context.product,
     "session.artifactsRoot": context.session.artifactsRoot,
     "session.completedSteps.json": stableJson(context.session.completedSteps),
@@ -243,10 +344,20 @@ function scalarPromptContextTokens(promptContext = {}) {
   return Object.fromEntries(entries);
 }
 
+function scalarPromptContextReferenceTokens(promptContext = {}) {
+  const entries = Object.keys(isPlainObject(promptContext) ? promptContext : {})
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => [`adapter.promptContext.${key}`, staticScalarReference(`adapter.promptContext.${key}`)]);
+  return Object.fromEntries(entries);
+}
+
 function renderPromptTemplate(template, context, extraTokens = {}) {
   const normalizedContext = normalizePromptContext(context);
+  const promptContextTokens = normalizedContext.prompt.staticContextMode === STATIC_CONTEXT_REFERENCE_MODE
+    ? scalarPromptContextReferenceTokens(normalizedContext.adapter.promptContext)
+    : scalarPromptContextTokens(normalizedContext.adapter.promptContext);
   const tokens = {
-    ...scalarPromptContextTokens(normalizedContext.adapter.promptContext),
+    ...promptContextTokens,
     ...promptTemplateTokens(normalizedContext),
     ...extraTokens
   };
@@ -335,6 +446,7 @@ class PromptRenderer {
 export {
   PromptRenderer,
   promptContextForAction,
+  promptSessionBriefing,
   renderPromptTemplate,
   renderPromptWithOverrides
 };

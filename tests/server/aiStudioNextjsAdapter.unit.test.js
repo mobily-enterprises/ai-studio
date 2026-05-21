@@ -211,9 +211,10 @@ test("nextjs prompt actions use the Next.js prompt pack", async () => {
     assert.doesNotMatch(afterPrompt.actionResult.prompt, /Managed runtime containers/u);
     assert.doesNotMatch(afterPrompt.actionResult.prompt, /containerName/u);
     assert.match(afterPrompt.actionResult.prompt, /ask concise questions before planning or implementing/u);
-    assert.match(afterPrompt.actionResult.prompt, /Next\.js selected blueprint:\nDatabase runtime: PostgreSQL/u);
+    assert.match(afterPrompt.actionResult.prompt, /AI Studio session briefing[\s\S]*Database runtime: PostgreSQL/u);
+    assert.match(afterPrompt.actionResult.prompt, /Next\.js selected blueprint:\nSee the AI Studio session briefing/u);
     assert.match(afterPrompt.actionResult.prompt, /Data layer: Prisma/u);
-    assert.doesNotMatch(afterPrompt.actionResult.prompt, /adapter\.promptContext\.environment_blueprint/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /\{\{adapter\.promptContext\.environment_blueprint\}\}/u);
     assert.match(afterPrompt.actionResult.prompt, /example-nextjs-app/u);
   });
 });

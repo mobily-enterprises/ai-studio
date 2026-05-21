@@ -13,37 +13,6 @@
       }"
     >
       <div
-        v-show="codexTerminalVisible"
-        class="studio-autopilot__codex-terminal-stage"
-        :class="{
-          'studio-autopilot__codex-terminal-stage--ambient': codexTerminalAmbient,
-          'studio-autopilot__codex-terminal-stage--review': reviewCodexChatVisible
-        }"
-      >
-        <div
-          :id="codexTerminalHostId"
-          class="studio-autopilot__codex-terminal-host"
-        />
-        <div
-          v-if="codexOverlayVisible"
-          class="studio-autopilot__codex-terminal-overlay"
-        >
-          <strong>{{ codexOverlayTitle }}</strong>
-          <span>{{ codexOverlayText }}</span>
-          <v-btn
-            class="studio-autopilot__stop-button"
-            :prepend-icon="mdiClose"
-            size="small"
-            type="button"
-            variant="tonal"
-            @click="handleCodexOverlayAction"
-          >
-            {{ codexOverlayActionLabel }}
-          </v-btn>
-        </div>
-      </div>
-
-      <div
         v-if="commandTerminalVisible"
         class="studio-autopilot__command-terminal-stage"
       >
@@ -60,7 +29,20 @@
         />
         <div class="studio-autopilot__command-terminal-overlay">
           <strong>{{ commandOverlayTitle }}</strong>
-          <template v-if="commandTerminalFailed">
+          <template v-if="commandFixActive">
+            <span>{{ commandFixStatusText }}</span>
+            <div class="studio-autopilot__actions">
+              <v-btn
+                size="small"
+                type="button"
+                variant="tonal"
+                @click="clearCommandFixState"
+              >
+                Back to command output
+              </v-btn>
+            </div>
+          </template>
+          <template v-else-if="commandTerminalFailed">
             <span>{{ commandFailureSummary }}</span>
             <v-textarea
               v-if="canRequestCommandAiFix"
@@ -117,7 +99,7 @@
       </div>
 
       <v-progress-circular
-        v-if="!codexTerminalVisible && !commandTerminalVisible && displayRunning"
+        v-if="!commandTerminalVisible && displayRunning"
         class="studio-autopilot__cog"
         color="primary"
         indeterminate
@@ -128,14 +110,14 @@
       </v-progress-circular>
 
       <v-icon
-        v-else-if="!codexTerminalVisible && !commandTerminalVisible && failure"
+        v-else-if="!commandTerminalVisible && failure"
         color="warning"
         :icon="mdiAlertCircleOutline"
         size="72"
       />
 
       <v-icon
-        v-else-if="!codexTerminalVisible && !commandTerminalVisible"
+        v-else-if="!commandTerminalVisible"
         color="primary"
         :icon="mdiCog"
         size="72"
@@ -143,6 +125,17 @@
 
       <div v-if="mainStatusVisible" class="studio-autopilot__status">
         <h2>{{ displayStatusText }}</h2>
+        <v-btn
+          v-if="codexWaiting"
+          class="studio-autopilot__stop-button"
+          :prepend-icon="mdiClose"
+          size="small"
+          type="button"
+          variant="tonal"
+          @click="issueDiscussionWaiting ? issueDiscussion.cancelWaiting() : stop()"
+        >
+          Stop Autopilot
+        </v-btn>
       </div>
 
       <form
@@ -258,6 +251,30 @@
       </v-alert>
 
       <div
+        v-else-if="promptRunNeedsContinuation"
+        class="studio-autopilot__decision"
+      >
+        <v-alert
+          type="info"
+          variant="tonal"
+          density="compact"
+        >
+          Codex paused before this step was confirmed complete. Continue the existing Codex session instead of starting over.
+        </v-alert>
+
+        <div class="studio-autopilot__actions">
+          <v-btn
+            color="primary"
+            :prepend-icon="mdiPlay"
+            variant="flat"
+            @click="continuePromptRun"
+          >
+            Continue
+          </v-btn>
+        </div>
+      </div>
+
+      <div
         v-else-if="readyForDeepUiCheck"
         class="studio-autopilot__decision"
       >
@@ -314,16 +331,6 @@
             :fix-command-failure="codexTerminal.fixCommandFailure"
             :session="session"
           />
-
-          <v-btn
-            :color="reviewCodexChatVisible ? 'primary' : undefined"
-            :prepend-icon="mdiRobotOutline"
-            type="button"
-            variant="tonal"
-            @click="toggleReviewCodexChat"
-          >
-            {{ reviewCodexChatVisible ? "Hide Codex chat" : "Chat with Codex" }}
-          </v-btn>
 
           <v-btn
             :disabled="reviewDiffDisabled"
@@ -516,7 +523,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, proxyRefs, ref, watch } from "vue";
+import { computed, onMounted, proxyRefs, ref, watch } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiArrowRight,
@@ -556,7 +563,7 @@ import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
-const emit = defineEmits(["busy-change", "codex-terminal-dock-change"]);
+const emit = defineEmits(["busy-change"]);
 const FINISH_SESSION_ACTION_ID = "finish_session";
 
 const props = defineProps({
@@ -575,10 +582,6 @@ const props = defineProps({
   codexTerminal: {
     default: () => ({}),
     type: Object
-  },
-  codexTerminalHostId: {
-    default: "studio-autopilot-codex-terminal-host",
-    type: String
   },
   commandRunner: {
     default: null,
@@ -628,8 +631,10 @@ const {
   commandPreview,
   commandResult,
   commandRunning,
+  continuePromptRun,
   failure,
   mergeAndSyncMainCheckout,
+  promptRunNeedsContinuation,
   readyForDeepUiCheck,
   readyForFinished,
   readyForIssue,
@@ -657,7 +662,6 @@ const {
 });
 const reviewFeedback = ref("");
 const reviewFeedbackVisible = ref(false);
-const reviewCodexChatVisible = ref(false);
 const commandFixActive = ref(false);
 const commandFixInjectionError = ref("");
 const commandFixSubmitting = ref(false);
@@ -699,24 +703,10 @@ const codexWaiting = computed(() => Boolean(
   issueDiscussionWaiting.value ||
   waitingForCodex.value
 ));
-const codexPromptFailed = computed(() => failure.value?.source === "codex");
-const codexTerminalVisible = computed(() => Boolean(
-  codexWaiting.value ||
-  codexPromptFailed.value ||
-  commandFixActive.value ||
-  (readyForReview.value && reviewCodexChatVisible.value)
-));
-const codexTerminalDisplayMode = computed(() => readyForReview.value && reviewCodexChatVisible.value
-  ? "full"
-  : "compact");
-const codexTerminalAmbient = computed(() => codexTerminalDisplayMode.value === "compact");
 const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
 const commandTerminalVisible = computed(() => Boolean(
-  !codexTerminalVisible.value &&
-  (
-    commandRunning.value ||
-    commandTerminalFailed.value
-  )
+  commandRunning.value ||
+  commandTerminalFailed.value
 ));
 const commandStatus = computed(() => commandRunning.value ? "running" : "");
 const commandTerminalError = computed(() => {
@@ -725,9 +715,6 @@ const commandTerminalError = computed(() => {
   }
   return "";
 });
-const commandOverlayTitle = computed(() => commandTerminalFailed.value
-  ? "Command needs attention."
-  : "Command running.");
 const commandFailureSummary = computed(() => (
   commandTerminalError.value ||
   failure.value?.error ||
@@ -744,31 +731,21 @@ const canRequestCommandAiFix = computed(() => Boolean(
   typeof props.codexTerminal.fixCommandFailure === "function" &&
   commandTerminalFailureEvidence.value
 ));
-const codexOverlayVisible = computed(() => Boolean(
-  codexWaiting.value ||
-  commandFixActive.value
+const commandFixStatusText = computed(() => (
+  commandFixInjectionError.value ||
+  "Asking Codex to solve the issue..."
 ));
-const codexOverlayTitle = computed(() => {
-  if (commandFixInjectionError.value) {
+const commandOverlayTitle = computed(() => {
+  if (commandFixActive.value && commandFixInjectionError.value) {
     return "Codex prompt could not be sent.";
   }
   if (commandFixActive.value) {
     return commandFixSubmitting.value ? "Preparing Codex..." : "Codex is working...";
   }
-  return issueDiscussionWaiting.value ? "Codex is working..." : "Autopilot is waiting for Codex.";
+  return commandTerminalFailed.value
+    ? "Command needs attention."
+    : "Command running.";
 });
-const codexOverlayText = computed(() => {
-  if (commandFixInjectionError.value) {
-    return commandFixInjectionError.value;
-  }
-  if (commandFixActive.value) {
-    return "Asking Codex to solve the issue...";
-  }
-  return issueDiscussionWaiting.value ? "Asking Codex to solve the issue..." : displayStatusText.value;
-});
-const codexOverlayActionLabel = computed(() => commandFixActive.value
-  ? "Back to command output"
-  : "Stop Autopilot");
 const commandTerminalText = computed(() => {
   const output = stripTerminalControlSequences(commandOutput.value);
   const resultOutput = stripTerminalControlSequences(commandResult.value?.output || "");
@@ -791,24 +768,13 @@ const canSubmitReviewFeedback = computed(() => Boolean(
   reviewFeedback.value.trim() && !reviewControlsBusy.value
 ));
 const navigationBusy = computed(() => Boolean(props.page?.busy || autopilotBusy.value || props.rewindBusy));
-const mainStatusVisible = computed(() => Boolean(
-  !codexTerminalVisible.value &&
-  !commandTerminalVisible.value
-));
+const mainStatusVisible = computed(() => !commandTerminalVisible.value);
 const standaloneFailureVisible = computed(() => Boolean(
   failure.value &&
-  !codexTerminalVisible.value &&
   !commandTerminalVisible.value &&
   !commandFixActive.value
 ));
 const failureErrorText = computed(() => String(failure.value?.error || ""));
-
-function emitCodexDockState() {
-  emit("codex-terminal-dock-change", {
-    displayMode: codexTerminalDisplayMode.value,
-    docked: codexTerminalVisible.value
-  });
-}
 
 function emitBusyState() {
   emit("busy-change", autopilotBusy.value);
@@ -837,7 +803,6 @@ async function requestCommandAiFix() {
   commandFixActive.value = true;
   commandFixInjectionError.value = "";
   commandFixSubmitting.value = true;
-  await waitForCodexDockToRender();
   try {
     const injected = await props.codexTerminal.fixCommandFailure(terminalFailureFixRequest({
       actionId: result.actionId,
@@ -862,35 +827,9 @@ async function requestCommandAiFix() {
   }
 }
 
-async function waitForCodexDockToRender() {
-  // The dock event updates the parent Teleport, so Codex needs one render pass after this view updates.
-  await nextTick();
-  await nextTick();
-}
-
 function retryFromCommandFailure() {
   clearCommandFixState();
   void retry();
-}
-
-function stopAutopilot() {
-  if (issueDiscussionWaiting.value) {
-    issueDiscussion.cancelWaiting();
-    return;
-  }
-  stop();
-}
-
-function handleCodexOverlayAction() {
-  if (commandFixActive.value) {
-    clearCommandFixState();
-    return;
-  }
-  stopAutopilot();
-}
-
-function toggleReviewCodexChat() {
-  reviewCodexChatVisible.value = !reviewCodexChatVisible.value;
 }
 
 async function rewindToAutopilotStep(step = {}) {
@@ -900,7 +839,6 @@ async function rewindToAutopilotStep(step = {}) {
   clearFailure();
   clearCommandFixState();
   commandFailureNote.value = "";
-  reviewCodexChatVisible.value = false;
   reviewFeedback.value = "";
   reviewFeedbackVisible.value = false;
   await props.rewindToStep(step);
@@ -925,26 +863,15 @@ async function submitReviewFeedback() {
   }
 }
 
-function emitAutopilotState() {
-  emitCodexDockState();
-  emitBusyState();
-}
-
 function resumeWhenActive() {
   if (props.active && canResume.value) {
     void resume();
   }
 }
 
-onMounted(emitAutopilotState);
+onMounted(emitBusyState);
 
 onMounted(resumeWhenActive);
-
-watch([codexTerminalVisible, codexTerminalDisplayMode], () => {
-  emitCodexDockState();
-}, {
-  flush: "post"
-});
 
 watch(autopilotBusy, () => {
   emitBusyState();
@@ -958,14 +885,6 @@ watch(() => props.active, resumeWhenActive, {
 
 watch(() => props.session?.currentStep || "", () => {
   resumeWhenActive();
-}, {
-  flush: "post"
-});
-
-watch(readyForReview, (ready) => {
-  if (!ready) {
-    reviewCodexChatVisible.value = false;
-  }
 }, {
   flush: "post"
 });
@@ -1027,17 +946,6 @@ watch(commandTerminalFailed, (failed) => {
   margin: 0;
 }
 
-.studio-autopilot__codex-terminal-stage {
-  display: grid;
-  justify-self: end;
-  max-width: min(72rem, 100%);
-  min-height: 36rem;
-  place-items: stretch;
-  position: relative;
-  text-align: left;
-  width: 100%;
-}
-
 .studio-autopilot__command-terminal-stage {
   display: grid;
   height: min(30rem, 58vh);
@@ -1048,63 +956,6 @@ watch(commandTerminalFailed, (failed) => {
   position: relative;
   text-align: left;
   width: 100%;
-}
-
-.studio-autopilot__codex-terminal-host {
-  display: grid;
-  min-height: 0;
-  text-align: left;
-}
-
-.studio-autopilot__codex-terminal-stage--ambient {
-  max-width: min(50.4rem, 100%);
-  min-height: 25.2rem;
-}
-
-.studio-autopilot__codex-terminal-stage--ambient .studio-autopilot__codex-terminal-host :deep(.studio-ai-sessions__terminals--compact) {
-  height: 25.2rem;
-  max-width: 50.4rem;
-}
-
-.studio-autopilot__codex-terminal-stage--ambient .studio-autopilot__codex-terminal-host :deep(.studio-ai-sessions__terminals) {
-  opacity: 0.46;
-  text-align: left;
-  transform: scale(0.78);
-  transform-origin: center center;
-}
-
-.studio-autopilot__codex-terminal-stage--review {
-  max-width: min(76rem, 100%);
-}
-
-.studio-autopilot__codex-terminal-host :deep(.codex-terminal),
-.studio-autopilot__codex-terminal-host :deep(.codex-terminal__stage),
-.studio-autopilot__codex-terminal-host :deep(.codex-terminal__host),
-.studio-autopilot__codex-terminal-host :deep(.xterm) {
-  text-align: left;
-}
-
-.studio-autopilot__codex-terminal-overlay {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(20, 30, 46, 0.16);
-  border-radius: 8px;
-  box-shadow: 0 0.75rem 2rem rgba(13, 24, 42, 0.14);
-  color: #182235;
-  display: flex;
-  flex-direction: column;
-  font-size: 0.95rem;
-  gap: 0.25rem;
-  left: 50%;
-  line-height: 1.35;
-  max-width: min(28rem, calc(100% - 2rem));
-  padding: 0.7rem 0.95rem;
-  pointer-events: auto;
-  position: absolute;
-  text-align: center;
-  top: 0.75rem;
-  transform: translateX(-50%);
-  width: max-content;
 }
 
 .studio-autopilot__command-terminal-overlay {
@@ -1150,7 +1001,6 @@ watch(commandTerminalFailed, (failed) => {
   width: min(34rem, calc(100% - 2rem));
 }
 
-.studio-autopilot__codex-terminal-overlay strong,
 .studio-autopilot__command-terminal-overlay strong {
   font-size: 1.1rem;
 }

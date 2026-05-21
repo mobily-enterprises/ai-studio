@@ -1,13 +1,43 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import {
   AiStudioSessionRuntime,
   DEFAULT_AI_STUDIO_WORKFLOW,
   FakeTargetAdapter,
+  PromptRenderer,
   WorkflowMachine
 } from "../../server/lib/aiStudio/index.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
+
+class PromptRendererFakeAdapter extends FakeTargetAdapter {
+  constructor({
+    promptPackRoot,
+    ...options
+  } = {}) {
+    super(options);
+    this.renderer = new PromptRenderer({
+      promptPackRoot,
+      systemPromptPackRoot: false
+    });
+  }
+
+  async renderPrompt({
+    action = {},
+    config = {},
+    input = {},
+    session = {}
+  } = {}) {
+    return this.renderer.renderPrompt({
+      action,
+      config,
+      input,
+      session
+    });
+  }
+}
 
 test("ai-studio runtime session view exposes workflow steps, current actions, and next state", async () => {
   await withTemporaryRoot(async (targetRoot) => {
@@ -199,11 +229,153 @@ test("ai-studio runtime prompt actions render Codex handoff data without advanci
     assert.equal(afterAction.actionResult.promptId, "make_plan");
     assert.match(afterAction.actionResult.prompt, /Run the AI Studio prompt action: Make plan/u);
     assert.match(afterAction.actionResult.prompt, /"scope": "unit test"/u);
+    assert.match(afterAction.actionResult.prompt, /AI Studio Autopilot completion contract:/u);
+    assert.match(afterAction.actionResult.promptRun.completionToken, /^AI_STUDIO_AUTOPILOT_DONE_[a-f0-9]{32}$/u);
+    assert.equal(afterAction.actionResult.promptRun.actionId, "make_plan");
+    assert.equal(afterAction.actionResult.promptRun.stepId, "plan_made");
+    assert.deepEqual(afterAction.promptRun, afterAction.actionResult.promptRun);
     assert.equal(afterAction.actionResult.codexPromptHandoff.kind, "codex_prompt_handoff");
     assert.equal(afterAction.actionResult.codexPromptHandoff.codex.mode, "inject_prompt");
     assert.equal(afterAction.actionResult.codexPromptHandoff.prompt, afterAction.actionResult.prompt);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /Make plan/u);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /\[\[AI_STUDIO_CONTEXT_START\]\]/u);
+
+    const actionDuringPromptRun = afterAction.actions.find((action) => action.id === "make_plan");
+    assert.equal(actionDuringPromptRun.enabled, false);
+    assert.equal(actionDuringPromptRun.disabledReason, "Codex prompt is waiting to continue.");
+
+    const afterAdvance = await runtime.advance("prompt_action");
+    assert.equal(afterAdvance.currentStep, "plan_executed");
+    assert.equal(afterAdvance.promptRun, null);
+  });
+});
+
+test("ai-studio runtime reuses the persisted prompt context snapshot for later prompt actions", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        promptContext: {
+          helper_map: ".jskit/helper-map.md",
+          marker: "first"
+        }
+      }),
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "plan_made",
+      sessionId: "prompt_context_snapshot"
+    });
+
+    const afterFirstPrompt = await runtime.runAction("prompt_context_snapshot", "make_plan");
+    assert.equal(afterFirstPrompt.actionResult.promptContext.adapter.promptContext.marker, "first");
+
+    const snapshot = await runtime.store.readPromptContextSnapshot("prompt_context_snapshot");
+    assert.equal(snapshot.adapter.promptContext.helper_map, ".jskit/helper-map.md");
+    assert.equal(snapshot.adapter.promptContext.marker, "first");
+    await runtime.advance("prompt_context_snapshot");
+
+    class ThrowingInspectionAdapter extends FakeTargetAdapter {
+      async inspect() {
+        throw new Error("Prompt actions should use the persisted snapshot, not live inspection.");
+      }
+
+      async getPromptContext() {
+        throw new Error("Prompt actions should use the persisted snapshot, not live prompt context.");
+      }
+    }
+
+    const restartedRuntime = new AiStudioSessionRuntime({
+      adapter: new ThrowingInspectionAdapter({
+        promptContext: {
+          marker: "second"
+        }
+      }),
+      targetRoot
+    });
+
+    const afterSecondPrompt = await restartedRuntime.runAction("prompt_context_snapshot", "execute_plan");
+    assert.equal(afterSecondPrompt.actionResult.promptContext.adapter.promptContext.marker, "first");
+    assert.match(afterSecondPrompt.actionResult.prompt, /"marker": "first"/u);
+    assert.doesNotMatch(afterSecondPrompt.actionResult.prompt, /"marker": "second"/u);
+  });
+});
+
+test("ai-studio runtime sends static adapter context once and references it later", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const promptPackRoot = path.join(targetRoot, "prompt-pack");
+    await mkdir(promptPackRoot, {
+      recursive: true
+    });
+    await writeFile(
+      path.join(promptPackRoot, "make_plan.txt"),
+      [
+        "Make plan action.",
+        "{{prompt.sessionBriefingReference}}",
+        "Facts: {{adapter.facts.json}}",
+        "Blueprint: {{adapter.promptContext.environment_blueprint}}",
+        "Services: {{adapter.managedServices.json}}",
+        "Config: {{config.json}}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(promptPackRoot, "execute_plan.txt"),
+      [
+        "Execute plan action.",
+        "{{prompt.sessionBriefingReference}}",
+        "Facts: {{adapter.facts.json}}",
+        "Blueprint: {{adapter.promptContext.environment_blueprint}}",
+        "Services: {{adapter.managedServices.json}}",
+        "Config: {{config.json}}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new PromptRendererFakeAdapter({
+        facts: {
+          summary: "Large static project summary"
+        },
+        promptContext: {
+          environment_blueprint: "Large static environment blueprint"
+        },
+        promptPackRoot
+      }),
+      projectConfig: {
+        values: {
+          static_config: "large-static-config"
+        }
+      },
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "plan_made",
+      sessionId: "session_briefing_once"
+    });
+
+    const firstPrompt = await runtime.runAction("session_briefing_once", "make_plan");
+    assert.match(firstPrompt.actionResult.prompt, /AI Studio session briefing/u);
+    assert.match(firstPrompt.actionResult.prompt, /Large static project summary/u);
+    assert.match(firstPrompt.actionResult.prompt, /Large static environment blueprint/u);
+    assert.match(firstPrompt.actionResult.prompt, /large-static-config/u);
+    assert.equal(firstPrompt.actionResult.promptRun.sessionBriefingIncluded, true);
+
+    await runtime.store.writeMetadataValue("session_briefing_once", "codex_session_briefing_delivered", "yes");
+    await runtime.advance("session_briefing_once");
+    const secondPrompt = await runtime.runAction("session_briefing_once", "execute_plan");
+
+    assert.doesNotMatch(secondPrompt.actionResult.prompt, /AI Studio session briefing\n\nThis briefing is sent once/u);
+    assert.doesNotMatch(secondPrompt.actionResult.prompt, /Large static project summary/u);
+    assert.doesNotMatch(secondPrompt.actionResult.prompt, /Large static environment blueprint/u);
+    assert.doesNotMatch(secondPrompt.actionResult.prompt, /large-static-config/u);
+    assert.match(secondPrompt.actionResult.prompt, /Use the AI Studio session briefing already provided/u);
+    assert.equal(secondPrompt.actionResult.promptRun.sessionBriefingIncluded, false);
+    assert.equal(secondPrompt.actionResult.promptContext.adapter.facts.summary, "Large static project summary");
+    assert.equal(
+      secondPrompt.actionResult.promptContext.adapter.promptContext.environment_blueprint,
+      "Large static environment blueprint"
+    );
   });
 });
 

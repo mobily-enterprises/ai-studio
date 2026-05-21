@@ -178,7 +178,7 @@ test("cpp prompt actions use the C++ prompt pack", async () => {
     assert.match(afterPrompt.actionResult.prompt, /C\+\+ selected blueprint:/u);
     assert.match(afterPrompt.actionResult.prompt, /C\+\+ standard: C\+\+23/u);
     assert.match(afterPrompt.actionResult.prompt, /ownership\/lifetime/u);
-    assert.doesNotMatch(afterPrompt.actionResult.prompt, /adapter\.promptContext\.environment_blueprint/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /\{\{adapter\.promptContext\.environment_blueprint\}\}/u);
     assert.match(afterPrompt.actionResult.prompt, /cpp_demo/u);
   });
 });
