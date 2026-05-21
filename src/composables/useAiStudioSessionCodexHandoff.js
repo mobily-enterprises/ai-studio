@@ -14,7 +14,6 @@ function useAiStudioSessionCodexHandoff({
   waitingForPromptedArtifact = () => false
 } = {}) {
   const busy = ref(false);
-  const output = ref("");
   const promptInjectionError = ref("");
   const promptInjectionKey = ref("");
   const promptOverride = ref("");
@@ -79,7 +78,6 @@ function useAiStudioSessionCodexHandoff({
 
   function clear() {
     busy.value = false;
-    output.value = "";
     promptInjectionError.value = "";
     promptInjectionKey.value = "";
     promptOverride.value = "";
@@ -108,10 +106,6 @@ function useAiStudioSessionCodexHandoff({
     busy.value = false;
     promptInjectionError.value = String(event.error || "Prompt injection failed.");
     setCopyStatus(promptInjectionError.value);
-  }
-
-  function handleOutput(nextOutput = "") {
-    output.value = String(nextOutput || "");
   }
 
   async function handleBusyChanged(event = {}) {
@@ -152,8 +146,6 @@ function useAiStudioSessionCodexHandoff({
     clearPromptOverride,
     fixCommandFailure,
     injectPrompt,
-    output,
-    outputReceived: handleOutput,
     promptInjected: handlePromptInjected,
     promptInjectionError,
     promptInjectionFailed: handlePromptInjectionFailed,

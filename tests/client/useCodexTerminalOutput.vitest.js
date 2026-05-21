@@ -102,6 +102,29 @@ describe("useCodexTerminalOutput", () => {
     expect(onOutputChanged).toHaveBeenLastCalledWith("first second");
   });
 
+  it("does not observe streamed output while the observer is disabled", () => {
+    const onOutputChanged = vi.fn();
+    const observerEnabled = ref(false);
+    const terminalOutput = useCodexTerminalOutput({
+      onOutputChanged,
+      shouldNotifyOutputChanged: () => observerEnabled.value,
+      writeDisplay: vi.fn()
+    });
+
+    terminalOutput.appendTerminalOutput("first ");
+    terminalOutput.appendTerminalOutput("second");
+    vi.advanceTimersByTime(120);
+
+    expect(onOutputChanged).not.toHaveBeenCalled();
+
+    observerEnabled.value = true;
+    terminalOutput.appendTerminalOutput(" third");
+    vi.advanceTimersByTime(120);
+
+    expect(onOutputChanged).toHaveBeenCalledTimes(1);
+    expect(onOutputChanged).toHaveBeenLastCalledWith("first second third");
+  });
+
   it("reports Codex background work separately from recent output activity", () => {
     const activityEvents = [];
     const terminalOutput = useCodexTerminalOutput({

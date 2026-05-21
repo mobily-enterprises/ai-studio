@@ -13,7 +13,6 @@
       :session="session"
       :visible="displayMode !== 'headless'"
       @busy-changed="codexTerminal.busyChanged"
-      @output="codexTerminal.outputReceived"
       @prompt-injected="codexTerminal.promptInjected"
       @prompt-injection-failed="codexTerminal.promptInjectionFailed"
       @session-update="codexTerminal.sessionUpdate"

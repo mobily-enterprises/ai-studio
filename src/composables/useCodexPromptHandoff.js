@@ -196,6 +196,10 @@ function useCodexPromptHandoff({
     );
   }
 
+  function needsCodexThreadCapture() {
+    return Boolean(codexThreadCaptureRequired.value && !codexThreadId.value);
+  }
+
   function codexTrustPromptIsBlocking() {
     const visibleText = visibleTerminalText?.() || "";
     const trustPromptVisible = visibleText
@@ -419,6 +423,7 @@ function useCodexPromptHandoff({
     ensureCodexThreadReady,
     injectPromptForRequest,
     injectingPrompt,
+    needsCodexThreadCapture,
     noteTerminalInput,
     noteTerminalStarted,
     requestPromptInjection,

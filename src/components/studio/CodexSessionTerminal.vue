@@ -155,7 +155,6 @@ const props = defineProps({
 const emit = defineEmits([
   "busy-changed",
   "input",
-  "output",
   "prompt-injected",
   "prompt-injection-failed",
   "session-update"
@@ -235,7 +234,7 @@ const {
   clearCodexBusy,
   clearCodexWorking,
   clearPromptEchoFilters,
-  flushTerminalOutputEmit,
+  flushTerminalOutput,
   getTerminalOutput,
   hasTerminalOutput,
   lastTerminalOutputAt,
@@ -249,11 +248,11 @@ const {
   emitBusyChanged(payload) {
     emit("busy-changed", payload);
   },
-  emitOutput(output) {
-    emit("output", output);
-  },
   onOutputChanged(output) {
     void promptHandoff?.captureCodexThreadFromOutput(output);
+  },
+  shouldNotifyOutputChanged() {
+    return promptHandoff?.needsCodexThreadCapture?.() === true;
   },
   sessionId,
   writeDisplay: writeTerminalDisplay
@@ -327,7 +326,7 @@ terminalLifecycle = useCodexTerminalSessionLifecycle({
   expanded,
   fitTerminal,
   onBeforeDispose() {
-    flushTerminalOutputEmit();
+    flushTerminalOutput();
   },
   onBeforeDetach() {
     promptHandoff?.detach();

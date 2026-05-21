@@ -15,7 +15,7 @@ const TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT = 12;
 const TERMINAL_ESCAPE_CHARACTER = String.fromCharCode(27);
 const MAX_TERMINAL_OUTPUT_LENGTH = 4 * 1024 * 1024;
 const TERMINAL_DISPLAY_UPDATE_INTERVAL_MS = 80;
-const TERMINAL_OUTPUT_EMIT_INTERVAL_MS = 120;
+const TERMINAL_OUTPUT_OBSERVER_INTERVAL_MS = 120;
 const TERMINAL_CURSOR_POSITION_PATTERN = new RegExp(`${TERMINAL_ESCAPE_CHARACTER}\\[\\d+;\\d+H`, "u");
 const CODEX_WORKING_TEXT_MARKERS = Object.freeze([
   "Working (",
@@ -82,8 +82,8 @@ function useCodexTerminalOutput({
   appendDisplay,
   displayActive = true,
   emitBusyChanged,
-  emitOutput,
   onOutputChanged,
+  shouldNotifyOutputChanged,
   sessionId,
   writeDisplay
 } = {}) {
@@ -92,7 +92,6 @@ function useCodexTerminalOutput({
   const promptEchoFilters = createCodexPromptEchoFilters();
 
   let terminalDisplayTimer = null;
-  let terminalOutputEmitTimer = null;
   let terminalOutputChangedTimer = null;
   let codexActivityBuffer = "";
   let codexIdleTimer = null;
@@ -106,6 +105,11 @@ function useCodexTerminalOutput({
 
   function displayIsActive() {
     return Boolean(unref(displayActive));
+  }
+
+  function outputObserverIsActive() {
+    return typeof onOutputChanged === "function" &&
+      (typeof shouldNotifyOutputChanged !== "function" || shouldNotifyOutputChanged() !== false);
   }
 
   function displayTerminalOutput(output = terminalLatestOutput) {
@@ -275,14 +279,6 @@ function useCodexTerminalOutput({
     scheduleTerminalDisplayFlush();
   }
 
-  function clearTerminalOutputEmit() {
-    if (!terminalOutputEmitTimer) {
-      return;
-    }
-    globalThis.clearTimeout(terminalOutputEmitTimer);
-    terminalOutputEmitTimer = null;
-  }
-
   function clearTerminalOutputChanged() {
     if (!terminalOutputChangedTimer) {
       return;
@@ -291,42 +287,33 @@ function useCodexTerminalOutput({
     terminalOutputChangedTimer = null;
   }
 
-  function emitTerminalOutputNow(output = terminalLatestOutput) {
-    clearTerminalOutputEmit();
+  function notifyTerminalOutputChangedNow(output = terminalLatestOutput) {
     clearTerminalOutputChanged();
-    emitOutput?.(output);
-    onOutputChanged?.(output);
-  }
-
-  function flushTerminalOutputEmit() {
-    if (!terminalOutputEmitTimer) {
+    if (!outputObserverIsActive()) {
       return;
     }
-    clearTerminalOutputEmit();
+    onOutputChanged(output);
+  }
+
+  function flushTerminalOutput() {
+    const shouldNotifyObserver = Boolean(terminalOutputChangedTimer && outputObserverIsActive());
     clearTerminalOutputChanged();
-    emitOutput?.(terminalLatestOutput);
-    onOutputChanged?.(terminalLatestOutput);
+    if (shouldNotifyObserver) {
+      onOutputChanged(terminalLatestOutput);
+    }
     writeDisplayNow();
   }
 
-  function scheduleTerminalOutputEmit() {
-    if (terminalOutputEmitTimer) {
-      return;
-    }
-    terminalOutputEmitTimer = globalThis.setTimeout(() => {
-      terminalOutputEmitTimer = null;
-      emitOutput?.(terminalLatestOutput);
-    }, TERMINAL_OUTPUT_EMIT_INTERVAL_MS);
-  }
-
   function scheduleTerminalOutputChanged() {
-    if (terminalOutputChangedTimer) {
+    if (!outputObserverIsActive() || terminalOutputChangedTimer) {
       return;
     }
     terminalOutputChangedTimer = globalThis.setTimeout(() => {
       terminalOutputChangedTimer = null;
-      onOutputChanged?.(terminalLatestOutput);
-    }, TERMINAL_OUTPUT_EMIT_INTERVAL_MS);
+      if (outputObserverIsActive()) {
+        onOutputChanged(terminalLatestOutput);
+      }
+    }, TERMINAL_OUTPUT_OBSERVER_INTERVAL_MS);
   }
 
   function updateTerminalOutput(nextOutput, {
@@ -336,7 +323,7 @@ function useCodexTerminalOutput({
     const previousOutput = terminalLatestOutput;
     terminalLatestOutput = trimTerminalOutput(nextOutput);
     if (emitImmediately) {
-      emitTerminalOutputNow(terminalLatestOutput);
+      notifyTerminalOutputChangedNow(terminalLatestOutput);
     }
     if (terminalLatestOutput !== previousOutput) {
       terminalOutputVersion += 1;
@@ -384,14 +371,12 @@ function useCodexTerminalOutput({
     updateTerminalOutput(`${terminalLatestOutput}${outputChunk}`, {
       outputChunk
     });
-    scheduleTerminalOutputEmit();
   }
 
   function resetTerminalOutput({
     emit = false
   } = {}) {
     clearTerminalDisplayTimer();
-    clearTerminalOutputEmit();
     clearTerminalOutputChanged();
     clearPendingDisplay();
     clearCodexBusy();
@@ -402,7 +387,7 @@ function useCodexTerminalOutput({
     terminalLastOutputAt = 0;
     terminalOutputVersion += 1;
     if (emit) {
-      emitTerminalOutputNow("");
+      notifyTerminalOutputChangedNow("");
     }
     if (displayIsActive()) {
       writeDisplay?.("");
@@ -417,7 +402,7 @@ function useCodexTerminalOutput({
     clearPromptEchoFilters: promptEchoFilters.clear,
     codexBusy,
     codexWorking,
-    flushTerminalOutputEmit,
+    flushTerminalOutput,
     getTerminalOutput: () => terminalLatestOutput,
     hasTerminalOutput: () => terminalHasOutput,
     lastTerminalOutputAt: () => terminalLastOutputAt,

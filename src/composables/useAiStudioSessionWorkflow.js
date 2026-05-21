@@ -136,8 +136,6 @@ function useAiStudioSessionWorkflow({
       busyChanged: workflow.codexHandoff.busyChanged,
       fixCommandFailure: workflow.codexHandoff.fixCommandFailure,
       injectPrompt: workflow.codexHandoff.injectPrompt,
-      output: workflow.codexHandoff.output,
-      outputReceived: workflow.codexHandoff.outputReceived,
       promptInjected: workflow.codexHandoff.promptInjected,
       promptInjectionError: workflow.codexHandoff.promptInjectionError,
       promptInjectionFailed: workflow.codexHandoff.promptInjectionFailed,
