@@ -4,6 +4,9 @@ import {
   useAiStudioAutopilotIssueDiscussion
 } from "../../src/composables/useAiStudioAutopilotIssueDiscussion.js";
 import {
+  useAiStudioCodexQuestionExchange
+} from "../../src/composables/useAiStudioCodexQuestionExchange.js";
+import {
   AUTOPILOT_ISSUE_MARKER_END,
   AUTOPILOT_ISSUE_MARKER_START
 } from "../../src/lib/aiStudioAutopilotIssueMarkers.js";
@@ -72,20 +75,20 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     });
     await nextTick();
 
-    expect(context.controller.questioning.value).toBe(true);
+    expect(context.questionExchange.hasQuestions.value).toBe(true);
     expect(context.controller.statusText.value).toBe("A few questions first");
-    expect(context.controller.questions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "Should cancelled bookings be included?",
       "Who can see the report?"
     ]);
 
-    context.controller.questions.value[0].answer = "No.";
-    context.controller.questions.value[1].answer = "Admins only.";
+    context.questionExchange.setAnswer("q1", "No.");
+    context.questionExchange.setAnswer("q2", "Admins only.");
     await nextTick();
     expect(window.localStorage.getItem("ai-studio:autopilot:issue-discussion:session-1"))
       .toContain("Admins only.");
 
-    await context.controller.submitQuestionAnswers();
+    await context.questionExchange.submitAnswers();
 
     expect(context.codexTerminal.injectPrompt).toHaveBeenLastCalledWith(
       expect.stringContaining("Q1: Should cancelled bookings be included?\nA1: No."),
@@ -135,10 +138,10 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     });
     await nextTick();
 
-    context.controller.questions.value[0].answer = "No.";
-    context.controller.questions.value[1].answer = "Admins only.";
+    context.questionExchange.setAnswer("q1", "No.");
+    context.questionExchange.setAnswer("q2", "Admins only.");
     await nextTick();
-    await context.controller.submitQuestionAnswers();
+    await context.questionExchange.submitAnswers();
 
     expect(window.localStorage.getItem("ai-studio:autopilot:issue-discussion:session-1"))
       .not.toContain("Admins only.");
@@ -156,10 +159,10 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     ].join("\n");
     await nextTick();
 
-    expect(reloadedContext.controller.questioning.value).toBe(true);
-    expect(reloadedContext.controller.questions.value).toHaveLength(1);
-    expect(reloadedContext.controller.questions.value[0].text).toBe("Should the report include export buttons?");
-    expect(reloadedContext.controller.questions.value[0].answer).toBe("");
+    expect(reloadedContext.questionExchange.hasQuestions.value).toBe(true);
+    expect(reloadedContext.questionExchange.questions.value).toHaveLength(1);
+    expect(reloadedContext.questionExchange.questions.value[0].text).toBe("Should the report include export buttons?");
+    expect(reloadedContext.questionExchange.questions.value[0].answer).toBe("");
   });
 
   it("cancels clarification questions and returns to the issue input", async () => {
@@ -176,14 +179,14 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     });
     await nextTick();
 
-    context.controller.questions.value[0].answer = "No.";
+    context.questionExchange.setAnswer("q1", "No.");
     await nextTick();
-    context.controller.cancelQuestions();
+    context.questionExchange.cancel();
 
     expect(context.clearIssueArtifacts).not.toHaveBeenCalled();
     expect(context.controller.inputVisible.value).toBe(true);
     expect(context.controller.requestText.value).toBe("Add booking reports");
-    expect(context.controller.questions.value).toEqual([]);
+    expect(context.questionExchange.questions.value).toEqual([]);
     expect(window.localStorage.getItem("ai-studio:autopilot:issue-discussion:session-1"))
       .not.toContain("No.");
 
@@ -194,7 +197,7 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     await nextTick();
 
     expect(context.controller.inputVisible.value).toBe(true);
-    expect(context.controller.questioning.value).toBe(false);
+    expect(context.questionExchange.hasQuestions.value).toBe(false);
   });
 
   it("restores a pending request as waiting instead of returning to the input form", () => {
@@ -275,8 +278,8 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     ].join("\n");
     await nextTick();
 
-    expect(context.controller.questioning.value).toBe(true);
-    expect(context.controller.questions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.hasQuestions.value).toBe(true);
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "What should the file contain?"
     ]);
   });
@@ -368,8 +371,8 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     });
     await nextTick();
 
-    expect(context.controller.questioning.value).toBe(true);
-    expect(context.controller.questions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.hasQuestions.value).toBe(true);
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "What should the file contain?"
     ]);
   });
@@ -403,6 +406,9 @@ function createIssueDiscussionContext({
     injectPrompt: vi.fn(async () => true),
     output: codexOutput
   };
+  const questionExchange = useAiStudioCodexQuestionExchange({
+    codexTerminal
+  });
   const saveIssueArtifacts = vi.fn(async () => ({
     ok: true
   }));
@@ -413,6 +419,7 @@ function createIssueDiscussionContext({
     actions,
     clearIssueArtifacts,
     codexTerminal,
+    questionExchange,
     readyForIssue: computed(() => session.value.currentStep === "issue_file_created"),
     refreshSessionData: vi.fn(async () => null),
     saveIssueArtifacts,
@@ -425,6 +432,7 @@ function createIssueDiscussionContext({
     codexOutput,
     codexTerminal,
     controller,
+    questionExchange,
     saveIssueArtifacts,
     session
   };

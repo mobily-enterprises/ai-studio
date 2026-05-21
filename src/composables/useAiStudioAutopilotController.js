@@ -1,5 +1,8 @@
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  useAiStudioCodexQuestionExchange
+} from "@/composables/useAiStudioCodexQuestionExchange.js";
+import {
   useAiStudioHeadlessCommandRunner
 } from "@/composables/useAiStudioHeadlessCommandRunner.js";
 import {
@@ -217,8 +220,10 @@ function writeStoredPendingPrompt(pending = {}) {
   }
   storage.setItem(promptPendingStorageKey(sessionId), JSON.stringify({
     actionId: String(pending.actionId || ""),
+    advanceAfterCompletion: pending.advanceAfterCompletion !== false,
     completionToken: normalizeStepCompletionToken(pending.completionToken),
     outputCursor: Number.isSafeInteger(pending.outputCursor) ? pending.outputCursor : 0,
+    questionRequestId: String(pending.questionRequestId || ""),
     questions: Array.isArray(pending.questions) ? pending.questions : [],
     requestId: String(pending.requestId || ""),
     sessionId,
@@ -229,6 +234,15 @@ function writeStoredPendingPrompt(pending = {}) {
 
 function clearStoredPendingPrompt(sessionId = "") {
   browserLocalStorage()?.removeItem(promptPendingStorageKey(sessionId));
+}
+
+function workflowQuestionOwnerId(pending = {}) {
+  return [
+    "workflow",
+    String(pending.sessionId || ""),
+    String(pending.stepId || ""),
+    String(pending.requestId || "")
+  ].join(":");
 }
 
 function delay(ms) {
@@ -385,6 +399,7 @@ function useAiStudioAutopilotController({
   actions = {},
   codexTerminal = {},
   commandRunner = useAiStudioHeadlessCommandRunner(),
+  questionExchange = null,
   refreshSessionData = async () => null,
   session
 } = {}) {
@@ -394,8 +409,10 @@ function useAiStudioAutopilotController({
   const deepUiCheckDecision = ref("");
   const failure = ref(null);
   const lastCommandResult = ref(null);
-  const autopilotQuestionFailure = ref("");
   const replanFeedback = ref("");
+  const codexQuestions = questionExchange || useAiStudioCodexQuestionExchange({
+    codexTerminal
+  });
 
   let autopilotPromise = null;
   let generalQuestionScanLength = 0;
@@ -407,7 +424,7 @@ function useAiStudioAutopilotController({
   const commandResult = computed(() => readRefOrGetterValue(commandRunner.lastResult) || lastCommandResult.value || null);
   const commandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
   const codexBusy = computed(() => readCodexBusy(codexTerminal));
-  const running = computed(() => active.value || commandRunning.value);
+  const running = computed(() => active.value || commandRunning.value || codexQuestions.submitting.value);
   const readyForIssue = computed(() => currentStep.value === ISSUE_STEP_ID);
   const readyForDeepUiCheck = computed(() => {
     return currentStep.value === DEEP_UI_CHECK_STEP_ID && !running.value && !failure.value;
@@ -415,21 +432,16 @@ function useAiStudioAutopilotController({
   const readyForFinished = computed(() => currentStep.value === FINISHED_STEP_ID);
   const readyForMerge = computed(() => currentStep.value === MERGE_PR_STEP_ID);
   const readyForReview = computed(() => currentStep.value === REVIEW_CHANGES_STEP_ID);
-  const autopilotQuestions = computed(() => Array.isArray(activePrompt.value?.questions)
-    ? activePrompt.value.questions
-    : []);
-  const autopilotQuestioning = computed(() => pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
-    autopilotQuestions.value.length > 0);
+  const workflowQuestionActive = computed(() => pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
+    codexQuestions.isOwner(workflowQuestionOwnerId(activePrompt.value)) &&
+    codexQuestions.hasQuestions.value);
   const waitingForCodex = computed(() => Boolean(
     (
       pendingPromptMatchesSession(activePrompt.value, readSession(session)) &&
-      autopilotQuestions.value.length <= 0
+      !workflowQuestionActive.value
     ) ||
     codexIsActiveForCurrentStep()
   ));
-  const canSubmitAutopilotQuestionAnswers = computed(() => autopilotQuestioning.value &&
-    !running.value &&
-    autopilotQuestions.value.every((question) => Boolean(String(question.answer || "").trim())));
   const canStart = computed(() => Boolean(
     readSession(session)?.sessionId &&
     !running.value &&
@@ -463,7 +475,7 @@ function useAiStudioAutopilotController({
     if (failure.value) {
       return "Attention required";
     }
-    if (autopilotQuestioning.value) {
+    if (workflowQuestionActive.value) {
       return "A few questions first";
     }
     if (running.value) {
@@ -498,7 +510,7 @@ function useAiStudioAutopilotController({
   function clearFailure() {
     failure.value = null;
     lastCommandResult.value = null;
-    autopilotQuestionFailure.value = "";
+    codexQuestions.clearFailure();
   }
 
   async function acceptChanges() {
@@ -568,40 +580,6 @@ function useAiStudioAutopilotController({
     }
     activeStage.value = "";
     stopWithFailure(autopilotStoppedFailure());
-  }
-
-  function cancelAutopilotQuestions() {
-    const pending = activePrompt.value || {};
-    clearPendingPrompt(pending.sessionId);
-    autopilotQuestionFailure.value = "";
-    stopWithFailure({
-      actionId: pending.actionId,
-      actionLabel: actionLabelForId(pending.actionId),
-      error: "Autopilot needs answers before it can continue this Codex step. Retry will run the step again, or switch to Inspect to continue manually.",
-      exitCode: null,
-      ok: false,
-      output: "",
-      source: "codex"
-    });
-  }
-
-  function updateAutopilotQuestionAnswer(questionId = "", answer = "") {
-    if (!autopilotQuestioning.value) {
-      return;
-    }
-    activePrompt.value = {
-      ...activePrompt.value,
-      questions: autopilotQuestions.value.map((question) => {
-        if (question.id !== questionId) {
-          return question;
-        }
-        return {
-          ...question,
-          answer: String(answer || "")
-        };
-      })
-    };
-    writeStoredPendingPrompt(activePrompt.value);
   }
 
   function stopCommandAction() {
@@ -913,7 +891,7 @@ function useAiStudioAutopilotController({
         }
 
         await runStageAction(currentSession, stage);
-        if (autopilotQuestioning.value) {
+        if (workflowQuestionActive.value) {
           return;
         }
         if (currentSession.currentStep === DEEP_UI_CHECK_STEP_ID) {
@@ -961,7 +939,8 @@ function useAiStudioAutopilotController({
 
     activePrompt.value = pending;
     activeStage.value = String(actionById(readActions(actions), pending.actionId)?.label || stepLabel(currentSession));
-    if (autopilotQuestions.value.length > 0) {
+    if (Array.isArray(pending.questions) && pending.questions.length > 0) {
+      startWorkflowQuestionExchange(pending);
       return PROMPT_WAIT_RESULT.QUESTIONS;
     }
 
@@ -1054,6 +1033,7 @@ function useAiStudioAutopilotController({
   } = {}) {
     const pending = {
       actionId: action.id,
+      advanceAfterCompletion,
       completionToken: createStepCompletionToken(),
       outputCursor: readCodexOutput(codexTerminal).length,
       requestId: createRequestId(),
@@ -1112,51 +1092,8 @@ function useAiStudioAutopilotController({
     }
   }
 
-  async function submitAutopilotQuestionAnswers() {
-    if (!autopilotQuestioning.value) {
-      return false;
-    }
-    if (!canSubmitAutopilotQuestionAnswers.value) {
-      autopilotQuestionFailure.value = "Answer each question before continuing.";
-      return false;
-    }
-
-    const pending = {
-      ...activePrompt.value,
-      outputCursor: readCodexOutput(codexTerminal).length,
-      questions: []
-    };
-    const answeredQuestions = autopilotQuestions.value.map((question) => ({
-      ...question
-    }));
-    activePrompt.value = pending;
-    writeStoredPendingPrompt(pending);
-    autopilotQuestionFailure.value = "";
-    active.value = true;
-    activeStage.value = actionLabelForId(pending.actionId);
-
+  async function continueAfterWorkflowQuestionAnswers(pending = {}) {
     try {
-      if (typeof codexTerminal.injectPrompt !== "function") {
-        throw new Error("Codex prompt injection is not available.");
-      }
-      const injected = await codexTerminal.injectPrompt(autopilotQuestionAnswersInstruction({
-        actionLabel: activeStage.value,
-        completionToken: pending.completionToken,
-        questions: answeredQuestions,
-        requestId: pending.requestId
-      }), {
-        completionActionId: pending.actionId,
-        completionRequestId: pending.requestId,
-        completionStartedAt: String(pending.startedAt || Date.now()),
-        completionStepId: pending.stepId,
-        completionToken: pending.completionToken,
-        requestId: pending.requestId,
-        sessionId: pending.sessionId
-      });
-      if (injected === false) {
-        throw new Error("Codex did not accept the clarification answers.");
-      }
-
       const waitResult = await waitForPromptCompletion(pending);
       if (waitResult === PROMPT_WAIT_RESULT.QUESTIONS) {
         return false;
@@ -1173,19 +1110,16 @@ function useAiStudioAutopilotController({
       }
 
       clearPendingPrompt(pending.sessionId);
-      await advanceCurrentStepIfReady();
+      clearReplanFeedback({
+        id: pending.actionId
+      });
+      if (pending.advanceAfterCompletion !== false) {
+        await advanceCurrentStepIfReady();
+      }
       active.value = false;
       activeStage.value = "";
       await runUntilStopPoint();
       return !failure.value;
-    } catch (error) {
-      activePrompt.value = {
-        ...pending,
-        questions: answeredQuestions
-      };
-      writeStoredPendingPrompt(activePrompt.value);
-      autopilotQuestionFailure.value = String(error?.message || error || "Codex could not receive the clarification answers.");
-      return false;
     } finally {
       if (!autopilotPromise) {
         active.value = false;
@@ -1234,7 +1168,7 @@ function useAiStudioAutopilotController({
         requestId: pending.requestId
       });
       if (questionMarker) {
-        setAutopilotQuestions(pending, questionMarker);
+        captureWorkflowQuestions(pending, questionMarker);
         return PROMPT_WAIT_RESULT.QUESTIONS;
       }
       if (codexFinishedWithoutMarker(pending, output)) {
@@ -1273,15 +1207,89 @@ function useAiStudioAutopilotController({
     });
   }
 
-  function setAutopilotQuestions(pending = {}, marker = {}) {
-    activePrompt.value = {
+  function captureWorkflowQuestions(pending = {}, marker = {}) {
+    const promptWithQuestions = {
       ...pending,
       outputCursor: readCodexOutput(codexTerminal).length,
       questionRequestId: marker.requestId,
       questions: marker.questions || []
     };
-    autopilotQuestionFailure.value = "";
-    writeStoredPendingPrompt(activePrompt.value);
+    activePrompt.value = promptWithQuestions;
+    writeStoredPendingPrompt(promptWithQuestions);
+    startWorkflowQuestionExchange(promptWithQuestions);
+  }
+
+  function startWorkflowQuestionExchange(pending = {}) {
+    const questions = Array.isArray(pending.questions) ? pending.questions : [];
+    if (questions.length <= 0) {
+      return false;
+    }
+
+    return codexQuestions.start({
+      contextLabel: actionLabelForId(pending.actionId),
+      onAnswerChange: (nextQuestions = []) => {
+        activePrompt.value = {
+          ...pendingPromptForSession(readSession(session)),
+          questions: nextQuestions
+        };
+        writeStoredPendingPrompt(activePrompt.value);
+      },
+      onCancel: () => {
+        clearPendingPrompt(pending.sessionId);
+        stopWithFailure({
+          actionId: pending.actionId,
+          actionLabel: actionLabelForId(pending.actionId),
+          error: "Autopilot needs answers before it can continue this Codex step. Retry will run the step again, or switch to Inspect to continue manually.",
+          exitCode: null,
+          ok: false,
+          output: "",
+          source: "codex"
+        });
+      },
+      onSubmitFailed: ({ questions: answeredQuestions = [] } = {}) => {
+        activePrompt.value = {
+          ...pending,
+          questions: answeredQuestions
+        };
+        writeStoredPendingPrompt(activePrompt.value);
+      },
+      onSubmitted: async ({ prepared = {} } = {}) => {
+        if (prepared.pending) {
+          await continueAfterWorkflowQuestionAnswers(prepared.pending);
+        }
+      },
+      ownerId: workflowQuestionOwnerId(pending),
+      prepareSubmit: ({ questions: answeredQuestions = [] } = {}) => {
+        const nextPending = {
+          ...pending,
+          outputCursor: readCodexOutput(codexTerminal).length,
+          questions: []
+        };
+        activePrompt.value = nextPending;
+        writeStoredPendingPrompt(nextPending);
+        active.value = true;
+        activeStage.value = actionLabelForId(nextPending.actionId);
+        return {
+          injectionContext: {
+            completionActionId: nextPending.actionId,
+            completionRequestId: nextPending.requestId,
+            completionStartedAt: String(nextPending.startedAt || Date.now()),
+            completionStepId: nextPending.stepId,
+            completionToken: nextPending.completionToken,
+            requestId: nextPending.requestId,
+            sessionId: nextPending.sessionId
+          },
+          pending: nextPending,
+          prompt: autopilotQuestionAnswersInstruction({
+            actionLabel: activeStage.value,
+            completionToken: nextPending.completionToken,
+            questions: answeredQuestions,
+            requestId: nextPending.requestId
+          })
+        };
+      },
+      questions
+    });
   }
 
   function codexFinishedWithoutMarker(pending = {}, output = "") {
@@ -1325,6 +1333,8 @@ function useAiStudioAutopilotController({
   }
 
   function clearPendingPrompt(sessionId = "") {
+    const pending = activePrompt.value || readStoredPendingPrompt(sessionId);
+    codexQuestions.clearForOwner(workflowQuestionOwnerId(pending || {}));
     activePrompt.value = null;
     clearStoredPendingPrompt(sessionId);
   }
@@ -1389,7 +1399,7 @@ function useAiStudioAutopilotController({
 
   function captureQuestionsFromCurrentCodexOutput() {
     const currentSession = readSession(session);
-    if (autopilotQuestioning.value || !currentPromptStage(currentSession)) {
+    if (workflowQuestionActive.value || !currentPromptStage(currentSession)) {
       return false;
     }
 
@@ -1419,7 +1429,7 @@ function useAiStudioAutopilotController({
       return false;
     }
 
-    setAutopilotQuestions(questionPending, marker);
+    captureWorkflowQuestions(questionPending, marker);
     stopRequested = false;
     clearFailure();
     return true;
@@ -1491,13 +1501,11 @@ function useAiStudioAutopilotController({
   return {
     acceptChanges,
     archiveSession,
-    cancelAutopilotQuestions,
     cancelMergeFailure,
     canAcceptReview,
     canArchiveSession,
     canStart,
     canResume,
-    canSubmitAutopilotQuestionAnswers,
     clearFailure,
     commandOutput,
     commandPreview,
@@ -1505,9 +1513,6 @@ function useAiStudioAutopilotController({
     commandRunning,
     failure,
     mergeAndSyncMainCheckout,
-    autopilotQuestionFailure,
-    autopilotQuestioning,
-    autopilotQuestions,
     readyForFinished,
     readyForDeepUiCheck,
     readyForIssue,
@@ -1523,9 +1528,7 @@ function useAiStudioAutopilotController({
     start,
     stop,
     stopCommandAction,
-    submitAutopilotQuestionAnswers,
     statusText,
-    updateAutopilotQuestionAnswer,
     waitingForCodex
   };
 }

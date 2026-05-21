@@ -1,5 +1,8 @@
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  useAiStudioCodexQuestionExchange
+} from "@/composables/useAiStudioCodexQuestionExchange.js";
+import {
   clearAiStudioIssueArtifacts,
   saveAiStudioIssueArtifacts
 } from "@/lib/aiStudioSessionApi.js";
@@ -115,10 +118,15 @@ function withQuestionAnswers(questions = [], answers = []) {
   }));
 }
 
+function issueQuestionOwnerId(sessionId = "") {
+  return `issue:${String(sessionId || "").trim()}`;
+}
+
 function useAiStudioAutopilotIssueDiscussion({
   actions = {},
   clearIssueArtifacts = clearAiStudioIssueArtifacts,
   codexTerminal = {},
+  questionExchange = null,
   readyForIssue = () => false,
   refreshSessionData = async () => null,
   saveIssueArtifacts = saveAiStudioIssueArtifacts,
@@ -132,9 +140,11 @@ function useAiStudioAutopilotIssueDiscussion({
   const draftBody = ref("");
   const draftTitle = ref("");
   const failure = ref("");
-  const questions = ref([]);
   const saving = ref(false);
   const storedQuestionAnswers = ref([]);
+  const codexQuestions = questionExchange || useAiStudioCodexQuestionExchange({
+    codexTerminal
+  });
 
   const currentSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(currentSession.value?.sessionId || ""));
@@ -142,9 +152,13 @@ function useAiStudioAutopilotIssueDiscussion({
   const promptInjectionError = computed(() => String(readRefOrGetterValue(codexTerminal.promptInjectionError) || ""));
   const ready = computed(() => Boolean(readRefOrGetterValue(readyForIssue)));
   const waiting = computed(() => ready.value && state.value === ISSUE_DISCUSSION_STATE.WAITING);
-  const questioning = computed(() => ready.value && state.value === ISSUE_DISCUSSION_STATE.QUESTIONS);
+  const questionOwnerId = computed(() => issueQuestionOwnerId(sessionId.value));
+  const issueQuestionActive = computed(() => ready.value &&
+    state.value === ISSUE_DISCUSSION_STATE.QUESTIONS &&
+    codexQuestions.isOwner(questionOwnerId.value));
   const reviewing = computed(() => ready.value && state.value === ISSUE_DISCUSSION_STATE.REVIEW);
   const inputVisible = computed(() => ready.value && state.value === ISSUE_DISCUSSION_STATE.INPUT);
+  const questions = computed(() => issueQuestionActive.value ? codexQuestions.questions.value : []);
   const canSubmit = computed(() => {
     return ready.value &&
       inputVisible.value &&
@@ -158,16 +172,10 @@ function useAiStudioAutopilotIssueDiscussion({
       Boolean(draftBody.value.trim()) &&
       !saving.value;
   });
-  const canSubmitAnswers = computed(() => {
-    return ready.value &&
-      questioning.value &&
-      questions.value.length > 0 &&
-      questions.value.every((question) => Boolean(String(question.answer || "").trim())) &&
-      !saving.value;
-  });
+  const questionFailure = computed(() => issueQuestionActive.value ? codexQuestions.failure.value : "");
   const statusText = computed(() => {
-    if (failure.value) {
-      return failure.value;
+    if (failure.value || questionFailure.value) {
+      return failure.value || questionFailure.value;
     }
     if (saving.value || state.value === ISSUE_DISCUSSION_STATE.SAVING) {
       return "Saving issue file...";
@@ -175,7 +183,7 @@ function useAiStudioAutopilotIssueDiscussion({
     if (waiting.value) {
       return "Asking Codex to define the issue...";
     }
-    if (questioning.value) {
+    if (issueQuestionActive.value) {
       return "A few questions first";
     }
     if (reviewing.value) {
@@ -226,15 +234,6 @@ function useAiStudioAutopilotIssueDiscussion({
     }
   }
 
-  function cancelQuestions() {
-    if (!questioning.value) {
-      return;
-    }
-
-    failure.value = "";
-    returnToInputIgnoringCurrentCodexAnswer();
-  }
-
   function cancelWaiting() {
     if (!waiting.value) {
       return;
@@ -242,55 +241,6 @@ function useAiStudioAutopilotIssueDiscussion({
 
     failure.value = "";
     returnToInputIgnoringCurrentCodexAnswer();
-  }
-
-  function updateQuestionAnswer(questionId = "", answer = "") {
-    if (!questioning.value) {
-      return;
-    }
-    questions.value = questions.value.map((question) => {
-      if (question.id !== questionId) {
-        return question;
-      }
-      return {
-        ...question,
-        answer: String(answer || "")
-      };
-    });
-  }
-
-  async function submitQuestionAnswers() {
-    if (!questioning.value) {
-      return;
-    }
-    if (!canSubmitAnswers.value) {
-      failure.value = "Answer each question before continuing.";
-      return;
-    }
-
-    const answeredQuestions = questions.value.map((question) => ({
-      ...question
-    }));
-    const answeredRequestId = activeRequestId.value;
-    if (answeredRequestId) {
-      ignoredRequestIds.value = new Set([
-        ...ignoredRequestIds.value,
-        answeredRequestId
-      ]);
-    }
-
-    const requestId = createRequestId();
-    activeRequestId.value = requestId;
-    outputCursor.value = codexOutput.value.length;
-    failure.value = "";
-    questions.value = [];
-    storedQuestionAnswers.value = [];
-    persistDiscussion();
-    await injectIssuePrompt(buildAnsweredIssueDraftPrompt({
-      requestId,
-      requestText: requestText.value,
-      questions: answeredQuestions
-    }), requestId);
   }
 
   async function acceptIssueDraft() {
@@ -385,8 +335,8 @@ function useAiStudioAutopilotIssueDiscussion({
     activeRequestId.value = "";
     draftBody.value = "";
     draftTitle.value = "";
-    questions.value = [];
     storedQuestionAnswers.value = [];
+    codexQuestions.clearForOwner(questionOwnerId.value);
     outputCursor.value = codexOutput.value.length;
     state.value = ISSUE_DISCUSSION_STATE.INPUT;
     persistDiscussion();
@@ -406,7 +356,6 @@ function useAiStudioAutopilotIssueDiscussion({
     draftBody.value = "";
     draftTitle.value = "";
     failure.value = "";
-    questions.value = [];
     state.value = loadedDiscussionState(activeRequestId.value);
     applyLatestMarker();
   }
@@ -446,7 +395,7 @@ function useAiStudioAutopilotIssueDiscussion({
     if (!marker) {
       return;
     }
-    if (questioning.value && marker.kind === "questions" && marker.requestId === activeRequestId.value) {
+    if (issueQuestionActive.value && marker.kind === "questions" && marker.requestId === activeRequestId.value) {
       return;
     }
 
@@ -455,15 +404,62 @@ function useAiStudioAutopilotIssueDiscussion({
     if (marker.kind === "questions") {
       draftBody.value = "";
       draftTitle.value = "";
-      questions.value = withQuestionAnswers(marker.questions, storedQuestionAnswers.value);
       state.value = ISSUE_DISCUSSION_STATE.QUESTIONS;
+      startQuestionExchange(marker);
     } else {
       draftBody.value = marker.body;
       draftTitle.value = marker.title;
-      questions.value = [];
+      codexQuestions.clearForOwner(questionOwnerId.value);
       state.value = ISSUE_DISCUSSION_STATE.REVIEW;
     }
     persistDiscussion();
+  }
+
+  function startQuestionExchange(marker = {}) {
+    codexQuestions.start({
+      contextLabel: "Issue definition",
+      onAnswerChange: (nextQuestions = []) => {
+        storedQuestionAnswers.value = nextQuestions.map((question) => String(question.answer || ""));
+        persistDiscussion();
+      },
+      onCancel: () => {
+        failure.value = "";
+        returnToInputIgnoringCurrentCodexAnswer();
+      },
+      onSubmitted: ({ prepared = {} } = {}) => {
+        if (prepared.answeredRequestId) {
+          ignoredRequestIds.value = new Set([
+            ...ignoredRequestIds.value,
+            prepared.answeredRequestId
+          ]);
+        }
+        activeRequestId.value = prepared.requestId;
+        outputCursor.value = prepared.outputCursor;
+        failure.value = "";
+        storedQuestionAnswers.value = [];
+        state.value = ISSUE_DISCUSSION_STATE.WAITING;
+        persistDiscussion();
+      },
+      ownerId: questionOwnerId.value,
+      prepareSubmit: ({ questions: answeredQuestions = [] } = {}) => {
+        const requestId = createRequestId();
+        return {
+          answeredRequestId: activeRequestId.value,
+          injectionContext: {
+            requestId,
+            sessionId: sessionId.value
+          },
+          outputCursor: codexOutput.value.length,
+          prompt: buildAnsweredIssueDraftPrompt({
+            requestId,
+            requestText: requestText.value,
+            questions: answeredQuestions
+          }),
+          requestId
+        };
+      },
+      questions: withQuestionAnswers(marker.questions, storedQuestionAnswers.value)
+    });
   }
 
   watch(sessionId, loadDiscussion, {
@@ -484,28 +480,15 @@ function useAiStudioAutopilotIssueDiscussion({
     resetActiveRequestAfterPromptFailure(error);
   });
 
-  watch(questions, () => {
-    if (!questioning.value) {
-      return;
-    }
-    persistDiscussion();
-  }, {
-    deep: true
-  });
-
   return {
     acceptIssueDraft,
     cancelWaiting,
-    cancelQuestions,
     canAccept,
     canSubmit,
-    canSubmitAnswers,
     draftBody,
     draftTitle,
     failure,
     inputVisible,
-    questioning,
-    questions,
     requestText,
     reviewing,
     rejectIssueDraft,
@@ -513,8 +496,6 @@ function useAiStudioAutopilotIssueDiscussion({
     state,
     statusText,
     submitInitialRequest,
-    submitQuestionAnswers,
-    updateQuestionAnswer,
     waiting
   };
 }

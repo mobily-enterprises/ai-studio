@@ -179,15 +179,16 @@
       </form>
 
       <AiStudioAutopilotQuestionForm
-        v-else-if="readyForIssue && issueDiscussion.questioning"
-        :can-submit="issueDiscussion.canSubmitAnswers"
-        :disabled="page.busy"
-        :failure="issueDiscussion.failure"
-        :loading="issueDiscussion.waiting"
-        :questions="issueDiscussion.questions"
-        @answer-change="issueDiscussion.updateQuestionAnswer"
-        @cancel="issueDiscussion.cancelQuestions"
-        @submit="issueDiscussion.submitQuestionAnswers"
+        v-else-if="codexQuestionsVisible"
+        :can-submit="codexQuestionCanSubmit"
+        :disabled="page.busy || codexQuestionSubmitting"
+        :failure="codexQuestionFailure"
+        intro="Codex needs a few answers before it can continue."
+        :loading="codexQuestionSubmitting"
+        :questions="codexQuestionList"
+        @answer-change="codexQuestionExchange.setAnswer"
+        @cancel="codexQuestionExchange.cancel"
+        @submit="codexQuestionExchange.submitAnswers"
       />
 
       <form
@@ -255,19 +256,6 @@
       >
         {{ issueDiscussion.failure }}
       </v-alert>
-
-      <AiStudioAutopilotQuestionForm
-        v-else-if="autopilotQuestioning"
-        :can-submit="canSubmitAutopilotQuestionAnswers"
-        :disabled="running"
-        :failure="autopilotQuestionFailure"
-        intro="Codex needs a few answers before it can continue."
-        :loading="running"
-        :questions="autopilotQuestions"
-        @answer-change="updateAutopilotQuestionAnswer"
-        @cancel="cancelAutopilotQuestions"
-        @submit="submitAutopilotQuestionAnswers"
-      />
 
       <div
         v-else-if="readyForDeepUiCheck"
@@ -556,6 +544,9 @@ import {
   useAiStudioAutopilotIssueDiscussion
 } from "@/composables/useAiStudioAutopilotIssueDiscussion.js";
 import {
+  useAiStudioCodexQuestionExchange
+} from "@/composables/useAiStudioCodexQuestionExchange.js";
+import {
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
 import {
@@ -623,14 +614,15 @@ const props = defineProps({
   }
 });
 
+const codexQuestionExchange = useAiStudioCodexQuestionExchange({
+  codexTerminal: props.codexTerminal
+});
 const {
   acceptChanges,
   cancelMergeFailure,
-  cancelAutopilotQuestions,
   canAcceptReview,
   canStart,
   canResume,
-  canSubmitAutopilotQuestionAnswers,
   clearFailure,
   commandOutput,
   commandPreview,
@@ -638,9 +630,6 @@ const {
   commandRunning,
   failure,
   mergeAndSyncMainCheckout,
-  autopilotQuestionFailure,
-  autopilotQuestioning,
-  autopilotQuestions,
   readyForDeepUiCheck,
   readyForFinished,
   readyForIssue,
@@ -656,14 +645,13 @@ const {
   start,
   stop,
   stopCommandAction,
-  submitAutopilotQuestionAnswers,
   statusText,
-  updateAutopilotQuestionAnswer,
   waitingForCodex
 } = useAiStudioAutopilotController({
   actions: props.actions,
   codexTerminal: props.codexTerminal,
   commandRunner: props.commandRunner || undefined,
+  questionExchange: codexQuestionExchange,
   refreshSessionData: () => props.refreshSessionData(),
   session: computed(() => props.session)
 });
@@ -684,13 +672,24 @@ const archiveAction = computed(() => {
 const issueDiscussion = proxyRefs(useAiStudioAutopilotIssueDiscussion({
   actions: props.actions,
   codexTerminal: props.codexTerminal,
+  questionExchange: codexQuestionExchange,
   readyForIssue,
   refreshSessionData: () => props.refreshSessionData(),
   session: computed(() => props.session)
 }));
-const displayStatusText = computed(() => readyForIssue.value
-  ? issueDiscussion.statusText
-  : statusText.value);
+const codexQuestionsVisible = computed(() => codexQuestionExchange.hasQuestions.value);
+const codexQuestionCanSubmit = computed(() => codexQuestionExchange.canSubmit.value);
+const codexQuestionFailure = computed(() => codexQuestionExchange.failure.value);
+const codexQuestionList = computed(() => codexQuestionExchange.questions.value);
+const codexQuestionSubmitting = computed(() => codexQuestionExchange.submitting.value);
+const displayStatusText = computed(() => {
+  if (codexQuestionsVisible.value) {
+    return "A few questions first";
+  }
+  return readyForIssue.value
+    ? issueDiscussion.statusText
+    : statusText.value;
+});
 const displayRunning = computed(() => Boolean(
   running.value ||
   (readyForIssue.value && issueDiscussion.saving)
@@ -779,6 +778,7 @@ const commandTerminalText = computed(() => {
 const autopilotBusy = computed(() => Boolean(
   running.value ||
   codexWaiting.value ||
+  codexQuestionSubmitting.value ||
   commandFixSubmitting.value ||
   issueDiscussionWaiting.value ||
   (readyForIssue.value && issueDiscussion.saving)

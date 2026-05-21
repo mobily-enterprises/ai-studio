@@ -8,6 +8,9 @@ import {
   useAiStudioAutopilotController
 } from "../../src/composables/useAiStudioAutopilotController.js";
 import {
+  useAiStudioCodexQuestionExchange
+} from "../../src/composables/useAiStudioCodexQuestionExchange.js";
+import {
   AUTOPILOT_COMPLETION_TOKEN_PREFIX,
   AUTOPILOT_QUESTIONS_MARKER_END,
   AUTOPILOT_QUESTIONS_MARKER_START
@@ -423,9 +426,9 @@ describe("useAiStudioAutopilotController", () => {
     await context.controller.resume();
 
     expect(context.session.value.currentStep).toBe("plan_executed");
-    expect(context.controller.autopilotQuestioning.value).toBe(true);
+    expect(context.questionExchange.hasQuestions.value).toBe(true);
     expect(context.controller.waitingForCodex.value).toBe(false);
-    expect(context.controller.autopilotQuestions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "Which database should Codex use?"
     ]);
     expect(context.controller.failure.value).toBeNull();
@@ -443,11 +446,11 @@ describe("useAiStudioAutopilotController", () => {
     });
 
     await context.controller.resume();
-    context.controller.updateAutopilotQuestionAnswer("q1", "Use the managed MariaDB runtime.");
+    context.questionExchange.setAnswer("q1", "Use the managed MariaDB runtime.");
 
-    expect(context.controller.canSubmitAutopilotQuestionAnswers.value).toBe(true);
+    expect(context.questionExchange.canSubmit.value).toBe(true);
 
-    await context.controller.submitAutopilotQuestionAnswers();
+    await context.questionExchange.submitAnswers();
 
     expect(context.codexTerminal.injectPrompt).toHaveBeenCalledWith(
       expect.stringContaining("Use the managed MariaDB runtime."),
@@ -457,7 +460,7 @@ describe("useAiStudioAutopilotController", () => {
     );
     expect(context.session.value.currentStep).toBe("deep_ui_check_run");
     expect(context.controller.readyForDeepUiCheck.value).toBe(true);
-    expect(context.controller.autopilotQuestioning.value).toBe(false);
+    expect(context.questionExchange.hasQuestions.value).toBe(false);
     expect(context.controller.failure.value).toBeNull();
   });
 
@@ -508,9 +511,9 @@ describe("useAiStudioAutopilotController", () => {
     context.codexBusy.value = true;
 
     await vi.waitFor(() => {
-      expect(context.controller.autopilotQuestioning.value).toBe(true);
+      expect(context.questionExchange.hasQuestions.value).toBe(true);
     });
-    expect(context.controller.autopilotQuestions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "Which auth setup should Codex use?"
     ]);
     expect(context.controller.failure.value).toBeNull();
@@ -544,17 +547,17 @@ describe("useAiStudioAutopilotController", () => {
     context.codexBusy.value = true;
 
     await vi.waitFor(() => {
-      expect(context.controller.autopilotQuestioning.value).toBe(true);
+      expect(context.questionExchange.hasQuestions.value).toBe(true);
     });
-    expect(context.controller.autopilotQuestions.value.map((question) => question.text)).toEqual([
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
       "Which auth setup should Codex use?"
     ]);
     expect(context.controller.failure.value).toBeNull();
 
-    context.controller.autopilotQuestions.value[0].answer = "Keep it public.";
+    context.questionExchange.setAnswer("q1", "Keep it public.");
     context.codexBusy.value = false;
 
-    await context.controller.submitAutopilotQuestionAnswers();
+    await context.questionExchange.submitAnswers();
 
     expect(context.session.value.currentStep).toBe("deep_ui_check_run");
     expect(context.controller.failure.value).toBeNull();
@@ -770,10 +773,14 @@ function createAutopilotContext() {
       };
     })
   };
+  const questionExchange = useAiStudioCodexQuestionExchange({
+    codexTerminal
+  });
   const controller = useAiStudioAutopilotController({
     actions,
     codexTerminal,
     commandRunner,
+    questionExchange,
     refreshSessionData: async () => null,
     session
   });
@@ -787,6 +794,7 @@ function createAutopilotContext() {
     commandRunner,
     controller,
     moveToStep,
+    questionExchange,
     session
   };
 }
