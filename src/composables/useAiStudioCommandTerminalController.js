@@ -223,6 +223,15 @@ function useAiStudioCommandTerminalController(props, emit) {
     emit("running-changed", terminalIsRunning());
   }
 
+  function setExpanded(nextExpanded) {
+    const normalizedExpanded = nextExpanded === true;
+    if (expanded.value === normalizedExpanded) {
+      return;
+    }
+    expanded.value = normalizedExpanded;
+    emit("expanded-changed", normalizedExpanded);
+  }
+
   function emitLaunchReady(terminalSession = {}) {
     if (!terminalSessionIsLaunchReady(terminalSession) || readyEmittedForTerminalId === terminalSession.id) {
       return;
@@ -287,7 +296,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     emitRunningState();
     terminalError.value = "";
     if (props.initialExpanded !== false) {
-      expanded.value = true;
+      setExpanded(true);
     }
 
     try {
@@ -387,6 +396,7 @@ function useAiStudioCommandTerminalController(props, emit) {
     if (!canRequestAiFix.value) {
       return;
     }
+    setExpanded(false);
     emit("fix-requested", terminalFailureFixRequest({
       actionId: actionId.value,
       actionLabel: activeActionLabel.value,
@@ -419,8 +429,7 @@ function useAiStudioCommandTerminalController(props, emit) {
   }
 
   function toggleExpanded() {
-    expanded.value = !expanded.value;
-    emit("expanded-changed", expanded.value);
+    setExpanded(!expanded.value);
     if (expanded.value) {
       void setupTerminalUi();
     }
@@ -428,8 +437,7 @@ function useAiStudioCommandTerminalController(props, emit) {
 
   async function focusTerminal() {
     if (!expanded.value) {
-      expanded.value = true;
-      emit("expanded-changed", true);
+      setExpanded(true);
       await nextTick();
     }
     return focusTerminalUi();

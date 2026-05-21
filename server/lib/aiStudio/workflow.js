@@ -19,6 +19,8 @@ const ISSUE_READY_CONDITION = `any:metadata:issue_url;${ISSUE_FILES_READY_CONDIT
 const PR_READY_CONDITION = `any:metadata:pr_url;artifact:${PULL_REQUEST_ARTIFACT}`;
 const REPORT_READY_CONDITION = `artifact:${REPORT_ARTIFACT}`;
 const HUMAN_INPUT_RESPONSE_READY_CONDITION = `artifact:${HUMAN_INPUT_RESPONSE_ARTIFACT}`;
+const MERGE_DECISION_READY_CONDITION = "any:metadata:pr_merged;metadata:merge_skipped";
+const SESSION_CAN_FINISH_CONDITION = "any:metadata:main_checkout_synced;metadata:merge_skipped";
 
 function reportEditorAction() {
   return {
@@ -544,6 +546,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       actions: [
         reportEditorAction(),
         {
+          disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
+          disabledWhenReason: "A merge decision has already been recorded.",
           disabledReason: "Create the pull request before preparing for merge.",
           enabledWhen: ["metadata:pr_url"],
           id: "prepare_for_merge",
@@ -553,19 +557,34 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         },
         {
           adapterCapability: "merge_pr",
+          disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
+          disabledWhenReason: "A merge decision has already been recorded.",
           disabledReason: "Create the pull request before merging.",
           enabledWhen: ["metadata:pr_url"],
           id: "merge_pr",
           label: "Merge",
           type: "command"
+        },
+        {
+          disabledReason: "A merge decision has already been recorded.",
+          disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
+          enabledWhen: ["metadata:pr_url"],
+          enabledWhenReason: "Create the pull request before choosing not to merge.",
+          id: "skip_merge",
+          label: "Do not merge",
+          type: "adapter"
         }
       ],
       description: "Prepare and merge the pull request.",
       id: "pr_merged",
       label: "Merge PR",
+      next: {
+        disabledReason: "Merge the pull request or choose not to merge before continuing.",
+        enabledWhen: [MERGE_DECISION_READY_CONDITION]
+      },
       rewindCleanup: {
-        actionResults: ["prepare_for_merge", "merge_pr"],
-        metadata: ["pr_merged"]
+        actionResults: ["prepare_for_merge", "merge_pr", "skip_merge"],
+        metadata: ["pr_merged", "merge_skipped"]
       }
     },
     {
@@ -582,6 +601,10 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
       description: "Sync the main checkout after a successful merge.",
       id: "main_checkout_synced",
       label: "Sync main checkout",
+      next: {
+        disabledReason: "Sync the main checkout after merging before continuing.",
+        enabledWhen: [SESSION_CAN_FINISH_CONDITION]
+      },
       rewindCleanup: {
         actionResults: ["sync_main_checkout"],
         metadata: ["main_checkout_synced"]
@@ -592,8 +615,8 @@ const DEFAULT_AI_STUDIO_WORKFLOW = deepFreeze({
         reportEditorAction(),
         {
           adapterCapability: "finish_session",
-          disabledReason: "Create the pull request before finishing the session.",
-          enabledWhen: ["metadata:pr_url"],
+          disabledReason: "Merge and sync the main checkout, or choose not to merge, before archiving.",
+          enabledWhen: ["metadata:pr_url", SESSION_CAN_FINISH_CONDITION],
           id: "finish_session",
           label: "Archive",
           type: "finish"

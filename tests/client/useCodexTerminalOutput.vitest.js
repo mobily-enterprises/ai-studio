@@ -133,16 +133,57 @@ describe("useCodexTerminalOutput", () => {
   });
 
   it("marks live terminal output busy even when the chunk is only terminal control data", () => {
+    const appendDisplay = vi.fn();
+    const onOutputChanged = vi.fn();
+    const writeDisplay = vi.fn();
     const terminalOutput = useCodexTerminalOutput({
-      writeDisplay: vi.fn()
+      appendDisplay,
+      onOutputChanged,
+      writeDisplay
     });
 
     terminalOutput.appendTerminalOutput("\u001b[?25h");
 
     expect(terminalOutput.codexBusy.value).toBe(true);
+    expect(terminalOutput.getTerminalOutput()).toBe("");
+
+    vi.advanceTimersByTime(1000);
+
+    expect(appendDisplay).toHaveBeenCalledWith("\u001b[?25h");
+    expect(onOutputChanged).not.toHaveBeenCalled();
+    expect(writeDisplay).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(2200);
 
     expect(terminalOutput.codexBusy.value).toBe(false);
+  });
+
+  it("drops pure terminal-control snapshots instead of replaying blank animation state", () => {
+    const writeDisplay = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      writeDisplay
+    });
+
+    terminalOutput.writeTerminalOutput("\u001b[22;2H\u001b[0m\u001b[49m\u001b[K\u001b[?25h");
+
+    expect(terminalOutput.getTerminalOutput()).toBe("");
+    expect(writeDisplay).toHaveBeenCalledWith("");
+  });
+
+  it("renders tiny cursor-repaint fragments live without storing them as transcript", () => {
+    const appendDisplay = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      appendDisplay,
+      writeDisplay: vi.fn()
+    });
+
+    terminalOutput.appendTerminalOutput("\u001b[?2026h\u001b[22;2H\u001b[0m\u001b[49m\u001b[K\u001b[23;1HWo\u001b[39m\u001b[49m\u001b[0m\u001b[?25h\u001b[26;3H\u001b[?2026l");
+
+    expect(terminalOutput.codexBusy.value).toBe(true);
+    expect(terminalOutput.getTerminalOutput()).toBe("");
+
+    vi.advanceTimersByTime(80);
+
+    expect(appendDisplay).toHaveBeenCalledTimes(1);
   });
 });

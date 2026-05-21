@@ -311,12 +311,17 @@ describe("useAiStudioAutopilotController", () => {
 
     expect(context.session.value.currentStep).toBe(FINISHED_STEP_ID);
     expect(context.commandRunner.runCommandAction).not.toHaveBeenCalled();
+    expect(context.actions.runAction).toHaveBeenCalledWith(expect.objectContaining({
+      id: "skip_merge",
+      label: "Do not merge"
+    }));
     expect(context.controller.readyForFinished.value).toBe(true);
     expect(context.controller.failure.value).toBeNull();
   });
 
   it("archives a finished session through the workflow action", async () => {
     context.moveToStep(FINISHED_STEP_ID, {
+      main_checkout_synced: "yes",
       pr_url: "https://github.com/example/project/pull/123"
     });
 
@@ -1029,6 +1034,13 @@ function createAutopilotContext({
         return;
       }
 
+      if (action.id === "skip_merge") {
+        moveToStep(session.value.currentStep, {
+          merge_skipped: "yes"
+        });
+        return;
+      }
+
       if (PROMPT_ACTION_IDS.has(action.id)) {
         const promptRun = createPromptRun(action);
         completePromptRun(promptRun);
@@ -1223,7 +1235,13 @@ function actionsForStep(stepId, metadata = {}) {
   if (stepId === "pr_merged") {
     return [
       promptAction("prepare_for_merge", "Prepare for merge"),
-      commandAction("merge_pr", "Merge")
+      commandAction("merge_pr", "Merge"),
+      {
+        enabled: !metadata.pr_merged && !metadata.merge_skipped,
+        id: "skip_merge",
+        label: "Do not merge",
+        type: "adapter"
+      }
     ];
   }
   if (stepId === "main_checkout_synced") {
@@ -1234,7 +1252,7 @@ function actionsForStep(stepId, metadata = {}) {
   if (stepId === FINISHED_STEP_ID) {
     return [
       {
-        enabled: Boolean(metadata.pr_url),
+        enabled: Boolean(metadata.pr_url && (metadata.main_checkout_synced || metadata.merge_skipped)),
         id: FINISH_SESSION_ACTION_ID,
         label: "Archive",
         type: "finish"
@@ -1308,8 +1326,11 @@ function nextStepReady(stepId, metadata = {}) {
   if (stepId === "pr_created") {
     return Boolean(metadata.pr_url);
   }
+  if (stepId === "pr_merged") {
+    return Boolean(metadata.pr_merged || metadata.merge_skipped);
+  }
   if (stepId === "main_checkout_synced") {
-    return true;
+    return Boolean(metadata.main_checkout_synced || metadata.merge_skipped);
   }
   return Boolean(NEXT_STEP[stepId]);
 }

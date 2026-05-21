@@ -8,6 +8,7 @@ const lifecycleHooks = vi.hoisted(() => ({
 const terminalSocket = vi.hoisted(() => ({
   closeSocket: vi.fn(),
   connect: vi.fn(async () => true),
+  resize: vi.fn(async () => true),
   send: vi.fn(async () => true)
 }));
 
@@ -34,6 +35,7 @@ describe("useCodexTerminalSessionLifecycle", () => {
     lifecycleHooks.mounted.length = 0;
     vi.clearAllMocks();
     terminalSocket.connect.mockResolvedValue(true);
+    terminalSocket.resize.mockResolvedValue(true);
     terminalSocket.send.mockResolvedValue(true);
   });
 
@@ -112,6 +114,26 @@ describe("useCodexTerminalSessionLifecycle", () => {
     expect(options.startTerminalSession).toHaveBeenCalledTimes(1);
     expect(options.terminalSessionId.value).toBe("terminal-1");
     expect(options.terminalStatus.value).toBe("running");
+  });
+
+  it("sends terminal size changes to the PTY when a terminal is running", async () => {
+    const { useCodexTerminalSessionLifecycle } = await import("../../src/composables/useCodexTerminalSessionLifecycle.js");
+    const options = createLifecycleOptions({
+      terminalSessionId: ref("terminal-1"),
+      terminalStatus: ref("running")
+    });
+
+    const lifecycle = useCodexTerminalSessionLifecycle(options);
+    const resized = await lifecycle.resizeTerminal({
+      cols: 132,
+      rows: 42
+    });
+
+    expect(resized).toBe(true);
+    expect(terminalSocket.resize).toHaveBeenCalledWith({
+      cols: 132,
+      rows: 42
+    });
   });
 });
 

@@ -6,6 +6,7 @@ import {
   closeTerminalSessionsForNamespacePrefix,
   countRunningTerminalSessions,
   readTerminalSession,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -138,6 +139,42 @@ test("terminal sessions stream PTY output to subscribers", async () => {
       message.type === "output" && String(message.chunk || "").includes("echo:hello")
     )));
     subscription.unsubscribe();
+  } finally {
+    await closeTerminalSessionsForNamespacePrefix(namespace);
+  }
+});
+
+test("terminal sessions resize the running PTY", async () => {
+  const namespace = `terminal-resize-test-${crypto.randomUUID()}`;
+  const session = startTerminalSession({
+    args: [
+      "-lc",
+      "stty size; IFS= read -r _; stty size; sleep 1"
+    ],
+    command: "bash",
+    commandPreview: "bash stty size",
+    namespace
+  });
+
+  try {
+    assert.equal(session.ok, true);
+    await waitFor(() => /28\s+100/u.test(readTerminalSession(session.id, { namespace }).output));
+
+    const resized = resizeTerminalSession(session.id, {
+      cols: 123,
+      rows: 41
+    }, {
+      namespace
+    });
+    assert.equal(resized.ok, true);
+    assert.equal(resized.cols, 123);
+    assert.equal(resized.rows, 41);
+
+    writeTerminalSession(session.id, "\n", {
+      namespace
+    });
+
+    await waitFor(() => /41\s+123/u.test(readTerminalSession(session.id, { namespace }).output));
   } finally {
     await closeTerminalSessionsForNamespacePrefix(namespace);
   }

@@ -11,6 +11,7 @@ import {
 } from "../configValues.js";
 import {
   completedMetadataSpec,
+  normalizeHookCommandResult,
   worktreeCommandSpec
 } from "./shellHelpers.js";
 
@@ -59,14 +60,14 @@ async function mergePrTerminalSpec({
   const config = context.config || session.config || {};
   const hook = hooks?.beforeMerge;
   const hookResult = typeof hook === "function"
-    ? await hook({
+    ? normalizeHookCommandResult(await hook({
         context,
         session,
         targetRoot,
         worktreePath: normalizeText(session.metadata?.worktree_path)
-      })
-    : {};
-  const beforeMergeScript = normalizeText(hookResult?.script || hookResult);
+      }))
+    : null;
+  const beforeMergeScript = normalizeText(hookResult?.script);
   const values = configValues(config);
   return worktreeCommandSpec({
     commandPreview: "gh pr merge",

@@ -30,6 +30,18 @@ function sessionLimits(sessions = []) {
   };
 }
 
+function sessionNeedsMainCheckoutSync(session = {}) {
+  const metadata = session.metadata || {};
+  return isOpenAiStudioSession(session) &&
+    String(metadata.pr_merged || "").trim() &&
+    !String(metadata.main_checkout_synced || "").trim() &&
+    !String(metadata.merge_skipped || "").trim();
+}
+
+function mainCheckoutSyncBlocker(sessions = []) {
+  return sessions.find(sessionNeedsMainCheckoutSync) || null;
+}
+
 function sessionListResponse(sessions = []) {
   return {
     limits: sessionLimits(sessions),
@@ -77,6 +89,21 @@ function createService({
               {
                 code: "open_session_limit",
                 message: `Studio allows up to ${limits.maxOpenSessions} active sessions at once. Finish or abandon one before creating another.`
+              }
+            ],
+            limits,
+            ok: false,
+            sessions: existingSessions,
+            status: "blocked"
+          };
+        }
+        const syncBlocker = mainCheckoutSyncBlocker(existingSessions);
+        if (syncBlocker) {
+          return {
+            errors: [
+              {
+                code: "main_checkout_sync_required",
+                message: `Session ${syncBlocker.sessionId} has merged a pull request but has not synced the main checkout. Run Sync main checkout there before starting another session.`
               }
             ],
             limits,

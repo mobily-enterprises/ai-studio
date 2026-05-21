@@ -2,6 +2,7 @@ import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
   readTerminalSession,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -330,6 +331,12 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
 
     writeTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
+        namespace: launchTargetTerminalNamespace(sessionId)
+      });
+    },
+
+    resizeTerminal(sessionId, terminalSessionId, size) {
+      return resizeTerminalSession(terminalSessionId, size, {
         namespace: launchTargetTerminalNamespace(sessionId)
       });
     }

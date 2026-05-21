@@ -220,6 +220,12 @@ const {
       source: "user"
     });
   },
+  onResize(size) {
+    if (!terminalLifecycle) {
+      return false;
+    }
+    return terminalLifecycle.resizeTerminal(size);
+  },
   visible: computed(() => props.visible)
 });
 let promptHandoff = null;

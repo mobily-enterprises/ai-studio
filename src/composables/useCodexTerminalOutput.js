@@ -4,15 +4,19 @@ import {
   STUDIO_CONTEXT_END_MARKER,
   STUDIO_CONTEXT_START_MARKER,
   stripStudioContextBlocksForDisplay,
+  terminalSnapshotOutputForDisplay,
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
 import { createCodexPromptEchoFilters } from "@/lib/codexPromptEchoFilters.js";
 
 const CODEX_ACTIVITY_QUIET_MS = 2200;
 const CODEX_ACTIVITY_BUFFER_LENGTH = 8192;
+const TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT = 12;
+const TERMINAL_ESCAPE_CHARACTER = String.fromCharCode(27);
 const MAX_TERMINAL_OUTPUT_LENGTH = 4 * 1024 * 1024;
 const TERMINAL_DISPLAY_UPDATE_INTERVAL_MS = 80;
 const TERMINAL_OUTPUT_EMIT_INTERVAL_MS = 120;
+const TERMINAL_CURSOR_POSITION_PATTERN = new RegExp(`${TERMINAL_ESCAPE_CHARACTER}\\[\\d+;\\d+H`, "u");
 const CODEX_WORKING_TEXT_MARKERS = Object.freeze([
   "Working (",
   "Waiting for background terminal",
@@ -57,6 +61,21 @@ function codexWorkingStateFromText(value = "") {
     return true;
   }
   return null;
+}
+
+function terminalOutputHasVisibleText(value = "") {
+  return stripTerminalControlSequences(value).trim().length > 0;
+}
+
+function terminalOutputIsSmallCursorRepaint(value = "") {
+  const source = String(value || "");
+  const visibleText = stripTerminalControlSequences(source).trim();
+  if (!visibleText || visibleText.length > TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT || visibleText.includes("\n")) {
+    return false;
+  }
+  return source.includes(`${TERMINAL_ESCAPE_CHARACTER}[?2026`) &&
+    source.includes(`${TERMINAL_ESCAPE_CHARACTER}[K`) &&
+    TERMINAL_CURSOR_POSITION_PATTERN.test(source);
 }
 
 function useCodexTerminalOutput({
@@ -171,6 +190,12 @@ function useCodexTerminalOutput({
       codexIdleTimer = null;
       clearCodexBusy();
     }, CODEX_ACTIVITY_QUIET_MS);
+  }
+
+  function noteTerminalActivityWithoutOutput() {
+    terminalOutputVersion += 1;
+    terminalLastOutputAt = Date.now();
+    scheduleCodexIdleWhenQuiet();
   }
 
   function clearTerminalDisplayTimer() {
@@ -337,7 +362,8 @@ function useCodexTerminalOutput({
   }
 
   function writeTerminalOutput(output) {
-    updateTerminalOutput(output, {
+    const terminalOutput = terminalSnapshotOutputForDisplay(output);
+    updateTerminalOutput(terminalOutputHasVisibleText(terminalOutput) ? terminalOutput : "", {
       emitImmediately: true
     });
   }
@@ -348,6 +374,13 @@ function useCodexTerminalOutput({
       return;
     }
     markCodexBusy();
+    if (!terminalOutputHasVisibleText(outputChunk) || terminalOutputIsSmallCursorRepaint(outputChunk)) {
+      noteTerminalActivityWithoutOutput();
+      if (displayChunkCanAppendRaw(outputChunk)) {
+        scheduleTerminalDisplayAppend(outputChunk);
+      }
+      return;
+    }
     updateTerminalOutput(`${terminalLatestOutput}${outputChunk}`, {
       outputChunk
     });

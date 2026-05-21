@@ -133,16 +133,32 @@ function createService({ projectService } = {}) {
       return codex.writeTerminal(sessionId, terminalSessionId, data);
     },
 
+    resizeCodexTerminal(sessionId, terminalSessionId, size) {
+      return codex.resizeTerminal(sessionId, terminalSessionId, size);
+    },
+
     writeCommandTerminal(sessionId, terminalSessionId, data) {
       return command.writeTerminal(sessionId, terminalSessionId, data);
+    },
+
+    resizeCommandTerminal(sessionId, terminalSessionId, size) {
+      return command.resizeTerminal(sessionId, terminalSessionId, size);
     },
 
     writeLaunchTargetTerminal(sessionId, terminalSessionId, data) {
       return launchTarget.writeTerminal(sessionId, terminalSessionId, data);
     },
 
+    resizeLaunchTargetTerminal(sessionId, terminalSessionId, size) {
+      return launchTarget.resizeTerminal(sessionId, terminalSessionId, size);
+    },
+
     writeShellTerminal(sessionId, terminalSessionId, data) {
       return shell.writeTerminal(sessionId, terminalSessionId, data);
+    },
+
+    resizeShellTerminal(sessionId, terminalSessionId, size) {
+      return shell.resizeTerminal(sessionId, terminalSessionId, size);
     }
   });
 }

@@ -195,6 +195,7 @@ async function requiredHookCommand({
 export {
   completedMetadataSpec,
   isGitWorktree,
+  normalizeHookCommandResult,
   readCurrentBranch,
   readCurrentCommit,
   requiredHookCommand,

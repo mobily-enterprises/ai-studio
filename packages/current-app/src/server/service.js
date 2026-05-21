@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -604,6 +605,12 @@ function createService({
 
     writeTargetScriptTerminal(terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
+        namespace: targetScriptTerminalNamespace()
+      });
+    },
+
+    resizeTargetScriptTerminal(terminalSessionId, size) {
+      return resizeTerminalSession(terminalSessionId, size, {
         namespace: targetScriptTerminalNamespace()
       });
     },

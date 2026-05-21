@@ -130,20 +130,36 @@ function useCodexTerminalSocket({
     return socketOpenPromise;
   }
 
-  async function send(data) {
+  async function sendSocketMessage(message) {
     if (!(await connect()) || socket?.readyState !== WebSocket.OPEN) {
       throw new Error("Terminal stream is not connected.");
     }
-    socket.send(JSON.stringify({
+    socket.send(JSON.stringify(message));
+  }
+
+  async function send(data) {
+    await sendSocketMessage({
       data: String(data || ""),
       type: "input"
-    }));
+    });
+  }
+
+  async function resize({
+    cols,
+    rows
+  } = {}) {
+    await sendSocketMessage({
+      cols,
+      rows,
+      type: "resize"
+    });
   }
 
   return {
     clearReconnect,
     closeSocket,
     connect,
+    resize,
     scheduleReconnect,
     send
   };

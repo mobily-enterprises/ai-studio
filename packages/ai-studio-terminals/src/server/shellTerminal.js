@@ -2,6 +2,7 @@ import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
   readTerminalSession,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -365,6 +366,12 @@ function createShellTerminalController({ projectService } = {}) {
 
     writeTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
+        namespace: shellTerminalNamespace(sessionId)
+      });
+    },
+
+    resizeTerminal(sessionId, terminalSessionId, size) {
+      return resizeTerminalSession(terminalSessionId, size, {
         namespace: shellTerminalNamespace(sessionId)
       });
     }

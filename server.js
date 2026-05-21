@@ -154,6 +154,7 @@ function registerTerminalWebSocketRoute(
   runtimeApp,
   {
     routePath,
+    resize,
     serviceId,
     serviceUnavailableMessage,
     subscribe,
@@ -202,23 +203,38 @@ function registerTerminalWebSocketRoute(
       socket.on("message", async (rawMessage) => {
         try {
           const message = JSON.parse(rawMessage.toString());
-          if (message?.type !== "input") {
+          if (message?.type === "input") {
+            const response = await write(service, {
+              data: message.data,
+              sessionId,
+              terminalSessionId
+            });
+            if (response?.ok === false) {
+              sendSocketJson(socket, {
+                error: response.error || "Terminal input failed.",
+                type: "error"
+              });
+            }
             return;
           }
-          const response = await write(service, {
-            data: message.data,
-            sessionId,
-            terminalSessionId
-          });
-          if (response?.ok === false) {
-            sendSocketJson(socket, {
-              error: response.error || "Terminal input failed.",
-              type: "error"
+          if (message?.type === "resize") {
+            const response = await resize?.(service, {
+              cols: message.cols,
+              rows: message.rows,
+              sessionId,
+              terminalSessionId
             });
+            if (response?.ok === false) {
+              sendSocketJson(socket, {
+                error: response.error || "Terminal resize failed.",
+                type: "error"
+              });
+            }
+            return;
           }
         } catch (error) {
           sendSocketJson(socket, {
-            error: String(error?.message || error || "Terminal input failed."),
+            error: String(error?.message || error || "Terminal socket message failed."),
             type: "error"
           });
         }
@@ -258,6 +274,9 @@ function registerAiStudioCodexTerminalWebSocketRoute(app, runtimeApp) {
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeCodexTerminal(sessionId, terminalSessionId, subscriber);
     },
+    resize(service, { cols, rows, sessionId, terminalSessionId }) {
+      return service.resizeCodexTerminal(sessionId, terminalSessionId, { cols, rows });
+    },
     write(service, { data, sessionId, terminalSessionId }) {
       return service.writeCodexTerminal(sessionId, terminalSessionId, data);
     }
@@ -271,6 +290,9 @@ function registerAiStudioCommandTerminalWebSocketRoute(app, runtimeApp) {
     serviceUnavailableMessage: "AI Studio terminal service is unavailable.",
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeCommandTerminal(sessionId, terminalSessionId, subscriber);
+    },
+    resize(service, { cols, rows, sessionId, terminalSessionId }) {
+      return service.resizeCommandTerminal(sessionId, terminalSessionId, { cols, rows });
     },
     write(service, { data, sessionId, terminalSessionId }) {
       return service.writeCommandTerminal(sessionId, terminalSessionId, data);
@@ -286,6 +308,9 @@ function registerAiStudioLaunchTargetTerminalWebSocketRoute(app, runtimeApp) {
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber);
     },
+    resize(service, { cols, rows, sessionId, terminalSessionId }) {
+      return service.resizeLaunchTargetTerminal(sessionId, terminalSessionId, { cols, rows });
+    },
     write(service, { data, sessionId, terminalSessionId }) {
       return service.writeLaunchTargetTerminal(sessionId, terminalSessionId, data);
     }
@@ -300,6 +325,9 @@ function registerAiStudioShellTerminalWebSocketRoute(app, runtimeApp) {
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeShellTerminal(sessionId, terminalSessionId, subscriber);
     },
+    resize(service, { cols, rows, sessionId, terminalSessionId }) {
+      return service.resizeShellTerminal(sessionId, terminalSessionId, { cols, rows });
+    },
     write(service, { data, sessionId, terminalSessionId }) {
       return service.writeShellTerminal(sessionId, terminalSessionId, data);
     }
@@ -313,6 +341,9 @@ function registerTargetScriptTerminalWebSocketRoute(app, runtimeApp) {
     serviceUnavailableMessage: "Current app service is unavailable.",
     subscribe(service, { subscriber, terminalSessionId }) {
       return service.subscribeTargetScriptTerminal(terminalSessionId, subscriber);
+    },
+    resize(service, { cols, rows, terminalSessionId }) {
+      return service.resizeTargetScriptTerminal(terminalSessionId, { cols, rows });
     },
     write(service, { data, terminalSessionId }) {
       return service.writeTargetScriptTerminal(terminalSessionId, data);

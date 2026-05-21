@@ -8,6 +8,7 @@ const CODEX_TERMINAL_SCROLLBACK_LINES = 50000;
 function useCodexTerminalViewport({
   expanded,
   onData,
+  onResize,
   visible
 } = {}) {
   const terminalHost = ref(null);
@@ -24,7 +25,11 @@ function useCodexTerminalViewport({
   let terminalOutsidePointerHandler = null;
   let terminalWindowBlurHandler = null;
   let terminalResizeHandler = null;
+  let terminalResizeObserver = null;
+  let pendingFitFrame = null;
   let terminalSetupPromise = null;
+  let terminalReportedCols = 0;
+  let terminalReportedRows = 0;
   let terminalOutputOffset = 0;
   let terminalDisplayOutput = "";
 
@@ -61,14 +66,87 @@ function useCodexTerminalViewport({
     blurTerminal();
   }
 
-  function fitTerminal() {
-    terminalFitAddon?.fit();
+  function terminalCanFit() {
+    return Boolean(terminalInstance && terminalFitAddon && unref(expanded) && unref(visible));
+  }
+
+  function fitTerminal(options = {}) {
+    if (!terminalCanFit()) {
+      return;
+    }
+    terminalFitAddon.fit();
+    reportTerminalSize(options);
+    terminalInstance.refresh?.(0, Math.max(0, terminalInstance.rows - 1));
+  }
+
+  function markTerminalSizeReported({
+    cols,
+    rows
+  } = {}) {
+    terminalReportedCols = cols;
+    terminalReportedRows = rows;
+  }
+
+  function resetReportedTerminalSize() {
+    terminalReportedCols = 0;
+    terminalReportedRows = 0;
+  }
+
+  function reportTerminalSize({
+    forceResize = false
+  } = {}) {
+    const cols = Number(terminalInstance?.cols || 0);
+    const rows = Number(terminalInstance?.rows || 0);
+    if (!cols || !rows || (!forceResize && cols === terminalReportedCols && rows === terminalReportedRows)) {
+      return;
+    }
+    const size = {
+      cols,
+      rows
+    };
+    const resizeResult = onResize?.(size);
+    if (resizeResult && typeof resizeResult.then === "function") {
+      resizeResult.then((resized) => {
+        if (resized !== false) {
+          markTerminalSizeReported(size);
+        }
+      }).catch(() => null);
+      return;
+    }
+    if (resizeResult !== false) {
+      markTerminalSizeReported(size);
+    }
+  }
+
+  function cancelScheduledFit() {
+    if (pendingFitFrame === null) {
+      return;
+    }
+    const cancelFrame = typeof window.cancelAnimationFrame === "function"
+      ? window.cancelAnimationFrame.bind(window)
+      : window.clearTimeout.bind(window);
+    cancelFrame(pendingFitFrame);
+    pendingFitFrame = null;
+  }
+
+  function scheduleTerminalFit() {
+    if (pendingFitFrame !== null || !terminalCanFit()) {
+      return;
+    }
+    const requestFrame = typeof window.requestAnimationFrame === "function"
+      ? window.requestAnimationFrame.bind(window)
+      : window.setTimeout.bind(window);
+    pendingFitFrame = requestFrame(() => {
+      pendingFitFrame = null;
+      fitTerminal();
+    });
   }
 
   function resetTerminal() {
     terminalInstance?.reset?.();
     terminalOutputOffset = 0;
     terminalDisplayOutput = "";
+    resetReportedTerminalSize();
   }
 
   function clearTerminalDisplay() {
@@ -138,7 +216,7 @@ function useCodexTerminalViewport({
       terminalInstance.loadAddon(terminalFitAddon);
       terminalInstance.open(terminalHost.value);
       if (unref(expanded) && unref(visible)) {
-        terminalFitAddon.fit();
+        fitTerminal();
       }
       terminalOutputOffset = 0;
       writeTerminalDisplay(terminalDisplayOutput);
@@ -164,8 +242,12 @@ function useCodexTerminalViewport({
       document.addEventListener("pointerdown", terminalOutsidePointerHandler, true);
       window.addEventListener("blur", terminalWindowBlurHandler);
       terminalSelectionDisposable = terminalInstance.onSelectionChange(updateSelection);
-      terminalResizeHandler = fitTerminal;
+      terminalResizeHandler = scheduleTerminalFit;
       window.addEventListener("resize", terminalResizeHandler);
+      if (typeof ResizeObserver !== "undefined") {
+        terminalResizeObserver = new ResizeObserver(scheduleTerminalFit);
+        terminalResizeObserver.observe(terminalHost.value);
+      }
       return true;
     })();
 
@@ -221,10 +303,14 @@ function useCodexTerminalViewport({
       window.removeEventListener("resize", terminalResizeHandler);
       terminalResizeHandler = null;
     }
+    terminalResizeObserver?.disconnect?.();
+    terminalResizeObserver = null;
+    cancelScheduledFit();
     terminalInstance?.dispose?.();
     terminalInstance = null;
     terminalFitAddon = null;
     terminalOutputOffset = 0;
+    resetReportedTerminalSize();
     if (!preserveDisplay) {
       terminalDisplayOutput = "";
     }

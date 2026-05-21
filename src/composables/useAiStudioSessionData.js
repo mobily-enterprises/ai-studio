@@ -75,6 +75,9 @@ function useAiStudioSessionData({
   });
 
   const sessions = computed(() => visibleAiStudioSessions(sessionList.items || []));
+  const mainCheckoutSyncBlocker = computed(() => {
+    return sessions.value.find(sessionNeedsMainCheckoutSync) || null;
+  });
   const selectedListSession = computed(() => {
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
@@ -85,11 +88,17 @@ function useAiStudioSessionData({
     payloadLimits: sessionList.pages?.[0]?.limits || {},
     sessions: sessions.value
   }));
-  const canCreateSession = computed(() => limits.value.openSessionCount < limits.value.maxOpenSessions);
+  const canCreateSession = computed(() => {
+    return !mainCheckoutSyncBlocker.value && limits.value.openSessionCount < limits.value.maxOpenSessions;
+  });
   const createSessionTitle = computed(() => {
-    return canCreateSession.value
-      ? "Create a new AI Studio session"
-      : `Studio allows up to ${limits.value.maxOpenSessions} active sessions.`;
+    if (mainCheckoutSyncBlocker.value) {
+      return `Sync the main checkout in session ${shortSessionId(mainCheckoutSyncBlocker.value.sessionId)} before creating another session.`;
+    }
+    if (limits.value.openSessionCount >= limits.value.maxOpenSessions) {
+      return `Studio allows up to ${limits.value.maxOpenSessions} active sessions.`;
+    }
+    return "Create a new AI Studio session";
   });
   const selectedSessionTitle = computed(() => {
     return aiStudioSessionDisplayTitle(selectedSession.value || {}) ||
@@ -149,6 +158,13 @@ function useAiStudioSessionData({
     statusLabel: aiStudioSessionStatusLabel,
     timelineSteps
   };
+}
+
+function sessionNeedsMainCheckoutSync(session = {}) {
+  const metadata = session.metadata || {};
+  return String(metadata.pr_merged || "").trim() &&
+    !String(metadata.main_checkout_synced || "").trim() &&
+    !String(metadata.merge_skipped || "").trim();
 }
 
 export {

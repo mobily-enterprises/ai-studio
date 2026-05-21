@@ -245,18 +245,24 @@ test.describe("live AI Studio session workflow", () => {
 
     await goNextToStep(page, "pr_merged");
     await assertChecklistControls(page, "pr_merged", {
-      enabled: ["Prepare for merge", "Merge", "Next"]
+      disabled: ["Next"],
+      enabled: ["Prepare for merge", "Merge", "Do not merge"]
+    });
+
+    await markMetadataAndReload(page, "pr_merged", "yes");
+    await assertChecklistControls(page, "pr_merged", {
+      enabled: ["Next"]
     });
 
     await goNextToStep(page, "main_checkout_synced");
     await assertChecklistControls(page, "main_checkout_synced", {
-      disabled: ["Sync main checkout"],
-      enabled: ["Next"]
+      disabled: ["Next"],
+      enabled: ["Sync main checkout"]
     });
 
-    await markMetadataAndReload(page, "pr_merged", "yes");
+    await markMetadataAndReload(page, "main_checkout_synced", "yes");
     await assertChecklistControls(page, "main_checkout_synced", {
-      enabled: ["Sync main checkout", "Next"]
+      enabled: ["Next"]
     });
 
     await goNextToStep(page, "session_finished");

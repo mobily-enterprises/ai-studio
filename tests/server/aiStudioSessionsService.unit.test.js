@@ -81,3 +81,49 @@ test("session action keeps terminals when the session remains active", async () 
   assert.equal(session.status, AI_STUDIO_SESSION_STATUS.ACTIVE);
   assert.deepEqual(closedSessionIds, []);
 });
+
+test("session creation waits for an unsynced merged session", async () => {
+  let createSessionCalled = false;
+  const existingSessions = [
+    {
+      metadata: {
+        pr_merged: "yes"
+      },
+      sessionId: "session-merged",
+      status: AI_STUDIO_SESSION_STATUS.ACTIVE
+    }
+  ];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async createSession() {
+            createSessionCalled = true;
+            return {
+              sessionId: "new-session"
+            };
+          },
+          async listSessions() {
+            return existingSessions;
+          }
+        };
+      },
+      async requireProjectType() {
+        return {
+          adapter: {
+            id: "jskit"
+          },
+          projectType: "jskit"
+        };
+      }
+    },
+    setupServices: readySetupServices()
+  });
+
+  const result = await service.createSession();
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.errors[0].code, "main_checkout_sync_required");
+  assert.equal(createSessionCalled, false);
+});

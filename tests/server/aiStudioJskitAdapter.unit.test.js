@@ -577,7 +577,8 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     assert.deepEqual(enabledByActionId(mergeWithoutPr.actions), {
       edit_report: false,
       merge_pr: false,
-      prepare_for_merge: false
+      prepare_for_merge: false,
+      skip_merge: false
     });
 
     await runtime.store.writeArtifact("jskit_merge", "report.md", "# Report\n");
@@ -586,12 +587,14 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     assert.deepEqual(enabledByActionId(mergeReady.actions), {
       edit_report: true,
       merge_pr: true,
-      prepare_for_merge: true
+      prepare_for_merge: true,
+      skip_merge: true
     });
 
     const afterPrepare = await runtime.runAction("jskit_merge", "prepare_for_merge");
     assert.equal(afterPrepare.actionResult.promptId, "prepare_for_merge");
     assert.match(afterPrepare.actionResult.prompt, /Prepare the JSKIT pull request for merge/u);
+    assert.match(afterPrepare.actionResult.prompt, /main checkout is ready to sync/u);
     await assert.rejects(
       () => runtime.runAction("jskit_merge", "merge_pr"),
       {
@@ -624,6 +627,17 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     await runtime.createSession({
       initialStep: "session_finished",
       metadata: {
+        pr_url: "https://github.com/example/repo/pull/24"
+      },
+      sessionId: "jskit_finish_blocked"
+    });
+    const finishBlocked = await runtime.getSession("jskit_finish_blocked");
+    assert.equal(finishBlocked.actions.find((action) => action.id === "finish_session").enabled, false);
+
+    await runtime.createSession({
+      initialStep: "session_finished",
+      metadata: {
+        main_checkout_synced: "yes",
         pr_url: "https://github.com/example/repo/pull/24"
       },
       sessionId: "jskit_finish"

@@ -975,6 +975,25 @@ function useAiStudioAutopilotController({
     active.value = true;
     activeStage.value = "Skip merge";
     try {
+      const skipAction = actionById(readActions(actions), "skip_merge");
+      if (!skipAction) {
+        stopWithFailure(missingActionFailure({
+          actionId: "skip_merge",
+          label: "Do not merge"
+        }));
+        return false;
+      }
+      if (skipAction.enabled !== true) {
+        stopWithFailure(disabledActionFailure(skipAction, {
+          actionId: "skip_merge",
+          label: "Do not merge"
+        }));
+        return false;
+      }
+      await actions.runAction?.(skipAction);
+      await refreshSessionData();
+      await nextTick();
+
       if (!await advanceCurrentStepIfReady()) {
         stopWithFailure({
           actionId: "",

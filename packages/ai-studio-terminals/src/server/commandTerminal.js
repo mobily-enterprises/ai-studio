@@ -4,6 +4,7 @@ import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
   readTerminalSession,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession
@@ -391,6 +392,12 @@ function createCommandTerminalController({
 
     writeTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
+        namespace: commandTerminalNamespace(sessionId)
+      });
+    },
+
+    resizeTerminal(sessionId, terminalSessionId, size) {
+      return resizeTerminalSession(terminalSessionId, size, {
         namespace: commandTerminalNamespace(sessionId)
       });
     }

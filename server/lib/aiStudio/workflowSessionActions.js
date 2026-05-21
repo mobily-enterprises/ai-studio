@@ -67,6 +67,15 @@ async function useNewBranchSessionAction() {
   });
 }
 
+async function skipMergeSessionAction() {
+  return adapterActionResult({
+    message: "Selected not to merge this pull request from AI Studio.",
+    metadata: {
+      merge_skipped: "yes"
+    }
+  });
+}
+
 async function useExistingIssueSessionAction({
   input = {},
   targetRoot = ""
@@ -177,6 +186,7 @@ async function useExistingPrSessionAction({
 }
 
 const AI_STUDIO_WORKFLOW_SESSION_ACTIONS = Object.freeze({
+  skip_merge: skipMergeSessionAction,
   use_existing_issue: useExistingIssueSessionAction,
   use_existing_pr: useExistingPrSessionAction,
   use_new_branch: useNewBranchSessionAction

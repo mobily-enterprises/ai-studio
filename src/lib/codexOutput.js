@@ -111,6 +111,47 @@ function stripTerminalControlSequences(value) {
     .replace(STANDALONE_TERMINAL_CONTROL_PATTERN, "");
 }
 
+function terminalControlSequenceKeepsColor(source = "", startIndex = 0, endIndex = startIndex) {
+  return source[startIndex] === ESCAPE_CHARACTER &&
+    source[startIndex + 1] === "[" &&
+    source[endIndex - 1] === "m";
+}
+
+function isStandaloneTerminalControlCharacter(character = "") {
+  const code = character.charCodeAt(0);
+  return (code >= 0 && code <= 8) ||
+    code === 11 ||
+    code === 12 ||
+    (code >= 14 && code <= 31) ||
+    (code >= 127 && code <= 159);
+}
+
+function terminalSnapshotOutputForDisplay(value) {
+  const source = String(value || "");
+  let output = "";
+
+  for (let cursor = 0; cursor < source.length;) {
+    const controlEnd = terminalControlSequenceEnd(source, cursor);
+    if (controlEnd > cursor) {
+      if (terminalControlSequenceKeepsColor(source, cursor, controlEnd)) {
+        output += source.slice(cursor, controlEnd);
+      }
+      cursor = controlEnd;
+      continue;
+    }
+
+    const character = source[cursor];
+    if (character === "\r") {
+      output += "\n";
+    } else if (!isStandaloneTerminalControlCharacter(character)) {
+      output += character;
+    }
+    cursor += 1;
+  }
+
+  return output.replace(/\n{4,}/gu, "\n\n\n");
+}
+
 function trailingMarkerPrefixLength(value, marker) {
   const source = String(value || "");
   const maxLength = Math.min(source.length, marker.length - 1);
@@ -237,6 +278,7 @@ export {
   hasStudioContextBlock,
   isCodexThreadId,
   stripStudioContextBlocksForDisplay,
+  terminalSnapshotOutputForDisplay,
   stripTerminalControlSequences,
   wrapPromptWithStudioContext
 };

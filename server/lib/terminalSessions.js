@@ -2,6 +2,12 @@ import crypto from "node:crypto";
 import { spawn as spawnPty } from "node-pty";
 
 const MAX_BUFFER_LENGTH = 2 * 1024 * 1024;
+const DEFAULT_TERMINAL_COLS = 100;
+const DEFAULT_TERMINAL_ROWS = 28;
+const MIN_TERMINAL_COLS = 20;
+const MIN_TERMINAL_ROWS = 5;
+const MAX_TERMINAL_COLS = 300;
+const MAX_TERMINAL_ROWS = 120;
 const stores = new Map();
 
 function normalizeNamespace(namespace = "") {
@@ -36,12 +42,46 @@ function terminalSessionResponse(session) {
   return {
     ok: true,
     closeError: session.closeError || "",
+    cols: session.cols || DEFAULT_TERMINAL_COLS,
     id: session.id,
     commandPreview: session.commandPreview,
     exitCode: session.exitCode,
     metadata: session.metadata || {},
     output: session.output,
+    rows: session.rows || DEFAULT_TERMINAL_ROWS,
     status: session.status
+  };
+}
+
+function normalizeTerminalDimension(value, {
+  max,
+  min
+} = {}) {
+  const dimension = Math.floor(Number(value));
+  if (!Number.isFinite(dimension) || dimension < min) {
+    return null;
+  }
+  return Math.min(max, dimension);
+}
+
+function normalizeTerminalSize({
+  cols,
+  rows
+} = {}) {
+  const normalizedCols = normalizeTerminalDimension(cols, {
+    max: MAX_TERMINAL_COLS,
+    min: MIN_TERMINAL_COLS
+  });
+  const normalizedRows = normalizeTerminalDimension(rows, {
+    max: MAX_TERMINAL_ROWS,
+    min: MIN_TERMINAL_ROWS
+  });
+  if (!normalizedCols || !normalizedRows) {
+    return null;
+  }
+  return {
+    cols: normalizedCols,
+    rows: normalizedRows
   };
 }
 
@@ -191,25 +231,27 @@ function startTerminalSession({
     })
     : env;
   const terminal = spawnPty(command, resolvedArgs, {
-    cols: 100,
+    cols: DEFAULT_TERMINAL_COLS,
     cwd,
     env: {
       ...process.env,
       ...(resolvedEnv && typeof resolvedEnv === "object" && !Array.isArray(resolvedEnv) ? resolvedEnv : {})
     },
     name: "xterm-color",
-    rows: 28
+    rows: DEFAULT_TERMINAL_ROWS
   });
 
   const session = {
     id,
     commandPreview: resolvedCommandPreview,
+    cols: DEFAULT_TERMINAL_COLS,
     exitCode: null,
     metadata: resolvedMetadata && typeof resolvedMetadata === "object" && !Array.isArray(resolvedMetadata)
       ? resolvedMetadata
       : {},
     onClose,
     output: "",
+    rows: DEFAULT_TERMINAL_ROWS,
     status: "running",
     subscribers: new Set(),
     terminal
@@ -320,6 +362,43 @@ function writeTerminalSession(id, data, { namespace = "default" } = {}) {
   return readTerminalSession(id, { namespace });
 }
 
+function resizeTerminalSession(id, size = {}, { namespace = "default" } = {}) {
+  const sessions = sessionsForNamespace(namespace);
+  const session = sessions.get(id);
+  if (!session) {
+    return {
+      ok: false,
+      error: "Terminal session not found."
+    };
+  }
+
+  const nextSize = normalizeTerminalSize(size);
+  if (!nextSize) {
+    return {
+      ok: false,
+      error: "Terminal size must include valid cols and rows."
+    };
+  }
+
+  if (session.cols === nextSize.cols && session.rows === nextSize.rows) {
+    return terminalSessionResponse(session);
+  }
+
+  if (session.status === "running" || session.status === "closing") {
+    try {
+      session.terminal.resize(nextSize.cols, nextSize.rows);
+    } catch (error) {
+      return {
+        ok: false,
+        error: String(error?.message || error || "Terminal resize failed.")
+      };
+    }
+  }
+  session.cols = nextSize.cols;
+  session.rows = nextSize.rows;
+  return terminalSessionResponse(session);
+}
+
 async function closeTerminalSession(id, { namespace = "default" } = {}) {
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
@@ -378,6 +457,7 @@ export {
   closeTerminalSessionsForNamespacePrefix,
   countRunningTerminalSessions,
   readTerminalSession,
+  resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
   writeTerminalSession

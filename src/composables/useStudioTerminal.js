@@ -36,6 +36,8 @@ function useStudioTerminal({
   let terminalDataDisposable = null;
   let terminalResizeHandler = null;
   let terminalResizeObserver = null;
+  let terminalReportedCols = 0;
+  let terminalReportedRows = 0;
   let terminalLatestOutput = "";
   let terminalOutputOffset = 0;
   let terminalSetupPromise = null;
@@ -45,10 +47,40 @@ function useStudioTerminal({
   const resolveWebSocketUrl = resolveCallback(webSocketUrl, () => "");
   const terminalExited = computed(() => terminalStatus.value === "exited");
 
+  function resetReportedTerminalSize() {
+    terminalReportedCols = 0;
+    terminalReportedRows = 0;
+  }
+
+  function terminalCurrentSize() {
+    const cols = Number(terminalInstance?.cols || 0);
+    const rows = Number(terminalInstance?.rows || 0);
+    if (!cols || !rows) {
+      return null;
+    }
+    return {
+      cols,
+      rows
+    };
+  }
+
+  function terminalSizeAlreadyReported(size = {}) {
+    return size.cols === terminalReportedCols && size.rows === terminalReportedRows;
+  }
+
+  function fitTerminalUi() {
+    if (!terminalFitAddon || !terminalInstance) {
+      return;
+    }
+    terminalFitAddon.fit();
+    terminalInstance.refresh?.(0, Math.max(0, terminalInstance.rows - 1));
+    void sendTerminalResize();
+  }
+
   async function setupTerminalUi() {
     if (terminalInstance) {
       await nextTick();
-      terminalFitAddon?.fit();
+      fitTerminalUi();
       return true;
     }
     if (terminalSetupPromise) {
@@ -58,7 +90,7 @@ function useStudioTerminal({
     terminalSetupPromise = (async () => {
       await nextTick();
       if (terminalInstance) {
-        terminalFitAddon?.fit();
+        fitTerminalUi();
         return true;
       }
       if (!terminalHost.value) {
@@ -79,17 +111,17 @@ function useStudioTerminal({
       terminalFitAddon = new FitAddon();
       terminalInstance.loadAddon(terminalFitAddon);
       terminalInstance.open(terminalHost.value);
-      terminalFitAddon.fit();
+      fitTerminalUi();
       terminalDataDisposable = terminalInstance.onData((data) => {
         void sendTerminalData(data);
       });
       terminalResizeHandler = () => {
-        terminalFitAddon?.fit();
+        fitTerminalUi();
       };
       window.addEventListener("resize", terminalResizeHandler);
       if (typeof ResizeObserver !== "undefined") {
         terminalResizeObserver = new ResizeObserver(() => {
-          terminalFitAddon?.fit();
+          fitTerminalUi();
         });
         terminalResizeObserver.observe(terminalHost.value);
       }
@@ -108,6 +140,7 @@ function useStudioTerminal({
     const socket = terminalSocket;
     terminalSocket = null;
     terminalSocketOpenPromise = null;
+    resetReportedTerminalSize();
     if (socket && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
       socket.close();
     }
@@ -128,12 +161,14 @@ function useStudioTerminal({
     terminalFitAddon = null;
     terminalSetupPromise = null;
     terminalOutputOffset = 0;
+    resetReportedTerminalSize();
   }
 
   function resetTerminalDisplay() {
     terminalLatestOutput = "";
     terminalOutput.value = "";
     terminalOutputOffset = 0;
+    resetReportedTerminalSize();
     terminalInstance?.reset?.();
   }
 
@@ -190,6 +225,7 @@ function useStudioTerminal({
       ? terminalSession.metadata
       : {};
     writeTerminalOutput(terminalSession.output || "");
+    void sendTerminalResize();
     notifySessionUpdate(terminalSession);
     notifyStatusUpdate({
       closeError: String(terminalSession.closeError || ""),
@@ -310,6 +346,27 @@ function useStudioTerminal({
     terminalSocket.send(JSON.stringify({
       data: String(data || ""),
       type: "input"
+    }));
+    return true;
+  }
+
+  async function sendTerminalResize() {
+    if (!terminalSessionId.value || terminalStatus.value === "exited") {
+      return false;
+    }
+    const size = terminalCurrentSize();
+    if (!size || terminalSizeAlreadyReported(size)) {
+      return false;
+    }
+    if (!(await connectTerminalSocket()) || terminalSocket?.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    terminalReportedCols = size.cols;
+    terminalReportedRows = size.rows;
+    terminalSocket.send(JSON.stringify({
+      cols: size.cols,
+      rows: size.rows,
+      type: "resize"
     }));
     return true;
   }

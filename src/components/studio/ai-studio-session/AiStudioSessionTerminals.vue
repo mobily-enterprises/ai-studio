@@ -22,6 +22,9 @@
     <div
       v-if="displayMode !== 'headless' && commandOutputVisible"
       class="studio-ai-sessions__command-overlay"
+      :class="{
+        'studio-ai-sessions__command-overlay--minimized': commandOverlayMinimized
+      }"
     >
       <AiStudioCommandTerminal
         v-if="commandTerminal.visible"
@@ -32,8 +35,9 @@
         :session="session"
         :start-request-key="commandTerminal.startKey"
         @closed="commandTerminal.closed"
+        @expanded-changed="handleCommandTerminalExpandedChanged"
         @finished="commandTerminal.finished"
-        @fix-requested="codexTerminal.fixCommandFailure"
+        @fix-requested="handleCommandTerminalFixRequested"
         @running-changed="commandTerminal.runningChanged"
       />
       <AiStudioHeadlessCommandOutput
@@ -59,7 +63,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import AiStudioCommandTerminal from "@/components/studio/AiStudioCommandTerminal.vue";
 import AiStudioHeadlessCommandOutput from "@/components/studio/ai-studio-session/AiStudioHeadlessCommandOutput.vue";
 import CodexSessionTerminal from "@/components/studio/CodexSessionTerminal.vue";
@@ -91,10 +95,39 @@ const props = defineProps({
   }
 });
 
+const commandTerminalExpanded = ref(true);
 const commandOutputVisible = computed(() => Boolean(
   props.showCommandOutput &&
   (props.commandTerminal.visible || props.headlessCommandTerminal.visible)
 ));
+const commandOverlayMinimized = computed(() => Boolean(
+  props.commandTerminal.visible && !commandTerminalExpanded.value
+));
+
+function handleCommandTerminalExpandedChanged(expanded) {
+  commandTerminalExpanded.value = expanded === true;
+}
+
+function handleCommandTerminalFixRequested(request) {
+  commandTerminalExpanded.value = false;
+  props.codexTerminal.fixCommandFailure?.(request);
+}
+
+watch(() => props.commandTerminal.startKey, () => {
+  if (props.commandTerminal.visible) {
+    commandTerminalExpanded.value = true;
+  }
+});
+
+watch(() => props.commandTerminal.visible, (visible) => {
+  if (!visible) {
+    commandTerminalExpanded.value = true;
+  }
+});
+
+watch(() => props.session?.sessionId || "", () => {
+  commandTerminalExpanded.value = true;
+});
 </script>
 
 <style scoped>
@@ -129,10 +162,25 @@ const commandOutputVisible = computed(() => Boolean(
   z-index: 2;
 }
 
+.studio-ai-sessions__command-overlay--minimized {
+  background: transparent;
+  border-radius: 0;
+  inset: auto 0.75rem 0.75rem auto;
+  max-width: calc(100vw - 1.5rem);
+  padding: 0;
+  width: min(30rem, calc(100vw - 1.5rem));
+}
+
 .studio-ai-sessions__command-terminal {
   flex: 1 1 auto;
   box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.28);
   height: 100%;
+}
+
+.studio-ai-sessions__command-overlay--minimized .studio-ai-sessions__command-terminal {
+  flex: 0 1 auto;
+  height: auto;
+  width: 100%;
 }
 
 @media (min-width: 981px) {

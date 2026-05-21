@@ -172,9 +172,14 @@ function useCodexTerminalSessionLifecycle({
       terminalStatus.value = session.status || "running";
       terminalCommandPreview.value = session.commandPreview || "";
       emitTerminalSessionState();
+      fitTerminal?.({
+        forceResize: true
+      });
       void setupTerminalUi?.().then((ready) => {
         if (ready) {
-          fitTerminal?.();
+          fitTerminal?.({
+            forceResize: true
+          });
           refreshTerminalOutput?.();
         }
       });
@@ -216,6 +221,19 @@ function useCodexTerminalSessionLifecycle({
       return true;
     } catch (sendError) {
       terminalError.value = String(sendError?.message || sendError || "Terminal input failed.");
+      return false;
+    }
+  }
+
+  async function resizeTerminal(size = {}) {
+    if (!terminalSessionId.value || terminalStatus.value === "exited") {
+      return false;
+    }
+    try {
+      await terminalSocket.resize(size);
+      return true;
+    } catch (resizeError) {
+      terminalError.value = String(resizeError?.message || resizeError || "Terminal resize failed.");
       return false;
     }
   }
@@ -344,6 +362,7 @@ function useCodexTerminalSessionLifecycle({
     detachTerminal,
     ensureTerminalReady,
     restartTerminal,
+    resizeTerminal,
     sendTerminalInput,
     showTerminalStartPanel,
     startTerminalWhenReady,
