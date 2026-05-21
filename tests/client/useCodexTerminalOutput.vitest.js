@@ -125,6 +125,18 @@ describe("useCodexTerminalOutput", () => {
     expect(onOutputChanged).toHaveBeenLastCalledWith("first second third");
   });
 
+  it("keeps only a bounded diagnostic tail for streamed output", () => {
+    const terminalOutput = useCodexTerminalOutput({
+      writeDisplay: vi.fn()
+    });
+    const longOutput = `${"a".repeat(300000)}final`;
+
+    terminalOutput.appendTerminalOutput(longOutput);
+
+    expect(terminalOutput.getTerminalOutput()).toHaveLength(256 * 1024);
+    expect(terminalOutput.getTerminalOutput()).toMatch(/a+final$/u);
+  });
+
   it("reports Codex background work separately from recent output activity", () => {
     const activityEvents = [];
     const terminalOutput = useCodexTerminalOutput({

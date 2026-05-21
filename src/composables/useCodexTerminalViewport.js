@@ -4,6 +4,15 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 const CODEX_TERMINAL_SCROLLBACK_LINES = 50000;
+const PENDING_TERMINAL_DISPLAY_TAIL_LENGTH = 256 * 1024;
+
+function trimPendingTerminalDisplay(output) {
+  const displayOutput = String(output || "");
+  if (displayOutput.length <= PENDING_TERMINAL_DISPLAY_TAIL_LENGTH) {
+    return displayOutput;
+  }
+  return displayOutput.slice(displayOutput.length - PENDING_TERMINAL_DISPLAY_TAIL_LENGTH);
+}
 
 function useCodexTerminalViewport({
   expanded,
@@ -30,8 +39,7 @@ function useCodexTerminalViewport({
   let terminalSetupPromise = null;
   let terminalReportedCols = 0;
   let terminalReportedRows = 0;
-  let terminalOutputOffset = 0;
-  let terminalDisplayOutput = "";
+  let pendingTerminalDisplay = "";
 
   function updateSelection() {
     terminalSelectedText.value = terminalInstance?.hasSelection?.()
@@ -144,14 +152,12 @@ function useCodexTerminalViewport({
 
   function resetTerminal() {
     terminalInstance?.reset?.();
-    terminalOutputOffset = 0;
-    terminalDisplayOutput = "";
+    pendingTerminalDisplay = "";
     resetReportedTerminalSize();
   }
 
   function clearTerminalDisplay() {
-    terminalOutputOffset = 0;
-    terminalDisplayOutput = "";
+    pendingTerminalDisplay = "";
   }
 
   function appendTerminalDisplay(outputChunk) {
@@ -159,33 +165,21 @@ function useCodexTerminalViewport({
     if (!chunk) {
       return;
     }
-    terminalDisplayOutput += chunk;
-    terminalOutputOffset = terminalDisplayOutput.length;
     if (terminalInstance) {
       terminalInstance.write(chunk);
+      return;
     }
+    pendingTerminalDisplay = trimPendingTerminalDisplay(`${pendingTerminalDisplay}${chunk}`);
   }
 
   function writeTerminalDisplay(output) {
-    const displayOutput = String(output || "");
+    const displayOutput = trimPendingTerminalDisplay(output);
+    pendingTerminalDisplay = displayOutput;
     if (!terminalInstance) {
-      terminalDisplayOutput = displayOutput;
-      terminalOutputOffset = displayOutput.length;
       return;
     }
-    if (
-      displayOutput.length < terminalOutputOffset ||
-      !displayOutput.startsWith(terminalDisplayOutput.slice(0, terminalOutputOffset))
-    ) {
-      terminalOutputOffset = 0;
-      terminalInstance.reset();
-    }
-    const chunk = displayOutput.slice(terminalOutputOffset);
-    if (chunk) {
-      terminalInstance.write(chunk);
-    }
-    terminalDisplayOutput = displayOutput;
-    terminalOutputOffset = displayOutput.length;
+    terminalInstance.reset();
+    terminalInstance.write(displayOutput);
   }
 
   async function setupTerminalUi() {
@@ -218,8 +212,7 @@ function useCodexTerminalViewport({
       if (unref(expanded) && unref(visible)) {
         fitTerminal();
       }
-      terminalOutputOffset = 0;
-      writeTerminalDisplay(terminalDisplayOutput);
+      writeTerminalDisplay(pendingTerminalDisplay);
       terminalDataDisposable = terminalInstance.onData((data) => {
         onData?.(data);
       });
@@ -309,10 +302,9 @@ function useCodexTerminalViewport({
     terminalInstance?.dispose?.();
     terminalInstance = null;
     terminalFitAddon = null;
-    terminalOutputOffset = 0;
     resetReportedTerminalSize();
     if (!preserveDisplay) {
-      terminalDisplayOutput = "";
+      pendingTerminalDisplay = "";
     }
     terminalFocused.value = false;
     terminalSelectedText.value = "";

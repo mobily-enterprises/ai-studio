@@ -13,7 +13,7 @@ const CODEX_ACTIVITY_QUIET_MS = 2200;
 const CODEX_ACTIVITY_BUFFER_LENGTH = 8192;
 const TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT = 12;
 const TERMINAL_ESCAPE_CHARACTER = String.fromCharCode(27);
-const MAX_TERMINAL_OUTPUT_LENGTH = 4 * 1024 * 1024;
+const TERMINAL_OUTPUT_TAIL_LENGTH = 256 * 1024;
 const TERMINAL_DISPLAY_UPDATE_INTERVAL_MS = 80;
 const TERMINAL_OUTPUT_OBSERVER_INTERVAL_MS = 120;
 const TERMINAL_CURSOR_POSITION_PATTERN = new RegExp(`${TERMINAL_ESCAPE_CHARACTER}\\[\\d+;\\d+H`, "u");
@@ -30,12 +30,12 @@ const CODEX_ACTIVITY_TEXT_MARKERS = Object.freeze([
   ...CODEX_IDLE_TEXT_MARKERS
 ]);
 
-function trimTerminalOutput(output) {
+function trimTerminalOutputTail(output) {
   const terminalOutput = String(output || "");
-  if (terminalOutput.length <= MAX_TERMINAL_OUTPUT_LENGTH) {
+  if (terminalOutput.length <= TERMINAL_OUTPUT_TAIL_LENGTH) {
     return terminalOutput;
   }
-  return terminalOutput.slice(terminalOutput.length - MAX_TERMINAL_OUTPUT_LENGTH);
+  return terminalOutput.slice(terminalOutput.length - TERMINAL_OUTPUT_TAIL_LENGTH);
 }
 
 function textIncludesAny(value = "", markers = []) {
@@ -63,19 +63,34 @@ function codexWorkingStateFromText(value = "") {
   return null;
 }
 
-function terminalOutputHasVisibleText(value = "") {
-  return stripTerminalControlSequences(value).trim().length > 0;
+function terminalOutputVisibleText(value = "") {
+  return stripTerminalControlSequences(value);
 }
 
-function terminalOutputIsSmallCursorRepaint(value = "") {
+function terminalOutputIsSmallCursorRepaint(value = "", visibleText = terminalOutputVisibleText(value)) {
   const source = String(value || "");
-  const visibleText = stripTerminalControlSequences(source).trim();
-  if (!visibleText || visibleText.length > TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT || visibleText.includes("\n")) {
+  const trimmedVisibleText = String(visibleText || "").trim();
+  if (
+    !trimmedVisibleText ||
+    trimmedVisibleText.length > TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT ||
+    trimmedVisibleText.includes("\n")
+  ) {
     return false;
   }
   return source.includes(`${TERMINAL_ESCAPE_CHARACTER}[?2026`) &&
     source.includes(`${TERMINAL_ESCAPE_CHARACTER}[K`) &&
     TERMINAL_CURSOR_POSITION_PATTERN.test(source);
+}
+
+function stripStudioContextBlocksIfPresent(output) {
+  const source = String(output || "");
+  if (
+    !source.includes(STUDIO_CONTEXT_START_MARKER) &&
+    !source.includes(STUDIO_CONTEXT_END_MARKER)
+  ) {
+    return source;
+  }
+  return stripStudioContextBlocksForDisplay(source);
 }
 
 function useCodexTerminalOutput({
@@ -97,7 +112,7 @@ function useCodexTerminalOutput({
   let codexIdleTimer = null;
   let codexBusyOutputVersion = 0;
   let terminalHasOutput = false;
-  let terminalLatestOutput = "";
+  let terminalOutputTail = "";
   let terminalLastOutputAt = 0;
   let terminalOutputVersion = 0;
   let pendingDisplayChunk = "";
@@ -112,8 +127,8 @@ function useCodexTerminalOutput({
       (typeof shouldNotifyOutputChanged !== "function" || shouldNotifyOutputChanged() !== false);
   }
 
-  function displayTerminalOutput(output = terminalLatestOutput) {
-    return stripStudioContextBlocksForDisplay(promptEchoFilters.apply(output));
+  function displayTerminalOutput(output = terminalOutputTail) {
+    return stripStudioContextBlocksIfPresent(promptEchoFilters.apply(output));
   }
 
   function clearCodexIdleTimer() {
@@ -229,7 +244,7 @@ function useCodexTerminalOutput({
     clearTerminalDisplayTimer();
     clearPendingDisplay();
     if (displayIsActive()) {
-      writeDisplay?.(displayTerminalOutput(terminalLatestOutput));
+      writeDisplay?.(displayTerminalOutput(terminalOutputTail));
     }
   }
 
@@ -245,7 +260,7 @@ function useCodexTerminalOutput({
       return;
     }
     clearPendingDisplay();
-    writeDisplay?.(displayTerminalOutput(terminalLatestOutput));
+    writeDisplay?.(displayTerminalOutput(terminalOutputTail));
   }
 
   function scheduleTerminalDisplayFlush() {
@@ -287,7 +302,7 @@ function useCodexTerminalOutput({
     terminalOutputChangedTimer = null;
   }
 
-  function notifyTerminalOutputChangedNow(output = terminalLatestOutput) {
+  function notifyTerminalOutputChangedNow(output = terminalOutputTail) {
     clearTerminalOutputChanged();
     if (!outputObserverIsActive()) {
       return;
@@ -299,7 +314,7 @@ function useCodexTerminalOutput({
     const shouldNotifyObserver = Boolean(terminalOutputChangedTimer && outputObserverIsActive());
     clearTerminalOutputChanged();
     if (shouldNotifyObserver) {
-      onOutputChanged(terminalLatestOutput);
+      onOutputChanged(terminalOutputTail);
     }
     writeDisplayNow();
   }
@@ -311,47 +326,62 @@ function useCodexTerminalOutput({
     terminalOutputChangedTimer = globalThis.setTimeout(() => {
       terminalOutputChangedTimer = null;
       if (outputObserverIsActive()) {
-        onOutputChanged(terminalLatestOutput);
+        onOutputChanged(terminalOutputTail);
       }
     }, TERMINAL_OUTPUT_OBSERVER_INTERVAL_MS);
   }
 
-  function updateTerminalOutput(nextOutput, {
-    emitImmediately = false,
-    outputChunk = ""
+  function noteTerminalTextOutput({
+    visibleText = ""
   } = {}) {
-    const previousOutput = terminalLatestOutput;
-    terminalLatestOutput = trimTerminalOutput(nextOutput);
-    if (emitImmediately) {
-      notifyTerminalOutputChangedNow(terminalLatestOutput);
-    }
-    if (terminalLatestOutput !== previousOutput) {
-      terminalOutputVersion += 1;
-      terminalLastOutputAt = Date.now();
-      terminalHasOutput = outputChunk
-        ? terminalHasOutput || stripTerminalControlSequences(outputChunk).trim().length > 0
-        : stripTerminalControlSequences(terminalLatestOutput).trim().length > 0;
-      updateCodexWorkingFromOutput(outputChunk || terminalLatestOutput, {
-        replace: !outputChunk
+    terminalOutputVersion += 1;
+    terminalLastOutputAt = Date.now();
+    terminalHasOutput = terminalHasOutput || String(visibleText || "").trim().length > 0;
+    scheduleCodexIdleWhenQuiet();
+  }
+
+  function replaceTerminalOutputTail(nextOutput, {
+    emitImmediately = false,
+    visibleText = ""
+  } = {}) {
+    const previousOutput = terminalOutputTail;
+    terminalOutputTail = trimTerminalOutputTail(nextOutput);
+    if (terminalOutputTail !== previousOutput) {
+      noteTerminalTextOutput({
+        visibleText
+      });
+      updateCodexWorkingFromOutput(terminalOutputTail, {
+        replace: true
       });
     }
-    if (!emitImmediately) {
-      scheduleTerminalOutputChanged();
-    }
     if (emitImmediately) {
+      notifyTerminalOutputChangedNow(terminalOutputTail);
       writeDisplayNow();
-    } else if (displayChunkCanAppendRaw(outputChunk)) {
-      scheduleTerminalDisplayAppend(outputChunk);
     } else {
+      scheduleTerminalOutputChanged();
       scheduleTerminalDisplayWrite();
     }
-    scheduleCodexIdleWhenQuiet();
+  }
+
+  function appendTerminalOutputTail(outputChunk, {
+    visibleText = ""
+  } = {}) {
+    terminalOutputTail = outputChunk.length >= TERMINAL_OUTPUT_TAIL_LENGTH
+      ? outputChunk.slice(outputChunk.length - TERMINAL_OUTPUT_TAIL_LENGTH)
+      : trimTerminalOutputTail(`${terminalOutputTail}${outputChunk}`);
+    noteTerminalTextOutput({
+      visibleText
+    });
+    updateCodexWorkingFromOutput(outputChunk);
+    scheduleTerminalOutputChanged();
   }
 
   function writeTerminalOutput(output) {
     const terminalOutput = terminalSnapshotOutputForDisplay(output);
-    updateTerminalOutput(terminalOutputHasVisibleText(terminalOutput) ? terminalOutput : "", {
-      emitImmediately: true
+    const visibleText = terminalOutputVisibleText(terminalOutput);
+    replaceTerminalOutputTail(visibleText.trim() ? terminalOutput : "", {
+      emitImmediately: true,
+      visibleText
     });
   }
 
@@ -361,16 +391,22 @@ function useCodexTerminalOutput({
       return;
     }
     markCodexBusy();
-    if (!terminalOutputHasVisibleText(outputChunk) || terminalOutputIsSmallCursorRepaint(outputChunk)) {
+    const visibleText = terminalOutputVisibleText(outputChunk);
+    if (!visibleText.trim() || terminalOutputIsSmallCursorRepaint(outputChunk, visibleText)) {
       noteTerminalActivityWithoutOutput();
       if (displayChunkCanAppendRaw(outputChunk)) {
         scheduleTerminalDisplayAppend(outputChunk);
       }
       return;
     }
-    updateTerminalOutput(`${terminalLatestOutput}${outputChunk}`, {
-      outputChunk
+    appendTerminalOutputTail(outputChunk, {
+      visibleText
     });
+    if (displayChunkCanAppendRaw(outputChunk)) {
+      scheduleTerminalDisplayAppend(outputChunk);
+    } else {
+      scheduleTerminalDisplayWrite();
+    }
   }
 
   function resetTerminalOutput({
@@ -383,7 +419,7 @@ function useCodexTerminalOutput({
     clearCodexWorking();
     codexActivityBuffer = "";
     terminalHasOutput = false;
-    terminalLatestOutput = "";
+    terminalOutputTail = "";
     terminalLastOutputAt = 0;
     terminalOutputVersion += 1;
     if (emit) {
@@ -403,7 +439,7 @@ function useCodexTerminalOutput({
     codexBusy,
     codexWorking,
     flushTerminalOutput,
-    getTerminalOutput: () => terminalLatestOutput,
+    getTerminalOutput: () => terminalOutputTail,
     hasTerminalOutput: () => terminalHasOutput,
     lastTerminalOutputAt: () => terminalLastOutputAt,
     markCodexBusy,
