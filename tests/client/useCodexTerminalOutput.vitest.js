@@ -137,6 +137,16 @@ describe("useCodexTerminalOutput", () => {
     expect(terminalOutput.getTerminalOutput()).toMatch(/a+final$/u);
   });
 
+  it("keeps plain streamed text without requiring terminal-control parsing", () => {
+    const terminalOutput = useCodexTerminalOutput({
+      writeDisplay: vi.fn()
+    });
+
+    terminalOutput.appendTerminalOutput("plain user-facing text");
+
+    expect(terminalOutput.getTerminalOutput()).toBe("plain user-facing text");
+  });
+
   it("reports Codex background work separately from recent output activity", () => {
     const activityEvents = [];
     const terminalOutput = useCodexTerminalOutput({

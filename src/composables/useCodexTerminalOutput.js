@@ -17,6 +17,7 @@ const TERMINAL_OUTPUT_TAIL_LENGTH = 256 * 1024;
 const TERMINAL_DISPLAY_UPDATE_INTERVAL_MS = 80;
 const TERMINAL_OUTPUT_OBSERVER_INTERVAL_MS = 120;
 const TERMINAL_CURSOR_POSITION_PATTERN = new RegExp(`${TERMINAL_ESCAPE_CHARACTER}\\[\\d+;\\d+H`, "u");
+const TERMINAL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const CODEX_WORKING_TEXT_MARKERS = Object.freeze([
   "Working (",
   "Waiting for background terminal",
@@ -63,12 +64,26 @@ function codexWorkingStateFromText(value = "") {
   return null;
 }
 
+function terminalChunkHasControlSequences(value = "") {
+  return TERMINAL_CONTROL_CHARACTER_PATTERN.test(String(value || ""));
+}
+
 function terminalOutputVisibleText(value = "") {
+  if (!terminalChunkHasControlSequences(value)) {
+    return String(value || "");
+  }
   return stripTerminalControlSequences(value);
 }
 
-function terminalOutputIsSmallCursorRepaint(value = "", visibleText = terminalOutputVisibleText(value)) {
+function terminalOutputLooksLikeSmallCursorRepaint(value = "") {
   const source = String(value || "");
+  return source.length <= 256 &&
+    source.includes(`${TERMINAL_ESCAPE_CHARACTER}[?2026`) &&
+    source.includes(`${TERMINAL_ESCAPE_CHARACTER}[K`) &&
+    TERMINAL_CURSOR_POSITION_PATTERN.test(source);
+}
+
+function terminalOutputIsSmallCursorRepaint(value = "", visibleText = terminalOutputVisibleText(value)) {
   const trimmedVisibleText = String(visibleText || "").trim();
   if (
     !trimmedVisibleText ||
@@ -77,9 +92,7 @@ function terminalOutputIsSmallCursorRepaint(value = "", visibleText = terminalOu
   ) {
     return false;
   }
-  return source.includes(`${TERMINAL_ESCAPE_CHARACTER}[?2026`) &&
-    source.includes(`${TERMINAL_ESCAPE_CHARACTER}[K`) &&
-    TERMINAL_CURSOR_POSITION_PATTERN.test(source);
+  return terminalOutputLooksLikeSmallCursorRepaint(value);
 }
 
 function stripStudioContextBlocksIfPresent(output) {
@@ -391,6 +404,13 @@ function useCodexTerminalOutput({
       return;
     }
     markCodexBusy();
+    if (terminalOutputLooksLikeSmallCursorRepaint(outputChunk)) {
+      noteTerminalActivityWithoutOutput();
+      if (displayChunkCanAppendRaw(outputChunk)) {
+        scheduleTerminalDisplayAppend(outputChunk);
+      }
+      return;
+    }
     const visibleText = terminalOutputVisibleText(outputChunk);
     if (!visibleText.trim() || terminalOutputIsSmallCursorRepaint(outputChunk, visibleText)) {
       noteTerminalActivityWithoutOutput();
