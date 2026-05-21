@@ -408,7 +408,9 @@ test("ai-studio session briefing contains the static adapter setup once", () => 
     },
     session: {
       artifactsRoot: "/workspace/.ai-studio/session/artifacts",
-      metadata: {},
+      metadata: {
+        code_index_path: ".ai-studio/code-index.md"
+      },
       sessionId: "briefing_session",
       targetRoot: "/workspace",
       worktree: "/workspace/worktree"
@@ -420,7 +422,7 @@ test("ai-studio session briefing contains the static adapter setup once", () => 
   assert.match(briefing, /Static environment blueprint/u);
   assert.match(briefing, /Managed database/u);
   assert.match(briefing, /packageManager/u);
-  assert.match(briefing, /code_index_path/u);
+  assert.match(briefing, /Generated code index path: \.ai-studio\/code-index\.md/u);
 });
 
 test("ai-studio prompt templates reject unknown tokens", () => {

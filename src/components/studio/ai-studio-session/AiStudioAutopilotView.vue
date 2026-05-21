@@ -517,6 +517,16 @@
         >
           Let's start
         </v-btn>
+        <v-btn
+          v-else-if="canResume"
+          class="studio-autopilot__start-button"
+          color="primary"
+          :prepend-icon="mdiPlay"
+          variant="flat"
+          @click="resume"
+        >
+          Continue Autopilot
+        </v-btn>
       </div>
     </div>
   </section>
@@ -648,6 +658,7 @@ const {
   skipDeepUiCheck,
   skipMerge,
   start,
+  syncFromCurrentCodexOutput,
   stop,
   stopCommandAction,
   statusText,
@@ -656,6 +667,7 @@ const {
   actions: props.actions,
   codexTerminal: props.codexTerminal,
   commandRunner: props.commandRunner || undefined,
+  enabled: computed(() => props.active),
   questionExchange: codexQuestionExchange,
   refreshSessionData: () => props.refreshSessionData(),
   session: computed(() => props.session)
@@ -676,6 +688,7 @@ const archiveAction = computed(() => {
 const issueDiscussion = proxyRefs(useAiStudioAutopilotIssueDiscussion({
   actions: props.actions,
   codexTerminal: props.codexTerminal,
+  enabled: computed(() => props.active),
   questionExchange: codexQuestionExchange,
   readyForIssue,
   refreshSessionData: () => props.refreshSessionData(),
@@ -752,14 +765,14 @@ const commandTerminalText = computed(() => {
   const preview = stripTerminalControlSequences(commandPreview.value);
   return tailCommandText(output || resultOutput || preview || "Starting command...");
 });
-const autopilotBusy = computed(() => Boolean(
+const autopilotBusy = computed(() => Boolean(props.active && (
   running.value ||
   codexWaiting.value ||
   codexQuestionSubmitting.value ||
   commandFixSubmitting.value ||
   issueDiscussionWaiting.value ||
   (readyForIssue.value && issueDiscussion.saving)
-));
+)));
 const reviewControlsBusy = computed(() => Boolean(running.value));
 const reviewDiffDisabled = computed(() => Boolean(reviewControlsBusy.value || props.review?.diffDisabled));
 const reviewDiffLoading = computed(() => Boolean(props.diff?.loading));
@@ -863,15 +876,13 @@ async function submitReviewFeedback() {
   }
 }
 
-function resumeWhenActive() {
-  if (props.active && canResume.value) {
-    void resume();
-  }
-}
-
 onMounted(emitBusyState);
 
-onMounted(resumeWhenActive);
+onMounted(() => {
+  if (props.active) {
+    syncFromCurrentCodexOutput();
+  }
+});
 
 watch(autopilotBusy, () => {
   emitBusyState();
@@ -879,12 +890,19 @@ watch(autopilotBusy, () => {
   flush: "post"
 });
 
-watch(() => props.active, resumeWhenActive, {
+watch(() => props.active, (active) => {
+  if (active) {
+    syncFromCurrentCodexOutput();
+  }
+  emitBusyState();
+}, {
   flush: "post"
 });
 
 watch(() => props.session?.currentStep || "", () => {
-  resumeWhenActive();
+  if (props.active) {
+    syncFromCurrentCodexOutput();
+  }
 }, {
   flush: "post"
 });

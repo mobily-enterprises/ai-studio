@@ -240,6 +240,13 @@ function promptSessionBriefingReference() {
 
 function promptSessionBriefing(contextInput = {}) {
   const context = normalizePromptContext(contextInput);
+  const codeIndexPath = normalizeText(context.session.metadata?.code_index_path);
+  const codeIndexPolicy = codeIndexPath
+    ? [
+      `Generated code index path: ${codeIndexPath}`,
+      "Read that generated code index before adding or reviewing helper-like code. Prefer existing helpers and structures from that index over redefining them."
+    ].join("\n")
+    : "If later session metadata includes `code_index_path`, read that generated code index before adding or reviewing helper-like code. Prefer existing helpers and structures from that index over redefining them.";
   return [
     "AI Studio session briefing",
     "",
@@ -271,7 +278,7 @@ function promptSessionBriefing(contextInput = {}) {
     stableJson(context.config),
     "",
     "Code index policy:",
-    "If later session metadata includes `code_index_path`, read that generated code index before adding or reviewing helper-like code. Prefer existing helpers and structures from that index over redefining them."
+    codeIndexPolicy
   ].join("\n").trim();
 }
 

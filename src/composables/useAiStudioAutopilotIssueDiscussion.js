@@ -126,6 +126,7 @@ function useAiStudioAutopilotIssueDiscussion({
   actions = {},
   clearIssueArtifacts = clearAiStudioIssueArtifacts,
   codexTerminal = {},
+  enabled = true,
   questionExchange = null,
   readyForIssue = () => false,
   refreshSessionData = async () => null,
@@ -150,7 +151,8 @@ function useAiStudioAutopilotIssueDiscussion({
   const sessionId = computed(() => String(currentSession.value?.sessionId || ""));
   const codexOutput = computed(() => String(readRefOrGetterValue(codexTerminal.output) || ""));
   const promptInjectionError = computed(() => String(readRefOrGetterValue(codexTerminal.promptInjectionError) || ""));
-  const ready = computed(() => Boolean(readRefOrGetterValue(readyForIssue)));
+  const discussionEnabled = computed(() => readRefOrGetterValue(enabled) !== false);
+  const ready = computed(() => Boolean(discussionEnabled.value && readRefOrGetterValue(readyForIssue)));
   const waiting = computed(() => ready.value && state.value === ISSUE_DISCUSSION_STATE.WAITING);
   const questionOwnerId = computed(() => issueQuestionOwnerId(sessionId.value));
   const issueQuestionActive = computed(() => ready.value &&
@@ -467,14 +469,14 @@ function useAiStudioAutopilotIssueDiscussion({
   });
 
   watch([codexOutput, ready], () => {
-    if (state.value === ISSUE_DISCUSSION_STATE.SAVING) {
+    if (!discussionEnabled.value || state.value === ISSUE_DISCUSSION_STATE.SAVING) {
       return;
     }
     applyLatestMarker();
   });
 
   watch(promptInjectionError, (error) => {
-    if (!error || !waiting.value) {
+    if (!discussionEnabled.value || !error || !waiting.value) {
       return;
     }
     resetActiveRequestAfterPromptFailure(error);

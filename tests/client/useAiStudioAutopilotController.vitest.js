@@ -461,6 +461,33 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBeNull();
   });
 
+  it("does not resurface old workflow questions after the user answers them", async () => {
+    context.moveToStep("plan_executed");
+    context.actions.runAction.mockImplementation(async (action) => {
+      if (action.id === "execute_plan") {
+        const promptRun = context.createPromptRun(action);
+        context.codexOutput.value = `${context.codexOutput.value}\n${autopilotQuestionsMarker({
+          questions: ["Which database should Codex use?"],
+          requestId: promptRun.requestId
+        })}`;
+      }
+    });
+
+    await context.controller.resume();
+    context.questionExchange.setAnswer("q1", "Use the managed MariaDB runtime.");
+    context.codexTerminal.injectPrompt.mockImplementationOnce(async () => {
+      context.codexOutput.value = `${context.codexOutput.value}\nAnswers received; continuing.`;
+      return true;
+    });
+
+    await context.questionExchange.submitAnswers();
+
+    expect(context.questionExchange.hasQuestions.value).toBe(false);
+    expect(context.session.value.currentStep).toBe("plan_executed");
+    expect(context.controller.promptRunNeedsContinuation.value).toBe(true);
+    expect(context.controller.failure.value).toBeNull();
+  });
+
   it("lets the user stop Autopilot while a Codex prompt is pending", async () => {
     context.moveToStep("review_run");
     context.actions.runAction.mockImplementation(async (action) => {
@@ -642,9 +669,68 @@ describe("useAiStudioAutopilotController", () => {
     ]);
     expect(context.session.value.currentStep).toBe(REVIEW_CHANGES_STEP_ID);
   });
+
+  it("does not run setup automation while Autopilot is disabled", async () => {
+    const enabled = ref(false);
+    context = createAutopilotContext({
+      enabled
+    });
+    context.moveToStep("worktree_created", {
+      work_source: "new_branch"
+    });
+
+    expect(context.controller.canResume.value).toBe(false);
+
+    await context.controller.resume();
+
+    expect(context.commandRunner.runCommandAction).not.toHaveBeenCalled();
+    expect(context.session.value.currentStep).toBe("worktree_created");
+
+    enabled.value = true;
+
+    expect(context.controller.canResume.value).toBe(true);
+
+    await context.controller.resume();
+
+    expect(context.commandRunner.runCommandAction.mock.calls.map(([input]) => input.action.id)).toEqual([
+      "create_worktree",
+      "install_dependencies"
+    ]);
+    expect(context.session.value.currentStep).toBe(ISSUE_STEP_ID);
+  });
+
+  it("does not capture Autopilot questions while disabled, then syncs when enabled", async () => {
+    const enabled = ref(false);
+    context = createAutopilotContext({
+      enabled
+    });
+    context.moveToStep("plan_executed");
+    const promptRun = context.createPromptRun({
+      id: "execute_plan",
+      label: "Execute plan"
+    });
+    context.codexOutput.value = autopilotQuestionsMarker({
+      questions: ["Which database should Codex use?"],
+      requestId: promptRun.requestId
+    });
+    context.codexBusy.value = true;
+
+    await Promise.resolve();
+
+    expect(context.questionExchange.hasQuestions.value).toBe(false);
+
+    enabled.value = true;
+    context.controller.syncFromCurrentCodexOutput();
+
+    expect(context.questionExchange.questions.value.map((question) => question.text)).toEqual([
+      "Which database should Codex use?"
+    ]);
+  });
 });
 
-function createAutopilotContext() {
+function createAutopilotContext({
+  enabled = true
+} = {}) {
   const session = ref(sessionForStep("session_created"));
   const codexBusy = ref(false);
   const codexOutput = ref("");
@@ -799,6 +885,7 @@ function createAutopilotContext() {
     actions,
     codexTerminal,
     commandRunner,
+    enabled,
     questionExchange,
     refreshSessionData: async () => null,
     session

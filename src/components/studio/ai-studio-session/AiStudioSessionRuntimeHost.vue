@@ -7,7 +7,7 @@
       <AiStudioAutopilotView
         v-show="sessionMode === 'autopilot'"
         :actions="actions"
-        :active="active"
+        :active="autopilotModeActive"
         :autopilot-steps="autopilotNavigationSteps"
         :codex-terminal="codexTerminal"
         :command-runner="autopilotCommandRunner"
@@ -190,6 +190,7 @@ const headlessCommandTerminal = proxyRefs({
 });
 
 const autopilotBusy = ref(false);
+const autopilotModeActive = computed(() => Boolean(props.active && props.sessionMode === "autopilot"));
 const codexTerminalDisplayMode = computed(() => {
   // Inactive hosts stay mounted headless so Codex output capture remains session-owned.
   if (!props.active || props.sessionMode !== "inspect") {

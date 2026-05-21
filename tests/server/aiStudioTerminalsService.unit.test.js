@@ -16,6 +16,7 @@ import {
   featureActions as terminalFeatureActions
 } from "../../packages/ai-studio-terminals/src/server/actions.js";
 import {
+  codexStartupSessionBriefingPrompt,
   codexTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/codexTerminal.js";
 import {
@@ -183,6 +184,75 @@ test("AI Studio Codex terminal joins the target runtime network before the image
   assert.ok(adapterImageArgs.includes(`MYSQL_PWD=${JSKIT_MARIADB_ROOT_PASSWORD}`));
   assert.ok(maskedTerminalDockerArgs(adapterImageArgs).includes("MYSQL_PWD=*****"));
   assert.ok(!maskedTerminalDockerArgs(adapterImageArgs).includes(`MYSQL_PWD=${JSKIT_MARIADB_ROOT_PASSWORD}`));
+});
+
+test("AI Studio Codex terminal passes the session briefing as the startup prompt", () => {
+  const startupPrompt = codexStartupSessionBriefingPrompt({
+    adapter: {
+      facts: {
+        summary: "Startup-aware app"
+      },
+      id: "unit",
+      label: "Unit adapter",
+      managedServices: [
+        {
+          checkCommand: "mysql --execute 'select 1'",
+          label: "Unit MariaDB"
+        }
+      ],
+      promptContext: {
+        database_contract: "Use the managed database."
+      }
+    },
+    config: {
+      database: "mysql"
+    },
+    metadata: {
+      code_index_path: ".ai-studio/code-index.md"
+    },
+    sessionId: "startup_prompt",
+    targetRoot: "/workspace/project",
+    worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
+  });
+  assert.match(startupPrompt, /AI Studio session briefing/u);
+  assert.match(startupPrompt, /Unit MariaDB/u);
+  assert.match(startupPrompt, /\.ai-studio\/code-index\.md/u);
+  assert.match(startupPrompt, /Reply exactly: AI Studio session briefing loaded/u);
+  assert.equal(codexStartupSessionBriefingPrompt({
+    metadata: {
+      codex_session_briefing_delivered: "yes"
+    }
+  }), "");
+
+  const args = codexTerminalArgs({
+    codexThreadId: "",
+    containerName: "ai-studio-codex-startup",
+    sessionId: "startup_prompt",
+    startupPrompt,
+    targetRoot: "/workspace/project",
+    terminalId: "startup-terminal",
+    worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
+  });
+  const startupScript = args.at(-1);
+  assert.match(startupScript, /codex/u);
+  assert.match(startupScript, /AI Studio session briefing/u);
+  assert.match(startupScript, /Unit MariaDB/u);
+  assert.doesNotMatch(startupScript, /resume [0-9a-f-]{36}/u);
+
+  const resumedArgs = codexTerminalArgs({
+    codexThreadId: "00000000-0000-4000-8000-000000000001",
+    containerName: "ai-studio-codex-startup-resume",
+    sessionId: "startup_prompt",
+    startupPrompt,
+    targetRoot: "/workspace/project",
+    terminalId: "startup-terminal",
+    worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
+  });
+  assert.match(
+    resumedArgs.at(-1),
+    /resume 00000000-0000-4000-8000-000000000001/u
+  );
+  assert.match(resumedArgs.at(-1), /AI Studio session briefing/u);
 });
 
 test("AI Studio Codex terminal mounts linked git metadata for worktree roots", async () => {

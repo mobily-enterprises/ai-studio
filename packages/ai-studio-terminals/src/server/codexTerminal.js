@@ -25,6 +25,9 @@ import {
   ensureTargetRuntimeNetwork
 } from "../../../../server/lib/aiStudio/runtimeContainers.js";
 import {
+  promptSessionBriefing
+} from "../../../../server/lib/aiStudio/promptRenderer.js";
+import {
   PROMPT_RUN_STATUS
 } from "../../../../server/lib/aiStudio/promptRun.js";
 import {
@@ -65,6 +68,10 @@ const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
 
 function savedCodexWorkdir(session = {}) {
   const workdir = String(session.metadata?.codex_workdir || "").trim();
@@ -153,8 +160,29 @@ function withCodexState(response = {}, session = {}) {
   };
 }
 
-function codexStartupScript(codexThreadId = "") {
+function sessionBriefingIsDelivered(session = {}) {
+  return normalizeText(session.metadata?.codex_session_briefing_delivered) === "yes";
+}
+
+function codexStartupSessionBriefingPrompt(session = {}) {
+  if (sessionBriefingIsDelivered(session)) {
+    return "";
+  }
+  const briefing = promptSessionBriefing({
+    config: session.config,
+    session
+  });
+  return [
+    briefing,
+    "",
+    "Startup instruction:",
+    "Keep this AI Studio briefing as the source of truth for this Codex session. Do not start project work from this briefing alone. Reply exactly: AI Studio session briefing loaded."
+  ].join("\n").trim();
+}
+
+function codexStartupScript(codexThreadId = "", startupPrompt = "") {
   const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
+  const normalizedStartupPrompt = normalizeText(startupPrompt);
   const codexReasoningConfig = `model_reasoning_effort="${CODEX_SESSION_REASONING_EFFORT}"`;
   const codexCommand = [
     "codex",
@@ -163,7 +191,8 @@ function codexStartupScript(codexThreadId = "") {
     "-c",
     codexReasoningConfig,
     "--dangerously-bypass-approvals-and-sandbox",
-    ...(normalizedThreadId ? ["resume", normalizedThreadId] : [])
+    ...(normalizedThreadId ? ["resume", normalizedThreadId] : []),
+    ...(normalizedStartupPrompt ? [normalizedStartupPrompt] : [])
   ];
   return studioUserStartupScript(codexCommand);
 }
@@ -174,6 +203,7 @@ function codexTerminalArgs({
   env = {},
   image = STUDIO_BASE_TOOLCHAIN_IMAGE,
   sessionId,
+  startupPrompt = "",
   targetRoot,
   terminalId,
   worktree
@@ -182,7 +212,7 @@ function codexTerminalArgs({
     commandArgs: [
       "bash",
       "-lc",
-      codexStartupScript(codexThreadId)
+      codexStartupScript(codexThreadId, startupPrompt)
     ],
     containerName,
     env,
@@ -207,6 +237,19 @@ function codexTerminalArgs({
 
 function codexContainerName({ sessionId, terminalId }) {
   return `${STUDIO_CODEX_CONTAINER_PREFIX}-${stableHash(sessionId)}-${stableHash(terminalId)}`;
+}
+
+function maskedCodexTerminalDockerArgs(args = []) {
+  const maskedArgs = maskedTerminalDockerArgs(args);
+  if (!maskedArgs.length) {
+    return maskedArgs;
+  }
+  if (!String(maskedArgs.at(-1) || "").includes("AI Studio session briefing")) {
+    return maskedArgs;
+  }
+  return maskedArgs.map((arg, index) => index === maskedArgs.length - 1
+    ? "<ai-studio-codex-startup-script>"
+    : arg);
 }
 
 function createCodexTerminalController({ projectService } = {}) {
@@ -372,7 +415,9 @@ function createCodexTerminalController({ projectService } = {}) {
         });
         const terminalEnvHash = terminalEnvironmentFingerprint(terminalEnv);
         const namespace = codexTerminalNamespace(sessionId);
-        return withCodexState(startTerminalSession({
+        const promptSession = await runtime.promptSessionForAction(session);
+        const startupPrompt = codexStartupSessionBriefingPrompt(promptSession);
+        const terminalResponse = startTerminalSession({
           args: ({ id }) => codexTerminalArgs({
             codexThreadId: codexThreadIdForWorkdir(session, workdir),
             containerName: codexContainerName({
@@ -382,12 +427,13 @@ function createCodexTerminalController({ projectService } = {}) {
             env: terminalEnv,
             image: imageResult.image,
             sessionId,
+            startupPrompt,
             targetRoot,
             terminalId: id,
             worktree: workdir
           }),
           command: "docker",
-          commandPreview: ({ args }) => dockerCommand(maskedTerminalDockerArgs(args)),
+          commandPreview: ({ args }) => dockerCommand(maskedCodexTerminalDockerArgs(args)),
           cwd: targetRoot,
           maxRunning: MAX_OPEN_CODEX_TERMINALS,
           metadata: {
@@ -395,6 +441,7 @@ function createCodexTerminalController({ projectService } = {}) {
             image: imageResult.image,
             imageLabel: imageResult.label,
             sessionId,
+            startupSessionBriefingIncluded: Boolean(startupPrompt),
             targetRoot,
             workdir
           },
@@ -413,7 +460,25 @@ function createCodexTerminalController({ projectService } = {}) {
               terminalSession.metadata?.image === imageResult.image &&
               terminalSession.metadata?.workdir === workdir;
           }
-        }), session);
+        });
+        if (terminalResponse.ok && terminalResponse.metadata?.startupSessionBriefingIncluded === true) {
+          const deliveredAt = new Date().toISOString();
+          await Promise.all([
+            runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered", "yes"),
+            runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered_at", deliveredAt),
+            runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivery", "startup")
+          ]);
+          return withCodexState(terminalResponse, {
+            ...session,
+            metadata: {
+              ...(session.metadata || {}),
+              codex_session_briefing_delivered: "yes",
+              codex_session_briefing_delivered_at: deliveredAt,
+              codex_session_briefing_delivery: "startup"
+            }
+          });
+        }
+        return withCodexState(terminalResponse, session);
       });
     },
 
@@ -454,4 +519,8 @@ function createCodexTerminalController({ projectService } = {}) {
   });
 }
 
-export { codexTerminalArgs, createCodexTerminalController };
+export {
+  codexStartupSessionBriefingPrompt,
+  codexTerminalArgs,
+  createCodexTerminalController
+};
