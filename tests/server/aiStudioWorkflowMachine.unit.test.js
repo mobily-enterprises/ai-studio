@@ -122,6 +122,10 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
   ]);
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").label, "Make changes");
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").autopilot.kind, "agent_conversation");
+  assert.equal(
+    generalCoding.steps.find((step) => step.id === "agent_conversation").autopilot.responseArtifact,
+    "response.md"
+  );
   assert.equal(generalCoding.steps.some((step) => step.id === "issue_file_created"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_made"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_executed"), false);
@@ -132,7 +136,7 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
     "work_source_selected",
     "worktree_created",
     "dependencies_installed",
-    "agent_response_created",
+    "maintenance_conversation",
     "project_validated",
     "changes_committed",
     "pr_file_created",
@@ -145,8 +149,8 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
   assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "plan_made"), false);
   assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "review_run"), false);
   assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "changes_accepted"), false);
-  assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "agent_response_created").autopilot.kind, "agent_conversation");
-  assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "agent_response_created").label, "Talk to Codex");
+  assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "maintenance_conversation").autopilot.kind, "agent_conversation");
+  assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "maintenance_conversation").label, "Talk to Codex");
   assert.deepEqual(nonCommitMaintenance.profile.initialMetadata, {
     work_source: "new_branch"
   });
@@ -155,7 +159,7 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
     "session_created",
     "worktree_created",
     "checklist_items_installed",
-    "agent_response_created",
+    "maintenance_conversation",
     "local_session_finished"
   ]);
   assert.equal(nonCommitMaintenance.steps.at(-2).autopilot.kind, "agent_conversation");
@@ -217,7 +221,7 @@ test("ai-studio non-code maintenance profile starts with a reusable session labe
     await runtime.store.writeMetadataValue("docs_profile", "dependencies_path", targetRoot);
     const conversationStep = await runtime.advance("docs_profile");
 
-    assert.equal(conversationStep.currentStep, "agent_response_created");
+    assert.equal(conversationStep.currentStep, "maintenance_conversation");
     assert.equal(conversationStep.next.stepId, "project_validated");
   });
 });
@@ -447,26 +451,18 @@ test("ai-studio runtime prompt actions render Codex handoff data without advanci
     assert.equal(afterAction.actionResult.promptId, "make_plan");
     assert.match(afterAction.actionResult.prompt, /Run the AI Studio prompt action: Make plan/u);
     assert.match(afterAction.actionResult.prompt, /"scope": "unit test"/u);
-    assert.match(afterAction.actionResult.prompt, /AI Studio prompt completion file contract:/u);
-    assert.match(afterAction.actionResult.prompt, /prompt-done\.json/u);
-    assert.match(afterAction.actionResult.prompt, /questions\.json/u);
-    assert.match(afterAction.actionResult.promptRun.completionToken, /^AI_STUDIO_AUTOPILOT_DONE_[a-f0-9]{32}$/u);
-    assert.equal(afterAction.actionResult.promptRun.actionId, "make_plan");
-    assert.equal(afterAction.actionResult.promptRun.stepId, "plan_made");
-    assert.deepEqual(afterAction.promptRun, afterAction.actionResult.promptRun);
+    assert.match(afterAction.actionResult.prompt, /AI Studio conversation contract:/u);
+    assert.match(afterAction.actionResult.prompt, /response\.md/u);
+    assert.match(afterAction.actionResult.prompt, /input_format\.json/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /AI_STUDIO_AUTOPILOT_DONE/u);
     assert.equal(afterAction.actionResult.codexPromptHandoff.kind, "codex_prompt_handoff");
     assert.equal(afterAction.actionResult.codexPromptHandoff.codex.mode, "inject_prompt");
     assert.equal(afterAction.actionResult.codexPromptHandoff.prompt, afterAction.actionResult.prompt);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /Make plan/u);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /\[\[AI_STUDIO_CONTEXT_START\]\]/u);
 
-    const actionDuringPromptRun = afterAction.actions.find((action) => action.id === "make_plan");
-    assert.equal(actionDuringPromptRun.enabled, false);
-    assert.equal(actionDuringPromptRun.disabledReason, "Codex prompt is waiting to continue.");
-
     const afterAdvance = await runtime.advance("prompt_action");
     assert.equal(afterAdvance.currentStep, "plan_executed");
-    assert.equal(afterAdvance.promptRun, null);
   });
 });
 
@@ -539,13 +535,13 @@ test("ai-studio runtime prompt handoff shows the action input outside hidden ter
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "agent_response_created",
+      initialStep: "maintenance_conversation",
       sessionId: "agent_prompt_visible_input",
       workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     const afterAction = await runtime.runAction("agent_prompt_visible_input", "agent_conversation", {
-      agentRequest: "Explain this codebase."
+      conversationRequest: "Explain this codebase."
     });
 
     assert.equal(afterAction.actionResult.status, "prompt_ready");
@@ -554,7 +550,8 @@ test("ai-studio runtime prompt handoff shows the action input outside hidden ter
       afterAction.actionResult.codexPromptHandoff.terminalInput,
       /^Explain this codebase\.\n\n\[\[AI_STUDIO_CONTEXT_START\]\]/u
     );
-    assert.match(afterAction.actionResult.codexPromptHandoff.prompt, /"agentRequest": "Explain this codebase\."/u);
+    assert.match(afterAction.actionResult.codexPromptHandoff.prompt, /"conversationRequest": "Explain this codebase\."/u);
+    assert.equal((await runtime.getSession("agent_prompt_visible_input")).currentStep, "maintenance_conversation");
   });
 });
 
@@ -667,7 +664,6 @@ test("ai-studio runtime sends static adapter context once and references it late
     assert.match(firstPrompt.actionResult.prompt, /Large static project summary/u);
     assert.match(firstPrompt.actionResult.prompt, /Large static environment blueprint/u);
     assert.match(firstPrompt.actionResult.prompt, /large-static-config/u);
-    assert.equal(firstPrompt.actionResult.promptRun.sessionBriefingIncluded, true);
 
     await runtime.store.writeMetadataValue("session_briefing_once", "codex_session_briefing_delivered", "yes");
     await runtime.advance("session_briefing_once");
@@ -678,7 +674,6 @@ test("ai-studio runtime sends static adapter context once and references it late
     assert.doesNotMatch(secondPrompt.actionResult.prompt, /Large static environment blueprint/u);
     assert.doesNotMatch(secondPrompt.actionResult.prompt, /large-static-config/u);
     assert.match(secondPrompt.actionResult.prompt, /Use the AI Studio session briefing already provided/u);
-    assert.equal(secondPrompt.actionResult.promptRun.sessionBriefingIncluded, false);
     assert.equal(secondPrompt.actionResult.promptContext.adapter.facts.summary, "Large static project summary");
     assert.equal(
       secondPrompt.actionResult.promptContext.adapter.promptContext.environment_blueprint,

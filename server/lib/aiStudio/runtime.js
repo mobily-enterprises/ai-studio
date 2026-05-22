@@ -22,13 +22,11 @@ import {
   wrapPromptWithStudioContext
 } from "./promptMarkers.js";
 import {
-  appendPromptRunInstruction,
-  createPromptRun,
-  promptRunBlocksAction
-} from "./promptRun.js";
+  CONVERSATION_FILE_ARTIFACTS
+} from "./conversationFiles.js";
 import {
-  AUTOPILOT_FILE_ARTIFACTS
-} from "./autopilotFiles.js";
+  conversationPromptInstruction
+} from "./conversationPromptContract.js";
 import {
   runtimeContainerManagedServicesPromptFacts,
   runtimeContainerPromptFacts
@@ -52,7 +50,9 @@ function promptActionIsBlocked(action = {}, session = {}) {
 }
 
 function promptActionHasUnfinishedRun(action = {}, session = {}) {
-  return action.type === "prompt" && promptRunBlocksAction(action, session);
+  void action;
+  void session;
+  return false;
 }
 
 function actionCapabilityIsMissing(action = {}, session = {}) {
@@ -258,6 +258,24 @@ function promptWithSessionBriefing({
       session
     }),
     String(prompt || "").trim()
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function promptWithConversationContract({
+  action = {},
+  prompt = "",
+  session = {}
+} = {}) {
+  return [
+    String(prompt || "").trim(),
+    conversationPromptInstruction({
+      action,
+      artifactsRoot: session.artifactsRoot,
+      session
+    })
   ]
     .map((part) => String(part || "").trim())
     .filter(Boolean)
@@ -617,16 +635,11 @@ class AiStudioSessionRuntime {
       session: promptSession,
       sessionBriefingIncluded
     });
-    const promptRun = await this.store.writePromptRun(promptSession.sessionId, createPromptRun({
+    await this.store.deleteArtifacts(promptSession.sessionId, CONVERSATION_FILE_ARTIFACTS);
+    const prompt = promptWithConversationContract({
       action,
-      now: this.now(),
-      promptId: renderedPrompt.promptId,
-      sessionBriefingIncluded,
+      prompt: promptWithBriefing,
       session: promptSession
-    }));
-    await this.store.deleteArtifacts(promptSession.sessionId, AUTOPILOT_FILE_ARTIFACTS);
-    const prompt = appendPromptRunInstruction(promptWithBriefing, promptRun, {
-      artifactsRoot: promptSession.artifactsRoot
     });
     return {
       codexPromptHandoff: buildCodexPromptHandoff({
@@ -637,7 +650,6 @@ class AiStudioSessionRuntime {
       prompt,
       promptContext: renderedPrompt.context,
       promptId: renderedPrompt.promptId,
-      promptRun,
       status: "prompt_ready"
     };
   }
@@ -749,7 +761,6 @@ class AiStudioSessionRuntime {
     await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
       message: `Advanced from ${session.currentStep} to ${session.next.stepId}.`
     });
-    await this.store.deletePromptRun(session.sessionId);
     await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
     return this.getSession(session.sessionId);
   }
@@ -765,8 +776,7 @@ class AiStudioSessionRuntime {
       this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
       this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
       this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
-      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames),
-      this.store.deletePromptRun(session.sessionId)
+      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames)
     ]);
     await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
     await this.store.appendCommandLogEntry(session.sessionId, {

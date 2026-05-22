@@ -1,15 +1,16 @@
 <template>
   <div v-if="sessionId" class="ai-studio-shell-controls">
-    <v-menu v-if="showActivator" location="bottom end">
+    <v-menu v-if="showShellTargetMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <v-btn
           v-bind="menuProps"
+          :color="shellActivatorColor"
           :disabled="menuDisabled"
-          :icon="mdiConsoleLine"
+          :icon="shellActivatorIcon"
           size="small"
-          title="Open shell"
+          :title="shellActivatorTitle"
           variant="tonal"
-          aria-label="Open shell"
+          :aria-label="shellActivatorTitle"
         />
       </template>
 
@@ -31,20 +32,31 @@
       </v-list>
     </v-menu>
 
-    <AiStudioFloatingTerminalWindow
-      :displayed="terminalDisplayed"
-      minimized-width="min(24rem, calc(100vw - 1.5rem))"
-      :minimized="terminalMinimized"
-      :storage-key="shellWindowStorageKey"
-      :visible="terminalVisible"
+    <v-btn
+      v-else-if="showActivator"
+      :color="shellActivatorColor"
+      :icon="shellActivatorIcon"
+      size="small"
+      :title="shellActivatorTitle"
+      variant="tonal"
+      :aria-label="shellActivatorTitle"
+      @click="toggleShellPanel"
+    />
+
+    <Teleport
+      v-if="hasShellTabs"
+      defer
+      to="body"
     >
-      <template #default="{ startDrag }">
-        <div
-          class="ai-studio-shell-controls__window"
-          :class="{
-            'ai-studio-shell-controls__window--minimized': terminalMinimized
-          }"
-        >
+      <div
+        class="ai-studio-shell-controls__inline-panel"
+        :class="{
+          'ai-studio-shell-controls__inline-panel--displayed': shellPanelOpen,
+          'ai-studio-shell-controls__inline-panel--hidden': !shellPanelOpen
+        }"
+        :style="shellPanelStyle"
+      >
+        <div class="ai-studio-shell-controls__window">
           <div class="ai-studio-shell-controls__terminal-stack">
             <AiStudioCommandTerminal
               v-for="tab in shellTabs"
@@ -54,16 +66,18 @@
               :class="{
                 'ai-studio-shell-controls__terminal--active': tab.id === activeShellTabId
               }"
-              draggable
+              emit-closed-before-server-ack
+              :finished-hold-ms="0"
               :reuse-running="false"
+              :show-interrupt="false"
               terminal-kind="shell"
               :session="tab.session"
               :shell-target="tab.target"
               :start-request-key="tab.startKey"
               :title="tab.title"
               @closed="closeShellTab(tab.id)"
-              @drag-start="startDrag"
-              @expanded-changed="handleTerminalExpandedChanged(tab.id, $event)"
+              @expanded-changed="handleShellPanelExpandedChanged(tab.id, $event)"
+              @finished="closeShellTab(tab.id)"
               @running-changed="handleRunningChanged(tab.id, $event)"
             >
               <template #heading>
@@ -122,8 +136,8 @@
             </AiStudioCommandTerminal>
           </div>
         </div>
-      </template>
-    </AiStudioFloatingTerminalWindow>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -132,30 +146,26 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   mdiCircleSmall,
   mdiClose,
-  mdiConsoleLine,
   mdiFolderOutline,
+  mdiMonitor,
+  mdiMonitorDashboard,
   mdiPlus,
   mdiSourceRepository
 } from "@mdi/js";
 import AiStudioCommandTerminal from "@/components/studio/AiStudioCommandTerminal.vue";
-import AiStudioFloatingTerminalWindow from "@/components/studio/AiStudioFloatingTerminalWindow.vue";
 import {
   aiStudioSessionWorktreePath
 } from "@/lib/aiStudioSessionPaths.js";
+import {
+  aiStudioShellPanelTargetSelector
+} from "@/lib/aiStudioShellPanelTarget.js";
 import {
   consumeShellShortcutEvent,
   MAX_SHELL_TABS,
   shellShortcutAction
 } from "@/lib/aiStudioShellShortcuts.js";
-import {
-  stableLocalStorageKeyPart
-} from "@/lib/browserLocalStorage.js";
 
 const props = defineProps({
-  busy: {
-    type: Boolean,
-    default: false
-  },
   session: {
     type: Object,
     default: null
@@ -172,28 +182,27 @@ const props = defineProps({
 
 const activeShellTabId = ref("");
 const shellTabs = ref([]);
-const terminalMinimized = ref(false);
+const shellPanelCollapsed = ref(false);
+const shellPanelFrame = ref(null);
 const shellTerminalRefs = new Map();
 let shellTabSequence = 0;
 let shortcutListenerActive = false;
+let shellPanelResizeObserver = null;
 
 const sessionId = computed(() => String(props.session?.sessionId || ""));
 const worktreePath = computed(() => aiStudioSessionWorktreePath(props.session || {}));
 const menuDisabled = computed(() => !sessionId.value);
 const canOpenMainShell = computed(() => Boolean(sessionId.value && !menuDisabled.value));
 const canOpenWorktreeShell = computed(() => Boolean(canOpenMainShell.value && worktreePath.value));
-const terminalVisible = computed(() => shellTabs.value.length > 0);
-const terminalDisplayed = computed(() => props.windowDisplayed !== false);
-const shellShortcutsActive = computed(() => terminalVisible.value && terminalDisplayed.value);
+const hasShellTabs = computed(() => shellTabs.value.length > 0);
+const shellPanelAllowed = computed(() => props.windowDisplayed !== false);
+const shellPanelOpen = computed(() => Boolean(hasShellTabs.value && shellPanelAllowed.value && !shellPanelCollapsed.value));
+const shellShortcutsActive = computed(() => shellPanelOpen.value);
 const activeShellTab = computed(() => shellTabs.value.find((tab) => tab.id === activeShellTabId.value) || null);
 const shellTabLimitReached = computed(() => shellTabs.value.length >= MAX_SHELL_TABS);
 const shellTabLimitMessage = `Shell tabs are limited to ${MAX_SHELL_TABS}.`;
 const canCreateMainShell = computed(() => Boolean(!shellTabLimitReached.value && canOpenMainShell.value));
 const canCreateWorktreeShell = computed(() => Boolean(!shellTabLimitReached.value && canOpenWorktreeShell.value));
-const shellWindowStorageKey = computed(() => {
-  const source = props.session?.targetRoot || props.session?.sessionRoot || sessionId.value;
-  return `ai-studio:floating-terminal:shell:${stableLocalStorageKeyPart(source)}`;
-});
 const canOpenNewTab = computed(() => {
   if (activeShellTab.value?.target) {
     return targetCanOpen(activeShellTab.value.target);
@@ -203,6 +212,29 @@ const canOpenNewTab = computed(() => {
 const mainShellMenuSubtitle = computed(() => (shellTabLimitReached.value ? shellTabLimitMessage : "Project root"));
 const newShellTabTitle = computed(() => (shellTabLimitReached.value ? shellTabLimitMessage : "New shell tab (Alt-N)"));
 const shellTabsShortcutTitle = `Alt-N creates a tab. Alt-1 through Alt-${MAX_SHELL_TABS} switches tabs.`;
+const shellPanelTargetSelector = computed(() => aiStudioShellPanelTargetSelector(sessionId.value));
+const runningShellCount = computed(() => shellTabs.value.filter((tab) => tab.running).length);
+const shellActivatorIcon = computed(() => (runningShellCount.value > 0 ? mdiMonitorDashboard : mdiMonitor));
+const shellActivatorColor = computed(() => (hasShellTabs.value ? "primary" : undefined));
+const shellActivatorTitle = computed(() => {
+  if (!hasShellTabs.value) {
+    return "Open shell";
+  }
+  return shellPanelOpen.value ? "Hide shells" : "Show shells";
+});
+const shellPanelStyle = computed(() => {
+  const frame = shellPanelFrame.value;
+  if (!shellPanelOpen.value || !frame) {
+    return {};
+  }
+  return {
+    height: `${frame.height}px`,
+    left: "0px",
+    top: `${frame.top}px`,
+    width: `${frame.right}px`
+  };
+});
+const showShellTargetMenu = computed(() => Boolean(props.showActivator && !hasShellTabs.value));
 const worktreeShellMenuSubtitle = computed(() => {
   if (shellTabLimitReached.value) {
     return shellTabLimitMessage;
@@ -241,6 +273,16 @@ function openShell(target) {
   createShellTab(target);
 }
 
+function toggleShellPanel() {
+  if (!hasShellTabs.value) {
+    return;
+  }
+  shellPanelCollapsed.value = !shellPanelCollapsed.value;
+  if (!shellPanelCollapsed.value) {
+    void focusShellTab();
+  }
+}
+
 function createShellTab(target) {
   if (!targetCanOpen(target)) {
     return;
@@ -260,7 +302,7 @@ function createShellTab(target) {
     }
   ];
   activeShellTabId.value = tabId;
-  terminalMinimized.value = false;
+  shellPanelCollapsed.value = false;
   void focusShellTab(tabId);
 }
 
@@ -273,14 +315,14 @@ function selectShellTab(tabId = "") {
     return;
   }
   activeShellTabId.value = tabId;
-  terminalMinimized.value = false;
+  shellPanelCollapsed.value = false;
   void focusShellTab(tabId);
 }
 
 function closeShell() {
   shellTabs.value = [];
   activeShellTabId.value = "";
-  terminalMinimized.value = false;
+  shellPanelCollapsed.value = false;
   shellTerminalRefs.clear();
 }
 
@@ -298,7 +340,7 @@ function closeShellTab(tabId = "") {
   const fallbackTab = nextTabs[Math.min(tabIndex, nextTabs.length - 1)] || null;
   activeShellTabId.value = fallbackTab?.id || "";
   if (!fallbackTab) {
-    terminalMinimized.value = false;
+    shellPanelCollapsed.value = false;
     return;
   }
   void focusShellTab(fallbackTab.id);
@@ -327,18 +369,18 @@ function handleRunningChanged(tabId = "", nextRunning = false) {
   }
 }
 
-function handleTerminalExpandedChanged(tabId = "", expanded = true) {
+function handleShellPanelExpandedChanged(tabId = "", expanded = true) {
   if (tabId !== activeShellTabId.value) {
     return;
   }
-  terminalMinimized.value = expanded !== true;
-  if (terminalMinimized.value && typeof document !== "undefined") {
+  shellPanelCollapsed.value = expanded !== true;
+  if (shellPanelCollapsed.value && typeof document !== "undefined") {
     document.activeElement?.blur?.();
   }
 }
 
 function handleShellShortcut(event) {
-  if (!terminalVisible.value || event.defaultPrevented) {
+  if (!hasShellTabs.value || event.defaultPrevented) {
     return;
   }
 
@@ -377,6 +419,59 @@ function stopShellShortcuts() {
   window.removeEventListener("keydown", handleShellShortcut, true);
 }
 
+function visibleShellPanelTarget() {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const target = document.querySelector(shellPanelTargetSelector.value);
+  const rect = target?.getBoundingClientRect?.();
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return target;
+}
+
+function syncShellPanelFrame() {
+  const target = visibleShellPanelTarget();
+  const rect = target?.getBoundingClientRect?.();
+  if (!rect) {
+    shellPanelFrame.value = null;
+    return;
+  }
+  shellPanelFrame.value = {
+    height: Math.round(rect.height),
+    right: Math.round(rect.right),
+    top: Math.round(rect.top)
+  };
+}
+
+async function startShellPanelFrameTracking() {
+  stopShellPanelFrameTracking();
+  await nextTick();
+  syncShellPanelFrame();
+
+  const target = visibleShellPanelTarget();
+  if (typeof ResizeObserver === "function" && target) {
+    shellPanelResizeObserver = new ResizeObserver(syncShellPanelFrame);
+    shellPanelResizeObserver.observe(target);
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", syncShellPanelFrame, true);
+    window.addEventListener("scroll", syncShellPanelFrame, true);
+  }
+}
+
+function stopShellPanelFrameTracking() {
+  shellPanelResizeObserver?.disconnect?.();
+  shellPanelResizeObserver = null;
+  if (typeof window !== "undefined") {
+    window.removeEventListener("resize", syncShellPanelFrame, true);
+    window.removeEventListener("scroll", syncShellPanelFrame, true);
+  }
+  shellPanelFrame.value = null;
+}
+
 watch(sessionId, () => {
   closeShell();
 });
@@ -391,7 +486,20 @@ watch(shellShortcutsActive, (visible) => {
   immediate: true
 });
 
-onBeforeUnmount(stopShellShortcuts);
+watch(shellPanelOpen, (open) => {
+  if (open) {
+    void startShellPanelFrameTracking();
+  } else {
+    stopShellPanelFrameTracking();
+  }
+}, {
+  immediate: true
+});
+
+onBeforeUnmount(() => {
+  stopShellShortcuts();
+  stopShellPanelFrameTracking();
+});
 </script>
 
 <style scoped>
@@ -414,13 +522,31 @@ onBeforeUnmount(stopShellShortcuts);
   min-height: 0;
 }
 
-.ai-studio-shell-controls__window--minimized {
-  display: block;
+.ai-studio-shell-controls__inline-panel {
+  background: rgb(var(--v-theme-surface));
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.ai-studio-shell-controls__inline-panel--displayed {
+  position: fixed;
+  z-index: 2600;
+}
+
+.ai-studio-shell-controls__inline-panel--hidden {
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
+  width: 0;
 }
 
 .ai-studio-shell-controls__tabs {
   align-items: center;
-  cursor: move;
+  cursor: default;
   display: flex;
   gap: 0.3rem;
   min-height: 1.9rem;
@@ -500,11 +626,6 @@ onBeforeUnmount(stopShellShortcuts);
   position: relative;
 }
 
-.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal-stack {
-  display: block;
-  position: static;
-}
-
 .ai-studio-shell-controls__terminal {
   height: 100%;
   inset: 0;
@@ -519,15 +640,32 @@ onBeforeUnmount(stopShellShortcuts);
   visibility: visible;
 }
 
-.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal {
-  display: none;
-  height: auto;
-  position: static;
-  visibility: visible;
-  width: auto;
+.ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal) {
+  box-shadow: none;
+  height: 100%;
 }
 
-.ai-studio-shell-controls__window--minimized .ai-studio-shell-controls__terminal--active {
-  display: block;
+.ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal__body) {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: calc(100% - 2.45rem);
+  min-height: 0;
+}
+
+.ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal__host) {
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 980px) {
+  .ai-studio-shell-controls__inline-panel--displayed {
+    background: rgb(var(--v-theme-background));
+    height: auto !important;
+    inset: 0;
+    left: 0 !important;
+    padding: 0.65rem;
+    top: 0 !important;
+    width: auto !important;
+    z-index: 2500;
+  }
 }
 </style>

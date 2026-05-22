@@ -363,11 +363,17 @@ test("agent conversation prompt keeps simple conversation out of project preflig
       type: "prompt"
     },
     input: {
-      agentRequest: "How are you?"
+      conversationRequest: "How are you?"
     },
     session: {
       artifactsRoot: "/workspace/.ai-studio/session/artifacts",
-      currentStep: "agent_response_created",
+      currentStep: "maintenance_conversation",
+      currentStepDefinition: {
+        autopilot: {
+          responseArtifact: "response.md"
+        },
+        label: "Talk to Codex"
+      },
       metadata: {},
       sessionId: "direct_conversation_prompt",
       targetRoot: "/workspace",
@@ -378,6 +384,8 @@ test("agent conversation prompt keeps simple conversation out of project preflig
   assert.match(rendered.prompt, /do not read repository files, list directories, or inspect existing artifact files first/u);
   assert.match(rendered.prompt, /This is an interactive conversation step/u);
   assert.match(rendered.prompt, /If `session.currentStep` is `agent_conversation`, this is the General coding change-making step/u);
+  assert.match(rendered.prompt, /This step requires a user-facing response artifact/u);
+  assert.match(rendered.prompt, /\/workspace\/\.ai-studio\/session\/artifacts\/response\.md/u);
 });
 
 test("ai-studio prompt renderer can mask static context after the session briefing", () => {

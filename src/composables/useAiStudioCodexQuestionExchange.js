@@ -1,8 +1,5 @@
 import { computed, ref } from "vue";
 import {
-  autopilotQuestionAnswersPrompt
-} from "@/lib/aiStudioAutopilotPromptFiles.js";
-import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
@@ -25,11 +22,20 @@ function normalizeQuestions(questions = []) {
 }
 
 function defaultAnswerPrompt(exchange = {}, questions = []) {
-  return autopilotQuestionAnswersPrompt({
-    contextLabel: exchange.contextLabel,
-    continuationLines: exchange.continuationLines,
-    questions
-  });
+  const answers = (Array.isArray(questions) ? questions : []).map((question, index) => {
+    return [
+      `Q${index + 1}: ${String(question.text || question.question || question || "").trim()}`,
+      `A${index + 1}: ${String(question.answer || "").trim()}`
+    ].join("\n");
+  }).join("\n\n");
+
+  return [
+    `Answers for ${exchange.contextLabel || "the current Codex task"}:`,
+    "",
+    answers,
+    "",
+    ...(Array.isArray(exchange.continuationLines) ? exchange.continuationLines : [exchange.continuationLines])
+  ].join("\n").trim();
 }
 
 function useAiStudioCodexQuestionExchange({

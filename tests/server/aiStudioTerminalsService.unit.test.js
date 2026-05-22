@@ -311,7 +311,7 @@ test("AI Studio Codex terminal mounts linked git metadata for worktree roots", a
   });
 });
 
-test("AI Studio Codex prompt handoff records the prompt-run output cursor", async () => {
+test("AI Studio Codex prompt handoff records terminal output cursor metadata", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
       targetRoot
@@ -334,12 +334,9 @@ test("AI Studio Codex prompt handoff records the prompt-run output cursor", asyn
     });
 
     assert.equal(result.ok, true);
-    const promptRun = await runtime.store.readPromptRun("codex_prompt_run");
-    assert.equal(promptRun.status, "injected");
-    assert.equal(promptRun.outputStart, 42);
     const metadata = await runtime.store.readMetadata("codex_prompt_run");
-    assert.equal(metadata.codex_session_briefing_delivered, "yes");
-    assert.match(metadata.codex_session_briefing_delivered_at, /^\d{4}-\d{2}-\d{2}T/u);
+    assert.equal(metadata.codex_prompt_handoff_signature, "codex_prompt_run:unit-signature");
+    assert.equal(metadata.codex_prompt_handoff_output_start, "42");
   });
 });
 

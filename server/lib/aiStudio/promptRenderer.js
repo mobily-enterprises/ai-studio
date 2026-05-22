@@ -149,6 +149,12 @@ function promptContextForAction({
 
 function normalizePromptContext(context = {}) {
   const adapterContext = context.adapter || context.session?.adapter;
+  const currentStepDefinition = isPlainObject(context.session?.currentStepDefinition)
+    ? context.session.currentStepDefinition
+    : {};
+  const currentStepAutopilot = isPlainObject(currentStepDefinition.autopilot)
+    ? currentStepDefinition.autopilot
+    : {};
   const promptStaticContextMode = staticContextMode(
     context.prompt?.staticContextMode ||
     context.session?.promptStaticContextMode
@@ -182,6 +188,7 @@ function normalizePromptContext(context = {}) {
       id: normalizeText(context.session?.id || context.session?.sessionId),
       metadataRoot: normalizeText(context.session?.metadataRoot),
       metadata: isPlainObject(context.session?.metadata) ? context.session.metadata : {},
+      responseArtifact: normalizeText(currentStepAutopilot.responseArtifact || context.session?.responseArtifact),
       sessionRoot: normalizeText(context.session?.sessionRoot),
       status: normalizeText(context.session?.status),
       targetRoot: normalizeText(context.session?.targetRoot),
@@ -194,6 +201,7 @@ function sessionPromptContext(session = {}) {
   return {
     artifactsRoot: session.artifactsRoot,
     completedSteps: session.completedSteps,
+    currentStepDefinition: session.currentStepDefinition,
     currentStep: session.currentStep,
     id: session.sessionId || session.id,
     metadataRoot: session.metadataRoot,
@@ -235,6 +243,21 @@ function promptSessionBriefingReference() {
     "Session briefing:",
     STATIC_CONTEXT_REFERENCE,
     "Do not ask the user to restate those static setup details. If this prompt includes an AI Studio session briefing above, treat that briefing as the source of truth for this Codex session."
+  ].join("\n");
+}
+
+function promptResponseArtifactInstruction(session = {}) {
+  const responseArtifact = normalizeText(session.responseArtifact);
+  if (!responseArtifact) {
+    return "This step does not require a response artifact. Do not write response artifacts unless another instruction explicitly names one.";
+  }
+  const responseArtifactPath = [
+    normalizeText(session.artifactsRoot),
+    responseArtifact
+  ].filter(Boolean).join("/");
+  return [
+    "This step requires a user-facing response artifact. Write it to:",
+    responseArtifactPath
   ].join("\n");
 }
 
@@ -323,6 +346,7 @@ function promptTemplateTokens(contextInput) {
     "session.id": context.session.id,
     "session.metadataRoot": context.session.metadataRoot,
     "session.metadata.json": stableJson(context.session.metadata),
+    "session.responseArtifactInstruction": promptResponseArtifactInstruction(context.session),
     "session.sessionRoot": context.session.sessionRoot,
     "session.status": context.session.status,
     "session.targetRoot": context.session.targetRoot,

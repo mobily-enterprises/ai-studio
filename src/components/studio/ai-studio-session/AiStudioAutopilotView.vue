@@ -2,6 +2,7 @@
   <section class="studio-autopilot">
     <AiStudioAutopilotNavigation
       :busy="navigationBusy"
+      layout="rail"
       :steps="autopilotSteps"
       @rewind="rewindToAutopilotStep"
     />
@@ -259,55 +260,6 @@
       </v-alert>
 
       <div
-        v-else-if="screenKind === 'prompt_done'"
-        class="studio-autopilot__decision"
-      >
-        <v-alert
-          type="info"
-          variant="tonal"
-          density="compact"
-        >
-          {{ screenMessage }}
-        </v-alert>
-
-        <div class="studio-autopilot__actions">
-          <v-btn
-            class="studio-autopilot__start-button"
-            color="primary"
-            :prepend-icon="mdiPlay"
-            variant="flat"
-            @click="resume"
-          >
-            {{ screenButtonLabel }}
-          </v-btn>
-        </div>
-      </div>
-
-      <div
-        v-else-if="screenKind === 'prompt_waiting'"
-        class="studio-autopilot__decision"
-      >
-        <v-alert
-          type="info"
-          variant="tonal"
-          density="compact"
-        >
-          {{ screenMessage }}
-        </v-alert>
-
-        <div class="studio-autopilot__actions">
-          <v-btn
-            color="primary"
-            :prepend-icon="mdiPlay"
-            variant="flat"
-            @click="continuePromptRun"
-          >
-            Continue
-          </v-btn>
-        </div>
-      </div>
-
-      <div
         v-else-if="screenKind === 'agent_conversation'"
         class="studio-autopilot__agent-conversation"
       >
@@ -320,11 +272,11 @@
         </v-alert>
 
         <AiStudioReportPreview
-          v-if="humanInputResponsePreviewVisible"
+          v-if="conversationResponsePreviewVisible"
           empty-text="AI response is not ready yet."
-          :error="humanInputResponsePreview.error"
-          :loading="humanInputResponsePreview.loading"
-          :text="humanInputResponsePreview.text"
+          :error="''"
+          :loading="false"
+          :text="conversationResponse"
           title="AI response"
         />
 
@@ -424,11 +376,11 @@
         />
 
         <AiStudioReportPreview
-          v-if="humanInputResponsePreviewVisible"
+          v-if="conversationResponsePreviewVisible"
           empty-text="AI response is not ready yet."
-          :error="humanInputResponsePreview.error"
-          :loading="humanInputResponsePreview.loading"
-          :text="humanInputResponsePreview.text"
+          :error="''"
+          :loading="false"
+          :text="conversationResponse"
           title="AI response"
         />
 
@@ -470,13 +422,24 @@
 
           <v-btn
             v-if="implementationReviewVisible || finalReviewVisible"
-            :disabled="reviewControlsBusy || (implementationReviewVisible && !canRequestReviewTweak)"
+            :disabled="reviewControlsBusy || !canRequestReviewConversation"
             :prepend-icon="mdiRefresh"
             type="button"
             variant="tonal"
-            @click="showReviewFeedback"
+            @click="showReviewConversationForm"
           >
-            {{ reviewFeedbackButtonLabel }}
+            Ask AI for tweaks
+          </v-btn>
+
+          <v-btn
+            v-if="finalReviewVisible"
+            :disabled="reviewControlsBusy"
+            :prepend-icon="mdiRefresh"
+            type="button"
+            variant="tonal"
+            @click="showReviewReplanForm"
+          >
+            Reject, replan
           </v-btn>
         </div>
 
@@ -734,10 +697,6 @@ const props = defineProps({
     default: () => ({}),
     type: Object
   },
-  humanInputResponsePreview: {
-    default: () => ({}),
-    type: Object
-  },
   refreshSessionData: {
     default: async () => null,
     type: Function
@@ -765,24 +724,23 @@ const {
   acceptChanges,
   cancelMergeFailure,
   agentConversationContinueLabel,
-  agentConversationShowsResponseArtifact,
   canAcceptReview,
   canFinishAgentConversation,
-  canRequestReviewTweak,
-  canSubmitAgentRequest,
+  canRequestReviewConversation,
+  canSubmitAgentConversationRequest,
   clearFailure,
   commandOutput,
   commandPreview,
   commandResult,
   commandRunning,
-  continuePromptRun,
+  conversationResponse,
   failure,
   finishAgentConversation,
   mergeAndSyncMainCheckout,
   readyForAgentConversation,
   readyForIssue,
   rejectChanges,
-  requestReviewTweak,
+  requestReviewConversation,
   retry,
   resume,
   runDeepUiCheck,
@@ -791,7 +749,7 @@ const {
   skipDeepUiCheck,
   skipMerge,
   start,
-  submitAgentRequest,
+  submitAgentConversationRequest,
   syncFromAutopilotArtifacts,
   stop,
   stopCommandAction,
@@ -809,6 +767,7 @@ const {
 });
 const reviewFeedback = ref("");
 const agentConversationRequest = ref("");
+const reviewFeedbackMode = ref("");
 const reviewFeedbackVisible = ref(false);
 const commandFixActive = ref(false);
 const commandFixInjectionError = ref("");
@@ -923,17 +882,23 @@ const reviewDiffTitle = computed(() => String(props.review?.diffTitle || "Review
 const canSubmitReviewFeedback = computed(() => Boolean(
   reviewFeedback.value.trim() &&
   !reviewControlsBusy.value &&
-  (!implementationReviewVisible.value || canRequestReviewTweak.value)
+  (
+    reviewFeedbackMode.value === "conversation"
+      ? canRequestReviewConversation.value
+      : finalReviewVisible.value
+  )
 ));
-const reviewFeedbackButtonLabel = computed(() => implementationReviewVisible.value
-  ? "Ask AI for tweaks"
-  : "Reject, give more instructions");
-const reviewFeedbackInputLabel = computed(() => implementationReviewVisible.value
-  ? "What would you like changed?"
-  : "What should change?");
-const reviewFeedbackSubmitLabel = computed(() => implementationReviewVisible.value
-  ? "Ask AI for tweaks"
-  : "Send to Codex");
+const reviewFeedbackInputLabel = computed(() => {
+  if (reviewFeedbackMode.value === "conversation") {
+    return implementationReviewVisible.value
+      ? "What would you like changed?"
+      : "What should Codex adjust before finalizing?";
+  }
+  return "What should change in the plan?";
+});
+const reviewFeedbackSubmitLabel = computed(() => (
+  reviewFeedbackMode.value === "conversation" ? "Ask AI for tweaks" : "Send to Codex"
+));
 const reviewAcceptLabel = computed(() => implementationReviewVisible.value
   ? "Looks good, continue"
   : "Accept and finalize");
@@ -944,12 +909,12 @@ const reportPreviewVisible = computed(() => Boolean(
   reportScreenVisible.value &&
   props.reportPreview?.visible
 ));
-const humanInputResponsePreviewVisible = computed(() => Boolean(
-  (implementationReviewVisible.value || (readyForAgentConversation.value && agentConversationShowsResponseArtifact.value)) &&
-  props.humanInputResponsePreview?.visible
+const conversationResponsePreviewVisible = computed(() => Boolean(
+  conversationResponse.value.trim() &&
+  (implementationReviewVisible.value || finalReviewVisible.value || readyForAgentConversation.value)
 ));
 const canSubmitAgentConversation = computed(() => Boolean(
-  canSubmitAgentRequest.value &&
+  canSubmitAgentConversationRequest.value &&
   agentConversationRequest.value.trim()
 ));
 const screenStopAction = computed(() => {
@@ -987,9 +952,11 @@ async function requestCommandAiFix() {
   commandFixInjectionError.value = "";
   commandFixSubmitting.value = true;
   try {
+    await clearAutopilotArtifacts();
     const injected = await props.codexTerminal.fixCommandFailure(terminalFailureFixRequest({
       actionId: result.actionId,
       actionLabel: result.actionLabel,
+      artifactsRoot: props.session?.artifactsRoot || "",
       closeError: commandTerminalError.value,
       commandPreview: commandPreview.value || result.commandPreview,
       exitCode: result.exitCode,
@@ -1031,16 +998,24 @@ async function rewindToAutopilotStep(step = {}) {
   clearCommandFixState();
   commandFailureNote.value = "";
   reviewFeedback.value = "";
+  reviewFeedbackMode.value = "";
   reviewFeedbackVisible.value = false;
   await props.rewindToStep(step);
 }
 
-function showReviewFeedback() {
+function showReviewConversationForm() {
+  reviewFeedbackMode.value = "conversation";
+  reviewFeedbackVisible.value = true;
+}
+
+function showReviewReplanForm() {
+  reviewFeedbackMode.value = "replan";
   reviewFeedbackVisible.value = true;
 }
 
 function cancelReviewFeedback() {
   reviewFeedback.value = "";
+  reviewFeedbackMode.value = "";
   reviewFeedbackVisible.value = false;
 }
 
@@ -1048,8 +1023,8 @@ async function submitReviewFeedback() {
   if (!canSubmitReviewFeedback.value) {
     return;
   }
-  const accepted = implementationReviewVisible.value
-    ? await requestReviewTweak(reviewFeedback.value)
+  const accepted = reviewFeedbackMode.value === "conversation"
+    ? await requestReviewConversation(reviewFeedback.value)
     : await rejectChanges(reviewFeedback.value);
   if (accepted) {
     cancelReviewFeedback();
@@ -1060,7 +1035,7 @@ async function submitAgentConversation() {
   if (!canSubmitAgentConversation.value) {
     return;
   }
-  const accepted = await submitAgentRequest(agentConversationRequest.value);
+  const accepted = await submitAgentConversationRequest(agentConversationRequest.value);
   if (accepted) {
     agentConversationRequest.value = "";
   }
@@ -1305,8 +1280,15 @@ watch(commandTerminalFailed, (failed) => {
 @media (min-width: 981px) {
   .studio-autopilot {
     align-content: start;
-    overflow-y: auto;
+    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+    height: 100%;
+    overflow: hidden;
     padding-right: 0.25rem;
+  }
+
+  .studio-autopilot__stage {
+    min-height: 0;
+    overflow-y: auto;
     scrollbar-gutter: stable;
   }
 }

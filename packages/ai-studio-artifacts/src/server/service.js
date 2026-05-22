@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { watch } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -9,14 +10,12 @@ import {
   deepFreeze
 } from "../../../../server/lib/aiStudio/deepFreeze.js";
 import {
-  AUTOPILOT_FILE_ARTIFACTS,
-  AUTOPILOT_ISSUE_DRAFT_ARTIFACT,
-  AUTOPILOT_PROMPT_DONE_ARTIFACT,
-  AUTOPILOT_QUESTIONS_ARTIFACT,
-  normalizeAutopilotIssueDraftFile,
-  normalizeAutopilotPromptDoneFile,
-  normalizeAutopilotQuestionsFile
-} from "../../../../server/lib/aiStudio/autopilotFiles.js";
+  CONVERSATION_FILE_ARTIFACTS,
+  CONVERSATION_HISTORY_ARTIFACT,
+  CONVERSATION_INPUT_FORMAT_ARTIFACT,
+  CONVERSATION_RESPONSE_ARTIFACT,
+  normalizeConversationInputFormat
+} from "../../../../server/lib/aiStudio/conversationFiles.js";
 
 const EMPTY_EDITOR_ACTION = deepFreeze({
   action: null,
@@ -257,7 +256,7 @@ function issueArtifactsResponse(session = {}, artifacts = {}) {
   };
 }
 
-function parseAutopilotJson(text = "") {
+function parseArtifactJson(text = "") {
   const source = String(text || "").trim();
   if (!source) {
     return null;
@@ -269,24 +268,81 @@ function parseAutopilotJson(text = "") {
   }
 }
 
-async function readAutopilotJson(runtime, sessionId = "", artifactName = "", normalize = () => null) {
-  return normalize(parseAutopilotJson(await runtime.store.readArtifact(sessionId, artifactName)));
+async function readConversationJson(runtime, sessionId = "", artifactName = "", normalize = () => null) {
+  return normalize(parseArtifactJson(await runtime.store.readArtifact(sessionId, artifactName)));
 }
 
-async function readAutopilotFiles(runtime, sessionId = "") {
+function conversationFingerprint(response = "", inputFormat = null) {
+  return createHash("sha256")
+    .update(String(response || ""))
+    .update("\0")
+    .update(JSON.stringify(inputFormat || null))
+    .digest("hex");
+}
+
+function parseConversationHistory(text = "") {
+  try {
+    const value = JSON.parse(String(text || "").trim() || "[]");
+    return Array.isArray(value) ? value.filter((entry) => entry && typeof entry === "object") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readConversationHistory(runtime, sessionId = "") {
+  return parseConversationHistory(await runtime.store.readArtifact(sessionId, CONVERSATION_HISTORY_ARTIFACT));
+}
+
+async function recordConversationHistory(runtime, sessionId = "", {
+  inputFormat = null,
+  response = ""
+} = {}) {
+  const normalizedResponse = String(response || "").trim();
+  if (!normalizedResponse || !inputFormat) {
+    return readConversationHistory(runtime, sessionId);
+  }
+  const history = await readConversationHistory(runtime, sessionId);
+  const fingerprint = conversationFingerprint(normalizedResponse, inputFormat);
+  if (history.at(-1)?.fingerprint === fingerprint) {
+    return history;
+  }
+  const nextHistory = [
+    ...history,
+    {
+      at: new Date().toISOString(),
+      fingerprint,
+      inputFormat,
+      response: normalizedResponse
+    }
+  ].slice(-50);
+  await runtime.store.writeArtifact(
+    sessionId,
+    CONVERSATION_HISTORY_ARTIFACT,
+    `${JSON.stringify(nextHistory, null, 2)}\n`
+  );
+  return nextHistory;
+}
+
+async function readConversationFiles(runtime, sessionId = "") {
   const [
-    issueDraft,
-    promptDone,
-    questions
+    inputFormat,
+    response
   ] = await Promise.all([
-    readAutopilotJson(runtime, sessionId, AUTOPILOT_ISSUE_DRAFT_ARTIFACT, normalizeAutopilotIssueDraftFile),
-    readAutopilotJson(runtime, sessionId, AUTOPILOT_PROMPT_DONE_ARTIFACT, normalizeAutopilotPromptDoneFile),
-    readAutopilotJson(runtime, sessionId, AUTOPILOT_QUESTIONS_ARTIFACT, normalizeAutopilotQuestionsFile)
+    readConversationJson(runtime, sessionId, CONVERSATION_INPUT_FORMAT_ARTIFACT, normalizeConversationInputFormat),
+    runtime.store.readArtifact(sessionId, CONVERSATION_RESPONSE_ARTIFACT)
   ]);
+  const history = await recordConversationHistory(runtime, sessionId, {
+    inputFormat,
+    response
+  });
   return {
-    issueDraft,
-    promptDone,
-    questions
+    conversation: {
+      history,
+      inputFormat,
+      response: String(response || "")
+    },
+    inputFormat,
+    response: String(response || "")
   };
 }
 
@@ -485,7 +541,8 @@ function createService({ projectService } = {}) {
         const session = await runtime.getSession(sessionId);
         return {
           ...session,
-          ...(await readAutopilotFiles(runtime, sessionId)),
+          ...(await readConversationFiles(runtime, sessionId)),
+          issueDraft: null,
           ok: true
         };
       });
@@ -494,14 +551,21 @@ function createService({ projectService } = {}) {
     async clearAutopilotArtifacts(sessionId) {
       return artifactResult(async () => {
         const runtime = await projectService.createRuntime();
-        await runtime.store.deleteArtifacts(sessionId, AUTOPILOT_FILE_ARTIFACTS);
+        await runtime.store.deleteArtifacts(sessionId, CONVERSATION_FILE_ARTIFACTS);
         const session = await runtime.getSession(sessionId);
         return {
           ...session,
+          conversation: {
+            history: await readConversationHistory(runtime, sessionId),
+            inputFormat: null,
+            response: ""
+          },
+          inputFormat: null,
           issueDraft: null,
           ok: true,
           promptDone: null,
-          questions: null
+          questions: null,
+          response: ""
         };
       });
     },
@@ -536,7 +600,7 @@ function createService({ projectService } = {}) {
           emit("autopilot-artifacts.updated", {
             artifactReadiness: currentSession.artifactReadiness,
             sessionId,
-            ...(await readAutopilotFiles(runtime, sessionId)),
+            ...(await readConversationFiles(runtime, sessionId)),
             ok: true
           });
         } finally {

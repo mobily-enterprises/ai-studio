@@ -11,9 +11,6 @@ import {
   pathExists
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
-import {
-  normalizePromptRun
-} from "./promptRun.js";
 
 const AI_STUDIO_STATE_DIR = ".ai-studio";
 const AI_STUDIO_SESSION_SCHEMA_VERSION = 1;
@@ -192,7 +189,6 @@ function resolveAiStudioSessionPaths({
     manifestPath: sessionRoot ? path.join(sessionRoot, "session.json") : "",
     metadataRoot: sessionRoot ? path.join(sessionRoot, "metadata") : "",
     promptContextSnapshotPath: sessionRoot ? path.join(sessionRoot, "prompt-context.json") : "",
-    promptRunPath: sessionRoot ? path.join(sessionRoot, "prompt-run.json") : "",
     sessionId: normalizedSessionId,
     sessionRoot,
     sessionsRoot,
@@ -470,54 +466,6 @@ function createAiStudioSessionStore({
     return actionResults.filter(Boolean);
   }
 
-  async function writePromptRun(sessionId, promptRun = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const record = normalizePromptRun(promptRun);
-    if (!record) {
-      throw aiStudioError("Invalid ai-studio prompt run.", "ai_studio_invalid_prompt_run");
-    }
-    await writeJsonFile(sessionPaths.promptRunPath, record);
-    return record;
-  }
-
-  async function readPromptRun(sessionId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const promptRunText = await readTextIfExists(sessionPaths.promptRunPath);
-    if (!promptRunText) {
-      return null;
-    }
-    try {
-      const promptRun = normalizePromptRun(JSON.parse(promptRunText));
-      if (!promptRun) {
-        throw new Error("Invalid prompt run.");
-      }
-      return promptRun;
-    } catch {
-      throw aiStudioError(
-        `Invalid ai-studio prompt run: ${sessionPaths.sessionId}`,
-        "ai_studio_invalid_prompt_run"
-      );
-    }
-  }
-
-  async function patchPromptRun(sessionId, patch = {}) {
-    const currentPromptRun = await readPromptRun(sessionId);
-    if (!currentPromptRun) {
-      return null;
-    }
-    return writePromptRun(sessionId, {
-      ...currentPromptRun,
-      ...patch
-    });
-  }
-
-  async function deletePromptRun(sessionId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(sessionPaths.promptRunPath, {
-      force: true
-    });
-  }
-
   async function writePromptContextSnapshot(sessionId, snapshot = {}) {
     const sessionPaths = await ensureSessionRoot(sessionId);
     const record = normalizePromptContextSnapshot(snapshot);
@@ -608,7 +556,6 @@ function createAiStudioSessionStore({
       completedSteps,
       artifactReadiness,
       actionResults,
-      promptRun,
       promptContextSnapshot
     ] = await Promise.all([
       readManifest(sessionPaths.sessionId),
@@ -618,7 +565,6 @@ function createAiStudioSessionStore({
       readCompletedSteps(sessionPaths.sessionId),
       readArtifactReadiness(sessionPaths.sessionId),
       readActionResults(sessionPaths.sessionId),
-      readPromptRun(sessionPaths.sessionId),
       readPromptContextSnapshot(sessionPaths.sessionId)
     ]);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
@@ -635,8 +581,6 @@ function createAiStudioSessionStore({
       metadataRoot: sessionPaths.metadataRoot,
       promptContextSnapshot,
       promptContextSnapshotPath: sessionPaths.promptContextSnapshotPath,
-      promptRun,
-      promptRunPath: sessionPaths.promptRunPath,
       sessionId: sessionPaths.sessionId,
       sessionName,
       sessionRoot: sessionPaths.sessionRoot,
@@ -729,9 +673,7 @@ function createAiStudioSessionStore({
     deleteMetadataValue,
     deleteMetadataValues,
     deletePromptContextSnapshot,
-    deletePromptRun,
     listSessions,
-    patchPromptRun,
     paths,
     readArtifact,
     readArtifactReadiness,
@@ -744,7 +686,6 @@ function createAiStudioSessionStore({
     readMetadata,
     readMetadataValue,
     readPromptContextSnapshot,
-    readPromptRun,
     readSession,
     readStatus,
     writeArtifact,
@@ -754,7 +695,6 @@ function createAiStudioSessionStore({
     writeIssueWordMetadata,
     writeMetadataValue,
     writePromptContextSnapshot,
-    writePromptRun,
     writeStatus
   };
 }

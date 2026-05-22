@@ -26,7 +26,7 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     vi.unstubAllGlobals();
   });
 
-  it("injects the hidden issue prompt and reviews issue-draft.json", async () => {
+  it("injects the hidden issue prompt and reviews the issue draft from input_format.json", async () => {
     const context = createIssueDiscussionContext();
     context.controller.requestText.value = "Add booking reports";
 
@@ -40,22 +40,20 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
         sessionId: "session-1"
       }
     );
-    expect(context.codexTerminal.injectPrompt.mock.calls[0][0]).toContain("/tmp/session/artifacts/issue-draft.json");
+    expect(context.codexTerminal.injectPrompt.mock.calls[0][0]).toContain("/tmp/session/artifacts/input_format.json");
     expect(window.localStorage.getItem("ai-studio:autopilot:issue-discussion:session-1"))
       .toContain("Add booking reports");
 
-    context.autopilotArtifacts.value = {
+    context.autopilotArtifacts.value = conversationArtifacts({
+      inputKind: "issue_draft",
       issueDraft: {
         body: "Build a report screen.",
-        requestId: "request-1",
         title: "Add booking reports",
         word: "Reports"
       },
-      ok: true,
-      promptDone: null,
-      questions: null,
-      sessionId: "session-1"
-    };
+      message: "Review this issue draft.",
+      status: "awaiting_input"
+    });
     await nextTick();
 
     expect(context.controller.reviewing.value).toBe(true);
@@ -81,30 +79,26 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     );
   });
 
-  it("renders questions.json and submits answers back to Codex", async () => {
+  it("renders questions from input_format.json and submits answers back to Codex", async () => {
     const context = createIssueDiscussionContext();
     context.controller.requestText.value = "Add booking reports";
 
     await context.controller.submitInitialRequest();
-    context.autopilotArtifacts.value = {
-      issueDraft: null,
-      ok: true,
-      promptDone: null,
-      questions: {
-        questions: [
-          {
-            id: "q1",
-            text: "Should cancelled bookings be included?"
-          },
-          {
-            id: "q2",
-            text: "Who can see the report?"
-          }
-        ],
-        requestId: "request-1"
-      },
-      sessionId: "session-1"
-    };
+    context.autopilotArtifacts.value = conversationArtifacts({
+      inputKind: "questions",
+      message: "Answer these before continuing.",
+      questions: [
+        {
+          id: "q1",
+          text: "Should cancelled bookings be included?"
+        },
+        {
+          id: "q2",
+          text: "Who can see the report?"
+        }
+      ],
+      status: "awaiting_input"
+    });
     await nextTick();
 
     expect(context.questionExchange.hasQuestions.value).toBe(true);
@@ -139,18 +133,16 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     );
     expect(context.controller.waiting.value).toBe(true);
 
-    context.autopilotArtifacts.value = {
+    context.autopilotArtifacts.value = conversationArtifacts({
+      inputKind: "issue_draft",
       issueDraft: {
         body: "Build admin-only booking reports.",
-        requestId: "request-2",
         title: "Add booking reports",
         word: "Reports"
       },
-      ok: true,
-      promptDone: null,
-      questions: null,
-      sessionId: "session-1"
-    };
+      message: "Review this issue draft.",
+      status: "awaiting_input"
+    });
     await nextTick();
 
     expect(context.controller.reviewing.value).toBe(true);
@@ -188,25 +180,23 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     );
   });
 
-  it("cancels clarification questions and ignores that request id", async () => {
+  it("cancels clarification questions and ignores the late Codex answer", async () => {
     const context = createIssueDiscussionContext();
     context.controller.requestText.value = "Create p.txt";
 
     await context.controller.submitInitialRequest();
     context.autopilotArtifacts.value = {
-      issueDraft: null,
-      ok: true,
-      promptDone: null,
-      questions: {
+      ...conversationArtifacts({
+        inputKind: "questions",
+        message: "Answer this before continuing.",
         questions: [
           {
             id: "q1",
             text: "What should p.txt contain?"
           }
         ],
-        requestId: "request-1"
-      },
-      sessionId: "session-1"
+        status: "awaiting_input"
+      })
     };
     await nextTick();
 
@@ -221,18 +211,16 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
     expect(window.localStorage.getItem("ai-studio:autopilot:issue-discussion:session-1"))
       .not.toContain("hello");
 
-    context.autopilotArtifacts.value = {
+    context.autopilotArtifacts.value = conversationArtifacts({
+      inputKind: "issue_draft",
       issueDraft: {
         body: "Stale answer.",
-        requestId: "request-1",
         title: "Stale",
         word: "Stale"
       },
-      ok: true,
-      promptDone: null,
-      questions: null,
-      sessionId: "session-1"
-    };
+      message: "Review this issue draft.",
+      status: "awaiting_input"
+    });
     await nextTick();
 
     expect(context.controller.inputVisible.value).toBe(true);
@@ -242,16 +230,16 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
   it("writes accepted issue artifacts and advances when the workflow next step is ready", async () => {
     const context = createIssueDiscussionContext({
       initialAutopilotArtifacts: {
+        ...conversationArtifacts({
+        inputKind: "issue_draft",
         issueDraft: {
           body: "Build a report screen.",
-          requestId: "request-from-file",
           title: "Add booking reports",
           word: "Reports"
         },
-        ok: true,
-        promptDone: null,
-        questions: null,
-        sessionId: "session-1"
+          message: "Review this issue draft.",
+          status: "awaiting_input"
+        })
       }
     });
     await nextTick();
@@ -272,13 +260,7 @@ describe("useAiStudioAutopilotIssueDiscussion", () => {
 function createIssueDiscussionContext({
   codexBusy = false,
   currentStep = "issue_file_created",
-  initialAutopilotArtifacts = {
-    issueDraft: null,
-    ok: true,
-    promptDone: null,
-    questions: null,
-    sessionId: "session-1"
-  }
+  initialAutopilotArtifacts = emptyConversationArtifacts()
 } = {}) {
   const session = ref({
     artifactReadiness: {},
@@ -318,13 +300,7 @@ function createIssueDiscussionContext({
     ok: true
   }));
   const clearAutopilotArtifacts = vi.fn(async () => {
-    autopilotArtifacts.value = {
-      issueDraft: null,
-      ok: true,
-      promptDone: null,
-      questions: null,
-      sessionId: "session-1"
-    };
+    autopilotArtifacts.value = emptyConversationArtifacts();
     return {
       ok: true
     };
@@ -352,6 +328,36 @@ function createIssueDiscussionContext({
     questionExchange,
     saveIssueArtifacts,
     session
+  };
+}
+
+function emptyConversationArtifacts() {
+  return {
+    conversation: {
+      history: [],
+      inputFormat: null,
+      response: ""
+    },
+    inputFormat: null,
+    issueDraft: null,
+    ok: true,
+    response: "",
+    sessionId: "session-1"
+  };
+}
+
+function conversationArtifacts(inputFormat = {}, response = "Codex response.") {
+  return {
+    conversation: {
+      history: [],
+      inputFormat,
+      response
+    },
+    inputFormat,
+    issueDraft: null,
+    ok: true,
+    response,
+    sessionId: "session-1"
   };
 }
 

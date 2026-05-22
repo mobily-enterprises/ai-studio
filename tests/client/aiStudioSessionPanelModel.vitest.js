@@ -114,7 +114,7 @@ describe("AI Studio session panel model", () => {
     ]);
   });
 
-  it("builds the filtered autopilot navigation stops", () => {
+  it("builds Autopilot navigation from the full workflow", () => {
     const rows = buildAiStudioAutopilotNavigationSteps({
       currentStep: "plan_made",
       status: "active",
@@ -174,13 +174,14 @@ describe("AI Studio session panel model", () => {
       label: row.label,
       state: row.state
     }))).toEqual([
-      { canRewind: false, id: "session_created", label: "Start", state: "done" },
-      { canRewind: true, id: "issue_file_created", label: "Briefing", state: "done" },
-      { canRewind: false, id: "implementation_reviewed", label: "Human review", state: "current" },
-      { canRewind: false, id: "deep_ui_check_run", label: "UI improvements", state: "pending" },
+      { canRewind: false, id: "session_created", label: "Create session", state: "done" },
+      { canRewind: true, id: "issue_file_created", label: "Define or select issue", state: "done" },
+      { canRewind: false, id: "plan_made", label: "Make plan", state: "current" },
+      { canRewind: false, id: "implementation_reviewed", label: "Human review", state: "pending" },
+      { canRewind: false, id: "deep_ui_check_run", label: "Run deep UI check", state: "pending" },
       { canRewind: false, id: "changes_accepted", label: "Final review", state: "pending" },
-      { canRewind: false, id: "pr_merged", label: "Merge", state: "pending" },
-      { canRewind: false, id: "session_finished", label: "Done", state: "pending" }
+      { canRewind: false, id: "pr_merged", label: "Merge PR", state: "pending" },
+      { canRewind: false, id: "session_finished", label: "Congratulations!", state: "pending" }
     ]);
   });
 

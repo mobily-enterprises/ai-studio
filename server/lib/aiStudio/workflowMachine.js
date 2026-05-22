@@ -130,7 +130,6 @@ function normalizeAction(action = {}, stepId = "") {
   const type = normalizeText(action.type || "command");
   return {
     adapterCapability: normalizeText(action.adapterCapability),
-    allowRepeatedPromptRuns: action.allowRepeatedPromptRuns === true,
     advanceOnSuccess: action.advanceOnSuccess === true,
     artifactFields: type === "editor" ? normalizeArtifactFields(action.artifactFields, id) : [],
     disabledReason: normalizeText(action.disabledReason),
@@ -299,9 +298,6 @@ function publicActionDefinition(action) {
   };
   if (action.advanceOnSuccess) {
     definition.advanceOnSuccess = true;
-  }
-  if (action.allowRepeatedPromptRuns) {
-    definition.allowRepeatedPromptRuns = true;
   }
   if (action.adapterCapability) {
     definition.adapterCapability = action.adapterCapability;

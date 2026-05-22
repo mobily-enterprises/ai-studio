@@ -1,6 +1,9 @@
 import {
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
+import {
+  conversationPromptInstruction
+} from "../../server/lib/aiStudio/conversationPromptContract.js";
 
 const DEFAULT_TERMINAL_FAILURE_TAIL_LINES = 200;
 
@@ -39,6 +42,7 @@ function optionalContextLine(label, value) {
 function terminalFailureFixPrompt({
   actionId = "",
   actionLabel = "",
+  artifactsRoot = "",
   closeError = "",
   commandPreview = "",
   exitCode = null,
@@ -79,12 +83,15 @@ function terminalFailureFixPrompt({
   return [
     "A terminal script failed in AI Studio. Diagnose the failure from the repository and the terminal output, then attempt to fix the underlying cause in the current worktree.",
     "",
-    "Response contract:",
-    "- When you are done, start your final response with exactly one of these marker lines:",
-    "Fixed it",
-    "Not fixed",
-    "- Use Fixed it only if you made or verified a concrete fix.",
-    "- Under the marker, include a concise explanation and mention any commands or tests you ran.",
+    conversationPromptInstruction({
+      action: {
+        id: "fix_command_failure"
+      },
+      artifactsRoot,
+      session: {
+        artifactsRoot
+      }
+    }),
     "",
     "Terminal context:",
     contextLines || "- No terminal metadata was available.",

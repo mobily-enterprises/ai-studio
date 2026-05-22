@@ -17,26 +17,35 @@
         :refresh-session-data="sessionData.refreshSessionData"
         :report-preview="reportPreview"
         :review="review"
-        :human-input-response-preview="humanInputResponsePreview"
         :rewind-busy="Boolean(timeline.rewindCommand?.isRunning)"
         :rewind-to-step="timeline.rewindToStep"
         :session="selection.selectedSession"
         @busy-change="setAutopilotBusy"
       />
 
-      <AiStudioSessionWorkspace
+      <div
         v-show="sessionMode === 'inspect'"
-        :actions="actions"
-        :dialogs="dialogs"
-        :issue-request="issueRequest"
-        :page="guardedPage"
-        :report-preview="reportPreview"
-        :review="review"
-        :human-input-response-preview="humanInputResponsePreview"
-        :selection="selection"
-        :timeline="timeline"
-        @update-issue-request-text="issueRequest.text = $event"
-      />
+        class="studio-ai-sessions__inspect-slot"
+      >
+        <AiStudioSessionWorkspace
+          class="studio-ai-sessions__inspect-workspace"
+          :actions="actions"
+          :dialogs="dialogs"
+          :issue-request="issueRequest"
+          :page="guardedPage"
+          :report-preview="reportPreview"
+          :review="review"
+          :human-input-response-preview="humanInputResponsePreview"
+          :selection="selection"
+          :timeline="timeline"
+          @update-issue-request-text="issueRequest.text = $event"
+        />
+
+        <div
+          :id="shellPanelTargetId"
+          class="studio-ai-sessions__shell-terminal-target"
+        />
+      </div>
 
       <AiStudioSessionTerminals
         :class="{
@@ -94,6 +103,9 @@ import {
   aiStudioSessionStatusLabel,
   isClosedAiStudioSession
 } from "@/lib/aiStudioSessionViewModel.js";
+import {
+  aiStudioShellPanelTargetId
+} from "@/lib/aiStudioShellPanelTarget.js";
 
 const props = defineProps({
   active: {
@@ -130,6 +142,7 @@ const selectedSessionTitle = computed(() => {
   return aiStudioSessionDisplayTitle(selectedSession.value || {}) ||
     `Session ${props.sessionData.shortSessionId(props.sessionId)}`;
 });
+const shellPanelTargetId = computed(() => aiStudioShellPanelTargetId(props.sessionId));
 const isSelectedSessionClosed = computed(() => isClosedAiStudioSession(selectedSession.value || {}));
 const sessionFacts = computed(() => aiStudioSessionFacts(selectedSession.value || {}));
 const timelineSteps = computed(() => buildAiStudioTimelineSteps(selectedSession.value));
@@ -344,6 +357,25 @@ watch(() => page.error, emitPageError, {
 .studio-ai-sessions__layout--autopilot > .studio-autopilot {
   position: relative;
   z-index: 2;
+}
+
+.studio-ai-sessions__inspect-slot {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.studio-ai-sessions__inspect-workspace,
+.studio-ai-sessions__shell-terminal-target {
+  grid-area: 1 / 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.studio-ai-sessions__shell-terminal-target {
+  pointer-events: none;
+  z-index: 3;
 }
 
 .studio-ai-sessions__layout--autopilot > .studio-ai-sessions__terminals--autopilot-preview {

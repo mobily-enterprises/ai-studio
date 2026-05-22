@@ -7,6 +7,7 @@
     }"
   >
     <CodexSessionTerminal
+      class="studio-ai-sessions__codex-terminal"
       :display-mode="displayMode"
       :prompt-injection-request-key="codexTerminal.promptInjectionKey"
       :prompt-override="codexTerminal.promptOverride"
@@ -136,6 +137,11 @@ watch(() => props.session?.sessionId || "", () => {
   position: relative;
 }
 
+.studio-ai-sessions__codex-terminal {
+  min-height: 0;
+  min-width: 0;
+}
+
 .studio-ai-sessions__terminals--headless {
   height: 0;
   min-height: 0;
@@ -186,6 +192,7 @@ watch(() => props.session?.sessionId || "", () => {
   .studio-ai-sessions__terminals {
     align-self: stretch;
     display: grid;
+    gap: 0.75rem;
     overflow: hidden;
   }
 }

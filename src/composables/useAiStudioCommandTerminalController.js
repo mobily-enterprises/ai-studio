@@ -276,14 +276,20 @@ function useAiStudioCommandTerminalController(props, emit) {
       return;
     }
     finishedEmittedForTerminalId = terminalSessionId.value;
-    window.setTimeout(() => {
+    const emitFinished = () => {
       emit("finished", {
         actionId: actionId.value,
         closeError: String(closeError || terminalError.value || ""),
         exitCode,
         sessionId: sessionId.value
       });
-    }, FINISHED_TERMINAL_HOLD_MS);
+    };
+    const finishedHoldMs = Math.max(0, Number(props.finishedHoldMs ?? FINISHED_TERMINAL_HOLD_MS));
+    if (finishedHoldMs > 0) {
+      window.setTimeout(emitFinished, finishedHoldMs);
+      return;
+    }
+    emitFinished();
   }
 
   function handleTerminalStatusUpdate({
@@ -398,8 +404,12 @@ function useAiStudioCommandTerminalController(props, emit) {
   } = {}) {
     terminalClosedByUser.value = true;
     emitRunningState();
-    await closeCurrentServerTerminalSession(sessionId.value);
-    if (emitClosed) {
+    const closePromise = closeCurrentServerTerminalSession(sessionId.value);
+    if (emitClosed && props.emitClosedBeforeServerAck) {
+      emit("closed");
+    }
+    await closePromise;
+    if (emitClosed && !props.emitClosedBeforeServerAck) {
       emit("closed");
     }
   }

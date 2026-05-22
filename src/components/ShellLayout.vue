@@ -13,3 +13,17 @@ export default {
   }
 };
 </script>
+
+<style>
+:root {
+  --studio-shell-primary-drawer-width: 220px;
+}
+
+[data-testid="jskit-shell-drawer"] {
+  width: var(--studio-shell-primary-drawer-width) !important;
+}
+
+[data-testid="jskit-shell-drawer"] ~ .v-main {
+  --v-layout-left: var(--studio-shell-primary-drawer-width) !important;
+}
+</style>

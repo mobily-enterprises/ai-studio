@@ -3,13 +3,29 @@ import {
   normalizeText
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
+import {
+  CONVERSATION_RESPONSE_ARTIFACT
+} from "./conversationFiles.js";
+
+function artifactReadyCondition(artifactName = "") {
+  return `artifact:${artifactName}`;
+}
+
+function editorActionIdForArtifact(artifactName = "") {
+  const safeName = normalizeText(artifactName)
+    .replace(/[^A-Za-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  return `edit_${safeName || "response_artifact"}`;
+}
 
 const CREATE_ISSUE_FILE_ACTION_ID = "create_issue_file";
-const APPLY_REVIEW_FEEDBACK_ACTION_ID = "apply_review_feedback";
 const AGENT_CONVERSATION_ACTION_ID = "agent_conversation";
 const AGENT_CONVERSATION_STEP_ID = "agent_conversation";
-const HUMAN_INPUT_RESPONSE_ARTIFACT = "human_input_response.md";
-const AGENT_RESPONSE_STEP_ID = "agent_response_created";
+const FINAL_REVIEW_CONVERSATION_ACTION_ID = "final_review_conversation";
+const HUMAN_REVIEW_CONVERSATION_ACTION_ID = "human_review_conversation";
+const HUMAN_INPUT_RESPONSE_ARTIFACT = CONVERSATION_RESPONSE_ARTIFACT;
+const AI_RESPONSE_EDITOR_ACTION_ID = "edit_ai_response";
+const MAINTENANCE_CONVERSATION_STEP_ID = "maintenance_conversation";
 const CHECKLIST_ITEMS_STEP_ID = "checklist_items_installed";
 const ISSUE_BODY_ARTIFACT = "issue.md";
 const ISSUE_FILE_STEP_ID = "issue_file_created";
@@ -30,7 +46,7 @@ const ISSUE_WORD_READY_CONDITION = `artifact:${ISSUE_WORD_ARTIFACT}`;
 const ISSUE_READY_CONDITION = `any:metadata:issue_url;${ISSUE_FILES_READY_CONDITION}`;
 const PR_READY_CONDITION = `any:metadata:pr_url;artifact:${PULL_REQUEST_ARTIFACT}`;
 const REPORT_READY_CONDITION = `artifact:${REPORT_ARTIFACT}`;
-const HUMAN_INPUT_RESPONSE_READY_CONDITION = `artifact:${HUMAN_INPUT_RESPONSE_ARTIFACT}`;
+const HUMAN_INPUT_RESPONSE_READY_CONDITION = artifactReadyCondition(HUMAN_INPUT_RESPONSE_ARTIFACT);
 const MERGE_DECISION_READY_CONDITION = "any:metadata:pr_merged;metadata:merge_skipped";
 const SESSION_CAN_FINISH_CONDITION = "any:metadata:main_checkout_synced;metadata:merge_skipped";
 
@@ -69,37 +85,49 @@ function reportEditorAction() {
   };
 }
 
-function humanInputResponseEditorAction() {
+function responseArtifactEditorAction({
+  artifactName = "",
+  fieldLabel = "AI response",
+  id = "edit_response_artifact",
+  label = "Edit AI response"
+} = {}) {
   return {
     artifactFields: [
       {
         kind: "textarea",
-        label: "AI response",
-        name: HUMAN_INPUT_RESPONSE_ARTIFACT,
+        label: fieldLabel,
+        name: artifactName,
         required: false
       }
     ],
-    enabledWhen: [HUMAN_INPUT_RESPONSE_READY_CONDITION],
+    enabledWhen: [artifactReadyCondition(artifactName)],
     enabledWhenReason: "Ask Codex for a response before editing it.",
-    id: "edit_human_input_response",
-    label: "Edit AI response",
+    id,
+    label,
     type: "editor"
   };
 }
 
+function aiResponseEditorAction() {
+  return responseArtifactEditorAction({
+    artifactName: HUMAN_INPUT_RESPONSE_ARTIFACT,
+    id: AI_RESPONSE_EDITOR_ACTION_ID
+  });
+}
+
 function agentConversationAction({
+  id = AGENT_CONVERSATION_ACTION_ID,
   inputLabel = "What do you want to ask Codex?",
   inputPlaceholder = "Describe what you want help with.",
   label = "Talk to Codex"
 } = {}) {
   return {
-    allowRepeatedPromptRuns: true,
-    id: AGENT_CONVERSATION_ACTION_ID,
+    id,
     inputFields: [
       {
         kind: "textarea",
         label: inputLabel,
-        name: "agentRequest",
+        name: "conversationRequest",
         placeholder: inputPlaceholder,
         requiredMessage: "Describe what you want Codex to do."
       }
@@ -118,20 +146,29 @@ function agentConversationStep({
   inputPlaceholder = "Describe what you want help with.",
   label = "Talk to Codex",
   next = null,
-  responseArtifact = ""
+  responseArtifact = "",
+  responseEditorActionId = "",
+  responseEditorFieldLabel = "AI response",
+  responseEditorLabel = "Edit AI response"
 } = {}) {
   const artifactsToClean = responseArtifact ? [responseArtifact] : [];
+  const conversationAction = agentConversationAction({
+    inputLabel,
+    inputPlaceholder,
+    label: actionLabel
+  });
   return {
     actions: [
-      agentConversationAction({
-        inputLabel,
-        inputPlaceholder,
-        label: actionLabel
-      }),
-      ...(responseArtifact ? [humanInputResponseEditorAction()] : [])
+      conversationAction,
+      ...(responseArtifact ? [responseArtifactEditorAction({
+        artifactName: responseArtifact,
+        fieldLabel: responseEditorFieldLabel,
+        id: responseEditorActionId || editorActionIdForArtifact(responseArtifact),
+        label: responseEditorLabel
+      })] : [])
     ],
     autopilot: {
-      actionId: AGENT_CONVERSATION_ACTION_ID,
+      actionId: conversationAction.id,
       kind: "agent_conversation",
       responseArtifact,
       stop: true
@@ -532,32 +569,25 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
   },
   implementation_reviewed: {
     actions: [
-      {
-        allowRepeatedPromptRuns: true,
-        id: APPLY_REVIEW_FEEDBACK_ACTION_ID,
-        inputFields: [
-          {
-            label: "What should Codex change?",
-            name: "reviewFeedback",
-            placeholder: "Describe the tweak in plain language.",
-            requiredMessage: "Describe what should change before sending this to Codex."
-          }
-        ],
+      agentConversationAction({
+        id: HUMAN_REVIEW_CONVERSATION_ACTION_ID,
         label: "Ask AI for tweaks",
-        promptId: APPLY_REVIEW_FEEDBACK_ACTION_ID,
-        type: "prompt"
-      },
-      humanInputResponseEditorAction()
+        inputLabel: "What would you like changed?",
+        inputPlaceholder: "Describe the tweak in plain language."
+      }),
+      aiResponseEditorAction()
     ],
     autopilot: {
+      actionId: HUMAN_REVIEW_CONVERSATION_ACTION_ID,
       kind: "implementation_review",
+      responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT,
       stop: true
     },
     description: "Try the implemented work and request small tweaks before slower review steps.",
     id: "implementation_reviewed",
     label: "Human review",
     rewindCleanup: {
-      actionResults: [APPLY_REVIEW_FEEDBACK_ACTION_ID],
+      actionResults: [HUMAN_REVIEW_CONVERSATION_ACTION_ID],
       artifacts: [HUMAN_INPUT_RESPONSE_ARTIFACT]
     }
   },
@@ -567,18 +597,21 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     id: AGENT_CONVERSATION_STEP_ID,
     inputLabel: "What should Codex change?",
     inputPlaceholder: "Describe the code change, cleanup, bug fix, or follow-up request.",
-    label: "Make changes"
+    label: "Make changes",
+    responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT,
+    responseEditorActionId: AI_RESPONSE_EDITOR_ACTION_ID
   }),
-  [AGENT_RESPONSE_STEP_ID]: agentConversationStep({
+  [MAINTENANCE_CONVERSATION_STEP_ID]: agentConversationStep({
     actionLabel: "Ask Codex",
     description: "Ask Codex for local maintenance help and save the answer as an editable AI response artifact.",
-    id: AGENT_RESPONSE_STEP_ID,
+    id: MAINTENANCE_CONVERSATION_STEP_ID,
     label: "Talk to Codex",
     next: {
       disabledReason: "Ask Codex and save an AI response before finishing.",
       enabledWhen: [HUMAN_INPUT_RESPONSE_READY_CONDITION]
     },
-    responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
+    responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT,
+    responseEditorActionId: AI_RESPONSE_EDITOR_ACTION_ID
   }),
   deep_ui_check_run: {
     actions: [
@@ -674,15 +707,25 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
   },
   changes_accepted: {
     actions: [
+      agentConversationAction({
+        id: FINAL_REVIEW_CONVERSATION_ACTION_ID,
+        label: "Ask AI for tweaks",
+        inputLabel: "What should Codex adjust before finalizing?",
+        inputPlaceholder: "Describe the final tweak. Studio will rerun review and validation afterwards."
+      }),
       reportEditorAction()
     ],
     autopilot: {
+      actionId: FINAL_REVIEW_CONVERSATION_ACTION_ID,
       kind: "final_review",
       stop: true
     },
     description: "Review the validated work before the report, commit, and pull request.",
     id: "changes_accepted",
-    label: "Final review"
+    label: "Final review",
+    rewindCleanup: {
+      actionResults: [FINAL_REVIEW_CONVERSATION_ACTION_ID]
+    }
   },
   report_created: {
     actions: [
@@ -1076,7 +1119,7 @@ const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
       "work_source_selected",
       "worktree_created",
       "dependencies_installed",
-      AGENT_RESPONSE_STEP_ID,
+      MAINTENANCE_CONVERSATION_STEP_ID,
       "project_validated",
       "changes_committed",
       "pr_file_created",
@@ -1098,7 +1141,7 @@ const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
       "session_created",
       "worktree_created",
       CHECKLIST_ITEMS_STEP_ID,
-      AGENT_RESPONSE_STEP_ID,
+      MAINTENANCE_CONVERSATION_STEP_ID,
       "local_session_finished"
     ]
   }

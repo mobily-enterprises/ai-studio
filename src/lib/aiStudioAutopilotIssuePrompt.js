@@ -1,29 +1,26 @@
 import {
-  autopilotQuestionAnswersPrompt
-} from "@/lib/aiStudioAutopilotPromptFiles.js";
-import {
   wrapPromptWithStudioContext
 } from "@/lib/codexOutput.js";
 import {
-  AUTOPILOT_ISSUE_DRAFT_ARTIFACT,
-  AUTOPILOT_QUESTIONS_ARTIFACT,
-  autopilotFilePath,
-  autopilotIssueDraftFileExample,
-  autopilotQuestionFileExample
-} from "../../server/lib/aiStudio/autopilotFiles.js";
+  CONVERSATION_INPUT_FORMAT_ARTIFACT,
+  CONVERSATION_INPUT_KIND,
+  CONVERSATION_RESPONSE_ARTIFACT,
+  conversationFilePath,
+  conversationInputFormatExample,
+  conversationIssueDraftInputFormatExample
+} from "../../server/lib/aiStudio/conversationFiles.js";
 
 function visibleIssueDraftPrompt() {
-  return "Write questions.json or issue-draft.json.";
+  return "Discuss and define issue.";
 }
 
 function issueDraftPromptHeader({
   artifactsRoot = "",
-  requestId = "",
   seedGuidance = "",
   seedMode = false
 } = {}) {
-  const questionsFile = autopilotFilePath(artifactsRoot, AUTOPILOT_QUESTIONS_ARTIFACT);
-  const issueDraftFile = autopilotFilePath(artifactsRoot, AUTOPILOT_ISSUE_DRAFT_ARTIFACT);
+  const responseFile = conversationFilePath(artifactsRoot, CONVERSATION_RESPONSE_ARTIFACT);
+  const inputFormatFile = conversationFilePath(artifactsRoot, CONVERSATION_INPUT_FORMAT_ARTIFACT);
   const modeLines = seedMode
     ? [
       "AI Studio is defining the application seed issue.",
@@ -32,10 +29,10 @@ function issueDraftPromptHeader({
       "Do not ask about business records, product workflows, detailed CRUD screens, or feature implementation yet.",
       "Seed readiness gate:",
       "- Treat the adapter seed guidance as the required setup checklist.",
-      "- Do not write issue-draft.json until every scaffold-affecting setup choice is answered, explicitly declined, or assigned a clear default.",
+      "- Do not write an issue draft input format until every scaffold-affecting setup choice is answered, explicitly declined, or assigned a clear default.",
       "- If any setup choice that affects the scaffold, selected modules, local environment, seed commands, or fake development secrets is still unresolved, ask another concise question set.",
       "- It is acceptable to ask more questions after the user answers a previous question set.",
-      "- Only write issue-draft.json once the draft can include selected modules, local dev values/defaults, and exact seed commands.",
+      "- Only write the issue draft input format once the draft can include selected modules, local dev values/defaults, and exact seed commands.",
       seedGuidance ? `Adapter seed guidance:\n${String(seedGuidance || "").trim()}` : ""
     ]
     : [
@@ -45,11 +42,11 @@ function issueDraftPromptHeader({
   return [
     ...modeLines.filter(Boolean),
     "Do not modify files.",
-    "Only write the specific AI Studio JSON file requested below.",
+    "Only write the AI Studio conversation files requested below.",
     "First decide whether the request is clear enough to create a useful issue.",
     "Every time you ask the user any question, you must do both of these things in the same response:",
     "1. Ask the question in normal plain text so Inspect users can answer naturally.",
-    `2. Write the same question set as JSON to: ${questionsFile}`,
+    `2. Write the same question set to ${inputFormatFile} using inputKind ${CONVERSATION_INPUT_KIND.QUESTIONS}.`,
     "This applies to every user question, not only Autopilot and not only blockers.",
     "If essential scope details are missing, ask concise self-contained questions for a non-technical user.",
     seedMode ? "Only ask questions whose answers would change the initial scaffold, selected modules, local environment, or seed commands." : "",
@@ -59,23 +56,22 @@ function issueDraftPromptHeader({
     "Do not dismiss an explicit question request as test noise or as unrelated to issue scope.",
     "If no essential questions are needed, produce a concise issue title, a deliberate one-word session label, and a useful Markdown issue body.",
     "The session label must be exactly one expressive word that describes the change. Do not use generic action words like Add, Fix, Update, Change, or Improve unless that word is the actual feature domain.",
-    `Use this exact requestId in every JSON file: ${String(requestId || "").trim()}`,
+    `Write the user-facing response to: ${responseFile}`,
+    `Write the UI state JSON to: ${inputFormatFile}`,
     "",
-    "Question file format:",
-    autopilotQuestionFileExample("<requestId>"),
+    "Question input_format.json format:",
+    conversationInputFormatExample(),
     "",
     "If no clarification is needed:",
-    "Write the issue draft to this JSON file.",
-    `Issue draft file path: ${issueDraftFile}`,
-    autopilotIssueDraftFileExample("<requestId>"),
+    "Write a short explanation to response.md and write the issue draft to input_format.json.",
+    conversationIssueDraftInputFormatExample(),
     "",
-    "Do not write both questions.json and issue-draft.json for the same response."
+    "Do not write both questions and an issue draft for the same response."
   ].join("\n");
 }
 
 function buildInitialIssueDraftPrompt({
   artifactsRoot = "",
-  requestId = "",
   requestText = "",
   seedGuidance = "",
   seedMode = false
@@ -83,7 +79,6 @@ function buildInitialIssueDraftPrompt({
   const hiddenPrompt = [
     issueDraftPromptHeader({
       artifactsRoot,
-      requestId,
       seedGuidance,
       seedMode
     }),
@@ -104,7 +99,6 @@ function buildInitialSeedIssueDraftPrompt(options = {}) {
 function buildAnsweredIssueDraftPrompt({
   artifactsRoot = "",
   questions = [],
-  requestId = "",
   requestText = "",
   seedGuidance = "",
   seedMode = false
@@ -112,7 +106,6 @@ function buildAnsweredIssueDraftPrompt({
   const hiddenPrompt = [
     issueDraftPromptHeader({
       artifactsRoot,
-      requestId,
       seedGuidance,
       seedMode
     }),
@@ -120,19 +113,21 @@ function buildAnsweredIssueDraftPrompt({
     seedMode ? "Original seed request:" : "Original user request:",
     String(requestText || "").trim(),
     "",
-    autopilotQuestionAnswersPrompt({
-      contextLabel: seedMode ? "Seed issue definition" : "Issue definition",
-      continuationLines: [
-        seedMode
-          ? "Use the original seed request and these answers to continue defining the seed issue."
-          : "Use the original request and these answers to continue defining the issue.",
-        "If you ask any more questions, ask them in normal text and write questions.json using the format above.",
-        seedMode
-          ? "Only write issue-draft.json if the seed readiness gate is satisfied; otherwise ask another question set."
-          : "Otherwise write issue-draft.json."
-      ],
-      questions
-    })
+    "User answers:",
+    (Array.isArray(questions) ? questions : []).map((question, index) => {
+      return [
+        `Q${index + 1}: ${String(question.text || question.question || question || "").trim()}`,
+        `A${index + 1}: ${String(question.answer || "").trim()}`
+      ].join("\n");
+    }).join("\n\n"),
+    "",
+    seedMode
+      ? "Use the original seed request and these answers to continue defining the seed issue."
+      : "Use the original request and these answers to continue defining the issue.",
+    "If you ask more questions, ask them in normal text and write input_format.json using the questions format above.",
+    seedMode
+      ? "Only write an issue_draft input format if the seed readiness gate is satisfied; otherwise ask another question set."
+      : "Otherwise write an issue_draft input format."
   ].join("\n");
   return wrapPromptWithStudioContext(hiddenPrompt, visibleIssueDraftPrompt());
 }

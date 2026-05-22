@@ -59,10 +59,12 @@
         />
 
         <AiStudioShellControls
-          :busy="interactionBusy"
-          :session="selection.selectedSession"
-          :show-activator="sessionMode === 'inspect'"
-          :window-displayed="sessionMode === 'inspect'"
+          v-for="sessionItem in toolbar.sessions"
+          v-show="sessionItem.sessionId === selection.selectedSessionId"
+          :key="`shell:${sessionItem.sessionId}`"
+          :session="sessionItem"
+          :show-activator="sessionMode === 'inspect' && sessionItem.sessionId === selection.selectedSessionId"
+          :window-displayed="sessionMode === 'inspect' && sessionItem.sessionId === selection.selectedSessionId"
         />
       </div>
     </Teleport>
@@ -160,7 +162,6 @@ const inspectButtonIcon = computed(() => sessionMode.value === "inspect" ? mdiCl
 const inspectButtonLabel = computed(() => sessionMode.value === "inspect" ? "Quit inspect" : "Inspect");
 const pageLoading = sessionData.pageLoading;
 const selectedRuntimeState = computed(() => runtimeStateBySessionId[selection.selectedSessionId] || null);
-const selectedRuntimeReady = computed(() => Boolean(selectedRuntimeState.value?.toolbarControls));
 const selectedAbandon = computed(() => selectedRuntimeState.value?.toolbarControls?.abandon || fallbackAbandon);
 const selectedDiff = computed(() => selectedRuntimeState.value?.toolbarControls?.diff || {});
 const selectedReview = computed(() => selectedRuntimeState.value?.toolbarControls?.review || {});
@@ -171,9 +172,6 @@ const inspectDiffVisible = computed(() => {
     sessionMode: sessionMode.value
   });
 });
-const interactionBusy = computed(() => Boolean(
-  selection.selectedSession && !selectedRuntimeReady.value
-) || Boolean(selectedRuntimeState.value?.busy));
 const pageError = computed(() => sessionData.sessionList.loadError || selectedRuntimeState.value?.pageError || "");
 
 function ensureRuntimeState(sessionId = "") {

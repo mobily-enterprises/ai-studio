@@ -32,9 +32,6 @@ import {
   wrapPromptWithStudioContext
 } from "../../../../server/lib/aiStudio/promptMarkers.js";
 import {
-  PROMPT_RUN_STATUS
-} from "../../../../server/lib/aiStudio/promptRun.js";
-import {
   aiStudioResult,
   codexTerminalNamespace,
   directoryExists,
@@ -292,26 +289,11 @@ function createCodexTerminalController({ projectService } = {}) {
           };
         }
         const runtime = await projectService.createRuntime();
-        const session = await runtime.getSession(sessionId);
+        await runtime.getSession(sessionId);
         const outputStart = normalizeCodexPromptHandoffOutputStart(input?.outputStart);
-        const promptRunWrite = session.promptRun
-          ? runtime.store.patchPromptRun(sessionId, {
-            injectedAt: new Date().toISOString(),
-            outputStart,
-            status: PROMPT_RUN_STATUS.INJECTED
-          })
-          : null;
-        const briefingWrites = session.promptRun?.sessionBriefingIncluded === true
-          ? [
-            runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered", "yes"),
-            runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered_at", new Date().toISOString())
-          ]
-          : [];
         await Promise.all([
           runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", signature),
-          runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart)),
-          promptRunWrite,
-          ...briefingWrites
+          runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
         ]);
         return {
           ok: true,

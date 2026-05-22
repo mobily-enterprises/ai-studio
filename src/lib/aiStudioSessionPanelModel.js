@@ -78,49 +78,6 @@ function enrichAiStudioSessionForDisplay(session = null) {
   };
 }
 
-const AI_STUDIO_AUTOPILOT_INTERACTION_STEPS = Object.freeze([
-  {
-    id: "session_created",
-    label: "Start"
-  },
-  {
-    id: "issue_file_created",
-    label: "Briefing"
-  },
-  {
-    id: "seed_application_defined",
-    label: "Seed app"
-  },
-  {
-    id: "agent_conversation",
-    label: "Make changes"
-  },
-  {
-    id: "agent_response_created",
-    label: "Talk"
-  },
-  {
-    id: "implementation_reviewed",
-    label: "Human review"
-  },
-  {
-    id: "deep_ui_check_run",
-    label: "UI improvements"
-  },
-  {
-    id: "changes_accepted",
-    label: "Final review"
-  },
-  {
-    id: "pr_merged",
-    label: "Merge"
-  },
-  {
-    id: "session_finished",
-    label: "Done"
-  }
-]);
-
 function buildAiStudioTimelineSteps(session = {}) {
   const currentStepId = String(session?.currentStep || "");
   const sessionIsOpen = isOpenAiStudioSession(session || {});
@@ -149,36 +106,7 @@ function buildAiStudioTimelineSteps(session = {}) {
 }
 
 function buildAiStudioAutopilotNavigationSteps(session = {}) {
-  const timelineStepById = new Map(buildAiStudioTimelineSteps(session).map((step) => [step.id, step]));
-  const autopilotSteps = AI_STUDIO_AUTOPILOT_INTERACTION_STEPS
-    .map((autopilotStep, index) => {
-      const timelineStep = timelineStepById.get(autopilotStep.id);
-      if (!timelineStep) {
-        return null;
-      }
-      return {
-        ...timelineStep,
-        autopilotIndex: index,
-        label: autopilotStep.label
-      };
-    })
-    .filter(Boolean);
-  const currentStep = autopilotSteps.find((step) => step.current);
-  const activeStep = currentStep || autopilotSteps.find((step) => step.state !== "done") || autopilotSteps.at(-1);
-  if (!activeStep) {
-    return [];
-  }
-
-  return autopilotSteps.map((step) => {
-    if (step.id !== activeStep.id || step.current) {
-      return step;
-    }
-    return {
-      ...step,
-      current: true,
-      state: "current"
-    };
-  });
+  return buildAiStudioTimelineSteps(session);
 }
 
 function aiStudioPromptHandoffFromSession(session = {}) {
@@ -262,7 +190,6 @@ function shortAiStudioSessionId(sessionId = "") {
 }
 
 export {
-  AI_STUDIO_AUTOPILOT_INTERACTION_STEPS,
   aiStudioActionIcon,
   aiStudioPromptHandoffFromSession,
   aiStudioSessionFacts,

@@ -9,10 +9,17 @@ import { parseJsonStreamEvent } from "@/lib/streamEvents.js";
 function emptyAutopilotArtifacts(sessionId = "") {
   return {
     artifactReadiness: {},
+    conversation: {
+      history: [],
+      inputFormat: null,
+      response: ""
+    },
+    inputFormat: null,
     issueDraft: null,
     ok: true,
     promptDone: null,
     questions: null,
+    response: "",
     sessionId: String(sessionId || "")
   };
 }

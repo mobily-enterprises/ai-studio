@@ -1,7 +1,7 @@
 const ISSUE_BODY_ARTIFACT = "issue.md";
 const ISSUE_TITLE_ARTIFACT = "issue_title";
 const ISSUE_WORD_ARTIFACT = "issue_word";
-const HUMAN_INPUT_RESPONSE_ARTIFACT = "human_input_response.md";
+const HUMAN_INPUT_RESPONSE_ARTIFACT = "response.md";
 const PULL_REQUEST_ARTIFACT = "pull_request.md";
 const REPORT_ARTIFACT = "report.md";
 

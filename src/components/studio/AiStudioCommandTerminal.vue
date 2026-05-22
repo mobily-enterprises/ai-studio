@@ -60,6 +60,7 @@
           Retry
         </v-btn>
         <v-btn
+          v-if="showInterrupt"
           :disabled="!terminalSessionId || terminalExited"
           size="small"
           variant="text"
@@ -133,9 +134,17 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
+  finishedHoldMs: {
+    type: Number,
+    default: 500
+  },
   launchTarget: {
     type: Object,
     default: null
+  },
+  emitClosedBeforeServerAck: {
+    type: Boolean,
+    default: false
   },
   reuseRunning: {
     type: Boolean,
@@ -148,6 +157,10 @@ const props = defineProps({
   shellTarget: {
     type: String,
     default: ""
+  },
+  showInterrupt: {
+    type: Boolean,
+    default: true
   },
   startRequestKey: {
     type: [String, Number],

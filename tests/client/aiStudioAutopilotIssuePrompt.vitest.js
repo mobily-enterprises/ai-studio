@@ -13,16 +13,15 @@ describe("aiStudioAutopilotIssuePrompt", () => {
   it("shows only the short visible prompt while hiding the long file instructions", () => {
     const prompt = buildInitialIssueDraftPrompt({
       artifactsRoot: "/tmp/session/artifacts",
-      requestId: "request-123",
       requestText: "Add booking reports"
     });
     const visiblePrompt = stripStudioContextBlocksForDisplay(prompt);
 
-    expect(visiblePrompt).toBe("Write questions.json or issue-draft.json.\n\n");
+    expect(visiblePrompt).toBe("Discuss and define issue.\n\n");
     expect(visiblePrompt).not.toContain("Add booking reports");
     expect(visiblePrompt).not.toContain("/tmp/session/artifacts");
-    expect(prompt).toContain("/tmp/session/artifacts/questions.json");
-    expect(prompt).toContain("/tmp/session/artifacts/issue-draft.json");
+    expect(prompt).toContain("/tmp/session/artifacts/input_format.json");
+    expect(prompt).toContain("/tmp/session/artifacts/response.md");
     expect(prompt).toContain("If clarification is needed, ask the minimum useful number of questions, up to three.");
     expect(prompt).toContain("a deliberate one-word session label");
     expect(prompt).toContain("\"word\": \"Label\"");
@@ -40,12 +39,11 @@ describe("aiStudioAutopilotIssuePrompt", () => {
           text: "Who can see the report?"
         }
       ],
-      requestId: "request-456",
       requestText: "Add booking reports"
     });
     const visiblePrompt = stripStudioContextBlocksForDisplay(prompt);
 
-    expect(visiblePrompt).toBe("Write questions.json or issue-draft.json.\n\n");
+    expect(visiblePrompt).toBe("Discuss and define issue.\n\n");
     expect(visiblePrompt).not.toContain("Admins only.");
     expect(visiblePrompt).not.toContain("Who can see the report?");
     expect(prompt).toContain("Q1: Who can see the report?");
@@ -55,7 +53,6 @@ describe("aiStudioAutopilotIssuePrompt", () => {
   it("requires seed readiness before writing a seed issue draft", () => {
     const initialPrompt = buildInitialSeedIssueDraftPrompt({
       artifactsRoot: "/tmp/session/artifacts",
-      requestId: "seed-request-123",
       requestText: "Seed a JSKIT app",
       seedGuidance: "Ask about auth, tenancy, database, and local dev secrets."
     });
@@ -67,15 +64,14 @@ describe("aiStudioAutopilotIssuePrompt", () => {
           text: "Which auth and database choices should the seed use?"
         }
       ],
-      requestId: "seed-request-456",
       requestText: "Seed a JSKIT app",
       seedGuidance: "Ask about auth, tenancy, database, and local dev secrets."
     });
 
     expect(initialPrompt).toContain("Seed readiness gate:");
     expect(initialPrompt).toContain("Treat the adapter seed guidance as the required setup checklist.");
-    expect(initialPrompt).toContain("Do not write issue-draft.json until every scaffold-affecting setup choice is answered");
+    expect(initialPrompt).toContain("Do not write an issue draft input format until every scaffold-affecting setup choice is answered");
     expect(initialPrompt).toContain("It is acceptable to ask more questions after the user answers a previous question set.");
-    expect(answeredPrompt).toContain("Only write issue-draft.json if the seed readiness gate is satisfied; otherwise ask another question set.");
+    expect(answeredPrompt).toContain("Only write an issue_draft input format if the seed readiness gate is satisfied; otherwise ask another question set.");
   });
 });
