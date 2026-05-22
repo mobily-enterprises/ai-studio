@@ -78,6 +78,7 @@ test("ai-studio runtime session view exposes workflow steps, current actions, an
 
 test("ai-studio workflow profiles are ordered step lists with self-contained step metadata", () => {
   const bigFeature = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE);
+  const nonCodeMaintenance = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
   const seedApplication = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION);
   const nonCommitMaintenance = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
 
@@ -97,6 +98,27 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
       seedApplication.steps.findIndex((step) => step.id === "seed_plan_executed"),
     true
   );
+  assert.equal(nonCodeMaintenance.profile.label, "Documentation/non code maintenance");
+  assert.equal(nonCodeMaintenance.profile.sessionWord, "documentation");
+  assert.deepEqual(nonCodeMaintenance.steps.map((step) => step.id), [
+    "session_created",
+    "work_source_selected",
+    "worktree_created",
+    "dependencies_installed",
+    "agent_response_created",
+    "project_validated",
+    "changes_committed",
+    "pr_file_created",
+    "pr_created",
+    "pr_merged",
+    "main_checkout_synced",
+    "session_finished"
+  ]);
+  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "issue_file_created"), false);
+  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "plan_made"), false);
+  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "review_run"), false);
+  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "changes_accepted"), false);
+  assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "agent_response_created").autopilot.kind, "agent_conversation");
   assert.deepEqual(nonCommitMaintenance.profile.initialMetadata, {
     work_source: "new_branch"
   });
@@ -137,6 +159,38 @@ test("ai-studio runtime persists the selected workflow profile per session", asy
       }),
       /Unknown AI Studio workflow profile/u
     );
+  });
+});
+
+test("ai-studio non-code maintenance profile starts with a reusable session label and skips issue planning", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    const session = await runtime.createSession({
+      sessionId: "docs_profile",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE
+    });
+
+    assert.equal(session.workflowId, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
+    assert.equal(session.sessionName, "documentation");
+    assert.equal(await runtime.store.readArtifact("docs_profile", "issue_word"), "documentation\n");
+    assert.equal(session.stepDefinitions.some((step) => step.id === "issue_file_created"), false);
+    assert.equal(session.stepDefinitions.some((step) => step.id === "plan_made"), false);
+    assert.equal(session.stepDefinitions.some((step) => step.id === "changes_accepted"), false);
+
+    await runtime.advance("docs_profile");
+    await runtime.store.writeMetadataValue("docs_profile", "work_source", "new_branch");
+    await runtime.advance("docs_profile");
+    await runtime.store.writeMetadataValue("docs_profile", "worktree_path", targetRoot);
+    await runtime.advance("docs_profile");
+    await runtime.store.writeMetadataValue("docs_profile", "dependencies_installed", "yes");
+    await runtime.store.writeMetadataValue("docs_profile", "dependencies_path", targetRoot);
+    const conversationStep = await runtime.advance("docs_profile");
+
+    assert.equal(conversationStep.currentStep, "agent_response_created");
+    assert.equal(conversationStep.next.stepId, "project_validated");
   });
 });
 

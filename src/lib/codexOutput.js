@@ -209,6 +209,17 @@ function stripStudioContextBlocksForDisplay(value) {
   while (visibleCursor < text.length) {
     const start = text.indexOf(STUDIO_CONTEXT_START_MARKER, visibleCursor);
     if (start < 0) {
+      const orphanEnd = text.indexOf(STUDIO_CONTEXT_END_MARKER, visibleCursor);
+      if (orphanEnd >= 0) {
+        let visibleEnd = orphanEnd + STUDIO_CONTEXT_END_MARKER.length;
+        if (text[visibleEnd] === "\n") {
+          visibleEnd += 1;
+        }
+        const rawEnd = rawIndexForVisibleOffset(rawIndexes, visibleEnd, source.length);
+        rawCursor = rawEnd;
+        visibleCursor = visibleEnd;
+        continue;
+      }
       const tail = text.slice(visibleCursor);
       const partialLength = trailingMarkerPrefixLength(tail, STUDIO_CONTEXT_START_MARKER);
       const rawEnd = partialLength > 0

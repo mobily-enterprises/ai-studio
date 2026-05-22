@@ -23,4 +23,4 @@ Missing information policy:
 Write the reviewed pull request body to:
 {{session.artifactsRoot}}/pull_request.md
 
-Keep it focused on the accepted issue, implementation summary, checks run, and any remaining risk. Do not inspect AI Studio session internals or existing artifact files unless this prompt explicitly asks for that.
+Keep it focused on the accepted work, implementation summary, checks run, and any remaining risk. Do not inspect AI Studio session internals or existing artifact files unless this prompt explicitly asks for that.

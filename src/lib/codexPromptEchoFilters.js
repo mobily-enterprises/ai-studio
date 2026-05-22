@@ -20,7 +20,7 @@ function promptEchoReplacement(prompt) {
   return compactPrompt;
 }
 
-function promptEchoMatch(output, filter) {
+function promptEchoMatch(output, filter, outputStartOffset = 0) {
   if (filter.expired) {
     return null;
   }
@@ -33,7 +33,7 @@ function promptEchoMatch(output, filter) {
     filter.match = null;
   }
 
-  const start = Math.max(0, filter.outputStart);
+  const start = Math.max(0, filter.outputStart - outputStartOffset);
   if (start > output.length) {
     return null;
   }
@@ -68,7 +68,7 @@ function promptEchoMatch(output, filter) {
       };
     }
   }
-  if (output.length - start > filter.longestCandidateLength + 1024) {
+  if (outputStartOffset === 0 && output.length - start > filter.longestCandidateLength + 1024) {
     filter.expired = true;
   }
   return null;
@@ -116,7 +116,9 @@ function createCodexPromptEchoFilters() {
     filters = [];
   }
 
-  function apply(output) {
+  function apply(output, {
+    outputStartOffset = 0
+  } = {}) {
     const source = String(output || "");
     if (!filters.length) {
       return source;
@@ -125,7 +127,7 @@ function createCodexPromptEchoFilters() {
     let displayOutput = "";
     let cursor = 0;
     for (const filter of filters) {
-      const match = promptEchoMatch(source, filter);
+      const match = promptEchoMatch(source, filter, outputStartOffset);
       if (!match || match.start < cursor) {
         continue;
       }

@@ -147,6 +147,32 @@ describe("useCodexTerminalOutput", () => {
     expect(terminalOutput.getTerminalOutput()).toBe("plain user-facing text");
   });
 
+  it("hides echoed prompts when redrawing from a retained output tail", () => {
+    const writeDisplay = vi.fn();
+    const terminalOutput = useCodexTerminalOutput({
+      writeDisplay
+    });
+    const filler = "x".repeat(300000);
+    const longPrompt = [
+      "[[AI_STUDIO_CONTEXT_START]]",
+      "hidden prompt body",
+      "[[AI_STUDIO_CONTEXT_END]]"
+    ].join("\n");
+    terminalOutput.addPromptEchoFilter({
+      outputStart: filler.length,
+      prompt: longPrompt
+    });
+
+    terminalOutput.appendTerminalOutput(`${filler}${longPrompt}\nVisible output`);
+    vi.advanceTimersByTime(80);
+
+    const displayOutput = writeDisplay.mock.calls.at(-1)?.[0] || "";
+    expect(displayOutput).toContain("Prompt sent.\nVisible output");
+    expect(displayOutput).not.toContain("hidden prompt body");
+    expect(displayOutput).not.toContain("[[AI_STUDIO_CONTEXT_START]]");
+    expect(displayOutput).not.toContain("[[AI_STUDIO_CONTEXT_END]]");
+  });
+
   it("reports Codex background work separately from recent output activity", () => {
     const activityEvents = [];
     const terminalOutput = useCodexTerminalOutput({

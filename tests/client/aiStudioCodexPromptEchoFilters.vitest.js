@@ -31,6 +31,23 @@ describe("AI Studio Codex prompt echo filters", () => {
     expect(filters.apply(`${longPrompt}\nshort answer`)).toBe("Prompt sent.\nshort answer");
   });
 
+  it("applies prompt offsets relative to a retained output tail", () => {
+    const filters = createCodexPromptEchoFilters();
+    const longPrompt = [
+      "[[AI_STUDIO_CONTEXT_START]]",
+      "x".repeat(300),
+      "[[AI_STUDIO_CONTEXT_END]]"
+    ].join("\n");
+    filters.add({
+      outputStart: 300000,
+      prompt: longPrompt
+    });
+
+    expect(filters.apply(`${longPrompt}\nshort answer`, {
+      outputStartOffset: 300000
+    })).toBe("Prompt sent.\nshort answer");
+  });
+
   it("tracks whether a prompt echo is still pending", () => {
     const filters = createCodexPromptEchoFilters();
     filters.add({

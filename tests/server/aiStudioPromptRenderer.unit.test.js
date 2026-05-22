@@ -346,6 +346,39 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
   assert.doesNotMatch(makePlan.prompt, /Code index policy:/u);
 });
 
+test("talk-to-agent prompt keeps simple conversation out of project preflight work", async () => {
+  const renderer = new PromptRenderer({
+    promptPackRoot: SYSTEM_PROMPT_PACK_ROOT,
+    systemPromptPackRoot: false
+  });
+
+  const rendered = await renderer.renderPrompt({
+    action: {
+      id: "talk_to_agent",
+      label: "Talk to agent",
+      promptId: "talk_to_agent",
+      type: "prompt"
+    },
+    input: {
+      agentRequest: "How are you?"
+    },
+    session: {
+      artifactsRoot: "/workspace/.ai-studio/session/artifacts",
+      currentStep: "agent_response_created",
+      metadata: {},
+      sessionId: "direct_conversation_prompt",
+      targetRoot: "/workspace",
+      worktreePath: "/workspace/.ai-studio/session/worktree"
+    }
+  });
+
+  assert.match(rendered.prompt, /For direct conversational requests:/u);
+  assert.match(rendered.prompt, /do not read repository files, list directories, or inspect existing artifact files first/u);
+  assert.match(rendered.prompt, /Do not run shell commands unless they are needed to answer the user/u);
+  assert.match(rendered.prompt, /For project work:/u);
+  assert.match(rendered.prompt, /Inspect files only when needed to understand, perform, or verify the requested change/u);
+});
+
 test("ai-studio prompt renderer can mask static context after the session briefing", () => {
   const rendered = renderPromptTemplate([
     "Facts: {{adapter.facts.json}}",

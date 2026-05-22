@@ -33,9 +33,16 @@ const CODEX_ACTIVITY_TEXT_MARKERS = Object.freeze([
 function trimTerminalOutputTail(output) {
   const terminalOutput = String(output || "");
   if (terminalOutput.length <= TERMINAL_OUTPUT_TAIL_LENGTH) {
-    return terminalOutput;
+    return {
+      output: terminalOutput,
+      trimmedLength: 0
+    };
   }
-  return terminalOutput.slice(terminalOutput.length - TERMINAL_OUTPUT_TAIL_LENGTH);
+  const trimmedLength = terminalOutput.length - TERMINAL_OUTPUT_TAIL_LENGTH;
+  return {
+    output: terminalOutput.slice(trimmedLength),
+    trimmedLength
+  };
 }
 
 function textIncludesAny(value = "", markers = []) {
@@ -138,6 +145,7 @@ function useCodexTerminalOutput({
   let codexBusyOutputVersion = 0;
   let terminalHasOutput = false;
   let terminalOutputTail = "";
+  let terminalOutputTailStartOffset = 0;
   let terminalLastOutputAt = 0;
   let terminalOutputVersion = 0;
   let pendingDisplayChunk = "";
@@ -153,7 +161,9 @@ function useCodexTerminalOutput({
   }
 
   function displayTerminalOutput(output = terminalOutputTail) {
-    return stripStudioContextBlocksIfPresent(promptEchoFilters.apply(output));
+    return stripStudioContextBlocksIfPresent(promptEchoFilters.apply(output, {
+      outputStartOffset: terminalOutputTailStartOffset
+    }));
   }
 
   function clearCodexIdleTimer() {
@@ -370,7 +380,9 @@ function useCodexTerminalOutput({
     visibleText = ""
   } = {}) {
     const previousOutput = terminalOutputTail;
-    terminalOutputTail = trimTerminalOutputTail(nextOutput);
+    const trimmedTail = trimTerminalOutputTail(nextOutput);
+    terminalOutputTail = trimmedTail.output;
+    terminalOutputTailStartOffset = trimmedTail.trimmedLength;
     if (terminalOutputTail !== previousOutput) {
       noteTerminalTextOutput({
         visibleText
@@ -391,9 +403,15 @@ function useCodexTerminalOutput({
   function appendTerminalOutputTail(outputChunk, {
     visibleText = ""
   } = {}) {
-    terminalOutputTail = outputChunk.length >= TERMINAL_OUTPUT_TAIL_LENGTH
-      ? outputChunk.slice(outputChunk.length - TERMINAL_OUTPUT_TAIL_LENGTH)
-      : trimTerminalOutputTail(`${terminalOutputTail}${outputChunk}`);
+    const previousTailLength = terminalOutputTail.length;
+    const nextOutput = outputChunk.length >= TERMINAL_OUTPUT_TAIL_LENGTH
+      ? outputChunk
+      : `${terminalOutputTail}${outputChunk}`;
+    const trimmedTail = trimTerminalOutputTail(nextOutput);
+    terminalOutputTail = trimmedTail.output;
+    terminalOutputTailStartOffset += outputChunk.length >= TERMINAL_OUTPUT_TAIL_LENGTH
+      ? previousTailLength + outputChunk.length - terminalOutputTail.length
+      : trimmedTail.trimmedLength;
     noteTerminalTextOutput({
       visibleText
     });
@@ -452,6 +470,7 @@ function useCodexTerminalOutput({
     codexActivityBuffer = "";
     terminalHasOutput = false;
     terminalOutputTail = "";
+    terminalOutputTailStartOffset = 0;
     terminalLastOutputAt = 0;
     terminalOutputVersion += 1;
     if (emit) {

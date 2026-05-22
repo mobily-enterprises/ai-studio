@@ -83,4 +83,14 @@ describe("codexOutput terminal utilities", () => {
 
     expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Make plan\n\n");
   });
+
+  it("hides a retained tail that starts inside hidden Studio prompt context", () => {
+    const terminalInput = [
+      "hidden prompt body still in retained tail",
+      "[[AI_STUDIO_CONTEXT_END]]",
+      "Visible output"
+    ].join("\n");
+
+    expect(stripStudioContextBlocksForDisplay(terminalInput)).toBe("Visible output");
+  });
 });

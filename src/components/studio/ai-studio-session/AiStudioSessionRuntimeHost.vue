@@ -349,10 +349,10 @@ watch(() => page.error, emitPageError, {
   height: min(18rem, 38vh);
   justify-self: center;
   max-width: min(58rem, calc(100% - 2rem));
-  opacity: 0.24;
+  opacity: 0.14;
   pointer-events: none;
   position: absolute;
-  top: clamp(7rem, 28vh, 14rem);
+  top: clamp(2.5rem, 14vh, 7rem);
   width: min(58rem, calc(100% - 2rem));
   z-index: 1;
 }

@@ -18,7 +18,7 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await page.getByRole("button", { name: "New Session" }).click();
   await expect(page.getByText("Session type")).toBeVisible();
   await expect(page.getByText("Big feature", { exact: true })).toBeVisible();
-  await expect(page.getByText("Non-code maintenance", { exact: true })).toBeVisible();
+  await expect(page.getByText("Documentation/non code maintenance", { exact: true })).toBeVisible();
   await expect(page.getByText("Non-commit maintenance", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/home$/u);
 });
@@ -250,9 +250,9 @@ async function mockReadyStudioShell(page: Page) {
               label: "Big feature"
             },
             {
-              description: "Run a non-code maintenance task with planning, validation, commit, and PR handling.",
+              description: "Update documentation or other non-code project files, validate, commit, create a PR, and optionally merge.",
               id: "non_code_maintenance",
-              label: "Non-code maintenance"
+              label: "Documentation/non code maintenance"
             },
             {
               description: "Run a local maintenance task without commit, pull request, or merge steps.",
