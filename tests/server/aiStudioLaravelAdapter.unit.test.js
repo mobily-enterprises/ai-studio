@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  AI_STUDIO_WORKFLOW_PROFILE_IDS,
   AiStudioSessionRuntime
 } from "../../server/lib/aiStudio/index.js";
 import {
@@ -209,6 +210,32 @@ test("laravel prompt actions use the Laravel prompt pack", async () => {
     assert.match(afterPrompt.actionResult.prompt, /chosen in the seed workflow/u);
     assert.doesNotMatch(afterPrompt.actionResult.prompt, /\{\{adapter\.promptContext\.environment_blueprint\}\}/u);
     assert.match(afterPrompt.actionResult.prompt, /example\/laravel-app/u);
+  });
+});
+
+test("laravel seed prompts require seed readiness before issue creation", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: createLaravelTargetAdapter(),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "seed_application_defined",
+      sessionId: "laravel_seed_prompt",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION
+    });
+
+    const afterDiscussionPrompt = await runtime.runAction("laravel_seed_prompt", "send_seed_prompt", {
+      seedRequest: "Seed the app foundation."
+    });
+    const afterFilePrompt = await runtime.runAction("laravel_seed_prompt", "create_seed_issue_file");
+
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /Seed readiness gate:/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /every Laravel setup choice that affects the scaffold/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /answered, explicitly declined, or assigned a clear default/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /It is acceptable to ask more questions/u);
+    assert.match(afterFilePrompt.actionResult.prompt, /Before writing files, confirm the conversation has satisfied the seed readiness gate/u);
+    assert.match(afterFilePrompt.actionResult.prompt, /If anything is still unresolved, ask concise follow-up questions instead of writing/u);
   });
 });
 

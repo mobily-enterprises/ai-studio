@@ -4,8 +4,12 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  REINSTALL_CODEX_CLI_TERMINAL_PREVIEW,
   TOOLCHAIN_IMAGE,
   isStudioSetupReady,
+  reinstallCodexCliRepair,
+  reinstallCodexCliScript,
+  reinstallCodexCliTerminalScript,
   resolveStudioRoot
 } from "../../packages/studio-setup-doctor/src/server/service.js";
 import {
@@ -53,4 +57,37 @@ test("Studio Setup resolves the Studio implementation root separately", () => {
       process.env.AI_STUDIO_APP_ROOT = previousStudioRoot;
     }
   }
+});
+
+test("Studio Setup Codex repair reinstalls Codex in the managed tool home", () => {
+  const repair = reinstallCodexCliRepair();
+  const script = reinstallCodexCliScript();
+
+  assert.equal(repair.actionId, "reinstall-codex-cli");
+  assert.equal(repair.autoRun, false);
+  assert.equal(repair.label, "Reinstall Codex CLI");
+  assert.match(repair.commandPreview, /docker run/u);
+  assert.match(repair.commandPreview, /HOME=\/home\/studio/u);
+  assert.match(repair.commandPreview, /NPM_CONFIG_PREFIX=\/home\/studio\/\.local/u);
+  assert.match(repair.commandPreview, /CODEX_GLOBAL_PACKAGE_DIR=/u);
+  assert.match(repair.commandPreview, /rm -rf "\$CODEX_GLOBAL_PACKAGE_DIR\/codex"/u);
+  assert.match(repair.commandPreview, /rm -rf "\$CODEX_GLOBAL_PACKAGE_DIR\/\.codex-"\*/u);
+  assert.match(repair.commandPreview, /npm install -g @openai\/codex@latest/u);
+  assert.doesNotMatch(repair.commandPreview, /docker build -t ai-studio-base-toolchain/u);
+  assert.doesNotMatch(script, /npm uninstall -g @openai\/codex/u);
+  assert.match(script, /rm -rf "\$CODEX_GLOBAL_PACKAGE_DIR\/codex"/u);
+  assert.match(script, /codex --version/u);
+});
+
+test("Studio Setup Codex repair terminal shows clear lifecycle text", () => {
+  const script = reinstallCodexCliTerminalScript();
+
+  assert.equal(REINSTALL_CODEX_CLI_TERMINAL_PREVIEW, "Reinstall Codex CLI inside the managed Studio toolchain");
+  assert.match(script, /AI Studio setup: reinstalling Codex CLI/u);
+  assert.match(script, /Status: running\. Keep this terminal open\./u);
+  assert.match(script, /Status: done\. Codex CLI was reinstalled and verified\./u);
+  assert.match(script, /It is safe to close this terminal\./u);
+  assert.doesNotMatch(script, /echo '\$ docker run/u);
+  assert.doesNotMatch(script, /printf '%s\\n' '\$ docker run/u);
+  assert.match(script, /npm install -g @openai\/codex@latest/u);
 });

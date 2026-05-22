@@ -20,4 +20,9 @@ Ask only for setup choices that affect the first runnable scaffold:
 - API-only needs
 - fake local development service keys needed by selected packages
 
+Seed readiness gate:
+- Keep asking concise follow-up questions until every Laravel setup choice that affects the scaffold, selected packages, local environment, seed commands, or fake development secrets is answered, explicitly declined, or assigned a clear default.
+- It is acceptable to ask more questions after the user answers a previous question set.
+- Do not say the seed issue is ready until you can restate the selected Laravel starter, packages, local dev values/defaults, and exact seed commands that should go into the issue.
+
 Do not ask for business entities, CRUD screens, workflows, or detailed product behavior yet. Those come after the app foundation exists.

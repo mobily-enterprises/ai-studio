@@ -13,10 +13,27 @@
             {{ commandPreview }}
           </p>
         </div>
-        <v-chip :color="status === 'running' ? 'primary' : 'default'" size="small" variant="tonal">
-          {{ status || "starting" }}
-        </v-chip>
+        <div
+          aria-live="polite"
+          class="doctor-terminal-dialog__status"
+          :class="{ 'doctor-terminal-dialog__status--running': running }"
+          role="status"
+        >
+          {{ statusLabel }}
+        </div>
       </div>
+      <v-expansion-panels
+        v-if="commandDetails"
+        class="doctor-terminal-dialog__details mb-3"
+        variant="accordion"
+      >
+        <v-expansion-panel>
+          <v-expansion-panel-title>Command details</v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <pre class="doctor-terminal-dialog__details-command">{{ commandDetails }}</pre>
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+      </v-expansion-panels>
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">
         {{ error }}
       </v-alert>
@@ -42,7 +59,13 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed } from "vue";
+
+const props = defineProps({
+  commandDetails: {
+    type: String,
+    default: ""
+  },
   commandPreview: {
     type: String,
     default: ""
@@ -81,6 +104,18 @@ defineProps({
   }
 });
 
+const running = computed(() => {
+  return ["starting", "running", "closing"].includes(props.status || "starting");
+});
+
+const statusLabel = computed(() => {
+  const value = String(props.status || "starting").trim();
+  if (!value) {
+    return "Starting";
+  }
+  return `${value[0].toUpperCase()}${value.slice(1)}`;
+});
+
 const emit = defineEmits([
   "close",
   "copy-selection",
@@ -102,6 +137,14 @@ const emit = defineEmits([
   overflow-wrap: anywhere;
 }
 
+.doctor-terminal-dialog__details-command {
+  margin: 0;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .doctor-terminal-dialog__copy-bar {
   align-items: center;
   display: flex;
@@ -120,5 +163,34 @@ const emit = defineEmits([
 
 .doctor-terminal-dialog__host :deep(.xterm) {
   height: 100%;
+}
+
+.doctor-terminal-dialog__status {
+  align-items: center;
+  background: rgb(var(--v-theme-surface-variant));
+  border-radius: 999px;
+  color: rgb(var(--v-theme-on-surface-variant));
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: clamp(1.4rem, 3.5vw, 2.8rem);
+  font-weight: 800;
+  justify-content: center;
+  letter-spacing: 0;
+  line-height: 1;
+  min-width: min(11.2rem, 30vw);
+  padding: 0.5rem 0.875rem;
+  text-transform: uppercase;
+}
+
+.doctor-terminal-dialog__status--running {
+  animation: doctor-terminal-dialog-status-blink 1s steps(2, start) infinite;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+}
+
+@keyframes doctor-terminal-dialog-status-blink {
+  50% {
+    opacity: 0.2;
+  }
 }
 </style>

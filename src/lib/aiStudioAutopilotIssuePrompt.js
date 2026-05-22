@@ -30,6 +30,12 @@ function issueDraftPromptHeader({
       "The seed issue is only for the initial runnable framework foundation.",
       "Ask about setup modules, framework packages, installer flags, local dev services, and fake development secrets.",
       "Do not ask about business records, product workflows, detailed CRUD screens, or feature implementation yet.",
+      "Seed readiness gate:",
+      "- Treat the adapter seed guidance as the required setup checklist.",
+      "- Do not write issue-draft.json until every scaffold-affecting setup choice is answered, explicitly declined, or assigned a clear default.",
+      "- If any setup choice that affects the scaffold, selected modules, local environment, seed commands, or fake development secrets is still unresolved, ask another concise question set.",
+      "- It is acceptable to ask more questions after the user answers a previous question set.",
+      "- Only write issue-draft.json once the draft can include selected modules, local dev values/defaults, and exact seed commands.",
       seedGuidance ? `Adapter seed guidance:\n${String(seedGuidance || "").trim()}` : ""
     ]
     : [
@@ -121,7 +127,9 @@ function buildAnsweredIssueDraftPrompt({
           ? "Use the original seed request and these answers to continue defining the seed issue."
           : "Use the original request and these answers to continue defining the issue.",
         "If you ask any more questions, ask them in normal text and write questions.json using the format above.",
-        "Otherwise write issue-draft.json."
+        seedMode
+          ? "Only write issue-draft.json if the seed readiness gate is satisfied; otherwise ask another question set."
+          : "Otherwise write issue-draft.json."
       ],
       questions
     })

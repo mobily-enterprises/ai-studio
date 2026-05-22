@@ -167,6 +167,7 @@
     <DoctorTerminalDialog
       v-model="terminalDialogOpen"
       :command-preview="terminalCommandPreview"
+      :command-details="terminalCommandDetails"
       :copy-status="terminalCopyStatus"
       :error="terminalError"
       :selected-text="terminalSelectedText"
@@ -323,6 +324,7 @@ const {
   openTerminal,
   sendCtrlC,
   terminalCloseError,
+  terminalCommandDetails,
   terminalCommandPreview,
   terminalCopyStatus,
   terminalDialogOpen,

@@ -1,6 +1,7 @@
 import {
   dockerCommand,
-  runDocker
+  runDocker,
+  shellQuote
 } from "./containerEngine.js";
 import {
   closeTerminalSession,
@@ -37,11 +38,20 @@ import {
 const TOOLCHAIN_DOCKERFILE = "tooling/studio-setup/Dockerfile";
 const TOOLCHAIN_CONTEXT = "tooling/studio-setup";
 const TERMINAL_NAMESPACE = "studio-setup-doctor";
+const REINSTALL_CODEX_CLI_TERMINAL_PREVIEW = "Reinstall Codex CLI inside the managed Studio toolchain";
 
 const isStudioSetupReady = areDoctorChecksReady;
 
 function commandPreview(args) {
   return dockerCommand(args);
+}
+
+function printCommandPreviewLine(command) {
+  return `printf '%s\\n' ${shellQuote(`$ ${command}`)}`;
+}
+
+function printTerminalLine(message) {
+  return `printf '%s\\n' ${shellQuote(message)}`;
 }
 
 function createRepair(options = {}) {
@@ -62,7 +72,7 @@ function buildToolchainScript() {
 
   return [
     "set -e",
-    `echo '$ ${commandPreview(args)}'`,
+    printCommandPreviewLine(commandPreview(args)),
     commandPreview(args)
   ].join("\n");
 }
@@ -70,6 +80,7 @@ function buildToolchainScript() {
 function startBashTerminal({
   commandPreview,
   cwd = "",
+  metadata = {},
   script
 }) {
   return startTerminalSession({
@@ -77,6 +88,7 @@ function startBashTerminal({
     command: "bash",
     commandPreview,
     cwd,
+    metadata,
     namespace: TERMINAL_NAMESPACE
   });
 }
@@ -104,6 +116,49 @@ function buildToolchainRepair() {
     ]),
     label: "Build managed base toolchain"
   });
+}
+
+function reinstallCodexCliScript() {
+  return [
+    "set -e",
+    "CODEX_GLOBAL_PACKAGE_DIR=\"${NPM_CONFIG_PREFIX:?}/lib/node_modules/@openai\"",
+    "echo '[studio] Removing broken Codex CLI install...'",
+    "rm -rf \"$CODEX_GLOBAL_PACKAGE_DIR/codex\"",
+    "rm -rf \"$CODEX_GLOBAL_PACKAGE_DIR/.codex-\"*",
+    "echo '[studio] Reinstalling Codex CLI...'",
+    "npm install -g @openai/codex@latest",
+    "echo '[studio] Verifying Codex CLI...'",
+    "codex --version"
+  ].join("\n");
+}
+
+function reinstallCodexCliToolchainArgs() {
+  return buildDoctorToolchainArgs([
+    "bash",
+    "-lc",
+    reinstallCodexCliScript()
+  ]);
+}
+
+function reinstallCodexCliRepair() {
+  return createRepair({
+    actionId: "reinstall-codex-cli",
+    command: commandPreview(reinstallCodexCliToolchainArgs()),
+    label: "Reinstall Codex CLI"
+  });
+}
+
+function reinstallCodexCliTerminalScript() {
+  const args = reinstallCodexCliToolchainArgs();
+  return [
+    "set -e",
+    printTerminalLine("AI Studio setup: reinstalling Codex CLI."),
+    printTerminalLine("Status: running. Keep this terminal open."),
+    printTerminalLine("This can take a minute while npm downloads Codex and its native package."),
+    commandPreview(args),
+    printTerminalLine("Status: done. Codex CLI was reinstalled and verified."),
+    printTerminalLine("It is safe to close this terminal.")
+  ].join("\n");
 }
 
 function resolveStudioRoot(studioRoot) {
@@ -499,7 +554,7 @@ function createStudioRuntimeDoctorPlugin({
                 expected: "Codex runs inside the managed base toolchain.",
                 explanation: "Studio delegates implementation work to local Codex sessions.",
                 isValid: (output) => output.trim().length > 0,
-                repair: buildToolchainRepair()
+                repair: reinstallCodexCliRepair()
               })
               : missingToolchainCheck("codex", "Codex CLI");
           }
@@ -536,6 +591,16 @@ function createStudioRuntimeDoctorPlugin({
           commandPreview: buildToolchainRepair().commandPreview,
           cwd: studioRoot,
           script: buildToolchainScript()
+        });
+      }
+      if (actionId === "reinstall-codex-cli") {
+        return startBashTerminal({
+          commandPreview: REINSTALL_CODEX_CLI_TERMINAL_PREVIEW,
+          cwd: studioRoot,
+          metadata: {
+            commandDetails: reinstallCodexCliRepair().commandPreview
+          },
+          script: reinstallCodexCliTerminalScript()
         });
       }
 
@@ -630,6 +695,10 @@ function createService({
 export {
   TOOLCHAIN_IMAGE,
   resolveStudioRoot,
+  REINSTALL_CODEX_CLI_TERMINAL_PREVIEW,
+  reinstallCodexCliRepair,
+  reinstallCodexCliScript,
+  reinstallCodexCliTerminalScript,
   isStudioSetupReady,
   createService
 };

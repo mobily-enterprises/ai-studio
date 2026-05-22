@@ -7,6 +7,8 @@ JSKIT seed guidance:
 
 Use the seed request and any discussion so far to write a focused issue for creating the initial runnable JSKIT app.
 
+Before writing files, confirm the conversation has satisfied the seed readiness gate: every JSKIT setup choice that affects the scaffold, selected modules, local environment, seed commands, or fake development secrets is answered, explicitly declined, or assigned a clear default. If anything is still unresolved, ask concise follow-up questions instead of writing the issue files.
+
 The issue must include:
 - the chosen JSKIT app name/title when known
 - the selected auth/users and tenancy choice

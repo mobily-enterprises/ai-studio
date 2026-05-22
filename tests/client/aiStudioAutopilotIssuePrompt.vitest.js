@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAnsweredSeedIssueDraftPrompt,
+  buildInitialSeedIssueDraftPrompt,
   buildAnsweredIssueDraftPrompt,
   buildInitialIssueDraftPrompt
 } from "../../src/lib/aiStudioAutopilotIssuePrompt.js";
@@ -48,5 +50,32 @@ describe("aiStudioAutopilotIssuePrompt", () => {
     expect(visiblePrompt).not.toContain("Who can see the report?");
     expect(prompt).toContain("Q1: Who can see the report?");
     expect(prompt).toContain("A1: Admins only.");
+  });
+
+  it("requires seed readiness before writing a seed issue draft", () => {
+    const initialPrompt = buildInitialSeedIssueDraftPrompt({
+      artifactsRoot: "/tmp/session/artifacts",
+      requestId: "seed-request-123",
+      requestText: "Seed a JSKIT app",
+      seedGuidance: "Ask about auth, tenancy, database, and local dev secrets."
+    });
+    const answeredPrompt = buildAnsweredSeedIssueDraftPrompt({
+      artifactsRoot: "/tmp/session/artifacts",
+      questions: [
+        {
+          answer: "Use users and MariaDB.",
+          text: "Which auth and database choices should the seed use?"
+        }
+      ],
+      requestId: "seed-request-456",
+      requestText: "Seed a JSKIT app",
+      seedGuidance: "Ask about auth, tenancy, database, and local dev secrets."
+    });
+
+    expect(initialPrompt).toContain("Seed readiness gate:");
+    expect(initialPrompt).toContain("Treat the adapter seed guidance as the required setup checklist.");
+    expect(initialPrompt).toContain("Do not write issue-draft.json until every scaffold-affecting setup choice is answered");
+    expect(initialPrompt).toContain("It is acceptable to ask more questions after the user answers a previous question set.");
+    expect(answeredPrompt).toContain("Only write issue-draft.json if the seed readiness gate is satisfied; otherwise ask another question set.");
   });
 });

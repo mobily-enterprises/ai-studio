@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   AI_STUDIO_SESSION_STATUS,
+  AI_STUDIO_WORKFLOW_PROFILE_IDS,
   AiStudioSessionRuntime
 } from "../../server/lib/aiStudio/index.js";
 import {
@@ -382,6 +383,32 @@ test("jskit prompt actions include JSKIT prompt context", async () => {
     assert.match(afterPrompt.actionResult.prompt, /Do not plan hand-created packages/u);
     assert.match(afterPrompt.actionResult.prompt, /JSKIT placement contract/u);
     assert.match(afterPrompt.actionResult.prompt, /npx jskit list-placements --json/u);
+  });
+});
+
+test("jskit seed prompts require seed readiness before issue creation", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: createJskitTargetAdapter(),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "seed_application_defined",
+      sessionId: "jskit_seed_prompt",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION
+    });
+
+    const afterDiscussionPrompt = await runtime.runAction("jskit_seed_prompt", "send_seed_prompt", {
+      seedRequest: "Seed the app foundation."
+    });
+    const afterFilePrompt = await runtime.runAction("jskit_seed_prompt", "create_seed_issue_file");
+
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /Seed readiness gate:/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /every JSKIT setup choice that affects the scaffold/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /answered, explicitly declined, or assigned a clear default/u);
+    assert.match(afterDiscussionPrompt.actionResult.prompt, /It is acceptable to ask more questions/u);
+    assert.match(afterFilePrompt.actionResult.prompt, /Before writing files, confirm the conversation has satisfied the seed readiness gate/u);
+    assert.match(afterFilePrompt.actionResult.prompt, /If anything is still unresolved, ask concise follow-up questions instead of writing/u);
   });
 });
 

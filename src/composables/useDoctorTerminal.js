@@ -16,6 +16,7 @@ function useDoctorTerminal({
   const terminalStatus = ref("");
   const terminalTitle = ref("Terminal");
   const terminalCommandPreview = ref("");
+  const terminalCommandDetails = ref("");
   const terminalCloseError = ref("");
   const terminalExitCode = ref(null);
   const terminalOutput = ref("");
@@ -192,6 +193,7 @@ function useDoctorTerminal({
       terminalOutput.value = session.output || "";
       terminalStatus.value = session.status || "";
       terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
+      terminalCommandDetails.value = session.metadata?.commandDetails || terminalCommandDetails.value;
       writeTerminalOutput(session.output);
       if (session.status === "exited") {
         if (terminalPollTimer) {
@@ -242,6 +244,7 @@ function useDoctorTerminal({
     terminalSettledNotified = false;
     terminalTitle.value = repair?.label || "Terminal";
     terminalCommandPreview.value = repair?.commandPreview || "";
+    terminalCommandDetails.value = "";
     terminalSessionId.value = "";
     terminalStatus.value = "starting";
     disposeTerminalUi();
@@ -260,6 +263,7 @@ function useDoctorTerminal({
       terminalSessionId.value = session.id || "";
       terminalStatus.value = session.status || "running";
       terminalCommandPreview.value = session.commandPreview || terminalCommandPreview.value;
+      terminalCommandDetails.value = session.metadata?.commandDetails || terminalCommandDetails.value;
       terminalCloseError.value = session.closeError || "";
       terminalExitCode.value = Number.isInteger(session.exitCode) ? session.exitCode : null;
       terminalOutput.value = session.output || "";
@@ -311,6 +315,7 @@ function useDoctorTerminal({
     openTerminal,
     sendCtrlC,
     terminalCloseError,
+    terminalCommandDetails,
     terminalCommandPreview,
     terminalCopyStatus,
     terminalDialogOpen,

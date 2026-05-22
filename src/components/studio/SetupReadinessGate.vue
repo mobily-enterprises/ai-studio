@@ -8,7 +8,27 @@
     />
 
     <v-sheet
-      v-if="needsSetup && !redirecting"
+      v-else-if="checking"
+      rounded="lg"
+      border
+      class="setup-readiness-gate__needed"
+    >
+      <div>
+        <h2 class="setup-readiness-gate__title">Checking setup</h2>
+        <p class="setup-readiness-gate__message">
+          Studio is checking whether the local toolchain and project setup are ready.
+        </p>
+      </div>
+      <v-progress-circular
+        color="primary"
+        indeterminate
+        size="28"
+        width="3"
+      />
+    </v-sheet>
+
+    <v-sheet
+      v-else-if="needsSetup"
       rounded="lg"
       border
       class="setup-readiness-gate__needed"
@@ -53,8 +73,10 @@ const setupGate = ref({
 
 const ready = computed(() => setupGate.value.ready === true);
 const errorMessage = computed(() => fallbackError.value);
+const checking = computed(() => !checked.value && !errorMessage.value);
 const needsSetup = computed(() => checked.value && !ready.value && !errorMessage.value);
-const redirecting = computed(() => needsSetup.value && route.path !== "/setup");
+const setupPageActive = computed(() => route.path === "/setup");
+const redirecting = computed(() => !setupPageActive.value && (checking.value || needsSetup.value));
 const setupRoute = computed(() => ({
   path: "/setup",
   query: {
