@@ -8,6 +8,7 @@
         v-show="sessionMode === 'autopilot'"
         :actions="actions"
         :active="autopilotModeActive"
+        :automation-enabled="autopilotAutomationEnabled"
         :autopilot-steps="autopilotNavigationSteps"
         :codex-terminal="codexTerminal"
         :command-runner="autopilotCommandRunner"
@@ -235,9 +236,11 @@ const headlessCommandTerminal = proxyRefs({
 
 const autopilotBusy = ref(false);
 const autopilotModeActive = computed(() => Boolean(props.active && props.sessionMode === "autopilot"));
+const autopilotAutomationEnabled = computed(() => props.sessionMode === "autopilot");
 const codexTerminalPreviewVisible = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
+  autopilotBusy.value &&
   (codexTerminal.busy || codexTerminal.working)
 ));
 const codexTerminalDisplayMode = computed(() => {
@@ -349,6 +352,8 @@ watch(() => page.error, emitPageError, {
 }
 
 .studio-ai-sessions__layout--autopilot > .studio-autopilot {
+  grid-column: 1;
+  grid-row: 1;
   position: relative;
   z-index: 2;
 }
@@ -373,15 +378,16 @@ watch(() => page.error, emitPageError, {
 }
 
 .studio-ai-sessions__layout--autopilot > .studio-ai-sessions__terminals--autopilot-preview {
-  align-self: center;
+  align-self: start;
+  grid-column: 1;
+  grid-row: 1;
   height: min(18rem, 38vh);
   justify-self: center;
-  max-width: min(58rem, calc(100% - 2rem));
+  margin-top: clamp(2.5rem, 14vh, 7rem);
+  max-width: min(64rem, calc(100% - 2rem));
   opacity: 0.14;
   pointer-events: none;
-  position: absolute;
-  top: clamp(2.5rem, 14vh, 7rem);
-  width: min(58rem, calc(100% - 2rem));
+  width: min(64rem, calc(100% - 2rem));
   z-index: 1;
 }
 
@@ -401,6 +407,20 @@ watch(() => page.error, emitPageError, {
 
   .studio-ai-sessions__layout {
     align-items: stretch;
+  }
+
+  .studio-ai-sessions__layout--autopilot {
+    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+  }
+
+  .studio-ai-sessions__layout--autopilot > .studio-autopilot {
+    grid-column: 1 / -1;
+  }
+
+  .studio-ai-sessions__layout--autopilot > .studio-ai-sessions__terminals--autopilot-preview {
+    grid-column: 2;
+    max-width: min(64rem, 100%);
+    width: 100%;
   }
 }
 </style>

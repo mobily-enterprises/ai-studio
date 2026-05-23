@@ -22,6 +22,7 @@ import {
 import {
   createJskitMariaDbRuntimeContainer,
   managedMariaDbAccessInstructions,
+  mariaDbCapabilitySql,
   startJskitMariaDbRepair
 } from "../../server/lib/aiStudio/adapters/jskit/setupMariaDbRuntime.js";
 import {
@@ -548,4 +549,18 @@ test("runtime container start script safely displays shell-quoted commands", asy
     assert.match(script, /container could not start\. Recreating the container while keeping managed volumes\./u);
     assert.match(script, /docker rm -f ai-studio-jskit-jskit-mariadb-/u);
   });
+});
+
+test("JSKIT MariaDB readiness probe uses isolated temporary schema names", () => {
+  const sql = mariaDbCapabilitySql({
+    appDatabaseName: "dogandgroom"
+  });
+
+  assert.match(sql, /CREATE DATABASE IF NOT EXISTS `dogandgroom`/u);
+  assert.match(sql, /CONCAT\('ai_studio_jskit_probe_', REPLACE\(UUID\(\), '-', ''\)\)/u);
+  assert.match(sql, /CREATE TABLE `', @ai_studio_jskit_probe_identifier, '`\.`capability_probe`/u);
+  assert.match(sql, /DROP TABLE IF EXISTS `', @ai_studio_jskit_probe_identifier, '`\.`capability_probe`/u);
+  assert.match(sql, /DROP DATABASE IF EXISTS `', @ai_studio_jskit_probe_identifier, '`/u);
+  assert.doesNotMatch(sql, /DROP TABLE `ai_studio_jskit_probe`\.`capability_probe`/u);
+  assert.doesNotMatch(sql, /DROP DATABASE `ai_studio_jskit_probe`/u);
 });

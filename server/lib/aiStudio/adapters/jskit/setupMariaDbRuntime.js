@@ -29,6 +29,8 @@ const JSKIT_MARIADB_ROOT_PASSWORD = "ai_studio_jskit_root";
 const JSKIT_MARIADB_PROBE_DATABASE = "ai_studio_jskit_probe";
 const JSKIT_MARIADB_PROBE_TABLE = "capability_probe";
 const JSKIT_HOST_DATABASE_HOST = AI_STUDIO_RUNTIME_HOST_ALIAS;
+const JSKIT_MARIADB_PROBE_SQL_VARIABLE = "@ai_studio_jskit_probe_sql";
+const JSKIT_MARIADB_PROBE_STATEMENT = "ai_studio_jskit_probe_statement";
 
 async function targetWantsJskitMariaDb(targetRoot = "", toolkit) {
   const lockJsonResult = await toolkit.readTargetJson(".jskit/lock.json", {
@@ -44,6 +46,28 @@ function mariaDbIdentifier(value = "") {
   return String(value || "").replaceAll("`", "``");
 }
 
+function mariaDbPreparedStatement(sqlExpression = "") {
+  return [
+    `SET ${JSKIT_MARIADB_PROBE_SQL_VARIABLE} = ${sqlExpression}`,
+    `PREPARE ${JSKIT_MARIADB_PROBE_STATEMENT} FROM ${JSKIT_MARIADB_PROBE_SQL_VARIABLE}`,
+    `EXECUTE ${JSKIT_MARIADB_PROBE_STATEMENT}`,
+    `DEALLOCATE PREPARE ${JSKIT_MARIADB_PROBE_STATEMENT}`
+  ];
+}
+
+function mariaDbTemporaryProbeSql() {
+  const probeDatabaseVariable = "@ai_studio_jskit_probe_database";
+  const probeIdentifierVariable = "@ai_studio_jskit_probe_identifier";
+  return [
+    `SET ${probeDatabaseVariable} = CONCAT('${JSKIT_MARIADB_PROBE_DATABASE}_', REPLACE(UUID(), '-', ''))`,
+    `SET ${probeIdentifierVariable} = REPLACE(${probeDatabaseVariable}, '\`', '\`\`')`,
+    ...mariaDbPreparedStatement(`CONCAT('CREATE DATABASE \`', ${probeIdentifierVariable}, '\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci')`),
+    ...mariaDbPreparedStatement(`CONCAT('CREATE TABLE \`', ${probeIdentifierVariable}, '\`.\`${JSKIT_MARIADB_PROBE_TABLE}\` (id INT NOT NULL PRIMARY KEY)')`),
+    ...mariaDbPreparedStatement(`CONCAT('DROP TABLE IF EXISTS \`', ${probeIdentifierVariable}, '\`.\`${JSKIT_MARIADB_PROBE_TABLE}\`')`),
+    ...mariaDbPreparedStatement(`CONCAT('DROP DATABASE IF EXISTS \`', ${probeIdentifierVariable}, '\`')`)
+  ];
+}
+
 function mariaDbCapabilitySql({
   appDatabaseName = ""
 } = {}) {
@@ -54,10 +78,7 @@ function mariaDbCapabilitySql({
           `CREATE DATABASE IF NOT EXISTS \`${mariaDbIdentifier(database)}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
         ]
       : []),
-    `CREATE DATABASE IF NOT EXISTS \`${JSKIT_MARIADB_PROBE_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-    `CREATE TABLE IF NOT EXISTS \`${JSKIT_MARIADB_PROBE_DATABASE}\`.\`${JSKIT_MARIADB_PROBE_TABLE}\` (id INT NOT NULL PRIMARY KEY)`,
-    `DROP TABLE \`${JSKIT_MARIADB_PROBE_DATABASE}\`.\`${JSKIT_MARIADB_PROBE_TABLE}\``,
-    `DROP DATABASE \`${JSKIT_MARIADB_PROBE_DATABASE}\``
+    ...mariaDbTemporaryProbeSql()
   ].join("; ");
 }
 

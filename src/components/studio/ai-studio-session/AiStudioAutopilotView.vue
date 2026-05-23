@@ -601,6 +601,10 @@ const props = defineProps({
     default: true,
     type: Boolean
   },
+  automationEnabled: {
+    default: true,
+    type: Boolean
+  },
   autopilotSteps: {
     default: () => [],
     type: Array
@@ -686,7 +690,7 @@ const {
   actions: props.actions,
   codexTerminal: props.codexTerminal,
   commandRunner: props.commandRunner || undefined,
-  enabled: computed(() => props.active),
+  enabled: computed(() => props.automationEnabled),
   refreshSessionData: () => props.refreshSessionData(),
   session: computed(() => props.session)
 });
@@ -793,6 +797,7 @@ const commandTerminalText = computed(() => {
 const autopilotBusy = computed(() => Boolean(props.active && (
   running.value ||
   codexWaiting.value ||
+  commandFixActive.value ||
   commandFixSubmitting.value ||
   stepInput.saving
 )));
