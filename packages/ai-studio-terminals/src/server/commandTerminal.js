@@ -51,6 +51,10 @@ function actionById(session = {}, actionId = "") {
     .find((action) => action.id === actionId) || null;
 }
 
+function actionRunsInCommandTerminal(action = {}) {
+  return action.dispatchRoute === "command-terminal" || action.type === "command";
+}
+
 function commandTerminalContainerName({
   sessionId = "",
   terminalId = ""
@@ -139,7 +143,7 @@ async function writeActionTerminalResult({
     action.id,
     {
       actionLabel: action.label,
-      actionType: action.type,
+      actionType: "command",
       artifacts: {},
       input,
       message,
@@ -159,7 +163,7 @@ async function writeActionTerminalResult({
   await runtime.store.appendCommandLogEntry(session.sessionId, {
     actionId: action.id,
     actionLabel: action.label,
-    actionType: action.type,
+    actionType: "command",
     kind: "terminal-action",
     status: actionResult.status,
     stepId: session.currentStep
@@ -272,7 +276,7 @@ function createCommandTerminalController({
             error: `Action ${actionId || "(empty)"} is not available on this AI Studio step.`
           };
         }
-        if (action.type !== "command") {
+        if (!actionRunsInCommandTerminal(action)) {
           return {
             ok: false,
             error: `Action ${action.label || action.id} does not run in the command terminal.`

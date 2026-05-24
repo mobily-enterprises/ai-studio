@@ -136,6 +136,7 @@ test("ai-studio runtime exposes server-owned presentation and intents for Autopi
       "request_review_tweak"
     ]);
     assert.equal(session.presentation.auto.nextOperation.kind, "wait");
+    assert.equal(session.presentation.auto.nextOperation.executable, false);
     assert.equal(session.presentation.auto.nextOperation.reason, "user");
   });
 });
@@ -152,7 +153,9 @@ test("ai-studio runtime exposes server-owned action icon hints", async () => {
     });
 
     assert.equal(session.actions.find((action) => action.id === "create_worktree")?.icon, "sync");
+    assert.equal(session.actions.find((action) => action.id === "create_worktree")?.dispatchRoute, "command-terminal");
     assert.equal(session.currentStepDefinition.actions.find((action) => action.id === "create_worktree")?.icon, "sync");
+    assert.equal(session.currentStepDefinition.actions.find((action) => action.id === "create_worktree")?.dispatchRoute, "command-terminal");
   });
 });
 
@@ -277,6 +280,8 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
     });
     const mergeReview = await runtime.runIntent("presentation_merge_intents", "merge_and_sync");
     assert.equal(mergeReview.presentation.auto.nextOperation.kind, "action");
+    assert.equal(mergeReview.presentation.auto.nextOperation.executable, true);
+    assert.equal(mergeReview.presentation.auto.nextOperation.route, "session-action");
     assert.equal(mergeReview.presentation.auto.nextOperation.actionId, "prepare_for_merge");
 
     await runtime.createSession({
@@ -573,6 +578,7 @@ test("ai-studio runtime shows current-step actions from the workflow", async () 
       {
         adapterCapability: "create_worktree",
         disabledReason: "",
+        dispatchRoute: "command-terminal",
         enabled: true,
         icon: "sync",
         id: "create_worktree",
@@ -826,6 +832,7 @@ test("ai-studio runtime presents waiting_for_input as the same Codex conversatio
     const waiting = await runtime.getSession("prompt_response_resume");
     assert.equal(waiting.stepMachine.status, "waiting_for_input");
     assert.equal(waiting.presentation.screen.kind, "conversation");
+    assert.equal(waiting.presentation.screen.input.submitTarget, "intent");
     assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
     assert.equal(waiting.presentation.screen.message, "What food should I use?");
     assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex"]);
@@ -1007,6 +1014,7 @@ test("ai-studio runtime disables prompt actions while the terminal is active", a
     assert.deepEqual(session.actions, [
       {
         disabledReason: "Codex terminal is active.",
+        dispatchRoute: "session-action",
         enabled: false,
         icon: "codex",
         id: "make_plan",
@@ -1074,6 +1082,7 @@ test("ai-studio runtime keeps disabled actions visible and rejects execution wit
     assert.deepEqual(session.actions, [
       {
         disabledReason: "Waiting for metadata: ready.",
+        dispatchRoute: "command-terminal",
         enabled: false,
         icon: "code",
         id: "blocked_action",

@@ -36,14 +36,13 @@ function objectValue(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function codexTerminalPresentation(session = {}, codexTerminal = null) {
+function codexTerminalPresentation(codexTerminal = null) {
   const terminal = objectValue(codexTerminal);
   const terminalSessionId = String(terminal.id || "").trim();
-  const screenKind = String(session.presentation?.screen?.kind || "").trim();
   const visible = Boolean(
     terminalSessionId &&
     terminal.status !== "exited" &&
-    screenKind === "codex_running"
+    terminal.transmitting === true
   );
   return {
     label: visible ? "Terminal is transmitting..." : "",
@@ -70,7 +69,7 @@ function withCodexTerminalState(session = {}, terminalState = {}) {
       ...presentation,
       terminal: {
         ...objectValue(presentation.terminal),
-        codex: codexTerminalPresentation(session, terminalState.codexTerminal || null)
+        codex: codexTerminalPresentation(terminalState.codexTerminal || null)
       }
     }
   };

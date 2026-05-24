@@ -4,8 +4,15 @@ import {
 } from "./core.js";
 import { STEP_STATUS } from "./workflowStepMachines.js";
 
-// Presentation is derived view state. Durable workflow truth remains in the
-// session files, workflow machine, step machines, action results, and metadata.
+// AI Studio ownership contract:
+// - Durable workflow truth remains in the session files, workflow machine, step
+//   machines, action results, and metadata.
+// - This module is the server-owned projection from workflow truth to UI and
+//   automation presentation.
+// - Clients render `presentation.screen`, submit server-provided intents/input,
+//   and dispatch `presentation.auto.nextOperation` by its explicit route.
+// - Clients must not infer workflow meaning from step ids, action names, action
+//   types, or raw step-machine statuses.
 const ACTION_IDS = Object.freeze({
   AGENT_CONVERSATION: "agent_conversation",
   FINAL_REVIEW_CONVERSATION: "final_review_conversation",
@@ -46,6 +53,13 @@ const STEP_IDS = Object.freeze({
   PROJECT_VALIDATED: "project_validated",
   REVIEW_RUN: "review_run",
   SEED_PLAN_MADE: "seed_plan_made"
+});
+
+const OPERATION_ROUTES = Object.freeze({
+  COMMAND_TERMINAL: "command-terminal",
+  SESSION_ACTION: "session-action",
+  SESSION_ADVANCE: "session-advance",
+  SESSION_INTENT: "session-intent"
 });
 
 function isObject(value) {
@@ -125,6 +139,18 @@ function screen(kind, {
     showProgress,
     title: normalizeText(title),
     variant: normalizeText(variant)
+  };
+}
+
+function inputPresentation(input = {}, {
+  submitTarget = ""
+} = {}) {
+  if (!isObject(input)) {
+    return null;
+  }
+  return {
+    ...input,
+    submitTarget: normalizeText(submitTarget || input.submitTarget)
   };
 }
 
@@ -329,7 +355,9 @@ function interactionPresentation(session = {}) {
         })
       ],
       screen: screen("conversation", {
-        input: interaction,
+        input: inputPresentation(interaction, {
+          submitTarget: "intent"
+        }),
         message: interaction.prompt || "",
         primaryIntentId: INTENT_IDS.TALK_TO_CODEX,
         sections: presentationSections(["response_preview"]),
@@ -339,8 +367,10 @@ function interactionPresentation(session = {}) {
   }
   return {
     intents: [],
-    screen: screen("input", {
-      input: interaction,
+    screen: screen(stepMachineStatus(session) === STEP_STATUS.CONFIRM_FILES ? "confirm_files" : "input", {
+      input: inputPresentation(interaction, {
+        submitTarget: "current-step-input"
+      }),
       message: interaction.prompt || "",
       title: interaction.title || currentStepLabel(session)
     })
@@ -400,16 +430,63 @@ function actionOperation(session = {}, stage = {}) {
   const action = actionById(session, stage.actionId);
   if (!action || action.enabled !== true) {
     return {
+      executable: false,
       kind: "stop",
       reason: action?.disabledReason || `${stage.label || stage.actionId || "Action"} is not available.`
     };
   }
+  const route = action.dispatchRoute === OPERATION_ROUTES.COMMAND_TERMINAL
+    ? OPERATION_ROUTES.COMMAND_TERMINAL
+    : OPERATION_ROUTES.SESSION_ACTION;
   return {
     actionId: action.id,
     advanceOnSuccess: stage.advanceOnSuccess === true || action.advanceOnSuccess === true,
+    executable: true,
+    id: `${route}:${action.id}`,
     input: {},
-    kind: "action",
-    label: stage.label || action.label || action.id
+    kind: route === OPERATION_ROUTES.COMMAND_TERMINAL ? "command" : "action",
+    label: stage.label || action.label || action.id,
+    route
+  };
+}
+
+function advanceOperation(session = {}) {
+  return {
+    executable: true,
+    id: `${OPERATION_ROUTES.SESSION_ADVANCE}:${session.next?.stepId || "next"}`,
+    kind: "advance",
+    label: session.next?.label || "Continue",
+    route: OPERATION_ROUTES.SESSION_ADVANCE
+  };
+}
+
+function intentOperation(intentId = "", {
+  label = ""
+} = {}) {
+  const normalizedIntentId = normalizeText(intentId);
+  return {
+    executable: Boolean(normalizedIntentId),
+    id: `${OPERATION_ROUTES.SESSION_INTENT}:${normalizedIntentId}`,
+    intentId: normalizedIntentId,
+    kind: "intent",
+    label: normalizeText(label || normalizedIntentId),
+    route: OPERATION_ROUTES.SESSION_INTENT
+  };
+}
+
+function waitOperation(reason = "") {
+  return {
+    executable: false,
+    kind: "wait",
+    reason: normalizeText(reason)
+  };
+}
+
+function stopOperation(reason = "") {
+  return {
+    executable: false,
+    kind: "stop",
+    reason: normalizeText(reason)
   };
 }
 
@@ -417,13 +494,13 @@ function mergeOperation(session = {}) {
   const metadata = session.metadata || {};
   if (normalizeText(metadata.merge_skipped)) {
     return nextIsReady(session)
-      ? { kind: "advance", label: session.next.label || "Continue" }
-      : { kind: "stop", reason: session.next?.disabledReason || "" };
+      ? advanceOperation(session)
+      : stopOperation(session.next?.disabledReason || "");
   }
   if (normalizeText(metadata.pr_merged)) {
     return nextIsReady(session)
-      ? { kind: "advance", label: session.next.label || "Continue" }
-      : { kind: "stop", reason: session.next?.disabledReason || "" };
+      ? advanceOperation(session)
+      : stopOperation(session.next?.disabledReason || "");
   }
   if (stepMachineStatus(session) === STEP_STATUS.READY && session.stepMachine?.promptComplete === true) {
     return actionOperation(session, {
@@ -432,10 +509,7 @@ function mergeOperation(session = {}) {
     });
   }
   if (stepMachineIsWaitingForCodex(session) || stepMachineNeedsInput(session)) {
-    return {
-      kind: "wait",
-      reason: automationWaitReason(session)
-    };
+    return waitOperation(automationWaitReason(session));
   }
   return actionOperation(session, {
     actionId: ACTION_IDS.PREPARE_FOR_MERGE,
@@ -453,11 +527,9 @@ function nextAutomationOperation(session = {}) {
     [STEP_STATUS.READY, STEP_STATUS.DONE].includes(stepMachineStatus(session)) &&
     session.stepMachine?.promptComplete === true
   ) {
-    return {
-      intentId: INTENT_IDS.RECHECK_AFTER_FINAL_TWEAK,
-      kind: "intent",
+    return intentOperation(INTENT_IDS.RECHECK_AFTER_FINAL_TWEAK, {
       label: "Recheck changes"
-    };
+    });
   }
 
   if (
@@ -468,17 +540,11 @@ function nextAutomationOperation(session = {}) {
   }
 
   if (waitReason) {
-    return {
-      kind: "wait",
-      reason: waitReason
-    };
+    return waitOperation(waitReason);
   }
 
   if (stepMachineStatus(session) === STEP_STATUS.DONE && nextIsReady(session)) {
-    return {
-      kind: "advance",
-      label: session.next.label || "Continue"
-    };
+    return advanceOperation(session);
   }
 
   const stage = stageAction(session);
@@ -487,16 +553,10 @@ function nextAutomationOperation(session = {}) {
   }
 
   if (nextIsReady(session)) {
-    return {
-      kind: "advance",
-      label: session.next.label || "Continue"
-    };
+    return advanceOperation(session);
   }
 
-  return {
-    kind: "stop",
-    reason: session.next?.disabledReason || ""
-  };
+  return stopOperation(session.next?.disabledReason || "");
 }
 
 function promptPresentation(session = {}) {
@@ -554,8 +614,6 @@ function buildPresentation(session = {}) {
   return {
     actions: Array.isArray(session.actions) ? session.actions : [],
     auto: {
-      canResume: ["action", "advance", "intent"].includes(nextOperation.kind),
-      canStart: ["action", "advance", "intent"].includes(nextOperation.kind),
       nextOperation
     },
     intents: base.intents,

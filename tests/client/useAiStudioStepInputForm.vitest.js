@@ -8,18 +8,21 @@ import {
 function promptResponseSession(prompt) {
   return {
     currentStep: "plan_executed",
-    currentStepDefinition: {
-      interaction: {
-        fields: [
-          {
-            kind: "textarea",
-            label: "Response",
-            name: "response",
-            required: true
-          }
-        ],
-        prompt,
-        submitKind: "user_response"
+    presentation: {
+      screen: {
+        input: {
+          fields: [
+            {
+              kind: "textarea",
+              label: "Response",
+              name: "response",
+              required: true
+            }
+          ],
+          prompt,
+          submitKind: "user_response",
+          submitTarget: "current-step-input"
+        }
       }
     },
     sessionId: "session-1",
@@ -45,7 +48,8 @@ describe("useAiStudioStepInputForm", () => {
             ],
             intentId: "talk_to_codex",
             kind: "conversation",
-            prompt: "What should Codex know?"
+            prompt: "What should Codex know?",
+            submitTarget: "intent"
           }
         }
       },

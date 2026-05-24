@@ -11,10 +11,7 @@ function interactionForSession(session = {}) {
   if (screenInput && typeof screenInput === "object" && !Array.isArray(screenInput)) {
     return screenInput;
   }
-  const interaction = session?.currentStepDefinition?.interaction;
-  return interaction && typeof interaction === "object" && !Array.isArray(interaction)
-    ? interaction
-    : null;
+  return null;
 }
 
 function interactionFields(interaction = {}) {
@@ -131,7 +128,7 @@ function useAiStudioStepInputForm({
       ? responseQuestionInput.value.intro
       : String(interaction.value?.prompt || "");
   });
-  const directSubmit = computed(() => interaction.value?.intentId !== "talk_to_codex" && interaction.value?.kind !== "conversation");
+  const directSubmit = computed(() => interaction.value?.submitTarget === "current-step-input");
   const visible = computed(() => directSubmit.value && fields.value.length > 0);
   const canSubmit = computed(() => visible.value &&
     !saving.value &&

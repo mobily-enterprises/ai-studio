@@ -288,29 +288,6 @@
           </div>
         </form>
       </div>
-
-      <div v-else class="studio-autopilot__actions">
-        <v-btn
-          v-if="screenKind === 'start'"
-          class="studio-autopilot__start-button"
-          color="primary"
-          :prepend-icon="mdiPlay"
-          variant="flat"
-          @click="start"
-        >
-          {{ screenButtonLabel }}
-        </v-btn>
-        <v-btn
-          v-else-if="screenKind === 'resume'"
-          class="studio-autopilot__start-button"
-          color="primary"
-          :prepend-icon="mdiPlay"
-          variant="flat"
-          @click="resume"
-        >
-          {{ screenButtonLabel }}
-        </v-btn>
-      </div>
     </div>
   </section>
 </template>
@@ -324,7 +301,6 @@ import {
   mdiClose,
   mdiCog,
   mdiFileCompare,
-  mdiPlay,
   mdiRefresh,
   mdiSend,
   mdiStopCircleOutline
@@ -406,21 +382,21 @@ const props = defineProps({
 });
 
 const {
+  canDispatchNextOperation,
   clearFailure,
   commandOutput,
   commandPreview,
   commandResult,
   commandRunning,
   failure,
+  nextOperationKey,
   retry,
-  resume,
+  runNextOperation,
   runPresentedIntent,
   running,
   screenState,
-  start,
   stop,
-  stopCommandAction,
-  waitingForCodex
+  stopCommandAction
 } = useAiStudioAutopilotController({
   actions: props.actions,
   commandRunner: props.commandRunner || undefined,
@@ -436,7 +412,7 @@ const stepInput = proxyRefs(useAiStudioStepInputForm({
   onSaved: async () => {
     await props.refreshSessionData();
     await nextTick();
-    await resume();
+    await runNextOperation();
   },
   session: computed(() => props.session)
 }));
@@ -444,7 +420,6 @@ const stepInput = proxyRefs(useAiStudioStepInputForm({
 const screenKind = computed(() => screenState.value.kind);
 const sessionId = computed(() => String(props.session?.sessionId || ""));
 const screenMessage = computed(() => String(screenState.value.message || ""));
-const screenButtonLabel = computed(() => String(screenState.value.buttonLabel || ""));
 const screenSections = computed(() => Array.isArray(screenState.value.sections) ? screenState.value.sections : []);
 const primaryIntentId = computed(() => String(screenState.value.primaryIntentId || ""));
 const displayStatusText = computed(() => {
@@ -481,7 +456,7 @@ const commandTerminalText = computed(() => {
 });
 const autopilotBusy = computed(() => Boolean(props.active && (
   running.value ||
-  waitingForCodex.value ||
+  screenState.value.showProgress === true ||
   stepInput.saving
 )));
 const navigationBusy = computed(() => Boolean(props.page?.busy || autopilotBusy.value || props.rewindBusy));
@@ -490,8 +465,7 @@ const standaloneFailureVisible = computed(() => screenKind.value === "failure");
 const screenStopAction = computed(() => String(screenState.value.stopAction || ""));
 const serverScreenVisible = computed(() => Boolean(
   !displayRunning.value &&
-  !commandTerminalVisible.value &&
-  !["start", "resume", "running", "codex_running"].includes(screenKind.value)
+  !commandTerminalVisible.value
 ));
 const responsePreviewText = computed(() => String(props.humanInputResponsePreview?.text || ""));
 const responsePreviewError = computed(() => String(props.humanInputResponsePreview?.error || ""));
@@ -665,9 +639,13 @@ watch(() => props.active, () => {
   flush: "post"
 });
 
-watch(screenKind, (kind) => {
-  if (props.active && kind === "start") {
-    void start();
+watch(() => [
+  props.active ? "active" : "inactive",
+  canDispatchNextOperation.value ? "dispatchable" : "idle",
+  nextOperationKey.value
+].join(":"), () => {
+  if (props.active && canDispatchNextOperation.value) {
+    void runNextOperation();
   }
 }, {
   flush: "post",
@@ -815,14 +793,6 @@ watch(allScreenControls, (controls) => {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
-}
-
-.studio-autopilot__start-button {
-  font-size: 1.65rem;
-  font-weight: 760;
-  min-height: 5.75rem;
-  min-width: min(30rem, 100%);
-  padding-inline: 3.5rem;
 }
 
 .studio-autopilot__input-form,

@@ -286,6 +286,16 @@ function publicAction(action, state) {
   };
 }
 
+function publicActionDispatchRoute(action = {}) {
+  if (action.type === "command") {
+    return "command-terminal";
+  }
+  if (action.type === "link") {
+    return "external-link";
+  }
+  return "session-action";
+}
+
 function publicActionIcon(action = {}) {
   if (action.icon) {
     return action.icon;
@@ -301,6 +311,7 @@ function publicActionIcon(action = {}) {
 
 function publicActionDefinition(action) {
   const definition = {
+    dispatchRoute: publicActionDispatchRoute(action),
     icon: publicActionIcon(action),
     id: action.id,
     label: action.label,

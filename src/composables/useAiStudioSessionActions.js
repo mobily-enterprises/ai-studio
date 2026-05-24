@@ -40,6 +40,10 @@ function intentInputFromContext(context = {}) {
   };
 }
 
+function actionDispatchRoute(action = {}) {
+  return String(action.dispatchRoute || "session-action").trim();
+}
+
 function useAiStudioSessionActions({
   clearCopyStatus = () => null,
   commandBusy = () => false,
@@ -224,11 +228,75 @@ function useAiStudioSessionActions({
     activeActionId.value = "";
   }
 
+  async function runActionById({
+    actionId = "",
+    advanceOnSuccess = false,
+    input = {},
+    sessionId = unref(selectedSessionId)
+  } = {}) {
+    const normalizedActionId = String(actionId || "").trim();
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || !normalizedActionId || readRefOrGetterBoolean(commandBusy)) {
+      return;
+    }
+    clearCopyStatus();
+    activeActionId.value = normalizedActionId;
+    try {
+      return await runActionCommand.run({
+        actionId: normalizedActionId,
+        advanceOnSuccess: advanceOnSuccess === true,
+        input: input && typeof input === "object" && !Array.isArray(input) ? input : {},
+        sessionId: normalizedSessionId
+      });
+    } finally {
+      activeActionId.value = "";
+    }
+  }
+
+  async function runIntentById({
+    fields = {},
+    intentId = "",
+    sessionId = unref(selectedSessionId),
+    stepId = selectedSession.value?.currentStep || "",
+    stepStatus = selectedSession.value?.stepMachine?.status || ""
+  } = {}) {
+    const normalizedIntentId = String(intentId || "").trim();
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || !normalizedIntentId || readRefOrGetterBoolean(commandBusy)) {
+      return;
+    }
+    clearCopyStatus();
+    activeActionId.value = normalizedIntentId;
+    try {
+      return await runIntentCommand.run({
+        fields: fields && typeof fields === "object" && !Array.isArray(fields) ? fields : {},
+        intentId: normalizedIntentId,
+        sessionId: normalizedSessionId,
+        stepId,
+        stepStatus
+      });
+    } finally {
+      activeActionId.value = "";
+    }
+  }
+
+  async function advanceSession({
+    sessionId = unref(selectedSessionId)
+  } = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || readRefOrGetterBoolean(commandBusy) || currentNext.value?.enabled !== true) {
+      return;
+    }
+    await advanceCommand.run({
+      sessionId: normalizedSessionId
+    });
+    commandTerminal.clear();
+  }
+
   async function runAction(action = {}, options = {}) {
     if (!unref(selectedSessionId) || !action.id || readRefOrGetterBoolean(commandBusy) || action.enabled !== true) {
       return;
     }
-    clearCopyStatus();
     const providedInput = options.input && typeof options.input === "object" && !Array.isArray(options.input)
       ? options.input
       : null;
@@ -236,26 +304,19 @@ function useAiStudioSessionActions({
       openInputDialog(action);
       return;
     }
-    if (action.type === "link") {
+    if (actionDispatchRoute(action) === "external-link") {
       openActionLink(action);
       return;
     }
-    if (action.type === "command") {
+    if (actionDispatchRoute(action) === "command-terminal") {
       commandTerminal.start(action);
       return;
     }
-    activeActionId.value = action.id;
-    try {
-      const input = providedInput || {};
-      return await runActionCommand.run({
-        actionId: action.id,
-        advanceOnSuccess: action.advanceOnSuccess === true,
-        input,
-        sessionId: unref(selectedSessionId)
-      });
-    } finally {
-      activeActionId.value = "";
-    }
+    return runActionById({
+      actionId: action.id,
+      advanceOnSuccess: action.advanceOnSuccess === true,
+      input: providedInput || {}
+    });
   }
 
   async function runIntent(intent = {}, options = {}) {
@@ -265,21 +326,10 @@ function useAiStudioSessionActions({
     if (intent.clientAction === "open_diff") {
       return;
     }
-    clearCopyStatus();
-    activeActionId.value = intent.id;
-    try {
-      return await runIntentCommand.run({
-        fields: options.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
-          ? options.fields
-          : {},
-        intentId: intent.id,
-        sessionId: unref(selectedSessionId),
-        stepId: selectedSession.value?.currentStep || "",
-        stepStatus: selectedSession.value?.stepMachine?.status || ""
-      });
-    } finally {
-      activeActionId.value = "";
-    }
+    return runIntentById({
+      fields: options.fields,
+      intentId: intent.id
+    });
   }
 
   function openActionLink(action = {}) {
@@ -291,13 +341,7 @@ function useAiStudioSessionActions({
   }
 
   async function goNext() {
-    if (!unref(selectedSessionId) || readRefOrGetterBoolean(commandBusy) || currentNext.value?.enabled !== true) {
-      return;
-    }
-    await advanceCommand.run({
-      sessionId: unref(selectedSessionId)
-    });
-    commandTerminal.clear();
+    await advanceSession();
   }
 
   async function rewindToStep(step = {}) {
@@ -317,6 +361,7 @@ function useAiStudioSessionActions({
     actionResultMessage,
     actionResultType,
     activeActionId,
+    advanceSession,
     advanceCommand,
     busy,
     clear,
@@ -328,8 +373,10 @@ function useAiStudioSessionActions({
     rewindCommand,
     rewindToStep,
     runAction,
+    runActionById,
     runActionCommand,
     runIntent,
+    runIntentById,
     runIntentCommand,
     waitingForPromptedArtifact,
     worktreeReady

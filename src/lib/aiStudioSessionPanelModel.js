@@ -152,12 +152,6 @@ function aiStudioActionIcon(action = {}) {
       sync: mdiSync
     }[icon] || mdiCodeBraces;
   }
-  if (action.type === "prompt") {
-    return mdiRobotOutline;
-  }
-  if (action.type === "finish") {
-    return mdiCheck;
-  }
   return mdiCodeBraces;
 }
 

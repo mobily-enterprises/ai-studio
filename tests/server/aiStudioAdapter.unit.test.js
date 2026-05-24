@@ -83,6 +83,7 @@ test("ai-studio runtime exposes fake adapter facts, commands, and enabled action
       {
         adapterCapability: "toy_command",
         disabledReason: "",
+        dispatchRoute: "command-terminal",
         enabled: true,
         icon: "code",
         id: "toy_command",
@@ -120,6 +121,7 @@ test("ai-studio runtime disables actions when the adapter lacks a required capab
       {
         adapterCapability: "toy_command",
         disabledReason: "Fake adapter does not support capability: toy_command.",
+        dispatchRoute: "command-terminal",
         enabled: false,
         icon: "code",
         id: "toy_command",

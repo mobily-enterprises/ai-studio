@@ -318,7 +318,7 @@ test("session prompt action fails visibly when server-side Codex delivery fails"
   assert.equal(result.error, "Codex terminal is not running.");
 });
 
-test("session presentation hides the Codex preview while a user input screen is active", async () => {
+test("session presentation keeps the Codex preview while a transmitting terminal is active", async () => {
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -362,10 +362,56 @@ test("session presentation hides the Codex preview while a user input screen is 
     transmitting: true
   });
   assert.deepEqual(session.presentation.terminal.codex, {
-    label: "",
+    label: "Terminal is transmitting...",
     readOnlyInAutopilot: true,
     renderer: "codex_terminal",
     terminalSessionId: "codex-terminal-active",
+    visible: true
+  });
+});
+
+test("session presentation hides the Codex preview when the terminal is not transmitting", async () => {
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return {
+              presentation: {
+                screen: {
+                  kind: "codex_running"
+                }
+              },
+              sessionId,
+              status: AI_STUDIO_SESSION_STATUS.ACTIVE
+            };
+          }
+        };
+      }
+    },
+    terminalService: {
+      async codexTerminalState(sessionId) {
+        return {
+          codexTerminal: {
+            commandPreview: "codex",
+            id: "codex-terminal-idle",
+            status: "running",
+            transmitting: false
+          },
+          ok: true,
+          sessionId
+        };
+      }
+    }
+  });
+
+  const session = await service.inspectSession("session-1");
+
+  assert.deepEqual(session.presentation.terminal.codex, {
+    label: "",
+    readOnlyInAutopilot: true,
+    renderer: "codex_terminal",
+    terminalSessionId: "codex-terminal-idle",
     visible: false
   });
 });

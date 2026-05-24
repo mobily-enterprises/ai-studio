@@ -5,69 +5,63 @@ import {
 } from "../../src/composables/useAiStudioAutopilotController.js";
 
 describe("useAiStudioAutopilotController", () => {
-  it("runs the server-selected command operation and lets the server advance", async () => {
+  it("dispatches a server-routed command operation without reading action metadata", async () => {
     const context = createControllerContext({
-      actions: [
-        {
-          enabled: true,
-          id: "cmd_action",
-          label: "Run command",
-          type: "command"
-        }
-      ],
       operation: {
         actionId: "cmd_action",
         advanceOnSuccess: true,
-        kind: "action",
-        label: "Run command"
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
       }
     });
 
-    await context.controller.start();
+    await context.controller.runNextOperation();
 
     expect(context.commandRunner.runCommandAction).toHaveBeenCalledWith(expect.objectContaining({
-      action: expect.objectContaining({ id: "cmd_action" }),
+      action: {
+        id: "cmd_action",
+        label: "Run command"
+      },
       advanceOnSuccess: true,
       sessionId: "session-1"
     }));
     expect(context.session.value.currentStep).toBe("step_b");
   });
 
-  it("runs a server-selected prompt action and waits for the step machine result", async () => {
+  it("dispatches prompt work as a normal server action request", async () => {
     const context = createControllerContext({
-      actions: [
-        {
-          enabled: true,
-          id: "prompt_action",
-          label: "Ask Codex",
-          promptId: "prompt_action",
-          type: "prompt"
-        }
-      ],
       operation: {
         actionId: "prompt_action",
+        executable: true,
+        id: "session-action:prompt_action",
         input: {
           request: "Make the change"
         },
         kind: "action",
-        label: "Ask Codex"
-      }
+        label: "Ask Codex",
+        route: "session-action"
+      },
+      stepStatus: "some_future_status"
     });
 
-    await context.controller.start();
+    await context.controller.runNextOperation();
 
-    expect(context.actions.runAction).toHaveBeenCalledWith(expect.objectContaining({
-      id: "prompt_action"
-    }), {
+    expect(context.actions.runActionById).toHaveBeenCalledWith({
+      actionId: "prompt_action",
+      advanceOnSuccess: false,
       input: {
         request: "Make the change"
-      }
+      },
+      sessionId: "session-1"
     });
-    expect(context.session.value.stepMachine.status).toBe("done");
-    expect(context.controller.failure.value).toBe(null);
+    expect(context.commandRunner.runCommandAction).not.toHaveBeenCalled();
+    expect(context.controller.screenState.value.kind).toBe("codex_running");
   });
 
-  it("runs presented intents without knowing what the intent means", async () => {
+  it("runs presented intents by id without knowing what the intent means", async () => {
     const context = createControllerContext({
       intents: [
         {
@@ -85,6 +79,7 @@ describe("useAiStudioAutopilotController", () => {
         }
       ],
       operation: {
+        executable: false,
         kind: "stop",
         reason: "Waiting for user"
       },
@@ -101,18 +96,44 @@ describe("useAiStudioAutopilotController", () => {
       continueAfterCompletion: false
     });
 
-    expect(context.actions.runIntent).toHaveBeenCalledWith(expect.objectContaining({
-      id: "server_intent"
-    }), {
+    expect(context.actions.runIntentById).toHaveBeenCalledWith({
       fields: {
         feedback: "Please adjust the copy."
-      }
+      },
+      intentId: "server_intent",
+      sessionId: "session-1",
+      stepId: "step_a",
+      stepStatus: "ready"
     });
   });
 
-  it("does not invent progress when the server says to stop", async () => {
+  it("renders the server screen instead of inventing a start screen", async () => {
     const context = createControllerContext({
       operation: {
+        actionId: "server_action",
+        executable: true,
+        id: "session-action:server_action",
+        kind: "action",
+        label: "Server action",
+        route: "session-action"
+      },
+      screen: {
+        kind: "ready",
+        title: "Server Ready"
+      }
+    });
+
+    expect(context.controller.canDispatchNextOperation.value).toBe(true);
+    expect(context.controller.screenState.value).toMatchObject({
+      kind: "ready",
+      title: "Server Ready"
+    });
+  });
+
+  it("does not dispatch when the server operation is not executable", async () => {
+    const context = createControllerContext({
+      operation: {
+        executable: false,
         kind: "stop",
         reason: "Waiting for a user decision"
       },
@@ -123,34 +144,29 @@ describe("useAiStudioAutopilotController", () => {
       }
     });
 
-    await context.controller.start();
+    await context.controller.runNextOperation();
 
-    expect(context.actions.runAction).not.toHaveBeenCalled();
-    expect(context.actions.goNext).not.toHaveBeenCalled();
+    expect(context.actions.runActionById).not.toHaveBeenCalled();
+    expect(context.actions.advanceSession).not.toHaveBeenCalled();
     expect(context.commandRunner.runCommandAction).not.toHaveBeenCalled();
     expect(context.controller.screenState.value.kind).toBe("decision");
   });
 
   it("surfaces command failures and retries from the server operation", async () => {
     const context = createControllerContext({
-      actions: [
-        {
-          enabled: true,
-          id: "cmd_action",
-          label: "Run command",
-          type: "command"
-        }
-      ],
       commandFails: true,
       operation: {
         actionId: "cmd_action",
         advanceOnSuccess: true,
-        kind: "action",
-        label: "Run command"
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
       }
     });
 
-    await context.controller.start();
+    await context.controller.runNextOperation();
 
     expect(context.controller.screenState.value.kind).toBe("command");
     expect(context.controller.commandResult.value.ok).toBe(false);
@@ -163,26 +179,26 @@ describe("useAiStudioAutopilotController", () => {
 });
 
 function createControllerContext({
-  actions = [],
   commandFails = false,
   enabled = true,
   intents = [],
   operation = {
+    executable: false,
     kind: "stop"
   },
   screen = {
     kind: "ready",
     title: "Ready"
-  }
+  },
+  stepStatus = "ready"
 } = {}) {
   const commandFailsRef = ref(commandFails);
   const enabledRef = ref(enabled);
   const stepMachine = ref({
-    status: "ready",
+    status: stepStatus,
     stepId: "step_a"
   });
   const session = ref(sessionView({
-    actions,
     intents,
     operation,
     screen,
@@ -195,35 +211,43 @@ function createControllerContext({
   const commandResult = ref(null);
 
   function syncSession(values = {}) {
+    const currentPresentation = session.value?.presentation || {};
     session.value = sessionView({
-      actions,
       intents,
-      operation,
-      screen,
+      operation: values.operation || currentPresentation.auto?.nextOperation || operation,
+      screen: values.screen || currentPresentation.screen || screen,
       stepId: values.stepId || session.value.currentStep,
       stepMachine: stepMachine.value
     });
   }
 
   const actionSurface = {
-    currentActions: computed(() => session.value.actions),
-    currentNext: computed(() => session.value.next),
-    goNext: vi.fn(async () => {
+    advanceSession: vi.fn(async () => {
       syncSession({
         stepId: "step_b"
       });
     }),
-    runAction: vi.fn(async (action = {}) => {
-      if (action.type === "prompt") {
-        stepMachine.value = {
-          promptComplete: true,
-          status: "done",
-          stepId: session.value.currentStep
-        };
-        syncSession();
-      }
+    currentActions: computed(() => session.value.actions),
+    currentNext: computed(() => session.value.next),
+    runActionById: vi.fn(async () => {
+      stepMachine.value = {
+        status: "awaiting_agent_result",
+        stepId: session.value.currentStep
+      };
+      syncSession({
+        operation: {
+          executable: false,
+          kind: "wait",
+          reason: "codex"
+        },
+        screen: {
+          kind: "codex_running",
+          showProgress: true,
+          title: "Terminal is transmitting..."
+        }
+      });
     }),
-    runIntent: vi.fn(async () => {
+    runIntentById: vi.fn(async () => {
       syncSession();
     })
   };
@@ -250,7 +274,7 @@ function createControllerContext({
         return commandResult.value;
       }
       if (advanceOnSuccess === true) {
-        await actionSurface.goNext();
+        await actionSurface.advanceSession();
       }
       commandResult.value = {
         actionId: action.id,
@@ -263,14 +287,8 @@ function createControllerContext({
     }),
     stopCommandAction: vi.fn()
   };
-
-  const codexTerminal = {
-    busy: ref(false),
-    working: ref(false)
-  };
   const controller = useAiStudioAutopilotController({
     actions: actionSurface,
-    codexTerminal,
     commandRunner,
     enabled: enabledRef,
     refreshSessionData: async () => {
@@ -281,7 +299,6 @@ function createControllerContext({
 
   return {
     actions: actionSurface,
-    codexTerminal,
     commandFails: commandFailsRef,
     commandRunner,
     controller,
@@ -290,16 +307,16 @@ function createControllerContext({
 }
 
 function sessionView({
-  actions = [],
   intents = [],
   operation = {},
   screen = {},
   stepId = "step_a",
   stepMachine = null
 } = {}) {
-  const nextOperation = stepId === "step_a" && stepMachine?.status !== "done"
-    ? operation
-    : { kind: "stop" };
+  const nextOperation = stepId === "step_a" ? operation : {
+    executable: false,
+    kind: "stop"
+  };
   const next = {
     enabled: true,
     label: "Next",
@@ -307,7 +324,7 @@ function sessionView({
     visible: true
   };
   return {
-    actions,
+    actions: [],
     currentStep: stepId,
     currentStepDefinition: {
       id: stepId,
@@ -318,8 +335,6 @@ function sessionView({
     next,
     presentation: {
       auto: {
-        canResume: ["action", "advance", "intent"].includes(nextOperation.kind),
-        canStart: ["action", "advance", "intent"].includes(nextOperation.kind),
         nextOperation
       },
       intents,

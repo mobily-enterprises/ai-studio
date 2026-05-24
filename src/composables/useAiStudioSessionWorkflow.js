@@ -114,6 +114,7 @@ function useAiStudioSessionWorkflow({
       actionResultMessage: workflow.actions.actionResultMessage,
       actionResultType: workflow.actions.actionResultType,
       activeActionId: workflow.actions.activeActionId,
+      advanceSession: workflow.actions.advanceSession,
       advanceCommand: workflow.actions.advanceCommand,
       currentActions: workflow.actions.currentActions,
       currentNext: workflow.actions.currentNext,
@@ -121,8 +122,10 @@ function useAiStudioSessionWorkflow({
       goNext: workflow.actions.goNext,
       rewindToStep: workflow.actions.rewindToStep,
       runAction: workflow.actions.runAction,
+      runActionById: workflow.actions.runActionById,
       runActionCommand: workflow.actions.runActionCommand,
       runIntent: workflow.actions.runIntent,
+      runIntentById: workflow.actions.runIntentById,
       runIntentCommand: workflow.actions.runIntentCommand
     },
     codexTerminal: {

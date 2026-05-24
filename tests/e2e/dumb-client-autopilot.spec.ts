@@ -6,6 +6,106 @@ import {
 } from "./support/base-shell-mocks";
 
 test.describe("Autopilot dumb client contract", () => {
+  test("auto-dispatches the server operation without rendering a manual start override", async ({ page }) => {
+    await recordForbiddenText(page, "Let's start");
+    const actionRequests: unknown[] = [];
+    const session = sessionPayload({
+      presentation: {
+        auto: {
+          nextOperation: {
+            actionId: "opaque_server_action",
+            executable: true,
+            id: "session-action:opaque_server_action",
+            kind: "action",
+            label: "Opaque server operation",
+            route: "session-action"
+          }
+        },
+        screen: {
+          kind: "ready",
+          sections: [],
+          title: "Server Ready"
+        }
+      }
+    });
+    await mockAiStudioSession(page, session, {
+      onAction: (actionId, body) => {
+        actionRequests.push({
+          actionId,
+          body
+        });
+        const presentation = session.presentation as Record<string, unknown>;
+        presentation.auto = {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "codex"
+          }
+        };
+        presentation.screen = {
+          icon: "progress",
+          kind: "codex_running",
+          sections: [],
+          showProgress: true,
+          title: "Terminal is transmitting..."
+        };
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect.poll(() => actionRequests).toEqual([
+      {
+        actionId: "opaque_server_action",
+        body: {}
+      }
+    ]);
+    await expect(page.getByRole("heading", { name: "Terminal is transmitting..." })).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __aiStudioForbiddenTextSeen?: boolean }).__aiStudioForbiddenTextSeen === true
+    ))).toBe(false);
+  });
+
+  test("does not start command machinery from action metadata when nextOperation waits", async ({ page }) => {
+    let commandTerminalStarts = 0;
+    const session = sessionPayload({
+      actions: [
+        {
+          dispatchRoute: "command-terminal",
+          enabled: true,
+          id: "metadata_only_command",
+          label: "Metadata-only command",
+          type: "command"
+        }
+      ],
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "server"
+          }
+        },
+        screen: {
+          kind: "blocked",
+          message: "The server did not authorize an operation.",
+          sections: [],
+          title: "Server Blocked"
+        }
+      }
+    });
+    await mockAiStudioSession(page, session, {
+      onCommandTerminalStart: () => {
+        commandTerminalStarts += 1;
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect(page.getByRole("heading", { name: "Server Blocked" })).toBeVisible();
+    await expect.poll(() => commandTerminalStarts).toBe(0);
+  });
+
   test("attaches to the server-owned Codex terminal preview without sending terminal input", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     let codexTerminalStartRequests = 0;
@@ -18,9 +118,8 @@ test.describe("Autopilot dumb client contract", () => {
       },
       presentation: {
         auto: {
-          canResume: false,
-          canStart: false,
           nextOperation: {
+            executable: false,
             kind: "wait",
             reason: "codex"
           }
@@ -69,7 +168,7 @@ test.describe("Autopilot dumb client contract", () => {
     ))).toEqual([]);
   });
 
-  test("hides the active Codex terminal preview when the server renders input", async ({ page }) => {
+  test("keeps the server-owned Codex terminal preview behind input while transmitting", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     const session = sessionPayload({
       codexTerminal: {
@@ -84,9 +183,8 @@ test.describe("Autopilot dumb client contract", () => {
       },
       presentation: {
         auto: {
-          canResume: false,
-          canStart: false,
           nextOperation: {
+            executable: false,
             kind: "wait",
             reason: "input"
           }
@@ -101,6 +199,7 @@ test.describe("Autopilot dumb client contract", () => {
               }
             ],
             prompt: "What is one workflow in the dog grooming app you want to improve first?",
+            submitTarget: "current-step-input",
             submitLabel: "Send to Codex",
             title: "Talk to Codex"
           },
@@ -116,11 +215,11 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "",
+            label: "Terminal is transmitting...",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
-            visible: false
+            visible: true
           }
         }
       },
@@ -135,7 +234,7 @@ test.describe("Autopilot dumb client contract", () => {
 
     await expect(page.getByRole("heading", { name: "Talk to Codex" })).toBeVisible();
     await expect(page.getByLabel("Response")).toBeVisible();
-    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeHidden();
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __aiStudioCodexTerminalInputs?: string[] }).__aiStudioCodexTerminalInputs || []
     ))).toEqual([]);
@@ -161,9 +260,8 @@ test.describe("Autopilot dumb client contract", () => {
       ],
       presentation: {
         auto: {
-          canResume: false,
-          canStart: false,
           nextOperation: {
+            executable: false,
             kind: "stop",
             reason: "user"
           }
@@ -211,9 +309,8 @@ test.describe("Autopilot dumb client contract", () => {
       },
       presentation: {
         auto: {
-          canResume: false,
-          canStart: false,
           nextOperation: {
+            executable: false,
             kind: "wait",
             reason: "input"
           }
@@ -228,6 +325,7 @@ test.describe("Autopilot dumb client contract", () => {
               }
             ],
             prompt: "Answer these before continuing.\n[1] What should change?\n[2] What should stay the same?",
+            submitTarget: "current-step-input",
             submitLabel: "Submit",
             title: "Server Questions"
           },
@@ -274,10 +372,14 @@ async function mockAiStudioSession(
   page: Page,
   session: Record<string, unknown>,
   {
+    onAction = () => undefined,
+    onCommandTerminalStart = () => undefined,
     onIntent = () => undefined,
     onStepInput = () => undefined,
     onCodexTerminalStart = () => undefined
   }: {
+    onAction?: (actionId: string, body: unknown) => void;
+    onCommandTerminalStart?: () => void;
     onCodexTerminalStart?: () => void;
     onIntent?: (body: unknown) => void;
     onStepInput?: (body: unknown) => void;
@@ -295,6 +397,24 @@ async function mockAiStudioSession(
         id: "server-codex-terminal",
         ok: true,
         status: "running"
+      });
+      return;
+    }
+    if (method === "POST" && /\/actions\/[^/]+$/u.test(url.pathname)) {
+      onAction(url.pathname.split("/").at(-1) || "", request.postDataJSON() || {});
+      await fulfillJson(route, {
+        ok: true,
+        ...session
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname.endsWith("/command-terminal")) {
+      onCommandTerminalStart();
+      await fulfillJson(route, {
+        commandPreview: "echo test",
+        id: "server-command-terminal",
+        ok: true,
+        status: "exited"
       });
       return;
     }
@@ -336,6 +456,26 @@ async function mockAiStudioSession(
       sessions: [session]
     });
   });
+}
+
+async function recordForbiddenText(page: Page, text: string) {
+  await page.addInitScript((forbiddenText) => {
+    const state = window as unknown as { __aiStudioForbiddenTextSeen?: boolean };
+    state.__aiStudioForbiddenTextSeen = false;
+    function check() {
+      if (document.body?.innerText.includes(String(forbiddenText || ""))) {
+        state.__aiStudioForbiddenTextSeen = true;
+      }
+    }
+    document.addEventListener("DOMContentLoaded", () => {
+      check();
+      new MutationObserver(check).observe(document.body, {
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
+    });
+  }, text);
 }
 
 async function mockCodexTerminalPreviewSocket(page: Page) {

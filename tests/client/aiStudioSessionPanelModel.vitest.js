@@ -186,10 +186,10 @@ describe("AI Studio session panel model", () => {
   });
 
   it("maps runtime actions and disabled reasons for UI controls", () => {
-    expect(aiStudioActionIcon({ type: "prompt" })).toBe(mdiRobotOutline);
-    expect(aiStudioActionIcon({ icon: "github", type: "command" })).toBe(mdiGithub);
-    expect(aiStudioActionIcon({ icon: "sync", type: "command" })).toBe(mdiSync);
-    expect(aiStudioActionIcon({ id: "server_owned_action", type: "command" })).toBe(mdiCodeBraces);
+    expect(aiStudioActionIcon({ icon: "codex" })).toBe(mdiRobotOutline);
+    expect(aiStudioActionIcon({ icon: "github" })).toBe(mdiGithub);
+    expect(aiStudioActionIcon({ icon: "sync" })).toBe(mdiSync);
+    expect(aiStudioActionIcon({ id: "server_owned_action" })).toBe(mdiCodeBraces);
     expect(currentStepDisabledReason([
       {
         disabledReason: "Create the issue file first.",
