@@ -140,7 +140,9 @@ function useAiStudioSessionWorkflow({
       goNext: workflow.actions.goNext,
       rewindToStep: workflow.actions.rewindToStep,
       runAction: workflow.actions.runAction,
-      runActionCommand: workflow.actions.runActionCommand
+      runActionCommand: workflow.actions.runActionCommand,
+      runIntent: workflow.actions.runIntent,
+      runIntentCommand: workflow.actions.runIntentCommand
     },
     codexTerminal: {
       busy: workflow.codexHandoff.busy,

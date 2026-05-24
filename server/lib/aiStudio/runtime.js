@@ -41,6 +41,10 @@ import {
   recordStepMachineActionStarted,
   saveStepMachineInput
 } from "./workflowStepMachines.js";
+import {
+  applyWorkflowPresentation,
+  runWorkflowIntent
+} from "./workflowPresentation.js";
 
 function metadataFlagIsOn(value) {
   return ["1", "true", "yes", "on"].includes(normalizeText(value).toLowerCase());
@@ -409,7 +413,7 @@ class AiStudioSessionRuntime {
       ...workflowMachine.buildSessionView(sessionWithConfig),
       workflowProfile: workflowProfileDefinition(workflowProfileId)
     };
-    return applyStepMachineView(this, sessionView);
+    return applyWorkflowPresentation(await applyStepMachineView(this, sessionView));
   }
 
   workflowProfileIdForSession(session = {}) {
@@ -797,6 +801,10 @@ class AiStudioSessionRuntime {
 
   async submitCurrentStepInput(sessionId, input = {}) {
     return saveStepMachineInput(this, sessionId, input);
+  }
+
+  async runIntent(sessionId, intentId, input = {}) {
+    return runWorkflowIntent(this, sessionId, intentId, input);
   }
 
   async recordCommandActionStarted(sessionId, actionId) {

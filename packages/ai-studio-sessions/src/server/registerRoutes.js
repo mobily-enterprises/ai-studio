@@ -6,7 +6,8 @@ import {
   ACTION_INSPECT_SESSION,
   ACTION_LIST_SESSIONS,
   ACTION_REWIND_SESSION,
-  ACTION_RUN_SESSION_ACTION
+  ACTION_RUN_SESSION_ACTION,
+  ACTION_RUN_SESSION_INTENT
 } from "./actions.js";
 import { createAiStudioFeatureRoutes } from "../../../../server/lib/aiStudio/featureRoutes.js";
 
@@ -57,6 +58,21 @@ function registerRoutes(
       };
     },
     summary: "Run an AI Studio session action."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/intents/:intentId", {
+    actionId: ACTION_RUN_SESSION_INTENT,
+    buildInput(request) {
+      const body = routes.requestBody(request);
+      return {
+        fields: body.fields || body.input || {},
+        intentId: request.params.intentId,
+        sessionId: request.params.sessionId,
+        stepId: body.stepId,
+        stepStatus: body.stepStatus
+      };
+    },
+    summary: "Run an AI Studio session intent."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/advance", {

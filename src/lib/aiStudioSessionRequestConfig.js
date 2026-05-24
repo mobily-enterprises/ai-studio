@@ -23,6 +23,10 @@ function aiStudioActionPath(sessionsApiPath = "", sessionId = "", actionId = "")
   return aiStudioSessionPath(sessionsApiPath, sessionId, `/actions/${encodePathSegment(actionId)}`);
 }
 
+function aiStudioIntentPath(sessionsApiPath = "", sessionId = "", intentId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, `/intents/${encodePathSegment(intentId)}`);
+}
+
 function aiStudioArtifactPreviewPath(sessionsApiPath = "", sessionId = "") {
   return aiStudioSessionPath(sessionsApiPath, sessionId, "/artifact-preview");
 }
@@ -119,6 +123,7 @@ export {
   aiStudioCodexPromptHandoffPath,
   aiStudioCodexThreadPath,
   aiStudioCommandTerminalPath,
+  aiStudioIntentPath,
   aiStudioLaunchTargetOpenPath,
   aiStudioLaunchTargetsPath,
   aiStudioLaunchTargetsQueryKey,

@@ -51,6 +51,7 @@ function agentConversationAction({
   label = "Talk to Codex"
 } = {}) {
   return {
+    icon: "codex",
     id,
     inputFields: [
       {
@@ -111,6 +112,7 @@ function createIssueOnGithubAction() {
     disabledWhenReason: "The GitHub issue already exists.",
     enabledWhen: [ISSUE_TITLE_READY_CONDITION, ISSUE_WORD_READY_CONDITION, ISSUE_BODY_READY_CONDITION],
     enabledWhenReason: "Create the issue file before submitting it to GitHub.",
+    icon: "github",
     id: "create_issue_on_gh",
     label: "Create issue on GH",
     type: "command"
@@ -129,6 +131,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
       {
         disabledReason: "Work source is already selected.",
         disabledWhen: ["metadata:work_source"],
+        icon: "branch",
         id: "use_new_branch",
         label: "Use new branch",
         type: "adapter"
@@ -137,6 +140,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "use_existing_pr",
         disabledReason: "Work source is already selected.",
         disabledWhen: ["metadata:work_source"],
+        icon: "github",
         id: "use_existing_pr",
         inputFields: [
           {
@@ -178,6 +182,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         disabledWhen: ["metadata:worktree_path"],
         enabledWhen: ["metadata:work_source"],
         enabledWhenReason: "Choose a work source before creating the worktree.",
+        icon: "sync",
         id: "create_worktree",
         label: "Create worktree",
         type: "command"
@@ -208,6 +213,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "install_dependencies",
         disabledReason: "Dependencies are already installed.",
         disabledWhen: ["metadata:dependencies_installed"],
+        icon: "sync",
         id: "install_dependencies",
         label: "Install dependencies",
         type: "command"
@@ -241,6 +247,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "install_dependencies",
         disabledReason: "Checklist items are already installed.",
         disabledWhen: ["metadata:dependencies_installed"],
+        icon: "sync",
         id: "install_dependencies",
         label: "Install checklist items",
         type: "command"
@@ -288,6 +295,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "use_existing_issue",
         disabledReason: "An existing issue is already selected.",
         disabledWhen: ["metadata:issue_url"],
+        icon: "github",
         id: "use_existing_issue",
         inputFields: [
           {
@@ -505,6 +513,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     actions: [
       {
         adapterCapability: "update_code_index",
+        icon: "sync",
         id: "update_code_index",
         label: "Update code index",
         type: "command"
@@ -513,6 +522,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "run_automated_checks",
         enabledWhen: ["metadata:code_index_updated"],
         enabledWhenReason: "Update the code index before running automated checks.",
+        icon: "run",
         id: "run_automated_checks",
         label: "Run automated checks",
         type: "command"
@@ -570,7 +580,8 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     id: "changes_accepted",
     label: "Final review",
     rewindCleanup: {
-      actionResults: [FINAL_REVIEW_CONVERSATION_ACTION_ID]
+      actionResults: [FINAL_REVIEW_CONVERSATION_ACTION_ID],
+      metadata: ["autopilot_final_review_followup"]
     }
   },
   report_created: {
@@ -623,6 +634,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     actions: [
       {
         adapterCapability: "commit_changes",
+        icon: "commit",
         id: "commit_changes",
         label: "Commit and push changes",
         type: "command"
@@ -650,6 +662,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
       {
         enabledWhen: ["metadata:pr_url"],
         hrefMetadata: "pr_url",
+        icon: "github",
         id: "open_pr",
         label: "Open PR",
         type: "link"
@@ -675,6 +688,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
           "metadata:branch_pushed"
         ],
         enabledWhenReason: "Save the pull request title/body and push the branch before creating the GitHub pull request.",
+        icon: "github",
         id: "create_pr_on_gh",
         label: "Create PR on GH",
         type: "command"
@@ -751,6 +765,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
         disabledWhenReason: "A merge decision has already been recorded.",
         enabledWhen: ["metadata:pr_url"],
+        icon: "github",
         id: "merge_pr",
         label: "Merge",
         type: "command"
@@ -778,7 +793,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     },
     rewindCleanup: {
       actionResults: ["prepare_for_merge", "merge_pr", "skip_merge"],
-      metadata: ["pr_merged", "merge_skipped"]
+      metadata: ["pr_merged", "merge_skipped", "autopilot_merge_intent"]
     }
   },
   main_checkout_synced: {
@@ -787,6 +802,7 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
         adapterCapability: "sync_main_checkout",
         disabledReason: "Merge the pull request before syncing the main checkout.",
         enabledWhen: ["metadata:pr_url", "metadata:pr_merged"],
+        icon: "sync",
         id: "sync_main_checkout",
         label: "Sync main checkout",
         type: "command"

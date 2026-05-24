@@ -89,9 +89,6 @@ function useAiStudioSessionData({
       ? "select"
       : "direct";
   });
-  const mainCheckoutSyncBlocker = computed(() => {
-    return sessions.value.find(sessionNeedsMainCheckoutSync) || null;
-  });
   const selectedListSession = computed(() => {
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
@@ -103,18 +100,12 @@ function useAiStudioSessionData({
     sessions: sessions.value
   }));
   const canCreateSession = computed(() => {
-    if (mainCheckoutSyncBlocker.value) {
-      return false;
-    }
     if (typeof creationOptions.value.canCreate === "boolean") {
       return creationOptions.value.canCreate;
     }
     return limits.value.openSessionCount < limits.value.maxOpenSessions;
   });
   const createSessionTitle = computed(() => {
-    if (mainCheckoutSyncBlocker.value) {
-      return `Sync the main checkout in session ${shortSessionId(mainCheckoutSyncBlocker.value.sessionId)} before creating another session.`;
-    }
     if (creationOptions.value.disabledReason) {
       return String(creationOptions.value.disabledReason);
     }
@@ -190,13 +181,6 @@ function useAiStudioSessionData({
     timelineSteps,
     workflowProfiles
   };
-}
-
-function sessionNeedsMainCheckoutSync(session = {}) {
-  const metadata = session.metadata || {};
-  return String(metadata.pr_merged || "").trim() &&
-    !String(metadata.main_checkout_synced || "").trim() &&
-    !String(metadata.merge_skipped || "").trim();
 }
 
 export {

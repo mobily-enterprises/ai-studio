@@ -113,6 +113,185 @@ test("ai-studio runtime exposes the evaluated Autopilot stage without workflow c
   });
 });
 
+test("ai-studio runtime exposes server-owned presentation and intents for Autopilot stops", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    const session = await runtime.createSession({
+      initialStep: "implementation_reviewed",
+      sessionId: "presentation_review"
+    });
+
+    assert.equal(session.presentation.screen.kind, "review");
+    assert.equal(session.presentation.screen.title, "Human review");
+    assert.equal(session.presentation.screen.variant, "implementation");
+    assert.equal(session.presentation.prompt.state, "idle");
+    assert.equal(session.presentation.actions, session.actions);
+    assert.equal(session.presentation.next, session.next);
+    assert.deepEqual(session.intents.map((intent) => intent.id), [
+      "open_diff",
+      "accept_review",
+      "request_review_tweak"
+    ]);
+    assert.equal(session.presentation.auto.nextOperation.kind, "wait");
+    assert.equal(session.presentation.auto.nextOperation.reason, "user");
+  });
+});
+
+test("ai-studio runtime exposes server-owned action icon hints", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    const session = await runtime.createSession({
+      initialStep: "worktree_created",
+      sessionId: "presentation_action_icons"
+    });
+
+    assert.equal(session.actions.find((action) => action.id === "create_worktree")?.icon, "sync");
+    assert.equal(session.currentStepDefinition.actions.find((action) => action.id === "create_worktree")?.icon, "sync");
+  });
+});
+
+test("ai-studio runtime exposes and runs the server-owned conversation intent", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const promptPackRoot = path.join(targetRoot, "prompt-pack");
+    await mkdir(promptPackRoot, {
+      recursive: true
+    });
+    await writeFile(
+      path.join(promptPackRoot, "agent_conversation.txt"),
+      [
+        "Agent conversation",
+        "",
+        "Action input:",
+        "{{input.json}}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new PromptRendererFakeAdapter({
+        promptPackRoot
+      }),
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "maintenance_conversation",
+      sessionId: "presentation_conversation_intent",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+
+    const session = await runtime.getSession("presentation_conversation_intent");
+    assert.equal(session.presentation.screen.kind, "conversation");
+    assert.equal(session.presentation.screen.primaryIntentId, "talk_to_codex");
+    assert.deepEqual(session.intents.map((intent) => intent.id), [
+      "talk_to_codex",
+      "continue_step"
+    ]);
+    assert.equal(
+      session.intents.find((intent) => intent.id === "talk_to_codex")?.inputFields[0]?.name,
+      "conversationRequest"
+    );
+
+    const afterIntent = await runtime.runIntent("presentation_conversation_intent", "talk_to_codex", {
+      fields: {
+        conversationRequest: "Explain this codebase."
+      },
+      stepId: session.currentStep,
+      stepStatus: session.stepMachine.status
+    });
+
+    assert.equal(afterIntent.actionResult.status, "prompt_ready");
+    assert.equal(afterIntent.actionResult.promptId, "agent_conversation");
+    assert.match(
+      afterIntent.actionResult.codexPromptHandoff.terminalInput,
+      /^Explain this codebase\.\n\n\[\[AI_STUDIO_CONTEXT_START\]\]/u
+    );
+  });
+});
+
+test("ai-studio runtime runs server-owned intents and rejects stale intent submissions", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "deep_ui_check_run",
+      sessionId: "presentation_intents"
+    });
+    const session = await runtime.getSession("presentation_intents");
+
+    assert.equal(session.presentation.screen.kind, "decision");
+    const skipped = await runtime.runIntent("presentation_intents", "skip_optional_check", {
+      stepId: session.currentStep,
+      stepStatus: session.stepMachine.status
+    });
+    assert.equal(skipped.currentStep, "review_run");
+
+    await assert.rejects(
+      () => runtime.runIntent("presentation_intents", "skip_optional_check", {
+        stepId: "deep_ui_check_run",
+        stepStatus: session.stepMachine.status
+      }),
+      /not available|Reload state/u
+    );
+  });
+});
+
+test("ai-studio runtime owns final-review follow-up and merge decision intents", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "changes_accepted",
+      sessionId: "presentation_final_review_intents"
+    });
+    const finalReview = await runtime.getSession("presentation_final_review_intents");
+    const tweak = await runtime.runIntent("presentation_final_review_intents", "request_review_tweak", {
+      fields: {
+        feedback: "Tighten the final copy."
+      },
+      stepId: finalReview.currentStep,
+      stepStatus: finalReview.stepMachine.status
+    });
+    assert.equal(tweak.actionResult.actionType, "prompt");
+    assert.equal(
+      await runtime.store.readMetadataValue("presentation_final_review_intents", "autopilot_final_review_followup"),
+      "recheck"
+    );
+
+    await runtime.createSession({
+      initialStep: "pr_merged",
+      metadata: {
+        pr_url: "https://github.com/example/project/pull/1"
+      },
+      sessionId: "presentation_merge_intents"
+    });
+    const mergeReview = await runtime.runIntent("presentation_merge_intents", "merge_and_sync");
+    assert.equal(mergeReview.presentation.auto.nextOperation.kind, "action");
+    assert.equal(mergeReview.presentation.auto.nextOperation.actionId, "prepare_for_merge");
+
+    await runtime.createSession({
+      initialStep: "pr_merged",
+      metadata: {
+        pr_url: "https://github.com/example/project/pull/2"
+      },
+      sessionId: "presentation_skip_merge_intent"
+    });
+    const skipped = await runtime.runIntent("presentation_skip_merge_intent", "skip_merge");
+    assert.equal(skipped.currentStep, "session_finished");
+    assert.equal(skipped.metadata.merge_skipped, "yes");
+  });
+});
+
 test("ai-studio workflow profiles are ordered step lists with self-contained step metadata", () => {
   const bigFeature = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE);
   const generalCoding = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.GENERAL_CODING);
@@ -395,6 +574,7 @@ test("ai-studio runtime shows current-step actions from the workflow", async () 
         adapterCapability: "create_worktree",
         disabledReason: "",
         enabled: true,
+        icon: "sync",
         id: "create_worktree",
         label: "Create worktree",
         type: "command",
@@ -827,6 +1007,7 @@ test("ai-studio runtime disables prompt actions while the terminal is active", a
       {
         disabledReason: "Codex terminal is active.",
         enabled: false,
+        icon: "codex",
         id: "make_plan",
         label: "Make plan",
         promptId: "make_plan",
@@ -893,6 +1074,7 @@ test("ai-studio runtime keeps disabled actions visible and rejects execution wit
       {
         disabledReason: "Waiting for metadata: ready.",
         enabled: false,
+        icon: "code",
         id: "blocked_action",
         label: "Blocked action",
         type: "command",

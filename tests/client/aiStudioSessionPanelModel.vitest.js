@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  mdiCodeBraces,
   mdiGithub,
   mdiRobotOutline,
   mdiSync
@@ -186,8 +187,9 @@ describe("AI Studio session panel model", () => {
 
   it("maps runtime actions and disabled reasons for UI controls", () => {
     expect(aiStudioActionIcon({ type: "prompt" })).toBe(mdiRobotOutline);
-    expect(aiStudioActionIcon({ id: "create_issue_on_gh", type: "command" })).toBe(mdiGithub);
-    expect(aiStudioActionIcon({ id: "create_worktree", type: "command" })).toBe(mdiSync);
+    expect(aiStudioActionIcon({ icon: "github", type: "command" })).toBe(mdiGithub);
+    expect(aiStudioActionIcon({ icon: "sync", type: "command" })).toBe(mdiSync);
+    expect(aiStudioActionIcon({ id: "server_owned_action", type: "command" })).toBe(mdiCodeBraces);
     expect(currentStepDisabledReason([
       {
         disabledReason: "Create the issue file first.",

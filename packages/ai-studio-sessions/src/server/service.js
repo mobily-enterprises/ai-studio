@@ -244,6 +244,18 @@ function createService({
       });
     },
 
+    async runSessionIntent(sessionId, intentId, input = {}) {
+      return sessionResult(async () => {
+        await assertAiStudioSetupReady(setupServices);
+        const runtime = await projectService.createRuntime();
+        const session = await runtime.runIntent(sessionId, intentId, input);
+        if (!isOpenAiStudioSession(session)) {
+          await terminalService?.closeSessionTerminals?.(sessionId);
+        }
+        return session;
+      });
+    },
+
     async rewindSession(sessionId, stepId) {
       return sessionResult(async () => {
         await assertAiStudioSetupReady(setupServices);

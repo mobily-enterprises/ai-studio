@@ -139,29 +139,24 @@ function aiStudioSessionFacts(session = {}) {
 }
 
 function aiStudioActionIcon(action = {}) {
+  const icon = String(action.icon || "");
+  if (icon) {
+    return {
+      branch: mdiSourceBranch,
+      code: mdiCodeBraces,
+      codex: mdiRobotOutline,
+      commit: mdiSourceCommit,
+      github: mdiGithub,
+      run: mdiPlay,
+      success: mdiCheck,
+      sync: mdiSync
+    }[icon] || mdiCodeBraces;
+  }
   if (action.type === "prompt") {
     return mdiRobotOutline;
   }
-  if (["create_issue_on_gh", "create_pr_on_gh", "merge_pr", "open_pr"].includes(action.id)) {
-    return mdiGithub;
-  }
-  if (["use_existing_issue", "use_existing_pr"].includes(action.id)) {
-    return mdiGithub;
-  }
-  if (action.id === "use_new_branch") {
-    return mdiSourceBranch;
-  }
-  if (["create_worktree", "install_dependencies", "sync_main_checkout", "update_code_index"].includes(action.id)) {
-    return mdiSync;
-  }
   if (action.type === "finish") {
     return mdiCheck;
-  }
-  if (action.id === "run_automated_checks") {
-    return mdiPlay;
-  }
-  if (action.id === "commit_changes") {
-    return mdiSourceCommit;
   }
   return mdiCodeBraces;
 }

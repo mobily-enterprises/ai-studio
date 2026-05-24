@@ -83,7 +83,9 @@ test.describe("non-commit maintenance agent chat", () => {
     await page.getByRole("button", { name: "Ask Codex" }).click();
 
     await expectMarkdownResponsePreview(page);
-    await expect(page.getByRole("button", { name: "Finish" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next" })).toBeEnabled();
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByRole("heading", { name: "Congratulations!" })).toBeVisible();
   });
 
   test("updates the Autopilot answer after Codex clarification questions", async ({ page }) => {
@@ -136,7 +138,6 @@ test.describe("non-commit maintenance agent chat", () => {
     await expect(page.getByRole("button", { name: "Next" })).toBeEnabled();
 
     await page.getByRole("button", { name: "Quit inspect" }).click();
-    await expect(page.getByRole("heading", { name: "AI response" })).toBeVisible();
     await expectMarkdownResponsePreview(page);
   });
 });
@@ -230,8 +231,56 @@ async function mockAgentChatRoutes(page: Page, runtime: AiStudioSessionRuntime) 
       return;
     }
 
+    if (method === "POST" && tail[0] === "intents") {
+      const intentInput = request.postDataJSON() || {};
+      const response = await runtime.runIntent(sessionId, tail[1], intentInput);
+      if (tail[1] === "talk_to_codex") {
+        const session = await runtime.getSession(sessionId);
+        const priorResponse = String(session.stepMachine?.response || "");
+        const fields = intentInput.fields && typeof intentInput.fields === "object"
+          ? intentInput.fields
+          : {};
+        if (priorResponse.includes("Pescara")) {
+          await writeAgentResponse(
+            runtime,
+            sessionId,
+            QUESTION_RESPONSE_MARKDOWN
+          );
+        } else if (String(fields.conversationRequest || "").toLowerCase().includes("three random questions")) {
+          await writeAgentQuestions(runtime, sessionId);
+        } else {
+          await writeAgentResponse(
+            runtime,
+            sessionId,
+            responseMarkdownForRequest(fields.conversationRequest)
+          );
+        }
+        await fulfillJson(route, {
+          ...await runtime.getSession(sessionId),
+          actionResult: response.actionResult
+        });
+        await pushArtifactReadiness(sessionId);
+        return;
+      }
+      await fulfillJson(route, response);
+      return;
+    }
+
     if (method === "POST" && tail[0] === "current-step" && tail[1] === "input") {
-      await fulfillJson(route, await runtime.submitCurrentStepInput(sessionId, request.postDataJSON() || {}));
+      const input = request.postDataJSON() || {};
+      let response = await runtime.submitCurrentStepInput(sessionId, input);
+      if (
+        input.kind === "user_response" &&
+        String(input.fields?.response || "").includes("Pescara")
+      ) {
+        await writeAgentResponse(
+          runtime,
+          sessionId,
+          QUESTION_RESPONSE_MARKDOWN
+        );
+        response = await runtime.getSession(sessionId);
+      }
+      await fulfillJson(route, response);
       await pushArtifactReadiness(sessionId);
       return;
     }

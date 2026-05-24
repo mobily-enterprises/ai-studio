@@ -8,7 +8,6 @@ import {
 } from "../core.js";
 import {
   artifactFilePath,
-  metadataFilePath,
   recordCommandFactScript,
   requiredArtifactScript,
   stepArtifactShellLibrary

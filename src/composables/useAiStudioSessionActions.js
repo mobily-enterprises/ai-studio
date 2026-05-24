@@ -14,6 +14,7 @@ import {
   AI_STUDIO_SURFACE_ID,
   LOCAL_STUDIO_COMMAND_OPTIONS,
   aiStudioActionPath,
+  aiStudioIntentPath,
   aiStudioSessionPath,
   commandInputFromContext
 } from "@/lib/aiStudioSessionRequestConfig.js";
@@ -24,12 +25,19 @@ import {
   readRefOrGetterBoolean
 } from "@/lib/vueRefOrGetterValue.js";
 
-const FINAL_REVIEW_STEP_ID = "changes_accepted";
-const IMPLEMENTATION_REVIEW_STEP_ID = "implementation_reviewed";
-
 function displayableActionResultMessage(result = {}) {
   const message = String(result?.message || "");
   return /^Rendered\b/u.test(message) ? "" : message;
+}
+
+function intentInputFromContext(context = {}) {
+  return {
+    fields: context?.fields && typeof context.fields === "object" && !Array.isArray(context.fields)
+      ? context.fields
+      : {},
+    stepId: String(context?.stepId || ""),
+    stepStatus: String(context?.stepStatus || "")
+  };
 }
 
 function useAiStudioSessionActions({
@@ -74,6 +82,32 @@ function useAiStudioSessionActions({
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
     placementSource: "ai-studio.sessions.action",
+    surfaceId: AI_STUDIO_SURFACE_ID,
+    writeMethod: "POST"
+  });
+
+  const runIntentCommand = useCommand({
+    access: "never",
+    apiSuffix: AI_STUDIO_SESSIONS_API_SUFFIX,
+    buildRawPayload: (_model, { context }) => intentInputFromContext(context),
+    buildCommandOptions: (_payload, { context }) => ({
+      method: "POST",
+      options: LOCAL_STUDIO_COMMAND_OPTIONS,
+      path: aiStudioIntentPath(sessionsApiPath.value, context?.sessionId, context?.intentId)
+    }),
+    fallbackRunError: "AI Studio intent could not run.",
+    messages: {
+      error: "AI Studio intent could not run.",
+      success: "AI Studio intent completed."
+    },
+    onRunSuccess: async (response, { context } = {}) => {
+      if (await codexHandoff.startFromActionResponse(response, context)) {
+        return;
+      }
+      await refreshSessionData();
+    },
+    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+    placementSource: "ai-studio.sessions.intent",
     surfaceId: AI_STUDIO_SURFACE_ID,
     writeMethod: "POST"
   });
@@ -168,15 +202,18 @@ function useAiStudioSessionActions({
     return false;
   });
   const acceptChangesUtilitiesVisible = computed(() => {
-    return [IMPLEMENTATION_REVIEW_STEP_ID, FINAL_REVIEW_STEP_ID].includes(selectedSession.value?.currentStep);
+    const intents = Array.isArray(selectedSession.value?.intents) ? selectedSession.value.intents : [];
+    return intents.some((intent) => intent.clientAction === "open_diff" && intent.enabled !== false);
   });
   const busy = computed(() => Boolean(
     runActionCommand.isRunning ||
+    runIntentCommand.isRunning ||
     advanceCommand.isRunning ||
     rewindCommand.isRunning
   ));
   const error = computed(() => {
     return commandMessage(runActionCommand, "error") ||
+      commandMessage(runIntentCommand, "error") ||
       commandMessage(advanceCommand, "error") ||
       commandMessage(rewindCommand, "error") ||
       "";
@@ -221,6 +258,30 @@ function useAiStudioSessionActions({
         advanceOnSuccess: action.advanceOnSuccess === true,
         input,
         sessionId: unref(selectedSessionId)
+      });
+    } finally {
+      activeActionId.value = "";
+    }
+  }
+
+  async function runIntent(intent = {}, options = {}) {
+    if (!unref(selectedSessionId) || !intent.id || readRefOrGetterBoolean(commandBusy) || intent.enabled !== true) {
+      return;
+    }
+    if (intent.clientAction === "open_diff") {
+      return;
+    }
+    clearCopyStatus();
+    activeActionId.value = intent.id;
+    try {
+      return await runIntentCommand.run({
+        fields: options.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
+          ? options.fields
+          : {},
+        intentId: intent.id,
+        sessionId: unref(selectedSessionId),
+        stepId: selectedSession.value?.currentStep || "",
+        stepStatus: selectedSession.value?.stepMachine?.status || ""
       });
     } finally {
       activeActionId.value = "";
@@ -274,6 +335,8 @@ function useAiStudioSessionActions({
     rewindToStep,
     runAction,
     runActionCommand,
+    runIntent,
+    runIntentCommand,
     waitingForPromptedArtifact,
     worktreeReady
   };

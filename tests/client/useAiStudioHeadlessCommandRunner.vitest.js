@@ -70,6 +70,7 @@ describe("useAiStudioHeadlessCommandRunner", () => {
     });
     expect(startCommandTerminal).toHaveBeenCalledWith("session-1", {
       actionId: "install_dependencies",
+      advanceOnSuccess: false,
       input: {
         packageManager: "npm"
       }

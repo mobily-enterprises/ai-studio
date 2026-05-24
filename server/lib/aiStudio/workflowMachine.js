@@ -101,6 +101,7 @@ function normalizeAction(action = {}, stepId = "") {
     enabledWhenReason: normalizeText(action.enabledWhenReason || action.disabledReason),
     enabledWhen: normalizeConditionList(action.enabledWhen),
     hrefMetadata: normalizeText(action.hrefMetadata),
+    icon: normalizeText(action.icon),
     id,
     inputFields: normalizeInputFields(action.inputFields, id),
     label: normalizeText(action.label || id),
@@ -285,8 +286,22 @@ function publicAction(action, state) {
   };
 }
 
+function publicActionIcon(action = {}) {
+  if (action.icon) {
+    return action.icon;
+  }
+  if (action.type === "prompt") {
+    return "codex";
+  }
+  if (action.type === "finish") {
+    return "success";
+  }
+  return "code";
+}
+
 function publicActionDefinition(action) {
   const definition = {
+    icon: publicActionIcon(action),
     id: action.id,
     label: action.label,
     type: action.type,
