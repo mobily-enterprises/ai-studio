@@ -19,7 +19,7 @@ const STEP_STATUS = Object.freeze({
   CONFIRM_FILES: "confirm_files",
   DONE: "done",
   FAILED: "failed",
-  NEED_INPUT: "need_input",
+  WAITING_FOR_INPUT: "waiting_for_input",
   READY: "ready"
 });
 
@@ -100,7 +100,7 @@ function stepMachineNeedsInput(session = {}) {
   return [
     STEP_STATUS.CONFIRM_FILES,
     STEP_STATUS.FAILED,
-    STEP_STATUS.NEED_INPUT
+    STEP_STATUS.WAITING_FOR_INPUT
   ].includes(stepMachineStatus(session));
 }
 
@@ -580,7 +580,7 @@ function useAiStudioAutopilotController({
       if (status === STEP_STATUS.READY && currentSession.value?.stepMachine?.promptComplete === true) {
         return CODEX_TURN_RESULT.COMPLETE;
       }
-      if (status === STEP_STATUS.CONFIRM_FILES || status === STEP_STATUS.NEED_INPUT) {
+      if (status === STEP_STATUS.CONFIRM_FILES || status === STEP_STATUS.WAITING_FOR_INPUT) {
         return CODEX_TURN_RESULT.WAITING_FOR_INPUT;
       }
       if (status === STEP_STATUS.DONE) {

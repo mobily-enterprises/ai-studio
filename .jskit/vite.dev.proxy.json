@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "packageId": "@jskit-ai/realtime",
+      "id": "realtime-socket-io",
+      "path": "/socket.io",
+      "changeOrigin": true,
+      "ws": true
+    }
+  ]
+}

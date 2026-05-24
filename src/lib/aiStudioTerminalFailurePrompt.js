@@ -91,7 +91,7 @@ function terminalFailureFixPrompt({
     "",
     "If you need user input before the command can be retried, call the helper with:",
     JSON.stringify({
-      kind: "need_input",
+      kind: "waiting_for_input",
       stepId: currentStep || "{{session.currentStep}}",
       stepStatus: stepStatus || "{{session.stepMachine.status}}",
       message: "The question or blocker for the user"

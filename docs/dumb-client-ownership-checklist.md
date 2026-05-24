@@ -179,7 +179,7 @@ POST /api/ai-studio/sessions/:sessionId/intents/:intentId
 - [ ] Include `stepId` and `stepStatus` in intent submissions where the intent depends on current step-machine state.
 - [ ] Return the refreshed session view after every intent.
 - [ ] Do not let clients pass target step IDs for workflow intents.
-- [ ] If an intent needs input, define that input shape server-side with `inputFields`.
+- [ ] If an intent waits for input, define that input shape server-side with `inputFields`.
 - [ ] Add focused unit tests around intent handlers before adding more abstraction.
 - [ ] Add focused Playwright coverage that clicks a server-provided intent and confirms the client sends the generic intent request, not a workflow-specific client sequence.
 
@@ -468,7 +468,7 @@ prompt: {
 ## Verification Checklist
 
 - [ ] Server unit test: current session view includes presentation for a normal action step.
-- [ ] Server unit test: current session view includes presentation for `need_input`.
+- [ ] Server unit test: current session view includes presentation for `waiting_for_input`.
 - [ ] Server unit test: current session view includes presentation for `confirm_files`.
 - [x] Server unit test: review step exposes server-owned review intents.
 - [x] Server unit test: final review tweak intent rewinds/reruns according to server logic.

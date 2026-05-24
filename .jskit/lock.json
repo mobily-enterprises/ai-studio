@@ -257,6 +257,89 @@
       "options": {},
       "installedAt": "2026-05-16T15:39:24.717Z",
       "migrationSyncVersion": "0.1.0"
+    },
+    "@jskit-ai/realtime": {
+      "packageId": "@jskit-ai/realtime",
+      "version": "0.1.82",
+      "source": {
+        "type": "npm-installed-package",
+        "packagePath": "node_modules/@jskit-ai/realtime",
+        "descriptorPath": "node_modules/@jskit-ai/realtime/package.descriptor.mjs"
+      },
+      "managed": {
+        "packageJson": {
+          "dependencies": {
+            "@jskit-ai/kernel": {
+              "hadPrevious": true,
+              "previousValue": "0.1.83",
+              "value": "0.x"
+            },
+            "@socket.io/redis-adapter": {
+              "hadPrevious": false,
+              "previousValue": "",
+              "value": "^8.3.0"
+            },
+            "redis": {
+              "hadPrevious": false,
+              "previousValue": "",
+              "value": "^5.8.2"
+            },
+            "socket.io": {
+              "hadPrevious": false,
+              "previousValue": "",
+              "value": "^4.8.3"
+            },
+            "socket.io-client": {
+              "hadPrevious": false,
+              "previousValue": "",
+              "value": "^4.8.3"
+            },
+            "@jskit-ai/realtime": {
+              "hadPrevious": false,
+              "previousValue": "",
+              "value": "0.x"
+            }
+          },
+          "devDependencies": {},
+          "scripts": {}
+        },
+        "text": {
+          ".env::realtime-redis-url": {
+            "file": ".env",
+            "op": "upsert-env",
+            "key": "REALTIME_REDIS_URL",
+            "value": "",
+            "hadPrevious": false,
+            "previousValue": "",
+            "reason": "Configure optional Redis backplane URL for realtime socket adapter.",
+            "category": "runtime-config",
+            "id": "realtime-redis-url"
+          },
+          "src/placement.js::realtime-placement-indicator": {
+            "file": "src/placement.js",
+            "op": "append-text",
+            "value": "\naddPlacement({\n  id: \"realtime.connection.indicator\",\n  target: \"shell.status\",\n  kind: \"component\",\n  surfaces: [\"*\"],\n  order: 950,\n  componentToken: \"realtime.web.connection.indicator\"\n});\n",
+            "position": "bottom",
+            "reason": "Append realtime connection indicator placement into app-owned placement registry.",
+            "category": "realtime-web",
+            "id": "realtime-placement-indicator"
+          }
+        },
+        "vite": {
+          "/socket.io::realtime-socket-io": {
+            "op": "upsert-vite-proxy",
+            "id": "realtime-socket-io",
+            "path": "/socket.io"
+          }
+        },
+        "files": [],
+        "migrations": []
+      },
+      "options": {
+        "realtime-redis-url": ""
+      },
+      "installedAt": "2026-05-24T07:02:06.012Z",
+      "migrationSyncVersion": "0.1.82"
     }
   }
 }

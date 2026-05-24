@@ -246,6 +246,7 @@ function launchTerminalIsReady(terminalSession = {}, readinessMarker = "") {
 }
 
 async function markLaunchTerminalReady({
+  publishSessionChanged = async () => null,
   store,
   sessionId = "",
   terminalSession = {},
@@ -264,9 +265,15 @@ async function markLaunchTerminalReady({
       ...(updatedSession?.metadata || {})
     }
   });
+  await publishSessionChanged(sessionId, {
+    reason: "launch-target-ready"
+  });
 }
 
-function createLaunchTargetTerminalController({ projectService } = {}) {
+function createLaunchTargetTerminalController({
+  projectService,
+  publishSessionChanged = async () => null
+} = {}) {
   return Object.freeze({
     closeAllForSession(sessionId) {
       return closeTerminalSessionsForNamespace(launchTargetTerminalNamespace(sessionId));
@@ -408,6 +415,7 @@ function createLaunchTargetTerminalController({ projectService } = {}) {
             }
             launchReadyWritten = true;
             void markLaunchTerminalReady({
+              publishSessionChanged,
               store: context.store,
               sessionId,
               terminalSession: runningTerminalSession,

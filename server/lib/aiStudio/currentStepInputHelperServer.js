@@ -205,6 +205,7 @@ async function writeHelperScript(session = {}) {
 }
 
 async function ensureHelperServer({
+  onSessionChanged = async () => null,
   projectService,
   targetRoot = ""
 } = {}) {
@@ -253,6 +254,7 @@ async function ensureHelperServer({
 
       const runtime = await projectService.createRuntime();
       const result = await runtime.submitCurrentStepInput(sessionId, input);
+      await onSessionChanged(result?.sessionId || sessionId);
       sendJson(response, aiStudioStatusCode(result), {
         ...result,
         ok: true
@@ -279,11 +281,13 @@ async function ensureHelperServer({
 }
 
 async function prepareCurrentStepInputHelper({
+  onSessionChanged = async () => null,
   projectService,
   session = {},
   targetRoot = ""
 } = {}) {
   await ensureHelperServer({
+    onSessionChanged,
     projectService,
     targetRoot
   });

@@ -4,11 +4,16 @@ import {
 } from "@/lib/aiStudioRequestConfig.js";
 
 const AI_STUDIO_SESSIONS_API_SUFFIX = "/ai-studio/sessions";
+const AI_STUDIO_SESSION_CHANGED_EVENT = "ai-studio.session.changed";
 const DEFAULT_MAX_OPEN_SESSIONS = 5;
 const SELECTED_SESSION_STORAGE_KEY = "ai-studio:selected-session-id";
 
 function aiStudioSessionsQueryKey(surfaceId, ownershipFilter) {
   return ["ai-studio", surfaceId, ownershipFilter, "sessions"];
+}
+
+function aiStudioSessionQueryKey(surfaceId, ownershipFilter) {
+  return ["ai-studio", surfaceId, ownershipFilter, "session"];
 }
 
 function encodePathSegment(value = "") {
@@ -111,6 +116,7 @@ function commandInputFromContext(context = {}) {
 }
 
 export {
+  AI_STUDIO_SESSION_CHANGED_EVENT,
   AI_STUDIO_SESSIONS_API_SUFFIX,
   AI_STUDIO_SURFACE_ID,
   DEFAULT_MAX_OPEN_SESSIONS,
@@ -130,6 +136,7 @@ export {
   aiStudioLaunchTerminalPath,
   aiStudioLaunchTerminalStopPath,
   aiStudioSessionPath,
+  aiStudioSessionQueryKey,
   aiStudioShellTerminalPath,
   aiStudioSessionsQueryKey,
   commandInputFromContext

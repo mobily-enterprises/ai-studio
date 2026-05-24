@@ -406,7 +406,7 @@ test("jskit seed issue definition uses the current-step input contract before is
     const initialSession = await runtime.getSession("jskit_seed_prompt");
 
     assert.equal(initialSession.currentStep, "seed_application_defined");
-    assert.equal(initialSession.stepMachine.status, "need_input");
+    assert.equal(initialSession.stepMachine.status, "waiting_for_input");
     assert.equal(initialSession.currentStepDefinition.interaction.submitKind, "ready");
 
     const afterInput = await runtime.submitCurrentStepInput("jskit_seed_prompt", {
@@ -417,7 +417,7 @@ test("jskit seed issue definition uses the current-step input contract before is
       },
       kind: "ready",
       stepId: "seed_application_defined",
-      stepStatus: "need_input"
+      stepStatus: "waiting_for_input"
     });
 
     assert.equal(afterInput.stepMachine.status, "confirm_files");

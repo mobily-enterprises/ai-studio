@@ -7,6 +7,10 @@ import {
 } from "@/lib/vueRefOrGetterValue.js";
 
 function interactionForSession(session = {}) {
+  const screenInput = session?.presentation?.screen?.input;
+  if (screenInput && typeof screenInput === "object" && !Array.isArray(screenInput)) {
+    return screenInput;
+  }
   const interaction = session?.currentStepDefinition?.interaction;
   return interaction && typeof interaction === "object" && !Array.isArray(interaction)
     ? interaction
@@ -127,7 +131,8 @@ function useAiStudioStepInputForm({
       ? responseQuestionInput.value.intro
       : String(interaction.value?.prompt || "");
   });
-  const visible = computed(() => fields.value.length > 0);
+  const directSubmit = computed(() => interaction.value?.intentId !== "talk_to_codex" && interaction.value?.kind !== "conversation");
+  const visible = computed(() => directSubmit.value && fields.value.length > 0);
   const canSubmit = computed(() => visible.value &&
     !saving.value &&
     !fields.value.some((field) => requiredFieldIsMissing(field, values.value)));

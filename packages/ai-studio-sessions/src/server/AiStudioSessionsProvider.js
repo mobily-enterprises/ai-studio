@@ -3,6 +3,11 @@ import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
 import { createService } from "./service.js";
 import { featureActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
+import {
+  aiStudioSessionChangedServiceEvent
+} from "../../../../server/lib/aiStudio/sessionRealtimeEvents.js";
+
+const AI_STUDIO_SESSIONS_SERVICE = "feature.ai-studio-sessions.service";
 
 class AiStudioSessionsProvider {
   static id = "feature.ai-studio-sessions";
@@ -27,7 +32,7 @@ class AiStudioSessionsProvider {
     }
 
     app.service(
-      "feature.ai-studio-sessions.service",
+      AI_STUDIO_SESSIONS_SERVICE,
       (scope) => {
         return createService({
           setupServices: {
@@ -39,6 +44,18 @@ class AiStudioSessionsProvider {
           projectService: scope.make("feature.ai-studio-project.service"),
           terminalService: scope.make("feature.ai-studio-terminals.service")
         });
+      },
+      {
+        events: {
+          abandonSession: [aiStudioSessionChangedServiceEvent()],
+          advanceSession: [aiStudioSessionChangedServiceEvent()],
+          createSession: [aiStudioSessionChangedServiceEvent({
+            operation: "created"
+          })],
+          rewindSession: [aiStudioSessionChangedServiceEvent()],
+          runSessionAction: [aiStudioSessionChangedServiceEvent()],
+          runSessionIntent: [aiStudioSessionChangedServiceEvent()]
+        }
       }
     );
 

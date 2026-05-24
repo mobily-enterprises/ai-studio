@@ -10,7 +10,7 @@ The client must not create or understand artifacts. The UI should only render th
 
 - [x] Define one machine input contract for all step input.
 - [x] Replace "form save" thinking with generic current-step input.
-- [x] Support input kinds such as `ready`, `need_input`, `user_response`, `confirm_files`, `skip`, and `consider_resolved`.
+- [x] Support input kinds such as `ready`, `waiting_for_input`, `user_response`, `confirm_files`, `skip`, and `consider_resolved`.
 - [x] Rename or rework `PUT /step-input` into a generic current-step input endpoint.
 - [x] Make the endpoint usable by both the web UI and Codex helpers.
 
@@ -22,7 +22,7 @@ The issue machine starts with discussion. It does not start by asking Codex to i
 
 State flow:
 
-- `need_input`
+- `waiting_for_input`
   - Purpose: discuss and define the issue scope.
   - State details:
     - `doing=discussion`
@@ -50,10 +50,10 @@ State flow:
     - move to `done`.
   - On failure:
     - store the command failure output.
-    - move to `need_input`.
+    - move to `waiting_for_input`.
     - set `from=attempting_execution`.
 
-- `need_input` with `from=attempting_execution`
+- `waiting_for_input` with `from=attempting_execution`
   - Purpose: ask the user/Codex what to do about the failed command.
   - A valid response returns to `attempting_execution`.
   - The command is then rerun.
@@ -66,7 +66,7 @@ Existing issue path:
 
 - Using an existing issue must enter the same machine.
 - On success, it writes the same permanent output shape and moves to `done`.
-- On failure, it moves to `need_input` with a clear message.
+- On failure, it moves to `waiting_for_input` with a clear message.
 
 ### Create Pull Request
 
@@ -78,23 +78,23 @@ State flow:
   - Purpose: ask Codex to inspect the repository status and produce pull request content.
   - No direct user input is required at the start.
   - Codex receives a prompt describing the required helper contract.
-  - Codex must call the helper with either `ready` or `need_input`.
+  - Codex must call the helper with either `ready` or `waiting_for_input`.
   - If Codex calls `ready`, it supplies:
     - pull request title
     - pull request body
   - On valid `ready`:
     - the server writes temporary PR files.
     - move to `confirm_files`.
-  - If Codex calls `need_input`:
+  - If Codex calls `waiting_for_input`:
     - store the question/message for the user.
-    - move to `need_input`.
+    - move to `waiting_for_input`.
     - set `from=awaiting_agent_result`.
 
-- `need_input` with `from=awaiting_agent_result`
+- `waiting_for_input` with `from=awaiting_agent_result`
   - Purpose: answer Codex's question before PR content can be resolved.
   - The user can answer through the UI.
   - The user can answer directly in Inspect mode.
-  - Codex can continue and eventually call the helper with `ready` or another `need_input`.
+  - Codex can continue and eventually call the helper with `ready` or another `waiting_for_input`.
   - Once the input loop completes, return to `awaiting_agent_result`.
 
 - `confirm_files`
@@ -112,10 +112,10 @@ State flow:
     - move to `done`.
   - On failure:
     - store the command failure output.
-    - move to `need_input`.
+    - move to `waiting_for_input`.
     - set `from=attempting_execution`.
 
-- `need_input` with `from=attempting_execution`
+- `waiting_for_input` with `from=attempting_execution`
   - Purpose: ask the user/Codex what to do about the failed PR command.
   - A valid response returns to `attempting_execution`.
   - The command is then rerun.
@@ -135,13 +135,13 @@ Output convention:
 
 - [x] Add one helper command/API that Codex can call to submit current-step input.
 - [x] Let Codex submit `ready` with structured fields.
-- [x] Let Codex submit `need_input` with a user-facing message.
+- [x] Let Codex submit `waiting_for_input` with a user-facing message.
 - [x] Let Codex submit user/conversation responses when needed.
 - [x] Ensure helper errors explain the expected schema clearly so Codex can retry correctly.
 
 ## Generic Need Input State
 
-- [x] Make `need_input` a real generic conversation state.
+- [x] Make `waiting_for_input` a real generic conversation state.
 - [x] Store the latest prompt to the user server-side.
 - [x] Store optional input schema server-side.
 - [x] Store the state to resume from, such as `awaiting_agent_result` or `attempting_execution`.
@@ -152,18 +152,18 @@ Output convention:
 
 - [x] Implement `awaiting_agent_result`.
 - [x] Let a machine start a repo-status prompt when it needs AI to produce files from repository state.
-- [x] Require Codex to call the helper with either `ready` or `need_input`.
+- [x] Require Codex to call the helper with either `ready` or `waiting_for_input`.
 - [x] On `ready`, write server-owned temporary files and move to `confirm_files`.
-- [x] On `need_input`, move to `need_input` with `from=awaiting_agent_result`.
+- [x] On `waiting_for_input`, move to `waiting_for_input` with `from=awaiting_agent_result`.
 
 ## Create Issue
 
 - [x] Refactor create issue into the intended flow:
-  - [x] `need_input` for discussion.
+  - [x] `waiting_for_input` for discussion.
   - [x] `ready` from UI or Codex helper.
   - [x] `confirm_files`.
   - [x] `attempting_execution`.
-  - [x] `done` or `need_input(from=attempting_execution)`.
+  - [x] `done` or `waiting_for_input(from=attempting_execution)`.
 - [x] Keep issue title, body, and session label writes on the server.
 - [x] Ensure using an existing issue goes through the same machine state model.
 
@@ -173,14 +173,14 @@ Output convention:
   - [x] `awaiting_agent_result`.
   - [x] `confirm_files`.
   - [x] `attempting_execution`.
-  - [x] `done` or `need_input(from=attempting_execution)`.
+  - [x] `done` or `waiting_for_input(from=attempting_execution)`.
 - [x] Have AI produce PR content from repository status.
 - [x] Keep PR title/body draft files server-owned.
 - [x] Keep PR URL/number/source outputs server-owned.
 
 ## Command Failures
 
-- [x] Make command failure enter `need_input`.
+- [x] Make command failure enter `waiting_for_input`.
 - [x] Preserve the failed command output for review.
 - [x] Let the user explain what to do next.
 - [x] Let Codex work through the failure using the helper contract.
@@ -214,7 +214,7 @@ Output convention:
 - [x] Add focused unit tests for each mini state machine.
 - [x] Test initial state.
 - [x] Test valid input transitions.
-- [x] Test `need_input` transitions.
+- [x] Test `waiting_for_input` transitions.
 - [x] Test command success.
 - [x] Test command failure.
 - [x] Test resume after user response.

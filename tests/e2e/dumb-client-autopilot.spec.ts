@@ -72,18 +72,6 @@ test.describe("Autopilot dumb client contract", () => {
     const session = sessionPayload({
       currentStepDefinition: {
         id: "server_step",
-        interaction: {
-          fields: [
-            {
-              kind: "textarea",
-              label: "Response",
-              name: "response"
-            }
-          ],
-          prompt: "Answer these before continuing.\n[1] What should change?\n[2] What should stay the same?",
-          submitLabel: "Submit",
-          title: "Server Questions"
-        },
         label: "Server Questions"
       },
       presentation: {
@@ -96,10 +84,27 @@ test.describe("Autopilot dumb client contract", () => {
           }
         },
         screen: {
+          input: {
+            fields: [
+              {
+                kind: "textarea",
+                label: "Response",
+                name: "response"
+              }
+            ],
+            prompt: "Answer these before continuing.\n[1] What should change?\n[2] What should stay the same?",
+            submitLabel: "Submit",
+            title: "Server Questions"
+          },
           kind: "input",
           message: "Answer these before continuing.",
           sections: [],
           title: "Server Questions"
+        },
+        step: {
+          id: "server_step",
+          label: "Server Questions",
+          status: "waiting_for_input"
         }
       }
     });
@@ -124,7 +129,7 @@ test.describe("Autopilot dumb client contract", () => {
         kind: "ready",
         source: "ui",
         stepId: "server_step",
-        stepStatus: "ready"
+        stepStatus: "waiting_for_input"
       }
     ]);
   });
@@ -156,6 +161,13 @@ async function mockAiStudioSession(
     }
     if (method === "POST" && url.pathname.endsWith("/current-step/input")) {
       onStepInput(request.postDataJSON());
+      await fulfillJson(route, {
+        ok: true,
+        ...session
+      });
+      return;
+    }
+    if (method === "GET" && /\/sessions\/[^/]+$/u.test(url.pathname)) {
       await fulfillJson(route, {
         ok: true,
         ...session
@@ -229,7 +241,7 @@ function sessionPayload(overrides: Record<string, unknown> = {}) {
       }
     ],
     stepMachine: {
-      status: "ready",
+      status: String((presentation.step as Record<string, unknown>)?.status || "ready"),
       stepId: "server_step"
     },
     targetRoot: "/workspace/example-target-app",

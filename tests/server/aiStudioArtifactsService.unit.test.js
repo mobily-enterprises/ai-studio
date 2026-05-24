@@ -82,7 +82,7 @@ test("AI Studio artifacts service saves semantic issue step input", async () => 
     const saved = await service.submitCurrentStepInput("step_input_issue", {
       kind: "ready",
       stepId: "issue_file_created",
-      stepStatus: "need_input",
+      stepStatus: "waiting_for_input",
       fields: {
         body: "Create a booking dashboard.",
         title: "Add booking dashboard",
@@ -241,7 +241,7 @@ test("AI Studio artifacts service rejects stale current-step input", async () =>
     assert.equal(saved.errors[0].code, "ai_studio_step_input_state_changed");
     assert.match(saved.errors[0].message, /Reload state/u);
     assert.equal(saved.currentStep, "issue_file_created");
-    assert.equal(saved.stepStatus, "need_input");
+    assert.equal(saved.stepStatus, "waiting_for_input");
     assert.equal(saved.expectedInput.title, "Define issue");
     assert.equal(saved.expectedInput.fields[0].name, "title");
   });
@@ -258,7 +258,11 @@ test("AI Studio current-step helper submits through the same server path", async
     });
     const projectService = projectServiceForRuntime(runtime);
     const session = await runtime.getSession("step_input_helper");
+    const changedSessionIds = [];
     const helper = await prepareCurrentStepInputHelper({
+      onSessionChanged: async (sessionId) => {
+        changedSessionIds.push(sessionId);
+      },
       projectService,
       session,
       targetRoot
@@ -274,7 +278,7 @@ test("AI Studio current-step helper submits through the same server path", async
         },
         kind: "ready",
         stepId: "issue_file_created",
-        stepStatus: "need_input"
+        stepStatus: "waiting_for_input"
       })
     ], {
       ...helper.env,
@@ -286,6 +290,7 @@ test("AI Studio current-step helper submits through the same server path", async
     assert.equal(response.ok, true);
     assert.equal(response.stepMachine.status, "confirm_files");
     assert.equal(await runtime.store.readArtifact("step_input_helper", "issue_title"), "Add booking dashboard\n");
+    assert.deepEqual(changedSessionIds, ["step_input_helper"]);
   });
 });
 
@@ -361,7 +366,7 @@ test("AI Studio artifacts service lets issue command failures return to retry st
       }
     );
     const failedSession = await runtime.getSession("step_input_issue_failure");
-    assert.equal(failedSession.stepMachine.status, "need_input");
+    assert.equal(failedSession.stepMachine.status, "waiting_for_input");
     assert.equal(failedSession.actions.find((action) => action.id === "create_issue_on_gh").enabled, false);
 
     const service = createService({
@@ -371,7 +376,7 @@ test("AI Studio artifacts service lets issue command failures return to retry st
       kind: "user_response",
       source: "ui",
       stepId: "issue_submitted",
-      stepStatus: "need_input",
+      stepStatus: "waiting_for_input",
       text: "The GitHub CLI is authenticated now."
     });
 
@@ -401,7 +406,7 @@ test("AI Studio artifacts service lets setup command failures return to retry st
       }
     );
     const failedSession = await runtime.getSession("step_input_setup_failure");
-    assert.equal(failedSession.stepMachine.status, "need_input");
+    assert.equal(failedSession.stepMachine.status, "waiting_for_input");
     assert.equal(failedSession.stepMachine.output, "EACCES");
 
     const service = createService({
@@ -411,7 +416,7 @@ test("AI Studio artifacts service lets setup command failures return to retry st
       kind: "user_response",
       source: "ui",
       stepId: "dependencies_installed",
-      stepStatus: "need_input",
+      stepStatus: "waiting_for_input",
       text: "Permissions are fixed."
     });
 
@@ -460,14 +465,14 @@ test("AI Studio artifacts service keeps pull request command failures inside the
       }
     );
     const failedSession = await runtime.getSession("step_input_pr_failure");
-    assert.equal(failedSession.stepMachine.status, "need_input");
+    assert.equal(failedSession.stepMachine.status, "waiting_for_input");
     assert.equal(failedSession.actions.find((action) => action.id === "create_pr_on_gh").enabled, false);
 
     const saved = await service.submitCurrentStepInput("step_input_pr_failure", {
       kind: "user_response",
       source: "ui",
       stepId: "create_pull_request",
-      stepStatus: "need_input",
+      stepStatus: "waiting_for_input",
       text: "The branch has been pushed."
     });
 

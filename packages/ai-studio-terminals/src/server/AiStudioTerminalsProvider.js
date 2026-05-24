@@ -3,6 +3,19 @@ import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
 import { createService } from "./service.js";
 import { featureActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
+import {
+  aiStudioSessionChangedServiceEvent,
+  createAiStudioSessionChangedPublisher
+} from "../../../../server/lib/aiStudio/sessionRealtimeEvents.js";
+
+const AI_STUDIO_TERMINALS_SERVICE = "feature.ai-studio-terminals.service";
+const TERMINAL_SESSION_MUTATION_EVENT_METHODS = Object.freeze([
+  "saveCodexPromptHandoff",
+  "saveCodexThread",
+  "startCodexTerminal",
+  "startCommandTerminal",
+  "startLaunchTargetTerminal"
+]);
 
 class AiStudioTerminalsProvider {
   static id = "feature.ai-studio-terminals";
@@ -22,11 +35,42 @@ class AiStudioTerminalsProvider {
     }
 
     app.service(
-      "feature.ai-studio-terminals.service",
+      AI_STUDIO_TERMINALS_SERVICE,
       (scope) => {
-        return createService({
-          projectService: scope.make("feature.ai-studio-project.service")
+        const domainEvents = typeof scope.has === "function" && scope.has("domainEvents")
+          ? scope.make("domainEvents")
+          : null;
+        const publishCommandTerminalChanged = createAiStudioSessionChangedPublisher({
+          domainEvents,
+          methodName: "startCommandTerminal",
+          serviceToken: AI_STUDIO_TERMINALS_SERVICE
         });
+        const publishCodexTerminalChanged = createAiStudioSessionChangedPublisher({
+          domainEvents,
+          methodName: "startCodexTerminal",
+          serviceToken: AI_STUDIO_TERMINALS_SERVICE
+        });
+        const publishLaunchTargetChanged = createAiStudioSessionChangedPublisher({
+          domainEvents,
+          methodName: "startLaunchTargetTerminal",
+          serviceToken: AI_STUDIO_TERMINALS_SERVICE
+        });
+        return createService({
+          projectService: scope.make("feature.ai-studio-project.service"),
+          publishSessionChanged: {
+            codexTerminal: publishCodexTerminalChanged,
+            commandTerminal: publishCommandTerminalChanged,
+            launchTarget: publishLaunchTargetChanged
+          }
+        });
+      },
+      {
+        events: Object.fromEntries(
+          TERMINAL_SESSION_MUTATION_EVENT_METHODS.map((methodName) => [
+            methodName,
+            [aiStudioSessionChangedServiceEvent()]
+          ])
+        )
       }
     );
 

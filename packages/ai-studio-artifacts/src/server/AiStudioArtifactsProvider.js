@@ -3,6 +3,11 @@ import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
 import { createService } from "./service.js";
 import { featureActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
+import {
+  aiStudioSessionChangedServiceEvent
+} from "../../../../server/lib/aiStudio/sessionRealtimeEvents.js";
+
+const AI_STUDIO_ARTIFACTS_SERVICE = "feature.ai-studio-artifacts.service";
 
 class AiStudioArtifactsProvider {
   static id = "feature.ai-studio-artifacts";
@@ -22,11 +27,16 @@ class AiStudioArtifactsProvider {
     }
 
     app.service(
-      "feature.ai-studio-artifacts.service",
+      AI_STUDIO_ARTIFACTS_SERVICE,
       (scope) => {
         return createService({
           projectService: scope.make("feature.ai-studio-project.service")
         });
+      },
+      {
+        events: {
+          submitCurrentStepInput: [aiStudioSessionChangedServiceEvent()]
+        }
       }
     );
 

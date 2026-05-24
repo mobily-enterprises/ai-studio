@@ -24,12 +24,43 @@ function promptResponseSession(prompt) {
     },
     sessionId: "session-1",
     stepMachine: {
-      status: "need_input"
+      status: "waiting_for_input"
     }
   };
 }
 
 describe("useAiStudioStepInputForm", () => {
+  it("does not treat server-owned Codex conversation input as a direct step input form", () => {
+    const session = ref({
+      presentation: {
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "textarea",
+                label: "Response",
+                name: "conversationRequest",
+                required: true
+              }
+            ],
+            intentId: "talk_to_codex",
+            kind: "conversation",
+            prompt: "What should Codex know?"
+          }
+        }
+      },
+      sessionId: "session-1",
+      stepMachine: {
+        status: "waiting_for_input"
+      }
+    });
+    const form = useAiStudioStepInputForm({
+      session
+    });
+
+    expect(form.visible.value).toBe(false);
+  });
+
   it("renders numbered prompt questions as separate inputs and submits one text response", async () => {
     let submittedInput = null;
     const session = ref(promptResponseSession([
@@ -64,7 +95,7 @@ describe("useAiStudioStepInputForm", () => {
       kind: "user_response",
       source: "ui",
       stepId: "plan_executed",
-      stepStatus: "need_input"
+      stepStatus: "waiting_for_input"
     });
   });
 

@@ -238,6 +238,7 @@ async function applySuccessFacts({
 function createCommandTerminalController({
   ensureRuntimeNetwork = ensureTargetRuntimeNetwork,
   projectService,
+  publishSessionChanged = async () => null,
   removeContainer = removeDockerContainer,
   resolveToolchainImage = resolveTerminalToolchainImage,
   startTerminal = startTerminalSession
@@ -405,6 +406,9 @@ function createCommandTerminalController({
                   runtime,
                   session,
                   spec
+                });
+                await publishSessionChanged(sessionId, {
+                  reason: "command-terminal-closed"
                 });
               } finally {
                 await Promise.all([

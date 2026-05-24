@@ -172,7 +172,12 @@ const inspectDiffVisible = computed(() => {
     sessionMode: sessionMode.value
   });
 });
-const pageError = computed(() => sessionData.sessionList.loadError || selectedRuntimeState.value?.pageError || "");
+const pageError = computed(() => (
+  sessionData.sessionList.loadError ||
+  sessionData.selectedSessionView?.loadError ||
+  selectedRuntimeState.value?.pageError ||
+  ""
+));
 
 function ensureRuntimeState(sessionId = "") {
   const key = String(sessionId || "");

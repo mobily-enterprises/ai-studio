@@ -108,7 +108,7 @@ test.describe("non-commit maintenance agent chat", () => {
       "Q2: Pescara",
       "Q3: guitar"
     ].join("\n"));
-    await autopilot.getByRole("button", { name: "Save response" }).click();
+    await autopilot.getByRole("button", { name: "Send to Codex" }).click();
 
     const responseRegion = await expectMarkdownResponsePreview(page, QUESTION_RESPONSE_TEXT);
     await expect(responseRegion).not.toContainText(REALLY_RESPONSE_TEXT);
@@ -185,6 +185,11 @@ async function mockAgentChatRoutes(page: Page, runtime: AiStudioSessionRuntime) 
       return;
     }
 
+    if (method === "GET" && sessionId && tail.length === 0) {
+      await fulfillJson(route, await runtime.getSession(sessionId));
+      return;
+    }
+
     if (method === "POST" && url.pathname === "/api/ai-studio/sessions") {
       const created = await runtime.createSession({
         sessionId: SESSION_ID,
@@ -235,12 +240,10 @@ async function mockAgentChatRoutes(page: Page, runtime: AiStudioSessionRuntime) 
       const intentInput = request.postDataJSON() || {};
       const response = await runtime.runIntent(sessionId, tail[1], intentInput);
       if (tail[1] === "talk_to_codex") {
-        const session = await runtime.getSession(sessionId);
-        const priorResponse = String(session.stepMachine?.response || "");
         const fields = intentInput.fields && typeof intentInput.fields === "object"
           ? intentInput.fields
           : {};
-        if (priorResponse.includes("Pescara")) {
+        if (String(fields.conversationRequest || "").includes("Pescara")) {
           await writeAgentResponse(
             runtime,
             sessionId,
@@ -268,18 +271,7 @@ async function mockAgentChatRoutes(page: Page, runtime: AiStudioSessionRuntime) 
 
     if (method === "POST" && tail[0] === "current-step" && tail[1] === "input") {
       const input = request.postDataJSON() || {};
-      let response = await runtime.submitCurrentStepInput(sessionId, input);
-      if (
-        input.kind === "user_response" &&
-        String(input.fields?.response || "").includes("Pescara")
-      ) {
-        await writeAgentResponse(
-          runtime,
-          sessionId,
-          QUESTION_RESPONSE_MARKDOWN
-        );
-        response = await runtime.getSession(sessionId);
-      }
+      const response = await runtime.submitCurrentStepInput(sessionId, input);
       await fulfillJson(route, response);
       await pushArtifactReadiness(sessionId);
       return;
@@ -430,7 +422,7 @@ async function writeAgentResponse(
 async function writeAgentQuestions(runtime: AiStudioSessionRuntime, sessionId: string) {
   const session = await runtime.getSession(sessionId);
   await runtime.submitCurrentStepInput(sessionId, {
-    kind: "need_input",
+    kind: "waiting_for_input",
     message: [
       "Answer these before continuing.",
       "",

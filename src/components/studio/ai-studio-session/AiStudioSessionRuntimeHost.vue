@@ -132,6 +132,9 @@ const emit = defineEmits([
 
 const selectedSessionId = computed(() => props.sessionId);
 const selectedListSession = computed(() => {
+  if (typeof props.sessionData.sessionForId === "function") {
+    return props.sessionData.sessionForId(props.sessionId);
+  }
   const sessions = unref(props.sessionData.sessions) || [];
   return sessions.find((session) => session.sessionId === props.sessionId) || null;
 });

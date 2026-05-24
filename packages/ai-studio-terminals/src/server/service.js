@@ -3,19 +3,25 @@ import { createCommandTerminalController } from "./commandTerminal.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
 import { createShellTerminalController } from "./shellTerminal.js";
 
-function createService({ projectService } = {}) {
+function createService({
+  projectService,
+  publishSessionChanged = {}
+} = {}) {
   if (!projectService) {
     throw new TypeError("createService requires feature.ai-studio-project.service.");
   }
 
   const codex = createCodexTerminalController({
-    projectService
+    projectService,
+    publishSessionChanged: publishSessionChanged.codexTerminal
   });
   const command = createCommandTerminalController({
-    projectService
+    projectService,
+    publishSessionChanged: publishSessionChanged.commandTerminal
   });
   const launchTarget = createLaunchTargetTerminalController({
-    projectService
+    projectService,
+    publishSessionChanged: publishSessionChanged.launchTarget
   });
   const shell = createShellTerminalController({
     projectService

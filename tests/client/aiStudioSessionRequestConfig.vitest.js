@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AI_STUDIO_SESSION_CHANGED_EVENT,
   SELECTED_SESSION_STORAGE_KEY,
   aiStudioActionPath,
   aiStudioArtifactPreviewPath,
@@ -8,6 +9,7 @@ import {
   aiStudioCodexAttachmentPath,
   aiStudioCodexPromptHandoffPath,
   aiStudioCodexThreadPath,
+  aiStudioSessionQueryKey,
   aiStudioSessionPath,
   aiStudioSessionsQueryKey,
   commandInputFromContext
@@ -16,11 +18,18 @@ import {
 describe("AI Studio session request config", () => {
   it("uses current AI Studio storage and route names", () => {
     expect(SELECTED_SESSION_STORAGE_KEY).toBe("ai-studio:selected-session-id");
+    expect(AI_STUDIO_SESSION_CHANGED_EVENT).toBe("ai-studio.session.changed");
     expect(aiStudioSessionsQueryKey("home", "public")).toEqual([
       "ai-studio",
       "home",
       "public",
       "sessions"
+    ]);
+    expect(aiStudioSessionQueryKey("home", "public")).toEqual([
+      "ai-studio",
+      "home",
+      "public",
+      "session"
     ]);
     expect(aiStudioArtifactPreviewQueryKey("home", "public", "2026-05-16_01:two")).toEqual([
       "ai-studio",

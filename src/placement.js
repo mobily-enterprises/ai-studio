@@ -69,3 +69,13 @@ addPlacement({
   order: 60,
   componentToken: "local.main.ui.ai-studio-target-scripts-nav-link"
 });
+
+
+addPlacement({
+  id: "realtime.connection.indicator",
+  target: "shell.status",
+  kind: "component",
+  surfaces: ["*"],
+  order: 950,
+  componentToken: "realtime.web.connection.indicator"
+});

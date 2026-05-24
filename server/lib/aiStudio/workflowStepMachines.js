@@ -11,8 +11,8 @@ const STEP_STATUS = Object.freeze({
   CONFIRM_FILES: "confirm_files",
   DONE: "done",
   FAILED: "failed",
-  NEED_INPUT: "need_input",
-  READY: "ready"
+  READY: "ready",
+  WAITING_FOR_INPUT: "waiting_for_input"
 });
 
 const ISSUE_BODY_ARTIFACT = "issue.md";
@@ -25,10 +25,10 @@ const REPORT_ARTIFACT = "report.md";
 const STEP_INPUT_KIND = Object.freeze({
   CONFIRM_FILES: "confirm_files",
   CONSIDER_RESOLVED: "consider_resolved",
-  NEED_INPUT: "need_input",
   READY: "ready",
   SKIP: "skip",
-  USER_RESPONSE: "user_response"
+  USER_RESPONSE: "user_response",
+  WAITING_FOR_INPUT: "waiting_for_input"
 });
 
 const sessionCreatedMachine = {
@@ -258,7 +258,7 @@ async function readPullRequestFieldValues(context = {}, filesReady = false) {
   };
 }
 
-function issueInputInteraction(status = STEP_STATUS.NEED_INPUT, values = {}) {
+function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = {}) {
   return {
     fields: [
       {
@@ -349,25 +349,28 @@ function commandFailureInteraction({
   };
 }
 
-function promptNeedInputInteraction({
+function promptWaitingForInputInteraction({
+  actionId = "",
   prompt = "Codex needs more information before this step can continue.",
-  submitLabel = "Save response",
-  title = "Codex needs input"
+  submitLabel = "Send to Codex",
+  title = "Talk to Codex"
 } = {}) {
   return {
+    actionId: normalizeText(actionId),
     fields: [
       {
         kind: "textarea",
         label: "Response",
-        name: "response",
+        name: "conversationRequest",
         required: true,
         requiredMessage: "Response is required.",
         value: ""
       }
     ],
-    kind: "prompt_response",
+    intentId: "talk_to_codex",
+    kind: "conversation",
     prompt,
-    submitKind: STEP_INPUT_KIND.USER_RESPONSE,
+    submitKind: "",
     submitLabel,
     title
   };
@@ -390,12 +393,12 @@ function promptActionDoneInstruction({
   return JSON.stringify(payload, null, 2);
 }
 
-function promptActionNeedInputInstruction({
+function promptActionWaitingForInputInstruction({
   stepId = "{{session.currentStep}}",
   stepStatus = "{{session.stepMachine.status}}"
 } = {}) {
   return JSON.stringify({
-    kind: STEP_INPUT_KIND.NEED_INPUT,
+    kind: STEP_INPUT_KIND.WAITING_FOR_INPUT,
     stepId,
     stepStatus,
     message: "The question or blocker for the user"
@@ -405,7 +408,7 @@ function promptActionNeedInputInstruction({
 function currentStepHelperInstruction({
   doneFields = {},
   doneMeaning = "The step is complete.",
-  needsInputMeaning = "You need more information from the user.",
+  waitingForInputMeaning = "You need more information from the user.",
   stepId = "{{session.currentStep}}",
   stepStatus = "{{session.stepMachine.status}}"
 } = {}) {
@@ -421,24 +424,17 @@ function currentStepHelperInstruction({
     `- Meaning of ready: ${doneMeaning}`,
     "",
     "- If you need user input before this step can continue, call the current-step input helper with this JSON:",
-    promptActionNeedInputInstruction({
+    promptActionWaitingForInputInstruction({
       stepId,
       stepStatus
     }),
-    `- Meaning of need_input: ${needsInputMeaning}`,
-    "- Before calling the helper for need_input, write the same question or blocker in normal Codex response text so Inspect users can read it directly in the terminal.",
+    `- Meaning of waiting_for_input: ${waitingForInputMeaning}`,
+    "- Before calling the helper for waiting_for_input, write the same question or blocker in normal Codex response text so Inspect users can read it directly in the terminal.",
     "- Keep the visible question text and the helper `message` equivalent; do not make the UI-only helper message more complete than the terminal-visible response.",
     "- When asking more than one question, format each question on its own line as `[1] Question text`, `[2] Question text`, and so on. Use the same numbered question text in the helper `message`.",
     "",
     "After the helper reports success, stop. Do not write workflow artifacts directly for this step."
   ].join("\n");
-}
-
-function standardPromptInputFields(state = {}) {
-  return {
-    response: normalizeText(state.response),
-    source: normalizeText(state.source)
-  };
 }
 
 function promptActionIsReadyForDone(input = {}) {
@@ -462,11 +458,12 @@ function promptStepDoneView(context = {}, machine = {}, state = {}) {
   };
 }
 
-function promptStepNeedInputView(context = {}, machine = {}, state = {}) {
+function promptStepWaitingForInputView(context = {}, machine = {}, state = {}) {
   return {
-    interaction: promptNeedInputInteraction({
+    interaction: promptWaitingForInputInteraction({
+      actionId: machine.promptActionId,
       prompt: state.message || "Codex needs more information before this step can continue.",
-      title: "Codex needs input"
+      title: "Talk to Codex"
     }),
     next: nextForSession(context.session, {
       disabledReason: "Answer Codex before continuing."
@@ -495,7 +492,7 @@ async function handleStandardPromptInput(context = {}, machine = {}, {
       assertAgentResultSource(context.session, input);
       break;
     case STEP_STATUS.READY:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
     case STEP_STATUS.FAILED:
       break;
     default:
@@ -505,22 +502,13 @@ async function handleStandardPromptInput(context = {}, machine = {}, {
   switch (state.status) {
     case STEP_STATUS.READY:
     case STEP_STATUS.AWAITING_AGENT_RESULT:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
     case STEP_STATUS.FAILED:
-      if (input.kind === STEP_INPUT_KIND.NEED_INPUT) {
-        await writeState(context, machine, machineState(STEP_STATUS.NEED_INPUT, {
+      if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+        await writeState(context, machine, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
           from: STEP_STATUS.AWAITING_AGENT_RESULT,
           message: input.message,
           source: input.source
-        }));
-        return;
-      }
-      if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-        await writeState(context, machine, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
-          ...standardPromptInputFields({
-            response: input.text || input.fields.response,
-            source: input.source
-          })
         }));
         return;
       }
@@ -553,7 +541,7 @@ async function markPromptActionStarted(context = {}, machine = {}, actionId = ""
   switch (state.status) {
     case STEP_STATUS.READY:
     case STEP_STATUS.FAILED:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
       await writeState(context, machine, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
         response: state.response,
         source: state.source
@@ -584,7 +572,7 @@ async function submitCommandFailureInput(context = {}, machine = {}) {
   const state = await readState(context, machine);
   const input = normalizeMachineInput(context.input);
   switch (state.status) {
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
     case STEP_STATUS.FAILED:
       if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
         await writeState(context, machine, machineState(STEP_STATUS.READY, {
@@ -612,7 +600,7 @@ async function markCommandActionStarted(context = {}, machine = {}, actionIds = 
   switch (state.status) {
     case STEP_STATUS.READY:
     case STEP_STATUS.FAILED:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
       await writeState(context, machine, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
         actionId: context.actionId
       }));
@@ -639,7 +627,7 @@ async function writeCommandActionFinishedState(context = {}, machine = {}, {
   switch (state.status) {
     case STEP_STATUS.ATTEMPTING_EXECUTION:
     case STEP_STATUS.READY:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
     case STEP_STATUS.FAILED:
       if (done) {
         await writeState(context, machine, machineState(STEP_STATUS.DONE));
@@ -649,7 +637,7 @@ async function writeCommandActionFinishedState(context = {}, machine = {}, {
         await writeState(context, machine, machineState(incompleteState));
         return;
       }
-      await writeState(context, machine, machineState(STEP_STATUS.NEED_INPUT, {
+      await writeState(context, machine, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
         from: STEP_STATUS.ATTEMPTING_EXECUTION,
         message: normalizeText(context.actionResult?.message),
         output: normalizeText(context.actionResult?.output),
@@ -677,7 +665,7 @@ function commandStepView(context = {}, machine = {}, state = {}, {
         stepMachine: publicState(machine, state)
       };
 
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
       return {
         interaction: commandFailureInteraction({
           prompt: state.message || failurePrompt,
@@ -747,7 +735,7 @@ const workSourceSelectedMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
       case STEP_STATUS.FAILED:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, await commandSucceeded(context, "work_source")
           ? machineState(STEP_STATUS.DONE)
           : machineState(STEP_STATUS.FAILED, {
@@ -770,7 +758,7 @@ const worktreeCreatedMachine = {
       return machineState(STEP_STATUS.DONE);
     }
     if (!metadataExists(context.session, "work_source")) {
-      return machineState(STEP_STATUS.NEED_INPUT, {
+      return machineState(STEP_STATUS.WAITING_FOR_INPUT, {
         message: "Choose a work source before creating the worktree."
       });
     }
@@ -793,7 +781,7 @@ const worktreeCreatedMachine = {
           stepMachine: publicState(this, state)
         };
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         if (state.from === STEP_STATUS.ATTEMPTING_EXECUTION) {
           return {
             actions: disableAction(context.session, "create_worktree", "Resolve the worktree command failure before retrying."),
@@ -831,7 +819,7 @@ const worktreeCreatedMachine = {
     const state = await readState(context, this);
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
           await writeState(context, this, machineState(STEP_STATUS.READY, {
@@ -859,7 +847,7 @@ const worktreeCreatedMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
       case STEP_STATUS.FAILED:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
         return;
 
@@ -880,10 +868,10 @@ const worktreeCreatedMachine = {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.READY:
       case STEP_STATUS.FAILED:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, await commandSucceeded(context, "worktree_path")
           ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.NEED_INPUT, {
+          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
               from: STEP_STATUS.ATTEMPTING_EXECUTION,
               message: normalizeText(context.actionResult?.message),
               output: normalizeText(context.actionResult?.output)
@@ -922,7 +910,7 @@ const dependenciesInstalledMachine = {
           stepMachine: publicState(this, state)
         };
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         return {
           actions: disableAction(context.session, "install_dependencies", "Resolve the install command failure before retrying."),
           interaction: commandFailureInteraction({
@@ -952,7 +940,7 @@ const dependenciesInstalledMachine = {
     const state = await readState(context, this);
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
           await writeState(context, this, machineState(STEP_STATUS.READY, {
@@ -980,7 +968,7 @@ const dependenciesInstalledMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
       case STEP_STATUS.FAILED:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
         return;
 
@@ -1001,10 +989,10 @@ const dependenciesInstalledMachine = {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.READY:
       case STEP_STATUS.FAILED:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, await commandSucceeded(context, "dependencies_installed")
           ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.NEED_INPUT, {
+          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
               from: STEP_STATUS.ATTEMPTING_EXECUTION,
               message: normalizeText(context.actionResult?.message),
               output: normalizeText(context.actionResult?.output)
@@ -1033,7 +1021,7 @@ const issueDefinitionMachine = {
     if (issueFilesAreReady(context.session)) {
       return machineState(STEP_STATUS.CONFIRM_FILES);
     }
-    return machineState(STEP_STATUS.NEED_INPUT, {
+    return machineState(STEP_STATUS.WAITING_FOR_INPUT, {
       doing: "discussion"
     });
   },
@@ -1071,11 +1059,11 @@ const issueDefinitionMachine = {
         };
       }
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
       default:
         return {
-          interaction: issueInputInteraction(STEP_STATUS.NEED_INPUT, {}),
+          interaction: issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {}),
           next: nextForSession(context.session, {
             disabledReason: "Define and save the issue before continuing."
           }),
@@ -1088,18 +1076,18 @@ const issueDefinitionMachine = {
     const state = await readState(context, this);
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.CONFIRM_FILES:
       case STEP_STATUS.FAILED: {
-        if (input.kind === STEP_INPUT_KIND.NEED_INPUT) {
-          await writeState(context, this, machineState(STEP_STATUS.NEED_INPUT, {
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
             doing: "discussion",
             message: input.message
           }));
           return;
         }
         if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-          await writeState(context, this, machineState(state.from || STEP_STATUS.NEED_INPUT, {
+          await writeState(context, this, machineState(state.from || STEP_STATUS.WAITING_FOR_INPUT, {
             response: input.text,
             source: input.source
           }));
@@ -1137,7 +1125,7 @@ const issueDefinitionMachine = {
 
     const state = await readState(context, this);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.CONFIRM_FILES:
       case STEP_STATUS.FAILED:
         await writeState(context, this, await commandSucceeded(context, "issue_url")
@@ -1163,7 +1151,7 @@ const issueSubmittedMachine = {
     }
     return issueFilesAreReady(context.session)
       ? machineState(STEP_STATUS.READY)
-      : machineState(STEP_STATUS.NEED_INPUT, {
+      : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
           message: "Define and save the issue before creating it on GitHub."
         });
   },
@@ -1172,7 +1160,7 @@ const issueSubmittedMachine = {
     let state = await readState(context, this);
     if (metadataExists(context.session, "issue_url")) {
       state = machineState(STEP_STATUS.DONE);
-    } else if (issueFilesAreReady(context.session) && state.status === STEP_STATUS.NEED_INPUT && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
+    } else if (issueFilesAreReady(context.session) && state.status === STEP_STATUS.WAITING_FOR_INPUT && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
       state = await writeState(context, this, machineState(STEP_STATUS.READY));
     }
 
@@ -1186,7 +1174,7 @@ const issueSubmittedMachine = {
           stepMachine: publicState(this, state)
         };
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         return {
           actions: disableAction(context.session, "create_issue_on_gh", "Resolve the issue command failure before retrying."),
           interaction: commandFailureInteraction({
@@ -1216,7 +1204,7 @@ const issueSubmittedMachine = {
     const state = await readState(context, this);
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
           await writeState(context, this, machineState(STEP_STATUS.READY, {
@@ -1263,11 +1251,11 @@ const issueSubmittedMachine = {
     switch (state.status) {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.READY:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         await writeState(context, this, await commandSucceeded(context, "issue_url")
           ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.NEED_INPUT, {
+          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
               from: STEP_STATUS.ATTEMPTING_EXECUTION,
               message: normalizeText(context.actionResult?.message),
               output: normalizeText(context.actionResult?.output)
@@ -1288,7 +1276,7 @@ const seedApplicationDefinitionMachine = {
     if (issueFilesAreReady(context.session)) {
       return machineState(STEP_STATUS.CONFIRM_FILES);
     }
-    return machineState(STEP_STATUS.NEED_INPUT, {
+    return machineState(STEP_STATUS.WAITING_FOR_INPUT, {
       doing: "discussion"
     });
   },
@@ -1312,11 +1300,11 @@ const seedApplicationDefinitionMachine = {
         };
       }
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
       default:
         return {
-          interaction: issueInputInteraction(STEP_STATUS.NEED_INPUT, {}),
+          interaction: issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {}),
           next: nextForSession(context.session, {
             disabledReason: "Define and save the seed issue before continuing."
           }),
@@ -1331,6 +1319,7 @@ const seedApplicationDefinitionMachine = {
 };
 
 const makePlanMachine = {
+  promptActionId: "make_plan",
   stepId: "plan_made",
 
   initialState() {
@@ -1342,8 +1331,8 @@ const makePlanMachine = {
     switch (state.status) {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state);
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.FAILED:
@@ -1363,13 +1352,14 @@ const makePlanMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The implementation plan has been written in the Codex response and is ready for execution.",
-      needsInputMeaning: "You cannot make a useful plan without a user decision or clarification."
+      waitingForInputMeaning: "You cannot make a useful plan without a user decision or clarification."
     });
   }
 };
 
 const seedPlanMadeMachine = {
   ...makePlanMachine,
+  promptActionId: "make_seed_plan",
   stepId: "seed_plan_made",
 
   async actionStarted(context = {}) {
@@ -1379,12 +1369,13 @@ const seedPlanMadeMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The seed implementation plan has been written in the Codex response and is ready for execution.",
-      needsInputMeaning: "You cannot make a useful seed plan without a user decision or clarification."
+      waitingForInputMeaning: "You cannot make a useful seed plan without a user decision or clarification."
     });
   }
 };
 
 const executePlanMachine = {
+  promptActionId: "execute_plan",
   stepId: "plan_executed",
 
   initialState() {
@@ -1396,8 +1387,8 @@ const executePlanMachine = {
     switch (state.status) {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state);
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.FAILED:
@@ -1417,13 +1408,14 @@ const executePlanMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The implementation work is complete enough to continue to review.",
-      needsInputMeaning: "You cannot continue implementation without a user decision or missing project detail."
+      waitingForInputMeaning: "You cannot continue implementation without a user decision or missing project detail."
     });
   }
 };
 
 const seedPlanExecutedMachine = {
   ...executePlanMachine,
+  promptActionId: "execute_seed_plan",
   stepId: "seed_plan_executed",
 
   async actionStarted(context = {}) {
@@ -1433,13 +1425,14 @@ const seedPlanExecutedMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The seed implementation work is complete enough to continue.",
-      needsInputMeaning: "You cannot continue seeding without a user decision or missing project detail."
+      waitingForInputMeaning: "You cannot continue seeding without a user decision or missing project detail."
     });
   }
 };
 
 const deepUiCheckMachine = {
   ...executePlanMachine,
+  promptActionId: "run_deep_ui_check",
   stepId: "deep_ui_check_run",
 
   async actionStarted(context = {}) {
@@ -1449,13 +1442,14 @@ const deepUiCheckMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The deep UI check has been completed or intentionally found no required fix.",
-      needsInputMeaning: "You cannot complete the UI check without a user decision."
+      waitingForInputMeaning: "You cannot complete the UI check without a user decision."
     });
   }
 };
 
 const reviewRunMachine = {
   ...executePlanMachine,
+  promptActionId: "run_deslop",
   stepId: "review_run",
 
   async actionStarted(context = {}) {
@@ -1465,13 +1459,14 @@ const reviewRunMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The review/deslop loop has completed and only acceptable low-risk findings remain.",
-      needsInputMeaning: "You cannot complete review/deslop without a user decision."
+      waitingForInputMeaning: "You cannot complete review/deslop without a user decision."
     });
   }
 };
 
 const projectKnowledgeUpdatedMachine = {
   ...executePlanMachine,
+  promptActionId: "update_project_knowledge",
   stepId: "project_knowledge_updated",
 
   async actionStarted(context = {}) {
@@ -1481,12 +1476,13 @@ const projectKnowledgeUpdatedMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "Project knowledge has been updated or there is no adapter-supported project knowledge to update.",
-      needsInputMeaning: "You cannot update project knowledge without a user decision."
+      waitingForInputMeaning: "You cannot update project knowledge without a user decision."
     });
   }
 };
 
 const reportCreatedMachine = {
+  promptActionId: "write_report",
   stepId: "report_created",
 
   initialState(context = {}) {
@@ -1504,8 +1500,8 @@ const reportCreatedMachine = {
     switch (state.status) {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state);
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.FAILED:
@@ -1530,12 +1526,13 @@ const reportCreatedMachine = {
         response: "Markdown session report"
       },
       doneMeaning: "The report text is complete and should be saved by Studio as the session report.",
-      needsInputMeaning: "You cannot write the report without a user decision or missing context."
+      waitingForInputMeaning: "You cannot write the report without a user decision or missing context."
     });
   }
 };
 
 const agentConversationMachine = {
+  promptActionId: "agent_conversation",
   stepId: "agent_conversation",
 
   initialState() {
@@ -1545,8 +1542,8 @@ const agentConversationMachine = {
   async view(context = {}) {
     const state = await readState(context, this);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state);
       case STEP_STATUS.AWAITING_AGENT_RESULT:
         return promptStepWaitingView(context, this, state, "Wait for Codex to finish this conversation turn.");
       case STEP_STATUS.READY:
@@ -1581,7 +1578,7 @@ const agentConversationMachine = {
         response: "Concise Markdown response describing what changed, checks run, and any blockers"
       },
       doneMeaning: "The current Codex conversation turn is complete. The user decides whether to ask another question or continue.",
-      needsInputMeaning: "You need a user answer before you can complete this conversation turn."
+      waitingForInputMeaning: "You need a user answer before you can complete this conversation turn."
     });
   }
 };
@@ -1593,6 +1590,7 @@ const maintenanceConversationMachine = {
 
 const implementationReviewMachine = {
   ...agentConversationMachine,
+  promptActionId: "human_review_conversation",
   stepId: "implementation_reviewed",
 
   async actionStarted(context = {}) {
@@ -1604,8 +1602,8 @@ const implementationReviewMachine = {
   async view(context = {}) {
     const state = await readState(context, this);
     switch (state.status) {
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state);
       case STEP_STATUS.AWAITING_AGENT_RESULT:
         return promptStepWaitingView(context, this, state, "Wait for Codex to finish this review turn.");
       case STEP_STATUS.READY:
@@ -1624,6 +1622,7 @@ const implementationReviewMachine = {
 
 const finalReviewMachine = {
   ...implementationReviewMachine,
+  promptActionId: "final_review_conversation",
   stepId: "changes_accepted",
 
   async actionStarted(context = {}) {
@@ -1713,6 +1712,7 @@ const changesCommittedMachine = {
 };
 
 const pullRequestMergedMachine = {
+  promptActionId: "prepare_for_merge",
   stepId: "pr_merged",
 
   initialState(context = {}) {
@@ -1730,8 +1730,8 @@ const pullRequestMergedMachine = {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
 
-      case STEP_STATUS.NEED_INPUT:
-        return promptStepNeedInputView(context, this, {
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, {
           ...state,
           message: state.message || "The merge step needs input before it can continue."
         });
@@ -1751,13 +1751,13 @@ const pullRequestMergedMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
           assertAgentResultSource(context.session, input);
         }
-        if (input.kind === STEP_INPUT_KIND.NEED_INPUT) {
-          await writeState(context, this, machineState(STEP_STATUS.NEED_INPUT, {
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
             from: state.status === STEP_STATUS.ATTEMPTING_EXECUTION
               ? STEP_STATUS.ATTEMPTING_EXECUTION
               : STEP_STATUS.AWAITING_AGENT_RESULT,
@@ -1812,7 +1812,7 @@ const pullRequestMergedMachine = {
   promptInstruction() {
     return currentStepHelperInstruction({
       doneMeaning: "The pull request and main checkout are ready for the merge command.",
-      needsInputMeaning: "The merge preparation found a blocker that needs user input."
+      waitingForInputMeaning: "The merge preparation found a blocker that needs user input."
     });
   }
 };
@@ -1908,7 +1908,7 @@ const pullRequestMachine = {
           stepMachine: publicState(this, state)
         };
 
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
         return {
           actions: disableAction(context.session, "create_pr_on_gh", "Resolve the pull request input request before retrying."),
           interaction: commandFailureInteraction({
@@ -1939,14 +1939,14 @@ const pullRequestMachine = {
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
       case STEP_STATUS.AWAITING_AGENT_RESULT:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.CONFIRM_FILES:
       case STEP_STATUS.FAILED: {
         if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
           assertAgentResultSource(context.session, input);
         }
-        if (input.kind === STEP_INPUT_KIND.NEED_INPUT) {
-          await writeState(context, this, machineState(STEP_STATUS.NEED_INPUT, {
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
             from: state.from || STEP_STATUS.AWAITING_AGENT_RESULT,
             message: input.message,
             source: input.source
@@ -2020,11 +2020,11 @@ const pullRequestMachine = {
     switch (state.status) {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.NEED_INPUT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
       case STEP_STATUS.FAILED:
         await writeState(context, this, await commandSucceeded(context, "pr_url")
           ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.NEED_INPUT, {
+          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
               from: STEP_STATUS.ATTEMPTING_EXECUTION,
               message: normalizeText(context.actionResult?.message),
               output: normalizeText(context.actionResult?.output)
@@ -2044,7 +2044,7 @@ const pullRequestMachine = {
         title: "Pull request title"
       },
       doneMeaning: "The pull request title and body are ready for user confirmation.",
-      needsInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
+      waitingForInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
     });
   }
 };
@@ -2154,7 +2154,7 @@ async function applyStepMachineView(runtime, session = {}) {
     ...session.currentStepDefinition,
     ...(view.interaction === undefined ? {} : { interaction: view.interaction })
   };
-  if ([STEP_STATUS.DONE, STEP_STATUS.NEED_INPUT].includes(normalizeText(stepMachine?.status)) && currentStepDefinition.autopilot) {
+  if ([STEP_STATUS.DONE, STEP_STATUS.WAITING_FOR_INPUT].includes(normalizeText(stepMachine?.status)) && currentStepDefinition.autopilot) {
     currentStepDefinition.autopilot = {
       ...currentStepDefinition.autopilot,
       stage: null

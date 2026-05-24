@@ -105,7 +105,7 @@ function useAiStudioSessionCodexHandoff({
 
   function syncWithSession(session = {}) {
     const stepStatus = String(session?.stepMachine?.status || "");
-    if (["confirm_files", "done", "need_input", "ready"].includes(stepStatus)) {
+    if (["confirm_files", "done", "waiting_for_input", "ready"].includes(stepStatus)) {
       busy.value = false;
       working.value = false;
     }

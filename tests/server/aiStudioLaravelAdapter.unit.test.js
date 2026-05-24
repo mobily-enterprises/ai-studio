@@ -228,7 +228,7 @@ test("laravel seed issue definition uses the current-step input contract before 
     const initialSession = await runtime.getSession("laravel_seed_prompt");
 
     assert.equal(initialSession.currentStep, "seed_application_defined");
-    assert.equal(initialSession.stepMachine.status, "need_input");
+    assert.equal(initialSession.stepMachine.status, "waiting_for_input");
     assert.equal(initialSession.currentStepDefinition.interaction.submitKind, "ready");
 
     const afterInput = await runtime.submitCurrentStepInput("laravel_seed_prompt", {
@@ -239,7 +239,7 @@ test("laravel seed issue definition uses the current-step input contract before 
       },
       kind: "ready",
       stepId: "seed_application_defined",
-      stepStatus: "need_input"
+      stepStatus: "waiting_for_input"
     });
 
     assert.equal(afterInput.stepMachine.status, "confirm_files");

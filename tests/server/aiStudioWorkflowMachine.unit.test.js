@@ -800,7 +800,7 @@ test("ai-studio runtime prompt handoff shows the action input outside hidden ter
   });
 });
 
-test("ai-studio runtime preserves user responses when a prompt step resumes", async () => {
+test("ai-studio runtime presents waiting_for_input as the same Codex conversation intent", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
       clock: () => new Date("2026-05-16T01:02:03.000Z"),
@@ -816,32 +816,33 @@ test("ai-studio runtime preserves user responses when a prompt step resumes", as
       conversationRequest: "Ask the user what to do."
     });
     await runtime.submitCurrentStepInput("prompt_response_resume", {
-      kind: "need_input",
+      kind: "waiting_for_input",
       message: "What food should I use?",
       source: "codex",
       stepId: "maintenance_conversation",
       stepStatus: "awaiting_agent_result"
     });
-    await runtime.submitCurrentStepInput("prompt_response_resume", {
+
+    const waiting = await runtime.getSession("prompt_response_resume");
+    assert.equal(waiting.stepMachine.status, "waiting_for_input");
+    assert.equal(waiting.presentation.screen.kind, "conversation");
+    assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
+    assert.equal(waiting.presentation.screen.message, "What food should I use?");
+    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex"]);
+    assert.equal(waiting.intents[0].actionId, "agent_conversation");
+    assert.equal(waiting.intents[0].inputFields[0].name, "conversationRequest");
+
+    const afterAnswer = await runtime.runIntent("prompt_response_resume", "talk_to_codex", {
       fields: {
-        response: "Use Pescara."
+        conversationRequest: "Use Pescara."
       },
-      kind: "user_response",
-      stepId: "maintenance_conversation",
-      stepStatus: "need_input"
+      stepId: waiting.currentStep,
+      stepStatus: waiting.stepMachine.status
     });
 
-    const beforeResume = await runtime.getSession("prompt_response_resume");
-    assert.equal(beforeResume.stepMachine.status, "awaiting_agent_result");
-    assert.equal(beforeResume.stepMachine.response, "Use Pescara.");
-
-    await runtime.runAction("prompt_response_resume", "agent_conversation", {
-      conversationRequest: "Continue."
-    });
-
-    const afterResume = await runtime.getSession("prompt_response_resume");
-    assert.equal(afterResume.stepMachine.status, "awaiting_agent_result");
-    assert.equal(afterResume.stepMachine.response, "Use Pescara.");
+    assert.equal(afterAnswer.stepMachine.status, "awaiting_agent_result");
+    assert.equal(afterAnswer.actionResult.status, "prompt_ready");
+    assert.match(afterAnswer.actionResult.codexPromptHandoff.terminalInput, /^Use Pescara\.\n\n\[\[AI_STUDIO_CONTEXT_START\]\]/u);
   });
 });
 

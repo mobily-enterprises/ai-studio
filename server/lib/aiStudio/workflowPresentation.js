@@ -100,13 +100,14 @@ function stepMachineIsWaitingForCodex(session = {}) {
 function stepMachineNeedsInput(session = {}) {
   return [
     STEP_STATUS.CONFIRM_FILES,
-    STEP_STATUS.NEED_INPUT,
+    STEP_STATUS.WAITING_FOR_INPUT,
     STEP_STATUS.FAILED
   ].includes(stepMachineStatus(session));
 }
 
 function screen(kind, {
   icon = "cog",
+  input = null,
   message = "",
   primaryIntentId = "",
   sections = [],
@@ -116,6 +117,7 @@ function screen(kind, {
 } = {}) {
   return {
     icon,
+    ...(isObject(input) ? { input } : {}),
     kind,
     message: normalizeText(message),
     primaryIntentId: normalizeText(primaryIntentId),
@@ -316,9 +318,29 @@ function interactionPresentation(session = {}) {
   if (!isObject(interaction)) {
     return null;
   }
+  if (normalizeText(interaction.intentId) === INTENT_IDS.TALK_TO_CODEX || normalizeText(interaction.kind) === "conversation") {
+    const action = actionById(session, interaction.actionId || stageAction(session)?.actionId || ACTION_IDS.AGENT_CONVERSATION);
+    return {
+      intents: [
+        intentForAction(INTENT_IDS.TALK_TO_CODEX, action, {
+          inputFields: interaction.fields,
+          label: interaction.submitLabel || action?.label || "Send to Codex",
+          style: "primary"
+        })
+      ],
+      screen: screen("conversation", {
+        input: interaction,
+        message: interaction.prompt || "",
+        primaryIntentId: INTENT_IDS.TALK_TO_CODEX,
+        sections: presentationSections(["response_preview"]),
+        title: interaction.title || currentStepLabel(session)
+      })
+    };
+  }
   return {
     intents: [],
     screen: screen("input", {
+      input: interaction,
       message: interaction.prompt || "",
       title: interaction.title || currentStepLabel(session)
     })
@@ -487,7 +509,7 @@ function promptPresentation(session = {}) {
         statusText: "Waiting for Codex."
       };
     case STEP_STATUS.CONFIRM_FILES:
-    case STEP_STATUS.NEED_INPUT:
+    case STEP_STATUS.WAITING_FOR_INPUT:
       return {
         state: "needs_user_input",
         statusText: "Input is required."

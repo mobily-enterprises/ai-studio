@@ -258,7 +258,10 @@ function maskedCodexTerminalDockerArgs(args = []) {
     : arg);
 }
 
-function createCodexTerminalController({ projectService } = {}) {
+function createCodexTerminalController({
+  projectService,
+  publishSessionChanged = async () => null
+} = {}) {
   return Object.freeze({
     async closeAllForSession(sessionId) {
       await closeTerminalSessionsForNamespace(codexTerminalNamespace(sessionId));
@@ -405,6 +408,9 @@ function createCodexTerminalController({ projectService } = {}) {
           targetRoot
         });
         const currentStepInputHelper = await prepareCurrentStepInputHelper({
+          onSessionChanged: (changedSessionId) => publishSessionChanged(changedSessionId, {
+            reason: "current-step-input-helper"
+          }),
           projectService,
           session,
           targetRoot

@@ -1,14 +1,17 @@
-import { computed, watch } from "vue";
+import { computed, proxyRefs, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
+import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
 import { useList } from "@jskit-ai/users-web/client/composables/useList";
 import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
 import { useStoredSelection } from "@/composables/useStoredSelection.js";
 import {
+  AI_STUDIO_SESSION_CHANGED_EVENT,
   AI_STUDIO_SESSIONS_API_SUFFIX,
   AI_STUDIO_SURFACE_ID,
   LOCAL_STUDIO_COMMAND_OPTIONS,
   SELECTED_SESSION_STORAGE_KEY,
+  aiStudioSessionQueryKey,
   aiStudioSessionsQueryKey
 } from "@/lib/aiStudioSessionRequestConfig.js";
 import {
@@ -39,6 +42,14 @@ function useAiStudioSessionData({
   const sessionsApiPath = computed(() => paths.api(AI_STUDIO_SESSIONS_API_SUFFIX, {
     surface: AI_STUDIO_SURFACE_ID
   }));
+  const selectedSessionPath = computed(() => {
+    const sessionId = String(selectedSessionId.value || "").trim();
+    return sessionId ? `${sessionsApiPath.value}/${encodeURIComponent(sessionId)}` : "";
+  });
+  const selectedSessionQueryKey = computed(() => [
+    ...aiStudioSessionQueryKey(AI_STUDIO_SURFACE_ID, ROUTE_VISIBILITY_PUBLIC),
+    String(selectedSessionId.value || "").trim()
+  ]);
 
   const sessionList = useList({
     access: "never",
@@ -47,6 +58,9 @@ function useAiStudioSessionData({
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
     placementSource: "ai-studio.sessions.list",
     queryKeyFactory: aiStudioSessionsQueryKey,
+    realtime: {
+      event: AI_STUDIO_SESSION_CHANGED_EVENT
+    },
     selectItems: (payload) => Array.isArray(payload?.sessions) ? payload.sessions : [],
     surfaceId: AI_STUDIO_SURFACE_ID
   });
@@ -77,6 +91,26 @@ function useAiStudioSessionData({
     surfaceId: AI_STUDIO_SURFACE_ID,
     writeMethod: "POST"
   });
+  const selectedSessionResource = useEndpointResource({
+    enabled: computed(() => Boolean(selectedSessionId.value)),
+    fallbackLoadError: "AI Studio session could not be loaded.",
+    path: selectedSessionPath,
+    queryKey: selectedSessionQueryKey,
+    readMethod: "GET",
+    refreshOnPull: true,
+    realtime: {
+      event: AI_STUDIO_SESSION_CHANGED_EVENT,
+      matches: ({ payload = {} } = {}) => {
+        const changedSessionId = String(payload.sessionId || payload.entityId || "").trim();
+        return Boolean(changedSessionId) && changedSessionId === selectedSessionId.value;
+      }
+    }
+  });
+  const selectedSessionView = proxyRefs({
+    loadError: selectedSessionResource.loadError,
+    record: computed(() => selectedSessionResource.data.value || null),
+    refresh: selectedSessionResource.reload
+  });
 
   const sessions = computed(() => visibleAiStudioSessions(sessionList.items || []));
   const creationOptions = computed(() => sessionList.pages?.[0]?.creation || {});
@@ -92,7 +126,14 @@ function useAiStudioSessionData({
   const selectedListSession = computed(() => {
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
-  const selectedSession = computed(() => enrichAiStudioSessionForDisplay(selectedListSession.value));
+  const selectedRawSession = computed(() => {
+    const viewedSession = selectedSessionView.record;
+    if (viewedSession?.sessionId === selectedSessionId.value && viewedSession?.ok !== false) {
+      return viewedSession;
+    }
+    return selectedListSession.value;
+  });
+  const selectedSession = computed(() => enrichAiStudioSessionForDisplay(selectedRawSession.value));
   const isSelectedSessionClosed = computed(() => isClosedAiStudioSession(selectedSession.value || {}));
   const pageLoading = computed(() => Boolean(sessionList.isLoading));
   const limits = computed(() => aiStudioSessionLimits({
@@ -121,8 +162,31 @@ function useAiStudioSessionData({
   const timelineSteps = computed(() => buildAiStudioTimelineSteps(selectedSession.value));
   const sessionFacts = computed(() => aiStudioSessionFacts(selectedSession.value || {}));
 
+  function sessionForId(sessionId = "") {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) {
+      return null;
+    }
+    if (normalizedSessionId === selectedSessionId.value && selectedRawSession.value) {
+      return enrichAiStudioSessionForDisplay(selectedRawSession.value);
+    }
+    return enrichAiStudioSessionForDisplay(
+      sessions.value.find((session) => session.sessionId === normalizedSessionId) || null
+    );
+  }
+
+  async function refreshSelectedSession() {
+    if (!selectedSessionId.value) {
+      return null;
+    }
+    return selectedSessionView.refresh();
+  }
+
   async function refreshSessionData() {
-    await sessionList.reload();
+    await Promise.all([
+      sessionList.reload(),
+      refreshSelectedSession()
+    ]);
   }
 
   function selectSessionId(sessionId = "") {
@@ -170,7 +234,9 @@ function useAiStudioSessionData({
     selectSessionId,
     selectedSession,
     selectedSessionId,
+    selectedSessionView,
     selectedSessionTitle,
+    sessionForId,
     sessionFacts,
     sessionList,
     sessions,
