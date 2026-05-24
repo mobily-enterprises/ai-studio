@@ -203,8 +203,25 @@ function useAiStudioSessionData({
     });
   }
 
+  function sessionIdExistsInList(sessionId = "", nextSessions = []) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    return Boolean(normalizedSessionId) && nextSessions.some((session) => session.sessionId === normalizedSessionId);
+  }
+
+  function shouldPreserveSelectedSessionDuringRefresh(nextSessions = []) {
+    const currentSessionId = String(selectedSessionId.value || "").trim();
+    if (!currentSessionId || sessionIdExistsInList(currentSessionId, nextSessions)) {
+      return false;
+    }
+    return Boolean(
+      sessionList.isLoading ||
+      createSessionCommand.isRunning ||
+      selectedSessionResource.isLoading?.value
+    );
+  }
+
   watch(sessions, (nextSessions) => {
-    if (sessionList.isInitialLoading) {
+    if (sessionList.isInitialLoading || shouldPreserveSelectedSessionDuringRefresh(nextSessions)) {
       return;
     }
     sessionSelection.selectAvailableId(nextSessions, {

@@ -32,9 +32,8 @@ const featureActions = Object.freeze([
     },
     observability: {},
     async execute(input, context, deps) {
-      void input;
       void context;
-      return deps.featureService.listSessions();
+      return deps.featureService.listSessions(input || {});
     }
   },
   {

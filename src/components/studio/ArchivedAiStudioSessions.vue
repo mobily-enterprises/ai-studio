@@ -173,6 +173,9 @@ const sessionList = useList({
   ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
   placementSource: "ai-studio.sessions.archive",
   queryKeyFactory: aiStudioSessionsQueryKey,
+  requestQueryParams: computed(() => ({
+    archive: props.archive
+  })),
   selectItems: (payload) => Array.isArray(payload?.sessions) ? payload.sessions : [],
   surfaceId: AI_STUDIO_SURFACE_ID
 });

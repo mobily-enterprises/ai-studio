@@ -289,7 +289,8 @@ async function mockSessionHistoryArchives(page, archiveRequests = []) {
     await fulfillJson(route, currentAppPayload);
   });
   await page.route("**/api/ai-studio/sessions**", async (route) => {
-    archiveRequests.push(new URL(route.request().url()).pathname);
+    const url = new URL(route.request().url());
+    archiveRequests.push(`${url.pathname}${url.search}`);
     await fulfillJson(route, {
       limits: {
         maxOpenSessions: 5,

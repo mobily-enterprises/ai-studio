@@ -106,6 +106,242 @@ test.describe("Autopilot dumb client contract", () => {
     await expect.poll(() => commandTerminalStarts).toBe(0);
   });
 
+  test("continues from server state when a command stream closes after server completion", async ({ page }) => {
+    await mockCommandTerminalSocketThatCloses(page);
+    const advances: unknown[] = [];
+    const session = sessionPayload({
+      actions: [
+        {
+          dispatchRoute: "command-terminal",
+          enabled: true,
+          id: "server_command",
+          label: "Server command",
+          type: "command"
+        }
+      ],
+      presentation: {
+        auto: {
+          nextOperation: {
+            actionId: "server_command",
+            executable: true,
+            id: "command-terminal:server_command",
+            kind: "command",
+            label: "Server command",
+            route: "command-terminal"
+          }
+        },
+        screen: {
+          kind: "ready",
+          sections: [],
+          title: "Server command"
+        }
+      }
+    });
+    await mockAiStudioSession(page, session, {
+      onAdvance: () => {
+        advances.push({});
+        Object.assign(session, sessionPayload({
+          currentStep: "next_server_step",
+          currentStepDefinition: {
+            id: "next_server_step",
+            label: "Next server step"
+          },
+          presentation: {
+            auto: {
+              nextOperation: {
+                executable: false,
+                kind: "stop",
+                reason: "complete"
+              }
+            },
+            screen: {
+              kind: "ready",
+              sections: [],
+              title: "Next server step"
+            },
+            step: {
+              id: "next_server_step",
+              label: "Next server step",
+              status: "ready"
+            }
+          },
+          stepMachine: {
+            status: "ready",
+            stepId: "next_server_step"
+          }
+        }));
+      },
+      onCommandTerminalClose: () => {
+        session.next = {
+          disabledReason: "",
+          enabled: true,
+          label: "Next",
+          stepId: "next_server_step",
+          visible: true
+        };
+        session.presentation = {
+          ...(session.presentation as Record<string, unknown>),
+          auto: {
+            nextOperation: {
+              executable: true,
+              id: "session-advance:next_server_step",
+              kind: "advance",
+              label: "Next",
+              route: "session-advance"
+            }
+          },
+          screen: {
+            kind: "ready",
+            sections: [],
+            title: "Server command complete"
+          },
+          step: {
+            id: "server_step",
+            label: "Server step",
+            status: "done"
+          }
+        };
+        session.stepMachine = {
+          status: "done",
+          stepId: "server_step"
+        };
+      },
+      onCommandTerminalStart: () => {
+        // The server owns command completion; the socket below intentionally
+        // closes before sending an exited status.
+        return {
+          commandPreview: "echo test",
+          id: "server-command-terminal",
+          ok: true,
+          status: "running"
+        };
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect.poll(() => advances.length).toBe(1);
+    await expect(page.getByRole("heading", { name: "Next server step" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  });
+
+  test("continues from server state after a command exits successfully", async ({ page }) => {
+    const advances: unknown[] = [];
+    const session = sessionPayload({
+      actions: [
+        {
+          dispatchRoute: "command-terminal",
+          enabled: true,
+          id: "server_command",
+          label: "Server command",
+          type: "command"
+        }
+      ],
+      presentation: {
+        auto: {
+          nextOperation: {
+            actionId: "server_command",
+            executable: true,
+            id: "command-terminal:server_command",
+            kind: "command",
+            label: "Server command",
+            route: "command-terminal"
+          }
+        },
+        screen: {
+          kind: "ready",
+          sections: [],
+          title: "Server command"
+        }
+      }
+    });
+    await mockAiStudioSession(page, session, {
+      onAdvance: () => {
+        advances.push({});
+        Object.assign(session, sessionPayload({
+          currentStep: "next_server_step",
+          currentStepDefinition: {
+            id: "next_server_step",
+            label: "Next server step"
+          },
+          presentation: {
+            auto: {
+              nextOperation: {
+                executable: false,
+                kind: "stop",
+                reason: "complete"
+              }
+            },
+            screen: {
+              kind: "ready",
+              sections: [],
+              title: "Next server step"
+            },
+            step: {
+              id: "next_server_step",
+              label: "Next server step",
+              status: "ready"
+            }
+          },
+          stepMachine: {
+            status: "ready",
+            stepId: "next_server_step"
+          }
+        }));
+      },
+      onCommandTerminalClose: () => {
+        session.next = {
+          disabledReason: "",
+          enabled: true,
+          label: "Next",
+          stepId: "next_server_step",
+          visible: true
+        };
+        session.presentation = {
+          ...(session.presentation as Record<string, unknown>),
+          auto: {
+            nextOperation: {
+              executable: true,
+              id: "session-advance:next_server_step",
+              kind: "advance",
+              label: "Next",
+              route: "session-advance"
+            }
+          },
+          screen: {
+            kind: "ready",
+            sections: [],
+            title: "Server command complete"
+          },
+          step: {
+            id: "server_step",
+            label: "Server step",
+            status: "done"
+          }
+        };
+        session.stepMachine = {
+          status: "done",
+          stepId: "server_step"
+        };
+      },
+      onCommandTerminalStart: () => {
+        return {
+          commandPreview: "echo test",
+          exitCode: 0,
+          id: "server-command-terminal",
+          ok: true,
+          output: "Server command output.",
+          status: "exited"
+        };
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect.poll(() => advances.length).toBe(1);
+    await expect(page.getByRole("heading", { name: "Next server step" })).toBeVisible();
+  });
+
   test("attaches to the server-owned Codex terminal preview without sending terminal input", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     let codexTerminalStartRequests = 0;
@@ -373,13 +609,17 @@ async function mockAiStudioSession(
   session: Record<string, unknown>,
   {
     onAction = () => undefined,
+    onAdvance = () => undefined,
+    onCommandTerminalClose = () => undefined,
     onCommandTerminalStart = () => undefined,
     onIntent = () => undefined,
     onStepInput = () => undefined,
     onCodexTerminalStart = () => undefined
   }: {
     onAction?: (actionId: string, body: unknown) => void;
-    onCommandTerminalStart?: () => void;
+    onAdvance?: () => void;
+    onCommandTerminalClose?: () => void;
+    onCommandTerminalStart?: () => Record<string, unknown> | void;
     onCodexTerminalStart?: () => void;
     onIntent?: (body: unknown) => void;
     onStepInput?: (body: unknown) => void;
@@ -408,13 +648,30 @@ async function mockAiStudioSession(
       });
       return;
     }
+    if (method === "POST" && url.pathname.endsWith("/advance")) {
+      onAdvance();
+      await fulfillJson(route, {
+        ok: true,
+        ...session
+      });
+      return;
+    }
     if (method === "POST" && url.pathname.endsWith("/command-terminal")) {
-      onCommandTerminalStart();
+      const commandTerminal = onCommandTerminalStart();
       await fulfillJson(route, {
         commandPreview: "echo test",
         id: "server-command-terminal",
         ok: true,
-        status: "exited"
+        status: "exited",
+        ...(commandTerminal && typeof commandTerminal === "object" ? commandTerminal : {})
+      });
+      return;
+    }
+    if (method === "DELETE" && /\/command-terminal\/[^/]+$/u.test(url.pathname)) {
+      onCommandTerminalClose();
+      await fulfillJson(route, {
+        closed: true,
+        ok: true
       });
       return;
     }
@@ -476,6 +733,56 @@ async function recordForbiddenText(page: Page, text: string) {
       });
     });
   }, text);
+}
+
+async function mockCommandTerminalSocketThatCloses(page: Page) {
+  await page.addInitScript(() => {
+    const OriginalWebSocket = window.WebSocket;
+
+    class MockWebSocket extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = MockWebSocket.CONNECTING;
+      url = "";
+
+      constructor(url) {
+        super();
+        this.url = String(url || "");
+        const pathname = new URL(this.url, window.location.href).pathname;
+        if (!pathname.includes("/command-terminal/")) {
+          return new OriginalWebSocket(url);
+        }
+        window.setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(new MessageEvent("message", {
+            data: JSON.stringify({
+              session: {
+                commandPreview: "echo test",
+                ok: true,
+                output: "Server command output.",
+                status: "running"
+              },
+              type: "snapshot"
+            })
+          }));
+          this.readyState = MockWebSocket.CLOSED;
+          this.dispatchEvent(new CloseEvent("close"));
+        }, 0);
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close"));
+      }
+    }
+
+    window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
 }
 
 async function mockCodexTerminalPreviewSocket(page: Page) {

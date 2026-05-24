@@ -12,6 +12,11 @@ import { inspectSessionDiff } from "./sessionDiff.js";
 
 const MAX_OPEN_AI_STUDIO_SESSIONS = 5;
 const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
+const SESSION_ARCHIVE_QUERY = Object.freeze({
+  ABANDONED: "abandoned",
+  COMPLETED: "completed",
+  FINISHED: "finished"
+});
 
 function sessionResult(operation) {
   return aiStudioResult(operation, {
@@ -22,6 +27,47 @@ function sessionResult(operation) {
 
 function isOpenAiStudioSession(session = {}) {
   return !CLOSED_SESSION_STATUSES.has(String(session.status || ""));
+}
+
+function normalizedInputText(value = "") {
+  return String(value || "").trim();
+}
+
+function sessionListOptions(input = {}) {
+  const archive = normalizedInputText(input.archive);
+  if (!archive) {
+    return {
+      enrichCodex: true,
+      runtimeOptions: {
+        statusGroup: "open"
+      }
+    };
+  }
+  if (archive === SESSION_ARCHIVE_QUERY.ABANDONED) {
+    return {
+      enrichCodex: false,
+      runtimeOptions: {
+        statusGroup: "closed",
+        statuses: [AI_STUDIO_SESSION_STATUS.ABANDONED]
+      }
+    };
+  }
+  if (archive === SESSION_ARCHIVE_QUERY.COMPLETED || archive === SESSION_ARCHIVE_QUERY.FINISHED) {
+    return {
+      enrichCodex: false,
+      runtimeOptions: {
+        statusGroup: "closed",
+        statuses: [AI_STUDIO_SESSION_STATUS.FINISHED]
+      }
+    };
+  }
+  throw new Error(`Unknown AI Studio session archive: ${archive}`);
+}
+
+async function listOpenSessions(runtime) {
+  return runtime.listSessions({
+    statusGroup: "open"
+  });
 }
 
 function codexPromptHandoffFromSession(session = {}) {
@@ -89,6 +135,29 @@ async function enrichSessionWithCodexTerminal(terminalService, session = {}) {
   return withCodexTerminalState(session, terminalState || {});
 }
 
+async function ensureSessionCodexTerminal(terminalService, session = {}) {
+  if (
+    !session ||
+    session.ok === false ||
+    !session.sessionId ||
+    !isOpenAiStudioSession(session) ||
+    !String(session.metadata?.worktree_path || session.worktree || "").trim() ||
+    typeof terminalService?.ensureCodexThread !== "function"
+  ) {
+    return session;
+  }
+  const bootstrap = await terminalService.ensureCodexThread(session.sessionId);
+  if (bootstrap?.ok === false) {
+    throw new Error(bootstrap.error || "AI Studio Codex terminal could not be prepared.");
+  }
+  return session;
+}
+
+async function prepareSessionForOpen(terminalService, session = {}) {
+  await ensureSessionCodexTerminal(terminalService, session);
+  return enrichSessionWithCodexTerminal(terminalService, session);
+}
+
 async function enrichSessionsWithCodexTerminal(terminalService, sessions = []) {
   return Promise.all((Array.isArray(sessions) ? sessions : [])
     .map((session) => enrichSessionWithCodexTerminal(terminalService, session)));
@@ -110,17 +179,6 @@ async function deliverCodexPromptIfNeeded(terminalService, session = {}) {
     ...session,
     codexPromptDelivery: delivery
   };
-}
-
-async function publishPromptStateChangedIfNeeded(publishSessionChanged, session = {}, {
-  reason = ""
-} = {}) {
-  if (!codexPromptHandoffFromSession(session) || typeof publishSessionChanged !== "function") {
-    return;
-  }
-  await publishSessionChanged(session.sessionId, {
-    reason
-  });
 }
 
 function sessionLimits(sessions = [], {
@@ -216,7 +274,6 @@ function selectedWorkflowProfile(input = {}, creation = {}) {
 
 function createService({
   projectService,
-  publishSessionChanged = {},
   setupServices = {},
   terminalService
 } = {}) {
@@ -246,8 +303,8 @@ function createService({
         const projectType = await projectService.requireProjectType();
         await assertAiStudioSetupReady(setupServices);
         const runtime = await projectService.createRuntime();
-        const existingSessions = await runtime.listSessions();
-        const { creation, limits } = await sessionCreationState(runtime, existingSessions);
+        const existingOpenSessions = await listOpenSessions(runtime);
+        const { creation, limits } = await sessionCreationState(runtime, existingOpenSessions);
         if (limits.openSessionCount >= limits.maxOpenSessions) {
           return {
             errors: [
@@ -259,11 +316,11 @@ function createService({
             creation,
             limits,
             ok: false,
-            sessions: existingSessions,
+            sessions: existingOpenSessions,
             status: "blocked"
           };
         }
-        const syncBlocker = mainCheckoutSyncBlocker(existingSessions);
+        const syncBlocker = mainCheckoutSyncBlocker(existingOpenSessions);
         if (syncBlocker) {
           return {
             errors: [
@@ -279,7 +336,7 @@ function createService({
             },
             limits,
             ok: false,
-            sessions: existingSessions,
+            sessions: existingOpenSessions,
             status: "blocked"
           };
         }
@@ -295,7 +352,7 @@ function createService({
             ],
             limits,
             ok: false,
-            sessions: existingSessions,
+            sessions: existingOpenSessions,
             status: "blocked"
           };
         }
@@ -313,7 +370,7 @@ function createService({
     async inspectSession(sessionId) {
       return sessionResult(async () => {
         const runtime = await projectService.createRuntime();
-        return enrichSessionWithCodexTerminal(terminalService, await runtime.getSession(sessionId));
+        return prepareSessionForOpen(terminalService, await runtime.getSession(sessionId));
       });
     },
 
@@ -324,12 +381,19 @@ function createService({
       });
     },
 
-    async listSessions() {
+    async listSessions(input = {}) {
       return sessionResult(async () => {
         const runtime = await projectService.createRuntime();
-        const sessions = await runtime.listSessions();
-        const enrichedSessions = await enrichSessionsWithCodexTerminal(terminalService, sessions);
-        return sessionListResponse(enrichedSessions, await sessionCreationState(runtime, sessions));
+        const options = sessionListOptions(input);
+        const sessions = await runtime.listSessions(options.runtimeOptions);
+        const openSessions = options.runtimeOptions.statusGroup === "open" &&
+          !Array.isArray(options.runtimeOptions.statuses)
+          ? sessions
+          : await listOpenSessions(runtime);
+        const responseSessions = options.enrichCodex
+          ? await enrichSessionsWithCodexTerminal(terminalService, sessions)
+          : sessions;
+        return sessionListResponse(responseSessions, await sessionCreationState(runtime, openSessions));
       });
     },
 
@@ -342,9 +406,6 @@ function createService({
           await terminalService?.closeSessionTerminals?.(sessionId);
           return session;
         }
-        await publishPromptStateChangedIfNeeded(publishSessionChanged.action, session, {
-          reason: "codex-prompt-state-updated"
-        });
         return enrichSessionWithCodexTerminal(terminalService, await deliverCodexPromptIfNeeded(terminalService, session));
       });
     },
@@ -358,9 +419,6 @@ function createService({
           await terminalService?.closeSessionTerminals?.(sessionId);
           return session;
         }
-        await publishPromptStateChangedIfNeeded(publishSessionChanged.intent, session, {
-          reason: "codex-prompt-state-updated"
-        });
         return enrichSessionWithCodexTerminal(terminalService, await deliverCodexPromptIfNeeded(terminalService, session));
       });
     },

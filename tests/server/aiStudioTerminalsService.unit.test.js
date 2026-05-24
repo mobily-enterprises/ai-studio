@@ -16,7 +16,7 @@ import {
   featureActions as terminalFeatureActions
 } from "../../packages/ai-studio-terminals/src/server/actions.js";
 import {
-  codexStartupSessionBriefingPrompt,
+  codexSessionBriefingPrompt,
   codexTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/codexTerminal.js";
 import {
@@ -227,8 +227,8 @@ test("AI Studio Codex terminal joins the target runtime network before the image
   assert.ok(!maskedTerminalDockerArgs(adapterImageArgs).includes(`MYSQL_PWD=${JSKIT_MARIADB_ROOT_PASSWORD}`));
 });
 
-test("AI Studio Codex terminal passes the session briefing as the startup prompt", () => {
-  const startupPrompt = codexStartupSessionBriefingPrompt({
+test("AI Studio Codex terminal renders the session briefing for explicit delivery", () => {
+  const briefingPrompt = codexSessionBriefingPrompt({
     adapter: {
       facts: {
         summary: "Startup-aware app"
@@ -255,13 +255,13 @@ test("AI Studio Codex terminal passes the session briefing as the startup prompt
     targetRoot: "/workspace/project",
     worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
   });
-  assert.match(startupPrompt, /AI Studio session briefing/u);
-  assert.match(startupPrompt, /Unit MariaDB/u);
-  assert.match(startupPrompt, /\.ai-studio\/code-index\.md/u);
-  assert.match(startupPrompt, /Reply exactly: AI Studio session briefing loaded/u);
-  assert.equal(startupPrompt.startsWith(`Load AI Studio session briefing.\n\n${STUDIO_CONTEXT_START_MARKER}`), true);
-  assert.equal(stripStudioContextBlocksForDisplay(startupPrompt), "Load AI Studio session briefing.\n\n");
-  assert.equal(codexStartupSessionBriefingPrompt({
+  assert.match(briefingPrompt, /AI Studio session briefing/u);
+  assert.match(briefingPrompt, /Unit MariaDB/u);
+  assert.match(briefingPrompt, /\.ai-studio\/code-index\.md/u);
+  assert.match(briefingPrompt, /Reply exactly: AI Studio session briefing loaded/u);
+  assert.equal(briefingPrompt.startsWith(`Load AI Studio session briefing.\n\n${STUDIO_CONTEXT_START_MARKER}`), true);
+  assert.equal(stripStudioContextBlocksForDisplay(briefingPrompt), "Load AI Studio session briefing.\n\n");
+  assert.equal(codexSessionBriefingPrompt({
     metadata: {
       codex_session_briefing_delivered: "yes"
     }
@@ -271,22 +271,20 @@ test("AI Studio Codex terminal passes the session briefing as the startup prompt
     codexThreadId: "",
     containerName: "ai-studio-codex-startup",
     sessionId: "startup_prompt",
-    startupPrompt,
     targetRoot: "/workspace/project",
     terminalId: "startup-terminal",
     worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
   });
   const startupScript = args.at(-1);
   assert.match(startupScript, /codex/u);
-  assert.match(startupScript, /AI Studio session briefing/u);
-  assert.match(startupScript, /Unit MariaDB/u);
+  assert.doesNotMatch(startupScript, /AI Studio session briefing/u);
+  assert.doesNotMatch(startupScript, /Unit MariaDB/u);
   assert.doesNotMatch(startupScript, /resume [0-9a-f-]{36}/u);
 
   const resumedArgs = codexTerminalArgs({
     codexThreadId: "00000000-0000-4000-8000-000000000001",
     containerName: "ai-studio-codex-startup-resume",
     sessionId: "startup_prompt",
-    startupPrompt,
     targetRoot: "/workspace/project",
     terminalId: "startup-terminal",
     worktree: "/workspace/project/.ai-studio/sessions/active/startup_prompt/worktree"
@@ -295,7 +293,7 @@ test("AI Studio Codex terminal passes the session briefing as the startup prompt
     resumedArgs.at(-1),
     /resume 00000000-0000-4000-8000-000000000001/u
   );
-  assert.match(resumedArgs.at(-1), /AI Studio session briefing/u);
+  assert.doesNotMatch(resumedArgs.at(-1), /AI Studio session briefing/u);
 });
 
 test("AI Studio Codex terminal mounts linked git metadata for worktree roots", async () => {
@@ -682,7 +680,15 @@ test("AI Studio command terminal records action results and metadata after succe
     let closePromise = Promise.resolve();
     let startedCommand = "";
     let startedDockerArgs = [];
+    const successfulCommandHooks = [];
     const command = createCommandTerminalController({
+      afterSuccessfulCommand: async (event) => {
+        successfulCommandHooks.push({
+          actionId: event.action?.id,
+          currentStep: event.session?.currentStep,
+          metadata: event.metadata
+        });
+      },
       ensureRuntimeNetwork: async (root) => {
         ensuredTargetRoot = root;
       },
@@ -755,6 +761,16 @@ test("AI Studio command terminal records action results and metadata after succe
     assert.equal(updatedSession.metadata.terminal_done, "yes");
     assert.equal(updatedSession.metadata.dynamic_done, "from-result-file");
     assert.equal(updatedSession.metadata.stale_value, undefined);
+    assert.deepEqual(successfulCommandHooks, [
+      {
+        actionId: "unit_command",
+        currentStep: "unit_step",
+        metadata: {
+          dynamic_done: "from-result-file",
+          terminal_done: "yes"
+        }
+      }
+    ]);
     assert.deepEqual(updatedSession.actionResult, undefined);
     assert.deepEqual(updatedSession.actionResults.map((result) => ({
       actionId: result.actionId,
@@ -876,7 +892,11 @@ test("AI Studio command terminal advances workflow when requested after success"
     });
 
     let closePromise = Promise.resolve();
+    const hookSteps = [];
     const command = createCommandTerminalController({
+      afterSuccessfulCommand: async ({ session }) => {
+        hookSteps.push(session.currentStep);
+      },
       ensureRuntimeNetwork: async () => null,
       projectService: {
         targetRoot,
@@ -927,6 +947,7 @@ test("AI Studio command terminal advances workflow when requested after success"
     const session = await runtime.getSession("terminal_advance");
     assert.equal(session.currentStep, "next_step");
     assert.deepEqual(session.completedSteps, ["unit_step"]);
+    assert.deepEqual(hookSteps, ["next_step"]);
   });
 });
 

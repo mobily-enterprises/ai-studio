@@ -41,6 +41,7 @@ function aiStudioStatusCode(response, { missingStatus = 404 } = {}) {
   }
   if (
     code === "ai_studio_action_disabled" ||
+    code === "ai_studio_action_not_available" ||
     code === "ai_studio_command_requires_terminal" ||
     code === "ai_studio_project_config_missing" ||
     code === "ai_studio_setup_not_ready" ||

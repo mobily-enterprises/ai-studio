@@ -117,6 +117,10 @@ function canServeStaticFile(distRoot, relativePath) {
   return existsSync(resolvedPath);
 }
 
+function readSpaDocument(distRoot) {
+  return readFileSync(path.resolve(distRoot, SPA_INDEX_FILE), "utf8");
+}
+
 function sendSocketJson(socket, payload) {
   if (socket.readyState !== 1) {
     return;
@@ -405,7 +409,6 @@ async function createServer(options = {}) {
   });
   const distRoot = path.resolve(appRoot, "dist");
   const hasWebBuild = existsSync(path.resolve(distRoot, SPA_INDEX_FILE));
-  const spaDocument = hasWebBuild ? readFileSync(path.resolve(distRoot, SPA_INDEX_FILE), "utf8") : "";
   const providerEnv = {
     ...runtimeEnv,
     [AI_STUDIO_APP_ROOT_ENV]: appRoot,
@@ -493,7 +496,10 @@ async function createServer(options = {}) {
         error: "Frontend build is not available. Run `npm run build`."
       });
     }
-    return reply.type("text/html; charset=utf-8").send(spaDocument);
+    return reply
+      .header("Cache-Control", "no-store")
+      .type("text/html; charset=utf-8")
+      .send(readSpaDocument(distRoot));
   });
 
   if (runtime) {

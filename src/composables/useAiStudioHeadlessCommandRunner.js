@@ -20,6 +20,14 @@ function terminalActionId(action = {}) {
   return String(action.id || "").trim();
 }
 
+function normalizedFailureStatus(value = null) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const status = Number(value);
+  return Number.isFinite(status) ? status : null;
+}
+
 function parseTerminalMessage(rawMessage = "") {
   try {
     return JSON.parse(String(rawMessage || ""));
@@ -50,21 +58,25 @@ function registerUnmountCleanup(callback) {
 
 function commandFailure({
   action = {},
+  code = "",
   commandPreview = "",
   error = "",
   exitCode = null,
   output = "",
+  status: failureStatus = null,
   terminalSessionId = ""
 } = {}) {
   const label = terminalActionLabel(action);
   return {
     actionId: terminalActionId(action),
     actionLabel: label,
+    code: String(code || ""),
     commandPreview,
     error: String(error || `${label} failed.`),
     exitCode,
     ok: false,
     output: String(output || ""),
+    status: normalizedFailureStatus(failureStatus),
     terminalSessionId
   };
 }
@@ -147,7 +159,14 @@ function useAiStudioHeadlessCommandRunner({
         input: normalizePlainObject(input)
       });
       if (terminalSession?.ok === false) {
-        throw new Error(terminalSession.error || "Command terminal could not start.");
+        const result = commandFailure({
+          action,
+          code: terminalSession.code || terminalSession.errors?.[0]?.code || "",
+          error: terminalSession.error || terminalSession.errors?.[0]?.message || "Command terminal could not start.",
+          status: terminalSession.status || terminalSession.statusCode
+        });
+        lastResult.value = result;
+        return result;
       }
 
       activeTerminal = {
@@ -167,7 +186,9 @@ function useAiStudioHeadlessCommandRunner({
     } catch (error) {
       const result = commandFailure({
         action,
-        error: String(error?.message || error || "Command terminal failed.")
+        code: error?.code,
+        error: String(error?.message || error || "Command terminal failed."),
+        status: error?.status || error?.statusCode
       });
       lastResult.value = result;
       return result;
@@ -324,6 +345,13 @@ function useAiStudioHeadlessCommandRunner({
     return typeof stopActiveCommand === "function" ? stopActiveCommand() : false;
   }
 
+  function clearResult() {
+    lastResult.value = null;
+    commandPreview.value = "";
+    output.value = "";
+    status.value = "";
+  }
+
   async function closeActiveTerminal() {
     closeSocket(activeSocket);
     activeSocket = null;
@@ -340,6 +368,7 @@ function useAiStudioHeadlessCommandRunner({
   });
 
   return {
+    clearResult,
     closeActiveTerminal,
     commandPreview,
     lastResult,

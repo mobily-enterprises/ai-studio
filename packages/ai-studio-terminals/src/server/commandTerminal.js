@@ -13,6 +13,9 @@ import {
   removeDockerContainer
 } from "../../../../server/lib/containerRuntime.js";
 import {
+  aiStudioError
+} from "../../../../server/lib/aiStudio/core.js";
+import {
   ensureTargetRuntimeNetwork
 } from "../../../../server/lib/aiStudio/runtimeContainers.js";
 import {
@@ -111,6 +114,7 @@ function commandTerminalArgs({
 
 async function writeActionTerminalResult({
   advanceOnSuccess = false,
+  afterSuccessfulCommand = async () => null,
   action = {},
   exitCode,
   input = {},
@@ -171,12 +175,30 @@ async function writeActionTerminalResult({
   if (typeof runtime.recordCommandActionFinished === "function") {
     await runtime.recordCommandActionFinished(session, action.id, actionResult);
   }
-  await advanceSessionAfterSuccessfulCommand({
+  const advancedSession = await advanceSessionAfterSuccessfulCommand({
     advanceOnSuccess,
     completed,
     runtime,
     session
   });
+  const currentSession = advancedSession || await runtime.getSession(session.sessionId);
+  if (completed) {
+    await afterSuccessfulCommand({
+      action,
+      actionResult,
+      input,
+      metadata,
+      runtime,
+      session: currentSession,
+      spec
+    });
+  }
+  return {
+    actionResult,
+    completed,
+    metadata,
+    session: currentSession
+  };
 }
 
 async function advanceSessionAfterSuccessfulCommand({
@@ -240,6 +262,7 @@ async function applySuccessFacts({
 }
 
 function createCommandTerminalController({
+  afterSuccessfulCommand = async () => null,
   ensureRuntimeNetwork = ensureTargetRuntimeNetwork,
   projectService,
   publishSessionChanged = async () => null,
@@ -271,22 +294,22 @@ function createCommandTerminalController({
         const session = await runtime.getSession(sessionId);
         const action = actionById(session, actionId);
         if (!action) {
-          return {
-            ok: false,
-            error: `Action ${actionId || "(empty)"} is not available on this AI Studio step.`
-          };
+          throw aiStudioError(
+            `Action ${actionId || "(empty)"} is not available on this AI Studio step.`,
+            "ai_studio_action_not_available"
+          );
         }
         if (!actionRunsInCommandTerminal(action)) {
-          return {
-            ok: false,
-            error: `Action ${action.label || action.id} does not run in the command terminal.`
-          };
+          throw aiStudioError(
+            `Action ${action.label || action.id} does not run in the command terminal.`,
+            "ai_studio_command_requires_terminal"
+          );
         }
         if (action.enabled !== true) {
-          return {
-            ok: false,
-            error: action.disabledReason || `Action ${action.label || action.id} is disabled.`
-          };
+          throw aiStudioError(
+            action.disabledReason || `Action ${action.label || action.id} is disabled.`,
+            "ai_studio_action_disabled"
+          );
         }
         const targetRoot = terminalTargetRoot(session, projectService);
         if (!targetRoot) {
@@ -403,6 +426,7 @@ function createCommandTerminalController({
               try {
                 await writeActionTerminalResult({
                   advanceOnSuccess,
+                  afterSuccessfulCommand,
                   action,
                   exitCode,
                   input: commandInput,

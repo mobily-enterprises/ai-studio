@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AI_STUDIO_WORKFLOW_PROFILE_IDS } from "../../server/lib/aiStudio/index.js";
-import { ACTION_CREATE_SESSION } from "../../packages/ai-studio-sessions/src/server/actions.js";
+import {
+  ACTION_CREATE_SESSION,
+  ACTION_LIST_SESSIONS
+} from "../../packages/ai-studio-sessions/src/server/actions.js";
 import { registerRoutes } from "../../packages/ai-studio-sessions/src/server/registerRoutes.js";
 import {
   findRegisteredRoute,
@@ -46,6 +49,50 @@ test("session creation route forwards the selected workflow profile", async () =
       actionId: ACTION_CREATE_SESSION,
       input: {
         workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      }
+    });
+  });
+});
+
+test("session list route forwards the requested archive filter", async () => {
+  await withLocalRequestBypass(async () => {
+    const app = testRouteApp();
+    registerRoutes(app, {
+      routeRelativePath: "ai-studio",
+      routeSurface: "home"
+    });
+
+    const route = findRegisteredRoute(app, {
+      method: "GET",
+      path: "/api/ai-studio/sessions"
+    });
+    assert.ok(route);
+
+    let executedAction = null;
+    const reply = testReply();
+    await route.handler({
+      input: {
+        query: {
+          archive: "abandoned"
+        }
+      },
+      query: {
+        archive: "abandoned"
+      },
+      async executeAction(action) {
+        executedAction = action;
+        return {
+          ok: true,
+          sessions: []
+        };
+      }
+    }, reply);
+
+    assert.equal(reply.statusCode, 200);
+    assert.deepEqual(executedAction, {
+      actionId: ACTION_LIST_SESSIONS,
+      input: {
+        archive: "abandoned"
       }
     });
   });

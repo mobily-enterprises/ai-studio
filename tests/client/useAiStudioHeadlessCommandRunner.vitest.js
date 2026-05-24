@@ -127,6 +127,39 @@ describe("useAiStudioHeadlessCommandRunner", () => {
     });
   });
 
+  it("preserves server conflict metadata when a command start is rejected", async () => {
+    const closeCommandTerminal = vi.fn(async () => ({
+      ok: true
+    }));
+    const runner = useAiStudioHeadlessCommandRunner({
+      closeCommandTerminal,
+      startCommandTerminal: vi.fn(async () => {
+        const error = new Error("This step is already complete.");
+        error.code = "ai_studio_action_disabled";
+        error.status = 409;
+        throw error;
+      }),
+      webSocketUrl: () => "ws://studio/session-1/terminal-conflict"
+    });
+
+    await expect(runner.runCommandAction({
+      action: {
+        id: "create_worktree",
+        label: "Create worktree"
+      },
+      sessionId: "session-1"
+    })).resolves.toMatchObject({
+      actionId: "create_worktree",
+      code: "ai_studio_action_disabled",
+      error: "This step is already complete.",
+      ok: false,
+      status: 409,
+      terminalSessionId: ""
+    });
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(closeCommandTerminal).not.toHaveBeenCalled();
+  });
+
   it("can stop a running command and preserve its output as a failure", async () => {
     const closeCommandTerminal = vi.fn(async () => ({
       ok: true

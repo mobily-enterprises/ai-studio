@@ -183,11 +183,6 @@ test("session prompt action injects the rendered Codex handoff from the server",
   ]);
   assert.deepEqual(operations, [
     {
-      kind: "publish",
-      reason: "codex-prompt-state-updated",
-      sessionId: "session-1"
-    },
-    {
       kind: "deliver",
       sessionId: "session-1"
     }
@@ -267,11 +262,6 @@ test("session prompt intent injects the rendered Codex handoff from the server",
     }
   ]);
   assert.deepEqual(operations, [
-    {
-      kind: "publish",
-      reason: "codex-prompt-state-updated",
-      sessionId: "session-1"
-    },
     {
       kind: "deliver",
       sessionId: "session-1"
@@ -368,6 +358,58 @@ test("session presentation keeps the Codex preview while a transmitting terminal
     terminalSessionId: "codex-terminal-active",
     visible: true
   });
+});
+
+test("session inspect prepares the server-owned Codex terminal after a restart", async () => {
+  const preparedSessions = [];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return {
+              metadata: {
+                worktree_path: "/workspace/project/.ai-studio/sessions/active/session-1/worktree"
+              },
+              presentation: {
+                screen: {
+                  kind: "input"
+                }
+              },
+              sessionId,
+              status: AI_STUDIO_SESSION_STATUS.ACTIVE
+            };
+          }
+        };
+      }
+    },
+    terminalService: {
+      async ensureCodexThread(sessionId) {
+        preparedSessions.push(sessionId);
+        return {
+          ok: true,
+          terminalSessionId: "codex-terminal-restored"
+        };
+      },
+      async codexTerminalState(sessionId) {
+        return {
+          codexTerminal: {
+            commandPreview: "codex",
+            id: "codex-terminal-restored",
+            status: "running",
+            transmitting: false
+          },
+          ok: true,
+          sessionId
+        };
+      }
+    }
+  });
+
+  const session = await service.inspectSession("session-1");
+
+  assert.deepEqual(preparedSessions, ["session-1"]);
+  assert.equal(session.codexTerminal.id, "codex-terminal-restored");
 });
 
 test("session presentation hides the Codex preview when the terminal is not transmitting", async () => {
@@ -497,6 +539,96 @@ test("session list exposes selectable workflow profiles after seeding", async ()
   );
   assert.equal(result.creation.workflowProfiles.some((profile) => profile.id === AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION), false);
   assert.equal(result.limits.maxOpenSessions, 5);
+});
+
+test("session list asks the runtime for open sessions by default", async () => {
+  const listCalls = [];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async listSessions(options = {}) {
+            listCalls.push(options);
+            return [
+              {
+                sessionId: "open-session",
+                status: AI_STUDIO_SESSION_STATUS.ACTIVE
+              }
+            ];
+          },
+          async workflowProfileCreationOptions() {
+            return workflowProfileCreationOptions({
+              seedRequired: false
+            });
+          }
+        };
+      }
+    },
+    setupServices: readySetupServices()
+  });
+
+  const result = await service.listSessions();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(listCalls, [
+    {
+      statusGroup: "open"
+    }
+  ]);
+  assert.deepEqual(result.sessions.map((session) => session.sessionId), ["open-session"]);
+  assert.equal(result.limits.openSessionCount, 1);
+});
+
+test("archived session list asks for archived sessions and computes creation limits from open sessions", async () => {
+  const listCalls = [];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async listSessions(options = {}) {
+            listCalls.push(options);
+            if (options.statusGroup === "closed") {
+              return [
+                {
+                  sessionId: "abandoned-session",
+                  status: AI_STUDIO_SESSION_STATUS.ABANDONED
+                }
+              ];
+            }
+            return [
+              {
+                sessionId: "open-session",
+                status: AI_STUDIO_SESSION_STATUS.ACTIVE
+              }
+            ];
+          },
+          async workflowProfileCreationOptions() {
+            return workflowProfileCreationOptions({
+              seedRequired: false
+            });
+          }
+        };
+      }
+    },
+    setupServices: readySetupServices()
+  });
+
+  const result = await service.listSessions({
+    archive: "abandoned"
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(listCalls, [
+    {
+      statusGroup: "closed",
+      statuses: [AI_STUDIO_SESSION_STATUS.ABANDONED]
+    },
+    {
+      statusGroup: "open"
+    }
+  ]);
+  assert.deepEqual(result.sessions.map((session) => session.sessionId), ["abandoned-session"]);
+  assert.equal(result.limits.openSessionCount, 1);
 });
 
 test("session list limits unseeded targets to one open seed session", async () => {

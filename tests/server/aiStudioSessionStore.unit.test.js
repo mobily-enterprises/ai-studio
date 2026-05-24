@@ -198,6 +198,53 @@ test("ai-studio session store allocates deterministic available ids and lists se
   });
 });
 
+test("ai-studio session store filters session lists by status before full reads", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createAiStudioSessionStore({
+      targetRoot
+    });
+
+    await store.createSession({
+      sessionId: "active_session"
+    });
+    await store.createSession({
+      sessionId: "blocked_session"
+    });
+    await store.createSession({
+      sessionId: "abandoned_session"
+    });
+    await store.createSession({
+      sessionId: "finished_session"
+    });
+    await store.writeStatus("blocked_session", AI_STUDIO_SESSION_STATUS.BLOCKED);
+    await store.writeStatus("abandoned_session", AI_STUDIO_SESSION_STATUS.ABANDONED);
+    await store.writeStatus("finished_session", AI_STUDIO_SESSION_STATUS.FINISHED);
+
+    const openSessions = await store.listSessions({
+      statusGroup: "open"
+    });
+    const closedSessions = await store.listSessions({
+      statusGroup: "closed"
+    });
+    const abandonedSessions = await store.listSessions({
+      statusGroup: "closed",
+      statuses: [AI_STUDIO_SESSION_STATUS.ABANDONED]
+    });
+
+    assert.deepEqual(openSessions.map((session) => session.sessionId), [
+      "active_session",
+      "blocked_session"
+    ]);
+    assert.deepEqual(closedSessions.map((session) => session.sessionId), [
+      "abandoned_session",
+      "finished_session"
+    ]);
+    assert.deepEqual(abandonedSessions.map((session) => session.sessionId), [
+      "abandoned_session"
+    ]);
+  });
+});
+
 test("ai-studio runtime delegates session operations to the store", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({

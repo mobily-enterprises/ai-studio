@@ -27,6 +27,7 @@ function registerRoutes(
 
   routes.actionRoute("GET", "/sessions", {
     actionId: ACTION_LIST_SESSIONS,
+    buildInput: sessionsQueryInput,
     summary: "List AI Studio sessions."
   });
 
@@ -102,6 +103,12 @@ function registerRoutes(
 function sessionInput(request) {
   return {
     sessionId: request.params.sessionId
+  };
+}
+
+function sessionsQueryInput(request) {
+  return {
+    archive: request.query?.archive || request.input?.query?.archive || ""
   };
 }
 

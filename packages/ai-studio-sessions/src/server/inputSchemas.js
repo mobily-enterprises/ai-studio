@@ -2,7 +2,13 @@ import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 
 const sessionListInputValidator = deepFreeze({
-  schema: createSchema({}),
+  schema: createSchema({
+    archive: {
+      type: "string",
+      noTrim: false,
+      required: false
+    }
+  }),
   mode: "patch"
 });
 

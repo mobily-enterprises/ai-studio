@@ -176,10 +176,81 @@ describe("useAiStudioAutopilotController", () => {
 
     expect(context.session.value.currentStep).toBe("step_b");
   });
+
+  it("refreshes stale command-start conflicts instead of showing command failure", async () => {
+    const context = createControllerContext({
+      commandStartConflict: true,
+      operation: {
+        actionId: "cmd_action",
+        advanceOnSuccess: true,
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.commandRunner.runCommandAction).toHaveBeenCalledTimes(1);
+    expect(context.commandRunner.clearResult).toHaveBeenCalledTimes(1);
+    expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.controller.failure.value).toBe(null);
+    expect(context.controller.commandResult.value).toBe(null);
+    expect(context.controller.screenState.value.kind).toBe("ready");
+  });
+
+  it("keeps following server state when terminal transport fails after a command completed", async () => {
+    const context = createControllerContext({
+      commandTransportFailsAfterServerProgress: true,
+      operation: {
+        actionId: "cmd_action",
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.commandRunner.runCommandAction).toHaveBeenCalledTimes(1);
+    expect(context.commandRunner.clearResult).toHaveBeenCalledTimes(1);
+    expect(context.actions.advanceSession).toHaveBeenCalledTimes(1);
+    expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.controller.failure.value).toBe(null);
+    expect(context.controller.commandResult.value).toBe(null);
+  });
+
+  it("continues through a server-provided follow-up operation after command success", async () => {
+    const context = createControllerContext({
+      commandCompletesWithServerAdvance: true,
+      operation: {
+        actionId: "cmd_action",
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.commandRunner.runCommandAction).toHaveBeenCalledTimes(1);
+    expect(context.actions.advanceSession).toHaveBeenCalledTimes(1);
+    expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.controller.failure.value).toBe(null);
+  });
 });
 
 function createControllerContext({
+  commandCompletesWithServerAdvance = false,
+  commandStartConflict = false,
   commandFails = false,
+  commandTransportFailsAfterServerProgress = false,
   enabled = true,
   intents = [],
   operation = {
@@ -209,6 +280,8 @@ function createControllerContext({
   const commandOutput = ref("");
   const commandPreview = ref("");
   const commandResult = ref(null);
+  const commandTransportFailureRefreshPending = ref(false);
+  const staleCommandRefreshPending = ref(false);
 
   function syncSession(values = {}) {
     const currentPresentation = session.value?.presentation || {};
@@ -257,7 +330,41 @@ function createControllerContext({
     lastResult: commandResult,
     output: commandOutput,
     running: commandRunning,
+    clearResult: vi.fn(() => {
+      commandResult.value = null;
+      commandPreview.value = "";
+      commandOutput.value = "";
+      commandRunning.value = false;
+    }),
     runCommandAction: vi.fn(async ({ action = {}, advanceOnSuccess = false } = {}) => {
+      if (commandStartConflict) {
+        staleCommandRefreshPending.value = true;
+        commandResult.value = {
+          actionId: action.id,
+          actionLabel: action.label,
+          code: "ai_studio_action_disabled",
+          error: "This step is already complete.",
+          ok: false,
+          output: "",
+          status: 409,
+          terminalSessionId: ""
+        };
+        return commandResult.value;
+      }
+      if (commandTransportFailsAfterServerProgress) {
+        commandTransportFailureRefreshPending.value = true;
+        commandResult.value = {
+          actionId: action.id,
+          actionLabel: action.label,
+          commandPreview: action.label || action.id,
+          error: "Terminal stream closed before the command finished.",
+          ok: false,
+          output: "",
+          status: null,
+          terminalSessionId: "terminal-1"
+        };
+        return commandResult.value;
+      }
       commandRunning.value = true;
       commandPreview.value = action.label || action.id;
       commandOutput.value = `${action.id} output`;
@@ -292,6 +399,54 @@ function createControllerContext({
     commandRunner,
     enabled: enabledRef,
     refreshSessionData: async () => {
+      if (staleCommandRefreshPending.value) {
+        staleCommandRefreshPending.value = false;
+        syncSession({
+          stepId: "step_b"
+        });
+        return;
+      }
+      if (commandTransportFailureRefreshPending.value) {
+        commandTransportFailureRefreshPending.value = false;
+        stepMachine.value = {
+          status: "done",
+          stepId: session.value.currentStep
+        };
+        syncSession({
+          operation: {
+            executable: true,
+            id: "session-advance:step_b",
+            kind: "advance",
+            label: "Next",
+            route: "session-advance"
+          },
+          screen: {
+            kind: "ready",
+            title: "Command completed"
+          }
+        });
+        return;
+      }
+      if (commandCompletesWithServerAdvance && commandResult.value?.ok === true) {
+        stepMachine.value = {
+          status: "done",
+          stepId: session.value.currentStep
+        };
+        syncSession({
+          operation: {
+            executable: true,
+            id: "session-advance:step_b",
+            kind: "advance",
+            label: "Next",
+            route: "session-advance"
+          },
+          screen: {
+            kind: "ready",
+            title: "Command completed"
+          }
+        });
+        return;
+      }
       syncSession();
     },
     session

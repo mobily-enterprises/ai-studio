@@ -390,8 +390,8 @@ class AiStudioSessionRuntime {
     return this.sessionView(await this.store.readSession(sessionId));
   }
 
-  async listSessions() {
-    const sessions = await this.store.listSessions();
+  async listSessions(options = {}) {
+    const sessions = await this.store.listSessions(options);
     return Promise.all(sessions.map((session) => this.sessionView(session)));
   }
 

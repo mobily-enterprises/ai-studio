@@ -219,6 +219,10 @@ function codexPromptHandoffSignature(sessionId = "") {
   return `${sessionId}:${Date.now()}`;
 }
 
+function codexBootstrapSignature(sessionId = "") {
+  return `${sessionId}:codex-bootstrap:${Date.now()}`;
+}
+
 function codexTerminalSnapshot(sessionId = "", terminalSessionId = "") {
   return readTerminalSession(terminalSessionId, {
     namespace: codexTerminalNamespace(sessionId)
@@ -331,7 +335,7 @@ function sessionBriefingIsDelivered(session = {}) {
   return normalizeText(session.metadata?.codex_session_briefing_delivered) === "yes";
 }
 
-function codexStartupSessionBriefingPrompt(session = {}) {
+function codexSessionBriefingPrompt(session = {}) {
   if (sessionBriefingIsDelivered(session)) {
     return "";
   }
@@ -342,15 +346,14 @@ function codexStartupSessionBriefingPrompt(session = {}) {
   const prompt = [
     briefing,
     "",
-    "Startup instruction:",
+    "Session briefing instruction:",
     "Keep this AI Studio briefing as the source of truth for this Codex session. Do not start project work from this briefing alone. Reply exactly: AI Studio session briefing loaded."
   ].join("\n").trim();
   return wrapPromptWithStudioContext(prompt, "Load AI Studio session briefing.");
 }
 
-function codexStartupScript(codexThreadId = "", startupPrompt = "") {
+function codexStartupScript(codexThreadId = "") {
   const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
-  const normalizedStartupPrompt = normalizeText(startupPrompt);
   const codexReasoningConfig = `model_reasoning_effort="${CODEX_SESSION_REASONING_EFFORT}"`;
   const codexCommand = [
     "codex",
@@ -359,8 +362,7 @@ function codexStartupScript(codexThreadId = "", startupPrompt = "") {
     "-c",
     codexReasoningConfig,
     "--dangerously-bypass-approvals-and-sandbox",
-    ...(normalizedThreadId ? ["resume", normalizedThreadId] : []),
-    ...(normalizedStartupPrompt ? [normalizedStartupPrompt] : [])
+    ...(normalizedThreadId ? ["resume", normalizedThreadId] : [])
   ];
   return studioUserStartupScript(codexCommand);
 }
@@ -372,7 +374,6 @@ function codexTerminalArgs({
   helperMount = null,
   image = STUDIO_BASE_TOOLCHAIN_IMAGE,
   sessionId,
-  startupPrompt = "",
   targetRoot,
   terminalId,
   worktree
@@ -381,7 +382,7 @@ function codexTerminalArgs({
     commandArgs: [
       "bash",
       "-lc",
-      codexStartupScript(codexThreadId, startupPrompt)
+      codexStartupScript(codexThreadId)
     ],
     containerName,
     env,
@@ -410,16 +411,7 @@ function codexContainerName({ sessionId, terminalId }) {
 }
 
 function maskedCodexTerminalDockerArgs(args = []) {
-  const maskedArgs = maskedTerminalDockerArgs(args);
-  if (!maskedArgs.length) {
-    return maskedArgs;
-  }
-  if (!String(maskedArgs.at(-1) || "").includes("AI Studio session briefing")) {
-    return maskedArgs;
-  }
-  return maskedArgs.map((arg, index) => index === maskedArgs.length - 1
-    ? "<ai-studio-codex-startup-script>"
-    : arg);
+  return maskedTerminalDockerArgs(args);
 }
 
 function createCodexTerminalController({
@@ -427,6 +419,8 @@ function createCodexTerminalController({
   publishPromptInjected = async () => null,
   publishSessionChanged = async () => null
 } = {}) {
+  const codexBootstrapPromises = new Map();
+
   async function startCodexTerminalSession(sessionId) {
     const runtime = await projectService.createRuntime();
     const session = await runtime.getSession(sessionId);
@@ -494,8 +488,6 @@ function createCodexTerminalController({
     };
     const terminalEnvHash = terminalEnvironmentFingerprint(terminalEnv);
     const namespace = codexTerminalNamespace(sessionId);
-    const promptSession = await runtime.promptSessionForAction(session);
-    const startupPrompt = codexStartupSessionBriefingPrompt(promptSession);
     const terminalResponse = startTerminalSession({
       args: ({ id }) => codexTerminalArgs({
         codexThreadId: codexThreadIdForWorkdir(session, workdir),
@@ -507,7 +499,6 @@ function createCodexTerminalController({
         helperMount: currentStepInputHelper.mount,
         image: imageResult.image,
         sessionId,
-        startupPrompt,
         targetRoot,
         terminalId: id,
         worktree: workdir
@@ -521,7 +512,6 @@ function createCodexTerminalController({
         image: imageResult.image,
         imageLabel: imageResult.label,
         sessionId,
-        startupSessionBriefingIncluded: Boolean(startupPrompt),
         targetRoot,
         workdir
       },
@@ -540,23 +530,6 @@ function createCodexTerminalController({
           terminalSession.metadata?.workdir === workdir;
       }
     });
-    if (terminalResponse.ok && terminalResponse.metadata?.startupSessionBriefingIncluded === true) {
-      const deliveredAt = new Date().toISOString();
-      await Promise.all([
-        runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered", "yes"),
-        runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivered_at", deliveredAt),
-        runtime.store.writeMetadataValue(sessionId, "codex_session_briefing_delivery", "startup")
-      ]);
-      return withCodexState(terminalResponse, {
-        ...session,
-        metadata: {
-          ...(session.metadata || {}),
-          codex_session_briefing_delivered: "yes",
-          codex_session_briefing_delivered_at: deliveredAt,
-          codex_session_briefing_delivery: "startup"
-        }
-      });
-    }
     return withCodexState(terminalResponse, session);
   }
 
@@ -650,6 +623,206 @@ function createCodexTerminalController({
     return "";
   }
 
+  async function writePromptIntoCodexTerminal(sessionId, terminalSessionId, prompt) {
+    return writeCodexTerminalInput(
+      sessionId,
+      terminalSessionId,
+      `${PROMPT_INJECTION_PREFIX}${prompt}${PROMPT_INJECTION_SUFFIX}`
+    );
+  }
+
+  async function markCodexTerminalTransmitting(sessionId, terminalSessionId, signature, reason) {
+    const result = updateCodexTerminalMetadata(
+      sessionId,
+      terminalSessionId,
+      transmittingCodexTurnMetadata(signature)
+    );
+    if (result.ok === false) {
+      return result;
+    }
+    await publishSessionChanged(sessionId, {
+      reason
+    });
+    return result;
+  }
+
+  async function markCodexTerminalIdle(sessionId, terminalSessionId, reason) {
+    const result = updateCodexTerminalMetadata(
+      sessionId,
+      terminalSessionId,
+      idleCodexTurnMetadata()
+    );
+    await publishSessionChanged(sessionId, {
+      reason
+    });
+    return result;
+  }
+
+  async function deliverSessionBriefing({
+    runtime,
+    session,
+    terminalSessionId
+  } = {}) {
+    if (sessionBriefingIsDelivered(session)) {
+      return {
+        ok: true,
+        delivered: false
+      };
+    }
+
+    const promptSession = await runtime.promptSessionForAction(session);
+    const briefingPrompt = codexSessionBriefingPrompt(promptSession);
+    if (!briefingPrompt) {
+      return {
+        ok: true,
+        delivered: false
+      };
+    }
+
+    const injected = await writePromptIntoCodexTerminal(
+      session.sessionId,
+      terminalSessionId,
+      briefingPrompt
+    );
+    if (injected.ok === false) {
+      return injected;
+    }
+
+    const ready = await waitForCodexReady(session.sessionId, terminalSessionId);
+    if (ready.ok === false) {
+      return ready;
+    }
+
+    const deliveredAt = new Date().toISOString();
+    await Promise.all([
+      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered", "yes"),
+      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered_at", deliveredAt),
+      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivery", "terminal_bootstrap")
+    ]);
+    return {
+      ok: true,
+      delivered: true
+    };
+  }
+
+  async function ensureCodexThreadReadyNow(sessionId) {
+    const runtime = await projectService.createRuntime();
+    let session = await runtime.getSession(sessionId);
+    const workdir = terminalWorktreePath(session);
+    const existingTerminal = activeCodexTerminal(session);
+    const terminalResponse = await startCodexTerminalSession(sessionId);
+    if (terminalResponse.ok === false) {
+      return terminalResponse;
+    }
+
+    const needsThreadCapture = !codexThreadIdForWorkdir(session, workdir);
+    const needsBriefing = !sessionBriefingIsDelivered(session);
+    if (!needsThreadCapture && !needsBriefing) {
+      if (!existingTerminal) {
+        const ready = await waitForCodexReady(sessionId, terminalResponse.id);
+        if (ready.ok === false) {
+          return ready;
+        }
+      }
+      await publishSessionChanged(sessionId, {
+        reason: "codex-terminal-ready"
+      });
+      return withCodexState(terminalResponse, session);
+    }
+
+    const terminalSessionId = terminalResponse.id;
+    const signature = codexBootstrapSignature(sessionId);
+    const turnMetadata = await markCodexTerminalTransmitting(
+      sessionId,
+      terminalSessionId,
+      signature,
+      "codex-thread-bootstrap-started"
+    );
+    if (turnMetadata.ok === false) {
+      return turnMetadata;
+    }
+
+    let bootstrapResult = {
+      ok: true
+    };
+    try {
+      const ready = await waitForCodexReady(sessionId, terminalSessionId);
+      if (ready.ok === false) {
+        bootstrapResult = ready;
+      }
+
+      if (bootstrapResult.ok !== false && needsThreadCapture) {
+        const threadId = await captureCodexThreadId({
+          runtime,
+          session,
+          terminalSessionId
+        });
+        if (!threadId) {
+          bootstrapResult = {
+            ok: false,
+            error: "Codex thread ID could not be captured."
+          };
+        }
+      }
+
+      if (bootstrapResult.ok !== false && needsThreadCapture) {
+        const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
+        if (threadReady.ok === false) {
+          bootstrapResult = threadReady;
+        }
+        session = await runtime.getSession(sessionId);
+      }
+
+      if (bootstrapResult.ok !== false) {
+        const briefing = await deliverSessionBriefing({
+          runtime,
+          session,
+          terminalSessionId
+        });
+        if (briefing.ok === false) {
+          bootstrapResult = briefing;
+        }
+      }
+    } finally {
+      await markCodexTerminalIdle(
+        sessionId,
+        terminalSessionId,
+        "codex-thread-bootstrap-finished"
+      );
+    }
+
+    if (bootstrapResult.ok === false) {
+      return bootstrapResult;
+    }
+
+    session = await runtime.getSession(sessionId);
+    return {
+      ...withCodexState(codexTerminalSnapshot(sessionId, terminalSessionId), session),
+      codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
+      terminalSessionId
+    };
+  }
+
+  async function ensureCodexThreadReady(sessionId) {
+    const normalizedSessionId = normalizeText(sessionId);
+    if (!normalizedSessionId) {
+      return {
+        ok: false,
+        error: "AI Studio session ID is required."
+      };
+    }
+    if (codexBootstrapPromises.has(normalizedSessionId)) {
+      return codexBootstrapPromises.get(normalizedSessionId);
+    }
+
+    const promise = ensureCodexThreadReadyNow(normalizedSessionId)
+      .finally(() => {
+        codexBootstrapPromises.delete(normalizedSessionId);
+      });
+    codexBootstrapPromises.set(normalizedSessionId, promise);
+    return promise;
+  }
+
   async function injectPromptIntoCodex(sessionId, handoff = {}) {
     const terminalInput = codexPromptHandoffTerminalInput(handoff);
     if (!terminalInput) {
@@ -659,40 +832,40 @@ function createCodexTerminalController({
       };
     }
 
+    const bootstrap = await ensureCodexThreadReady(sessionId);
+    if (bootstrap.ok === false) {
+      return bootstrap;
+    }
+
     const runtime = await projectService.createRuntime();
     const session = await runtime.getSession(sessionId);
-    const terminalResponse = await startCodexTerminalSession(sessionId);
-    if (terminalResponse.ok === false) {
-      return terminalResponse;
-    }
-    const ready = await waitForCodexReady(sessionId, terminalResponse.id);
-    if (ready.ok === false) {
-      return ready;
-    }
-    await captureCodexThreadId({
-      runtime,
-      session,
-      terminalSessionId: terminalResponse.id
-    });
-
-    const snapshot = codexTerminalSnapshot(sessionId, terminalResponse.id);
-    const outputStart = String(snapshot.output || "").length;
+    const terminalSessionId = bootstrap.terminalSessionId || bootstrap.id;
     const signature = codexPromptHandoffSignature(sessionId);
-    const turnMetadataResult = updateCodexTerminalMetadata(
+    const turnMetadataResult = await markCodexTerminalTransmitting(
       sessionId,
-      terminalResponse.id,
-      transmittingCodexTurnMetadata(signature)
+      terminalSessionId,
+      signature,
+      "codex-prompt-injection-started"
     );
     if (turnMetadataResult.ok === false) {
       return turnMetadataResult;
     }
-    const injected = writeCodexTerminalInput(
+
+    const ready = await waitForCodexReady(sessionId, terminalSessionId);
+    if (ready.ok === false) {
+      await markCodexTerminalIdle(sessionId, terminalSessionId, "codex-prompt-injection-failed");
+      return ready;
+    }
+
+    const snapshot = codexTerminalSnapshot(sessionId, terminalSessionId);
+    const outputStart = String(snapshot.output || "").length;
+    const injected = await writePromptIntoCodexTerminal(
       sessionId,
-      terminalResponse.id,
-      `${PROMPT_INJECTION_PREFIX}${terminalInput}${PROMPT_INJECTION_SUFFIX}`
+      terminalSessionId,
+      terminalInput
     );
     if (injected.ok === false) {
-      updateCodexTerminalMetadata(sessionId, terminalResponse.id, idleCodexTurnMetadata());
+      await markCodexTerminalIdle(sessionId, terminalSessionId, "codex-prompt-injection-failed");
       return injected;
     }
 
@@ -715,7 +888,7 @@ function createCodexTerminalController({
       codexPromptInjected: true,
       codexPromptHandoffOutputStart: outputStart,
       codexPromptHandoffSignature: signature,
-      terminalSessionId: terminalResponse.id
+      terminalSessionId
     };
   }
 
@@ -750,6 +923,12 @@ function createCodexTerminalController({
       });
     },
 
+    async ensureThread(sessionId) {
+      return aiStudioResult(async () => {
+        return ensureCodexThreadReady(sessionId);
+      });
+    },
+
     async terminalState(sessionId) {
       return aiStudioResult(async () => {
         const runtime = await projectService.createRuntime();
@@ -764,7 +943,7 @@ function createCodexTerminalController({
 
     async startTerminal(sessionId) {
       return aiStudioResult(async () => {
-        return startCodexTerminalSession(sessionId);
+        return ensureCodexThreadReady(sessionId);
       });
     },
 
@@ -812,7 +991,7 @@ function createCodexTerminalController({
 }
 
 export {
-  codexStartupSessionBriefingPrompt,
+  codexSessionBriefingPrompt,
   codexTerminalArgs,
   createCodexTerminalController
 };

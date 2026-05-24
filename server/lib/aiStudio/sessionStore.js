@@ -26,6 +26,10 @@ const AI_STUDIO_SESSION_STATUS = deepFreeze({
   FINISHED: "finished"
 });
 const AI_STUDIO_SESSION_STATUSES = new Set(Object.values(AI_STUDIO_SESSION_STATUS));
+const CLOSED_AI_STUDIO_SESSION_STATUSES = new Set([
+  AI_STUDIO_SESSION_STATUS.ABANDONED,
+  AI_STUDIO_SESSION_STATUS.FINISHED
+]);
 const ACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
@@ -87,6 +91,48 @@ function assertAiStudioSessionStatus(status) {
     throw aiStudioError(`Invalid ai-studio session status: ${normalizedStatus}`, "ai_studio_invalid_session_status");
   }
   return normalizedStatus;
+}
+
+function normalizeSessionListStatusGroup(statusGroup = "") {
+  const normalizedStatusGroup = normalizeText(statusGroup);
+  if (!normalizedStatusGroup) {
+    return "";
+  }
+  if (["all", "closed", "open"].includes(normalizedStatusGroup)) {
+    return normalizedStatusGroup;
+  }
+  throw aiStudioError(`Invalid ai-studio session list status group: ${normalizedStatusGroup}`, "ai_studio_invalid_session_list_status_group");
+}
+
+function normalizeSessionListStatuses(statuses = []) {
+  return new Set((Array.isArray(statuses) ? statuses : [])
+    .map((status) => normalizeText(status))
+    .filter(Boolean)
+    .map(assertAiStudioSessionStatus));
+}
+
+function normalizeSessionListOptions(options = {}) {
+  return {
+    statusGroup: normalizeSessionListStatusGroup(options.statusGroup),
+    statuses: normalizeSessionListStatuses(options.statuses)
+  };
+}
+
+function sessionStatusMatchesListOptions(status, {
+  statusGroup = "",
+  statuses = new Set()
+} = {}) {
+  const normalizedStatus = normalizeText(status) || AI_STUDIO_SESSION_STATUS.ACTIVE;
+  if (statuses.size > 0 && !statuses.has(normalizedStatus)) {
+    return false;
+  }
+  if (statusGroup === "open") {
+    return !CLOSED_AI_STUDIO_SESSION_STATUSES.has(normalizedStatus);
+  }
+  if (statusGroup === "closed") {
+    return CLOSED_AI_STUDIO_SESSION_STATUSES.has(normalizedStatus);
+  }
+  return true;
 }
 
 async function readTextIfExists(filePath) {
@@ -725,13 +771,21 @@ function createAiStudioSessionStore({
     return readSession(resolvedSessionId);
   }
 
-  async function listSessions() {
+  async function listSessions(options = {}) {
     const rootPaths = paths();
     const sessionIds = sortedDirectoryNames(
       await readDirectoryEntries(rootPaths.activeSessionsRoot),
       isValidAiStudioSessionId
     );
-    return Promise.all(sessionIds.map((entrySessionId) => readSession(entrySessionId)));
+    const listOptions = normalizeSessionListOptions(options);
+    const filteredSessionIds = listOptions.statusGroup || listOptions.statuses.size > 0
+      ? (await Promise.all(sessionIds.map(async (entrySessionId) => ({
+        sessionId: entrySessionId,
+        status: await readStatus(entrySessionId)
+      })))).filter(({ status }) => sessionStatusMatchesListOptions(status, listOptions))
+        .map(({ sessionId }) => sessionId)
+      : sessionIds;
+    return Promise.all(filteredSessionIds.map((entrySessionId) => readSession(entrySessionId)));
   }
 
   return {

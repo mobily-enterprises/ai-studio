@@ -17,6 +17,12 @@ function createService({
     publishSessionChanged: publishSessionChanged.codexTerminal
   });
   const command = createCommandTerminalController({
+    afterSuccessfulCommand: async ({ metadata = {}, session = {} } = {}) => {
+      if (!String(metadata.worktree_path || "").trim()) {
+        return;
+      }
+      await codex.ensureThread(session.sessionId);
+    },
     projectService,
     publishSessionChanged: publishSessionChanged.commandTerminal
   });
@@ -70,6 +76,10 @@ function createService({
 
     injectCodexPrompt(sessionId, handoff = {}) {
       return codex.injectCodexPrompt(sessionId, handoff);
+    },
+
+    ensureCodexThread(sessionId) {
+      return codex.ensureThread(sessionId);
     },
 
     codexTerminalState(sessionId) {

@@ -24,7 +24,9 @@ test.describe("session history navigation", () => {
       await expect(page.getByRole("link", { name: /^Session History$/u }).first()).toBeVisible();
       await expect(page.getByRole("link", { name: /^Completed$/u })).toHaveCount(0);
       await expect(page.getByRole("link", { name: /^Abandoned$/u })).toHaveCount(0);
-      expect(archiveRequests).toContain("/api/ai-studio/sessions");
+      expect(archiveRequests.some((request) => {
+        return request.startsWith("/api/ai-studio/sessions?") && request.includes("archive=completed");
+      })).toBe(true);
 
       await page.getByRole("tab", { name: "Abandoned", exact: true }).click();
       await expect(page).toHaveURL(/\/home\/history\?tab=abandoned$/u);
