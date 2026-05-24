@@ -30,9 +30,17 @@ import {
   launchActionsFromOutput
 } from "../../packages/ai-studio-terminals/src/server/launchTargetTerminal.js";
 import {
+  codexTerminalNamespace
+} from "../../packages/ai-studio-terminals/src/server/terminalShared.js";
+import {
   resolveShellTerminalCwd,
   shellTerminalArgs
 } from "../../packages/ai-studio-terminals/src/server/shellTerminal.js";
+import {
+  closeTerminalSession,
+  startTerminalSession,
+  updateTerminalSessionMetadata
+} from "../../server/lib/terminalSessions.js";
 import {
   resolveTerminalToolchainImage
 } from "../../packages/ai-studio-terminals/src/server/terminalToolchainImage.js";
@@ -308,6 +316,79 @@ test("AI Studio Codex terminal mounts linked git metadata for worktree roots", a
     });
 
     assert.ok(args.includes(`${linkedRepository}:${linkedRepository}`));
+  });
+});
+
+test("AI Studio Codex terminal state separates running from transmitting", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "codex_turn_state";
+    const sessionRoot = path.join(targetRoot, ".ai-studio", "sessions", "active", sessionId);
+    const worktree = path.join(sessionRoot, "worktree");
+    await mkdir(worktree, {
+      recursive: true
+    });
+    const namespace = codexTerminalNamespace(sessionId);
+    const terminal = startTerminalSession({
+      args: [
+        "-e",
+        "process.stdin.resume(); setInterval(() => {}, 1000);"
+      ],
+      command: process.execPath,
+      commandPreview: "codex",
+      metadata: {
+        targetRoot,
+        workdir: worktree
+      },
+      namespace
+    });
+    assert.equal(terminal.ok, true);
+
+    const terminalService = createService({
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return {
+            async getSession() {
+              return {
+                completedSteps: ["worktree_created"],
+                metadata: {
+                  worktree_path: worktree
+                },
+                sessionId,
+                sessionRoot,
+                targetRoot
+              };
+            }
+          };
+        }
+      }
+    });
+
+    try {
+      let state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.status, "running");
+      assert.equal(state.codexTerminal.transmitting, false);
+
+      assert.equal(updateTerminalSessionMetadata(terminal.id, {
+        codexTurnState: "transmitting"
+      }, {
+        namespace
+      }).ok, true);
+      state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.transmitting, true);
+
+      assert.equal(updateTerminalSessionMetadata(terminal.id, {
+        codexTurnState: "idle"
+      }, {
+        namespace
+      }).ok, true);
+      state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.transmitting, false);
+    } finally {
+      await closeTerminalSession(terminal.id, {
+        namespace
+      });
+    }
   });
 });
 

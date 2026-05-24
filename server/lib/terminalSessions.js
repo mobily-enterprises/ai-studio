@@ -370,6 +370,18 @@ function readTerminalSession(id, { namespace = "default" } = {}) {
   return terminalSessionResponse(session);
 }
 
+function updateTerminalSessionMetadata(id, metadata = {}, { namespace = "default" } = {}) {
+  const sessions = sessionsForNamespace(namespace);
+  const session = sessions.get(id);
+  if (!session) {
+    return {
+      ok: false,
+      error: "Terminal session not found."
+    };
+  }
+  return applySessionMetadata(session, metadata);
+}
+
 function subscribeTerminalSession(id, subscriber, { namespace = "default" } = {}) {
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
@@ -541,5 +553,6 @@ export {
   startTerminalSession,
   stopTerminalSession,
   subscribeTerminalSession,
+  updateTerminalSessionMetadata,
   writeTerminalSession
 };

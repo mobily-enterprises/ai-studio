@@ -11,6 +11,7 @@ import {
   resizeTerminalSession,
   startTerminalSession,
   subscribeTerminalSession,
+  updateTerminalSessionMetadata,
   writeTerminalSession
 } from "../../../../server/lib/terminalSessions.js";
 import {
@@ -96,6 +97,10 @@ const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
+const CODEX_TURN_STATE = Object.freeze({
+  IDLE: "idle",
+  TRANSMITTING: "transmitting"
+});
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -240,7 +245,7 @@ function activeCodexTerminal(session = {}) {
     commandPreview: terminal.commandPreview || "",
     id: terminal.id || "",
     status: terminal.status || "",
-    transmitting: terminal.status === "running"
+    transmitting: terminal.metadata?.codexTurnState === CODEX_TURN_STATE.TRANSMITTING
   };
 }
 
@@ -248,6 +253,40 @@ function writeCodexTerminalInput(sessionId = "", terminalSessionId = "", data = 
   return writeTerminalSession(terminalSessionId, data, {
     namespace: codexTerminalNamespace(sessionId)
   });
+}
+
+function updateCodexTerminalMetadata(sessionId = "", terminalSessionId = "", metadata = {}) {
+  return updateTerminalSessionMetadata(terminalSessionId, metadata, {
+    namespace: codexTerminalNamespace(sessionId)
+  });
+}
+
+function activeCodexTerminalSessions(sessionId = "") {
+  return listTerminalSessions({
+    namespace: codexTerminalNamespace(sessionId)
+  }).filter((terminal) => terminal.status !== "exited");
+}
+
+function transmittingCodexTurnMetadata(signature = "") {
+  return {
+    codexTurnFinishedAt: "",
+    codexTurnSignature: signature,
+    codexTurnStartedAt: new Date().toISOString(),
+    codexTurnState: CODEX_TURN_STATE.TRANSMITTING
+  };
+}
+
+function idleCodexTurnMetadata() {
+  return {
+    codexTurnFinishedAt: new Date().toISOString(),
+    codexTurnState: CODEX_TURN_STATE.IDLE
+  };
+}
+
+function clearCodexTurnsForSession(sessionId = "") {
+  for (const terminal of activeCodexTerminalSessions(sessionId)) {
+    updateCodexTerminalMetadata(sessionId, terminal.id, idleCodexTurnMetadata());
+  }
 }
 
 function codexState(session = {}) {
@@ -439,9 +478,12 @@ function createCodexTerminalController({
       targetRoot
     });
     const currentStepInputHelper = await prepareCurrentStepInputHelper({
-      onSessionChanged: (changedSessionId) => publishSessionChanged(changedSessionId, {
-        reason: "current-step-input-helper"
-      }),
+      onSessionChanged: async (changedSessionId) => {
+        clearCodexTurnsForSession(changedSessionId);
+        await publishSessionChanged(changedSessionId, {
+          reason: "current-step-input-helper"
+        });
+      },
       projectService,
       session,
       targetRoot
@@ -635,16 +677,25 @@ function createCodexTerminalController({
 
     const snapshot = codexTerminalSnapshot(sessionId, terminalResponse.id);
     const outputStart = String(snapshot.output || "").length;
+    const signature = codexPromptHandoffSignature(sessionId);
+    const turnMetadataResult = updateCodexTerminalMetadata(
+      sessionId,
+      terminalResponse.id,
+      transmittingCodexTurnMetadata(signature)
+    );
+    if (turnMetadataResult.ok === false) {
+      return turnMetadataResult;
+    }
     const injected = writeCodexTerminalInput(
       sessionId,
       terminalResponse.id,
       `${PROMPT_INJECTION_PREFIX}${terminalInput}${PROMPT_INJECTION_SUFFIX}`
     );
     if (injected.ok === false) {
+      updateCodexTerminalMetadata(sessionId, terminalResponse.id, idleCodexTurnMetadata());
       return injected;
     }
 
-    const signature = codexPromptHandoffSignature(sessionId);
     await Promise.all([
       runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", signature),
       runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
