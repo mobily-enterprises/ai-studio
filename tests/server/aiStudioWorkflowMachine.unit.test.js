@@ -213,6 +213,54 @@ test("ai-studio runtime exposes server-owned presentation and intents for Autopi
   });
 });
 
+test("ai-studio runtime presentation exposes durable background task status", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      sessionId: "presentation_background_task"
+    });
+    await runtime.store.writeBackgroundTaskEvent("presentation_background_task", "codex_bootstrap", {
+      event: {
+        kind: "failed"
+      },
+      patch: {
+        error: "Create the session worktree before starting Codex.",
+        kind: "codex_bootstrap",
+        label: "Codex bootstrap",
+        message: "Codex bootstrap failed.",
+        retry: {
+          clientAction: "start_codex_terminal",
+          label: "Retry Codex"
+        },
+        status: "failed"
+      }
+    });
+
+    const session = await runtime.getSession("presentation_background_task");
+    assert.deepEqual(session.presentation.backgroundTasks, [
+      {
+        error: "Create the session worktree before starting Codex.",
+        finishedAt: session.presentation.backgroundTasks[0].finishedAt,
+        id: "codex_bootstrap",
+        kind: "codex_bootstrap",
+        label: "Codex bootstrap",
+        message: "Codex bootstrap failed.",
+        retry: {
+          clientAction: "start_codex_terminal",
+          label: "Retry Codex"
+        },
+        startedAt: session.presentation.backgroundTasks[0].startedAt,
+        status: "failed",
+        terminalSessionId: "",
+        updatedAt: session.presentation.backgroundTasks[0].updatedAt
+      }
+    ]);
+  });
+});
+
 test("ai-studio runtime presentation snapshots come from workflow step metadata", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     assert.deepEqual(
@@ -1643,6 +1691,47 @@ test("ai-studio runtime recovers a stuck in-flight command step back to ready", 
       stepId: "checklist_items_installed",
       toStatus: "ready"
     });
+  });
+});
+
+test("ai-studio runtime presentation owns command recovery availability", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "checklist_items_installed",
+      sessionId: "server_owned_command_recovery",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+    await runtime.recordCommandActionStarted("server_owned_command_recovery", "install_dependencies");
+
+    const applyingSession = await runtime.getSession("server_owned_command_recovery");
+    assert.equal(applyingSession.stepMachine.status, "attempting_execution");
+    assert.equal(applyingSession.presentation.command.applying, true);
+    assert.equal(applyingSession.presentation.recovery.available, false);
+
+    await runtime.store.writeCommandLifecycleEvent(
+      "server_owned_command_recovery",
+      `${applyingSession.stepRevision}-install_dependencies`,
+      {
+        patch: {
+          actionId: "install_dependencies",
+          phase: "result_written",
+          stepId: applyingSession.currentStep,
+          stepRevision: applyingSession.stepRevision
+        },
+        event: {
+          kind: "result_written"
+        }
+      }
+    );
+
+    const recoverableSession = await runtime.getSession("server_owned_command_recovery");
+    assert.equal(recoverableSession.presentation.command.applying, false);
+    assert.equal(recoverableSession.presentation.command.state, "stalled");
+    assert.equal(recoverableSession.presentation.recovery.available, true);
+    assert.equal(recoverableSession.presentation.recovery.reason, "workflow_state_stalled");
   });
 });
 

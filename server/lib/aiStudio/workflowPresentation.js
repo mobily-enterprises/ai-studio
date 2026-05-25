@@ -65,6 +65,22 @@ const OPERATION_ROUTES = Object.freeze({
   SESSION_ADVANCE: "session-advance",
   SESSION_INTENT: "session-intent"
 });
+const COMMAND_RECOVERY_DELAY_MS = 5000;
+const COMMAND_LIFECYCLE_RUNNING_PHASES = Object.freeze(new Set([
+  "starting",
+  "started"
+]));
+const COMMAND_LIFECYCLE_FINALIZING_PHASES = Object.freeze(new Set([
+  "terminal_exited",
+  "result_writing"
+]));
+const COMMAND_LIFECYCLE_COMMITTED_PHASES = Object.freeze(new Set([
+  "advanced",
+  "done",
+  "failed",
+  "post_commit_running",
+  "result_written"
+]));
 const INTENT_PRESENTATION_GROUPS = Object.freeze([
   "decision",
   "stop"
@@ -435,6 +451,95 @@ function automationWaitReason(session = {}) {
   return "";
 }
 
+function timestampAgeMs(value = "", nowMs = Date.now()) {
+  const timestampMs = Date.parse(normalizeText(value));
+  return Number.isFinite(timestampMs) ? Math.max(0, nowMs - timestampMs) : 0;
+}
+
+function commandLifecyclePhase(lifecycle = {}) {
+  return normalizeText(lifecycle?.phase || lifecycle?.status);
+}
+
+function commandLifecycle(session = {}) {
+  return isObject(session.currentCommandLifecycle) ? session.currentCommandLifecycle : null;
+}
+
+function unavailableCommandRecovery(reason = "") {
+  return {
+    available: false,
+    label: "Recover step",
+    reason: normalizeText(reason),
+    route: "recover-stuck-step"
+  };
+}
+
+function availableCommandRecovery(reason = "") {
+  return {
+    ...unavailableCommandRecovery(reason),
+    available: true
+  };
+}
+
+function commandPresentation(session = {}) {
+  const lifecycle = commandLifecycle(session);
+  const phase = commandLifecyclePhase(lifecycle);
+  const status = stepMachineStatus(session);
+  if (status !== STEP_STATUS.ATTEMPTING_EXECUTION) {
+    return {
+      applying: false,
+      lifecyclePhase: phase,
+      recovery: unavailableCommandRecovery(),
+      state: "idle"
+    };
+  }
+
+  if (!phase || COMMAND_LIFECYCLE_RUNNING_PHASES.has(phase)) {
+    return {
+      applying: true,
+      lifecyclePhase: phase,
+      recovery: unavailableCommandRecovery("command_running"),
+      state: "applying"
+    };
+  }
+
+  if (COMMAND_LIFECYCLE_FINALIZING_PHASES.has(phase)) {
+    const ageMs = timestampAgeMs(lifecycle.updatedAt || lifecycle.startedAt);
+    if (ageMs < COMMAND_RECOVERY_DELAY_MS) {
+      return {
+        applying: true,
+        lifecyclePhase: phase,
+        recovery: {
+          ...unavailableCommandRecovery("command_finalizing"),
+          availableAfterMs: COMMAND_RECOVERY_DELAY_MS - ageMs
+        },
+        state: "applying"
+      };
+    }
+    return {
+      applying: false,
+      lifecyclePhase: phase,
+      recovery: availableCommandRecovery("command_finalization_stalled"),
+      state: "stalled"
+    };
+  }
+
+  if (COMMAND_LIFECYCLE_COMMITTED_PHASES.has(phase)) {
+    return {
+      applying: false,
+      lifecyclePhase: phase,
+      recovery: availableCommandRecovery("workflow_state_stalled"),
+      state: "stalled"
+    };
+  }
+
+  return {
+    applying: true,
+    lifecyclePhase: phase,
+    recovery: unavailableCommandRecovery("command_state_unknown"),
+    state: "applying"
+  };
+}
+
 function actionOperation(session = {}, stage = {}) {
   const action = actionById(session, stage.actionId);
   if (!action || action.enabled !== true) {
@@ -616,6 +721,49 @@ function promptPresentation(session = {}) {
   }
 }
 
+function backgroundTaskRetryPresentation(task = {}) {
+  const retry = isObject(task.retry) ? task.retry : null;
+  if (!retry) {
+    return null;
+  }
+  const clientAction = normalizeText(retry.clientAction);
+  if (!clientAction) {
+    return null;
+  }
+  return {
+    clientAction,
+    label: normalizeText(retry.label) || "Retry"
+  };
+}
+
+function backgroundTaskPresentation(session = {}) {
+  return (Array.isArray(session.backgroundTasks) ? session.backgroundTasks : [])
+    .map((task) => {
+      if (!isObject(task)) {
+        return null;
+      }
+      const id = normalizeText(task.id);
+      const status = normalizeText(task.status);
+      if (!id || !status) {
+        return null;
+      }
+      return {
+        error: normalizeText(task.error),
+        finishedAt: normalizeText(task.finishedAt),
+        id,
+        kind: normalizeText(task.kind),
+        label: normalizeText(task.label) || id,
+        message: normalizeText(task.message),
+        retry: backgroundTaskRetryPresentation(task),
+        startedAt: normalizeText(task.startedAt),
+        status,
+        terminalSessionId: normalizeText(task.terminalSessionId),
+        updatedAt: normalizeText(task.updatedAt)
+      };
+    })
+    .filter(Boolean);
+}
+
 function buildPresentation(session = {}) {
   const interaction = interactionPresentation(session);
   const waiting = waitingPresentation(session);
@@ -634,14 +782,18 @@ function buildPresentation(session = {}) {
   }
 
   const nextOperation = nextAutomationOperation(session);
+  const command = commandPresentation(session);
   return {
     actions: Array.isArray(session.actions) ? session.actions : [],
     auto: {
       nextOperation
     },
+    backgroundTasks: backgroundTaskPresentation(session),
+    command,
     intents: base.intents,
     next: session.next || null,
     prompt: promptPresentation(session),
+    recovery: command.recovery,
     screen: base.screen,
     step: {
       id: normalizeText(session.currentStep),
@@ -676,10 +828,18 @@ function assertIntentMatchesCurrentState(session = {}, input = {}) {
     return;
   }
   if (stepId !== normalizeText(session.currentStep) || stepStatus !== normalizeText(session.stepMachine?.status)) {
-    throw aiStudioError(
+    const error = aiStudioError(
       `Reload state. This intent was prepared for ${stepId || "(missing step)"}:${stepStatus || "(missing status)"}, but the current workflow state is ${session.currentStep || "(no current step)"}:${session.stepMachine?.status || "(no machine status)"}.`,
       "ai_studio_intent_state_changed"
     );
+    error.operationOutcome = "stale_operation";
+    error.refreshRecommended = true;
+    error.sessionId = session.sessionId || "";
+    error.revision = session.revision ?? null;
+    error.currentStep = session.currentStep || "";
+    error.stepRevision = session.stepRevision ?? null;
+    error.stepStatus = session.stepMachine?.status || "";
+    throw error;
   }
 }
 

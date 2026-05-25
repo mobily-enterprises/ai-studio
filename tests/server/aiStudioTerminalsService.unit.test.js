@@ -412,6 +412,51 @@ test("AI Studio Codex terminal state separates running from transmitting", async
   });
 });
 
+test("AI Studio Codex bootstrap failure is persisted as a visible background task", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      sessionId: "codex_bootstrap_missing_worktree"
+    });
+    const publishReasons = [];
+    const terminalService = createService({
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        }
+      },
+      publishSessionChanged: {
+        codexTerminal: async (sessionId, event = {}) => {
+          publishReasons.push({
+            reason: event.reason,
+            sessionId
+          });
+        }
+      }
+    });
+
+    const result = await terminalService.ensureCodexThread("codex_bootstrap_missing_worktree");
+    const session = await runtime.getSession("codex_bootstrap_missing_worktree");
+    const task = session.presentation.backgroundTasks.find((entry) => entry.id === "codex_bootstrap");
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Create the session worktree before starting Codex/u);
+    assert.equal(task.status, "failed");
+    assert.match(task.error, /Create the session worktree before starting Codex/u);
+    assert.deepEqual(task.retry, {
+      clientAction: "start_codex_terminal",
+      label: "Retry Codex"
+    });
+    assert.deepEqual(publishReasons.map((entry) => entry.reason), [
+      "codex-bootstrap-running",
+      "codex-bootstrap-failed"
+    ]);
+  });
+});
+
 test("AI Studio shell terminal joins the target runtime network before the image", () => {
   const targetRoot = "/workspace/project";
   const worktree = "/workspace/project/.ai-studio/sessions/active/unit/worktree";

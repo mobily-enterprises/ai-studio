@@ -8,8 +8,8 @@ Canonical product/design decisions live in `.jskit/APP_BLUEPRINT.md`.
 
 | Finding | Status |
 | --- | --- |
-| 1. Client autopilot still contains workflow recovery policy | Outstanding |
-| 2. Background Codex bootstrap is not visible enough | Outstanding |
+| 1. Client autopilot still contains workflow recovery policy | Done |
+| 2. Background Codex bootstrap is not visible enough | Done |
 | 3. Session list/detail reads are pure but still heavy | Outstanding |
 | 4. Command action completion and session publishing are still loosely coupled | Done |
 | 5. Skip-merge flow is still procedural | Done |
@@ -20,40 +20,6 @@ Canonical product/design decisions live in `.jskit/APP_BLUEPRINT.md`.
 | 10. Simple markdown does not parse pointlists | Done |
 
 ## Outstanding Findings
-
-### Finding 1 - P1 High: Client autopilot still contains workflow recovery policy
-
-Evidence:
-
-- `src/composables/useAiStudioAutopilotController.js`
-- `server/lib/aiStudio/sessionRealtimeEvents.js`
-
-Problem:
-
-The client still knows too much about stale command starts, operation key drift, command-completion polling, and stuck execution recovery. That code exists because the server operation/realtime contract does not return enough lifecycle truth.
-
-Tackle:
-
-- Include session revision/state details in realtime events or operation responses.
-- Make command-terminal completion return a clear post-operation state.
-- Keep the client as a transport/retry shell over explicit server lifecycle states.
-
-### Finding 2 - P1 High: Background Codex bootstrap is not visible enough
-
-Evidence:
-
-- `packages/ai-studio-terminals/src/server/commandTerminal.js`
-- `packages/ai-studio-terminals/src/server/service.js`
-
-Problem:
-
-Successful command completion schedules Codex thread/bootstrap work in the background. Failures are logged but not represented as durable, visible session state.
-
-Tackle:
-
-- Persist a visible background task/bootstrap status on the session.
-- Surface status in `presentation.terminal` or a dedicated `presentation.backgroundTasks` block.
-- Add recovery/retry action when bootstrap fails.
 
 ### Finding 3 - P2 Medium: Session list/detail reads are pure but still heavy
 
@@ -95,6 +61,63 @@ Why:
 Only revisit this if timestamped logs show a real user-visible gap before the Codex/command terminal appears. This decision is documented in `.jskit/APP_BLUEPRINT.md`.
 
 ## Completed Findings
+
+### Finding 2 - Background Codex bootstrap is visible session state
+
+Changed files:
+
+- `server/lib/aiStudio/sessionStore.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `packages/ai-studio-terminals/src/server/codexTerminal.js`
+- `src/composables/useAiStudioBackgroundTasks.js`
+- `src/components/studio/ai-studio-session/AiStudioBackgroundTasks.vue`
+- `src/components/studio/ai-studio-session/AiStudioAutopilotView.vue`
+- `src/components/studio/ai-studio-session/AiStudioSessionCurrentStep.vue`
+- `src/components/studio/ai-studio-session/AiStudioSessionWorkspace.vue`
+- `src/components/studio/ai-studio-session/AiStudioSessionRuntimeHost.vue`
+- `tests/client/useAiStudioBackgroundTasks.vitest.js`
+- `tests/server/aiStudioSessionStore.unit.test.js`
+- `tests/server/aiStudioTerminalsService.unit.test.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Implemented:
+
+- Added durable session background-task records under `.ai-studio/sessions/active/<session>/background-tasks/`.
+- Codex bootstrap now writes `running`, `ready`, and `failed` task status from the actual bootstrap path.
+- `presentation.backgroundTasks` exposes the status, timestamps, error, terminal id, and retry metadata.
+- Autopilot and Inspect render failed/running background tasks and retry failed Codex bootstrap through the existing Codex terminal action.
+
+Verification:
+
+- `node --test tests/server/aiStudioSessionStore.unit.test.js tests/server/aiStudioTerminalsService.unit.test.js tests/server/aiStudioWorkflowMachine.unit.test.js`
+- `npx vitest run tests/client/useAiStudioBackgroundTasks.vitest.js`
+- `npm run test:client`
+- `npm run build`
+- `git diff --check`
+
+### Finding 1 - Client autopilot uses server-owned recovery state
+
+Changed files:
+
+- `server/lib/aiStudio/workflowPresentation.js`
+- `server/lib/aiStudio/sessionRealtimeEvents.js`
+- `server/lib/aiStudio/serverResponses.js`
+- `server/lib/aiStudio/runtime.js`
+- `packages/ai-studio-terminals/src/server/commandTerminal.js`
+- `src/composables/useAiStudioAutopilotController.js`
+- `src/composables/useAiStudioHeadlessCommandRunner.js`
+- `src/composables/useAiStudioSessionActions.js`
+- `tests/client/useAiStudioAutopilotController.vitest.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+- `tests/server/aiStudioSessionRealtimeEvents.unit.test.js`
+
+Done:
+
+- Server presentation now exposes explicit command and recovery state through `presentation.command` and `presentation.recovery`.
+- Client autopilot no longer decides stuck recovery from local timers, raw step-machine age, or raw command lifecycle phases.
+- Server stale/state-rejected operation responses include `operationOutcome`, `refreshRecommended`, and session revision context.
+- Realtime session-change payloads include revision/current-step context when the changed session is available.
+- Recovery remains an explicit user action; it is not auto-run by Autopilot.
 
 ### Prior completed finding: Centralized workflow presentation/intent contract
 

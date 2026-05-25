@@ -33,6 +33,7 @@
           :actions="actions"
           :dialogs="dialogs"
           :page="guardedPage"
+          :refresh-session-data="sessionData.refreshSessionData"
           :report-preview="reportPreview"
           :review="review"
           :human-input-response-preview="humanInputResponsePreview"

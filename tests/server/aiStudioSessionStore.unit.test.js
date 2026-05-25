@@ -52,10 +52,11 @@ test("ai-studio session store creates inspectable session state under .ai-studio
 
     await assertPathExists(paths.manifestPath);
     await assertPathExists(paths.currentStepPath);
-	    await assertPathExists(paths.statusPath);
-	    await assertPathExists(paths.metadataRoot);
-	    await assertPathExists(paths.artifactsRoot);
-	    await assertPathExists(paths.commandLifecyclesRoot);
+    await assertPathExists(paths.statusPath);
+    await assertPathExists(paths.metadataRoot);
+    await assertPathExists(paths.artifactsRoot);
+    await assertPathExists(paths.backgroundTasksRoot);
+    await assertPathExists(paths.commandLifecyclesRoot);
 
     assert.equal(await readFile(paths.currentStepPath, "utf8"), "session_created\n");
     assert.equal(await readFile(paths.statusPath, "utf8"), "active\n");
@@ -169,6 +170,67 @@ test("ai-studio session store reads and writes metadata, artifacts, status, curr
         at: "2026-05-16T01:02:03.000Z",
         status: "ok"
       }
+    ]);
+  });
+});
+
+test("ai-studio session store persists background task status with retry metadata", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createAiStudioSessionStore({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "background_task_status"
+    });
+
+    await store.writeBackgroundTaskEvent("background_task_status", "codex_bootstrap", {
+      event: {
+        kind: "started"
+      },
+      patch: {
+        kind: "codex_bootstrap",
+        label: "Codex bootstrap",
+        message: "Preparing Codex.",
+        status: "running"
+      }
+    });
+    await store.writeBackgroundTaskEvent("background_task_status", "codex_bootstrap", {
+      event: {
+        kind: "failed"
+      },
+      patch: {
+        error: "Create the session worktree before starting Codex.",
+        message: "Codex bootstrap failed.",
+        retry: {
+          clientAction: "start_codex_terminal",
+          label: "Retry Codex"
+        },
+        status: "failed"
+      }
+    });
+
+    const task = await store.readBackgroundTask("background_task_status", "codex_bootstrap");
+    assert.deepEqual({
+      error: task.error,
+      eventKinds: task.events.map((event) => event.kind),
+      id: task.id,
+      label: task.label,
+      retry: task.retry,
+      status: task.status
+    }, {
+      error: "Create the session worktree before starting Codex.",
+      eventKinds: ["started", "failed"],
+      id: "codex_bootstrap",
+      label: "Codex bootstrap",
+      retry: {
+        clientAction: "start_codex_terminal",
+        label: "Retry Codex"
+      },
+      status: "failed"
+    });
+    assert.deepEqual((await store.readSession("background_task_status")).backgroundTasks.map((entry) => entry.id), [
+      "codex_bootstrap"
     ]);
   });
 });

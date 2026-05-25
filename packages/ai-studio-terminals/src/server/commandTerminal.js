@@ -122,6 +122,17 @@ function staleCompletionReason(startedSession = {}, currentSession = {}) {
   return "";
 }
 
+function refreshRecommendedCommandError(error, session = {}, operationOutcome = "state_rejected") {
+  error.operationOutcome = operationOutcome;
+  error.refreshRecommended = true;
+  error.sessionId = session.sessionId || "";
+  error.revision = sessionRevision(session.revision);
+  error.currentStep = session.currentStep || "";
+  error.stepRevision = sessionStepRevision(session.stepRevision);
+  error.stepStatus = session.stepMachine?.status || "";
+  return error;
+}
+
 function resolveCommandWorkdir(targetRoot = "", cwd = "") {
   const normalizedCwd = String(cwd || "").trim();
   if (!normalizedCwd) {
@@ -410,7 +421,8 @@ function scheduleCommandTerminalPostCommitEffects({
     });
     const publishResult = await Promise.allSettled([
       publishSessionChanged(sessionId, {
-        reason: "command-terminal-closed"
+        reason: "command-terminal-closed",
+        session: completion.session
       }),
       shouldRunAfterSuccessfulCommand
         ? afterSuccessfulCommand({
@@ -594,10 +606,10 @@ function createCommandTerminalController({
               actionId,
               reason: "action_not_available"
             });
-            throw aiStudioError(
+            throw refreshRecommendedCommandError(aiStudioError(
               `Action ${actionId || "(empty)"} is not available on this AI Studio step.`,
               "ai_studio_action_not_available"
-            );
+            ), session, "stale_operation");
           }
           if (!actionRunsInCommandTerminal(action)) {
             aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
@@ -616,10 +628,10 @@ function createCommandTerminalController({
               actionId,
               reason: "action_disabled"
             });
-            throw aiStudioError(
+            throw refreshRecommendedCommandError(aiStudioError(
               action.disabledReason || `Action ${action.label || action.id} is disabled.`,
               "ai_studio_action_disabled"
-            );
+            ), session, "state_rejected");
           }
           const targetRoot = terminalTargetRoot(session, projectService);
           if (!targetRoot) {

@@ -19,13 +19,42 @@ function sessionIdFromResult(result = {}) {
   );
 }
 
+function safeSessionNumber(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
+}
+
+function sessionStatePayload(source = {}) {
+  const session = source?.session && typeof source.session === "object" && !Array.isArray(source.session)
+    ? source.session
+    : source;
+  if (!session || typeof session !== "object" || Array.isArray(session)) {
+    return {};
+  }
+  const revision = safeSessionNumber(session.revision);
+  const stepRevision = safeSessionNumber(session.stepRevision);
+  const currentStep = normalizeSessionId(session.currentStep);
+  const stepStatus = normalizeSessionId(session.stepMachine?.status);
+  return {
+    ...(revision === null ? {} : { revision }),
+    ...(stepRevision === null ? {} : { stepRevision }),
+    ...(currentStep ? { currentStep } : {}),
+    ...(stepStatus ? { stepStatus } : {})
+  };
+}
+
 function sessionIdFromServiceEvent({ result = {}, args = [] } = {}) {
   return sessionIdFromResult(result) || normalizeSessionId(args?.[0]);
 }
 
 function aiStudioSessionRealtimePayload({ result = {}, args = [] } = {}) {
   const sessionId = sessionIdFromResult(result) || normalizeSessionId(args?.[0]);
-  return sessionId ? { sessionId } : {};
+  return sessionId
+    ? {
+        sessionId,
+        ...sessionStatePayload(result)
+      }
+    : {};
 }
 
 function aiStudioSessionChangedServiceEvent({
@@ -60,12 +89,22 @@ function createAiStudioSessionChangedPublisher({
 
   return async function publishAiStudioSessionChanged(sessionId = "", {
     operation = "updated",
-    reason = ""
+    reason = "",
+    session = null
   } = {}) {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) {
       return null;
     }
+    const realtimePayload = {
+      ...aiStudioSessionRealtimePayload({
+        args: [normalizedSessionId],
+        result: session || {
+          sessionId: normalizedSessionId
+        }
+      }),
+      ...(reason ? { reason } : {})
+    };
 
     return domainEvents.publish({
       source: AI_STUDIO_SESSION_EVENT_SOURCE,
@@ -84,10 +123,7 @@ function createAiStudioSessionChangedPublisher({
         },
         realtime: {
           event: AI_STUDIO_SESSION_CHANGED_EVENT,
-          payload: {
-            ...(reason ? { reason } : {}),
-            sessionId: normalizedSessionId
-          }
+          payload: realtimePayload
         }
       }
     });

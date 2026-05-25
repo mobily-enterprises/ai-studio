@@ -18,22 +18,8 @@ const OPERATION_ROUTES = Object.freeze({
   SESSION_ADVANCE: "session-advance",
   SESSION_INTENT: "session-intent"
 });
-const STALE_COMMAND_START_CODES = Object.freeze(new Set([
-  "ai_studio_action_disabled",
-  "ai_studio_action_not_available",
-  "ai_studio_step_input_state_changed",
-  "ai_studio_step_not_ready"
-]));
 const COMMAND_COMPLETION_REFRESH_ATTEMPTS = 6;
 const COMMAND_COMPLETION_REFRESH_DELAY_MS = 250;
-const STUCK_EXECUTION_RECOVERY_MIN_AGE_MS = 30000;
-const STEP_STATUS_ATTEMPTING_EXECUTION = "attempting_execution";
-const COMMAND_LIFECYCLE_APPLYING_PHASES = Object.freeze(new Set([
-  "starting",
-  "started",
-  "terminal_exited",
-  "result_writing"
-]));
 
 function delay(ms = 0) {
   return new Promise((resolve) => {
@@ -69,6 +55,20 @@ function currentOperation(session = {}) {
 function operationInput(operation = {}) {
   const input = operation.input || operation.fields;
   return input && typeof input === "object" && !Array.isArray(input) ? input : {};
+}
+
+function currentCommandPresentation(session = {}) {
+  const command = currentPresentation(session).command;
+  return command && typeof command === "object" && !Array.isArray(command)
+    ? command
+    : {};
+}
+
+function currentRecoveryPresentation(session = {}) {
+  const recovery = currentPresentation(session).recovery || currentCommandPresentation(session).recovery;
+  return recovery && typeof recovery === "object" && !Array.isArray(recovery)
+    ? recovery
+    : {};
 }
 
 function operationCanDispatch(operation = {}) {
@@ -123,57 +123,20 @@ function autopilotStoppedFailure() {
   };
 }
 
-function commandStartWasRejectedAsStale(result = {}) {
+function commandStartNeedsRefresh(result = {}) {
   if (result?.ok === true || result?.terminalSessionId) {
     return false;
   }
-  const code = String(result?.code || "");
-  if (STALE_COMMAND_START_CODES.has(code)) {
-    return true;
-  }
-  return Number(result?.status || 0) === 409;
-}
-
-function commandLifecyclePhase(lifecycle = {}) {
-  return String(lifecycle?.phase || lifecycle?.status || "").trim();
-}
-
-function commandLifecycleMatchesCurrentStep(session = {}, lifecycle = {}) {
-  if (!lifecycle || typeof lifecycle !== "object" || Array.isArray(lifecycle)) {
-    return false;
-  }
-  return String(lifecycle.stepId || "") === String(session?.currentStep || "") &&
-    Number(lifecycle.stepRevision || 0) === Number(session?.stepRevision || 0);
-}
-
-function currentCommandLifecycle(session = {}) {
-  if (commandLifecycleMatchesCurrentStep(session, session?.currentCommandLifecycle)) {
-    return session.currentCommandLifecycle;
-  }
-  const lifecycles = Array.isArray(session?.commandLifecycles) ? session.commandLifecycles : [];
-  return lifecycles
-    .filter((lifecycle) => commandLifecycleMatchesCurrentStep(session, lifecycle))
-    .at(-1) || null;
+  return result?.refreshRecommended === true ||
+    String(result?.operationOutcome || "") === "stale_operation";
 }
 
 function sessionStillApplyingCommand(session = {}) {
-  if (String(session?.stepMachine?.status || "") !== STEP_STATUS_ATTEMPTING_EXECUTION) {
-    return false;
-  }
-  const lifecycle = currentCommandLifecycle(session);
-  if (!lifecycle) {
-    return true;
-  }
-  const phase = commandLifecyclePhase(lifecycle);
-  return !phase || COMMAND_LIFECYCLE_APPLYING_PHASES.has(phase);
+  return currentCommandPresentation(session).applying === true;
 }
 
-function stepMachineStateAgeMs(session = {}, nowMs = Date.now()) {
-  const stateAtMs = Date.parse(String(session?.stepMachine?.at || ""));
-  return Number.isFinite(stateAtMs) ? Math.max(0, nowMs - stateAtMs) : 0;
-}
-
-function serverMovedPastCommandOperation(previousOperation = {}, nextOperation = {}) {
+function serverNoLongerPresentsCommand(previousOperation = {}, session = {}) {
+  const nextOperation = currentOperation(session);
   if (!operationCanDispatch(nextOperation)) {
     return true;
   }
@@ -197,7 +160,6 @@ function useAiStudioAutopilotController({
   const failure = ref(null);
   const lastCommandResult = ref(null);
   const lastDispatchedOperationKey = ref("");
-  const recoveryOfferedAfterTimeout = ref(false);
   const recoveryRunning = ref(false);
 
   let autopilotPromise = null;
@@ -230,13 +192,9 @@ function useAiStudioAutopilotController({
   const stuckRecoveryAvailable = computed(() => Boolean(
     autopilotEnabled.value &&
     currentSession.value?.sessionId &&
-    sessionStillApplyingCommand(currentSession.value) &&
+    currentRecoveryPresentation(currentSession.value).available === true &&
     !running.value &&
-    !commandRunning.value &&
-    (
-      recoveryOfferedAfterTimeout.value ||
-      stepMachineStateAgeMs(currentSession.value) >= STUCK_EXECUTION_RECOVERY_MIN_AGE_MS
-    )
+    !commandRunning.value
   ));
   const screenState = computed(() => {
     if (commandRunning.value || commandFailed.value) {
@@ -378,7 +336,6 @@ function useAiStudioAutopilotController({
       await actions.recoverStuckStep?.({
         sessionId: currentSession.value?.sessionId || ""
       });
-      recoveryOfferedAfterTimeout.value = false;
       lastDispatchedOperationKey.value = "";
       if (typeof commandRunner.clearResult === "function") {
         commandRunner.clearResult();
@@ -606,11 +563,13 @@ function useAiStudioAutopilotController({
       input: operationInput(operation),
       sessionId: currentSession.value?.sessionId || ""
     });
-    if (commandStartWasRejectedAsStale(result)) {
-      aiStudioSessionDebugLog("client.autopilot.commandTerminal.staleStartRejected", {
+    if (commandStartNeedsRefresh(result)) {
+      aiStudioSessionDebugLog("client.autopilot.commandTerminal.startNeedsRefresh", {
         ...operationDebugSummary(operation),
         code: String(result?.code || ""),
         durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        operationOutcome: String(result?.operationOutcome || ""),
+        refreshRecommended: result?.refreshRecommended === true,
         sessionId: String(currentSession.value?.sessionId || ""),
         status: result?.status ?? null
       });
@@ -625,8 +584,8 @@ function useAiStudioAutopilotController({
     await refreshSessionData();
     await nextTick();
     if (result?.ok !== true) {
-      if (serverMovedPastCommandOperation(operation, currentOperation(currentSession.value))) {
-        aiStudioSessionDebugLog("client.autopilot.commandTerminal.serverMovedPastFailure", {
+      if (serverNoLongerPresentsCommand(operation, currentSession.value)) {
+        aiStudioSessionDebugLog("client.autopilot.commandTerminal.serverNoLongerPresentsCommand", {
           ...aiStudioSessionDebugSummary(currentSession.value || {}),
           ...operationDebugSummary(operation),
           durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
@@ -692,21 +651,8 @@ function useAiStudioAutopilotController({
       attempts: maxAttempts,
       durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
     });
-    if (sessionStillApplyingCommand(currentSession.value)) {
-      recoveryOfferedAfterTimeout.value = true;
-    }
     return !sessionStillApplyingCommand(currentSession.value);
   }
-
-  watch(() => [
-    currentSession.value?.sessionId || "",
-    currentSession.value?.currentStep || "",
-    currentSession.value?.stepMachine?.status || ""
-  ].join(":"), () => {
-    if (!sessionStillApplyingCommand(currentSession.value)) {
-      recoveryOfferedAfterTimeout.value = false;
-    }
-  });
 
   watch(nextOperationDispatchKey, (key) => {
     if (key !== lastDispatchedOperationKey.value) {

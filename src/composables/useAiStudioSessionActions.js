@@ -52,7 +52,8 @@ function actionDispatchRoute(action = {}) {
 }
 
 function staleAdvanceError(error = {}) {
-  return String(error?.code || "") === "ai_studio_step_not_ready";
+  return error?.refreshRecommended === true ||
+    String(error?.operationOutcome || "") === "stale_operation";
 }
 
 function useAiStudioSessionActions({

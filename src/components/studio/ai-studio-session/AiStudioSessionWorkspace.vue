@@ -10,7 +10,9 @@
           :actions="actions"
           :diff="dialogs.diff"
           :page="page"
+          :refresh-session-data="refreshSessionData"
           :review="review"
+          :session="selection.selectedSession"
           :step-input="stepInput"
         />
       </template>
@@ -74,6 +76,10 @@ defineProps({
   review: {
     default: () => ({}),
     type: Object
+  },
+  refreshSessionData: {
+    default: async () => null,
+    type: Function
   },
   humanInputResponsePreview: {
     default: () => ({}),

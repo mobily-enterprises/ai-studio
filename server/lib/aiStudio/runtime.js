@@ -123,17 +123,17 @@ async function defaultActionHandler(context = {}) {
 }
 
 function actionNotAvailableError(session, actionId) {
-  return aiStudioError(
+  return refreshRecommendedStateError(aiStudioError(
     `Action ${actionId} is not available on step ${session.currentStep || "(none)"}.`,
     "ai_studio_action_not_available"
-  );
+  ), session, "stale_operation");
 }
 
-function actionDisabledError(action) {
-  return aiStudioError(
+function actionDisabledError(action, session = {}) {
+  return refreshRecommendedStateError(aiStudioError(
     action.disabledReason || `Action ${action.id} is disabled.`,
     "ai_studio_action_disabled"
-  );
+  ), session, "state_rejected");
 }
 
 function commandActionRequiresTerminalError(action) {
@@ -141,6 +141,17 @@ function commandActionRequiresTerminalError(action) {
     `Command action ${action.label || action.id} must run in the command terminal.`,
     "ai_studio_command_requires_terminal"
   );
+}
+
+function refreshRecommendedStateError(error, session = {}, operationOutcome = "state_rejected") {
+  error.operationOutcome = operationOutcome;
+  error.refreshRecommended = true;
+  error.sessionId = session.sessionId || "";
+  error.revision = session.revision ?? null;
+  error.currentStep = session.currentStep || "";
+  error.stepRevision = session.stepRevision ?? null;
+  error.stepStatus = session.stepMachine?.status || "";
+  return error;
 }
 
 function currentAction(session, actionId) {
@@ -816,7 +827,7 @@ class AiStudioSessionRuntime {
             actionId: normalizedActionId,
             reason: "action_disabled"
           });
-          throw actionDisabledError(action);
+          throw actionDisabledError(action, session);
         }
         if (action.type === "command") {
           aiStudioSessionDebugLog("server.runtime.runAction.blocked", {
@@ -898,10 +909,10 @@ class AiStudioSessionRuntime {
             nextVisible: session.next?.visible !== false,
             reason: "step_not_ready"
           });
-          throw aiStudioError(
+          throw refreshRecommendedStateError(aiStudioError(
             session.next?.disabledReason || "Current AI Studio step cannot advance.",
             "ai_studio_step_not_ready"
-          );
+          ), session, "state_rejected");
         }
         aiStudioSessionDebugLog("server.runtime.advance.transition", {
           fromStepId: session.currentStep,

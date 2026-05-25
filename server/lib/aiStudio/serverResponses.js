@@ -14,7 +14,12 @@ function aiStudioErrorResponse(error, {
       }
     ],
     ok: false,
+    operationOutcome: String(error?.operationOutcome || ""),
+    refreshRecommended: error?.refreshRecommended === true,
+    sessionId: error?.sessionId || "",
+    revision: error?.revision ?? null,
     currentStep: error?.currentStep || "",
+    stepRevision: error?.stepRevision ?? null,
     expectedInput: error?.expectedInput || null,
     stepStatus: error?.stepStatus || "",
     projectConfig: error?.projectConfig || null,

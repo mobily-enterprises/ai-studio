@@ -33,6 +33,7 @@ const CLOSED_AI_STUDIO_SESSION_STATUSES = new Set([
 ]);
 const ACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
+const BACKGROUND_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const COMMAND_LIFECYCLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const CONVERSATION_MESSAGE_FILE_PATTERN = /^(user|assistant)\.(\d{8}T\d{9}Z)\.md$/u;
 const CONVERSATION_TURN_ID_PATTERN = /^\d{6}$/u;
@@ -50,6 +51,12 @@ const COMMAND_LIFECYCLE_PHASE_RANK = Object.freeze({
   done: 80,
   failed: 90
 });
+const BACKGROUND_TASK_STATUS = Object.freeze({
+  FAILED: "failed",
+  READY: "ready",
+  RUNNING: "running"
+});
+const BACKGROUND_TASK_STATUSES = new Set(Object.values(BACKGROUND_TASK_STATUS));
 const sessionMutationChains = new Map();
 const sessionMutationContext = new AsyncLocalStorage();
 
@@ -72,6 +79,10 @@ function isSafeActionId(actionId) {
 
 function isSafeCommandLifecycleId(lifecycleId) {
   return COMMAND_LIFECYCLE_ID_PATTERN.test(normalizeText(lifecycleId));
+}
+
+function isSafeBackgroundTaskId(taskId) {
+  return BACKGROUND_TASK_ID_PATTERN.test(normalizeText(taskId));
 }
 
 function assertValidAiStudioSessionId(sessionId) {
@@ -115,6 +126,28 @@ function assertSafeCommandLifecycleId(lifecycleId) {
     );
   }
   return normalizedLifecycleId;
+}
+
+function assertSafeBackgroundTaskId(taskId) {
+  const normalizedTaskId = normalizeText(taskId);
+  if (!isSafeBackgroundTaskId(normalizedTaskId)) {
+    throw aiStudioError(
+      `Invalid ai-studio background task id: ${normalizedTaskId || "(empty)"}`,
+      "ai_studio_invalid_background_task_id"
+    );
+  }
+  return normalizedTaskId;
+}
+
+function normalizeBackgroundTaskStatus(status) {
+  const normalizedStatus = normalizeText(status) || BACKGROUND_TASK_STATUS.RUNNING;
+  if (!BACKGROUND_TASK_STATUSES.has(normalizedStatus)) {
+    throw aiStudioError(
+      `Invalid ai-studio background task status: ${normalizedStatus}`,
+      "ai_studio_invalid_background_task_status"
+    );
+  }
+  return normalizedStatus;
 }
 
 function assertAiStudioSessionStatus(status) {
@@ -372,6 +405,7 @@ function resolveAiStudioSessionPaths({
     actionsRoot: sessionRoot ? path.join(sessionRoot, "actions") : "",
     activeSessionsRoot,
     artifactsRoot: sessionRoot ? path.join(sessionRoot, "artifacts") : "",
+    backgroundTasksRoot: sessionRoot ? path.join(sessionRoot, "background-tasks") : "",
     commandLifecyclesRoot: sessionRoot ? path.join(sessionRoot, "command-lifecycle") : "",
     commandLogPath: sessionRoot ? path.join(sessionRoot, "command-log.jsonl") : "",
     conversationLogRoot: sessionRoot ? path.join(sessionRoot, "conversation-log") : "",
@@ -445,6 +479,10 @@ function artifactFilePath(sessionPaths, relativePath) {
 
 function actionResultFilePath(sessionPaths, actionId) {
   return path.join(sessionPaths.actionsRoot, assertSafeActionId(actionId));
+}
+
+function backgroundTaskFilePath(sessionPaths, taskId) {
+  return path.join(sessionPaths.backgroundTasksRoot, `${assertSafeBackgroundTaskId(taskId)}.json`);
 }
 
 function commandLifecycleFilePath(sessionPaths, lifecycleId) {
@@ -701,6 +739,97 @@ function createAiStudioSessionStore({
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => JSON.parse(line));
+  }
+
+  async function readBackgroundTaskFromPath(sessionPaths, taskId) {
+    const normalizedTaskId = assertSafeBackgroundTaskId(taskId);
+    const taskText = await readTextIfExists(backgroundTaskFilePath(sessionPaths, normalizedTaskId));
+    if (!taskText) {
+      return null;
+    }
+    try {
+      const record = JSON.parse(taskText);
+      return isPlainObject(record)
+        ? {
+            ...record,
+            events: Array.isArray(record.events) ? record.events.filter(isPlainObject) : [],
+            id: normalizedTaskId,
+            status: normalizeBackgroundTaskStatus(record.status)
+          }
+        : null;
+    } catch {
+      throw aiStudioError(
+        `Invalid ai-studio background task: ${normalizedTaskId}`,
+        "ai_studio_invalid_background_task"
+      );
+    }
+  }
+
+  async function readBackgroundTask(sessionId, taskId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    return readBackgroundTaskFromPath(sessionPaths, taskId);
+  }
+
+  async function readBackgroundTasks(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const taskNames = sortedFileNames(
+      await readDirectoryEntries(sessionPaths.backgroundTasksRoot),
+      (name) => name.endsWith(".json") && isSafeBackgroundTaskId(name.slice(0, -".json".length))
+    );
+    const tasks = await Promise.all(taskNames.map((fileName) => {
+      return readBackgroundTaskFromPath(sessionPaths, fileName.slice(0, -".json".length));
+    }));
+    return tasks
+      .filter(Boolean)
+      .sort((left, right) => {
+        const timeComparison = normalizeText(left.updatedAt).localeCompare(normalizeText(right.updatedAt));
+        return timeComparison || normalizeText(left.id).localeCompare(normalizeText(right.id));
+      });
+  }
+
+  async function writeBackgroundTaskEvent(sessionId, taskId, {
+    event = {},
+    patch = {}
+  } = {}) {
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const normalizedTaskId = assertSafeBackgroundTaskId(taskId);
+      const previous = await readBackgroundTaskFromPath(sessionPaths, normalizedTaskId) || {
+        events: [],
+        id: normalizedTaskId
+      };
+      const eventAt = normalizeText(event.at || patch.updatedAt) || now().toISOString();
+      const status = normalizeBackgroundTaskStatus(patch.status || event.status || previous.status);
+      const previousStatus = normalizeText(previous.status);
+      const eventRecord = {
+        ...event,
+        at: eventAt,
+        kind: normalizeText(event.kind || status || "updated"),
+        message: normalizeText(event.message || patch.message),
+        status
+      };
+      const record = {
+        ...previous,
+        ...patch,
+        events: [
+          ...(Array.isArray(previous.events) ? previous.events : []),
+          eventRecord
+        ],
+        finishedAt: status === BACKGROUND_TASK_STATUS.RUNNING
+          ? ""
+          : normalizeText(patch.finishedAt || previous.finishedAt) || eventAt,
+        id: normalizedTaskId,
+        startedAt: status === BACKGROUND_TASK_STATUS.RUNNING && previousStatus !== BACKGROUND_TASK_STATUS.RUNNING
+          ? eventAt
+          : normalizeText(patch.startedAt || previous.startedAt) || eventAt,
+        status,
+        updatedAt: eventAt
+      };
+      if (status !== BACKGROUND_TASK_STATUS.FAILED && !Object.hasOwn(patch, "error")) {
+        record.error = "";
+      }
+      await writeJsonFile(backgroundTaskFilePath(sessionPaths, normalizedTaskId), record);
+      return record;
+    });
   }
 
   async function readCommandLifecycleFromPath(sessionPaths, lifecycleId) {
@@ -1070,6 +1199,7 @@ function createAiStudioSessionStore({
       completedSteps,
       artifactReadiness,
       actionResults,
+      backgroundTasks,
       commandLifecycles,
       promptContextSnapshot
     ] = await Promise.all([
@@ -1080,6 +1210,7 @@ function createAiStudioSessionStore({
       readCompletedSteps(sessionPaths.sessionId),
       readArtifactReadiness(sessionPaths.sessionId),
       readActionResults(sessionPaths.sessionId),
+      readBackgroundTasks(sessionPaths.sessionId),
       readCommandLifecycles(sessionPaths.sessionId),
       readPromptContextSnapshot(sessionPaths.sessionId)
     ]);
@@ -1096,6 +1227,8 @@ function createAiStudioSessionStore({
       actionsRoot: sessionPaths.actionsRoot,
       artifactReadiness,
       artifactsRoot: sessionPaths.artifactsRoot,
+      backgroundTasks,
+      backgroundTasksRoot: sessionPaths.backgroundTasksRoot,
       commandLifecycles,
       commandLifecyclesRoot: sessionPaths.commandLifecyclesRoot,
       currentCommandLifecycle,
@@ -1155,6 +1288,9 @@ function createAiStudioSessionStore({
         recursive: true
       }),
       mkdir(sessionPaths.artifactsRoot, {
+        recursive: true
+      }),
+      mkdir(sessionPaths.backgroundTasksRoot, {
         recursive: true
       }),
       mkdir(sessionPaths.commandLifecyclesRoot, {
@@ -1230,6 +1366,8 @@ function createAiStudioSessionStore({
     readArtifactReadiness,
     readActionResult,
     readActionResults,
+    readBackgroundTask,
+    readBackgroundTasks,
     readCommandLifecycle,
     readCommandLifecycles,
     readCommandLog,
@@ -1244,6 +1382,7 @@ function createAiStudioSessionStore({
     readStatus,
     readStepState,
     writeArtifact,
+    writeBackgroundTaskEvent,
     writeCommandLifecycleEvent,
     writeActionResult,
     writeCompletedStep,

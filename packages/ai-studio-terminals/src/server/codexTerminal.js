@@ -95,6 +95,7 @@ const ESCAPE_SEQUENCE_PATTERN = new RegExp(`${ESCAPE_CHARACTER}[ -/]*[@-~]`, "gu
 const STANDALONE_TERMINAL_CONTROL_PATTERN = new RegExp(`[${STANDALONE_TERMINAL_CONTROL_CHARACTERS}]`, "gu");
 const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
+const CODEX_BOOTSTRAP_TASK_ID = "codex_bootstrap";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 const CODEX_TURN_STATE = Object.freeze({
@@ -104,6 +105,10 @@ const CODEX_TURN_STATE = Object.freeze({
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function errorMessage(value, fallback = "Codex could not be prepared.") {
+  return normalizeText(value?.error || value?.message || value) || fallback;
 }
 
 function delay(ms) {
@@ -651,11 +656,11 @@ function createCodexTerminalController({
   }
 
   async function markCodexTerminalTransmitting(sessionId, terminalSessionId, signature, reason) {
-  const result = updateCodexTerminalMetadata(
-    sessionId,
-    terminalSessionId,
-    transmittingCodexTurnMetadata(signature, reason)
-  );
+    const result = updateCodexTerminalMetadata(
+      sessionId,
+      terminalSessionId,
+      transmittingCodexTurnMetadata(signature, reason)
+    );
     if (result.ok === false) {
       return result;
     }
@@ -673,6 +678,76 @@ function createCodexTerminalController({
     );
     await publishSessionChanged(sessionId, {
       reason
+    });
+    return result;
+  }
+
+  async function writeCodexBootstrapTaskEvent(runtime, sessionId, {
+    error = "",
+    kind = "",
+    message = "",
+    status = "running",
+    terminalSessionId = ""
+  } = {}) {
+    const task = await runtime.store.writeBackgroundTaskEvent(sessionId, CODEX_BOOTSTRAP_TASK_ID, {
+      event: {
+        error: normalizeText(error),
+        kind: normalizeText(kind || status),
+        message: normalizeText(message),
+        status
+      },
+      patch: {
+        error: normalizeText(error),
+        kind: "codex_bootstrap",
+        label: "Codex bootstrap",
+        message: normalizeText(message),
+        retry: status === "failed"
+          ? {
+              clientAction: "start_codex_terminal",
+              label: "Retry Codex"
+            }
+          : null,
+        status,
+        terminalSessionId: normalizeText(terminalSessionId)
+      }
+    });
+    await publishSessionChanged(sessionId, {
+      reason: `codex-bootstrap-${status}`
+    });
+    return task;
+  }
+
+  async function writeCodexBootstrapRunning(runtime, sessionId, {
+    kind = "running",
+    message,
+    terminalSessionId = ""
+  } = {}) {
+    return writeCodexBootstrapTaskEvent(runtime, sessionId, {
+      kind,
+      message,
+      status: "running",
+      terminalSessionId
+    });
+  }
+
+  async function writeCodexBootstrapReady(runtime, sessionId, terminalSessionId) {
+    return writeCodexBootstrapTaskEvent(runtime, sessionId, {
+      kind: "ready",
+      message: "Codex is ready.",
+      status: "ready",
+      terminalSessionId
+    });
+  }
+
+  async function writeCodexBootstrapFailure(runtime, sessionId, result, {
+    terminalSessionId = ""
+  } = {}) {
+    await writeCodexBootstrapTaskEvent(runtime, sessionId, {
+      error: errorMessage(result),
+      kind: "failed",
+      message: "Codex bootstrap failed.",
+      status: "failed",
+      terminalSessionId
     });
     return result;
   }
@@ -728,100 +803,122 @@ function createCodexTerminalController({
 
   async function ensureCodexThreadReadyNow(sessionId) {
     const runtime = await projectService.createRuntime();
-    let session = await runtime.getSession(sessionId);
-    const workdir = terminalWorktreePath(session);
-    const existingTerminal = activeCodexTerminal(session);
-    const terminalResponse = await startCodexTerminalSession(sessionId);
-    if (terminalResponse.ok === false) {
-      return terminalResponse;
-    }
-
-    const needsThreadCapture = !codexThreadIdForWorkdir(session, workdir);
-    const needsBriefing = !sessionBriefingIsDelivered(session);
-    if (!needsThreadCapture && !needsBriefing) {
-      if (!existingTerminal) {
-        const ready = await waitForCodexReady(sessionId, terminalResponse.id);
-        if (ready.ok === false) {
-          return ready;
-        }
-      }
-      await publishSessionChanged(sessionId, {
-        reason: "codex-terminal-ready"
-      });
-      return withCodexState(terminalResponse, session);
-    }
-
-    const terminalSessionId = terminalResponse.id;
-    const signature = codexBootstrapSignature(sessionId);
-    const turnMetadata = await markCodexTerminalTransmitting(
-      sessionId,
-      terminalSessionId,
-      signature,
-      "codex-thread-bootstrap-started"
-    );
-    if (turnMetadata.ok === false) {
-      return turnMetadata;
-    }
-
-    let bootstrapResult = {
-      ok: true
-    };
     try {
-      const ready = await waitForCodexReady(sessionId, terminalSessionId);
-      if (ready.ok === false) {
-        bootstrapResult = ready;
+      await writeCodexBootstrapRunning(runtime, sessionId, {
+        kind: "started",
+        message: "Preparing Codex for this session."
+      });
+      let session = await runtime.getSession(sessionId);
+      const workdir = terminalWorktreePath(session);
+      const existingTerminal = activeCodexTerminal(session);
+      const terminalResponse = await startCodexTerminalSession(sessionId);
+      if (terminalResponse.ok === false) {
+        return writeCodexBootstrapFailure(runtime, sessionId, terminalResponse);
       }
 
-      if (bootstrapResult.ok !== false && needsThreadCapture) {
-        const threadId = await captureCodexThreadId({
-          runtime,
-          session,
-          terminalSessionId
+      const needsThreadCapture = !codexThreadIdForWorkdir(session, workdir);
+      const needsBriefing = !sessionBriefingIsDelivered(session);
+      if (!needsThreadCapture && !needsBriefing) {
+        if (!existingTerminal) {
+          const ready = await waitForCodexReady(sessionId, terminalResponse.id);
+          if (ready.ok === false) {
+            return writeCodexBootstrapFailure(runtime, sessionId, ready, {
+              terminalSessionId: terminalResponse.id
+            });
+          }
+        }
+        await writeCodexBootstrapReady(runtime, sessionId, terminalResponse.id);
+        await publishSessionChanged(sessionId, {
+          reason: "codex-terminal-ready"
         });
-        if (!threadId) {
-          bootstrapResult = {
-            ok: false,
-            error: "Codex thread ID could not be captured."
-          };
-        }
+        return withCodexState(terminalResponse, session);
       }
 
-      if (bootstrapResult.ok !== false && needsThreadCapture) {
-        const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
-        if (threadReady.ok === false) {
-          bootstrapResult = threadReady;
-        }
-        session = await runtime.getSession(sessionId);
-      }
-
-      if (bootstrapResult.ok !== false) {
-        const briefing = await deliverSessionBriefing({
-          runtime,
-          session,
-          terminalSessionId
-        });
-        if (briefing.ok === false) {
-          bootstrapResult = briefing;
-        }
-      }
-    } finally {
-      await markCodexTerminalIdle(
+      const terminalSessionId = terminalResponse.id;
+      await writeCodexBootstrapRunning(runtime, sessionId, {
+        kind: "terminal_started",
+        message: "Preparing Codex thread.",
+        terminalSessionId
+      });
+      const signature = codexBootstrapSignature(sessionId);
+      const turnMetadata = await markCodexTerminalTransmitting(
         sessionId,
         terminalSessionId,
-        "codex-thread-bootstrap-finished"
+        signature,
+        "codex-thread-bootstrap-started"
       );
-    }
+      if (turnMetadata.ok === false) {
+        return writeCodexBootstrapFailure(runtime, sessionId, turnMetadata, {
+          terminalSessionId
+        });
+      }
 
-    if (bootstrapResult.ok === false) {
-      return bootstrapResult;
-    }
+      let bootstrapResult = {
+        ok: true
+      };
+      try {
+        const ready = await waitForCodexReady(sessionId, terminalSessionId);
+        if (ready.ok === false) {
+          bootstrapResult = ready;
+        }
 
-    session = await runtime.getSession(sessionId);
-    return {
-      ...withCodexState(codexTerminalSnapshot(sessionId, terminalSessionId), session),
-      codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
-      terminalSessionId
-    };
+        if (bootstrapResult.ok !== false && needsThreadCapture) {
+          const threadId = await captureCodexThreadId({
+            runtime,
+            session,
+            terminalSessionId
+          });
+          if (!threadId) {
+            bootstrapResult = {
+              ok: false,
+              error: "Codex thread ID could not be captured."
+            };
+          }
+        }
+
+        if (bootstrapResult.ok !== false && needsThreadCapture) {
+          const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
+          if (threadReady.ok === false) {
+            bootstrapResult = threadReady;
+          }
+          session = await runtime.getSession(sessionId);
+        }
+
+        if (bootstrapResult.ok !== false) {
+          const briefing = await deliverSessionBriefing({
+            runtime,
+            session,
+            terminalSessionId
+          });
+          if (briefing.ok === false) {
+            bootstrapResult = briefing;
+          }
+        }
+      } finally {
+        await markCodexTerminalIdle(
+          sessionId,
+          terminalSessionId,
+          "codex-thread-bootstrap-finished"
+        );
+      }
+
+      if (bootstrapResult.ok === false) {
+        return writeCodexBootstrapFailure(runtime, sessionId, bootstrapResult, {
+          terminalSessionId
+        });
+      }
+
+      session = await runtime.getSession(sessionId);
+      await writeCodexBootstrapReady(runtime, sessionId, terminalSessionId);
+      return {
+        ...withCodexState(codexTerminalSnapshot(sessionId, terminalSessionId), session),
+        codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
+        terminalSessionId
+      };
+    } catch (error) {
+      await writeCodexBootstrapFailure(runtime, sessionId, error);
+      throw error;
+    }
   }
 
   async function ensureCodexThreadReady(sessionId) {

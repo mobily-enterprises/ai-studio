@@ -1,4 +1,13 @@
 <template>
+  <AiStudioBackgroundTasks
+    v-if="visibleBackgroundTasks.length || backgroundTaskError"
+    class="studio-ai-sessions__background-tasks"
+    :error="backgroundTaskError"
+    :retrying-task-id="retryingBackgroundTaskId"
+    :tasks="visibleBackgroundTasks"
+    @retry="retryBackgroundTask"
+  />
+
   <form
     v-if="stepInput.visible"
     class="studio-ai-sessions__step-input"
@@ -136,14 +145,19 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
 import {
   mdiArrowRight,
   mdiCheck,
   mdiFileCompare
 } from "@mdi/js";
+import AiStudioBackgroundTasks from "@/components/studio/ai-studio-session/AiStudioBackgroundTasks.vue";
 import AiStudioSessionActionButton from "@/components/studio/ai-studio-session/AiStudioSessionActionButton.vue";
+import {
+  useAiStudioBackgroundTasks
+} from "@/composables/useAiStudioBackgroundTasks.js";
 
-defineProps({
+const props = defineProps({
   actions: {
     default: () => ({}),
     type: Object
@@ -160,12 +174,29 @@ defineProps({
     default: () => ({}),
     type: Object
   },
+  refreshSessionData: {
+    default: async () => null,
+    type: Function
+  },
+  session: {
+    default: null,
+    type: Object
+  },
   stepInput: {
     default: () => ({}),
     type: Object
   }
 });
 
+const {
+  backgroundTaskError,
+  retryBackgroundTask,
+  retryingBackgroundTaskId,
+  visibleBackgroundTasks
+} = useAiStudioBackgroundTasks({
+  refreshSessionData: () => props.refreshSessionData(),
+  session: computed(() => props.session)
+});
 </script>
 
 <style scoped>
@@ -180,6 +211,10 @@ defineProps({
 .studio-ai-sessions__step-input {
   display: grid;
   gap: 0.65rem;
+}
+
+.studio-ai-sessions__background-tasks {
+  margin-bottom: 0.55rem;
 }
 
 .studio-ai-sessions__issue-request-input {

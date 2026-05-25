@@ -34,6 +34,29 @@ test("AI Studio session service event describes a realtime session change", () =
   });
 });
 
+test("AI Studio session service event includes session revision context when available", () => {
+  const event = aiStudioSessionChangedServiceEvent();
+  const payload = event.realtime.payload({
+    result: {
+      currentStep: "project_validated",
+      revision: 7,
+      sessionId: "session-with-state",
+      stepMachine: {
+        status: "attempting_execution"
+      },
+      stepRevision: 3
+    }
+  });
+
+  assert.deepEqual(payload, {
+    currentStep: "project_validated",
+    revision: 7,
+    sessionId: "session-with-state",
+    stepRevision: 3,
+    stepStatus: "attempting_execution"
+  });
+});
+
 test("AI Studio session change publisher emits service-scoped domain events", async () => {
   const events = [];
   const publish = createAiStudioSessionChangedPublisher({

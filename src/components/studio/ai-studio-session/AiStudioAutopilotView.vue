@@ -142,6 +142,14 @@
         </div>
       </div>
 
+      <AiStudioBackgroundTasks
+        v-if="visibleBackgroundTasks.length || backgroundTaskError"
+        :error="backgroundTaskError"
+        :retrying-task-id="retryingBackgroundTaskId"
+        :tasks="visibleBackgroundTasks"
+        @retry="retryBackgroundTask"
+      />
+
       <form
         v-if="stepInput.visible && !displayRunning && !commandTerminalVisible"
         class="studio-autopilot__input-form"
@@ -381,6 +389,7 @@ import {
   mdiStopCircleOutline
 } from "@mdi/js";
 import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
+import AiStudioBackgroundTasks from "@/components/studio/ai-studio-session/AiStudioBackgroundTasks.vue";
 import AiStudioAutopilotNavigation from "@/components/studio/ai-studio-session/AiStudioAutopilotNavigation.vue";
 import AiStudioAutopilotPromptTextarea from "@/components/studio/ai-studio-session/AiStudioAutopilotPromptTextarea.vue";
 import AiStudioConversationLog from "@/components/studio/ai-studio-session/AiStudioConversationLog.vue";
@@ -389,6 +398,9 @@ import AiStudioReportPreview from "@/components/studio/ai-studio-session/AiStudi
 import {
   useAiStudioAutopilotController
 } from "@/composables/useAiStudioAutopilotController.js";
+import {
+  useAiStudioBackgroundTasks
+} from "@/composables/useAiStudioBackgroundTasks.js";
 import { useAiStudioStepInputForm } from "@/composables/useAiStudioStepInputForm.js";
 import {
   stripTerminalControlSequences
@@ -495,6 +507,15 @@ const {
 
 const selectedControl = ref(null);
 const selectedControlValues = ref({});
+const {
+  backgroundTaskError,
+  retryBackgroundTask,
+  retryingBackgroundTaskId,
+  visibleBackgroundTasks
+} = useAiStudioBackgroundTasks({
+  refreshSessionData: () => props.refreshSessionData(),
+  session: computed(() => props.session)
+});
 
 const stepInput = proxyRefs(useAiStudioStepInputForm({
   onSaved: async () => {

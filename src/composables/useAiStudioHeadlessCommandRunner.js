@@ -67,7 +67,9 @@ function commandFailure({
   commandPreview = "",
   error = "",
   exitCode = null,
+  operationOutcome = "",
   output = "",
+  refreshRecommended = false,
   status: failureStatus = null,
   terminalSessionId = ""
 } = {}) {
@@ -80,7 +82,9 @@ function commandFailure({
     error: String(error || `${label} failed.`),
     exitCode,
     ok: false,
+    operationOutcome: String(operationOutcome || ""),
     output: String(output || ""),
+    refreshRecommended: refreshRecommended === true,
     status: normalizedFailureStatus(failureStatus),
     terminalSessionId
   };
@@ -188,6 +192,8 @@ function useAiStudioHeadlessCommandRunner({
           action,
           code: terminalSession.code || terminalSession.errors?.[0]?.code || "",
           error: terminalSession.error || terminalSession.errors?.[0]?.message || "Command terminal could not start.",
+          operationOutcome: terminalSession.operationOutcome,
+          refreshRecommended: terminalSession.refreshRecommended === true,
           status: terminalSession.status || terminalSession.statusCode
         });
         lastResult.value = result;
@@ -235,6 +241,8 @@ function useAiStudioHeadlessCommandRunner({
         action,
         code: error?.code,
         error: String(error?.message || error || "Command terminal failed."),
+        operationOutcome: error?.operationOutcome,
+        refreshRecommended: error?.refreshRecommended === true,
         status: error?.status || error?.statusCode
       });
       lastResult.value = result;

@@ -269,10 +269,8 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBe(null);
   });
 
-  it("stops command completion polling when the server lifecycle says the result is committed", async () => {
+  it("stops command completion polling when the server says the command is no longer applying", async () => {
     const context = createControllerContext({
-      commandCompletionLifecyclePhase: "result_written",
-      commandCompletionStaleRefreshes: 99,
       operation: {
         actionId: "cmd_action",
         executable: true,
@@ -290,21 +288,16 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.controller.failure.value).toBe(null);
   });
 
-  it("offers stuck-step recovery only after command completion refresh times out", async () => {
+  it("uses server-presented stuck-step recovery", async () => {
     const context = createControllerContext({
-      commandCompletionRefreshAttempts: 2,
-      commandCompletionStaleRefreshes: 99,
       operation: {
-        actionId: "cmd_action",
-        executable: true,
-        id: "command-terminal:cmd_action",
-        kind: "command",
-        label: "Run command",
-        route: "command-terminal"
-      }
+        executable: false,
+        kind: "wait",
+        reason: "command applying"
+      },
+      recoveryAvailable: true,
+      stepStatus: "attempting_execution"
     });
-
-    await context.controller.runNextOperation();
 
     expect(context.actions.recoverStuckStep).not.toHaveBeenCalled();
     expect(context.controller.stuckRecoveryAvailable.value).toBe(true);
@@ -321,7 +314,6 @@ describe("useAiStudioAutopilotController", () => {
 
 function createControllerContext({
   commandCompletesWithServerAdvance = false,
-  commandCompletionLifecyclePhase = "",
   commandCompletionRefreshAttempts = 6,
   commandCompletionStaleRefreshes = 0,
   commandStartConflict = false,
@@ -333,6 +325,7 @@ function createControllerContext({
     executable: false,
     kind: "stop"
   },
+  recoveryAvailable = false,
   screen = {
     kind: "ready",
     title: "Ready"
@@ -345,7 +338,11 @@ function createControllerContext({
     status: stepStatus,
     stepId: "step_a"
   });
+  const commandPresentation = ref(commandPresentationView({
+    recoveryAvailable
+  }));
   const session = ref(sessionView({
+    command: commandPresentation.value,
     intents,
     operation,
     screen,
@@ -357,7 +354,6 @@ function createControllerContext({
   const commandPreview = ref("");
   const commandResult = ref(null);
   const commandTransportFailureRefreshPending = ref(false);
-  const commandLifecycle = ref(null);
   const commandCompletionStaleRefreshesRef = ref(commandCompletionStaleRefreshes);
   const serverCommandAdvancePending = ref(false);
   const staleCommandRefreshPending = ref(false);
@@ -365,7 +361,7 @@ function createControllerContext({
   function syncSession(values = {}) {
     const currentPresentation = session.value?.presentation || {};
     session.value = sessionView({
-      commandLifecycle: commandLifecycle.value,
+      command: commandPresentation.value,
       intents,
       operation: values.operation || currentPresentation.auto?.nextOperation || operation,
       screen: values.screen || currentPresentation.screen || screen,
@@ -387,6 +383,7 @@ function createControllerContext({
         status: "ready",
         stepId: session.value.currentStep
       };
+      commandPresentation.value = commandPresentationView();
       syncSession({
         operation
       });
@@ -434,7 +431,9 @@ function createControllerContext({
           code: "ai_studio_action_disabled",
           error: "This step is already complete.",
           ok: false,
+          operationOutcome: "stale_operation",
           output: "",
+          refreshRecommended: true,
           status: 409,
           terminalSessionId: ""
         };
@@ -518,16 +517,10 @@ function createControllerContext({
         status: "attempting_execution",
         stepId: session.value.currentStep
       };
-      commandLifecycle.value = commandCompletionLifecyclePhase
-        ? {
-            actionId: commandResult.value.actionId,
-            id: `1-${commandResult.value.actionId}`,
-            phase: commandCompletionLifecyclePhase,
-            status: commandCompletionLifecyclePhase,
-            stepId: session.value.currentStep,
-            stepRevision: session.value.stepRevision
-          }
-        : null;
+      commandPresentation.value = commandPresentationView({
+        applying: true,
+        recoveryAvailable: false
+      });
       syncSession({
         operation: {
           executable: false,
@@ -541,6 +534,9 @@ function createControllerContext({
       });
       return;
     }
+    commandPresentation.value = commandPresentationView({
+      recoveryAvailable: recoveryAvailable && stepMachine.value.status === "attempting_execution"
+    });
     if (serverCommandAdvancePending.value && commandResult.value?.ok === true) {
       serverCommandAdvancePending.value = false;
       syncSession({
@@ -591,7 +587,7 @@ function createControllerContext({
 }
 
 function sessionView({
-  commandLifecycle = null,
+  command = commandPresentationView(),
   intents = [],
   operation = {},
   screen = {},
@@ -610,8 +606,8 @@ function sessionView({
   };
   return {
     actions: [],
-    commandLifecycles: commandLifecycle ? [commandLifecycle] : [],
-    currentCommandLifecycle: commandLifecycle,
+    commandLifecycles: [],
+    currentCommandLifecycle: null,
     currentStep: stepId,
     currentStepDefinition: {
       id: stepId,
@@ -624,7 +620,9 @@ function sessionView({
       auto: {
         nextOperation
       },
+      command,
       intents,
+      recovery: command.recovery,
       screen,
       step: {
         id: stepId,
@@ -635,5 +633,21 @@ function sessionView({
     sessionId: "session-1",
     stepMachine,
     stepRevision: 1
+  };
+}
+
+function commandPresentationView({
+  applying = false,
+  recoveryAvailable = false
+} = {}) {
+  return {
+    applying,
+    recovery: {
+      available: recoveryAvailable,
+      label: "Recover step",
+      reason: recoveryAvailable ? "workflow_state_stalled" : "",
+      route: "recover-stuck-step"
+    },
+    state: recoveryAvailable ? "stalled" : applying ? "applying" : "idle"
   };
 }
