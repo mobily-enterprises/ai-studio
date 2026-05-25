@@ -220,7 +220,7 @@ Remaining risk:
 
 ## Wave 3: Presentation And Step Architecture
 
-Status: pending
+Status: completed
 
 Use one worker only, or defer until correctness fixes are stable.
 
@@ -239,12 +239,38 @@ Tasks:
 
 Exit criteria:
 
-- Step behavior and step presentation are no longer maintained in separate hard-coded maps.
-- Snapshot tests cover key workflow profiles and states.
+- Step behavior and step presentation are no longer maintained in separate hard-coded maps. Completed.
+- Snapshot tests cover key workflow profiles and states. Completed.
+
+### Wave 3 Outcome
+
+Changed files:
+
+- `server/lib/aiStudio/workflow.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `server/lib/aiStudio/index.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Implemented:
+
+- Added step-owned presentation metadata for conversation, review, optional decision, merge, and finished workflow stops.
+- Made the workflow presentation projector consume step metadata for stop screens, decision screens, server-owned intents, and special automation operations.
+- Moved final-review recheck and merge-and-sync automation triggers behind step metadata instead of hard-coded current-step checks.
+- Preserved generic presentation fallbacks for states without explicit presentation metadata.
+- Added runtime presentation snapshots covering representative workflow profiles and stop states.
+
+Verification:
+
+- `node --test tests/server/aiStudioWorkflowMachine.unit.test.js`
+- `npm test`
+- `npm run test:client`
+- `npm run build`
+- `npx eslint server/lib/aiStudio/workflow.js server/lib/aiStudio/workflowPresentation.js server/lib/aiStudio/index.js tests/server/aiStudioWorkflowMachine.unit.test.js`
+- `git diff --check`
 
 ## Wave 4: Low-Risk Cleanup
 
-Status: pending
+Status: completed
 
 Use two or three workers in parallel.
 
@@ -272,30 +298,80 @@ Agents:
 
 Exit criteria:
 
-- Duplicate utility code is reduced.
-- Dead code is removed or made intentional.
-- Invalid workflow conditions fail early.
+- Duplicate utility code is reduced. Completed.
+- Dead code is removed or made intentional. Completed.
+- Invalid workflow conditions fail early. Completed.
+
+### Wave 4 Outcome
+
+Changed files:
+
+- `server/lib/aiStudio/sessionDebugLogCore.js`
+- `server/lib/aiStudio/sessionDebugLog.js`
+- `src/lib/aiStudioSessionDebugLog.js`
+- `src/composables/useAiStudioSessionActions.js`
+- `packages/ai-studio-sessions/src/server/AiStudioSessionsProvider.js`
+- `tests/server/aiStudioSessionsService.unit.test.js`
+- `tests/server/aiStudioTerminalsService.unit.test.js`
+- `server/lib/aiStudio/workflowMachine.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Implemented:
+
+- Moved the duplicated AI Studio session debug logger implementation behind one shared core while keeping server and client wrapper import paths.
+- Removed the constant-false `waitingForPromptedArtifact` client value.
+- Removed unused `publishSessionChanged` plumbing from the sessions provider and related tests; session change publication remains wired through service events.
+- Added workflow condition DSL validation during workflow construction, including recursive `any:` checks and malformed condition errors.
+- Widened one command-terminal post-commit test timeout so the test still catches hook-blocking regressions without failing under full-suite load.
+
+Verification:
+
+- `node --test tests/server/aiStudioWorkflowMachine.unit.test.js`
+- `node --test tests/server/aiStudioSessionsService.unit.test.js tests/server/aiStudioSessionRealtimeEvents.unit.test.js`
+- `node --test tests/server/aiStudioTerminalsService.unit.test.js`
+- `npx vitest run tests/client/dumbClientOwnership.vitest.js`
+- `npm test`
+- `npm run test:client`
+- `npx vite build`
+- `npx eslint server/lib/aiStudio/sessionDebugLogCore.js server/lib/aiStudio/sessionDebugLog.js src/lib/aiStudioSessionDebugLog.js`
 
 ## Wave 5: UX And Data Shape Cleanup
 
-Status: pending
+Status: completed
 
 Use one worker.
 
 Owner files:
 
 - `src/composables/useAiStudioStepInputForm.js`
-- relevant server projection/input files
 
 Tasks:
 
-- Stop parsing numbered questions from prose.
-- Add structured question/input metadata from the server if that behavior is still needed.
+- Keep numbered-question rendering as client-only UI sugar over the existing single prompt/message contract.
+- Keep current-step input submission as one response value; do not add a separate server question/answer shape.
 
 Exit criteria:
 
-- Client form behavior no longer depends on prompt text formatting.
-- Server-owned input shape is explicit.
+- Client form can render the supported numbered-question format as separate fields. Completed.
+- Client submits numbered answers back as one response value. Completed.
+- Server-owned input shape stays unchanged. Completed.
+
+### Wave 5 Outcome
+
+Changed files:
+
+- `tests/client/useAiStudioStepInputForm.vitest.js`
+- `waves-todo.md`
+
+Implemented:
+
+- Preserved the current server contract: a direct current-step input still carries one `response` field/message.
+- Kept the numbered-question behavior as UI-only rendering sugar for plain response prompts.
+- Added coverage that the sugar only applies to a single plain response field, so already-structured server input is not reinterpreted.
+
+Verification:
+
+- `npx vitest run tests/client/useAiStudioStepInputForm.vitest.js`
 
 ## Recommended Execution Order
 

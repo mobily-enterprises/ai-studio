@@ -44,7 +44,8 @@ export {
   normalizeWorkflowProfileId,
   workflowForProfile,
   workflowProfileCreationOptions,
-  workflowProfileDefinition
+  workflowProfileDefinition,
+  workflowStepPresentation
 } from "./workflow.js";
 export {
   AI_STUDIO_PROJECT_TYPE_FILE,

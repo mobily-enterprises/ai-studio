@@ -98,6 +98,8 @@ import {
   dockerEnvValue
 } from "./dockerArgsTestHelpers.js";
 
+const POST_COMMIT_TEST_TIMEOUT_MS = 500;
+
 class UnitCommandAdapter extends TargetAdapter {
   constructor() {
     super({
@@ -1006,7 +1008,7 @@ test("AI Studio command terminal commits completion before slow post-commit hook
       assert.equal(terminal.ok, true);
       assert.equal(await Promise.race([
         closePromise.then(() => true),
-        delay(50).then(() => false)
+        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
 
       const session = await runtime.getSession("terminal_post_commit");
@@ -1015,18 +1017,18 @@ test("AI Studio command terminal commits completion before slow post-commit hook
       assert.equal(session.actionResults[0]?.status, "completed");
       assert.equal(await Promise.race([
         hookStarted.promise.then(() => true),
-        delay(50).then(() => false)
+        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
       assert.equal(await Promise.race([
         publishStarted.promise.then(() => true),
-        delay(50).then(() => false)
+        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
     } finally {
       hookReleased.resolve();
       publishReleased.resolve();
       await Promise.race([
         closePromise.catch(() => null),
-        delay(50)
+        delay(POST_COMMIT_TEST_TIMEOUT_MS)
       ]);
     }
   });

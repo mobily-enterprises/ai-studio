@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  AI_STUDIO_SESSION_STATUS,
   AI_STUDIO_WORKFLOW_PROFILE_IDS,
   AiStudioSessionRuntime,
   DEFAULT_AI_STUDIO_WORKFLOW,
@@ -11,7 +12,8 @@ import {
   FakeTargetAdapter,
   PromptRenderer,
   WorkflowMachine,
-  workflowForProfile
+  workflowForProfile,
+  workflowStepPresentation
 } from "../../server/lib/aiStudio/index.js";
 import {
   stepMachineForStep
@@ -55,6 +57,40 @@ class SeedRequiredFakeAdapter extends FakeTargetAdapter {
       }
     };
   }
+}
+
+function presentationSnapshot(session = {}) {
+  const nextOperation = session.presentation?.auto?.nextOperation || {};
+  const screen = session.presentation?.screen || {};
+  return {
+    auto: {
+      actionId: nextOperation.actionId || "",
+      executable: nextOperation.executable === true,
+      intentId: nextOperation.intentId || "",
+      kind: nextOperation.kind || "",
+      reason: nextOperation.reason || "",
+      route: nextOperation.route || ""
+    },
+    enabledIntentIds: (Array.isArray(session.intents) ? session.intents : [])
+      .filter((intent) => intent.enabled === true)
+      .map((intent) => intent.id),
+    intentIds: (Array.isArray(session.intents) ? session.intents : [])
+      .map((intent) => intent.id),
+    screen: {
+      kind: screen.kind || "",
+      message: screen.message || "",
+      primaryIntentId: screen.primaryIntentId || "",
+      sections: (Array.isArray(screen.sections) ? screen.sections : [])
+        .map((section) => section.kind),
+      title: screen.title || "",
+      variant: screen.variant || ""
+    },
+    step: {
+      id: session.presentation?.step?.id || "",
+      status: session.presentation?.step?.status || "",
+      workflowKind: session.presentation?.step?.workflowKind || ""
+    }
+  };
 }
 
 test("ai-studio runtime session view exposes workflow steps, current actions, and next state", async () => {
@@ -166,6 +202,263 @@ test("ai-studio runtime exposes server-owned presentation and intents for Autopi
     assert.equal(session.presentation.auto.nextOperation.kind, "wait");
     assert.equal(session.presentation.auto.nextOperation.executable, false);
     assert.equal(session.presentation.auto.nextOperation.reason, "user");
+  });
+});
+
+test("ai-studio runtime presentation snapshots come from workflow step metadata", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    assert.deepEqual(
+      workflowStepPresentation("changes_accepted").automation.recheckAfterPrompt,
+      {
+        intentId: "recheck_after_final_tweak",
+        label: "Recheck changes",
+        metadataName: "autopilot_final_review_followup",
+        metadataValue: "recheck",
+        promptComplete: true,
+        statuses: ["ready", "done"]
+      }
+    );
+
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          finish_session: true,
+          merge_pr: true
+        }
+      }),
+      targetRoot
+    });
+
+    const implementationReview = await runtime.createSession({
+      initialStep: "implementation_reviewed",
+      sessionId: "presentation_snapshot_implementation_review"
+    });
+    const maintenanceConversation = await runtime.createSession({
+      initialStep: "maintenance_conversation",
+      sessionId: "presentation_snapshot_conversation",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+    const optionalCheck = await runtime.createSession({
+      initialStep: "deep_ui_check_run",
+      sessionId: "presentation_snapshot_decision"
+    });
+    const finalReview = await runtime.createSession({
+      initialStep: "changes_accepted",
+      sessionId: "presentation_snapshot_final_review"
+    });
+    const mergeReview = await runtime.createSession({
+      initialStep: "pr_merged",
+      metadata: {
+        pr_url: "https://github.com/example/project/pull/3"
+      },
+      sessionId: "presentation_snapshot_merge"
+    });
+    const finished = await runtime.createSession({
+      initialStep: "local_session_finished",
+      sessionId: "presentation_snapshot_finished",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+
+    assert.deepEqual({
+      finalReview: presentationSnapshot(finalReview),
+      finished: presentationSnapshot(finished),
+      implementationReview: presentationSnapshot(implementationReview),
+      maintenanceConversation: presentationSnapshot(maintenanceConversation),
+      mergeReview: presentationSnapshot(mergeReview),
+      optionalCheck: presentationSnapshot(optionalCheck)
+    }, {
+      finalReview: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "user",
+          route: ""
+        },
+        enabledIntentIds: [
+          "open_diff",
+          "accept_review",
+          "request_review_tweak",
+          "reject_and_replan"
+        ],
+        intentIds: [
+          "open_diff",
+          "accept_review",
+          "request_review_tweak",
+          "reject_and_replan"
+        ],
+        screen: {
+          kind: "review",
+          message: "Review the validated work before Autopilot writes the report and commits.",
+          primaryIntentId: "",
+          sections: [
+            "launch_controls",
+            "report_preview",
+            "response_preview"
+          ],
+          title: "Final review",
+          variant: "final"
+        },
+        step: {
+          id: "changes_accepted",
+          status: "ready",
+          workflowKind: "final_review"
+        }
+      },
+      finished: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "user",
+          route: ""
+        },
+        enabledIntentIds: ["archive_session"],
+        intentIds: ["archive_session"],
+        screen: {
+          kind: "finished",
+          message: "The session is complete.",
+          primaryIntentId: "",
+          sections: ["report_preview"],
+          title: "Congratulations!",
+          variant: ""
+        },
+        step: {
+          id: "local_session_finished",
+          status: "ready",
+          workflowKind: "finished"
+        }
+      },
+      implementationReview: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "user",
+          route: ""
+        },
+        enabledIntentIds: [
+          "open_diff",
+          "accept_review",
+          "request_review_tweak"
+        ],
+        intentIds: [
+          "open_diff",
+          "accept_review",
+          "request_review_tweak"
+        ],
+        screen: {
+          kind: "review",
+          message: "Try the work now. Ask Codex for small tweaks, or continue when it looks right.",
+          primaryIntentId: "",
+          sections: [
+            "launch_controls",
+            "report_preview",
+            "response_preview"
+          ],
+          title: "Human review",
+          variant: "implementation"
+        },
+        step: {
+          id: "implementation_reviewed",
+          status: "ready",
+          workflowKind: "implementation_review"
+        }
+      },
+      maintenanceConversation: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "user",
+          route: ""
+        },
+        enabledIntentIds: ["talk_to_codex"],
+        intentIds: [
+          "talk_to_codex",
+          "continue_step"
+        ],
+        screen: {
+          kind: "conversation",
+          message: "Ask Codex for changes. Continue when the work is ready for the next workflow step.",
+          primaryIntentId: "talk_to_codex",
+          sections: ["response_preview"],
+          title: "Talk to Codex",
+          variant: ""
+        },
+        step: {
+          id: "maintenance_conversation",
+          status: "ready",
+          workflowKind: "agent_conversation"
+        }
+      },
+      mergeReview: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "user",
+          route: ""
+        },
+        enabledIntentIds: [
+          "merge_and_sync",
+          "skip_merge"
+        ],
+        intentIds: [
+          "merge_and_sync",
+          "skip_merge"
+        ],
+        screen: {
+          kind: "merge",
+          message: "The pull request is ready. Merge it and update the main checkout, or finish without merging.",
+          primaryIntentId: "",
+          sections: ["report_preview"],
+          title: "Merge pull request?",
+          variant: ""
+        },
+        step: {
+          id: "pr_merged",
+          status: "ready",
+          workflowKind: "merge_review"
+        }
+      },
+      optionalCheck: {
+        auto: {
+          actionId: "",
+          executable: false,
+          intentId: "",
+          kind: "wait",
+          reason: "decision",
+          route: ""
+        },
+        enabledIntentIds: [
+          "run_optional_check",
+          "skip_optional_check"
+        ],
+        intentIds: [
+          "run_optional_check",
+          "skip_optional_check"
+        ],
+        screen: {
+          kind: "decision",
+          message: "This optional check can take a long time. Run it now, or skip it and continue.",
+          primaryIntentId: "",
+          sections: [],
+          title: "Run deep UI check?",
+          variant: ""
+        },
+        step: {
+          id: "deep_ui_check_run",
+          status: "ready",
+          workflowKind: ""
+        }
+      }
+    });
   });
 });
 
@@ -298,6 +591,14 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
       await runtime.store.readMetadataValue("presentation_final_review_intents", "autopilot_final_review_followup"),
       "recheck"
     );
+    await runtime.store.writeStepState("presentation_final_review_intents", "changes_accepted", {
+      promptComplete: true,
+      schemaVersion: 1,
+      status: "ready"
+    });
+    const recheckReady = await runtime.getSession("presentation_final_review_intents");
+    assert.equal(recheckReady.presentation.auto.nextOperation.kind, "intent");
+    assert.equal(recheckReady.presentation.auto.nextOperation.intentId, "recheck_after_final_tweak");
 
     await runtime.createSession({
       initialStep: "pr_merged",
@@ -1329,5 +1630,129 @@ test("ai-studio workflow rejects duplicate action ids inside a step", () => {
       }
     }),
     /Duplicate AI Studio workflow action id/u
+  );
+});
+
+test("ai-studio workflow accepts supported condition forms and keeps runtime checks stable", () => {
+  const machine = new WorkflowMachine({
+    workflow: {
+      id: "condition_forms",
+      steps: [
+        {
+          id: "intro",
+          label: "Intro"
+        },
+        {
+          actions: [
+            {
+              enabledWhen: [
+                "always",
+                "session:active",
+                "metadata:ready",
+                "any:metadata:missing;metadata:any_ready",
+                "artifact:one.md",
+                "artifacts:two.md,three.md",
+                "action-input:collect.answer",
+                "completed:intro"
+              ],
+              id: "requires_conditions",
+              label: "Requires conditions"
+            }
+          ],
+          id: "first",
+          label: "First"
+        }
+      ]
+    }
+  });
+
+  const session = machine.buildSessionView({
+    actionResults: [
+      {
+        actionId: "collect",
+        at: "2026-05-16T01:02:03.000Z",
+        input: {
+          answer: "yes"
+        }
+      }
+    ],
+    artifactReadiness: {
+      "one.md": {
+        nonEmpty: true
+      },
+      "three.md": {
+        nonEmpty: true
+      },
+      "two.md": {
+        nonEmpty: true
+      }
+    },
+    completedSteps: ["intro"],
+    currentStep: "first",
+    metadata: {
+      any_ready: "yes",
+      ready: "yes"
+    },
+    status: AI_STUDIO_SESSION_STATUS.ACTIVE
+  });
+
+  assert.equal(session.actions[0].enabled, true);
+});
+
+test("ai-studio workflow rejects unknown nested condition prefixes during construction", () => {
+  assert.throws(
+    () => new WorkflowMachine({
+      workflow: {
+        id: "bad_condition_prefix",
+        steps: [
+          {
+            id: "first",
+            label: "First",
+            next: {
+              enabledWhen: ["any:metadata:ready;unknown:ready"]
+            }
+          },
+          {
+            id: "second",
+            label: "Second"
+          }
+        ]
+      }
+    }),
+    (error) => {
+      assert.equal(error.code, "ai_studio_workflow_unknown_condition");
+      assert.match(error.message, /Unknown AI Studio workflow condition/u);
+      assert.match(error.message, /unknown:ready/u);
+      return true;
+    }
+  );
+});
+
+test("ai-studio workflow rejects malformed condition values during construction", () => {
+  assert.throws(
+    () => new WorkflowMachine({
+      workflow: {
+        id: "bad_condition_value",
+        steps: [
+          {
+            actions: [
+              {
+                enabledWhen: ["action-input:collect"],
+                id: "blocked",
+                label: "Blocked"
+              }
+            ],
+            id: "first",
+            label: "First"
+          }
+        ]
+      }
+    }),
+    (error) => {
+      assert.equal(error.code, "ai_studio_workflow_malformed_condition");
+      assert.match(error.message, /Malformed AI Studio workflow condition/u);
+      assert.match(error.message, /action-input:collect/u);
+      return true;
+    }
   );
 });

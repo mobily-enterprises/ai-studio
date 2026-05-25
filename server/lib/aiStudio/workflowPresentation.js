@@ -8,6 +8,9 @@ import {
   aiStudioSessionDebugLog,
   aiStudioSessionDebugSummary
 } from "./sessionDebugLog.js";
+import {
+  workflowStepPresentation
+} from "./workflow.js";
 import { STEP_STATUS } from "./workflowStepMachines.js";
 
 // AI Studio ownership contract:
@@ -193,9 +196,10 @@ function intentForAction(id, action = {}, options = {}) {
 }
 
 function continueIntent(session = {}, {
+  id = INTENT_IDS.CONTINUE_STEP,
   label = ""
 } = {}) {
-  return intent(INTENT_IDS.CONTINUE_STEP, {
+  return intent(normalizeText(id) || INTENT_IDS.CONTINUE_STEP, {
     disabledReason: session.next?.disabledReason || "",
     enabled: nextIsReady(session),
     label: label || session.next?.label || "Continue",
@@ -207,125 +211,125 @@ function presentationSections(names = []) {
   return names.map((name) => ({ kind: name }));
 }
 
+function stepPresentationConfig(session = {}) {
+  const presentation = workflowStepPresentation(session.currentStep);
+  return isObject(presentation) ? presentation : {};
+}
+
+function screenTitleFromConfig(config = {}, session = {}) {
+  const title = normalizeText(config.title);
+  if (title === "current_step") {
+    return currentStepLabel(session);
+  }
+  if (normalizeText(config.titleActionId)) {
+    const action = actionById(session, normalizeText(config.titleActionId));
+    return `${action?.label || currentStepLabel(session)}${normalizeText(config.titleSuffix)}`;
+  }
+  return title || currentStepLabel(session);
+}
+
+function screenFromConfig(config = {}, session = {}) {
+  const sectionNames = Array.isArray(config.sections) ? config.sections : [];
+  return screen(config.kind || "stop", {
+    icon: config.icon || "cog",
+    message: config.message || "",
+    primaryIntentId: config.primaryIntentId || "",
+    sections: presentationSections(sectionNames),
+    showProgress: config.showProgress === true,
+    title: screenTitleFromConfig(config, session),
+    variant: config.variant || ""
+  });
+}
+
+function configuredIntentEnabled(session = {}, config = {}) {
+  if (normalizeText(config.enabledWhenAction)) {
+    return actionById(session, config.enabledWhenAction)?.enabled === true;
+  }
+  if (normalizeText(config.enabledWhen) === "has_next_step") {
+    return session.next?.visible !== false && Boolean(session.next?.stepId);
+  }
+  return config.enabled !== false;
+}
+
+function configuredIntentDisabledReason(session = {}, config = {}, enabled = true) {
+  if (enabled) {
+    return "";
+  }
+  if (normalizeText(config.disabledReason)) {
+    return config.disabledReason;
+  }
+  if (normalizeText(config.enabledWhenAction)) {
+    return actionById(session, config.enabledWhenAction)?.disabledReason || "";
+  }
+  if (normalizeText(config.enabledWhen) === "has_next_step" && session.next?.visible === false) {
+    return "There is no next workflow step.";
+  }
+  return "";
+}
+
+function intentFromConfig(session = {}, config = {}) {
+  const id = normalizeText(config.id);
+  if (!id) {
+    return null;
+  }
+  if (normalizeText(config.type) === "continue") {
+    return continueIntent(session, {
+      id,
+      label: config.label
+    });
+  }
+  if (normalizeText(config.type) === "action") {
+    const stage = stageAction(session);
+    const action = actionById(session, config.actionId || stage?.actionId || "");
+    return intentForAction(id, action, {
+      disabledReason: config.disabledReason || "",
+      inputFields: config.inputFields,
+      label: config.label || "",
+      style: config.style || "secondary"
+    });
+  }
+  const enabled = configuredIntentEnabled(session, config);
+  return intent(id, {
+    clientAction: config.clientAction || "",
+    disabledReason: configuredIntentDisabledReason(session, config, enabled),
+    enabled,
+    inputFields: config.inputFields,
+    label: config.label || "",
+    style: config.style || "secondary"
+  });
+}
+
+function presentationFromConfig(session = {}, config = {}) {
+  const intents = (Array.isArray(config.intents) ? config.intents : [])
+    .map((intentConfig) => intentFromConfig(session, intentConfig))
+    .filter(Boolean);
+  return {
+    intents,
+    screen: screenFromConfig(isObject(config.screen) ? config.screen : {}, session)
+  };
+}
+
 function stopScreenPresentation(session = {}) {
-  const autopilot = currentAutopilot(session);
-  const kind = normalizeText(autopilot.kind);
-  const label = currentStepLabel(session);
-
-  if (kind === "agent_conversation") {
-    const action = actionById(session, autopilot.stage?.actionId || autopilot.actionId || ACTION_IDS.AGENT_CONVERSATION);
-    return {
-      intents: [
-        intentForAction(INTENT_IDS.TALK_TO_CODEX, action, {
-          style: "primary"
-        }),
-        continueIntent(session)
-      ],
-      screen: screen("conversation", {
-        message: "Ask Codex for changes. Continue when the work is ready for the next workflow step.",
-        primaryIntentId: INTENT_IDS.TALK_TO_CODEX,
-        sections: presentationSections(["response_preview"]),
-        title: label
-      })
-    };
-  }
-
-  if (kind === "implementation_review" || kind === "final_review") {
-    const finalReview = kind === "final_review";
-    const actionId = finalReview
-      ? ACTION_IDS.FINAL_REVIEW_CONVERSATION
-      : ACTION_IDS.HUMAN_REVIEW_CONVERSATION;
-    const tweakAction = actionById(session, actionId);
-    const intents = [
-      intent("open_diff", {
-        clientAction: "open_diff",
-        enabled: true,
-        label: "Review diff"
-      }),
-      intent(INTENT_IDS.ACCEPT_REVIEW, {
-        disabledReason: session.next?.disabledReason || "",
-        enabled: nextIsReady(session),
-        label: finalReview ? "Accept and finalize" : "Looks good, continue",
-        style: "primary"
-      }),
-      intentForAction(INTENT_IDS.REQUEST_REVIEW_TWEAK, tweakAction, {
-        style: "secondary"
-      })
-    ];
-    if (finalReview) {
-      intents.push(intent(INTENT_IDS.REJECT_AND_REPLAN, {
-        enabled: true,
-        inputFields: [
-          {
-            kind: "textarea",
-            label: "What should change in the plan?",
-            name: "feedback",
-            requiredMessage: "Describe what should change before sending the work back to Codex."
-          }
-        ],
-        label: "Reject, replan"
-      }));
-    }
-    return {
-      intents,
-      screen: screen("review", {
-        message: finalReview
-          ? "Review the validated work before Autopilot writes the report and commits."
-          : "Try the work now. Ask Codex for small tweaks, or continue when it looks right.",
-        sections: presentationSections(["launch_controls", "report_preview", "response_preview"]),
-        title: finalReview ? "Final review" : "Human review",
-        variant: finalReview ? "final" : "implementation"
-      })
-    };
-  }
-
-  if (kind === "merge_review") {
-    return {
-      intents: [
-        intent(INTENT_IDS.MERGE_AND_SYNC, {
-          enabled: actionById(session, ACTION_IDS.PREPARE_FOR_MERGE)?.enabled === true,
-          label: "Merge and update main checkout",
-          style: "primary"
-        }),
-        intentForAction(INTENT_IDS.SKIP_MERGE, actionById(session, ACTION_IDS.SKIP_MERGE), {
-          label: "Do not merge"
-        })
-      ],
-      screen: screen("merge", {
-        message: "The pull request is ready. Merge it and update the main checkout, or finish without merging.",
-        sections: presentationSections(["report_preview"]),
-        title: "Merge pull request?"
-      })
-    };
-  }
-
-  if (kind === "finished") {
-    return {
-      intents: [
-        intentForAction(INTENT_IDS.ARCHIVE_SESSION, actionById(session, ACTION_IDS.FINISH_SESSION), {
-          label: "Archive",
-          style: "primary"
-        })
-      ],
-      screen: screen("finished", {
-        icon: "success",
-        message: "The session is complete.",
-        sections: presentationSections(["report_preview"]),
-        title: "Congratulations!"
-      })
-    };
+  const configured = stepPresentationConfig(session).stop;
+  if (isObject(configured)) {
+    return presentationFromConfig(session, configured);
   }
 
   return {
     intents: [],
     screen: screen("stop", {
-      title: label
+      title: currentStepLabel(session)
     })
   };
 }
 
 function userDecisionPresentation(session = {}) {
-  const action = actionById(session, ACTION_IDS.RUN_DEEP_UI_CHECK) || actionById(session, stageAction(session)?.actionId);
+  const configured = stepPresentationConfig(session).decision;
+  if (isObject(configured)) {
+    return presentationFromConfig(session, configured);
+  }
+
+  const action = actionById(session, stageAction(session)?.actionId);
   return {
     intents: [
       intentForAction(INTENT_IDS.RUN_OPTIONAL_CHECK, action, {
@@ -496,7 +500,7 @@ function stopOperation(reason = "") {
   };
 }
 
-function mergeOperation(session = {}) {
+function mergeOperation(session = {}, config = {}) {
   const metadata = session.metadata || {};
   if (normalizeText(metadata.merge_skipped)) {
     return nextIsReady(session)
@@ -510,7 +514,7 @@ function mergeOperation(session = {}) {
   }
   if (stepMachineStatus(session) === STEP_STATUS.READY && session.stepMachine?.promptComplete === true) {
     return actionOperation(session, {
-      actionId: ACTION_IDS.MERGE_PR,
+      actionId: config.mergeActionId || ACTION_IDS.MERGE_PR,
       label: "Merge"
     });
   }
@@ -518,31 +522,45 @@ function mergeOperation(session = {}) {
     return waitOperation(automationWaitReason(session));
   }
   return actionOperation(session, {
-    actionId: ACTION_IDS.PREPARE_FOR_MERGE,
+    actionId: config.prepareActionId || ACTION_IDS.PREPARE_FOR_MERGE,
     label: "Prepare for merge"
   });
 }
 
-function nextAutomationOperation(session = {}) {
-  const waitReason = automationWaitReason(session);
+function configuredAutomationOperation(session = {}) {
+  const automation = stepPresentationConfig(session).automation;
+  if (!isObject(automation)) {
+    return null;
+  }
   const metadata = session.metadata || {};
-
+  const recheck = isObject(automation.recheckAfterPrompt) ? automation.recheckAfterPrompt : null;
   if (
-    normalizeText(session.currentStep) === STEP_IDS.CHANGES_ACCEPTED &&
-    normalizeText(metadata[METADATA_KEYS.FINAL_REVIEW_FOLLOWUP]) === "recheck" &&
-    [STEP_STATUS.READY, STEP_STATUS.DONE].includes(stepMachineStatus(session)) &&
-    session.stepMachine?.promptComplete === true
+    recheck &&
+    normalizeText(metadata[recheck.metadataName]) === normalizeText(recheck.metadataValue) &&
+    (Array.isArray(recheck.statuses) ? recheck.statuses : []).includes(stepMachineStatus(session)) &&
+    (recheck.promptComplete !== true || session.stepMachine?.promptComplete === true)
   ) {
-    return intentOperation(INTENT_IDS.RECHECK_AFTER_FINAL_TWEAK, {
-      label: "Recheck changes"
+    return intentOperation(recheck.intentId, {
+      label: recheck.label
     });
   }
 
+  const merge = isObject(automation.mergeIntent) ? automation.mergeIntent : null;
   if (
-    normalizeText(session.currentStep) === STEP_IDS.PR_MERGED &&
-    normalizeText(metadata[METADATA_KEYS.MERGE_INTENT]) === "merge_and_sync"
+    merge &&
+    normalizeText(metadata[merge.metadataName]) === normalizeText(merge.metadataValue)
   ) {
-    return mergeOperation(session);
+    return mergeOperation(session, merge);
+  }
+  return null;
+}
+
+function nextAutomationOperation(session = {}) {
+  const waitReason = automationWaitReason(session);
+
+  const configuredOperation = configuredAutomationOperation(session);
+  if (configuredOperation) {
+    return configuredOperation;
   }
 
   if (waitReason) {

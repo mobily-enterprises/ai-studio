@@ -114,6 +114,51 @@ describe("useAiStudioStepInputForm", () => {
     expect(form.fields.value[0].name).toBe("response");
   });
 
+  it("only applies numbered question sugar to a single plain response field", () => {
+    const session = ref({
+      currentStep: "plan_executed",
+      presentation: {
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "text",
+                label: "Title",
+                name: "title",
+                required: true
+              },
+              {
+                kind: "textarea",
+                label: "Response",
+                name: "response",
+                required: true
+              }
+            ],
+            prompt: [
+              "[1] What filename should I create?",
+              "[2] What contents should it have?"
+            ].join("\n"),
+            submitKind: "user_response",
+            submitTarget: "current-step-input"
+          }
+        }
+      },
+      sessionId: "session-1",
+      stepMachine: {
+        status: "waiting_for_input"
+      }
+    });
+    const form = useAiStudioStepInputForm({
+      session
+    });
+
+    expect(form.prompt.value).toBe([
+      "[1] What filename should I create?",
+      "[2] What contents should it have?"
+    ].join("\n"));
+    expect(form.fields.value.map((field) => field.name)).toEqual(["title", "response"]);
+  });
+
   it("keeps introductory text above numbered question fields", () => {
     const session = ref(promptResponseSession([
       "Codex needs these details:",

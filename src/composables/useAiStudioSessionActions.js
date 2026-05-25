@@ -208,9 +208,6 @@ function useAiStudioSessionActions({
   const currentStepDisabledReason = computed(() => {
     return resolveCurrentStepDisabledReason(currentActions.value, currentNext.value);
   });
-  const waitingForPromptedArtifact = computed(() => {
-    return false;
-  });
   const acceptChangesUtilitiesVisible = computed(() => {
     const intents = Array.isArray(selectedSession.value?.intents) ? selectedSession.value.intents : [];
     return intents.some((intent) => intent.clientAction === "open_diff" && intent.enabled !== false);
@@ -629,7 +626,6 @@ function useAiStudioSessionActions({
     runIntent,
     runIntentById,
     runIntentCommand,
-    waitingForPromptedArtifact,
     worktreeReady
   };
 }

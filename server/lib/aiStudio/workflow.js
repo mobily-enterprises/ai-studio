@@ -97,6 +97,29 @@ function agentConversationStep({
     id,
     label,
     ...(next ? { next } : {}),
+    presentation: {
+      stop: {
+        intents: [
+          {
+            actionId: conversationAction.id,
+            id: "talk_to_codex",
+            style: "primary",
+            type: "action"
+          },
+          {
+            id: "continue_step",
+            type: "continue"
+          }
+        ],
+        screen: {
+          kind: "conversation",
+          message: "Ask Codex for changes. Continue when the work is ready for the next workflow step.",
+          primaryIntentId: "talk_to_codex",
+          sections: ["response_preview"],
+          title: "current_step"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: [AGENT_CONVERSATION_ACTION_ID],
       artifacts: artifactsToClean
@@ -443,6 +466,37 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     description: "Try the implemented work and request small tweaks before slower review steps.",
     id: "implementation_reviewed",
     label: "Human review",
+    presentation: {
+      stop: {
+        intents: [
+          {
+            clientAction: "open_diff",
+            enabled: true,
+            id: "open_diff",
+            label: "Review diff"
+          },
+          {
+            id: "accept_review",
+            label: "Looks good, continue",
+            style: "primary",
+            type: "continue"
+          },
+          {
+            actionId: HUMAN_REVIEW_CONVERSATION_ACTION_ID,
+            id: "request_review_tweak",
+            style: "secondary",
+            type: "action"
+          }
+        ],
+        screen: {
+          kind: "review",
+          message: "Try the work now. Ask Codex for small tweaks, or continue when it looks right.",
+          sections: ["launch_controls", "report_preview", "response_preview"],
+          title: "Human review",
+          variant: "implementation"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: [HUMAN_REVIEW_CONVERSATION_ACTION_ID],
       artifacts: [HUMAN_INPUT_RESPONSE_ARTIFACT]
@@ -485,6 +539,29 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     description: "Run the deeper UI review when the target supports it.",
     id: "deep_ui_check_run",
     label: "Run deep UI check",
+    presentation: {
+      decision: {
+        intents: [
+          {
+            actionId: "run_deep_ui_check",
+            id: "run_optional_check",
+            style: "primary",
+            type: "action"
+          },
+          {
+            enabledWhen: "has_next_step",
+            id: "skip_optional_check",
+            label: "Skip"
+          }
+        ],
+        screen: {
+          kind: "decision",
+          message: "This optional check can take a long time. Run it now, or skip it and continue.",
+          titleActionId: "run_deep_ui_check",
+          titleSuffix: "?"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: ["run_deep_ui_check"]
     }
@@ -579,6 +656,60 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     description: "Review the validated work before the report, commit, and pull request.",
     id: "changes_accepted",
     label: "Final review",
+    presentation: {
+      automation: {
+        recheckAfterPrompt: {
+          intentId: "recheck_after_final_tweak",
+          label: "Recheck changes",
+          metadataName: "autopilot_final_review_followup",
+          metadataValue: "recheck",
+          promptComplete: true,
+          statuses: ["ready", "done"]
+        }
+      },
+      stop: {
+        intents: [
+          {
+            clientAction: "open_diff",
+            enabled: true,
+            id: "open_diff",
+            label: "Review diff"
+          },
+          {
+            id: "accept_review",
+            label: "Accept and finalize",
+            style: "primary",
+            type: "continue"
+          },
+          {
+            actionId: FINAL_REVIEW_CONVERSATION_ACTION_ID,
+            id: "request_review_tweak",
+            style: "secondary",
+            type: "action"
+          },
+          {
+            enabled: true,
+            id: "reject_and_replan",
+            inputFields: [
+              {
+                kind: "textarea",
+                label: "What should change in the plan?",
+                name: "feedback",
+                requiredMessage: "Describe what should change before sending the work back to Codex."
+              }
+            ],
+            label: "Reject, replan"
+          }
+        ],
+        screen: {
+          kind: "review",
+          message: "Review the validated work before Autopilot writes the report and commits.",
+          sections: ["launch_controls", "report_preview", "response_preview"],
+          title: "Final review",
+          variant: "final"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: [FINAL_REVIEW_CONVERSATION_ACTION_ID],
       metadata: ["autopilot_final_review_followup"]
@@ -791,6 +922,38 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
       disabledReason: "Merge the pull request or choose not to merge before continuing.",
       enabledWhen: [MERGE_DECISION_READY_CONDITION]
     },
+    presentation: {
+      automation: {
+        mergeIntent: {
+          mergeActionId: "merge_pr",
+          metadataName: "autopilot_merge_intent",
+          metadataValue: "merge_and_sync",
+          prepareActionId: "prepare_for_merge"
+        }
+      },
+      stop: {
+        intents: [
+          {
+            enabledWhenAction: "prepare_for_merge",
+            id: "merge_and_sync",
+            label: "Merge and update main checkout",
+            style: "primary"
+          },
+          {
+            actionId: "skip_merge",
+            id: "skip_merge",
+            label: "Do not merge",
+            type: "action"
+          }
+        ],
+        screen: {
+          kind: "merge",
+          message: "The pull request is ready. Merge it and update the main checkout, or finish without merging.",
+          sections: ["report_preview"],
+          title: "Merge pull request?"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: ["prepare_for_merge", "merge_pr", "skip_merge"],
       metadata: ["pr_merged", "merge_skipped", "autopilot_merge_intent"]
@@ -846,6 +1009,26 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     next: {
       visible: false
     },
+    presentation: {
+      stop: {
+        intents: [
+          {
+            actionId: "finish_session",
+            id: "archive_session",
+            label: "Archive",
+            style: "primary",
+            type: "action"
+          }
+        ],
+        screen: {
+          icon: "success",
+          kind: "finished",
+          message: "The session is complete.",
+          sections: ["report_preview"],
+          title: "Congratulations!"
+        }
+      }
+    },
     rewindCleanup: {
       actionResults: ["finish_session"]
     }
@@ -868,6 +1051,26 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     label: "Finish local session",
     next: {
       visible: false
+    },
+    presentation: {
+      stop: {
+        intents: [
+          {
+            actionId: "finish_session",
+            id: "archive_session",
+            label: "Archive",
+            style: "primary",
+            type: "action"
+          }
+        ],
+        screen: {
+          icon: "success",
+          kind: "finished",
+          message: "The session is complete.",
+          sections: ["report_preview"],
+          title: "Congratulations!"
+        }
+      }
     },
     rewindCleanup: {
       actionResults: ["finish_session"]
@@ -1018,6 +1221,11 @@ function workflowStepDefinition(stepId = "") {
   return plainClone(step);
 }
 
+function workflowStepPresentation(stepId = "") {
+  const step = AI_STUDIO_WORKFLOW_STEP_CATALOG[normalizeText(stepId)];
+  return plainClone(step?.presentation || null);
+}
+
 function workflowForProfile(profileId = DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID) {
   const profile = workflowProfileDefinition(profileId);
   return deepFreeze({
@@ -1070,5 +1278,6 @@ export {
   normalizeWorkflowProfileId,
   workflowForProfile,
   workflowProfileCreationOptions,
-  workflowProfileDefinition
+  workflowProfileDefinition,
+  workflowStepPresentation
 };

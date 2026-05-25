@@ -16,6 +16,113 @@ function normalizeConditionList(value) {
     : [];
 }
 
+function workflowConditionContext(context = "") {
+  const normalizedContext = normalizeText(context);
+  return normalizedContext ? ` in ${normalizedContext}` : "";
+}
+
+function malformedWorkflowCondition(condition, context, reason) {
+  throw aiStudioError(
+    `Malformed AI Studio workflow condition${workflowConditionContext(context)}: ${normalizeText(condition) || "(empty)"}. ${reason}`,
+    "ai_studio_workflow_malformed_condition"
+  );
+}
+
+function unknownWorkflowCondition(condition, context) {
+  throw aiStudioError(
+    `Unknown AI Studio workflow condition${workflowConditionContext(context)}: ${normalizeText(condition) || "(empty)"}.`,
+    "ai_studio_workflow_unknown_condition"
+  );
+}
+
+function requiredConditionValue(condition, prefix, context, reason) {
+  const value = normalizeText(condition.slice(prefix.length));
+  if (!value) {
+    malformedWorkflowCondition(condition, context, reason);
+  }
+  return value;
+}
+
+function validateDelimitedConditionValues(condition, prefix, delimiter, context, reason) {
+  const value = requiredConditionValue(condition, prefix, context, reason);
+  const entries = value.split(delimiter).map(normalizeText);
+  if (entries.some((entry) => !entry)) {
+    malformedWorkflowCondition(condition, context, reason);
+  }
+  return entries;
+}
+
+function validateWorkflowCondition(condition, context = "") {
+  const name = normalizeText(condition);
+  if (!name) {
+    malformedWorkflowCondition(condition, context, "Condition must not be empty.");
+  }
+  if (name === "always" || name === "session:active") {
+    return;
+  }
+  if (name.startsWith("always:")) {
+    malformedWorkflowCondition(name, context, "The always condition does not accept a value.");
+  }
+  if (name.startsWith("session:")) {
+    malformedWorkflowCondition(name, context, "Session conditions only support session:active.");
+  }
+  if (name.startsWith("metadata:")) {
+    requiredConditionValue(name, "metadata:", context, "Metadata conditions require a metadata name.");
+    return;
+  }
+  if (name.startsWith("any:")) {
+    const conditions = validateDelimitedConditionValues(
+      name,
+      "any:",
+      ";",
+      context,
+      "Any conditions require one or more semicolon-separated conditions."
+    );
+    conditions.forEach((candidate) => validateWorkflowCondition(candidate, context));
+    return;
+  }
+  if (name.startsWith("artifact:")) {
+    requiredConditionValue(name, "artifact:", context, "Artifact conditions require an artifact name.");
+    return;
+  }
+  if (name.startsWith("artifacts:")) {
+    validateDelimitedConditionValues(
+      name,
+      "artifacts:",
+      ",",
+      context,
+      "Artifacts conditions require one or more comma-separated artifact names."
+    );
+    return;
+  }
+  if (name.startsWith("action-input:")) {
+    const {
+      actionId,
+      inputName
+    } = actionInputConditionParts(requiredConditionValue(
+      name,
+      "action-input:",
+      context,
+      "Action input conditions require an action id and input name."
+    ));
+    if (!actionId || !inputName) {
+      malformedWorkflowCondition(name, context, "Action input conditions must use action-input:<action>.<input>.");
+    }
+    return;
+  }
+  if (name.startsWith("completed:")) {
+    requiredConditionValue(name, "completed:", context, "Completed step conditions require a step id.");
+    return;
+  }
+  unknownWorkflowCondition(name, context);
+}
+
+function normalizeWorkflowConditionList(value, context = "") {
+  const conditions = normalizeConditionList(value);
+  conditions.forEach((condition) => validateWorkflowCondition(condition, context));
+  return conditions;
+}
+
 function normalizeRewindCleanup(cleanup = {}) {
   return {
     actionResults: normalizeConditionList(cleanup.actionResults),
@@ -97,9 +204,9 @@ function normalizeAction(action = {}, stepId = "") {
     advanceOnSuccess: action.advanceOnSuccess === true,
     disabledReason: normalizeText(action.disabledReason),
     disabledWhenReason: normalizeText(action.disabledWhenReason || action.disabledReason),
-    disabledWhen: normalizeConditionList(action.disabledWhen),
+    disabledWhen: normalizeWorkflowConditionList(action.disabledWhen, `step ${stepId} action ${id} disabledWhen`),
     enabledWhenReason: normalizeText(action.enabledWhenReason || action.disabledReason),
-    enabledWhen: normalizeConditionList(action.enabledWhen),
+    enabledWhen: normalizeWorkflowConditionList(action.enabledWhen, `step ${stepId} action ${id} enabledWhen`),
     hrefMetadata: normalizeText(action.hrefMetadata),
     icon: normalizeText(action.icon),
     id,
@@ -111,34 +218,38 @@ function normalizeAction(action = {}, stepId = "") {
   };
 }
 
-function normalizeNext(next = {}) {
+function normalizeNext(next = {}, stepId = "") {
   return {
     disabledReason: normalizeText(next.disabledReason),
-    enabledWhen: normalizeConditionList(next.enabledWhen),
+    enabledWhen: normalizeWorkflowConditionList(next.enabledWhen, `step ${stepId} next.enabledWhen`),
     label: normalizeText(next.label || "Next"),
     visible: next.visible !== false,
-    visibleWhen: normalizeConditionList(next.visibleWhen)
+    visibleWhen: normalizeWorkflowConditionList(next.visibleWhen, `step ${stepId} next.visibleWhen`)
   };
 }
 
-function normalizeAutopilotAction(action = {}) {
+function normalizeAutopilotAction(action = {}, stepId = "", index = 0) {
+  const actionId = normalizeText(action.actionId);
   return {
-    actionId: normalizeText(action.actionId),
+    actionId,
     advanceOnSuccess: action.advanceOnSuccess === true,
-    completeWhen: normalizeConditionList(action.completeWhen),
+    completeWhen: normalizeWorkflowConditionList(
+      action.completeWhen,
+      `step ${stepId} autopilot action ${actionId || index + 1} completeWhen`
+    ),
     label: normalizeText(action.label || action.actionId)
   };
 }
 
-function normalizeAutopilot(autopilot = {}) {
+function normalizeAutopilot(autopilot = {}, stepId = "") {
   const actionSequence = Array.isArray(autopilot.actionSequence)
-    ? autopilot.actionSequence.map(normalizeAutopilotAction).filter((action) => action.actionId)
+    ? autopilot.actionSequence.map((action, index) => normalizeAutopilotAction(action, stepId, index)).filter((action) => action.actionId)
     : [];
   return {
     actionId: normalizeText(autopilot.actionId),
     actionSequence,
     advanceOnSuccess: autopilot.advanceOnSuccess === true,
-    completeWhen: normalizeConditionList(autopilot.completeWhen),
+    completeWhen: normalizeWorkflowConditionList(autopilot.completeWhen, `step ${stepId} autopilot.completeWhen`),
     kind: normalizeText(autopilot.kind),
     label: normalizeText(autopilot.label || autopilot.actionId),
     stop: autopilot.stop === true,
@@ -208,13 +319,13 @@ function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
   seenStepIds.add(id);
   return {
     actions: normalizeActions(step.actions, id),
-    autopilot: normalizeAutopilot(step.autopilot),
+    autopilot: normalizeAutopilot(step.autopilot, id),
     description: normalizeText(step.description),
     id,
     index,
     interaction: normalizeInteraction(step.interaction),
     label: normalizeText(step.label || id),
-    next: normalizeNext(step.next),
+    next: normalizeNext(step.next, id),
     rewindCleanup: normalizeRewindCleanup(step.rewindCleanup),
     rewindable: step.rewindable !== false
   };

@@ -115,15 +115,6 @@ test("session prompt action injects the rendered Codex handoff from the server",
         };
       }
     },
-    publishSessionChanged: {
-      async action(sessionId, event = {}) {
-        operations.push({
-          kind: "publish",
-          reason: event.reason,
-          sessionId
-        });
-      }
-    },
     setupServices: readySetupServices(),
     terminalService: {
       async injectCodexPrompt(sessionId, promptHandoff) {
@@ -214,15 +205,6 @@ test("session prompt intent injects the rendered Codex handoff from the server",
             };
           }
         };
-      }
-    },
-    publishSessionChanged: {
-      async intent(sessionId, event = {}) {
-        operations.push({
-          kind: "publish",
-          reason: event.reason,
-          sessionId
-        });
       }
     },
     setupServices: readySetupServices(),
