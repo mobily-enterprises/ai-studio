@@ -478,6 +478,13 @@ class AiStudioSessionRuntime {
     return Promise.all(sessions.map((session) => this.sessionView(session)));
   }
 
+  async listSessionSummaries(options = {}) {
+    const summaries = typeof this.store.listSessionSummaries === "function"
+      ? await this.store.listSessionSummaries(options)
+      : await this.store.listSessions(options);
+    return summaries.map((summary) => this.sessionSummaryView(summary));
+  }
+
   actionHandler(actionId) {
     return this.actionHandlers[actionId] || this.defaultHandler;
   }
@@ -497,6 +504,14 @@ class AiStudioSessionRuntime {
       workflowProfile: workflowProfileDefinition(workflowProfileId)
     };
     return applyWorkflowPresentation(await applyStepMachineView(this, sessionView));
+  }
+
+  sessionSummaryView(session = {}) {
+    const workflowProfileId = this.workflowProfileIdForSession(session);
+    return {
+      ...session,
+      workflowProfile: workflowProfileDefinition(workflowProfileId)
+    };
   }
 
   workflowProfileIdForSession(session = {}) {

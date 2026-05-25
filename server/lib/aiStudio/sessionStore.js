@@ -1256,6 +1256,43 @@ function createAiStudioSessionStore({
     };
   }
 
+  async function readSessionSummary(sessionId) {
+    const sessionPaths = await ensureSessionRoot(sessionId);
+    const [
+      manifest,
+      status,
+      currentStep,
+      metadata,
+      completedSteps
+    ] = await Promise.all([
+      readManifest(sessionPaths.sessionId),
+      readStatus(sessionPaths.sessionId),
+      readCurrentStep(sessionPaths.sessionId),
+      readMetadata(sessionPaths.sessionId),
+      readCompletedSteps(sessionPaths.sessionId)
+    ]);
+    const sessionName = await sessionNameForSession(sessionPaths, metadata);
+    return {
+      completedStepCount: completedSteps.length,
+      completedSteps,
+      createdAt: normalizeText(manifest.createdAt),
+      currentStep,
+      manifest: {
+        createdAt: normalizeText(manifest.createdAt),
+        revision: revisionNumber(manifest.revision),
+        stepRevision: stepRevisionNumber(manifest.stepRevision),
+        updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
+      },
+      metadata,
+      revision: revisionNumber(manifest.revision),
+      sessionId: sessionPaths.sessionId,
+      sessionName,
+      status,
+      stepRevision: stepRevisionNumber(manifest.stepRevision),
+      updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
+    };
+  }
+
   async function createSession({
     initialStep = AI_STUDIO_INITIAL_STEP,
     metadata = {},
@@ -1344,6 +1381,23 @@ function createAiStudioSessionStore({
     return Promise.all(filteredSessionIds.map((entrySessionId) => readSession(entrySessionId)));
   }
 
+  async function listSessionSummaries(options = {}) {
+    const rootPaths = paths();
+    const sessionIds = sortedDirectoryNames(
+      await readDirectoryEntries(rootPaths.activeSessionsRoot),
+      isValidAiStudioSessionId
+    );
+    const listOptions = normalizeSessionListOptions(options);
+    const filteredSessionIds = listOptions.statusGroup || listOptions.statuses.size > 0
+      ? (await Promise.all(sessionIds.map(async (entrySessionId) => ({
+        sessionId: entrySessionId,
+        status: await readStatus(entrySessionId)
+      })))).filter(({ status }) => sessionStatusMatchesListOptions(status, listOptions))
+        .map(({ sessionId }) => sessionId)
+      : sessionIds;
+    return Promise.all(filteredSessionIds.map((entrySessionId) => readSessionSummary(entrySessionId)));
+  }
+
   return {
     appendCommandLogEntry,
     artifactExists,
@@ -1360,6 +1414,7 @@ function createAiStudioSessionStore({
     deleteStepState,
     deleteStepStates,
     listSessions,
+    listSessionSummaries,
     mutateSession,
     paths,
     readArtifact,
@@ -1379,6 +1434,7 @@ function createAiStudioSessionStore({
     readMetadataValue,
     readPromptContextSnapshot,
     readSession,
+    readSessionSummary,
     readStatus,
     readStepState,
     writeArtifact,

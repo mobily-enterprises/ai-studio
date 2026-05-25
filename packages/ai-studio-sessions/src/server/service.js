@@ -51,7 +51,6 @@ function sessionListOptions(input = {}) {
   const archive = normalizedInputText(input.archive);
   if (!archive) {
     return {
-      enrichCodex: true,
       runtimeOptions: {
         statusGroup: "open"
       }
@@ -59,7 +58,6 @@ function sessionListOptions(input = {}) {
   }
   if (archive === SESSION_ARCHIVE_QUERY.ABANDONED) {
     return {
-      enrichCodex: false,
       runtimeOptions: {
         statusGroup: "closed",
         statuses: [AI_STUDIO_SESSION_STATUS.ABANDONED]
@@ -68,7 +66,6 @@ function sessionListOptions(input = {}) {
   }
   if (archive === SESSION_ARCHIVE_QUERY.COMPLETED || archive === SESSION_ARCHIVE_QUERY.FINISHED) {
     return {
-      enrichCodex: false,
       runtimeOptions: {
         statusGroup: "closed",
         statuses: [AI_STUDIO_SESSION_STATUS.FINISHED]
@@ -78,8 +75,15 @@ function sessionListOptions(input = {}) {
   throw new Error(`Unknown AI Studio session archive: ${archive}`);
 }
 
-async function listOpenSessions(runtime) {
-  return runtime.listSessions({
+async function listSessionSummaries(runtime, options = {}) {
+  if (typeof runtime?.listSessionSummaries === "function") {
+    return runtime.listSessionSummaries(options);
+  }
+  return runtime.listSessions(options);
+}
+
+async function listOpenSessionSummaries(runtime) {
+  return listSessionSummaries(runtime, {
     statusGroup: "open"
   });
 }
@@ -219,11 +223,6 @@ async function enrichSessionWithCodexTerminal(terminalService, session = {}) {
     durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
   });
   return enrichedSession;
-}
-
-async function enrichSessionsWithCodexTerminal(terminalService, sessions = []) {
-  return Promise.all((Array.isArray(sessions) ? sessions : [])
-    .map((session) => enrichSessionWithCodexTerminal(terminalService, session)));
 }
 
 async function deliverCodexPromptIfNeeded(terminalService, session = {}) {
@@ -447,7 +446,7 @@ function createService({
           const projectType = await projectService.requireProjectType();
           await assertAiStudioSetupReady(setupServices);
           const runtime = await projectService.createRuntime();
-          const existingOpenSessions = await listOpenSessions(runtime);
+          const existingOpenSessions = await listOpenSessionSummaries(runtime);
           const { creation, limits } = await sessionCreationState(runtime, existingOpenSessions);
           aiStudioSessionDebugLog("server.service.createSession.creationState", {
             canCreate: creation.canCreate === true,
@@ -675,15 +674,12 @@ function createService({
         try {
           const runtime = await projectService.createRuntime();
           const options = sessionListOptions(input);
-          const sessions = await runtime.listSessions(options.runtimeOptions);
+          const sessions = await listSessionSummaries(runtime, options.runtimeOptions);
           const openSessions = options.runtimeOptions.statusGroup === "open" &&
             !Array.isArray(options.runtimeOptions.statuses)
             ? sessions
-            : await listOpenSessions(runtime);
-          const responseSessions = options.enrichCodex
-            ? await enrichSessionsWithCodexTerminal(terminalService, sessions)
-            : sessions;
-          const response = sessionListResponse(responseSessions, await sessionCreationState(runtime, openSessions));
+            : await listOpenSessionSummaries(runtime);
+          const response = sessionListResponse(sessions, await sessionCreationState(runtime, openSessions));
           aiStudioSessionDebugLog("server.service.listSessions.done", {
             archive: String(input?.archive || ""),
             durationMs: aiStudioSessionDebugDurationMs(startedAtMs),

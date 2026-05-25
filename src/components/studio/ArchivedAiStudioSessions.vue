@@ -193,6 +193,10 @@ const archiveIcon = computed(() => {
 });
 
 function completedStepCount(session = {}) {
+  const count = Number(session.completedStepCount);
+  if (Number.isSafeInteger(count) && count >= 0) {
+    return count;
+  }
   return Array.isArray(session.completedSteps) ? session.completedSteps.length : 0;
 }
 

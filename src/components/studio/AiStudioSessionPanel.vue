@@ -171,7 +171,9 @@ const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "I
 const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
 const pageLoading = sessionData.pageLoading;
 const selectedToolbarSession = computed(() => {
-  return (toolbar.sessions || []).find((session) => session.sessionId === selection.selectedSessionId) || null;
+  return selection.selectedSession ||
+    (toolbar.sessions || []).find((session) => session.sessionId === selection.selectedSessionId) ||
+    null;
 });
 const selectedRuntimeState = computed(() => runtimeStateBySessionId[selection.selectedSessionId] || null);
 const selectedAbandon = computed(() => selectedRuntimeState.value?.toolbarControls?.abandon || fallbackAbandon);

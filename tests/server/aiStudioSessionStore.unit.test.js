@@ -171,6 +171,29 @@ test("ai-studio session store reads and writes metadata, artifacts, status, curr
         status: "ok"
       }
     ]);
+
+    const summary = await store.readSessionSummary("state_contract");
+    assert.deepEqual({
+      completedStepCount: summary.completedStepCount,
+      currentStep: summary.currentStep,
+      hasArtifactReadiness: "artifactReadiness" in summary,
+      hasCommandLifecycles: "commandLifecycles" in summary,
+      hasPresentation: "presentation" in summary,
+      metadata: summary.metadata,
+      sessionId: summary.sessionId,
+      status: summary.status
+    }, {
+      completedStepCount: 0,
+      currentStep: "install_dependencies",
+      hasArtifactReadiness: false,
+      hasCommandLifecycles: false,
+      hasPresentation: false,
+      metadata: {
+        adapter: "cpp-cmake"
+      },
+      sessionId: "state_contract",
+      status: "blocked"
+    });
   });
 });
 

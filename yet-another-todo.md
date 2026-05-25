@@ -10,7 +10,7 @@ Canonical product/design decisions live in `.jskit/APP_BLUEPRINT.md`.
 | --- | --- |
 | 1. Client autopilot still contains workflow recovery policy | Done |
 | 2. Background Codex bootstrap is not visible enough | Done |
-| 3. Session list/detail reads are pure but still heavy | Outstanding |
+| 3. Session list/detail reads are pure but still heavy | Done |
 | 4. Command action completion and session publishing are still loosely coupled | Done |
 | 5. Skip-merge flow is still procedural | Done |
 | 6. Non-command actions run inside the session mutation queue | Not to do by design |
@@ -21,22 +21,7 @@ Canonical product/design decisions live in `.jskit/APP_BLUEPRINT.md`.
 
 ## Outstanding Findings
 
-### Finding 3 - P2 Medium: Session list/detail reads are pure but still heavy
-
-Evidence:
-
-- `server/lib/aiStudio/runtime.js`
-- `packages/ai-studio-sessions/src/server/service.js`
-
-Problem:
-
-Listing sessions builds full projected views and enriches open sessions with Codex terminal state. This is read-only now, but still does unnecessary work for list views.
-
-Tackle:
-
-- Make list payload intentionally shallow.
-- Keep full projection/enrichment for selected session detail.
-- Batch terminal-state reads if list enrichment remains necessary.
+None.
 
 ## Explicit Non-TODOs
 
@@ -61,6 +46,38 @@ Why:
 Only revisit this if timestamped logs show a real user-visible gap before the Codex/command terminal appears. This decision is documented in `.jskit/APP_BLUEPRINT.md`.
 
 ## Completed Findings
+
+### Finding 3 - Session list reads are shallow; detail reads stay full
+
+Changed files:
+
+- `server/lib/aiStudio/sessionStore.js`
+- `server/lib/aiStudio/runtime.js`
+- `packages/ai-studio-sessions/src/server/service.js`
+- `src/composables/useAiStudioSessionData.js`
+- `src/components/studio/AiStudioSessionPanel.vue`
+- `src/components/studio/ArchivedAiStudioSessions.vue`
+- `tests/client/useAiStudioSessionData.vitest.js`
+- `tests/server/aiStudioSessionStore.unit.test.js`
+- `tests/server/aiStudioSessionsService.unit.test.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Implemented:
+
+- Added store/runtime session summary reads for `GET /sessions`.
+- Kept `GET /sessions/:sessionId` as the full projected/enriched session detail read.
+- Removed Codex terminal enrichment from list responses.
+- Kept selected-session Run/Shell controls on the selected detail record, not the shallow list item.
+- Added tests that list summaries omit detail-heavy fields such as `presentation`, `stepDefinitions`, `artifactReadiness`, `commandLifecycles`, and `codexTerminal`.
+
+Verification:
+
+- `node --test tests/server/aiStudioSessionStore.unit.test.js tests/server/aiStudioWorkflowMachine.unit.test.js tests/server/aiStudioSessionsService.unit.test.js`
+- `npx vitest run tests/client/useAiStudioSessionData.vitest.js tests/client/aiStudioSessionPanelModel.vitest.js`
+- `npm run test:client`
+- `npm run build`
+- `npx playwright test --config playwright.config.ts tests/e2e/base-shell.spec.ts -g "session history"`
+- `git diff --check`
 
 ### Finding 2 - Background Codex bootstrap is visible session state
 

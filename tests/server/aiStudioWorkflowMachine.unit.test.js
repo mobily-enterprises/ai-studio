@@ -134,11 +134,15 @@ test("ai-studio runtime read views do not persist default or derived step-machin
     const before = await runtime.store.readSession("read_pure_step_view");
 
     const session = await runtime.getSession("read_pure_step_view");
-    const listed = await runtime.listSessions();
+    const listed = await runtime.listSessionSummaries();
     const after = await runtime.store.readSession("read_pure_step_view");
 
     assert.equal(session.stepMachine.status, "confirm_files");
-    assert.equal(listed.find((candidate) => candidate.sessionId === "read_pure_step_view")?.stepMachine.status, "confirm_files");
+    const listedSession = listed.find((candidate) => candidate.sessionId === "read_pure_step_view");
+    assert.equal(listedSession?.currentStep, "issue_file_created");
+    assert.equal("stepMachine" in listedSession, false);
+    assert.equal("presentation" in listedSession, false);
+    assert.equal("artifactReadiness" in listedSession, false);
     assert.equal(await runtime.store.readStepState("read_pure_step_view", "issue_file_created"), null);
     assert.equal(after.revision, before.revision);
     assert.equal(after.updatedAt, before.updatedAt);

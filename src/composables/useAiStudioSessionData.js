@@ -50,38 +50,16 @@ function selectedSessionOperationSummary(session = {}) {
   };
 }
 
-function sessionRevision(session = {}) {
-  const revision = Number(session?.revision);
-  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
-}
-
-function sessionUpdatedAtMs(session = {}) {
-  const updatedAtMs = Date.parse(String(session?.updatedAt || ""));
-  return Number.isFinite(updatedAtMs) ? updatedAtMs : 0;
-}
-
-function compareSessionFreshness(leftSession = null, rightSession = null) {
-  const leftRevision = sessionRevision(leftSession);
-  const rightRevision = sessionRevision(rightSession);
-  if (leftRevision !== null || rightRevision !== null) {
-    const revisionDifference = (leftRevision ?? -1) - (rightRevision ?? -1);
-    if (revisionDifference !== 0) {
-      return revisionDifference;
-    }
+function selectedSessionRecord(detailSession = null, listSession = null, selectedSessionId = "") {
+  const normalizedSessionId = String(selectedSessionId || "").trim();
+  if (
+    normalizedSessionId &&
+    detailSession?.sessionId === normalizedSessionId &&
+    detailSession?.ok !== false
+  ) {
+    return detailSession;
   }
-  return sessionUpdatedAtMs(leftSession) - sessionUpdatedAtMs(rightSession);
-}
-
-function freshestSessionRecord(preferredSession = null, fallbackSession = null) {
-  if (!preferredSession?.sessionId) {
-    return fallbackSession;
-  }
-  if (!fallbackSession?.sessionId || fallbackSession.sessionId !== preferredSession.sessionId) {
-    return preferredSession;
-  }
-  return compareSessionFreshness(fallbackSession, preferredSession) > 0
-    ? fallbackSession
-    : preferredSession;
+  return listSession;
 }
 
 function useAiStudioSessionData({
@@ -182,11 +160,11 @@ function useAiStudioSessionData({
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
   const selectedRawSession = computed(() => {
-    const viewedSession = selectedSessionView.record;
-    if (viewedSession?.sessionId === selectedSessionId.value && viewedSession?.ok !== false) {
-      return freshestSessionRecord(viewedSession, selectedListSession.value);
-    }
-    return selectedListSession.value;
+    return selectedSessionRecord(
+      selectedSessionView.record,
+      selectedListSession.value,
+      selectedSessionId.value
+    );
   });
   const selectedSession = computed(() => enrichAiStudioSessionForDisplay(selectedRawSession.value));
   const isSelectedSessionClosed = computed(() => isClosedAiStudioSession(selectedSession.value || {}));
@@ -396,7 +374,6 @@ function useAiStudioSessionData({
 }
 
 export {
-  compareSessionFreshness,
-  freshestSessionRecord,
+  selectedSessionRecord,
   useAiStudioSessionData
 };

@@ -597,18 +597,24 @@ test("session list exposes selectable workflow profiles after seeding", async ()
 test("session list asks the runtime for open sessions by default", async () => {
   const listCalls = [];
   const preparedSessions = [];
+  const terminalStateSessions = [];
   const service = createService({
     projectService: {
       async createRuntime() {
         return {
-          async listSessions(options = {}) {
+          async listSessionSummaries(options = {}) {
             listCalls.push(options);
             return [
               {
+                currentStep: "worktree_created",
                 sessionId: "open-session",
-                status: AI_STUDIO_SESSION_STATUS.ACTIVE
+                status: AI_STUDIO_SESSION_STATUS.ACTIVE,
+                updatedAt: "2026-05-25T00:00:00.000Z"
               }
             ];
+          },
+          async listSessions() {
+            throw new Error("listSessions should not be used for the session list.");
           },
           async workflowProfileCreationOptions() {
             return workflowProfileCreationOptions({
@@ -621,6 +627,7 @@ test("session list asks the runtime for open sessions by default", async () => {
     setupServices: readySetupServices(),
     terminalService: {
       async codexTerminalState(sessionId) {
+        terminalStateSessions.push(sessionId);
         return {
           ok: true,
           sessionId
@@ -644,7 +651,13 @@ test("session list asks the runtime for open sessions by default", async () => {
     }
   ]);
   assert.deepEqual(preparedSessions, []);
+  assert.deepEqual(terminalStateSessions, []);
   assert.deepEqual(result.sessions.map((session) => session.sessionId), ["open-session"]);
+  assert.equal(result.sessions[0].presentation, undefined);
+  assert.equal(result.sessions[0].stepDefinitions, undefined);
+  assert.equal(result.sessions[0].artifactReadiness, undefined);
+  assert.equal(result.sessions[0].commandLifecycles, undefined);
+  assert.equal(result.sessions[0].codexTerminal, undefined);
   assert.equal(result.limits.openSessionCount, 1);
 });
 
@@ -654,11 +667,12 @@ test("archived session list asks for archived sessions and computes creation lim
     projectService: {
       async createRuntime() {
         return {
-          async listSessions(options = {}) {
+          async listSessionSummaries(options = {}) {
             listCalls.push(options);
             if (options.statusGroup === "closed") {
               return [
                 {
+                  completedStepCount: 3,
                   sessionId: "abandoned-session",
                   status: AI_STUDIO_SESSION_STATUS.ABANDONED
                 }
@@ -670,6 +684,9 @@ test("archived session list asks for archived sessions and computes creation lim
                 status: AI_STUDIO_SESSION_STATUS.ACTIVE
               }
             ];
+          },
+          async listSessions() {
+            throw new Error("listSessions should not be used for archived session lists.");
           },
           async workflowProfileCreationOptions() {
             return workflowProfileCreationOptions({
