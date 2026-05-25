@@ -1,0 +1,308 @@
+# State Machine Fix Waves
+
+This plan slices the state-machine cleanup so agents can work with minimal collision risk. The main rule is that only one worker should edit the state-machine spine at a time:
+
+- `server/lib/aiStudio/runtime.js`
+- `server/lib/aiStudio/workflowStepMachines.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `server/lib/aiStudio/workflowMachine.js`
+
+## Wave 0: Read-Only Mapping
+
+Status: completed
+
+Purpose: identify the exact server and client mutation/control paths before implementation.
+
+Agents:
+
+- Server mutation map
+  - Type: explorer
+  - Edit scope: none
+  - Read scope:
+    - `server/lib/aiStudio/*`
+    - `packages/ai-studio-*/*/server/*`
+  - Output:
+    - Every place that writes session state, step state, metadata, artifacts, terminal results, or publishes session changes.
+    - Any path where a read can mutate state.
+    - Any race-prone or duplicate mutation path.
+    - File and line references.
+
+- Client workflow map
+  - Type: explorer
+  - Edit scope: none
+  - Read scope:
+    - `src/composables/*AiStudio*`
+    - AI Studio runtime/autopilot/session components
+  - Output:
+    - Every place the client advances, refreshes, retries, infers state, or starts terminal work.
+    - Any duplicate client/server responsibility.
+    - Any stale-snapshot or optimistic UI path.
+    - File and line references.
+
+Exit criteria:
+
+- Server mutation paths are cataloged. Completed.
+- Client control paths are cataloged. Completed.
+- Wave 1 implementation scope is confirmed. Completed.
+
+### Wave 0 Findings
+
+Server mutation map:
+
+- Core durable writers live in `server/lib/aiStudio/sessionStore.js`.
+- `runtime.advance`, `workflowPresentation.forceAdvanceCurrentStep`, session creation, intent handling, and command-terminal close all have paths that can advance or mutate session state.
+- `runtime.rewind` can delete action, artifact, completed-step, metadata, and step-state records while terminal close callbacks can still write late results.
+- `getSession` and `listSessions` call `sessionView`, which calls `applyStepMachineView`; that path can initialize or transition step state, so read paths are not pure.
+- Artifact preview/readiness, terminal status, Codex terminal state, launch status, inspect, diff, and list paths can inherit the read-side mutation problem when they call `runtime.getSession`.
+- Session events are split between provider service events and manual publishers, especially around terminal controllers.
+
+Client workflow map:
+
+- Session create, advance, action, intent, rewind, current-step input, manual command terminal, headless command terminal, and Codex terminal start paths are all client-triggered from AI Studio composables/components.
+- The client still auto-advances after normal action success in `useAiStudioSessionActions.js`.
+- The client still auto-advances after manual command-terminal completion in `useAiStudioSessionCommandTerminal.js`; this overlaps with server command completion advancement.
+- Autopilot uses `presentation.auto.nextOperation`, but `session-advance` still flows through `advanceSession`, which also gates on `session.next.enabled`.
+- Client freshness is inferred locally in `useAiStudioSessionData.js` instead of using a server revision.
+- Autopilot has stale-command and delayed-progress compensation around command execution and `attempting_execution`.
+
+Confirmed Wave 1 scope additions:
+
+- Include `server/lib/aiStudio/sessionStore.js`; it is the durable write boundary.
+- Include `server/lib/aiStudio/sessionRealtimeEvents.js`; event publication needs to align with the mutation contract.
+- Include `server/lib/aiStudio/currentStepInputHelperServer.js`; it is another mutation ingress.
+- Include package providers/services for sessions, artifacts, and terminals because their read/status paths can invoke session views and their event paths are split.
+- Include command, Codex, launch, shell terminal controllers as mutation/event participants.
+
+Confirmed Wave 2 scope additions:
+
+- Include `src/composables/useAiStudioSessionActions.js`; it owns manual action and advance behavior.
+- Include `src/composables/useAiStudioSessionCommandTerminal.js` and `src/composables/useAiStudioCommandTerminalController.js`; they own manual command terminal settle behavior.
+- Include `src/composables/useAiStudioAutopilotController.js` and `src/composables/useAiStudioHeadlessCommandRunner.js`; they own headless command/autopilot behavior.
+- Include `src/composables/useAiStudioSessionData.js`; it owns list/detail freshness merging.
+- Include `src/composables/useAiStudioStepInputForm.js` and `src/components/studio/ai-studio-session/AiStudioAutopilotView.vue`; step input can immediately continue from stale state.
+
+## Wave 1: Server State Contract
+
+Status: completed
+
+Use one worker only.
+
+Owner files:
+
+- `server/lib/aiStudio/runtime.js`
+- `server/lib/aiStudio/workflowStepMachines.js`
+- `server/lib/aiStudio/workflowMachine.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `packages/ai-studio-sessions/src/server/service.js`
+- related tests
+
+Tasks:
+
+- Make `inspectSession`, `listSessions`, and `getSession` pure reads.
+- Remove writes from step `view()` paths.
+- Add per-session mutation serialization.
+- Add durable session revision or updated timestamp.
+- Route advance, rewind, intent, action completion, and command completion through the same mutation path.
+
+Exit criteria:
+
+- Read paths do not change session files. Completed.
+- Mutations are serialized per session. Completed.
+- State-changing endpoints use the shared mutation contract. Completed.
+- Tests cover read purity and conflicting mutation attempts. Completed.
+
+### Wave 1 Outcome
+
+Changed files:
+
+- `server/lib/aiStudio/sessionStore.js`
+- `server/lib/aiStudio/runtime.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `server/lib/aiStudio/workflowStepMachines.js`
+- `packages/ai-studio-terminals/src/server/codexTerminal.js`
+- `packages/ai-studio-terminals/src/server/commandTerminal.js`
+- `packages/ai-studio-terminals/src/server/launchTargetTerminal.js`
+- `tests/server/aiStudioSessionStore.unit.test.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Implemented:
+
+- Added a process-local per-session mutation queue in the session store.
+- Added durable session `revision` and `updatedAt` markers.
+- Exposed revision/update markers in session views.
+- Made step-machine read/view paths compute missing or derived state in memory without writing.
+- Routed advance, force-advance, rewind, action execution, current-step input, workflow intents, command action start/finish, command terminal completion, and related terminal metadata writes through the mutation boundary.
+- Added stale-step protection for command terminal completion.
+- Added focused tests for read purity and mutation serialization/revision behavior.
+
+Verification:
+
+- `git diff --check`
+- `node --test tests/server/aiStudioSessionStore.unit.test.js tests/server/aiStudioWorkflowMachine.unit.test.js tests/server/aiStudioArtifactsService.unit.test.js tests/server/aiStudioTerminalsService.unit.test.js tests/server/aiStudioSessionsService.unit.test.js`
+- `npm test`
+
+Remaining risk:
+
+- The mutation queue is process-local. It serializes this app process but is not a cross-process file lock if multiple Node processes mutate the same `.ai-studio` session directory concurrently.
+
+## Wave 2: Command Completion And Client Advance
+
+Status: completed
+
+Use two workers after Wave 1 lands.
+
+Agents:
+
+- Server command worker
+  - Owner files:
+    - `packages/ai-studio-terminals/src/server/commandTerminal.js`
+    - terminal service tests
+  - Tasks:
+    - Make command completion publish visible status quickly.
+    - Ensure successful command completion advances only through the server mutation path.
+    - Make terminal completion independent from slow bootstrap or session publishing.
+
+- Client command/autopilot worker
+  - Owner files:
+    - `src/composables/useAiStudioSessionCommandTerminal.js`
+    - `src/composables/useAiStudioAutopilotController.js`
+    - `src/composables/useAiStudioSessionData.js`
+  - Tasks:
+    - Remove client-side terminal `goNext()` after success.
+    - Use server revision instead of freshness scoring where possible.
+    - Keep bounded refresh/retry only where the server contract still requires it.
+
+Exit criteria:
+
+- Command success has one authoritative advance path. Completed.
+- Inspect mode no longer performs stale duplicate advances after terminal completion. Completed.
+- Autopilot uses server state instead of stale local inference where possible. Completed.
+
+### Wave 2 Outcome
+
+Changed files:
+
+- `packages/ai-studio-terminals/src/server/commandTerminal.js`
+- `packages/ai-studio-terminals/src/server/service.js`
+- `src/composables/useAiStudioCommandTerminalController.js`
+- `src/composables/useAiStudioSessionActions.js`
+- `src/composables/useAiStudioSessionCommandTerminal.js`
+- `src/composables/useAiStudioSessionData.js`
+- `tests/client/useAiStudioAutopilotController.vitest.js`
+- `tests/client/useAiStudioSessionCommandTerminal.vitest.js`
+- `tests/client/useAiStudioSessionData.vitest.js`
+- `tests/server/aiStudioTerminalsService.unit.test.js`
+
+Implemented:
+
+- Removed client-side auto-advance after manual command-terminal completion.
+- Removed client-side auto-advance after normal action success.
+- Forwarded manual command terminal `advanceOnSuccess` to the server command-terminal API.
+- Kept command success advancement server-owned through the Wave 1 runtime mutation path.
+- Moved command terminal publish/bootstrap effects after durable command completion.
+- Added revision-aware stale terminal close protection for advance-and-rewind cases.
+- Replaced client selected-session freshness scoring with server `revision` / `updatedAt` comparison.
+- Updated tests so command success progress is modeled as server state publication rather than a client `advanceSession()` call.
+
+Verification:
+
+- `git diff --check`
+- `node --test tests/server/aiStudioTerminalsService.unit.test.js tests/server/aiStudioWorkflowCommandTerminal.unit.test.js`
+- `npx vitest run tests/client/useAiStudioSessionCommandTerminal.vitest.js tests/client/useAiStudioSessionData.vitest.js tests/client/useAiStudioAutopilotController.vitest.js tests/client/dumbClientOwnership.vitest.js tests/client/useAiStudioHeadlessCommandRunner.vitest.js`
+- `npm run test:client`
+- `npm test`
+- `npm run test:e2e`
+- `npm run build`
+
+Remaining risk:
+
+- Command terminal stale-close detection uses session revision, so unrelated session mutations during a long-running command can conservatively suppress a late command result. This is safer than writing results into an advanced/rewound state, but it may need a narrower command-run token if unrelated concurrent metadata updates become common.
+
+## Wave 3: Presentation And Step Architecture
+
+Status: pending
+
+Use one worker only, or defer until correctness fixes are stable.
+
+Owner files:
+
+- `server/lib/aiStudio/workflowPresentation.js`
+- `server/lib/aiStudio/workflowStepMachines.js`
+- `server/lib/aiStudio/workflow.js`
+- presentation/state snapshot tests
+
+Tasks:
+
+- Move presentation, intents, automation, inputs, and transition behavior closer to step definitions.
+- Reduce hard-coded step and action interpretation in `workflowPresentation.js`.
+- Make step status, interaction, next operation, and client affordances come from one server-side projection.
+
+Exit criteria:
+
+- Step behavior and step presentation are no longer maintained in separate hard-coded maps.
+- Snapshot tests cover key workflow profiles and states.
+
+## Wave 4: Low-Risk Cleanup
+
+Status: pending
+
+Use two or three workers in parallel.
+
+Agents:
+
+- Debug helper cleanup
+  - Owner files:
+    - `server/lib/aiStudio/sessionDebugLog.js`
+    - `src/lib/aiStudioSessionDebugLog.js`
+    - any shared module needed
+  - Task: remove duplicate logging helper logic while keeping server/client wrappers.
+
+- Dead code and misleading API cleanup
+  - Owner files:
+    - `src/composables/useAiStudioSessionActions.js`
+    - `packages/ai-studio-sessions/src/server/AiStudioSessionsProvider.js`
+    - `packages/ai-studio-sessions/src/server/service.js`
+  - Task: remove or intentionally wire dead values such as `waitingForPromptedArtifact` and unused service parameters.
+
+- Workflow validation cleanup
+  - Owner files:
+    - `server/lib/aiStudio/workflowMachine.js`
+    - workflow tests
+  - Task: validate condition DSL at workflow load or test time instead of discovering unknown conditions at runtime.
+
+Exit criteria:
+
+- Duplicate utility code is reduced.
+- Dead code is removed or made intentional.
+- Invalid workflow conditions fail early.
+
+## Wave 5: UX And Data Shape Cleanup
+
+Status: pending
+
+Use one worker.
+
+Owner files:
+
+- `src/composables/useAiStudioStepInputForm.js`
+- relevant server projection/input files
+
+Tasks:
+
+- Stop parsing numbered questions from prose.
+- Add structured question/input metadata from the server if that behavior is still needed.
+
+Exit criteria:
+
+- Client form behavior no longer depends on prompt text formatting.
+- Server-owned input shape is explicit.
+
+## Recommended Execution Order
+
+1. Run Wave 0 explorers.
+2. Run Wave 1 with one server-state worker.
+3. Run Wave 2 with two workers.
+4. Dogfood non-commit maintenance in autopilot and inspect mode.
+5. Run Wave 4 cleanup.
+6. Run Wave 3 architecture cleanup only after behavior is stable.
+7. Run Wave 5 if structured input still matters.

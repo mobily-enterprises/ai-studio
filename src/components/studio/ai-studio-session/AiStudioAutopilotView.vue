@@ -107,6 +107,18 @@
         >
           Stop Autopilot
         </v-btn>
+        <v-btn
+          v-if="stuckRecoveryAvailable"
+          class="studio-autopilot__stop-button"
+          :loading="stuckRecoveryRunning"
+          :prepend-icon="mdiRefresh"
+          size="small"
+          type="button"
+          variant="tonal"
+          @click="recoverStuckStep"
+        >
+          Recover step
+        </v-btn>
       </div>
 
       <form
@@ -390,13 +402,16 @@ const {
   commandRunning,
   failure,
   nextOperationKey,
+  recoverStuckStep,
   retry,
   runNextOperation,
   runPresentedIntent,
   running,
   screenState,
   stop,
-  stopCommandAction
+  stopCommandAction,
+  stuckRecoveryAvailable,
+  stuckRecoveryRunning
 } = useAiStudioAutopilotController({
   actions: props.actions,
   commandRunner: props.commandRunner || undefined,

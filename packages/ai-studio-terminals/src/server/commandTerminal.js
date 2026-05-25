@@ -71,6 +71,32 @@ function commandTerminalContainerName({
   return `ai-studio-command-${stableHash(sessionId)}-${stableHash(terminalId)}`;
 }
 
+function sessionRevision(value) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function sessionStepRevision(value) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 1 ? revision : null;
+}
+
+function staleCompletionReason(startedSession = {}, currentSession = {}) {
+  if (currentSession.currentStep !== startedSession.currentStep) {
+    return "step_changed";
+  }
+  const startedRevision = sessionStepRevision(startedSession.stepRevision);
+  const currentRevision = sessionStepRevision(currentSession.stepRevision);
+  if (
+    startedRevision !== null &&
+    currentRevision !== null &&
+    currentRevision !== startedRevision
+  ) {
+    return "step_revision_changed";
+  }
+  return "";
+}
+
 function resolveCommandWorkdir(targetRoot = "", cwd = "") {
   const normalizedCwd = String(cwd || "").trim();
   if (!normalizedCwd) {
@@ -120,7 +146,6 @@ function commandTerminalArgs({
 
 async function writeActionTerminalResult({
   advanceOnSuccess = false,
-  afterSuccessfulCommand = async () => null,
   action = {},
   exitCode,
   input = {},
@@ -138,6 +163,34 @@ async function writeActionTerminalResult({
     stepId: String(session.currentStep || "")
   });
   const completed = exitCode === 0;
+  const currentSessionBeforeWrite = await runtime.getSession(session.sessionId);
+  const staleReason = staleCompletionReason(session, currentSessionBeforeWrite);
+  if (staleReason) {
+    aiStudioSessionDebugLog("server.commandTerminal.writeResult.stale", {
+      actionId: String(action.id || ""),
+      currentStep: String(currentSessionBeforeWrite.currentStep || ""),
+      currentRevision: sessionRevision(currentSessionBeforeWrite.revision),
+      currentStepRevision: sessionStepRevision(currentSessionBeforeWrite.stepRevision),
+      exitCode,
+      reason: staleReason,
+      sessionId: String(session.sessionId || ""),
+      startedRevision: sessionRevision(session.revision),
+      startedStepRevision: sessionStepRevision(session.stepRevision),
+      startedStep: String(session.currentStep || "")
+    });
+    return {
+      action,
+      actionResult: null,
+      completed,
+      input,
+      metadata: {},
+      runtime,
+      session: currentSessionBeforeWrite,
+      spec,
+      stale: true
+    };
+  }
+  const sessionForWrite = currentSessionBeforeWrite;
   const commandResult = completed ? await readCommandResultFile(resultFile.path) : {
     facts: {}
   };
@@ -146,7 +199,7 @@ async function writeActionTerminalResult({
     facts: commandResult.facts || {},
     input,
     runtime,
-    session,
+    session: sessionForWrite,
     spec
   }) : {
     deleteMetadata: [],
@@ -167,7 +220,7 @@ async function writeActionTerminalResult({
       message,
       metadata,
       status: completed ? "completed" : "blocked",
-      stepId: session.currentStep
+      stepId: sessionForWrite.currentStep
     }
   );
   if (completed) {
@@ -184,16 +237,16 @@ async function writeActionTerminalResult({
     actionType: "command",
     kind: "terminal-action",
     status: actionResult.status,
-    stepId: session.currentStep
+    stepId: sessionForWrite.currentStep
   });
   if (typeof runtime.recordCommandActionFinished === "function") {
-    await runtime.recordCommandActionFinished(session, action.id, actionResult);
+    await runtime.recordCommandActionFinished(sessionForWrite, action.id, actionResult);
   }
   const advancedSession = await advanceSessionAfterSuccessfulCommand({
     advanceOnSuccess,
     completed,
     runtime,
-    session
+    session: sessionForWrite
   });
   const currentSession = advancedSession || await runtime.getSession(session.sessionId);
   aiStudioSessionDebugLog("server.commandTerminal.writeResult.done", {
@@ -205,23 +258,72 @@ async function writeActionTerminalResult({
     exitCode,
     metadataKeys: Object.keys(metadata).sort()
   });
-  if (completed) {
-    await afterSuccessfulCommand({
-      action,
-      actionResult,
-      input,
-      metadata,
-      runtime,
-      session: currentSession,
-      spec
-    });
-  }
   return {
+    action,
     actionResult,
     completed,
+    input,
     metadata,
-    session: currentSession
+    runtime,
+    session: currentSession,
+    spec
   };
+}
+
+function scheduleCommandTerminalPostCommitTask(label, task, details = {}) {
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog(`server.commandTerminal.postCommit.${label}.scheduled`, details);
+  void (async () => {
+    try {
+      await task();
+      aiStudioSessionDebugLog(`server.commandTerminal.postCommit.${label}.done`, {
+        ...details,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+    } catch (error) {
+      aiStudioSessionDebugLog(`server.commandTerminal.postCommit.${label}.error`, {
+        ...details,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error)
+      });
+    }
+  })();
+}
+
+function scheduleCommandTerminalPostCommitEffects({
+  afterSuccessfulCommand = async () => null,
+  completion = {},
+  publishSessionChanged = async () => null,
+  sessionId = ""
+} = {}) {
+  scheduleCommandTerminalPostCommitTask("publishSessionChanged", () => {
+    return publishSessionChanged(sessionId, {
+      reason: "command-terminal-closed"
+    });
+  }, {
+    actionId: String(completion?.action?.id || ""),
+    reason: "command-terminal-closed",
+    sessionId: String(sessionId || "")
+  });
+
+  if (completion?.completed !== true || completion?.stale === true || !completion?.actionResult) {
+    return;
+  }
+
+  scheduleCommandTerminalPostCommitTask("afterSuccessfulCommand", () => {
+    return afterSuccessfulCommand({
+      action: completion.action,
+      actionResult: completion.actionResult,
+      input: completion.input,
+      metadata: completion.metadata,
+      runtime: completion.runtime,
+      session: completion.session,
+      spec: completion.spec
+    });
+  }, {
+    actionId: String(completion.action?.id || ""),
+    sessionId: String(completion.session?.sessionId || sessionId || "")
+  });
 }
 
 async function advanceSessionAfterSuccessfulCommand({
@@ -230,7 +332,7 @@ async function advanceSessionAfterSuccessfulCommand({
   runtime,
   session = {}
 } = {}) {
-  if (!advanceOnSuccess || !completed || typeof runtime?.advance !== "function") {
+  if (!advanceOnSuccess || !completed) {
     aiStudioSessionDebugLog("server.commandTerminal.advanceAfterSuccess.skipped", {
       advanceOnSuccess,
       completed,
@@ -238,6 +340,12 @@ async function advanceSessionAfterSuccessfulCommand({
       sessionId: String(session.sessionId || "")
     });
     return null;
+  }
+  if (typeof runtime?.advance !== "function") {
+    throw aiStudioError(
+      "AI Studio runtime advance is not available for command completion.",
+      "ai_studio_runtime_advance_not_available"
+    );
   }
 
   const refreshedSession = await runtime.getSession(session.sessionId);
@@ -463,8 +571,10 @@ function createCommandTerminalController({
             }
             return resultFile;
           };
+          let startedSession = session;
           if (typeof runtime.recordCommandActionStarted === "function") {
             await runtime.recordCommandActionStarted(sessionId, action.id);
+            startedSession = await runtime.getSession(sessionId);
           }
           try {
             const terminal = await startTerminal({
@@ -517,19 +627,23 @@ function createCommandTerminalController({
                   terminalSessionId: id
                 });
                 try {
-                  await writeActionTerminalResult({
-                    advanceOnSuccess,
-                    afterSuccessfulCommand,
-                    action,
-                    exitCode,
-                    input: commandInput,
-                    resultFile: activeResultFile,
-                    runtime,
-                    session,
-                    spec
+                  const completion = await runtime.store.mutateSession(session.sessionId, async () => {
+                    return writeActionTerminalResult({
+                      advanceOnSuccess,
+                      action,
+                      exitCode,
+                      input: commandInput,
+                      resultFile: activeResultFile,
+                      runtime,
+                      session: startedSession,
+                      spec
+                    });
                   });
-                  await publishSessionChanged(sessionId, {
-                    reason: "command-terminal-closed"
+                  scheduleCommandTerminalPostCommitEffects({
+                    afterSuccessfulCommand,
+                    completion,
+                    publishSessionChanged,
+                    sessionId
                   });
                   aiStudioSessionDebugLog("server.commandTerminal.onClose.done", {
                     actionId: action.id,

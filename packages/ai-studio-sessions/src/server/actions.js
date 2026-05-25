@@ -15,6 +15,7 @@ const ACTION_RUN_SESSION_ACTION = "feature.ai-studio-sessions.action.run";
 const ACTION_RUN_SESSION_INTENT = "feature.ai-studio-sessions.intent.run";
 const ACTION_ADVANCE_SESSION = "feature.ai-studio-sessions.advance";
 const ACTION_ABANDON_SESSION = "feature.ai-studio-sessions.abandon";
+const ACTION_RECOVER_STUCK_SESSION_STEP = "feature.ai-studio-sessions.step.stuck.recover";
 const ACTION_REWIND_SESSION = "feature.ai-studio-sessions.rewind";
 
 const featureActions = Object.freeze([
@@ -175,6 +176,24 @@ const featureActions = Object.freeze([
     }
   },
   {
+    id: ACTION_RECOVER_STUCK_SESSION_STEP,
+    version: 1,
+    kind: "command",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: sessionIdInputValidator,
+    output: null,
+    idempotency: "optional",
+    audit: {
+      actionName: ACTION_RECOVER_STUCK_SESSION_STEP
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.recoverStuckSessionStep(input.sessionId);
+    }
+  },
+  {
     id: ACTION_ABANDON_SESSION,
     version: 1,
     kind: "command",
@@ -201,6 +220,7 @@ export {
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
   ACTION_LIST_SESSIONS,
+  ACTION_RECOVER_STUCK_SESSION_STEP,
   ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION,
   ACTION_RUN_SESSION_INTENT,

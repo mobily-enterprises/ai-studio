@@ -70,6 +70,9 @@ function useAiStudioSessionActions({
   const advanceRunning = ref(false);
   const advanceMessage = ref("");
   const advanceMessageType = ref("success");
+  const recoverStuckStepRunning = ref(false);
+  const recoverStuckStepMessage = ref("");
+  const recoverStuckStepMessageType = ref("success");
 
   const runActionCommand = useCommand({
     access: "never",
@@ -86,24 +89,12 @@ function useAiStudioSessionActions({
       success: "AI Studio action completed."
     },
     onRunSuccess: async (response, { context } = {}) => {
-      const shouldAdvance = actionShouldAdvance(response, context);
       aiStudioSessionDebugLog("client.sessionActions.runAction.success", {
         ...aiStudioSessionDebugSummary(response || {}),
         actionId: String(context?.actionId || ""),
         actionResultStatus: String(response?.actionResult?.status || ""),
-        advanceOnSuccess: context?.advanceOnSuccess === true,
-        shouldAdvance
+        advanceOnSuccess: context?.advanceOnSuccess === true
       });
-      if (shouldAdvance) {
-        aiStudioSessionDebugLog("client.sessionActions.runAction.autoAdvance.start", {
-          actionId: String(context?.actionId || ""),
-          sessionId: String(context?.sessionId || "")
-        });
-        await advanceCommand.run({
-          sessionId: context.sessionId
-        });
-        return;
-      }
       await refreshSessionData();
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -146,6 +137,12 @@ function useAiStudioSessionActions({
     message: advanceMessage,
     messageType: advanceMessageType,
     run: runAdvanceCommand
+  });
+  const recoverStuckStepCommand = proxyRefs({
+    isRunning: recoverStuckStepRunning,
+    message: recoverStuckStepMessage,
+    messageType: recoverStuckStepMessageType,
+    run: runRecoverStuckStepCommand
   });
 
   const rewindCommand = useCommand({
@@ -222,22 +219,17 @@ function useAiStudioSessionActions({
     runActionCommand.isRunning ||
     runIntentCommand.isRunning ||
     advanceCommand.isRunning ||
+    recoverStuckStepCommand.isRunning ||
     rewindCommand.isRunning
   ));
   const error = computed(() => {
     return commandMessage(runActionCommand, "error") ||
       commandMessage(runIntentCommand, "error") ||
       commandMessage(advanceCommand, "error") ||
+      commandMessage(recoverStuckStepCommand, "error") ||
       commandMessage(rewindCommand, "error") ||
       "";
   });
-
-  function actionShouldAdvance(response = {}, context = {}) {
-    return context.advanceOnSuccess === true &&
-      response.actionResult?.status === "completed" &&
-      response.next?.visible === true &&
-      response.next?.enabled === true;
-  }
 
   function clear() {
     activeActionId.value = "";
@@ -349,6 +341,81 @@ function useAiStudioSessionActions({
       throw error;
     } finally {
       activeActionId.value = "";
+    }
+  }
+
+  async function runRecoverStuckStepCommand({
+    sessionId = unref(selectedSessionId)
+  } = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || recoverStuckStepRunning.value) {
+      return null;
+    }
+    recoverStuckStepRunning.value = true;
+    recoverStuckStepMessage.value = "";
+    recoverStuckStepMessageType.value = "success";
+    try {
+      const response = await usersWebHttpClient.request(
+        aiStudioSessionPath(sessionsApiPath.value, normalizedSessionId, "/recover-stuck-step"),
+        {
+          method: "POST",
+          ...LOCAL_STUDIO_COMMAND_OPTIONS
+        }
+      );
+      aiStudioSessionDebugLog("client.sessionActions.recoverStuckStepCommand.success", {
+        ...aiStudioSessionDebugSummary(response || selectedSession.value || {}),
+        selectedSessionId: String(unref(selectedSessionId) || "")
+      });
+      recoverStuckStepMessage.value = "AI Studio session step recovered.";
+      await refreshSessionData();
+      return response;
+    } catch (error) {
+      recoverStuckStepMessageType.value = "error";
+      recoverStuckStepMessage.value = String(error?.message || "AI Studio session step could not be recovered.");
+      throw error;
+    } finally {
+      recoverStuckStepRunning.value = false;
+    }
+  }
+
+  async function recoverStuckStep({
+    sessionId = unref(selectedSessionId)
+  } = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!normalizedSessionId || busy) {
+      aiStudioSessionDebugLog("client.sessionActions.recoverStuckStep.skipped", {
+        ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+        busy,
+        reason: !normalizedSessionId ? "missing_session" : "busy",
+        sessionId: normalizedSessionId
+      });
+      return null;
+    }
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionActions.recoverStuckStep.start", {
+      ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+      sessionId: normalizedSessionId
+    });
+    try {
+      const response = await recoverStuckStepCommand.run({
+        sessionId: normalizedSessionId
+      });
+      aiStudioSessionDebugLog("client.sessionActions.recoverStuckStep.done", {
+        ...aiStudioSessionDebugSummary(response || selectedSession.value || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        ok: response?.ok !== false,
+        sessionId: normalizedSessionId
+      });
+      commandTerminal.clear();
+      return response;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionActions.recoverStuckStep.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: normalizedSessionId
+      });
+      throw error;
     }
   }
 
@@ -552,6 +619,8 @@ function useAiStudioSessionActions({
     currentStepDisabledReason,
     error,
     goNext,
+    recoverStuckStep,
+    recoverStuckStepCommand,
     rewindCommand,
     rewindToStep,
     runAction,

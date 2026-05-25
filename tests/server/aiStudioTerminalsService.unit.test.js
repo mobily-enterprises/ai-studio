@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import {
@@ -180,6 +181,17 @@ test("launch terminal actions are parsed only from the first output lines", () =
 function assertPlaywrightBrowserCache(args) {
   assertDockerVolumeMount(args, STUDIO_PLAYWRIGHT_BROWSERS_VOLUME, STUDIO_PLAYWRIGHT_BROWSERS_PATH);
   assertDockerEnv(args, "PLAYWRIGHT_BROWSERS_PATH", STUDIO_PLAYWRIGHT_BROWSERS_PATH);
+}
+
+function deferred() {
+  let resolve = () => null;
+  const promise = new Promise((next) => {
+    resolve = next;
+  });
+  return {
+    promise,
+    resolve
+  };
 }
 
 test("AI Studio Codex terminal joins the target runtime network before the image", () => {
@@ -803,6 +815,316 @@ test("AI Studio command terminal records action results and metadata after succe
         stepId: "unit_step"
       }
     ]);
+  });
+});
+
+test("AI Studio command terminal accepts completion after unrelated session metadata changes", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new UnitCommandAdapter(),
+      targetRoot,
+      workflow: {
+        id: "unit-terminal-metadata-race",
+        steps: [
+          {
+            actions: [
+              {
+                adapterCapability: "unit_command",
+                id: "unit_command",
+                label: "Unit command",
+                type: "command"
+              }
+            ],
+            id: "unit_step",
+            label: "Unit step"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "terminal_metadata_race"
+    });
+
+    let closeTerminal = async () => null;
+    const command = createCommandTerminalController({
+      ensureRuntimeNetwork: async () => null,
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        },
+        async projectConfigEnvironment() {
+          return {
+            AI_STUDIO_CONFIG_DIR: path.join(targetRoot, ".ai-studio", "config")
+          };
+        }
+      },
+      removeContainer: async () => null,
+      resolveToolchainImage: async () => ({
+        image: "unit-command-toolchain:1.0.0",
+        label: "Unit command toolchain",
+        ok: true
+      }),
+      startTerminal: (options) => {
+        const id = "unit-command-metadata-race-terminal";
+        const dockerArgs = options.args({
+          id,
+          namespace: options.namespace
+        });
+        const resultFilePath = dockerEnvValue(dockerArgs, COMMAND_RESULT_ENV);
+        closeTerminal = async () => {
+          await writeFile(
+            resultFilePath,
+            "fact:set\tdynamic_done\tZnJvbS1yZXN1bHQtZmlsZQ==\n",
+            "utf8"
+          );
+          await options.onClose({
+            exitCode: 0,
+            id
+          });
+        };
+        return {
+          id,
+          ok: true,
+          status: "running"
+        };
+      }
+    });
+
+    const terminal = await command.startTerminal("terminal_metadata_race", {
+      actionId: "unit_command"
+    });
+    assert.equal(terminal.ok, true);
+
+    const startedSession = await runtime.getSession("terminal_metadata_race");
+    await runtime.store.writeMetadataValue("terminal_metadata_race", "background_marker", "done");
+    const metadataChangedSession = await runtime.getSession("terminal_metadata_race");
+    assert.equal(metadataChangedSession.revision > startedSession.revision, true);
+    assert.equal(metadataChangedSession.stepRevision, startedSession.stepRevision);
+
+    await closeTerminal();
+
+    const session = await runtime.getSession("terminal_metadata_race");
+    assert.equal(session.metadata.background_marker, "done");
+    assert.equal(session.metadata.terminal_done, "yes");
+    assert.equal(session.metadata.dynamic_done, "from-result-file");
+    assert.equal(session.actionResults[0]?.status, "completed");
+    const commandLog = await runtime.store.readCommandLog("terminal_metadata_race");
+    assert.equal(commandLog.filter((entry) => entry.kind === "terminal-action").length, 1);
+  });
+});
+
+test("AI Studio command terminal commits completion before slow post-commit hooks finish", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new UnitCommandAdapter(),
+      targetRoot,
+      workflow: {
+        id: "unit-terminal-post-commit",
+        steps: [
+          {
+            actions: [
+              {
+                adapterCapability: "unit_command",
+                id: "unit_command",
+                label: "Unit command",
+                type: "command"
+              }
+            ],
+            id: "unit_step",
+            label: "Unit step"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "terminal_post_commit"
+    });
+
+    const hookStarted = deferred();
+    const hookReleased = deferred();
+    const publishStarted = deferred();
+    const publishReleased = deferred();
+    let closePromise = Promise.resolve();
+    const command = createCommandTerminalController({
+      afterSuccessfulCommand: async () => {
+        hookStarted.resolve();
+        await hookReleased.promise;
+      },
+      ensureRuntimeNetwork: async () => null,
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        },
+        async projectConfigEnvironment() {
+          return {
+            AI_STUDIO_CONFIG_DIR: path.join(targetRoot, ".ai-studio", "config")
+          };
+        }
+      },
+      publishSessionChanged: async () => {
+        publishStarted.resolve();
+        await publishReleased.promise;
+      },
+      removeContainer: async () => null,
+      resolveToolchainImage: async () => ({
+        image: "unit-command-toolchain:1.0.0",
+        label: "Unit command toolchain",
+        ok: true
+      }),
+      startTerminal: (options) => {
+        const id = "unit-command-post-commit-terminal";
+        const dockerArgs = options.args({
+          id,
+          namespace: options.namespace
+        });
+        const resultFilePath = dockerEnvValue(dockerArgs, COMMAND_RESULT_ENV);
+        closePromise = (async () => {
+          await writeFile(
+            resultFilePath,
+            "fact:set\tdynamic_done\tZnJvbS1yZXN1bHQtZmlsZQ==\n",
+            "utf8"
+          );
+          await options.onClose({
+            exitCode: 0,
+            id
+          });
+        })();
+        return {
+          id,
+          ok: true,
+          status: "running"
+        };
+      }
+    });
+
+    try {
+      const terminal = await command.startTerminal("terminal_post_commit", {
+        actionId: "unit_command"
+      });
+      assert.equal(terminal.ok, true);
+      assert.equal(await Promise.race([
+        closePromise.then(() => true),
+        delay(50).then(() => false)
+      ]), true);
+
+      const session = await runtime.getSession("terminal_post_commit");
+      assert.equal(session.metadata.terminal_done, "yes");
+      assert.equal(session.metadata.dynamic_done, "from-result-file");
+      assert.equal(session.actionResults[0]?.status, "completed");
+      assert.equal(await Promise.race([
+        hookStarted.promise.then(() => true),
+        delay(50).then(() => false)
+      ]), true);
+      assert.equal(await Promise.race([
+        publishStarted.promise.then(() => true),
+        delay(50).then(() => false)
+      ]), true);
+    } finally {
+      hookReleased.resolve();
+      publishReleased.resolve();
+      await Promise.race([
+        closePromise.catch(() => null),
+        delay(50)
+      ]);
+    }
+  });
+});
+
+test("AI Studio command terminal ignores stale close after advance and rewind", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      adapter: new UnitCommandAdapter(),
+      targetRoot,
+      workflow: {
+        id: "unit-terminal-stale-close",
+        steps: [
+          {
+            actions: [
+              {
+                adapterCapability: "unit_command",
+                id: "unit_command",
+                label: "Unit command",
+                type: "command"
+              }
+            ],
+            id: "unit_step",
+            label: "Unit step"
+          },
+          {
+            id: "next_step",
+            label: "Next step"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "terminal_stale_close"
+    });
+
+    let closeTerminal = async () => null;
+    const command = createCommandTerminalController({
+      ensureRuntimeNetwork: async () => null,
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        },
+        async projectConfigEnvironment() {
+          return {
+            AI_STUDIO_CONFIG_DIR: path.join(targetRoot, ".ai-studio", "config")
+          };
+        }
+      },
+      removeContainer: async () => null,
+      resolveToolchainImage: async () => ({
+        image: "unit-command-toolchain:1.0.0",
+        label: "Unit command toolchain",
+        ok: true
+      }),
+      startTerminal: (options) => {
+        const id = "unit-command-stale-terminal";
+        const dockerArgs = options.args({
+          id,
+          namespace: options.namespace
+        });
+        const resultFilePath = dockerEnvValue(dockerArgs, COMMAND_RESULT_ENV);
+        closeTerminal = async () => {
+          await writeFile(
+            resultFilePath,
+            "fact:set\tdynamic_done\tZnJvbS1yZXN1bHQtZmlsZQ==\n",
+            "utf8"
+          );
+          await options.onClose({
+            exitCode: 0,
+            id
+          });
+        };
+        return {
+          id,
+          ok: true,
+          status: "running"
+        };
+      }
+    });
+
+    const terminal = await command.startTerminal("terminal_stale_close", {
+      actionId: "unit_command"
+    });
+    assert.equal(terminal.ok, true);
+
+    await runtime.advance("terminal_stale_close");
+    await runtime.rewind("terminal_stale_close", "unit_step");
+    await closeTerminal();
+
+    const session = await runtime.getSession("terminal_stale_close");
+    assert.equal(session.currentStep, "unit_step");
+    assert.equal(session.metadata.terminal_done, undefined);
+    assert.equal(session.metadata.dynamic_done, undefined);
+    assert.deepEqual(session.actionResults, []);
+    const commandLog = await runtime.store.readCommandLog("terminal_stale_close");
+    assert.deepEqual(commandLog.filter((entry) => entry.kind === "terminal-action"), []);
   });
 });
 

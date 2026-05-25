@@ -65,7 +65,10 @@ async function readState(context = {}, machine = {}) {
   if (savedState?.schemaVersion === STEP_STATE_SCHEMA_VERSION && normalizeText(savedState.status)) {
     return savedState;
   }
-  return writeState(context, machine, machine.initialState(context));
+  return {
+    ...machine.initialState(context),
+    stepId: machine.stepId
+  };
 }
 
 async function writeState(context = {}, machine = {}, state = {}) {
@@ -1042,7 +1045,7 @@ const issueDefinitionMachine = {
     if (existingIssueSelected) {
       state = machineState(STEP_STATUS.DONE);
     } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
+      state = machineState(STEP_STATUS.CONFIRM_FILES);
     }
 
     switch (state.status) {
@@ -1170,7 +1173,7 @@ const issueSubmittedMachine = {
     if (metadataExists(context.session, "issue_url")) {
       state = machineState(STEP_STATUS.DONE);
     } else if (issueFilesAreReady(context.session) && state.status === STEP_STATUS.WAITING_FOR_INPUT && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = await writeState(context, this, machineState(STEP_STATUS.READY));
+      state = machineState(STEP_STATUS.READY);
     }
 
     switch (state.status) {
@@ -1294,7 +1297,7 @@ const seedApplicationDefinitionMachine = {
     let state = await readState(context, this);
     const filesReady = issueFilesAreReady(context.session);
     if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES) {
-      state = await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
+      state = machineState(STEP_STATUS.CONFIRM_FILES);
     }
 
     switch (state.status) {
@@ -1884,7 +1887,7 @@ const pullRequestMachine = {
     if (created) {
       state = machineState(STEP_STATUS.DONE);
     } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
+      state = machineState(STEP_STATUS.CONFIRM_FILES);
     }
 
     switch (state.status) {
@@ -2205,6 +2208,35 @@ async function saveStepMachineInput(runtime, sessionId = "", input = {}) {
   return runtime.getSession(session.sessionId);
 }
 
+async function recoverStuckStepMachineExecution(runtime, session = {}, {
+  message = "Recovered stuck command execution. Re-run the current step."
+} = {}) {
+  const machine = stepMachineForStep(session.currentStep);
+  if (!machine) {
+    throw aiStudioError(
+      `The current AI Studio step cannot be recovered: ${session.currentStep || "(none)"}`,
+      "ai_studio_step_recovery_not_available"
+    );
+  }
+  const state = await readState({
+    runtime,
+    session
+  }, machine);
+  if (normalizeText(state.status) !== STEP_STATUS.ATTEMPTING_EXECUTION) {
+    throw aiStudioError(
+      "The current AI Studio step is not waiting on an in-flight command.",
+      "ai_studio_step_recovery_not_available"
+    );
+  }
+  await writeState({
+    runtime,
+    session
+  }, machine, machineState(STEP_STATUS.READY, {
+    from: STEP_STATUS.ATTEMPTING_EXECUTION,
+    message: normalizeText(message)
+  }));
+}
+
 async function recordStepMachineActionStarted(runtime, session = {}, actionId = "") {
   const machine = stepMachineForStep(session.currentStep);
   if (typeof machine?.actionStarted !== "function") {
@@ -2236,6 +2268,7 @@ export {
   currentStepPromptInputInstruction,
   recordStepMachineActionFinished,
   recordStepMachineActionStarted,
+  recoverStuckStepMachineExecution,
   saveStepMachineInput,
   stepMachineForStep
 };

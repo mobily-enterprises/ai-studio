@@ -543,6 +543,34 @@ function createService({
       });
     },
 
+    async recoverStuckSessionStep(sessionId) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.recoverStuckSessionStep.start", {
+        sessionId
+      });
+      return sessionResult(async () => {
+        try {
+          await assertAiStudioSetupReady(setupServices);
+          const runtime = await projectService.createRuntime();
+          await terminalService?.closeSessionNonCodexTerminals?.(sessionId);
+          const session = await runtime.recoverStuckStep(sessionId);
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, session);
+          aiStudioSessionDebugLog("server.service.recoverStuckSessionStep.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.recoverStuckSessionStep.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
+      });
+    },
+
     async listSessions(input = {}) {
       const startedAtMs = Date.now();
       aiStudioSessionDebugLog("server.service.listSessions.start", {

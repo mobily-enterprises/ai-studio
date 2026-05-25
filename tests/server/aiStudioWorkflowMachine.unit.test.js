@@ -80,6 +80,34 @@ test("ai-studio runtime session view exposes workflow steps, current actions, an
   });
 });
 
+test("ai-studio runtime read views do not persist default or derived step-machine state", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      sessionId: "read_pure_step_view"
+    });
+    await Promise.all([
+      runtime.store.writeArtifact("read_pure_step_view", "issue_title", "Title\n"),
+      runtime.store.writeArtifact("read_pure_step_view", "issue_word", "Title\n"),
+      runtime.store.writeArtifact("read_pure_step_view", "issue.md", "Body\n")
+    ]);
+    const before = await runtime.store.readSession("read_pure_step_view");
+
+    const session = await runtime.getSession("read_pure_step_view");
+    const listed = await runtime.listSessions();
+    const after = await runtime.store.readSession("read_pure_step_view");
+
+    assert.equal(session.stepMachine.status, "confirm_files");
+    assert.equal(listed.find((candidate) => candidate.sessionId === "read_pure_step_view")?.stepMachine.status, "confirm_files");
+    assert.equal(await runtime.store.readStepState("read_pure_step_view", "issue_file_created"), null);
+    assert.equal(after.revision, before.revision);
+    assert.equal(after.updatedAt, before.updatedAt);
+  });
+});
+
 test("ai-studio runtime exposes the evaluated Autopilot stage without workflow conditions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
@@ -1048,6 +1076,58 @@ test("ai-studio runtime rejects actions that are not available on the current st
       () => runtime.runAction("wrong_action", "install_dependencies"),
       {
         code: "ai_studio_action_not_available"
+      }
+    );
+  });
+});
+
+test("ai-studio runtime recovers a stuck in-flight command step back to ready", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "checklist_items_installed",
+      sessionId: "recover_stuck_command",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+    await runtime.recordCommandActionStarted("recover_stuck_command", "install_dependencies");
+
+    const stuckSession = await runtime.getSession("recover_stuck_command");
+    assert.equal(stuckSession.stepMachine.status, "attempting_execution");
+
+    const recoveredSession = await runtime.recoverStuckStep("recover_stuck_command");
+    assert.equal(recoveredSession.currentStep, "checklist_items_installed");
+    assert.equal(recoveredSession.stepMachine.status, "ready");
+    assert.equal(recoveredSession.next.enabled, false);
+
+    const commandLog = await runtime.store.readCommandLog("recover_stuck_command");
+    assert.deepEqual(commandLog.at(-1), {
+      at: commandLog.at(-1).at,
+      fromStatus: "attempting_execution",
+      kind: "recover-stuck-step",
+      message: "Recovered stuck command execution. Re-run the current step.",
+      stepId: "checklist_items_installed",
+      toStatus: "ready"
+    });
+  });
+});
+
+test("ai-studio runtime refuses stuck-step recovery unless the step is attempting execution", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "checklist_items_installed",
+      sessionId: "recover_not_stuck",
+      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    });
+
+    await assert.rejects(
+      () => runtime.recoverStuckStep("recover_not_stuck"),
+      {
+        code: "ai_studio_step_recovery_not_available"
       }
     );
   });

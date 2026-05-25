@@ -1,8 +1,5 @@
 import { computed, nextTick, ref, unref } from "vue";
 import {
-  latestAiStudioActionResult
-} from "@/lib/aiStudioActionResults.js";
-import {
   aiStudioSessionDebugDurationMs,
   aiStudioSessionDebugLog,
   aiStudioSessionDebugSummary
@@ -13,7 +10,6 @@ import {
 
 function useAiStudioSessionCommandTerminal({
   currentNext = () => null,
-  goNext = async () => null,
   refreshSessionData,
   selectedSession,
   selectedSessionId
@@ -22,7 +18,6 @@ function useAiStudioSessionCommandTerminal({
   const input = ref({});
   const running = ref(false);
   const startKey = ref("");
-  const pendingAdvanceOnSuccess = ref(false);
   const pendingStartedAt = ref(0);
 
   const visible = computed(() => Boolean(action.value || running.value));
@@ -39,7 +34,6 @@ function useAiStudioSessionCommandTerminal({
     input.value = {};
     running.value = false;
     startKey.value = "";
-    pendingAdvanceOnSuccess.value = false;
     pendingStartedAt.value = 0;
   }
 
@@ -53,7 +47,6 @@ function useAiStudioSessionCommandTerminal({
     });
     action.value = nextAction;
     input.value = {};
-    pendingAdvanceOnSuccess.value = nextAction.advanceOnSuccess === true;
     pendingStartedAt.value = commandStartedAt;
     startKey.value = `${unref(selectedSessionId)}:${nextAction.id}:${commandStartedAt}`;
   }
@@ -72,39 +65,17 @@ function useAiStudioSessionCommandTerminal({
     await refreshSessionData();
     await nextTick();
 
-    const result = latestAiStudioActionResult(readRefOrGetterValue(selectedSession), actionId, {
-      since: pendingStartedAt.value
-    });
-    const commandSucceeded = Number(exitCode) === 0 || result?.status === "completed";
     const next = readRefOrGetterValue(currentNext);
     aiStudioSessionDebugLog("client.sessionCommandTerminal.settled.afterRefresh", {
       ...aiStudioSessionDebugSummary(readRefOrGetterValue(selectedSession) || {}),
       actionId: String(actionId || ""),
-      actionResultStatus: String(result?.status || ""),
-      commandSucceeded,
       durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
       exitCode,
       nextEnabled: next?.enabled === true,
       nextVisible: next?.visible === true,
-      pendingAdvanceOnSuccess: pendingAdvanceOnSuccess.value,
       sessionId: String(unref(selectedSessionId) || "")
     });
-    if (
-      commandSucceeded &&
-      pendingAdvanceOnSuccess.value &&
-      next?.visible === true &&
-      next?.enabled === true
-    ) {
-      aiStudioSessionDebugLog("client.sessionCommandTerminal.autoAdvance.start", {
-        actionId: String(actionId || ""),
-        sessionId: String(unref(selectedSessionId) || "")
-      });
-      clear();
-      await goNext();
-      return;
-    }
 
-    pendingAdvanceOnSuccess.value = false;
     pendingStartedAt.value = 0;
   }
 

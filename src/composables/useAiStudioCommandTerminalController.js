@@ -138,6 +138,7 @@ function useAiStudioCommandTerminalController(props, emit) {
       if (context.terminalKind === "command") {
         return {
           actionId: String(context.actionId || ""),
+          advanceOnSuccess: context.advanceOnSuccess === true,
           input: context.actionInput || {}
         };
       }
@@ -341,6 +342,7 @@ function useAiStudioCommandTerminalController(props, emit) {
       const session = await startTerminalCommand.run({
         actionId: actionId.value,
         actionInput: props.actionInput || {},
+        advanceOnSuccess: props.action?.advanceOnSuccess === true,
         launchTargetId: launchTargetId.value,
         reuseRunning: props.reuseRunning !== false,
         sessionId: sessionId.value,

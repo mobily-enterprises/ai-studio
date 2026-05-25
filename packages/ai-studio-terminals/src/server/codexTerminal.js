@@ -629,10 +629,12 @@ function createCodexTerminalController({
       const snapshot = codexTerminalSnapshot(session.sessionId, terminalSessionId);
       const threadId = extractCodexThreadId(snapshot.output || "");
       if (threadId) {
-        await Promise.all([
-          runtime.store.writeMetadataValue(session.sessionId, "codex_thread_id", threadId),
-          runtime.store.writeMetadataValue(session.sessionId, "codex_workdir", workdir)
-        ]);
+        await runtime.store.mutateSession(session.sessionId, async () => {
+          await Promise.all([
+            runtime.store.writeMetadataValue(session.sessionId, "codex_thread_id", threadId),
+            runtime.store.writeMetadataValue(session.sessionId, "codex_workdir", workdir)
+          ]);
+        });
         return threadId;
       }
       await delay(250);
@@ -711,11 +713,13 @@ function createCodexTerminalController({
     }
 
     const deliveredAt = new Date().toISOString();
-    await Promise.all([
-      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered", "yes"),
-      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered_at", deliveredAt),
-      runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivery", "terminal_bootstrap")
-    ]);
+    await runtime.store.mutateSession(session.sessionId, async () => {
+      await Promise.all([
+        runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered", "yes"),
+        runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivered_at", deliveredAt),
+        runtime.store.writeMetadataValue(session.sessionId, "codex_session_briefing_delivery", "terminal_bootstrap")
+      ]);
+    });
     return {
       ok: true,
       delivered: true
@@ -886,10 +890,12 @@ function createCodexTerminalController({
       return injected;
     }
 
-    await Promise.all([
-      runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", signature),
-      runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
-    ]);
+    await runtime.store.mutateSession(sessionId, async () => {
+      await Promise.all([
+        runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", signature),
+        runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
+      ]);
+    });
     await publishPromptInjected(sessionId, {
       reason: "codex-prompt-injected"
     });

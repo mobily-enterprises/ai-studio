@@ -729,27 +729,15 @@ async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advance
     message
   });
   try {
-    if (session.next?.visible === false || !session.next?.stepId) {
-      aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.blocked", {
-        ...aiStudioSessionDebugSummary(session),
-        nextDisabledReason: String(session.next?.disabledReason || ""),
-        reason: "step_not_ready"
-      });
+    if (typeof runtime?.forceAdvance !== "function") {
       throw aiStudioError(
-        session.next?.disabledReason || "Current AI Studio step cannot advance.",
-        "ai_studio_step_not_ready"
+        "AI Studio runtime force-advance is not available.",
+        "ai_studio_force_advance_not_available"
       );
     }
-    aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.transition", {
-      fromStepId: session.currentStep,
-      sessionId: session.sessionId,
-      toStepId: session.next.stepId
-    });
-    await runtime.store.writeCompletedStep(session.sessionId, session.currentStep, {
+    const advancedSession = await runtime.forceAdvance(session.sessionId, {
       message
     });
-    await runtime.store.writeCurrentStep(session.sessionId, session.next.stepId);
-    const advancedSession = await runtime.getSession(session.sessionId);
     aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.done", {
       ...aiStudioSessionDebugSummary(advancedSession),
       durationMs: aiStudioSessionDebugDurationMs(startedAtMs),

@@ -120,6 +120,8 @@ function useAiStudioSessionWorkflow({
       currentNext: workflow.actions.currentNext,
       currentStepDisabledReason: workflow.actions.currentStepDisabledReason,
       goNext: workflow.actions.goNext,
+      recoverStuckStep: workflow.actions.recoverStuckStep,
+      recoverStuckStepCommand: workflow.actions.recoverStuckStepCommand,
       rewindToStep: workflow.actions.rewindToStep,
       runAction: workflow.actions.runAction,
       runActionById: workflow.actions.runActionById,

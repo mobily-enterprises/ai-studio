@@ -85,14 +85,16 @@ async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
   if (!metadata.launchTargetId || !openTarget.href) {
     return;
   }
-  await Promise.all([
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.id, metadata.launchTargetId),
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.label, metadata.launchTargetLabel || metadata.launchTargetId),
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.kind, openTarget.kind),
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.openLabel, openTarget.label),
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.href, openTarget.href),
-    store.writeMetadataValue(sessionId, LAUNCH_METADATA.startedAt, new Date().toISOString())
-  ]);
+  await store.mutateSession(sessionId, async () => {
+    await Promise.all([
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.id, metadata.launchTargetId),
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.label, metadata.launchTargetLabel || metadata.launchTargetId),
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.kind, openTarget.kind),
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.openLabel, openTarget.label),
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.href, openTarget.href),
+      store.writeMetadataValue(sessionId, LAUNCH_METADATA.startedAt, new Date().toISOString())
+    ]);
+  });
 }
 
 async function createLaunchContext(projectService, sessionId) {

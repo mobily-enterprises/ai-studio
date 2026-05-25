@@ -12,6 +12,12 @@ import {
 } from "../../server/lib/aiStudio/index.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function assertPathExists(filePath) {
   await assert.doesNotReject(access(filePath));
 }
@@ -79,6 +85,7 @@ test("ai-studio session store reads and writes metadata, artifacts, status, curr
     const session = await store.readSession("state_contract");
     assert.equal(session.status, "blocked");
     assert.equal(session.currentStep, "install_dependencies");
+    assert.equal(session.stepRevision, 2);
     assert.equal(session.stepStatesRoot.endsWith("/step-state"), true);
     assert.equal(session.metadata.adapter, "cpp-cmake");
     assert.deepEqual(await store.readStepState("state_contract", "install_dependencies"), {
@@ -111,6 +118,54 @@ test("ai-studio session store reads and writes metadata, artifacts, status, curr
         status: "ok"
       }
     ]);
+  });
+});
+
+test("ai-studio session store serializes per-session mutations and bumps revision once per committed boundary", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const storeA = createAiStudioSessionStore({
+      targetRoot
+    });
+    const storeB = createAiStudioSessionStore({
+      targetRoot
+    });
+    const created = await storeA.createSession({
+      sessionId: "serialized_mutation"
+    });
+    const events = [];
+    let releaseFirst = () => null;
+
+    const first = storeA.mutateSession("serialized_mutation", async () => {
+      events.push("first-start");
+      await new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+      await storeA.writeMetadataValue("serialized_mutation", "first", "done");
+      events.push("first-end");
+    });
+    await delay(0);
+    const second = storeB.mutateSession("serialized_mutation", async () => {
+      events.push("second-start");
+      await storeB.writeMetadataValue("serialized_mutation", "second", "done");
+      events.push("second-end");
+    });
+    await delay(0);
+
+    assert.deepEqual(events, ["first-start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    const session = await storeA.readSession("serialized_mutation");
+    assert.deepEqual(events, ["first-start", "first-end", "second-start", "second-end"]);
+    assert.equal(session.metadata.first, "done");
+    assert.equal(session.metadata.second, "done");
+    assert.equal(created.revision, 1);
+    assert.equal(session.revision, 3);
+    assert.equal(session.manifest.revision, 3);
+    assert.equal(created.stepRevision, 1);
+    assert.equal(session.stepRevision, 1);
+    assert.equal(session.manifest.stepRevision, 1);
+    assert.equal(Boolean(session.updatedAt), true);
   });
 });
 

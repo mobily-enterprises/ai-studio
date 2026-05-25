@@ -5,6 +5,7 @@ import {
   ACTION_INSPECT_SESSION_DIFF,
   ACTION_INSPECT_SESSION,
   ACTION_LIST_SESSIONS,
+  ACTION_RECOVER_STUCK_SESSION_STEP,
   ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION,
   ACTION_RUN_SESSION_INTENT
@@ -91,6 +92,12 @@ function registerRoutes(
       };
     },
     summary: "Rewind an AI Studio session."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/recover-stuck-step", {
+    actionId: ACTION_RECOVER_STUCK_SESSION_STEP,
+    buildInput: sessionInput,
+    summary: "Recover an AI Studio session step stuck in command execution."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/abandon", {

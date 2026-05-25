@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -35,6 +36,8 @@ const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const sessionMutationChains = new Map();
+const sessionMutationContext = new AsyncLocalStorage();
 
 function isValidAiStudioSessionId(sessionId) {
   const normalizedSessionId = normalizeText(sessionId);
@@ -159,6 +162,60 @@ async function writeJsonFile(filePath, value) {
 
 function jsonClone(value) {
   return JSON.parse(JSON.stringify(value ?? null));
+}
+
+function revisionNumber(value) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+}
+
+function stepRevisionNumber(value) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 1 ? revision : 1;
+}
+
+function normalizeManifest(manifest = {}) {
+  return {
+    ...manifest,
+    revision: revisionNumber(manifest.revision),
+    stepRevision: stepRevisionNumber(manifest.stepRevision)
+  };
+}
+
+function withRevisionMarker(value, manifest = {}, sessionId = "") {
+  if (!isPlainObject(value) || normalizeText(value.sessionId) !== sessionId) {
+    return value;
+  }
+  const normalizedManifest = normalizeManifest(manifest);
+  return {
+    ...value,
+    manifest: isPlainObject(value.manifest)
+      ? {
+          ...value.manifest,
+          revision: normalizedManifest.revision,
+          stepRevision: normalizedManifest.stepRevision,
+          updatedAt: normalizeText(normalizedManifest.updatedAt)
+        }
+      : value.manifest,
+    revision: normalizedManifest.revision,
+    stepRevision: normalizedManifest.stepRevision,
+    updatedAt: normalizeText(normalizedManifest.updatedAt)
+  };
+}
+
+function enqueueSessionMutation(key, operation) {
+  const previous = sessionMutationChains.get(key) || Promise.resolve();
+  const run = () => sessionMutationContext.run({
+    key
+  }, operation);
+  const queued = previous.catch(() => null).then(run);
+  const stored = queued.catch(() => null).finally(() => {
+    if (sessionMutationChains.get(key) === stored) {
+      sessionMutationChains.delete(key);
+    }
+  });
+  sessionMutationChains.set(key, stored);
+  return queued;
 }
 
 function normalizePromptContextSnapshot(snapshot = {}) {
@@ -350,9 +407,44 @@ function createAiStudioSessionStore({
     return sessionPaths;
   }
 
-  async function writeStatus(sessionId, status) {
+  async function bumpSessionRevision(sessionPaths) {
+    const manifest = await readManifest(sessionPaths.sessionId);
+    const nextManifest = {
+      ...manifest,
+      revision: revisionNumber(manifest.revision) + 1,
+      updatedAt: now().toISOString()
+    };
+    await writeJsonFile(sessionPaths.manifestPath, nextManifest);
+    return nextManifest;
+  }
+
+  async function bumpSessionStepRevision(sessionPaths) {
+    const manifest = await readManifest(sessionPaths.sessionId);
+    const nextManifest = {
+      ...manifest,
+      stepRevision: stepRevisionNumber(manifest.stepRevision) + 1
+    };
+    await writeJsonFile(sessionPaths.manifestPath, nextManifest);
+    return nextManifest;
+  }
+
+  async function mutateSession(sessionId, operation) {
     const sessionPaths = await ensureSessionRoot(sessionId);
-    await writeTextFile(sessionPaths.statusPath, `${assertAiStudioSessionStatus(status)}\n`);
+    const key = sessionPaths.sessionRoot;
+    if (sessionMutationContext.getStore()?.key === key) {
+      return operation(sessionPaths);
+    }
+    return enqueueSessionMutation(key, async () => {
+      const result = await operation(sessionPaths);
+      const manifest = await bumpSessionRevision(sessionPaths);
+      return withRevisionMarker(result, manifest, sessionPaths.sessionId);
+    });
+  }
+
+  async function writeStatus(sessionId, status) {
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await writeTextFile(sessionPaths.statusPath, `${assertAiStudioSessionStatus(status)}\n`);
+    });
   }
 
   async function readStatus(sessionId) {
@@ -361,8 +453,14 @@ function createAiStudioSessionStore({
   }
 
   async function writeCurrentStep(sessionId, currentStep) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await writeTextFile(sessionPaths.currentStepPath, `${normalizeText(currentStep) || AI_STUDIO_INITIAL_STEP}\n`);
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const nextStep = normalizeText(currentStep) || AI_STUDIO_INITIAL_STEP;
+      const previousStep = normalizeText(await readTextIfExists(sessionPaths.currentStepPath)) || AI_STUDIO_INITIAL_STEP;
+      await writeTextFile(sessionPaths.currentStepPath, `${nextStep}\n`);
+      if (previousStep !== nextStep) {
+        await bumpSessionStepRevision(sessionPaths);
+      }
+    });
   }
 
   async function readCurrentStep(sessionId) {
@@ -371,21 +469,23 @@ function createAiStudioSessionStore({
   }
 
   async function writeMetadataValue(sessionId, name, value) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
+    });
   }
 
   async function writeIssueWordMetadata(sessionId, issueWord) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const sessionName = sessionNameFromIssueWord(issueWord);
-    if (!sessionName) {
-      await rm(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), {
-        force: true
-      });
-      return "";
-    }
-    await writeTextFile(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), `${sessionName}\n`);
-    return sessionName;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const sessionName = sessionNameFromIssueWord(issueWord);
+      if (!sessionName) {
+        await rm(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), {
+          force: true
+        });
+        return "";
+      }
+      await writeTextFile(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), `${sessionName}\n`);
+      return sessionName;
+    });
   }
 
   async function readMetadataValue(sessionId, name) {
@@ -394,9 +494,10 @@ function createAiStudioSessionStore({
   }
 
   async function deleteMetadataValue(sessionId, name) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(metadataFilePath(sessionPaths, name), {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(metadataFilePath(sessionPaths, name), {
+        force: true
+      });
     });
   }
 
@@ -431,10 +532,11 @@ function createAiStudioSessionStore({
   }
 
   async function writeArtifact(sessionId, relativePath, text) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const artifactPath = artifactFilePath(sessionPaths, relativePath);
-    await writeTextFile(artifactPath, text);
-    return artifactPath;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const artifactPath = artifactFilePath(sessionPaths, relativePath);
+      await writeTextFile(artifactPath, text);
+      return artifactPath;
+    });
   }
 
   async function readArtifact(sessionId, relativePath) {
@@ -443,9 +545,10 @@ function createAiStudioSessionStore({
   }
 
   async function deleteArtifact(sessionId, relativePath) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(artifactFilePath(sessionPaths, relativePath), {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(artifactFilePath(sessionPaths, relativePath), {
+        force: true
+      });
     });
   }
 
@@ -476,17 +579,18 @@ function createAiStudioSessionStore({
   }
 
   async function appendCommandLogEntry(sessionId, entry = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const payload = {
-      ...entry,
-      at: normalizeText(entry.at) || now().toISOString()
-    };
-    await mkdir(path.dirname(sessionPaths.commandLogPath), {
-      recursive: true
-    });
-    await writeFile(sessionPaths.commandLogPath, `${JSON.stringify(payload)}\n`, {
-      encoding: "utf8",
-      flag: "a"
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const payload = {
+        ...entry,
+        at: normalizeText(entry.at) || now().toISOString()
+      };
+      await mkdir(path.dirname(sessionPaths.commandLogPath), {
+        recursive: true
+      });
+      await writeFile(sessionPaths.commandLogPath, `${JSON.stringify(payload)}\n`, {
+        encoding: "utf8",
+        flag: "a"
+      });
     });
   }
 
@@ -500,15 +604,16 @@ function createAiStudioSessionStore({
   }
 
   async function writeActionResult(sessionId, actionId, result = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const normalizedActionId = assertSafeActionId(actionId);
-    const record = {
-      ...result,
-      actionId: normalizedActionId,
-      at: normalizeText(result.at) || now().toISOString()
-    };
-    await writeJsonFile(actionResultFilePath(sessionPaths, normalizedActionId), record);
-    return record;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const normalizedActionId = assertSafeActionId(actionId);
+      const record = {
+        ...result,
+        actionId: normalizedActionId,
+        at: normalizeText(result.at) || now().toISOString()
+      };
+      await writeJsonFile(actionResultFilePath(sessionPaths, normalizedActionId), record);
+      return record;
+    });
   }
 
   async function readActionResult(sessionId, actionId) {
@@ -526,9 +631,10 @@ function createAiStudioSessionStore({
   }
 
   async function deleteActionResult(sessionId, actionId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(actionResultFilePath(sessionPaths, actionId), {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(actionResultFilePath(sessionPaths, actionId), {
+        force: true
+      });
     });
   }
 
@@ -544,16 +650,17 @@ function createAiStudioSessionStore({
   }
 
   async function writePromptContextSnapshot(sessionId, snapshot = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const record = normalizePromptContextSnapshot(snapshot);
-    if (!record) {
-      throw aiStudioError(
-        "Invalid ai-studio prompt context snapshot.",
-        "ai_studio_invalid_prompt_context_snapshot"
-      );
-    }
-    await writeJsonFile(sessionPaths.promptContextSnapshotPath, record);
-    return record;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const record = normalizePromptContextSnapshot(snapshot);
+      if (!record) {
+        throw aiStudioError(
+          "Invalid ai-studio prompt context snapshot.",
+          "ai_studio_invalid_prompt_context_snapshot"
+        );
+      }
+      await writeJsonFile(sessionPaths.promptContextSnapshotPath, record);
+      return record;
+    });
   }
 
   async function readPromptContextSnapshot(sessionId) {
@@ -577,24 +684,26 @@ function createAiStudioSessionStore({
   }
 
   async function deletePromptContextSnapshot(sessionId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(sessionPaths.promptContextSnapshotPath, {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(sessionPaths.promptContextSnapshotPath, {
+        force: true
+      });
     });
   }
 
   async function writeCompletedStep(sessionId, stepId, {
     message = ""
   } = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const normalizedStepId = assertSafeStepId(stepId);
-    const record = {
-      at: now().toISOString(),
-      message: normalizeText(message),
-      stepId: normalizedStepId
-    };
-    await writeJsonFile(completedStepFilePath(sessionPaths, normalizedStepId), record);
-    return record;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const normalizedStepId = assertSafeStepId(stepId);
+      const record = {
+        at: now().toISOString(),
+        message: normalizeText(message),
+        stepId: normalizedStepId
+      };
+      await writeJsonFile(completedStepFilePath(sessionPaths, normalizedStepId), record);
+      return record;
+    });
   }
 
   async function readCompletedSteps(sessionId) {
@@ -603,9 +712,10 @@ function createAiStudioSessionStore({
   }
 
   async function deleteCompletedStep(sessionId, stepId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(completedStepFilePath(sessionPaths, stepId), {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(completedStepFilePath(sessionPaths, stepId), {
+        force: true
+      });
     });
   }
 
@@ -628,21 +738,23 @@ function createAiStudioSessionStore({
   }
 
   async function writeStepState(sessionId, stepId, state = {}) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    const normalizedStepId = assertSafeStepId(stepId);
-    const record = {
-      ...state,
-      at: normalizeText(state.at) || now().toISOString(),
-      stepId: normalizedStepId
-    };
-    await writeJsonFile(stepStateFilePath(sessionPaths, normalizedStepId), record);
-    return record;
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const normalizedStepId = assertSafeStepId(stepId);
+      const record = {
+        ...state,
+        at: normalizeText(state.at) || now().toISOString(),
+        stepId: normalizedStepId
+      };
+      await writeJsonFile(stepStateFilePath(sessionPaths, normalizedStepId), record);
+      return record;
+    });
   }
 
   async function deleteStepState(sessionId, stepId) {
-    const sessionPaths = await ensureSessionRoot(sessionId);
-    await rm(stepStateFilePath(sessionPaths, stepId), {
-      force: true
+    return mutateSession(sessionId, async (sessionPaths) => {
+      await rm(stepStateFilePath(sessionPaths, stepId), {
+        force: true
+      });
     });
   }
 
@@ -654,7 +766,7 @@ function createAiStudioSessionStore({
     const sessionPaths = await ensureSessionRoot(sessionId);
     const manifestText = await readTextIfExists(sessionPaths.manifestPath);
     try {
-      return JSON.parse(manifestText);
+      return normalizeManifest(JSON.parse(manifestText));
     } catch {
       throw aiStudioError(`Invalid ai-studio session manifest: ${sessionPaths.sessionId}`, "ai_studio_invalid_manifest");
     }
@@ -697,14 +809,17 @@ function createAiStudioSessionStore({
       promptContextSnapshot,
       promptContextSnapshotPath: sessionPaths.promptContextSnapshotPath,
       reportPath: reportReady ? artifactFilePath(sessionPaths, REPORT_ARTIFACT) : "",
+      revision: revisionNumber(manifest.revision),
       sessionId: sessionPaths.sessionId,
       sessionName,
       sessionRoot: sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
       status,
+      stepRevision: stepRevisionNumber(manifest.stepRevision),
       stepStatesRoot: sessionPaths.stepStatesRoot,
       stepsRoot: sessionPaths.stepsRoot,
-      targetRoot: sessionPaths.targetRoot
+      targetRoot: sessionPaths.targetRoot,
+      updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
     };
   }
 
@@ -755,8 +870,10 @@ function createAiStudioSessionStore({
     const manifest = {
       createdAt,
       product: "ai-studio",
+      revision: 1,
       schemaVersion: AI_STUDIO_SESSION_SCHEMA_VERSION,
       sessionId: resolvedSessionId,
+      stepRevision: 1,
       targetRoot: sessionPaths.targetRoot,
       updatedAt: createdAt
     };
@@ -804,6 +921,7 @@ function createAiStudioSessionStore({
     deleteStepState,
     deleteStepStates,
     listSessions,
+    mutateSession,
     paths,
     readArtifact,
     readArtifactReadiness,

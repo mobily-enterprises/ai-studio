@@ -29,6 +29,7 @@ describe("useAiStudioAutopilotController", () => {
       sessionId: "session-1"
     }));
     expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.actions.advanceSession).not.toHaveBeenCalled();
   });
 
   it("dispatches prompt work as a normal server action request", async () => {
@@ -175,6 +176,7 @@ describe("useAiStudioAutopilotController", () => {
     await context.controller.retry();
 
     expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.actions.advanceSession).not.toHaveBeenCalled();
   });
 
   it("refreshes stale command-start conflicts instead of showing command failure", async () => {
@@ -266,10 +268,39 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.session.value.currentStep).toBe("step_b");
     expect(context.controller.failure.value).toBe(null);
   });
+
+  it("offers stuck-step recovery only after command completion refresh times out", async () => {
+    const context = createControllerContext({
+      commandCompletionRefreshAttempts: 2,
+      commandCompletionStaleRefreshes: 99,
+      operation: {
+        actionId: "cmd_action",
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.actions.recoverStuckStep).not.toHaveBeenCalled();
+    expect(context.controller.stuckRecoveryAvailable.value).toBe(true);
+
+    await context.controller.recoverStuckStep();
+
+    expect(context.actions.recoverStuckStep).toHaveBeenCalledWith({
+      sessionId: "session-1"
+    });
+    expect(context.controller.stuckRecoveryAvailable.value).toBe(false);
+    expect(context.session.value.stepMachine.status).toBe("ready");
+  });
 });
 
 function createControllerContext({
   commandCompletesWithServerAdvance = false,
+  commandCompletionRefreshAttempts = 6,
   commandCompletionStaleRefreshes = 0,
   commandStartConflict = false,
   commandFails = false,
@@ -305,6 +336,7 @@ function createControllerContext({
   const commandResult = ref(null);
   const commandTransportFailureRefreshPending = ref(false);
   const commandCompletionStaleRefreshesRef = ref(commandCompletionStaleRefreshes);
+  const serverCommandAdvancePending = ref(false);
   const staleCommandRefreshPending = ref(false);
 
   function syncSession(values = {}) {
@@ -326,6 +358,15 @@ function createControllerContext({
     }),
     currentActions: computed(() => session.value.actions),
     currentNext: computed(() => session.value.next),
+    recoverStuckStep: vi.fn(async () => {
+      stepMachine.value = {
+        status: "ready",
+        stepId: session.value.currentStep
+      };
+      syncSession({
+        operation
+      });
+    }),
     runActionById: vi.fn(async () => {
       stepMachine.value = {
         status: "awaiting_agent_result",
@@ -405,7 +446,7 @@ function createControllerContext({
         return commandResult.value;
       }
       if (advanceOnSuccess === true) {
-        await actionSurface.advanceSession();
+        serverCommandAdvancePending.value = true;
       }
       commandResult.value = {
         actionId: action.id,
@@ -466,6 +507,13 @@ function createControllerContext({
       });
       return;
     }
+    if (serverCommandAdvancePending.value && commandResult.value?.ok === true) {
+      serverCommandAdvancePending.value = false;
+      syncSession({
+        stepId: "step_b"
+      });
+      return;
+    }
     if (commandCompletesWithServerAdvance && commandResult.value?.ok === true) {
       stepMachine.value = {
         status: "done",
@@ -490,6 +538,7 @@ function createControllerContext({
   });
   const controller = useAiStudioAutopilotController({
     actions: actionSurface,
+    commandCompletionRefreshAttempts,
     commandCompletionRefreshDelayMs: 0,
     commandRunner,
     enabled: enabledRef,

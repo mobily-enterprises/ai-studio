@@ -50,36 +50,26 @@ function selectedSessionOperationSummary(session = {}) {
   };
 }
 
-const STEP_STATUS_FRESHNESS_RANK = Object.freeze({
-  attempting_execution: 2,
-  awaiting_agent_result: 2,
-  confirm_files: 2,
-  done: 4,
-  failed: 3,
-  ready: 1,
-  waiting_for_input: 2
-});
-
-function latestActionResultTimeMs(session = {}) {
-  const results = Array.isArray(session?.actionResults) ? session.actionResults : [];
-  return results.reduce((latest, result = {}) => {
-    const time = Date.parse(String(result.at || ""));
-    return Number.isFinite(time) && time > latest ? time : latest;
-  }, 0);
+function sessionRevision(session = {}) {
+  const revision = Number(session?.revision);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
-function sessionFreshnessScore(session = {}) {
-  if (!session?.sessionId) {
-    return 0;
+function sessionUpdatedAtMs(session = {}) {
+  const updatedAtMs = Date.parse(String(session?.updatedAt || ""));
+  return Number.isFinite(updatedAtMs) ? updatedAtMs : 0;
+}
+
+function compareSessionFreshness(leftSession = null, rightSession = null) {
+  const leftRevision = sessionRevision(leftSession);
+  const rightRevision = sessionRevision(rightSession);
+  if (leftRevision !== null || rightRevision !== null) {
+    const revisionDifference = (leftRevision ?? -1) - (rightRevision ?? -1);
+    if (revisionDifference !== 0) {
+      return revisionDifference;
+    }
   }
-  const actionResults = Array.isArray(session.actionResults) ? session.actionResults.length : 0;
-  const completedSteps = Array.isArray(session.completedSteps) ? session.completedSteps.length : 0;
-  const statusRank = STEP_STATUS_FRESHNESS_RANK[String(session.stepMachine?.status || "")] || 0;
-  return latestActionResultTimeMs(session) +
-    actionResults * 1000 +
-    completedSteps * 100 +
-    statusRank * 10 +
-    (session.next?.enabled === true ? 1 : 0);
+  return sessionUpdatedAtMs(leftSession) - sessionUpdatedAtMs(rightSession);
 }
 
 function freshestSessionRecord(preferredSession = null, fallbackSession = null) {
@@ -89,7 +79,7 @@ function freshestSessionRecord(preferredSession = null, fallbackSession = null) 
   if (!fallbackSession?.sessionId || fallbackSession.sessionId !== preferredSession.sessionId) {
     return preferredSession;
   }
-  return sessionFreshnessScore(fallbackSession) > sessionFreshnessScore(preferredSession)
+  return compareSessionFreshness(fallbackSession, preferredSession) > 0
     ? fallbackSession
     : preferredSession;
 }
@@ -406,5 +396,7 @@ function useAiStudioSessionData({
 }
 
 export {
+  compareSessionFreshness,
+  freshestSessionRecord,
   useAiStudioSessionData
 };

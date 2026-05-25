@@ -26,6 +26,7 @@ const STALE_COMMAND_START_CODES = Object.freeze(new Set([
 ]));
 const COMMAND_COMPLETION_REFRESH_ATTEMPTS = 6;
 const COMMAND_COMPLETION_REFRESH_DELAY_MS = 250;
+const STUCK_EXECUTION_RECOVERY_MIN_AGE_MS = 30000;
 const STEP_STATUS_ATTEMPTING_EXECUTION = "attempting_execution";
 
 function delay(ms = 0) {
@@ -131,6 +132,11 @@ function sessionStillApplyingCommand(session = {}) {
   return String(session?.stepMachine?.status || "") === STEP_STATUS_ATTEMPTING_EXECUTION;
 }
 
+function stepMachineStateAgeMs(session = {}, nowMs = Date.now()) {
+  const stateAtMs = Date.parse(String(session?.stepMachine?.at || ""));
+  return Number.isFinite(stateAtMs) ? Math.max(0, nowMs - stateAtMs) : 0;
+}
+
 function serverMovedPastCommandOperation(previousOperation = {}, nextOperation = {}) {
   if (!operationCanDispatch(nextOperation)) {
     return true;
@@ -155,6 +161,8 @@ function useAiStudioAutopilotController({
   const failure = ref(null);
   const lastCommandResult = ref(null);
   const lastDispatchedOperationKey = ref("");
+  const recoveryOfferedAfterTimeout = ref(false);
+  const recoveryRunning = ref(false);
 
   let autopilotPromise = null;
   let rerunRequested = false;
@@ -182,6 +190,17 @@ function useAiStudioAutopilotController({
     !running.value &&
     !failure.value &&
     !commandFailed.value
+  ));
+  const stuckRecoveryAvailable = computed(() => Boolean(
+    autopilotEnabled.value &&
+    currentSession.value?.sessionId &&
+    sessionStillApplyingCommand(currentSession.value) &&
+    !running.value &&
+    !commandRunning.value &&
+    (
+      recoveryOfferedAfterTimeout.value ||
+      stepMachineStateAgeMs(currentSession.value) >= STUCK_EXECUTION_RECOVERY_MIN_AGE_MS
+    )
   ));
   const screenState = computed(() => {
     if (commandRunning.value || commandFailed.value) {
@@ -303,6 +322,54 @@ function useAiStudioAutopilotController({
     }
     stopRequested = true;
     return commandRunner.stopCommandAction();
+  }
+
+  async function recoverStuckStep() {
+    if (!stuckRecoveryAvailable.value || recoveryRunning.value) {
+      aiStudioSessionDebugLog("client.autopilot.recoverStuckStep.skipped", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        available: stuckRecoveryAvailable.value,
+        recoveryRunning: recoveryRunning.value
+      });
+      return false;
+    }
+    const startedAtMs = Date.now();
+    recoveryRunning.value = true;
+    aiStudioSessionDebugLog("client.autopilot.recoverStuckStep.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {})
+    });
+    try {
+      await actions.recoverStuckStep?.({
+        sessionId: currentSession.value?.sessionId || ""
+      });
+      recoveryOfferedAfterTimeout.value = false;
+      lastDispatchedOperationKey.value = "";
+      if (typeof commandRunner.clearResult === "function") {
+        commandRunner.clearResult();
+      }
+      await refreshSessionData();
+      await nextTick();
+      aiStudioSessionDebugLog("client.autopilot.recoverStuckStep.done", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+      return true;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.autopilot.recoverStuckStep.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
+      stopWithFailure({
+        actionId: "recover_stuck_step",
+        actionLabel: "Recover step",
+        error: String(error?.message || error || "AI Studio session step could not be recovered."),
+        source: "recovery"
+      });
+      return false;
+    } finally {
+      recoveryRunning.value = false;
+    }
   }
 
   async function runUntilStopPoint() {
@@ -589,8 +656,21 @@ function useAiStudioAutopilotController({
       attempts: maxAttempts,
       durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
     });
+    if (sessionStillApplyingCommand(currentSession.value)) {
+      recoveryOfferedAfterTimeout.value = true;
+    }
     return !sessionStillApplyingCommand(currentSession.value);
   }
+
+  watch(() => [
+    currentSession.value?.sessionId || "",
+    currentSession.value?.currentStep || "",
+    currentSession.value?.stepMachine?.status || ""
+  ].join(":"), () => {
+    if (!sessionStillApplyingCommand(currentSession.value)) {
+      recoveryOfferedAfterTimeout.value = false;
+    }
+  });
 
   watch(nextOperationDispatchKey, (key) => {
     if (key !== lastDispatchedOperationKey.value) {
@@ -613,11 +693,14 @@ function useAiStudioAutopilotController({
     failure,
     nextOperation,
     nextOperationKey,
+    recoverStuckStep,
     retry,
     runNextOperation,
     runPresentedIntent,
     running,
     screenState,
+    stuckRecoveryAvailable,
+    stuckRecoveryRunning: recoveryRunning,
     stop,
     stopCommandAction
   };
