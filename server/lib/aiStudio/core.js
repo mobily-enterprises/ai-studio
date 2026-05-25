@@ -10,6 +10,10 @@ function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
+function plainClone(value) {
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
 function normalizeTargetRoot(targetRoot = process.cwd()) {
   return path.resolve(normalizeText(targetRoot) || process.cwd());
 }
@@ -42,5 +46,6 @@ export {
   isMissingPathError,
   normalizeText,
   normalizeTargetRoot,
+  plainClone,
   pathExists
 };

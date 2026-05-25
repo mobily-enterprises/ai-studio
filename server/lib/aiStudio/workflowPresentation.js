@@ -1,5 +1,6 @@
 import {
   aiStudioError,
+  isPlainObject,
   normalizeText
 } from "./core.js";
 import {
@@ -86,17 +87,13 @@ const INTENT_PRESENTATION_GROUPS = Object.freeze([
   "stop"
 ]);
 
-function isObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
-}
-
 function currentStepDefinition(session = {}) {
-  return isObject(session.currentStepDefinition) ? session.currentStepDefinition : {};
+  return isPlainObject(session.currentStepDefinition) ? session.currentStepDefinition : {};
 }
 
 function currentAutopilot(session = {}) {
   const autopilot = session.workflowAutopilot;
-  return isObject(autopilot) ? autopilot : {};
+  return isPlainObject(autopilot) ? autopilot : {};
 }
 
 function currentStepLabel(session = {}) {
@@ -110,7 +107,7 @@ function actionById(session = {}, actionId = "") {
 
 function stageAction(session = {}) {
   const stage = currentAutopilot(session).stage;
-  if (!isObject(stage) || !stage.actionId) {
+  if (!isPlainObject(stage) || !stage.actionId) {
     return null;
   }
   return {
@@ -155,7 +152,7 @@ function screen(kind, {
 } = {}) {
   return {
     icon,
-    ...(isObject(input) ? { input } : {}),
+    ...(isPlainObject(input) ? { input } : {}),
     kind,
     message: normalizeText(message),
     primaryIntentId: normalizeText(primaryIntentId),
@@ -169,7 +166,7 @@ function screen(kind, {
 function inputPresentation(input = {}, {
   submitTarget = ""
 } = {}) {
-  if (!isObject(input)) {
+  if (!isPlainObject(input)) {
     return null;
   }
   return {
@@ -228,7 +225,7 @@ function presentationSections(names = []) {
 
 function stepPresentationConfig(session = {}) {
   const presentation = session.workflowPresentation;
-  return isObject(presentation) ? presentation : {};
+  return isPlainObject(presentation) ? presentation : {};
 }
 
 function screenTitleFromConfig(config = {}, session = {}) {
@@ -320,13 +317,13 @@ function presentationFromConfig(session = {}, config = {}) {
     .filter(Boolean);
   return {
     intents,
-    screen: screenFromConfig(isObject(config.screen) ? config.screen : {}, session)
+    screen: screenFromConfig(isPlainObject(config.screen) ? config.screen : {}, session)
   };
 }
 
 function stopScreenPresentation(session = {}) {
   const configured = stepPresentationConfig(session).stop;
-  if (isObject(configured)) {
+  if (isPlainObject(configured)) {
     return presentationFromConfig(session, configured);
   }
 
@@ -340,7 +337,7 @@ function stopScreenPresentation(session = {}) {
 
 function userDecisionPresentation(session = {}) {
   const configured = stepPresentationConfig(session).decision;
-  if (isObject(configured)) {
+  if (isPlainObject(configured)) {
     return presentationFromConfig(session, configured);
   }
 
@@ -366,7 +363,7 @@ function userDecisionPresentation(session = {}) {
 
 function interactionPresentation(session = {}) {
   const interaction = currentStepDefinition(session).interaction;
-  if (!isObject(interaction)) {
+  if (!isPlainObject(interaction)) {
     return null;
   }
   if (normalizeText(interaction.intentId) === INTENT_IDS.TALK_TO_CODEX || normalizeText(interaction.kind) === "conversation") {
@@ -461,7 +458,7 @@ function commandLifecyclePhase(lifecycle = {}) {
 }
 
 function commandLifecycle(session = {}) {
-  return isObject(session.currentCommandLifecycle) ? session.currentCommandLifecycle : null;
+  return isPlainObject(session.currentCommandLifecycle) ? session.currentCommandLifecycle : null;
 }
 
 function unavailableCommandRecovery(reason = "") {
@@ -633,11 +630,11 @@ function mergeOperation(session = {}, config = {}) {
 
 function configuredAutomationOperation(session = {}) {
   const automation = stepPresentationConfig(session).automation;
-  if (!isObject(automation)) {
+  if (!isPlainObject(automation)) {
     return null;
   }
   const metadata = session.metadata || {};
-  const recheck = isObject(automation.recheckAfterPrompt) ? automation.recheckAfterPrompt : null;
+  const recheck = isPlainObject(automation.recheckAfterPrompt) ? automation.recheckAfterPrompt : null;
   if (
     recheck &&
     normalizeText(metadata[recheck.metadataName]) === normalizeText(recheck.metadataValue) &&
@@ -649,7 +646,7 @@ function configuredAutomationOperation(session = {}) {
     });
   }
 
-  const merge = isObject(automation.mergeIntent) ? automation.mergeIntent : null;
+  const merge = isPlainObject(automation.mergeIntent) ? automation.mergeIntent : null;
   if (
     merge &&
     normalizeText(metadata[merge.metadataName]) === normalizeText(merge.metadataValue)
@@ -722,7 +719,7 @@ function promptPresentation(session = {}) {
 }
 
 function backgroundTaskRetryPresentation(task = {}) {
-  const retry = isObject(task.retry) ? task.retry : null;
+  const retry = isPlainObject(task.retry) ? task.retry : null;
   if (!retry) {
     return null;
   }
@@ -739,7 +736,7 @@ function backgroundTaskRetryPresentation(task = {}) {
 function backgroundTaskPresentation(session = {}) {
   return (Array.isArray(session.backgroundTasks) ? session.backgroundTasks : [])
     .map((task) => {
-      if (!isObject(task)) {
+      if (!isPlainObject(task)) {
         return null;
       }
       const id = normalizeText(task.id);
@@ -870,7 +867,7 @@ function selectedIntentById(session = {}, intentId = "") {
 // Public session payloads intentionally strip `workflowPresentation`; intent
 // execution re-reads the current step contract from the workflow machine.
 function currentStepPresentationContract(runtime, session = {}) {
-  if (isObject(session.workflowPresentation)) {
+  if (isPlainObject(session.workflowPresentation)) {
     return session.workflowPresentation;
   }
   const machine = typeof runtime?.workflowMachineForSession === "function"
@@ -879,7 +876,7 @@ function currentStepPresentationContract(runtime, session = {}) {
   const step = typeof machine?.currentStepForSession === "function"
     ? machine.currentStepForSession(session)
     : null;
-  return isObject(step?.presentation) ? step.presentation : {};
+  return isPlainObject(step?.presentation) ? step.presentation : {};
 }
 
 function presentationIntentConfigById(presentation = {}, intentId = "") {
@@ -937,7 +934,7 @@ function serverOperationForIntent(runtime, session = {}, intentId = "", selected
   if (!intentConfig) {
     return fallbackActionServerOperation(selectedIntent);
   }
-  if (isObject(intentConfig.serverOperation)) {
+  if (isPlainObject(intentConfig.serverOperation)) {
     return intentConfig.serverOperation;
   }
   return defaultServerOperationForIntentConfig(intentConfig) ||
@@ -1073,7 +1070,7 @@ async function sequenceServerOperation(runtime, session = {}, selectedIntent = {
 }
 
 async function runServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
-  const safeOperation = isObject(operation) ? operation : {};
+  const safeOperation = isPlainObject(operation) ? operation : {};
   switch (normalizeText(safeOperation.kind)) {
     case "advance":
       return runtime.advance(session.sessionId);
@@ -1100,10 +1097,10 @@ async function runServerOperation(runtime, session = {}, selectedIntent = {}, op
 }
 
 function intentFields(input = {}) {
-  if (isObject(input.fields)) {
+  if (isPlainObject(input.fields)) {
     return input.fields;
   }
-  if (isObject(input.input)) {
+  if (isPlainObject(input.input)) {
     return input.input;
   }
   return {};
@@ -1127,7 +1124,7 @@ function actionInputForOperation(operation = {}, fields = {}) {
 }
 
 async function writeOperationMetadata(runtime, sessionId = "", metadata = {}) {
-  for (const [name, value] of Object.entries(isObject(metadata) ? metadata : {})) {
+  for (const [name, value] of Object.entries(isPlainObject(metadata) ? metadata : {})) {
     await runtime.store.writeMetadataValue(sessionId, name, value);
   }
 }

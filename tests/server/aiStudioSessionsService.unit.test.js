@@ -9,6 +9,11 @@ import {
 import {
   createService
 } from "../../packages/ai-studio-sessions/src/server/service.js";
+import {
+  _testing as coreMaintenanceTesting
+} from "../../server/lib/aiStudio/workflowModules/coreMaintenance.js";
+
+const CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS = coreMaintenanceTesting.workflowProfileIds;
 
 function readySetupServices() {
   const readyService = {
@@ -586,8 +591,8 @@ test("session list exposes selectable workflow profiles after seeding", async ()
     [
       AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE,
       AI_STUDIO_WORKFLOW_PROFILE_IDS.GENERAL_CODING,
-      AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE,
-      AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE,
+      CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     ]
   );
   assert.equal(result.creation.workflowProfiles.some((profile) => profile.id === AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION), false);
@@ -839,12 +844,12 @@ test("session creation uses the selected workflow profile after seeding", async 
   });
 
   const result = await service.createSession({
-    workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+    workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.workflowProfile.id, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
-  assert.equal(selectedWorkflowProfile, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+  assert.equal(result.workflowProfile.id, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+  assert.equal(selectedWorkflowProfile, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
 });
 
 test("session creation blocks a second open seed session", async () => {

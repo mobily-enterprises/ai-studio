@@ -5,12 +5,17 @@ import test from "node:test";
 
 import {
   AI_STUDIO_SESSION_STATUS,
+  AI_STUDIO_CORE_WORKFLOW_MODULE_ID,
   AI_STUDIO_WORKFLOW_PROFILE_IDS,
+  AI_STUDIO_WORKFLOW_PROFILES,
   AiStudioSessionRuntime,
+  createWorkflowRegistry,
   DEFAULT_AI_STUDIO_WORKFLOW,
   DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID,
   FakeTargetAdapter,
   PromptRenderer,
+  registeredWorkflowRecords,
+  registeredWorkflowStepRecords,
   WorkflowMachine,
   workflowForProfile,
   workflowStepPresentation
@@ -20,9 +25,15 @@ import {
   stepMachineForStep
 } from "../../server/lib/aiStudio/workflowStepMachines.js";
 import {
+  _testing as coreMaintenanceTesting
+} from "../../server/lib/aiStudio/workflowModules/coreMaintenance.js";
+import {
   questionBatchLimitInstruction
 } from "../../server/lib/aiStudio/promptQuestionPolicy.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
+
+const CORE_MAINTENANCE_WORKFLOW_MODULE_ID = coreMaintenanceTesting.moduleId;
+const CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS = coreMaintenanceTesting.workflowProfileIds;
 
 class PromptRendererFakeAdapter extends FakeTargetAdapter {
   constructor({
@@ -305,7 +316,7 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
     const maintenanceConversation = await runtime.createSession({
       initialStep: "maintenance_conversation",
       sessionId: "presentation_snapshot_conversation",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
     const optionalCheck = await runtime.createSession({
       initialStep: "deep_ui_check_run",
@@ -325,7 +336,7 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
     const finished = await runtime.createSession({
       initialStep: "local_session_finished",
       sessionId: "presentation_snapshot_finished",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     assert.deepEqual({
@@ -632,7 +643,7 @@ test("ai-studio runtime exposes and runs the server-owned conversation intent", 
     await runtime.createSession({
       initialStep: "maintenance_conversation",
       sessionId: "presentation_conversation_intent",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     const session = await runtime.getSession("presentation_conversation_intent");
@@ -766,9 +777,9 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
 test("ai-studio workflow profiles are ordered step lists with self-contained step metadata", () => {
   const bigFeature = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE);
   const generalCoding = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.GENERAL_CODING);
-  const nonCodeMaintenance = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
+  const nonCodeMaintenance = workflowForProfile(CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
   const seedApplication = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION);
-  const nonCommitMaintenance = workflowForProfile(AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+  const nonCommitMaintenance = workflowForProfile(CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
 
   assert.equal(bigFeature.id, DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID);
   assert.ok(bigFeature.steps.find((step) => step.id === "issue_file_created")?.autopilot.stop);
@@ -888,7 +899,7 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
 });
 
 test("ai-studio workflow profiles have an explicit state machine for every step", () => {
-  for (const profileId of Object.values(AI_STUDIO_WORKFLOW_PROFILE_IDS)) {
+  for (const profileId of Object.keys(AI_STUDIO_WORKFLOW_PROFILES)) {
     const workflow = workflowForProfile(profileId);
     assert.deepEqual(
       workflow.steps.map((step) => step.id).filter((stepId) => !stepMachineForStep(stepId)),
@@ -896,6 +907,139 @@ test("ai-studio workflow profiles have an explicit state machine for every step"
       `${profileId} has workflow steps without state machines`
     );
   }
+});
+
+test("ai-studio core workflow steps are registered with definitions and machines", () => {
+  const records = registeredWorkflowStepRecords();
+  assert.deepEqual(
+    records.filter((record) => record.hasDefinition && !record.hasMachine).map((record) => record.id),
+    [],
+    "registered workflow steps must not have definitions without machines"
+  );
+  assert.deepEqual(
+    records.filter((record) => record.hasMachine && !record.hasDefinition).map((record) => record.id),
+    [],
+    "registered workflow steps must not have machines without definitions"
+  );
+  assert.equal(
+    records.find((record) => record.id === "session_created")?.moduleId,
+    AI_STUDIO_CORE_WORKFLOW_MODULE_ID
+  );
+  assert.equal(
+    records.find((record) => record.id === "create_pull_request")?.moduleId,
+    AI_STUDIO_CORE_WORKFLOW_MODULE_ID
+  );
+  assert.equal(
+    records.find((record) => record.id === "maintenance_conversation")?.moduleId,
+    CORE_MAINTENANCE_WORKFLOW_MODULE_ID
+  );
+  assert.deepEqual(
+    records
+      .filter((record) => record.moduleId === CORE_MAINTENANCE_WORKFLOW_MODULE_ID)
+      .map((record) => record.id),
+    [...coreMaintenanceTesting.ownedStepIds].sort()
+  );
+});
+
+test("ai-studio workflow modules register workflow profiles", () => {
+  const records = registeredWorkflowRecords();
+  assert.equal(
+    records.find((record) => record.id === AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE)?.moduleId,
+    AI_STUDIO_CORE_WORKFLOW_MODULE_ID
+  );
+  assert.equal(
+    records.find((record) => record.id === CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE)?.moduleId,
+    CORE_MAINTENANCE_WORKFLOW_MODULE_ID
+  );
+  assert.equal(
+    records.find((record) => record.id === CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE)?.moduleId,
+    CORE_MAINTENANCE_WORKFLOW_MODULE_ID
+  );
+  assert.deepEqual(
+    records.find((record) => record.id === CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE)?.stepIds,
+    [
+      "session_created",
+      "worktree_created",
+      "checklist_items_installed",
+      "maintenance_conversation",
+      "local_session_finished"
+    ]
+  );
+});
+
+test("ai-studio workflow registry rejects duplicate step and workflow ownership", () => {
+  const registry = createWorkflowRegistry();
+  registry.registerModule({
+    id: "alpha",
+    steps: [
+      {
+        definition: {
+          id: "shared_step",
+          label: "Shared step"
+        }
+      }
+    ],
+    workflows: [
+      {
+        id: "shared_workflow",
+        label: "Shared workflow",
+        stepIds: ["shared_step"]
+      }
+    ]
+  });
+  registry.registerModule({
+    id: "alpha",
+    steps: [
+      {
+        id: "shared_step",
+        machine: {
+          stepId: "shared_step"
+        }
+      }
+    ]
+  });
+  assert.equal(registry.definitionForStep("shared_step").label, "Shared step");
+  assert.equal(registry.machineForStep("shared_step").stepId, "shared_step");
+  assert.throws(
+    () => registry.registerModule({
+      id: "beta",
+      steps: [
+        {
+          definition: {
+            id: "shared_step",
+            label: "Duplicate step"
+          }
+        }
+      ]
+    }),
+    /already registered by module alpha/
+  );
+  assert.throws(
+    () => registry.registerModule({
+      id: "beta",
+      workflows: [
+        {
+          id: "shared_workflow",
+          label: "Duplicate workflow",
+          stepIds: ["shared_step"]
+        }
+      ]
+    }),
+    /already registered by module alpha/
+  );
+  assert.throws(
+    () => registry.registerModule({
+      id: "gamma",
+      workflows: [
+        {
+          id: "missing_step_workflow",
+          label: "Missing step workflow",
+          stepIds: ["missing_step"]
+        }
+      ]
+    }),
+    /references unregistered steps: missing_step/
+  );
 });
 
 test("ai-studio runtime persists the selected workflow profile per session", async () => {
@@ -906,12 +1050,12 @@ test("ai-studio runtime persists the selected workflow profile per session", asy
 
     const session = await runtime.createSession({
       sessionId: "maintenance_profile",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
-    assert.equal(session.workflowId, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
-    assert.equal(session.workflowProfile.id, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
-    assert.equal(session.metadata.workflow_profile, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+    assert.equal(session.workflowId, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+    assert.equal(session.workflowProfile.id, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
+    assert.equal(session.metadata.workflow_profile, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE);
     assert.equal(session.metadata.work_source, "new_branch");
     assert.equal(session.sessionName, "maintenance");
     assert.equal(session.stepDefinitions.at(-1).id, "local_session_finished");
@@ -935,10 +1079,10 @@ test("ai-studio non-code maintenance profile starts with a reusable session labe
 
     const session = await runtime.createSession({
       sessionId: "docs_profile",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE
     });
 
-    assert.equal(session.workflowId, AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
+    assert.equal(session.workflowId, CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE);
     assert.equal(session.sessionName, "documentation");
     assert.equal(await runtime.store.readArtifact("docs_profile", "issue_word"), "documentation\n");
     assert.equal(session.stepDefinitions.some((step) => step.id === "issue_file_created"), false);
@@ -1367,7 +1511,7 @@ test("ai-studio runtime prompt handoff shows the action input outside hidden ter
     await runtime.createSession({
       initialStep: "maintenance_conversation",
       sessionId: "agent_prompt_visible_input",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     const afterAction = await runtime.runAction("agent_prompt_visible_input", "agent_conversation", {
@@ -1394,7 +1538,7 @@ test("ai-studio runtime presents waiting_for_input as the same Codex conversatio
     await runtime.createSession({
       initialStep: "maintenance_conversation",
       sessionId: "prompt_response_resume",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     await runtime.runAction("prompt_response_resume", "agent_conversation", {
@@ -1678,7 +1822,7 @@ test("ai-studio runtime recovers a stuck in-flight command step back to ready", 
     await runtime.createSession({
       initialStep: "checklist_items_installed",
       sessionId: "recover_stuck_command",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
     await runtime.recordCommandActionStarted("recover_stuck_command", "install_dependencies");
 
@@ -1710,7 +1854,7 @@ test("ai-studio runtime presentation owns command recovery availability", async 
     await runtime.createSession({
       initialStep: "checklist_items_installed",
       sessionId: "server_owned_command_recovery",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
     await runtime.recordCommandActionStarted("server_owned_command_recovery", "install_dependencies");
 
@@ -1751,7 +1895,7 @@ test("ai-studio runtime refuses stuck-step recovery unless the step is attemptin
     await runtime.createSession({
       initialStep: "checklist_items_installed",
       sessionId: "recover_not_stuck",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
 
     await assert.rejects(

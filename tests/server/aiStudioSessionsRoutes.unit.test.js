@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AI_STUDIO_WORKFLOW_PROFILE_IDS } from "../../server/lib/aiStudio/index.js";
 import {
   ACTION_CREATE_SESSION,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG
 } from "../../packages/ai-studio-sessions/src/server/actions.js";
+import {
+  _testing as coreMaintenanceTesting
+} from "../../server/lib/aiStudio/workflowModules/coreMaintenance.js";
 import { registerRoutes } from "../../packages/ai-studio-sessions/src/server/registerRoutes.js";
 import {
   findRegisteredRoute,
@@ -14,6 +16,8 @@ import {
   testRouteApp,
   withLocalRequestBypass
 } from "./aiStudioRouteTestHelpers.js";
+
+const CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS = coreMaintenanceTesting.workflowProfileIds;
 
 test("session creation route forwards the selected workflow profile", async () => {
   await withLocalRequestBypass(async () => {
@@ -34,7 +38,7 @@ test("session creation route forwards the selected workflow profile", async () =
     await route.handler({
       input: {
         body: {
-          workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+          workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
         }
       },
       async executeAction(action) {
@@ -49,7 +53,7 @@ test("session creation route forwards the selected workflow profile", async () =
     assert.deepEqual(executedAction, {
       actionId: ACTION_CREATE_SESSION,
       input: {
-        workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+        workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
       }
     });
   });

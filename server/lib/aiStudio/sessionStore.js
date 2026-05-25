@@ -9,6 +9,7 @@ import {
   isMissingPathError,
   normalizeTargetRoot,
   normalizeText,
+  plainClone,
   pathExists
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
@@ -222,10 +223,6 @@ async function writeJsonFile(filePath, value) {
   await writeTextFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function jsonClone(value) {
-  return JSON.parse(JSON.stringify(value ?? null));
-}
-
 function revisionNumber(value) {
   const revision = Number(value);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
@@ -285,7 +282,7 @@ function normalizePromptContextSnapshot(snapshot = {}) {
     return null;
   }
   return {
-    adapter: jsonClone(snapshot.adapter),
+    adapter: plainClone(snapshot.adapter),
     createdAt: normalizeText(snapshot.createdAt),
     schemaVersion: snapshot.schemaVersion === AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
       ? AI_STUDIO_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION

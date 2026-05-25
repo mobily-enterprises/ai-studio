@@ -48,6 +48,11 @@ export {
   workflowStepPresentation
 } from "./workflow.js";
 export {
+  AGENT_CONVERSATION_ACTION_ID,
+  agentConversationAction,
+  agentConversationStep
+} from "./workflowDefinitionBuilders.js";
+export {
   AI_STUDIO_PROJECT_TYPE_FILE,
   createAiStudioProjectTypeStore,
   projectTypePath
@@ -65,6 +70,14 @@ export {
   WorkflowMachine,
   normalizeWorkflow
 } from "./workflowMachine.js";
+export {
+  AI_STUDIO_CORE_WORKFLOW_MODULE_ID,
+  createWorkflowRegistry,
+  defineWorkflowModule,
+  registeredWorkflowRecords,
+  registeredWorkflowStepRecords,
+  registerWorkflowModule
+} from "./workflowRegistry.js";
 export {
   AI_STUDIO_WORKFLOW_COMMANDS,
   AI_STUDIO_WORKFLOW_SESSION_ACTION_CAPABILITIES,

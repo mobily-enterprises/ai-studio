@@ -1,21 +1,40 @@
 import {
   aiStudioError,
-  normalizeText
+  normalizeText,
+  plainClone
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
+import {
+  AI_STUDIO_CORE_WORKFLOW_MODULE_ID,
+  registeredWorkflowDefinitionsById,
+  registerWorkflowModule,
+  workflowDefinitionForProfile,
+  workflowStepDefinitionForStep,
+  workflowStepPresentationForStep
+} from "./workflowRegistry.js";
+import {
+  HUMAN_INPUT_RESPONSE_ARTIFACT,
+  ISSUE_BODY_ARTIFACT,
+  ISSUE_TITLE_ARTIFACT,
+  ISSUE_WORD_ARTIFACT,
+  REPORT_ARTIFACT
+} from "./workflowArtifacts.js";
+import {
+  agentConversationAction,
+  agentConversationStep
+} from "./workflowDefinitionBuilders.js";
+import {
+  AI_STUDIO_WORKFLOW_PROFILE_IDS,
+  DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID
+} from "./workflowProfileIds.js";
+import {
+  coreMaintenanceWorkflowDefinitionModule
+} from "./workflowModules/coreMaintenance.js";
 
-const AGENT_CONVERSATION_ACTION_ID = "agent_conversation";
 const AGENT_CONVERSATION_STEP_ID = "agent_conversation";
 const FINAL_REVIEW_CONVERSATION_ACTION_ID = "final_review_conversation";
 const HUMAN_REVIEW_CONVERSATION_ACTION_ID = "human_review_conversation";
-const HUMAN_INPUT_RESPONSE_ARTIFACT = "response.md";
-const MAINTENANCE_CONVERSATION_STEP_ID = "maintenance_conversation";
-const CHECKLIST_ITEMS_STEP_ID = "checklist_items_installed";
-const ISSUE_BODY_ARTIFACT = "issue.md";
 const ISSUE_FILE_STEP_ID = "issue_file_created";
-const ISSUE_TITLE_ARTIFACT = "issue_title";
-const ISSUE_WORD_ARTIFACT = "issue_word";
-const REPORT_ARTIFACT = "report.md";
 const SEED_APPLICATION_STEP_ID = "seed_application_defined";
 const CREATE_PULL_REQUEST_STEP_ID = "create_pull_request";
 const ISSUE_FILES_READY_CONDITION = `artifacts:${ISSUE_TITLE_ARTIFACT},${ISSUE_BODY_ARTIFACT},${ISSUE_WORD_ARTIFACT}`;
@@ -24,108 +43,8 @@ const ISSUE_BODY_READY_CONDITION = `artifact:${ISSUE_BODY_ARTIFACT}`;
 const ISSUE_WORD_READY_CONDITION = `artifact:${ISSUE_WORD_ARTIFACT}`;
 const ISSUE_READY_CONDITION = `any:metadata:issue_url;${ISSUE_FILES_READY_CONDITION}`;
 const REPORT_READY_CONDITION = `artifact:${REPORT_ARTIFACT}`;
-const HUMAN_INPUT_RESPONSE_READY_CONDITION = `artifact:${HUMAN_INPUT_RESPONSE_ARTIFACT}`;
 const MERGE_DECISION_READY_CONDITION = "any:metadata:pr_merged;metadata:merge_skipped";
 const SESSION_CAN_FINISH_CONDITION = "any:metadata:main_checkout_synced;metadata:merge_skipped";
-
-const AI_STUDIO_WORKFLOW_PROFILE_IDS = deepFreeze({
-  BIG_FEATURE: "big_feature",
-  GENERAL_CODING: "general_coding",
-  NON_CODE_MAINTENANCE: "non_code_maintenance",
-  NON_COMMIT_MAINTENANCE: "non_commit_maintenance",
-  SEED_APPLICATION: "seed_application"
-});
-
-const DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID = AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE;
-const USER_SELECTABLE_WORKFLOW_PROFILE_IDS = deepFreeze([
-  AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE,
-  AI_STUDIO_WORKFLOW_PROFILE_IDS.GENERAL_CODING,
-  AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE,
-  AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
-]);
-
-function agentConversationAction({
-  id = AGENT_CONVERSATION_ACTION_ID,
-  inputLabel = "What do you want to ask Codex?",
-  inputPlaceholder = "Describe what you want help with.",
-  label = "Talk to Codex"
-} = {}) {
-  return {
-    icon: "codex",
-    id,
-    inputFields: [
-      {
-        kind: "textarea",
-        label: inputLabel,
-        name: "conversationRequest",
-        placeholder: inputPlaceholder,
-        requiredMessage: "Describe what you want Codex to do."
-      }
-    ],
-    label,
-    promptId: AGENT_CONVERSATION_ACTION_ID,
-    type: "prompt"
-  };
-}
-
-function agentConversationStep({
-  actionLabel = "Talk to Codex",
-  description = "",
-  id,
-  inputLabel = "What do you want to ask Codex?",
-  inputPlaceholder = "Describe what you want help with.",
-  label = "Talk to Codex",
-  next = null,
-  responseArtifact = ""
-} = {}) {
-  const artifactsToClean = responseArtifact ? [responseArtifact] : [];
-  const conversationAction = agentConversationAction({
-    inputLabel,
-    inputPlaceholder,
-    label: actionLabel
-  });
-  return {
-    actions: [
-      conversationAction
-    ],
-    autopilot: {
-      actionId: conversationAction.id,
-      kind: "agent_conversation",
-      stop: true
-    },
-    description,
-    id,
-    label,
-    ...(next ? { next } : {}),
-    presentation: {
-      stop: {
-        intents: [
-          {
-            actionId: conversationAction.id,
-            id: "talk_to_codex",
-            style: "primary",
-            type: "action"
-          },
-          {
-            id: "continue_step",
-            type: "continue"
-          }
-        ],
-        screen: {
-          kind: "conversation",
-          message: "Ask Codex for changes. Continue when the work is ready for the next workflow step.",
-          primaryIntentId: "talk_to_codex",
-          sections: ["response_preview"],
-          title: "current_step"
-        }
-      }
-    },
-    rewindCleanup: {
-      actionResults: [AGENT_CONVERSATION_ACTION_ID],
-      artifacts: artifactsToClean
-    }
-  };
-}
 
 function createIssueOnGithubAction() {
   return {
@@ -257,35 +176,6 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     label: "Install dependencies",
     next: {
       disabledReason: "Install dependencies before continuing.",
-      enabledWhen: ["metadata:dependencies_installed"]
-    },
-    rewindCleanup: {
-      actionResults: ["install_dependencies"],
-      metadata: ["dependencies_installed", "dependencies_path"]
-    }
-  },
-  [CHECKLIST_ITEMS_STEP_ID]: {
-    actions: [
-      {
-        adapterCapability: "install_dependencies",
-        disabledReason: "Checklist items are already installed.",
-        disabledWhen: ["metadata:dependencies_installed"],
-        icon: "sync",
-        id: "install_dependencies",
-        label: "Install checklist items",
-        type: "command"
-      }
-    ],
-    autopilot: {
-      actionId: "install_dependencies",
-      completeWhen: ["metadata:dependencies_installed"],
-      label: "Install checklist items"
-    },
-    description: "Install the adapter-provided local checklist items needed before talking to Codex.",
-    id: CHECKLIST_ITEMS_STEP_ID,
-    label: "Install checklist items",
-    next: {
-      disabledReason: "Install checklist items before continuing.",
       enabledWhen: ["metadata:dependencies_installed"]
     },
     rewindCleanup: {
@@ -509,17 +399,6 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     inputLabel: "What should Codex change?",
     inputPlaceholder: "Describe the code change, cleanup, bug fix, or follow-up request.",
     label: "Make changes",
-    responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
-  }),
-  [MAINTENANCE_CONVERSATION_STEP_ID]: agentConversationStep({
-    actionLabel: "Ask Codex",
-    description: "Ask Codex for local maintenance help and save the answer as an editable AI response artifact.",
-    id: MAINTENANCE_CONVERSATION_STEP_ID,
-    label: "Talk to Codex",
-    next: {
-      disabledReason: "Ask Codex and save an AI response before finishing.",
-      enabledWhen: [HUMAN_INPUT_RESPONSE_READY_CONDITION]
-    },
     responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
   }),
   deep_ui_check_run: {
@@ -1083,53 +962,10 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
     rewindCleanup: {
       actionResults: ["finish_session"]
     }
-  },
-  local_session_finished: {
-    actions: [
-      {
-        adapterCapability: "finish_session",
-        id: "finish_session",
-        label: "Archive",
-        type: "finish"
-      }
-    ],
-    autopilot: {
-      kind: "finished",
-      stop: true
-    },
-    description: "Archive this local maintenance session without creating a pull request.",
-    id: "local_session_finished",
-    label: "Finish local session",
-    next: {
-      visible: false
-    },
-    presentation: {
-      stop: {
-        intents: [
-          {
-            actionId: "finish_session",
-            id: "archive_session",
-            label: "Archive",
-            style: "primary",
-            type: "action"
-          }
-        ],
-        screen: {
-          icon: "success",
-          kind: "finished",
-          message: "The session is complete.",
-          sections: ["report_preview"],
-          title: "Congratulations!"
-        }
-      }
-    },
-    rewindCleanup: {
-      actionResults: ["finish_session"]
-    }
   }
 });
 
-const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
+const AI_STUDIO_CORE_WORKFLOW_PROFILES = deepFreeze({
   [AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION]: {
     description: "Create the initial application scaffold and local development foundation.",
     id: AI_STUDIO_WORKFLOW_PROFILE_IDS.SEED_APPLICATION,
@@ -1152,7 +988,8 @@ const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
       "pr_merged",
       "main_checkout_synced",
       "session_finished"
-    ]
+    ],
+    userSelectable: false
   },
   [AI_STUDIO_WORKFLOW_PROFILE_IDS.BIG_FEATURE]: {
     description: "Plan, implement, review, validate, commit, create a PR, and optionally merge.",
@@ -1179,7 +1016,8 @@ const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
       "pr_merged",
       "main_checkout_synced",
       "session_finished"
-    ]
+    ],
+    userSelectable: true
   },
   [AI_STUDIO_WORKFLOW_PROFILE_IDS.GENERAL_CODING]: {
     description: "Make focused code changes with Codex, review, validate, commit, create a PR, and optionally merge.",
@@ -1203,52 +1041,31 @@ const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze({
       "pr_merged",
       "main_checkout_synced",
       "session_finished"
-    ]
-  },
-  [AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE]: {
-    description: "Update documentation or other non-code project files, validate, commit, create a PR, and optionally merge.",
-    id: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_CODE_MAINTENANCE,
-    label: "Documentation/non code maintenance",
-    sessionWord: "documentation",
-    stepIds: [
-      "session_created",
-      "work_source_selected",
-      "worktree_created",
-      "dependencies_installed",
-      MAINTENANCE_CONVERSATION_STEP_ID,
-      "project_validated",
-      "changes_committed",
-      CREATE_PULL_REQUEST_STEP_ID,
-      "pr_merged",
-      "main_checkout_synced",
-      "session_finished"
-    ]
-  },
-  [AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE]: {
-    description: "Run a local maintenance task without commit, pull request, or merge steps.",
-    id: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE,
-    label: "Non-commit maintenance",
-    initialMetadata: {
-      work_source: "new_branch"
-    },
-    sessionWord: "maintenance",
-    stepIds: [
-      "session_created",
-      "worktree_created",
-      CHECKLIST_ITEMS_STEP_ID,
-      MAINTENANCE_CONVERSATION_STEP_ID,
-      "local_session_finished"
-    ]
+    ],
+    userSelectable: true
   }
 });
 
-function plainClone(value) {
-  return JSON.parse(JSON.stringify(value ?? null));
-}
+registerWorkflowModule({
+  id: AI_STUDIO_CORE_WORKFLOW_MODULE_ID,
+  steps: Object.values(AI_STUDIO_WORKFLOW_STEP_CATALOG)
+    .map((definition) => ({
+      definition
+    }))
+});
+
+registerWorkflowModule(coreMaintenanceWorkflowDefinitionModule());
+
+registerWorkflowModule({
+  id: AI_STUDIO_CORE_WORKFLOW_MODULE_ID,
+  workflows: Object.values(AI_STUDIO_CORE_WORKFLOW_PROFILES)
+});
+
+const AI_STUDIO_WORKFLOW_PROFILES = deepFreeze(registeredWorkflowDefinitionsById());
 
 function normalizeWorkflowProfileId(profileId = "") {
   const normalizedProfileId = normalizeText(profileId) || DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID;
-  if (!AI_STUDIO_WORKFLOW_PROFILES[normalizedProfileId]) {
+  if (!workflowDefinitionForProfile(normalizedProfileId)) {
     throw aiStudioError(
       `Unknown AI Studio workflow profile: ${normalizedProfileId}`,
       "ai_studio_unknown_workflow_profile"
@@ -1258,23 +1075,22 @@ function normalizeWorkflowProfileId(profileId = "") {
 }
 
 function workflowProfileDefinition(profileId = DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID) {
-  return AI_STUDIO_WORKFLOW_PROFILES[normalizeWorkflowProfileId(profileId)];
+  return workflowDefinitionForProfile(normalizeWorkflowProfileId(profileId));
 }
 
 function workflowStepDefinition(stepId = "") {
-  const step = AI_STUDIO_WORKFLOW_STEP_CATALOG[normalizeText(stepId)];
+  const step = workflowStepDefinitionForStep(stepId);
   if (!step) {
     throw aiStudioError(
       `Unknown AI Studio workflow step in profile: ${normalizeText(stepId) || "(empty)"}`,
       "ai_studio_unknown_workflow_profile_step"
     );
   }
-  return plainClone(step);
+  return step;
 }
 
 function workflowStepPresentation(stepId = "") {
-  const step = AI_STUDIO_WORKFLOW_STEP_CATALOG[normalizeText(stepId)];
-  return plainClone(step?.presentation || null);
+  return workflowStepPresentationForStep(stepId);
 }
 
 function workflowForProfile(profileId = DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID) {
@@ -1295,6 +1111,12 @@ function publicWorkflowProfile(profileId = DEFAULT_AI_STUDIO_WORKFLOW_PROFILE_ID
   };
 }
 
+function selectableWorkflowProfileIds() {
+  return Object.values(AI_STUDIO_WORKFLOW_PROFILES)
+    .filter((profile) => profile.userSelectable === true)
+    .map((profile) => profile.id);
+}
+
 function workflowProfileCreationOptions({
   seedRequired = false
 } = {}) {
@@ -1312,7 +1134,7 @@ function workflowProfileCreationOptions({
     mode: "select",
     requiredWorkflowProfile: null,
     seedRequired: false,
-    workflowProfiles: USER_SELECTABLE_WORKFLOW_PROFILE_IDS.map(publicWorkflowProfile)
+    workflowProfiles: selectableWorkflowProfileIds().map(publicWorkflowProfile)
   };
 }
 

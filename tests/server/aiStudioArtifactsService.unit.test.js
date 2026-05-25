@@ -4,7 +4,6 @@ import test from "node:test";
 
 import {
   AiStudioSessionRuntime,
-  AI_STUDIO_WORKFLOW_PROFILE_IDS,
   FakeTargetAdapter
 } from "../../server/lib/aiStudio/index.js";
 import {
@@ -14,7 +13,12 @@ import {
   helperSocketHostPath,
   prepareCurrentStepInputHelper
 } from "../../server/lib/aiStudio/currentStepInputHelperServer.js";
+import {
+  _testing as coreMaintenanceTesting
+} from "../../server/lib/aiStudio/workflowModules/coreMaintenance.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
+
+const CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS = coreMaintenanceTesting.workflowProfileIds;
 
 function projectServiceForRuntime(runtime) {
   return {
@@ -159,7 +163,7 @@ test("AI Studio artifacts service appends helper responses to the conversation l
     await runtime.createSession({
       initialStep: "maintenance_conversation",
       sessionId: "helper_conversation_log",
-      workflowProfile: AI_STUDIO_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
+      workflowProfile: CORE_MAINTENANCE_WORKFLOW_PROFILE_IDS.NON_COMMIT_MAINTENANCE
     });
     await runtime.store.writeConversationUserMessage("helper_conversation_log", {
       text: "What should we improve?"

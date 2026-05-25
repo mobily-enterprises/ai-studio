@@ -3,7 +3,8 @@ import {
 } from "./sessionStore.js";
 import {
   aiStudioError,
-  normalizeText
+  normalizeText,
+  plainClone
 } from "./core.js";
 import { deepFreeze } from "./deepFreeze.js";
 import {
@@ -14,10 +15,6 @@ function normalizeConditionList(value) {
   return Array.isArray(value)
     ? value.map(normalizeText).filter(Boolean)
     : [];
-}
-
-function plainClone(value) {
-  return JSON.parse(JSON.stringify(value ?? null));
 }
 
 function workflowConditionContext(context = "") {
