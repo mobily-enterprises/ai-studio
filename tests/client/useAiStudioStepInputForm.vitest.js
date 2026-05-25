@@ -82,16 +82,19 @@ describe("useAiStudioStepInputForm", () => {
     });
 
     expect(form.prompt.value).toBe("");
-    expect(form.fields.value.map((field) => field.name)).toEqual(["question_1", "question_2"]);
+    expect(form.fields.value.map((field) => field.name)).toEqual(["__ui_question_1", "__ui_question_2"]);
     expect(form.fields.value.map((field) => field.label)).toEqual([
       "What filename should I create?",
       "What contents should it have?"
     ]);
 
-    form.updateValue("question_1", "p.txt");
-    form.updateValue("question_2", "hello");
+    form.updateValue("__ui_question_1", "p.txt");
+    form.updateValue("__ui_question_2", "hello");
 
     expect(await form.submit()).toBe(true);
+    expect(Object.keys(submittedInput.fields)).toEqual(["response"]);
+    expect(submittedInput.fields).not.toHaveProperty("__ui_question_1");
+    expect(submittedInput.fields).not.toHaveProperty("__ui_question_2");
     expect(submittedInput).toMatchObject({
       fields: {
         response: "[1] p.txt\n[2] hello"
@@ -157,6 +160,22 @@ describe("useAiStudioStepInputForm", () => {
       "[2] What contents should it have?"
     ].join("\n"));
     expect(form.fields.value.map((field) => field.name)).toEqual(["title", "response"]);
+  });
+
+  it("keeps the normal response textarea when numbered questions are ambiguous", () => {
+    const session = ref(promptResponseSession([
+      "[1] What filename should I create?",
+      "[3] What contents should it have?"
+    ].join("\n")));
+    const form = useAiStudioStepInputForm({
+      session
+    });
+
+    expect(form.prompt.value).toBe([
+      "[1] What filename should I create?",
+      "[3] What contents should it have?"
+    ].join("\n"));
+    expect(form.fields.value.map((field) => field.name)).toEqual(["response"]);
   });
 
   it("keeps introductory text above numbered question fields", () => {

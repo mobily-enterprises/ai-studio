@@ -16,6 +16,10 @@ function normalizeConditionList(value) {
     : [];
 }
 
+function plainClone(value) {
+  return JSON.parse(JSON.stringify(value ?? null));
+}
+
 function workflowConditionContext(context = "") {
   const normalizedContext = normalizeText(context);
   return normalizedContext ? ` in ${normalizedContext}` : "";
@@ -326,6 +330,7 @@ function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
     interaction: normalizeInteraction(step.interaction),
     label: normalizeText(step.label || id),
     next: normalizeNext(step.next, id),
+    presentation: plainClone(step.presentation || null),
     rewindCleanup: normalizeRewindCleanup(step.rewindCleanup),
     rewindable: step.rewindable !== false
   };
@@ -449,10 +454,9 @@ function publicActionDefinition(action) {
   return definition;
 }
 
-function publicCurrentStepDefinition(step, autopilotStage = null) {
+function publicCurrentStepDefinition(step) {
   const definition = {
     actions: step.actions.map(publicActionDefinition),
-    autopilot: publicAutopilotDefinition(step.autopilot, autopilotStage),
     description: step.description,
     id: step.id,
     index: step.index,
@@ -771,12 +775,14 @@ class WorkflowMachine {
       actions: currentStep ? this.visibleActionsForStep(currentStep, session) : [],
       completedSteps,
       currentStep: currentStep?.id || "",
-      currentStepDefinition: currentStep ? publicCurrentStepDefinition(
-        currentStep,
-        this.autopilotStageForSession(currentStep, session)
-      ) : null,
+      currentStepDefinition: currentStep ? publicCurrentStepDefinition(currentStep) : null,
       next: this.nextStateForStep(currentStep, session),
       stepDefinitions: this.stepDefinitionsForSession(currentStep, completedSteps),
+      workflowAutopilot: currentStep ? publicAutopilotDefinition(
+        currentStep.autopilot,
+        this.autopilotStageForSession(currentStep, session)
+      ) : null,
+      workflowPresentation: currentStep?.presentation || null,
       workflowId: this.workflow.id
     };
   }

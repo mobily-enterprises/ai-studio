@@ -3,6 +3,11 @@ import {
   submitAiStudioCurrentStepInput
 } from "@/lib/aiStudioSessionApi.js";
 import {
+  numberedQuestionInputFields,
+  numberedQuestionSubmissionFields,
+  numberedQuestionSugarForInput
+} from "@/lib/aiStudioNumberedQuestionSugar.js";
+import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
@@ -16,83 +21,6 @@ function interactionForSession(session = {}) {
 
 function interactionFields(interaction = {}) {
   return Array.isArray(interaction?.fields) ? interaction.fields : [];
-}
-
-function isPlainResponseField(field = {}) {
-  return field.name === "response" && field.kind === "textarea";
-}
-
-function numberedQuestionPrompt(value = "") {
-  const lines = String(value || "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length < 2) {
-    return {
-      intro: "",
-      questions: []
-    };
-  }
-
-  const intro = [];
-  const questions = [];
-  for (const line of lines) {
-    const match = line.match(/^\[(\d+)\]\s+(.+)$/u);
-    if (!match) {
-      if (!questions.length) {
-        intro.push(line);
-        continue;
-      }
-      return {
-        intro: "",
-        questions: []
-      };
-    }
-    const number = Number(match[1]);
-    if (number !== questions.length + 1) {
-      return {
-        intro: "",
-        questions: []
-      };
-    }
-    questions.push({
-      label: match[2].trim(),
-      name: `question_${number}`,
-      number
-    });
-  }
-
-  if (!questions.every((question) => question.label) || questions.length < 2) {
-    return {
-      intro: "",
-      questions: []
-    };
-  }
-  return {
-    intro: intro.join("\n"),
-    questions
-  };
-}
-
-function responseQuestionPrompt(interaction = {}, fields = []) {
-  if (fields.length !== 1 || !isPlainResponseField(fields[0])) {
-    return {
-      intro: "",
-      questions: []
-    };
-  }
-  return numberedQuestionPrompt(interaction?.prompt);
-}
-
-function questionInputFields(questions = []) {
-  return questions.map((question) => ({
-    kind: "textarea",
-    label: question.label,
-    name: question.name,
-    required: true,
-    requiredMessage: `Answer question ${question.number}.`,
-    rows: 3
-  }));
 }
 
 function initialValues(fields = []) {
@@ -116,11 +44,11 @@ function useAiStudioStepInputForm({
   const sessionId = computed(() => String(currentSession.value?.sessionId || ""));
   const interaction = computed(() => interactionForSession(currentSession.value));
   const originalFields = computed(() => interactionFields(interaction.value));
-  const responseQuestionInput = computed(() => responseQuestionPrompt(interaction.value, originalFields.value));
+  const responseQuestionInput = computed(() => numberedQuestionSugarForInput(interaction.value, originalFields.value));
   const responseQuestions = computed(() => responseQuestionInput.value.questions);
   const fields = computed(() => {
     return responseQuestions.value.length
-      ? questionInputFields(responseQuestions.value)
+      ? numberedQuestionInputFields(responseQuestions.value)
       : originalFields.value;
   });
   const prompt = computed(() => {
@@ -150,11 +78,7 @@ function useAiStudioStepInputForm({
     if (!responseQuestions.value.length) {
       return values.value;
     }
-    return {
-      response: responseQuestions.value
-        .map((question) => `[${question.number}] ${String(values.value[question.name] || "").trim()}`)
-        .join("\n")
-    };
+    return numberedQuestionSubmissionFields(responseQuestions.value, values.value);
   }
 
   async function submit() {

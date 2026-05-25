@@ -93,6 +93,12 @@ The UI decides:
 
 The UI must not own workflow state.
 
+## Important Design Decisions
+
+Canonical AI Studio design decisions live in
+`.jskit/APP_BLUEPRINT.md#important-design-decisions`. This rebuild plan must
+follow those decisions rather than redefining them.
+
 ## Studio Setup, Adapter Setup, And Project Setup
 
 The setup vocabulary is:

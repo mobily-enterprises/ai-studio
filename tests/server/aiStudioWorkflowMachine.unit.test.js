@@ -144,9 +144,15 @@ test("ai-studio runtime read views do not persist default or derived step-machin
   });
 });
 
-test("ai-studio runtime exposes the evaluated Autopilot stage without workflow conditions", async () => {
+test("ai-studio runtime keeps evaluated Autopilot state in presentation, not raw step definitions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          run_automated_checks: true,
+          update_code_index: true
+        }
+      }),
       targetRoot
     });
 
@@ -155,25 +161,26 @@ test("ai-studio runtime exposes the evaluated Autopilot stage without workflow c
       sessionId: "autopilot_stage_view"
     });
 
-    assert.deepEqual(session.currentStepDefinition.autopilot.stage, {
-      actionId: "update_code_index",
-      advanceOnSuccess: false,
-      label: "Update code index"
-    });
-    assert.equal("actionSequence" in session.currentStepDefinition.autopilot, false);
-    assert.equal("completeWhen" in session.currentStepDefinition.autopilot, false);
+    assert.equal("autopilot" in session.currentStepDefinition, false);
+    assert.equal("workflowAutopilot" in session, false);
+    assert.equal(session.presentation.auto.nextOperation.kind, "command");
+    assert.equal(session.presentation.auto.nextOperation.actionId, "update_code_index");
+    assert.equal(session.presentation.auto.nextOperation.route, "command-terminal");
 
     await runtime.store.writeMetadataValue("autopilot_stage_view", "code_index_updated", "yes");
     const afterCodeIndex = await runtime.getSession("autopilot_stage_view");
-    assert.deepEqual(afterCodeIndex.currentStepDefinition.autopilot.stage, {
-      actionId: "run_automated_checks",
-      advanceOnSuccess: false,
-      label: "Run automated checks"
-    });
+    assert.equal("autopilot" in afterCodeIndex.currentStepDefinition, false);
+    assert.equal("workflowAutopilot" in afterCodeIndex, false);
+    assert.equal(afterCodeIndex.presentation.auto.nextOperation.kind, "command");
+    assert.equal(afterCodeIndex.presentation.auto.nextOperation.actionId, "run_automated_checks");
+    assert.equal(afterCodeIndex.presentation.auto.nextOperation.route, "command-terminal");
 
     await runtime.store.writeMetadataValue("autopilot_stage_view", "automated_checks_passed", "yes");
     const afterValidation = await runtime.getSession("autopilot_stage_view");
-    assert.equal(afterValidation.currentStepDefinition.autopilot.stage, null);
+    assert.equal("autopilot" in afterValidation.currentStepDefinition, false);
+    assert.equal("workflowAutopilot" in afterValidation, false);
+    assert.equal(afterValidation.presentation.auto.nextOperation.kind, "advance");
+    assert.equal(afterValidation.presentation.auto.nextOperation.route, "session-advance");
   });
 });
 
@@ -215,6 +222,12 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
         metadataName: "autopilot_final_review_followup",
         metadataValue: "recheck",
         promptComplete: true,
+        serverOperation: {
+          kind: "delete_metadata_and_rewind",
+          metadataName: "autopilot_final_review_followup",
+          reviewStepId: "review_run",
+          validationStepId: "project_validated"
+        },
         statuses: ["ready", "done"]
       }
     );
@@ -462,6 +475,62 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
   });
 });
 
+test("ai-studio runtime presentation uses the workflow instance metadata as the step contract", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot,
+      workflow: {
+        id: "custom_presentation_contract",
+        steps: [
+          {
+            actions: [
+              {
+                id: "custom_action",
+                label: "Custom action",
+                type: "adapter"
+              }
+            ],
+            autopilot: {
+              stop: true
+            },
+            id: "custom_step",
+            label: "Custom step",
+            next: {
+              visible: false
+            },
+            presentation: {
+              stop: {
+                intents: [
+                  {
+                    actionId: "custom_action",
+                    id: "custom_action_intent",
+                    label: "Run custom action",
+                    type: "action"
+                  }
+                ],
+                screen: {
+                  kind: "custom_stop",
+                  message: "Custom workflow presentation.",
+                  title: "Custom workflow"
+                }
+              }
+            }
+          }
+        ]
+      }
+    });
+
+    const session = await runtime.createSession({
+      sessionId: "custom_presentation_contract"
+    });
+
+    assert.equal(session.presentation.screen.kind, "custom_stop");
+    assert.equal(session.presentation.screen.title, "Custom workflow");
+    assert.equal(session.intents[0].id, "custom_action_intent");
+    assert.equal("workflowPresentation" in session, false);
+  });
+});
+
 test("ai-studio runtime exposes server-owned action icon hints", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new AiStudioSessionRuntime({
@@ -578,6 +647,9 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
       initialStep: "changes_accepted",
       sessionId: "presentation_final_review_intents"
     });
+    await runtime.store.writeCompletedStep("presentation_final_review_intents", "review_run", {
+      message: "Review completed before final tweaks."
+    });
     const finalReview = await runtime.getSession("presentation_final_review_intents");
     const tweak = await runtime.runIntent("presentation_final_review_intents", "request_review_tweak", {
       fields: {
@@ -599,6 +671,15 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
     const recheckReady = await runtime.getSession("presentation_final_review_intents");
     assert.equal(recheckReady.presentation.auto.nextOperation.kind, "intent");
     assert.equal(recheckReady.presentation.auto.nextOperation.intentId, "recheck_after_final_tweak");
+    const rechecked = await runtime.runIntent("presentation_final_review_intents", "recheck_after_final_tweak", {
+      stepId: recheckReady.currentStep,
+      stepStatus: recheckReady.stepMachine.status
+    });
+    assert.equal(rechecked.currentStep, "review_run");
+    assert.equal(
+      await runtime.store.readMetadataValue("presentation_final_review_intents", "autopilot_final_review_followup"),
+      ""
+    );
 
     await runtime.createSession({
       initialStep: "pr_merged",

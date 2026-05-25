@@ -71,7 +71,7 @@ function parseLongTextReviewBlocks(value) {
       continue;
     }
 
-    const unorderedMatch = trimmed.match(/^[-*+]\s+(.*)$/u);
+    const unorderedMatch = trimmed.match(/^[-*+•]\s+(.*)$/u);
     const orderedMatch = trimmed.match(/^\d+[.)]\s+(.*)$/u);
     if (unorderedMatch || orderedMatch) {
       flushParagraph();

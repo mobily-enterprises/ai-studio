@@ -2166,9 +2166,10 @@ async function applyStepMachineView(runtime, session = {}) {
     ...session.currentStepDefinition,
     ...(view.interaction === undefined ? {} : { interaction: view.interaction })
   };
-  if ([STEP_STATUS.DONE, STEP_STATUS.WAITING_FOR_INPUT].includes(normalizeText(stepMachine?.status)) && currentStepDefinition.autopilot) {
-    currentStepDefinition.autopilot = {
-      ...currentStepDefinition.autopilot,
+  let workflowAutopilot = session.workflowAutopilot;
+  if ([STEP_STATUS.DONE, STEP_STATUS.WAITING_FOR_INPUT].includes(normalizeText(stepMachine?.status)) && workflowAutopilot) {
+    workflowAutopilot = {
+      ...workflowAutopilot,
       stage: null
     };
   }
@@ -2178,7 +2179,8 @@ async function applyStepMachineView(runtime, session = {}) {
     ...(view.actions ? { actions: view.actions } : {}),
     currentStepDefinition,
     ...(view.next ? { next: view.next } : {}),
-    stepMachine
+    stepMachine,
+    workflowAutopilot
   };
 }
 

@@ -79,6 +79,18 @@ describe("Studio long text review blocks", () => {
     ]);
   });
 
+  it("parses point bullets as unordered lists", () => {
+    expect(parseLongTextReviewBlocks("• First point\n• Second point")).toEqual([
+      {
+        items: [
+          { text: "First point" },
+          { text: "Second point" }
+        ],
+        type: "ul"
+      }
+    ]);
+  });
+
   it("parses safe inline strong and code spans", () => {
     expect(parseLongTextInlineParts("For **6163** run `weather`.")).toEqual([
       {

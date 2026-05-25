@@ -10,6 +10,11 @@
 - Target-readiness rule: after Studio Setup Doctor passes and before any app inspection, Studio runs Adapter Setup Doctor in `/setup?tab=adapter-setup` to prove target identity, filesystem access, Git state, and GitHub control capability without reading target-specific app metadata.
 - App-setup rule: after Adapter Setup Doctor passes and before `/home`, Studio runs Project Setup Doctor in `/setup?tab=project-setup` to make the target root ready for the selected adapter.
 
+## Important Design Decisions
+
+- Numbered questions are deliberately UI-only sugar. The server sends one prompt/message and one logical response field; the client may render supported numbered-question text as separate inputs, but it submits one combined response value. Do not replace this with server question metadata, structured question endpoints, or separate persisted question-answer fields.
+- Non-command action handlers stay inside the per-session mutation queue by default. AI Studio is an interactive, sequential workflow, and long-running Codex/command work is already made visible through live terminal surfaces. Do not split prompt/adapter/finish handlers out into parallel action execution unless timestamped logs show a real user-visible gap before the terminal appears; fix that measured pre-terminal stall before changing the serialization model.
+
 ## Platform Choices
 
 - Tenancy mode: none.

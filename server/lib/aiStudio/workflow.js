@@ -551,7 +551,11 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
           {
             enabledWhen: "has_next_step",
             id: "skip_optional_check",
-            label: "Skip"
+            label: "Skip",
+            serverOperation: {
+              kind: "force_advance",
+              message: "Skipped optional check."
+            }
           }
         ],
         screen: {
@@ -664,6 +668,12 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
           metadataName: "autopilot_final_review_followup",
           metadataValue: "recheck",
           promptComplete: true,
+          serverOperation: {
+            kind: "delete_metadata_and_rewind",
+            metadataName: "autopilot_final_review_followup",
+            reviewStepId: "review_run",
+            validationStepId: "project_validated"
+          },
           statuses: ["ready", "done"]
         }
       },
@@ -684,6 +694,14 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
           {
             actionId: FINAL_REVIEW_CONVERSATION_ACTION_ID,
             id: "request_review_tweak",
+            serverOperation: {
+              actionId: FINAL_REVIEW_CONVERSATION_ACTION_ID,
+              input: "conversation",
+              kind: "run_action",
+              metadataBeforeAction: {
+                autopilot_final_review_followup: "recheck"
+              }
+            },
             style: "secondary",
             type: "action"
           },
@@ -698,7 +716,16 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
                 requiredMessage: "Describe what should change before sending the work back to Codex."
               }
             ],
-            label: "Reject, replan"
+            label: "Reject, replan",
+            serverOperation: {
+              feedbackFields: ["feedback", "message", "response"],
+              kind: "reject_and_replan",
+              planActionId: "make_plan",
+              planStepId: "plan_made",
+              reason: "changes_rejected",
+              seedActionId: "make_seed_plan",
+              seedPlanStepId: "seed_plan_made"
+            }
           }
         ],
         screen: {
@@ -937,12 +964,23 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
             enabledWhenAction: "prepare_for_merge",
             id: "merge_and_sync",
             label: "Merge and update main checkout",
+            serverOperation: {
+              kind: "write_metadata",
+              metadataName: "autopilot_merge_intent",
+              metadataValue: "merge_and_sync"
+            },
             style: "primary"
           },
           {
             actionId: "skip_merge",
             id: "skip_merge",
             label: "Do not merge",
+            serverOperation: {
+              actionId: "skip_merge",
+              kind: "skip_merge",
+              metadataName: "merge_skipped",
+              metadataValue: "yes"
+            },
             type: "action"
           }
         ],

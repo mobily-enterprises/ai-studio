@@ -8,9 +8,6 @@ import {
   aiStudioSessionDebugLog,
   aiStudioSessionDebugSummary
 } from "./sessionDebugLog.js";
-import {
-  workflowStepPresentation
-} from "./workflow.js";
 import { STEP_STATUS } from "./workflowStepMachines.js";
 
 // AI Studio ownership contract:
@@ -70,6 +67,10 @@ const OPERATION_ROUTES = Object.freeze({
   SESSION_ADVANCE: "session-advance",
   SESSION_INTENT: "session-intent"
 });
+const INTENT_PRESENTATION_GROUPS = Object.freeze([
+  "decision",
+  "stop"
+]);
 
 function isObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -80,7 +81,7 @@ function currentStepDefinition(session = {}) {
 }
 
 function currentAutopilot(session = {}) {
-  const autopilot = currentStepDefinition(session).autopilot;
+  const autopilot = session.workflowAutopilot;
   return isObject(autopilot) ? autopilot : {};
 }
 
@@ -212,7 +213,7 @@ function presentationSections(names = []) {
 }
 
 function stepPresentationConfig(session = {}) {
-  const presentation = workflowStepPresentation(session.currentStep);
+  const presentation = session.workflowPresentation;
   return isObject(presentation) ? presentation : {};
 }
 
@@ -656,8 +657,15 @@ function buildPresentation(session = {}) {
 
 function applyWorkflowPresentation(session = {}) {
   const presentation = buildPresentation(session);
+  const {
+    workflowAutopilot,
+    workflowPresentation,
+    ...publicSession
+  } = session;
+  void workflowAutopilot;
+  void workflowPresentation;
   return {
-    ...session,
+    ...publicSession,
     intents: presentation.intents,
     presentation
   };
@@ -682,6 +690,212 @@ function intentById(session = {}, intentId = "") {
     .find((candidate) => candidate.id === intentId) || null;
 }
 
+function automationIntentById(session = {}, intentId = "") {
+  const operation = session.presentation?.auto?.nextOperation;
+  if (
+    operation?.kind !== "intent" ||
+    normalizeText(operation.intentId) !== intentId ||
+    operation.executable !== true
+  ) {
+    return null;
+  }
+  return intent(intentId, {
+    enabled: true,
+    label: operation.label || intentId
+  });
+}
+
+function selectedIntentById(session = {}, intentId = "") {
+  return intentById(session, intentId) || automationIntentById(session, intentId);
+}
+
+// Public session payloads intentionally strip `workflowPresentation`; intent
+// execution re-reads the current step contract from the workflow machine.
+function currentStepPresentationContract(runtime, session = {}) {
+  if (isObject(session.workflowPresentation)) {
+    return session.workflowPresentation;
+  }
+  const machine = typeof runtime?.workflowMachineForSession === "function"
+    ? runtime.workflowMachineForSession(session)
+    : null;
+  const step = typeof machine?.currentStepForSession === "function"
+    ? machine.currentStepForSession(session)
+    : null;
+  return isObject(step?.presentation) ? step.presentation : {};
+}
+
+function presentationIntentConfigById(presentation = {}, intentId = "") {
+  for (const groupName of INTENT_PRESENTATION_GROUPS) {
+    const presentationGroup = presentation[groupName];
+    const found = (Array.isArray(presentationGroup?.intents) ? presentationGroup.intents : [])
+      .find((candidate) => normalizeText(candidate.id) === intentId);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function automationIntentConfigById(presentation = {}, intentId = "") {
+  const recheck = presentation?.automation?.recheckAfterPrompt;
+  if (normalizeText(recheck?.intentId) !== intentId) {
+    return null;
+  }
+  return recheck;
+}
+
+function defaultServerOperationForIntentConfig(intentConfig = {}) {
+  const type = normalizeText(intentConfig.type);
+  if (type === "continue") {
+    return {
+      kind: "advance"
+    };
+  }
+  if (type === "action") {
+    return {
+      actionId: normalizeText(intentConfig.actionId),
+      input: "fields",
+      kind: "run_action"
+    };
+  }
+  return null;
+}
+
+function fallbackActionServerOperation(selectedIntent = {}) {
+  if (!selectedIntent.actionId) {
+    return null;
+  }
+  return {
+    actionId: selectedIntent.actionId,
+    input: "fields",
+    kind: "run_action"
+  };
+}
+
+function serverOperationForIntent(runtime, session = {}, intentId = "", selectedIntent = {}) {
+  const presentation = currentStepPresentationContract(runtime, session);
+  const intentConfig = presentationIntentConfigById(presentation, intentId) ||
+    automationIntentConfigById(presentation, intentId);
+  if (!intentConfig) {
+    return fallbackActionServerOperation(selectedIntent);
+  }
+  if (isObject(intentConfig.serverOperation)) {
+    return intentConfig.serverOperation;
+  }
+  return defaultServerOperationForIntentConfig(intentConfig) ||
+    fallbackActionServerOperation(selectedIntent);
+}
+
+function fieldNamesForOperation(operation = {}, fallback = []) {
+  return Array.isArray(operation.feedbackFields)
+    ? operation.feedbackFields
+    : fallback;
+}
+
+function firstPresentField(fields = {}, names = []) {
+  return normalizeText(names.map((name) => fields[name]).find(Boolean));
+}
+
+function replanTargetForSession(session = {}, operation = {}) {
+  if (replanStepIdForSession(session) === STEP_IDS.SEED_PLAN_MADE) {
+    return {
+      actionId: normalizeText(operation.seedActionId || ACTION_IDS.MAKE_SEED_PLAN),
+      stepId: normalizeText(operation.seedPlanStepId || STEP_IDS.SEED_PLAN_MADE)
+    };
+  }
+  return {
+    actionId: normalizeText(operation.planActionId || ACTION_IDS.MAKE_PLAN),
+    stepId: normalizeText(operation.planStepId || STEP_IDS.PLAN_MADE)
+  };
+}
+
+function finalReviewRecheckTargetStepForSession(session = {}, operation = {}) {
+  return finalReviewRecheckStepIdForSession(session) === STEP_IDS.REVIEW_RUN
+    ? normalizeText(operation.reviewStepId || STEP_IDS.REVIEW_RUN)
+    : normalizeText(operation.validationStepId || STEP_IDS.PROJECT_VALIDATED);
+}
+
+async function runActionServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
+  await writeOperationMetadata(runtime, session.sessionId, operation.metadataBeforeAction);
+  return runtime.runAction(
+    session.sessionId,
+    normalizeText(operation.actionId) || selectedIntent.actionId,
+    actionInputForOperation(operation, fields)
+  );
+}
+
+async function rejectAndReplanServerOperation(runtime, session = {}, operation = {}, fields = {}) {
+  const feedback = firstPresentField(fields, fieldNamesForOperation(operation, ["feedback", "message", "response"]));
+  if (!feedback) {
+    throw aiStudioError("Describe what should change before sending the work back to Codex.", "ai_studio_intent_input_required");
+  }
+  const target = replanTargetForSession(session, operation);
+  await runtime.rewind(session.sessionId, target.stepId);
+  return runtime.runAction(session.sessionId, target.actionId, {
+    autopilotFeedback: feedback,
+    autopilotReason: normalizeText(operation.reason || "changes_rejected")
+  });
+}
+
+async function deleteMetadataAndRewindServerOperation(runtime, session = {}, operation = {}) {
+  await runtime.store.deleteMetadataValue(
+    session.sessionId,
+    normalizeText(operation.metadataName || METADATA_KEYS.FINAL_REVIEW_FOLLOWUP)
+  );
+  return runtime.rewind(
+    session.sessionId,
+    finalReviewRecheckTargetStepForSession(session, operation)
+  );
+}
+
+async function writeMetadataServerOperation(runtime, session = {}, operation = {}) {
+  await runtime.store.writeMetadataValue(
+    session.sessionId,
+    normalizeText(operation.metadataName || METADATA_KEYS.MERGE_INTENT),
+    normalizeText(operation.metadataValue)
+  );
+  return runtime.getSession(session.sessionId);
+}
+
+async function skipMergeServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}) {
+  await runtime.runAction(
+    session.sessionId,
+    normalizeText(operation.actionId) || selectedIntent.actionId || ACTION_IDS.SKIP_MERGE,
+    {}
+  );
+  await runtime.store.writeMetadataValue(
+    session.sessionId,
+    normalizeText(operation.metadataName || "merge_skipped"),
+    normalizeText(operation.metadataValue || "yes")
+  );
+  return continueAfterSkipMerge(runtime, session.sessionId);
+}
+
+async function runServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
+  const safeOperation = isObject(operation) ? operation : {};
+  switch (normalizeText(safeOperation.kind)) {
+    case "advance":
+      return runtime.advance(session.sessionId);
+    case "force_advance":
+      return forceAdvanceCurrentStep(runtime, session, safeOperation.message || "Advanced by server intent.");
+    case "run_action":
+      return runActionServerOperation(runtime, session, selectedIntent, safeOperation, fields);
+    case "reject_and_replan":
+      return rejectAndReplanServerOperation(runtime, session, safeOperation, fields);
+    case "delete_metadata_and_rewind":
+      return deleteMetadataAndRewindServerOperation(runtime, session, safeOperation);
+    case "write_metadata":
+      return writeMetadataServerOperation(runtime, session, safeOperation);
+    case "skip_merge":
+      return skipMergeServerOperation(runtime, session, selectedIntent, safeOperation);
+    default:
+      throw aiStudioError(
+        `Intent ${selectedIntent.id || "(empty)"} has no server handler.`,
+        "ai_studio_intent_not_handled"
+      );
+    }
+}
+
 function intentFields(input = {}) {
   if (isObject(input.fields)) {
     return input.fields;
@@ -696,6 +910,23 @@ function conversationInput(fields = {}) {
   return {
     conversationRequest: normalizeText(fields.conversationRequest || fields.feedback || fields.message || fields.response)
   };
+}
+
+function actionInputForOperation(operation = {}, fields = {}) {
+  const inputMode = normalizeText(operation.input || operation.inputMode || "fields");
+  if (inputMode === "empty") {
+    return {};
+  }
+  if (inputMode === "conversation") {
+    return conversationInput(fields);
+  }
+  return fields;
+}
+
+async function writeOperationMetadata(runtime, sessionId = "", metadata = {}) {
+  for (const [name, value] of Object.entries(isObject(metadata) ? metadata : {})) {
+    await runtime.store.writeMetadataValue(sessionId, name, value);
+  }
 }
 
 function replanStepIdForSession(session = {}) {
@@ -775,7 +1006,7 @@ async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advance
 async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input = {}) {
   const session = await runtime.getSession(sessionId);
   const normalizedIntentId = normalizeText(intentId);
-  const selectedIntent = intentById(session, normalizedIntentId);
+  const selectedIntent = selectedIntentById(session, normalizedIntentId);
   if (!selectedIntent) {
     throw aiStudioError(
       `Intent ${normalizedIntentId || "(empty)"} is not available on step ${session.currentStep || "(none)"}.`,
@@ -791,64 +1022,8 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
   assertIntentMatchesCurrentState(session, input);
 
   const fields = intentFields(input);
-  switch (normalizedIntentId) {
-    case INTENT_IDS.ACCEPT_REVIEW:
-    case INTENT_IDS.CONTINUE_STEP:
-      return runtime.advance(sessionId);
-
-    case INTENT_IDS.SKIP_OPTIONAL_CHECK:
-      return forceAdvanceCurrentStep(runtime, session, "Skipped optional check.");
-
-    case INTENT_IDS.RUN_OPTIONAL_CHECK:
-      return runtime.runAction(sessionId, selectedIntent.actionId || ACTION_IDS.RUN_DEEP_UI_CHECK, {});
-
-    case INTENT_IDS.TALK_TO_CODEX:
-      return runtime.runAction(sessionId, selectedIntent.actionId || ACTION_IDS.AGENT_CONVERSATION, conversationInput(fields));
-
-    case INTENT_IDS.REQUEST_REVIEW_TWEAK: {
-      if (normalizeText(session.currentStep) === STEP_IDS.CHANGES_ACCEPTED) {
-        await runtime.store.writeMetadataValue(sessionId, METADATA_KEYS.FINAL_REVIEW_FOLLOWUP, "recheck");
-      }
-      return runtime.runAction(sessionId, selectedIntent.actionId, conversationInput(fields));
-    }
-
-    case INTENT_IDS.REJECT_AND_REPLAN: {
-      const feedback = normalizeText(fields.feedback || fields.message || fields.response);
-      if (!feedback) {
-        throw aiStudioError("Describe what should change before sending the work back to Codex.", "ai_studio_intent_input_required");
-      }
-      const targetStepId = replanStepIdForSession(session);
-      await runtime.rewind(sessionId, targetStepId);
-      const actionId = targetStepId === STEP_IDS.SEED_PLAN_MADE ? ACTION_IDS.MAKE_SEED_PLAN : ACTION_IDS.MAKE_PLAN;
-      return runtime.runAction(sessionId, actionId, {
-        autopilotFeedback: feedback,
-        autopilotReason: "changes_rejected"
-      });
-    }
-
-    case INTENT_IDS.RECHECK_AFTER_FINAL_TWEAK: {
-      await runtime.store.deleteMetadataValue(sessionId, METADATA_KEYS.FINAL_REVIEW_FOLLOWUP);
-      return runtime.rewind(sessionId, finalReviewRecheckStepIdForSession(session));
-    }
-
-    case INTENT_IDS.MERGE_AND_SYNC:
-      await runtime.store.writeMetadataValue(sessionId, METADATA_KEYS.MERGE_INTENT, "merge_and_sync");
-      return runtime.getSession(sessionId);
-
-    case INTENT_IDS.SKIP_MERGE:
-      await runtime.runAction(sessionId, selectedIntent.actionId || ACTION_IDS.SKIP_MERGE, {});
-      await runtime.store.writeMetadataValue(sessionId, "merge_skipped", "yes");
-      return continueAfterSkipMerge(runtime, sessionId);
-
-    case INTENT_IDS.ARCHIVE_SESSION:
-      return runtime.runAction(sessionId, selectedIntent.actionId || ACTION_IDS.FINISH_SESSION, {});
-
-    default:
-      throw aiStudioError(
-        `Intent ${normalizedIntentId || "(empty)"} has no server handler.`,
-        "ai_studio_intent_not_handled"
-      );
-  }
+  const operation = serverOperationForIntent(runtime, session, normalizedIntentId, selectedIntent);
+  return runServerOperation(runtime, session, selectedIntent, operation, fields);
 }
 
 export {

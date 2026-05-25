@@ -139,7 +139,7 @@ presentation: {
 - [ ] Ensure `presentation.screen.kind` is generic enough for the client to render reusable layouts.
 - [ ] Ensure `presentation.screen.variant` can distinguish server-owned variants, such as implementation review versus final review, without exposing step IDs.
 - [ ] Ensure all labels, titles, messages, button text, and disabled reasons come from the server.
-- [ ] Ensure `currentStepDefinition.autopilot.kind` is either replaced by `presentation` or reduced to a server-private implementation detail.
+- [x] Ensure `currentStepDefinition.autopilot.kind` is either replaced by `presentation` or reduced to a server-private implementation detail.
 - [ ] Add a short server-side comment or doc block explaining that presentation is derived view state, not durable workflow truth.
 - [ ] Add focused Playwright coverage that loads a session fixture and confirms the client renders `presentation.screen` title/message/actions without deriving workflow-specific UI locally.
 
@@ -289,43 +289,6 @@ prompt: {
 - [ ] Keep Inspect terminal chat separate and obvious.
 - [ ] Add focused Playwright coverage that Autopilot free chat renders from server-provided fields and submits the expected opaque action/intent payload.
 - [ ] Add focused Playwright coverage that Inspect mode still allows terminal-first conversation without the Autopilot free-chat form taking ownership.
-
-## Numbered Questions UI Sugar
-
-- [ ] Keep numbered-question splitting client-side only as presentational sugar.
-- [ ] Do not persist `question_1`, `question_2`, or similar names.
-- [ ] Do not expose numbered question field names to the server as workflow state.
-- [ ] Submit only the original logical field, usually `response`.
-- [ ] Preserve the current collapsed format unless the server contract changes intentionally:
-
-```text
-[1] answer one
-[2] answer two
-```
-
-- [ ] Prefer a future server-provided presentation hint over parsing prompt text:
-
-```js
-{
-  name: "response",
-  kind: "textarea",
-  presentation: {
-    kind: "numbered_questions",
-    questions: [
-      { number: 1, label: "..." },
-      { number: 2, label: "..." }
-    ]
-  }
-}
-```
-
-- [ ] If text parsing remains temporarily, keep it in one generic UI helper.
-- [ ] Keep the numbered-question helper small, pure, and independent from workflow state.
-- [ ] Make the collapse back to the original logical field obvious in code.
-- [ ] Test that separate UI boxes collapse back into one `fields.response` value.
-- [ ] Test that no numbered-question temporary names are submitted to the server.
-- [ ] Add focused Playwright coverage that numbered questions render as separate inputs but submit only the original logical field.
-- [ ] Add focused Playwright coverage that ordinary textarea fields still render and submit unchanged.
 
 ## Review Ownership
 
