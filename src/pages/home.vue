@@ -157,7 +157,8 @@ watch(
   display: flex;
   gap: 0.35rem;
   justify-content: flex-end;
-  max-width: min(32rem, 58vw);
+  margin-left: auto;
+  max-width: min(48rem, 72vw);
   min-width: 0;
   white-space: nowrap;
 }

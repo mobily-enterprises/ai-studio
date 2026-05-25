@@ -12,9 +12,9 @@ Canonical product/design decisions live in `.jskit/APP_BLUEPRINT.md`.
 | 2. Background Codex bootstrap is not visible enough | Outstanding |
 | 3. Session list/detail reads are pure but still heavy | Outstanding |
 | 4. Command action completion and session publishing are still loosely coupled | Outstanding |
-| 5. Skip-merge flow is still procedural | Outstanding |
+| 5. Skip-merge flow is still procedural | Done |
 | 6. Non-command actions run inside the session mutation queue | Not to do by design |
-| 7. `workflowStepMachines.js` is too large and repetitive | Outstanding |
+| 7. `workflowStepMachines.js` is too large and repetitive | Done, targeted factories only |
 | 8. Public payload still exposes raw autopilot definition | Done |
 | 9. Numbered questions must remain UI sugar | Done |
 | 10. Simple markdown does not parse pointlists | Done |
@@ -87,36 +87,6 @@ Tackle:
 - Persist a command lifecycle record with states such as `started`, `result_written`, `advanced`, `published`, `bootstrap_started`, `bootstrap_done`.
 - Let the client follow that lifecycle instead of inferring from `attempting_execution`.
 
-### Finding 5 - P2 Medium: Skip-merge flow is still procedural
-
-Evidence:
-
-- `server/lib/aiStudio/workflowPresentation.js`
-
-Problem:
-
-Skip merge still advances through multiple steps procedurally and special-cases main checkout sync.
-
-Tackle:
-
-- Express skipped transitions declaratively in the workflow catalog.
-- Remove the hard-coded bounded advance loop.
-
-### Finding 7 - P2 Medium: `workflowStepMachines.js` is too large and repetitive
-
-Evidence:
-
-- `server/lib/aiStudio/workflowStepMachines.js`
-
-Problem:
-
-Many step machines repeat the same prompt/action/input lifecycle in one large file.
-
-Tackle:
-
-- Extract reusable prompt, command, review, and input machine factories.
-- Leave only step-specific state deltas in individual definitions.
-
 ## Explicit Non-TODOs
 
 ### Finding 6 - Keep Non-Command Actions Serialized
@@ -160,6 +130,46 @@ Done:
 - Made the workflow catalog the canonical place for declarative presentation and intent contract data.
 - Kept evaluated autopilot state server-internal.
 - Moved public presentation generation to read from the centralized workflow metadata.
+
+### Finding 7 - Targeted workflow machine factories
+
+Evidence:
+
+- `server/lib/aiStudio/workflowStepMachines.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Previous problem:
+
+The original finding was too broad. The step machines are repetitive, but most of that repetition is step-specific workflow meaning and should stay explicit. The genuinely repeated classes are interactive AI conversation turns and editable artifact review turns.
+
+Done:
+
+- Added a `createChatWithAiMachine` factory.
+- Reused it for `agent_conversation`, `maintenance_conversation`, `implementation_reviewed`, and `changes_accepted`.
+- Made completion ownership configurable: user-decided chat turns say the user decides when to continue; AI-decided tweak turns include an explicit `enoughWhen` condition in the prompt contract.
+- Added a `createEditableArtifactReviewMachine` factory.
+- Reused it for `issue_file_created`, `seed_application_defined`, and `create_pull_request`.
+- Kept draft origin explicit: issue and seed start with user-provided editable fields; pull request starts with an AI-created draft and only shows editable fields after Codex submits the draft.
+- Kept command execution declarative by action id and completion metadata instead of passing arbitrary command functions through the machine.
+- Left the other prompt, command, review, and input machines unfactored by design.
+
+### Finding 5 - Skip-merge flow is declarative
+
+Evidence:
+
+- `server/lib/aiStudio/workflow.js`
+- `server/lib/aiStudio/workflowPresentation.js`
+- `tests/server/aiStudioWorkflowMachine.unit.test.js`
+
+Previous problem:
+
+Skip merge recorded declarative readiness metadata, but the intent handler still owned the follow-through with a skip-specific bounded advance loop and a hard-coded main-checkout special case.
+
+Done:
+
+- Replaced the skip-specific server operation with generic `sequence` and `advance_to_step` operations.
+- Moved the skip-merge intent behavior into the workflow catalog: run `skip_merge`, write `merge_skipped`, then advance to `session_finished`.
+- Removed the hard-coded `continueAfterSkipMerge` path from presentation code.
 
 ### Finding 9 - Numbered questions remain UI sugar
 

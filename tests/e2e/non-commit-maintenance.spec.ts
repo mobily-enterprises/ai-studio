@@ -78,14 +78,17 @@ test.describe("non-commit maintenance agent chat", () => {
     await page.goto(`${BASE_URL}/home`);
     await createNonCommitMaintenanceSession(page);
 
-    await expect(page.getByRole("heading", { name: "Talk to Codex" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Inspect$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Autopilot$/ })).toBeHidden();
+    await expect(page.getByText("Ask Codex for changes. Continue when the work is ready for the next workflow step."))
+      .toBeVisible();
     await page.getByLabel("What do you want to ask Codex?").fill("Tell me what maintenance is needed.");
     await page.getByRole("button", { name: "Ask Codex" }).click();
 
     await expectMarkdownResponsePreview(page);
     await expectNoBrowserCodexTerminalInput(page);
-    await expect(page.getByRole("button", { name: "Next" })).toBeEnabled();
-    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByRole("button", { name: "Next step" })).toBeEnabled();
+    await page.getByRole("button", { name: "Next step" }).click();
     await expect(page.getByRole("heading", { name: "Congratulations!" })).toBeVisible();
   });
 
@@ -93,7 +96,10 @@ test.describe("non-commit maintenance agent chat", () => {
     await page.goto(`${BASE_URL}/home`);
     await createNonCommitMaintenanceSession(page);
 
-    await expect(page.getByRole("heading", { name: "Talk to Codex" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Inspect$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Autopilot$/ })).toBeHidden();
+    await expect(page.getByText("Ask Codex for changes. Continue when the work is ready for the next workflow step."))
+      .toBeVisible();
 
     await page.getByLabel("What do you want to ask Codex?").fill("Really?");
     await page.getByRole("button", { name: "Ask Codex" }).click();
@@ -120,6 +126,8 @@ test.describe("non-commit maintenance agent chat", () => {
     await page.goto(`${BASE_URL}/home?mode=inspect`);
     await createNonCommitMaintenanceSession(page);
 
+    await expect(page.getByRole("button", { name: /^Autopilot$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Inspect$/ })).toBeHidden();
     await page.getByRole("button", { name: "Create worktree" }).click();
     await expect(page.getByText("Create worktree finished.")).toBeVisible();
     await page.getByRole("button", { name: "Next" }).click();
@@ -140,14 +148,14 @@ test.describe("non-commit maintenance agent chat", () => {
     await expectNoBrowserCodexTerminalInput(page);
     await expect(page.getByRole("button", { name: "Next" })).toBeEnabled();
 
-    await page.getByRole("button", { name: "Quit inspect" }).click();
+    await page.getByRole("button", { name: "Autopilot" }).click();
     await expectMarkdownResponsePreview(page);
     await expectNoBrowserCodexTerminalInput(page);
   });
 });
 
 async function expectMarkdownResponsePreview(page: Page, expectedText = RESPONSE_TEXT) {
-  const responseRegion = page.getByRole("region", { name: "AI response" });
+  const responseRegion = page.getByRole("region", { name: "Codex" });
   await expect(responseRegion).toContainText(expectedText);
   if (expectedText === RESPONSE_TEXT) {
     await expect(responseRegion.getByRole("heading", { name: "Summary" })).toBeVisible();

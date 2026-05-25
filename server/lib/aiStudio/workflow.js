@@ -976,10 +976,23 @@ const AI_STUDIO_WORKFLOW_STEP_CATALOG = deepFreeze({
             id: "skip_merge",
             label: "Do not merge",
             serverOperation: {
-              actionId: "skip_merge",
-              kind: "skip_merge",
-              metadataName: "merge_skipped",
-              metadataValue: "yes"
+              kind: "sequence",
+              operations: [
+                {
+                  actionId: "skip_merge",
+                  input: "empty",
+                  kind: "run_action"
+                },
+                {
+                  kind: "write_metadata",
+                  metadataName: "merge_skipped",
+                  metadataValue: "yes"
+                },
+                {
+                  kind: "advance_to_step",
+                  stepId: "session_finished"
+                }
+              ]
             },
             type: "action"
           }

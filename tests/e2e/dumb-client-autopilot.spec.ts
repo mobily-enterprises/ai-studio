@@ -468,7 +468,6 @@ test.describe("Autopilot dumb client contract", () => {
 
     await page.goto(`${BASE_URL}/home`);
 
-    await expect(page.getByRole("heading", { name: "Talk to Codex" })).toBeVisible();
     await expect(page.getByLabel("Response")).toBeVisible();
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
     await expect.poll(async () => page.evaluate(() => (
@@ -521,9 +520,13 @@ test.describe("Autopilot dumb client contract", () => {
 
     await expect(page.getByRole("heading", { name: "Server Review" })).toBeVisible();
     await expect(page.getByText("This text came from the server.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Attach file" })).toHaveCount(0);
 
-    await page.getByLabel("Feedback").fill("Please adjust the copy.");
-    await page.getByRole("button", { name: "Ask server" }).click();
+    const feedbackInput = page.getByLabel("Feedback");
+    await feedbackInput.fill("Please adjust the copy.");
+    await feedbackInput.press("Tab");
+    await expect(page.getByRole("button", { name: "Ask server" })).toBeFocused();
+    await page.keyboard.press("Enter");
 
     await expect.poll(() => intentRequests).toEqual([
       {

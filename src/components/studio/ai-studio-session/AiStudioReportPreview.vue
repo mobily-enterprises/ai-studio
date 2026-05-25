@@ -1,7 +1,17 @@
 <template>
-  <section class="studio-report-preview" :aria-label="title">
-    <div class="studio-report-preview__header">
-      <strong>{{ title }}</strong>
+  <section class="studio-report-preview" :aria-label="title || 'Preview'">
+    <div
+      v-if="title || titleIcon || loading"
+      class="studio-report-preview__header"
+    >
+      <div class="studio-report-preview__identity">
+        <v-icon
+          v-if="titleIcon"
+          :icon="titleIcon"
+          size="18"
+        />
+        <strong v-if="title">{{ title }}</strong>
+      </div>
       <v-progress-circular
         v-if="loading"
         color="primary"
@@ -56,6 +66,10 @@ const props = defineProps({
   title: {
     default: "Session report",
     type: String
+  },
+  titleIcon: {
+    default: "",
+    type: String
   }
 });
 
@@ -77,6 +91,18 @@ const textBlocks = computed(() => parseLongTextReviewBlocks(props.text));
   display: flex;
   gap: 0.5rem;
   justify-content: space-between;
+}
+
+.studio-report-preview__identity {
+  align-items: center;
+  color: rgb(var(--v-theme-primary));
+  display: flex;
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.studio-report-preview__identity strong {
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .studio-report-preview__body {

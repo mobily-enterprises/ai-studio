@@ -1,5 +1,9 @@
 <template>
-  <div v-if="visible" class="ai-studio-launch-controls">
+  <div
+    v-if="visible"
+    class="ai-studio-launch-controls"
+    :class="{ 'ai-studio-launch-controls--prominent': prominent }"
+  >
     <div
       v-if="terminalDockVisible"
       class="ai-studio-launch-controls__dock"
@@ -55,6 +59,7 @@
       <template #activator="{ props: menuProps }">
         <v-btn
           v-bind="menuProps"
+          class="ai-studio-launch-controls__run-button"
           color="primary"
           :disabled="runMenuDisabled"
           :loading="loading"
@@ -239,6 +244,10 @@ const props = defineProps({
     default: "tonal",
     type: String
   },
+  prominent: {
+    default: false,
+    type: Boolean
+  },
   busy: {
     type: Boolean,
     default: false
@@ -361,6 +370,22 @@ function requestAiFix() {
   gap: 0.45rem;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.ai-studio-launch-controls--prominent .ai-studio-launch-controls__run-button {
+  font-size: 1rem;
+  font-weight: 720;
+  min-height: 2.75rem;
+  min-width: clamp(8.5rem, 10vw, 12rem);
+  padding-inline: 1.1rem 1.25rem;
+}
+
+.ai-studio-launch-controls--prominent .ai-studio-launch-controls__run-button :deep(.v-btn__prepend) {
+  margin-inline-end: 0.5rem;
+}
+
+.ai-studio-launch-controls--prominent .ai-studio-launch-controls__run-button :deep(.v-icon) {
+  font-size: 1.55rem;
 }
 
 .ai-studio-launch-controls__dock {

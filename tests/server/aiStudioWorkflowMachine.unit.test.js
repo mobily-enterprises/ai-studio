@@ -16,6 +16,7 @@ import {
   workflowStepPresentation
 } from "../../server/lib/aiStudio/index.js";
 import {
+  currentStepPromptInputInstruction,
   stepMachineForStep
 } from "../../server/lib/aiStudio/workflowStepMachines.js";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
@@ -753,6 +754,7 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").label, "Make changes");
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").autopilot.kind, "agent_conversation");
   const createPullRequestStep = generalCoding.steps.find((step) => step.id === "create_pull_request");
+  const mergeStep = generalCoding.steps.find((step) => step.id === "pr_merged");
   assert.deepEqual(createPullRequestStep.actions.map((action) => action.id), [
     "open_pr",
     "resolve_pull_request",
@@ -770,6 +772,28 @@ test("ai-studio workflow profiles are ordered step lists with self-contained ste
     "create_pull_request.number.txt",
     "create_pull_request.source.txt"
   ]);
+  assert.deepEqual(
+    mergeStep.presentation.stop.intents.find((intent) => intent.id === "skip_merge").serverOperation,
+    {
+      kind: "sequence",
+      operations: [
+        {
+          actionId: "skip_merge",
+          input: "empty",
+          kind: "run_action"
+        },
+        {
+          kind: "write_metadata",
+          metadataName: "merge_skipped",
+          metadataValue: "yes"
+        },
+        {
+          kind: "advance_to_step",
+          stepId: "session_finished"
+        }
+      ]
+    }
+  );
   assert.equal(generalCoding.steps.some((step) => step.id === "issue_file_created"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_made"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_executed"), false);
@@ -1171,6 +1195,95 @@ test("ai-studio pull request resolution prompt uses the current-step helper cont
   });
 });
 
+test("editable artifact review steps preserve user-origin and prompt-origin draft behavior", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    const issueSession = await runtime.createSession({
+      initialStep: "issue_file_created",
+      sessionId: "editable_artifact_issue"
+    });
+    assert.equal(issueSession.stepMachine.status, "waiting_for_input");
+    assert.deepEqual(issueSession.presentation.screen.input.fields.map((field) => field.name), [
+      "title",
+      "word",
+      "body"
+    ]);
+
+    const confirmedIssue = await runtime.submitCurrentStepInput("editable_artifact_issue", {
+      fields: {
+        body: "Issue body",
+        title: "Issue title",
+        word: "issue-word"
+      },
+      kind: "ready",
+      source: "ui",
+      stepId: "issue_file_created",
+      stepStatus: "waiting_for_input"
+    });
+    assert.equal(confirmedIssue.stepMachine.status, "confirm_files");
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Issue title\n");
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Issue body\n");
+
+    const prSession = await runtime.createSession({
+      initialStep: "create_pull_request",
+      metadata: {
+        branch_pushed: "origin/ai-studio/test-session"
+      },
+      sessionId: "editable_artifact_pr"
+    });
+    assert.equal(prSession.stepMachine.status, "awaiting_agent_result");
+    assert.equal(prSession.presentation.screen.input, undefined);
+
+    const waitingPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
+      kind: "waiting_for_input",
+      message: "Which target branch should this use?",
+      source: "codex",
+      stepId: "create_pull_request",
+      stepStatus: "awaiting_agent_result"
+    });
+    assert.equal(waitingPr.stepMachine.status, "waiting_for_input");
+    assert.equal(waitingPr.next.disabledReason, "Resolve the pull request input request before continuing.");
+
+    const resumedPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
+      fields: {
+        response: "Use main."
+      },
+      kind: "user_response",
+      source: "ui",
+      stepId: "create_pull_request",
+      stepStatus: "waiting_for_input"
+    });
+    assert.equal(resumedPr.stepMachine.status, "awaiting_agent_result");
+
+    const confirmedPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
+      fields: {
+        body: "PR body",
+        title: "PR title"
+      },
+      kind: "ready",
+      source: "codex",
+      stepId: "create_pull_request",
+      stepStatus: "awaiting_agent_result"
+    });
+    assert.equal(confirmedPr.stepMachine.status, "confirm_files");
+    assert.deepEqual(confirmedPr.presentation.screen.input.fields.map((field) => field.name), [
+      "title",
+      "body"
+    ]);
+    assert.equal(
+      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_pull_request.title.txt"),
+      "PR title\n"
+    );
+    assert.equal(
+      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_pull_request.body.md"),
+      "PR body\n"
+    );
+  });
+});
+
 test("ai-studio runtime prompt handoff shows the action input outside hidden terminal context", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const promptPackRoot = path.join(targetRoot, "prompt-pack");
@@ -1261,6 +1374,44 @@ test("ai-studio runtime presents waiting_for_input as the same Codex conversatio
     assert.equal(afterAnswer.actionResult.status, "prompt_ready");
     assert.match(afterAnswer.actionResult.codexPromptHandoff.terminalInput, /^Use Pescara\.\n\n\[\[AI_STUDIO_CONTEXT_START\]\]/u);
   });
+});
+
+test("chat-with-ai step instructions make completion ownership explicit", () => {
+  const userDecidedInstruction = currentStepPromptInputInstruction({
+    currentStep: "maintenance_conversation",
+    stepMachine: {
+      status: "ready"
+    }
+  });
+  const aiDecidedInstruction = currentStepPromptInputInstruction({
+    currentStep: "implementation_reviewed",
+    stepMachine: {
+      status: "ready"
+    }
+  });
+  const finalReviewInstruction = currentStepPromptInputInstruction({
+    currentStep: "changes_accepted",
+    stepMachine: {
+      status: "ready"
+    }
+  });
+
+  assert.match(
+    userDecidedInstruction,
+    /The current Codex conversation turn is complete\. The user decides whether to ask another question or continue\./u
+  );
+  assert.match(
+    aiDecidedInstruction,
+    /You decide this AI discussion turn is complete only when: the requested focused tweak has either been made/u
+  );
+  assert.match(
+    finalReviewInstruction,
+    /You decide this AI discussion turn is complete only when: the requested final tweak has either been made/u
+  );
+  assert.doesNotMatch(
+    aiDecidedInstruction,
+    /The user decides whether to ask another question or continue/u
+  );
 });
 
 test("ai-studio runtime reuses the persisted prompt context snapshot for later prompt actions", async () => {

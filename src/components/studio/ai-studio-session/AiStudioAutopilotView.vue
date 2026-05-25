@@ -62,63 +62,84 @@
         </div>
       </div>
 
-      <v-progress-circular
-        v-if="!commandTerminalVisible && displayRunning"
-        class="studio-autopilot__cog"
-        color="primary"
-        indeterminate
-        :size="116"
-        :width="7"
-      >
-        <v-icon :icon="mdiCog" size="50" />
-      </v-progress-circular>
-
-      <v-icon
-        v-else-if="!commandTerminalVisible && screenState.icon === 'warning'"
-        color="warning"
-        :icon="mdiAlertCircleOutline"
-        size="58"
-      />
-
-      <v-icon
-        v-else-if="!commandTerminalVisible && screenState.icon === 'success'"
-        color="success"
-        :icon="mdiCheckCircleOutline"
-        size="64"
-      />
-
-      <v-icon
-        v-else-if="!commandTerminalVisible"
-        color="primary"
-        :icon="mdiCog"
-        size="58"
-      />
-
-      <div v-if="mainStatusVisible" class="studio-autopilot__status">
-        <h2>{{ displayStatusText }}</h2>
-        <v-btn
-          v-if="screenStopAction"
-          class="studio-autopilot__stop-button"
-          :prepend-icon="mdiClose"
-          size="small"
-          type="button"
-          variant="tonal"
-          @click="stopScreenAction"
+      <div v-if="mainStatusVisible" class="studio-autopilot__status-bar">
+        <v-progress-circular
+          v-if="displayRunning"
+          class="studio-autopilot__cog"
+          color="primary"
+          indeterminate
+          :size="48"
+          :width="3"
         >
-          Stop Autopilot
-        </v-btn>
-        <v-btn
-          v-if="stuckRecoveryAvailable"
-          class="studio-autopilot__stop-button"
-          :loading="stuckRecoveryRunning"
-          :prepend-icon="mdiRefresh"
-          size="small"
-          type="button"
-          variant="tonal"
-          @click="recoverStuckStep"
+          <v-icon :icon="mdiCog" size="24" />
+        </v-progress-circular>
+
+        <v-icon
+          v-else-if="screenState.icon === 'warning'"
+          color="warning"
+          :icon="mdiAlertCircleOutline"
+          size="34"
+        />
+
+        <v-icon
+          v-else-if="screenState.icon === 'success'"
+          color="success"
+          :icon="mdiCheckCircleOutline"
+          size="36"
+        />
+
+        <v-icon
+          v-else
+          color="primary"
+          :icon="mdiCog"
+          size="34"
+        />
+
+        <div
+          v-if="headerScreenMessageVisible"
+          class="studio-autopilot__screen-message studio-autopilot__screen-message--inline"
+          :class="{
+            'studio-autopilot__screen-message--warning': standaloneFailureVisible
+          }"
         >
-          Recover step
-        </v-btn>
+          <v-icon
+            :icon="standaloneFailureVisible ? mdiAlertCircleOutline : mdiInformationOutline"
+            size="19"
+          />
+          <span>{{ screenMessage }}</span>
+        </div>
+
+        <div v-else-if="statusTitleVisible" class="studio-autopilot__status">
+          <h2>{{ displayStatusText }}</h2>
+          <div
+            v-if="screenStopAction || stuckRecoveryAvailable"
+            class="studio-autopilot__status-actions"
+          >
+            <v-btn
+              v-if="screenStopAction"
+              class="studio-autopilot__stop-button"
+              :prepend-icon="mdiClose"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="stopScreenAction"
+            >
+              Stop Autopilot
+            </v-btn>
+            <v-btn
+              v-if="stuckRecoveryAvailable"
+              class="studio-autopilot__stop-button"
+              :loading="stuckRecoveryRunning"
+              :prepend-icon="mdiRefresh"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="recoverStuckStep"
+            >
+              Recover step
+            </v-btn>
+          </div>
+        </div>
       </div>
 
       <form
@@ -187,15 +208,23 @@
       <div
         v-else-if="serverScreenVisible"
         class="studio-autopilot__server-screen"
+        :class="{
+          'studio-autopilot__server-screen--with-response': responsePreviewVisible
+        }"
       >
-        <v-alert
-          v-if="screenMessage"
-          :type="standaloneFailureVisible ? 'warning' : 'info'"
-          variant="tonal"
-          density="compact"
+        <div
+          v-if="screenMessage && !headerScreenMessageVisible"
+          class="studio-autopilot__screen-message"
+          :class="{
+            'studio-autopilot__screen-message--warning': standaloneFailureVisible
+          }"
         >
-          {{ screenMessage }}
-        </v-alert>
+          <v-icon
+            :icon="standaloneFailureVisible ? mdiAlertCircleOutline : mdiInformationOutline"
+            size="19"
+          />
+          <span>{{ screenMessage }}</span>
+        </div>
 
         <AiStudioLaunchControls
           v-if="launchControlsVisible"
@@ -217,31 +246,14 @@
 
         <AiStudioReportPreview
           v-if="responsePreviewVisible"
-          empty-text="AI response is not ready yet."
+          class="studio-autopilot__response-preview"
+          empty-text="Codex response is not ready yet."
           :error="responsePreviewError"
           :loading="responsePreviewLoading"
           :text="responsePreviewText"
-          title="AI response"
+          :title-icon="mdiRobotOutline"
+          title="Codex"
         />
-
-        <div
-          v-if="screenControls.length"
-          class="studio-autopilot__actions"
-        >
-          <v-btn
-            v-for="control in screenControls"
-            :key="control.id"
-            :color="control.style === 'primary' ? 'primary' : undefined"
-            :disabled="controlDisabled(control)"
-            :loading="controlLoading(control)"
-            :prepend-icon="controlIcon(control)"
-            type="button"
-            :variant="control.style === 'primary' ? 'flat' : 'tonal'"
-            @click="activateControl(control)"
-          >
-            {{ control.label }}
-          </v-btn>
-        </div>
 
         <form
           v-if="selectedControl"
@@ -258,7 +270,7 @@
               class="studio-autopilot__input"
               :disabled="running"
               :label="field.label"
-              :rows="field.rows || 4"
+              :rows="field.rows || 3"
               :session-id="sessionId"
               variant="outlined"
               @update:model-value="updateSelectedControlValue(field.name, $event)"
@@ -299,6 +311,25 @@
             </v-btn>
           </div>
         </form>
+
+        <div
+          v-if="screenControls.length"
+          class="studio-autopilot__actions studio-autopilot__screen-actions"
+        >
+          <v-btn
+            v-for="control in screenControls"
+            :key="control.id"
+            :color="control.style === 'primary' ? 'primary' : undefined"
+            :disabled="controlDisabled(control)"
+            :loading="controlLoading(control)"
+            :prepend-icon="controlIcon(control)"
+            type="button"
+            :variant="control.style === 'primary' ? 'flat' : 'tonal'"
+            @click="activateControl(control)"
+          >
+            {{ controlDisplayLabel(control) }}
+          </v-btn>
+        </div>
       </div>
     </div>
   </section>
@@ -313,7 +344,9 @@ import {
   mdiClose,
   mdiCog,
   mdiFileCompare,
+  mdiInformationOutline,
   mdiRefresh,
+  mdiRobotOutline,
   mdiSend,
   mdiStopCircleOutline
 } from "@mdi/js";
@@ -443,6 +476,8 @@ const displayStatusText = computed(() => {
   }
   return screenState.value.title;
 });
+const statusTitleIsCodexChat = computed(() => String(displayStatusText.value || "").trim() === "Talk to Codex");
+const statusTitleVisible = computed(() => !statusTitleIsCodexChat.value);
 const displayRunning = computed(() => Boolean(screenState.value.showProgress));
 const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
 const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command" && !stepInput.visible));
@@ -481,6 +516,11 @@ const screenStopAction = computed(() => String(screenState.value.stopAction || "
 const serverScreenVisible = computed(() => Boolean(
   !displayRunning.value &&
   !commandTerminalVisible.value
+));
+const headerScreenMessageVisible = computed(() => Boolean(
+  serverScreenVisible.value &&
+  screenMessage.value &&
+  statusTitleIsCodexChat.value
 ));
 const responsePreviewText = computed(() => String(props.humanInputResponsePreview?.text || ""));
 const responsePreviewError = computed(() => String(props.humanInputResponsePreview?.error || ""));
@@ -583,6 +623,11 @@ function controlIcon(control = {}) {
     return mdiCheck;
   }
   return mdiRefresh;
+}
+
+function controlDisplayLabel(control = {}) {
+  const label = String(control.label || "").trim();
+  return label === "Next" ? "Next step" : label;
 }
 
 function initialControlValues(control = {}) {
@@ -710,11 +755,11 @@ watch(allScreenControls, (controls) => {
   border: 1px solid rgba(var(--v-theme-outline), 0.24);
   border-radius: 8px;
   display: grid;
-  gap: 0.65rem;
+  gap: 0.5rem;
   justify-items: center;
   min-height: 18rem;
-  padding: 0.85rem 1rem 1rem;
-  text-align: center;
+  padding: 0.2rem 1rem 1rem;
+  text-align: left;
 }
 
 .studio-autopilot__stage--failure {
@@ -726,13 +771,27 @@ watch(allScreenControls, (controls) => {
   animation: studio-autopilot-cog-spin 1.7s linear infinite;
 }
 
+.studio-autopilot__status-bar {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+  justify-content: center;
+  max-width: 54rem;
+  min-height: 2.5rem;
+  text-align: left;
+  width: 100%;
+}
+
 .studio-autopilot__status {
-  display: grid;
-  gap: 0.15rem;
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  min-width: 0;
 }
 
 .studio-autopilot__status h2 {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 720;
   letter-spacing: 0;
   line-height: 1.15;
@@ -799,7 +858,14 @@ watch(allScreenControls, (controls) => {
 }
 
 .studio-autopilot__stop-button {
-  margin-top: 0.3rem;
+  margin-top: 0;
+}
+
+.studio-autopilot__status-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .studio-autopilot__actions {
@@ -815,21 +881,117 @@ watch(allScreenControls, (controls) => {
 .studio-autopilot__control-form {
   display: grid;
   gap: 0.6rem;
-  max-width: 44rem;
+  max-width: 52rem;
   width: 100%;
 }
 
 .studio-autopilot__server-screen {
   justify-items: center;
+  min-height: 0;
+}
+
+.studio-autopilot__server-screen--with-response {
+  align-content: stretch;
+  grid-template-areas:
+    "response"
+    "composer"
+    "workflow";
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  height: 100%;
+  padding-bottom: 0.45rem;
 }
 
 .studio-autopilot__control-form {
-  margin-top: 0.15rem;
+  gap: 0.45rem;
+  margin-top: 0.1rem;
+}
+
+.studio-autopilot__screen-message {
+  align-items: center;
+  background: rgba(var(--v-theme-info), 0.1);
+  border: 1px solid rgba(var(--v-theme-info), 0.24);
+  border-radius: 8px;
+  color: rgb(var(--v-theme-info));
+  display: flex;
+  font-size: 0.9rem;
+  gap: 0.55rem;
+  justify-self: stretch;
+  line-height: 1.35;
+  min-height: 2.25rem;
+  padding: 0.42rem 0.65rem;
+}
+
+.studio-autopilot__screen-message--inline {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.studio-autopilot__screen-message span {
+  color: rgb(var(--v-theme-on-surface));
+  min-width: 0;
+}
+
+.studio-autopilot__screen-message--warning {
+  background: rgba(var(--v-theme-warning), 0.1);
+  border-color: rgba(var(--v-theme-warning), 0.28);
+  color: rgb(var(--v-theme-warning));
+}
+
+.studio-autopilot__response-preview {
+  justify-self: stretch;
+  min-height: 0;
+}
+
+.studio-autopilot__response-preview :deep(.studio-report-preview__body) {
+  max-height: min(34rem, max(14rem, calc(100dvh - 25rem)));
+}
+
+.studio-autopilot__server-screen--with-response .studio-autopilot__response-preview {
+  align-self: stretch;
+  display: grid;
+  grid-area: response;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.studio-autopilot__server-screen--with-response .studio-autopilot__response-preview :deep(.studio-report-preview__body) {
+  max-height: none;
+  min-height: 0;
+}
+
+.studio-autopilot__server-screen--with-response .studio-autopilot__control-form {
+  align-self: end;
+  grid-area: composer;
+  min-height: max-content;
+  padding-bottom: 0.15rem;
+}
+
+.studio-autopilot__server-screen--with-response .studio-autopilot__screen-actions {
+  align-self: end;
+  grid-area: workflow;
 }
 
 .studio-autopilot__input {
   text-align: left;
   width: 100%;
+}
+
+.studio-autopilot__control-form :deep(.studio-autopilot-prompt-textarea) {
+  gap: 0.35rem;
+}
+
+.studio-autopilot__control-form :deep(.v-input),
+.studio-autopilot__control-form :deep(.v-field) {
+  overflow: visible;
+}
+
+.studio-autopilot__control-form :deep(.v-field__input textarea) {
+  min-height: 5.4rem;
+}
+
+.studio-autopilot__screen-actions {
+  justify-content: flex-end;
+  justify-self: stretch;
 }
 
 @keyframes studio-autopilot-cog-spin {

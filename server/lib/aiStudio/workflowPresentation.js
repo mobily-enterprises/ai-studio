@@ -28,8 +28,7 @@ const ACTION_IDS = Object.freeze({
   MAKE_SEED_PLAN: "make_seed_plan",
   MERGE_PR: "merge_pr",
   PREPARE_FOR_MERGE: "prepare_for_merge",
-  RUN_DEEP_UI_CHECK: "run_deep_ui_check",
-  SKIP_MERGE: "skip_merge"
+  RUN_DEEP_UI_CHECK: "run_deep_ui_check"
 });
 
 const INTENT_IDS = Object.freeze({
@@ -53,7 +52,6 @@ const METADATA_KEYS = Object.freeze({
 
 const STEP_IDS = Object.freeze({
   CHANGES_ACCEPTED: "changes_accepted",
-  MAIN_CHECKOUT_SYNCED: "main_checkout_synced",
   PLAN_MADE: "plan_made",
   PR_MERGED: "pr_merged",
   PROJECT_VALIDATED: "project_validated",
@@ -857,18 +855,61 @@ async function writeMetadataServerOperation(runtime, session = {}, operation = {
   return runtime.getSession(session.sessionId);
 }
 
-async function skipMergeServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}) {
-  await runtime.runAction(
-    session.sessionId,
-    normalizeText(operation.actionId) || selectedIntent.actionId || ACTION_IDS.SKIP_MERGE,
-    {}
-  );
-  await runtime.store.writeMetadataValue(
-    session.sessionId,
-    normalizeText(operation.metadataName || "merge_skipped"),
-    normalizeText(operation.metadataValue || "yes")
-  );
-  return continueAfterSkipMerge(runtime, session.sessionId);
+function workflowStepIds(session = {}) {
+  return (Array.isArray(session.stepDefinitions) ? session.stepDefinitions : [])
+    .map((step) => normalizeText(step.id))
+    .filter(Boolean);
+}
+
+async function advanceToStepServerOperation(runtime, session = {}, operation = {}) {
+  const startedAtMs = Date.now();
+  const targetStepId = normalizeText(operation.stepId || operation.targetStepId);
+  if (!targetStepId) {
+    throw aiStudioError("advance_to_step requires a target step id.", "ai_studio_operation_target_required");
+  }
+
+  let currentSession = await runtime.getSession(session.sessionId);
+  const stepIds = workflowStepIds(currentSession);
+  if (!stepIds.includes(targetStepId)) {
+    throw aiStudioError(`Workflow target step does not exist: ${targetStepId}`, "ai_studio_unknown_workflow_step");
+  }
+
+  aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.start", {
+    ...aiStudioSessionDebugSummary(currentSession),
+    targetStepId
+  });
+
+  for (let count = 0; normalizeText(currentSession.currentStep) !== targetStepId; count += 1) {
+    if (count >= stepIds.length) {
+      throw aiStudioError(`Workflow could not advance to ${targetStepId}.`, "ai_studio_advance_target_not_reached");
+    }
+    aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.advance", {
+      ...aiStudioSessionDebugSummary(currentSession),
+      count: count + 1,
+      targetStepId
+    });
+    currentSession = await runtime.advance(currentSession.sessionId);
+  }
+
+  aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.done", {
+    ...aiStudioSessionDebugSummary(currentSession),
+    durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+    targetStepId
+  });
+  return currentSession;
+}
+
+async function sequenceServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
+  const operations = Array.isArray(operation.operations) ? operation.operations : [];
+  if (operations.length === 0) {
+    throw aiStudioError("sequence requires at least one operation.", "ai_studio_operation_sequence_empty");
+  }
+
+  let currentSession = session;
+  for (const nextOperation of operations) {
+    currentSession = await runServerOperation(runtime, currentSession, selectedIntent, nextOperation, fields);
+  }
+  return currentSession;
 }
 
 async function runServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
@@ -886,8 +927,10 @@ async function runServerOperation(runtime, session = {}, selectedIntent = {}, op
       return deleteMetadataAndRewindServerOperation(runtime, session, safeOperation);
     case "write_metadata":
       return writeMetadataServerOperation(runtime, session, safeOperation);
-    case "skip_merge":
-      return skipMergeServerOperation(runtime, session, selectedIntent, safeOperation);
+    case "advance_to_step":
+      return advanceToStepServerOperation(runtime, session, safeOperation);
+    case "sequence":
+      return sequenceServerOperation(runtime, session, selectedIntent, safeOperation, fields);
     default:
       throw aiStudioError(
         `Intent ${selectedIntent.id || "(empty)"} has no server handler.`,
@@ -941,34 +984,6 @@ function finalReviewRecheckStepIdForSession(session = {}) {
   return stepDefinitions.some((step) => step.id === STEP_IDS.REVIEW_RUN)
     ? STEP_IDS.REVIEW_RUN
     : STEP_IDS.PROJECT_VALIDATED;
-}
-
-async function continueAfterSkipMerge(runtime, sessionId = "") {
-  const startedAtMs = Date.now();
-  aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.start", {
-    sessionId
-  });
-  let session = await runtime.getSession(sessionId);
-  for (let count = 0; count < 3 && nextIsReady(session); count += 1) {
-    aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.advance", {
-      ...aiStudioSessionDebugSummary(session),
-      count: count + 1
-    });
-    session = await runtime.advance(sessionId);
-  }
-  if (
-    normalizeText(session.currentStep) === STEP_IDS.MAIN_CHECKOUT_SYNCED &&
-    normalizeText(session.metadata?.merge_skipped) &&
-    session.next?.visible !== false &&
-    session.next?.stepId
-  ) {
-    return forceAdvanceCurrentStep(runtime, session, "Skipped main checkout sync after merge was skipped.");
-  }
-  aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.done", {
-    ...aiStudioSessionDebugSummary(session),
-    durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
-  });
-  return session;
 }
 
 async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advanced by server intent.") {

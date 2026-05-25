@@ -421,7 +421,7 @@ watch(() => page.error, emitPageError, {
   grid-row: 1;
   height: min(18rem, 38vh);
   justify-self: center;
-  margin-top: clamp(2.5rem, 14vh, 7rem);
+  margin-top: clamp(0.5rem, 4vh, 2rem);
   max-width: min(64rem, calc(100% - 2rem));
   opacity: 0.14;
   pointer-events: none;

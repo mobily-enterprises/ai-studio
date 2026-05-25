@@ -35,16 +35,20 @@
     <AiStudioReportPreview
       v-if="humanInputResponsePreview.visible"
       class="studio-ai-sessions__report"
-      empty-text="AI response is not ready yet."
+      empty-text="Codex response is not ready yet."
       :error="humanInputResponsePreview.error"
       :loading="humanInputResponsePreview.loading"
       :text="humanInputResponsePreview.text"
-      title="AI response"
+      :title-icon="mdiRobotOutline"
+      title="Codex"
     />
   </section>
 </template>
 
 <script setup>
+import {
+  mdiRobotOutline
+} from "@mdi/js";
 import AiStudioReportPreview from "@/components/studio/ai-studio-session/AiStudioReportPreview.vue";
 import AiStudioSessionCurrentStep from "@/components/studio/ai-studio-session/AiStudioSessionCurrentStep.vue";
 import AiStudioSessionFacts from "@/components/studio/ai-studio-session/AiStudioSessionFacts.vue";

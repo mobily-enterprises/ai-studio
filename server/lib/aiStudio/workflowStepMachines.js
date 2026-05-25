@@ -226,14 +226,7 @@ function artifactText(value = "") {
   return `${normalizeText(value)}\n`;
 }
 
-async function readIssueFieldValues(context = {}, filesReady = false) {
-  if (!filesReady) {
-    return {
-      body: "",
-      title: "",
-      word: ""
-    };
-  }
+async function readIssueFieldValues(context = {}) {
   const [title, body, word] = await Promise.all([
     context.runtime.store.readArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT),
     context.runtime.store.readArtifact(context.session.sessionId, ISSUE_BODY_ARTIFACT),
@@ -246,6 +239,20 @@ async function readIssueFieldValues(context = {}, filesReady = false) {
   };
 }
 
+async function writeIssueFieldValues(context = {}, fields = {}) {
+  const title = requireInputValue(fields.title, "Issue title is required.");
+  const body = requireInputValue(fields.body, "Issue body is required.");
+  const word = requireInputValue(fields.word, "Session label is required.");
+
+  await Promise.all([
+    context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT, artifactText(title)),
+    context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_BODY_ARTIFACT, artifactText(body)),
+    context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_WORD_ARTIFACT, artifactText(word)),
+    context.runtime.store.writeMetadataValue(context.session.sessionId, "issue_title", title),
+    context.runtime.store.writeIssueWordMetadata(context.session.sessionId, word)
+  ]);
+}
+
 function pullRequestFilesAreReady(session = {}) {
   return [
     PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
@@ -253,13 +260,7 @@ function pullRequestFilesAreReady(session = {}) {
   ].every((artifactName) => artifactIsReady(session, artifactName));
 }
 
-async function readPullRequestFieldValues(context = {}, filesReady = false) {
-  if (!filesReady) {
-    return {
-      body: "",
-      title: ""
-    };
-  }
+async function readPullRequestFieldValues(context = {}) {
   const [title, body] = await Promise.all([
     context.runtime.store.readArtifact(context.session.sessionId, PULL_REQUEST_TITLE_DRAFT_ARTIFACT),
     context.runtime.store.readArtifact(context.session.sessionId, PULL_REQUEST_BODY_DRAFT_ARTIFACT)
@@ -268,6 +269,23 @@ async function readPullRequestFieldValues(context = {}, filesReady = false) {
     body: normalizeText(body),
     title: normalizeText(title)
   };
+}
+
+async function writePullRequestFieldValues(context = {}, fields = {}) {
+  const title = requireInputValue(fields.title, "Pull request title is required.");
+  const body = requireInputValue(fields.body, "Pull request body is required.");
+  await Promise.all([
+    context.runtime.store.writeArtifact(
+      context.session.sessionId,
+      PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
+      artifactText(title)
+    ),
+    context.runtime.store.writeArtifact(
+      context.session.sessionId,
+      PULL_REQUEST_BODY_DRAFT_ARTIFACT,
+      artifactText(body)
+    )
+  ]);
 }
 
 function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = {}) {
@@ -490,6 +508,345 @@ function promptStepWaitingView(context = {}, machine = {}, state = {}, message =
       disabledReason: message
     }),
     stepMachine: publicState(machine, state)
+  };
+}
+
+function chatWithAiPromptInstructionOptions({
+  decidedBy = "user",
+  doneFields = {
+    response: "Concise Markdown response describing what changed, checks run, and any blockers"
+  },
+  doneMeaning = "",
+  enoughWhen = "",
+  waitingForInputMeaning = "You need a user answer before you can complete this conversation turn."
+} = {}) {
+  if (normalizeText(decidedBy) === "ai") {
+    const enoughCondition = normalizeText(enoughWhen || doneMeaning);
+    return {
+      doneFields,
+      doneMeaning: enoughCondition
+        ? `You decide this AI discussion turn is complete only when: ${enoughCondition}`
+        : "You decide when this AI discussion turn has enough information to finish.",
+      waitingForInputMeaning
+    };
+  }
+
+  return {
+    doneFields,
+    doneMeaning: doneMeaning ||
+      "The current Codex conversation turn is complete. The user decides whether to ask another question or continue.",
+    waitingForInputMeaning
+  };
+}
+
+function createChatWithAiMachine({
+  completionPolicy = {},
+  nextWhenIdle = {
+    enabled: true
+  },
+  promptActionId = "",
+  responseArtifact = HUMAN_INPUT_RESPONSE_ARTIFACT,
+  stepId = "",
+  waitingMessage = "Wait for Codex to finish this conversation turn."
+} = {}) {
+  const normalizedPromptActionId = normalizeText(promptActionId);
+  const normalizedStepId = normalizeText(stepId);
+  if (!normalizedPromptActionId || !normalizedStepId) {
+    throw aiStudioError("Chat-with-AI step machines require a step id and prompt action id.", "ai_studio_invalid_step_machine");
+  }
+
+  return {
+    promptActionId: normalizedPromptActionId,
+    stepId: normalizedStepId,
+
+    initialState() {
+      return machineState(STEP_STATUS.READY);
+    },
+
+    async view(context = {}) {
+      const state = await readState(context, this);
+      switch (state.status) {
+        case STEP_STATUS.WAITING_FOR_INPUT:
+          return promptStepWaitingForInputView(context, this, state);
+        case STEP_STATUS.AWAITING_AGENT_RESULT:
+          return promptStepWaitingView(context, this, state, waitingMessage);
+        case STEP_STATUS.READY:
+        case STEP_STATUS.DONE:
+        case STEP_STATUS.FAILED:
+        default:
+          return {
+            next: nextForSession(context.session, valueFromConfig(nextWhenIdle, context, state)),
+            stepMachine: publicState(this, state)
+          };
+      }
+    },
+
+    async submitInput(context = {}) {
+      return handleStandardPromptInput(context, this, {
+        responseArtifact
+      });
+    },
+
+    async actionStarted(context = {}) {
+      return markPromptActionStarted(context, this, normalizedPromptActionId, {
+        restartDone: true
+      });
+    },
+
+    promptInstruction() {
+      return currentStepHelperInstruction(chatWithAiPromptInstructionOptions(completionPolicy));
+    }
+  };
+}
+
+function valueFromConfig(valueOrFactory, ...args) {
+  return typeof valueOrFactory === "function" ? valueOrFactory(...args) : valueOrFactory;
+}
+
+function optionalActionsView(context = {}, state = {}, actionConfig = null) {
+  const actions = valueFromConfig(actionConfig, context, state);
+  return actions === null || actions === undefined ? {} : { actions };
+}
+
+// Shared lifecycle for steps that collect or receive draft artifact fields,
+// show those fields for user confirmation, then optionally wait for a command.
+function createEditableArtifactReviewMachine({
+  command = null,
+  done,
+  draftOrigin = "user",
+  draftReady,
+  initialDetails = {},
+  interaction,
+  nextWhenConfirmed = {
+    enabled: true
+  },
+  nextWhenDone = {
+    enabled: true
+  },
+  nextWhenDrafting = {
+    disabledReason: "Finish the draft before continuing."
+  },
+  nextWhenWaitingForInput = null,
+  nextWhenWorking = {
+    disabledReason: "Complete this step before continuing."
+  },
+  onConfirmedActions = null,
+  onDoneActions = null,
+  onWaitingActions = null,
+  promptInstruction = null,
+  readValues,
+  saveValues,
+  stepId = "",
+  unsupportedDoneMessage = "This step cannot accept input right now.",
+  waitingInteraction = null,
+  waitingForInputState = null,
+  userResponseResumeStatus = null
+} = {}) {
+  const normalizedStepId = normalizeText(stepId);
+  const commandActionId = command ? normalizeText(command.actionId) : "";
+  const commandDoneMetadata = command ? normalizeText(command.doneMetadata) : "";
+  if (
+    !normalizedStepId ||
+    typeof draftReady !== "function" ||
+    typeof interaction !== "function" ||
+    typeof readValues !== "function" ||
+    typeof saveValues !== "function"
+  ) {
+    throw aiStudioError("Editable artifact review machines require a step id, interaction, and draft artifact handlers.", "ai_studio_invalid_step_machine");
+  }
+  if (
+    command &&
+    (!commandActionId || (typeof command.succeeded !== "function" && !commandDoneMetadata) || typeof command.failureState !== "function")
+  ) {
+    throw aiStudioError("Editable artifact review command config requires an action id, success detector, and failure state.", "ai_studio_invalid_step_machine");
+  }
+  const initialDraftStatus = normalizeText(draftOrigin) === "prompt"
+    ? STEP_STATUS.AWAITING_AGENT_RESULT
+    : STEP_STATUS.WAITING_FOR_INPUT;
+
+  function isDone(context = {}) {
+    return typeof done === "function" ? done(context.session, context) : false;
+  }
+
+  function hasDraft(context = {}) {
+    return draftReady(context.session, context);
+  }
+
+  function normalizeInitialDetails(context = {}) {
+    return valueFromConfig(initialDetails, context) || {};
+  }
+
+  function waitingForInputNextOptions(context = {}, state = {}) {
+    return valueFromConfig(nextWhenWaitingForInput || nextWhenDrafting, context, state);
+  }
+
+  function normalizeWaitingForInputState(input = {}, state = {}) {
+    if (typeof waitingForInputState === "function") {
+      return waitingForInputState(input, state);
+    }
+    return {
+      from: state.from || initialDraftStatus,
+      message: input.message,
+      source: input.source
+    };
+  }
+
+  function normalizeUserResponseResumeStatus(state = {}, input = {}) {
+    if (typeof userResponseResumeStatus === "function") {
+      return userResponseResumeStatus(state, input);
+    }
+    return state.from || initialDraftStatus;
+  }
+
+  return {
+    stepId: normalizedStepId,
+
+    initialState(context = {}) {
+      if (isDone(context)) {
+        return machineState(STEP_STATUS.DONE);
+      }
+      if (hasDraft(context)) {
+        return machineState(STEP_STATUS.CONFIRM_FILES);
+      }
+      return machineState(initialDraftStatus, normalizeInitialDetails(context));
+    },
+
+    async view(context = {}) {
+      let state = await readState(context, this);
+      if (isDone(context)) {
+        state = machineState(STEP_STATUS.DONE);
+      } else if (hasDraft(context) && state.status !== STEP_STATUS.CONFIRM_FILES && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
+        state = machineState(STEP_STATUS.CONFIRM_FILES);
+      }
+
+      switch (state.status) {
+        case STEP_STATUS.DONE:
+          return {
+            ...optionalActionsView(context, state, onDoneActions),
+            interaction: null,
+            next: nextForSession(context.session, valueFromConfig(nextWhenDone, context, state)),
+            stepMachine: publicState(this, state)
+          };
+
+        case STEP_STATUS.CONFIRM_FILES: {
+          const values = await readValues(context);
+          return {
+            ...optionalActionsView(context, state, onConfirmedActions),
+            interaction: interaction(STEP_STATUS.CONFIRM_FILES, values, context),
+            next: nextForSession(context.session, valueFromConfig(nextWhenConfirmed, context, state)),
+            stepMachine: publicState(this, state)
+          };
+        }
+
+        case STEP_STATUS.AWAITING_AGENT_RESULT:
+          return {
+            interaction: null,
+            next: nextForSession(context.session, valueFromConfig(nextWhenDrafting, context, state)),
+            stepMachine: publicState(this, state)
+          };
+
+        case STEP_STATUS.WAITING_FOR_INPUT:
+          return {
+            ...optionalActionsView(context, state, onWaitingActions),
+            interaction: waitingInteraction
+              ? waitingInteraction(state, context)
+              : interaction(STEP_STATUS.WAITING_FOR_INPUT, {}, context),
+            next: nextForSession(context.session, waitingForInputNextOptions(context, state)),
+            stepMachine: publicState(this, state)
+          };
+
+        case STEP_STATUS.FAILED:
+          return {
+            ...optionalActionsView(context, state, onWaitingActions),
+            interaction: waitingInteraction ? waitingInteraction(state, context) : null,
+            next: nextForSession(context.session, valueFromConfig(nextWhenWorking, context, state)),
+            stepMachine: publicState(this, state)
+          };
+
+        case STEP_STATUS.READY:
+        case STEP_STATUS.ATTEMPTING_EXECUTION:
+        default:
+          return {
+            interaction: null,
+            next: nextForSession(context.session, valueFromConfig(nextWhenWorking, context, state)),
+            stepMachine: publicState(this, state)
+          };
+      }
+    },
+
+    async submitInput(context = {}) {
+      const state = await readState(context, this);
+      const input = normalizeMachineInput(context.input);
+      switch (state.status) {
+        case STEP_STATUS.AWAITING_AGENT_RESULT:
+        case STEP_STATUS.WAITING_FOR_INPUT:
+        case STEP_STATUS.CONFIRM_FILES:
+        case STEP_STATUS.FAILED:
+          if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
+            assertAgentResultSource(context.session, input);
+          }
+          if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+            await writeState(context, this, machineState(
+              STEP_STATUS.WAITING_FOR_INPUT,
+              normalizeWaitingForInputState(input, state)
+            ));
+            return;
+          }
+          if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
+            await writeState(context, this, machineState(normalizeUserResponseResumeStatus(state, input), {
+              response: input.text || input.fields.response,
+              source: input.source
+            }));
+            return;
+          }
+          if (input.kind !== STEP_INPUT_KIND.READY && input.kind !== STEP_INPUT_KIND.CONFIRM_FILES) {
+            throw unsupportedInputKind(input.kind, this.stepId);
+          }
+          await saveValues(context, input.fields);
+          await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
+          return;
+
+        case STEP_STATUS.DONE:
+        case STEP_STATUS.ATTEMPTING_EXECUTION:
+        default:
+          throw aiStudioError(unsupportedDoneMessage, "ai_studio_step_input_not_available");
+      }
+    },
+
+    async actionStarted(context = {}) {
+      if (!command || context.actionId !== commandActionId || command.markAttemptingOnStart === false) {
+        return;
+      }
+      const state = await readState(context, this);
+      const startStatuses = command.startStatuses || [STEP_STATUS.CONFIRM_FILES, STEP_STATUS.FAILED];
+      if (startStatuses.includes(state.status)) {
+        await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
+      }
+    },
+
+    async actionFinished(context = {}) {
+      if (!command || context.actionId !== commandActionId) {
+        return;
+      }
+      const state = await readState(context, this);
+      const finishStatuses = command.finishStatuses || [
+        STEP_STATUS.ATTEMPTING_EXECUTION,
+        STEP_STATUS.CONFIRM_FILES,
+        STEP_STATUS.WAITING_FOR_INPUT,
+        STEP_STATUS.FAILED
+      ];
+      if (!finishStatuses.includes(state.status)) {
+        return;
+      }
+      const succeeded = typeof command.succeeded === "function"
+        ? await command.succeeded(context, state)
+        : await commandSucceeded(context, commandDoneMetadata);
+      await writeState(context, this, succeeded
+        ? machineState(STEP_STATUS.DONE)
+        : command.failureState(context, state));
+    },
+
+    ...(typeof promptInstruction === "function" ? { promptInstruction } : {})
   };
 }
 
@@ -1023,136 +1380,44 @@ const checklistItemsInstalledMachine = {
   stepId: "checklist_items_installed"
 };
 
-const issueDefinitionMachine = {
+const issueDefinitionMachine = createEditableArtifactReviewMachine({
+  command: {
+    actionId: "use_existing_issue",
+    doneMetadata: "issue_url",
+    failureState: (context = {}) => machineState(STEP_STATUS.FAILED, {
+      message: normalizeText(context.actionResult?.message)
+    }),
+    finishStatuses: [
+      STEP_STATUS.WAITING_FOR_INPUT,
+      STEP_STATUS.CONFIRM_FILES,
+      STEP_STATUS.FAILED
+    ],
+    markAttemptingOnStart: false
+  },
+  done: (session = {}) => metadataExists(session, "issue_url"),
+  draftReady: issueFilesAreReady,
+  initialDetails: {
+    doing: "discussion"
+  },
+  interaction: issueInputInteraction,
+  nextWhenDrafting: {
+    disabledReason: "Define and save the issue before continuing."
+  },
+  nextWhenWorking: {
+    disabledReason: "Define and save the issue before continuing."
+  },
+  onConfirmedActions: (context = {}) => disableAction(context.session, "use_existing_issue", "Issue details are already saved."),
+  onDoneActions: (context = {}) => disableAction(context.session, "use_existing_issue", "An existing issue is already selected."),
+  readValues: readIssueFieldValues,
+  saveValues: writeIssueFieldValues,
   stepId: "issue_file_created",
-
-  initialState(context = {}) {
-    if (metadataExists(context.session, "issue_url")) {
-      return machineState(STEP_STATUS.DONE);
-    }
-    if (issueFilesAreReady(context.session)) {
-      return machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-    return machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-      doing: "discussion"
-    });
-  },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    const existingIssueSelected = metadataExists(context.session, "issue_url");
-    const filesReady = issueFilesAreReady(context.session);
-    if (existingIssueSelected) {
-      state = machineState(STEP_STATUS.DONE);
-    } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-
-    switch (state.status) {
-      case STEP_STATUS.DONE:
-        return {
-          actions: disableAction(context.session, "use_existing_issue", "An existing issue is already selected."),
-          interaction: null,
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.CONFIRM_FILES: {
-        const values = await readIssueFieldValues(context, true);
-        return {
-          actions: disableAction(context.session, "use_existing_issue", "Issue details are already saved."),
-          interaction: issueInputInteraction(STEP_STATUS.CONFIRM_FILES, values),
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-      }
-
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.FAILED:
-      default:
-        return {
-          interaction: issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {}),
-          next: nextForSession(context.session, {
-            disabledReason: "Define and save the issue before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
-  },
-
-  async submitInput(context = {}) {
-    const state = await readState(context, this);
-    const input = normalizeMachineInput(context.input);
-    switch (state.status) {
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.FAILED: {
-        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
-          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-            doing: "discussion",
-            message: input.message
-          }));
-          return;
-        }
-        if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-          await writeState(context, this, machineState(state.from || STEP_STATUS.WAITING_FOR_INPUT, {
-            response: input.text,
-            source: input.source
-          }));
-          return;
-        }
-        if (input.kind !== STEP_INPUT_KIND.READY && input.kind !== STEP_INPUT_KIND.CONFIRM_FILES) {
-          throw unsupportedInputKind(input.kind, this.stepId);
-        }
-        const fields = input.fields;
-        const title = requireInputValue(fields.title, "Issue title is required.");
-        const body = requireInputValue(fields.body, "Issue body is required.");
-        const word = requireInputValue(fields.word, "Session label is required.");
-
-        await Promise.all([
-          context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT, artifactText(title)),
-          context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_BODY_ARTIFACT, artifactText(body)),
-          context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_WORD_ARTIFACT, artifactText(word)),
-          context.runtime.store.writeMetadataValue(context.session.sessionId, "issue_title", title),
-          context.runtime.store.writeIssueWordMetadata(context.session.sessionId, word)
-        ]);
-        await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
-        return;
-      }
-
-      case STEP_STATUS.DONE:
-      default:
-        throw aiStudioError("The issue is already complete.", "ai_studio_step_input_not_available");
-    }
-  },
-
-  async actionFinished(context = {}) {
-    if (context.actionId !== "use_existing_issue") {
-      return;
-    }
-
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.FAILED:
-        await writeState(context, this, await commandSucceeded(context, "issue_url")
-          ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.FAILED, {
-              message: normalizeText(context.actionResult?.message)
-            }));
-        return;
-
-      case STEP_STATUS.DONE:
-      default:
-        return;
-    }
-  }
-};
+  unsupportedDoneMessage: "The issue is already complete.",
+  waitingForInputState: (input = {}) => ({
+    doing: "discussion",
+    message: input.message
+  }),
+  waitingInteraction: () => issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {})
+});
 
 const issueSubmittedMachine = {
   stepId: "issue_submitted",
@@ -1281,54 +1546,28 @@ const issueSubmittedMachine = {
   }
 };
 
-const seedApplicationDefinitionMachine = {
+const seedApplicationDefinitionMachine = createEditableArtifactReviewMachine({
+  draftReady: issueFilesAreReady,
+  initialDetails: {
+    doing: "discussion"
+  },
+  interaction: issueInputInteraction,
+  nextWhenDrafting: {
+    disabledReason: "Define and save the seed issue before continuing."
+  },
+  nextWhenWorking: {
+    disabledReason: "Define and save the seed issue before continuing."
+  },
+  readValues: readIssueFieldValues,
+  saveValues: writeIssueFieldValues,
   stepId: "seed_application_defined",
-
-  initialState(context = {}) {
-    if (issueFilesAreReady(context.session)) {
-      return machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-    return machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-      doing: "discussion"
-    });
-  },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    const filesReady = issueFilesAreReady(context.session);
-    if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES) {
-      state = machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-
-    switch (state.status) {
-      case STEP_STATUS.CONFIRM_FILES: {
-        const values = await readIssueFieldValues(context, true);
-        return {
-          interaction: issueInputInteraction(STEP_STATUS.CONFIRM_FILES, values),
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-      }
-
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.FAILED:
-      default:
-        return {
-          interaction: issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {}),
-          next: nextForSession(context.session, {
-            disabledReason: "Define and save the seed issue before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
-  },
-
-  async submitInput(context = {}) {
-    return issueDefinitionMachine.submitInput.call(this, context);
-  }
-};
+  unsupportedDoneMessage: "The seed definition step cannot accept input right now.",
+  waitingForInputState: (input = {}) => ({
+    doing: "discussion",
+    message: input.message
+  }),
+  waitingInteraction: () => issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {})
+});
 
 const makePlanMachine = {
   promptActionId: "make_plan",
@@ -1543,106 +1782,51 @@ const reportCreatedMachine = {
   }
 };
 
-const agentConversationMachine = {
+const agentConversationMachine = createChatWithAiMachine({
+  completionPolicy: {
+    decidedBy: "user"
+  },
+  nextWhenIdle: (context = {}) => ({
+    disabledReason: "Ask Codex for changes before continuing.",
+    enabled: artifactIsReady(context.session, HUMAN_INPUT_RESPONSE_ARTIFACT)
+  }),
   promptActionId: "agent_conversation",
-  stepId: "agent_conversation",
+  stepId: "agent_conversation"
+});
 
-  initialState() {
-    return machineState(STEP_STATUS.READY);
+const maintenanceConversationMachine = createChatWithAiMachine({
+  completionPolicy: {
+    decidedBy: "user"
   },
-
-  async view(context = {}) {
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.WAITING_FOR_INPUT:
-        return promptStepWaitingForInputView(context, this, state);
-      case STEP_STATUS.AWAITING_AGENT_RESULT:
-        return promptStepWaitingView(context, this, state, "Wait for Codex to finish this conversation turn.");
-      case STEP_STATUS.READY:
-      case STEP_STATUS.DONE:
-      case STEP_STATUS.FAILED:
-      default:
-        return {
-          next: nextForSession(context.session, {
-            enabled: artifactIsReady(context.session, HUMAN_INPUT_RESPONSE_ARTIFACT),
-            disabledReason: "Ask Codex for changes before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
-  },
-
-  async submitInput(context = {}) {
-    return handleStandardPromptInput(context, this, {
-      responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
-    });
-  },
-
-  async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "agent_conversation", {
-      restartDone: true
-    });
-  },
-
-  promptInstruction() {
-    return currentStepHelperInstruction({
-      doneFields: {
-        response: "Concise Markdown response describing what changed, checks run, and any blockers"
-      },
-      doneMeaning: "The current Codex conversation turn is complete. The user decides whether to ask another question or continue.",
-      waitingForInputMeaning: "You need a user answer before you can complete this conversation turn."
-    });
-  }
-};
-
-const maintenanceConversationMachine = {
-  ...agentConversationMachine,
+  nextWhenIdle: (context = {}) => ({
+    disabledReason: "Ask Codex for changes before continuing.",
+    enabled: artifactIsReady(context.session, HUMAN_INPUT_RESPONSE_ARTIFACT)
+  }),
+  promptActionId: "agent_conversation",
   stepId: "maintenance_conversation"
-};
+});
 
-const implementationReviewMachine = {
-  ...agentConversationMachine,
+const implementationReviewMachine = createChatWithAiMachine({
+  completionPolicy: {
+    decidedBy: "ai",
+    enoughWhen: "the requested focused tweak has either been made and focused checks run when practical, or you can clearly report that no code change is needed.",
+    waitingForInputMeaning: "You cannot complete the focused review tweak without a user decision or missing project detail."
+  },
   promptActionId: "human_review_conversation",
   stepId: "implementation_reviewed",
+  waitingMessage: "Wait for Codex to finish this review turn."
+});
 
-  async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "human_review_conversation", {
-      restartDone: true
-    });
+const finalReviewMachine = createChatWithAiMachine({
+  completionPolicy: {
+    decidedBy: "ai",
+    enoughWhen: "the requested final tweak has either been made or you can clearly report the blocker; AI Studio can then rerun review and validation.",
+    waitingForInputMeaning: "You cannot complete the final review tweak without a user decision or missing project detail."
   },
-
-  async view(context = {}) {
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.WAITING_FOR_INPUT:
-        return promptStepWaitingForInputView(context, this, state);
-      case STEP_STATUS.AWAITING_AGENT_RESULT:
-        return promptStepWaitingView(context, this, state, "Wait for Codex to finish this review turn.");
-      case STEP_STATUS.READY:
-      case STEP_STATUS.DONE:
-      case STEP_STATUS.FAILED:
-      default:
-        return {
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
-  }
-};
-
-const finalReviewMachine = {
-  ...implementationReviewMachine,
   promptActionId: "final_review_conversation",
   stepId: "changes_accepted",
-
-  async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "final_review_conversation", {
-      restartDone: true
-    });
-  }
-};
+  waitingMessage: "Wait for Codex to finish this review turn."
+});
 
 const projectValidatedMachine = {
   stepId: "project_validated",
@@ -1867,188 +2051,33 @@ const mainCheckoutSyncedMachine = {
   }
 };
 
-const pullRequestMachine = {
-  stepId: "create_pull_request",
-
-  initialState(context = {}) {
-    if (metadataExists(context.session, "pr_url")) {
-      return machineState(STEP_STATUS.DONE);
-    }
-    if (pullRequestFilesAreReady(context.session)) {
-      return machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-    return machineState(STEP_STATUS.AWAITING_AGENT_RESULT);
+const pullRequestMachine = createEditableArtifactReviewMachine({
+  command: {
+    actionId: "create_pr_on_gh",
+    doneMetadata: "pr_url",
+    failureState: (context = {}) => machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+      from: STEP_STATUS.ATTEMPTING_EXECUTION,
+      message: normalizeText(context.actionResult?.message),
+      output: normalizeText(context.actionResult?.output)
+    })
   },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    const created = metadataExists(context.session, "pr_url");
-    const filesReady = pullRequestFilesAreReady(context.session);
-    if (created) {
-      state = machineState(STEP_STATUS.DONE);
-    } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = machineState(STEP_STATUS.CONFIRM_FILES);
-    }
-
-    switch (state.status) {
-      case STEP_STATUS.DONE:
-        return {
-          interaction: null,
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.CONFIRM_FILES: {
-        const values = await readPullRequestFieldValues(context, true);
-        return {
-          interaction: pullRequestInputInteraction(values),
-          next: nextForSession(context.session, {
-            disabledReason: "Create the pull request before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-      }
-
-      case STEP_STATUS.AWAITING_AGENT_RESULT:
-        return {
-          interaction: null,
-          next: nextForSession(context.session, {
-            disabledReason: "Resolve the pull request content before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.WAITING_FOR_INPUT:
-        return {
-          actions: disableAction(context.session, "create_pr_on_gh", "Resolve the pull request input request before retrying."),
-          interaction: commandFailureInteraction({
-            prompt: state.message || "Codex needs more information before the pull request can continue.",
-            title: "Pull request needs input"
-          }),
-          next: nextForSession(context.session, {
-            disabledReason: "Resolve the pull request input request before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.FAILED:
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      default:
-        return {
-          interaction: null,
-          next: nextForSession(context.session, {
-            disabledReason: "Create the pull request before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
+  done: (session = {}) => metadataExists(session, "pr_url"),
+  draftOrigin: "prompt",
+  draftReady: pullRequestFilesAreReady,
+  interaction: (_status, values = {}) => pullRequestInputInteraction(values),
+  nextWhenConfirmed: {
+    disabledReason: "Create the pull request before continuing."
   },
-
-  async submitInput(context = {}) {
-    const state = await readState(context, this);
-    const input = normalizeMachineInput(context.input);
-    switch (state.status) {
-      case STEP_STATUS.AWAITING_AGENT_RESULT:
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.FAILED: {
-        if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
-          assertAgentResultSource(context.session, input);
-        }
-        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
-          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-            from: state.from || STEP_STATUS.AWAITING_AGENT_RESULT,
-            message: input.message,
-            source: input.source
-          }));
-          return;
-        }
-        if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-          const resumeState = state.from === STEP_STATUS.ATTEMPTING_EXECUTION
-            ? STEP_STATUS.CONFIRM_FILES
-            : STEP_STATUS.AWAITING_AGENT_RESULT;
-          await writeState(context, this, machineState(resumeState, {
-            response: input.text || input.fields.response,
-            source: input.source
-          }));
-          return;
-        }
-        if (input.kind !== STEP_INPUT_KIND.READY && input.kind !== STEP_INPUT_KIND.CONFIRM_FILES) {
-          throw unsupportedInputKind(input.kind, this.stepId);
-        }
-        const fields = input.fields;
-        const title = requireInputValue(fields.title, "Pull request title is required.");
-        const body = requireInputValue(fields.body, "Pull request body is required.");
-        await Promise.all([
-          context.runtime.store.writeArtifact(
-            context.session.sessionId,
-            PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
-            artifactText(title)
-          ),
-          context.runtime.store.writeArtifact(
-            context.session.sessionId,
-            PULL_REQUEST_BODY_DRAFT_ARTIFACT,
-            artifactText(body)
-          )
-        ]);
-        await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES));
-        return;
-      }
-
-      case STEP_STATUS.DONE:
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      default:
-        throw aiStudioError("The pull request step cannot accept input right now.", "ai_studio_step_input_not_available");
-    }
+  nextWhenDrafting: {
+    disabledReason: "Resolve the pull request content before continuing."
   },
-
-  async actionStarted(context = {}) {
-    if (context.actionId !== "create_pr_on_gh") {
-      return;
-    }
-
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.FAILED:
-        await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
-        return;
-
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.DONE:
-      default:
-        return;
-    }
+  nextWhenWaitingForInput: {
+    disabledReason: "Resolve the pull request input request before continuing."
   },
-
-  async actionFinished(context = {}) {
-    if (context.actionId !== "create_pr_on_gh") {
-      return;
-    }
-
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.CONFIRM_FILES:
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.FAILED:
-        await writeState(context, this, await commandSucceeded(context, "pr_url")
-          ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-              from: STEP_STATUS.ATTEMPTING_EXECUTION,
-              message: normalizeText(context.actionResult?.message),
-              output: normalizeText(context.actionResult?.output)
-            }));
-        return;
-
-      case STEP_STATUS.DONE:
-      default:
-        return;
-    }
+  nextWhenWorking: {
+    disabledReason: "Create the pull request before continuing."
   },
-
+  onWaitingActions: (context = {}) => disableAction(context.session, "create_pr_on_gh", "Resolve the pull request input request before retrying."),
   promptInstruction() {
     return currentStepHelperInstruction({
       doneFields: {
@@ -2058,8 +2087,19 @@ const pullRequestMachine = {
       doneMeaning: "The pull request title and body are ready for user confirmation.",
       waitingForInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
     });
-  }
-};
+  },
+  readValues: readPullRequestFieldValues,
+  saveValues: writePullRequestFieldValues,
+  stepId: "create_pull_request",
+  unsupportedDoneMessage: "The pull request step cannot accept input right now.",
+  userResponseResumeStatus: (state = {}) => state.from === STEP_STATUS.ATTEMPTING_EXECUTION
+    ? STEP_STATUS.CONFIRM_FILES
+    : STEP_STATUS.AWAITING_AGENT_RESULT,
+  waitingInteraction: (state = {}) => commandFailureInteraction({
+    prompt: state.message || "Codex needs more information before the pull request can continue.",
+    title: "Pull request needs input"
+  })
+});
 
 const sessionFinishedMachine = {
   stepId: "session_finished",

@@ -24,46 +24,55 @@
         v-if="selection.selectedSession"
         class="studio-ai-sessions__app-bar-actions"
       >
-        <v-btn
-          v-if="inspectDiffVisible"
-          class="studio-ai-sessions__inspect-button"
-          :disabled="selectedReview.diffDisabled"
-          :loading="selectedDiff.loading"
-          :prepend-icon="mdiFileCompare"
-          size="small"
-          :title="selectedReview.diffTitle"
-          type="button"
-          variant="tonal"
-          @click="selectedDiff.openDialog"
+        <div
+          v-if="sessionMode === 'inspect'"
+          class="studio-ai-sessions__inspect-tools"
         >
-          Review diff
-        </v-btn>
+          <v-btn
+            v-if="inspectDiffVisible"
+            class="studio-ai-sessions__inspect-button"
+            :disabled="selectedReview.diffDisabled"
+            :loading="selectedDiff.loading"
+            :prepend-icon="mdiFileCompare"
+            size="small"
+            :title="selectedReview.diffTitle"
+            type="button"
+            variant="tonal"
+            @click="selectedDiff.openDialog"
+          >
+            Review diff
+          </v-btn>
 
-        <v-btn
-          class="studio-ai-sessions__inspect-button"
-          :prepend-icon="inspectButtonIcon"
-          size="small"
-          variant="tonal"
-          @click="toggleInspectMode"
-        >
-          {{ inspectButtonLabel }}
-        </v-btn>
+          <AiStudioShellControls
+            v-if="selectedToolbarSession"
+            :key="`shell:${selectedToolbarSession.sessionId}`"
+            :session="selectedToolbarSession"
+            show-activator
+            window-displayed
+          />
+        </div>
 
         <AiStudioLaunchControls
           v-if="selectedToolbarSession"
           :key="`launch:${selectedToolbarSession.sessionId}`"
+          button-size="large"
+          button-variant="flat"
           :busy="false"
+          class="studio-ai-sessions__run-controls"
+          prominent
           :session="selectedToolbarSession"
           window-displayed
         />
 
-        <AiStudioShellControls
-          v-if="selectedToolbarSession"
-          :key="`shell:${selectedToolbarSession.sessionId}`"
-          :session="selectedToolbarSession"
-          :show-activator="sessionMode === 'inspect'"
-          :window-displayed="sessionMode === 'inspect'"
-        />
+        <v-btn
+          class="studio-ai-sessions__mode-switch"
+          :prepend-icon="modeSwitchIcon"
+          type="button"
+          variant="tonal"
+          @click="switchSessionMode"
+        >
+          {{ modeSwitchLabel }}
+        </v-btn>
       </div>
     </Teleport>
 
@@ -103,8 +112,8 @@
 import { computed, proxyRefs, reactive, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
-  mdiClose,
   mdiFileCompare,
+  mdiPlayCircleOutline,
   mdiTune
 } from "@mdi/js";
 import AiStudioLaunchControls from "@/components/studio/AiStudioLaunchControls.vue";
@@ -157,8 +166,9 @@ const toolbar = proxyRefs({
 });
 
 const sessionMode = computed(() => route.query.mode === "inspect" ? "inspect" : "autopilot");
-const inspectButtonIcon = computed(() => sessionMode.value === "inspect" ? mdiClose : mdiTune);
-const inspectButtonLabel = computed(() => sessionMode.value === "inspect" ? "Quit inspect" : "Inspect");
+const modeSwitchTarget = computed(() => sessionMode.value === "inspect" ? "autopilot" : "inspect");
+const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "Inspect" : "Autopilot");
+const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
 const pageLoading = sessionData.pageLoading;
 const selectedToolbarSession = computed(() => {
   return (toolbar.sessions || []).find((session) => session.sessionId === selection.selectedSessionId) || null;
@@ -245,12 +255,8 @@ function setSessionMode(mode = "autopilot") {
   });
 }
 
-function toggleInspectMode() {
-  aiStudioSessionDebugLog("client.sessionPanel.toggleInspectMode", {
-    selectedSessionId: String(selection.selectedSessionId || ""),
-    sessionMode: sessionMode.value
-  });
-  setSessionMode(sessionMode.value === "inspect" ? "autopilot" : "inspect");
+function switchSessionMode() {
+  setSessionMode(modeSwitchTarget.value);
 }
 
 watch(sessionMode, () => {
@@ -313,11 +319,26 @@ watch(sessionData.sessions, (sessions = []) => {
   display: flex;
   gap: 0.35rem;
   justify-content: flex-end;
+  margin-left: auto;
   min-width: 0;
 }
 
+.studio-ai-sessions__inspect-tools,
+.studio-ai-sessions__mode-switch,
+.studio-ai-sessions__run-controls,
 .studio-ai-sessions__inspect-button {
   flex: 0 0 auto;
+}
+
+.studio-ai-sessions__inspect-tools {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.studio-ai-sessions__mode-switch {
+  min-width: 7.35rem;
 }
 
 @media (max-width: 600px) {
@@ -328,6 +349,11 @@ watch(sessionData.sessions, (sessions = []) => {
   .studio-ai-sessions__inspect-button {
     min-width: 0;
     padding-inline: 0.55rem;
+  }
+
+  .studio-ai-sessions__mode-switch {
+    min-width: 6.75rem;
+    padding-inline: 0.45rem;
   }
 }
 </style>

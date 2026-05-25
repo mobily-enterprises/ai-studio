@@ -13,6 +13,7 @@
       class="studio-autopilot-prompt-textarea__input"
       :disabled="disabled"
       :error-messages="combinedErrorMessages"
+      hide-details="auto"
       :hint="hint"
       :label="label"
       :persistent-hint="persistentHint"
@@ -20,25 +21,6 @@
       :variant="variant"
       @update:model-value="$emit('update:modelValue', String($event || ''))"
     />
-
-    <div class="studio-autopilot-prompt-textarea__footer">
-      <v-btn
-        class="studio-autopilot-prompt-textarea__attach"
-        :disabled="disabled || uploading || !sessionId"
-        :loading="uploading"
-        :prepend-icon="mdiPaperclip"
-        size="small"
-        type="button"
-        variant="tonal"
-        @click="openFilePicker"
-      >
-        Attach file
-      </v-btn>
-
-      <span class="studio-autopilot-prompt-textarea__hint">
-        Files are uploaded for Codex and added to this prompt.
-      </span>
-    </div>
 
     <div
       v-if="uploadedAttachments.length"
@@ -54,19 +36,11 @@
         {{ attachment.fileName }}
       </v-chip>
     </div>
-
-    <input
-      ref="fileInput"
-      class="studio-autopilot-prompt-textarea__file-input"
-      multiple
-      type="file"
-      @change="handleFileInputChange"
-    >
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import {
   mdiPaperclip
 } from "@mdi/js";
@@ -125,7 +99,6 @@ const props = defineProps({
   }
 });
 
-const fileInput = ref(null);
 const { uploadAttachment } = useAiStudioCodexCommands();
 const attachments = useCodexAttachments({
   canUpload: () => !props.disabled,
@@ -136,7 +109,6 @@ const attachments = useCodexAttachments({
   uploadAttachment
 });
 const dragActive = attachments.dragActive;
-const uploading = attachments.uploading;
 const uploadedAttachments = attachments.attachments;
 const combinedErrorMessages = computed(() => {
   const parentMessages = Array.isArray(props.errorMessages)
@@ -147,10 +119,6 @@ const combinedErrorMessages = computed(() => {
     : parentMessages;
 });
 
-function openFilePicker() {
-  fileInput.value?.click?.();
-}
-
 function updatePromptWithAttachments(uploadedAttachments = []) {
   emit(
     "update:modelValue",
@@ -160,13 +128,6 @@ function updatePromptWithAttachments(uploadedAttachments = []) {
 
 function handleDrop(event) {
   void attachments.handleDrop(event);
-}
-
-function handleFileInputChange(event) {
-  void attachments.uploadFiles(event?.target?.files);
-  if (event?.target) {
-    event.target.value = "";
-  }
 }
 
 const handleDragEnter = attachments.handleDragEnter;
@@ -187,21 +148,10 @@ const handleDragLeave = attachments.handleDragLeave;
   outline-offset: 4px;
 }
 
-.studio-autopilot-prompt-textarea__footer,
 .studio-autopilot-prompt-textarea__attachments {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
-}
-
-.studio-autopilot-prompt-textarea__hint {
-  color: rgb(var(--v-theme-on-surface-variant));
-  font-size: 0.78rem;
-  line-height: 1.3;
-}
-
-.studio-autopilot-prompt-textarea__file-input {
-  display: none;
 }
 </style>
