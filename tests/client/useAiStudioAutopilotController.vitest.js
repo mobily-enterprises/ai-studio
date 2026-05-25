@@ -244,10 +244,33 @@ describe("useAiStudioAutopilotController", () => {
     expect(context.session.value.currentStep).toBe("step_b");
     expect(context.controller.failure.value).toBe(null);
   });
+
+  it("keeps refreshing after command success until attempting_execution clears", async () => {
+    const context = createControllerContext({
+      commandCompletesWithServerAdvance: true,
+      commandCompletionStaleRefreshes: 2,
+      operation: {
+        actionId: "cmd_action",
+        executable: true,
+        id: "command-terminal:cmd_action",
+        kind: "command",
+        label: "Run command",
+        route: "command-terminal"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.refreshSessionData).toHaveBeenCalledTimes(4);
+    expect(context.actions.advanceSession).toHaveBeenCalledTimes(1);
+    expect(context.session.value.currentStep).toBe("step_b");
+    expect(context.controller.failure.value).toBe(null);
+  });
 });
 
 function createControllerContext({
   commandCompletesWithServerAdvance = false,
+  commandCompletionStaleRefreshes = 0,
   commandStartConflict = false,
   commandFails = false,
   commandTransportFailsAfterServerProgress = false,
@@ -281,6 +304,7 @@ function createControllerContext({
   const commandPreview = ref("");
   const commandResult = ref(null);
   const commandTransportFailureRefreshPending = ref(false);
+  const commandCompletionStaleRefreshesRef = ref(commandCompletionStaleRefreshes);
   const staleCommandRefreshPending = ref(false);
 
   function syncSession(values = {}) {
@@ -394,61 +418,82 @@ function createControllerContext({
     }),
     stopCommandAction: vi.fn()
   };
+  const refreshSessionData = vi.fn(async () => {
+    if (staleCommandRefreshPending.value) {
+      staleCommandRefreshPending.value = false;
+      syncSession({
+        stepId: "step_b"
+      });
+      return;
+    }
+    if (commandTransportFailureRefreshPending.value) {
+      commandTransportFailureRefreshPending.value = false;
+      stepMachine.value = {
+        status: "done",
+        stepId: session.value.currentStep
+      };
+      syncSession({
+        operation: {
+          executable: true,
+          id: "session-advance:step_b",
+          kind: "advance",
+          label: "Next",
+          route: "session-advance"
+        },
+        screen: {
+          kind: "ready",
+          title: "Command completed"
+        }
+      });
+      return;
+    }
+    if (commandResult.value?.ok === true && commandCompletionStaleRefreshesRef.value > 0) {
+      commandCompletionStaleRefreshesRef.value -= 1;
+      stepMachine.value = {
+        status: "attempting_execution",
+        stepId: session.value.currentStep
+      };
+      syncSession({
+        operation: {
+          executable: false,
+          kind: "wait",
+          reason: "command applying"
+        },
+        screen: {
+          kind: "command",
+          title: "Command applying"
+        }
+      });
+      return;
+    }
+    if (commandCompletesWithServerAdvance && commandResult.value?.ok === true) {
+      stepMachine.value = {
+        status: "done",
+        stepId: session.value.currentStep
+      };
+      syncSession({
+        operation: {
+          executable: true,
+          id: "session-advance:step_b",
+          kind: "advance",
+          label: "Next",
+          route: "session-advance"
+        },
+        screen: {
+          kind: "ready",
+          title: "Command completed"
+        }
+      });
+      return;
+    }
+    syncSession();
+  });
   const controller = useAiStudioAutopilotController({
     actions: actionSurface,
+    commandCompletionRefreshDelayMs: 0,
     commandRunner,
     enabled: enabledRef,
-    refreshSessionData: async () => {
-      if (staleCommandRefreshPending.value) {
-        staleCommandRefreshPending.value = false;
-        syncSession({
-          stepId: "step_b"
-        });
-        return;
-      }
-      if (commandTransportFailureRefreshPending.value) {
-        commandTransportFailureRefreshPending.value = false;
-        stepMachine.value = {
-          status: "done",
-          stepId: session.value.currentStep
-        };
-        syncSession({
-          operation: {
-            executable: true,
-            id: "session-advance:step_b",
-            kind: "advance",
-            label: "Next",
-            route: "session-advance"
-          },
-          screen: {
-            kind: "ready",
-            title: "Command completed"
-          }
-        });
-        return;
-      }
-      if (commandCompletesWithServerAdvance && commandResult.value?.ok === true) {
-        stepMachine.value = {
-          status: "done",
-          stepId: session.value.currentStep
-        };
-        syncSession({
-          operation: {
-            executable: true,
-            id: "session-advance:step_b",
-            kind: "advance",
-            label: "Next",
-            route: "session-advance"
-          },
-          screen: {
-            kind: "ready",
-            title: "Command completed"
-          }
-        });
-        return;
-      }
-      syncSession();
-    },
+    refreshSessionData,
     session
   });
 
@@ -457,6 +502,7 @@ function createControllerContext({
     commandFails: commandFailsRef,
     commandRunner,
     controller,
+    refreshSessionData,
     session
   };
 }

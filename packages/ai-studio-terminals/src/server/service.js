@@ -2,6 +2,31 @@ import { createCodexTerminalController } from "./codexTerminal.js";
 import { createCommandTerminalController } from "./commandTerminal.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
 import { createShellTerminalController } from "./shellTerminal.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog
+} from "../../../../server/lib/aiStudio/sessionDebugLog.js";
+
+function scheduleTerminalBackgroundTask(label, task, details = {}) {
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog(`server.terminals.${label}.scheduled`, details);
+  void (async () => {
+    try {
+      await task();
+      aiStudioSessionDebugLog(`server.terminals.${label}.done`, {
+        ...details,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+    } catch (error) {
+      aiStudioSessionDebugLog(`server.terminals.${label}.error`, {
+        ...details,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error)
+      });
+    }
+  })();
+}
 
 function createService({
   projectService,
@@ -21,10 +46,31 @@ function createService({
       if (!String(metadata.worktree_path || "").trim()) {
         return;
       }
-      await codex.ensureThread(session.sessionId);
+      scheduleTerminalBackgroundTask("codexBootstrap", async () => {
+        const result = await codex.ensureThread(session.sessionId);
+        if (result?.ok === false) {
+          throw new Error(result.error || "AI Studio Codex terminal could not be prepared.");
+        }
+      }, {
+        reason: "command-terminal-success",
+        sessionId: String(session.sessionId || "")
+      });
     },
     projectService,
-    publishSessionChanged: publishSessionChanged.commandTerminal
+    publishSessionChanged: async (sessionId, event = {}) => {
+      if (typeof publishSessionChanged.commandTerminal !== "function") {
+        return null;
+      }
+      scheduleTerminalBackgroundTask(
+        "commandTerminalPublish",
+        () => publishSessionChanged.commandTerminal(sessionId, event),
+        {
+          reason: String(event.reason || ""),
+          sessionId: String(sessionId || "")
+        }
+      );
+      return null;
+    }
   });
   const launchTarget = createLaunchTargetTerminalController({
     projectService,

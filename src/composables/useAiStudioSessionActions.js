@@ -1,6 +1,7 @@
-import { computed, ref, unref } from "vue";
+import { computed, proxyRefs, ref, unref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
+import { usersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
 import {
   normalizeActionInputFields
 } from "@/lib/aiStudioActionInputModel.js";
@@ -24,6 +25,12 @@ import {
 import {
   readRefOrGetterBoolean
 } from "@/lib/vueRefOrGetterValue.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "@/lib/aiStudioSessionDebugLog.js";
 
 function displayableActionResultMessage(result = {}) {
   const message = String(result?.message || "");
@@ -44,6 +51,10 @@ function actionDispatchRoute(action = {}) {
   return String(action.dispatchRoute || "session-action").trim();
 }
 
+function staleAdvanceError(error = {}) {
+  return String(error?.code || "") === "ai_studio_step_not_ready";
+}
+
 function useAiStudioSessionActions({
   clearCopyStatus = () => null,
   commandBusy = () => false,
@@ -56,6 +67,9 @@ function useAiStudioSessionActions({
   sessionsApiPath
 } = {}) {
   const activeActionId = ref("");
+  const advanceRunning = ref(false);
+  const advanceMessage = ref("");
+  const advanceMessageType = ref("success");
 
   const runActionCommand = useCommand({
     access: "never",
@@ -72,7 +86,19 @@ function useAiStudioSessionActions({
       success: "AI Studio action completed."
     },
     onRunSuccess: async (response, { context } = {}) => {
-      if (actionShouldAdvance(response, context)) {
+      const shouldAdvance = actionShouldAdvance(response, context);
+      aiStudioSessionDebugLog("client.sessionActions.runAction.success", {
+        ...aiStudioSessionDebugSummary(response || {}),
+        actionId: String(context?.actionId || ""),
+        actionResultStatus: String(response?.actionResult?.status || ""),
+        advanceOnSuccess: context?.advanceOnSuccess === true,
+        shouldAdvance
+      });
+      if (shouldAdvance) {
+        aiStudioSessionDebugLog("client.sessionActions.runAction.autoAdvance.start", {
+          actionId: String(context?.actionId || ""),
+          sessionId: String(context?.sessionId || "")
+        });
         await advanceCommand.run({
           sessionId: context.sessionId
         });
@@ -101,8 +127,12 @@ function useAiStudioSessionActions({
       success: "AI Studio intent completed."
     },
     onRunSuccess: async (response, { context } = {}) => {
-      void response;
-      void context;
+      aiStudioSessionDebugLog("client.sessionActions.runIntent.success", {
+        ...aiStudioSessionDebugSummary(response || {}),
+        intentId: String(context?.intentId || ""),
+        requestedStepId: String(context?.stepId || ""),
+        requestedStepStatus: String(context?.stepStatus || "")
+      });
       await refreshSessionData();
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -111,26 +141,11 @@ function useAiStudioSessionActions({
     writeMethod: "POST"
   });
 
-  const advanceCommand = useCommand({
-    access: "never",
-    apiSuffix: AI_STUDIO_SESSIONS_API_SUFFIX,
-    buildCommandOptions: (_payload, { context }) => ({
-      method: "POST",
-      options: LOCAL_STUDIO_COMMAND_OPTIONS,
-      path: aiStudioSessionPath(sessionsApiPath.value, context?.sessionId, "/advance")
-    }),
-    fallbackRunError: "AI Studio session could not advance.",
-    messages: {
-      error: "AI Studio session could not advance.",
-      success: "AI Studio session advanced."
-    },
-    onRunSuccess: async () => {
-      await refreshSessionData();
-    },
-    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "ai-studio.sessions.advance",
-    surfaceId: AI_STUDIO_SURFACE_ID,
-    writeMethod: "POST"
+  const advanceCommand = proxyRefs({
+    isRunning: advanceRunning,
+    message: advanceMessage,
+    messageType: advanceMessageType,
+    run: runAdvanceCommand
   });
 
   const rewindCommand = useCommand({
@@ -228,6 +243,58 @@ function useAiStudioSessionActions({
     activeActionId.value = "";
   }
 
+  async function runAdvanceCommand({
+    sessionId = unref(selectedSessionId)
+  } = {}) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || advanceRunning.value) {
+      return null;
+    }
+    advanceRunning.value = true;
+    advanceMessage.value = "";
+    advanceMessageType.value = "success";
+    try {
+      const response = await usersWebHttpClient.request(
+        aiStudioSessionPath(sessionsApiPath.value, normalizedSessionId, "/advance"),
+        {
+          method: "POST",
+          ...LOCAL_STUDIO_COMMAND_OPTIONS
+        }
+      );
+      aiStudioSessionDebugLog("client.sessionActions.advanceCommand.success", {
+        ...aiStudioSessionDebugSummary(response || selectedSession.value || {}),
+        selectedSessionId: String(unref(selectedSessionId) || "")
+      });
+      advanceMessage.value = "AI Studio session advanced.";
+      await refreshSessionData();
+      return response;
+    } catch (error) {
+      if (staleAdvanceError(error)) {
+        aiStudioSessionDebugLog("client.sessionActions.advanceCommand.stale", {
+          ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+          code: String(error?.code || ""),
+          error: aiStudioSessionDebugError(error),
+          selectedSessionId: String(unref(selectedSessionId) || ""),
+          sessionId: normalizedSessionId,
+          status: error?.status ?? null
+        });
+        advanceMessage.value = "";
+        await refreshSessionData();
+        return {
+          code: String(error?.code || ""),
+          ok: false,
+          stale: true,
+          status: error?.status ?? null
+        };
+      }
+      advanceMessageType.value = "error";
+      advanceMessage.value = String(error?.message || "AI Studio session could not advance.");
+      throw error;
+    } finally {
+      advanceRunning.value = false;
+    }
+  }
+
   async function runActionById({
     actionId = "",
     advanceOnSuccess = false,
@@ -236,18 +303,50 @@ function useAiStudioSessionActions({
   } = {}) {
     const normalizedActionId = String(actionId || "").trim();
     const normalizedSessionId = String(sessionId || "").trim();
-    if (!normalizedSessionId || !normalizedActionId || readRefOrGetterBoolean(commandBusy)) {
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!normalizedSessionId || !normalizedActionId || busy) {
+      aiStudioSessionDebugLog("client.sessionActions.runActionById.skipped", {
+        actionId: normalizedActionId,
+        busy,
+        reason: !normalizedSessionId ? "missing_session" : !normalizedActionId ? "missing_action" : "busy",
+        sessionId: normalizedSessionId
+      });
       return;
     }
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionActions.runActionById.start", {
+      ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+      actionId: normalizedActionId,
+      advanceOnSuccess: advanceOnSuccess === true,
+      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
+      sessionId: normalizedSessionId
+    });
     clearCopyStatus();
     activeActionId.value = normalizedActionId;
     try {
-      return await runActionCommand.run({
+      const response = await runActionCommand.run({
         actionId: normalizedActionId,
         advanceOnSuccess: advanceOnSuccess === true,
         input: input && typeof input === "object" && !Array.isArray(input) ? input : {},
         sessionId: normalizedSessionId
       });
+      aiStudioSessionDebugLog("client.sessionActions.runActionById.done", {
+        ...aiStudioSessionDebugSummary(response || {}),
+        actionId: normalizedActionId,
+        actionResultStatus: String(response?.actionResult?.status || ""),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        ok: response?.ok !== false,
+        sessionId: normalizedSessionId
+      });
+      return response;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionActions.runActionById.error", {
+        actionId: normalizedActionId,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: normalizedSessionId
+      });
+      throw error;
     } finally {
       activeActionId.value = "";
     }
@@ -262,19 +361,51 @@ function useAiStudioSessionActions({
   } = {}) {
     const normalizedIntentId = String(intentId || "").trim();
     const normalizedSessionId = String(sessionId || "").trim();
-    if (!normalizedSessionId || !normalizedIntentId || readRefOrGetterBoolean(commandBusy)) {
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!normalizedSessionId || !normalizedIntentId || busy) {
+      aiStudioSessionDebugLog("client.sessionActions.runIntentById.skipped", {
+        busy,
+        intentId: normalizedIntentId,
+        reason: !normalizedSessionId ? "missing_session" : !normalizedIntentId ? "missing_intent" : "busy",
+        sessionId: normalizedSessionId
+      });
       return;
     }
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionActions.runIntentById.start", {
+      ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+      fieldKeys: Object.keys(fields && typeof fields === "object" && !Array.isArray(fields) ? fields : {}).sort(),
+      intentId: normalizedIntentId,
+      sessionId: normalizedSessionId,
+      stepId: String(stepId || ""),
+      stepStatus: String(stepStatus || "")
+    });
     clearCopyStatus();
     activeActionId.value = normalizedIntentId;
     try {
-      return await runIntentCommand.run({
+      const response = await runIntentCommand.run({
         fields: fields && typeof fields === "object" && !Array.isArray(fields) ? fields : {},
         intentId: normalizedIntentId,
         sessionId: normalizedSessionId,
         stepId,
         stepStatus
       });
+      aiStudioSessionDebugLog("client.sessionActions.runIntentById.done", {
+        ...aiStudioSessionDebugSummary(response || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        intentId: normalizedIntentId,
+        ok: response?.ok !== false,
+        sessionId: normalizedSessionId
+      });
+      return response;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionActions.runIntentById.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        intentId: normalizedIntentId,
+        sessionId: normalizedSessionId
+      });
+      throw error;
     } finally {
       activeActionId.value = "";
     }
@@ -284,17 +415,56 @@ function useAiStudioSessionActions({
     sessionId = unref(selectedSessionId)
   } = {}) {
     const normalizedSessionId = String(sessionId || "").trim();
-    if (!normalizedSessionId || readRefOrGetterBoolean(commandBusy) || currentNext.value?.enabled !== true) {
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!normalizedSessionId || busy || currentNext.value?.enabled !== true) {
+      aiStudioSessionDebugLog("client.sessionActions.advanceSession.skipped", {
+        ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+        busy,
+        nextDisabledReason: String(currentNext.value?.disabledReason || ""),
+        reason: !normalizedSessionId ? "missing_session" : busy ? "busy" : "next_disabled",
+        sessionId: normalizedSessionId
+      });
       return;
     }
-    await advanceCommand.run({
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionActions.advanceSession.start", {
+      ...aiStudioSessionDebugSummary(selectedSession.value || {}),
       sessionId: normalizedSessionId
     });
-    commandTerminal.clear();
+    try {
+      const response = await advanceCommand.run({
+        sessionId: normalizedSessionId
+      });
+      aiStudioSessionDebugLog("client.sessionActions.advanceSession.done", {
+        ...aiStudioSessionDebugSummary(response || selectedSession.value || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        ok: response?.ok !== false,
+        sessionId: normalizedSessionId
+      });
+      if (response?.stale !== true) {
+        commandTerminal.clear();
+      }
+      return response;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionActions.advanceSession.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: normalizedSessionId
+      });
+      throw error;
+    }
   }
 
   async function runAction(action = {}, options = {}) {
-    if (!unref(selectedSessionId) || !action.id || readRefOrGetterBoolean(commandBusy) || action.enabled !== true) {
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!unref(selectedSessionId) || !action.id || busy || action.enabled !== true) {
+      aiStudioSessionDebugLog("client.sessionActions.runAction.skipped", {
+        actionId: String(action.id || ""),
+        actionEnabled: action.enabled === true,
+        busy,
+        reason: !unref(selectedSessionId) ? "missing_session" : !action.id ? "missing_action" : busy ? "busy" : "action_disabled",
+        sessionId: String(unref(selectedSessionId) || "")
+      });
       return;
     }
     const providedInput = options.input && typeof options.input === "object" && !Array.isArray(options.input)
@@ -309,6 +479,10 @@ function useAiStudioSessionActions({
       return;
     }
     if (actionDispatchRoute(action) === "command-terminal") {
+      aiStudioSessionDebugLog("client.sessionActions.runAction.commandTerminal.start", {
+        actionId: String(action.id || ""),
+        sessionId: String(unref(selectedSessionId) || "")
+      });
       commandTerminal.start(action);
       return;
     }
@@ -320,7 +494,15 @@ function useAiStudioSessionActions({
   }
 
   async function runIntent(intent = {}, options = {}) {
-    if (!unref(selectedSessionId) || !intent.id || readRefOrGetterBoolean(commandBusy) || intent.enabled !== true) {
+    const busy = readRefOrGetterBoolean(commandBusy);
+    if (!unref(selectedSessionId) || !intent.id || busy || intent.enabled !== true) {
+      aiStudioSessionDebugLog("client.sessionActions.runIntent.skipped", {
+        busy,
+        intentEnabled: intent.enabled === true,
+        intentId: String(intent.id || ""),
+        reason: !unref(selectedSessionId) ? "missing_session" : !intent.id ? "missing_intent" : busy ? "busy" : "intent_disabled",
+        sessionId: String(unref(selectedSessionId) || "")
+      });
       return;
     }
     if (intent.clientAction === "open_diff") {

@@ -2,6 +2,12 @@ import {
   aiStudioError,
   normalizeText
 } from "./core.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "./sessionDebugLog.js";
 import { STEP_STATUS } from "./workflowStepMachines.js";
 
 // AI Studio ownership contract:
@@ -689,8 +695,16 @@ function finalReviewRecheckStepIdForSession(session = {}) {
 }
 
 async function continueAfterSkipMerge(runtime, sessionId = "") {
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.start", {
+    sessionId
+  });
   let session = await runtime.getSession(sessionId);
   for (let count = 0; count < 3 && nextIsReady(session); count += 1) {
+    aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.advance", {
+      ...aiStudioSessionDebugSummary(session),
+      count: count + 1
+    });
     session = await runtime.advance(sessionId);
   }
   if (
@@ -701,21 +715,55 @@ async function continueAfterSkipMerge(runtime, sessionId = "") {
   ) {
     return forceAdvanceCurrentStep(runtime, session, "Skipped main checkout sync after merge was skipped.");
   }
+  aiStudioSessionDebugLog("server.workflowPresentation.continueAfterSkipMerge.done", {
+    ...aiStudioSessionDebugSummary(session),
+    durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+  });
   return session;
 }
 
 async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advanced by server intent.") {
-  if (session.next?.visible === false || !session.next?.stepId) {
-    throw aiStudioError(
-      session.next?.disabledReason || "Current AI Studio step cannot advance.",
-      "ai_studio_step_not_ready"
-    );
-  }
-  await runtime.store.writeCompletedStep(session.sessionId, session.currentStep, {
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.start", {
+    ...aiStudioSessionDebugSummary(session),
     message
   });
-  await runtime.store.writeCurrentStep(session.sessionId, session.next.stepId);
-  return runtime.getSession(session.sessionId);
+  try {
+    if (session.next?.visible === false || !session.next?.stepId) {
+      aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.blocked", {
+        ...aiStudioSessionDebugSummary(session),
+        nextDisabledReason: String(session.next?.disabledReason || ""),
+        reason: "step_not_ready"
+      });
+      throw aiStudioError(
+        session.next?.disabledReason || "Current AI Studio step cannot advance.",
+        "ai_studio_step_not_ready"
+      );
+    }
+    aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.transition", {
+      fromStepId: session.currentStep,
+      sessionId: session.sessionId,
+      toStepId: session.next.stepId
+    });
+    await runtime.store.writeCompletedStep(session.sessionId, session.currentStep, {
+      message
+    });
+    await runtime.store.writeCurrentStep(session.sessionId, session.next.stepId);
+    const advancedSession = await runtime.getSession(session.sessionId);
+    aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.done", {
+      ...aiStudioSessionDebugSummary(advancedSession),
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      fromStepId: session.currentStep
+    });
+    return advancedSession;
+  } catch (error) {
+    aiStudioSessionDebugLog("server.workflowPresentation.forceAdvance.error", {
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      error: aiStudioSessionDebugError(error),
+      sessionId: session.sessionId
+    });
+    throw error;
+  }
 }
 
 async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input = {}) {

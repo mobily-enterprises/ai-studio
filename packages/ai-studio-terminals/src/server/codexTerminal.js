@@ -246,6 +246,8 @@ function activeCodexTerminal(session = {}) {
     return null;
   }
   return {
+    activityLabel: terminal.metadata?.codexTurnLabel || "",
+    activityReason: terminal.metadata?.codexTurnReason || "",
     commandPreview: terminal.commandPreview || "",
     id: terminal.id || "",
     status: terminal.status || "",
@@ -271,9 +273,22 @@ function activeCodexTerminalSessions(sessionId = "") {
   }).filter((terminal) => terminal.status !== "exited");
 }
 
-function transmittingCodexTurnMetadata(signature = "") {
+function codexTurnLabel(reason = "") {
+  switch (normalizeText(reason)) {
+    case "codex-thread-bootstrap-started":
+      return "Preparing Codex...";
+    case "codex-prompt-injection-started":
+      return "Sending prompt to Codex...";
+    default:
+      return "Terminal is transmitting...";
+  }
+}
+
+function transmittingCodexTurnMetadata(signature = "", reason = "") {
   return {
     codexTurnFinishedAt: "",
+    codexTurnLabel: codexTurnLabel(reason),
+    codexTurnReason: normalizeText(reason),
     codexTurnSignature: signature,
     codexTurnStartedAt: new Date().toISOString(),
     codexTurnState: CODEX_TURN_STATE.TRANSMITTING
@@ -282,6 +297,8 @@ function transmittingCodexTurnMetadata(signature = "") {
 
 function idleCodexTurnMetadata() {
   return {
+    codexTurnLabel: "",
+    codexTurnReason: "",
     codexTurnFinishedAt: new Date().toISOString(),
     codexTurnState: CODEX_TURN_STATE.IDLE
   };
@@ -632,11 +649,11 @@ function createCodexTerminalController({
   }
 
   async function markCodexTerminalTransmitting(sessionId, terminalSessionId, signature, reason) {
-    const result = updateCodexTerminalMetadata(
-      sessionId,
-      terminalSessionId,
-      transmittingCodexTurnMetadata(signature)
-    );
+  const result = updateCodexTerminalMetadata(
+    sessionId,
+    terminalSessionId,
+    transmittingCodexTurnMetadata(signature, reason)
+  );
     if (result.ok === false) {
       return result;
     }

@@ -360,7 +360,7 @@ test("session presentation keeps the Codex preview while a transmitting terminal
   });
 });
 
-test("session inspect prepares the server-owned Codex terminal after a restart", async () => {
+test("session inspect reads existing Codex terminal state without preparing it", async () => {
   const preparedSessions = [];
   const service = createService({
     projectService: {
@@ -408,7 +408,7 @@ test("session inspect prepares the server-owned Codex terminal after a restart",
 
   const session = await service.inspectSession("session-1");
 
-  assert.deepEqual(preparedSessions, ["session-1"]);
+  assert.deepEqual(preparedSessions, []);
   assert.equal(session.codexTerminal.id, "codex-terminal-restored");
 });
 
@@ -543,6 +543,7 @@ test("session list exposes selectable workflow profiles after seeding", async ()
 
 test("session list asks the runtime for open sessions by default", async () => {
   const listCalls = [];
+  const preparedSessions = [];
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -564,7 +565,21 @@ test("session list asks the runtime for open sessions by default", async () => {
         };
       }
     },
-    setupServices: readySetupServices()
+    setupServices: readySetupServices(),
+    terminalService: {
+      async codexTerminalState(sessionId) {
+        return {
+          ok: true,
+          sessionId
+        };
+      },
+      async ensureCodexThread(sessionId) {
+        preparedSessions.push(sessionId);
+        return {
+          ok: true
+        };
+      }
+    }
   });
 
   const result = await service.listSessions();
@@ -575,6 +590,7 @@ test("session list asks the runtime for open sessions by default", async () => {
       statusGroup: "open"
     }
   ]);
+  assert.deepEqual(preparedSessions, []);
   assert.deepEqual(result.sessions.map((session) => session.sessionId), ["open-session"]);
   assert.equal(result.limits.openSessionCount, 1);
 });

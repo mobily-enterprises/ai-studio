@@ -28,6 +28,71 @@ import {
   aiStudioSessionStatusLabel,
   isClosedAiStudioSession
 } from "@/lib/aiStudioSessionViewModel.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "@/lib/aiStudioSessionDebugLog.js";
+
+function selectedSessionOperationSummary(session = {}) {
+  const operation = session?.presentation?.auto?.nextOperation;
+  const source = operation && typeof operation === "object" && !Array.isArray(operation)
+    ? operation
+    : {};
+  return {
+    operationActionId: String(source.actionId || ""),
+    operationExecutable: source.executable === true,
+    operationId: String(source.id || ""),
+    operationIntentId: String(source.intentId || ""),
+    operationKind: String(source.kind || ""),
+    operationRoute: String(source.route || "")
+  };
+}
+
+const STEP_STATUS_FRESHNESS_RANK = Object.freeze({
+  attempting_execution: 2,
+  awaiting_agent_result: 2,
+  confirm_files: 2,
+  done: 4,
+  failed: 3,
+  ready: 1,
+  waiting_for_input: 2
+});
+
+function latestActionResultTimeMs(session = {}) {
+  const results = Array.isArray(session?.actionResults) ? session.actionResults : [];
+  return results.reduce((latest, result = {}) => {
+    const time = Date.parse(String(result.at || ""));
+    return Number.isFinite(time) && time > latest ? time : latest;
+  }, 0);
+}
+
+function sessionFreshnessScore(session = {}) {
+  if (!session?.sessionId) {
+    return 0;
+  }
+  const actionResults = Array.isArray(session.actionResults) ? session.actionResults.length : 0;
+  const completedSteps = Array.isArray(session.completedSteps) ? session.completedSteps.length : 0;
+  const statusRank = STEP_STATUS_FRESHNESS_RANK[String(session.stepMachine?.status || "")] || 0;
+  return latestActionResultTimeMs(session) +
+    actionResults * 1000 +
+    completedSteps * 100 +
+    statusRank * 10 +
+    (session.next?.enabled === true ? 1 : 0);
+}
+
+function freshestSessionRecord(preferredSession = null, fallbackSession = null) {
+  if (!preferredSession?.sessionId) {
+    return fallbackSession;
+  }
+  if (!fallbackSession?.sessionId || fallbackSession.sessionId !== preferredSession.sessionId) {
+    return preferredSession;
+  }
+  return sessionFreshnessScore(fallbackSession) > sessionFreshnessScore(preferredSession)
+    ? fallbackSession
+    : preferredSession;
+}
 
 function useAiStudioSessionData({
   onTitleChange = null
@@ -129,7 +194,7 @@ function useAiStudioSessionData({
   const selectedRawSession = computed(() => {
     const viewedSession = selectedSessionView.record;
     if (viewedSession?.sessionId === selectedSessionId.value && viewedSession?.ok !== false) {
-      return viewedSession;
+      return freshestSessionRecord(viewedSession, selectedListSession.value);
     }
     return selectedListSession.value;
   });
@@ -183,13 +248,37 @@ function useAiStudioSessionData({
   }
 
   async function refreshSessionData() {
-    await Promise.all([
-      sessionList.reload(),
-      refreshSelectedSession()
-    ]);
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionData.refresh.start", {
+      selectedSessionId: String(selectedSessionId.value || "")
+    });
+    try {
+      const result = await Promise.all([
+        sessionList.reload(),
+        refreshSelectedSession()
+      ]);
+      aiStudioSessionDebugLog("client.sessionData.refresh.done", {
+        ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        selectedSessionId: String(selectedSessionId.value || ""),
+        sessionCount: sessions.value.length
+      });
+      return result;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionData.refresh.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        selectedSessionId: String(selectedSessionId.value || "")
+      });
+      throw error;
+    }
   }
 
   function selectSessionId(sessionId = "") {
+    aiStudioSessionDebugLog("client.sessionData.selectSession", {
+      fromSessionId: String(selectedSessionId.value || ""),
+      toSessionId: String(sessionId || "")
+    });
     sessionSelection.select(sessionId);
   }
 
@@ -198,9 +287,30 @@ function useAiStudioSessionData({
   }
 
   async function createSession(workflowProfile = "") {
-    return createSessionCommand.run({
-      workflowProfile
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.sessionData.createSession.start", {
+      workflowProfile: String(workflowProfile || "")
     });
+    try {
+      const response = await createSessionCommand.run({
+        workflowProfile
+      });
+      aiStudioSessionDebugLog("client.sessionData.createSession.done", {
+        ...aiStudioSessionDebugSummary(response || {}),
+        code: String(response?.code || response?.errors?.[0]?.code || ""),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        ok: response?.ok !== false,
+        workflowProfile: String(workflowProfile || "")
+      });
+      return response;
+    } catch (error) {
+      aiStudioSessionDebugLog("client.sessionData.createSession.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        workflowProfile: String(workflowProfile || "")
+      });
+      throw error;
+    }
   }
 
   function sessionIdExistsInList(sessionId = "", nextSessions = []) {
@@ -221,6 +331,10 @@ function useAiStudioSessionData({
   }
 
   watch(sessions, (nextSessions) => {
+    aiStudioSessionDebugLog("client.sessionData.sessions.changed", {
+      selectedSessionId: String(selectedSessionId.value || ""),
+      sessionCount: nextSessions.length
+    });
     if (sessionList.isInitialLoading || shouldPreserveSelectedSessionDuringRefresh(nextSessions)) {
       return;
     }
@@ -229,6 +343,31 @@ function useAiStudioSessionData({
       getId: (session) => session.sessionId
     });
   }, {
+    immediate: true
+  });
+
+  watch(() => {
+    const session = selectedSession.value || {};
+    return [
+      session.sessionId || "",
+      session.currentStep || "",
+      session.stepMachine?.status || "",
+      session.next?.stepId || "",
+      session.next?.enabled === true ? "next-enabled" : "next-disabled",
+      session.presentation?.auto?.nextOperation?.id || "",
+      session.presentation?.auto?.nextOperation?.executable === true ? "op-executable" : "op-idle"
+    ].join("|");
+  }, () => {
+    const session = selectedSession.value || {};
+    if (!session.sessionId) {
+      return;
+    }
+    aiStudioSessionDebugLog("client.sessionData.selectedSession.state", {
+      ...aiStudioSessionDebugSummary(session),
+      ...selectedSessionOperationSummary(session)
+    });
+  }, {
+    flush: "post",
     immediate: true
   });
 

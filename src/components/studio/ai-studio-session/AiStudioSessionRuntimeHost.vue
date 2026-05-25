@@ -105,6 +105,10 @@ import {
 import {
   aiStudioShellPanelTargetId
 } from "@/lib/aiStudioShellPanelTarget.js";
+import {
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "@/lib/aiStudioSessionDebugLog.js";
 
 const props = defineProps({
   active: {
@@ -175,6 +179,7 @@ const sessionWorkflow = useAiStudioSessionWorkflow({
 });
 const autopilotCommandRunner = useAiStudioHeadlessCommandRunner();
 const artifactReadiness = useAiStudioArtifactReadiness({
+  active: computed(() => props.active),
   sessionId: selectedSessionId
 });
 const liveArtifactReadiness = computed(() => {
@@ -326,8 +331,31 @@ watch(interactionBusy, emitBusy, {
   flush: "post"
 });
 
+watch(() => [
+  props.active ? "active" : "inactive",
+  props.sessionMode,
+  props.sessionId,
+  selectedSession.value?.currentStep || "",
+  selectedSession.value?.stepMachine?.status || ""
+].join("|"), () => {
+  aiStudioSessionDebugLog("client.sessionRuntimeHost.state", {
+    ...aiStudioSessionDebugSummary(selectedSession.value || {}),
+    active: props.active,
+    sessionId: props.sessionId,
+    sessionMode: props.sessionMode
+  });
+}, {
+  flush: "post",
+  immediate: true
+});
+
 watch(liveArtifactReadinessVersion, (version, previousVersion) => {
-  if (version && version !== previousVersion) {
+  if (props.active && version && version !== previousVersion) {
+    aiStudioSessionDebugLog("client.sessionRuntimeHost.artifactReadiness.changed", {
+      artifactReadinessVersion: version,
+      previousArtifactReadinessVersion: previousVersion || "",
+      sessionId: props.sessionId
+    });
     void props.sessionData.refreshSessionData();
   }
 }, {

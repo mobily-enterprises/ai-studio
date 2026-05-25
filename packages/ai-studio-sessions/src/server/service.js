@@ -6,6 +6,12 @@ import {
   aiStudioResult
 } from "../../../../server/lib/aiStudio/serverResponses.js";
 import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "../../../../server/lib/aiStudio/sessionDebugLog.js";
+import {
   assertAiStudioSetupReady
 } from "../../../../server/lib/aiStudio/setupReadiness.js";
 import { inspectSessionDiff } from "./sessionDiff.js";
@@ -91,7 +97,7 @@ function codexTerminalPresentation(codexTerminal = null) {
     terminal.transmitting === true
   );
   return {
-    label: visible ? "Terminal is transmitting..." : "",
+    label: visible ? terminal.activityLabel || "Terminal is transmitting..." : "",
     readOnlyInAutopilot: true,
     renderer: "codex_terminal",
     terminalSessionId,
@@ -126,36 +132,33 @@ async function enrichSessionWithCodexTerminal(terminalService, session = {}) {
     return session;
   }
   if (typeof terminalService?.codexTerminalState !== "function") {
+    aiStudioSessionDebugLog("server.service.codexTerminalState.skipped", {
+      reason: "service_unavailable",
+      sessionId: session.sessionId
+    });
     return withCodexTerminalState(session, {});
   }
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog("server.service.codexTerminalState.start", {
+    sessionId: session.sessionId
+  });
   const terminalState = await terminalService.codexTerminalState(session.sessionId);
   if (terminalState?.ok === false) {
+    aiStudioSessionDebugLog("server.service.codexTerminalState.error", {
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      error: String(terminalState.error || "AI Studio Codex terminal state could not be read."),
+      sessionId: session.sessionId
+    });
     throw new Error(terminalState.error || "AI Studio Codex terminal state could not be read.");
   }
-  return withCodexTerminalState(session, terminalState || {});
-}
-
-async function ensureSessionCodexTerminal(terminalService, session = {}) {
-  if (
-    !session ||
-    session.ok === false ||
-    !session.sessionId ||
-    !isOpenAiStudioSession(session) ||
-    !String(session.metadata?.worktree_path || session.worktree || "").trim() ||
-    typeof terminalService?.ensureCodexThread !== "function"
-  ) {
-    return session;
-  }
-  const bootstrap = await terminalService.ensureCodexThread(session.sessionId);
-  if (bootstrap?.ok === false) {
-    throw new Error(bootstrap.error || "AI Studio Codex terminal could not be prepared.");
-  }
-  return session;
-}
-
-async function prepareSessionForOpen(terminalService, session = {}) {
-  await ensureSessionCodexTerminal(terminalService, session);
-  return enrichSessionWithCodexTerminal(terminalService, session);
+  const enrichedSession = withCodexTerminalState(session, terminalState || {});
+  aiStudioSessionDebugLog("server.service.codexTerminalState.done", {
+    ...aiStudioSessionDebugSummary(enrichedSession),
+    codexTerminalId: String(enrichedSession.codexTerminal?.id || ""),
+    codexTerminalStatus: String(enrichedSession.codexTerminal?.status || ""),
+    durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+  });
+  return enrichedSession;
 }
 
 async function enrichSessionsWithCodexTerminal(terminalService, sessions = []) {
@@ -166,15 +169,40 @@ async function enrichSessionsWithCodexTerminal(terminalService, sessions = []) {
 async function deliverCodexPromptIfNeeded(terminalService, session = {}) {
   const handoff = codexPromptHandoffFromSession(session);
   if (!handoff) {
+    aiStudioSessionDebugLog("server.service.deliverCodexPrompt.skipped", {
+      reason: "no_handoff",
+      sessionId: String(session?.sessionId || "")
+    });
     return session;
   }
   if (typeof terminalService?.injectCodexPrompt !== "function") {
+    aiStudioSessionDebugLog("server.service.deliverCodexPrompt.error", {
+      error: "AI Studio Codex prompt delivery service is not available.",
+      sessionId: String(session?.sessionId || "")
+    });
     throw new Error("AI Studio Codex prompt delivery service is not available.");
   }
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog("server.service.deliverCodexPrompt.start", {
+    promptId: String(handoff.promptId || ""),
+    sessionId: session.sessionId
+  });
   const delivery = await terminalService.injectCodexPrompt(session.sessionId, handoff);
   if (delivery?.ok === false) {
+    aiStudioSessionDebugLog("server.service.deliverCodexPrompt.error", {
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      error: String(delivery.error || "AI Studio Codex prompt delivery failed."),
+      promptId: String(handoff.promptId || ""),
+      sessionId: session.sessionId
+    });
     throw new Error(delivery.error || "AI Studio Codex prompt delivery failed.");
   }
+  aiStudioSessionDebugLog("server.service.deliverCodexPrompt.done", {
+    durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+    promptId: String(handoff.promptId || ""),
+    sessionId: session.sessionId,
+    terminalSessionId: String(delivery?.terminalSessionId || "")
+  });
   return {
     ...session,
     codexPromptDelivery: delivery
@@ -272,6 +300,20 @@ function selectedWorkflowProfile(input = {}, creation = {}) {
   };
 }
 
+function sessionServiceDebugResponse(response = {}) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    return {
+      ok: false
+    };
+  }
+  return {
+    ...aiStudioSessionDebugSummary(response),
+    code: String(response.code || response.errors?.[0]?.code || ""),
+    ok: response.ok !== false,
+    status: String(response.status || "")
+  };
+}
+
 function createService({
   projectService,
   setupServices = {},
@@ -283,94 +325,214 @@ function createService({
 
   return Object.freeze({
     async advanceSession(sessionId) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.advanceSession.start", {
+        sessionId
+      });
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
-        return enrichSessionWithCodexTerminal(terminalService, await runtime.advance(sessionId));
+        try {
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.advance(sessionId);
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, session);
+          aiStudioSessionDebugLog("server.service.advanceSession.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.advanceSession.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
       });
     },
 
     async abandonSession(sessionId) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.abandonSession.start", {
+        sessionId
+      });
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
-        await runtime.store.writeStatus(sessionId, AI_STUDIO_SESSION_STATUS.ABANDONED);
-        await terminalService?.closeSessionTerminals?.(sessionId);
-        return enrichSessionWithCodexTerminal(terminalService, await runtime.getSession(sessionId));
+        try {
+          const runtime = await projectService.createRuntime();
+          await runtime.store.writeStatus(sessionId, AI_STUDIO_SESSION_STATUS.ABANDONED);
+          await terminalService?.closeSessionTerminals?.(sessionId);
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, await runtime.getSession(sessionId));
+          aiStudioSessionDebugLog("server.service.abandonSession.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.abandonSession.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
       });
     },
 
     async createSession(input = {}) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.createSession.start", {
+        workflowProfile: String(input?.workflowProfile || "")
+      });
       return sessionResult(async () => {
-        const projectType = await projectService.requireProjectType();
-        await assertAiStudioSetupReady(setupServices);
-        const runtime = await projectService.createRuntime();
-        const existingOpenSessions = await listOpenSessions(runtime);
-        const { creation, limits } = await sessionCreationState(runtime, existingOpenSessions);
-        if (limits.openSessionCount >= limits.maxOpenSessions) {
-          return {
-            errors: [
-              {
-                code: "open_session_limit",
-                message: sessionLimitMessage(limits, creation)
-              }
-            ],
-            creation,
-            limits,
-            ok: false,
-            sessions: existingOpenSessions,
-            status: "blocked"
-          };
-        }
-        const syncBlocker = mainCheckoutSyncBlocker(existingOpenSessions);
-        if (syncBlocker) {
-          return {
-            errors: [
-              {
-                code: "main_checkout_sync_required",
-                message: `Session ${syncBlocker.sessionId} has merged a pull request but has not synced the main checkout. Run Sync main checkout there before starting another session.`
-              }
-            ],
-            creation: {
-              ...creation,
-              canCreate: false,
-              disabledReason: `Session ${syncBlocker.sessionId} has merged a pull request but has not synced the main checkout. Run Sync main checkout there before starting another session.`
+        try {
+          const projectType = await projectService.requireProjectType();
+          await assertAiStudioSetupReady(setupServices);
+          const runtime = await projectService.createRuntime();
+          const existingOpenSessions = await listOpenSessions(runtime);
+          const { creation, limits } = await sessionCreationState(runtime, existingOpenSessions);
+          aiStudioSessionDebugLog("server.service.createSession.creationState", {
+            canCreate: creation.canCreate === true,
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            maxOpenSessions: limits.maxOpenSessions,
+            openSessionCount: limits.openSessionCount,
+            requestedWorkflowProfile: String(input?.workflowProfile || ""),
+            seedRequired: creation.seedRequired === true
+          });
+          if (limits.openSessionCount >= limits.maxOpenSessions) {
+            aiStudioSessionDebugLog("server.service.createSession.blocked", {
+              code: "open_session_limit",
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+              maxOpenSessions: limits.maxOpenSessions,
+              openSessionCount: limits.openSessionCount
+            });
+            return {
+              errors: [
+                {
+                  code: "open_session_limit",
+                  message: sessionLimitMessage(limits, creation)
+                }
+              ],
+              creation,
+              limits,
+              ok: false,
+              sessions: existingOpenSessions,
+              status: "blocked"
+            };
+          }
+          const syncBlocker = mainCheckoutSyncBlocker(existingOpenSessions);
+          if (syncBlocker) {
+            aiStudioSessionDebugLog("server.service.createSession.blocked", {
+              blockerSessionId: syncBlocker.sessionId,
+              code: "main_checkout_sync_required",
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+            });
+            return {
+              errors: [
+                {
+                  code: "main_checkout_sync_required",
+                  message: `Session ${syncBlocker.sessionId} has merged a pull request but has not synced the main checkout. Run Sync main checkout there before starting another session.`
+                }
+              ],
+              creation: {
+                ...creation,
+                canCreate: false,
+                disabledReason: `Session ${syncBlocker.sessionId} has merged a pull request but has not synced the main checkout. Run Sync main checkout there before starting another session.`
+              },
+              limits,
+              ok: false,
+              sessions: existingOpenSessions,
+              status: "blocked"
+            };
+          }
+          const profileSelection = selectedWorkflowProfile(input, creation);
+          if (profileSelection.error) {
+            aiStudioSessionDebugLog("server.service.createSession.blocked", {
+              code: "workflow_profile_not_available",
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+              requestedWorkflowProfile: String(input?.workflowProfile || "")
+            });
+            return {
+              creation,
+              errors: [
+                {
+                  code: "workflow_profile_not_available",
+                  message: profileSelection.error
+                }
+              ],
+              limits,
+              ok: false,
+              sessions: existingOpenSessions,
+              status: "blocked"
+            };
+          }
+          aiStudioSessionDebugLog("server.service.createSession.runtimeCreate.start", {
+            adapterId: projectType.adapter?.id || projectType.projectType,
+            projectType: projectType.projectType,
+            workflowProfile: profileSelection.profile
+          });
+          const session = await runtime.createSession({
+            metadata: {
+              adapter_id: projectType.adapter?.id || projectType.projectType,
+              project_type: projectType.projectType
             },
-            limits,
-            ok: false,
-            sessions: existingOpenSessions,
-            status: "blocked"
-          };
+            workflowProfile: profileSelection.profile
+          });
+          aiStudioSessionDebugLog("server.service.createSession.runtimeCreate.done", {
+            ...sessionServiceDebugResponse(session),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            workflowProfile: profileSelection.profile
+          });
+          aiStudioSessionDebugLog("server.service.createSession.initialAdvance.start", {
+            currentStep: session.currentStep,
+            sessionId: session.sessionId,
+            workflowProfile: profileSelection.profile
+          });
+          const advancedSession = await runtime.advance(session.sessionId);
+          aiStudioSessionDebugLog("server.service.createSession.initialAdvance.done", {
+            ...sessionServiceDebugResponse(advancedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            fromStepId: session.currentStep,
+            workflowProfile: profileSelection.profile
+          });
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, advancedSession);
+          aiStudioSessionDebugLog("server.service.createSession.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            workflowProfile: profileSelection.profile
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.createSession.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            workflowProfile: String(input?.workflowProfile || "")
+          });
+          throw error;
         }
-        const profileSelection = selectedWorkflowProfile(input, creation);
-        if (profileSelection.error) {
-          return {
-            creation,
-            errors: [
-              {
-                code: "workflow_profile_not_available",
-                message: profileSelection.error
-              }
-            ],
-            limits,
-            ok: false,
-            sessions: existingOpenSessions,
-            status: "blocked"
-          };
-        }
-        const session = await runtime.createSession({
-          metadata: {
-            adapter_id: projectType.adapter?.id || projectType.projectType,
-            project_type: projectType.projectType
-          },
-          workflowProfile: profileSelection.profile
-        });
-        return enrichSessionWithCodexTerminal(terminalService, await runtime.advance(session.sessionId));
       });
     },
 
     async inspectSession(sessionId) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.inspectSession.start", {
+        sessionId
+      });
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
-        return prepareSessionForOpen(terminalService, await runtime.getSession(sessionId));
+        try {
+          const runtime = await projectService.createRuntime();
+          const session = await enrichSessionWithCodexTerminal(terminalService, await runtime.getSession(sessionId));
+          aiStudioSessionDebugLog("server.service.inspectSession.done", {
+            ...sessionServiceDebugResponse(session),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+          });
+          return session;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.inspectSession.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
       });
     },
 
@@ -382,54 +544,157 @@ function createService({
     },
 
     async listSessions(input = {}) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.listSessions.start", {
+        archive: String(input?.archive || "")
+      });
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
-        const options = sessionListOptions(input);
-        const sessions = await runtime.listSessions(options.runtimeOptions);
-        const openSessions = options.runtimeOptions.statusGroup === "open" &&
-          !Array.isArray(options.runtimeOptions.statuses)
-          ? sessions
-          : await listOpenSessions(runtime);
-        const responseSessions = options.enrichCodex
-          ? await enrichSessionsWithCodexTerminal(terminalService, sessions)
-          : sessions;
-        return sessionListResponse(responseSessions, await sessionCreationState(runtime, openSessions));
+        try {
+          const runtime = await projectService.createRuntime();
+          const options = sessionListOptions(input);
+          const sessions = await runtime.listSessions(options.runtimeOptions);
+          const openSessions = options.runtimeOptions.statusGroup === "open" &&
+            !Array.isArray(options.runtimeOptions.statuses)
+            ? sessions
+            : await listOpenSessions(runtime);
+          const responseSessions = options.enrichCodex
+            ? await enrichSessionsWithCodexTerminal(terminalService, sessions)
+            : sessions;
+          const response = sessionListResponse(responseSessions, await sessionCreationState(runtime, openSessions));
+          aiStudioSessionDebugLog("server.service.listSessions.done", {
+            archive: String(input?.archive || ""),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            openSessionCount: response.limits?.openSessionCount ?? null,
+            sessionCount: response.sessions.length
+          });
+          return response;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.listSessions.error", {
+            archive: String(input?.archive || ""),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error)
+          });
+          throw error;
+        }
       });
     },
 
     async runSessionAction(sessionId, actionId, input = {}) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.runSessionAction.start", {
+        actionId,
+        sessionId
+      });
       return sessionResult(async () => {
-        await assertAiStudioSetupReady(setupServices);
-        const runtime = await projectService.createRuntime();
-        const session = await runtime.runAction(sessionId, actionId, input);
-        if (!isOpenAiStudioSession(session)) {
-          await terminalService?.closeSessionTerminals?.(sessionId);
-          return session;
+        try {
+          await assertAiStudioSetupReady(setupServices);
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.runAction(sessionId, actionId, input);
+          if (!isOpenAiStudioSession(session)) {
+            await terminalService?.closeSessionTerminals?.(sessionId);
+            aiStudioSessionDebugLog("server.service.runSessionAction.done", {
+              ...sessionServiceDebugResponse(session),
+              actionId,
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+            });
+            return session;
+          }
+          const enrichedSession = await enrichSessionWithCodexTerminal(
+            terminalService,
+            await deliverCodexPromptIfNeeded(terminalService, session)
+          );
+          aiStudioSessionDebugLog("server.service.runSessionAction.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            actionId,
+            actionResultStatus: String(enrichedSession.actionResult?.status || ""),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.runSessionAction.error", {
+            actionId,
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
         }
-        return enrichSessionWithCodexTerminal(terminalService, await deliverCodexPromptIfNeeded(terminalService, session));
       });
     },
 
     async runSessionIntent(sessionId, intentId, input = {}) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.runSessionIntent.start", {
+        intentId,
+        sessionId,
+        stepId: String(input?.stepId || ""),
+        stepStatus: String(input?.stepStatus || "")
+      });
       return sessionResult(async () => {
-        await assertAiStudioSetupReady(setupServices);
-        const runtime = await projectService.createRuntime();
-        const session = await runtime.runIntent(sessionId, intentId, input);
-        if (!isOpenAiStudioSession(session)) {
-          await terminalService?.closeSessionTerminals?.(sessionId);
-          return session;
+        try {
+          await assertAiStudioSetupReady(setupServices);
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.runIntent(sessionId, intentId, input);
+          if (!isOpenAiStudioSession(session)) {
+            await terminalService?.closeSessionTerminals?.(sessionId);
+            aiStudioSessionDebugLog("server.service.runSessionIntent.done", {
+              ...sessionServiceDebugResponse(session),
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+              intentId
+            });
+            return session;
+          }
+          const enrichedSession = await enrichSessionWithCodexTerminal(
+            terminalService,
+            await deliverCodexPromptIfNeeded(terminalService, session)
+          );
+          aiStudioSessionDebugLog("server.service.runSessionIntent.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            actionResultStatus: String(enrichedSession.actionResult?.status || ""),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            intentId
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.runSessionIntent.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            intentId,
+            sessionId
+          });
+          throw error;
         }
-        return enrichSessionWithCodexTerminal(terminalService, await deliverCodexPromptIfNeeded(terminalService, session));
       });
     },
 
     async rewindSession(sessionId, stepId) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.rewindSession.start", {
+        sessionId,
+        stepId
+      });
       return sessionResult(async () => {
-        await assertAiStudioSetupReady(setupServices);
-        const runtime = await projectService.createRuntime();
-        const session = await runtime.rewind(sessionId, stepId);
-        await terminalService?.closeSessionNonCodexTerminals?.(sessionId);
-        return enrichSessionWithCodexTerminal(terminalService, session);
+        try {
+          await assertAiStudioSetupReady(setupServices);
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.rewind(sessionId, stepId);
+          await terminalService?.closeSessionNonCodexTerminals?.(sessionId);
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, session);
+          aiStudioSessionDebugLog("server.service.rewindSession.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            requestedStepId: stepId
+          });
+          return enrichedSession;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.rewindSession.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId,
+            stepId
+          });
+          throw error;
+        }
       });
     }
   });

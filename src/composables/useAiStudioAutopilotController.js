@@ -3,6 +3,12 @@ import {
   useAiStudioHeadlessCommandRunner
 } from "@/composables/useAiStudioHeadlessCommandRunner.js";
 import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "@/lib/aiStudioSessionDebugLog.js";
+import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
@@ -18,6 +24,15 @@ const STALE_COMMAND_START_CODES = Object.freeze(new Set([
   "ai_studio_step_input_state_changed",
   "ai_studio_step_not_ready"
 ]));
+const COMMAND_COMPLETION_REFRESH_ATTEMPTS = 6;
+const COMMAND_COMPLETION_REFRESH_DELAY_MS = 250;
+const STEP_STATUS_ATTEMPTING_EXECUTION = "attempting_execution";
+
+function delay(ms = 0) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function readSession(session) {
   return readRefOrGetterValue(session) || null;
@@ -66,6 +81,19 @@ function operationKey(operation = {}) {
   ].join(":");
 }
 
+function operationDebugSummary(operation = {}) {
+  return {
+    operationActionId: String(operation.actionId || ""),
+    operationExecutable: operation.executable === true,
+    operationId: String(operation.id || ""),
+    operationIntentId: String(operation.intentId || ""),
+    operationKey: operationKey(operation),
+    operationKind: String(operation.kind || ""),
+    operationLabel: String(operation.label || ""),
+    operationRoute: String(operation.route || "")
+  };
+}
+
 function missingOperationFailure(operation = {}) {
   return {
     actionId: String(operation.actionId || operation.intentId || ""),
@@ -99,6 +127,10 @@ function commandStartWasRejectedAsStale(result = {}) {
   return Number(result?.status || 0) === 409;
 }
 
+function sessionStillApplyingCommand(session = {}) {
+  return String(session?.stepMachine?.status || "") === STEP_STATUS_ATTEMPTING_EXECUTION;
+}
+
 function serverMovedPastCommandOperation(previousOperation = {}, nextOperation = {}) {
   if (!operationCanDispatch(nextOperation)) {
     return true;
@@ -111,6 +143,8 @@ function serverMovedPastCommandOperation(previousOperation = {}, nextOperation =
 
 function useAiStudioAutopilotController({
   actions = {},
+  commandCompletionRefreshAttempts = COMMAND_COMPLETION_REFRESH_ATTEMPTS,
+  commandCompletionRefreshDelayMs = COMMAND_COMPLETION_REFRESH_DELAY_MS,
   commandRunner = useAiStudioHeadlessCommandRunner(),
   enabled = true,
   refreshSessionData = async () => null,
@@ -190,6 +224,14 @@ function useAiStudioAutopilotController({
   }
 
   function stopWithFailure(result = {}) {
+    aiStudioSessionDebugLog("client.autopilot.failure", {
+      actionId: String(result.actionId || ""),
+      actionLabel: String(result.actionLabel || result.actionId || "Action"),
+      error: String(result.error || "Autopilot action failed."),
+      exitCode: result.exitCode ?? null,
+      sessionId: String(currentSession.value?.sessionId || ""),
+      source: String(result.source || "")
+    });
     failure.value = {
       actionId: String(result.actionId || ""),
       actionLabel: String(result.actionLabel || result.actionId || "Action"),
@@ -203,17 +245,37 @@ function useAiStudioAutopilotController({
 
   async function runNextOperation() {
     if (!canDispatchNextOperation.value) {
+      aiStudioSessionDebugLog("client.autopilot.runNextOperation.skipped", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        ...operationDebugSummary(nextOperation.value),
+        commandFailed: commandFailed.value,
+        enabled: autopilotEnabled.value,
+        failure: Boolean(failure.value),
+        running: running.value
+      });
       return;
     }
     stopRequested = false;
     clearFailure();
+    aiStudioSessionDebugLog("client.autopilot.runNextOperation.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(nextOperation.value)
+    });
     await runUntilStopPoint();
   }
 
   async function retry() {
     if (!autopilotEnabled.value || running.value) {
+      aiStudioSessionDebugLog("client.autopilot.retry.skipped", {
+        enabled: autopilotEnabled.value,
+        running: running.value,
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
       return;
     }
+    aiStudioSessionDebugLog("client.autopilot.retry.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {})
+    });
     stopRequested = false;
     lastDispatchedOperationKey.value = "";
     clearFailure();
@@ -221,6 +283,10 @@ function useAiStudioAutopilotController({
   }
 
   function stop() {
+    aiStudioSessionDebugLog("client.autopilot.stop.requested", {
+      commandRunning: commandRunning.value,
+      sessionId: String(currentSession.value?.sessionId || "")
+    });
     stopRequested = true;
     if (commandRunning.value && typeof commandRunner.stopCommandAction === "function") {
       commandRunner.stopCommandAction();
@@ -242,8 +308,17 @@ function useAiStudioAutopilotController({
   async function runUntilStopPoint() {
     if (autopilotPromise) {
       rerunRequested = true;
+      aiStudioSessionDebugLog("client.autopilot.runUntilStopPoint.rerunRequested", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        ...operationDebugSummary(nextOperation.value)
+      });
       return autopilotPromise;
     }
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.autopilot.runUntilStopPoint.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(nextOperation.value)
+    });
     do {
       rerunRequested = false;
       autopilotPromise = executeAutopilot();
@@ -253,24 +328,56 @@ function useAiStudioAutopilotController({
         autopilotPromise = null;
       }
     } while ((rerunRequested || canDispatchNextOperation.value) && !stopRequested);
+    aiStudioSessionDebugLog("client.autopilot.runUntilStopPoint.done", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      failure: Boolean(failure.value),
+      stopRequested
+    });
   }
 
   async function executeAutopilot() {
+    const startedAtMs = Date.now();
     active.value = true;
     try {
       const sessionNow = currentSession.value;
       if (!autopilotEnabled.value || stopRequested || !sessionNow?.sessionId) {
+        aiStudioSessionDebugLog("client.autopilot.execute.skipped", {
+          enabled: autopilotEnabled.value,
+          hasSession: Boolean(sessionNow?.sessionId),
+          stopRequested
+        });
         return;
       }
       const operation = currentOperation(sessionNow);
       if (!operationCanDispatch(operation)) {
+        aiStudioSessionDebugLog("client.autopilot.execute.noDispatchableOperation", {
+          ...aiStudioSessionDebugSummary(sessionNow),
+          ...operationDebugSummary(operation)
+        });
         return;
       }
       lastDispatchedOperationKey.value = [
         sessionNow.sessionId,
         operationKey(operation)
       ].join("::");
+      aiStudioSessionDebugLog("client.autopilot.execute.dispatch", {
+        ...aiStudioSessionDebugSummary(sessionNow),
+        ...operationDebugSummary(operation),
+        dispatchKey: lastDispatchedOperationKey.value
+      });
       await dispatchOperation(operation);
+      aiStudioSessionDebugLog("client.autopilot.execute.done", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+    } catch (error) {
+      aiStudioSessionDebugLog("client.autopilot.execute.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
+      throw error;
     } finally {
       active.value = false;
       activeStage.value = "";
@@ -278,49 +385,65 @@ function useAiStudioAutopilotController({
   }
 
   async function dispatchOperation(operation = {}) {
+    const startedAtMs = Date.now();
     activeStage.value = String(operation.label || operation.actionId || operation.intentId || "Autopilot");
+    aiStudioSessionDebugLog("client.autopilot.operation.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(operation)
+    });
     if (!operationCanDispatch(operation)) {
+      aiStudioSessionDebugLog("client.autopilot.operation.blocked", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        ...operationDebugSummary(operation),
+        reason: "not_dispatchable"
+      });
       stopWithFailure(missingOperationFailure(operation));
       return;
     }
 
     const route = String(operation.route || "");
-    if (route === OPERATION_ROUTES.SESSION_ADVANCE) {
-      await actions.advanceSession?.({
-        sessionId: currentSession.value?.sessionId || ""
+    try {
+      if (route === OPERATION_ROUTES.SESSION_ADVANCE) {
+        await actions.advanceSession?.({
+          sessionId: currentSession.value?.sessionId || ""
+        });
+        await refreshSessionData();
+        await nextTick();
+      } else if (route === OPERATION_ROUTES.SESSION_INTENT) {
+        await actions.runIntentById?.({
+          fields: operationInput(operation),
+          intentId: operation.intentId,
+          sessionId: currentSession.value?.sessionId || "",
+          stepId: operation.stepId || currentSession.value?.currentStep || "",
+          stepStatus: operation.stepStatus || currentSession.value?.stepMachine?.status || ""
+        });
+        await refreshSessionData();
+        await nextTick();
+      } else if (route === OPERATION_ROUTES.SESSION_ACTION) {
+        await actions.runActionById?.({
+          actionId: operation.actionId,
+          advanceOnSuccess: operation.advanceOnSuccess === true,
+          input: operationInput(operation),
+          sessionId: currentSession.value?.sessionId || ""
+        });
+        await refreshSessionData();
+        await nextTick();
+      } else if (route === OPERATION_ROUTES.COMMAND_TERMINAL) {
+        await runCommandTerminalOperation(operation);
+      }
+      aiStudioSessionDebugLog("client.autopilot.operation.done", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        ...operationDebugSummary(operation),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
       });
-      await refreshSessionData();
-      await nextTick();
-      return;
-    }
-
-    if (route === OPERATION_ROUTES.SESSION_INTENT) {
-      await actions.runIntentById?.({
-        fields: operationInput(operation),
-        intentId: operation.intentId,
-        sessionId: currentSession.value?.sessionId || "",
-        stepId: operation.stepId || currentSession.value?.currentStep || "",
-        stepStatus: operation.stepStatus || currentSession.value?.stepMachine?.status || ""
+    } catch (error) {
+      aiStudioSessionDebugLog("client.autopilot.operation.error", {
+        ...operationDebugSummary(operation),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: String(currentSession.value?.sessionId || "")
       });
-      await refreshSessionData();
-      await nextTick();
-      return;
-    }
-
-    if (route === OPERATION_ROUTES.SESSION_ACTION) {
-      await actions.runActionById?.({
-        actionId: operation.actionId,
-        advanceOnSuccess: operation.advanceOnSuccess === true,
-        input: operationInput(operation),
-        sessionId: currentSession.value?.sessionId || ""
-      });
-      await refreshSessionData();
-      await nextTick();
-      return;
-    }
-
-    if (route === OPERATION_ROUTES.COMMAND_TERMINAL) {
-      await runCommandTerminalOperation(operation);
+      throw error;
     }
   }
 
@@ -365,6 +488,11 @@ function useAiStudioAutopilotController({
   }
 
   async function runCommandTerminalOperation(operation = {}) {
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("client.autopilot.commandTerminal.start", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(operation)
+    });
     lastCommandResult.value = null;
     const result = await commandRunner.runCommandAction({
       action: {
@@ -376,6 +504,13 @@ function useAiStudioAutopilotController({
       sessionId: currentSession.value?.sessionId || ""
     });
     if (commandStartWasRejectedAsStale(result)) {
+      aiStudioSessionDebugLog("client.autopilot.commandTerminal.staleStartRejected", {
+        ...operationDebugSummary(operation),
+        code: String(result?.code || ""),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        sessionId: String(currentSession.value?.sessionId || ""),
+        status: result?.status ?? null
+      });
       lastCommandResult.value = null;
       if (typeof commandRunner.clearResult === "function") {
         commandRunner.clearResult();
@@ -388,6 +523,12 @@ function useAiStudioAutopilotController({
     await nextTick();
     if (result?.ok !== true) {
       if (serverMovedPastCommandOperation(operation, currentOperation(currentSession.value))) {
+        aiStudioSessionDebugLog("client.autopilot.commandTerminal.serverMovedPastFailure", {
+          ...aiStudioSessionDebugSummary(currentSession.value || {}),
+          ...operationDebugSummary(operation),
+          durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+          resultError: String(result?.error || "")
+        });
         lastCommandResult.value = null;
         if (typeof commandRunner.clearResult === "function") {
           commandRunner.clearResult();
@@ -395,14 +536,69 @@ function useAiStudioAutopilotController({
         return;
       }
       lastCommandResult.value = result;
+      aiStudioSessionDebugLog("client.autopilot.commandTerminal.failed", {
+        ...operationDebugSummary(operation),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: String(result?.error || ""),
+        exitCode: result?.exitCode ?? null,
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
       stopWithFailure(result);
       return;
     }
+    await waitForCommandCompletionRefresh({
+      operation,
+      startedAtMs
+    });
     lastCommandResult.value = result;
+    aiStudioSessionDebugLog("client.autopilot.commandTerminal.done", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(operation),
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      exitCode: result?.exitCode ?? null
+    });
+  }
+
+  async function waitForCommandCompletionRefresh({
+    operation = {},
+    startedAtMs = Date.now()
+  } = {}) {
+    const maxAttempts = Math.max(0, Number(commandCompletionRefreshAttempts) || 0);
+    const baseDelayMs = Math.max(0, Number(commandCompletionRefreshDelayMs) || 0);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (!sessionStillApplyingCommand(currentSession.value)) {
+        return true;
+      }
+      const delayMs = baseDelayMs * attempt;
+      aiStudioSessionDebugLog("client.autopilot.commandTerminal.waitForState", {
+        ...aiStudioSessionDebugSummary(currentSession.value || {}),
+        ...operationDebugSummary(operation),
+        attempt,
+        delayMs,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+      if (delayMs > 0) {
+        await delay(delayMs);
+      }
+      await refreshSessionData();
+      await nextTick();
+    }
+    aiStudioSessionDebugLog("client.autopilot.commandTerminal.waitForState.timeout", {
+      ...aiStudioSessionDebugSummary(currentSession.value || {}),
+      ...operationDebugSummary(operation),
+      attempts: maxAttempts,
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+    });
+    return !sessionStillApplyingCommand(currentSession.value);
   }
 
   watch(nextOperationDispatchKey, (key) => {
     if (key !== lastDispatchedOperationKey.value) {
+      aiStudioSessionDebugLog("client.autopilot.dispatchKey.reset", {
+        lastDispatchedOperationKey: lastDispatchedOperationKey.value,
+        nextOperationDispatchKey: key,
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
       lastDispatchedOperationKey.value = "";
     }
   });

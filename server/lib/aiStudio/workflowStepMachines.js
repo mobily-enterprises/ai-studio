@@ -2,6 +2,9 @@ import {
   aiStudioError,
   normalizeText
 } from "./core.js";
+import {
+  aiStudioSessionDebugLog
+} from "./sessionDebugLog.js";
 
 const STEP_STATE_SCHEMA_VERSION = 1;
 
@@ -66,10 +69,16 @@ async function readState(context = {}, machine = {}) {
 }
 
 async function writeState(context = {}, machine = {}, state = {}) {
-  return context.runtime.store.writeStepState(context.session.sessionId, machine.stepId, {
+  const record = await context.runtime.store.writeStepState(context.session.sessionId, machine.stepId, {
     schemaVersion: STEP_STATE_SCHEMA_VERSION,
     ...state
   });
+  aiStudioSessionDebugLog("server.stepMachine.writeState", {
+    sessionId: String(context.session?.sessionId || ""),
+    status: String(record.status || ""),
+    stepId: String(machine.stepId || "")
+  });
+  return record;
 }
 
 function publicState(machine = {}, state = {}) {

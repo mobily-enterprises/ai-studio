@@ -3,6 +3,11 @@ import {
   latestAiStudioActionResult
 } from "@/lib/aiStudioActionResults.js";
 import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "@/lib/aiStudioSessionDebugLog.js";
+import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
@@ -23,6 +28,13 @@ function useAiStudioSessionCommandTerminal({
   const visible = computed(() => Boolean(action.value || running.value));
 
   function clear() {
+    if (action.value || running.value) {
+      aiStudioSessionDebugLog("client.sessionCommandTerminal.clear", {
+        actionId: String(action.value?.id || ""),
+        running: running.value,
+        sessionId: String(unref(selectedSessionId) || "")
+      });
+    }
     action.value = null;
     input.value = {};
     running.value = false;
@@ -33,6 +45,12 @@ function useAiStudioSessionCommandTerminal({
 
   function start(nextAction = {}) {
     const commandStartedAt = Date.now();
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.start", {
+      ...aiStudioSessionDebugSummary(readRefOrGetterValue(selectedSession) || {}),
+      actionId: String(nextAction.id || ""),
+      advanceOnSuccess: nextAction.advanceOnSuccess === true,
+      sessionId: String(unref(selectedSessionId) || "")
+    });
     action.value = nextAction;
     input.value = {};
     pendingAdvanceOnSuccess.value = nextAction.advanceOnSuccess === true;
@@ -44,6 +62,12 @@ function useAiStudioSessionCommandTerminal({
     actionId = "",
     exitCode = null
   } = {}) {
+    const startedAtMs = pendingStartedAt.value || Date.now();
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.settled.start", {
+      actionId: String(actionId || ""),
+      exitCode,
+      sessionId: String(unref(selectedSessionId) || "")
+    });
     running.value = false;
     await refreshSessionData();
     await nextTick();
@@ -53,12 +77,28 @@ function useAiStudioSessionCommandTerminal({
     });
     const commandSucceeded = Number(exitCode) === 0 || result?.status === "completed";
     const next = readRefOrGetterValue(currentNext);
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.settled.afterRefresh", {
+      ...aiStudioSessionDebugSummary(readRefOrGetterValue(selectedSession) || {}),
+      actionId: String(actionId || ""),
+      actionResultStatus: String(result?.status || ""),
+      commandSucceeded,
+      durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+      exitCode,
+      nextEnabled: next?.enabled === true,
+      nextVisible: next?.visible === true,
+      pendingAdvanceOnSuccess: pendingAdvanceOnSuccess.value,
+      sessionId: String(unref(selectedSessionId) || "")
+    });
     if (
       commandSucceeded &&
       pendingAdvanceOnSuccess.value &&
       next?.visible === true &&
       next?.enabled === true
     ) {
+      aiStudioSessionDebugLog("client.sessionCommandTerminal.autoAdvance.start", {
+        actionId: String(actionId || ""),
+        sessionId: String(unref(selectedSessionId) || "")
+      });
       clear();
       await goNext();
       return;
@@ -69,13 +109,28 @@ function useAiStudioSessionCommandTerminal({
   }
 
   function handleClosed() {
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.closed", {
+      actionId: String(action.value?.id || ""),
+      sessionId: String(unref(selectedSessionId) || "")
+    });
     clear();
   }
 
   async function handleFinished(event = {}) {
     if (event.sessionId && event.sessionId !== unref(selectedSessionId)) {
+      aiStudioSessionDebugLog("client.sessionCommandTerminal.finished.ignored", {
+        actionId: String(event.actionId || ""),
+        eventSessionId: String(event.sessionId || ""),
+        selectedSessionId: String(unref(selectedSessionId) || "")
+      });
       return;
     }
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.finished", {
+      actionId: String(event.actionId || ""),
+      eventSessionId: String(event.sessionId || ""),
+      exitCode: event.exitCode ?? null,
+      selectedSessionId: String(unref(selectedSessionId) || "")
+    });
     await refreshAfterSettled({
       actionId: event.actionId,
       exitCode: event.exitCode
@@ -85,6 +140,12 @@ function useAiStudioSessionCommandTerminal({
   async function handleRunningChanged(nextRunning) {
     const wasRunning = running.value;
     running.value = Boolean(nextRunning);
+    aiStudioSessionDebugLog("client.sessionCommandTerminal.runningChanged", {
+      actionId: String(action.value?.id || ""),
+      nextRunning: running.value,
+      sessionId: String(unref(selectedSessionId) || ""),
+      wasRunning
+    });
     if (running.value || !wasRunning) {
       return;
     }

@@ -14,6 +14,7 @@ function emptyArtifactReadiness(sessionId = "") {
 }
 
 function useAiStudioArtifactReadiness({
+  active = true,
   readReadiness = readAiStudioArtifactReadiness,
   sessionId = () => ""
 } = {}) {
@@ -25,6 +26,10 @@ function useAiStudioArtifactReadiness({
 
   function currentSessionId() {
     return String(unref(sessionId) || "").trim();
+  }
+
+  function isActive() {
+    return unref(active) !== false;
   }
 
   function closeStream() {
@@ -47,7 +52,7 @@ function useAiStudioArtifactReadiness({
 
   async function refresh() {
     const nextSessionId = currentSessionId();
-    if (!nextSessionId) {
+    if (!nextSessionId || !isActive()) {
       readiness.value = emptyArtifactReadiness();
       return readiness.value;
     }
@@ -58,7 +63,7 @@ function useAiStudioArtifactReadiness({
 
   function startStream() {
     const nextSessionId = currentSessionId();
-    if (!nextSessionId) {
+    if (!nextSessionId || !isActive()) {
       closeStream();
       readiness.value = emptyArtifactReadiness();
       return false;
@@ -106,7 +111,10 @@ function useAiStudioArtifactReadiness({
     return true;
   }
 
-  watch(currentSessionId, startStream, {
+  watch(() => [
+    currentSessionId(),
+    isActive() ? "active" : "inactive"
+  ].join("|"), startStream, {
     immediate: true
   });
 

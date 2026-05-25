@@ -4,6 +4,11 @@ import {
   closeAiStudioCommandTerminal,
   startAiStudioCommandTerminal
 } from "@/lib/aiStudioSessionApi.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog
+} from "@/lib/aiStudioSessionDebugLog.js";
 
 const WEBSOCKET_CLOSING = 2;
 const WEBSOCKET_CLOSED = 3;
@@ -138,15 +143,28 @@ function useAiStudioHeadlessCommandRunner({
     input = {},
     sessionId = ""
   } = {}) {
+    const startedAtMs = Date.now();
     const normalizedSessionId = String(sessionId || "").trim();
     const actionId = terminalActionId(action);
     if (!normalizedSessionId || !actionId || running.value) {
+      aiStudioSessionDebugLog("client.headlessCommand.run.skipped", {
+        actionId,
+        running: running.value,
+        reason: !normalizedSessionId ? "missing_session" : !actionId ? "missing_action" : "running",
+        sessionId: normalizedSessionId
+      });
       return commandFailure({
         action,
         error: "Command action cannot start."
       });
     }
 
+    aiStudioSessionDebugLog("client.headlessCommand.run.start", {
+      actionId,
+      advanceOnSuccess: advanceOnSuccess === true,
+      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
+      sessionId: normalizedSessionId
+    });
     running.value = true;
     lastResult.value = null;
     commandPreview.value = "";
@@ -159,6 +177,13 @@ function useAiStudioHeadlessCommandRunner({
         input: normalizePlainObject(input)
       });
       if (terminalSession?.ok === false) {
+        aiStudioSessionDebugLog("client.headlessCommand.startTerminal.rejected", {
+          actionId,
+          code: String(terminalSession.code || terminalSession.errors?.[0]?.code || ""),
+          durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+          sessionId: normalizedSessionId,
+          status: terminalSession.status || terminalSession.statusCode || null
+        });
         const result = commandFailure({
           action,
           code: terminalSession.code || terminalSession.errors?.[0]?.code || "",
@@ -173,17 +198,39 @@ function useAiStudioHeadlessCommandRunner({
         sessionId: normalizedSessionId,
         terminalSessionId: String(terminalSession.id || "")
       };
+      aiStudioSessionDebugLog("client.headlessCommand.startTerminal.done", {
+        actionId,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        sessionId: normalizedSessionId,
+        terminalSessionId: activeTerminal.terminalSessionId,
+        terminalStatus: String(terminalSession.status || "")
+      });
       applyLiveTerminalSnapshot(terminalSession);
       const result = await waitForCommandExit({
         action,
+        commandStartedAtMs: startedAtMs,
         initialSession: terminalSession,
         sessionId: normalizedSessionId,
         terminalSessionId: activeTerminal.terminalSessionId,
         webSocketUrl
       });
       lastResult.value = result;
+      aiStudioSessionDebugLog("client.headlessCommand.run.done", {
+        actionId,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        exitCode: result.exitCode ?? null,
+        ok: result.ok === true,
+        sessionId: normalizedSessionId,
+        terminalSessionId: result.terminalSessionId || ""
+      });
       return result;
     } catch (error) {
+      aiStudioSessionDebugLog("client.headlessCommand.run.error", {
+        actionId,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId: normalizedSessionId
+      });
       const result = commandFailure({
         action,
         code: error?.code,
@@ -212,6 +259,7 @@ function useAiStudioHeadlessCommandRunner({
 
   function waitForCommandExit({
     action = {},
+    commandStartedAtMs = Date.now(),
     initialSession = {},
     sessionId = "",
     terminalSessionId = "",
@@ -226,6 +274,15 @@ function useAiStudioHeadlessCommandRunner({
         if (settled) {
           return;
         }
+        aiStudioSessionDebugLog("client.headlessCommand.stream.settle", {
+          actionId: terminalActionId(action),
+          durationMs: aiStudioSessionDebugDurationMs(commandStartedAtMs),
+          error: String(result?.error || ""),
+          exitCode: result?.exitCode ?? null,
+          ok: result?.ok === true,
+          sessionId,
+          terminalSessionId
+        });
         settled = true;
         stopActiveCommand = null;
         closeSocket(activeSocket);
@@ -302,10 +359,22 @@ function useAiStudioHeadlessCommandRunner({
       };
 
       if (terminalHasExited(initialSession)) {
+        aiStudioSessionDebugLog("client.headlessCommand.stream.initialExited", {
+          actionId: terminalActionId(action),
+          sessionId,
+          terminalSessionId
+        });
         settle(resultForExit(initialSession.exitCode ?? null, String(initialSession.closeError || "")));
         return;
       }
       if (!terminalSessionId || typeof WebSocket !== "function") {
+        aiStudioSessionDebugLog("client.headlessCommand.stream.unavailable", {
+          actionId: terminalActionId(action),
+          hasTerminalSessionId: Boolean(terminalSessionId),
+          hasWebSocket: typeof WebSocket === "function",
+          sessionId,
+          terminalSessionId
+        });
         settle(commandFailure({
           action,
           commandPreview,
@@ -316,6 +385,11 @@ function useAiStudioHeadlessCommandRunner({
         return;
       }
 
+      aiStudioSessionDebugLog("client.headlessCommand.stream.open", {
+        actionId: terminalActionId(action),
+        sessionId,
+        terminalSessionId
+      });
       activeSocket = new WebSocket(resolveWebSocketUrl(sessionId, terminalSessionId));
       activeSocket.addEventListener("message", (event) => {
         handleMessage(event.data);

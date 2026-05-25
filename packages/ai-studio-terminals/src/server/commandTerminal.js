@@ -16,6 +16,12 @@ import {
   aiStudioError
 } from "../../../../server/lib/aiStudio/core.js";
 import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "../../../../server/lib/aiStudio/sessionDebugLog.js";
+import {
   ensureTargetRuntimeNetwork
 } from "../../../../server/lib/aiStudio/runtimeContainers.js";
 import {
@@ -123,6 +129,14 @@ async function writeActionTerminalResult({
   session = {},
   spec = {}
 } = {}) {
+  const startedAtMs = Date.now();
+  aiStudioSessionDebugLog("server.commandTerminal.writeResult.start", {
+    actionId: String(action.id || ""),
+    advanceOnSuccess,
+    exitCode,
+    sessionId: String(session.sessionId || ""),
+    stepId: String(session.currentStep || "")
+  });
   const completed = exitCode === 0;
   const commandResult = completed ? await readCommandResultFile(resultFile.path) : {
     facts: {}
@@ -182,6 +196,15 @@ async function writeActionTerminalResult({
     session
   });
   const currentSession = advancedSession || await runtime.getSession(session.sessionId);
+  aiStudioSessionDebugLog("server.commandTerminal.writeResult.done", {
+    ...aiStudioSessionDebugSummary(currentSession),
+    actionId: String(action.id || ""),
+    actionResultStatus: String(actionResult.status || ""),
+    completed,
+    durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+    exitCode,
+    metadataKeys: Object.keys(metadata).sort()
+  });
   if (completed) {
     await afterSuccessfulCommand({
       action,
@@ -208,6 +231,12 @@ async function advanceSessionAfterSuccessfulCommand({
   session = {}
 } = {}) {
   if (!advanceOnSuccess || !completed || typeof runtime?.advance !== "function") {
+    aiStudioSessionDebugLog("server.commandTerminal.advanceAfterSuccess.skipped", {
+      advanceOnSuccess,
+      completed,
+      hasAdvance: typeof runtime?.advance === "function",
+      sessionId: String(session.sessionId || "")
+    });
     return null;
   }
 
@@ -217,8 +246,16 @@ async function advanceSessionAfterSuccessfulCommand({
     refreshedSession.next.enabled === true &&
     refreshedSession.next.stepId
   ) {
+    aiStudioSessionDebugLog("server.commandTerminal.advanceAfterSuccess.start", {
+      ...aiStudioSessionDebugSummary(refreshedSession)
+    });
     return runtime.advance(session.sessionId);
   }
+  aiStudioSessionDebugLog("server.commandTerminal.advanceAfterSuccess.notReady", {
+    ...aiStudioSessionDebugSummary(refreshedSession),
+    nextDisabledReason: String(refreshedSession?.next?.disabledReason || ""),
+    nextVisible: refreshedSession?.next?.visible === true
+  });
   return refreshedSession;
 }
 
@@ -288,175 +325,265 @@ function createCommandTerminalController({
     },
 
     async startTerminal(sessionId, input = {}) {
+      const startedAtMs = Date.now();
+      const requestedActionId = String(input?.actionId || "").trim();
+      aiStudioSessionDebugLog("server.commandTerminal.start.start", {
+        actionId: requestedActionId,
+        advanceOnSuccess: input?.advanceOnSuccess === true,
+        inputKeys: Object.keys(normalizePlainObject(input?.input)).sort(),
+        sessionId
+      });
       return aiStudioResult(async () => {
-        const actionId = String(input?.actionId || "").trim();
-        const runtime = await projectService.createRuntime();
-        const session = await runtime.getSession(sessionId);
-        const action = actionById(session, actionId);
-        if (!action) {
-          throw aiStudioError(
-            `Action ${actionId || "(empty)"} is not available on this AI Studio step.`,
-            "ai_studio_action_not_available"
-          );
-        }
-        if (!actionRunsInCommandTerminal(action)) {
-          throw aiStudioError(
-            `Action ${action.label || action.id} does not run in the command terminal.`,
-            "ai_studio_command_requires_terminal"
-          );
-        }
-        if (action.enabled !== true) {
-          throw aiStudioError(
-            action.disabledReason || `Action ${action.label || action.id} is disabled.`,
-            "ai_studio_action_disabled"
-          );
-        }
-        const targetRoot = terminalTargetRoot(session, projectService);
-        if (!targetRoot) {
-          return {
-            ok: false,
-            error: "AI Studio command target root is not available."
-          };
-        }
-
-        const advanceOnSuccess = input?.advanceOnSuccess === true;
-        const commandInput = normalizePlainObject(input?.input);
-        const spec = await runtime.adapter.createCommandTerminalSpec(action.id, {
-          action,
-          config: runtime.projectConfig,
-          input: commandInput,
-          runtime,
-          session,
-          store: runtime.store
-        });
-        if (spec?.ok === false) {
-          return {
-            ok: false,
-            error: spec.message || `Command ${action.label || action.id} cannot start.`
-          };
-        }
-
-        const workdir = resolveCommandWorkdir(targetRoot, spec.cwd);
-        if (!pathInsideOrEqual(targetRoot, workdir)) {
-          return {
-            ok: false,
-            error: "AI Studio command workdir is outside the target root."
-          };
-        }
-
-        const imageResult = await resolveToolchainImage({
-          runtime,
-          session,
-          target: "command",
-          targetRoot
-        });
-        if (imageResult.ok === false) {
-          return imageResult;
-        }
-
-        await ensureRuntimeNetwork(targetRoot);
-        await ensureAdapterRuntimeContainers({
-          runtime,
-          session,
-          target: "command",
-          targetRoot
-        });
-        const terminalEnv = await projectTerminalEnvironment({
-          projectService,
-          runtime,
-          session,
-          target: "command",
-          targetRoot
-        });
-        const terminalEnvHash = terminalEnvironmentFingerprint(terminalEnv);
-        const namespace = commandTerminalNamespace(sessionId);
-        let resultFile = null;
-        const commandResultFile = () => {
-          if (!resultFile) {
-            resultFile = createCommandResultFileSync();
-          }
-          return resultFile;
-        };
-        if (typeof runtime.recordCommandActionStarted === "function") {
-          await runtime.recordCommandActionStarted(sessionId, action.id);
-        }
         try {
-          return await startTerminal({
-            args: (terminalContext) => {
-              const activeResultFile = commandResultFile();
-              const specEnv = typeof spec.env === "function" ? spec.env(terminalContext) : spec.env || {};
-              return commandTerminalArgs({
-                args: spec.args || [],
-                command: spec.command,
-                containerName: commandTerminalContainerName({
-                  sessionId,
-                  terminalId: terminalContext.id
-                }),
-                env: {
-                  ...terminalEnv,
-                  ...specEnv,
-                  [COMMAND_RESULT_ENV]: activeResultFile.path
-                },
-                image: imageResult.image,
-                mounts: Array.isArray(spec.mounts) ? spec.mounts : [],
-                resultFile: activeResultFile,
-                sessionId,
-                targetRoot,
-                terminalId: terminalContext.id,
-                workdir
-              });
-            },
-            command: "docker",
-            commandPreview: spec.commandPreview,
-            cwd: workdir,
-            maxRunning: 1,
-            metadata: {
-              actionId: action.id,
-              actionLabel: action.label,
-              cwd: workdir,
-              envHash: terminalEnvHash,
-              image: imageResult.image,
-              imageLabel: imageResult.label,
-              sessionId
-            },
-            namespace,
-            namespaceLimitPrefix: namespace,
-            onClose: async ({ exitCode, id }) => {
-              const activeResultFile = resultFile || {};
-              try {
-                await writeActionTerminalResult({
-                  advanceOnSuccess,
-                  afterSuccessfulCommand,
-                  action,
-                  exitCode,
-                  input: commandInput,
-                  resultFile: activeResultFile,
-                  runtime,
-                  session,
-                  spec
-                });
-                await publishSessionChanged(sessionId, {
-                  reason: "command-terminal-closed"
-                });
-              } finally {
-                await Promise.all([
-                  removeCommandResultFile(activeResultFile),
-                  removeContainer(commandTerminalContainerName({
-                    sessionId,
-                    terminalId: id
-                  }))
-                ]);
-              }
-            },
-            reuseRunning: true
+          const actionId = requestedActionId;
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.getSession(sessionId);
+          aiStudioSessionDebugLog("server.commandTerminal.start.sessionLoaded", {
+            ...aiStudioSessionDebugSummary(session),
+            actionId
           });
-        } catch (error) {
-          if (typeof runtime.recordCommandActionFinished === "function") {
-            await runtime.recordCommandActionFinished(session, action.id, {
-              message: String(error?.message || error || "Command terminal could not start."),
-              status: "blocked"
+          const action = actionById(session, actionId);
+          if (!action) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "action_not_available"
             });
+            throw aiStudioError(
+              `Action ${actionId || "(empty)"} is not available on this AI Studio step.`,
+              "ai_studio_action_not_available"
+            );
           }
+          if (!actionRunsInCommandTerminal(action)) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "command_requires_terminal"
+            });
+            throw aiStudioError(
+              `Action ${action.label || action.id} does not run in the command terminal.`,
+              "ai_studio_command_requires_terminal"
+            );
+          }
+          if (action.enabled !== true) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "action_disabled"
+            });
+            throw aiStudioError(
+              action.disabledReason || `Action ${action.label || action.id} is disabled.`,
+              "ai_studio_action_disabled"
+            );
+          }
+          const targetRoot = terminalTargetRoot(session, projectService);
+          if (!targetRoot) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "missing_target_root"
+            });
+            return {
+              ok: false,
+              error: "AI Studio command target root is not available."
+            };
+          }
+
+          const advanceOnSuccess = input?.advanceOnSuccess === true;
+          const commandInput = normalizePlainObject(input?.input);
+          const spec = await runtime.adapter.createCommandTerminalSpec(action.id, {
+            action,
+            config: runtime.projectConfig,
+            input: commandInput,
+            runtime,
+            session,
+            store: runtime.store
+          });
+          if (spec?.ok === false) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "spec_not_ready"
+            });
+            return {
+              ok: false,
+              error: spec.message || `Command ${action.label || action.id} cannot start.`
+            };
+          }
+
+          const workdir = resolveCommandWorkdir(targetRoot, spec.cwd);
+          if (!pathInsideOrEqual(targetRoot, workdir)) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "workdir_outside_target"
+            });
+            return {
+              ok: false,
+              error: "AI Studio command workdir is outside the target root."
+            };
+          }
+
+          const imageResult = await resolveToolchainImage({
+            runtime,
+            session,
+            target: "command",
+            targetRoot
+          });
+          if (imageResult.ok === false) {
+            aiStudioSessionDebugLog("server.commandTerminal.start.blocked", {
+              ...aiStudioSessionDebugSummary(session),
+              actionId,
+              reason: "toolchain_image",
+              toolchainError: String(imageResult.error || "")
+            });
+            return imageResult;
+          }
+
+          await ensureRuntimeNetwork(targetRoot);
+          await ensureAdapterRuntimeContainers({
+            runtime,
+            session,
+            target: "command",
+            targetRoot
+          });
+          const terminalEnv = await projectTerminalEnvironment({
+            projectService,
+            runtime,
+            session,
+            target: "command",
+            targetRoot
+          });
+          const terminalEnvHash = terminalEnvironmentFingerprint(terminalEnv);
+          const namespace = commandTerminalNamespace(sessionId);
+          let resultFile = null;
+          const commandResultFile = () => {
+            if (!resultFile) {
+              resultFile = createCommandResultFileSync();
+            }
+            return resultFile;
+          };
+          if (typeof runtime.recordCommandActionStarted === "function") {
+            await runtime.recordCommandActionStarted(sessionId, action.id);
+          }
+          try {
+            const terminal = await startTerminal({
+              args: (terminalContext) => {
+                const activeResultFile = commandResultFile();
+                const specEnv = typeof spec.env === "function" ? spec.env(terminalContext) : spec.env || {};
+                return commandTerminalArgs({
+                  args: spec.args || [],
+                  command: spec.command,
+                  containerName: commandTerminalContainerName({
+                    sessionId,
+                    terminalId: terminalContext.id
+                  }),
+                  env: {
+                    ...terminalEnv,
+                    ...specEnv,
+                    [COMMAND_RESULT_ENV]: activeResultFile.path
+                  },
+                  image: imageResult.image,
+                  mounts: Array.isArray(spec.mounts) ? spec.mounts : [],
+                  resultFile: activeResultFile,
+                  sessionId,
+                  targetRoot,
+                  terminalId: terminalContext.id,
+                  workdir
+                });
+              },
+              command: "docker",
+              commandPreview: spec.commandPreview,
+              cwd: workdir,
+              maxRunning: 1,
+              metadata: {
+                actionId: action.id,
+                actionLabel: action.label,
+                cwd: workdir,
+                envHash: terminalEnvHash,
+                image: imageResult.image,
+                imageLabel: imageResult.label,
+                sessionId
+              },
+              namespace,
+              namespaceLimitPrefix: namespace,
+              onClose: async ({ exitCode, id }) => {
+                const onCloseStartedAtMs = Date.now();
+                const activeResultFile = resultFile || {};
+                aiStudioSessionDebugLog("server.commandTerminal.onClose.start", {
+                  actionId: action.id,
+                  exitCode,
+                  sessionId,
+                  terminalSessionId: id
+                });
+                try {
+                  await writeActionTerminalResult({
+                    advanceOnSuccess,
+                    afterSuccessfulCommand,
+                    action,
+                    exitCode,
+                    input: commandInput,
+                    resultFile: activeResultFile,
+                    runtime,
+                    session,
+                    spec
+                  });
+                  await publishSessionChanged(sessionId, {
+                    reason: "command-terminal-closed"
+                  });
+                  aiStudioSessionDebugLog("server.commandTerminal.onClose.done", {
+                    actionId: action.id,
+                    durationMs: aiStudioSessionDebugDurationMs(onCloseStartedAtMs),
+                    exitCode,
+                    sessionId,
+                    terminalSessionId: id
+                  });
+                } catch (error) {
+                  aiStudioSessionDebugLog("server.commandTerminal.onClose.error", {
+                    actionId: action.id,
+                    durationMs: aiStudioSessionDebugDurationMs(onCloseStartedAtMs),
+                    error: aiStudioSessionDebugError(error),
+                    exitCode,
+                    sessionId,
+                    terminalSessionId: id
+                  });
+                  throw error;
+                } finally {
+                  await Promise.all([
+                    removeCommandResultFile(activeResultFile),
+                    removeContainer(commandTerminalContainerName({
+                      sessionId,
+                      terminalId: id
+                    }))
+                  ]);
+                }
+              },
+              reuseRunning: true
+            });
+            aiStudioSessionDebugLog("server.commandTerminal.start.done", {
+              actionId: action.id,
+              durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+              sessionId,
+              terminalSessionId: String(terminal?.id || ""),
+              terminalStatus: String(terminal?.status || "")
+            });
+            return terminal;
+          } catch (error) {
+            if (typeof runtime.recordCommandActionFinished === "function") {
+              await runtime.recordCommandActionFinished(session, action.id, {
+                message: String(error?.message || error || "Command terminal could not start."),
+                status: "blocked"
+              });
+            }
+            throw error;
+          }
+        } catch (error) {
+          aiStudioSessionDebugLog("server.commandTerminal.start.error", {
+            actionId: requestedActionId,
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
           throw error;
         }
       });

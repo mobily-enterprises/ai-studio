@@ -45,6 +45,12 @@ import {
   applyWorkflowPresentation,
   runWorkflowIntent
 } from "./workflowPresentation.js";
+import {
+  aiStudioSessionDebugDurationMs,
+  aiStudioSessionDebugError,
+  aiStudioSessionDebugLog,
+  aiStudioSessionDebugSummary
+} from "./sessionDebugLog.js";
 
 function metadataFlagIsOn(value) {
   return ["1", "true", "yes", "on"].includes(normalizeText(value).toLowerCase());
@@ -372,18 +378,51 @@ class AiStudioSessionRuntime {
   }
 
   async createSession(input = {}) {
-    const workflowProfileId = await this.workflowProfileIdForNewSession(input);
-    const workflowMachine = this.workflowMachineForProfile(workflowProfileId);
-    const initialStep = input.initialStep
-      ? workflowMachine.assertStepId(input.initialStep)
-      : workflowMachine.firstStepId();
-    const session = await this.store.createSession({
-      ...input,
-      metadata: this.sessionMetadataWithWorkflowProfile(input.metadata, workflowProfileId),
-      initialStep
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.createSession.start", {
+      requestedInitialStep: String(input?.initialStep || ""),
+      requestedSessionId: String(input?.sessionId || ""),
+      requestedWorkflowProfile: String(input?.workflowProfile || input?.metadata?.workflow_profile || "")
     });
-    await this.writeInitialSessionArtifacts(session.sessionId, workflowProfileId);
-    return this.getSession(session.sessionId);
+    try {
+      const workflowProfileId = await this.workflowProfileIdForNewSession(input);
+      const workflowMachine = this.workflowMachineForProfile(workflowProfileId);
+      const initialStep = input.initialStep
+        ? workflowMachine.assertStepId(input.initialStep)
+        : workflowMachine.firstStepId();
+      aiStudioSessionDebugLog("server.runtime.createSession.storeCreate.start", {
+        initialStep,
+        requestedSessionId: String(input?.sessionId || ""),
+        workflowProfile: workflowProfileId
+      });
+      const session = await this.store.createSession({
+        ...input,
+        metadata: this.sessionMetadataWithWorkflowProfile(input.metadata, workflowProfileId),
+        initialStep
+      });
+      aiStudioSessionDebugLog("server.runtime.createSession.storeCreate.done", {
+        ...aiStudioSessionDebugSummary(session),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        initialStep,
+        workflowProfile: workflowProfileId
+      });
+      await this.writeInitialSessionArtifacts(session.sessionId, workflowProfileId);
+      const viewedSession = await this.getSession(session.sessionId);
+      aiStudioSessionDebugLog("server.runtime.createSession.done", {
+        ...aiStudioSessionDebugSummary(viewedSession),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        workflowProfile: workflowProfileId
+      });
+      return viewedSession;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.createSession.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        requestedInitialStep: String(input?.initialStep || ""),
+        requestedSessionId: String(input?.sessionId || "")
+      });
+      throw error;
+    }
   }
 
   async getSession(sessionId) {
@@ -715,96 +754,255 @@ class AiStudioSessionRuntime {
   }
 
   async runAction(sessionId, actionId, input = {}) {
-    const normalizedActionId = assertSafeActionId(actionId);
-    const session = await this.runActionSessionView(sessionId);
-    const action = currentAction(session, normalizedActionId);
-    if (!action) {
-      throw actionNotAvailableError(session, normalizedActionId);
-    }
-    if (!action.enabled) {
-      throw actionDisabledError(action);
-    }
-    if (action.type === "command") {
-      throw commandActionRequiresTerminalError(action);
-    }
-
-    await recordStepMachineActionStarted(this, session, action.id);
-    const actionSession = await this.runActionSessionView(session.sessionId);
-    const actionAfterStart = currentAction(actionSession, normalizedActionId) || action;
-
-    const handlerResult = await this.actionHandler(actionAfterStart.id)({
-      action: actionAfterStart,
-      input,
-      runtime: this,
-      session: actionSession,
-      store: this.store
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.runAction.start", {
+      actionId,
+      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
+      sessionId
     });
-    const actionResult = await this.store.writeActionResult(
-      actionSession.sessionId,
-      actionAfterStart.id,
-      actionResultRecord(actionAfterStart, actionSession, input, handlerResult)
-    );
-    await writeActionResultEffects(this.store, actionSession.sessionId, handlerResult);
-    await this.store.appendCommandLogEntry(
-      actionSession.sessionId,
-      actionLogEntry(actionAfterStart, actionSession, actionResult)
-    );
-    await recordStepMachineActionFinished(this, actionSession, actionAfterStart.id, actionResult);
+    try {
+      const normalizedActionId = assertSafeActionId(actionId);
+      const session = await this.runActionSessionView(sessionId);
+      aiStudioSessionDebugLog("server.runtime.runAction.sessionLoaded", {
+        ...aiStudioSessionDebugSummary(session),
+        actionId: normalizedActionId
+      });
+      const action = currentAction(session, normalizedActionId);
+      if (!action) {
+        aiStudioSessionDebugLog("server.runtime.runAction.blocked", {
+          ...aiStudioSessionDebugSummary(session),
+          actionId: normalizedActionId,
+          reason: "action_not_available"
+        });
+        throw actionNotAvailableError(session, normalizedActionId);
+      }
+      if (!action.enabled) {
+        aiStudioSessionDebugLog("server.runtime.runAction.blocked", {
+          ...aiStudioSessionDebugSummary(session),
+          actionId: normalizedActionId,
+          reason: "action_disabled"
+        });
+        throw actionDisabledError(action);
+      }
+      if (action.type === "command") {
+        aiStudioSessionDebugLog("server.runtime.runAction.blocked", {
+          ...aiStudioSessionDebugSummary(session),
+          actionId: normalizedActionId,
+          reason: "command_requires_terminal"
+        });
+        throw commandActionRequiresTerminalError(action);
+      }
 
-    return {
-      ...await this.runActionSessionView(actionSession.sessionId),
-      actionResult
-    };
+      await recordStepMachineActionStarted(this, session, action.id);
+      const actionSession = await this.runActionSessionView(session.sessionId);
+      const actionAfterStart = currentAction(actionSession, normalizedActionId) || action;
+
+      aiStudioSessionDebugLog("server.runtime.runAction.handler.start", {
+        ...aiStudioSessionDebugSummary(actionSession),
+        actionId: actionAfterStart.id,
+        actionType: String(actionAfterStart.type || "")
+      });
+      const handlerResult = await this.actionHandler(actionAfterStart.id)({
+        action: actionAfterStart,
+        input,
+        runtime: this,
+        session: actionSession,
+        store: this.store
+      });
+      const actionResult = await this.store.writeActionResult(
+        actionSession.sessionId,
+        actionAfterStart.id,
+        actionResultRecord(actionAfterStart, actionSession, input, handlerResult)
+      );
+      await writeActionResultEffects(this.store, actionSession.sessionId, handlerResult);
+      await this.store.appendCommandLogEntry(
+        actionSession.sessionId,
+        actionLogEntry(actionAfterStart, actionSession, actionResult)
+      );
+      await recordStepMachineActionFinished(this, actionSession, actionAfterStart.id, actionResult);
+
+      const viewedSession = {
+        ...await this.runActionSessionView(actionSession.sessionId),
+        actionResult
+      };
+      aiStudioSessionDebugLog("server.runtime.runAction.done", {
+        ...aiStudioSessionDebugSummary(viewedSession),
+        actionId: actionAfterStart.id,
+        actionResultStatus: String(actionResult.status || ""),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+      return viewedSession;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.runAction.error", {
+        actionId,
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId
+      });
+      throw error;
+    }
   }
 
   async advance(sessionId) {
-    const session = await this.getSession(sessionId);
-    if (!session.next.visible || !session.next.enabled || !session.next.stepId) {
-      throw aiStudioError(
-        session.next.disabledReason || "Current AI Studio step cannot advance.",
-        "ai_studio_step_not_ready"
-      );
-    }
-    await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
-      message: `Advanced from ${session.currentStep} to ${session.next.stepId}.`
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.advance.start", {
+      sessionId
     });
-    await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
-    return this.getSession(session.sessionId);
+    try {
+      const session = await this.getSession(sessionId);
+      aiStudioSessionDebugLog("server.runtime.advance.loaded", {
+        ...aiStudioSessionDebugSummary(session),
+        nextVisible: session.next?.visible !== false,
+        nextDisabledReason: String(session.next?.disabledReason || "")
+      });
+      if (!session.next.visible || !session.next.enabled || !session.next.stepId) {
+        aiStudioSessionDebugLog("server.runtime.advance.blocked", {
+          ...aiStudioSessionDebugSummary(session),
+          nextDisabledReason: String(session.next.disabledReason || ""),
+          nextVisible: session.next.visible !== false,
+          reason: "step_not_ready"
+        });
+        throw aiStudioError(
+          session.next.disabledReason || "Current AI Studio step cannot advance.",
+          "ai_studio_step_not_ready"
+        );
+      }
+      aiStudioSessionDebugLog("server.runtime.advance.transition", {
+        fromStepId: session.currentStep,
+        sessionId: session.sessionId,
+        toStepId: session.next.stepId
+      });
+      await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
+        message: `Advanced from ${session.currentStep} to ${session.next.stepId}.`
+      });
+      await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
+      const advancedSession = await this.getSession(session.sessionId);
+      aiStudioSessionDebugLog("server.runtime.advance.done", {
+        ...aiStudioSessionDebugSummary(advancedSession),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        fromStepId: session.currentStep
+      });
+      return advancedSession;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.advance.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId
+      });
+      throw error;
+    }
   }
 
   async rewind(sessionId, stepId) {
-    const session = await this.getSession(sessionId);
-    if (session.status !== AI_STUDIO_SESSION_STATUS.ACTIVE) {
-      throw aiStudioError("Closed AI Studio sessions cannot be rewound.", "ai_studio_closed_session_rewind");
-    }
-
-    const plan = this.workflowMachineForSession(session).rewindPlanForSession(session, stepId);
-    await Promise.all([
-      this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
-      this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
-      this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
-      this.store.deleteMetadataValues(session.sessionId, plan.metadataNames),
-      this.store.deleteStepStates(session.sessionId, [
-        plan.targetStepId,
-        session.currentStep,
-        ...plan.completedStepIds
-      ])
-    ]);
-    await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
-    await this.store.appendCommandLogEntry(session.sessionId, {
-      fromStepId: session.currentStep,
-      kind: "rewind",
-      toStepId: plan.targetStepId
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.rewind.start", {
+      requestedStepId: stepId,
+      sessionId
     });
-    return this.getSession(session.sessionId);
+    try {
+      const session = await this.getSession(sessionId);
+      if (session.status !== AI_STUDIO_SESSION_STATUS.ACTIVE) {
+        aiStudioSessionDebugLog("server.runtime.rewind.blocked", {
+          ...aiStudioSessionDebugSummary(session),
+          reason: "closed_session"
+        });
+        throw aiStudioError("Closed AI Studio sessions cannot be rewound.", "ai_studio_closed_session_rewind");
+      }
+
+      const plan = this.workflowMachineForSession(session).rewindPlanForSession(session, stepId);
+      aiStudioSessionDebugLog("server.runtime.rewind.plan", {
+        ...aiStudioSessionDebugSummary(session),
+        actionResultCount: plan.actionResultIds.length,
+        artifactCount: plan.artifactNames.length,
+        completedStepCount: plan.completedStepIds.length,
+        metadataCount: plan.metadataNames.length,
+        requestedStepId: stepId,
+        targetStepId: plan.targetStepId
+      });
+      await Promise.all([
+        this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
+        this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
+        this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
+        this.store.deleteMetadataValues(session.sessionId, plan.metadataNames),
+        this.store.deleteStepStates(session.sessionId, [
+          plan.targetStepId,
+          session.currentStep,
+          ...plan.completedStepIds
+        ])
+      ]);
+      await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
+      await this.store.appendCommandLogEntry(session.sessionId, {
+        fromStepId: session.currentStep,
+        kind: "rewind",
+        toStepId: plan.targetStepId
+      });
+      const rewoundSession = await this.getSession(session.sessionId);
+      aiStudioSessionDebugLog("server.runtime.rewind.done", {
+        ...aiStudioSessionDebugSummary(rewoundSession),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        fromStepId: session.currentStep,
+        requestedStepId: stepId
+      });
+      return rewoundSession;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.rewind.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        requestedStepId: stepId,
+        sessionId
+      });
+      throw error;
+    }
   }
 
   async submitCurrentStepInput(sessionId, input = {}) {
-    return saveStepMachineInput(this, sessionId, input);
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.submitCurrentStepInput.start", {
+      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
+      sessionId
+    });
+    try {
+      const session = await saveStepMachineInput(this, sessionId, input);
+      aiStudioSessionDebugLog("server.runtime.submitCurrentStepInput.done", {
+        ...aiStudioSessionDebugSummary(session),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs)
+      });
+      return session;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.submitCurrentStepInput.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        sessionId
+      });
+      throw error;
+    }
   }
 
   async runIntent(sessionId, intentId, input = {}) {
-    return runWorkflowIntent(this, sessionId, intentId, input);
+    const startedAtMs = Date.now();
+    aiStudioSessionDebugLog("server.runtime.runIntent.start", {
+      intentId,
+      sessionId,
+      stepId: String(input?.stepId || ""),
+      stepStatus: String(input?.stepStatus || "")
+    });
+    try {
+      const session = await runWorkflowIntent(this, sessionId, intentId, input);
+      aiStudioSessionDebugLog("server.runtime.runIntent.done", {
+        ...aiStudioSessionDebugSummary(session),
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        intentId
+      });
+      return session;
+    } catch (error) {
+      aiStudioSessionDebugLog("server.runtime.runIntent.error", {
+        durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+        error: aiStudioSessionDebugError(error),
+        intentId,
+        sessionId
+      });
+      throw error;
+    }
   }
 
   async recordCommandActionStarted(sessionId, actionId) {

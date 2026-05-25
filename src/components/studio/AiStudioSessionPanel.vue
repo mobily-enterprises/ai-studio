@@ -50,21 +50,19 @@
         </v-btn>
 
         <AiStudioLaunchControls
-          v-for="sessionItem in toolbar.sessions"
-          v-show="sessionItem.sessionId === selection.selectedSessionId"
-          :key="`launch:${sessionItem.sessionId}`"
+          v-if="selectedToolbarSession"
+          :key="`launch:${selectedToolbarSession.sessionId}`"
           :busy="false"
-          :session="sessionItem"
-          :window-displayed="sessionItem.sessionId === selection.selectedSessionId"
+          :session="selectedToolbarSession"
+          window-displayed
         />
 
         <AiStudioShellControls
-          v-for="sessionItem in toolbar.sessions"
-          v-show="sessionItem.sessionId === selection.selectedSessionId"
-          :key="`shell:${sessionItem.sessionId}`"
-          :session="sessionItem"
-          :show-activator="sessionMode === 'inspect' && sessionItem.sessionId === selection.selectedSessionId"
-          :window-displayed="sessionMode === 'inspect' && sessionItem.sessionId === selection.selectedSessionId"
+          v-if="selectedToolbarSession"
+          :key="`shell:${selectedToolbarSession.sessionId}`"
+          :session="selectedToolbarSession"
+          :show-activator="sessionMode === 'inspect'"
+          :window-displayed="sessionMode === 'inspect'"
         />
       </div>
     </Teleport>
@@ -88,12 +86,10 @@
 
     <div v-else class="studio-ai-sessions__runtime-stack">
       <AiStudioSessionRuntimeHost
-        v-for="sessionItem in toolbar.sessions"
-        v-show="sessionItem.sessionId === selection.selectedSessionId"
-        :key="sessionItem.sessionId"
-        :active="sessionItem.sessionId === selection.selectedSessionId"
+        :key="selection.selectedSessionId"
+        active
         :session-data="sessionData"
-        :session-id="sessionItem.sessionId"
+        :session-id="selection.selectedSessionId"
         :session-mode="sessionMode"
         @busy-change="setRuntimeBusy"
         @page-error-change="setRuntimePageError"
@@ -122,6 +118,9 @@ import {
 import {
   useAiStudioSessionData
 } from "@/composables/useAiStudioSessionData.js";
+import {
+  aiStudioSessionDebugLog
+} from "@/lib/aiStudioSessionDebugLog.js";
 
 const emit = defineEmits(["title-change"]);
 const route = useRoute();
@@ -161,6 +160,9 @@ const sessionMode = computed(() => route.query.mode === "inspect" ? "inspect" : 
 const inspectButtonIcon = computed(() => sessionMode.value === "inspect" ? mdiClose : mdiTune);
 const inspectButtonLabel = computed(() => sessionMode.value === "inspect" ? "Quit inspect" : "Inspect");
 const pageLoading = sessionData.pageLoading;
+const selectedToolbarSession = computed(() => {
+  return (toolbar.sessions || []).find((session) => session.sessionId === selection.selectedSessionId) || null;
+});
 const selectedRuntimeState = computed(() => runtimeStateBySessionId[selection.selectedSessionId] || null);
 const selectedAbandon = computed(() => selectedRuntimeState.value?.toolbarControls?.abandon || fallbackAbandon);
 const selectedDiff = computed(() => selectedRuntimeState.value?.toolbarControls?.diff || {});
@@ -225,6 +227,11 @@ function setRuntimePageError({
 }
 
 function setSessionMode(mode = "autopilot") {
+  aiStudioSessionDebugLog("client.sessionPanel.setSessionMode", {
+    fromMode: sessionMode.value,
+    selectedSessionId: String(selection.selectedSessionId || ""),
+    toMode: mode
+  });
   const query = {
     ...route.query
   };
@@ -239,10 +246,18 @@ function setSessionMode(mode = "autopilot") {
 }
 
 function toggleInspectMode() {
+  aiStudioSessionDebugLog("client.sessionPanel.toggleInspectMode", {
+    selectedSessionId: String(selection.selectedSessionId || ""),
+    sessionMode: sessionMode.value
+  });
   setSessionMode(sessionMode.value === "inspect" ? "autopilot" : "inspect");
 }
 
 watch(sessionMode, () => {
+  aiStudioSessionDebugLog("client.sessionPanel.sessionMode.changed", {
+    selectedSessionId: String(selection.selectedSessionId || ""),
+    sessionMode: sessionMode.value
+  });
   if (selection.selectedSessionId) {
     void sessionData.refreshSessionData();
   }
