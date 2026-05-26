@@ -167,8 +167,67 @@ function validateWorkflowStepEntries(workflowId = "", steps = []) {
   });
 }
 
+function normalizeWorkflowIntentHandlers(workflowId = "", steps = [], intentHandlers = {}) {
+  if (intentHandlers === undefined) {
+    return deepFreeze({});
+  }
+  if (!isPlainObject(intentHandlers)) {
+    throw aiStudioError(
+      `AI Studio workflow ${workflowId} intentHandlers must be an object.`,
+      "ai_studio_workflow_module_invalid"
+    );
+  }
+
+  const stepIds = new Set(steps.map((entry) => entry.stepId));
+  const normalizedHandlers = {};
+  for (const [rawStepId, stepHandlers] of Object.entries(intentHandlers)) {
+    const stepId = normalizeText(rawStepId);
+    if (!stepId) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} intentHandlers contains an empty step id.`,
+        "ai_studio_workflow_module_invalid"
+      );
+    }
+    if (!stepIds.has(stepId)) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} intentHandlers references unknown step: ${stepId}.`,
+        "ai_studio_workflow_unknown_step"
+      );
+    }
+    if (!isPlainObject(stepHandlers)) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} intentHandlers.${stepId} must be an object.`,
+        "ai_studio_workflow_module_invalid"
+      );
+    }
+
+    const normalizedStepHandlers = {};
+    for (const [rawIntentId, handler] of Object.entries(stepHandlers)) {
+      const intentId = normalizeText(rawIntentId);
+      if (!intentId) {
+        throw aiStudioError(
+          `AI Studio workflow ${workflowId} intentHandlers.${stepId} contains an empty intent id.`,
+          "ai_studio_workflow_module_invalid"
+        );
+      }
+      if (typeof handler !== "function") {
+        throw aiStudioError(
+          `AI Studio workflow ${workflowId} intentHandlers.${stepId}.${intentId} must be a function.`,
+          "ai_studio_workflow_module_invalid"
+        );
+      }
+      normalizedStepHandlers[intentId] = handler;
+    }
+    normalizedHandlers[stepId] = Object.freeze(normalizedStepHandlers);
+  }
+  return deepFreeze(normalizedHandlers);
+}
+
 function normalizeWorkflowContribution(moduleId = "", contribution = {}, index = 0) {
-  const workflow = isPlainObject(contribution) ? plainClone(contribution) : {};
+  const contributionObject = isPlainObject(contribution) ? contribution : {};
+  const workflowConfig = { ...contributionObject };
+  delete workflowConfig.intentHandlers;
+  const workflow = plainClone(workflowConfig);
   const workflowId = normalizeText(workflow.id);
   const context = `${moduleId} workflow ${index + 1}`;
   const steps = normalizeWorkflowSteps(workflow);
@@ -183,11 +242,81 @@ function normalizeWorkflowContribution(moduleId = "", contribution = {}, index =
     );
   }
   validateWorkflowStepEntries(workflowId, steps);
+  const intentHandlers = normalizeWorkflowIntentHandlers(
+    workflowId,
+    steps,
+    contributionObject.intentHandlers
+  );
 
   return deepFreeze({
-    ...workflowMetadata,
+    definition: {
+      ...workflowMetadata,
+      id: workflowId,
+      steps
+    },
     id: workflowId,
-    steps
+    intentHandlers
+  });
+}
+
+function workflowContributionDefinition(workflow = {}) {
+  return isPlainObject(workflow.definition)
+    ? workflow.definition
+    : workflow;
+}
+
+function workflowContributionIntentHandlers(workflow = {}) {
+  return isPlainObject(workflow.intentHandlers)
+    ? workflow.intentHandlers
+    : {};
+}
+
+function publicWorkflowDefinition(workflow = {}) {
+  const definition = workflowContributionDefinition(workflow);
+  return deepFreeze({
+    ...definition,
+    steps: Array.isArray(definition.steps) ? definition.steps : []
+  });
+}
+
+function workflowIntentHandlersForRecord(workflowRecord = {}) {
+  return isPlainObject(workflowRecord.intentHandlers)
+    ? workflowRecord.intentHandlers
+    : {};
+}
+
+function workflowIntentHandlerRecords(intentHandlers = {}) {
+  return Object.fromEntries(Object.entries(isPlainObject(intentHandlers) ? intentHandlers : {})
+    .map(([stepId, handlers]) => [
+      stepId,
+      Object.keys(isPlainObject(handlers) ? handlers : {}).sort()
+    ])
+    .sort(([leftId], [rightId]) => leftId.localeCompare(rightId)));
+}
+
+function workflowForRecord(workflowRecord = {}, stepRecords = new Map()) {
+  const definition = workflowRecord.definition;
+  return deepFreeze({
+    definition: plainClone(definition),
+    id: definition.id,
+    intentHandlers: workflowIntentHandlersForRecord(workflowRecord),
+    steps: definition.steps.map((entry) => {
+      const stepId = entry.stepId;
+      const stepDefinition = stepRecords.get(stepId)?.definition || null;
+      if (!stepDefinition) {
+        throw aiStudioError(
+          `AI Studio workflow ${definition.id} references unregistered step: ${stepId}.`,
+          "ai_studio_workflow_unknown_step"
+        );
+      }
+      return {
+        ...plainClone(stepDefinition),
+        workflow: {
+          rejectTo: entry.rejectTo,
+          recheckTo: entry.recheckTo
+        }
+      };
+    })
   });
 }
 
@@ -263,18 +392,21 @@ function createWorkflowRegistry() {
   }
 
   function storeWorkflowContribution(moduleId = "", workflow = {}) {
-    const missingStepIds = workflow.steps
+    const definition = publicWorkflowDefinition(workflow);
+    const intentHandlers = workflowContributionIntentHandlers(workflow);
+    const missingStepIds = definition.steps
       .map((entry) => entry.stepId)
       .filter((stepId) => !stepRecords.get(stepId)?.definition);
     if (missingStepIds.length > 0) {
       throw aiStudioError(
-        `AI Studio workflow ${workflow.id} references unregistered steps: ${missingStepIds.join(", ")}.`,
+        `AI Studio workflow ${definition.id} references unregistered steps: ${missingStepIds.join(", ")}.`,
         "ai_studio_workflow_unknown_step"
       );
     }
-    workflowRecords.set(workflow.id, Object.freeze({
-      definition: workflow,
-      id: workflow.id,
+    workflowRecords.set(definition.id, Object.freeze({
+      definition,
+      id: definition.id,
+      intentHandlers,
       moduleId
     }));
   }
@@ -339,28 +471,7 @@ function createWorkflowRegistry() {
     if (!workflowRecord) {
       return null;
     }
-    const definition = workflowRecord.definition;
-    return deepFreeze({
-      definition: plainClone(definition),
-      id: definition.id,
-      steps: definition.steps.map((entry) => {
-        const stepId = entry.stepId;
-        const stepDefinition = stepRecords.get(stepId)?.definition || null;
-        if (!stepDefinition) {
-          throw aiStudioError(
-            `AI Studio workflow ${definition.id} references unregistered step: ${stepId}.`,
-            "ai_studio_workflow_unknown_step"
-          );
-        }
-        return {
-          ...plainClone(stepDefinition),
-          workflow: {
-            rejectTo: entry.rejectTo,
-            recheckTo: entry.recheckTo
-          }
-        };
-      })
-    });
+    return workflowForRecord(workflowRecord, stepRecords);
   }
 
   function machineForStep(stepId = "") {
@@ -418,6 +529,7 @@ function createWorkflowRegistry() {
     return Array.from(workflowRecords.values())
       .map((record) => ({
         id: record.id,
+        intentHandlers: workflowIntentHandlerRecords(record.intentHandlers),
         moduleId: record.moduleId,
         steps: plainClone(record.definition.steps)
       }))

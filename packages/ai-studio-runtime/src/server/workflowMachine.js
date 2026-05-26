@@ -395,15 +395,58 @@ function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
   };
 }
 
+function normalizeWorkflowIntentHandlers(intentHandlers = {}, stepIds = new Set(), workflowId = "default") {
+  if (intentHandlers === undefined) {
+    return {};
+  }
+  if (!isPlainObject(intentHandlers)) {
+    throw aiStudioError(
+      `AI Studio workflow ${workflowId} intentHandlers must be an object.`,
+      "ai_studio_workflow_intent_handlers_invalid"
+    );
+  }
+  const normalizedHandlers = {};
+  for (const [rawStepId, stepHandlers] of Object.entries(intentHandlers)) {
+    const stepId = normalizeText(rawStepId);
+    if (!stepId || !stepIds.has(stepId)) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} intentHandlers references unknown step: ${stepId || "(empty)"}.`,
+        "ai_studio_workflow_unknown_step"
+      );
+    }
+    if (!isPlainObject(stepHandlers)) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} intentHandlers.${stepId} must be an object.`,
+        "ai_studio_workflow_intent_handlers_invalid"
+      );
+    }
+    normalizedHandlers[stepId] = Object.freeze(Object.fromEntries(Object.entries(stepHandlers)
+      .map(([rawIntentId, handler]) => {
+        const intentId = normalizeText(rawIntentId);
+        if (!intentId || typeof handler !== "function") {
+          throw aiStudioError(
+            `AI Studio workflow ${workflowId} intentHandlers.${stepId}.${intentId || "(empty)"} must be a function.`,
+            "ai_studio_workflow_intent_handlers_invalid"
+          );
+        }
+        return [intentId, handler];
+      })));
+  }
+  return normalizedHandlers;
+}
+
 function normalizeWorkflow(workflow = {}) {
   const workflowSteps = Array.isArray(workflow.steps) ? workflow.steps : [];
   if (workflowSteps.length === 0) {
     throw aiStudioError("AI Studio workflow must contain at least one step.", "ai_studio_empty_workflow");
   }
   const seenStepIds = new Set();
+  const id = normalizeText(workflow.id || "default");
+  const steps = workflowSteps.map((step, index) => normalizeStep(step, index, seenStepIds));
   return deepFreeze({
-    id: normalizeText(workflow.id || "default"),
-    steps: workflowSteps.map((step, index) => normalizeStep(step, index, seenStepIds))
+    id,
+    intentHandlers: normalizeWorkflowIntentHandlers(workflow.intentHandlers, seenStepIds, id),
+    steps
   });
 }
 
@@ -602,6 +645,7 @@ class WorkflowMachine {
     this.workflow = normalizeWorkflow(workflow);
     this.steps = this.workflow.steps;
     this.stepById = new Map(this.steps.map((step) => [step.id, step]));
+    this.intentHandlers = this.workflow.intentHandlers;
     this.actionReadiness = typeof actionReadiness === "function"
       ? actionReadiness
       : defaultActionReadiness;
@@ -643,6 +687,12 @@ class WorkflowMachine {
       return this.stepById.get(storedStepId);
     }
     return this.steps.find((step) => !completed.has(step.id)) || null;
+  }
+
+  intentHandlerForStepIntent(stepId = "", intentId = "") {
+    const stepHandlers = this.intentHandlers[normalizeText(stepId)];
+    const handler = isPlainObject(stepHandlers) ? stepHandlers[normalizeText(intentId)] : null;
+    return typeof handler === "function" ? handler : null;
   }
 
   checkCondition(condition, session = {}) {

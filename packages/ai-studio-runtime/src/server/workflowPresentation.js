@@ -353,14 +353,16 @@ function intentFromConfig(session = {}, config = {}) {
       style: config.style || "secondary"
     });
   }
+  const action = actionById(session, config.actionId || "");
   const enabled = configuredIntentEnabled(session, config);
   return intent(id, {
+    actionId: config.actionId || "",
     control: config.control,
-    disabledReason: configuredIntentDisabledReason(session, config, enabled),
-    enabled,
+    disabledReason: action?.disabledReason || configuredIntentDisabledReason(session, config, enabled),
+    enabled: action ? action.enabled === true && enabled : enabled,
     input: config.input,
-    inputFields: config.inputFields,
-    label: config.label || "",
+    inputFields: config.inputFields || action?.inputFields || [],
+    label: config.label || action?.label || "",
     style: config.style || "secondary"
   });
 }
@@ -1009,57 +1011,10 @@ function automationIntentConfigById(presentation = {}, intentId = "") {
   return recheck;
 }
 
-function defaultServerOperationForIntentConfig(intentConfig = {}) {
-  const type = normalizeText(intentConfig.type);
-  if (type === "continue") {
-    return {
-      kind: "advance"
-    };
-  }
-  if (type === "reject") {
-    return {
-      kind: "reject"
-    };
-  }
-  if (type === "action") {
-    return {
-      actionId: normalizeText(intentConfig.actionId),
-      input: "fields",
-      kind: "run_action"
-    };
-  }
-  return null;
-}
-
-function fallbackActionServerOperation(selectedIntent = {}) {
-  if (!selectedIntent.actionId) {
-    return null;
-  }
-  return {
-    actionId: selectedIntent.actionId,
-    input: "fields",
-    kind: "run_action"
-  };
-}
-
-function serverOperationForIntent(runtime, session = {}, intentId = "", selectedIntent = {}) {
+function intentConfigForIntent(runtime, session = {}, intentId = "") {
   const presentation = currentStepPresentationContract(runtime, session);
-  const intentConfig = presentationIntentConfigById(presentation, intentId) ||
+  return presentationIntentConfigById(presentation, intentId) ||
     automationIntentConfigById(presentation, intentId);
-  if (!intentConfig) {
-    return fallbackActionServerOperation(selectedIntent);
-  }
-  if (isPlainObject(intentConfig.serverOperation)) {
-    return intentConfig.serverOperation;
-  }
-  return defaultServerOperationForIntentConfig(intentConfig) ||
-    fallbackActionServerOperation(selectedIntent);
-}
-
-function fieldNamesForOperation(operation = {}, fallback = []) {
-  return Array.isArray(operation.feedbackFields)
-    ? operation.feedbackFields
-    : fallback;
 }
 
 function firstPresentField(fields = {}, names = []) {
@@ -1106,17 +1061,20 @@ function currentAutopilotAction(runtime, session = {}) {
   return normalizeText(stage?.actionId);
 }
 
-async function runActionServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
-  await writeOperationMetadata(runtime, session.sessionId, operation.metadataBeforeAction);
-  return runtime.runAction(
-    session.sessionId,
-    normalizeText(operation.actionId) || selectedIntent.actionId,
-    actionInputForOperation(operation, fields)
-  );
+async function runActionIntent(runtime, session = {}, selectedIntent = {}, intentConfig = {}, fields = {}) {
+  const config = isPlainObject(intentConfig) ? intentConfig : {};
+  const actionId = normalizeText(config.actionId) || selectedIntent.actionId;
+  if (!actionId) {
+    throw aiStudioError(
+      `Intent ${selectedIntent.id || "(empty)"} does not define an action.`,
+      "ai_studio_intent_not_handled"
+    );
+  }
+  return runtime.runAction(session.sessionId, actionId, fields);
 }
 
-async function rejectServerOperation(runtime, session = {}, operation = {}, fields = {}) {
-  const feedback = firstPresentField(fields, fieldNamesForOperation(operation, ["feedback", "message", "response"]));
+async function rejectWorkflowIntent(runtime, session = {}, fields = {}) {
+  const feedback = firstPresentField(fields, ["feedback", "message", "response"]);
   if (!feedback) {
     throw aiStudioError("Describe what should change before sending the work back to Codex.", "ai_studio_intent_input_required");
   }
@@ -1133,28 +1091,8 @@ async function rejectServerOperation(runtime, session = {}, operation = {}, fiel
   }
   return runtime.runAction(rewoundSession.sessionId, actionId, {
     autopilotFeedback: feedback,
-    autopilotReason: normalizeText(operation.reason || "changes_rejected")
+    autopilotReason: "changes_rejected"
   });
-}
-
-async function deleteMetadataAndRewindServerOperation(runtime, session = {}, operation = {}) {
-  await runtime.store.deleteMetadataValue(
-    session.sessionId,
-    requiredPresentationValue(operation, "metadataName", "delete_metadata_and_rewind operation")
-  );
-  return runtime.rewind(
-    session.sessionId,
-    workflowRecheckTargetForSession(runtime, session)
-  );
-}
-
-async function writeMetadataServerOperation(runtime, session = {}, operation = {}) {
-  await runtime.store.writeMetadataValue(
-    session.sessionId,
-    requiredPresentationValue(operation, "metadataName", "write_metadata operation"),
-    normalizeText(operation.metadataValue)
-  );
-  return runtime.getSession(session.sessionId);
 }
 
 function workflowStepIds(session = {}) {
@@ -1163,32 +1101,32 @@ function workflowStepIds(session = {}) {
     .filter(Boolean);
 }
 
-async function advanceToStepServerOperation(runtime, session = {}, operation = {}) {
+async function advanceToWorkflowStep(runtime, session = {}, targetStepId = "") {
   const startedAtMs = Date.now();
-  const targetStepId = normalizeText(operation.stepId || operation.targetStepId);
-  if (!targetStepId) {
-    throw aiStudioError("advance_to_step requires a target step id.", "ai_studio_operation_target_required");
+  const normalizedTargetStepId = normalizeText(targetStepId);
+  if (!normalizedTargetStepId) {
+    throw aiStudioError("Workflow intent target step is required.", "ai_studio_operation_target_required");
   }
 
   let currentSession = await runtime.getSession(session.sessionId);
   const stepIds = workflowStepIds(currentSession);
-  if (!stepIds.includes(targetStepId)) {
-    throw aiStudioError(`Workflow target step does not exist: ${targetStepId}`, "ai_studio_unknown_workflow_step");
+  if (!stepIds.includes(normalizedTargetStepId)) {
+    throw aiStudioError(`Workflow target step does not exist: ${normalizedTargetStepId}`, "ai_studio_unknown_workflow_step");
   }
 
   aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.start", {
     ...aiStudioSessionDebugSummary(currentSession),
-    targetStepId
+    targetStepId: normalizedTargetStepId
   });
 
-  for (let count = 0; normalizeText(currentSession.currentStep) !== targetStepId; count += 1) {
+  for (let count = 0; normalizeText(currentSession.currentStep) !== normalizedTargetStepId; count += 1) {
     if (count >= stepIds.length) {
-      throw aiStudioError(`Workflow could not advance to ${targetStepId}.`, "ai_studio_advance_target_not_reached");
+      throw aiStudioError(`Workflow could not advance to ${normalizedTargetStepId}.`, "ai_studio_advance_target_not_reached");
     }
     aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.advance", {
       ...aiStudioSessionDebugSummary(currentSession),
       count: count + 1,
-      targetStepId
+      targetStepId: normalizedTargetStepId
     });
     currentSession = await runtime.advance(currentSession.sessionId);
   }
@@ -1196,49 +1134,9 @@ async function advanceToStepServerOperation(runtime, session = {}, operation = {
   aiStudioSessionDebugLog("server.workflowPresentation.advanceToStep.done", {
     ...aiStudioSessionDebugSummary(currentSession),
     durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
-    targetStepId
+    targetStepId: normalizedTargetStepId
   });
   return currentSession;
-}
-
-async function sequenceServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
-  const operations = Array.isArray(operation.operations) ? operation.operations : [];
-  if (operations.length === 0) {
-    throw aiStudioError("sequence requires at least one operation.", "ai_studio_operation_sequence_empty");
-  }
-
-  let currentSession = session;
-  for (const nextOperation of operations) {
-    currentSession = await runServerOperation(runtime, currentSession, selectedIntent, nextOperation, fields);
-  }
-  return currentSession;
-}
-
-async function runServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
-  const safeOperation = isPlainObject(operation) ? operation : {};
-  switch (normalizeText(safeOperation.kind)) {
-    case "advance":
-      return runtime.advance(session.sessionId);
-    case "force_advance":
-      return forceAdvanceCurrentStep(runtime, session, safeOperation.message || "Advanced by server intent.");
-    case "run_action":
-      return runActionServerOperation(runtime, session, selectedIntent, safeOperation, fields);
-    case "reject":
-      return rejectServerOperation(runtime, session, safeOperation, fields);
-    case "delete_metadata_and_rewind":
-      return deleteMetadataAndRewindServerOperation(runtime, session, safeOperation);
-    case "write_metadata":
-      return writeMetadataServerOperation(runtime, session, safeOperation);
-    case "advance_to_step":
-      return advanceToStepServerOperation(runtime, session, safeOperation);
-    case "sequence":
-      return sequenceServerOperation(runtime, session, selectedIntent, safeOperation, fields);
-    default:
-      throw aiStudioError(
-        `Intent ${selectedIntent.id || "(empty)"} has no server handler.`,
-        "ai_studio_intent_not_handled"
-      );
-    }
 }
 
 function intentFields(input = {}) {
@@ -1255,23 +1153,6 @@ function conversationInput(fields = {}) {
   return {
     conversationRequest: normalizeText(fields.conversationRequest || fields.feedback || fields.message || fields.response)
   };
-}
-
-function actionInputForOperation(operation = {}, fields = {}) {
-  const inputMode = normalizeText(operation.input || operation.inputMode || "fields");
-  if (inputMode === "empty") {
-    return {};
-  }
-  if (inputMode === "conversation") {
-    return conversationInput(fields);
-  }
-  return fields;
-}
-
-async function writeOperationMetadata(runtime, sessionId = "", metadata = {}) {
-  for (const [name, value] of Object.entries(isPlainObject(metadata) ? metadata : {})) {
-    await runtime.store.writeMetadataValue(sessionId, name, value);
-  }
 }
 
 async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advanced by server intent.") {
@@ -1306,6 +1187,62 @@ async function forceAdvanceCurrentStep(runtime, session = {}, message = "Advance
   }
 }
 
+function workflowIntentHandlerForSession(runtime, session = {}, intentId = "") {
+  const machine = typeof runtime?.workflowMachineForSession === "function"
+    ? runtime.workflowMachineForSession(session)
+    : null;
+  return typeof machine?.intentHandlerForStepIntent === "function"
+    ? machine.intentHandlerForStepIntent(session.currentStep, intentId)
+    : null;
+}
+
+function workflowIntentContext(runtime, session = {}, selectedIntent = {}, fields = {}) {
+  return {
+    conversationInput: () => conversationInput(fields),
+    currentAutopilotAction: (targetSession = session) => currentAutopilotAction(runtime, targetSession),
+    deleteMetadata: (name = "") => runtime.store.deleteMetadataValue(session.sessionId, name),
+    fields,
+    forceAdvance: (message = "Advanced by server intent.") => forceAdvanceCurrentStep(runtime, session, message),
+    getSession: () => runtime.getSession(session.sessionId),
+    goTo: (stepId = "") => advanceToWorkflowStep(runtime, session, stepId),
+    intent: selectedIntent,
+    recheckTargetStepId: () => workflowRecheckTargetForSession(runtime, session),
+    rejectTargetStepId: () => workflowRejectTargetForSession(runtime, session),
+    rewind: (stepId = "") => runtime.rewind(session.sessionId, stepId),
+    runAction: (actionId = "", input = fields) => runtime.runAction(session.sessionId, actionId, input),
+    runtime,
+    session,
+    writeMetadata: (name = "", value = "") => runtime.store.writeMetadataValue(session.sessionId, name, value)
+  };
+}
+
+async function runWorkflowIntentHandler(runtime, session = {}, selectedIntent = {}, fields = {}) {
+  const handler = workflowIntentHandlerForSession(runtime, session, selectedIntent.id);
+  if (!handler) {
+    return null;
+  }
+  const result = await handler(workflowIntentContext(runtime, session, selectedIntent, fields));
+  return result || runtime.getSession(session.sessionId);
+}
+
+async function runBuiltinWorkflowIntent(runtime, session = {}, selectedIntent = {}, intentConfig = {}, fields = {}) {
+  const hasIntentConfig = isPlainObject(intentConfig) && Object.keys(intentConfig).length > 0;
+  const type = normalizeText(intentConfig?.type);
+  if (type === "continue") {
+    return runtime.advance(session.sessionId);
+  }
+  if (type === "reject") {
+    return rejectWorkflowIntent(runtime, session, fields);
+  }
+  if (type === "action" || (!hasIntentConfig && selectedIntent.actionId)) {
+    return runActionIntent(runtime, session, selectedIntent, intentConfig, fields);
+  }
+  throw aiStudioError(
+    `Intent ${selectedIntent.id || "(empty)"} has no server handler.`,
+    "ai_studio_intent_not_handled"
+  );
+}
+
 async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input = {}) {
   const session = await runtime.getSession(sessionId);
   const normalizedIntentId = normalizeText(intentId);
@@ -1325,8 +1262,17 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
   assertIntentMatchesCurrentState(session, input);
 
   const fields = intentFields(input);
-  const operation = serverOperationForIntent(runtime, session, normalizedIntentId, selectedIntent);
-  return runServerOperation(runtime, session, selectedIntent, operation, fields);
+  const handledSession = await runWorkflowIntentHandler(runtime, session, selectedIntent, fields);
+  if (handledSession) {
+    return handledSession;
+  }
+  return runBuiltinWorkflowIntent(
+    runtime,
+    session,
+    selectedIntent,
+    intentConfigForIntent(runtime, session, normalizedIntentId),
+    fields
+  );
 }
 
 export {

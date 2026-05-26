@@ -53,16 +53,7 @@ const actionDispatchRoutes = Object.freeze(new Set(Object.values(AI_STUDIO_ACTIO
 const clientControlActions = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ACTIONS)));
 const clientControlIconTokens = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS)));
 const clientControlStateFlags = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS)));
-const serverOperationKinds = Object.freeze(new Set([
-  "advance",
-  "advance_to_step",
-  "delete_metadata_and_rewind",
-  "force_advance",
-  "reject",
-  "run_action",
-  "sequence",
-  "write_metadata"
-]));
+const builtinIntentTypes = Object.freeze(new Set(["action", "continue", "reject"]));
 
 class PromptRendererFakeAdapter extends FakeTargetAdapter {
   constructor({
@@ -237,65 +228,20 @@ function validateSessionPresentationControls(failures, session = {}, context = "
   });
 }
 
-function validateServerOperation(failures, {
-  actionIds,
-  context = "",
-  operation = {},
-  step,
-  stepIds
-} = {}) {
-  const operationObject = objectRecord(operation);
-  const kind = normalizedText(operationObject.kind);
-  if (!serverOperationKinds.has(kind)) {
-    failures.push(`${context} uses unknown server operation: ${kind || "(empty)"}`);
-    return;
-  }
-
-  if (kind === "run_action" && normalizedText(operationObject.actionId)) {
-    requireActionReference(failures, actionIds, operationObject.actionId, `${context}.actionId`);
-  }
-  if (kind === "reject") {
-    requireStepReference(failures, stepIds, step?.workflow?.rejectTo, `${context}.rejectTo`);
-  }
-  if (kind === "delete_metadata_and_rewind") {
-    requireStepReference(failures, stepIds, step?.workflow?.recheckTo, `${context}.recheckTo`);
-    if (normalizedText(operationObject.reviewStepId)) {
-      requireStepReference(failures, stepIds, operationObject.reviewStepId, `${context}.reviewStepId`);
-    }
-    if (normalizedText(operationObject.validationStepId)) {
-      requireStepReference(failures, stepIds, operationObject.validationStepId, `${context}.validationStepId`);
-    }
-  }
-  if (kind === "advance_to_step") {
-    requireStepReference(
-      failures,
-      stepIds,
-      operationObject.stepId || operationObject.targetStepId,
-      `${context}.stepId`
-    );
-  }
-  if (kind === "sequence") {
-    arrayValue(operationObject.operations).forEach((nextOperation, index) => {
-      validateServerOperation(failures, {
-        actionIds,
-        context: `${context}.operations[${index}]`,
-        operation: nextOperation,
-        step,
-        stepIds
-      });
-    });
-  }
-}
-
 function validatePresentationIntent(failures, {
   actionIds,
   context = "",
+  handlerIntentIds = new Set(),
   intent = {},
   step,
   stepIds
 } = {}) {
   const intentObject = objectRecord(intent);
   const intentType = normalizedText(intentObject.type);
+  const intentId = normalizedText(intentObject.id);
+  if (Object.hasOwn(intentObject, "serverOperation")) {
+    failures.push(`${context} must not define serverOperation`);
+  }
   if (normalizedText(intentObject.actionId)) {
     requireActionReference(failures, actionIds, intentObject.actionId, `${context}.actionId`);
   }
@@ -316,14 +262,13 @@ function validatePresentationIntent(failures, {
   if (intentType === "reject") {
     requireStepReference(failures, stepIds, step.workflow?.rejectTo, `${context}.rejectTo`);
   }
-  if (objectRecord(intentObject.serverOperation).kind) {
-    validateServerOperation(failures, {
-      actionIds,
-      context: `${context}.serverOperation`,
-      operation: intentObject.serverOperation,
-      step,
-      stepIds
-    });
+  if (
+    intentId &&
+    !builtinIntentTypes.has(intentType) &&
+    Object.keys(objectRecord(intentObject.control)).length === 0 &&
+    !handlerIntentIds.has(intentId)
+  ) {
+    failures.push(`${context} has no workflow intent handler for ${intentId}`);
   }
 }
 
@@ -396,6 +341,7 @@ function validateWorkflowContract(workflow = {}) {
 
     const presentation = objectRecord(step.presentation);
     const allIntentIds = new Set();
+    const handlerIntentIds = new Set(Object.keys(objectRecord(workflow.intentHandlers?.[stepId])));
     for (const groupName of presentationGroups) {
       const group = objectRecord(presentation[groupName]);
       const intents = arrayValue(group.intents);
@@ -410,6 +356,7 @@ function validateWorkflowContract(workflow = {}) {
         validatePresentationIntent(failures, {
           actionIds,
           context: `${context}.presentation.${groupName}.intents[${index}]`,
+          handlerIntentIds,
           intent,
           step,
           stepIds
@@ -431,14 +378,14 @@ function validateWorkflowContract(workflow = {}) {
 
     const recheck = objectRecord(presentation.automation?.recheckAfterPrompt);
     if (normalizedText(recheck.intentId)) {
-      allIntentIds.add(normalizedText(recheck.intentId));
-      validateServerOperation(failures, {
-        actionIds,
-        context: `${context}.presentation.automation.recheckAfterPrompt.serverOperation`,
-        operation: recheck.serverOperation,
-        step,
-        stepIds
-      });
+      const recheckIntentId = normalizedText(recheck.intentId);
+      allIntentIds.add(recheckIntentId);
+      if (Object.hasOwn(recheck, "serverOperation")) {
+        failures.push(`${context}.presentation.automation.recheckAfterPrompt must not define serverOperation`);
+      }
+      if (!handlerIntentIds.has(recheckIntentId)) {
+        failures.push(`${context}.presentation.automation.recheckAfterPrompt has no workflow intent handler for ${recheckIntentId}`);
+      }
     }
 
     const mergeIntent = objectRecord(presentation.automation?.mergeIntent);
@@ -451,6 +398,11 @@ function validateWorkflowContract(workflow = {}) {
           id: mergeIntent.metadataValue,
           kind: "intent"
         });
+      }
+    }
+    for (const handlerIntentId of handlerIntentIds) {
+      if (!allIntentIds.has(handlerIntentId)) {
+        failures.push(`${context}.intentHandlers.${handlerIntentId} does not match a presented intent`);
       }
     }
   }
@@ -720,10 +672,6 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
         metadataName: "autopilot_final_review_followup",
         metadataValue: "recheck",
         promptComplete: true,
-        serverOperation: {
-          kind: "delete_metadata_and_rewind",
-          metadataName: "autopilot_final_review_followup"
-        },
         statuses: ["ready", "done"]
       }
     );
@@ -1340,6 +1288,18 @@ test("ai-studio workflow definitions are ordered step lists with self-contained 
       .presentation.stop.intents.find((intent) => intent.id === "reject").serverOperation,
     undefined
   );
+  assert.equal(
+    typeof generalCoding.intentHandlers.changes_accepted.request_review_tweak,
+    "function"
+  );
+  assert.equal(
+    typeof generalCoding.intentHandlers.changes_accepted.recheck_after_final_tweak,
+    "function"
+  );
+  assert.equal(
+    typeof generalCoding.intentHandlers.deep_ui_check_run.skip_optional_check,
+    "function"
+  );
   const createPullRequestStep = generalCoding.steps.find((step) => step.id === "create_pull_request");
   const mergeStep = generalCoding.steps.find((step) => step.id === "pr_merged");
   assert.deepEqual(createPullRequestStep.actions.map((action) => action.id), [
@@ -1359,27 +1319,17 @@ test("ai-studio workflow definitions are ordered step lists with self-contained 
     "create_pull_request.number.txt",
     "create_pull_request.source.txt"
   ]);
-  assert.deepEqual(
+  assert.equal(
     mergeStep.presentation.stop.intents.find((intent) => intent.id === "skip_merge").serverOperation,
-    {
-      kind: "sequence",
-      operations: [
-        {
-          actionId: "skip_merge",
-          input: "empty",
-          kind: "run_action"
-        },
-        {
-          kind: "write_metadata",
-          metadataName: "merge_skipped",
-          metadataValue: "yes"
-        },
-        {
-          kind: "advance_to_step",
-          stepId: "session_finished"
-        }
-      ]
-    }
+    undefined
+  );
+  assert.equal(
+    typeof generalCoding.intentHandlers.pr_merged.merge_and_sync,
+    "function"
+  );
+  assert.equal(
+    typeof generalCoding.intentHandlers.pr_merged.skip_merge,
+    "function"
   );
   assert.equal(generalCoding.steps.some((step) => step.id === "issue_file_created"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_made"), false);
@@ -1430,7 +1380,7 @@ test("ai-studio workflow definitions have an explicit state machine for every st
   }
 });
 
-test("ai-studio workflow contract resolves every referenced step, action, intent, and server operation", () => {
+test("ai-studio workflow contract resolves every referenced step, action, intent, and workflow handler", () => {
   const failures = workflowRegistryTesting.registeredWorkflowRecords()
     .flatMap(({ id: definitionId }) => validateWorkflowContract(workflowForDefinition(definitionId)));
 
@@ -1670,6 +1620,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
     [
       {
         id: "shared_workflow",
+        intentHandlers: {},
         moduleId: "beta",
         steps: [
           {

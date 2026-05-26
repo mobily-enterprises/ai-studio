@@ -5,6 +5,9 @@ import {
 import {
   buildAgentConversationStepDefinition
 } from "../workflowDefinitionBuilders.js";
+import {
+  coreLifecycleWorkflowIntentHandlers
+} from "./coreLifecycle.js";
 import { when } from "../workflowConditions.js";
 import {
   STEP_STATUS,
@@ -87,6 +90,7 @@ const coreMaintenanceWorkflowDefinitions = [
   {
     description: "Update documentation or other non-code project files, validate, commit, create a PR, and optionally merge.",
     id: workflowDefinitionIds.NON_CODE_MAINTENANCE,
+    intentHandlers: coreLifecycleWorkflowIntentHandlers,
     label: "Documentation/non code maintenance",
     sessionWord: "documentation",
     steps: [

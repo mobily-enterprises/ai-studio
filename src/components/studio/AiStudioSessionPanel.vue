@@ -128,6 +128,9 @@ import {
   useAiStudioSessionData
 } from "@/composables/useAiStudioSessionData.js";
 import {
+  useAiStudioSessionMode
+} from "@/composables/useAiStudioSessionMode.js";
+import {
   aiStudioSessionDebugLog
 } from "@/lib/aiStudioSessionDebugLog.js";
 
@@ -165,7 +168,14 @@ const toolbar = proxyRefs({
   workflowDefinitions: sessionData.workflowDefinitions
 });
 
-const sessionMode = computed(() => route.query.mode === "inspect" ? "inspect" : "autopilot");
+const {
+  sessionMode,
+  setSessionMode: storeSessionMode
+} = useAiStudioSessionMode({
+  route,
+  router,
+  selectedSessionId: sessionData.selectedSessionId
+});
 const modeSwitchTarget = computed(() => sessionMode.value === "inspect" ? "autopilot" : "inspect");
 const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "Inspect" : "Autopilot");
 const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
@@ -249,17 +259,7 @@ function setSessionMode(mode = "autopilot") {
     selectedSessionId: String(selection.selectedSessionId || ""),
     toMode: mode
   });
-  const query = {
-    ...route.query
-  };
-  if (mode === "inspect") {
-    query.mode = "inspect";
-  } else {
-    delete query.mode;
-  }
-  void router.replace({
-    query
-  });
+  storeSessionMode(mode);
 }
 
 function switchSessionMode() {

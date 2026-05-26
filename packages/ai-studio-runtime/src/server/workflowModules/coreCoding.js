@@ -19,6 +19,9 @@ import {
   buildAgentConversationActionDefinition,
   buildAgentConversationStepDefinition
 } from "../workflowDefinitionBuilders.js";
+import {
+  coreLifecycleWorkflowIntentHandlers
+} from "./coreLifecycle.js";
 import { when } from "../workflowConditions.js";
 import {
   STEP_INPUT_KIND,
@@ -70,6 +73,36 @@ const finalReviewConversationActionId = "final_review_conversation";
 const humanReviewConversationActionId = "human_review_conversation";
 const ISSUE_FILE_STEP_ID = "issue_file_created";
 const SEED_APPLICATION_STEP_ID = "seed_application_defined";
+
+async function skipOptionalCheck(ctx = {}) {
+  return ctx.forceAdvance("Skipped optional check.");
+}
+
+async function requestFinalReviewTweak(ctx = {}) {
+  await ctx.writeMetadata("autopilot_final_review_followup", "recheck");
+  return ctx.runAction(finalReviewConversationActionId, ctx.conversationInput());
+}
+
+async function recheckAfterFinalTweak(ctx = {}) {
+  await ctx.deleteMetadata("autopilot_final_review_followup");
+  return ctx.rewind(ctx.recheckTargetStepId());
+}
+
+const finalReviewIntentHandlers = deepFreeze({
+  request_review_tweak: requestFinalReviewTweak,
+  recheck_after_final_tweak: recheckAfterFinalTweak
+});
+const optionalCheckIntentHandlers = deepFreeze({
+  skip_optional_check: skipOptionalCheck
+});
+const coreCodingSeedWorkflowIntentHandlers = deepFreeze({
+  ...coreLifecycleWorkflowIntentHandlers,
+  [changesAcceptedStepId]: finalReviewIntentHandlers
+});
+const coreCodingStandardWorkflowIntentHandlers = deepFreeze({
+  ...coreCodingSeedWorkflowIntentHandlers,
+  [deepUiCheckRunStepId]: optionalCheckIntentHandlers
+});
 
 function createIssueOnGithubAction() {
   return {
@@ -344,11 +377,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
           {
             enabledWhen: "has_next_step",
             id: "skip_optional_check",
-            label: "Skip",
-            serverOperation: {
-              kind: "force_advance",
-              message: "Skipped optional check."
-            }
+            label: "Skip"
           }
         ],
         screen: {
@@ -408,10 +437,6 @@ const coreCodingStepDefinitionsById = deepFreeze({
           metadataName: "autopilot_final_review_followup",
           metadataValue: "recheck",
           promptComplete: true,
-          serverOperation: {
-            kind: "delete_metadata_and_rewind",
-            metadataName: "autopilot_final_review_followup"
-          },
           statuses: ["ready", "done"]
         }
       },
@@ -437,16 +462,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
           {
             actionId: finalReviewConversationActionId,
             id: "request_review_tweak",
-            serverOperation: {
-              actionId: finalReviewConversationActionId,
-              input: "conversation",
-              kind: "run_action",
-              metadataBeforeAction: {
-                autopilot_final_review_followup: "recheck"
-              }
-            },
-            style: "secondary",
-            type: "action"
+            style: "secondary"
           },
           {
             enabled: true,
@@ -529,6 +545,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
   {
     description: "Create the initial application scaffold and local development foundation.",
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.SEED_APPLICATION,
+    intentHandlers: coreCodingSeedWorkflowIntentHandlers,
     label: "Seed application",
     sessionWord: "seeding",
     steps: [
@@ -558,6 +575,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
   {
     description: "Plan, implement, review, validate, commit, create a PR, and optionally merge.",
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.BIG_FEATURE,
+    intentHandlers: coreCodingStandardWorkflowIntentHandlers,
     label: "Big feature",
     steps: [
       "session_created",
@@ -590,6 +608,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
   {
     description: "Make focused code changes with Codex, review, validate, commit, create a PR, and optionally merge.",
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.GENERAL_CODING,
+    intentHandlers: coreCodingStandardWorkflowIntentHandlers,
     label: "General coding",
     sessionWord: "coding",
     steps: [

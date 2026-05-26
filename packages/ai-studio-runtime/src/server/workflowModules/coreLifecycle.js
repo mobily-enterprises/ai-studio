@@ -54,6 +54,24 @@ const sessionFinishedStepId = "session_finished";
 const installDependenciesActionId = "install_dependencies";
 const dependenciesInstalledMetadataName = "dependencies_installed";
 
+async function recordMergeIntent(ctx = {}) {
+  await ctx.writeMetadata("autopilot_merge_intent", "merge_and_sync");
+  return ctx.getSession();
+}
+
+async function skipMergeAndFinish(ctx = {}) {
+  await ctx.runAction("skip_merge", {});
+  await ctx.writeMetadata("merge_skipped", "yes");
+  return ctx.goTo(sessionFinishedStepId);
+}
+
+const coreLifecycleWorkflowIntentHandlers = deepFreeze({
+  [prMergedStepId]: {
+    merge_and_sync: recordMergeIntent,
+    skip_merge: skipMergeAndFinish
+  }
+});
+
 const coreLifecycleStepDefinitionsById = deepFreeze({
   [sessionCreatedStepId]: {
     description: "Create the AI Studio session.",
@@ -423,37 +441,12 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
             enabledWhenAction: "prepare_for_merge",
             id: "merge_and_sync",
             label: "Merge and update main checkout",
-            serverOperation: {
-              kind: "write_metadata",
-              metadataName: "autopilot_merge_intent",
-              metadataValue: "merge_and_sync"
-            },
             style: "primary"
           },
           {
-            actionId: "skip_merge",
+            enabledWhenAction: "skip_merge",
             id: "skip_merge",
-            label: "Do not merge",
-            serverOperation: {
-              kind: "sequence",
-              operations: [
-                {
-                  actionId: "skip_merge",
-                  input: "empty",
-                  kind: "run_action"
-                },
-                {
-                  kind: "write_metadata",
-                  metadataName: "merge_skipped",
-                  metadataValue: "yes"
-                },
-                {
-                  kind: "advance_to_step",
-                  stepId: sessionFinishedStepId
-                }
-              ]
-            },
-            type: "action"
+            label: "Do not merge"
           }
         ],
         screen: {
@@ -1342,5 +1335,6 @@ const _testing = deepFreeze({
 
 export {
   _testing,
+  coreLifecycleWorkflowIntentHandlers,
   coreLifecycleWorkflowModule
 };

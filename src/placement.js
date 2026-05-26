@@ -57,7 +57,7 @@ addPlacement({
   props: {
     label: "Sessions",
     to: "/home",
-    exact: true
+    exact: false
   }
 });
 

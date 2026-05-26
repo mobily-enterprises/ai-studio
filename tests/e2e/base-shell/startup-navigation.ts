@@ -64,6 +64,16 @@ test.describe("studio startup navigation", () => {
     expect(apiRequests.count("/api/studio/current-app")).toBe(0);
   });
 
+  test("inspect mode keeps Sessions primary navigation active", async ({ page }) => {
+    await mockTargetAppBlocked(page);
+    await mockCurrentAppInspection(page);
+
+    await page.goto(`${BASE_URL}/home?mode=inspect`);
+
+    await expectSessionsRoute(page);
+    await expect(page.getByRole("link", { name: /^Sessions$/u }).first()).toHaveAttribute("aria-current", "page");
+  });
+
   test("target scripts page persists stars, resets defaults, and runs one terminal", async ({ page }) => {
     const terminalInputs: string[] = [];
     const terminalStarts: string[] = [];
