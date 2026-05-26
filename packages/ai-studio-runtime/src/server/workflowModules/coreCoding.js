@@ -435,7 +435,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
           },
           {
             enabled: true,
-            id: "reject_and_replan",
+            id: "reject",
             inputFields: [
               {
                 kind: "textarea",
@@ -444,16 +444,8 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
                 requiredMessage: "Describe what should change before sending the work back to Codex."
               }
             ],
-            label: "Reject, replan",
-            serverOperation: {
-              feedbackFields: ["feedback", "message", "response"],
-              kind: "reject_and_replan",
-              planActionId: "make_plan",
-              planStepId: planMadeStepId,
-              reason: "changes_rejected",
-              seedActionId: "make_seed_plan",
-              seedPlanStepId: seedPlanMadeStepId
-            }
+            label: "Reject, revise",
+            type: "reject"
           }
         ],
         screen: {
@@ -524,7 +516,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.SEED_APPLICATION,
     label: "Seed application",
     sessionWord: "seeding",
-    stepIds: [
+    steps: [
       "session_created",
       "work_source_selected",
       "worktree_created",
@@ -533,7 +525,10 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       seedPlanExecutedStepId,
       "dependencies_installed",
       "project_validated",
-      changesAcceptedStepId,
+      {
+        rejectTo: seedPlanMadeStepId,
+        stepId: changesAcceptedStepId
+      },
       reportCreatedStepId,
       projectKnowledgeUpdatedStepId,
       "changes_committed",
@@ -548,7 +543,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
     description: "Plan, implement, review, validate, commit, create a PR, and optionally merge.",
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.BIG_FEATURE,
     label: "Big feature",
-    stepIds: [
+    steps: [
       "session_created",
       "work_source_selected",
       "worktree_created",
@@ -561,7 +556,10 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       deepUiCheckRunStepId,
       reviewRunStepId,
       "project_validated",
-      changesAcceptedStepId,
+      {
+        rejectTo: planMadeStepId,
+        stepId: changesAcceptedStepId
+      },
       reportCreatedStepId,
       projectKnowledgeUpdatedStepId,
       "changes_committed",
@@ -577,7 +575,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
     id: AI_STUDIO_WORKFLOW_DEFINITION_IDS.GENERAL_CODING,
     label: "General coding",
     sessionWord: "coding",
-    stepIds: [
+    steps: [
       "session_created",
       "work_source_selected",
       "worktree_created",
@@ -586,7 +584,10 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       deepUiCheckRunStepId,
       reviewRunStepId,
       "project_validated",
-      changesAcceptedStepId,
+      {
+        rejectTo: agentConversationStepId,
+        stepId: changesAcceptedStepId
+      },
       reportCreatedStepId,
       projectKnowledgeUpdatedStepId,
       "changes_committed",

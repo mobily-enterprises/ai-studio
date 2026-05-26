@@ -5,6 +5,7 @@ export default Object.freeze({
   kind: "runtime",
   description: "AI Studio adapter registry, adapter contracts, and built-in adapters.",
   dependsOn: [
+    "@jskit-ai/kernel",
     "@local/ai-studio-core",
     "@local/setup-doctor-core",
     "@local/studio-terminal-core"

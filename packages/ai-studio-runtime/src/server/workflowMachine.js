@@ -290,6 +290,12 @@ function normalizeInteraction(interaction = {}) {
   };
 }
 
+function normalizeWorkflowStepBehavior(workflow = {}) {
+  return {
+    rejectTo: normalizeText(workflow.rejectTo)
+  };
+}
+
 function normalizeActions(actions = [], stepId = "") {
   const seenActionIds = new Set();
   const normalizedActions = [];
@@ -327,7 +333,8 @@ function normalizeStep(step = {}, index = 0, seenStepIds = new Set()) {
     next: normalizeNext(step.next, id),
     presentation: plainClone(step.presentation || null),
     rewindCleanup: normalizeRewindCleanup(step.rewindCleanup),
-    rewindable: step.rewindable !== false
+    rewindable: step.rewindable !== false,
+    workflow: normalizeWorkflowStepBehavior(step.workflow)
   };
 }
 
@@ -780,6 +787,7 @@ class WorkflowMachine {
         currentStep.autopilot,
         this.autopilotStageForSession(currentStep, session)
       ) : null,
+      workflowStep: currentStep?.workflow || null,
       workflowPresentation: currentStep?.presentation || null,
       workflowId: this.workflow.id
     };

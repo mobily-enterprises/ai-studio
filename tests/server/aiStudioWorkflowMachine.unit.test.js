@@ -367,13 +367,13 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
           "open_diff",
           "accept_review",
           "request_review_tweak",
-          "reject_and_replan"
+          "reject"
         ],
         intentIds: [
           "open_diff",
           "accept_review",
           "request_review_tweak",
-          "reject_and_replan"
+          "reject"
         ],
         screen: {
           kind: "review",
@@ -757,6 +757,68 @@ test("ai-studio runtime owns final-review follow-up and merge decision intents",
     );
 
     await runtime.createSession({
+      initialStep: "changes_accepted",
+      sessionId: "big_feature_reject"
+    });
+    await runtime.store.writeCompletedStep("big_feature_reject", "plan_made", {
+      message: "Plan was completed before final review."
+    });
+    const bigFeatureRejectReady = await runtime.getSession("big_feature_reject");
+    const bigFeatureRejected = await runtime.runIntent("big_feature_reject", "reject", {
+      fields: {
+        feedback: "Plan a simpler version."
+      },
+      stepId: bigFeatureRejectReady.currentStep,
+      stepStatus: bigFeatureRejectReady.stepMachine.status
+    });
+    assert.equal(bigFeatureRejected.currentStep, "plan_made");
+    assert.equal(bigFeatureRejected.actionResult.actionId, "make_plan");
+    assert.equal(bigFeatureRejected.actionResult.input.autopilotFeedback, "Plan a simpler version.");
+    assert.equal(bigFeatureRejected.actionResult.input.autopilotReason, "changes_rejected");
+
+    const seedRuntime = new AiStudioSessionRuntime({
+      adapter: new SeedRequiredFakeAdapter(),
+      targetRoot
+    });
+    await seedRuntime.createSession({
+      initialStep: "changes_accepted",
+      sessionId: "seed_reject",
+      workflowDefinition: AI_STUDIO_WORKFLOW_DEFINITION_IDS.SEED_APPLICATION
+    });
+    await seedRuntime.store.writeCompletedStep("seed_reject", "seed_plan_made", {
+      message: "Seed plan was completed before final review."
+    });
+    const seedRejectReady = await seedRuntime.getSession("seed_reject");
+    const seedRejected = await seedRuntime.runIntent("seed_reject", "reject", {
+      fields: {
+        feedback: "Seed less infrastructure."
+      },
+      stepId: seedRejectReady.currentStep,
+      stepStatus: seedRejectReady.stepMachine.status
+    });
+    assert.equal(seedRejected.currentStep, "seed_plan_made");
+    assert.equal(seedRejected.actionResult.actionId, "make_seed_plan");
+
+    await runtime.createSession({
+      initialStep: "changes_accepted",
+      sessionId: "general_coding_reject",
+      workflowDefinition: AI_STUDIO_WORKFLOW_DEFINITION_IDS.GENERAL_CODING
+    });
+    await runtime.store.writeCompletedStep("general_coding_reject", "agent_conversation", {
+      message: "Conversation step was completed before final review."
+    });
+    const generalRejectReady = await runtime.getSession("general_coding_reject");
+    const generalRejected = await runtime.runIntent("general_coding_reject", "reject", {
+      fields: {
+        feedback: "Make the focused change smaller."
+      },
+      stepId: generalRejectReady.currentStep,
+      stepStatus: generalRejectReady.stepMachine.status
+    });
+    assert.equal(generalRejected.currentStep, "agent_conversation");
+    assert.equal(generalRejected.actionResult.actionId, "agent_conversation");
+
+    await runtime.createSession({
       initialStep: "pr_merged",
       metadata: {
         pr_url: "https://github.com/example/project/pull/1"
@@ -827,6 +889,23 @@ test("ai-studio workflow definitions are ordered step lists with self-contained 
   ]);
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").label, "Make changes");
   assert.equal(generalCoding.steps.find((step) => step.id === "agent_conversation").autopilot.kind, "agent_conversation");
+  assert.equal(
+    seedApplication.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
+    "seed_plan_made"
+  );
+  assert.equal(
+    bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
+    "plan_made"
+  );
+  assert.equal(
+    generalCoding.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
+    "agent_conversation"
+  );
+  assert.equal(
+    generalCoding.steps.find((step) => step.id === "changes_accepted")
+      .presentation.stop.intents.find((intent) => intent.id === "reject").serverOperation,
+    undefined
+  );
   const createPullRequestStep = generalCoding.steps.find((step) => step.id === "create_pull_request");
   const mergeStep = generalCoding.steps.find((step) => step.id === "pr_merged");
   assert.deepEqual(createPullRequestStep.actions.map((action) => action.id), [
@@ -1016,8 +1095,9 @@ test("ai-studio workflow modules register workflow definitions with explicit cro
   );
 
   const nonCommitMaintenance = recordsById.get(maintenanceWorkflowDefinitionIds.NON_COMMIT_MAINTENANCE);
+  const nonCommitMaintenanceStepIds = nonCommitMaintenance?.steps.map((step) => step.stepId) || [];
   assert.deepEqual(
-    nonCommitMaintenance?.stepIds,
+    nonCommitMaintenanceStepIds,
     [
       "session_created",
       "worktree_created",
@@ -1026,7 +1106,7 @@ test("ai-studio workflow modules register workflow definitions with explicit cro
       "local_session_finished"
     ]
   );
-  for (const stepId of nonCommitMaintenance.stepIds.filter((id) => lifecycleStepIds.has(id))) {
+  for (const stepId of nonCommitMaintenanceStepIds.filter((id) => lifecycleStepIds.has(id))) {
     assert.equal(
       stepRecordsById.get(stepId)?.moduleId,
       lifecycleModuleId,
@@ -1053,7 +1133,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
   registry.registerWorkflows("alpha", {
     id: "shared_workflow",
     label: "Shared workflow",
-    stepIds: ["shared_step"]
+    steps: ["shared_step"]
   });
   registry.registerSteps("alpha", {
     id: "shared_step",
@@ -1080,7 +1160,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
   registry.registerWorkflows("beta", {
     id: "shared_workflow",
     label: "Replacement workflow",
-    stepIds: ["shared_step"]
+    steps: ["shared_step"]
   });
 
   assert.equal(registry.definitionForStep("shared_step").label, "Replacement step");
@@ -1134,15 +1214,53 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
       {
         id: "shared_workflow",
         moduleId: "beta",
-        stepIds: ["shared_step"]
+        steps: [
+          {
+            rejectTo: "",
+            stepId: "shared_step"
+          }
+        ]
       }
     ]
+  );
+  registry.registerSteps("gamma", {
+    definition: {
+      id: "later_step",
+      label: "Later step"
+    }
+  });
+  assert.throws(
+    () => registry.registerWorkflows("gamma", {
+      id: "bad_reject_workflow",
+      label: "Bad reject workflow",
+      steps: [
+        {
+          rejectTo: "missing_step",
+          stepId: "shared_step"
+        }
+      ]
+    }),
+    /rejects to unknown step: missing_step/
+  );
+  assert.throws(
+    () => registry.registerWorkflows("gamma", {
+      id: "forward_reject_workflow",
+      label: "Forward reject workflow",
+      steps: [
+        {
+          rejectTo: "later_step",
+          stepId: "shared_step"
+        },
+        "later_step"
+      ]
+    }),
+    /reject target must be an earlier step: later_step/
   );
   assert.throws(
     () => registry.registerWorkflows("gamma", {
       id: "missing_step_workflow",
       label: "Missing step workflow",
-      stepIds: ["missing_step"]
+      steps: ["missing_step"]
     }),
     /references unregistered steps: missing_step/
   );

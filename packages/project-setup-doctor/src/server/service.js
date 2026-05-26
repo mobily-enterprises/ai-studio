@@ -42,7 +42,7 @@ import {
 } from "@local/ai-studio-core/server/doctorCheckItems";
 import {
   AI_STUDIO_STATE_DIR
-} from "@local/ai-studio-runtime/server/sessionStore";
+} from "@local/ai-studio-core/server/core";
 import {
   ADD_AI_STUDIO_GITIGNORE_RULES_ACTION_ID,
   AI_STUDIO_LOCAL_STATE_GITIGNORE_PATTERNS,

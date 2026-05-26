@@ -5,6 +5,7 @@ export default Object.freeze({
   kind: "runtime",
   description: "Shared setup doctor route, stream, status, plugin, and repair tooling.",
   dependsOn: [
+    "@jskit-ai/kernel",
     "@local/ai-studio-core",
     "@local/studio-terminal-core"
   ],

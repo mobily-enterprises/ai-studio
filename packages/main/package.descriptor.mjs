@@ -4,7 +4,9 @@ export default Object.freeze({
   version: "0.1.0",
   kind: "runtime",
   description: "App-local main composition and glue scaffold.",
-  dependsOn: [],
+  dependsOn: [
+    "@jskit-ai/kernel"
+  ],
   capabilities: {
     provides: [],
     requires: []

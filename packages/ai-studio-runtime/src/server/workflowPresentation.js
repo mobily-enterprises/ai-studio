@@ -23,8 +23,7 @@ import { STEP_STATUS } from "./workflowStepMachines.js";
 const INTENT_IDS = Object.freeze({
   CONTINUE_STEP: "continue_step",
   RUN_OPTIONAL_CHECK: "run_optional_check",
-  SKIP_OPTIONAL_CHECK: "skip_optional_check",
-  TALK_TO_CODEX: "talk_to_codex"
+  SKIP_OPTIONAL_CHECK: "skip_optional_check"
 });
 
 const OPERATION_ROUTES = Object.freeze({
@@ -195,6 +194,14 @@ function stepPresentationConfig(session = {}) {
   return isPlainObject(presentation) ? presentation : {};
 }
 
+function workflowStepBehavior(session = {}) {
+  return isPlainObject(session.workflowStep) ? session.workflowStep : {};
+}
+
+function rejectTargetStepId(session = {}) {
+  return normalizeText(workflowStepBehavior(session).rejectTo);
+}
+
 function presentationContractError(message = "Invalid workflow presentation contract.") {
   throw aiStudioError(message, "ai_studio_workflow_presentation_invalid");
 }
@@ -267,6 +274,16 @@ function intentFromConfig(session = {}, config = {}) {
     return continueIntent(session, {
       id,
       label: config.label
+    });
+  }
+  if (normalizeText(config.type) === "reject") {
+    const enabled = Boolean(rejectTargetStepId(session));
+    return intent(id, {
+      disabledReason: enabled ? "" : "This workflow does not define a rejection target for the current step.",
+      enabled,
+      inputFields: config.inputFields,
+      label: config.label || "Reject",
+      style: config.style || "secondary"
     });
   }
   if (normalizeText(config.type) === "action") {
@@ -789,10 +806,12 @@ function applyWorkflowPresentation(session = {}) {
   const presentation = buildPresentation(session);
   const {
     workflowAutopilot,
+    workflowStep,
     workflowPresentation,
     ...publicSession
   } = session;
   void workflowAutopilot;
+  void workflowStep;
   void workflowPresentation;
   return {
     ...publicSession,
@@ -862,6 +881,19 @@ function currentStepPresentationContract(runtime, session = {}) {
   return isPlainObject(step?.presentation) ? step.presentation : {};
 }
 
+function currentWorkflowStepBehavior(runtime, session = {}) {
+  if (isPlainObject(session.workflowStep)) {
+    return session.workflowStep;
+  }
+  const machine = typeof runtime?.workflowMachineForSession === "function"
+    ? runtime.workflowMachineForSession(session)
+    : null;
+  const step = typeof machine?.currentStepForSession === "function"
+    ? machine.currentStepForSession(session)
+    : null;
+  return isPlainObject(step?.workflow) ? step.workflow : {};
+}
+
 function presentationIntentConfigById(presentation = {}, intentId = "") {
   for (const groupName of INTENT_PRESENTATION_GROUPS) {
     const presentationGroup = presentation[groupName];
@@ -887,6 +919,11 @@ function defaultServerOperationForIntentConfig(intentConfig = {}) {
   if (type === "continue") {
     return {
       kind: "advance"
+    };
+  }
+  if (type === "reject") {
+    return {
+      kind: "reject"
     };
   }
   if (type === "action") {
@@ -939,18 +976,28 @@ function workflowHasStep(session = {}, stepId = "") {
   return Boolean(normalizedStepId) && workflowStepIds(session).includes(normalizedStepId);
 }
 
-function replanTargetForSession(session = {}, operation = {}) {
-  const seedPlanStepId = normalizeText(operation.seedPlanStepId);
-  if (workflowHasStep(session, seedPlanStepId)) {
-    return {
-      actionId: requiredPresentationValue(operation, "seedActionId", "reject_and_replan operation"),
-      stepId: seedPlanStepId
-    };
+function workflowRejectTargetForSession(runtime, session = {}) {
+  const targetStepId = normalizeText(currentWorkflowStepBehavior(runtime, session).rejectTo);
+  if (!targetStepId) {
+    throw aiStudioError("This workflow does not define a rejection target for the current step.", "ai_studio_reject_target_missing");
   }
-  return {
-    actionId: requiredPresentationValue(operation, "planActionId", "reject_and_replan operation"),
-    stepId: requiredPresentationValue(operation, "planStepId", "reject_and_replan operation")
-  };
+  if (!workflowHasStep(session, targetStepId)) {
+    throw aiStudioError(`Workflow reject target does not exist: ${targetStepId}`, "ai_studio_unknown_workflow_step");
+  }
+  return targetStepId;
+}
+
+function currentAutopilotAction(runtime, session = {}) {
+  const machine = typeof runtime?.workflowMachineForSession === "function"
+    ? runtime.workflowMachineForSession(session)
+    : null;
+  const step = typeof machine?.currentStepForSession === "function"
+    ? machine.currentStepForSession(session)
+    : null;
+  const stage = typeof machine?.autopilotStageForSession === "function"
+    ? machine.autopilotStageForSession(step, session)
+    : null;
+  return normalizeText(stage?.actionId);
 }
 
 function finalReviewRecheckTargetStepForSession(session = {}, operation = {}) {
@@ -970,14 +1017,23 @@ async function runActionServerOperation(runtime, session = {}, selectedIntent = 
   );
 }
 
-async function rejectAndReplanServerOperation(runtime, session = {}, operation = {}, fields = {}) {
+async function rejectServerOperation(runtime, session = {}, operation = {}, fields = {}) {
   const feedback = firstPresentField(fields, fieldNamesForOperation(operation, ["feedback", "message", "response"]));
   if (!feedback) {
     throw aiStudioError("Describe what should change before sending the work back to Codex.", "ai_studio_intent_input_required");
   }
-  const target = replanTargetForSession(session, operation);
-  await runtime.rewind(session.sessionId, target.stepId);
-  return runtime.runAction(session.sessionId, target.actionId, {
+  const rewoundSession = await runtime.rewind(
+    session.sessionId,
+    workflowRejectTargetForSession(runtime, session)
+  );
+  const actionId = currentAutopilotAction(runtime, rewoundSession);
+  if (!actionId) {
+    throw aiStudioError(
+      `Workflow reject target ${rewoundSession.currentStep || "(none)"} does not define an autopilot action.`,
+      "ai_studio_reject_target_action_missing"
+    );
+  }
+  return runtime.runAction(rewoundSession.sessionId, actionId, {
     autopilotFeedback: feedback,
     autopilotReason: normalizeText(operation.reason || "changes_rejected")
   });
@@ -1069,8 +1125,8 @@ async function runServerOperation(runtime, session = {}, selectedIntent = {}, op
       return forceAdvanceCurrentStep(runtime, session, safeOperation.message || "Advanced by server intent.");
     case "run_action":
       return runActionServerOperation(runtime, session, selectedIntent, safeOperation, fields);
-    case "reject_and_replan":
-      return rejectAndReplanServerOperation(runtime, session, safeOperation, fields);
+    case "reject":
+      return rejectServerOperation(runtime, session, safeOperation, fields);
     case "delete_metadata_and_rewind":
       return deleteMetadataAndRewindServerOperation(runtime, session, safeOperation);
     case "write_metadata":

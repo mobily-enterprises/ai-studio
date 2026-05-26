@@ -92,7 +92,7 @@ const coreMaintenanceWorkflowDefinitions = [
     id: workflowDefinitionIds.NON_CODE_MAINTENANCE,
     label: "Documentation/non code maintenance",
     sessionWord: "documentation",
-    stepIds: [
+    steps: [
       "session_created",
       "work_source_selected",
       "worktree_created",
@@ -115,7 +115,7 @@ const coreMaintenanceWorkflowDefinitions = [
       work_source: "new_branch"
     },
     sessionWord: "maintenance",
-    stepIds: [
+    steps: [
       "session_created",
       "worktree_created",
       "dependencies_installed",

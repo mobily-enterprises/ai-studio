@@ -96,23 +96,32 @@ function normalizeStepFactoryContribution(moduleId = "", contribution = {}, inde
   });
 }
 
-function normalizeWorkflowContribution(moduleId = "", contribution = {}, index = 0) {
-  const workflow = isPlainObject(contribution) ? plainClone(contribution) : {};
-  const workflowId = normalizeText(workflow.id);
-  const context = `${moduleId} workflow ${index + 1}`;
-  const stepIds = Array.isArray(workflow.stepIds)
-    ? workflow.stepIds.map(normalizeText).filter(Boolean)
-    : [];
-
-  if (!workflowId) {
-    throw aiStudioError(
-      `AI Studio workflow ${context} requires an id.`,
-      "ai_studio_workflow_module_invalid"
-    );
+function normalizeWorkflowStepEntry(entry = {}) {
+  if (typeof entry === "string") {
+    return {
+      rejectTo: "",
+      stepId: normalizeText(entry)
+    };
   }
-  if (stepIds.length === 0) {
+  const entryObject = isPlainObject(entry) ? entry : {};
+  return {
+    rejectTo: normalizeText(entryObject.rejectTo),
+    stepId: normalizeText(entryObject.stepId || entryObject.id)
+  };
+}
+
+function normalizeWorkflowSteps(workflow = {}) {
+  const entries = Array.isArray(workflow.steps) ? workflow.steps : [];
+  return entries
+    .map(normalizeWorkflowStepEntry)
+    .filter((entry) => entry.stepId);
+}
+
+function validateWorkflowStepEntries(workflowId = "", steps = []) {
+  const stepIds = steps.map((entry) => entry.stepId);
+  if (steps.length === 0) {
     throw aiStudioError(
-      `AI Studio workflow ${context} must list at least one step.`,
+      `AI Studio workflow ${workflowId} must list at least one step.`,
       "ai_studio_workflow_module_invalid"
     );
   }
@@ -123,10 +132,48 @@ function normalizeWorkflowContribution(moduleId = "", contribution = {}, index =
     );
   }
 
+  const stepIndexById = new Map(stepIds.map((stepId, index) => [stepId, index]));
+  steps.forEach((entry, index) => {
+    if (!entry.rejectTo) {
+      return;
+    }
+    const targetIndex = stepIndexById.get(entry.rejectTo);
+    if (targetIndex === undefined) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} step ${entry.stepId} rejects to unknown step: ${entry.rejectTo}.`,
+        "ai_studio_workflow_unknown_reject_step"
+      );
+    }
+    if (targetIndex >= index) {
+      throw aiStudioError(
+        `AI Studio workflow ${workflowId} step ${entry.stepId} reject target must be an earlier step: ${entry.rejectTo}.`,
+        "ai_studio_workflow_invalid_reject_step"
+      );
+    }
+  });
+}
+
+function normalizeWorkflowContribution(moduleId = "", contribution = {}, index = 0) {
+  const workflow = isPlainObject(contribution) ? plainClone(contribution) : {};
+  const workflowId = normalizeText(workflow.id);
+  const context = `${moduleId} workflow ${index + 1}`;
+  const steps = normalizeWorkflowSteps(workflow);
+  const workflowMetadata = { ...workflow };
+  delete workflowMetadata.stepIds;
+  delete workflowMetadata.steps;
+
+  if (!workflowId) {
+    throw aiStudioError(
+      `AI Studio workflow ${context} requires an id.`,
+      "ai_studio_workflow_module_invalid"
+    );
+  }
+  validateWorkflowStepEntries(workflowId, steps);
+
   return deepFreeze({
-    ...workflow,
+    ...workflowMetadata,
     id: workflowId,
-    stepIds
+    steps
   });
 }
 
@@ -212,7 +259,9 @@ function createWorkflowRegistry() {
   }
 
   function storeWorkflowContribution(moduleId = "", workflow = {}) {
-    const missingStepIds = workflow.stepIds.filter((stepId) => !stepRecords.get(stepId)?.definition);
+    const missingStepIds = workflow.steps
+      .map((entry) => entry.stepId)
+      .filter((stepId) => !stepRecords.get(stepId)?.definition);
     if (missingStepIds.length > 0) {
       throw aiStudioError(
         `AI Studio workflow ${workflow.id} references unregistered steps: ${missingStepIds.join(", ")}.`,
@@ -290,7 +339,8 @@ function createWorkflowRegistry() {
     return deepFreeze({
       definition: plainClone(definition),
       id: definition.id,
-      steps: definition.stepIds.map((stepId) => {
+      steps: definition.steps.map((entry) => {
+        const stepId = entry.stepId;
         const stepDefinition = stepRecords.get(stepId)?.definition || null;
         if (!stepDefinition) {
           throw aiStudioError(
@@ -298,7 +348,12 @@ function createWorkflowRegistry() {
             "ai_studio_workflow_unknown_step"
           );
         }
-        return plainClone(stepDefinition);
+        return {
+          ...plainClone(stepDefinition),
+          workflow: {
+            rejectTo: entry.rejectTo
+          }
+        };
       })
     });
   }
@@ -359,7 +414,7 @@ function createWorkflowRegistry() {
       .map((record) => ({
         id: record.id,
         moduleId: record.moduleId,
-        stepIds: [...record.definition.stepIds]
+        steps: plainClone(record.definition.steps)
       }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
