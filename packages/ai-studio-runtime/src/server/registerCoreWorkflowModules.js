@@ -16,16 +16,20 @@ import {
   coreMaintenanceWorkflowModule
 } from "./workflowModules/coreMaintenance.js";
 
-registerWorkflowStepFactories(coreWorkflowStepFactories.id, coreWorkflowStepFactories.factories);
-
-[
+const coreWorkflowModules = [
   coreLifecycleWorkflowModule,
   coreCodingWorkflowModule,
   coreMaintenanceWorkflowModule
-].forEach((module) => {
-  registerWorkflowSteps(module.id, module.stepDefinitions);
+];
+
+registerWorkflowStepFactories(coreWorkflowStepFactories.id, coreWorkflowStepFactories.factories);
+
+coreWorkflowModules.forEach((module) => {
+  registerWorkflowSteps(module.id, module.steps);
+});
+
+coreWorkflowModules.forEach((module) => {
   if (module.workflowDefinitions.length > 0) {
     registerWorkflows(module.id, module.workflowDefinitions);
   }
-  registerWorkflowSteps(module.id, module.stepMachineContributions);
 });

@@ -58,6 +58,9 @@ import {
   mdiProgressClock,
   mdiRefresh
 } from "@mdi/js";
+import {
+  controlHasClientAction
+} from "@/lib/aiStudioPresentationControls.js";
 
 const props = defineProps({
   error: {
@@ -82,7 +85,7 @@ const visibleTasks = computed(() => {
 });
 
 function taskCanRetry(task = {}) {
-  return task.status === "failed" && Boolean(task.retry?.clientAction);
+  return task.status === "failed" && controlHasClientAction(task.retry);
 }
 
 function taskIsRetrying(task = {}) {

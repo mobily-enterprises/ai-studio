@@ -3,6 +3,9 @@ import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibil
 import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
 import { usersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
 import {
+  AI_STUDIO_ACTION_DISPATCH_ROUTES as ACTION_DISPATCH_ROUTES
+} from "@local/ai-studio-core/shared";
+import {
   normalizeActionInputFields
 } from "@/lib/aiStudioActionInputModel.js";
 import {
@@ -26,6 +29,11 @@ import {
   readRefOrGetterBoolean
 } from "@/lib/vueRefOrGetterValue.js";
 import {
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS,
+  controlHasClientAction,
+  controlUsesClientAction
+} from "@/lib/aiStudioPresentationControls.js";
+import {
   aiStudioSessionDebugDurationMs,
   aiStudioSessionDebugError,
   aiStudioSessionDebugLog,
@@ -48,7 +56,7 @@ function intentInputFromContext(context = {}) {
 }
 
 function actionDispatchRoute(action = {}) {
-  return String(action.dispatchRoute || "session-action").trim();
+  return String(action.dispatchRoute || ACTION_DISPATCH_ROUTES.SESSION_ACTION).trim();
 }
 
 function staleAdvanceError(error = {}) {
@@ -211,7 +219,10 @@ function useAiStudioSessionActions({
   });
   const acceptChangesUtilitiesVisible = computed(() => {
     const intents = Array.isArray(selectedSession.value?.intents) ? selectedSession.value.intents : [];
-    return intents.some((intent) => intent.clientAction === "open_diff" && intent.enabled !== false);
+    return intents.some((intent) => (
+      controlUsesClientAction(intent, AI_STUDIO_CLIENT_CONTROL_ACTIONS.OPEN_DIFF) &&
+      intent.enabled !== false
+    ));
   });
   const busy = computed(() => Boolean(
     runActionCommand.isRunning ||
@@ -539,11 +550,11 @@ function useAiStudioSessionActions({
       openInputDialog(action);
       return;
     }
-    if (actionDispatchRoute(action) === "external-link") {
+    if (actionDispatchRoute(action) === ACTION_DISPATCH_ROUTES.EXTERNAL_LINK) {
       openActionLink(action);
       return;
     }
-    if (actionDispatchRoute(action) === "command-terminal") {
+    if (actionDispatchRoute(action) === ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL) {
       aiStudioSessionDebugLog("client.sessionActions.runAction.commandTerminal.start", {
         actionId: String(action.id || ""),
         sessionId: String(unref(selectedSessionId) || "")
@@ -570,7 +581,7 @@ function useAiStudioSessionActions({
       });
       return;
     }
-    if (intent.clientAction === "open_diff") {
+    if (controlHasClientAction(intent)) {
       return;
     }
     return runIntentById({

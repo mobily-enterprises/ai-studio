@@ -5,6 +5,7 @@ import {
 import {
   buildAgentConversationStepDefinition
 } from "../workflowDefinitionBuilders.js";
+import { when } from "../workflowConditions.js";
 import {
   STEP_STATUS,
   actionCreatedMetadata,
@@ -25,66 +26,62 @@ const workflowDefinitionIds = deepFreeze({
   NON_COMMIT_MAINTENANCE: "non_commit_maintenance"
 });
 
-const coreMaintenanceStepDefinitions = [
-  {
-    definition: buildAgentConversationStepDefinition({
-      actionLabel: "Ask Codex",
-      description: "Ask Codex for local maintenance help and save the answer as an editable AI response artifact.",
-      id: "maintenance_conversation",
-      label: "Talk to Codex",
-      next: {
-        disabledReason: "Ask Codex and save an AI response before finishing.",
-        enabledWhen: [`artifact:${HUMAN_INPUT_RESPONSE_ARTIFACT}`]
-      },
-      responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
-    })
-  },
-  {
-    definition: {
-      actions: [
-        {
-          adapterCapability: "finish_session",
-          id: "finish_session",
-          label: "Archive",
-          type: "finish"
-        }
-      ],
-      autopilot: {
-        kind: "finished",
-        stop: true
-      },
-      description: "Archive this local maintenance session without creating a pull request.",
-      id: localSessionFinishedStepId,
-      label: "Finish local session",
-      next: {
-        visible: false
-      },
-      presentation: {
-        stop: {
-          intents: [
-            {
-              actionId: "finish_session",
-              id: "archive_session",
-              label: "Archive",
-              style: "primary",
-              type: "action"
-            }
-          ],
-          screen: {
-            icon: "success",
-            kind: "finished",
-            message: "The session is complete.",
-            sections: ["report_preview"],
-            title: "Congratulations!"
-          }
-        }
-      },
-      rewindCleanup: {
-        actionResults: ["finish_session"]
+const coreMaintenanceStepDefinitionsById = deepFreeze({
+  maintenance_conversation: buildAgentConversationStepDefinition({
+    actionLabel: "Ask Codex",
+    description: "Ask Codex for local maintenance help and save the answer as an editable AI response artifact.",
+    id: "maintenance_conversation",
+    label: "Talk to Codex",
+    next: {
+      disabledReason: "Ask Codex and save an AI response before finishing.",
+      enabledWhen: [when.artifactReady(HUMAN_INPUT_RESPONSE_ARTIFACT)]
+    },
+    responseArtifact: HUMAN_INPUT_RESPONSE_ARTIFACT
+  }),
+  [localSessionFinishedStepId]: {
+    actions: [
+      {
+        adapterCapability: "finish_session",
+        id: "finish_session",
+        label: "Archive",
+        type: "finish"
       }
+    ],
+    autopilot: {
+      kind: "finished",
+      stop: true
+    },
+    description: "Archive this local maintenance session without creating a pull request.",
+    id: localSessionFinishedStepId,
+    label: "Finish local session",
+    next: {
+      visible: false
+    },
+    presentation: {
+      stop: {
+        intents: [
+          {
+            actionId: "finish_session",
+            id: "archive_session",
+            label: "Archive",
+            style: "primary",
+            type: "action"
+          }
+        ],
+        screen: {
+          icon: "success",
+          kind: "finished",
+          message: "The session is complete.",
+          sections: ["report_preview"],
+          title: "Congratulations!"
+        }
+      }
+    },
+    rewindCleanup: {
+      actionResults: ["finish_session"]
     }
   }
-];
+});
 
 const coreMaintenanceWorkflowDefinitions = [
   {
@@ -164,7 +161,7 @@ const localSessionFinishedMachine = {
   }
 };
 
-const coreMaintenanceStepMachineContributions = [
+const coreMaintenanceSteps = Object.freeze([
   {
     config: {
       completionPolicy: {
@@ -176,19 +173,20 @@ const coreMaintenanceStepMachineContributions = [
       }),
       promptActionId: "agent_conversation"
     },
+    definition: coreMaintenanceStepDefinitionsById.maintenance_conversation,
     factoryId: "chat_with_ai",
     id: "maintenance_conversation"
   },
   {
+    definition: coreMaintenanceStepDefinitionsById[localSessionFinishedStepId],
     id: localSessionFinishedStepId,
     machine: localSessionFinishedMachine
   }
-];
+]);
 
 const coreMaintenanceWorkflowModule = Object.freeze({
   id: moduleId,
-  stepDefinitions: coreMaintenanceStepDefinitions,
-  stepMachineContributions: coreMaintenanceStepMachineContributions,
+  steps: coreMaintenanceSteps,
   workflowDefinitions: coreMaintenanceWorkflowDefinitions
 });
 

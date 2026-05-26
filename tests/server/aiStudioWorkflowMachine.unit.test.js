@@ -9,12 +9,19 @@ import {
   AiStudioSessionRuntime,
   DEFAULT_AI_STUDIO_WORKFLOW_DEFINITION_ID,
   WorkflowMachine,
+  when,
   workflowForDefinition
 } from "@local/ai-studio-runtime/server";
 import {
   FakeTargetAdapter,
   PromptRenderer
 } from "@local/ai-studio-adapters/server";
+import {
+  AI_STUDIO_ACTION_DISPATCH_ROUTES,
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS,
+  AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS,
+  AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS
+} from "@local/ai-studio-core/shared";
 import {
   _testing as workflowRegistryTesting,
   workflowStepMachineForStep
@@ -40,6 +47,21 @@ const maintenanceModuleId = coreMaintenanceTesting.moduleId;
 const maintenanceWorkflowDefinitionIds = coreMaintenanceTesting.workflowDefinitionIds;
 const codingModuleId = coreCodingTesting.moduleId;
 const lifecycleModuleId = coreLifecycleTesting.moduleId;
+const presentationGroups = Object.freeze(["decision", "stop"]);
+const actionDispatchRoutes = Object.freeze(new Set(Object.values(AI_STUDIO_ACTION_DISPATCH_ROUTES)));
+const clientControlActions = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ACTIONS)));
+const clientControlIconTokens = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS)));
+const clientControlStateFlags = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS)));
+const serverOperationKinds = Object.freeze(new Set([
+  "advance",
+  "advance_to_step",
+  "delete_metadata_and_rewind",
+  "force_advance",
+  "reject",
+  "run_action",
+  "sequence",
+  "write_metadata"
+]));
 
 class PromptRendererFakeAdapter extends FakeTargetAdapter {
   constructor({
@@ -78,6 +100,361 @@ class SeedRequiredFakeAdapter extends FakeTargetAdapter {
       }
     };
   }
+}
+
+function normalizedText(value = "") {
+  return String(value ?? "").trim();
+}
+
+function objectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function conditionReferences(condition = {}, refs = []) {
+  const conditionObject = objectRecord(condition);
+  switch (normalizedText(conditionObject.kind)) {
+    case "any":
+      arrayValue(conditionObject.conditions).forEach((entry) => {
+        conditionReferences(entry, refs);
+      });
+      return refs;
+    case "step_completed":
+      refs.push({
+        id: normalizedText(conditionObject.stepId),
+        kind: "step"
+      });
+      return refs;
+    case "action_input_exists":
+      refs.push({
+        id: normalizedText(conditionObject.actionId),
+        kind: "action"
+      });
+      return refs;
+    default:
+      return refs;
+  }
+}
+
+function conditionListReferences(conditions = []) {
+  return arrayValue(conditions).flatMap((condition) => conditionReferences(condition));
+}
+
+function addMissingReference(failures, {
+  context = "",
+  id = "",
+  kind = ""
+} = {}) {
+  failures.push(`${context} references unknown ${kind}: ${id || "(empty)"}`);
+}
+
+function requireStepReference(failures, stepIds, stepId = "", context = "") {
+  const normalizedStepId = normalizedText(stepId);
+  if (!normalizedStepId || !stepIds.has(normalizedStepId)) {
+    addMissingReference(failures, {
+      context,
+      id: normalizedStepId,
+      kind: "step"
+    });
+  }
+}
+
+function requireActionReference(failures, actionIds, actionId = "", context = "") {
+  const normalizedActionId = normalizedText(actionId);
+  if (!normalizedActionId || !actionIds.has(normalizedActionId)) {
+    addMissingReference(failures, {
+      context,
+      id: normalizedActionId,
+      kind: "action"
+    });
+  }
+}
+
+function validateConditionReferences(failures, {
+  actionIds,
+  conditions = [],
+  context = "",
+  stepIds
+} = {}) {
+  for (const ref of conditionListReferences(conditions)) {
+    if (ref.kind === "step") {
+      requireStepReference(failures, stepIds, ref.id, context);
+    }
+    if (ref.kind === "action") {
+      requireActionReference(failures, actionIds, ref.id, context);
+    }
+  }
+}
+
+function validateActionDispatchRoute(failures, action = {}, context = "") {
+  const route = normalizedText(action.dispatchRoute);
+  if (!route) {
+    return;
+  }
+  if (!actionDispatchRoutes.has(route)) {
+    failures.push(`${context}.dispatchRoute uses unknown action dispatch route: ${route || "(empty)"}`);
+  }
+}
+
+function validateClientControl(failures, control = {}, context = "") {
+  const controlObject = objectRecord(control);
+  const action = normalizedText(controlObject.action);
+  if (action && !clientControlActions.has(action)) {
+    failures.push(`${context}.action uses unknown client control action: ${action}`);
+  }
+  const icon = normalizedText(controlObject.icon);
+  if (icon && !clientControlIconTokens.has(icon)) {
+    failures.push(`${context}.icon uses unknown client control icon token: ${icon}`);
+  }
+  for (const flag of arrayValue(controlObject.disabledWhen).map(normalizedText).filter(Boolean)) {
+    if (!clientControlStateFlags.has(flag)) {
+      failures.push(`${context}.disabledWhen uses unknown client control state flag: ${flag}`);
+    }
+  }
+  for (const flag of arrayValue(controlObject.loadingWhen).map(normalizedText).filter(Boolean)) {
+    if (!clientControlStateFlags.has(flag)) {
+      failures.push(`${context}.loadingWhen uses unknown client control state flag: ${flag}`);
+    }
+  }
+}
+
+function validateSessionPresentationControls(failures, session = {}, context = "session presentation") {
+  arrayValue(session.intents).forEach((intent, index) => {
+    const control = objectRecord(intent).control;
+    if (Object.keys(objectRecord(control)).length > 0) {
+      validateClientControl(failures, control, `${context}.intents[${index}].control`);
+    }
+  });
+  arrayValue(session.presentation?.backgroundTasks).forEach((task, index) => {
+    const control = objectRecord(objectRecord(task).retry).control;
+    if (Object.keys(objectRecord(control)).length > 0) {
+      validateClientControl(failures, control, `${context}.backgroundTasks[${index}].retry.control`);
+    }
+  });
+}
+
+function validateServerOperation(failures, {
+  actionIds,
+  context = "",
+  operation = {},
+  step,
+  stepIds
+} = {}) {
+  const operationObject = objectRecord(operation);
+  const kind = normalizedText(operationObject.kind);
+  if (!serverOperationKinds.has(kind)) {
+    failures.push(`${context} uses unknown server operation: ${kind || "(empty)"}`);
+    return;
+  }
+
+  if (kind === "run_action" && normalizedText(operationObject.actionId)) {
+    requireActionReference(failures, actionIds, operationObject.actionId, `${context}.actionId`);
+  }
+  if (kind === "reject") {
+    requireStepReference(failures, stepIds, step?.workflow?.rejectTo, `${context}.rejectTo`);
+  }
+  if (kind === "delete_metadata_and_rewind") {
+    requireStepReference(failures, stepIds, step?.workflow?.recheckTo, `${context}.recheckTo`);
+    if (normalizedText(operationObject.reviewStepId)) {
+      requireStepReference(failures, stepIds, operationObject.reviewStepId, `${context}.reviewStepId`);
+    }
+    if (normalizedText(operationObject.validationStepId)) {
+      requireStepReference(failures, stepIds, operationObject.validationStepId, `${context}.validationStepId`);
+    }
+  }
+  if (kind === "advance_to_step") {
+    requireStepReference(
+      failures,
+      stepIds,
+      operationObject.stepId || operationObject.targetStepId,
+      `${context}.stepId`
+    );
+  }
+  if (kind === "sequence") {
+    arrayValue(operationObject.operations).forEach((nextOperation, index) => {
+      validateServerOperation(failures, {
+        actionIds,
+        context: `${context}.operations[${index}]`,
+        operation: nextOperation,
+        step,
+        stepIds
+      });
+    });
+  }
+}
+
+function validatePresentationIntent(failures, {
+  actionIds,
+  context = "",
+  intent = {},
+  step,
+  stepIds
+} = {}) {
+  const intentObject = objectRecord(intent);
+  const intentType = normalizedText(intentObject.type);
+  if (normalizedText(intentObject.actionId)) {
+    requireActionReference(failures, actionIds, intentObject.actionId, `${context}.actionId`);
+  }
+  if (normalizedText(intentObject.enabledWhenAction)) {
+    requireActionReference(failures, actionIds, intentObject.enabledWhenAction, `${context}.enabledWhenAction`);
+  }
+  if (Object.keys(objectRecord(intentObject.control)).length > 0) {
+    validateClientControl(failures, intentObject.control, `${context}.control`);
+  }
+  if (intentType === "action") {
+    requireActionReference(
+      failures,
+      actionIds,
+      intentObject.actionId || step.autopilot?.actionId,
+      `${context}.action`
+    );
+  }
+  if (intentType === "reject") {
+    requireStepReference(failures, stepIds, step.workflow?.rejectTo, `${context}.rejectTo`);
+  }
+  if (objectRecord(intentObject.serverOperation).kind) {
+    validateServerOperation(failures, {
+      actionIds,
+      context: `${context}.serverOperation`,
+      operation: intentObject.serverOperation,
+      step,
+      stepIds
+    });
+  }
+}
+
+function validateWorkflowContract(workflow = {}) {
+  const failures = [];
+  const stepIds = new Set(arrayValue(workflow.steps).map((step) => normalizedText(step.id)).filter(Boolean));
+
+  for (const step of arrayValue(workflow.steps)) {
+    const stepId = normalizedText(step.id);
+    const context = `${workflow.id}.${stepId}`;
+    const actionIds = new Set(arrayValue(step.actions).map((action) => normalizedText(action.id)).filter(Boolean));
+    if (normalizedText(step.workflow?.rejectTo)) {
+      requireStepReference(failures, stepIds, step.workflow.rejectTo, `${context}.workflow.rejectTo`);
+    }
+    if (normalizedText(step.workflow?.recheckTo)) {
+      requireStepReference(failures, stepIds, step.workflow.recheckTo, `${context}.workflow.recheckTo`);
+    }
+
+    for (const action of arrayValue(step.actions)) {
+      validateActionDispatchRoute(failures, action, `${context}.actions.${action.id}`);
+      validateConditionReferences(failures, {
+        actionIds,
+        conditions: action.disabledWhen,
+        context: `${context}.actions.${action.id}.disabledWhen`,
+        stepIds
+      });
+      validateConditionReferences(failures, {
+        actionIds,
+        conditions: action.enabledWhen,
+        context: `${context}.actions.${action.id}.enabledWhen`,
+        stepIds
+      });
+    }
+
+    for (const actionId of arrayValue(step.rewindCleanup?.actionResults)) {
+      requireActionReference(failures, actionIds, actionId, `${context}.rewindCleanup.actionResults`);
+    }
+
+    if (normalizedText(step.autopilot?.actionId)) {
+      requireActionReference(failures, actionIds, step.autopilot.actionId, `${context}.autopilot.actionId`);
+    }
+    validateConditionReferences(failures, {
+      actionIds,
+      conditions: step.autopilot?.completeWhen,
+      context: `${context}.autopilot.completeWhen`,
+      stepIds
+    });
+    arrayValue(step.autopilot?.actionSequence).forEach((action, index) => {
+      requireActionReference(failures, actionIds, action.actionId, `${context}.autopilot.actionSequence[${index}]`);
+      validateConditionReferences(failures, {
+        actionIds,
+        conditions: action.completeWhen,
+        context: `${context}.autopilot.actionSequence[${index}].completeWhen`,
+        stepIds
+      });
+    });
+
+    validateConditionReferences(failures, {
+      actionIds,
+      conditions: step.next?.enabledWhen,
+      context: `${context}.next.enabledWhen`,
+      stepIds
+    });
+    validateConditionReferences(failures, {
+      actionIds,
+      conditions: step.next?.visibleWhen,
+      context: `${context}.next.visibleWhen`,
+      stepIds
+    });
+
+    const presentation = objectRecord(step.presentation);
+    const allIntentIds = new Set();
+    for (const groupName of presentationGroups) {
+      const group = objectRecord(presentation[groupName]);
+      const intents = arrayValue(group.intents);
+      const groupIntentIds = new Set();
+      intents.forEach((intent, index) => {
+        const intentId = normalizedText(intent.id);
+        if (groupIntentIds.has(intentId)) {
+          failures.push(`${context}.presentation.${groupName}.intents has duplicate intent: ${intentId}`);
+        }
+        groupIntentIds.add(intentId);
+        allIntentIds.add(intentId);
+        validatePresentationIntent(failures, {
+          actionIds,
+          context: `${context}.presentation.${groupName}.intents[${index}]`,
+          intent,
+          step,
+          stepIds
+        });
+      });
+
+      const screen = objectRecord(group.screen);
+      if (normalizedText(screen.primaryIntentId) && !groupIntentIds.has(normalizedText(screen.primaryIntentId))) {
+        addMissingReference(failures, {
+          context: `${context}.presentation.${groupName}.screen.primaryIntentId`,
+          id: screen.primaryIntentId,
+          kind: "intent"
+        });
+      }
+      if (normalizedText(screen.titleActionId)) {
+        requireActionReference(failures, actionIds, screen.titleActionId, `${context}.presentation.${groupName}.screen.titleActionId`);
+      }
+    }
+
+    const recheck = objectRecord(presentation.automation?.recheckAfterPrompt);
+    if (normalizedText(recheck.intentId)) {
+      allIntentIds.add(normalizedText(recheck.intentId));
+      validateServerOperation(failures, {
+        actionIds,
+        context: `${context}.presentation.automation.recheckAfterPrompt.serverOperation`,
+        operation: recheck.serverOperation,
+        step,
+        stepIds
+      });
+    }
+
+    const mergeIntent = objectRecord(presentation.automation?.mergeIntent);
+    if (Object.keys(mergeIntent).length > 0) {
+      requireActionReference(failures, actionIds, mergeIntent.prepareActionId, `${context}.presentation.automation.mergeIntent.prepareActionId`);
+      requireActionReference(failures, actionIds, mergeIntent.mergeActionId, `${context}.presentation.automation.mergeIntent.mergeActionId`);
+      if (normalizedText(mergeIntent.metadataValue) && !allIntentIds.has(normalizedText(mergeIntent.metadataValue))) {
+        addMissingReference(failures, {
+          context: `${context}.presentation.automation.mergeIntent.metadataValue`,
+          id: mergeIntent.metadataValue,
+          kind: "intent"
+        });
+      }
+    }
+  }
+
+  return failures;
 }
 
 function presentationSnapshot(session = {}) {
@@ -231,6 +608,12 @@ test("ai-studio runtime exposes server-owned presentation and intents for Autopi
       "accept_review",
       "request_review_tweak"
     ]);
+    assert.deepEqual(session.intents.find((intent) => intent.id === "open_diff")?.control, {
+      action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.OPEN_DIFF,
+      disabledWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_DISABLED],
+      icon: AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS.DIFF,
+      loadingWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_LOADING]
+    });
     assert.equal(session.presentation.auto.nextOperation.kind, "wait");
     assert.equal(session.presentation.auto.nextOperation.executable, false);
     assert.equal(session.presentation.auto.nextOperation.reason, "user");
@@ -256,7 +639,9 @@ test("ai-studio runtime presentation exposes durable background task status", as
         label: "Codex bootstrap",
         message: "Codex bootstrap failed.",
         retry: {
-          clientAction: "start_codex_terminal",
+          control: {
+            action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL
+          },
           label: "Retry Codex"
         },
         status: "failed"
@@ -273,7 +658,12 @@ test("ai-studio runtime presentation exposes durable background task status", as
         label: "Codex bootstrap",
         message: "Codex bootstrap failed.",
         retry: {
-          clientAction: "start_codex_terminal",
+          control: {
+            action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL,
+            disabledWhen: [],
+            icon: "",
+            loadingWhen: []
+          },
           label: "Retry Codex"
         },
         startedAt: session.presentation.backgroundTasks[0].startedAt,
@@ -282,6 +672,39 @@ test("ai-studio runtime presentation exposes durable background task status", as
         updatedAt: session.presentation.backgroundTasks[0].updatedAt
       }
     ]);
+  });
+});
+
+test("ai-studio runtime presentation emits only declared client controls", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new AiStudioSessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "implementation_reviewed",
+      sessionId: "presentation_client_controls"
+    });
+    await runtime.store.writeBackgroundTaskEvent("presentation_client_controls", "codex_bootstrap", {
+      event: {
+        kind: "failed"
+      },
+      patch: {
+        retry: {
+          control: {
+            action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL
+          },
+          label: "Retry Codex"
+        },
+        status: "failed"
+      }
+    });
+
+    const session = await runtime.getSession("presentation_client_controls");
+    const failures = [];
+    validateSessionPresentationControls(failures, session);
+
+    assert.deepEqual(failures, []);
   });
 });
 
@@ -298,9 +721,7 @@ test("ai-studio runtime presentation snapshots come from workflow step metadata"
         promptComplete: true,
         serverOperation: {
           kind: "delete_metadata_and_rewind",
-          metadataName: "autopilot_final_review_followup",
-          reviewStepId: "review_run",
-          validationStepId: "project_validated"
+          metadataName: "autopilot_final_review_followup"
         },
         statuses: ["ready", "done"]
       }
@@ -894,12 +1315,24 @@ test("ai-studio workflow definitions are ordered step lists with self-contained 
     "seed_plan_made"
   );
   assert.equal(
+    seedApplication.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
+    "project_validated"
+  );
+  assert.equal(
     bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
     "plan_made"
   );
   assert.equal(
+    bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
+    "review_run"
+  );
+  assert.equal(
     generalCoding.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
     "agent_conversation"
+  );
+  assert.equal(
+    generalCoding.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
+    "review_run"
   );
   assert.equal(
     generalCoding.steps.find((step) => step.id === "changes_accepted")
@@ -994,6 +1427,13 @@ test("ai-studio workflow definitions have an explicit state machine for every st
       `${definitionId} has workflow steps without state machines`
     );
   }
+});
+
+test("ai-studio workflow contract resolves every referenced step, action, intent, and server operation", () => {
+  const failures = workflowRegistryTesting.registeredWorkflowRecords()
+    .flatMap(({ id: definitionId }) => validateWorkflowContract(workflowForDefinition(definitionId)));
+
+  assert.deepEqual(failures, []);
 });
 
 test("ai-studio workflow steps are registered with definitions, machines, and clear ownership", () => {
@@ -1124,22 +1564,37 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
     }),
     id: "shared_factory"
   });
+  assert.throws(
+    () => registry.registerSteps("alpha", {
+      definition: {
+        id: "definition_only",
+        label: "Definition only"
+      }
+    }),
+    /must register a machine or factory/
+  );
+  assert.throws(
+    () => registry.registerSteps("alpha", {
+      id: "machine_only",
+      machine: {
+        stepId: "machine_only"
+      }
+    }),
+    /must register a definition/
+  );
   registry.registerSteps("alpha", {
     definition: {
       id: "shared_step",
       label: "Shared step"
+    },
+    machine: {
+      stepId: "shared_step"
     }
   });
   registry.registerWorkflows("alpha", {
     id: "shared_workflow",
     label: "Shared workflow",
     steps: ["shared_step"]
-  });
-  registry.registerSteps("alpha", {
-    id: "shared_step",
-    machine: {
-      stepId: "shared_step"
-    }
   });
   assert.equal(registry.definitionForStep("shared_step").label, "Shared step");
   assert.equal(registry.machineForStep("shared_step").stepId, "shared_step");
@@ -1148,10 +1603,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
     definition: {
       id: "shared_step",
       label: "Replacement step"
-    }
-  });
-  registry.registerSteps("beta", {
-    id: "shared_step",
+    },
     machine: {
       replacement: true,
       stepId: "shared_step"
@@ -1171,6 +1623,10 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
   registry.registerSteps("beta", {
     config: {
       marker: "factory"
+    },
+    definition: {
+      id: "shared_step",
+      label: "Replacement step"
     },
     factoryId: "shared_factory",
     id: "shared_step"
@@ -1217,6 +1673,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
         steps: [
           {
             rejectTo: "",
+            recheckTo: "",
             stepId: "shared_step"
           }
         ]
@@ -1227,6 +1684,9 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
     definition: {
       id: "later_step",
       label: "Later step"
+    },
+    machine: {
+      stepId: "later_step"
     }
   });
   assert.throws(
@@ -1240,7 +1700,7 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
         }
       ]
     }),
-    /rejects to unknown step: missing_step/
+    /rejectTo points to unknown step: missing_step/
   );
   assert.throws(
     () => registry.registerWorkflows("gamma", {
@@ -1254,7 +1714,20 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
         "later_step"
       ]
     }),
-    /reject target must be an earlier step: later_step/
+    /rejectTo target must be an earlier step: later_step/
+  );
+  assert.throws(
+    () => registry.registerWorkflows("gamma", {
+      id: "bad_recheck_workflow",
+      label: "Bad recheck workflow",
+      steps: [
+        {
+          recheckTo: "missing_step",
+          stepId: "shared_step"
+        }
+      ]
+    }),
+    /recheckTo points to unknown step: missing_step/
   );
   assert.throws(
     () => registry.registerWorkflows("gamma", {
@@ -1266,6 +1739,10 @@ test("ai-studio workflow registry replaces duplicate step and workflow registrat
   );
   assert.throws(
     () => registry.registerSteps("gamma", {
+      definition: {
+        id: "missing_factory_step",
+        label: "Missing factory step"
+      },
       factoryId: "missing_factory",
       id: "missing_factory_step"
     }),
@@ -1792,6 +2269,11 @@ test("ai-studio runtime presents waiting_for_input as the same Codex conversatio
     assert.equal(waiting.presentation.screen.message, "What food should I use?");
     assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex"]);
     assert.equal(waiting.intents[0].actionId, "agent_conversation");
+    assert.deepEqual(waiting.intents[0].input?.questionSugar, {
+      fieldName: "conversationRequest",
+      kind: "numbered_questions",
+      source: "latest_assistant_message"
+    });
     assert.equal(waiting.intents[0].inputFields[0].name, "conversationRequest");
 
     const afterAnswer = await runtime.runIntent("prompt_response_resume", "talk_to_codex", {
@@ -2150,7 +2632,7 @@ test("ai-studio runtime keeps disabled actions visible and rejects execution wit
           {
             actions: [
               {
-                enabledWhen: ["metadata:ready"],
+                enabledWhen: [when.metadataExists("ready")],
                 id: "blocked_action",
                 label: "Blocked action"
               }
@@ -2197,7 +2679,7 @@ test("ai-studio runtime blocks advance when workflow next conditions are not met
           id: "first",
           label: "First",
           next: {
-            enabledWhen: ["metadata:ready"]
+            enabledWhen: [when.metadataExists("ready")]
           }
         },
         {
@@ -2340,7 +2822,7 @@ test("ai-studio workflow rejects duplicate action ids inside a step", () => {
   );
 });
 
-test("ai-studio workflow accepts supported condition forms and keeps runtime checks stable", () => {
+test("ai-studio workflow accepts structured condition forms and keeps runtime checks stable", () => {
   const machine = new WorkflowMachine({
     workflow: {
       id: "condition_forms",
@@ -2353,14 +2835,17 @@ test("ai-studio workflow accepts supported condition forms and keeps runtime che
           actions: [
             {
               enabledWhen: [
-                "always",
-                "session:active",
-                "metadata:ready",
-                "any:metadata:missing;metadata:any_ready",
-                "artifact:one.md",
-                "artifacts:two.md,three.md",
-                "action-input:collect.answer",
-                "completed:intro"
+                when.always(),
+                when.sessionActive(),
+                when.metadataExists("ready"),
+                when.any(
+                  when.metadataExists("missing"),
+                  when.metadataExists("any_ready")
+                ),
+                when.artifactReady("one.md"),
+                when.allArtifactsReady("two.md", "three.md"),
+                when.actionInputExists("collect", "answer"),
+                when.stepCompleted("intro")
               ],
               id: "requires_conditions",
               label: "Requires conditions"
@@ -2406,7 +2891,36 @@ test("ai-studio workflow accepts supported condition forms and keeps runtime che
   assert.equal(session.actions[0].enabled, true);
 });
 
-test("ai-studio workflow rejects unknown nested condition prefixes during construction", () => {
+test("ai-studio workflow rejects condition strings during construction", () => {
+  assert.throws(
+    () => new WorkflowMachine({
+      workflow: {
+        id: "string_condition_forms",
+        steps: [
+          {
+            actions: [
+              {
+                enabledWhen: ["metadata:ready"],
+                id: "requires_structured_conditions",
+                label: "Requires structured conditions"
+              }
+            ],
+            id: "first",
+            label: "First"
+          }
+        ]
+      }
+    }),
+    (error) => {
+      assert.equal(error.code, "ai_studio_workflow_malformed_condition");
+      assert.match(error.message, /Condition must be a condition object/u);
+      assert.match(error.message, /metadata:ready/u);
+      return true;
+    }
+  );
+});
+
+test("ai-studio workflow rejects unknown nested structured condition kinds during construction", () => {
   assert.throws(
     () => new WorkflowMachine({
       workflow: {
@@ -2416,7 +2930,15 @@ test("ai-studio workflow rejects unknown nested condition prefixes during constr
             id: "first",
             label: "First",
             next: {
-              enabledWhen: ["any:metadata:ready;unknown:ready"]
+              enabledWhen: [
+                when.any(
+                  when.metadataExists("ready"),
+                  {
+                    kind: "unknown",
+                    value: "ready"
+                  }
+                )
+              ]
             }
           },
           {
@@ -2429,22 +2951,22 @@ test("ai-studio workflow rejects unknown nested condition prefixes during constr
     (error) => {
       assert.equal(error.code, "ai_studio_workflow_unknown_condition");
       assert.match(error.message, /Unknown AI Studio workflow condition/u);
-      assert.match(error.message, /unknown:ready/u);
+      assert.match(error.message, /kind:unknown/u);
       return true;
     }
   );
 });
 
-test("ai-studio workflow rejects malformed condition values during construction", () => {
+test("ai-studio workflow rejects malformed structured condition values during construction", () => {
   assert.throws(
     () => new WorkflowMachine({
       workflow: {
-        id: "bad_condition_value",
+        id: "bad_action_input_condition_value",
         steps: [
           {
             actions: [
               {
-                enabledWhen: ["action-input:collect"],
+                enabledWhen: [when.actionInputExists("collect", "")],
                 id: "blocked",
                 label: "Blocked"
               }
@@ -2458,7 +2980,35 @@ test("ai-studio workflow rejects malformed condition values during construction"
     (error) => {
       assert.equal(error.code, "ai_studio_workflow_malformed_condition");
       assert.match(error.message, /Malformed AI Studio workflow condition/u);
-      assert.match(error.message, /action-input:collect/u);
+      assert.match(error.message, /Action input conditions require an input name/u);
+      return true;
+    }
+  );
+});
+
+test("ai-studio workflow rejects malformed structured condition lists during construction", () => {
+  assert.throws(
+    () => new WorkflowMachine({
+      workflow: {
+        id: "bad_structured_condition_value",
+        steps: [
+          {
+            actions: [
+              {
+                enabledWhen: [when.allArtifactsReady("one.md", "")],
+                id: "blocked",
+                label: "Blocked"
+              }
+            ],
+            id: "first",
+            label: "First"
+          }
+        ]
+      }
+    }),
+    (error) => {
+      assert.equal(error.code, "ai_studio_workflow_malformed_condition");
+      assert.match(error.message, /Artifacts conditions require one or more artifact names/u);
       return true;
     }
   );

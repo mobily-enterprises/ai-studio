@@ -66,6 +66,9 @@ export default defineConfig({
   test: {
     include: ["tests/client/**/*.vitest.js"]
   },
+  build: {
+    chunkSizeWarningLimit: 700
+  },
   server: {
     port: devPort,
     proxy: {

@@ -4,7 +4,8 @@ import {
   sessionIdInputValidator,
   sessionIntentInputValidator,
   sessionListInputValidator,
-  sessionRewindInputValidator
+  sessionRewindInputValidator,
+  sessionTerminalFailureFixInputValidator
 } from "./inputSchemas.js";
 
 const ACTION_LIST_SESSIONS = "feature.ai-studio-sessions.list";
@@ -12,6 +13,7 @@ const ACTION_CREATE_SESSION = "feature.ai-studio-sessions.create";
 const ACTION_INSPECT_SESSION = "feature.ai-studio-sessions.inspect";
 const ACTION_INSPECT_SESSION_DIFF = "feature.ai-studio-sessions.diff.inspect";
 const ACTION_READ_SESSION_CONVERSATION_LOG = "feature.ai-studio-sessions.conversation-log.read";
+const ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST = "feature.ai-studio-sessions.terminal-failure-fix-request.build";
 const ACTION_RUN_SESSION_ACTION = "feature.ai-studio-sessions.action.run";
 const ACTION_RUN_SESSION_INTENT = "feature.ai-studio-sessions.intent.run";
 const ACTION_ADVANCE_SESSION = "feature.ai-studio-sessions.advance";
@@ -108,6 +110,27 @@ const featureActions = Object.freeze([
     async execute(input, context, deps) {
       void context;
       return deps.featureService.readSessionConversationLog(input.sessionId);
+    }
+  },
+  {
+    id: ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
+    version: 1,
+    kind: "command",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: sessionTerminalFailureFixInputValidator,
+    output: null,
+    idempotency: "optional",
+    audit: {
+      actionName: ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.buildTerminalFailureFixRequest(
+        input.sessionId,
+        input
+      );
     }
   },
   {
@@ -235,6 +258,7 @@ const featureActions = Object.freeze([
 export {
   ACTION_ABANDON_SESSION,
   ACTION_ADVANCE_SESSION,
+  ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,

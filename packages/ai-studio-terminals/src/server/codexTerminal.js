@@ -96,6 +96,7 @@ const STANDALONE_TERMINAL_CONTROL_PATTERN = new RegExp(`[${STANDALONE_TERMINAL_C
 const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const CODEX_BOOTSTRAP_TASK_ID = "codex_bootstrap";
+const START_CODEX_TERMINAL_CONTROL_ACTION = "start_codex_terminal";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 const CODEX_TURN_STATE = Object.freeze({
@@ -703,7 +704,9 @@ function createCodexTerminalController({
         message: normalizeText(message),
         retry: status === "failed"
           ? {
-              clientAction: "start_codex_terminal",
+              control: {
+                action: START_CODEX_TERMINAL_CONTROL_ACTION
+              },
               label: "Retry Codex"
             }
           : null,

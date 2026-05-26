@@ -54,6 +54,9 @@ import {
 import {
   targetToolchainTerminalArgs
 } from "./targetToolchainTerminal.js";
+import {
+  AI_STUDIO_ACTION_DISPATCH_ROUTES as ACTION_DISPATCH_ROUTES
+} from "@local/ai-studio-core/shared";
 
 function actionById(session = {}, actionId = "") {
   return (Array.isArray(session.actions) ? session.actions : [])
@@ -61,7 +64,7 @@ function actionById(session = {}, actionId = "") {
 }
 
 function actionRunsInCommandTerminal(action = {}) {
-  return action.dispatchRoute === "command-terminal" || action.type === "command";
+  return action.dispatchRoute === ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL || action.type === "command";
 }
 
 function commandTerminalContainerName({

@@ -9,6 +9,13 @@ function conversationControl(overrides = {}) {
   return {
     enabled: true,
     id: "talk_to_codex",
+    input: {
+      questionSugar: {
+        fieldName: "conversationRequest",
+        kind: "numbered_questions",
+        source: "latest_assistant_message"
+      }
+    },
     inputFields: [
       {
         kind: "textarea",
@@ -38,12 +45,7 @@ describe("useAiStudioAutopilotComposer", () => {
       controls,
       conversationLog: ref({}),
       primaryIntentId: ref("talk_to_codex"),
-      running: ref(false),
-      session: ref({
-        stepMachine: {
-          status: "waiting_for_input"
-        }
-      })
+      running: ref(false)
     });
 
     await nextTick();
@@ -74,12 +76,7 @@ describe("useAiStudioAutopilotComposer", () => {
         return true;
       },
       primaryIntentId: ref("talk_to_codex"),
-      running: ref(false),
-      session: ref({
-        stepMachine: {
-          status: "waiting_for_input"
-        }
-      })
+      running: ref(false)
     });
 
     await nextTick();
@@ -98,5 +95,28 @@ describe("useAiStudioAutopilotComposer", () => {
     });
     expect(submitted.fields).not.toHaveProperty("__ui_question_1");
     expect(submitted.fields).not.toHaveProperty("__ui_question_2");
+  });
+
+  it("does not infer numbered question behavior without server input metadata", async () => {
+    const composer = useAiStudioAutopilotComposer({
+      controls: ref([conversationControl({
+        input: null
+      })]),
+      conversationLog: ref({
+        turns: [
+          {
+            assistant: {
+              text: "[1] First?\n[2] Second?"
+            }
+          }
+        ]
+      }),
+      primaryIntentId: ref("talk_to_codex"),
+      running: ref(false)
+    });
+
+    await nextTick();
+
+    expect(composer.selectedControlFields.value.map((field) => field.name)).toEqual(["conversationRequest"]);
   });
 });

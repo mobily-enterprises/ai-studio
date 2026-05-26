@@ -7,6 +7,9 @@ import {
 import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
+import {
+  controlHasClientAction
+} from "@/lib/aiStudioPresentationControls.js";
 
 function controlHasInputFields(control = {}) {
   return Array.isArray(control.inputFields) && control.inputFields.length > 0;
@@ -28,6 +31,23 @@ function latestAssistantMessage(conversationLog = {}) {
   return "";
 }
 
+function inactiveQuestionInput() {
+  return {
+    intro: "",
+    questions: []
+  };
+}
+
+function selectedControlQuestionSugar(control = {}) {
+  const input = control?.input;
+  const questionSugar = input && typeof input === "object" && !Array.isArray(input)
+    ? input.questionSugar
+    : null;
+  return questionSugar && typeof questionSugar === "object" && !Array.isArray(questionSugar)
+    ? questionSugar
+    : null;
+}
+
 function requiredFieldIsMissing(field = {}, values = {}) {
   return field.required !== false && !String(values[field.name] || "").trim();
 }
@@ -36,16 +56,14 @@ function useAiStudioAutopilotComposer({
   conversationLog,
   controls,
   isControlDisabled = () => false,
-  onOpenDiff = () => null,
+  onRunClientControl = () => false,
   onRunControl = async () => false,
   primaryIntentId,
-  running,
-  session
+  running
 } = {}) {
   const selectedControl = ref(null);
   const selectedControlValues = ref({});
 
-  const currentSession = computed(() => readRefOrGetterValue(session) || null);
   const currentControls = computed(() => {
     const value = readRefOrGetterValue(controls);
     return Array.isArray(value) ? value : [];
@@ -70,14 +88,18 @@ function useAiStudioAutopilotComposer({
       : [];
   });
   const selectedControlQuestionInput = computed(() => {
+    const questionSugar = selectedControlQuestionSugar(selectedControl.value);
+    if (
+      questionSugar?.kind !== "numbered_questions" ||
+      questionSugar.source !== "latest_assistant_message"
+    ) {
+      return inactiveQuestionInput();
+    }
     return numberedQuestionSugarForMessageInput({
       fields: selectedControlOriginalFields.value,
-      fieldName: "conversationRequest",
+      fieldName: questionSugar.fieldName,
       intentId: selectedControl.value?.id,
-      message: latestAssistantMessage(currentConversationLog.value),
-      requiredIntentId: "talk_to_codex",
-      requiredStepStatus: "waiting_for_input",
-      stepStatus: currentSession.value?.stepMachine?.status
+      message: latestAssistantMessage(currentConversationLog.value)
     });
   });
   const selectedControlFields = computed(() => {
@@ -109,9 +131,8 @@ function useAiStudioAutopilotComposer({
     if (isControlDisabled(control)) {
       return false;
     }
-    if (control.clientAction === "open_diff") {
-      onOpenDiff(control);
-      return true;
+    if (controlHasClientAction(control)) {
+      return await onRunClientControl(control) !== false;
     }
     if (controlHasInputFields(control)) {
       selectControl(control);

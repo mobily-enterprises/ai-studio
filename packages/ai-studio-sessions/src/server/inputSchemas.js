@@ -91,6 +91,92 @@ const sessionIntentInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const sessionTerminalFailureFixInputValidator = deepFreeze({
+  schema: createSchema({
+    actionId: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    actionLabel: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    closeError: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    commandPreview: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    currentStep: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    exitCode: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    launchTargetId: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    launchTargetLabel: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    output: {
+      type: "string",
+      noTrim: true,
+      required: false
+    },
+    sessionId: {
+      type: "string",
+      noTrim: false,
+      required: true
+    },
+    shellTarget: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    stepStatus: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    terminalKind: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    terminalSessionId: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    terminalStatus: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    userMessage: {
+      type: "string",
+      noTrim: false,
+      required: false
+    }
+  }),
+  mode: "patch"
+});
+
 const sessionRewindInputValidator = deepFreeze({
   schema: createSchema({
     sessionId: {
@@ -113,5 +199,6 @@ export {
   sessionIdInputValidator,
   sessionIntentInputValidator,
   sessionListInputValidator,
-  sessionRewindInputValidator
+  sessionRewindInputValidator,
+  sessionTerminalFailureFixInputValidator
 };

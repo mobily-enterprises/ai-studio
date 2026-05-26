@@ -644,6 +644,57 @@ test.describe("Autopilot dumb client contract", () => {
     expect(advances).toBe(0);
   });
 
+  test("aligns the Inspect shell terminal bottom with the Codex terminal", async ({ page }) => {
+    await page.setViewportSize({
+      height: 948,
+      width: 2048
+    });
+    await mockInspectTerminalSockets(page);
+    const session = sessionPayload({
+      completedSteps: ["worktree_created"],
+      metadata: {
+        worktree_path: "/workspace/example-target-app/.ai-studio/sessions/active/session-renderer/worktree"
+      },
+      sessionRoot: "/workspace/example-target-app/.ai-studio/sessions/active/session-renderer",
+      worktreeReady: true
+    });
+    await mockAiStudioSession(page, session);
+
+    await page.goto(`${BASE_URL}/home?mode=inspect`);
+    await expect(page.locator(".codex-terminal__host")).toBeVisible();
+    await page.getByLabel("Open shell").click();
+    await page.getByText("Worktree shell").click();
+    await expect(page.locator(".ai-studio-shell-controls__terminal--active .ai-command-terminal__host"))
+      .toBeVisible();
+
+    const terminalBounds = await page.evaluate(() => {
+      function rectFor(selector: string) {
+        const element = document.querySelector(selector);
+        if (!element) {
+          return null;
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          height: rect.height,
+          top: rect.top
+        };
+      }
+      const shell = rectFor(".ai-studio-shell-controls__terminal--active .ai-command-terminal__host");
+      const codex = rectFor(".codex-terminal__host");
+      return {
+        codex,
+        delta: shell && codex ? shell.bottom - codex.bottom : null,
+        shell
+      };
+    });
+
+    expect(terminalBounds.shell).toBeTruthy();
+    expect(terminalBounds.codex).toBeTruthy();
+    expect(Math.abs(terminalBounds.delta ?? Number.POSITIVE_INFINITY), JSON.stringify(terminalBounds, null, 2))
+      .toBeLessThanOrEqual(0.25);
+  });
+
   test("renders numbered questions as UI sugar and submits only the logical response field", async ({ page }) => {
     const stepInputs: unknown[] = [];
     const session = sessionPayload({
@@ -751,6 +802,15 @@ async function mockAiStudioSession(
       });
       return;
     }
+    if (method === "POST" && url.pathname.endsWith("/shell-terminal")) {
+      await fulfillJson(route, {
+        commandPreview: "bash",
+        id: "server-shell-terminal",
+        ok: true,
+        status: "running"
+      });
+      return;
+    }
     if (method === "POST" && /\/actions\/[^/]+$/u.test(url.pathname)) {
       onAction(url.pathname.split("/").at(-1) || "", request.postDataJSON() || {});
       await fulfillJson(route, {
@@ -852,6 +912,56 @@ async function recordForbiddenText(page: Page, text: string) {
       });
     });
   }, text);
+}
+
+async function mockInspectTerminalSockets(page: Page) {
+  await page.addInitScript(() => {
+    const OriginalWebSocket = window.WebSocket;
+
+    class MockWebSocket extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = MockWebSocket.CONNECTING;
+      url = "";
+
+      constructor(url) {
+        super();
+        this.url = String(url || "");
+        const pathname = new URL(this.url, window.location.href).pathname;
+        if (!pathname.includes("/codex-terminal/") && !pathname.includes("/shell-terminal/")) {
+          return new OriginalWebSocket(url);
+        }
+        window.setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(new MessageEvent("message", {
+            data: JSON.stringify({
+              session: {
+                commandPreview: pathname.includes("/shell-terminal/") ? "bash" : "codex",
+                ok: true,
+                output: pathname.includes("/shell-terminal/")
+                  ? "studio worktree .../session-renderer/worktree $ "
+                  : "OpenAI Codex\n\nTip: Type / to open the command popup.",
+                status: "running"
+              },
+              type: "snapshot"
+            })
+          }));
+        }, 0);
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close"));
+      }
+    }
+
+    window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
 }
 
 async function mockCommandTerminalSocketThatCloses(page: Page) {

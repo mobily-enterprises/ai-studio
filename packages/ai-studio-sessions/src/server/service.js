@@ -14,6 +14,9 @@ import {
 import {
   assertAiStudioSetupReady
 } from "@local/ai-studio-runtime/server/setupReadiness";
+import {
+  terminalFailureFixRequestForSession
+} from "@local/ai-studio-runtime/server/terminalFailureFixRequest";
 import { inspectSessionDiff } from "./sessionDiff.js";
 
 const MAX_OPEN_AI_STUDIO_SESSIONS = 5;
@@ -620,6 +623,34 @@ function createService({
       return sessionResult(async () => {
         const runtime = await projectService.createRuntime();
         return inspectSessionDiff(await runtime.getSession(sessionId));
+      });
+    },
+
+    async buildTerminalFailureFixRequest(sessionId, input = {}) {
+      const startedAtMs = Date.now();
+      aiStudioSessionDebugLog("server.service.buildTerminalFailureFixRequest.start", {
+        sessionId,
+        terminalKind: String(input?.terminalKind || "")
+      });
+      return sessionResult(async () => {
+        try {
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.getSession(sessionId);
+          const request = terminalFailureFixRequestForSession(session, input);
+          aiStudioSessionDebugLog("server.service.buildTerminalFailureFixRequest.done", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            outputTailLength: request.outputTail.length,
+            sessionId
+          });
+          return request;
+        } catch (error) {
+          aiStudioSessionDebugLog("server.service.buildTerminalFailureFixRequest.error", {
+            durationMs: aiStudioSessionDebugDurationMs(startedAtMs),
+            error: aiStudioSessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
       });
     },
 

@@ -8,6 +8,9 @@ import {
   AiStudioSessionRuntime
 } from "@local/ai-studio-runtime/server";
 import {
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS
+} from "@local/ai-studio-core/shared";
+import {
   TargetAdapter,
   adapterProjectFacts
 } from "@local/ai-studio-adapters/server";
@@ -449,7 +452,12 @@ test("AI Studio Codex bootstrap failure is persisted as a visible background tas
     assert.equal(task.status, "failed");
     assert.match(task.error, /Create the session worktree before starting Codex/u);
     assert.deepEqual(task.retry, {
-      clientAction: "start_codex_terminal",
+      control: {
+        action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL,
+        disabledWhen: [],
+        icon: "",
+        loadingWhen: []
+      },
       label: "Retry Codex"
     });
     assert.deepEqual(publishReasons.map((entry) => entry.reason), [

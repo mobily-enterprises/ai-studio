@@ -228,7 +228,8 @@ const shellPanelStyle = computed(() => {
     return {};
   }
   return {
-    height: `${frame.height}px`,
+    bottom: `${frame.bottom}px`,
+    height: "auto",
     left: "0px",
     top: `${frame.top}px`,
     width: `${frame.right}px`
@@ -438,10 +439,11 @@ function syncShellPanelFrame() {
     shellPanelFrame.value = null;
     return;
   }
+  const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || rect.bottom;
   shellPanelFrame.value = {
-    height: Math.round(rect.height),
+    bottom: Math.max(0, viewportHeight - rect.bottom),
     right: Math.round(rect.right),
-    top: Math.round(rect.top)
+    top: rect.top
   };
 }
 
@@ -646,9 +648,15 @@ onBeforeUnmount(() => {
 }
 
 .ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal__body) {
+  flex: 1 1 auto;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  height: calc(100% - 2.45rem);
+  height: auto;
   min-height: 0;
+  overflow: hidden;
+}
+
+.ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal--shell .ai-command-terminal__body) {
+  gap: 0.5rem;
 }
 
 .ai-studio-shell-controls__inline-panel :deep(.ai-command-terminal__host) {

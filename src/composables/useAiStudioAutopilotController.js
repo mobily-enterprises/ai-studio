@@ -1,5 +1,8 @@
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  AI_STUDIO_OPERATION_ROUTES as OPERATION_ROUTES
+} from "@local/ai-studio-core/shared";
+import {
   useAiStudioHeadlessCommandRunner
 } from "@/composables/useAiStudioHeadlessCommandRunner.js";
 import {
@@ -12,12 +15,6 @@ import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
 
-const OPERATION_ROUTES = Object.freeze({
-  COMMAND_TERMINAL: "command-terminal",
-  SESSION_ACTION: "session-action",
-  SESSION_ADVANCE: "session-advance",
-  SESSION_INTENT: "session-intent"
-});
 const COMMAND_COMPLETION_REFRESH_ATTEMPTS = 6;
 const COMMAND_COMPLETION_REFRESH_DELAY_MS = 250;
 
@@ -490,34 +487,7 @@ function useAiStudioAutopilotController({
 
     const route = String(operation.route || "");
     try {
-      if (route === OPERATION_ROUTES.SESSION_ADVANCE) {
-        await actions.advanceSession?.({
-          sessionId: currentSession.value?.sessionId || ""
-        });
-        await refreshSessionData();
-        await nextTick();
-      } else if (route === OPERATION_ROUTES.SESSION_INTENT) {
-        await actions.runIntentById?.({
-          fields: operationInput(operation),
-          intentId: operation.intentId,
-          sessionId: currentSession.value?.sessionId || "",
-          stepId: operation.stepId || currentSession.value?.currentStep || "",
-          stepStatus: operation.stepStatus || currentSession.value?.stepMachine?.status || ""
-        });
-        await refreshSessionData();
-        await nextTick();
-      } else if (route === OPERATION_ROUTES.SESSION_ACTION) {
-        await actions.runActionById?.({
-          actionId: operation.actionId,
-          advanceOnSuccess: operation.advanceOnSuccess === true,
-          input: operationInput(operation),
-          sessionId: currentSession.value?.sessionId || ""
-        });
-        await refreshSessionData();
-        await nextTick();
-      } else if (route === OPERATION_ROUTES.COMMAND_TERMINAL) {
-        await runCommandTerminalOperation(operation);
-      }
+      await dispatchOperationRoute(route, operation);
       aiStudioSessionDebugLog("client.autopilot.operation.done", {
         ...aiStudioSessionDebugSummary(currentSession.value || {}),
         ...operationDebugSummary(operation),
@@ -532,6 +502,58 @@ function useAiStudioAutopilotController({
       });
       throw error;
     }
+  }
+
+  async function dispatchOperationRoute(route = "", operation = {}) {
+    const dispatchers = operationDispatchers();
+    const dispatcher = dispatchers[route];
+    if (typeof dispatcher !== "function") {
+      stopWithFailure(missingOperationFailure(operation));
+      return;
+    }
+    await dispatcher(operation);
+  }
+
+  function operationDispatchers() {
+    return {
+      [OPERATION_ROUTES.COMMAND_TERMINAL]: runCommandTerminalOperation,
+      [OPERATION_ROUTES.SESSION_ACTION]: dispatchSessionActionOperation,
+      [OPERATION_ROUTES.SESSION_ADVANCE]: dispatchSessionAdvanceOperation,
+      [OPERATION_ROUTES.SESSION_INTENT]: dispatchSessionIntentOperation
+    };
+  }
+
+  async function refreshAfterServerOperation() {
+    await refreshSessionData();
+    await nextTick();
+  }
+
+  async function dispatchSessionAdvanceOperation() {
+    await actions.advanceSession?.({
+      sessionId: currentSession.value?.sessionId || ""
+    });
+    await refreshAfterServerOperation();
+  }
+
+  async function dispatchSessionIntentOperation(operation = {}) {
+    await actions.runIntentById?.({
+      fields: operationInput(operation),
+      intentId: operation.intentId,
+      sessionId: currentSession.value?.sessionId || "",
+      stepId: operation.stepId || currentSession.value?.currentStep || "",
+      stepStatus: operation.stepStatus || currentSession.value?.stepMachine?.status || ""
+    });
+    await refreshAfterServerOperation();
+  }
+
+  async function dispatchSessionActionOperation(operation = {}) {
+    await actions.runActionById?.({
+      actionId: operation.actionId,
+      advanceOnSuccess: operation.advanceOnSuccess === true,
+      input: operationInput(operation),
+      sessionId: currentSession.value?.sessionId || ""
+    });
+    await refreshAfterServerOperation();
   }
 
   async function runPresentedIntent(intent = {}, {

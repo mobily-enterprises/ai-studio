@@ -44,6 +44,10 @@ function aiStudioConversationLogPath(sessionsApiPath = "", sessionId = "") {
   return aiStudioSessionPath(sessionsApiPath, sessionId, "/conversation-log");
 }
 
+function aiStudioTerminalFailureFixRequestPath(sessionsApiPath = "", sessionId = "") {
+  return aiStudioSessionPath(sessionsApiPath, sessionId, "/terminal-failure-fix-request");
+}
+
 function aiStudioCommandTerminalPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
   return aiStudioSessionPath(
     sessionsApiPath,
@@ -145,5 +149,6 @@ export {
   aiStudioSessionQueryKey,
   aiStudioShellTerminalPath,
   aiStudioSessionsQueryKey,
+  aiStudioTerminalFailureFixRequestPath,
   commandInputFromContext
 };

@@ -1,6 +1,7 @@
 <template>
   <section class="studio-autopilot">
     <AiStudioAutopilotNavigation
+      class="studio-autopilot__nav"
       :busy="navigationBusy"
       layout="rail"
       :steps="autopilotSteps"
@@ -346,6 +347,14 @@ import { useAiStudioStepInputForm } from "@/composables/useAiStudioStepInputForm
 import {
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
+import {
+  runAiStudioClientControl
+} from "@/lib/aiStudioClientControlDispatcher.js";
+import {
+  AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS,
+  controlIconToken,
+  controlStateActive as presentationControlStateActive
+} from "@/lib/aiStudioPresentationControls.js";
 
 // Autopilot workflow meaning belongs to the server. This component renders the
 // current presentation and dispatches the server-provided intents.
@@ -564,11 +573,10 @@ const {
   conversationLog: computed(() => props.conversationLog),
   controls: allScreenControls,
   isControlDisabled: controlDisabled,
-  onOpenDiff: () => props.diff?.openDialog?.(),
+  onRunClientControl: runClientControl,
   onRunControl: (control, options) => runPresentedIntent(control, options),
   primaryIntentId,
-  running,
-  session: computed(() => props.session)
+  running
 });
 const composerWorkflowControls = computed(() => {
   return screenControls.value.map((control) => ({
@@ -620,21 +628,33 @@ async function rewindToAutopilotStep(step = {}) {
   await props.rewindToStep(step);
 }
 
+function controlStateActive(control = {}, field = "") {
+  return presentationControlStateActive(control, field, {
+    diff: props.diff,
+    review: props.review
+  });
+}
+
+function runClientControl(control = {}) {
+  return runAiStudioClientControl(control, {
+    diff: props.diff
+  });
+}
+
 function controlDisabled(control = {}) {
-  if (control.clientAction === "open_diff") {
-    return Boolean(running.value || props.review?.diffDisabled);
-  }
-  return Boolean(running.value || control.enabled !== true);
+  return Boolean(
+    running.value ||
+    control.enabled !== true ||
+    controlStateActive(control, "disabledWhen")
+  );
 }
 
 function controlLoading(control = {}) {
-  return control.clientAction === "open_diff"
-    ? Boolean(props.diff?.loading)
-    : running.value;
+  return Boolean(running.value || controlStateActive(control, "loadingWhen"));
 }
 
 function controlIcon(control = {}) {
-  if (control.clientAction === "open_diff") {
+  if (controlIconToken(control) === AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS.DIFF) {
     return mdiFileCompare;
   }
   if (control.style === "primary") {
@@ -923,10 +943,17 @@ watch(() => [
 @media (min-width: 981px) {
   .studio-autopilot {
     align-content: start;
-    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+    column-gap: var(--studio-ai-sessions-layout-gap, 0.9rem);
+    grid-template-columns:
+      var(--studio-ai-sessions-inspect-main-column, minmax(18rem, 0.78fr))
+      var(--studio-ai-sessions-codex-terminal-column, minmax(30rem, 1.22fr));
     height: 100%;
     overflow: hidden;
-    padding-right: 0.25rem;
+  }
+
+  .studio-autopilot__nav {
+    justify-self: start;
+    width: min(15rem, 100%);
   }
 
   .studio-autopilot__stage {

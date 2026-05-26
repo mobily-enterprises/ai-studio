@@ -383,9 +383,12 @@ watch(() => page.error, emitPageError, {
 }
 
 .studio-ai-sessions__layout {
+  --studio-ai-sessions-codex-terminal-column: minmax(30rem, 1.22fr);
+  --studio-ai-sessions-inspect-main-column: minmax(18rem, 0.78fr);
+  --studio-ai-sessions-layout-gap: 0.9rem;
   align-items: flex-start;
   display: grid;
-  gap: 0.9rem;
+  gap: var(--studio-ai-sessions-layout-gap);
   min-height: 0;
 }
 
@@ -395,7 +398,7 @@ watch(() => page.error, emitPageError, {
 }
 
 .studio-ai-sessions__layout--inspect {
-  grid-template-columns: minmax(18rem, 0.78fr) minmax(30rem, 1.22fr);
+  grid-template-columns: var(--studio-ai-sessions-inspect-main-column) var(--studio-ai-sessions-codex-terminal-column);
 }
 
 .studio-ai-sessions__layout--autopilot > .studio-autopilot {
@@ -457,7 +460,7 @@ watch(() => page.error, emitPageError, {
   }
 
   .studio-ai-sessions__layout--autopilot {
-    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+    grid-template-columns: var(--studio-ai-sessions-inspect-main-column) var(--studio-ai-sessions-codex-terminal-column);
   }
 
   .studio-ai-sessions__layout--autopilot > .studio-autopilot {

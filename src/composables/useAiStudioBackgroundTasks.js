@@ -1,8 +1,9 @@
 import { computed, ref, unref } from "vue";
 
 import {
-  startAiStudioCodexTerminal
-} from "@/lib/aiStudioSessionApi.js";
+  clientControlHasDispatcher,
+  runAiStudioClientControl
+} from "@/lib/aiStudioClientControlDispatcher.js";
 
 const VISIBLE_BACKGROUND_TASK_STATUSES = new Set(["failed", "running"]);
 
@@ -22,8 +23,8 @@ function normalizeBackgroundTasks(session = {}) {
     .filter((task) => task.id && task.status);
 }
 
-function taskRetryAction(task = {}) {
-  return String(task.retry?.clientAction || "").trim();
+function taskRetryHasClientDispatcher(task = {}) {
+  return clientControlHasDispatcher(task.retry);
 }
 
 function taskRetryErrorMessage(error) {
@@ -43,18 +44,23 @@ function useAiStudioBackgroundTasks({
 
   async function retryBackgroundTask(task = {}) {
     const sessionId = String(unref(session)?.sessionId || "").trim();
-    const retryAction = taskRetryAction(task);
-    if (!sessionId || !task.id || retryAction !== "start_codex_terminal") {
+    if (!sessionId || !task.id || !taskRetryHasClientDispatcher(task)) {
       return false;
     }
     backgroundTaskError.value = "";
     retryingBackgroundTaskId.value = task.id;
     try {
-      const result = await startAiStudioCodexTerminal(sessionId);
+      const result = await runAiStudioClientControl(task.retry, {
+        refreshSessionData,
+        session: unref(session),
+        sessionId
+      });
+      if (!result) {
+        return false;
+      }
       if (result?.ok === false) {
         throw new Error(result.error || "Codex could not be prepared.");
       }
-      await refreshSessionData();
       return true;
     } catch (error) {
       backgroundTaskError.value = taskRetryErrorMessage(error);

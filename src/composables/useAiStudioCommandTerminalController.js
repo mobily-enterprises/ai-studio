@@ -427,12 +427,12 @@ function useAiStudioCommandTerminalController(props, emit) {
     await startTerminal();
   }
 
-  function requestAiFix() {
+  async function requestAiFix() {
     if (!canRequestAiFix.value) {
       return;
     }
     setExpanded(false);
-    emit("fix-requested", terminalFailureFixRequest({
+    emit("fix-requested", await terminalFailureFixRequest({
       actionId: actionId.value,
       actionLabel: activeActionLabel.value,
       closeError: terminalError.value,

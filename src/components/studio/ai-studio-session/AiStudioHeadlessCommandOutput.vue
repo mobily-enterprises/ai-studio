@@ -138,11 +138,11 @@ function tailText(value = "") {
   return text.slice(text.length - maxLength);
 }
 
-function requestAiFix() {
+async function requestAiFix() {
   if (!canRequestAiFix.value) {
     return;
   }
-  emit("fix-requested", terminalFailureFixRequest({
+  emit("fix-requested", await terminalFailureFixRequest({
     actionId: props.actionId,
     actionLabel: props.actionLabel,
     closeError: props.error,

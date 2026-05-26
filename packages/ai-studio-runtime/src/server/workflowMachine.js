@@ -3,15 +3,34 @@ import {
 } from "./sessionStore.js";
 import {
   aiStudioError,
+  isPlainObject,
   normalizeText,
   plainClone
 } from "@local/ai-studio-core/server/core";
 import { deepFreeze } from "@local/ai-studio-core/server/deepFreeze";
+import {
+  AI_STUDIO_ACTION_DISPATCH_ROUTES as ACTION_DISPATCH_ROUTES
+} from "@local/ai-studio-core/shared";
+import {
+  WORKFLOW_CONDITION_KINDS,
+  when
+} from "./workflowConditions.js";
 
-function normalizeConditionList(value) {
+function normalizeStringList(value) {
   return Array.isArray(value)
     ? value.map(normalizeText).filter(Boolean)
     : [];
+}
+
+function workflowConditionSummary(condition) {
+  if (typeof condition === "string") {
+    return normalizeText(condition) || "(empty)";
+  }
+  if (isPlainObject(condition)) {
+    const kind = normalizeText(condition.kind);
+    return kind ? `kind:${kind}` : "(condition object)";
+  }
+  return normalizeText(condition) || "(empty)";
 }
 
 function workflowConditionContext(context = "") {
@@ -21,110 +40,147 @@ function workflowConditionContext(context = "") {
 
 function malformedWorkflowCondition(condition, context, reason) {
   throw aiStudioError(
-    `Malformed AI Studio workflow condition${workflowConditionContext(context)}: ${normalizeText(condition) || "(empty)"}. ${reason}`,
+    `Malformed AI Studio workflow condition${workflowConditionContext(context)}: ${workflowConditionSummary(condition)}. ${reason}`,
     "ai_studio_workflow_malformed_condition"
   );
 }
 
 function unknownWorkflowCondition(condition, context) {
   throw aiStudioError(
-    `Unknown AI Studio workflow condition${workflowConditionContext(context)}: ${normalizeText(condition) || "(empty)"}.`,
+    `Unknown AI Studio workflow condition${workflowConditionContext(context)}: ${workflowConditionSummary(condition)}.`,
     "ai_studio_workflow_unknown_condition"
   );
 }
 
-function requiredConditionValue(condition, prefix, context, reason) {
-  const value = normalizeText(condition.slice(prefix.length));
-  if (!value) {
-    malformedWorkflowCondition(condition, context, reason);
+function normalizeAnyCondition(condition, conditions, context = "") {
+  if (!Array.isArray(conditions)) {
+    malformedWorkflowCondition(condition, context, "Any conditions require an array of conditions.");
   }
-  return value;
-}
-
-function validateDelimitedConditionValues(condition, prefix, delimiter, context, reason) {
-  const value = requiredConditionValue(condition, prefix, context, reason);
-  const entries = value.split(delimiter).map(normalizeText);
-  if (entries.some((entry) => !entry)) {
-    malformedWorkflowCondition(condition, context, reason);
-  }
-  return entries;
-}
-
-function validateWorkflowCondition(condition, context = "") {
-  const name = normalizeText(condition);
-  if (!name) {
-    malformedWorkflowCondition(condition, context, "Condition must not be empty.");
-  }
-  if (name === "always" || name === "session:active") {
-    return;
-  }
-  if (name.startsWith("always:")) {
-    malformedWorkflowCondition(name, context, "The always condition does not accept a value.");
-  }
-  if (name.startsWith("session:")) {
-    malformedWorkflowCondition(name, context, "Session conditions only support session:active.");
-  }
-  if (name.startsWith("metadata:")) {
-    requiredConditionValue(name, "metadata:", context, "Metadata conditions require a metadata name.");
-    return;
-  }
-  if (name.startsWith("any:")) {
-    const conditions = validateDelimitedConditionValues(
-      name,
-      "any:",
-      ";",
-      context,
-      "Any conditions require one or more semicolon-separated conditions."
-    );
-    conditions.forEach((candidate) => validateWorkflowCondition(candidate, context));
-    return;
-  }
-  if (name.startsWith("artifact:")) {
-    requiredConditionValue(name, "artifact:", context, "Artifact conditions require an artifact name.");
-    return;
-  }
-  if (name.startsWith("artifacts:")) {
-    validateDelimitedConditionValues(
-      name,
-      "artifacts:",
-      ",",
-      context,
-      "Artifacts conditions require one or more comma-separated artifact names."
-    );
-    return;
-  }
-  if (name.startsWith("action-input:")) {
-    const {
-      actionId,
-      inputName
-    } = actionInputConditionParts(requiredConditionValue(
-      name,
-      "action-input:",
-      context,
-      "Action input conditions require an action id and input name."
-    ));
-    if (!actionId || !inputName) {
-      malformedWorkflowCondition(name, context, "Action input conditions must use action-input:<action>.<input>.");
+  const normalizedConditions = [];
+  for (const candidate of conditions) {
+    const normalizedCandidate = normalizeWorkflowCondition(candidate, context);
+    if (!normalizedCandidate) {
+      malformedWorkflowCondition(condition, context, "Any conditions require one or more non-empty conditions.");
     }
-    return;
+    normalizedConditions.push(normalizedCandidate);
   }
-  if (name.startsWith("completed:")) {
-    requiredConditionValue(name, "completed:", context, "Completed step conditions require a step id.");
-    return;
+  if (normalizedConditions.length === 0) {
+    malformedWorkflowCondition(condition, context, "Any conditions require one or more conditions.");
   }
-  unknownWorkflowCondition(name, context);
+  return when.any(...normalizedConditions);
+}
+
+function requiredStructuredValue(condition, value, context, reason) {
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue) {
+    malformedWorkflowCondition(condition, context, reason);
+  }
+  return normalizedValue;
+}
+
+function requiredStructuredValues(condition, values, context, reason) {
+  if (!Array.isArray(values)) {
+    malformedWorkflowCondition(condition, context, reason);
+  }
+  const normalizedValues = values.map(normalizeText);
+  if (normalizedValues.length === 0 || normalizedValues.some((entry) => !entry)) {
+    malformedWorkflowCondition(condition, context, reason);
+  }
+  return normalizedValues;
+}
+
+function normalizeStructuredWorkflowCondition(condition, context = "") {
+  if (!isPlainObject(condition)) {
+    malformedWorkflowCondition(condition, context, "Condition must be a condition object.");
+  }
+  const kind = normalizeText(condition.kind);
+  if (!kind) {
+    malformedWorkflowCondition(condition, context, "Condition objects require a kind.");
+  }
+  switch (kind) {
+    case WORKFLOW_CONDITION_KINDS.ALWAYS:
+      return when.always();
+    case WORKFLOW_CONDITION_KINDS.SESSION_ACTIVE:
+      return when.sessionActive();
+    case WORKFLOW_CONDITION_KINDS.METADATA_EXISTS:
+      return when.metadataExists(requiredStructuredValue(
+        condition,
+        condition.metadataName,
+        context,
+        "Metadata conditions require a metadata name."
+      ));
+    case WORKFLOW_CONDITION_KINDS.ANY:
+      return normalizeAnyCondition(condition, condition.conditions, context);
+    case WORKFLOW_CONDITION_KINDS.ARTIFACT_READY:
+      return when.artifactReady(requiredStructuredValue(
+        condition,
+        condition.artifactName,
+        context,
+        "Artifact conditions require an artifact name."
+      ));
+    case WORKFLOW_CONDITION_KINDS.ALL_ARTIFACTS_READY:
+      return when.allArtifactsReady(...requiredStructuredValues(
+        condition,
+        condition.artifactNames,
+        context,
+        "Artifacts conditions require one or more artifact names."
+      ));
+    case WORKFLOW_CONDITION_KINDS.ACTION_INPUT_EXISTS:
+      return when.actionInputExists(
+        requiredStructuredValue(condition, condition.actionId, context, "Action input conditions require an action id."),
+        requiredStructuredValue(condition, condition.inputName, context, "Action input conditions require an input name.")
+      );
+    case WORKFLOW_CONDITION_KINDS.STEP_COMPLETED:
+      return when.stepCompleted(requiredStructuredValue(
+        condition,
+        condition.stepId,
+        context,
+        "Completed step conditions require a step id."
+      ));
+    default:
+      unknownWorkflowCondition(condition, context);
+  }
+}
+
+function normalizeWorkflowCondition(condition, context = "") {
+  return normalizeStructuredWorkflowCondition(condition, context);
 }
 
 function normalizeWorkflowConditionList(value, context = "") {
-  const conditions = normalizeConditionList(value);
-  conditions.forEach((condition) => validateWorkflowCondition(condition, context));
-  return conditions;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((condition) => normalizeWorkflowCondition(condition, context));
+}
+
+function workflowConditionLabel(condition) {
+  const normalizedCondition = normalizeWorkflowCondition(condition);
+  switch (normalizedCondition.kind) {
+    case WORKFLOW_CONDITION_KINDS.ALWAYS:
+      return "always";
+    case WORKFLOW_CONDITION_KINDS.SESSION_ACTIVE:
+      return "active session";
+    case WORKFLOW_CONDITION_KINDS.METADATA_EXISTS:
+      return `metadata "${normalizedCondition.metadataName}"`;
+    case WORKFLOW_CONDITION_KINDS.ANY:
+      return `any of (${normalizedCondition.conditions.map(workflowConditionLabel).join(", ")})`;
+    case WORKFLOW_CONDITION_KINDS.ARTIFACT_READY:
+      return `artifact "${normalizedCondition.artifactName}"`;
+    case WORKFLOW_CONDITION_KINDS.ALL_ARTIFACTS_READY:
+      return `artifacts ${normalizedCondition.artifactNames.map((artifactName) => `"${artifactName}"`).join(", ")}`;
+    case WORKFLOW_CONDITION_KINDS.ACTION_INPUT_EXISTS:
+      return `action input "${normalizedCondition.actionId}.${normalizedCondition.inputName}"`;
+    case WORKFLOW_CONDITION_KINDS.STEP_COMPLETED:
+      return `completed step "${normalizedCondition.stepId}"`;
+    default:
+      return workflowConditionSummary(normalizedCondition);
+  }
 }
 
 function normalizeRewindCleanup(cleanup = {}) {
   return {
-    actionResults: normalizeConditionList(cleanup.actionResults),
-    artifacts: normalizeConditionList(cleanup.artifacts),
+    actionResults: normalizeStringList(cleanup.actionResults),
+    artifacts: normalizeStringList(cleanup.artifacts),
     metadata: normalizeRewindMetadataCleanup(cleanup.metadata)
   };
 }
@@ -292,7 +348,8 @@ function normalizeInteraction(interaction = {}) {
 
 function normalizeWorkflowStepBehavior(workflow = {}) {
   return {
-    rejectTo: normalizeText(workflow.rejectTo)
+    rejectTo: normalizeText(workflow.rejectTo),
+    recheckTo: normalizeText(workflow.recheckTo)
   };
 }
 
@@ -406,12 +463,12 @@ function publicAction(action, state) {
 
 function publicActionDispatchRoute(action = {}) {
   if (action.type === "command") {
-    return "command-terminal";
+    return ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL;
   }
   if (action.type === "link") {
-    return "external-link";
+    return ACTION_DISPATCH_ROUTES.EXTERNAL_LINK;
   }
-  return "session-action";
+  return ACTION_DISPATCH_ROUTES.SESSION_ACTION;
 }
 
 function publicActionIcon(action = {}) {
@@ -509,27 +566,6 @@ function latestActionResult(session = {}, actionId = "") {
     .at(-1) || null;
 }
 
-function actionInputConditionParts(conditionName = "") {
-  const separatorIndex = conditionName.indexOf(".");
-  if (separatorIndex <= 0 || separatorIndex === conditionName.length - 1) {
-    return {
-      actionId: "",
-      inputName: ""
-    };
-  }
-  return {
-    actionId: normalizeText(conditionName.slice(0, separatorIndex)),
-    inputName: normalizeText(conditionName.slice(separatorIndex + 1))
-  };
-}
-
-function conditionValueList(value = "") {
-  return normalizeText(value)
-    .split(",")
-    .map(normalizeText)
-    .filter(Boolean);
-}
-
 function enabledState() {
   return {
     disabledReason: "",
@@ -610,65 +646,59 @@ class WorkflowMachine {
   }
 
   checkCondition(condition, session = {}) {
-    const name = normalizeText(condition);
-    if (!name || name === "always") {
-      return conditionMet();
-    }
-    if (name === "session:active") {
-      return session.status === AI_STUDIO_SESSION_STATUS.ACTIVE
-        ? conditionMet()
-        : conditionMissing("Session is not active.");
-    }
-    if (name.startsWith("metadata:")) {
-      const metadataName = name.slice("metadata:".length);
-      return normalizeText(session.metadata?.[metadataName])
-        ? conditionMet()
-        : conditionMissing(`Waiting for metadata: ${metadataName}.`);
-    }
-    if (name.startsWith("any:")) {
-      const conditions = name
-        .slice("any:".length)
-        .split(";")
-        .map(normalizeText)
-        .filter(Boolean);
-      if (conditions.some((candidate) => this.checkCondition(candidate, session).met)) {
+    const normalizedCondition = normalizeWorkflowCondition(condition);
+    switch (normalizedCondition.kind) {
+      case WORKFLOW_CONDITION_KINDS.ALWAYS:
         return conditionMet();
+      case WORKFLOW_CONDITION_KINDS.SESSION_ACTIVE:
+        return session.status === AI_STUDIO_SESSION_STATUS.ACTIVE
+          ? conditionMet()
+          : conditionMissing("Session is not active.");
+      case WORKFLOW_CONDITION_KINDS.METADATA_EXISTS: {
+        const metadataName = normalizedCondition.metadataName;
+        return normalizeText(session.metadata?.[metadataName])
+          ? conditionMet()
+          : conditionMissing(`Waiting for metadata: ${metadataName}.`);
       }
-      return conditionMissing(`Waiting for one of: ${conditions.join("; ")}.`);
+      case WORKFLOW_CONDITION_KINDS.ANY: {
+        const conditions = normalizedCondition.conditions;
+        if (conditions.some((candidate) => this.checkCondition(candidate, session).met)) {
+          return conditionMet();
+        }
+        return conditionMissing(`Waiting for one of: ${conditions.map(workflowConditionLabel).join("; ")}.`);
+      }
+      case WORKFLOW_CONDITION_KINDS.ARTIFACT_READY: {
+        const artifactName = normalizedCondition.artifactName;
+        const artifact = session.artifactReadiness?.[artifactName];
+        return artifact?.nonEmpty
+          ? conditionMet()
+          : conditionMissing(`Waiting for artifact: ${artifactName}.`);
+      }
+      case WORKFLOW_CONDITION_KINDS.ALL_ARTIFACTS_READY: {
+        const artifactNames = normalizedCondition.artifactNames;
+        const missingArtifact = artifactNames.find((artifactName) => {
+          return session.artifactReadiness?.[artifactName]?.nonEmpty !== true;
+        });
+        return artifactNames.length > 0 && !missingArtifact
+          ? conditionMet()
+          : conditionMissing(`Waiting for artifacts: ${artifactNames.join(", ")}.`);
+      }
+      case WORKFLOW_CONDITION_KINDS.ACTION_INPUT_EXISTS: {
+        const { actionId, inputName } = normalizedCondition;
+        const actionResult = latestActionResult(session, actionId);
+        return actionId && inputName && normalizeText(actionResult?.input?.[inputName])
+          ? conditionMet()
+          : conditionMissing(`Waiting for action input: ${actionId}.${inputName}.`);
+      }
+      case WORKFLOW_CONDITION_KINDS.STEP_COMPLETED: {
+        const stepId = normalizedCondition.stepId;
+        return this.completedStepIds(session).includes(stepId)
+          ? conditionMet()
+          : conditionMissing(`Waiting for step completion: ${stepId}.`);
+      }
+      default:
+        return conditionMissing(`Unknown condition: ${workflowConditionLabel(normalizedCondition)}.`);
     }
-    if (name.startsWith("artifact:")) {
-      const artifactName = name.slice("artifact:".length);
-      const artifact = session.artifactReadiness?.[artifactName];
-      return artifact?.nonEmpty
-        ? conditionMet()
-        : conditionMissing(`Waiting for artifact: ${artifactName}.`);
-    }
-    if (name.startsWith("artifacts:")) {
-      const artifactNames = conditionValueList(name.slice("artifacts:".length));
-      const missingArtifact = artifactNames.find((artifactName) => {
-        return session.artifactReadiness?.[artifactName]?.nonEmpty !== true;
-      });
-      return artifactNames.length > 0 && !missingArtifact
-        ? conditionMet()
-        : conditionMissing(`Waiting for artifacts: ${artifactNames.join(", ")}.`);
-    }
-    if (name.startsWith("action-input:")) {
-      const {
-        actionId,
-        inputName
-      } = actionInputConditionParts(name.slice("action-input:".length));
-      const actionResult = latestActionResult(session, actionId);
-      return actionId && inputName && normalizeText(actionResult?.input?.[inputName])
-        ? conditionMet()
-        : conditionMissing(`Waiting for action input: ${actionId}.${inputName}.`);
-    }
-    if (name.startsWith("completed:")) {
-      const stepId = name.slice("completed:".length);
-      return this.completedStepIds(session).includes(stepId)
-        ? conditionMet()
-        : conditionMissing(`Waiting for step completion: ${stepId}.`);
-    }
-    return conditionMissing(`Unknown condition: ${name}.`);
   }
 
   checkRequirements(requirements = [], session = {}, disabledReasonOverride = "") {
@@ -705,7 +735,7 @@ class WorkflowMachine {
     for (const condition of conditions) {
       const result = this.checkCondition(condition, session);
       if (result.met) {
-        return disabledState(disabledReasonOverride || `Blocked by condition: ${condition}.`);
+        return disabledState(disabledReasonOverride || `Blocked by condition: ${workflowConditionLabel(condition)}.`);
       }
     }
     return enabledState();
@@ -834,5 +864,6 @@ class WorkflowMachine {
 
 export {
   WorkflowMachine,
+  normalizeWorkflowCondition,
   normalizeWorkflow
 };

@@ -11,6 +11,9 @@ import {
   isValidAiStudioSessionId,
   resolveAiStudioSessionPaths
 } from "@local/ai-studio-runtime/server";
+import {
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS
+} from "@local/ai-studio-core/shared";
 import { withTemporaryRoot } from "./aiStudioTestHelpers.js";
 
 function delay(ms) {
@@ -226,7 +229,7 @@ test("ai-studio session store persists background task status with retry metadat
         error: "Create the session worktree before starting Codex.",
         message: "Codex bootstrap failed.",
         retry: {
-          clientAction: "start_codex_terminal",
+          clientAction: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL,
           label: "Retry Codex"
         },
         status: "failed"
@@ -247,7 +250,7 @@ test("ai-studio session store persists background task status with retry metadat
       id: "codex_bootstrap",
       label: "Codex bootstrap",
       retry: {
-        clientAction: "start_codex_terminal",
+        clientAction: AI_STUDIO_CLIENT_CONTROL_ACTIONS.START_CODEX_TERMINAL,
         label: "Retry Codex"
       },
       status: "failed"

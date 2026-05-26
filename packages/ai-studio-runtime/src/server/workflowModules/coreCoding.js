@@ -2,6 +2,11 @@ import {
   aiStudioError,
   normalizeText
 } from "@local/ai-studio-core/server/core";
+import {
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS,
+  AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS,
+  AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS
+} from "@local/ai-studio-core/shared";
 import { deepFreeze } from "@local/ai-studio-core/server/deepFreeze";
 import {
   HUMAN_INPUT_RESPONSE_ARTIFACT,
@@ -14,6 +19,7 @@ import {
   buildAgentConversationActionDefinition,
   buildAgentConversationStepDefinition
 } from "../workflowDefinitionBuilders.js";
+import { when } from "../workflowConditions.js";
 import {
   STEP_INPUT_KIND,
   STEP_STATUS,
@@ -69,13 +75,9 @@ function createIssueOnGithubAction() {
   return {
     adapterCapability: "create_issue_on_gh",
     disabledReason: "Create the issue file before submitting it to GitHub.",
-    disabledWhen: ["metadata:issue_url"],
+    disabledWhen: [when.metadataExists("issue_url")],
     disabledWhenReason: "The GitHub issue already exists.",
-    enabledWhen: [
-      `artifact:${ISSUE_TITLE_ARTIFACT}`,
-      `artifact:${ISSUE_WORD_ARTIFACT}`,
-      `artifact:${ISSUE_BODY_ARTIFACT}`
-    ],
+    enabledWhen: [when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_WORD_ARTIFACT, ISSUE_BODY_ARTIFACT)],
     enabledWhenReason: "Create the issue file before submitting it to GitHub.",
     icon: "github",
     id: "create_issue_on_gh",
@@ -84,7 +86,7 @@ function createIssueOnGithubAction() {
   };
 }
 
-const coreCodingStepDefinitions = Object.values(deepFreeze({
+const coreCodingStepDefinitionsById = deepFreeze({
   [SEED_APPLICATION_STEP_ID]: {
     actions: [],
     autopilot: {
@@ -96,7 +98,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
     label: "Seed application",
     next: {
       disabledReason: "Define and save the seed issue before continuing.",
-      enabledWhen: [`artifacts:${ISSUE_TITLE_ARTIFACT},${ISSUE_BODY_ARTIFACT},${ISSUE_WORD_ARTIFACT}`]
+      enabledWhen: [when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)]
     },
     rewindCleanup: {
       actionResults: [],
@@ -109,7 +111,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "use_existing_issue",
         disabledReason: "An existing issue is already selected.",
-        disabledWhen: ["metadata:issue_url"],
+        disabledWhen: [when.metadataExists("issue_url")],
         icon: "github",
         id: "use_existing_issue",
         inputFields: [
@@ -133,7 +135,12 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
     label: "Define or select issue",
     next: {
       disabledReason: "Discuss and finalise issue before continuing.",
-      enabledWhen: [`any:metadata:issue_url;artifacts:${ISSUE_TITLE_ARTIFACT},${ISSUE_BODY_ARTIFACT},${ISSUE_WORD_ARTIFACT}`]
+      enabledWhen: [
+        when.any(
+          when.metadataExists("issue_url"),
+          when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)
+        )
+      ]
     },
     rewindCleanup: {
       actionResults: ["use_existing_issue"],
@@ -147,14 +154,14 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
     ],
     autopilot: {
       actionId: "create_issue_on_gh",
-      completeWhen: ["metadata:issue_url"],
+      completeWhen: [when.metadataExists("issue_url")],
       label: "Edit and submit issue"
     },
     description: "Review the issue files and submit the GitHub issue.",
     id: issueSubmittedStepId,
     label: "Edit and submit issue",
     next: {
-      enabledWhen: ["metadata:issue_url"]
+      enabledWhen: [when.metadataExists("issue_url")]
     },
     rewindCleanup: {
       actionResults: ["create_issue_on_gh"],
@@ -262,7 +269,12 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
       stop: {
         intents: [
           {
-            clientAction: "open_diff",
+            control: {
+              action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.OPEN_DIFF,
+              disabledWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_DISABLED],
+              icon: AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS.DIFF,
+              loadingWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_LOADING]
+            },
             enabled: true,
             id: "open_diff",
             label: "Review diff"
@@ -398,9 +410,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
           promptComplete: true,
           serverOperation: {
             kind: "delete_metadata_and_rewind",
-            metadataName: "autopilot_final_review_followup",
-            reviewStepId: reviewRunStepId,
-            validationStepId: "project_validated"
+            metadataName: "autopilot_final_review_followup"
           },
           statuses: ["ready", "done"]
         }
@@ -408,7 +418,12 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
       stop: {
         intents: [
           {
-            clientAction: "open_diff",
+            control: {
+              action: AI_STUDIO_CLIENT_CONTROL_ACTIONS.OPEN_DIFF,
+              disabledWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_DISABLED],
+              icon: AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS.DIFF,
+              loadingWhen: [AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS.DIFF_LOADING]
+            },
             enabled: true,
             id: "open_diff",
             label: "Review diff"
@@ -473,7 +488,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
     ],
     autopilot: {
       actionId: "write_report",
-      completeWhen: [`artifact:${REPORT_ARTIFACT}`],
+      completeWhen: [when.artifactReady(REPORT_ARTIFACT)],
       label: "Write report"
     },
     description: "Write the local report explaining what changed and why.",
@@ -481,7 +496,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
     label: "Write report",
     next: {
       disabledReason: "Write the session report before updating project knowledge.",
-      enabledWhen: [`artifact:${REPORT_ARTIFACT}`]
+      enabledWhen: [when.artifactReady(REPORT_ARTIFACT)]
     },
     rewindCleanup: {
       actionResults: ["write_report"],
@@ -508,7 +523,7 @@ const coreCodingStepDefinitions = Object.values(deepFreeze({
       actionResults: ["update_project_knowledge"]
     }
   }
-})).map((definition) => ({ definition }));
+});
 
 const coreCodingWorkflowDefinitions = deepFreeze([
   {
@@ -527,6 +542,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       "project_validated",
       {
         rejectTo: seedPlanMadeStepId,
+        recheckTo: "project_validated",
         stepId: changesAcceptedStepId
       },
       reportCreatedStepId,
@@ -558,6 +574,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       "project_validated",
       {
         rejectTo: planMadeStepId,
+        recheckTo: reviewRunStepId,
         stepId: changesAcceptedStepId
       },
       reportCreatedStepId,
@@ -586,6 +603,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       "project_validated",
       {
         rejectTo: agentConversationStepId,
+        recheckTo: reviewRunStepId,
         stepId: changesAcceptedStepId
       },
       reportCreatedStepId,
@@ -1015,7 +1033,7 @@ const reportCreatedMachine = {
   }
 };
 
-const coreCodingStepMachineContributions = Object.values(Object.freeze({
+const coreCodingSteps = Object.freeze(Object.values(Object.freeze({
   [SEED_APPLICATION_STEP_ID]: {
     config: {
       draftReady: issueFilesAreReady,
@@ -1038,6 +1056,7 @@ const coreCodingStepMachineContributions = Object.values(Object.freeze({
       }),
       waitingInteraction: () => issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {})
     },
+    definition: coreCodingStepDefinitionsById[SEED_APPLICATION_STEP_ID],
     factoryId: "editable_artifact_review",
     id: SEED_APPLICATION_STEP_ID
   },
@@ -1079,26 +1098,32 @@ const coreCodingStepMachineContributions = Object.values(Object.freeze({
       }),
       waitingInteraction: () => issueInputInteraction(STEP_STATUS.WAITING_FOR_INPUT, {})
     },
+    definition: coreCodingStepDefinitionsById[ISSUE_FILE_STEP_ID],
     factoryId: "editable_artifact_review",
     id: ISSUE_FILE_STEP_ID
   },
   [issueSubmittedStepId]: {
+    definition: coreCodingStepDefinitionsById[issueSubmittedStepId],
     id: issueSubmittedStepId,
     machine: issueSubmittedMachine
   },
   [seedPlanMadeStepId]: {
+    definition: coreCodingStepDefinitionsById[seedPlanMadeStepId],
     id: seedPlanMadeStepId,
     machine: seedPlanMadeMachine
   },
   [seedPlanExecutedStepId]: {
+    definition: coreCodingStepDefinitionsById[seedPlanExecutedStepId],
     id: seedPlanExecutedStepId,
     machine: seedPlanExecutedMachine
   },
   [planMadeStepId]: {
+    definition: coreCodingStepDefinitionsById[planMadeStepId],
     id: planMadeStepId,
     machine: makePlanMachine
   },
   [planExecutedStepId]: {
+    definition: coreCodingStepDefinitionsById[planExecutedStepId],
     id: planExecutedStepId,
     machine: executePlanMachine
   },
@@ -1112,6 +1137,7 @@ const coreCodingStepMachineContributions = Object.values(Object.freeze({
       promptActionId: humanReviewConversationActionId,
       waitingMessage: "Wait for Codex to finish this review turn."
     },
+    definition: coreCodingStepDefinitionsById[implementationReviewedStepId],
     factoryId: "chat_with_ai",
     id: implementationReviewedStepId
   },
@@ -1126,14 +1152,17 @@ const coreCodingStepMachineContributions = Object.values(Object.freeze({
       }),
       promptActionId: "agent_conversation"
     },
+    definition: coreCodingStepDefinitionsById[agentConversationStepId],
     factoryId: "chat_with_ai",
     id: agentConversationStepId
   },
   [deepUiCheckRunStepId]: {
+    definition: coreCodingStepDefinitionsById[deepUiCheckRunStepId],
     id: deepUiCheckRunStepId,
     machine: deepUiCheckMachine
   },
   [reviewRunStepId]: {
+    definition: coreCodingStepDefinitionsById[reviewRunStepId],
     id: reviewRunStepId,
     machine: reviewRunMachine
   },
@@ -1147,23 +1176,25 @@ const coreCodingStepMachineContributions = Object.values(Object.freeze({
       promptActionId: finalReviewConversationActionId,
       waitingMessage: "Wait for Codex to finish this review turn."
     },
+    definition: coreCodingStepDefinitionsById[changesAcceptedStepId],
     factoryId: "chat_with_ai",
     id: changesAcceptedStepId
   },
   [reportCreatedStepId]: {
+    definition: coreCodingStepDefinitionsById[reportCreatedStepId],
     id: reportCreatedStepId,
     machine: reportCreatedMachine
   },
   [projectKnowledgeUpdatedStepId]: {
+    definition: coreCodingStepDefinitionsById[projectKnowledgeUpdatedStepId],
     id: projectKnowledgeUpdatedStepId,
     machine: projectKnowledgeUpdatedMachine
   }
-}));
+})));
 
 const coreCodingWorkflowModule = Object.freeze({
   id: moduleId,
-  stepDefinitions: coreCodingStepDefinitions,
-  stepMachineContributions: coreCodingStepMachineContributions,
+  steps: coreCodingSteps,
   workflowDefinitions: coreCodingWorkflowDefinitions
 });
 

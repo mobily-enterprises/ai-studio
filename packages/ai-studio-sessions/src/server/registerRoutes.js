@@ -1,6 +1,7 @@
 import {
   ACTION_ABANDON_SESSION,
   ACTION_ADVANCE_SESSION,
+  ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
   ACTION_INSPECT_SESSION,
@@ -55,6 +56,17 @@ function registerRoutes(
     actionId: ACTION_READ_SESSION_CONVERSATION_LOG,
     buildInput: sessionInput,
     summary: "Read an AI Studio session conversation log."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/terminal-failure-fix-request", {
+    actionId: ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
+    buildInput(request) {
+      return {
+        ...routes.requestBody(request),
+        sessionId: request.params.sessionId
+      };
+    },
+    summary: "Build an AI Studio terminal failure repair prompt."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/actions/:actionId", {

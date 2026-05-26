@@ -7,6 +7,7 @@ import {
   PULL_REQUEST_BODY_DRAFT_ARTIFACT,
   PULL_REQUEST_TITLE_DRAFT_ARTIFACT
 } from "../workflowArtifacts.js";
+import { when } from "../workflowConditions.js";
 import {
   STEP_INPUT_KIND,
   STEP_STATUS,
@@ -18,7 +19,6 @@ import {
   commandFailureInteraction,
   commandStepView,
   commandSucceeded,
-  createInstallDependenciesMachine,
   currentStepHelperInstruction,
   disableAction,
   machineState,
@@ -51,8 +51,10 @@ const createPullRequestStepId = "create_pull_request";
 const prMergedStepId = "pr_merged";
 const mainCheckoutSyncedStepId = "main_checkout_synced";
 const sessionFinishedStepId = "session_finished";
+const installDependenciesActionId = "install_dependencies";
+const dependenciesInstalledMetadataName = "dependencies_installed";
 
-const coreLifecycleStepDefinitions = Object.values(deepFreeze({
+const coreLifecycleStepDefinitionsById = deepFreeze({
   [sessionCreatedStepId]: {
     description: "Create the AI Studio session.",
     id: sessionCreatedStepId,
@@ -63,7 +65,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     actions: [
       {
         disabledReason: "Work source is already selected.",
-        disabledWhen: ["metadata:work_source"],
+        disabledWhen: [when.metadataExists("work_source")],
         icon: "branch",
         id: "use_new_branch",
         label: "Use new branch",
@@ -72,7 +74,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "use_existing_pr",
         disabledReason: "Work source is already selected.",
-        disabledWhen: ["metadata:work_source"],
+        disabledWhen: [when.metadataExists("work_source")],
         icon: "github",
         id: "use_existing_pr",
         inputFields: [
@@ -90,7 +92,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     autopilot: {
       actionId: "use_new_branch",
       advanceOnSuccess: true,
-      completeWhen: ["metadata:work_source"],
+      completeWhen: [when.metadataExists("work_source")],
       label: "Choose work source"
     },
     description: "Choose whether this session starts from a new branch or an existing pull request.",
@@ -103,7 +105,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Choose work source",
     next: {
       disabledReason: "Choose a work source before continuing.",
-      enabledWhen: ["metadata:work_source"]
+      enabledWhen: [when.metadataExists("work_source")]
     },
     rewindable: false
   },
@@ -112,8 +114,8 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "create_worktree",
         disabledReason: "Worktree already exists.",
-        disabledWhen: ["metadata:worktree_path"],
-        enabledWhen: ["metadata:work_source"],
+        disabledWhen: [when.metadataExists("worktree_path")],
+        enabledWhen: [when.metadataExists("work_source")],
         enabledWhenReason: "Choose a work source before creating the worktree.",
         icon: "sync",
         id: "create_worktree",
@@ -123,7 +125,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     ],
     autopilot: {
       actionId: "create_worktree",
-      completeWhen: ["metadata:worktree_path"],
+      completeWhen: [when.metadataExists("worktree_path")],
       label: "Create worktree"
     },
     description: "Create the isolated worktree or target-specific working area.",
@@ -136,25 +138,25 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Create worktree",
     next: {
       disabledReason: "Create the worktree before continuing.",
-      enabledWhen: ["metadata:worktree_path"]
+      enabledWhen: [when.metadataExists("worktree_path")]
     },
     rewindable: false
   },
   [dependenciesInstalledStepId]: {
     actions: [
       {
-        adapterCapability: "install_dependencies",
+        adapterCapability: installDependenciesActionId,
         disabledReason: "Dependencies are already installed.",
-        disabledWhen: ["metadata:dependencies_installed"],
+        disabledWhen: [when.metadataExists(dependenciesInstalledMetadataName)],
         icon: "sync",
-        id: "install_dependencies",
+        id: installDependenciesActionId,
         label: "Install dependencies",
         type: "command"
       }
     ],
     autopilot: {
-      actionId: "install_dependencies",
-      completeWhen: ["metadata:dependencies_installed"],
+      actionId: installDependenciesActionId,
+      completeWhen: [when.metadataExists(dependenciesInstalledMetadataName)],
       label: "Install dependencies"
     },
     description: "Install target dependencies when the adapter requires them.",
@@ -167,11 +169,11 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Install dependencies",
     next: {
       disabledReason: "Install dependencies before continuing.",
-      enabledWhen: ["metadata:dependencies_installed"]
+      enabledWhen: [when.metadataExists(dependenciesInstalledMetadataName)]
     },
     rewindCleanup: {
-      actionResults: ["install_dependencies"],
-      metadata: ["dependencies_installed", "dependencies_path"]
+      actionResults: [installDependenciesActionId],
+      metadata: [dependenciesInstalledMetadataName, "dependencies_path"]
     }
   },
   [projectValidatedStepId]: {
@@ -185,7 +187,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       },
       {
         adapterCapability: "run_automated_checks",
-        enabledWhen: ["metadata:code_index_updated"],
+        enabledWhen: [when.metadataExists("code_index_updated")],
         enabledWhenReason: "Update the code index before running automated checks.",
         icon: "run",
         id: "run_automated_checks",
@@ -197,12 +199,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       actionSequence: [
         {
           actionId: "update_code_index",
-          completeWhen: ["metadata:code_index_updated"],
+          completeWhen: [when.metadataExists("code_index_updated")],
           label: "Update code index"
         },
         {
           actionId: "run_automated_checks",
-          completeWhen: ["metadata:automated_checks_passed"],
+          completeWhen: [when.metadataExists("automated_checks_passed")],
           label: "Run automated checks"
         }
       ],
@@ -213,7 +215,10 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Validate project",
     next: {
       disabledReason: "Update the code index and run automated checks successfully before continuing.",
-      enabledWhen: ["metadata:code_index_updated", "metadata:automated_checks_passed"]
+      enabledWhen: [
+        when.metadataExists("code_index_updated"),
+        when.metadataExists("automated_checks_passed")
+      ]
     },
     rewindCleanup: {
       actionResults: ["update_code_index", "run_automated_checks"],
@@ -239,7 +244,10 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     ],
     autopilot: {
       actionId: "commit_changes",
-      completeWhen: ["metadata:accepted_commit", "metadata:branch_pushed"],
+      completeWhen: [
+        when.metadataExists("accepted_commit"),
+        when.metadataExists("branch_pushed")
+      ],
       label: "Commit and push changes"
     },
     description: "Commit the accepted changes and push the session branch.",
@@ -247,7 +255,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Commit and push changes",
     next: {
       disabledReason: "Commit and push changes before continuing.",
-      enabledWhen: ["metadata:accepted_commit"]
+      enabledWhen: [when.metadataExists("accepted_commit")]
     },
     rewindCleanup: {
       actionResults: ["commit_changes"],
@@ -257,7 +265,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
   [createPullRequestStepId]: {
     actions: [
       {
-        enabledWhen: ["metadata:pr_url"],
+        enabledWhen: [when.metadataExists("pr_url")],
         hrefMetadata: "pr_url",
         icon: "github",
         id: "open_pr",
@@ -266,7 +274,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       },
       {
         disabledReason: "Pull request details are already ready for review.",
-        disabledWhen: [`artifacts:${PULL_REQUEST_TITLE_DRAFT_ARTIFACT},${PULL_REQUEST_BODY_DRAFT_ARTIFACT}`],
+        disabledWhen: [when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT)],
         id: "resolve_pull_request",
         label: "Draft PR",
         promptId: "resolve_pull_request",
@@ -275,12 +283,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "create_pr_on_gh",
         disabledReason: "Commit and push changes before creating the GitHub pull request.",
-        disabledWhen: ["metadata:pr_url"],
+        disabledWhen: [when.metadataExists("pr_url")],
         disabledWhenReason: "The GitHub pull request already exists.",
         enabledWhen: [
-          `artifact:${PULL_REQUEST_TITLE_DRAFT_ARTIFACT}`,
-          `artifact:${PULL_REQUEST_BODY_DRAFT_ARTIFACT}`,
-          "metadata:branch_pushed"
+          when.artifactReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT),
+          when.artifactReady(PULL_REQUEST_BODY_DRAFT_ARTIFACT),
+          when.metadataExists("branch_pushed")
         ],
         enabledWhenReason: "Save the pull request title/body and push the branch before creating the GitHub pull request.",
         icon: "github",
@@ -293,12 +301,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       actionSequence: [
         {
           actionId: "resolve_pull_request",
-          completeWhen: [`artifacts:${PULL_REQUEST_TITLE_DRAFT_ARTIFACT},${PULL_REQUEST_BODY_DRAFT_ARTIFACT}`],
+          completeWhen: [when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT)],
           label: "Draft PR"
         },
         {
           actionId: "create_pr_on_gh",
-          completeWhen: ["metadata:pr_url"],
+          completeWhen: [when.metadataExists("pr_url")],
           label: "Create PR on GH"
         }
       ],
@@ -309,7 +317,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Create pull request",
     next: {
       disabledReason: "Create the pull request before continuing.",
-      enabledWhen: ["metadata:pr_url"]
+      enabledWhen: [when.metadataExists("pr_url")]
     },
     rewindCleanup: {
       actionResults: ["create_pr_on_gh"],
@@ -344,9 +352,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     actions: [
       {
         disabledReason: "Create the pull request before preparing for merge.",
-        disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
+        disabledWhen: [
+          when.metadataExists("pr_merged"),
+          when.metadataExists("merge_skipped")
+        ],
         disabledWhenReason: "A merge decision has already been recorded.",
-        enabledWhen: ["metadata:pr_url"],
+        enabledWhen: [when.metadataExists("pr_url")],
         id: "prepare_for_merge",
         label: "Prepare for merge",
         promptId: "prepare_for_merge",
@@ -355,9 +366,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "merge_pr",
         disabledReason: "Create the pull request before merging.",
-        disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
+        disabledWhen: [
+          when.metadataExists("pr_merged"),
+          when.metadataExists("merge_skipped")
+        ],
         disabledWhenReason: "A merge decision has already been recorded.",
-        enabledWhen: ["metadata:pr_url"],
+        enabledWhen: [when.metadataExists("pr_url")],
         icon: "github",
         id: "merge_pr",
         label: "Merge",
@@ -365,8 +379,11 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       },
       {
         disabledReason: "A merge decision has already been recorded.",
-        disabledWhen: ["metadata:pr_merged", "metadata:merge_skipped"],
-        enabledWhen: ["metadata:pr_url"],
+        disabledWhen: [
+          when.metadataExists("pr_merged"),
+          when.metadataExists("merge_skipped")
+        ],
+        enabledWhen: [when.metadataExists("pr_url")],
         enabledWhenReason: "Create the pull request before choosing not to merge.",
         id: "skip_merge",
         label: "Do not merge",
@@ -382,7 +399,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Merge PR",
     next: {
       disabledReason: "Merge the pull request or choose not to merge before continuing.",
-      enabledWhen: ["any:metadata:pr_merged;metadata:merge_skipped"]
+      enabledWhen: [
+        when.any(
+          when.metadataExists("pr_merged"),
+          when.metadataExists("merge_skipped")
+        )
+      ]
     },
     presentation: {
       automation: {
@@ -452,7 +474,10 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "sync_main_checkout",
         disabledReason: "Merge the pull request before syncing the main checkout.",
-        enabledWhen: ["metadata:pr_url", "metadata:pr_merged"],
+        enabledWhen: [
+          when.metadataExists("pr_url"),
+          when.metadataExists("pr_merged")
+        ],
         icon: "sync",
         id: "sync_main_checkout",
         label: "Sync main checkout",
@@ -461,7 +486,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     ],
     autopilot: {
       actionId: "sync_main_checkout",
-      completeWhen: ["metadata:main_checkout_synced"],
+      completeWhen: [when.metadataExists("main_checkout_synced")],
       label: "Sync main checkout"
     },
     description: "Sync the main checkout after a successful merge.",
@@ -469,7 +494,12 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
     label: "Sync main checkout",
     next: {
       disabledReason: "Sync the main checkout after merging before continuing.",
-      enabledWhen: ["any:metadata:main_checkout_synced;metadata:merge_skipped"]
+      enabledWhen: [
+        when.any(
+          when.metadataExists("main_checkout_synced"),
+          when.metadataExists("merge_skipped")
+        )
+      ]
     },
     rewindCleanup: {
       actionResults: ["sync_main_checkout"],
@@ -481,7 +511,13 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       {
         adapterCapability: "finish_session",
         disabledReason: "Merge and sync the main checkout, or choose not to merge, before archiving.",
-        enabledWhen: ["metadata:pr_url", "any:metadata:main_checkout_synced;metadata:merge_skipped"],
+        enabledWhen: [
+          when.metadataExists("pr_url"),
+          when.any(
+            when.metadataExists("main_checkout_synced"),
+            when.metadataExists("merge_skipped")
+          )
+        ],
         id: "finish_session",
         label: "Archive",
         type: "finish"
@@ -521,7 +557,7 @@ const coreLifecycleStepDefinitions = Object.values(deepFreeze({
       actionResults: ["finish_session"]
     }
   }
-})).map((definition) => ({ definition }));
+});
 
 const sessionCreatedMachine = {
   stepId: sessionCreatedStepId,
@@ -721,6 +757,127 @@ const worktreeCreatedMachine = {
       case STEP_STATUS.FAILED:
       case STEP_STATUS.WAITING_FOR_INPUT:
         await writeState(context, this, await commandSucceeded(context, "worktree_path")
+          ? machineState(STEP_STATUS.DONE)
+          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+              from: STEP_STATUS.ATTEMPTING_EXECUTION,
+              message: normalizeText(context.actionResult?.message),
+              output: normalizeText(context.actionResult?.output)
+            }));
+        return;
+
+      case STEP_STATUS.DONE:
+      default:
+        return;
+    }
+  }
+};
+
+const dependenciesInstalledMachine = {
+  stepId: dependenciesInstalledStepId,
+
+  initialState(context = {}) {
+    return metadataExists(context.session, dependenciesInstalledMetadataName)
+      ? machineState(STEP_STATUS.DONE)
+      : machineState(STEP_STATUS.READY);
+  },
+
+  async view(context = {}) {
+    let state = await readState(context, this);
+    if (metadataExists(context.session, dependenciesInstalledMetadataName)) {
+      state = machineState(STEP_STATUS.DONE);
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.DONE:
+        return {
+          actions: disableAction(context.session, installDependenciesActionId, "This step is already complete."),
+          next: nextForSession(context.session, {
+            enabled: true
+          }),
+          stepMachine: publicState(this, state)
+        };
+
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return {
+          actions: disableAction(context.session, installDependenciesActionId, "Resolve the install command failure before retrying."),
+          interaction: commandFailureInteraction({
+            prompt: state.message || "The install command failed. Explain what should happen, then retry the command.",
+            title: "Install command needs attention"
+          }),
+          next: nextForSession(context.session, {
+            disabledReason: "Resolve the install command failure before continuing."
+          }),
+          stepMachine: publicState(this, state)
+        };
+
+      case STEP_STATUS.READY:
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.FAILED:
+      default:
+        return {
+          next: nextForSession(context.session, {
+            disabledReason: "Install dependencies before continuing."
+          }),
+          stepMachine: publicState(this, state)
+        };
+    }
+  },
+
+  async submitInput(context = {}) {
+    const state = await readState(context, this);
+    const input = normalizeMachineInput(context.input);
+    switch (state.status) {
+      case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.FAILED:
+        if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
+          await writeState(context, this, machineState(STEP_STATUS.READY, {
+            response: input.text || input.fields.response,
+            source: input.source
+          }));
+          return;
+        }
+        throw unsupportedInputKind(input.kind, this.stepId);
+
+      case STEP_STATUS.READY:
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.DONE:
+      default:
+        throw aiStudioError("The dependency install step cannot accept input right now.", "ai_studio_step_input_not_available");
+    }
+  },
+
+  async actionStarted(context = {}) {
+    if (context.actionId !== installDependenciesActionId) {
+      return;
+    }
+
+    const state = await readState(context, this);
+    switch (state.status) {
+      case STEP_STATUS.READY:
+      case STEP_STATUS.FAILED:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
+        return;
+
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.DONE:
+      default:
+        return;
+    }
+  },
+
+  async actionFinished(context = {}) {
+    if (context.actionId !== installDependenciesActionId) {
+      return;
+    }
+
+    const state = await readState(context, this);
+    switch (state.status) {
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.READY:
+      case STEP_STATUS.FAILED:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        await writeState(context, this, await commandSucceeded(context, dependenciesInstalledMetadataName)
           ? machineState(STEP_STATUS.DONE)
           : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
               from: STEP_STATUS.ATTEMPTING_EXECUTION,
@@ -1060,28 +1217,34 @@ function pullRequestInputInteraction(values = {}) {
   };
 }
 
-const coreLifecycleStepMachineContributions = [
+const coreLifecycleSteps = Object.freeze([
   {
+    definition: coreLifecycleStepDefinitionsById[sessionCreatedStepId],
     id: sessionCreatedStepId,
     machine: sessionCreatedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[workSourceSelectedStepId],
     id: workSourceSelectedStepId,
     machine: workSourceSelectedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[worktreeCreatedStepId],
     id: worktreeCreatedStepId,
     machine: worktreeCreatedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[dependenciesInstalledStepId],
     id: dependenciesInstalledStepId,
-    machine: createInstallDependenciesMachine()
+    machine: dependenciesInstalledMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[projectValidatedStepId],
     id: projectValidatedStepId,
     machine: projectValidatedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[changesCommittedStepId],
     id: changesCommittedStepId,
     machine: changesCommittedMachine
   },
@@ -1134,27 +1297,30 @@ const coreLifecycleStepMachineContributions = [
         title: "Pull request needs input"
       })
     },
+    definition: coreLifecycleStepDefinitionsById[createPullRequestStepId],
     factoryId: "editable_artifact_review",
     id: createPullRequestStepId
   },
   {
+    definition: coreLifecycleStepDefinitionsById[prMergedStepId],
     id: prMergedStepId,
     machine: pullRequestMergedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[mainCheckoutSyncedStepId],
     id: mainCheckoutSyncedStepId,
     machine: mainCheckoutSyncedMachine
   },
   {
+    definition: coreLifecycleStepDefinitionsById[sessionFinishedStepId],
     id: sessionFinishedStepId,
     machine: sessionFinishedMachine
   }
-];
+]);
 
 const coreLifecycleWorkflowModule = Object.freeze({
   id: moduleId,
-  stepDefinitions: coreLifecycleStepDefinitions,
-  stepMachineContributions: coreLifecycleStepMachineContributions,
+  steps: coreLifecycleSteps,
   workflowDefinitions: []
 });
 

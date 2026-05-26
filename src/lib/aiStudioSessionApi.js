@@ -29,6 +29,10 @@ function aiStudioCurrentStepInputEndpoint(sessionId) {
   return aiStudioSessionEndpoint(sessionId, "/current-step/input");
 }
 
+function aiStudioTerminalFailureFixRequestEndpoint(sessionId) {
+  return aiStudioSessionEndpoint(sessionId, "/terminal-failure-fix-request");
+}
+
 function aiStudioArtifactReadinessStreamEndpoint(sessionId) {
   return aiStudioSessionEndpoint(sessionId, "/artifact-readiness/stream");
 }
@@ -93,6 +97,13 @@ async function submitAiStudioCurrentStepInput(sessionId, input = {}) {
   });
 }
 
+async function buildAiStudioTerminalFailureFixRequest(sessionId, input = {}) {
+  const payload = input && typeof input === "object" && !Array.isArray(input)
+    ? input
+    : {};
+  return studioHttpClient.post(aiStudioTerminalFailureFixRequestEndpoint(sessionId), payload);
+}
+
 export {
   aiStudioCodexTerminalWebSocketUrl,
   aiStudioCommandTerminalWebSocketUrl,
@@ -101,6 +112,7 @@ export {
   aiStudioShellTerminalWebSocketUrl,
   closeAiStudioCodexTerminal,
   closeAiStudioCommandTerminal,
+  buildAiStudioTerminalFailureFixRequest,
   readAiStudioArtifactReadiness,
   readAiStudioSessionDiff,
   submitAiStudioCurrentStepInput,

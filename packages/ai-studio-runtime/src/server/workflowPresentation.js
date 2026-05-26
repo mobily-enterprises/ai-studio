@@ -4,6 +4,12 @@ import {
   normalizeText
 } from "@local/ai-studio-core/server/core";
 import {
+  AI_STUDIO_CLIENT_CONTROL_ACTIONS,
+  AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS,
+  AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS,
+  AI_STUDIO_OPERATION_ROUTES as OPERATION_ROUTES
+} from "@local/ai-studio-core/shared";
+import {
   aiStudioSessionDebugDurationMs,
   aiStudioSessionDebugError,
   aiStudioSessionDebugLog,
@@ -26,12 +32,6 @@ const INTENT_IDS = Object.freeze({
   SKIP_OPTIONAL_CHECK: "skip_optional_check"
 });
 
-const OPERATION_ROUTES = Object.freeze({
-  COMMAND_TERMINAL: "command-terminal",
-  SESSION_ACTION: "session-action",
-  SESSION_ADVANCE: "session-advance",
-  SESSION_INTENT: "session-intent"
-});
 const COMMAND_RECOVERY_DELAY_MS = 5000;
 const COMMAND_LIFECYCLE_RUNNING_PHASES = Object.freeze(new Set([
   "starting",
@@ -52,6 +52,15 @@ const INTENT_PRESENTATION_GROUPS = Object.freeze([
   "decision",
   "stop"
 ]);
+const CLIENT_CONTROL_ACTIONS = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ACTIONS)));
+const CLIENT_CONTROL_ICON_TOKENS = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_ICON_TOKENS)));
+const CLIENT_CONTROL_STATE_FLAGS = Object.freeze(new Set(Object.values(AI_STUDIO_CLIENT_CONTROL_STATE_FLAGS)));
+const INPUT_BEHAVIOR_KINDS = Object.freeze({
+  NUMBERED_QUESTIONS: "numbered_questions"
+});
+const INPUT_MESSAGE_SOURCES = Object.freeze({
+  LATEST_ASSISTANT_MESSAGE: "latest_assistant_message"
+});
 
 function currentStepDefinition(session = {}) {
   return isPlainObject(session.currentStepDefinition) ? session.currentStepDefinition : {};
@@ -143,22 +152,69 @@ function inputPresentation(input = {}, {
 
 function intent(id, {
   actionId = "",
-  clientAction = "",
   disabledReason = "",
   enabled = true,
+  control = null,
+  input = null,
   inputFields = [],
   label = "",
   style = "secondary"
 } = {}) {
+  const controlPresentation = isPlainObject(control) ? normalizeControlPresentation(control) : null;
+  const intentInputPresentation = isPlainObject(input) ? input : null;
   return {
     actionId: normalizeText(actionId),
-    clientAction: normalizeText(clientAction),
+    ...(controlPresentation ? { control: controlPresentation } : {}),
     disabledReason: enabled ? "" : normalizeText(disabledReason || "This action is not available right now."),
     enabled: enabled === true,
     id,
+    ...(intentInputPresentation ? { input: intentInputPresentation } : {}),
     inputFields: Array.isArray(inputFields) ? inputFields : [],
     label: normalizeText(label || id),
     style
+  };
+}
+
+function normalizeControlAction(action = "", context = "client control") {
+  const normalizedAction = normalizeText(action);
+  if (normalizedAction && !CLIENT_CONTROL_ACTIONS.has(normalizedAction)) {
+    presentationContractError(`${context} uses unknown action: ${normalizedAction}.`);
+  }
+  return normalizedAction;
+}
+
+function normalizeControlIconToken(icon = "", context = "client control") {
+  const normalizedIcon = normalizeText(icon);
+  if (normalizedIcon && !CLIENT_CONTROL_ICON_TOKENS.has(normalizedIcon)) {
+    presentationContractError(`${context} uses unknown icon token: ${normalizedIcon}.`);
+  }
+  return normalizedIcon;
+}
+
+function normalizeControlStateFlags(values = [], context = "client control") {
+  const flags = (Array.isArray(values) ? values : [])
+    .map((value) => normalizeText(value))
+    .filter(Boolean);
+  const unknownFlag = flags.find((flag) => !CLIENT_CONTROL_STATE_FLAGS.has(flag));
+  if (unknownFlag) {
+    presentationContractError(`${context} uses unknown state flag: ${unknownFlag}.`);
+  }
+  return flags;
+}
+
+function normalizeControlPresentation(control = {}) {
+  const action = normalizeControlAction(control.action);
+  const icon = normalizeControlIconToken(control.icon);
+  const disabledWhen = normalizeControlStateFlags(control.disabledWhen, "client control disabledWhen");
+  const loadingWhen = normalizeControlStateFlags(control.loadingWhen, "client control loadingWhen");
+  if (!action && !icon && disabledWhen.length === 0 && loadingWhen.length === 0) {
+    return null;
+  }
+  return {
+    action,
+    disabledWhen,
+    icon,
+    loadingWhen
   };
 }
 
@@ -168,6 +224,7 @@ function intentForAction(id, action = {}, options = {}) {
     actionId: action?.id || options.actionId || "",
     disabledReason: action?.disabledReason || options.disabledReason || "",
     enabled: action?.enabled === true,
+    input: options.input,
     inputFields: options.inputFields || action?.inputFields || [],
     label: options.label || action?.label || id
   });
@@ -298,9 +355,10 @@ function intentFromConfig(session = {}, config = {}) {
   }
   const enabled = configuredIntentEnabled(session, config);
   return intent(id, {
-    clientAction: config.clientAction || "",
+    control: config.control,
     disabledReason: configuredIntentDisabledReason(session, config, enabled),
     enabled,
+    input: config.input,
     inputFields: config.inputFields,
     label: config.label || "",
     style: config.style || "secondary"
@@ -367,11 +425,13 @@ function interactionPresentation(session = {}) {
     if (!conversationIntentId) {
       presentationContractError("Conversation interactions require an intentId.");
     }
+    const inputFields = Array.isArray(interaction.fields) ? interaction.fields : [];
     const action = actionById(session, interaction.actionId || stageAction(session)?.actionId || "");
     return {
       intents: [
         intentForAction(conversationIntentId, action, {
-          inputFields: interaction.fields,
+          input: conversationIntentInputPresentation(session, inputFields),
+          inputFields,
           label: interaction.submitLabel || action?.label || "Send to Codex",
           style: "primary"
         })
@@ -396,6 +456,24 @@ function interactionPresentation(session = {}) {
       message: interaction.prompt || "",
       title: interaction.title || currentStepLabel(session)
     })
+  };
+}
+
+function conversationIntentInputPresentation(session = {}, fields = []) {
+  if (stepMachineStatus(session) !== STEP_STATUS.WAITING_FOR_INPUT) {
+    return null;
+  }
+  const fieldName = "conversationRequest";
+  const field = Array.isArray(fields) && fields.length === 1 ? fields[0] : null;
+  if (normalizeText(field?.name) !== fieldName || normalizeText(field?.kind) !== "textarea") {
+    return null;
+  }
+  return {
+    questionSugar: {
+      fieldName,
+      kind: INPUT_BEHAVIOR_KINDS.NUMBERED_QUESTIONS,
+      source: INPUT_MESSAGE_SOURCES.LATEST_ASSISTANT_MESSAGE
+    }
   };
 }
 
@@ -723,12 +801,16 @@ function backgroundTaskRetryPresentation(task = {}) {
   if (!retry) {
     return null;
   }
-  const clientAction = normalizeText(retry.clientAction);
-  if (!clientAction) {
+  const control = normalizeControlPresentation(isPlainObject(retry.control)
+    ? retry.control
+    : {
+        action: retry.clientAction
+      });
+  if (!control) {
     return null;
   }
   return {
-    clientAction,
+    control,
     label: normalizeText(retry.label) || "Retry"
   };
 }
@@ -987,6 +1069,17 @@ function workflowRejectTargetForSession(runtime, session = {}) {
   return targetStepId;
 }
 
+function workflowRecheckTargetForSession(runtime, session = {}) {
+  const targetStepId = normalizeText(currentWorkflowStepBehavior(runtime, session).recheckTo);
+  if (!targetStepId) {
+    throw aiStudioError("This workflow does not define a recheck target for the current step.", "ai_studio_recheck_target_missing");
+  }
+  if (!workflowHasStep(session, targetStepId)) {
+    throw aiStudioError(`Workflow recheck target does not exist: ${targetStepId}`, "ai_studio_unknown_workflow_step");
+  }
+  return targetStepId;
+}
+
 function currentAutopilotAction(runtime, session = {}) {
   const machine = typeof runtime?.workflowMachineForSession === "function"
     ? runtime.workflowMachineForSession(session)
@@ -998,14 +1091,6 @@ function currentAutopilotAction(runtime, session = {}) {
     ? machine.autopilotStageForSession(step, session)
     : null;
   return normalizeText(stage?.actionId);
-}
-
-function finalReviewRecheckTargetStepForSession(session = {}, operation = {}) {
-  const reviewStepId = normalizeText(operation.reviewStepId);
-  if (workflowHasStep(session, reviewStepId)) {
-    return reviewStepId;
-  }
-  return requiredPresentationValue(operation, "validationStepId", "delete_metadata_and_rewind operation");
 }
 
 async function runActionServerOperation(runtime, session = {}, selectedIntent = {}, operation = {}, fields = {}) {
@@ -1046,7 +1131,7 @@ async function deleteMetadataAndRewindServerOperation(runtime, session = {}, ope
   );
   return runtime.rewind(
     session.sessionId,
-    finalReviewRecheckTargetStepForSession(session, operation)
+    workflowRecheckTargetForSession(runtime, session)
   );
 }
 

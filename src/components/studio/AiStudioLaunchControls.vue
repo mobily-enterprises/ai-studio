@@ -343,12 +343,12 @@ const workflowAiFixVisible = computed(() => Boolean(
   )
 ));
 
-function requestAiFix() {
+async function requestAiFix() {
   if (!workflowAiFixVisible.value) {
     return null;
   }
   minimizeTerminal();
-  return props.fixCommandFailure?.(terminalFailureFixRequest({
+  const request = await terminalFailureFixRequest({
     closeError: terminalError.value,
     commandPreview: terminalCommandPreview.value,
     exitCode: terminalExitCode.value,
@@ -359,7 +359,8 @@ function requestAiFix() {
     terminalKind: "launch",
     terminalSessionId: terminalSessionId.value,
     terminalStatus: terminalStatus.value
-  }));
+  });
+  return props.fixCommandFailure?.(request);
 }
 </script>
 

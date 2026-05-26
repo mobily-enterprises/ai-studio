@@ -14,13 +14,14 @@
 
 - Numbered questions are deliberately UI-only sugar. The server sends one prompt/message and one logical response field; the client may render supported numbered-question text as separate inputs, but it submits one combined response value. Do not replace this with server question metadata, structured question endpoints, or separate persisted question-answer fields.
 - Non-command action handlers stay inside the per-session mutation queue by default. AI Studio is an interactive, sequential workflow, and long-running Codex/command work is already made visible through live terminal surfaces. Do not split prompt/adapter/finish handlers out into parallel action execution unless timestamped logs show a real user-visible gap before the terminal appears; fix that measured pre-terminal stall before changing the serialization model.
+- AI Studio is a single-process local editor for one target root. It is launched from the destination directory, or with that directory preserved as `AI_STUDIO_TARGET_ROOT`, and it works on that directory only. Session persistence is file-backed under `.ai-studio`; in-process mutation queues are the concurrency boundary. JSKIT realtime is used for local UI event fanout so the same operator can keep multiple browsers or devices in sync with the same Studio process. That realtime layer does not make session persistence distributed. Do not add Redis, Socket.IO clustering, cross-process locking, distributed session coordination, or hosted project-registry assumptions unless this product contract is deliberately changed first.
 
 ## Platform Choices
 
 - Tenancy mode: none.
 - Database engine: none for Studio V0.
 - Auth provider: none for Studio V0.
-- Optional extras: no realtime, assistant runtime, uploads, users, workspaces, or database packages in the initial baseline.
+- Optional extras: no assistant runtime, uploads, users, workspaces, or database packages in the initial baseline. Realtime is part of the Studio baseline only for same-process multi-client UI synchronization.
 - Mandatory Studio Setup runtime: Docker plus a reliable Studio-managed base toolchain able to run git, ripgrep, Playwright/Chromium, GitHub CLI, Codex, and Codex sandbox checks. Target-specific runtimes such as Node, npm, Python, databases, and framework doctors belong to adapter/project setup.
 
 ## Actors And Access

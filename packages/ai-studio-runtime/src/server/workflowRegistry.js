@@ -38,9 +38,15 @@ function normalizeWorkflowStepContribution(moduleId = "", contribution = {}, ind
       "ai_studio_workflow_module_invalid"
     );
   }
-  if (!definition && !machine && !factoryId) {
+  if (!definition) {
     throw aiStudioError(
-      `AI Studio workflow ${context} must register a definition, machine, or factory.`,
+      `AI Studio workflow ${context} must register a definition.`,
+      "ai_studio_workflow_module_invalid"
+    );
+  }
+  if (!machine && !factoryId) {
+    throw aiStudioError(
+      `AI Studio workflow ${context} must register a machine or factory.`,
       "ai_studio_workflow_module_invalid"
     );
   }
@@ -64,7 +70,7 @@ function normalizeWorkflowStepContribution(moduleId = "", contribution = {}, ind
   }
 
   return {
-    definition: definition ? deepFreeze(plainClone(definition)) : null,
+    definition: deepFreeze(plainClone(definition)),
     factoryConfig,
     factoryId,
     id: stepId,
@@ -100,12 +106,14 @@ function normalizeWorkflowStepEntry(entry = {}) {
   if (typeof entry === "string") {
     return {
       rejectTo: "",
+      recheckTo: "",
       stepId: normalizeText(entry)
     };
   }
   const entryObject = isPlainObject(entry) ? entry : {};
   return {
     rejectTo: normalizeText(entryObject.rejectTo),
+    recheckTo: normalizeText(entryObject.recheckTo),
     stepId: normalizeText(entryObject.stepId || entryObject.id)
   };
 }
@@ -133,23 +141,29 @@ function validateWorkflowStepEntries(workflowId = "", steps = []) {
   }
 
   const stepIndexById = new Map(stepIds.map((stepId, index) => [stepId, index]));
-  steps.forEach((entry, index) => {
-    if (!entry.rejectTo) {
+  function validateEarlierStepTarget(entry = {}, index = 0, fieldName = "") {
+    const targetStepId = normalizeText(entry[fieldName]);
+    if (!targetStepId) {
       return;
     }
-    const targetIndex = stepIndexById.get(entry.rejectTo);
+    const targetIndex = stepIndexById.get(targetStepId);
     if (targetIndex === undefined) {
       throw aiStudioError(
-        `AI Studio workflow ${workflowId} step ${entry.stepId} rejects to unknown step: ${entry.rejectTo}.`,
-        "ai_studio_workflow_unknown_reject_step"
+        `AI Studio workflow ${workflowId} step ${entry.stepId} ${fieldName} points to unknown step: ${targetStepId}.`,
+        "ai_studio_workflow_unknown_target_step"
       );
     }
     if (targetIndex >= index) {
       throw aiStudioError(
-        `AI Studio workflow ${workflowId} step ${entry.stepId} reject target must be an earlier step: ${entry.rejectTo}.`,
-        "ai_studio_workflow_invalid_reject_step"
+        `AI Studio workflow ${workflowId} step ${entry.stepId} ${fieldName} target must be an earlier step: ${targetStepId}.`,
+        "ai_studio_workflow_invalid_target_step"
       );
     }
+  }
+
+  steps.forEach((entry, index) => {
+    validateEarlierStepTarget(entry, index, "rejectTo");
+    validateEarlierStepTarget(entry, index, "recheckTo");
   });
 }
 
@@ -231,30 +245,20 @@ function createWorkflowRegistry() {
   }
 
   function storeStepContribution(moduleId = "", contribution = {}) {
-    const existing = stepRecords.get(contribution.id);
-    const definition = contribution.definition || existing?.definition || null;
-    const machine = contribution.machine || (contribution.factoryId ? null : existing?.machine || null);
-    const factoryId = contribution.factoryId || (contribution.machine ? "" : existing?.factoryId || "");
-    const factoryConfig = contribution.factoryId
-      ? contribution.factoryConfig
-      : contribution.machine
-        ? null
-        : existing?.factoryConfig || null;
-    const ownerModuleId = contribution.definition ? moduleId : existing?.moduleId || moduleId;
-    if (factoryId && !stepFactoryRecords.has(factoryId)) {
+    if (contribution.factoryId && !stepFactoryRecords.has(contribution.factoryId)) {
       throw aiStudioError(
-        `AI Studio workflow step ${contribution.id} references unregistered step factory: ${factoryId}.`,
+        `AI Studio workflow step ${contribution.id} references unregistered step factory: ${contribution.factoryId}.`,
         "ai_studio_workflow_unknown_step_factory"
       );
     }
 
     stepRecords.set(contribution.id, Object.freeze({
-      definition,
-      factoryConfig,
-      factoryId,
+      definition: contribution.definition,
+      factoryConfig: contribution.factoryConfig,
+      factoryId: contribution.factoryId,
       id: contribution.id,
-      machine,
-      moduleId: ownerModuleId
+      machine: contribution.machine,
+      moduleId
     }));
   }
 
@@ -351,7 +355,8 @@ function createWorkflowRegistry() {
         return {
           ...plainClone(stepDefinition),
           workflow: {
-            rejectTo: entry.rejectTo
+            rejectTo: entry.rejectTo,
+            recheckTo: entry.recheckTo
           }
         };
       })
