@@ -180,7 +180,8 @@ function actionLogEntry(action, session, actionResult) {
 }
 
 function actionResultRecord(action, session, input, handlerResult = {}) {
-  const result = handlerResult || {};
+  const result = { ...(handlerResult || {}) };
+  delete result.recordsConversationTurn;
   const recordsConversationTurn = action.recordsConversationTurn === true;
   return {
     ...result,
