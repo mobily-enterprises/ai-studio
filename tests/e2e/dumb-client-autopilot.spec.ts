@@ -1264,6 +1264,94 @@ test.describe("Autopilot dumb client contract", () => {
     expect(advances).toBe(0);
   });
 
+  test("shows the conversation pending indicator only while Codex is awaited", async ({ page }) => {
+    const session = sessionPayload({
+      presentation: {
+        screen: {
+          kind: "conversation",
+          sections: [
+            {
+              kind: "response_preview"
+            }
+          ],
+          title: "Talk to Codex"
+        },
+        step: {
+          id: "server_step",
+          label: "Talk to Codex",
+          status: "awaiting_agent_result"
+        }
+      },
+      stepMachine: {
+        status: "awaiting_agent_result",
+        stepId: "server_step"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      conversationLog: [
+        {
+          turnId: "turn-1",
+          user: {
+            at: "2026-05-25T01:02:00.000Z",
+            role: "user",
+            text: "Please inspect the current state."
+          }
+        }
+      ]
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const conversation = page.getByLabel("Conversation history");
+    await expect(conversation).toBeVisible();
+    await expect(conversation.getByText("Please inspect the current state.")).toBeVisible();
+    await expect(conversation.getByText("Waiting for Codex...")).toBeVisible();
+  });
+
+  test("does not show a stale conversation pending indicator for settled user-only turns", async ({ page }) => {
+    const session = sessionPayload({
+      presentation: {
+        screen: {
+          kind: "conversation",
+          sections: [
+            {
+              kind: "response_preview"
+            }
+          ],
+          title: "Human review"
+        },
+        step: {
+          id: "server_step",
+          label: "Human review",
+          status: "confirm_files"
+        }
+      },
+      stepMachine: {
+        status: "confirm_files",
+        stepId: "server_step"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      conversationLog: [
+        {
+          turnId: "turn-1",
+          user: {
+            at: "2026-05-25T01:02:00.000Z",
+            role: "user",
+            text: "Make the file name lower case."
+          }
+        }
+      ]
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const conversation = page.getByLabel("Conversation history");
+    await expect(conversation).toBeVisible();
+    await expect(conversation.getByText("Make the file name lower case.")).toBeVisible();
+    await expect(conversation.getByText("Waiting for Codex...")).toHaveCount(0);
+  });
+
   test("aligns the Inspect shell terminal bottom with the Codex terminal", async ({ page }) => {
     await page.setViewportSize({
       height: 948,

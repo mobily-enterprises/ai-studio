@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  normalizeConversationLog
+  normalizeConversationLog,
+  sessionIsAwaitingCodex
 } from "../../src/composables/useVibe64ConversationLog.js";
 
 describe("useVibe64ConversationLog", () => {
@@ -57,5 +58,92 @@ describe("useVibe64ConversationLog", () => {
         }
       }
     ]);
+  });
+
+  it("marks only the latest user-only turn as pending while Codex is awaited", () => {
+    expect(normalizeConversationLog({
+      conversationLog: [
+        {
+          turnId: "000001",
+          user: {
+            role: "user",
+            text: "Please revise this."
+          }
+        },
+        {
+          assistant: {
+            role: "assistant",
+            text: "Done."
+          },
+          turnId: "000002",
+          user: {
+            role: "user",
+            text: "One more tweak."
+          }
+        },
+        {
+          turnId: "000003",
+          user: {
+            role: "user",
+            text: "Make the file name lower case."
+          }
+        }
+      ]
+    }, {
+      pending: true
+    }).map((turn) => [
+      turn.turnId,
+      turn.pending === true
+    ])).toEqual([
+      ["000001", false],
+      ["000002", false],
+      ["000003", true]
+    ]);
+  });
+
+  it("leaves user-only turns settled when the session is not awaiting Codex", () => {
+    expect(normalizeConversationLog({
+      conversationLog: [
+        {
+          turnId: "000001",
+          user: {
+            role: "user",
+            text: "Make the file name lower case."
+          }
+        }
+      ]
+    }, {
+      pending: false
+    })).toEqual([
+      {
+        assistant: null,
+        messages: [
+          {
+            at: "",
+            role: "user",
+            text: "Make the file name lower case."
+          }
+        ],
+        turnId: "000001",
+        user: {
+          at: "",
+          role: "user",
+          text: "Make the file name lower case."
+        }
+      }
+    ]);
+  });
+
+  it("derives pending state from the step machine status", () => {
+    expect(sessionIsAwaitingCodex({
+      stepMachine: {
+        status: "awaiting_agent_result"
+      }
+    })).toBe(true);
+    expect(sessionIsAwaitingCodex({
+      stepMachine: {
+        status: "confirm_files"
+      }
+    })).toBe(false);
   });
 });

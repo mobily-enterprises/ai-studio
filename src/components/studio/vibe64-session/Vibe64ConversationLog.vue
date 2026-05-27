@@ -82,7 +82,7 @@
         </div>
 
         <div
-          v-else
+          v-else-if="turn.pending"
           class="studio-conversation-log__pending"
         >
           <v-progress-circular
@@ -179,6 +179,7 @@ const displayTurns = computed(() => (Array.isArray(props.turns) ? props.turns : 
     assistant: displayMessage(turn.assistant, {
       allowNumberedQuestions: true
     }),
+    pending: turn.pending === true,
     turnId: String(turn.turnId || index + 1),
     user: displayMessage(turn.user)
   }))
@@ -197,6 +198,7 @@ function messageScrollKey(message = null) {
 function turnScrollKey(turn = {}) {
   return [
     turn.turnId,
+    turn.pending ? "pending" : "settled",
     messageScrollKey(turn.user),
     messageScrollKey(turn.assistant)
   ].join(":");

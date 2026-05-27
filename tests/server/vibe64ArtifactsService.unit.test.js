@@ -199,6 +199,54 @@ test("Vibe64 artifacts service appends helper responses to the conversation log"
   });
 });
 
+test("Vibe64 artifacts service closes structured Codex helper turns in the conversation log", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      adapter: new FakeTargetAdapter(),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      metadata: worktreeMetadata(targetRoot, "structured_helper_conversation_log"),
+      sessionId: "structured_helper_conversation_log"
+    });
+    await runtime.runAction("structured_helper_conversation_log", "draft_issue", {
+      conversationRequest: "Create a file called P.txt in the project root."
+    });
+    await runtime.store.writeConversationUserMessage("structured_helper_conversation_log", {
+      text: "Create a file called P.txt in the project root."
+    });
+
+    const service = createService({
+      projectService: projectServiceForRuntime(runtime)
+    });
+
+    const saved = await service.submitCurrentStepInput("structured_helper_conversation_log", {
+      fields: {
+        body: "Create an empty file named p.txt in the project root.",
+        title: "Create lowercase p.txt",
+        word: "p"
+      },
+      kind: "ready",
+      source: "codex",
+      stepId: "issue_file_created",
+      stepStatus: "awaiting_agent_result"
+    });
+
+    const conversationLog = await runtime.store.readConversationLog("structured_helper_conversation_log");
+    assert.equal(saved.ok, true);
+    assert.deepEqual(conversationLog.map((turn) => [
+      turn.user?.text || "",
+      turn.assistant?.text || ""
+    ]), [
+      [
+        "Create a file called P.txt in the project root.",
+        "Prepared: Create lowercase p.txt"
+      ]
+    ]);
+  });
+});
+
 test("Vibe64 artifacts service rejects UI input while a step waits for Codex", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({

@@ -46,11 +46,26 @@ function normalizeConversationTurn(turn = {}, index = 0) {
   };
 }
 
-function normalizeConversationLog(payload = {}) {
+function normalizeConversationLog(payload = {}, options = {}) {
   const turns = Array.isArray(payload?.conversationLog) ? payload.conversationLog : [];
-  return turns
+  const normalizedTurns = turns
     .map((turn, index) => normalizeConversationTurn(turn, index))
     .filter(Boolean);
+  const pendingTurnIndex = options.pending === true ? normalizedTurns.length - 1 : -1;
+  return normalizedTurns.map((turn, index) => {
+    if (index === pendingTurnIndex && turn.user && !turn.assistant) {
+      return {
+        ...turn,
+        pending: true
+      };
+    }
+    return turn;
+  });
+}
+
+function sessionIsAwaitingCodex(session = {}) {
+  const source = session && typeof session === "object" && !Array.isArray(session) ? session : {};
+  return String(source.stepMachine?.status || source.presentation?.step?.status || "").trim() === "awaiting_agent_result";
 }
 
 function useVibe64ConversationLog({
@@ -92,7 +107,9 @@ function useVibe64ConversationLog({
       }
     }
   });
-  const turns = computed(() => normalizeConversationLog(resource.data.value || {}));
+  const turns = computed(() => normalizeConversationLog(resource.data.value || {}, {
+    pending: sessionIsAwaitingCodex(currentSession.value)
+  }));
   const visible = computed(() => Boolean(
     resource.isLoading.value ||
     resource.loadError.value ||
@@ -110,5 +127,6 @@ function useVibe64ConversationLog({
 
 export {
   normalizeConversationLog,
+  sessionIsAwaitingCodex,
   useVibe64ConversationLog
 };

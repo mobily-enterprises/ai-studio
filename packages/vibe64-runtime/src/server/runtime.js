@@ -368,7 +368,21 @@ function inputFields(input = {}) {
 function currentStepInputText(input = {}) {
   const source = inputObject(input);
   const fields = inputFields(input);
-  return normalizeText(fields.response || source.text || source.message);
+  const directText = normalizeText(fields.response || source.text || source.message);
+  if (directText) {
+    return directText;
+  }
+  if (normalizeText(source.kind) !== "ready") {
+    return "";
+  }
+  const title = normalizeText(fields.title);
+  if (title) {
+    return `Prepared: ${title}`;
+  }
+  if (Object.keys(fields).length) {
+    return "Completed this step.";
+  }
+  return "";
 }
 
 async function recordCurrentStepConversationMessage(runtime, sessionId = "", input = {}) {
