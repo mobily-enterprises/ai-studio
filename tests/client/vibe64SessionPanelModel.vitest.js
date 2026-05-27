@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   mdiCodeBraces,
   mdiGithub,
+  mdiMessagePlusOutline,
   mdiRobotOutline,
-  mdiSync
+  mdiSync,
+  mdiUndoVariant
 } from "@mdi/js";
 
 import {
@@ -188,6 +190,8 @@ describe("Vibe64 session panel model", () => {
   it("maps runtime actions and disabled reasons for UI controls", () => {
     expect(vibe64ActionIcon({ icon: "codex" })).toBe(mdiRobotOutline);
     expect(vibe64ActionIcon({ icon: "github" })).toBe(mdiGithub);
+    expect(vibe64ActionIcon({ icon: "message-square-plus" })).toBe(mdiMessagePlusOutline);
+    expect(vibe64ActionIcon({ icon: "rotate-ccw" })).toBe(mdiUndoVariant);
     expect(vibe64ActionIcon({ icon: "sync" })).toBe(mdiSync);
     expect(vibe64ActionIcon({ id: "server_owned_action" })).toBe(mdiCodeBraces);
     expect(currentStepDisabledReason([

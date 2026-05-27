@@ -1387,6 +1387,123 @@ test.describe("Autopilot dumb client contract", () => {
       }
     ]);
   });
+
+  test("renders workflow controls alongside current-step input forms", async ({ page }) => {
+    const intentRequests: unknown[] = [];
+    const intents = [
+      {
+        enabled: true,
+        id: "continue_step",
+        inputFields: [],
+        label: "Accept saved issue",
+        style: "primary"
+      },
+      {
+        actionId: "reject_issue_draft",
+        enabled: true,
+        id: "reject_issue_draft",
+        inputFields: [
+          {
+            kind: "textarea",
+            label: "What should change?",
+            name: "feedback",
+            placeholder: "Tell Codex how to improve the saved issue draft.",
+            requiredMessage: "Explain what should change before sending the improvement request."
+          }
+        ],
+        label: "Send improvement request",
+        style: "secondary"
+      }
+    ];
+    const session = sessionPayload({
+      currentStep: "issue_file_created",
+      currentStepDefinition: {
+        id: "issue_file_created",
+        label: "Define or select issue"
+      },
+      intents,
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "user"
+          }
+        },
+        intents,
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "text",
+                label: "Issue title",
+                name: "title",
+                value: "Create root a.txt file"
+              },
+              {
+                kind: "text",
+                label: "Session label",
+                name: "word",
+                value: "a-txt"
+              },
+              {
+                kind: "textarea",
+                label: "Issue body",
+                name: "body",
+                value: "Create a file named `a.txt` in the project root."
+              }
+            ],
+            prompt: "Review the issue details. Save changes here, or continue to create the GitHub issue.",
+            submitTarget: "current-step-input",
+            submitLabel: "Update issue",
+            title: "Define issue"
+          },
+          kind: "confirm_files",
+          message: "Review the issue details. Save changes here, or continue to create the GitHub issue.",
+          sections: [],
+          title: "Define issue"
+        },
+        step: {
+          id: "issue_file_created",
+          label: "Define or select issue",
+          status: "confirm_files"
+        }
+      },
+      stepMachine: {
+        status: "confirm_files",
+        stepId: "issue_file_created"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      onIntent: (body) => {
+        intentRequests.push(body);
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect(page.getByRole("heading", { name: "Define issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Update issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Accept saved issue" })).toBeVisible();
+    await page.getByRole("button", { name: "Send improvement request" }).click();
+
+    await expect(page.getByLabel("Issue title")).toBeVisible();
+    await expect(page.getByLabel("What should change?")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Update issue" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Accept saved issue" })).toHaveCount(0);
+    await page.getByLabel("What should change?").fill("Use a clearer title.");
+    await page.getByRole("button", { name: "Send improvement request" }).click();
+
+    await expect.poll(() => intentRequests).toEqual([
+      {
+        fields: {
+          feedback: "Use a clearer title."
+        },
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
+  });
 });
 
 async function mockVibe64Session(

@@ -2344,6 +2344,7 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       "continue_step",
       "reject_issue_draft"
     ]);
+    assert.equal(confirmedIssue.intents.find((intent) => intent.id === "reject_issue_draft")?.label, "Send improvement request");
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Issue title\n");
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Issue body\n");
 
@@ -2374,10 +2375,28 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       stepId: "issue_file_created",
       stepStatus: "confirm_files"
     });
-    assert.equal(rejectedIssue.stepMachine.status, "ready");
-    assert.equal(rejectedIssue.presentation.screen.kind, "issue_source");
-    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "");
-    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "");
+    assert.equal(rejectedIssue.stepMachine.status, "awaiting_agent_result");
+    assert.equal(rejectedIssue.actionResult.status, "prompt_ready");
+    assert.equal(rejectedIssue.actionResult.promptId, "draft_issue");
+    assert.equal(rejectedIssue.actionResult.input.feedback, "Use a clearer title.");
+    assert.match(rejectedIssue.actionResult.prompt, /Use a clearer title\./u);
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Issue title\n");
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Issue body\n");
+
+    const revisedIssue = await runtime.submitCurrentStepInput("editable_artifact_issue", {
+      fields: {
+        body: "Revised issue body",
+        title: "Revised issue title",
+        word: "revised-issue"
+      },
+      kind: "confirm_files",
+      source: "codex",
+      stepId: "issue_file_created",
+      stepStatus: "awaiting_agent_result"
+    });
+    assert.equal(revisedIssue.stepMachine.status, "confirm_files");
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Revised issue title\n");
+    assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Revised issue body\n");
 
     const existingIssueRuntime = new Vibe64SessionRuntime({
       actionHandlers: {

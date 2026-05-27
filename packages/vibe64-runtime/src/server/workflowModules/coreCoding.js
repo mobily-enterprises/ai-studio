@@ -229,11 +229,11 @@ const coreCodingStepDefinitionsById = deepFreeze({
         type: "prompt"
       },
       {
-        disabledReason: "Draft an issue before rejecting it.",
+        disabledReason: "Draft an issue before requesting improvements.",
         disabledWhen: [when.metadataExists("issue_url")],
         disabledWhenReason: "An existing issue is already selected.",
         enabledWhen: [when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)],
-        enabledWhenReason: "Draft an issue before rejecting it.",
+        enabledWhenReason: "Draft an issue before requesting improvements.",
         icon: "rotate-ccw",
         id: rejectIssueDraftActionId,
         inputFields: [
@@ -241,12 +241,14 @@ const coreCodingStepDefinitionsById = deepFreeze({
             kind: "textarea",
             label: "What should change?",
             name: "feedback",
-            placeholder: "Tell Codex what was wrong or missing.",
-            requiredMessage: "Explain what should change before drafting again."
+            placeholder: "Tell Codex how to improve the saved issue draft.",
+            requiredMessage: "Explain what should change before sending the improvement request."
           }
         ],
-        label: "Reject and revise",
-        type: "record"
+        label: "Send improvement request",
+        promptId: draftIssueActionId,
+        recordsConversationTurn: true,
+        type: "prompt"
       }
     ],
     autopilot: {
@@ -812,7 +814,7 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
         {
           actionId: rejectIssueDraftActionId,
           id: rejectIssueDraftActionId,
-          label: "Reject and revise",
+          label: "Send improvement request",
           style: "secondary",
           type: "action"
         }
@@ -895,6 +897,14 @@ function issueDraftReviewState(details = {}) {
   });
 }
 
+function issueDraftPromptIsActive(state = {}) {
+  return [
+    STEP_STATUS.ATTEMPTING_EXECUTION,
+    STEP_STATUS.AWAITING_AGENT_RESULT,
+    STEP_STATUS.WAITING_FOR_INPUT
+  ].includes(state.status);
+}
+
 async function submitIssueDraftAgentResult(context = {}, machine = {}, input = {}) {
   assertAgentResultSource(context.session, input);
   switch (input.kind) {
@@ -944,7 +954,7 @@ const issueFileMachine = {
       state = machineState(STEP_STATUS.DONE, {
         phase: issueFilePhase.EXISTING_SELECTED
       });
-    } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES) {
+    } else if (filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && !issueDraftPromptIsActive(state)) {
       state = issueDraftReviewState({
         from: state.status
       });
@@ -958,7 +968,7 @@ const issueFileMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
         return {
-          actions: disableAction(context.session, rejectIssueDraftActionId, "Draft an issue before rejecting it."),
+          actions: disableAction(context.session, rejectIssueDraftActionId, "Draft an issue before requesting improvements."),
           next: {
             disabledReason: "Select an existing issue or draft a new one."
           },
@@ -1054,8 +1064,8 @@ const issueFileMachine = {
     }
 
     if (context.actionId === rejectIssueDraftActionId) {
-      await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
-        phase: issueFilePhase.REVIEW_DRAFT
+      await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
+        phase: issueFilePhase.DRAFTING
       }));
     }
   },
@@ -1073,16 +1083,6 @@ const issueFileMachine = {
         phase: issueFilePhase.SELECTING_EXISTING
       }));
       return;
-    }
-
-    if (context.actionId === rejectIssueDraftActionId) {
-      const feedback = normalizeText(context.actionResult?.input?.feedback);
-      await clearIssueFieldValues(context);
-      await writeState(context, this, issueSourceSelectionState({
-        message: feedback
-          ? `Previous draft rejected: ${feedback}`
-          : "Previous draft rejected. Describe what you want instead."
-      }));
     }
   },
 

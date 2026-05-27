@@ -182,9 +182,9 @@
       </v-alert>
 
       <form
-        v-if="stepInput.visible && !displayRunning && !commandTerminalVisible"
+        v-if="stepInputFormVisible"
         class="studio-autopilot__input-form"
-        @submit.prevent="submitStepInput"
+        @submit.prevent="submitStepInputForm"
       >
         <p
           v-if="stepInput.prompt"
@@ -230,8 +230,42 @@
           {{ stepInput.error }}
         </v-alert>
 
+        <div
+          v-if="selectedStepInputControlVisible"
+          class="studio-autopilot__inline-control"
+        >
+          <template
+            v-for="field in selectedControlFields"
+            :key="field.name"
+          >
+            <v-textarea
+              v-if="field.kind === 'textarea'"
+              auto-grow
+              class="studio-autopilot__input"
+              :disabled="running"
+              :label="field.label"
+              :model-value="selectedControlValues[field.name] || ''"
+              :placeholder="field.placeholder"
+              :rows="field.rows || 4"
+              variant="outlined"
+              @update:model-value="updateSelectedControlValue(field.name, $event)"
+            />
+            <v-text-field
+              v-else
+              class="studio-autopilot__input"
+              :disabled="running"
+              :label="field.label"
+              :model-value="selectedControlValues[field.name] || ''"
+              :placeholder="field.placeholder"
+              variant="outlined"
+              @update:model-value="updateSelectedControlValue(field.name, $event)"
+            />
+          </template>
+        </div>
+
         <div class="studio-autopilot__actions">
           <v-btn
+            v-if="!selectedStepInputControlVisible"
             color="primary"
             variant="flat"
             :disabled="page.busy || !stepInput.canSubmit"
@@ -241,6 +275,46 @@
           >
             {{ stepInput.interaction?.submitLabel || "Submit" }}
           </v-btn>
+
+          <v-btn
+            v-if="selectedStepInputControlVisible"
+            color="primary"
+            :disabled="!canSubmitSelectedControl"
+            :loading="running"
+            :prepend-icon="mdiSend"
+            type="button"
+            variant="flat"
+            @click="submitSelectedControl"
+          >
+            {{ selectedControl.label }}
+          </v-btn>
+
+          <v-btn
+            v-if="selectedStepInputControlVisible"
+            :disabled="running"
+            :prepend-icon="mdiClose"
+            type="button"
+            variant="tonal"
+            @click="clearSelectedControl"
+          >
+            Cancel
+          </v-btn>
+
+          <template v-else>
+            <v-btn
+              v-for="control in workflowButtonControls"
+              :key="control.id"
+              :color="control.buttonColor"
+              :disabled="control.disabled"
+              :loading="control.loading"
+              :prepend-icon="control.icon"
+              type="button"
+              :variant="control.buttonVariant"
+              @click="activateControl(control.sourceControl || control)"
+            >
+              {{ control.label }}
+            </v-btn>
+          </template>
         </div>
       </form>
 
@@ -313,7 +387,7 @@
           :selected-control-is-primary="selectedControlIsPrimary"
           :selected-control-values="selectedControlValues"
           :session-id="sessionId"
-          :workflow-controls="composerWorkflowControls"
+          :workflow-controls="workflowButtonControls"
           @activate-control="activateControl"
           @cancel="clearSelectedControl"
           @submit="submitSelectedControl"
@@ -321,19 +395,19 @@
         />
 
         <div
-          v-if="screenControls.length && !selectedControl"
+          v-if="workflowButtonControls.length && !selectedControl"
           class="studio-autopilot__actions studio-autopilot__screen-actions"
         >
           <v-btn
-            v-for="control in screenControls"
+            v-for="control in workflowButtonControls"
             :key="control.id"
-            :color="control.style === 'primary' ? 'primary' : undefined"
-            :disabled="controlDisabled(control)"
-            :loading="controlLoading(control)"
-            :prepend-icon="controlIcon(control)"
+            :color="control.buttonColor"
+            :disabled="control.disabled"
+            :loading="control.loading"
+            :prepend-icon="control.icon"
             type="button"
-            :variant="control.style === 'primary' ? 'flat' : 'tonal'"
-            @click="activateControl(control)"
+            :variant="control.buttonVariant"
+            @click="activateControl(control.sourceControl || control)"
           >
             {{ control.label }}
           </v-btn>
@@ -361,6 +435,7 @@ import {
   mdiInformationOutline,
   mdiRefresh,
   mdiRobotOutline,
+  mdiSend,
   mdiStopCircleOutline
 } from "@mdi/js";
 import Vibe64FixCodexDialog from "@/components/studio/Vibe64FixCodexDialog.vue";
@@ -534,6 +609,16 @@ const statusTitleVisible = computed(() => !statusTitleIsCodexChat.value);
 const displayRunning = computed(() => Boolean(screenState.value.showProgress));
 const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
 const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command" && !stepInput.visible));
+const stepInputFormVisible = computed(() => Boolean(
+  stepInput.visible &&
+  !displayRunning.value &&
+  !commandTerminalVisible.value
+));
+const selectedStepInputControlVisible = computed(() => Boolean(
+  stepInputFormVisible.value &&
+  selectedControl.value &&
+  selectedControlFields.value.length
+));
 const commandStatus = computed(() => commandRunning.value ? "running" : "");
 const commandTerminalError = computed(() => {
   if (commandResult.value?.ok === false) {
@@ -637,7 +722,7 @@ const {
   primaryIntentId,
   running
 });
-const composerWorkflowControls = computed(() => {
+const workflowButtonControls = computed(() => {
   return screenControls.value.map((control) => ({
     ...control,
     buttonColor: control.style === "primary" ? "primary" : undefined,
@@ -655,6 +740,14 @@ function sectionVisible(kind = "") {
 
 function emitBusyState() {
   emit("busy-change", autopilotBusy.value);
+}
+
+function submitStepInputForm() {
+  if (selectedStepInputControlVisible.value) {
+    submitSelectedControl();
+    return;
+  }
+  submitStepInput();
 }
 
 function tailCommandText(value = "") {

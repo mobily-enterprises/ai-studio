@@ -5,12 +5,14 @@ import {
   mdiFolderOutline,
   mdiGithub,
   mdiIdentifier,
+  mdiMessagePlusOutline,
   mdiPlay,
   mdiProgressCheck,
   mdiRobotOutline,
   mdiSourceBranch,
   mdiSourceCommit,
-  mdiSync
+  mdiSync,
+  mdiUndoVariant
 } from "@mdi/js";
 import {
   buildVibe64SessionFacts,
@@ -147,6 +149,8 @@ function vibe64ActionIcon(action = {}) {
       codex: mdiRobotOutline,
       commit: mdiSourceCommit,
       github: mdiGithub,
+      "message-square-plus": mdiMessagePlusOutline,
+      "rotate-ccw": mdiUndoVariant,
       run: mdiPlay,
       success: mdiCheck,
       sync: mdiSync
