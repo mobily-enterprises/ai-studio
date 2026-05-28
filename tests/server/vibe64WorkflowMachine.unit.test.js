@@ -631,6 +631,8 @@ test("vibe64 runtime keeps review validation command failures in the validation 
     assert.equal(failed.stepMachine.phase, "validation");
     assert.equal(failed.currentStepDefinition.interaction.kind, "command_failure_response");
     assert.equal(failed.currentStepDefinition.interaction.title, "Validation needs attention");
+    assert.equal(failed.presentation.screen.input.submitLabel, "Retry command");
+    assert.equal(failed.presentation.screen.input.fields[0].required, false);
 
     const answered = await runtime.submitCurrentStepInput("review_validation_failure", {
       kind: "user_response",
@@ -1278,6 +1280,34 @@ test("vibe64 runtime runs server-owned intents and rejects stale intent submissi
       }),
       /not available|Reload state/u
     );
+  });
+});
+
+test("vibe64 runtime auto-continues completed optional UI checks", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "deep_ui_check_run",
+      metadata: worktreeMetadata(targetRoot, "completed_optional_ui_check"),
+      sessionId: "completed_optional_ui_check"
+    });
+    await runtime.runAction("completed_optional_ui_check", "run_deep_ui_check");
+    const completed = await runtime.submitCurrentStepInput("completed_optional_ui_check", {
+      kind: "ready",
+      source: "codex",
+      stepId: "deep_ui_check_run",
+      stepStatus: "awaiting_agent_result"
+    });
+
+    assert.equal(completed.currentStep, "deep_ui_check_run");
+    assert.equal(completed.stepMachine.status, "done");
+    assert.equal(completed.presentation.screen.kind, "ready");
+    assert.equal(completed.presentation.screen.message, "The user interface check is done.");
+    assert.equal(completed.presentation.auto.nextOperation.kind, "advance");
+    assert.equal(completed.presentation.auto.nextOperation.executable, true);
   });
 });
 
@@ -2391,6 +2421,13 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       "continue_step",
       "reject_issue_draft"
     ]);
+    const continueIssueIntent = confirmedIssue.intents.find((intent) => intent.id === "continue_step");
+    assert.equal(continueIssueIntent?.saveCurrentStepInputBeforeRun, true);
+    assert.equal(
+      confirmedIssue.presentation.screen.input.intents.find((intent) => intent.id === "continue_step")?.saveCurrentStepInputBeforeRun,
+      true
+    );
+    assert.equal(confirmedIssue.actions.find((action) => action.id === "create_issue_on_gh")?.saveCurrentStepInputBeforeRun, true);
     assert.equal(confirmedIssue.intents.find((intent) => intent.id === "reject_issue_draft")?.label, "Send improvement request");
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Issue title\n");
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Issue body\n");

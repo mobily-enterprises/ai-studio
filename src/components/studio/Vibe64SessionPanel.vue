@@ -30,14 +30,14 @@
         />
 
         <v-btn
-          v-if="globalCodexButtonVisible"
-          class="studio-ai-sessions__global-codex-button"
-          :color="globalCodexTerminalOpen ? 'primary' : undefined"
+          v-if="autopilotCodexButtonVisible"
+          class="studio-ai-sessions__autopilot-codex-button"
+          :color="autopilotCodexTerminalOpen ? 'primary' : undefined"
           :prepend-icon="mdiRobotOutline"
           size="small"
           type="button"
-          :variant="globalCodexTerminalOpen ? 'flat' : 'tonal'"
-          @click="toggleGlobalCodexTerminal"
+          :variant="autopilotCodexTerminalOpen ? 'flat' : 'tonal'"
+          @click="toggleAutopilotCodexTerminal"
         >
           Codex terminal
         </v-btn>
@@ -136,6 +136,7 @@
     <div v-else class="studio-ai-sessions__runtime-stack">
       <Vibe64SessionRuntimeHost
         active
+        :autopilot-codex-open="autopilotCodexTerminalOpen"
         :global-codex-open="globalCodexTerminalOpen"
         :global-codex-terminal-state="globalCodexTerminalState"
         :session-data="sessionData"
@@ -190,6 +191,7 @@ const fallbackAbandon = {
   request: () => null
 };
 const runtimeStateBySessionId = reactive({});
+const autopilotCodexTerminalOpen = ref(false);
 const globalCodexTerminalOpen = ref(false);
 const globalCodexTerminalState = ref(null);
 const sessionData = useVibe64SessionData({
@@ -228,7 +230,10 @@ const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "I
 const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
 const pageLoading = sessionData.pageLoading;
 const toolbarActionsVisible = computed(() => true);
-const globalCodexButtonVisible = computed(() => sessionMode.value === "autopilot");
+const autopilotCodexButtonVisible = computed(() => Boolean(
+  sessionMode.value === "autopilot" &&
+  selection.selectedSession
+));
 const globalCodexTerminalController = {
   sessionUpdate: updateGlobalCodexTerminalState
 };
@@ -318,8 +323,8 @@ function switchSessionMode() {
   setSessionMode(modeSwitchTarget.value);
 }
 
-function toggleGlobalCodexTerminal() {
-  globalCodexTerminalOpen.value = !globalCodexTerminalOpen.value;
+function toggleAutopilotCodexTerminal() {
+  autopilotCodexTerminalOpen.value = !autopilotCodexTerminalOpen.value;
 }
 
 function openGlobalCodexTerminal() {
@@ -355,6 +360,12 @@ watch(sessionMode, () => {
   });
   if (selection.selectedSessionId) {
     void sessionData.refreshSessionData();
+  }
+});
+
+watch(() => selection.selectedSessionId, (sessionId) => {
+  if (!sessionId) {
+    autopilotCodexTerminalOpen.value = false;
   }
 });
 
@@ -434,7 +445,7 @@ watch(sessionData.sessions, (sessions = []) => {
 }
 
 .studio-ai-sessions__inspect-tools,
-.studio-ai-sessions__global-codex-button,
+.studio-ai-sessions__autopilot-codex-button,
 .studio-ai-sessions__mode-switch,
 .studio-ai-sessions__run-controls,
 .studio-ai-sessions__inspect-button {

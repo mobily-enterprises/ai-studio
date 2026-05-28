@@ -594,6 +594,8 @@ test.describe("Autopilot dumb client contract", () => {
       output: "install failed\n"
     });
     let commandTerminalCloses = 0;
+    let commandTerminalStarts = 0;
+    const stepInputs: unknown[] = [];
     const commandSession = sessionPayload({
       actions: [
         {
@@ -686,14 +688,15 @@ test.describe("Autopilot dumb client contract", () => {
                 fields: [
                   {
                     kind: "textarea",
-                    label: "What should happen next?",
+                    label: "Retry note",
                     name: "response",
-                    required: true
+                    required: false
                   }
                 ],
                 kind: "command_failure_response",
                 prompt: "Install dependencies failed with exit code 1.",
-                submitLabel: "Save response",
+                submitKind: "user_response",
+                submitLabel: "Retry command",
                 submitTarget: "current-step-input",
                 title: "Install command needs attention"
               },
@@ -716,12 +719,47 @@ test.describe("Autopilot dumb client contract", () => {
           }
         });
       },
-      onCommandTerminalStart: () => ({
-        commandPreview: "npm install",
-        id: "server-command-terminal",
-        ok: true,
-        status: "running"
-      }),
+      onCommandTerminalStart: () => {
+        commandTerminalStarts += 1;
+        return {
+          commandPreview: "npm install",
+          id: "server-command-terminal",
+          ok: true,
+          status: "running"
+        };
+      },
+      onStepInput: (body) => {
+        stepInputs.push(body);
+        Object.assign(commandSession, {
+          presentation: {
+            ...(commandSession.presentation as Record<string, unknown>),
+            auto: {
+              nextOperation: {
+                actionId: "install_dependencies",
+                executable: true,
+                id: "command-terminal:install_dependencies",
+                kind: "command",
+                label: "Install dependencies",
+                route: "command-terminal"
+              }
+            },
+            screen: {
+              kind: "action",
+              sections: [],
+              title: "Install dependencies"
+            },
+            step: {
+              id: "dependencies_installed",
+              label: "Install dependencies",
+              status: "ready"
+            }
+          },
+          stepMachine: {
+            status: "ready",
+            stepId: "dependencies_installed"
+          }
+        });
+      },
       sessionList: [otherSession, commandSession]
     });
 
@@ -741,7 +779,22 @@ test.describe("Autopilot dumb client contract", () => {
       hasText: "Command needs attention."
     })).toBeVisible();
     await expect(page.getByRole("button", { name: "Get AI to fix it" })).toBeVisible();
-    await expect(page.getByLabel("What should happen next?")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Retry command" })).toBeVisible();
+    await expect(page.getByLabel("Retry note")).toBeHidden();
+
+    await page.getByRole("button", { name: "Retry command" }).click();
+
+    await expect.poll(() => stepInputs.length).toBe(1);
+    expect(stepInputs[0]).toMatchObject({
+      fields: {
+        response: ""
+      },
+      kind: "user_response",
+      source: "ui",
+      stepId: "dependencies_installed",
+      stepStatus: "waiting_for_input"
+    });
+    await expect.poll(() => commandTerminalStarts).toBe(2);
   });
 
   test("attaches to the server-owned Codex terminal preview without sending terminal input", async ({ page }) => {
@@ -807,15 +860,10 @@ test.describe("Autopilot dumb client contract", () => {
     ))).toEqual([]);
   });
 
-  test("opens a global Codex terminal from Autopilot when no sessions exist", async ({ page }) => {
+  test("opens the selected session Codex terminal from Autopilot", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
-    await page.addInitScript(() => {
-      window.localStorage.removeItem("vibe64:selected-session-id");
-    });
     let globalCodexStarts = 0;
     let sessionCodexStarts = 0;
-
-    await mockStudioReady(page);
     await page.route("**/api/vibe64/codex-terminal", async (route) => {
       if (route.request().method() === "POST") {
         globalCodexStarts += 1;
@@ -838,11 +886,34 @@ test.describe("Autopilot dumb client contract", () => {
         ok: true
       });
     });
-    await page.route("**/api/vibe64/sessions**", async (route) => {
-      const url = new URL(route.request().url());
-      if (route.request().method() === "POST" && url.pathname.endsWith("/codex-terminal")) {
+    const session = sessionPayload({
+      metadata: {
+        worktree_path: "/workspace/example-target-app/.vibe64/sessions/active/session-renderer/worktree"
+      },
+      worktree: "/workspace/example-target-app/.vibe64/sessions/active/session-renderer/worktree",
+      worktreeReady: true
+    });
+    await mockVibe64Session(page, session, {
+      onCodexTerminalStart: () => {
         sessionCodexStarts += 1;
       }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+    await page.getByRole("button", { name: "Codex terminal" }).click();
+
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-foreground .codex-terminal__host")).toBeVisible();
+    await expect.poll(() => sessionCodexStarts).toBe(1);
+    await expect.poll(() => globalCodexStarts).toBe(0);
+  });
+
+  test("hides the Autopilot Codex terminal button when no session is selected", async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.removeItem("vibe64:selected-session-id");
+    });
+
+    await mockStudioReady(page);
+    await page.route("**/api/vibe64/sessions**", async (route) => {
       await fulfillJson(route, {
         creation: {
           canCreate: true,
@@ -862,11 +933,7 @@ test.describe("Autopilot dumb client contract", () => {
     await page.goto(`${BASE_URL}/home`);
 
     await expect(page.getByText("No sessions yet.")).toBeVisible();
-    await page.getByRole("button", { name: "Codex terminal" }).click();
-
-    await expect(page.locator(".studio-ai-sessions__global-codex-terminal .codex-terminal__host")).toBeVisible();
-    await expect.poll(() => globalCodexStarts).toBe(1);
-    await expect.poll(() => sessionCodexStarts).toBe(0);
+    await expect(page.getByRole("button", { name: "Codex terminal" })).toHaveCount(0);
   });
 
   test("runs the server-presented Codex continuation control from Autopilot", async ({ page }) => {
@@ -1774,12 +1841,14 @@ test.describe("Autopilot dumb client contract", () => {
 
   test("renders workflow controls alongside current-step input forms", async ({ page }) => {
     const intentRequests: unknown[] = [];
+    const stepInputs: unknown[] = [];
     const intents = [
       {
         enabled: true,
         id: "continue_step",
         inputFields: [],
         label: "Create GitHub issue",
+        saveCurrentStepInputBeforeRun: true,
         style: "primary"
       },
       {
@@ -1834,16 +1903,20 @@ test.describe("Autopilot dumb client contract", () => {
                 kind: "textarea",
                 label: "Issue body",
                 name: "body",
-                value: "Create a file named `a.txt` in the project root."
+                value: Array.from({ length: 18 }, (_value, index) => (
+                  `Line ${index + 1}: create a file named \`a.txt\` in the project root.`
+                )).join("\n")
               }
             ],
-            prompt: "Review the issue details. Save changes here, or create the GitHub issue.",
+            intents,
+            prompt: "Review the issue details, then create the GitHub issue.",
+            submitKind: "confirm_files",
             submitTarget: "current-step-input",
-            submitLabel: "Update details",
+            submitLabel: "Save changes",
             title: "Define issue"
           },
           kind: "confirm_files",
-          message: "Review the issue details. Save changes here, or create the GitHub issue.",
+          message: "Review the issue details, then create the GitHub issue.",
           sections: [],
           title: "Define issue"
         },
@@ -1861,22 +1934,32 @@ test.describe("Autopilot dumb client contract", () => {
     await mockVibe64Session(page, session, {
       onIntent: (body) => {
         intentRequests.push(body);
+      },
+      onStepInput: (body) => {
+        stepInputs.push(body);
       }
     });
 
     await page.goto(`${BASE_URL}/home`);
 
-    await expect(page.getByRole("heading", { name: "Define issue" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Update details" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create GitHub issue" })).toBeVisible();
-    await page.getByRole("button", { name: "Send improvement request" }).click();
+    const autopilot = page.locator(".studio-autopilot");
+    await expect(autopilot.getByRole("heading", { name: "Define issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+    await expect(autopilot.getByRole("button", { name: "Create GitHub issue" })).toBeVisible();
+    const createIssueBox = await autopilot.getByRole("button", { name: "Create GitHub issue" }).boundingBox();
+    const viewport = page.viewportSize();
+    expect(createIssueBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect((createIssueBox?.y || 0) + (createIssueBox?.height || 0)).toBeLessThanOrEqual(viewport?.height || 0);
+    await autopilot.getByRole("button", { name: "Send improvement request" }).click();
 
-    await expect(page.getByLabel("Issue title")).toBeVisible();
-    await expect(page.getByLabel("What should change?")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Update details" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Create GitHub issue" })).toHaveCount(0);
-    await page.getByLabel("What should change?").fill("Use a clearer title.");
-    await page.getByRole("button", { name: "Send improvement request" }).click();
+    await expect(autopilot.getByLabel("Issue title")).toBeVisible();
+    await expect(autopilot.getByLabel("What should change?")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+    await expect(autopilot.getByRole("button", { name: "Create GitHub issue" })).toHaveCount(0);
+    await expect.poll(() => stepInputs).toEqual([]);
+    await autopilot.getByLabel("What should change?").fill("Use a clearer title.");
+    await autopilot.getByRole("button", { name: "Send improvement request" }).click();
 
     await expect.poll(() => intentRequests).toEqual([
       {
@@ -1887,6 +1970,202 @@ test.describe("Autopilot dumb client contract", () => {
         stepStatus: "confirm_files"
       }
     ]);
+    await expect.poll(() => stepInputs).toEqual([]);
+  });
+
+  test("saves current-step fields before running a save-backed workflow control", async ({ page }) => {
+    const intentRequests: unknown[] = [];
+    const stepInputs: unknown[] = [];
+    const intents = [
+      {
+        enabled: true,
+        id: "continue_step",
+        inputFields: [],
+        label: "Create GitHub issue",
+        saveCurrentStepInputBeforeRun: true,
+        style: "primary"
+      }
+    ];
+    const session = sessionPayload({
+      currentStep: "issue_file_created",
+      currentStepDefinition: {
+        id: "issue_file_created",
+        label: "Define work"
+      },
+      intents,
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "user"
+          }
+        },
+        intents,
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "text",
+                label: "Issue title",
+                name: "title",
+                value: "Create root a.txt file"
+              },
+              {
+                kind: "text",
+                label: "Session label",
+                name: "word",
+                value: "a-txt"
+              },
+              {
+                kind: "textarea",
+                label: "Issue body",
+                name: "body",
+                value: "Create a file named `a.txt` in the project root."
+              }
+            ],
+            intents,
+            prompt: "Review the issue details, then create the GitHub issue.",
+            submitKind: "confirm_files",
+            submitTarget: "current-step-input",
+            submitLabel: "Save changes",
+            title: "Define issue"
+          },
+          kind: "confirm_files",
+          message: "Review the issue details, then create the GitHub issue.",
+          sections: [],
+          title: "Define issue"
+        },
+        step: {
+          id: "issue_file_created",
+          label: "Define work",
+          status: "confirm_files"
+        }
+      },
+      stepMachine: {
+        status: "confirm_files",
+        stepId: "issue_file_created"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      onIntent: (body) => {
+        intentRequests.push(body);
+      },
+      onStepInput: (body) => {
+        stepInputs.push(body);
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const autopilot = page.locator(".studio-autopilot");
+    await autopilot.getByLabel("Issue title").fill("Updated issue title");
+    await autopilot.getByRole("button", { name: "Create GitHub issue" }).click();
+
+    await expect.poll(() => stepInputs).toEqual([
+      {
+        fields: {
+          body: "Create a file named `a.txt` in the project root.",
+          title: "Updated issue title",
+          word: "a-txt"
+        },
+        kind: "confirm_files",
+        source: "ui",
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
+    await expect.poll(() => intentRequests).toEqual([
+      {
+        fields: {},
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
+  });
+
+  test("renders current-step input fields in Inspect", async ({ page }) => {
+    const intents = [
+      {
+        enabled: true,
+        id: "continue_step",
+        inputFields: [],
+        label: "Use this description",
+        saveCurrentStepInputBeforeRun: true,
+        style: "primary"
+      }
+    ];
+    const session = sessionPayload({
+      currentStep: "issue_file_created",
+      currentStepDefinition: {
+        id: "issue_file_created",
+        label: "Define work"
+      },
+      intents,
+      presentation: {
+        intents,
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "text",
+                label: "Work title",
+                name: "title",
+                value: "Add empty a.txt to worktree root"
+              },
+              {
+                kind: "text",
+                label: "Session label",
+                name: "word",
+                value: "a-txt"
+              },
+              {
+                kind: "textarea",
+                label: "Work description",
+                name: "body",
+                value: "Create an empty file named `a.txt` in the active Vibe64 worktree root."
+              }
+            ],
+            intents,
+            prompt: "Review the work details, then continue without creating a GitHub issue.",
+            submitKind: "confirm_files",
+            submitTarget: "current-step-input",
+            submitLabel: "Save changes",
+            title: "Define work"
+          },
+          kind: "confirm_files",
+          message: "Review the work details, then continue without creating a GitHub issue.",
+          sections: [],
+          title: "Define work"
+        },
+        step: {
+          id: "issue_file_created",
+          label: "Define work",
+          status: "confirm_files"
+        }
+      },
+      stepDefinitions: [
+        {
+          id: "issue_file_created",
+          index: 0,
+          label: "Define work",
+          status: "current"
+        }
+      ],
+      stepMachine: {
+        status: "confirm_files",
+        stepId: "issue_file_created"
+      }
+    });
+    await mockVibe64Session(page, session);
+
+    await page.goto(`${BASE_URL}/home?mode=inspect`);
+
+    const inspect = page.locator(".studio-ai-sessions__inspect-slot");
+    await expect(inspect.getByLabel("Work title")).toHaveValue("Add empty a.txt to worktree root");
+    await expect(inspect.getByLabel("Session label")).toHaveValue("a-txt");
+    await expect(inspect.getByLabel("Work description")).toHaveValue("Create an empty file named `a.txt` in the active Vibe64 worktree root.");
+    await expect(inspect.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   });
 });
 

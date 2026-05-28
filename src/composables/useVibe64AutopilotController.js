@@ -278,9 +278,14 @@ function useVibe64AutopilotController({
     };
   });
 
-  function clearFailure() {
+  function clearFailure({
+    clearCommandResult = false
+  } = {}) {
     failure.value = null;
     lastCommandResult.value = null;
+    if (clearCommandResult && !rawCommandRunning.value && typeof commandRunner.clearResult === "function") {
+      commandRunner.clearResult();
+    }
   }
 
   function selectedSessionIs(sessionId = "") {
@@ -348,7 +353,9 @@ function useVibe64AutopilotController({
     });
     stopRequested = false;
     lastDispatchedOperationKey.value = "";
-    clearFailure();
+    clearFailure({
+      clearCommandResult: true
+    });
     await runUntilStopPoint();
   }
 

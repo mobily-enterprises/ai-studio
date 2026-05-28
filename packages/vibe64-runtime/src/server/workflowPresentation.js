@@ -163,6 +163,7 @@ function intent(id, {
   inputFields = [],
   label = "",
   operation = "",
+  saveCurrentStepInputBeforeRun = false,
   style = "secondary",
   submitFields = null
 } = {}) {
@@ -180,6 +181,7 @@ function intent(id, {
     inputFields: Array.isArray(inputFields) ? inputFields : [],
     label: normalizeText(label || id),
     ...(normalizedOperation ? { operation: normalizedOperation } : {}),
+    ...(saveCurrentStepInputBeforeRun === true ? { saveCurrentStepInputBeforeRun: true } : {}),
     ...(intentSubmitFields ? { submitFields: intentSubmitFields } : {}),
     style
   };
@@ -245,13 +247,15 @@ function intentForAction(id, action = {}, options = {}) {
 
 function continueIntent(session = {}, {
   id = INTENT_IDS.CONTINUE_STEP,
-  label = ""
+  label = "",
+  saveCurrentStepInputBeforeRun = false
 } = {}) {
   return intent(normalizeText(id) || INTENT_IDS.CONTINUE_STEP, {
     disabledReason: session.next?.disabledReason || "",
     enabled: nextIsReady(session),
     label: label || session.next?.label || "Continue",
     operation: "continue",
+    saveCurrentStepInputBeforeRun,
     style: "primary"
   });
 }
@@ -344,7 +348,8 @@ function intentFromConfig(session = {}, config = {}) {
   if (normalizeText(config.type) === "continue") {
     return continueIntent(session, {
       id,
-      label: config.label
+      label: config.label,
+      saveCurrentStepInputBeforeRun: config.saveCurrentStepInputBeforeRun === true
     });
   }
   if (normalizeText(config.type) === "reject") {
@@ -365,6 +370,7 @@ function intentFromConfig(session = {}, config = {}) {
       disabledReason: config.disabledReason || "",
       inputFields: config.inputFields,
       label: config.label || "",
+      saveCurrentStepInputBeforeRun: config.saveCurrentStepInputBeforeRun === true,
       style: config.style || "secondary"
     });
   }
@@ -380,6 +386,7 @@ function intentFromConfig(session = {}, config = {}) {
       ? config.inputFields
       : action?.inputFields || [],
     label: config.label || action?.label || "",
+    saveCurrentStepInputBeforeRun: config.saveCurrentStepInputBeforeRun === true,
     submitFields: config.submitFields,
     style: config.style || "secondary"
   });
@@ -571,6 +578,9 @@ function genericPresentation(session = {}) {
     return {
       intents: [continueIntent(session)],
       screen: screen("ready", {
+        message: stepMachineStatus(session) === STEP_STATUS.DONE
+          ? session.stepMachine?.message || `${currentStepLabel(session)} completed.`
+          : "",
         title: currentStepLabel(session)
       })
     };
@@ -598,6 +608,9 @@ function automationWaitReason(session = {}) {
     return "user";
   }
   if (currentAutopilot(session).userDecision === true) {
+    if (stepMachineStatus(session) === STEP_STATUS.DONE && nextIsReady(session)) {
+      return "";
+    }
     return "decision";
   }
   return "";

@@ -19,4 +19,7 @@ Action input:
 Missing information policy:
 {{prompt.missingInformationPolicy}}
 
-Inspect the user-facing application behavior carefully. Focus on real UI defects, broken flows, layout issues, state mistakes, and mismatches with the requested work. Fix clear defects directly when the project supports it. Report what you changed, which checks ran, and why no edit was needed if the UI is already sound.
+Changed-files scope:
+Before inspecting the application, identify the session worktree diff and changed files. Only check user-facing behavior that could plausibly be affected by those changed files and the requested work. Do not run a broad whole-application UI audit. If the changed files do not affect UI behavior, say that directly and complete the step without spending time on unrelated screens.
+
+Inspect the affected user-facing application behavior carefully. Focus on real UI defects, broken flows, layout issues, state mistakes, and mismatches with the requested work. Fix clear defects directly when the project supports it. Report what you changed, which checks ran, and why no edit was needed if the affected UI is already sound.

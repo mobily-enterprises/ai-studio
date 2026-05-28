@@ -268,6 +268,7 @@ function normalizeAction(action = {}, stepId = "") {
     label: normalizeText(action.label || id),
     promptId: type === "prompt" ? normalizeText(action.promptId || id) : "",
     recordsConversationTurn: action.recordsConversationTurn === true,
+    saveCurrentStepInputBeforeRun: action.saveCurrentStepInputBeforeRun === true,
     type,
     visible: action.visible !== false
   };
@@ -550,6 +551,9 @@ function publicActionDefinition(action) {
   }
   if (action.recordsConversationTurn) {
     definition.recordsConversationTurn = true;
+  }
+  if (action.saveCurrentStepInputBeforeRun) {
+    definition.saveCurrentStepInputBeforeRun = true;
   }
   if (action.inputFields.length > 0) {
     definition.inputFields = action.inputFields.map((field) => ({

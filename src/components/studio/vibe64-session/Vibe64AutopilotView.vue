@@ -42,7 +42,7 @@
                 variant="tonal"
                 @click="retryFromCommandFailure"
               >
-                Retry
+                Retry command
               </v-btn>
               <v-btn
                 color="primary"
@@ -202,6 +202,7 @@
             auto-grow
             class="studio-autopilot__input"
             :disabled="page.busy || stepInput.saving"
+            hide-details="auto"
             :label="field.label"
             :model-value="stepInput.values[field.name] || ''"
             :placeholder="field.placeholder"
@@ -213,6 +214,7 @@
             v-else
             class="studio-autopilot__input"
             :disabled="page.busy || stepInput.saving"
+            hide-details="auto"
             :label="field.label"
             :model-value="stepInput.values[field.name] || ''"
             :placeholder="field.placeholder"
@@ -265,9 +267,9 @@
 
         <div class="studio-autopilot__actions">
           <v-btn
-            v-if="!selectedStepInputControlVisible"
+            v-if="!selectedStepInputControlVisible && !stepInputHasWorkflowIntents"
             color="primary"
-            variant="flat"
+            :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
             :disabled="page.busy || !stepInput.canSubmit"
             :loading="stepInput.saving"
             :prepend-icon="mdiCheck"
@@ -284,7 +286,7 @@
             :prepend-icon="mdiSend"
             type="button"
             variant="flat"
-            @click="submitSelectedControl"
+            @click="submitSelectedWorkflowControl"
           >
             {{ selectedControl.label }}
           </v-btn>
@@ -310,7 +312,7 @@
               :prepend-icon="control.icon"
               type="button"
               :variant="control.buttonVariant"
-              @click="activateControl(control.sourceControl || control)"
+              @click="activateWorkflowButtonControl(control.sourceControl || control)"
             >
               {{ control.label }}
             </v-btn>
@@ -342,9 +344,10 @@
         <Vibe64LaunchControls
           v-if="launchControlsVisible"
           button-label="Try it!"
-          button-size="default"
+          button-size="x-large"
           button-variant="flat"
           :busy="running"
+          prominent
           :session="session"
           :window-displayed="props.active"
           workflow-command
@@ -468,6 +471,10 @@ import {
 import {
   terminalFailureFixRequest
 } from "@/lib/vibe64TerminalFailurePrompt.js";
+import {
+  controlSavesCurrentStepInputBeforeRun,
+  currentStepInputHasDecisionControls
+} from "@/lib/vibe64CurrentStepInputDecision.js";
 import {
   VIBE64_CLIENT_CONTROL_ICON_TOKENS,
   controlIconToken,
@@ -614,6 +621,9 @@ const stepInputFormVisible = computed(() => Boolean(
   !displayRunning.value &&
   !commandTerminalVisible.value
 ));
+const stepInputHasWorkflowIntents = computed(() => Boolean(
+  currentStepInputHasDecisionControls(props.session, stepInput.interaction)
+));
 const selectedStepInputControlVisible = computed(() => Boolean(
   stepInputFormVisible.value &&
   selectedControl.value &&
@@ -744,7 +754,10 @@ function emitBusyState() {
 
 function submitStepInputForm() {
   if (selectedStepInputControlVisible.value) {
-    submitSelectedControl();
+    submitSelectedWorkflowControl();
+    return;
+  }
+  if (stepInputHasWorkflowIntents.value) {
     return;
   }
   submitStepInput();
@@ -763,8 +776,39 @@ async function submitStepInput() {
   await stepInput.submit();
 }
 
-function retryFromCommandFailure() {
-  void retry();
+async function saveCurrentStepInputForControl(control = {}) {
+  if (
+    !stepInputFormVisible.value ||
+    !controlSavesCurrentStepInputBeforeRun(control)
+  ) {
+    return true;
+  }
+  return await stepInput.submit();
+}
+
+async function activateWorkflowButtonControl(control = {}) {
+  if (await saveCurrentStepInputForControl(control) === false) {
+    return false;
+  }
+  return activateControl(control);
+}
+
+async function submitSelectedWorkflowControl() {
+  if (await saveCurrentStepInputForControl(selectedControl.value) === false) {
+    return false;
+  }
+  return submitSelectedControl();
+}
+
+async function retryFromCommandFailure() {
+  if (stepInput.interaction?.kind === "command_failure_response" && stepInput.visible) {
+    clearFailure({
+      clearCommandResult: true
+    });
+    await stepInput.submit();
+    return;
+  }
+  await retry();
 }
 
 async function requestCommandAiFix() {
@@ -829,13 +873,14 @@ async function runClientControl(control = {}) {
 function controlDisabled(control = {}) {
   return Boolean(
     running.value ||
+    stepInput.saving ||
     control.enabled !== true ||
     controlStateActive(control, "disabledWhen")
   );
 }
 
 function controlLoading(control = {}) {
-  return Boolean(running.value || controlStateActive(control, "loadingWhen"));
+  return Boolean(running.value || stepInput.saving || controlStateActive(control, "loadingWhen"));
 }
 
 function controlIcon(control = {}) {
@@ -1016,9 +1061,28 @@ watch(() => [
 .studio-autopilot__input-form,
 .studio-autopilot__server-screen {
   display: grid;
-  gap: 0.6rem;
+  gap: 0.55rem;
   max-width: 52rem;
   width: 100%;
+}
+
+.studio-autopilot__input-form {
+  align-self: stretch;
+  max-height: min(100%, calc(100dvh - 7rem));
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-gutter: stable;
+}
+
+.studio-autopilot__input-form > .studio-autopilot__actions {
+  background: rgb(var(--v-theme-surface));
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.18);
+  bottom: 0;
+  margin-top: 0;
+  padding-block: 0.55rem 0.25rem;
+  position: sticky;
+  z-index: 1;
 }
 
 .studio-autopilot__notice {
@@ -1148,7 +1212,7 @@ watch(() => [
 
   .studio-autopilot__stage {
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
     scrollbar-gutter: stable;
   }
 }

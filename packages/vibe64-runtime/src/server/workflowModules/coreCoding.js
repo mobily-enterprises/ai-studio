@@ -166,6 +166,7 @@ function createIssueOnGithubAction() {
     icon: "github",
     id: "create_issue_on_gh",
     label: "Create issue on GH",
+    saveCurrentStepInputBeforeRun: true,
     type: "command"
   };
 }
@@ -843,6 +844,7 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
         {
           id: "continue_step",
           label: createGithubIssue ? "Create GitHub issue" : "Use this description",
+          saveCurrentStepInputBeforeRun: true,
           style: "primary",
           type: createGithubIssue ? "action" : "continue",
           ...(createGithubIssue ? { actionId: "create_issue_on_gh" } : {})
@@ -887,15 +889,15 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
     intents: reviewIntents,
     prompt: status === STEP_STATUS.CONFIRM_FILES
       ? (createGithubIssue
-          ? "Review the issue details. Save changes here, or create the GitHub issue."
-          : "Review the work details. Save changes here, or continue without creating a GitHub issue.")
+          ? "Review the issue details, then create the GitHub issue."
+          : "Review the work details, then continue without creating a GitHub issue.")
       : (createGithubIssue
           ? "Discuss the requested change, then submit the issue title, session label, and issue body."
           : "Discuss the requested change, then submit the work title, session label, and description."),
     submitKind: status === STEP_STATUS.CONFIRM_FILES
       ? STEP_INPUT_KIND.CONFIRM_FILES
       : STEP_INPUT_KIND.READY,
-    submitLabel: status === STEP_STATUS.CONFIRM_FILES ? "Update details" : "Save details",
+    submitLabel: status === STEP_STATUS.CONFIRM_FILES ? "Save changes" : "Save details",
     title: createGithubIssue ? "Define issue" : "Define work"
   };
 }
@@ -1582,7 +1584,7 @@ const deepUiCheckMachine = {
   inputCompletionMessage(context = {}) {
     const input = normalizeMachineInput(context.input);
     return input.kind === STEP_INPUT_KIND.READY
-      ? "Deep UI check completed."
+      ? "The user interface check is done."
       : "";
   },
 

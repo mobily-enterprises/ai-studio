@@ -11,7 +11,7 @@
   <form
     v-if="stepInput.visible"
     class="studio-ai-sessions__step-input"
-    @submit.prevent="stepInput.submit"
+    @submit.prevent="submitStepInputForm"
   >
     <p
       v-if="stepInput.interaction?.prompt"
@@ -20,20 +20,35 @@
       {{ stepInput.interaction.prompt }}
     </p>
 
-    <component
-      :is="field.kind === 'textarea' ? 'v-textarea' : 'v-text-field'"
+    <template
       v-for="field in stepInput.fields"
       :key="field.name"
-      auto-grow
-      class="studio-ai-sessions__issue-request-input"
-      :disabled="page.busy || stepInput.saving"
-      :label="field.label"
-      :model-value="stepInput.values[field.name] || ''"
-      :placeholder="field.placeholder"
-      :rows="field.kind === 'textarea' ? 8 : undefined"
-      variant="outlined"
-      @update:model-value="stepInput.updateValue(field.name, $event)"
-    />
+    >
+      <v-textarea
+        v-if="field.kind === 'textarea'"
+        auto-grow
+        class="studio-ai-sessions__issue-request-input"
+        :disabled="page.busy || stepInput.saving"
+        hide-details="auto"
+        :label="field.label"
+        :model-value="stepInput.values[field.name] || ''"
+        :placeholder="field.placeholder"
+        :rows="field.rows || 8"
+        variant="outlined"
+        @update:model-value="stepInput.updateValue(field.name, $event)"
+      />
+      <v-text-field
+        v-else
+        class="studio-ai-sessions__issue-request-input"
+        :disabled="page.busy || stepInput.saving"
+        hide-details="auto"
+        :label="field.label"
+        :model-value="stepInput.values[field.name] || ''"
+        :placeholder="field.placeholder"
+        variant="outlined"
+        @update:model-value="stepInput.updateValue(field.name, $event)"
+      />
+    </template>
 
     <v-alert
       v-if="stepInput.error"
@@ -50,18 +65,19 @@
         class="studio-ai-sessions__next-step-button"
         color="primary"
         variant="tonal"
-        :disabled="page.busy || actions.currentNext.enabled !== true"
-        :loading="actions.advanceCommand.isRunning"
+        :disabled="page.busy || stepInput.saving || actions.currentNext.enabled !== true"
+        :loading="stepInput.saving || actions.advanceCommand.isRunning"
         :prepend-icon="mdiArrowRight"
         :title="actions.currentNext.disabledReason || actions.currentNext.label || 'Next step'"
-        @click="actions.goNext"
+        @click="goNextFromStepInput"
       >
         {{ actions.currentNext.label || "Next step" }}
       </v-btn>
 
       <v-btn
+        v-if="!stepInputHasWorkflowIntents"
         color="primary"
-        variant="flat"
+        :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
         :disabled="page.busy || !stepInput.canSubmit"
         :loading="stepInput.saving"
         :prepend-icon="mdiCheck"
@@ -75,7 +91,8 @@
         :key="action.id"
         :action="action"
         :actions="actions"
-        :busy="page.busy"
+        :before-run="runActionFromStepInput"
+        :busy="page.busy || stepInput.saving"
         variant="tonal"
       />
     </div>
@@ -156,6 +173,10 @@ import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64
 import {
   useVibe64BackgroundTasks
 } from "@/composables/useVibe64BackgroundTasks.js";
+import {
+  controlSavesCurrentStepInputBeforeRun,
+  currentStepInputHasDecisionControls
+} from "@/lib/vibe64CurrentStepInputDecision.js";
 
 const props = defineProps({
   actions: {
@@ -188,6 +209,39 @@ const props = defineProps({
   }
 });
 
+const stepInputHasWorkflowIntents = computed(() => (
+  currentStepInputHasDecisionControls(props.session, props.stepInput.interaction)
+));
+
+async function saveStepInputBeforeDecision(control = {}) {
+  const nextStepControl = control?.kind === "next";
+  if (
+    !props.stepInput.visible ||
+    !stepInputHasWorkflowIntents.value ||
+    (!nextStepControl && !controlSavesCurrentStepInputBeforeRun(control))
+  ) {
+    return true;
+  }
+  return await props.stepInput.submit();
+}
+
+async function goNextFromStepInput() {
+  if (await saveStepInputBeforeDecision({ kind: "next" }) === false) {
+    return;
+  }
+  await props.actions.goNext();
+}
+
+async function runActionFromStepInput(action = {}) {
+  return saveStepInputBeforeDecision(action);
+}
+
+async function submitStepInputForm() {
+  if (stepInputHasWorkflowIntents.value) {
+    return;
+  }
+  await props.stepInput.submit();
+}
 const {
   backgroundTaskError,
   retryBackgroundTask,

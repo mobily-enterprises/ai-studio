@@ -206,24 +206,25 @@ function artifactText(value = "") {
 }
 
 function commandFailureInteraction({
-  prompt = "The command failed. Explain what should happen, then retry the command.",
+  prompt = "The command failed. Fix anything needed, then retry the command.",
   title = "Command needs attention"
 } = {}) {
   return {
     fields: [
       {
         kind: "textarea",
-        label: "What should happen next?",
+        label: "Retry note",
         name: "response",
-        required: true,
-        requiredMessage: "Explain what should happen before retrying.",
+        placeholder: "Optional note about what changed before retrying.",
+        required: false,
+        rows: 3,
         value: ""
       }
     ],
     kind: "command_failure_response",
     prompt,
     submitKind: STEP_INPUT_KIND.USER_RESPONSE,
-    submitLabel: "Save response",
+    submitLabel: "Retry command",
     title
   };
 }
@@ -771,8 +772,15 @@ async function handleStandardPromptInput(context = {}, machine = {}, {
         if (responseArtifact) {
           await writePromptResponseArtifact(context, responseArtifact, input.fields.response || input.text);
         }
+        const completionMessage = normalizeText(input.message) ||
+          (typeof machine.inputCompletionMessage === "function"
+            ? normalizeText(machine.inputCompletionMessage({
+                input,
+                ...context
+              }))
+            : "");
         await writeState(context, machine, machineState(STEP_STATUS.DONE, {
-          message: input.message,
+          message: completionMessage,
           source: input.source
         }));
         return;

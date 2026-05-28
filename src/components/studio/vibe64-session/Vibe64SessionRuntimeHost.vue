@@ -51,7 +51,7 @@
       <Vibe64SessionTerminals
         :class="{
           'studio-ai-sessions__terminals--autopilot-preview': codexTerminalPreviewVisible,
-          'studio-ai-sessions__terminals--autopilot-foreground': globalCodexTerminalVisible
+          'studio-ai-sessions__terminals--autopilot-foreground': codexTerminalForegroundVisible
         }"
         :allow-codex-start="codexTerminalCanStart"
         :codex-terminal="codexTerminal"
@@ -143,6 +143,10 @@ const props = defineProps({
   sessionMode: {
     default: "autopilot",
     type: String
+  },
+  autopilotCodexOpen: {
+    default: false,
+    type: Boolean
   }
 });
 
@@ -314,16 +318,27 @@ const codexTerminalPreviewVisible = computed(() => Boolean(
   codexTerminalPresentation.value.terminalSessionId &&
   codexTerminalPreviewWithinWindow.value
 ));
+const autopilotCodexTerminalVisible = computed(() => Boolean(
+  props.active &&
+  props.sessionMode === "autopilot" &&
+  props.autopilotCodexOpen &&
+  selectedSessionId.value
+));
 const globalCodexTerminalVisible = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
-  props.globalCodexOpen
+  props.globalCodexOpen &&
+  !autopilotCodexTerminalVisible.value
+));
+const codexTerminalForegroundVisible = computed(() => Boolean(
+  autopilotCodexTerminalVisible.value ||
+  globalCodexTerminalVisible.value
 ));
 const codexTerminalDisplayMode = computed(() => {
   if (!props.active) {
     return "headless";
   }
-  if (globalCodexTerminalVisible.value) {
+  if (codexTerminalForegroundVisible.value) {
     return "full";
   }
   if (props.sessionMode === "inspect") {
@@ -336,10 +351,10 @@ const codexTerminalDisplayMode = computed(() => {
 });
 const codexTerminalCanStart = computed(() => Boolean(
   props.active &&
-  (props.sessionMode === "inspect" || globalCodexTerminalVisible.value)
+  (props.sessionMode === "inspect" || codexTerminalForegroundVisible.value)
 ));
 const codexTerminalReadOnly = computed(() => {
-  if (globalCodexTerminalVisible.value) {
+  if (codexTerminalForegroundVisible.value) {
     return false;
   }
   if (props.sessionMode === "inspect") {
