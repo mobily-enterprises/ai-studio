@@ -196,7 +196,7 @@ test("laravel prompt actions use the Laravel prompt pack", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "laravel_prompt"),
       sessionId: "laravel_prompt"
     });

@@ -57,7 +57,7 @@ function createWorktreeScript({
   const quotedPrepareWorktreeScriptPath = shellQuote(normalizeText(prepareWorktreeScriptPath));
   const quotedTargetRoot = shellQuote(targetRoot);
   const quotedWorktreePath = shellQuote(worktreePath);
-  const workSource = normalizeText(session.metadata?.work_source) || "new_branch";
+  const workSource = normalizeText(session.metadata?.work_source) || "new_issue";
   const sourcePrNumber = normalizeText(session.metadata?.source_pr_number);
   const sourcePrHeadRef = normalizeText(session.metadata?.source_pr_head_ref);
   const sourcePrHeadRepo = normalizeText(session.metadata?.source_pr_head_repo);
@@ -141,7 +141,7 @@ async function createWorktreeTerminalSpec({
     readCurrentBranch(resolvedTargetRoot),
     readCurrentCommit(resolvedTargetRoot)
   ]);
-  const workSource = normalizeText(session.metadata?.work_source) || "new_branch";
+  const workSource = normalizeText(session.metadata?.work_source) || "new_issue";
   const metadataBaseBranch = workSource === "existing_pr"
     ? normalizeText(session.metadata?.source_pr_head_ref) || baseBranch
     : baseBranch;

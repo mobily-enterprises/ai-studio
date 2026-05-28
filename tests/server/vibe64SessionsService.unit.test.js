@@ -664,7 +664,7 @@ test("session presentation offers Codex continuation when an awaiting turn is st
               stepMachine: {
                 at: staleIso(),
                 status: "awaiting_agent_result",
-                stepId: "plan_executed"
+                stepId: "plan_and_execute"
               }
             };
           }
@@ -739,7 +739,7 @@ test("session presentation keeps a fresh awaiting Codex turn in waiting state", 
               stepMachine: {
                 at: waitStartedAt,
                 status: "awaiting_agent_result",
-                stepId: "plan_executed"
+                stepId: "plan_and_execute"
               }
             };
           }
@@ -805,7 +805,7 @@ test("session presentation does not treat stale manual terminal input as Codex p
               stepMachine: {
                 at: stepStartedAt,
                 status: "awaiting_agent_result",
-                stepId: "plan_executed"
+                stepId: "plan_and_execute"
               }
             };
           }
@@ -866,7 +866,7 @@ test("session presentation keeps a stale Codex wait running while current-turn o
               stepMachine: {
                 at: stepStartedAt,
                 status: "awaiting_agent_result",
-                stepId: "plan_executed"
+                stepId: "plan_and_execute"
               }
             };
           }
@@ -932,7 +932,7 @@ test("session presentation offers Codex continuation when current-turn output is
               stepMachine: {
                 at: stepStartedAt,
                 status: "awaiting_agent_result",
-                stepId: "plan_executed"
+                stepId: "plan_and_execute"
               }
             };
           }

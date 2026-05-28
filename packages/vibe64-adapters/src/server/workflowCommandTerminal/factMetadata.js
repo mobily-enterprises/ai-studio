@@ -76,7 +76,12 @@ function createIssueSuccessMetadataFromFacts({ facts = {} } = {}) {
   }
   return commandMetadataResult({
     metadata: {
+      github_issue_mode: "create",
       issue_source: "created",
+      work_anchor_number: normalizeText(metadata.issue_number),
+      work_anchor_title: normalizeText(metadata.issue_title),
+      work_anchor_type: "issue",
+      work_anchor_url: normalizeText(metadata.issue_url),
       ...metadata
     }
   });

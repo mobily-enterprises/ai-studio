@@ -108,6 +108,41 @@ describe("useVibe64AutopilotController", () => {
     });
   });
 
+  it("reports blocked presented intents as not accepted", async () => {
+    const context = createControllerContext({
+      intentResponse: {
+        actionResult: {
+          status: "blocked"
+        },
+        ok: true
+      },
+      intents: [
+        {
+          enabled: true,
+          id: "server_intent",
+          inputFields: [
+            {
+              kind: "textarea",
+              label: "Feedback",
+              name: "feedback"
+            }
+          ],
+          label: "Server intent",
+          style: "primary"
+        }
+      ]
+    });
+
+    const accepted = await context.controller.runPresentedIntent(context.session.value.intents[0], {
+      fields: {
+        feedback: "Try this again."
+      },
+      continueAfterCompletion: false
+    });
+
+    expect(accepted).toBe(false);
+  });
+
   it("renders the server screen instead of inventing a start screen", async () => {
     const context = createControllerContext({
       operation: {
@@ -320,6 +355,7 @@ function createControllerContext({
   commandFails = false,
   commandTransportFailsAfterServerProgress = false,
   enabled = true,
+  intentResponse = null,
   intents = [],
   operation = {
     executable: false,
@@ -408,6 +444,9 @@ function createControllerContext({
     }),
     runIntentById: vi.fn(async () => {
       syncSession();
+      return intentResponse || {
+        ok: true
+      };
     })
   };
 

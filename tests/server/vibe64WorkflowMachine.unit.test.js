@@ -1235,8 +1235,8 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       metadata: worktreeMetadata(targetRoot, "big_feature_reject"),
       sessionId: "big_feature_reject"
     });
-    await runtime.store.writeCompletedStep("big_feature_reject", "plan_made", {
-      message: "Plan was completed before final review."
+    await runtime.store.writeCompletedStep("big_feature_reject", "plan_and_execute", {
+      message: "Plan and implementation were completed before final review."
     });
     const bigFeatureRejectReady = await runtime.getSession("big_feature_reject");
     const bigFeatureRejected = await runtime.runIntent("big_feature_reject", "reject", {
@@ -1246,7 +1246,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       stepId: bigFeatureRejectReady.currentStep,
       stepStatus: bigFeatureRejectReady.stepMachine.status
     });
-    assert.equal(bigFeatureRejected.currentStep, "plan_made");
+    assert.equal(bigFeatureRejected.currentStep, "plan_and_execute");
     assert.equal(bigFeatureRejected.actionResult.actionId, "make_plan");
     assert.equal(bigFeatureRejected.actionResult.input.autopilotFeedback, "Plan a simpler version.");
     assert.equal(bigFeatureRejected.actionResult.input.autopilotReason, "changes_rejected");
@@ -1370,9 +1370,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "worktree_created",
     "dependencies_installed",
     "issue_file_created",
-    "issue_submitted",
-    "plan_made",
-    "plan_executed",
+    "plan_and_execute",
     "implementation_reviewed",
     "deep_ui_check_run",
     "review_run",
@@ -1432,7 +1430,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   );
   assert.equal(
     bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
-    "plan_made"
+    "plan_and_execute"
   );
   assert.equal(
     bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
@@ -1497,6 +1495,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   assert.equal(generalCoding.steps.some((step) => step.id === "issue_file_created"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_made"), false);
   assert.equal(generalCoding.steps.some((step) => step.id === "plan_executed"), false);
+  assert.equal(generalCoding.steps.some((step) => step.id === "plan_and_execute"), false);
   assert.equal(nonCodeMaintenance.definition.label, "Documentation/non code maintenance");
   assert.equal(nonCodeMaintenance.definition.sessionWord, "documentation");
   assert.deepEqual(nonCodeMaintenance.steps.map((step) => step.id), [
@@ -1529,7 +1528,10 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "maintenance_conversation").autopilot.kind, "agent_conversation");
   assert.equal(nonCodeMaintenance.steps.find((step) => step.id === "maintenance_conversation").label, "Talk to Codex");
   assert.deepEqual(nonCommitMaintenance.definition.initialMetadata, {
-    work_source: "new_branch"
+    github_issue_mode: "skip",
+    issue_source: "none",
+    work_anchor_type: "description",
+    work_source: "description"
   });
   assert.equal(nonCommitMaintenance.definition.sessionWord, "maintenance");
   assert.deepEqual(nonCommitMaintenance.steps.map((step) => step.id), [
@@ -1969,7 +1971,7 @@ test("vibe64 runtime persists the selected workflow definition per session", asy
     assert.equal(session.workflowId, maintenanceWorkflowDefinitionIds.NON_COMMIT_MAINTENANCE);
     assert.equal(session.workflowDefinition.id, maintenanceWorkflowDefinitionIds.NON_COMMIT_MAINTENANCE);
     assert.equal(session.metadata.workflow_definition, maintenanceWorkflowDefinitionIds.NON_COMMIT_MAINTENANCE);
-    assert.equal(session.metadata.work_source, "new_branch");
+    assert.equal(session.metadata.work_source, "description");
     assert.equal(session.sessionName, "maintenance");
     assert.equal(session.stepDefinitions.at(-1).id, "local_session_finished");
     assert.equal(await runtime.store.readArtifact("maintenance_definition", "issue_word"), "maintenance\n");
@@ -2004,7 +2006,7 @@ test("vibe64 non-code maintenance definition starts with a reusable session labe
     assert.equal(session.stepDefinitions.some((step) => step.id === "changes_accepted"), true);
 
     await runtime.advance("docs_definition");
-    await runtime.store.writeMetadataValue("docs_definition", "work_source", "new_branch");
+    await runtime.store.writeMetadataValue("docs_definition", "work_source", "description");
     await runtime.advance("docs_definition");
     await runtime.store.writeMetadataValue("docs_definition", "worktree_path", targetRoot);
     await runtime.advance("docs_definition");
@@ -2079,10 +2081,13 @@ test("vibe64 runtime advance records completed steps and moves to the next workf
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       actionHandlers: {
-        use_new_branch: async () => ({
+        use_new_issue: async () => ({
           message: "Starting fresh with a new issue.",
           metadata: {
-            work_source: "new_branch"
+            github_issue_mode: "create",
+            issue_source: "new",
+            work_anchor_type: "issue",
+            work_source: "new_issue"
           },
           status: "completed"
         })
@@ -2103,14 +2108,16 @@ test("vibe64 runtime advance records completed steps and moves to the next workf
     assert.equal(afterFirstAdvance.next.enabled, false);
     assert.equal(afterFirstAdvance.presentation.screen.kind, "work_source");
     assert.deepEqual(afterFirstAdvance.actions.map((action) => action.id), [
-      "use_new_branch",
+      "use_new_issue",
       "use_existing_issue",
-      "use_existing_pr"
+      "use_existing_pr",
+      "use_description"
     ]);
     assert.deepEqual(afterFirstAdvance.intents.map((intent) => intent.id), [
-      "use_new_branch",
+      "use_new_issue",
       "use_existing_issue",
-      "use_existing_pr"
+      "use_existing_pr",
+      "use_description"
     ]);
     const existingIssueAction = afterFirstAdvance.actions.find((action) => action.id === "use_existing_issue");
     assert.equal(existingIssueAction?.enabled, true);
@@ -2124,12 +2131,13 @@ test("vibe64 runtime advance records completed steps and moves to the next workf
       "prRef"
     ]);
 
-    const afterWorkSource = await runtime.runIntent("advance_flow", "use_new_branch", {
+    const afterWorkSource = await runtime.runIntent("advance_flow", "use_new_issue", {
       stepId: afterFirstAdvance.currentStep,
       stepStatus: afterFirstAdvance.stepMachine.status
     });
     assert.equal(afterWorkSource.currentStep, "worktree_created");
-    assert.equal(afterWorkSource.metadata.work_source, "new_branch");
+    assert.equal(afterWorkSource.metadata.github_issue_mode, "create");
+    assert.equal(afterWorkSource.metadata.work_source, "new_issue");
     assert.equal(afterWorkSource.actionResult.message, "Starting fresh with a new issue.");
     assert.deepEqual(afterWorkSource.completedSteps, [
       "session_created",
@@ -2153,7 +2161,7 @@ test("vibe64 runtime shows current-step actions from the workflow", async () => 
     });
 
     await runtime.advance("disabled_actions");
-    await runtime.store.writeMetadataValue("disabled_actions", "work_source", "new_branch");
+    await runtime.store.writeMetadataValue("disabled_actions", "work_source", "new_issue");
     const session = await runtime.advance("disabled_actions");
     assert.equal(session.currentStep, "worktree_created");
     assert.deepEqual(session.actions, [
@@ -2243,7 +2251,7 @@ test("vibe64 runtime rejects command actions because terminals own command execu
     await runtime.createSession({
       initialStep: "worktree_created",
       metadata: {
-        work_source: "new_branch"
+        work_source: "new_issue"
       },
       sessionId: "command_action"
     });
@@ -2265,7 +2273,7 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "prompt_action"),
       sessionId: "prompt_action"
     });
@@ -2274,7 +2282,7 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
       scope: "unit test"
     });
 
-    assert.equal(afterAction.currentStep, "plan_made");
+    assert.equal(afterAction.currentStep, "plan_and_execute");
     assert.deepEqual(afterAction.completedSteps, []);
     assert.equal(afterAction.actionResult.status, "prompt_ready");
     assert.equal(afterAction.actionResult.promptId, "make_plan");
@@ -2294,11 +2302,25 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
     await runtime.submitCurrentStepInput("prompt_action", {
       kind: "ready",
       source: "codex",
-      stepId: "plan_made",
+      stepId: "plan_and_execute",
+      stepStatus: "awaiting_agent_result"
+    });
+    const afterPlan = await runtime.getSession("prompt_action");
+    assert.equal(afterPlan.currentStep, "plan_and_execute");
+    assert.equal(afterPlan.metadata.plan_ready, "yes");
+    assert.equal(afterPlan.actions.find((action) => action.id === "execute_plan")?.enabled, true);
+
+    const afterExecuteAction = await runtime.runAction("prompt_action", "execute_plan");
+    assert.equal(afterExecuteAction.currentStep, "plan_and_execute");
+    assert.equal(afterExecuteAction.actionResult.promptId, "execute_plan");
+    await runtime.submitCurrentStepInput("prompt_action", {
+      kind: "ready",
+      source: "codex",
+      stepId: "plan_and_execute",
       stepStatus: "awaiting_agent_result"
     });
     const afterAdvance = await runtime.advance("prompt_action");
-    assert.equal(afterAdvance.currentStep, "plan_executed");
+    assert.equal(afterAdvance.currentStep, "implementation_reviewed");
   });
 });
 
@@ -2354,20 +2376,21 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
 
     const issueSession = await runtime.createSession({
       initialStep: "issue_file_created",
-      metadata: worktreeMetadata(targetRoot, "editable_artifact_issue"),
+      metadata: {
+        ...worktreeMetadata(targetRoot, "editable_artifact_issue"),
+        github_issue_mode: "create",
+        work_source: "new_issue"
+      },
       sessionId: "editable_artifact_issue"
     });
     assert.equal(issueSession.stepMachine.status, "ready");
     assert.equal(issueSession.presentation.screen.kind, "issue_source");
     assert.deepEqual(issueSession.intents.map((intent) => intent.id), [
-      "use_existing_issue",
-      "draft_issue"
+      "draft_issue",
+      "create_issue_on_gh"
     ]);
-    assert.equal(issueSession.actions.find((action) => action.id === "use_existing_issue")?.enabled, true);
-    assert.equal(issueSession.intents.find((intent) => intent.id === "use_existing_issue")?.enabled, true);
-    assert.deepEqual(issueSession.intents.find((intent) => intent.id === "use_existing_issue")?.inputFields.map((field) => field.name), [
-      "issueRef"
-    ]);
+    assert.equal(issueSession.actions.find((action) => action.id === "draft_issue")?.enabled, true);
+    assert.equal(issueSession.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
 
     const draftingIssue = await runtime.runAction("editable_artifact_issue", "draft_issue", {
       conversationRequest: "Add saved reports."
@@ -2406,6 +2429,10 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
 
     await runtime.createSession({
       initialStep: "issue_file_created",
+      metadata: {
+        github_issue_mode: "skip",
+        work_source: "description"
+      },
       sessionId: "editable_artifact_issue_accept"
     });
     await runtime.submitCurrentStepInput("editable_artifact_issue_accept", {
@@ -2422,7 +2449,7 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       stepId: "issue_file_created",
       stepStatus: "confirm_files"
     });
-    assert.equal(acceptedIssue.currentStep, "issue_submitted");
+    assert.equal(acceptedIssue.currentStep, "plan_and_execute");
 
     const rejectedIssue = await runtime.runIntent("editable_artifact_issue", "reject_issue_draft", {
       fields: {
@@ -2454,55 +2481,11 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue_title"), "Revised issue title\n");
     assert.equal(await runtime.store.readArtifact("editable_artifact_issue", "issue.md"), "Revised issue body\n");
 
-    const existingIssueRuntime = new Vibe64SessionRuntime({
-      actionHandlers: {
-        use_existing_issue: async () => ({
-          artifacts: {
-            "issue.md": "Existing body\n",
-            issue_title: "Existing issue\n",
-            issue_word: "Existing\n"
-          },
-          message: "Selected GitHub issue #12.",
-          metadata: {
-            issue_number: "12",
-            issue_source: "existing",
-            issue_title: "Existing issue",
-            issue_url: "https://github.com/example/project/issues/12",
-            issue_word: "Existing"
-          },
-          status: "completed"
-        })
-      },
-      adapter: new FakeTargetAdapter({
-        capabilities: {
-          use_existing_issue: true
-        }
-      }),
-      targetRoot
-    });
-    await existingIssueRuntime.createSession({
-      initialStep: "issue_file_created",
-      sessionId: "existing_issue_artifacts"
-    });
-    const existingIssue = await existingIssueRuntime.runAction("existing_issue_artifacts", "use_existing_issue", {
-      issueRef: "12"
-    });
-    assert.equal(existingIssue.stepMachine.status, "done");
-    assert.equal(existingIssue.presentation.screen.kind, "ready");
-    assert.equal(existingIssue.presentation.auto.nextOperation.kind, "wait");
-    assert.equal(existingIssue.presentation.auto.nextOperation.reason, "user");
-    assert.deepEqual(existingIssue.intents.map((intent) => intent.id), [
-      "continue_step"
-    ]);
-    assert.equal(existingIssue.metadata.issue_url, "https://github.com/example/project/issues/12");
-    assert.equal(existingIssue.metadata.issue_word, "Existing");
-    assert.equal(await existingIssueRuntime.store.readArtifact("existing_issue_artifacts", "issue_title"), "Existing issue\n");
-    assert.equal(await existingIssueRuntime.store.readArtifact("existing_issue_artifacts", "issue.md"), "Existing body\n");
-
     await runtime.createSession({
       initialStep: "issue_file_created",
       metadata: {
         ...worktreeMetadata(targetRoot, "issue_url_without_artifacts"),
+        github_issue_mode: "reuse",
         issue_number: "13",
         issue_source: "existing",
         issue_url: "https://github.com/example/project/issues/13"
@@ -2511,9 +2494,8 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
     });
     const issueUrlOnly = await runtime.getSession("issue_url_without_artifacts");
     assert.notEqual(issueUrlOnly.next.enabled, true);
-    assert.equal(issueUrlOnly.next.disabledReason, "Select an existing issue or draft a new one.");
+    assert.equal(issueUrlOnly.next.disabledReason, "Describe the work before continuing.");
     assert.equal(issueUrlOnly.presentation.screen.kind, "issue_source");
-    assert.equal(issueUrlOnly.actions.find((action) => action.id === "use_existing_issue")?.enabled, true);
     assert.equal(issueUrlOnly.actions.find((action) => action.id === "draft_issue")?.enabled, true);
     const repairedIssueDraft = await runtime.submitCurrentStepInput("issue_url_without_artifacts", {
       fields: {
@@ -2543,21 +2525,21 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       targetRoot
     });
     await missingIssueRuntime.createSession({
-      initialStep: "issue_file_created",
+      initialStep: "work_source_selected",
       sessionId: "missing_issue_artifacts"
     });
     const missingIssue = await missingIssueRuntime.runIntent("missing_issue_artifacts", "use_existing_issue", {
       fields: {
         issueRef: "404404"
       },
-      stepId: "issue_file_created",
+      stepId: "work_source_selected",
       stepStatus: "ready"
     });
     assert.equal(missingIssue.actionResult.status, "blocked");
     assert.equal(missingIssue.stepMachine.status, "failed");
     assert.equal(missingIssue.stepMachine.message, "Could not resolve GitHub issue: issue not found");
-    assert.equal(missingIssue.presentation.screen.kind, "issue_source");
-    assert.equal(missingIssue.currentStep, "issue_file_created");
+    assert.equal(missingIssue.presentation.screen.kind, "work_source");
+    assert.equal(missingIssue.currentStep, "work_source_selected");
     assert.ok(missingIssue.intents.some((intent) => intent.id === "use_existing_issue" && intent.enabled === true));
 
     const prSession = await runtime.createSession({
@@ -2617,7 +2599,7 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
   });
 });
 
-test("vibe64 existing PR work anchors skip issue creation steps", async () => {
+test("vibe64 existing PR work anchors continue from saved work details without issue creation", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       targetRoot
@@ -2626,31 +2608,91 @@ test("vibe64 existing PR work anchors skip issue creation steps", async () => {
       initialStep: "issue_file_created",
       metadata: {
         ...worktreeMetadata(targetRoot, "existing_pr_issue_skip"),
+        github_issue_mode: "skip",
+        issue_source: "none",
+        source_pr_number: "77",
         source_pr_title: "Upstream feature",
         source_pr_url: "https://github.com/example/project/pull/77",
+        work_anchor_number: "77",
+        work_anchor_type: "pull_request",
+        work_anchor_url: "https://github.com/example/project/pull/77",
         work_source: "existing_pr"
       },
       sessionId: "existing_pr_issue_skip"
     });
 
-    assert.equal(session.stepMachine.status, "done");
-    assert.equal(
-      session.stepMachine.message,
-      "Skipped: existing PR selected as the work anchor; no GitHub issue is required."
-    );
-    assert.equal(session.next.enabled, true);
-    assert.equal(session.actions.find((action) => action.id === "use_existing_issue")?.enabled, false);
-    assert.equal(session.actions.find((action) => action.id === "draft_issue")?.enabled, false);
+    assert.equal(session.stepMachine.status, "ready");
+    assert.equal(session.next.enabled, false);
+    assert.equal(session.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
+    assert.equal(session.actions.find((action) => action.id === "draft_issue")?.enabled, true);
 
-    const submitted = await runtime.advance("existing_pr_issue_skip");
-    assert.equal(submitted.currentStep, "issue_submitted");
-    assert.equal(submitted.stepMachine.status, "done");
+    const reviewed = await runtime.submitCurrentStepInput("existing_pr_issue_skip", {
+      fields: {
+        body: "Build on the upstream feature.",
+        title: "Extend upstream feature",
+        word: "upstream-feature"
+      },
+      kind: "ready",
+      stepId: "issue_file_created",
+      stepStatus: "ready"
+    });
+    assert.equal(reviewed.stepMachine.status, "confirm_files");
+    assert.equal(reviewed.next.enabled, true);
+    assert.equal(reviewed.metadata.work_anchor_number, "77");
+    assert.equal(reviewed.metadata.work_anchor_url, "https://github.com/example/project/pull/77");
+    assert.equal(reviewed.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
+
+    const submitted = await runtime.runIntent("existing_pr_issue_skip", "continue_step", {
+      stepId: "issue_file_created",
+      stepStatus: "confirm_files"
+    });
+    assert.equal(submitted.currentStep, "plan_and_execute");
+    assert.equal(submitted.metadata.work_anchor_number, "77");
+    assert.equal(submitted.metadata.work_anchor_type, "pull_request");
+    assert.equal(submitted.metadata.work_anchor_url, "https://github.com/example/project/pull/77");
+    assert.equal(await runtime.store.readArtifact("existing_pr_issue_skip", "issue_title"), "Extend upstream feature\n");
+  });
+});
+
+test("vibe64 issue question state only exposes the Codex answer path", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    const session = await runtime.createSession({
+      initialStep: "issue_file_created",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "issue_question_flow"),
+        github_issue_mode: "create",
+        issue_source: "new",
+        work_source: "new_issue"
+      },
+      sessionId: "issue_question_flow"
+    });
+
+    await runtime.runAction("issue_question_flow", "draft_issue", {
+      conversationRequest: "Add a booking form."
+    });
+    await runtime.submitCurrentStepInput("issue_question_flow", {
+      kind: "waiting_for_input",
+      message: "Should the booking form collect a phone number?",
+      source: "codex",
+      stepId: session.currentStep,
+      stepStatus: "awaiting_agent_result"
+    });
+
+    const waiting = await runtime.getSession("issue_question_flow");
+    assert.equal(waiting.stepMachine.status, "waiting_for_input");
+    assert.equal(waiting.presentation.screen.kind, "conversation");
+    assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
+    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "continue_step"]);
+    assert.equal(waiting.intents[0].actionId, "draft_issue");
+    assert.equal(waiting.intents[0].label, "Send to Codex");
+    assert.equal(waiting.intents[1].enabled, false);
     assert.equal(
-      submitted.stepMachine.message,
-      "Skipped: existing PR selected as the work anchor; no GitHub issue is required."
+      waiting.intents.some((intent) => intent.id === "draft_issue" || intent.id === "create_issue_on_gh"),
+      false
     );
-    assert.equal(submitted.next.enabled, true);
-    assert.equal(submitted.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
   });
 });
 
@@ -3020,7 +3062,7 @@ test("vibe64 runtime reuses the persisted prompt context snapshot for later prom
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "prompt_context_snapshot"),
       sessionId: "prompt_context_snapshot"
     });
@@ -3034,10 +3076,9 @@ test("vibe64 runtime reuses the persisted prompt context snapshot for later prom
     await runtime.submitCurrentStepInput("prompt_context_snapshot", {
       kind: "ready",
       source: "codex",
-      stepId: "plan_made",
+      stepId: "plan_and_execute",
       stepStatus: "awaiting_agent_result"
     });
-    await runtime.advance("prompt_context_snapshot");
 
     class ThrowingInspectionAdapter extends FakeTargetAdapter {
       async inspect() {
@@ -3114,7 +3155,7 @@ test("vibe64 runtime sends static adapter context once and references it later",
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "session_briefing_once"),
       sessionId: "session_briefing_once"
     });
@@ -3129,10 +3170,9 @@ test("vibe64 runtime sends static adapter context once and references it later",
     await runtime.submitCurrentStepInput("session_briefing_once", {
       kind: "ready",
       source: "codex",
-      stepId: "plan_made",
+      stepId: "plan_and_execute",
       stepStatus: "awaiting_agent_result"
     });
-    await runtime.advance("session_briefing_once");
     const secondPrompt = await runtime.runAction("session_briefing_once", "execute_plan");
 
     assert.doesNotMatch(secondPrompt.actionResult.prompt, /Vibe64 session briefing\n\nThis briefing is sent once/u);
@@ -3159,7 +3199,7 @@ test("vibe64 runtime disables prompt actions while the terminal is active", asyn
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: {
         ...worktreeMetadata(targetRoot, "terminal_active"),
         terminal_active: "true"
@@ -3168,19 +3208,9 @@ test("vibe64 runtime disables prompt actions while the terminal is active", asyn
     });
 
     const session = await runtime.getSession("terminal_active");
-    assert.deepEqual(session.actions, [
-      {
-        disabledReason: "Codex terminal is active.",
-        dispatchRoute: "session-action",
-        enabled: false,
-        icon: "codex",
-        id: "make_plan",
-        label: "Make a plan",
-        promptId: "make_plan",
-        type: "prompt",
-        visible: true
-      }
-    ]);
+    const makePlanAction = session.actions.find((action) => action.id === "make_plan");
+    assert.equal(makePlanAction?.enabled, false);
+    assert.equal(makePlanAction?.disabledReason, "Codex terminal is active.");
     await assert.rejects(
       () => runtime.runAction("terminal_active", "make_plan"),
       {
@@ -3197,24 +3227,14 @@ test("vibe64 runtime disables prompt actions before the session worktree exists"
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       sessionId: "prompt_without_worktree"
     });
 
     const session = await runtime.getSession("prompt_without_worktree");
-    assert.deepEqual(session.actions, [
-      {
-        disabledReason: "Create the session worktree before asking Codex.",
-        dispatchRoute: "session-action",
-        enabled: false,
-        icon: "codex",
-        id: "make_plan",
-        label: "Make a plan",
-        promptId: "make_plan",
-        type: "prompt",
-        visible: true
-      }
-    ]);
+    const makePlanAction = session.actions.find((action) => action.id === "make_plan");
+    assert.equal(makePlanAction?.enabled, false);
+    assert.equal(makePlanAction?.disabledReason, "Create the session worktree before asking Codex.");
     assert.equal(session.presentation.auto.nextOperation.kind, "stop");
     assert.equal(session.presentation.auto.nextOperation.executable, false);
     assert.equal(session.presentation.auto.nextOperation.reason, "Create the session worktree before asking Codex.");
@@ -3498,10 +3518,10 @@ test("vibe64 runtime validates initial workflow steps", async () => {
     });
 
     const session = await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       sessionId: "starts_at_plan"
     });
-    assert.equal(session.currentStep, "plan_made");
+    assert.equal(session.currentStep, "plan_and_execute");
 
     await assert.rejects(
       () => runtime.createSession({

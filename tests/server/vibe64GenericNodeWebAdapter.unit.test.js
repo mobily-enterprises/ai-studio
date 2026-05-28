@@ -191,7 +191,7 @@ test("generic Node web prompt actions use the prompt pack", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "node_web_prompt"),
       sessionId: "node_web_prompt"
     });

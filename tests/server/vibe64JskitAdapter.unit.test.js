@@ -367,7 +367,7 @@ test("jskit prompt actions include JSKIT prompt context", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "jskit_prompt"),
       sessionId: "jskit_prompt"
     });
@@ -446,8 +446,11 @@ test("jskit execute-plan prompt requires generators, placements, and database mo
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_executed",
-      metadata: worktreeMetadata(targetRoot, "jskit_execute_prompt"),
+      initialStep: "plan_and_execute",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "jskit_execute_prompt"),
+        plan_ready: "yes"
+      },
       sessionId: "jskit_execute_prompt"
     });
 
@@ -522,48 +525,28 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     });
 
     await runtime.createSession({
-      initialStep: "issue_submitted",
+      initialStep: "issue_file_created",
+      metadata: {
+        github_issue_mode: "create",
+        work_source: "new_issue"
+      },
       sessionId: "jskit_issue"
     });
     const issueBeforeFiles = await runtime.getSession("jskit_issue");
     assert.equal(issueBeforeFiles.next.enabled, false);
-    assert.deepEqual(issueBeforeFiles.actions.map((action) => ({
-      enabled: action.enabled,
-      id: action.id
-    })), [
-      {
-        enabled: false,
-        id: "create_issue_on_gh"
-      }
-    ]);
+    assert.equal(issueBeforeFiles.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
 
     await runtime.store.writeArtifact("jskit_issue", "issue_title", "Add reports\n");
     await runtime.store.writeArtifact("jskit_issue", "issue_word", "Reports\n");
     await runtime.store.writeArtifact("jskit_issue", "issue.md", "Body\n");
     const issueReady = await runtime.getSession("jskit_issue");
-    assert.deepEqual(issueReady.actions.map((action) => ({
-      enabled: action.enabled,
-      id: action.id
-    })), [
-      {
-        enabled: true,
-        id: "create_issue_on_gh"
-      }
-    ]);
+    assert.equal(issueReady.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, true);
     assert.equal(issueReady.next.enabled, false);
 
     await runtime.store.writeMetadataValue("jskit_issue", "issue_url", "https://github.com/example/repo/issues/42");
     const issueSubmitted = await runtime.getSession("jskit_issue");
     assert.equal(issueSubmitted.next.enabled, true);
-    assert.deepEqual(issueSubmitted.actions.map((action) => ({
-      enabled: action.enabled,
-      id: action.id
-    })), [
-      {
-        enabled: false,
-        id: "create_issue_on_gh"
-      }
-    ]);
+    assert.equal(issueSubmitted.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
 
     await runtime.createSession({
       initialStep: "create_pull_request",

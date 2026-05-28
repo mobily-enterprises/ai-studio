@@ -52,11 +52,11 @@ const codexPromptStepDefinitions = [
     description: "Create the GitHub issue."
   },
   {
-    id: "plan_made",
+    id: "plan_and_execute",
     index: 6,
-    label: "Plan made",
+    label: "Plan and execute",
     kind: "codex_prompt",
-    description: "Ask Codex to create an implementation plan in the terminal."
+    description: "Ask Codex to create and execute the implementation plan in the terminal."
   }
 ];
 const codexPromptSessionPayload = {
@@ -149,9 +149,9 @@ const codexIssueDraftedPayload = {
 const codexIssueCreatedPayload = {
   ...codexIssueDraftedPayload,
   completedSteps: [...codexIssueDraftedPayload.completedSteps, "issue_created"],
-  currentStep: "plan_made",
+  currentStep: "plan_and_execute",
   currentStepAction: {
-    stepId: "plan_made",
+    stepId: "plan_and_execute",
     kind: "codex_prompt",
     automation: { mode: "codex_prompt" },
     buttonLabel: "Record plan",
@@ -278,8 +278,7 @@ const deepUiPromptedSessionPayload = {
     "issue_prompt_rendered",
     "issue_drafted",
     "issue_created",
-    "plan_made",
-    "plan_executed"
+    "plan_and_execute"
   ],
   currentStepAction: {
     ...deepUiSkipSessionPayload.currentStepAction,
@@ -292,18 +291,11 @@ const deepUiPromptedSessionPayload = {
 const planExecutionRejectSessionId = "2026-05-12_02-06-46";
 const planExecutionRejectStepDefinitions = [
   {
-    id: "plan_made",
+    id: "plan_and_execute",
     index: 6,
-    label: "Plan made",
+    label: "Plan and execute",
     kind: "codex_prompt",
-    description: "Codex writes an implementation plan in the terminal."
-  },
-  {
-    id: "plan_executed",
-    index: 7,
-    label: "Plan executed",
-    kind: "codex_prompt",
-    description: "Codex has the execution prompt. Studio advances when Codex finishes."
+    description: "Codex writes and executes the implementation plan in the terminal."
   },
   {
     id: "deep_ui_check_run",
@@ -317,15 +309,14 @@ const planExecutionRejectPayload = {
   ok: true,
   sessionId: planExecutionRejectSessionId,
   status: "running",
-  currentStep: "plan_executed",
+  currentStep: "plan_and_execute",
   completedSteps: [
     "session_created",
     "worktree_created",
     "dependencies_installed",
     "issue_prompt_rendered",
     "issue_drafted",
-    "issue_created",
-    "plan_made"
+    "issue_created"
   ],
   stepDefinitions: planExecutionRejectStepDefinitions,
   currentStepAction: {
@@ -336,7 +327,7 @@ const planExecutionRejectPayload = {
     automation: { mode: "codex_prompt" },
     label: "Go to next step",
     requiresExplicitRun: false,
-    stepId: "plan_executed"
+    stepId: "plan_and_execute"
   },
   codex: {
     autoInject: true,

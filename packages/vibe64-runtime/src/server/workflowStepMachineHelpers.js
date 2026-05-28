@@ -341,12 +341,12 @@ function promptStepDoneView(context = {}, machine = {}, state = {}) {
   };
 }
 
-function promptStepWaitingForInputView(context = {}, machine = {}, state = {}) {
+function promptStepWaitingForInputView(context = {}, machine = {}, state = {}, options = {}) {
   return {
     interaction: promptWaitingForInputInteraction({
-      actionId: machine.promptActionId,
-      prompt: state.message || "Codex needs more information before this step can continue.",
-      title: "Talk to Codex"
+      actionId: normalizeText(options.actionId || machine.promptActionId),
+      prompt: options.prompt || state.message || "Codex needs more information before this step can continue.",
+      title: options.title || "Talk to Codex"
     }),
     next: nextForSession(context.session, {
       disabledReason: "Answer Codex before continuing."

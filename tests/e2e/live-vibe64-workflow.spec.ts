@@ -132,19 +132,8 @@ test.describe("live Vibe64 session workflow", () => {
       enabled: ["Next step"]
     });
 
-    await goNextToStep(page, "issue_submitted");
-    await assertChecklistControls(page, "issue_submitted", {
-      disabled: ["Create issue on GH"],
-      enabled: ["Next step"]
-    });
-
-    await goNextToStep(page, "plan_made");
-    await assertChecklistControls(page, "plan_made", {
-      enabled: ["Make a plan for the issue", "Next step"]
-    });
-
-    await goNextToStep(page, "plan_executed");
-    await assertChecklistControls(page, "plan_executed", {
+    await goNextToStep(page, "plan_and_execute");
+    await assertChecklistControls(page, "plan_and_execute", {
       enabled: ["Execute plan", "Next step"]
     });
 
@@ -275,8 +264,7 @@ test.describe("live Vibe64 session workflow", () => {
     await expectButtonDisabled(page, "Solve existing issue");
     await expectButtonEnabled(page, "Next step");
 
-    await goNextToStep(page, "issue_submitted");
-    await expectButtonDisabled(page, "Create issue on GH");
+    await goNextToStep(page, "plan_and_execute");
     await expectButtonEnabled(page, "Next step");
   });
 
@@ -288,7 +276,6 @@ test.describe("live Vibe64 session workflow", () => {
     });
 
     await expectButtonEnabled(page, "Next step");
-    await goNextToStep(page, "issue_submitted");
     await runCommandAndWaitForMetadata(page, "Create issue on GH", "issue_url", UI_COMMAND_TIMEOUT_MS);
 
     const session = await latestSession(page);
@@ -304,9 +291,7 @@ test.describe("live Vibe64 session workflow", () => {
 
     await createNewBranchSessionAtIssueStep(page);
     await useExistingIssue(page, issue.url);
-    await goNextToStep(page, "issue_submitted");
-    await goNextToStep(page, "plan_made");
-    await goNextToStep(page, "plan_executed");
+    await goNextToStep(page, "plan_and_execute");
     await goNextToStep(page, "implementation_reviewed");
     await goNextToStep(page, "deep_ui_check_run");
     await goNextToStep(page, "review_run");
@@ -367,8 +352,7 @@ test.describe("live Vibe64 session workflow", () => {
 
     await goNextToStep(page, "dependencies_installed");
     await runCommandAndWaitForMetadata(page, "Install dependencies", "dependencies_installed", UI_COMMAND_TIMEOUT_MS);
-    await goNextToStep(page, "plan_made");
-    await goNextToStep(page, "plan_executed");
+    await goNextToStep(page, "plan_and_execute");
     await goNextToStep(page, "implementation_reviewed");
     await goNextToStep(page, "deep_ui_check_run");
     await goNextToStep(page, "review_run");

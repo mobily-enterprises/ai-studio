@@ -98,7 +98,7 @@ async function createNewBranchSessionAtIssueStep(page: Page) {
 
 async function chooseNewBranch(page: Page) {
   await clickButton(page, "Start fresh with a new issue");
-  await expectSessionMetadata(page, "work_source", "new_branch");
+  await expectSessionMetadata(page, "work_source", "new_issue");
   await expectStep(page, "worktree_created");
 }
 

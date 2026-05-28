@@ -77,7 +77,7 @@ describe("Vibe64 session panel model", () => {
 
   it("builds timeline rows with current, pending, done, and rewind state", () => {
     const rows = buildVibe64TimelineSteps({
-      currentStep: "plan_made",
+      currentStep: "plan_and_execute",
       status: "active",
       stepDefinitions: [
         {
@@ -97,9 +97,9 @@ describe("Vibe64 session panel model", () => {
           status: "done"
         },
         {
-          id: "plan_made",
+          id: "plan_and_execute",
           index: 2,
-          label: "Make a plan",
+          label: "Plan and execute",
           status: "current"
         }
       ]
@@ -112,13 +112,13 @@ describe("Vibe64 session panel model", () => {
     }))).toEqual([
       { canRewind: false, id: "session_created", state: "done" },
       { canRewind: true, id: "worktree_created", state: "done" },
-      { canRewind: false, id: "plan_made", state: "current" }
+      { canRewind: false, id: "plan_and_execute", state: "current" }
     ]);
   });
 
   it("builds Autopilot navigation from the full workflow", () => {
     const rows = buildVibe64AutopilotNavigationSteps({
-      currentStep: "plan_made",
+      currentStep: "plan_and_execute",
       status: "active",
       stepDefinitions: [
         {
@@ -133,13 +133,13 @@ describe("Vibe64 session panel model", () => {
           done: true,
           id: "issue_file_created",
           index: 4,
-          label: "Define or select issue",
+          label: "Define work",
           status: "done"
         },
         {
-          id: "plan_made",
-          index: 6,
-          label: "Make a plan",
+          id: "plan_and_execute",
+          index: 5,
+          label: "Plan and execute",
           status: "current"
         },
         {
@@ -177,8 +177,8 @@ describe("Vibe64 session panel model", () => {
       state: row.state
     }))).toEqual([
       { canRewind: false, id: "session_created", label: "Create session", state: "done" },
-      { canRewind: true, id: "issue_file_created", label: "Define or select issue", state: "done" },
-      { canRewind: false, id: "plan_made", label: "Make a plan", state: "current" },
+      { canRewind: true, id: "issue_file_created", label: "Define work", state: "done" },
+      { canRewind: false, id: "plan_and_execute", label: "Plan and execute", state: "current" },
       { canRewind: false, id: "implementation_reviewed", label: "Human review", state: "pending" },
       { canRewind: false, id: "deep_ui_check_run", label: "Run deep UI check", state: "pending" },
       { canRewind: false, id: "changes_accepted", label: "Final review", state: "pending" },

@@ -183,7 +183,7 @@ test("nextjs prompt actions use the Next.js prompt pack", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "nextjs_prompt"),
       sessionId: "nextjs_prompt"
     });

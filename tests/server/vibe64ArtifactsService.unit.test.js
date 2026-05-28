@@ -108,7 +108,7 @@ test("Vibe64 artifacts service saves semantic issue step input", async () => {
     assert.equal(updatedSession.sessionName, "Booking");
     assert.equal(updatedSession.stepMachine.status, "confirm_files");
     assert.equal(updatedSession.next.enabled, true);
-    assert.equal(updatedSession.next.stepId, "issue_submitted");
+    assert.equal(updatedSession.next.stepId, "plan_and_execute");
   });
 });
 
@@ -267,7 +267,7 @@ test("Vibe64 artifacts service records step-owned completion messages for prompt
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "plan_completion_conversation_log"),
       sessionId: "plan_completion_conversation_log"
     });
@@ -283,7 +283,7 @@ test("Vibe64 artifacts service records step-owned completion messages for prompt
     const saved = await service.submitCurrentStepInput("plan_completion_conversation_log", {
       kind: "ready",
       source: "codex",
-      stepId: "plan_made",
+      stepId: "plan_and_execute",
       stepStatus: "awaiting_agent_result"
     });
 
@@ -502,7 +502,11 @@ test("Vibe64 artifacts service lets issue command failures return to retry state
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "issue_submitted",
+      initialStep: "issue_file_created",
+      metadata: {
+        github_issue_mode: "create",
+        work_source: "new_issue"
+      },
       sessionId: "step_input_issue_failure"
     });
     await Promise.all([
@@ -530,13 +534,13 @@ test("Vibe64 artifacts service lets issue command failures return to retry state
     const saved = await service.submitCurrentStepInput("step_input_issue_failure", {
       kind: "user_response",
       source: "ui",
-      stepId: "issue_submitted",
+      stepId: "issue_file_created",
       stepStatus: "waiting_for_input",
       text: "The GitHub CLI is authenticated now."
     });
 
     assert.equal(saved.ok, true);
-    assert.equal(saved.stepMachine.status, "ready");
+    assert.equal(saved.stepMachine.status, "confirm_files");
     assert.equal(saved.actions.find((action) => action.id === "create_issue_on_gh").enabled, true);
   });
 });
@@ -643,7 +647,7 @@ test("Vibe64 artifacts service reads live artifact readiness", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_executed",
+      initialStep: "plan_and_execute",
       sessionId: "artifact_readiness"
     });
     await runtime.store.writeArtifact("artifact_readiness", "response.md", "Saved response.\n");

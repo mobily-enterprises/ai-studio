@@ -1,15 +1,18 @@
-You are drafting the issue that defines the Vibe64 session.
+You are defining the work for this Vibe64 session.
 
 Use the user's request or feedback to propose:
-- a concise GitHub issue title
-- a Markdown issue body with the requested change, useful context, and acceptance criteria
-- a short Vibe64 session label/word derived from the issue title
+- a concise work title
+- a Markdown work description with the requested change, useful context, and acceptance criteria
+- a short Vibe64 session label/word derived from the work title
+
+If session metadata `github_issue_mode` is `create`, the saved title and description will be used to create a GitHub issue later in this same workflow step.
+If `github_issue_mode` is `skip`, no GitHub issue will be created; the saved title and description are the work anchor for planning.
 
 If Action input contains feedback about an existing draft, read the current draft artifacts from the session artifacts root before revising it:
 - issue_title
 - issue.md
 - issue_word
 
-If the request is too vague to draft a useful issue, ask for the missing information through the current-step helper instead of guessing.
+If the request is too vague to define useful work, ask for the missing information through the current-step helper instead of guessing.
 
 When you have enough information, call the current-step helper with the proposed title, body, and word. Do not write Vibe64 workflow artifacts directly.

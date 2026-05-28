@@ -164,7 +164,7 @@ test("cpp prompt actions use the C++ prompt pack", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "cpp_prompt"),
       sessionId: "cpp_prompt"
     });

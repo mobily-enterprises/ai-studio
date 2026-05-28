@@ -108,7 +108,7 @@ test.describe("Autopilot dumb client contract", () => {
 
   test("shows blocked intent action results as errors and keeps issue input retryable", async ({ page }) => {
     const intentRequests: unknown[] = [];
-    const session = issueSourceSession();
+    const session = workSourceSession();
     await mockVibe64Session(page, session, {
       onIntent: (body) => {
         intentRequests.push(body);
@@ -117,16 +117,17 @@ test.describe("Autopilot dumb client contract", () => {
           actionType: "adapter",
           message: "Could not resolve GitHub issue: issue not found",
           status: "blocked",
-          stepId: "issue_file_created"
+          stepId: "work_source_selected"
         };
         session.stepMachine = {
           status: "failed",
-          stepId: "issue_file_created"
+          stepId: "work_source_selected"
         };
       }
     });
 
     await page.goto(`${BASE_URL}/home`);
+    await page.getByRole("button", { exact: true, name: "Solve existing issue" }).click();
     await page.getByLabel("Issue URL or number").fill("404404");
     await page.getByRole("button", { exact: true, name: "Solve existing issue" }).click();
 
@@ -135,7 +136,7 @@ test.describe("Autopilot dumb client contract", () => {
         fields: {
           issueRef: "404404"
         },
-        stepId: "issue_file_created",
+        stepId: "work_source_selected",
         stepStatus: "ready"
       }
     ]);
@@ -146,7 +147,7 @@ test.describe("Autopilot dumb client contract", () => {
   });
 
   test("progresses after a successful existing-issue intent result", async ({ page }) => {
-    const session = issueSourceSession();
+    const session = workSourceSession();
     await mockVibe64Session(page, session, {
       onIntent: () => {
         Object.assign(session, sessionPayload({
@@ -162,12 +163,12 @@ test.describe("Autopilot dumb client contract", () => {
               issue_word: "Existing"
             },
             status: "completed",
-            stepId: "issue_file_created"
+            stepId: "work_source_selected"
           },
-          currentStep: "issue_submitted",
+          currentStep: "worktree_created",
           currentStepDefinition: {
-            id: "issue_submitted",
-            label: "Edit and submit issue"
+            id: "worktree_created",
+            label: "Create worktree"
           },
           intents: [],
           metadata: {
@@ -188,27 +189,28 @@ test.describe("Autopilot dumb client contract", () => {
             screen: {
               kind: "ready",
               sections: [],
-              title: "Edit and submit issue"
+              title: "Create worktree"
             },
             step: {
-              id: "issue_submitted",
-              label: "Edit and submit issue",
+              id: "worktree_created",
+              label: "Create worktree",
               status: "ready"
             }
           },
           stepMachine: {
             status: "ready",
-            stepId: "issue_submitted"
+            stepId: "worktree_created"
           }
         }));
       }
     });
 
     await page.goto(`${BASE_URL}/home`);
+    await page.getByRole("button", { exact: true, name: "Solve existing issue" }).click();
     await page.getByLabel("Issue URL or number").fill("123");
     await page.getByRole("button", { exact: true, name: "Solve existing issue" }).click();
 
-    await expect(page.getByRole("heading", { name: "Edit and submit issue" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create worktree" })).toBeVisible();
     await expect(page.getByText("Could not resolve GitHub issue")).toHaveCount(0);
   });
 
@@ -224,10 +226,11 @@ test.describe("Autopilot dumb client contract", () => {
     await page.goto(`${BASE_URL}/home`);
 
     await expect(page.getByRole("heading", { name: "Choose starting point" })).toBeVisible();
-    await expect(page.getByText("Start fresh with a new issue, solve an existing issue, or build on an existing pull request."))
+    await expect(page.getByText("Start fresh with a new issue, solve an existing issue, build on an existing pull request, or describe work without creating an issue."))
       .toBeVisible();
     await expect(page.getByRole("button", { name: "Start fresh with a new issue" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Solve existing issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Describe work without an issue" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Use existing PR" })).toBeVisible();
 
     await page.getByRole("button", { name: "Solve existing issue" }).click();
@@ -284,60 +287,21 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByRole("button", { name: "Next step" })).toHaveCount(0);
   });
 
-  test("auto-advances skipped issue steps for an existing PR work anchor", async ({ page }) => {
+  test("keeps existing PR sessions on the work definition step until details are saved", async ({ page }) => {
     const advances: string[] = [];
     const session = existingPrIssueSkipSession();
     await mockVibe64Session(page, session, {
       onAdvance: () => {
         advances.push(String(session.currentStep || ""));
-        if (session.currentStep === "issue_file_created") {
-          Object.assign(session, existingPrIssueSubmittedSkipSession());
-          return;
-        }
-        if (session.currentStep === "issue_submitted") {
-          Object.assign(session, sessionPayload({
-            currentStep: "plan_made",
-            currentStepDefinition: {
-              id: "plan_made",
-              label: "Make a plan"
-            },
-            presentation: {
-              auto: {
-                nextOperation: {
-                  executable: false,
-                  kind: "stop",
-                  reason: "Plan from the PR work anchor."
-                }
-              },
-              screen: {
-                kind: "ready",
-                sections: [],
-                title: "Make a plan"
-              },
-              step: {
-                id: "plan_made",
-                label: "Make a plan",
-                status: "ready"
-              }
-            },
-            stepMachine: {
-              status: "ready",
-              stepId: "plan_made"
-            }
-          }));
-        }
       }
     });
 
     await page.goto(`${BASE_URL}/home`);
 
-    await expect(page.getByRole("heading", { name: "Make a plan" })).toBeVisible();
-    await expect.poll(() => advances).toEqual([
-      "issue_file_created",
-      "issue_submitted"
-    ]);
+    await expect(page.getByRole("heading", { name: "Define work" })).toBeVisible();
+    await expect.poll(() => advances).toEqual([]);
     await expect(page.getByRole("button", { name: "Solve existing issue" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Make my own issue" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Describe work" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Create issue on GH" })).toHaveCount(0);
   });
 
@@ -1612,7 +1576,7 @@ test.describe("Autopilot dumb client contract", () => {
         enabled: true,
         id: "continue_step",
         inputFields: [],
-        label: "Accept saved issue",
+        label: "Create GitHub issue",
         style: "primary"
       },
       {
@@ -1636,7 +1600,7 @@ test.describe("Autopilot dumb client contract", () => {
       currentStep: "issue_file_created",
       currentStepDefinition: {
         id: "issue_file_created",
-        label: "Define or select issue"
+        label: "Define work"
       },
       intents,
       presentation: {
@@ -1670,19 +1634,19 @@ test.describe("Autopilot dumb client contract", () => {
                 value: "Create a file named `a.txt` in the project root."
               }
             ],
-            prompt: "Review the issue details. Save changes here, or continue to create the GitHub issue.",
+            prompt: "Review the issue details. Save changes here, or create the GitHub issue.",
             submitTarget: "current-step-input",
-            submitLabel: "Update issue",
+            submitLabel: "Update details",
             title: "Define issue"
           },
           kind: "confirm_files",
-          message: "Review the issue details. Save changes here, or continue to create the GitHub issue.",
+          message: "Review the issue details. Save changes here, or create the GitHub issue.",
           sections: [],
           title: "Define issue"
         },
         step: {
           id: "issue_file_created",
-          label: "Define or select issue",
+          label: "Define work",
           status: "confirm_files"
         }
       },
@@ -1700,14 +1664,14 @@ test.describe("Autopilot dumb client contract", () => {
     await page.goto(`${BASE_URL}/home`);
 
     await expect(page.getByRole("heading", { name: "Define issue" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Update issue" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Accept saved issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Update details" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create GitHub issue" })).toBeVisible();
     await page.getByRole("button", { name: "Send improvement request" }).click();
 
     await expect(page.getByLabel("Issue title")).toBeVisible();
     await expect(page.getByLabel("What should change?")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Update issue" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Accept saved issue" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Update details" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create GitHub issue" })).toHaveCount(0);
     await page.getByLabel("What should change?").fill("Use a clearer title.");
     await page.getByRole("button", { name: "Send improvement request" }).click();
 
@@ -2140,21 +2104,6 @@ function sessionPayload(overrides: Record<string, unknown> = {}) {
 function issueSourceSession(overrides: Record<string, unknown> = {}) {
   const intents = [
     {
-      actionId: "use_existing_issue",
-      enabled: true,
-      id: "use_existing_issue",
-      inputFields: [
-        {
-          label: "Issue URL or number",
-          name: "issueRef",
-          placeholder: "123, #123, or https://github.com/org/repo/issues/123",
-          requiredMessage: "Issue URL or number is required."
-        }
-      ],
-      label: "Solve existing issue",
-      style: "primary"
-    },
-    {
       actionId: "draft_issue",
       enabled: true,
       id: "draft_issue",
@@ -2167,7 +2116,15 @@ function issueSourceSession(overrides: Record<string, unknown> = {}) {
           requiredMessage: "Describe what you want Vibe64 to work on."
         }
       ],
-      label: "Make my own issue",
+      label: "Describe work",
+      style: "primary"
+    },
+    {
+      actionId: "create_issue_on_gh",
+      enabled: false,
+      id: "create_issue_on_gh",
+      inputFields: [],
+      label: "Create issue on GH",
       style: "secondary"
     }
   ];
@@ -2175,7 +2132,7 @@ function issueSourceSession(overrides: Record<string, unknown> = {}) {
     currentStep: "issue_file_created",
     currentStepDefinition: {
       id: "issue_file_created",
-      label: "Define or select issue"
+      label: "Define work"
     },
     intents,
     presentation: {
@@ -2183,32 +2140,32 @@ function issueSourceSession(overrides: Record<string, unknown> = {}) {
         nextOperation: {
           executable: false,
           kind: "stop",
-          reason: "Select an existing issue or draft a new one."
+          reason: "Describe the work before continuing."
         }
       },
       intents,
       screen: {
         kind: "issue_source",
-        message: "Enter a GitHub issue number, or draft a new issue from a description.",
-        primaryIntentId: "use_existing_issue",
+        message: "Describe the work, review the saved details, and create a GitHub issue only when this session requires one.",
+        primaryIntentId: "draft_issue",
         sections: [],
-        title: "Define or select issue"
+        title: "Define work"
       },
       step: {
         id: "issue_file_created",
-        label: "Define or select issue",
+        label: "Define work",
         status: "ready"
       }
     },
     stepDefinitions: [
       {
         id: "issue_file_created",
-        label: "Define or select issue",
+        label: "Define work",
         status: "current"
       },
       {
-        id: "issue_submitted",
-        label: "Edit and submit issue",
+        id: "plan_and_execute",
+        label: "Plan and execute",
         status: "pending"
       }
     ],
@@ -2223,9 +2180,9 @@ function issueSourceSession(overrides: Record<string, unknown> = {}) {
 function workSourceSession(overrides: Record<string, unknown> = {}) {
   const intents = [
     {
-      actionId: "use_new_branch",
+      actionId: "use_new_issue",
       enabled: true,
-      id: "use_new_branch",
+      id: "use_new_issue",
       inputFields: [],
       label: "Start fresh with a new issue",
       style: "primary"
@@ -2259,6 +2216,14 @@ function workSourceSession(overrides: Record<string, unknown> = {}) {
       ],
       label: "Use existing PR",
       style: "secondary"
+    },
+    {
+      actionId: "use_description",
+      enabled: true,
+      id: "use_description",
+      inputFields: [],
+      label: "Describe work without an issue",
+      style: "secondary"
     }
   ];
   return sessionPayload({
@@ -2279,7 +2244,7 @@ function workSourceSession(overrides: Record<string, unknown> = {}) {
       intents,
       screen: {
         kind: "work_source",
-        message: "Start fresh with a new issue, solve an existing issue, or build on an existing pull request.",
+        message: "Start fresh with a new issue, solve an existing issue, build on an existing pull request, or describe work without creating an issue.",
         sections: [],
         title: "Choose starting point"
       },
@@ -2375,128 +2340,95 @@ function worktreeSession(overrides: Record<string, unknown> = {}) {
 }
 
 function existingPrIssueSkipSession(overrides: Record<string, unknown> = {}) {
+  const intents = [
+    {
+      actionId: "draft_issue",
+      enabled: true,
+      id: "draft_issue",
+      inputFields: [
+        {
+          kind: "textarea",
+          label: "What do you want Vibe64 to work on?",
+          name: "conversationRequest",
+          placeholder: "Describe the feature, bug, or change you want.",
+          requiredMessage: "Describe what you want Vibe64 to work on."
+        }
+      ],
+      label: "Describe work",
+      style: "primary"
+    }
+  ];
   return sessionPayload({
+    actions: [
+      {
+        enabled: true,
+        id: "draft_issue",
+        inputFields: [
+          {
+            kind: "textarea",
+            label: "What do you want Vibe64 to work on?",
+            name: "conversationRequest",
+            placeholder: "Describe the feature, bug, or change you want.",
+            requiredMessage: "Describe what you want Vibe64 to work on."
+          }
+        ],
+        label: "Describe work"
+      },
+      {
+        enabled: false,
+        id: "create_issue_on_gh",
+        label: "Create issue on GH"
+      }
+    ],
     currentStep: "issue_file_created",
     currentStepDefinition: {
       id: "issue_file_created",
-      label: "Define or select issue"
+      label: "Define work"
     },
+    intents,
     metadata: {
+      github_issue_mode: "skip",
+      issue_source: "none",
       source_pr_title: "Upstream feature",
       source_pr_update_mode: "stacked",
       source_pr_url: "https://github.com/example/project/pull/77",
+      work_anchor_type: "pull_request",
       work_source: "existing_pr"
     },
     next: {
-      disabledReason: "",
-      enabled: true,
+      disabledReason: "Describe the work before continuing.",
+      enabled: false,
       label: "Next step",
-      stepId: "issue_submitted",
+      stepId: "plan_and_execute",
       visible: true
     },
     presentation: {
       auto: {
         nextOperation: {
-          executable: true,
-          id: "session-advance:issue_submitted",
-          kind: "advance",
-          label: "Next step",
-          route: "session-advance"
+          executable: false,
+          kind: "stop",
+          reason: "Describe the work before continuing."
         }
       },
-      intents: [
-        {
-          actionId: "",
-          disabledReason: "",
-          enabled: true,
-          id: "continue_step",
-          inputFields: [],
-          label: "Next step",
-          operation: "continue",
-          style: "primary"
-        }
-      ],
+      intents,
       screen: {
-        kind: "ready",
+        kind: "issue_source",
+        message: "Describe the work, review the saved details, and create a GitHub issue only when this session requires one.",
+        primaryIntentId: "draft_issue",
         sections: [],
-        title: "Define or select issue"
+        title: "Define work"
       },
       step: {
         id: "issue_file_created",
-        label: "Define or select issue",
-        status: "done"
+        label: "Define work",
+        status: "ready"
       }
     },
     stepMachine: {
-      message: "Skipped: existing PR selected as the work anchor; no GitHub issue is required.",
-      phase: "skipped_existing_pr",
-      skipReason: "Skipped: existing PR selected as the work anchor; no GitHub issue is required.",
-      status: "done",
+      message: "Describe the work before continuing.",
+      phase: "choose_source",
+      status: "ready",
       stepId: "issue_file_created"
-    },
-    ...overrides
-  });
-}
-
-function existingPrIssueSubmittedSkipSession(overrides: Record<string, unknown> = {}) {
-  return sessionPayload({
-    currentStep: "issue_submitted",
-    currentStepDefinition: {
-      id: "issue_submitted",
-      label: "Edit and submit issue"
-    },
-    metadata: {
-      source_pr_title: "Upstream feature",
-      source_pr_update_mode: "stacked",
-      source_pr_url: "https://github.com/example/project/pull/77",
-      work_source: "existing_pr"
-    },
-    next: {
-      disabledReason: "",
-      enabled: true,
-      label: "Next step",
-      stepId: "plan_made",
-      visible: true
-    },
-    presentation: {
-      auto: {
-        nextOperation: {
-          executable: true,
-          id: "session-advance:plan_made",
-          kind: "advance",
-          label: "Next step",
-          route: "session-advance"
-        }
-      },
-      intents: [
-        {
-          actionId: "",
-          disabledReason: "",
-          enabled: true,
-          id: "continue_step",
-          inputFields: [],
-          label: "Next step",
-          operation: "continue",
-          style: "primary"
-        }
-      ],
-      screen: {
-        kind: "ready",
-        sections: [],
-        title: "Edit and submit issue"
-      },
-      step: {
-        id: "issue_submitted",
-        label: "Edit and submit issue",
-        status: "done"
-      }
-    },
-    stepMachine: {
-      message: "Skipped: existing PR selected as the work anchor; no GitHub issue is required.",
-      phase: "skipped_existing_pr",
-      skipReason: "Skipped: existing PR selected as the work anchor; no GitHub issue is required.",
-      status: "done",
-      stepId: "issue_submitted"
     },
     ...overrides
   });

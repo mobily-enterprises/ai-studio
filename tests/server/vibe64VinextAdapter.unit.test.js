@@ -84,7 +84,7 @@ test("vinext prompt actions use the Vinext prompt pack", async () => {
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "vinext_prompt"),
       sessionId: "vinext_prompt"
     });

@@ -71,9 +71,7 @@ const agentConversationStepId = "agent_conversation";
 const changesAcceptedStepId = "changes_accepted";
 const deepUiCheckRunStepId = "deep_ui_check_run";
 const implementationReviewedStepId = "implementation_reviewed";
-const issueSubmittedStepId = "issue_submitted";
-const planExecutedStepId = "plan_executed";
-const planMadeStepId = "plan_made";
+const planAndExecuteStepId = "plan_and_execute";
 const projectKnowledgeUpdatedStepId = "project_knowledge_updated";
 const reportCreatedStepId = "report_created";
 const reviewRunStepId = "review_run";
@@ -85,6 +83,14 @@ const ISSUE_FILE_STEP_ID = "issue_file_created";
 const draftIssueActionId = "draft_issue";
 const rejectIssueDraftActionId = "reject_issue_draft";
 const SEED_APPLICATION_STEP_ID = "seed_application_defined";
+const GITHUB_ISSUE_MODE_METADATA = "github_issue_mode";
+const PLAN_READY_METADATA = "plan_ready";
+const IMPLEMENTATION_DONE_METADATA = "implementation_done";
+const GITHUB_ISSUE_MODES = deepFreeze({
+  CREATE: "create",
+  REUSE: "reuse",
+  SKIP: "skip"
+});
 
 async function skipOptionalCheck(ctx = {}) {
   return ctx.forceAdvance("Skipped optional check.");
@@ -190,25 +196,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
   [ISSUE_FILE_STEP_ID]: {
     actions: [
       {
-        disabledReason: "Issue details are already saved.",
-        disabledWhen: [
-          when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)
-        ],
-        icon: "github",
-        id: "use_existing_issue",
-        inputFields: [
-          {
-            label: "Issue URL or number",
-            name: "issueRef",
-            placeholder: "123, #123, or https://github.com/org/repo/issues/123",
-            requiredMessage: "Issue URL or number is required."
-          }
-        ],
-        label: "Solve existing issue",
-        type: "adapter"
-      },
-      {
-        disabledReason: "Issue details are already saved.",
+        disabledReason: "Work details are already saved.",
         disabledWhen: [
           when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)
         ],
@@ -223,7 +211,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
             requiredMessage: "Describe what you want Vibe64 to work on."
           }
         ],
-        label: "Make my own issue",
+        label: "Describe work",
         promptId: draftIssueActionId,
         recordsConversationTurn: true,
         type: "prompt"
@@ -249,69 +237,62 @@ const coreCodingStepDefinitionsById = deepFreeze({
         promptId: draftIssueActionId,
         recordsConversationTurn: true,
         type: "prompt"
-      }
+      },
+      createIssueOnGithubAction()
     ],
     autopilot: {
       kind: "issue_discussion",
       stop: true
     },
-    description: "Define a new issue or select an existing GitHub issue.",
+    description: "Define the work and create a GitHub issue only when the starting point requires one.",
     id: ISSUE_FILE_STEP_ID,
-    label: "Define or select issue",
+    label: "Define work",
     next: {
-      disabledReason: "Discuss and finalise issue before continuing.",
+      disabledReason: "Define the work before continuing.",
       enabledWhen: [when.allArtifactsReady(ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT)]
     },
     presentation: {
       stop: {
         intents: [
           {
-            actionId: "use_existing_issue",
-            id: "use_existing_issue",
-            label: "Solve existing issue",
+            actionId: draftIssueActionId,
+            id: draftIssueActionId,
+            label: "Describe work",
             style: "primary",
             type: "action"
           },
           {
-            actionId: draftIssueActionId,
-            id: draftIssueActionId,
-            label: "Make my own issue",
+            actionId: "create_issue_on_gh",
+            id: "create_issue_on_gh",
+            label: "Create issue on GH",
             style: "secondary",
             type: "action"
           }
         ],
         screen: {
           kind: "issue_source",
-          message: "Enter a GitHub issue number, or draft a new issue from a description.",
-          primaryIntentId: "use_existing_issue",
-          title: "Define or select issue"
+          message: "Describe the work, review the saved details, and create a GitHub issue only when this session requires one.",
+          primaryIntentId: draftIssueActionId,
+          title: "Define work"
         }
       }
     },
     rewindCleanup: {
-      actionResults: ["use_existing_issue", draftIssueActionId, rejectIssueDraftActionId],
+      actionResults: [draftIssueActionId, rejectIssueDraftActionId, "create_issue_on_gh"],
       artifacts: [ISSUE_TITLE_ARTIFACT, ISSUE_BODY_ARTIFACT, ISSUE_WORD_ARTIFACT],
-      metadata: ["issue_url", "issue_number", "issue_title", "issue_source", ISSUE_WORD_ARTIFACT]
-    }
-  },
-  [issueSubmittedStepId]: {
-    actions: [
-      createIssueOnGithubAction()
-    ],
-    autopilot: {
-      actionId: "create_issue_on_gh",
-      completeWhen: [when.metadataExists("issue_url")],
-      label: "Edit and submit issue"
-    },
-    description: "Review the issue files and submit the GitHub issue.",
-    id: issueSubmittedStepId,
-    label: "Edit and submit issue",
-    next: {
-      enabledWhen: [when.metadataExists("issue_url")]
-    },
-    rewindCleanup: {
-      actionResults: ["create_issue_on_gh"],
-      metadata: ["issue_url", "issue_number", "issue_title"]
+      metadata: [
+        "issue_url",
+        "issue_number",
+        "issue_title",
+        "issue_source",
+        "work_anchor_number",
+        "work_anchor_title",
+        "work_anchor_type",
+        "work_anchor_url",
+        ISSUE_WORD_ARTIFACT,
+        PLAN_READY_METADATA,
+        IMPLEMENTATION_DONE_METADATA
+      ]
     }
   },
   [seedPlanMadeStepId]: {
@@ -354,29 +335,22 @@ const coreCodingStepDefinitionsById = deepFreeze({
       actionResults: ["execute_seed_plan"]
     }
   },
-  [planMadeStepId]: {
+  [planAndExecuteStepId]: {
     actions: [
       {
+        disabledWhen: [when.metadataExists(PLAN_READY_METADATA)],
+        disabledWhenReason: "The plan is already ready.",
         id: "make_plan",
         label: "Make a plan",
         promptId: "make_plan",
         type: "prompt"
-      }
-    ],
-    autopilot: {
-      actionId: "make_plan",
-      label: "Make a plan"
-    },
-    description: "Ask Codex to create the implementation plan.",
-    id: planMadeStepId,
-    label: "Make a plan",
-    rewindCleanup: {
-      actionResults: ["make_plan"]
-    }
-  },
-  [planExecutedStepId]: {
-    actions: [
+      },
       {
+        disabledReason: "Implementation is already complete.",
+        disabledWhen: [when.metadataExists(IMPLEMENTATION_DONE_METADATA)],
+        disabledWhenReason: "Implementation is already complete.",
+        enabledWhen: [when.metadataExists(PLAN_READY_METADATA)],
+        enabledWhenReason: "Make the plan before executing it.",
         id: "execute_plan",
         label: "Execute plan",
         promptId: "execute_plan",
@@ -384,14 +358,30 @@ const coreCodingStepDefinitionsById = deepFreeze({
       }
     ],
     autopilot: {
-      actionId: "execute_plan",
-      label: "Execute plan"
+      actionSequence: [
+        {
+          actionId: "make_plan",
+          completeWhen: [when.metadataExists(PLAN_READY_METADATA)],
+          label: "Make a plan"
+        },
+        {
+          actionId: "execute_plan",
+          completeWhen: [when.metadataExists(IMPLEMENTATION_DONE_METADATA)],
+          label: "Execute plan"
+        }
+      ],
+      label: "Plan and execute"
     },
-    description: "Ask Codex to execute the plan.",
-    id: planExecutedStepId,
-    label: "Execute plan",
+    description: "Ask Codex to create the implementation plan, then execute it.",
+    id: planAndExecuteStepId,
+    label: "Plan and execute",
+    next: {
+      disabledReason: "Execute the plan before continuing.",
+      enabledWhen: [when.metadataExists(IMPLEMENTATION_DONE_METADATA)]
+    },
     rewindCleanup: {
-      actionResults: ["execute_plan"]
+      actionResults: ["make_plan", "execute_plan"],
+      metadata: [PLAN_READY_METADATA, IMPLEMENTATION_DONE_METADATA]
     }
   },
   [implementationReviewedStepId]: {
@@ -690,14 +680,12 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       "worktree_created",
       "dependencies_installed",
       ISSUE_FILE_STEP_ID,
-      issueSubmittedStepId,
-      planMadeStepId,
-      planExecutedStepId,
+      planAndExecuteStepId,
       qaWorkflowGroup({
         humanReview: true
       }),
       finishOffWorkflowGroup({
-        rejectTo: planMadeStepId,
+        rejectTo: planAndExecuteStepId,
         recheckTo: reviewRunStepId
       })
     ],
@@ -732,23 +720,20 @@ function issueFilesAreReady(session = {}) {
   ].every((artifactName) => artifactIsReady(session, artifactName));
 }
 
-async function actionCreatedIssueFiles(context = {}) {
-  const artifacts = context.actionResult?.artifacts && typeof context.actionResult.artifacts === "object"
-    ? context.actionResult.artifacts
-    : {};
-  const storedValues = await Promise.all([
-    context.runtime.store.readArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT),
-    context.runtime.store.readArtifact(context.session.sessionId, ISSUE_BODY_ARTIFACT),
-    context.runtime.store.readArtifact(context.session.sessionId, ISSUE_WORD_ARTIFACT)
-  ]);
-  return [
-    [ISSUE_TITLE_ARTIFACT, storedValues[0]],
-    [ISSUE_BODY_ARTIFACT, storedValues[1]],
-    [ISSUE_WORD_ARTIFACT, storedValues[2]]
-  ].every(([artifactName, storedValue]) => (
-    normalizeText(artifacts[artifactName]) ||
-    normalizeText(storedValue)
-  ));
+function githubIssueMode(session = {}) {
+  return normalizeText(session.metadata?.[GITHUB_ISSUE_MODE_METADATA]);
+}
+
+function githubIssueShouldBeCreated(session = {}) {
+  return githubIssueMode(session) === GITHUB_ISSUE_MODES.CREATE;
+}
+
+function githubIssueShouldBeSkipped(session = {}) {
+  return githubIssueMode(session) === GITHUB_ISSUE_MODES.SKIP;
+}
+
+function githubIssueIsReused(session = {}) {
+  return githubIssueMode(session) === GITHUB_ISSUE_MODES.REUSE;
 }
 
 function disableActions(session = {}, reasonsById = {}) {
@@ -770,6 +755,10 @@ function disableActions(session = {}, reasonsById = {}) {
   });
 }
 
+function inputResponseText(input = {}) {
+  return normalizeText(input.text || input.fields?.response || input.fields?.conversationRequest);
+}
+
 async function readIssueFieldValues(context = {}) {
   const [title, body, word] = await Promise.all([
     context.runtime.store.readArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT),
@@ -784,32 +773,54 @@ async function readIssueFieldValues(context = {}) {
 }
 
 async function writeIssueFieldValues(context = {}, fields = {}) {
-  const title = requireInputValue(fields.title, "Issue title is required.");
-  const body = requireInputValue(fields.body, "Issue body is required.");
+  const title = requireInputValue(fields.title, "Work title is required.");
+  const body = requireInputValue(fields.body, "Work description is required.");
   const word = requireInputValue(fields.word, "Session label is required.");
+  const mode = githubIssueMode(context.session);
+  const preservesExistingPrAnchor = mode === GITHUB_ISSUE_MODES.SKIP &&
+    normalizeText(context.session.metadata?.work_source) === "existing_pr";
+  const staleMetadata = preservesExistingPrAnchor
+    ? ["issue_number", "issue_url"]
+    : ["issue_number", "issue_url", "work_anchor_number", "work_anchor_url"];
+  const metadata = {
+    issue_title: title,
+    ...(preservesExistingPrAnchor ? {} : { work_anchor_title: title }),
+    ...(mode === GITHUB_ISSUE_MODES.SKIP
+      ? {
+          issue_source: "none",
+          ...(preservesExistingPrAnchor ? {} : { work_anchor_type: "description" })
+        }
+      : {
+          issue_source: "draft",
+          work_anchor_type: "issue"
+        })
+  };
 
   await Promise.all([
     context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT, artifactText(title)),
     context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_BODY_ARTIFACT, artifactText(body)),
     context.runtime.store.writeArtifact(context.session.sessionId, ISSUE_WORD_ARTIFACT, artifactText(word)),
-    context.runtime.store.writeMetadataValue(context.session.sessionId, "issue_title", title),
+    ...Object.entries(metadata).map(([name, value]) => context.runtime.store.writeMetadataValue(
+      context.session.sessionId,
+      name,
+      value
+    )),
     context.runtime.store.writeIssueWordMetadata(context.session.sessionId, word),
-    context.runtime.store.deleteMetadataValues(context.session.sessionId, [
-      "issue_number",
-      "issue_source",
-      "issue_url"
-    ])
+    context.runtime.store.deleteMetadataValues(context.session.sessionId, staleMetadata)
   ]);
 }
 
-function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = {}) {
+function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = {}, {
+  createGithubIssue = false
+} = {}) {
   const reviewIntents = status === STEP_STATUS.CONFIRM_FILES
     ? [
         {
           id: "continue_step",
-          label: "Accept saved issue",
+          label: createGithubIssue ? "Create GitHub issue" : "Use this description",
           style: "primary",
-          type: "continue"
+          type: createGithubIssue ? "action" : "continue",
+          ...(createGithubIssue ? { actionId: "create_issue_on_gh" } : {})
         },
         {
           actionId: rejectIssueDraftActionId,
@@ -824,10 +835,10 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
     fields: [
       {
         kind: "text",
-        label: "Issue title",
+        label: createGithubIssue ? "Issue title" : "Work title",
         name: "title",
         required: true,
-        requiredMessage: "Issue title is required.",
+        requiredMessage: createGithubIssue ? "Issue title is required." : "Work title is required.",
         value: values.title || ""
       },
       {
@@ -840,48 +851,50 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
       },
       {
         kind: "textarea",
-        label: "Issue body",
+        label: createGithubIssue ? "Issue body" : "Work description",
         name: "body",
         required: true,
-        requiredMessage: "Issue body is required.",
+        requiredMessage: createGithubIssue ? "Issue body is required." : "Work description is required.",
         value: values.body || ""
       }
     ],
     kind: "confirm_files_run_command",
     intents: reviewIntents,
     prompt: status === STEP_STATUS.CONFIRM_FILES
-      ? "Review the issue details. Save changes here, or continue to create the GitHub issue."
-      : "Discuss the requested change, then submit the issue title, session label, and issue body.",
+      ? (createGithubIssue
+          ? "Review the issue details. Save changes here, or create the GitHub issue."
+          : "Review the work details. Save changes here, or continue without creating a GitHub issue.")
+      : (createGithubIssue
+          ? "Discuss the requested change, then submit the issue title, session label, and issue body."
+          : "Discuss the requested change, then submit the work title, session label, and description."),
     submitKind: status === STEP_STATUS.CONFIRM_FILES
       ? STEP_INPUT_KIND.CONFIRM_FILES
       : STEP_INPUT_KIND.READY,
-    submitLabel: status === STEP_STATUS.CONFIRM_FILES ? "Update issue" : "Save issue",
-    title: "Define issue"
+    submitLabel: status === STEP_STATUS.CONFIRM_FILES ? "Update details" : "Save details",
+    title: createGithubIssue ? "Define issue" : "Define work"
   };
 }
 
 const issueFilePhase = Object.freeze({
   CHOOSE_SOURCE: "choose_source",
+  CREATING_ISSUE: "creating_issue",
   DRAFTING: "drafting",
   EXISTING_SELECTED: "existing_selected",
   REVIEW_DRAFT: "review_draft",
-  SELECTING_EXISTING: "selecting_existing",
-  SKIPPED_EXISTING_PR: "skipped_existing_pr"
+  SKIPPED: "skipped"
 });
 
-function existingPrIsWorkAnchor(session = {}) {
-  return normalizeText(session.metadata?.work_source) === "existing_pr";
+function issueSkipMessage(session = {}) {
+  return normalizeText(session.metadata?.work_source) === "existing_pr"
+    ? "Skipped: existing PR selected as the work anchor; no GitHub issue is required."
+    : "No GitHub issue is required for this session.";
 }
 
-function existingPrIssueSkipMessage() {
-  return "Skipped: existing PR selected as the work anchor; no GitHub issue is required.";
-}
-
-function existingPrIssueSkipState() {
+function issueSkipState(session = {}) {
   return machineState(STEP_STATUS.DONE, {
-    message: existingPrIssueSkipMessage(),
-    phase: issueFilePhase.SKIPPED_EXISTING_PR,
-    skipReason: existingPrIssueSkipMessage()
+    message: issueSkipMessage(session),
+    phase: issueFilePhase.SKIPPED,
+    skipReason: issueSkipMessage(session)
   });
 }
 
@@ -914,7 +927,7 @@ async function submitIssueDraftAgentResult(context = {}, machine = {}, input = {
       await writeState(context, machine, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
         message: input.message,
         phase: issueFilePhase.DRAFTING,
-        response: input.response,
+        response: inputResponseText(input),
         source: input.source
       }));
       return;
@@ -923,7 +936,7 @@ async function submitIssueDraftAgentResult(context = {}, machine = {}, input = {
     case STEP_INPUT_KIND.READY:
       await writeIssueFieldValues(context, input.fields);
       await writeState(context, machine, issueDraftReviewState({
-        response: input.response,
+        response: inputResponseText(input),
         source: input.source
       }));
       return;
@@ -938,11 +951,11 @@ const issueFileMachine = {
   stepId: ISSUE_FILE_STEP_ID,
 
   initialState(context = {}) {
-    if (existingPrIsWorkAnchor(context.session)) {
-      return existingPrIssueSkipState();
-    }
     const filesReady = issueFilesAreReady(context.session);
-    if (filesReady && metadataExists(context.session, "issue_url")) {
+    if (githubIssueShouldBeSkipped(context.session) && filesReady) {
+      return issueSkipState(context.session);
+    }
+    if ((githubIssueIsReused(context.session) || githubIssueShouldBeCreated(context.session)) && filesReady && metadataExists(context.session, "issue_url")) {
       return machineState(STEP_STATUS.DONE, {
         phase: issueFilePhase.EXISTING_SELECTED
       });
@@ -955,9 +968,11 @@ const issueFileMachine = {
   async view(context = {}) {
     let state = await readState(context, this);
     const filesReady = issueFilesAreReady(context.session);
-    if (existingPrIsWorkAnchor(context.session)) {
-      state = existingPrIssueSkipState();
-    } else if (filesReady && metadataExists(context.session, "issue_url")) {
+    const createGithubIssue = githubIssueShouldBeCreated(context.session);
+    const skipGithubIssue = githubIssueShouldBeSkipped(context.session);
+    if (skipGithubIssue && filesReady && state.status !== STEP_STATUS.CONFIRM_FILES && !issueDraftPromptIsActive(state)) {
+      state = issueSkipState(context.session);
+    } else if ((githubIssueIsReused(context.session) || createGithubIssue) && filesReady && metadataExists(context.session, "issue_url")) {
       state = machineState(STEP_STATUS.DONE, {
         phase: issueFilePhase.EXISTING_SELECTED
       });
@@ -975,29 +990,41 @@ const issueFileMachine = {
     switch (state.status) {
       case STEP_STATUS.READY:
         return {
-          actions: disableAction(context.session, rejectIssueDraftActionId, "Draft an issue before requesting improvements."),
-          next: {
-            disabledReason: "Select an existing issue or draft a new one."
-          },
+          actions: disableActions(context.session, {
+            create_issue_on_gh: createGithubIssue
+              ? "Save the issue details before creating the GitHub issue."
+              : "This session continues without creating a GitHub issue.",
+            [rejectIssueDraftActionId]: "Describe the work before requesting improvements."
+          }),
+          next: nextForSession(context.session, {
+            disabledReason: "Describe the work before continuing."
+          }),
           stepMachine: publicState(this, {
             ...state,
-            message: state.message || "Select an existing issue or draft a new one."
+            message: state.message || "Describe the work before continuing."
           })
         };
 
       case STEP_STATUS.ATTEMPTING_EXECUTION:
-        return promptStepWaitingView(context, this, state, {
-          prompt: "Wait for Vibe64 to load the existing GitHub issue.",
-          title: "Loading issue"
-        });
+        return promptStepWaitingView(context, this, state, "Wait for Vibe64 to create the GitHub issue.");
 
       case STEP_STATUS.AWAITING_AGENT_RESULT:
-        return promptStepWaitingView(context, this, state, {
-          prompt: "Wait for Codex to draft the issue.",
-          title: "Drafting issue"
-        });
+        return promptStepWaitingView(context, this, state, "Wait for Codex to draft the work details.");
 
       case STEP_STATUS.WAITING_FOR_INPUT:
+        if (state.phase === issueFilePhase.CREATING_ISSUE) {
+          return {
+            actions: disableAction(context.session, "create_issue_on_gh", "Resolve the issue command before retrying."),
+            interaction: commandFailureInteraction({
+              prompt: state.message || "Could not create the GitHub issue. Explain what should happen, then retry.",
+              title: "Issue command needs attention"
+            }),
+            next: nextForSession(context.session, {
+              disabledReason: "Resolve the issue command before continuing."
+            }),
+            stepMachine: publicState(this, state)
+          };
+        }
         return promptStepWaitingForInputView(context, this, state, {
           prompt: state.message || "Codex needs more information before it can draft the issue.",
           title: "Describe the issue"
@@ -1006,14 +1033,19 @@ const issueFileMachine = {
       case STEP_STATUS.CONFIRM_FILES: {
         const values = await readIssueFieldValues(context);
         return {
-          actions: disableAction(context.session, "use_existing_issue", "Issue details are already saved."),
-          interaction: issueInputInteraction(STEP_STATUS.CONFIRM_FILES, values),
+          actions: skipGithubIssue
+            ? disableAction(context.session, "create_issue_on_gh", "This session continues without creating a GitHub issue.")
+            : context.session.actions,
+          interaction: issueInputInteraction(STEP_STATUS.CONFIRM_FILES, values, {
+            createGithubIssue
+          }),
           next: nextForSession(context.session, {
-            enabled: true
+            disabledReason: createGithubIssue ? "Create the GitHub issue before continuing." : "",
+            enabled: !createGithubIssue
           }),
           stepMachine: publicState(this, {
             ...state,
-            message: state.message || "Review the saved issue draft."
+            message: state.message || (createGithubIssue ? "Review the saved issue draft." : "Review the saved work description.")
           })
         };
       }
@@ -1021,35 +1053,35 @@ const issueFileMachine = {
       case STEP_STATUS.DONE:
         return {
           actions: disableActions(context.session, {
-            use_existing_issue: state.skipReason || "An existing issue is already selected.",
-            [draftIssueActionId]: state.skipReason || "An existing issue is already selected.",
-            [rejectIssueDraftActionId]: state.skipReason || "An existing issue is already selected."
+            create_issue_on_gh: state.skipReason || "The GitHub issue state is already resolved.",
+            [draftIssueActionId]: state.skipReason || "Work details are already saved.",
+            [rejectIssueDraftActionId]: state.skipReason || "Work details are already saved."
           }),
           next: nextForSession(context.session, {
             enabled: true
           }),
           stepMachine: publicState(this, {
             ...state,
-            message: state.message || "Existing GitHub issue selected."
+            message: state.message || "Work details are ready."
           })
         };
 
       case STEP_STATUS.FAILED:
         return {
-          next: {
-            disabledReason: "Resolve the issue selection failure before continuing."
-          },
+          next: nextForSession(context.session, {
+            disabledReason: "Resolve the work definition failure before continuing."
+          }),
           stepMachine: publicState(this, {
             ...state,
-            message: state.message || "Issue selection failed."
+            message: state.message || "Work definition failed."
           })
         };
 
       default:
         return {
-          next: {
-            disabledReason: "Select an existing issue or draft a new one."
-          },
+          next: nextForSession(context.session, {
+            disabledReason: "Describe the work before continuing."
+          }),
           stepMachine: publicState(this, state)
         };
     }
@@ -1063,9 +1095,9 @@ const issueFileMachine = {
       return;
     }
 
-    if (context.actionId === "use_existing_issue") {
+    if (context.actionId === "create_issue_on_gh") {
       await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
-        phase: issueFilePhase.SELECTING_EXISTING
+        phase: issueFilePhase.CREATING_ISSUE
       }));
       return;
     }
@@ -1078,16 +1110,18 @@ const issueFileMachine = {
   },
 
   async actionFinished(context = {}) {
-    if (context.actionId === "use_existing_issue") {
-      if (await commandSucceeded(context, "issue_url") && await actionCreatedIssueFiles(context)) {
+    if (context.actionId === "create_issue_on_gh") {
+      if (await commandSucceeded(context, "issue_url")) {
         await writeState(context, this, machineState(STEP_STATUS.DONE, {
           phase: issueFilePhase.EXISTING_SELECTED
         }));
         return;
       }
-      await writeState(context, this, machineState(STEP_STATUS.FAILED, {
-        message: normalizeText(context.actionResult?.message) || "Could not load the existing GitHub issue.",
-        phase: issueFilePhase.SELECTING_EXISTING
+      await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+        from: STEP_STATUS.ATTEMPTING_EXECUTION,
+        message: normalizeText(context.actionResult?.message) || "Could not create the GitHub issue.",
+        output: normalizeText(context.actionResult?.output),
+        phase: issueFilePhase.CREATING_ISSUE
       }));
       return;
     }
@@ -1102,7 +1136,7 @@ const issueFileMachine = {
         if (input.kind === STEP_INPUT_KIND.CONFIRM_FILES || input.kind === STEP_INPUT_KIND.READY) {
           await writeIssueFieldValues(context, input.fields);
           await writeState(context, this, issueDraftReviewState({
-            response: input.response,
+            response: inputResponseText(input),
             source: input.source
           }));
           return;
@@ -1114,10 +1148,10 @@ const issueFileMachine = {
         return;
 
       case STEP_STATUS.WAITING_FOR_INPUT:
-        if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-          await writeState(context, this, issueSourceSelectionState({
+        if (state.phase === issueFilePhase.CREATING_ISSUE && (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE)) {
+          await writeState(context, this, issueDraftReviewState({
             message: input.message,
-            response: input.response,
+            response: inputResponseText(input),
             source: input.source
           }));
           return;
@@ -1131,10 +1165,12 @@ const issueFileMachine = {
       case STEP_STATUS.CONFIRM_FILES:
         if (input.kind === STEP_INPUT_KIND.CONFIRM_FILES || input.kind === STEP_INPUT_KIND.READY) {
           await writeIssueFieldValues(context, input.fields);
-          await writeState(context, this, issueDraftReviewState({
-            response: input.response,
-            source: input.source
-          }));
+          await writeState(context, this, githubIssueShouldBeSkipped(context.session)
+            ? issueSkipState(context.session)
+            : issueDraftReviewState({
+                response: inputResponseText(input),
+                source: input.source
+              }));
           return;
         }
         throw unsupportedInputKind(input.kind, this.stepId);
@@ -1143,7 +1179,7 @@ const issueFileMachine = {
         if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
           await writeState(context, this, issueSourceSelectionState({
             message: input.message,
-            response: input.response,
+            response: inputResponseText(input),
             source: input.source
           }));
           return;
@@ -1158,9 +1194,12 @@ const issueFileMachine = {
 
   inputCompletionMessage(context = {}) {
     const input = normalizeMachineInput(context.input);
-    return [STEP_INPUT_KIND.READY, STEP_INPUT_KIND.CONFIRM_FILES].includes(input.kind)
-      ? "Issue draft submitted for review."
-      : "";
+    if (![STEP_INPUT_KIND.READY, STEP_INPUT_KIND.CONFIRM_FILES].includes(input.kind)) {
+      return "";
+    }
+    return githubIssueShouldBeSkipped(context.session)
+      ? "Work description saved."
+      : "Issue draft submitted for review.";
   },
 
   promptInstruction() {
@@ -1176,145 +1215,9 @@ const issueFileMachine = {
   }
 };
 
-const issueSubmittedMachine = {
-  stepId: issueSubmittedStepId,
-
-  initialState(context = {}) {
-    if (existingPrIsWorkAnchor(context.session)) {
-      return existingPrIssueSkipState();
-    }
-    if (metadataExists(context.session, "issue_url")) {
-      return machineState(STEP_STATUS.DONE);
-    }
-    return issueFilesAreReady(context.session)
-      ? machineState(STEP_STATUS.READY)
-      : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-          message: "Define and save the issue before creating it on GitHub."
-        });
-  },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    if (existingPrIsWorkAnchor(context.session)) {
-      state = existingPrIssueSkipState();
-    } else if (metadataExists(context.session, "issue_url")) {
-      state = machineState(STEP_STATUS.DONE);
-    } else if (issueFilesAreReady(context.session) && state.status === STEP_STATUS.WAITING_FOR_INPUT && state.from !== STEP_STATUS.ATTEMPTING_EXECUTION) {
-      state = machineState(STEP_STATUS.READY);
-    }
-
-    switch (state.status) {
-      case STEP_STATUS.DONE:
-        return {
-          actions: disableAction(
-            context.session,
-            "create_issue_on_gh",
-            state.skipReason || "The GitHub issue already exists."
-          ),
-          next: nextForSession(context.session, {
-            enabled: true
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.WAITING_FOR_INPUT:
-        return {
-          actions: disableAction(context.session, "create_issue_on_gh", "Resolve the issue command failure before retrying."),
-          interaction: commandFailureInteraction({
-            prompt: state.message || "The GitHub issue command failed. Explain what should happen, then retry the command.",
-            title: "Issue command needs attention"
-          }),
-          next: nextForSession(context.session, {
-            disabledReason: "Resolve the GitHub issue command failure before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-
-      case STEP_STATUS.READY:
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.FAILED:
-      default:
-        return {
-          next: nextForSession(context.session, {
-            disabledReason: "Create the GitHub issue before continuing."
-          }),
-          stepMachine: publicState(this, state)
-        };
-    }
-  },
-
-  async submitInput(context = {}) {
-    const state = await readState(context, this);
-    const input = normalizeMachineInput(context.input);
-    switch (state.status) {
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.FAILED:
-        if (input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED || input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
-          await writeState(context, this, machineState(STEP_STATUS.READY, {
-            response: input.text || input.fields.response,
-            source: input.source
-          }));
-          return;
-        }
-        throw unsupportedInputKind(input.kind, this.stepId);
-
-      case STEP_STATUS.READY:
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.DONE:
-      default:
-        throw vibe64Error("The GitHub issue step cannot accept input right now.", "vibe64_step_input_not_available");
-    }
-  },
-
-  async actionStarted(context = {}) {
-    if (context.actionId !== "create_issue_on_gh") {
-      return;
-    }
-
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.READY:
-      case STEP_STATUS.FAILED:
-        await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION));
-        return;
-
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.DONE:
-      default:
-        return;
-    }
-  },
-
-  async actionFinished(context = {}) {
-    if (context.actionId !== "create_issue_on_gh") {
-      return;
-    }
-
-    const state = await readState(context, this);
-    switch (state.status) {
-      case STEP_STATUS.ATTEMPTING_EXECUTION:
-      case STEP_STATUS.READY:
-      case STEP_STATUS.WAITING_FOR_INPUT:
-      case STEP_STATUS.FAILED:
-        await writeState(context, this, await commandSucceeded(context, "issue_url")
-          ? machineState(STEP_STATUS.DONE)
-          : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-              from: STEP_STATUS.ATTEMPTING_EXECUTION,
-              message: normalizeText(context.actionResult?.message),
-              output: normalizeText(context.actionResult?.output)
-            }));
-        return;
-
-      case STEP_STATUS.DONE:
-      default:
-        return;
-    }
-  }
-};
-
 const makePlanMachine = {
   promptActionId: "make_plan",
-  stepId: planMadeStepId,
+  stepId: planAndExecuteStepId,
 
   initialState() {
     return machineState(STEP_STATUS.READY);
@@ -1384,7 +1287,7 @@ const seedPlanMadeMachine = {
 
 const executePlanMachine = {
   promptActionId: "execute_plan",
-  stepId: planExecutedStepId,
+  stepId: planAndExecuteStepId,
 
   initialState() {
     return machineState(STEP_STATUS.READY);
@@ -1425,6 +1328,194 @@ const executePlanMachine = {
       doneMeaning: "The implementation work is complete enough to continue to review.",
       waitingForInputMeaning: "You cannot continue implementation without a user decision or missing project detail."
     });
+  }
+};
+
+const planAndExecutePhase = Object.freeze({
+  EXECUTING: "executing",
+  PLANNING: "planning",
+  PLAN_READY: "plan_ready"
+});
+
+function planAndExecuteReadyState(details = {}) {
+  return machineState(STEP_STATUS.READY, {
+    phase: planAndExecutePhase.PLANNING,
+    ...details
+  });
+}
+
+function planAndExecutePlanReadyState(details = {}) {
+  return machineState(STEP_STATUS.READY, {
+    phase: planAndExecutePhase.PLAN_READY,
+    ...details
+  });
+}
+
+async function markPlanAndExecuteActionStarted(context = {}, machine = {}, {
+  actionId = "",
+  phase = ""
+} = {}) {
+  if (context.actionId !== actionId) {
+    return;
+  }
+  const state = await readState(context, machine);
+  switch (state.status) {
+    case STEP_STATUS.READY:
+    case STEP_STATUS.FAILED:
+    case STEP_STATUS.WAITING_FOR_INPUT:
+      await writeState(context, machine, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
+        phase,
+        response: state.response,
+        source: state.source
+      }));
+      return;
+    case STEP_STATUS.AWAITING_AGENT_RESULT:
+    case STEP_STATUS.DONE:
+    default:
+      return;
+  }
+}
+
+const planAndExecuteMachine = {
+  promptActionId: "make_plan",
+  stepId: planAndExecuteStepId,
+
+  initialState(context = {}) {
+    if (metadataExists(context.session, IMPLEMENTATION_DONE_METADATA)) {
+      return machineState(STEP_STATUS.DONE, {
+        phase: planAndExecutePhase.EXECUTING
+      });
+    }
+    if (metadataExists(context.session, PLAN_READY_METADATA)) {
+      return planAndExecutePlanReadyState();
+    }
+    return planAndExecuteReadyState();
+  },
+
+  async view(context = {}) {
+    let state = await readState(context, this);
+    if (metadataExists(context.session, IMPLEMENTATION_DONE_METADATA)) {
+      state = machineState(STEP_STATUS.DONE, {
+        phase: planAndExecutePhase.EXECUTING
+      });
+    } else if (
+      metadataExists(context.session, PLAN_READY_METADATA) &&
+      ![STEP_STATUS.AWAITING_AGENT_RESULT, STEP_STATUS.WAITING_FOR_INPUT].includes(state.status)
+    ) {
+      state = planAndExecutePlanReadyState({
+        from: state.status
+      });
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.DONE:
+        return promptStepDoneView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return promptStepWaitingForInputView(context, this, state, {
+          actionId: state.phase === planAndExecutePhase.EXECUTING ? "execute_plan" : "make_plan",
+          prompt: state.message || "Codex needs more information before this step can continue."
+        });
+      case STEP_STATUS.READY:
+      case STEP_STATUS.AWAITING_AGENT_RESULT:
+      case STEP_STATUS.FAILED:
+      default:
+        return promptStepWaitingView(
+          context,
+          this,
+          state,
+          state.phase === planAndExecutePhase.PLAN_READY
+            ? "Ask Codex to execute the plan before continuing."
+            : "Ask Codex to make the plan before continuing."
+        );
+    }
+  },
+
+  async submitInput(context = {}) {
+    const state = await readState(context, this);
+    const input = normalizeMachineInput(context.input);
+    if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
+      assertAgentResultSource(context.session, input);
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.READY:
+      case STEP_STATUS.AWAITING_AGENT_RESULT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.FAILED:
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.AWAITING_AGENT_RESULT,
+            message: input.message,
+            phase: state.phase || planAndExecutePhase.PLANNING,
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind === STEP_INPUT_KIND.USER_RESPONSE) {
+          await writeState(context, this, machineState(STEP_STATUS.READY, {
+            message: input.message,
+            phase: state.phase || planAndExecutePhase.PLANNING,
+            response: inputResponseText(input),
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind === STEP_INPUT_KIND.READY || input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED) {
+          if (state.phase === planAndExecutePhase.EXECUTING) {
+            await context.runtime.store.writeMetadataValue(context.session.sessionId, IMPLEMENTATION_DONE_METADATA, "yes");
+            await writeState(context, this, machineState(STEP_STATUS.DONE, {
+              message: input.message,
+              phase: planAndExecutePhase.EXECUTING,
+              source: input.source
+            }));
+            return;
+          }
+          await context.runtime.store.writeMetadataValue(context.session.sessionId, PLAN_READY_METADATA, "yes");
+          await writeState(context, this, planAndExecutePlanReadyState({
+            message: input.message,
+            source: input.source
+          }));
+          return;
+        }
+        throw unsupportedInputKind(input.kind, this.stepId);
+
+      case STEP_STATUS.DONE:
+      default:
+        throw vibe64Error("This step is already complete.", "vibe64_step_input_not_available");
+    }
+  },
+
+  inputCompletionMessage(context = {}) {
+    const input = normalizeMachineInput(context.input);
+    if (input.kind !== STEP_INPUT_KIND.READY) {
+      return "";
+    }
+    return context.session.stepMachine?.phase === planAndExecutePhase.EXECUTING
+      ? "Implementation submitted for review."
+      : "Plan submitted for review.";
+  },
+
+  async actionStarted(context = {}) {
+    await markPlanAndExecuteActionStarted(context, this, {
+      actionId: "make_plan",
+      phase: planAndExecutePhase.PLANNING
+    });
+    await markPlanAndExecuteActionStarted(context, this, {
+      actionId: "execute_plan",
+      phase: planAndExecutePhase.EXECUTING
+    });
+  },
+
+  promptInstruction({ action = {} } = {}) {
+    return normalizeText(action.id) === "execute_plan"
+      ? currentStepHelperInstruction({
+          doneMeaning: "The implementation work is complete enough to continue to review.",
+          waitingForInputMeaning: "You cannot continue implementation without a user decision or missing project detail."
+        })
+      : currentStepHelperInstruction({
+          doneMeaning: "The implementation plan has been written in the Codex response and is ready for execution.",
+          waitingForInputMeaning: "You cannot make a useful plan without a user decision or clarification."
+        });
   }
 };
 
@@ -1614,11 +1705,6 @@ const coreCodingSteps = Object.freeze(Object.values(Object.freeze({
     id: ISSUE_FILE_STEP_ID,
     machine: issueFileMachine
   },
-  [issueSubmittedStepId]: {
-    definition: coreCodingStepDefinitionsById[issueSubmittedStepId],
-    id: issueSubmittedStepId,
-    machine: issueSubmittedMachine
-  },
   [seedPlanMadeStepId]: {
     definition: coreCodingStepDefinitionsById[seedPlanMadeStepId],
     id: seedPlanMadeStepId,
@@ -1629,15 +1715,10 @@ const coreCodingSteps = Object.freeze(Object.values(Object.freeze({
     id: seedPlanExecutedStepId,
     machine: seedPlanExecutedMachine
   },
-  [planMadeStepId]: {
-    definition: coreCodingStepDefinitionsById[planMadeStepId],
-    id: planMadeStepId,
-    machine: makePlanMachine
-  },
-  [planExecutedStepId]: {
-    definition: coreCodingStepDefinitionsById[planExecutedStepId],
-    id: planExecutedStepId,
-    machine: executePlanMachine
+  [planAndExecuteStepId]: {
+    definition: coreCodingStepDefinitionsById[planAndExecuteStepId],
+    id: planAndExecuteStepId,
+    machine: planAndExecuteMachine
   },
   [implementationReviewedStepId]: {
     config: {
@@ -1719,11 +1800,9 @@ const _testing = deepFreeze({
   ownedStepIds: [
     SEED_APPLICATION_STEP_ID,
     ISSUE_FILE_STEP_ID,
-    issueSubmittedStepId,
     seedPlanMadeStepId,
     seedPlanExecutedStepId,
-    planMadeStepId,
-    planExecutedStepId,
+    planAndExecuteStepId,
     implementationReviewedStepId,
     agentConversationStepId,
     deepUiCheckRunStepId,

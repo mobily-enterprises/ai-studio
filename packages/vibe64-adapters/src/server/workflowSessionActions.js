@@ -72,11 +72,26 @@ function prCanUseStackedBase(pr = {}) {
     pr.isCrossRepository === false;
 }
 
-async function useNewBranchSessionAction() {
+async function useNewIssueSessionAction() {
   return adapterActionResult({
-    message: "Starting fresh with a new issue.",
+    message: "Starting fresh with a new GitHub issue.",
     metadata: {
-      work_source: "new_branch"
+      github_issue_mode: "create",
+      issue_source: "new",
+      work_anchor_type: "issue",
+      work_source: "new_issue"
+    }
+  });
+}
+
+async function useDescriptionSessionAction() {
+  return adapterActionResult({
+    message: "Starting from a plain work description.",
+    metadata: {
+      github_issue_mode: "skip",
+      issue_source: "none",
+      work_anchor_type: "description",
+      work_source: "description"
     }
   });
 }
@@ -134,6 +149,7 @@ async function useExistingIssueSessionAction({
     },
     message: `Selected GitHub issue #${issue.number}: ${title}`,
     metadata: {
+      github_issue_mode: "reuse",
       issue_number: String(issue.number || ""),
       issue_source: "existing",
       issue_title: title,
@@ -203,6 +219,7 @@ async function useExistingPrSessionAction({
   return adapterActionResult({
     message: `Selected GitHub PR #${pr.number}: ${title}`,
     metadata: {
+      github_issue_mode: "skip",
       issue_source: "none",
       source_pr_base_ref: normalizeText(pr.baseRefName),
       source_pr_head_ref: normalizeText(pr.headRefName),
@@ -226,9 +243,10 @@ async function useExistingPrSessionAction({
 
 const VIBE64_WORKFLOW_SESSION_ACTIONS = Object.freeze({
   skip_merge: skipMergeSessionAction,
+  use_description: useDescriptionSessionAction,
   use_existing_issue: useExistingIssueSessionAction,
   use_existing_pr: useExistingPrSessionAction,
-  use_new_branch: useNewBranchSessionAction
+  use_new_issue: useNewIssueSessionAction
 });
 
 async function runVibe64WorkflowSessionAction(actionId, context = {}) {

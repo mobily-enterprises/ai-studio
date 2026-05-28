@@ -567,7 +567,7 @@ function useVibe64AutopilotController({
     active.value = true;
     activeStage.value = intent.label || "Run intent";
     try {
-      await actions.runIntentById?.({
+      const response = await actions.runIntentById?.({
         fields,
         intentId: intent.id,
         sessionId: currentSession.value?.sessionId || "",
@@ -576,6 +576,10 @@ function useVibe64AutopilotController({
       });
       await refreshSessionData();
       await nextTick();
+      const actionResultStatus = String(response?.actionResult?.status || "");
+      if (actionResultStatus === "blocked" || actionResultStatus === "failed") {
+        return false;
+      }
       if (failure.value) {
         return false;
       }

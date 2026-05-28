@@ -42,7 +42,7 @@ test("vibe64 prompt renderer renders explicit session context into prompt templa
         dryRun: true
       },
       session: {
-        currentStep: "plan_made",
+        currentStep: "plan_and_execute",
         metadata: {
           z_last: "last",
           a_first: "first",
@@ -298,7 +298,7 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
     systemPromptPackRoot: false
   });
   const baseSession = {
-    currentStep: "plan_executed",
+    currentStep: "plan_and_execute",
     metadata: {
       code_index_path: ".jskit/helper-map.md"
     },
@@ -336,7 +336,7 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
     },
     session: {
       ...baseSession,
-      currentStep: "plan_made"
+      currentStep: "plan_and_execute"
     }
   });
 

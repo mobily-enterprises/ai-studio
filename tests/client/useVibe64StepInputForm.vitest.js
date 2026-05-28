@@ -7,7 +7,7 @@ import {
 
 function promptResponseSession(prompt) {
   return {
-    currentStep: "plan_executed",
+    currentStep: "plan_and_execute",
     presentation: {
       screen: {
         input: {
@@ -101,7 +101,7 @@ describe("useVibe64StepInputForm", () => {
       },
       kind: "user_response",
       source: "ui",
-      stepId: "plan_executed",
+      stepId: "plan_and_execute",
       stepStatus: "waiting_for_input"
     });
   });
@@ -119,7 +119,7 @@ describe("useVibe64StepInputForm", () => {
 
   it("only applies numbered question sugar to a single plain response field", () => {
     const session = ref({
-      currentStep: "plan_executed",
+      currentStep: "plan_and_execute",
       presentation: {
         screen: {
           input: {

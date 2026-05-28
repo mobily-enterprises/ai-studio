@@ -391,15 +391,27 @@ function presentationFromConfig(session = {}, config = {}) {
   };
 }
 
-function configuredStopIntentsExcept(session = {}, excludedIntentIds = []) {
+function fallbackContinueIntentExcept(session = {}, excluded = new Set()) {
+  if (session.next?.visible === false || !session.next?.stepId) {
+    return [];
+  }
+  const fallback = continueIntent(session);
+  return excluded.has(fallback.id) ? [] : [fallback];
+}
+
+function configuredStopIntentsExcept(session = {}, excludedIntentIds = [], {
+  useConfigured = true
+} = {}) {
   const excluded = new Set(excludedIntentIds.map(normalizeText).filter(Boolean));
+  if (!useConfigured) {
+    return fallbackContinueIntentExcept(session, excluded);
+  }
   const stopIntents = stopScreenPresentation(session).intents
     .filter((candidate) => !excluded.has(candidate.id));
   if (stopIntents.length > 0 || session.next?.visible === false || !session.next?.stepId) {
     return stopIntents;
   }
-  const fallback = continueIntent(session);
-  return excluded.has(fallback.id) ? [] : [fallback];
+  return fallbackContinueIntentExcept(session, excluded);
 }
 
 function stopScreenPresentation(session = {}) {
@@ -474,7 +486,9 @@ function interactionPresentation(session = {}) {
     return {
       intents: [
         primaryIntent,
-        ...configuredStopIntentsExcept(session, [conversationIntentId])
+        ...configuredStopIntentsExcept(session, [conversationIntentId], {
+          useConfigured: stepMachineStatus(session) !== STEP_STATUS.WAITING_FOR_INPUT
+        })
       ],
       screen: screen("conversation", {
         input: inputPresentation(interaction, {

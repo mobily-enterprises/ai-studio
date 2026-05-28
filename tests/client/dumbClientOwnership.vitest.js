@@ -23,7 +23,7 @@ const SERVER_OWNED_WORKFLOW_WORDS = Object.freeze([
   "make_plan",
   "make_seed_plan",
   "merge_pr",
-  "plan_made",
+  "plan_and_execute",
   "pr_merged",
   "prepare_for_merge",
   "project_validated",

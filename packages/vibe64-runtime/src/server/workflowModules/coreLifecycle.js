@@ -86,7 +86,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         disabledWhen: [when.metadataExists("work_source")],
         advanceOnSuccess: true,
         icon: "branch",
-        id: "use_new_branch",
+        id: "use_new_issue",
         label: "Start fresh with a new issue",
         type: "adapter"
       },
@@ -123,6 +123,15 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         ],
         label: "Use existing PR",
         type: "adapter"
+      },
+      {
+        disabledReason: "Work source is already selected.",
+        disabledWhen: [when.metadataExists("work_source")],
+        advanceOnSuccess: true,
+        icon: "message-square-plus",
+        id: "use_description",
+        label: "Describe work without an issue",
+        type: "adapter"
       }
     ],
     autopilot: {
@@ -131,7 +140,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       label: "Choose starting point",
       stop: true
     },
-    description: "Choose whether this session starts fresh with a new issue, solves an existing issue, or builds on an existing pull request.",
+    description: "Choose whether this session starts fresh with a new issue, solves an existing issue, builds on an existing pull request, or starts from a plain work description.",
     id: workSourceSelectedStepId,
     label: "Choose starting point",
     next: {
@@ -142,8 +151,8 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       stop: {
         intents: [
           {
-            actionId: "use_new_branch",
-            id: "use_new_branch",
+            actionId: "use_new_issue",
+            id: "use_new_issue",
             label: "Start fresh with a new issue",
             style: "primary",
             type: "action"
@@ -161,11 +170,18 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
             label: "Use existing PR",
             style: "secondary",
             type: "action"
+          },
+          {
+            actionId: "use_description",
+            id: "use_description",
+            label: "Describe work without an issue",
+            style: "secondary",
+            type: "action"
           }
         ],
         screen: {
           kind: "work_source",
-          message: "Start fresh with a new issue, solve an existing issue, or build on an existing pull request.",
+          message: "Start fresh with a new issue, solve an existing issue, build on an existing pull request, or describe work without creating an issue.",
           sections: [],
           title: "Choose starting point"
         }
@@ -653,7 +669,7 @@ const workSourceSelectedMachine = {
   },
 
   async actionFinished(context = {}) {
-    if (!["use_new_branch", "use_existing_issue", "use_existing_pr"].includes(context.actionId)) {
+    if (!["use_new_issue", "use_existing_issue", "use_existing_pr", "use_description"].includes(context.actionId)) {
       return;
     }
 

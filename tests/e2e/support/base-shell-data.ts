@@ -564,7 +564,7 @@ const completedArchiveSession = {
   branch: "issue-2-session-history",
   issueUrl: "https://github.com/merc/example-target-app/issues/2",
   prUrl: "https://github.com/merc/example-target-app/pull/12",
-  completedSteps: ["issue_created", "plan_made", "plan_executed"],
+  completedSteps: ["issue_created", "plan_and_execute"],
   finalReportText: "Completed archive report."
 };
 
@@ -573,7 +573,7 @@ const abandonedArchiveSession = {
   status: "abandoned",
   branch: "issue-2-abandoned-session",
   issueUrl: "https://github.com/merc/example-target-app/issues/2",
-  completedSteps: ["issue_created", "plan_made"]
+  completedSteps: ["issue_created"]
 };
 
 export {

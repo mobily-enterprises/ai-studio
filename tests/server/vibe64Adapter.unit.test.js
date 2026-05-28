@@ -159,7 +159,7 @@ test("vibe64 prompt actions include adapter facts in rendered prompt context", a
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "plan_made",
+      initialStep: "plan_and_execute",
       metadata: worktreeMetadata(targetRoot, "adapter_prompt"),
       sessionId: "adapter_prompt"
     });

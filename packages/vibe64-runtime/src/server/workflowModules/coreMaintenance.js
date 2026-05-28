@@ -113,7 +113,10 @@ const coreMaintenanceWorkflowDefinitions = [
     id: workflowDefinitionIds.NON_COMMIT_MAINTENANCE,
     label: "Non-commit maintenance",
     initialMetadata: {
-      work_source: "new_branch"
+      github_issue_mode: "skip",
+      issue_source: "none",
+      work_anchor_type: "description",
+      work_source: "description"
     },
     sessionWord: "maintenance",
     steps: [
