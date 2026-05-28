@@ -258,6 +258,32 @@ test.describe("Autopilot dumb client contract", () => {
     ]);
   });
 
+  test("advances immediately after selecting a starting point", async ({ page }) => {
+    const intentRequests: unknown[] = [];
+    const session = workSourceSession();
+    await mockVibe64Session(page, session, {
+      onIntent: (body) => {
+        intentRequests.push(body);
+        Object.assign(session, worktreeSession());
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await page.getByRole("button", { name: "Start fresh with a new issue" }).click();
+
+    await expect.poll(() => intentRequests).toEqual([
+      {
+        fields: {},
+        stepId: "work_source_selected",
+        stepStatus: "ready"
+      }
+    ]);
+    await expect(page.getByRole("heading", { name: "Create worktree" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Choose starting point" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Next step" })).toHaveCount(0);
+  });
+
   test("auto-advances skipped issue steps for an existing PR work anchor", async ({ page }) => {
     const advances: string[] = [];
     const session = existingPrIssueSkipSession();
@@ -2278,6 +2304,71 @@ function workSourceSession(overrides: Record<string, unknown> = {}) {
     stepMachine: {
       status: "ready",
       stepId: "work_source_selected"
+    },
+    ...overrides
+  });
+}
+
+function worktreeSession(overrides: Record<string, unknown> = {}) {
+  return sessionPayload({
+    actions: [
+      {
+        dispatchRoute: "command-terminal",
+        enabled: true,
+        id: "create_worktree",
+        label: "Create worktree",
+        type: "command"
+      }
+    ],
+    currentStep: "worktree_created",
+    currentStepDefinition: {
+      id: "worktree_created",
+      label: "Create worktree"
+    },
+    next: {
+      enabled: false,
+      stepId: "dependencies_installed",
+      visible: true
+    },
+    presentation: {
+      auto: {
+        nextOperation: {
+          actionId: "create_worktree",
+          executable: true,
+          id: "command-terminal:create_worktree",
+          kind: "command",
+          label: "Create worktree",
+          route: "command-terminal"
+        }
+      },
+      intents: [],
+      screen: {
+        kind: "action",
+        message: "Create the session worktree.",
+        sections: [],
+        title: "Create worktree"
+      },
+      step: {
+        id: "worktree_created",
+        label: "Create worktree",
+        status: "ready"
+      }
+    },
+    stepDefinitions: [
+      {
+        id: "work_source_selected",
+        label: "Choose starting point",
+        status: "done"
+      },
+      {
+        id: "worktree_created",
+        label: "Create worktree",
+        status: "current"
+      }
+    ],
+    stepMachine: {
+      status: "ready",
+      stepId: "worktree_created"
     },
     ...overrides
   });

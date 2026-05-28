@@ -90,7 +90,6 @@ async function createSession(page: Page) {
 async function createNewBranchSessionAtIssueStep(page: Page) {
   await createSession(page);
   await chooseNewBranch(page);
-  await goNextToStep(page, "worktree_created");
   await runCommandAndWaitForMetadata(page, "Create worktree", "worktree_path");
   await goNextToStep(page, "dependencies_installed");
   await runCommandAndWaitForMetadata(page, "Install dependencies", "dependencies_installed", UI_COMMAND_TIMEOUT_MS);
@@ -100,9 +99,7 @@ async function createNewBranchSessionAtIssueStep(page: Page) {
 async function chooseNewBranch(page: Page) {
   await clickButton(page, "Start fresh with a new issue");
   await expectSessionMetadata(page, "work_source", "new_branch");
-  await expectButtonDisabled(page, "Start fresh with a new issue");
-  await expectButtonDisabled(page, "Use existing PR");
-  await expectButtonEnabled(page, "Next step");
+  await expectStep(page, "worktree_created");
 }
 
 async function chooseExistingPr(page: Page, prRef: string) {
@@ -110,7 +107,7 @@ async function chooseExistingPr(page: Page, prRef: string) {
   await fillInputDialog(page, "PR URL or number", prRef);
   const session = await expectSessionMetadata(page, "work_source", "existing_pr");
   expect(session.metadata?.source_pr_url || "").toContain("/pull/");
-  await expectButtonEnabled(page, "Next step");
+  await expectStep(page, "worktree_created");
 }
 
 async function useExistingIssue(page: Page, issueRef: string) {

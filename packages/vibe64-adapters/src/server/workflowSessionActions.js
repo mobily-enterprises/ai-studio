@@ -74,7 +74,7 @@ function prCanUseStackedBase(pr = {}) {
 
 async function useNewBranchSessionAction() {
   return adapterActionResult({
-    message: "Selected a new Vibe64 branch.",
+    message: "Starting fresh with a new issue.",
     metadata: {
       work_source: "new_branch"
     }

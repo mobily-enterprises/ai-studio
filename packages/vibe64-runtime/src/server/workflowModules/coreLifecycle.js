@@ -84,6 +84,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       {
         disabledReason: "Work source is already selected.",
         disabledWhen: [when.metadataExists("work_source")],
+        advanceOnSuccess: true,
         icon: "branch",
         id: "use_new_branch",
         label: "Start fresh with a new issue",
@@ -92,6 +93,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       {
         disabledReason: "Work source is already selected.",
         disabledWhen: [when.metadataExists("work_source")],
+        advanceOnSuccess: true,
         icon: "github",
         id: "use_existing_issue",
         inputFields: [
@@ -108,6 +110,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       {
         disabledReason: "Work source is already selected.",
         disabledWhen: [when.metadataExists("work_source")],
+        advanceOnSuccess: true,
         icon: "github",
         id: "use_existing_pr",
         inputFields: [

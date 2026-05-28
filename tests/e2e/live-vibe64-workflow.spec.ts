@@ -86,7 +86,6 @@ test.describe("live Vibe64 session workflow", () => {
   test("starts a new session, chooses a new branch, creates a worktree, and installs dependencies", async ({ page }) => {
     await createSession(page);
     await chooseNewBranch(page);
-    await goNextToStep(page, "worktree_created");
     await runCommandAndWaitForMetadata(page, "Create worktree", "worktree_path");
     await expectButtonEnabled(page, "Next step");
 
@@ -359,7 +358,6 @@ test.describe("live Vibe64 session workflow", () => {
 
     await createSession(page);
     await chooseExistingPr(page, pullRequest.url);
-    await goNextToStep(page, "worktree_created");
     await runCommandAndWaitForMetadata(page, "Create worktree", "worktree_path", UI_COMMAND_TIMEOUT_MS);
 
     const worktreeSession = await expectSessionMetadata(page, "source_pr_update_mode", "stacked");

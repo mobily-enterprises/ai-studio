@@ -2078,6 +2078,15 @@ test("vibe64 runtime rejects the seed definition after seeding is no longer requ
 test("vibe64 runtime advance records completed steps and moves to the next workflow step", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
+      actionHandlers: {
+        use_new_branch: async () => ({
+          message: "Starting fresh with a new issue.",
+          metadata: {
+            work_source: "new_branch"
+          },
+          status: "completed"
+        })
+      },
       clock: () => new Date("2026-05-16T01:02:03.000Z"),
       targetRoot
     });
@@ -2115,10 +2124,14 @@ test("vibe64 runtime advance records completed steps and moves to the next workf
       "prRef"
     ]);
 
-    await runtime.store.writeMetadataValue("advance_flow", "work_source", "new_branch");
-    const afterSecondAdvance = await runtime.advance("advance_flow");
-    assert.equal(afterSecondAdvance.currentStep, "worktree_created");
-    assert.deepEqual(afterSecondAdvance.completedSteps, [
+    const afterWorkSource = await runtime.runIntent("advance_flow", "use_new_branch", {
+      stepId: afterFirstAdvance.currentStep,
+      stepStatus: afterFirstAdvance.stepMachine.status
+    });
+    assert.equal(afterWorkSource.currentStep, "worktree_created");
+    assert.equal(afterWorkSource.metadata.work_source, "new_branch");
+    assert.equal(afterWorkSource.actionResult.message, "Starting fresh with a new issue.");
+    assert.deepEqual(afterWorkSource.completedSteps, [
       "session_created",
       "work_source_selected"
     ]);

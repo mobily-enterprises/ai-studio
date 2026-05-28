@@ -193,6 +193,18 @@ function actionLogEntry(action, session, actionResult) {
   };
 }
 
+function actionResultCompleted(actionResult = {}) {
+  return normalizeText(actionResult.status || "completed") === "completed";
+}
+
+function actionCanAdvanceOnSuccess(action = {}, actionResult = {}, session = {}) {
+  return action.advanceOnSuccess === true &&
+    actionResultCompleted(actionResult) &&
+    session.next?.visible !== false &&
+    session.next?.enabled === true &&
+    Boolean(session.next?.stepId);
+}
+
 function actionResultRecord(action, session, input, handlerResult = {}) {
   const result = { ...(handlerResult || {}) };
   delete result.recordsConversationTurn;
@@ -922,8 +934,12 @@ class Vibe64SessionRuntime {
         );
         await recordStepMachineActionFinished(this, actionSession, actionAfterStart.id, actionResult);
 
+        const actionCompletedSession = await this.runActionSessionView(actionSession.sessionId);
+        const finalSession = actionCanAdvanceOnSuccess(actionAfterStart, actionResult, actionCompletedSession)
+          ? await this.advance(actionSession.sessionId)
+          : actionCompletedSession;
         const viewedSession = {
-          ...await this.runActionSessionView(actionSession.sessionId),
+          ...finalSession,
           actionResult
         };
         vibe64SessionDebugLog("server.runtime.runAction.done", {
