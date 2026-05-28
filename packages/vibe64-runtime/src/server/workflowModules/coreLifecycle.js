@@ -46,10 +46,11 @@ const worktreeCreatedStepId = "worktree_created";
 const dependenciesInstalledStepId = "dependencies_installed";
 const changesCommittedStepId = "changes_committed";
 const createAndMergePullRequestStepId = "create_and_merge_pull_request";
-const mainCheckoutSyncedStepId = "main_checkout_synced";
 const sessionFinishedStepId = "session_finished";
 const installDependenciesActionId = "install_dependencies";
 const dependenciesInstalledMetadataName = "dependencies_installed";
+const syncMainCheckoutActionId = "sync_main_checkout";
+const mainCheckoutSyncedMetadataName = "main_checkout_synced";
 
 async function recordMergeIntent(ctx = {}) {
   await ctx.writeMetadata("autopilot_merge_intent", "merge_and_sync");
@@ -350,6 +351,24 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         type: "command"
       },
       {
+        adapterCapability: syncMainCheckoutActionId,
+        disabledReason: "Merge the pull request before syncing the main checkout.",
+        disabledWhen: [
+          when.metadataExists(mainCheckoutSyncedMetadataName),
+          when.metadataExists("merge_skipped")
+        ],
+        disabledWhenReason: "The main checkout sync has already been resolved.",
+        enabledWhen: [
+          when.metadataExists("pr_url"),
+          when.metadataExists("pr_merged")
+        ],
+        enabledWhenReason: "Merge the pull request before syncing the main checkout.",
+        icon: "sync",
+        id: syncMainCheckoutActionId,
+        label: "Sync main checkout",
+        type: "command"
+      },
+      {
         disabledReason: "A merge decision has already been recorded.",
         disabledWhen: [
           when.metadataExists("pr_merged"),
@@ -375,16 +394,16 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
           label: "Create PR on GH"
         }
       ],
-      label: "Create and merge PR"
+      label: "Create pull request, possibly merge"
     },
-    description: "Submit the pull request body, create the GitHub pull request, then merge or skip merging.",
+    description: "Submit the pull request body, create the GitHub pull request, then merge and sync the main checkout or skip merging.",
     id: createAndMergePullRequestStepId,
-    label: "Create and merge PR",
+    label: "Create pull request, possibly merge",
     next: {
-      disabledReason: "Create the pull request and merge it or choose not to merge before continuing.",
+      disabledReason: "Create the pull request, then merge and sync the main checkout or choose not to merge before continuing.",
       enabledWhen: [
         when.any(
-          when.metadataExists("pr_merged"),
+          when.metadataExists(mainCheckoutSyncedMetadataName),
           when.metadataExists("merge_skipped")
         )
       ]
@@ -397,6 +416,8 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
           metadataName: "autopilot_merge_intent",
           metadataValue: "merge_and_sync",
           prepareActionId: "prepare_for_merge",
+          syncActionId: syncMainCheckoutActionId,
+          syncedMetadataName: mainCheckoutSyncedMetadataName,
           skippedMetadataName: "merge_skipped"
         }
       },
@@ -423,7 +444,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       }
     },
     rewindCleanup: {
-      actionResults: ["resolve_pull_request", "create_pr_on_gh", "prepare_for_merge", "merge_pr", "skip_merge"],
+      actionResults: ["resolve_pull_request", "create_pr_on_gh", "prepare_for_merge", "merge_pr", syncMainCheckoutActionId, "skip_merge"],
       artifacts: [
         PULL_REQUEST_BODY_DRAFT_ARTIFACT,
         PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
@@ -449,46 +470,10 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
           }
         },
         "pr_merged",
+        mainCheckoutSyncedMetadataName,
         "merge_skipped",
         "autopilot_merge_intent"
       ]
-    }
-  },
-  [mainCheckoutSyncedStepId]: {
-    actions: [
-      {
-        adapterCapability: "sync_main_checkout",
-        disabledReason: "Merge the pull request before syncing the main checkout.",
-        enabledWhen: [
-          when.metadataExists("pr_url"),
-          when.metadataExists("pr_merged")
-        ],
-        icon: "sync",
-        id: "sync_main_checkout",
-        label: "Sync main checkout",
-        type: "command"
-      }
-    ],
-    autopilot: {
-      actionId: "sync_main_checkout",
-      completeWhen: [when.metadataExists("main_checkout_synced")],
-      label: "Sync main checkout"
-    },
-    description: "Sync the main checkout after a successful merge.",
-    id: mainCheckoutSyncedStepId,
-    label: "Sync main checkout",
-    next: {
-      disabledReason: "Sync the main checkout after merging before continuing.",
-      enabledWhen: [
-        when.any(
-          when.metadataExists("main_checkout_synced"),
-          when.metadataExists("merge_skipped")
-        )
-      ]
-    },
-    rewindCleanup: {
-      actionResults: ["sync_main_checkout"],
-      metadata: ["main_checkout_synced"]
     }
   },
   [sessionFinishedStepId]: {
@@ -499,7 +484,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         enabledWhen: [
           when.metadataExists("pr_url"),
           when.any(
-            when.metadataExists("main_checkout_synced"),
+            when.metadataExists(mainCheckoutSyncedMetadataName),
             when.metadataExists("merge_skipped")
           )
         ],
@@ -922,11 +907,17 @@ const pullRequestPhase = Object.freeze({
   MERGE_READY: "merge_ready",
   MERGING: "merging",
   PREPARING_MERGE: "preparing_merge",
-  REVIEW_DRAFT: "review_draft"
+  REVIEW_DRAFT: "review_draft",
+  SYNC_READY: "sync_ready",
+  SYNCING_MAIN: "syncing_main"
 });
 
-function mergeDecisionRecorded(session = {}) {
-  return metadataExists(session, "pr_merged") || metadataExists(session, "merge_skipped");
+function pullRequestStepComplete(session = {}) {
+  return metadataExists(session, mainCheckoutSyncedMetadataName) || metadataExists(session, "merge_skipped");
+}
+
+function mainCheckoutSyncPending(session = {}) {
+  return metadataExists(session, "pr_merged") && !metadataExists(session, mainCheckoutSyncedMetadataName);
 }
 
 function mergeReviewAutopilot() {
@@ -942,8 +933,13 @@ const createAndMergePullRequestMachine = {
   stepId: createAndMergePullRequestStepId,
 
   initialState(context = {}) {
-    if (mergeDecisionRecorded(context.session)) {
+    if (pullRequestStepComplete(context.session)) {
       return machineState(STEP_STATUS.DONE);
+    }
+    if (mainCheckoutSyncPending(context.session)) {
+      return machineState(STEP_STATUS.READY, {
+        phase: pullRequestPhase.SYNC_READY
+      });
     }
     if (metadataExists(context.session, "pr_url")) {
       return machineState(STEP_STATUS.READY, {
@@ -961,8 +957,15 @@ const createAndMergePullRequestMachine = {
 
   async view(context = {}) {
     let state = await readState(context, this);
-    if (mergeDecisionRecorded(context.session)) {
+    if (pullRequestStepComplete(context.session)) {
       state = machineState(STEP_STATUS.DONE);
+    } else if (mainCheckoutSyncPending(context.session) && ![
+      STEP_STATUS.ATTEMPTING_EXECUTION,
+      STEP_STATUS.WAITING_FOR_INPUT
+    ].includes(state.status)) {
+      state = machineState(STEP_STATUS.READY, {
+        phase: pullRequestPhase.SYNC_READY
+      });
     } else if (metadataExists(context.session, "pr_url") && ![
       STEP_STATUS.AWAITING_AGENT_RESULT,
       STEP_STATUS.ATTEMPTING_EXECUTION,
@@ -975,7 +978,12 @@ const createAndMergePullRequestMachine = {
     } else if (
       pullRequestFilesAreReady(context.session) &&
       state.status !== STEP_STATUS.CONFIRM_FILES &&
-      ![pullRequestPhase.CREATING_PR, pullRequestPhase.PREPARING_MERGE, pullRequestPhase.MERGING].includes(state.phase)
+      ![
+        pullRequestPhase.CREATING_PR,
+        pullRequestPhase.PREPARING_MERGE,
+        pullRequestPhase.MERGING,
+        pullRequestPhase.SYNCING_MAIN
+      ].includes(state.phase)
     ) {
       state = machineState(STEP_STATUS.CONFIRM_FILES, {
         phase: pullRequestPhase.REVIEW_DRAFT
@@ -1001,21 +1009,32 @@ const createAndMergePullRequestMachine = {
       }
 
       case STEP_STATUS.WAITING_FOR_INPUT:
-        if ([pullRequestPhase.CREATING_PR, pullRequestPhase.MERGING].includes(state.phase)) {
+        if ([pullRequestPhase.CREATING_PR, pullRequestPhase.MERGING, pullRequestPhase.SYNCING_MAIN].includes(state.phase)) {
+          const waitingActionId = state.phase === pullRequestPhase.MERGING
+            ? "merge_pr"
+            : (state.phase === pullRequestPhase.SYNCING_MAIN ? syncMainCheckoutActionId : "create_pr_on_gh");
           return {
             actions: disableAction(
               context.session,
-              state.phase === pullRequestPhase.MERGING ? "merge_pr" : "create_pr_on_gh",
+              waitingActionId,
               state.phase === pullRequestPhase.MERGING
                 ? "Resolve the merge command before retrying."
-                : "Resolve the pull request command before retrying."
+                : (state.phase === pullRequestPhase.SYNCING_MAIN
+                    ? "Resolve the main checkout sync command before retrying."
+                    : "Resolve the pull request command before retrying.")
             ),
             interaction: commandFailureInteraction({
-              prompt: state.message || "The pull request command failed. Explain what should happen, then retry.",
-              title: state.title || "Pull request needs attention"
+              prompt: state.message || (state.phase === pullRequestPhase.SYNCING_MAIN
+                ? "The main checkout sync command failed. Explain what should happen, then retry it."
+                : "The pull request command failed. Explain what should happen, then retry."),
+              title: state.title || (state.phase === pullRequestPhase.SYNCING_MAIN
+                ? "Main checkout sync needs attention"
+                : "Pull request needs attention")
             }),
             next: nextForSession(context.session, {
-              disabledReason: "Resolve the pull request command before continuing."
+              disabledReason: state.phase === pullRequestPhase.SYNCING_MAIN
+                ? "Resolve the main checkout sync command before continuing."
+                : "Resolve the pull request command before continuing."
             }),
             stepMachine: publicState(this, state)
           };
@@ -1034,7 +1053,16 @@ const createAndMergePullRequestMachine = {
         if (state.phase === pullRequestPhase.MERGE_READY) {
           return {
             next: nextForSession(context.session, {
-              disabledReason: "Merge the pull request or choose not to merge before continuing."
+              disabledReason: "Merge the pull request and sync the main checkout, or choose not to merge before continuing."
+            }),
+            stepMachine: publicState(this, state),
+            workflowAutopilot: mergeReviewAutopilot()
+          };
+        }
+        if (state.phase === pullRequestPhase.SYNC_READY) {
+          return {
+            next: nextForSession(context.session, {
+              disabledReason: "Sync the main checkout after merging before continuing."
             }),
             stepMachine: publicState(this, state),
             workflowAutopilot: mergeReviewAutopilot()
@@ -1046,7 +1074,7 @@ const createAndMergePullRequestMachine = {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.FAILED:
       default:
-        return promptStepWaitingView(context, this, state, "Create the pull request and merge it or choose not to merge before continuing.");
+        return promptStepWaitingView(context, this, state, "Create the pull request, then merge and sync the main checkout or choose not to merge before continuing.");
     }
   },
 
@@ -1084,6 +1112,14 @@ const createAndMergePullRequestMachine = {
                   response: input.text || input.fields.response,
                   source: input.source
                 }));
+            return;
+          }
+          if (state.phase === pullRequestPhase.SYNCING_MAIN) {
+            await writeState(context, this, machineState(STEP_STATUS.READY, {
+              phase: pullRequestPhase.SYNC_READY,
+              response: input.text || input.fields.response,
+              source: input.source
+            }));
             return;
           }
           await writeState(context, this, machineState(STEP_STATUS.READY, {
@@ -1150,6 +1186,13 @@ const createAndMergePullRequestMachine = {
         actionId: context.actionId,
         phase: pullRequestPhase.MERGING
       }));
+      return;
+    }
+    if (context.actionId === syncMainCheckoutActionId) {
+      await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
+        actionId: context.actionId,
+        phase: pullRequestPhase.SYNCING_MAIN
+      }));
     }
   },
 
@@ -1174,13 +1217,27 @@ const createAndMergePullRequestMachine = {
     }
     if (context.actionId === "merge_pr") {
       await writeState(context, this, await actionCreatedMetadata(context, "pr_merged")
-        ? machineState(STEP_STATUS.DONE)
+        ? machineState(STEP_STATUS.READY, {
+            phase: pullRequestPhase.SYNC_READY
+          })
         : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
             from: STEP_STATUS.ATTEMPTING_EXECUTION,
             message: normalizeText(context.actionResult?.message),
             output: normalizeText(context.actionResult?.output),
             phase: pullRequestPhase.MERGING,
             title: "Merge needs attention"
+          }));
+      return;
+    }
+    if (context.actionId === syncMainCheckoutActionId) {
+      await writeState(context, this, await actionCreatedMetadata(context, mainCheckoutSyncedMetadataName)
+        ? machineState(STEP_STATUS.DONE)
+        : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.ATTEMPTING_EXECUTION,
+            message: normalizeText(context.actionResult?.message),
+            output: normalizeText(context.actionResult?.output),
+            phase: pullRequestPhase.SYNCING_MAIN,
+            title: "Main checkout sync needs attention"
           }));
     }
   },
@@ -1208,44 +1265,6 @@ const createAndMergePullRequestMachine = {
           doneMeaning: "The pull request title and body are ready for user confirmation.",
           waitingForInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
         });
-  }
-};
-
-const mainCheckoutSyncedMachine = {
-  stepId: mainCheckoutSyncedStepId,
-
-  initialState(context = {}) {
-    return metadataExists(context.session, "main_checkout_synced") || metadataExists(context.session, "merge_skipped")
-      ? machineState(STEP_STATUS.DONE)
-      : machineState(STEP_STATUS.READY);
-  },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    if (metadataExists(context.session, "main_checkout_synced") || metadataExists(context.session, "merge_skipped")) {
-      state = machineState(STEP_STATUS.DONE);
-    }
-    return commandStepView(context, this, state, {
-      disabledReason: "Sync the main checkout after merging before continuing.",
-      failurePrompt: "The main checkout sync command failed. Explain what should happen, then retry it.",
-      failureTitle: "Main checkout sync needs attention"
-    });
-  },
-
-  async submitInput(context = {}) {
-    return submitCommandFailureInput(context, this);
-  },
-
-  async actionStarted(context = {}) {
-    return markCommandActionStarted(context, this, ["sync_main_checkout"]);
-  },
-
-  async actionFinished(context = {}) {
-    return writeCommandActionFinishedState(context, this, {
-      actionIds: ["sync_main_checkout"],
-      done: await actionCreatedMetadata(context, "main_checkout_synced"),
-      failureTitle: "Main checkout sync needs attention"
-    });
   }
 };
 
@@ -1346,7 +1365,7 @@ function pullRequestInputInteraction(values = {}) {
     prompt: "Review the pull request details. Save changes here, or continue to create the GitHub pull request.",
     submitKind: STEP_INPUT_KIND.CONFIRM_FILES,
     submitLabel: "Update PR",
-    title: "Create and merge PR"
+    title: "Create pull request, possibly merge"
   };
 }
 
@@ -1382,11 +1401,6 @@ const coreLifecycleSteps = Object.freeze([
     machine: createAndMergePullRequestMachine
   },
   {
-    definition: coreLifecycleStepDefinitionsById[mainCheckoutSyncedStepId],
-    id: mainCheckoutSyncedStepId,
-    machine: mainCheckoutSyncedMachine
-  },
-  {
     definition: coreLifecycleStepDefinitionsById[sessionFinishedStepId],
     id: sessionFinishedStepId,
     machine: sessionFinishedMachine
@@ -1408,7 +1422,6 @@ const _testing = deepFreeze({
     dependenciesInstalledStepId,
     changesCommittedStepId,
     createAndMergePullRequestStepId,
-    mainCheckoutSyncedStepId,
     sessionFinishedStepId
   ]
 });

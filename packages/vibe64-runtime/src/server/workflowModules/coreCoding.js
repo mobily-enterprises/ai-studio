@@ -134,7 +134,6 @@ function finishOffWorkflowGroup({
       reportAndKnowledgeUpdatedStepId,
       "changes_committed",
       "create_and_merge_pull_request",
-      "main_checkout_synced",
       "session_finished"
     ]
   });

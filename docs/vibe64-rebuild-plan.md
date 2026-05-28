@@ -356,7 +356,7 @@ Checklist:
 - [ ] `Create PR on GH` is an action.
 - [ ] `Prepare for merge` is a prompt action.
 - [ ] `Merge` is a command action.
-- [ ] `Sync main checkout` is a command action.
+- [ ] `Sync main checkout` is a command action inside the pull request merge step.
 - [ ] `Finish` is an action.
 
 Acceptance:
@@ -391,10 +391,7 @@ Default workflow:
 - Accept changes
 - Update project knowledge
 - Commit changes
-- Create PR file
-- Edit and create PR
-- Merge PR
-- Sync main checkout
+- Create pull request, possibly merge
 - Finish session
 
 Checklist:

@@ -436,6 +436,9 @@ function validateWorkflowContract(workflow = {}) {
     if (Object.keys(mergeIntent).length > 0) {
       requireActionReference(failures, actionIds, mergeIntent.prepareActionId, `${context}.presentation.automation.mergeIntent.prepareActionId`);
       requireActionReference(failures, actionIds, mergeIntent.mergeActionId, `${context}.presentation.automation.mergeIntent.mergeActionId`);
+      if (normalizedText(mergeIntent.syncActionId)) {
+        requireActionReference(failures, actionIds, mergeIntent.syncActionId, `${context}.presentation.automation.mergeIntent.syncActionId`);
+      }
       if (normalizedText(mergeIntent.metadataValue) && !allIntentIds.has(normalizedText(mergeIntent.metadataValue))) {
         addMissingReference(failures, {
           context: `${context}.presentation.automation.mergeIntent.metadataValue`,
@@ -1281,6 +1284,12 @@ test("vibe64 runtime runs server-owned intents and rejects stale intent submissi
 test("vibe64 runtime owns final-review follow-up and merge decision intents", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          merge_pr: true,
+          sync_main_checkout: true
+        }
+      }),
       targetRoot
     });
 
@@ -1382,6 +1391,18 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
     assert.equal(mergeReview.presentation.auto.nextOperation.route, "session-action");
     assert.equal(mergeReview.presentation.auto.nextOperation.actionId, "prepare_for_merge");
 
+    await runtime.store.writeMetadataValue("presentation_merge_intents", "pr_merged", "yes");
+    const syncPending = await runtime.getSession("presentation_merge_intents");
+    assert.equal(syncPending.next.enabled, false);
+    assert.equal(syncPending.presentation.auto.nextOperation.kind, "command");
+    assert.equal(syncPending.presentation.auto.nextOperation.executable, true);
+    assert.equal(syncPending.presentation.auto.nextOperation.actionId, "sync_main_checkout");
+
+    await runtime.store.writeMetadataValue("presentation_merge_intents", "main_checkout_synced", "yes");
+    const mergeComplete = await runtime.getSession("presentation_merge_intents");
+    assert.equal(mergeComplete.next.enabled, true);
+    assert.equal(mergeComplete.presentation.auto.nextOperation.kind, "advance");
+
     await runtime.createSession({
       initialStep: "create_and_merge_pull_request",
       metadata: {
@@ -1450,7 +1471,6 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "report_and_update_knowledge",
     "changes_committed",
     "create_and_merge_pull_request",
-    "main_checkout_synced",
     "session_finished"
   ]);
   assert.deepEqual(seedApplication.steps.map((step) => step.id).slice(0, 6), [
@@ -1489,6 +1509,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "create_pr_on_gh",
     "prepare_for_merge",
     "merge_pr",
+    "sync_main_checkout",
     "skip_merge"
   ]);
   assert.deepEqual(createPullRequestStep.autopilot.actionSequence.map((action) => action.actionId), [
@@ -1496,6 +1517,8 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "create_pr_on_gh"
   ]);
   assert.equal(createPullRequestStep.interaction, undefined);
+  assert.equal(createPullRequestStep.label, "Create pull request, possibly merge");
+  assert.equal(createPullRequestStep.autopilot.label, "Create pull request, possibly merge");
   assert.deepEqual(createPullRequestStep.rewindCleanup.artifacts, [
     "tmp/create_and_merge_pull_request.body.md",
     "tmp/create_and_merge_pull_request.title.txt",

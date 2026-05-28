@@ -578,6 +578,7 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     assert.equal(prSubmittedActions.create_pr_on_gh, false);
     assert.equal(prSubmittedActions.prepare_for_merge, true);
     assert.equal(prSubmittedActions.merge_pr, true);
+    assert.equal(prSubmittedActions.sync_main_checkout, false);
     assert.equal(prSubmittedActions.skip_merge, true);
   });
 });
@@ -602,6 +603,7 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       open_pr: false,
       prepare_for_merge: false,
       resolve_pull_request: true,
+      sync_main_checkout: false,
       skip_merge: false
     });
 
@@ -614,6 +616,7 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       open_pr: true,
       prepare_for_merge: true,
       resolve_pull_request: false,
+      sync_main_checkout: false,
       skip_merge: true
     });
 
@@ -629,18 +632,20 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     );
 
     await runtime.createSession({
-      initialStep: "main_checkout_synced",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         pr_url: "https://github.com/example/repo/pull/24"
       },
       sessionId: "jskit_sync_blocked"
     });
     const syncBlocked = await runtime.getSession("jskit_sync_blocked");
-    assert.equal(syncBlocked.actions[0].enabled, false);
-    assert.equal(syncBlocked.actions[0].disabledReason, "Merge the pull request before syncing the main checkout.");
+    const syncBlockedAction = syncBlocked.actions.find((action) => action.id === "sync_main_checkout");
+    assert.equal(syncBlockedAction.enabled, false);
+    assert.equal(syncBlockedAction.disabledReason, "Merge the pull request before syncing the main checkout.");
+    assert.equal(syncBlocked.next.enabled, false);
 
     await runtime.createSession({
-      initialStep: "main_checkout_synced",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         pr_merged: "yes",
         pr_url: "https://github.com/example/repo/pull/24"
@@ -648,7 +653,8 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       sessionId: "jskit_sync"
     });
     const syncReady = await runtime.getSession("jskit_sync");
-    assert.equal(syncReady.actions[0].enabled, true);
+    assert.equal(syncReady.actions.find((action) => action.id === "sync_main_checkout").enabled, true);
+    assert.equal(syncReady.next.enabled, false);
 
     await runtime.createSession({
       initialStep: "session_finished",
