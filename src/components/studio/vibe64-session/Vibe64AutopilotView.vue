@@ -608,7 +608,7 @@ const statusTitleIsCodexChat = computed(() => String(displayStatusText.value || 
 const statusTitleVisible = computed(() => !statusTitleIsCodexChat.value);
 const displayRunning = computed(() => Boolean(screenState.value.showProgress));
 const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
-const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command" && !stepInput.visible));
+const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command"));
 const stepInputFormVisible = computed(() => Boolean(
   stepInput.visible &&
   !displayRunning.value &&

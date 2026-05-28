@@ -587,6 +587,163 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByRole("heading", { name: "Next server step" })).toBeVisible();
   });
 
+  test("keeps a running Autopilot command alive when switching sessions", async ({ page }) => {
+    await mockCommandTerminalSocketThatExits(page, {
+      delayMs: 2000,
+      exitCode: 1,
+      output: "install failed\n"
+    });
+    let commandTerminalCloses = 0;
+    const commandSession = sessionPayload({
+      actions: [
+        {
+          dispatchRoute: "command-terminal",
+          enabled: true,
+          id: "install_dependencies",
+          label: "Install dependencies",
+          type: "command"
+        }
+      ],
+      currentStep: "dependencies_installed",
+      currentStepDefinition: {
+        id: "dependencies_installed",
+        label: "Install dependencies"
+      },
+      presentation: {
+        auto: {
+          nextOperation: {
+            actionId: "install_dependencies",
+            executable: true,
+            id: "command-terminal:install_dependencies",
+            kind: "command",
+            label: "Install dependencies",
+            route: "command-terminal"
+          }
+        },
+        screen: {
+          kind: "action",
+          sections: [],
+          title: "Install dependencies"
+        },
+        step: {
+          id: "dependencies_installed",
+          label: "Install dependencies",
+          status: "ready"
+        }
+      },
+      sessionId: "session-alpha",
+      sessionName: "Alpha",
+      stepDefinitions: [
+        {
+          id: "dependencies_installed",
+          label: "Install dependencies",
+          status: "current"
+        }
+      ],
+      stepMachine: {
+        status: "ready",
+        stepId: "dependencies_installed"
+      }
+    });
+    const otherSession = sessionPayload({
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "stop",
+            reason: "Other session is waiting."
+          }
+        },
+        screen: {
+          kind: "ready",
+          sections: [],
+          title: "Other session"
+        },
+        step: {
+          id: "other_step",
+          label: "Other step",
+          status: "ready"
+        }
+      },
+      sessionId: "session-beta",
+      sessionName: "Beta"
+    });
+    await mockVibe64Session(page, commandSession, {
+      onCommandTerminalClose: () => {
+        commandTerminalCloses += 1;
+        Object.assign(commandSession, {
+          presentation: {
+            ...(commandSession.presentation as Record<string, unknown>),
+            auto: {
+              nextOperation: {
+                executable: false,
+                kind: "wait",
+                reason: "Resolve the install command failure before continuing."
+              }
+            },
+            screen: {
+              input: {
+                fields: [
+                  {
+                    kind: "textarea",
+                    label: "What should happen next?",
+                    name: "response",
+                    required: true
+                  }
+                ],
+                kind: "command_failure_response",
+                prompt: "Install dependencies failed with exit code 1.",
+                submitLabel: "Save response",
+                submitTarget: "current-step-input",
+                title: "Install command needs attention"
+              },
+              kind: "input",
+              message: "Install dependencies failed with exit code 1.",
+              sections: [],
+              title: "Install command needs attention"
+            },
+            step: {
+              id: "dependencies_installed",
+              label: "Install dependencies",
+              status: "waiting_for_input"
+            }
+          },
+          stepMachine: {
+            from: "attempting_execution",
+            message: "Install dependencies failed with exit code 1.",
+            status: "waiting_for_input",
+            stepId: "dependencies_installed"
+          }
+        });
+      },
+      onCommandTerminalStart: () => ({
+        commandPreview: "npm install",
+        id: "server-command-terminal",
+        ok: true,
+        status: "running"
+      }),
+      sessionList: [otherSession, commandSession]
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page.locator(".studio-autopilot__command-terminal-overlay strong", {
+      hasText: "Command running."
+    })).toBeVisible();
+
+    await page.locator(".studio-ai-sessions__tab", { hasText: "Beta" }).click();
+    await page.waitForTimeout(30);
+    expect(commandTerminalCloses).toBe(0);
+    await expect(page.getByRole("heading", { name: "Other session" })).toBeVisible();
+    await expect.poll(() => commandTerminalCloses).toBe(1);
+
+    await page.locator(".studio-ai-sessions__tab", { hasText: "Alpha" }).click();
+    await expect(page.locator(".studio-autopilot__command-terminal-overlay strong", {
+      hasText: "Command needs attention."
+    })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Get AI to fix it" })).toBeVisible();
+    await expect(page.getByLabel("What should happen next?")).toHaveCount(0);
+  });
+
   test("attaches to the server-owned Codex terminal preview without sending terminal input", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     let codexTerminalStartRequests = 0;
@@ -2025,6 +2182,71 @@ async function mockCommandTerminalSocketThatCloses(page: Page) {
     }
 
     window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
+}
+
+async function mockCommandTerminalSocketThatExits(page: Page, {
+  delayMs = 0,
+  exitCode = 0,
+  output = "Server command output."
+} = {}) {
+  await page.addInitScript(({ delayMs: exitDelayMs, exitCode: commandExitCode, output: commandOutput }) => {
+    const OriginalWebSocket = window.WebSocket;
+
+    class MockWebSocket extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = MockWebSocket.CONNECTING;
+      url = "";
+
+      constructor(url) {
+        super();
+        this.url = String(url || "");
+        const pathname = new URL(this.url, window.location.href).pathname;
+        if (!pathname.includes("/command-terminal/")) {
+          return new OriginalWebSocket(url);
+        }
+        window.setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(new MessageEvent("message", {
+            data: JSON.stringify({
+              session: {
+                commandPreview: "npm install",
+                ok: true,
+                output: commandOutput,
+                status: "running"
+              },
+              type: "snapshot"
+            })
+          }));
+          window.setTimeout(() => {
+            this.dispatchEvent(new MessageEvent("message", {
+              data: JSON.stringify({
+                exitCode: commandExitCode,
+                status: "exited",
+                type: "status"
+              })
+            }));
+          }, exitDelayMs);
+        }, 0);
+      }
+
+      send() {}
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close"));
+      }
+    }
+
+    window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  }, {
+    delayMs,
+    exitCode,
+    output
   });
 }
 

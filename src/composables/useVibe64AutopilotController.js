@@ -146,6 +146,14 @@ function serverNoLongerPresentsCommand(previousOperation = {}, session = {}) {
   return operationKey(nextOperation) !== operationKey(previousOperation);
 }
 
+function serverPresentsCommandFailureInput(session = {}) {
+  return String(currentScreen(session).input?.kind || "") === "command_failure_response";
+}
+
+function resultSessionId(result = {}) {
+  return String(result?.sessionId || "").trim();
+}
+
 function useVibe64AutopilotController({
   actions = {},
   commandCompletionRefreshAttempts = COMMAND_COMPLETION_REFRESH_ATTEMPTS,
@@ -158,6 +166,7 @@ function useVibe64AutopilotController({
   const active = ref(false);
   const activeStage = ref("");
   const failure = ref(null);
+  const activeCommandSessionId = ref("");
   const lastCommandResult = ref(null);
   const lastDispatchedOperationKey = ref("");
   const recoveryRunning = ref(false);
@@ -169,15 +178,37 @@ function useVibe64AutopilotController({
   const autopilotEnabled = computed(() => readRefOrGetterValue(enabled) !== false);
   const currentSession = computed(() => readSession(session));
   const nextOperation = computed(() => currentOperation(currentSession.value));
-  const commandOutput = computed(() => String(readRefOrGetterValue(commandRunner.output) || ""));
-  const commandPreview = computed(() => String(readRefOrGetterValue(commandRunner.commandPreview) || ""));
-  const commandResult = computed(() => readRefOrGetterValue(commandRunner.lastResult) || lastCommandResult.value || null);
-  const commandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
+  const currentSessionId = computed(() => String(currentSession.value?.sessionId || ""));
+  const rawCommandResult = computed(() => readRefOrGetterValue(commandRunner.lastResult) || lastCommandResult.value || null);
+  const rawCommandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
+  const commandSessionId = computed(() => (
+    resultSessionId(rawCommandResult.value) ||
+    String(readRefOrGetterValue(commandRunner.activeSessionId) || activeCommandSessionId.value || "")
+  ));
+  const commandVisibleForCurrentSession = computed(() => Boolean(
+    commandSessionId.value &&
+    commandSessionId.value === currentSessionId.value
+  ));
+  const commandOutput = computed(() => commandVisibleForCurrentSession.value
+    ? String(readRefOrGetterValue(commandRunner.output) || "")
+    : "");
+  const commandPreview = computed(() => commandVisibleForCurrentSession.value
+    ? String(readRefOrGetterValue(commandRunner.commandPreview) || "")
+    : "");
+  const commandResult = computed(() => commandVisibleForCurrentSession.value ? rawCommandResult.value : null);
+  const commandRunning = computed(() => rawCommandRunning.value && commandVisibleForCurrentSession.value);
   const commandFailed = computed(() => commandResult.value?.ok === false);
-  const running = computed(() => active.value || commandRunning.value);
+  const visibleFailure = computed(() => {
+    if (!failure.value) {
+      return null;
+    }
+    const failedSessionId = String(failure.value.sessionId || "");
+    return !failedSessionId || failedSessionId === currentSessionId.value ? failure.value : null;
+  });
+  const running = computed(() => active.value || rawCommandRunning.value);
   const nextOperationKey = computed(() => operationKey(nextOperation.value));
   const nextOperationDispatchKey = computed(() => [
-    currentSession.value?.sessionId || "",
+    currentSessionId.value,
     nextOperationKey.value
   ].join("::"));
   const canDispatchNextOperation = computed(() => {
@@ -185,7 +216,7 @@ function useVibe64AutopilotController({
     const nextOperationReady = operationCanDispatch(nextOperation.value);
     const dispatchKeyIsNew = nextOperationDispatchKey.value !== lastDispatchedOperationKey.value;
     const controllerIdle = !running.value;
-    const noAutopilotFailure = !failure.value;
+    const noAutopilotFailure = !visibleFailure.value;
     const noCommandFailure = !commandFailed.value;
 
     return Boolean(
@@ -221,11 +252,11 @@ function useVibe64AutopilotController({
         title: commandRunning.value ? "Command running." : "Command needs attention."
       };
     }
-    if (failure.value) {
+    if (visibleFailure.value) {
       return {
         icon: "warning",
         kind: "failure",
-        message: String(failure.value.error || ""),
+        message: String(visibleFailure.value.error || ""),
         showProgress: false,
         title: "Attention required"
       };
@@ -252,13 +283,22 @@ function useVibe64AutopilotController({
     lastCommandResult.value = null;
   }
 
+  function selectedSessionIs(sessionId = "") {
+    return Boolean(sessionId) && currentSessionId.value === sessionId;
+  }
+
+  function currentSessionFor(sessionId = "") {
+    return selectedSessionIs(sessionId) ? currentSession.value : null;
+  }
+
   function stopWithFailure(result = {}) {
+    const failedSessionId = resultSessionId(result) || currentSessionId.value;
     vibe64SessionDebugLog("client.autopilot.failure", {
       actionId: String(result.actionId || ""),
       actionLabel: String(result.actionLabel || result.actionId || "Action"),
       error: String(result.error || "Autopilot action failed."),
       exitCode: result.exitCode ?? null,
-      sessionId: String(currentSession.value?.sessionId || ""),
+      sessionId: failedSessionId,
       source: String(result.source || "")
     });
     failure.value = {
@@ -268,6 +308,7 @@ function useVibe64AutopilotController({
       error: String(result.error || "Autopilot action failed."),
       exitCode: result.exitCode ?? null,
       output: String(result.output || ""),
+      sessionId: failedSessionId,
       source: String(result.source || "")
     };
   }
@@ -279,7 +320,7 @@ function useVibe64AutopilotController({
         ...operationDebugSummary(nextOperation.value),
         commandFailed: commandFailed.value,
         enabled: autopilotEnabled.value,
-        failure: Boolean(failure.value),
+        failure: Boolean(visibleFailure.value),
         running: running.value
       });
       return;
@@ -391,6 +432,7 @@ function useVibe64AutopilotController({
       return autopilotPromise;
     }
     const startedAtMs = Date.now();
+    const runSessionId = currentSessionId.value;
     vibe64SessionDebugLog("client.autopilot.runUntilStopPoint.start", {
       ...vibe64SessionDebugSummary(currentSession.value || {}),
       ...operationDebugSummary(nextOperation.value)
@@ -403,21 +445,22 @@ function useVibe64AutopilotController({
       } finally {
         autopilotPromise = null;
       }
-    } while (shouldContinueAutopilotLoop());
+    } while (shouldContinueAutopilotLoop(runSessionId));
     vibe64SessionDebugLog("client.autopilot.runUntilStopPoint.done", {
       ...vibe64SessionDebugSummary(currentSession.value || {}),
       durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-      failure: Boolean(failure.value),
+      failure: Boolean(visibleFailure.value),
       stopRequested
     });
   }
 
-  function shouldContinueAutopilotLoop() {
+  function shouldContinueAutopilotLoop(runSessionId = "") {
     const rerunWasRequested = rerunRequested;
     const nextOperationReady = canDispatchNextOperation.value;
     const stopWasRequested = stopRequested;
+    const sameSessionIsSelected = !runSessionId || currentSessionId.value === runSessionId;
 
-    return (rerunWasRequested || nextOperationReady) && !stopWasRequested;
+    return sameSessionIsSelected && (rerunWasRequested || nextOperationReady) && !stopWasRequested;
   }
 
   async function executeAutopilot() {
@@ -580,13 +623,13 @@ function useVibe64AutopilotController({
       if (actionResultStatus === "blocked" || actionResultStatus === "failed") {
         return false;
       }
-      if (failure.value) {
+      if (visibleFailure.value) {
         return false;
       }
       if (continueAfterCompletion) {
         await runUntilStopPoint();
       }
-      return !failure.value;
+      return !visibleFailure.value;
     } catch (error) {
       stopWithFailure({
         actionId: intent.id,
@@ -614,8 +657,11 @@ function useVibe64AutopilotController({
 
   async function runCommandTerminalOperation(operation = {}) {
     const startedAtMs = Date.now();
+    const commandSession = currentSession.value || {};
+    const launchedSessionId = String(commandSession.sessionId || "");
+    activeCommandSessionId.value = launchedSessionId;
     vibe64SessionDebugLog("client.autopilot.commandTerminal.start", {
-      ...vibe64SessionDebugSummary(currentSession.value || {}),
+      ...vibe64SessionDebugSummary(commandSession),
       ...operationDebugSummary(operation)
     });
     lastCommandResult.value = null;
@@ -626,7 +672,7 @@ function useVibe64AutopilotController({
       },
       advanceOnSuccess: operation.advanceOnSuccess === true,
       input: operationInput(operation),
-      sessionId: currentSession.value?.sessionId || ""
+      sessionId: launchedSessionId
     });
     if (commandStartNeedsRefresh(result)) {
       vibe64SessionDebugLog("client.autopilot.commandTerminal.startNeedsRefresh", {
@@ -635,7 +681,7 @@ function useVibe64AutopilotController({
         durationMs: vibe64SessionDebugDurationMs(startedAtMs),
         operationOutcome: String(result?.operationOutcome || ""),
         refreshRecommended: result?.refreshRecommended === true,
-        sessionId: String(currentSession.value?.sessionId || ""),
+        sessionId: launchedSessionId,
         status: result?.status ?? null
       });
       lastCommandResult.value = null;
@@ -649,7 +695,11 @@ function useVibe64AutopilotController({
     await refreshSessionData();
     await nextTick();
     if (result?.ok !== true) {
-      if (serverNoLongerPresentsCommand(operation, currentSession.value)) {
+      if (
+        selectedSessionIs(launchedSessionId) &&
+        serverNoLongerPresentsCommand(operation, currentSession.value) &&
+        !serverPresentsCommandFailureInput(currentSession.value)
+      ) {
         vibe64SessionDebugLog("client.autopilot.commandTerminal.serverNoLongerPresentsCommand", {
           ...vibe64SessionDebugSummary(currentSession.value || {}),
           ...operationDebugSummary(operation),
@@ -668,18 +718,19 @@ function useVibe64AutopilotController({
         durationMs: vibe64SessionDebugDurationMs(startedAtMs),
         error: String(result?.error || ""),
         exitCode: result?.exitCode ?? null,
-        sessionId: String(currentSession.value?.sessionId || "")
+        sessionId: launchedSessionId
       });
       stopWithFailure(result);
       return;
     }
     await waitForCommandCompletionRefresh({
       operation,
+      sessionId: launchedSessionId,
       startedAtMs
     });
     lastCommandResult.value = result;
     vibe64SessionDebugLog("client.autopilot.commandTerminal.done", {
-      ...vibe64SessionDebugSummary(currentSession.value || {}),
+      ...vibe64SessionDebugSummary(currentSessionFor(launchedSessionId) || commandSession),
       ...operationDebugSummary(operation),
       durationMs: vibe64SessionDebugDurationMs(startedAtMs),
       exitCode: result?.exitCode ?? null
@@ -688,17 +739,18 @@ function useVibe64AutopilotController({
 
   async function waitForCommandCompletionRefresh({
     operation = {},
+    sessionId = "",
     startedAtMs = Date.now()
   } = {}) {
     const maxAttempts = Math.max(0, Number(commandCompletionRefreshAttempts) || 0);
     const baseDelayMs = Math.max(0, Number(commandCompletionRefreshDelayMs) || 0);
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      if (!sessionStillApplyingCommand(currentSession.value)) {
+      if (!selectedSessionIs(sessionId) || !sessionStillApplyingCommand(currentSession.value)) {
         return true;
       }
       const delayMs = baseDelayMs * attempt;
       vibe64SessionDebugLog("client.autopilot.commandTerminal.waitForState", {
-        ...vibe64SessionDebugSummary(currentSession.value || {}),
+        ...vibe64SessionDebugSummary(currentSessionFor(sessionId) || {}),
         ...operationDebugSummary(operation),
         attempt,
         delayMs,
@@ -716,7 +768,7 @@ function useVibe64AutopilotController({
       attempts: maxAttempts,
       durationMs: vibe64SessionDebugDurationMs(startedAtMs)
     });
-    return !sessionStillApplyingCommand(currentSession.value);
+    return !selectedSessionIs(sessionId) || !sessionStillApplyingCommand(currentSession.value);
   }
 
   watch(nextOperationDispatchKey, (key) => {
@@ -737,7 +789,7 @@ function useVibe64AutopilotController({
     commandPreview,
     commandResult,
     commandRunning,
-    failure,
+    failure: visibleFailure,
     nextOperation,
     nextOperationKey,
     recoverStuckStep,

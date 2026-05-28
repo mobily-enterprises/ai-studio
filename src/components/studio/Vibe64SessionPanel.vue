@@ -135,7 +135,6 @@
 
     <div v-else class="studio-ai-sessions__runtime-stack">
       <Vibe64SessionRuntimeHost
-        :key="selection.selectedSessionId"
         active
         :global-codex-open="globalCodexTerminalOpen"
         :global-codex-terminal-state="globalCodexTerminalState"

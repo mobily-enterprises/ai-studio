@@ -75,6 +75,7 @@ function commandFailure({
   operationOutcome = "",
   output = "",
   refreshRecommended = false,
+  sessionId = "",
   status: failureStatus = null,
   terminalSessionId = ""
 } = {}) {
@@ -91,6 +92,7 @@ function commandFailure({
     operationOutcome: String(operationOutcome || ""),
     output: String(output || ""),
     refreshRecommended: refreshRecommended === true,
+    sessionId: String(sessionId || ""),
     status: normalizedFailureStatus(failureStatus),
     terminalSessionId
   };
@@ -102,6 +104,7 @@ function commandSuccess({
   commandPreview = "",
   exitCode = 0,
   output = "",
+  sessionId = "",
   terminalSessionId = ""
 } = {}) {
   return {
@@ -113,6 +116,7 @@ function commandSuccess({
     exitCode,
     ok: true,
     output: String(output || ""),
+    sessionId: String(sessionId || ""),
     terminalSessionId
   };
 }
@@ -122,6 +126,7 @@ function commandStopped({
   attemptedCommand = "",
   commandPreview = "",
   output = "",
+  sessionId = "",
   terminalSessionId = ""
 } = {}) {
   const label = terminalActionLabel(action);
@@ -132,6 +137,7 @@ function commandStopped({
     error: `${label} was stopped before it finished.`,
     exitCode: null,
     output,
+    sessionId,
     terminalSessionId
   });
 }
@@ -142,6 +148,7 @@ function useVibe64HeadlessCommandRunner({
   webSocketUrl = vibe64CommandTerminalWebSocketUrl
 } = {}) {
   const commandPreview = ref("");
+  const activeSessionId = ref("");
   const output = ref("");
   const running = ref(false);
   const status = ref("");
@@ -180,6 +187,7 @@ function useVibe64HeadlessCommandRunner({
       sessionId: normalizedSessionId
     });
     running.value = true;
+    activeSessionId.value = normalizedSessionId;
     lastResult.value = null;
     commandPreview.value = "";
     output.value = "";
@@ -204,6 +212,7 @@ function useVibe64HeadlessCommandRunner({
           error: terminalSession.error || terminalSession.errors?.[0]?.message || "Command terminal could not start.",
           operationOutcome: terminalSession.operationOutcome,
           refreshRecommended: terminalSession.refreshRecommended === true,
+          sessionId: normalizedSessionId,
           status: terminalSession.status || terminalSession.statusCode
         });
         lastResult.value = result;
@@ -253,6 +262,7 @@ function useVibe64HeadlessCommandRunner({
         error: String(error?.message || error || "Command terminal failed."),
         operationOutcome: error?.operationOutcome,
         refreshRecommended: error?.refreshRecommended === true,
+        sessionId: normalizedSessionId,
         status: error?.status || error?.statusCode
       });
       lastResult.value = result;
@@ -316,6 +326,7 @@ function useVibe64HeadlessCommandRunner({
           commandPreview,
           exitCode,
           output,
+          sessionId,
           terminalSessionId
         };
         return Number(exitCode) === 0 && !closeError
@@ -368,6 +379,7 @@ function useVibe64HeadlessCommandRunner({
             commandPreview,
             error: String(message.error || "Terminal stream failed."),
             output,
+            sessionId,
             terminalSessionId
           }));
         }
@@ -380,6 +392,7 @@ function useVibe64HeadlessCommandRunner({
           attemptedCommand,
           commandPreview,
           output,
+          sessionId,
           terminalSessionId
         }));
         return true;
@@ -408,6 +421,7 @@ function useVibe64HeadlessCommandRunner({
           commandPreview,
           error: "Terminal stream is not available.",
           output,
+          sessionId,
           terminalSessionId
         }));
         return;
@@ -428,6 +442,7 @@ function useVibe64HeadlessCommandRunner({
           commandPreview,
           error: "Terminal stream failed.",
           output,
+          sessionId,
           terminalSessionId
         }));
       });
@@ -437,6 +452,7 @@ function useVibe64HeadlessCommandRunner({
           commandPreview,
           error: "Terminal stream closed before the command finished.",
           output,
+          sessionId,
           terminalSessionId
         }));
       });
@@ -449,6 +465,7 @@ function useVibe64HeadlessCommandRunner({
 
   function clearResult() {
     lastResult.value = null;
+    activeSessionId.value = "";
     commandPreview.value = "";
     output.value = "";
     status.value = "";
@@ -473,6 +490,7 @@ function useVibe64HeadlessCommandRunner({
     clearResult,
     closeActiveTerminal,
     commandPreview,
+    activeSessionId,
     lastResult,
     output,
     runCommandAction,

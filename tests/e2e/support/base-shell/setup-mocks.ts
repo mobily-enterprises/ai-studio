@@ -20,6 +20,19 @@ import {
   setupReadinessPayload
 } from "./http";
 
+async function mockProjectTools(page) {
+  const payload = {
+    ok: true,
+    tools: []
+  };
+  await page.route("**/api/vibe64/tools", async (route) => {
+    await fulfillJson(route, payload);
+  });
+  await page.route("**/api/studio/vibe64/tools", async (route) => {
+    await fulfillJson(route, payload);
+  });
+}
+
 async function mockProjectGateReady(page) {
   await page.route("**/api/bootstrap", async (route) => {
     await fulfillJson(route, bootstrapPayload);
@@ -36,6 +49,7 @@ async function mockProjectGateReady(page) {
   await page.route("**/api/vibe64/accounts", async (route) => {
     await fulfillJson(route, readyAccountsPayload);
   });
+  await mockProjectTools(page);
 }
 
 async function mockSetupReadiness(page, payload) {
@@ -139,18 +153,6 @@ async function mockCurrentAppInspection(page) {
   await mockProtectedRouteReady(page);
   await page.route("**/api/studio/current-app", async (route) => {
     await fulfillJson(route, currentAppPayload);
-  });
-  await page.route("**/api/vibe64/tools", async (route) => {
-    await fulfillJson(route, {
-      ok: true,
-      tools: []
-    });
-  });
-  await page.route("**/api/studio/vibe64/tools", async (route) => {
-    await fulfillJson(route, {
-      ok: true,
-      tools: []
-    });
   });
   await page.route("**/api/vibe64/sessions**", async (route) => {
     await fulfillJson(route, {

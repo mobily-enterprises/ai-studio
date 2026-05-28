@@ -245,24 +245,38 @@ const timeline = proxyRefs({
   rewindToStep: sessionWorkflow.timeline.rewindToStep,
   steps: timelineSteps
 });
+const headlessCommandSessionId = computed(() => String(
+  autopilotCommandRunner.lastResult.value?.sessionId ||
+  autopilotCommandRunner.activeSessionId.value ||
+  ""
+));
+const headlessCommandMatchesSelectedSession = computed(() => Boolean(
+  headlessCommandSessionId.value &&
+  headlessCommandSessionId.value === selectedSessionId.value
+));
 const headlessCommandTerminal = proxyRefs({
   actionId: computed(() => String(autopilotCommandRunner.lastResult.value?.actionId || "")),
   actionLabel: computed(() => String(autopilotCommandRunner.lastResult.value?.actionLabel || "")),
   attemptedCommand: computed(() => String(autopilotCommandRunner.lastResult.value?.attemptedCommand || "")),
-  commandPreview: autopilotCommandRunner.commandPreview,
+  commandPreview: computed(() => headlessCommandMatchesSelectedSession.value ? autopilotCommandRunner.commandPreview.value : ""),
   error: computed(() => {
     const result = autopilotCommandRunner.lastResult.value;
-    return result?.ok === false ? String(result.error || "") : "";
+    return headlessCommandMatchesSelectedSession.value && result?.ok === false ? String(result.error || "") : "";
   }),
-  exitCode: computed(() => autopilotCommandRunner.lastResult.value?.exitCode ?? null),
-  failed: computed(() => autopilotCommandRunner.lastResult.value?.ok === false),
-  output: autopilotCommandRunner.output,
-  running: autopilotCommandRunner.running,
-  status: autopilotCommandRunner.status,
-  terminalSessionId: computed(() => String(autopilotCommandRunner.lastResult.value?.terminalSessionId || "")),
+  exitCode: computed(() => headlessCommandMatchesSelectedSession.value ? autopilotCommandRunner.lastResult.value?.exitCode ?? null : null),
+  failed: computed(() => headlessCommandMatchesSelectedSession.value && autopilotCommandRunner.lastResult.value?.ok === false),
+  output: computed(() => headlessCommandMatchesSelectedSession.value ? autopilotCommandRunner.output.value : ""),
+  running: computed(() => headlessCommandMatchesSelectedSession.value && autopilotCommandRunner.running.value),
+  status: computed(() => headlessCommandMatchesSelectedSession.value ? autopilotCommandRunner.status.value : ""),
+  terminalSessionId: computed(() => headlessCommandMatchesSelectedSession.value
+    ? String(autopilotCommandRunner.lastResult.value?.terminalSessionId || "")
+    : ""),
   visible: computed(() => Boolean(
-    autopilotCommandRunner.running.value ||
-    autopilotCommandRunner.lastResult.value?.ok === false
+    headlessCommandMatchesSelectedSession.value &&
+    (
+      autopilotCommandRunner.running.value ||
+      autopilotCommandRunner.lastResult.value?.ok === false
+    )
   ))
 });
 
