@@ -74,7 +74,12 @@ async function applyStepMachineView(runtime, session = {}) {
     ...session.currentStepDefinition,
     ...(view.interaction === undefined ? {} : { interaction: view.interaction })
   };
-  let workflowAutopilot = session.workflowAutopilot;
+  let workflowAutopilot = view.workflowAutopilot
+    ? {
+        ...(session.workflowAutopilot || {}),
+        ...view.workflowAutopilot
+      }
+    : session.workflowAutopilot;
   if ([STEP_STATUS.DONE, STEP_STATUS.WAITING_FOR_INPUT].includes(normalizeText(stepMachine?.status)) && workflowAutopilot) {
     workflowAutopilot = {
       ...workflowAutopilot,

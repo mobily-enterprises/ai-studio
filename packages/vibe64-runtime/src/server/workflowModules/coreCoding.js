@@ -29,8 +29,10 @@ import {
 } from "./coreLifecycle.js";
 import { when } from "../workflowConditions.js";
 import {
+  LET_CODEX_DECIDE_INPUT,
   STEP_INPUT_KIND,
   STEP_STATUS,
+  actionCompleted,
   assertAgentResultSource,
   artifactIsReady,
   artifactText,
@@ -51,6 +53,7 @@ import {
   readState,
   requireInputValue,
   unsupportedInputKind,
+  writePromptResponseArtifact,
   writeState
 } from "../workflowStepMachineHelpers.js";
 
@@ -72,9 +75,8 @@ const changesAcceptedStepId = "changes_accepted";
 const deepUiCheckRunStepId = "deep_ui_check_run";
 const implementationReviewedStepId = "implementation_reviewed";
 const planAndExecuteStepId = "plan_and_execute";
-const projectKnowledgeUpdatedStepId = "project_knowledge_updated";
-const reportCreatedStepId = "report_created";
-const reviewRunStepId = "review_run";
+const reportAndKnowledgeUpdatedStepId = "report_and_update_knowledge";
+const reviewAndValidateStepId = "review_and_validate";
 const seedPlanExecutedStepId = "seed_plan_executed";
 const seedPlanMadeStepId = "seed_plan_made";
 const finalReviewConversationActionId = "final_review_conversation";
@@ -86,6 +88,8 @@ const SEED_APPLICATION_STEP_ID = "seed_application_defined";
 const GITHUB_ISSUE_MODE_METADATA = "github_issue_mode";
 const PLAN_READY_METADATA = "plan_ready";
 const IMPLEMENTATION_DONE_METADATA = "implementation_done";
+const PROJECT_KNOWLEDGE_UPDATED_METADATA = "project_knowledge_updated";
+const REVIEW_DESLOP_COMPLETED_METADATA = "review_deslop_completed";
 const GITHUB_ISSUE_MODES = deepFreeze({
   CREATE: "create",
   REUSE: "reuse",
@@ -130,11 +134,9 @@ function finishOffWorkflowGroup({
         rejectTo,
         stepId: changesAcceptedStepId
       },
-      reportCreatedStepId,
-      projectKnowledgeUpdatedStepId,
+      reportAndKnowledgeUpdatedStepId,
       "changes_committed",
-      "create_pull_request",
-      "pr_merged",
+      "create_and_merge_pull_request",
       "main_checkout_synced",
       "session_finished"
     ]
@@ -152,8 +154,7 @@ function qaWorkflowGroup({
     steps: [
       workflowWhen(humanReview, implementationReviewedStepId),
       deepUiCheckRunStepId,
-      reviewRunStepId,
-      "project_validated"
+      reviewAndValidateStepId
     ]
   });
 }
@@ -497,24 +498,78 @@ const coreCodingStepDefinitionsById = deepFreeze({
       actionResults: ["run_deep_ui_check"]
     }
   },
-  [reviewRunStepId]: {
+  [reviewAndValidateStepId]: {
     actions: [
       {
         id: "run_deslop",
         label: "Run deslop",
         promptId: "run_deslop",
         type: "prompt"
+      },
+      {
+        adapterCapability: "update_code_index",
+        enabledWhen: [when.metadataExists(REVIEW_DESLOP_COMPLETED_METADATA)],
+        enabledWhenReason: "Run review/deslop before updating the code index.",
+        icon: "sync",
+        id: "update_code_index",
+        label: "Update code index",
+        type: "command"
+      },
+      {
+        adapterCapability: "run_automated_checks",
+        enabledWhen: [
+          when.metadataExists(REVIEW_DESLOP_COMPLETED_METADATA),
+          when.metadataExists("code_index_updated")
+        ],
+        enabledWhenReason: "Update the code index before running automated checks.",
+        icon: "run",
+        id: "run_automated_checks",
+        label: "Run automated checks",
+        type: "command"
       }
     ],
     autopilot: {
-      actionId: "run_deslop",
-      label: "Run deslop"
+      actionSequence: [
+        {
+          actionId: "run_deslop",
+          completeWhen: [when.metadataExists(REVIEW_DESLOP_COMPLETED_METADATA)],
+          label: "Run review/deslop"
+        },
+        {
+          actionId: "update_code_index",
+          completeWhen: [when.metadataExists("code_index_updated")],
+          label: "Update code index"
+        },
+        {
+          actionId: "run_automated_checks",
+          completeWhen: [when.metadataExists("automated_checks_passed")],
+          label: "Run automated checks"
+        }
+      ],
+      label: "Review and validate"
     },
-    description: "Run the review/deslop prompt.",
-    id: reviewRunStepId,
-    label: "Run review/deslop",
+    description: "Run review/deslop, update the code index, and run automated checks.",
+    id: reviewAndValidateStepId,
+    label: "Review and validate",
+    next: {
+      disabledReason: "Run review/deslop, update the code index, and run automated checks successfully before continuing.",
+      enabledWhen: [
+        when.metadataExists(REVIEW_DESLOP_COMPLETED_METADATA),
+        when.metadataExists("code_index_updated"),
+        when.metadataExists("automated_checks_passed")
+      ]
+    },
     rewindCleanup: {
-      actionResults: ["run_deslop"]
+      actionResults: ["run_deslop", "update_code_index", "run_automated_checks"],
+      metadata: [
+        REVIEW_DESLOP_COMPLETED_METADATA,
+        "code_index_command_source",
+        "code_index_package_manager",
+        "code_index_path",
+        "code_index_updated",
+        "automated_checks_package_manager",
+        "automated_checks_passed"
+      ]
     }
   },
   [changesAcceptedStepId]: {
@@ -600,35 +655,17 @@ const coreCodingStepDefinitionsById = deepFreeze({
       metadata: ["autopilot_final_review_followup"]
     }
   },
-  [reportCreatedStepId]: {
+  [reportAndKnowledgeUpdatedStepId]: {
     actions: [
       {
         id: "write_report",
         label: "Write report",
         promptId: "write_report",
         type: "prompt"
-      }
-    ],
-    autopilot: {
-      actionId: "write_report",
-      completeWhen: [when.artifactReady(REPORT_ARTIFACT)],
-      label: "Write report"
-    },
-    description: "Write the local report explaining what changed and why.",
-    id: reportCreatedStepId,
-    label: "Write report",
-    next: {
-      disabledReason: "Write the session report before updating project knowledge.",
-      enabledWhen: [when.artifactReady(REPORT_ARTIFACT)]
-    },
-    rewindCleanup: {
-      actionResults: ["write_report"],
-      artifacts: [REPORT_ARTIFACT]
-    }
-  },
-  [projectKnowledgeUpdatedStepId]: {
-    actions: [
+      },
       {
+        enabledWhen: [when.artifactReady(REPORT_ARTIFACT)],
+        enabledWhenReason: "Write the session report before updating project knowledge.",
         id: "update_project_knowledge",
         label: "Update project knowledge",
         promptId: "update_project_knowledge",
@@ -636,14 +673,34 @@ const coreCodingStepDefinitionsById = deepFreeze({
       }
     ],
     autopilot: {
-      actionId: "update_project_knowledge",
-      label: "Update project knowledge"
+      actionSequence: [
+        {
+          actionId: "write_report",
+          completeWhen: [when.artifactReady(REPORT_ARTIFACT)],
+          label: "Write report"
+        },
+        {
+          actionId: "update_project_knowledge",
+          completeWhen: [when.metadataExists(PROJECT_KNOWLEDGE_UPDATED_METADATA)],
+          label: "Update project knowledge"
+        }
+      ],
+      label: "Write report and update project knowledge"
     },
-    description: "Update adapter-supported project knowledge.",
-    id: projectKnowledgeUpdatedStepId,
-    label: "Update project knowledge",
+    description: "Write the local report and update adapter-supported project knowledge.",
+    id: reportAndKnowledgeUpdatedStepId,
+    label: "Write report and update project knowledge",
+    next: {
+      disabledReason: "Write the report and update project knowledge before continuing.",
+      enabledWhen: [
+        when.artifactReady(REPORT_ARTIFACT),
+        when.metadataExists(PROJECT_KNOWLEDGE_UPDATED_METADATA)
+      ]
+    },
     rewindCleanup: {
-      actionResults: ["update_project_knowledge"]
+      actionResults: ["write_report", "update_project_knowledge"],
+      artifacts: [REPORT_ARTIFACT],
+      metadata: [PROJECT_KNOWLEDGE_UPDATED_METADATA]
     }
   }
 });
@@ -661,10 +718,10 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       seedPlanMadeStepId,
       seedPlanExecutedStepId,
       "dependencies_installed",
-      "project_validated",
+      reviewAndValidateStepId,
       finishOffWorkflowGroup({
         rejectTo: seedPlanMadeStepId,
-        recheckTo: "project_validated"
+        recheckTo: reviewAndValidateStepId
       })
     ],
     sessionWord: "seeding",
@@ -686,7 +743,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       }),
       finishOffWorkflowGroup({
         rejectTo: planAndExecuteStepId,
-        recheckTo: reviewRunStepId
+        recheckTo: reviewAndValidateStepId
       })
     ],
     userSelectable: true
@@ -704,7 +761,7 @@ const coreCodingWorkflowDefinitions = deepFreeze([
       qaWorkflowGroup(),
       finishOffWorkflowGroup({
         rejectTo: agentConversationStepId,
-        recheckTo: reviewRunStepId
+        recheckTo: reviewAndValidateStepId
       })
     ],
     sessionWord: "coding",
@@ -1027,6 +1084,7 @@ const issueFileMachine = {
         }
         return promptStepWaitingForInputView(context, this, state, {
           prompt: state.message || "Codex needs more information before it can draft the issue.",
+          skipInput: LET_CODEX_DECIDE_INPUT,
           title: "Describe the issue"
         });
 
@@ -1413,7 +1471,8 @@ const planAndExecuteMachine = {
       case STEP_STATUS.WAITING_FOR_INPUT:
         return promptStepWaitingForInputView(context, this, state, {
           actionId: state.phase === planAndExecutePhase.EXECUTING ? "execute_plan" : "make_plan",
-          prompt: state.message || "Codex needs more information before this step can continue."
+          prompt: state.message || "Codex needs more information before this step can continue.",
+          skipInput: LET_CODEX_DECIDE_INPUT
         });
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
@@ -1567,13 +1626,131 @@ const deepUiCheckMachine = {
   }
 };
 
-const reviewRunMachine = {
-  ...executePlanMachine,
-  promptActionId: "run_deslop",
-  stepId: reviewRunStepId,
+const reviewAndValidatePhase = Object.freeze({
+  REVIEW: "review",
+  VALIDATION: "validation"
+});
 
-  async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "run_deslop");
+const reviewAndValidateCommandActionIds = Object.freeze(["update_code_index", "run_automated_checks"]);
+
+function reviewAndValidateComplete(session = {}) {
+  return metadataExists(session, REVIEW_DESLOP_COMPLETED_METADATA) &&
+    metadataExists(session, "code_index_updated") &&
+    metadataExists(session, "automated_checks_passed");
+}
+
+const reviewAndValidateMachine = {
+  promptActionId: "run_deslop",
+  stepId: reviewAndValidateStepId,
+
+  initialState(context = {}) {
+    if (reviewAndValidateComplete(context.session)) {
+      return machineState(STEP_STATUS.DONE);
+    }
+    return machineState(STEP_STATUS.READY, {
+      phase: metadataExists(context.session, REVIEW_DESLOP_COMPLETED_METADATA)
+        ? reviewAndValidatePhase.VALIDATION
+        : reviewAndValidatePhase.REVIEW
+    });
+  },
+
+  async view(context = {}) {
+    let state = await readState(context, this);
+    if (reviewAndValidateComplete(context.session)) {
+      state = machineState(STEP_STATUS.DONE);
+    } else if (
+      metadataExists(context.session, REVIEW_DESLOP_COMPLETED_METADATA) &&
+      ![STEP_STATUS.AWAITING_AGENT_RESULT, STEP_STATUS.ATTEMPTING_EXECUTION, STEP_STATUS.WAITING_FOR_INPUT].includes(state.status)
+    ) {
+      state = machineState(STEP_STATUS.READY, {
+        phase: reviewAndValidatePhase.VALIDATION
+      });
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.DONE:
+        return promptStepDoneView(context, this, state);
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        return state.phase === reviewAndValidatePhase.VALIDATION
+          ? {
+              interaction: commandFailureInteraction({
+                prompt: state.message || "The validation command failed. Explain what should happen, then retry validation.",
+                title: state.title || "Validation needs attention"
+              }),
+              next: nextForSession(context.session, {
+                disabledReason: "Run review/deslop, update the code index, and run automated checks successfully before continuing."
+              }),
+              stepMachine: publicState(this, state)
+            }
+          : promptStepWaitingForInputView(context, this, state, {
+              actionId: "run_deslop",
+              prompt: state.message || "Codex needs more information before review/deslop can continue.",
+              skipInput: LET_CODEX_DECIDE_INPUT,
+              title: "Review needs input"
+            });
+      case STEP_STATUS.READY:
+      case STEP_STATUS.AWAITING_AGENT_RESULT:
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.FAILED:
+      default:
+        return promptStepWaitingView(
+          context,
+          this,
+          state,
+          "Run review/deslop, update the code index, and run automated checks successfully before continuing."
+        );
+    }
+  },
+
+  async submitInput(context = {}) {
+    const state = await readState(context, this);
+    const input = normalizeMachineInput(context.input);
+    if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
+      assertAgentResultSource(context.session, input);
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.READY:
+      case STEP_STATUS.AWAITING_AGENT_RESULT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.FAILED:
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.AWAITING_AGENT_RESULT,
+            message: input.message,
+            phase: state.phase || reviewAndValidatePhase.REVIEW,
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind === STEP_INPUT_KIND.USER_RESPONSE || input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED) {
+          await writeState(context, this, machineState(STEP_STATUS.READY, {
+            phase: state.phase || reviewAndValidatePhase.REVIEW,
+            response: inputResponseText(input),
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind === STEP_INPUT_KIND.READY) {
+          await context.runtime.store.writeMetadataValue(
+            context.session.sessionId,
+            REVIEW_DESLOP_COMPLETED_METADATA,
+            "yes"
+          );
+          await writeState(context, this, machineState(STEP_STATUS.READY, {
+            message: input.message,
+            phase: reviewAndValidatePhase.VALIDATION,
+            source: input.source
+          }));
+          return;
+        }
+        throw unsupportedInputKind(input.kind, this.stepId);
+
+      case STEP_STATUS.DONE:
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      default:
+        throw vibe64Error("This step cannot accept input right now.", "vibe64_step_input_not_available");
+    }
   },
 
   inputCompletionMessage(context = {}) {
@@ -1581,6 +1758,66 @@ const reviewRunMachine = {
     return input.kind === STEP_INPUT_KIND.READY
       ? "Review/deslop completed."
       : "";
+  },
+
+  async actionStarted(context = {}) {
+    if (context.actionId === "run_deslop") {
+      return markPromptActionStarted(context, this, "run_deslop");
+    }
+    if (!reviewAndValidateCommandActionIds.includes(context.actionId)) {
+      return;
+    }
+    const state = await readState(context, this);
+    switch (state.status) {
+      case STEP_STATUS.READY:
+      case STEP_STATUS.FAILED:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+        await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
+          actionId: context.actionId,
+          phase: reviewAndValidatePhase.VALIDATION
+        }));
+        return;
+
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.DONE:
+      default:
+        return;
+    }
+  },
+
+  async actionFinished(context = {}) {
+    if (!reviewAndValidateCommandActionIds.includes(context.actionId)) {
+      return;
+    }
+    const state = await readState(context, this);
+    switch (state.status) {
+      case STEP_STATUS.ATTEMPTING_EXECUTION:
+      case STEP_STATUS.READY:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.FAILED:
+        if (reviewAndValidateComplete(await context.runtime.getSession(context.session.sessionId))) {
+          await writeState(context, this, machineState(STEP_STATUS.DONE));
+          return;
+        }
+        if (actionCompleted(context.actionResult)) {
+          await writeState(context, this, machineState(STEP_STATUS.READY, {
+            phase: reviewAndValidatePhase.VALIDATION
+          }));
+          return;
+        }
+        await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+          from: STEP_STATUS.ATTEMPTING_EXECUTION,
+          message: normalizeText(context.actionResult?.message),
+          output: normalizeText(context.actionResult?.output),
+          phase: reviewAndValidatePhase.VALIDATION,
+          title: "Validation needs attention"
+        }));
+        return;
+
+      case STEP_STATUS.DONE:
+      default:
+        return;
+    }
   },
 
   promptInstruction() {
@@ -1591,84 +1828,155 @@ const reviewRunMachine = {
   }
 };
 
-const projectKnowledgeUpdatedMachine = {
-  ...executePlanMachine,
-  promptActionId: "update_project_knowledge",
-  stepId: projectKnowledgeUpdatedStepId,
+const reportAndKnowledgePhase = Object.freeze({
+  KNOWLEDGE: "knowledge",
+  REPORT: "report"
+});
 
-  async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "update_project_knowledge");
-  },
+function reportAndKnowledgeComplete(session = {}) {
+  return artifactIsReady(session, REPORT_ARTIFACT) &&
+    metadataExists(session, PROJECT_KNOWLEDGE_UPDATED_METADATA);
+}
 
-  inputCompletionMessage(context = {}) {
-    const input = normalizeMachineInput(context.input);
-    return input.kind === STEP_INPUT_KIND.READY
-      ? "Project knowledge update completed."
-      : "";
-  },
-
-  promptInstruction() {
-    return currentStepHelperInstruction({
-      doneMeaning: "Project knowledge has been updated or there is no adapter-supported project knowledge to update.",
-      waitingForInputMeaning: "You cannot update project knowledge without a user decision."
-    });
-  }
-};
-
-const reportCreatedMachine = {
+const reportAndKnowledgeUpdatedMachine = {
   promptActionId: "write_report",
-  stepId: reportCreatedStepId,
+  stepId: reportAndKnowledgeUpdatedStepId,
 
   initialState(context = {}) {
-    return artifactIsReady(context.session, REPORT_ARTIFACT)
-      ? machineState(STEP_STATUS.DONE)
-      : machineState(STEP_STATUS.READY);
+    if (reportAndKnowledgeComplete(context.session)) {
+      return machineState(STEP_STATUS.DONE);
+    }
+    return machineState(STEP_STATUS.READY, {
+      phase: artifactIsReady(context.session, REPORT_ARTIFACT)
+        ? reportAndKnowledgePhase.KNOWLEDGE
+        : reportAndKnowledgePhase.REPORT
+    });
   },
 
   async view(context = {}) {
     let state = await readState(context, this);
-    if (artifactIsReady(context.session, REPORT_ARTIFACT)) {
+    if (reportAndKnowledgeComplete(context.session)) {
       state = machineState(STEP_STATUS.DONE);
+    } else if (
+      artifactIsReady(context.session, REPORT_ARTIFACT) &&
+      ![STEP_STATUS.AWAITING_AGENT_RESULT, STEP_STATUS.WAITING_FOR_INPUT].includes(state.status)
+    ) {
+      state = machineState(STEP_STATUS.READY, {
+        phase: reportAndKnowledgePhase.KNOWLEDGE
+      });
     }
 
     switch (state.status) {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
       case STEP_STATUS.WAITING_FOR_INPUT:
-        return promptStepWaitingForInputView(context, this, state);
+        return promptStepWaitingForInputView(context, this, state, {
+          actionId: state.phase === reportAndKnowledgePhase.KNOWLEDGE ? "update_project_knowledge" : "write_report",
+          prompt: state.message || "Codex needs more information before this step can continue.",
+          skipInput: LET_CODEX_DECIDE_INPUT
+        });
       case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.FAILED:
       default:
-        return promptStepWaitingView(context, this, state, "Write the session report before updating project knowledge.");
+        return promptStepWaitingView(context, this, state, "Write the report and update project knowledge before continuing.");
     }
   },
 
   async submitInput(context = {}) {
-    return handleStandardPromptInput(context, this, {
-      responseArtifact: REPORT_ARTIFACT
-    });
+    const state = await readState(context, this);
+    const input = normalizeMachineInput(context.input);
+    if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
+      assertAgentResultSource(context.session, input);
+    }
+
+    switch (state.status) {
+      case STEP_STATUS.READY:
+      case STEP_STATUS.AWAITING_AGENT_RESULT:
+      case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.FAILED:
+        if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
+          await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.AWAITING_AGENT_RESULT,
+            message: input.message,
+            phase: state.phase || reportAndKnowledgePhase.REPORT,
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind !== STEP_INPUT_KIND.READY && input.kind !== STEP_INPUT_KIND.CONSIDER_RESOLVED) {
+          throw unsupportedInputKind(input.kind, this.stepId);
+        }
+        if (state.phase === reportAndKnowledgePhase.KNOWLEDGE) {
+          await context.runtime.store.writeMetadataValue(
+            context.session.sessionId,
+            PROJECT_KNOWLEDGE_UPDATED_METADATA,
+            "yes"
+          );
+          await writeState(context, this, machineState(STEP_STATUS.DONE, {
+            message: input.message,
+            phase: reportAndKnowledgePhase.KNOWLEDGE,
+            source: input.source
+          }));
+          return;
+        }
+        await writePromptResponseArtifact(context, REPORT_ARTIFACT, input.fields.response || input.text);
+        await writeState(context, this, machineState(STEP_STATUS.READY, {
+          message: input.message,
+          phase: reportAndKnowledgePhase.KNOWLEDGE,
+          source: input.source
+        }));
+        return;
+
+      case STEP_STATUS.DONE:
+      default:
+        throw vibe64Error("This step is already complete.", "vibe64_step_input_not_available");
+    }
   },
 
   inputCompletionMessage(context = {}) {
     const input = normalizeMachineInput(context.input);
-    return input.kind === STEP_INPUT_KIND.READY
-      ? "Report submitted for review."
-      : "";
+    if (input.kind !== STEP_INPUT_KIND.READY) {
+      return "";
+    }
+    return context.session.stepMachine?.phase === reportAndKnowledgePhase.KNOWLEDGE
+      ? "Project knowledge update completed."
+      : "Report submitted for review.";
   },
 
   async actionStarted(context = {}) {
-    return markPromptActionStarted(context, this, "write_report");
+    const phaseByActionId = {
+      update_project_knowledge: reportAndKnowledgePhase.KNOWLEDGE,
+      write_report: reportAndKnowledgePhase.REPORT
+    };
+    const phase = phaseByActionId[context.actionId];
+    if (!phase) {
+      return;
+    }
+    const state = await readState(context, this);
+    if (![STEP_STATUS.READY, STEP_STATUS.FAILED, STEP_STATUS.WAITING_FOR_INPUT].includes(state.status)) {
+      return;
+    }
+    await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
+      phase,
+      response: state.response,
+      source: state.source
+    }));
   },
 
-  promptInstruction() {
-    return currentStepHelperInstruction({
-      doneFields: {
-        response: "Markdown session report"
-      },
-      doneMeaning: "The report text is complete and should be saved by Studio as the session report.",
-      waitingForInputMeaning: "You cannot write the report without a user decision or missing context."
-    });
+  promptInstruction({ action = {} } = {}) {
+    return normalizeText(action.id) === "update_project_knowledge"
+      ? currentStepHelperInstruction({
+          doneMeaning: "Project knowledge has been updated or there is no adapter-supported project knowledge to update.",
+          waitingForInputMeaning: "You cannot update project knowledge without a user decision."
+        })
+      : currentStepHelperInstruction({
+          doneFields: {
+            response: "Markdown session report"
+          },
+          doneMeaning: "The report text is complete and should be saved by Studio as the session report.",
+          waitingForInputMeaning: "You cannot write the report without a user decision or missing context."
+        });
   }
 };
 
@@ -1756,10 +2064,10 @@ const coreCodingSteps = Object.freeze(Object.values(Object.freeze({
     id: deepUiCheckRunStepId,
     machine: deepUiCheckMachine
   },
-  [reviewRunStepId]: {
-    definition: coreCodingStepDefinitionsById[reviewRunStepId],
-    id: reviewRunStepId,
-    machine: reviewRunMachine
+  [reviewAndValidateStepId]: {
+    definition: coreCodingStepDefinitionsById[reviewAndValidateStepId],
+    id: reviewAndValidateStepId,
+    machine: reviewAndValidateMachine
   },
   [changesAcceptedStepId]: {
     config: {
@@ -1776,15 +2084,10 @@ const coreCodingSteps = Object.freeze(Object.values(Object.freeze({
     factoryId: "chat_with_ai",
     id: changesAcceptedStepId
   },
-  [reportCreatedStepId]: {
-    definition: coreCodingStepDefinitionsById[reportCreatedStepId],
-    id: reportCreatedStepId,
-    machine: reportCreatedMachine
-  },
-  [projectKnowledgeUpdatedStepId]: {
-    definition: coreCodingStepDefinitionsById[projectKnowledgeUpdatedStepId],
-    id: projectKnowledgeUpdatedStepId,
-    machine: projectKnowledgeUpdatedMachine
+  [reportAndKnowledgeUpdatedStepId]: {
+    definition: coreCodingStepDefinitionsById[reportAndKnowledgeUpdatedStepId],
+    id: reportAndKnowledgeUpdatedStepId,
+    machine: reportAndKnowledgeUpdatedMachine
   }
 })));
 
@@ -1806,10 +2109,9 @@ const _testing = deepFreeze({
     implementationReviewedStepId,
     agentConversationStepId,
     deepUiCheckRunStepId,
-    reviewRunStepId,
+    reviewAndValidateStepId,
     changesAcceptedStepId,
-    reportCreatedStepId,
-    projectKnowledgeUpdatedStepId
+    reportAndKnowledgeUpdatedStepId
   ],
   workflowDefinitionIds: VIBE64_WORKFLOW_DEFINITION_IDS
 });

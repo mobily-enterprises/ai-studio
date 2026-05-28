@@ -140,6 +140,18 @@ async function mockCurrentAppInspection(page) {
   await page.route("**/api/studio/current-app", async (route) => {
     await fulfillJson(route, currentAppPayload);
   });
+  await page.route("**/api/vibe64/tools", async (route) => {
+    await fulfillJson(route, {
+      ok: true,
+      tools: []
+    });
+  });
+  await page.route("**/api/studio/vibe64/tools", async (route) => {
+    await fulfillJson(route, {
+      ok: true,
+      tools: []
+    });
+  });
   await page.route("**/api/vibe64/sessions**", async (route) => {
     await fulfillJson(route, {
       limits: {

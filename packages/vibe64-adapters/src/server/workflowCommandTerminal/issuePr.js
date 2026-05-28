@@ -46,7 +46,7 @@ function createIssueOnGhScript(session = {}) {
 }
 
 function createPrOnGhScript(session = {}) {
-  const stepId = "create_pull_request";
+  const stepId = "create_and_merge_pull_request";
   const prBodyPath = artifactFilePath(session, `tmp/${stepId}.body.md`);
   const prTitlePath = artifactFilePath(session, `tmp/${stepId}.title.txt`);
   const sourcePrHeadSha = normalizeText(session.metadata?.source_pr_head_sha);

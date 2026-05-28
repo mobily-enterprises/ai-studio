@@ -192,7 +192,7 @@ const deepUiSkipStepDefinitions = [
     description: "Start the review pass."
   },
   {
-    id: "project_validated",
+    id: "review_and_validate",
     index: 14,
     label: "Validate project",
     kind: "command",
@@ -371,7 +371,7 @@ const reviewDeslopStepDefinitions = [
     }
   },
   {
-    id: "project_validated",
+    id: "review_and_validate",
     index: 15,
     label: "Validate project",
     kind: "command",
@@ -448,13 +448,13 @@ const reviewDeslopNextPromptPayload = {
 };
 const reviewDeslopUnexpectedAdvancedPayload = {
   ...reviewDeslopNextPromptPayload,
-  currentStep: "project_validated",
+  currentStep: "review_and_validate",
   currentStepAction: {
     buttonLabel: "Update code index",
     input: { type: "none" },
     kind: "command",
     label: "Update code index",
-    stepId: "project_validated"
+    stepId: "review_and_validate"
   }
 };
 

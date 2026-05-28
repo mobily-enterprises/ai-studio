@@ -163,10 +163,12 @@ function intent(id, {
   inputFields = [],
   label = "",
   operation = "",
-  style = "secondary"
+  style = "secondary",
+  submitFields = null
 } = {}) {
   const controlPresentation = isPlainObject(control) ? normalizeControlPresentation(control) : null;
   const intentInputPresentation = isPlainObject(input) ? input : null;
+  const intentSubmitFields = isPlainObject(submitFields) ? submitFields : null;
   const normalizedOperation = normalizeText(operation);
   return {
     actionId: normalizeText(actionId),
@@ -178,6 +180,7 @@ function intent(id, {
     inputFields: Array.isArray(inputFields) ? inputFields : [],
     label: normalizeText(label || id),
     ...(normalizedOperation ? { operation: normalizedOperation } : {}),
+    ...(intentSubmitFields ? { submitFields: intentSubmitFields } : {}),
     style
   };
 }
@@ -377,6 +380,7 @@ function intentFromConfig(session = {}, config = {}) {
       ? config.inputFields
       : action?.inputFields || [],
     label: config.label || action?.label || "",
+    submitFields: config.submitFields,
     style: config.style || "secondary"
   });
 }
@@ -465,6 +469,21 @@ function interactionIntents(session = {}, interaction = {}) {
     .filter(Boolean);
 }
 
+function conversationSkipIntent(interaction = {}, action = {}) {
+  const skipInput = isPlainObject(interaction.skipInput) ? interaction.skipInput : null;
+  const message = normalizeText(skipInput?.message);
+  if (!skipInput || !message) {
+    return null;
+  }
+  return intentForAction(skipInput.id || "let_codex_decide", action, {
+    label: skipInput.label || "Let Codex decide",
+    style: skipInput.style || "secondary",
+    submitFields: {
+      conversationRequest: message
+    }
+  });
+}
+
 function interactionPresentation(session = {}) {
   const interaction = currentStepDefinition(session).interaction;
   if (!isPlainObject(interaction)) {
@@ -483,12 +502,13 @@ function interactionPresentation(session = {}) {
       label: interaction.submitLabel || action?.label || "Send to Codex",
       style: "primary"
     });
+    const waitingForInput = stepMachineStatus(session) === STEP_STATUS.WAITING_FOR_INPUT;
+    const skipIntent = waitingForInput ? conversationSkipIntent(interaction, action) : null;
     return {
       intents: [
         primaryIntent,
-        ...configuredStopIntentsExcept(session, [conversationIntentId], {
-          useConfigured: stepMachineStatus(session) !== STEP_STATUS.WAITING_FOR_INPUT
-        })
+        ...(skipIntent ? [skipIntent] : []),
+        ...(waitingForInput ? [] : configuredStopIntentsExcept(session, [conversationIntentId]))
       ],
       screen: screen("conversation", {
         input: inputPresentation(interaction, {
@@ -572,6 +592,9 @@ function automationWaitReason(session = {}) {
     return "input";
   }
   if (currentAutopilot(session).stop === true) {
+    if (stepMachineStatus(session) === STEP_STATUS.DONE && nextIsReady(session) && !stopPresentationPersistsWhenComplete(session)) {
+      return "";
+    }
     return "user";
   }
   if (currentAutopilot(session).userDecision === true) {
@@ -1118,7 +1141,11 @@ async function runActionIntent(runtime, session = {}, selectedIntent = {}, inten
       "vibe64_intent_not_handled"
     );
   }
-  return runtime.runAction(session.sessionId, actionId, fields);
+  return runtime.runAction(session.sessionId, actionId, {
+    ...(isPlainObject(selectedIntent.submitFields) ? selectedIntent.submitFields : {}),
+    ...(isPlainObject(config.submitFields) ? config.submitFields : {}),
+    ...fields
+  });
 }
 
 async function rejectWorkflowIntent(runtime, session = {}, fields = {}) {
@@ -1309,7 +1336,12 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
   }
   assertIntentMatchesCurrentState(session, input);
 
-  const fields = intentFields(input);
+  const intentConfig = intentConfigForIntent(runtime, session, normalizedIntentId);
+  const fields = {
+    ...(isPlainObject(selectedIntent.submitFields) ? selectedIntent.submitFields : {}),
+    ...(isPlainObject(intentConfig?.submitFields) ? intentConfig.submitFields : {}),
+    ...intentFields(input)
+  };
   const handledSession = await runWorkflowIntentHandler(runtime, session, selectedIntent, fields);
   if (handledSession) {
     return handledSession;
@@ -1318,7 +1350,7 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
     runtime,
     session,
     selectedIntent,
-    intentConfigForIntent(runtime, session, normalizedIntentId),
+    intentConfig,
     fields
   );
 }

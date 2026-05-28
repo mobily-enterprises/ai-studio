@@ -33,7 +33,9 @@ import {
 } from "@local/vibe64-runtime/server/workflowRegistry";
 import {
   currentStepInputConversationText,
-  currentStepPromptInputInstruction
+  currentStepPromptInputInstruction,
+  recordStepMachineActionFinished,
+  recordStepMachineActionStarted
 } from "@local/vibe64-runtime/server/workflowStepMachines";
 import {
   _testing as coreCodingTesting
@@ -554,15 +556,24 @@ test("vibe64 runtime keeps evaluated Autopilot state in presentation, not raw st
     });
 
     const session = await runtime.createSession({
-      initialStep: "project_validated",
+      initialStep: "review_and_validate",
+      metadata: worktreeMetadata(targetRoot, "autopilot_stage_view"),
       sessionId: "autopilot_stage_view"
     });
 
     assert.equal("autopilot" in session.currentStepDefinition, false);
     assert.equal("workflowAutopilot" in session, false);
-    assert.equal(session.presentation.auto.nextOperation.kind, "command");
-    assert.equal(session.presentation.auto.nextOperation.actionId, "update_code_index");
-    assert.equal(session.presentation.auto.nextOperation.route, "command-terminal");
+    assert.equal(session.presentation.auto.nextOperation.kind, "action");
+    assert.equal(session.presentation.auto.nextOperation.actionId, "run_deslop");
+    assert.equal(session.presentation.auto.nextOperation.route, "session-action");
+
+    await runtime.store.writeMetadataValue("autopilot_stage_view", "review_deslop_completed", "yes");
+    const afterReview = await runtime.getSession("autopilot_stage_view");
+    assert.equal("autopilot" in afterReview.currentStepDefinition, false);
+    assert.equal("workflowAutopilot" in afterReview, false);
+    assert.equal(afterReview.presentation.auto.nextOperation.kind, "command");
+    assert.equal(afterReview.presentation.auto.nextOperation.actionId, "update_code_index");
+    assert.equal(afterReview.presentation.auto.nextOperation.route, "command-terminal");
 
     await runtime.store.writeMetadataValue("autopilot_stage_view", "code_index_updated", "yes");
     const afterCodeIndex = await runtime.getSession("autopilot_stage_view");
@@ -578,6 +589,56 @@ test("vibe64 runtime keeps evaluated Autopilot state in presentation, not raw st
     assert.equal("workflowAutopilot" in afterValidation, false);
     assert.equal(afterValidation.presentation.auto.nextOperation.kind, "advance");
     assert.equal(afterValidation.presentation.auto.nextOperation.route, "session-advance");
+  });
+});
+
+test("vibe64 runtime keeps review validation command failures in the validation phase", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      adapter: new FakeTargetAdapter({
+        capabilities: {
+          run_automated_checks: true,
+          update_code_index: true
+        }
+      }),
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "review_and_validate",
+      metadata: worktreeMetadata(targetRoot, "review_validation_failure"),
+      sessionId: "review_validation_failure"
+    });
+    await runtime.store.writeMetadataValue("review_validation_failure", "review_deslop_completed", "yes");
+    const ready = await runtime.getSession("review_validation_failure");
+    assert.equal(ready.presentation.auto.nextOperation.actionId, "update_code_index");
+
+    await recordStepMachineActionStarted(runtime, ready, "update_code_index");
+    const attempting = await runtime.getSession("review_validation_failure");
+    assert.equal(attempting.stepMachine.status, "attempting_execution");
+    assert.equal(attempting.stepMachine.phase, "validation");
+
+    await recordStepMachineActionFinished(runtime, attempting, "update_code_index", {
+      message: "Index command failed.",
+      output: "missing script",
+      status: "blocked"
+    });
+    const failed = await runtime.getSession("review_validation_failure");
+    assert.equal(failed.stepMachine.status, "waiting_for_input");
+    assert.equal(failed.stepMachine.phase, "validation");
+    assert.equal(failed.currentStepDefinition.interaction.kind, "command_failure_response");
+    assert.equal(failed.currentStepDefinition.interaction.title, "Validation needs attention");
+
+    const answered = await runtime.submitCurrentStepInput("review_validation_failure", {
+      kind: "user_response",
+      source: "user",
+      stepId: "review_and_validate",
+      stepStatus: "waiting_for_input",
+      text: "Install the missing script and retry."
+    });
+    assert.equal(answered.stepMachine.status, "ready");
+    assert.equal(answered.stepMachine.phase, "validation");
+    assert.equal(answered.presentation.auto.nextOperation.actionId, "update_code_index");
   });
 });
 
@@ -628,6 +689,38 @@ test("vibe64 runtime exposes server-owned presentation and intents for Autopilot
     ]);
     assert.equal(completedReview.presentation.auto.nextOperation.kind, "wait");
     assert.equal(completedReview.presentation.auto.nextOperation.reason, "user");
+  });
+});
+
+test("vibe64 runtime auto-advances completed non-persistent Autopilot stops", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "presentation_existing_issue"),
+        github_issue_mode: "reuse",
+        issue_url: "https://github.com/example/project/issues/12",
+        work_source: "existing_issue"
+      },
+      sessionId: "presentation_existing_issue"
+    });
+    await Promise.all([
+      runtime.store.writeArtifact("presentation_existing_issue", "issue_title", "Add saved reports\n"),
+      runtime.store.writeArtifact("presentation_existing_issue", "issue_word", "reports\n"),
+      runtime.store.writeArtifact("presentation_existing_issue", "issue.md", "Add saved reports.\n")
+    ]);
+
+    const session = await runtime.getSession("presentation_existing_issue");
+
+    assert.equal(session.currentStep, "issue_file_created");
+    assert.equal(session.stepMachine.status, "done");
+    assert.equal(session.next.enabled, true);
+    assert.equal(session.presentation.auto.nextOperation.kind, "advance");
+    assert.equal(session.presentation.auto.nextOperation.executable, true);
+    assert.equal(session.presentation.auto.nextOperation.route, "session-advance");
   });
 });
 
@@ -793,7 +886,7 @@ test("vibe64 runtime presentation snapshots come from workflow step metadata", a
       sessionId: "presentation_snapshot_final_review"
     });
     const mergeReview = await runtime.createSession({
-      initialStep: "pr_merged",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         ...worktreeMetadata(targetRoot, "presentation_snapshot_merge"),
         pr_url: "https://github.com/example/project/pull/3"
@@ -969,7 +1062,7 @@ test("vibe64 runtime presentation snapshots come from workflow step metadata", a
           variant: ""
         },
         step: {
-          id: "pr_merged",
+          id: "create_and_merge_pull_request",
           status: "ready",
           workflowKind: "merge_review"
         }
@@ -1173,7 +1266,7 @@ test("vibe64 runtime runs server-owned intents and rejects stale intent submissi
       stepId: session.currentStep,
       stepStatus: session.stepMachine.status
     });
-    assert.equal(skipped.currentStep, "review_run");
+    assert.equal(skipped.currentStep, "review_and_validate");
 
     await assert.rejects(
       () => runtime.runIntent("presentation_intents", "skip_optional_check", {
@@ -1196,7 +1289,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       metadata: worktreeMetadata(targetRoot, "presentation_final_review_intents"),
       sessionId: "presentation_final_review_intents"
     });
-    await runtime.store.writeCompletedStep("presentation_final_review_intents", "review_run", {
+    await runtime.store.writeCompletedStep("presentation_final_review_intents", "review_and_validate", {
       message: "Review completed before final tweaks."
     });
     const finalReview = await runtime.getSession("presentation_final_review_intents");
@@ -1224,7 +1317,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       stepId: recheckReady.currentStep,
       stepStatus: recheckReady.stepMachine.status
     });
-    assert.equal(rechecked.currentStep, "review_run");
+    assert.equal(rechecked.currentStep, "review_and_validate");
     assert.equal(
       await runtime.store.readMetadataValue("presentation_final_review_intents", "autopilot_final_review_followup"),
       ""
@@ -1296,7 +1389,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
     assert.equal(generalRejected.actionResult.actionId, "agent_conversation");
 
     await runtime.createSession({
-      initialStep: "pr_merged",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         ...worktreeMetadata(targetRoot, "presentation_merge_intents"),
         pr_url: "https://github.com/example/project/pull/1"
@@ -1310,7 +1403,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
     assert.equal(mergeReview.presentation.auto.nextOperation.actionId, "prepare_for_merge");
 
     await runtime.createSession({
-      initialStep: "pr_merged",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         pr_url: "https://github.com/example/project/pull/2"
       },
@@ -1373,14 +1466,11 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "plan_and_execute",
     "implementation_reviewed",
     "deep_ui_check_run",
-    "review_run",
-    "project_validated",
+    "review_and_validate",
     "changes_accepted",
-    "report_created",
-    "project_knowledge_updated",
+    "report_and_update_knowledge",
     "changes_committed",
-    "create_pull_request",
-    "pr_merged",
+    "create_and_merge_pull_request",
     "main_checkout_synced",
     "session_finished"
   ]);
@@ -1407,14 +1497,11 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "agent_conversation",
     "implementation_reviewed",
     "deep_ui_check_run",
-    "review_run",
-    "project_validated",
+    "review_and_validate",
     "changes_accepted",
-    "report_created",
-    "project_knowledge_updated",
+    "report_and_update_knowledge",
     "changes_committed",
-    "create_pull_request",
-    "pr_merged",
+    "create_and_merge_pull_request",
     "main_checkout_synced",
     "session_finished"
   ]);
@@ -1426,7 +1513,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   );
   assert.equal(
     seedApplication.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
-    "project_validated"
+    "review_and_validate"
   );
   assert.equal(
     bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
@@ -1434,7 +1521,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   );
   assert.equal(
     bigFeature.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
-    "review_run"
+    "review_and_validate"
   );
   assert.equal(
     generalCoding.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
@@ -1442,7 +1529,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   );
   assert.equal(
     generalCoding.steps.find((step) => step.id === "changes_accepted").workflow.recheckTo,
-    "review_run"
+    "review_and_validate"
   );
   assert.equal(
     generalCoding.steps.find((step) => step.id === "changes_accepted")
@@ -1461,12 +1548,14 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     typeof generalCoding.intentHandlers.deep_ui_check_run.skip_optional_check,
     "function"
   );
-  const createPullRequestStep = generalCoding.steps.find((step) => step.id === "create_pull_request");
-  const mergeStep = generalCoding.steps.find((step) => step.id === "pr_merged");
+  const createPullRequestStep = generalCoding.steps.find((step) => step.id === "create_and_merge_pull_request");
   assert.deepEqual(createPullRequestStep.actions.map((action) => action.id), [
     "open_pr",
     "resolve_pull_request",
-    "create_pr_on_gh"
+    "create_pr_on_gh",
+    "prepare_for_merge",
+    "merge_pr",
+    "skip_merge"
   ]);
   assert.deepEqual(createPullRequestStep.autopilot.actionSequence.map((action) => action.actionId), [
     "resolve_pull_request",
@@ -1474,22 +1563,22 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
   ]);
   assert.equal(createPullRequestStep.interaction, undefined);
   assert.deepEqual(createPullRequestStep.rewindCleanup.artifacts, [
-    "tmp/create_pull_request.body.md",
-    "tmp/create_pull_request.title.txt",
-    "create_pull_request.url.txt",
-    "create_pull_request.number.txt",
-    "create_pull_request.source.txt"
+    "tmp/create_and_merge_pull_request.body.md",
+    "tmp/create_and_merge_pull_request.title.txt",
+    "create_and_merge_pull_request.url.txt",
+    "create_and_merge_pull_request.number.txt",
+    "create_and_merge_pull_request.source.txt"
   ]);
   assert.equal(
-    mergeStep.presentation.stop.intents.find((intent) => intent.id === "skip_merge").serverOperation,
+    createPullRequestStep.presentation.stop.intents.find((intent) => intent.id === "skip_merge").serverOperation,
     undefined
   );
   assert.equal(
-    typeof generalCoding.intentHandlers.pr_merged.merge_and_sync,
+    typeof generalCoding.intentHandlers.create_and_merge_pull_request.merge_and_sync,
     "function"
   );
   assert.equal(
-    typeof generalCoding.intentHandlers.pr_merged.skip_merge,
+    typeof generalCoding.intentHandlers.create_and_merge_pull_request.skip_merge,
     "function"
   );
   assert.equal(generalCoding.steps.some((step) => step.id === "issue_file_created"), false);
@@ -1505,18 +1594,15 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "dependencies_installed",
     "maintenance_conversation",
     "changes_accepted",
-    "report_created",
-    "project_knowledge_updated",
+    "report_and_update_knowledge",
     "changes_committed",
-    "create_pull_request",
-    "pr_merged",
+    "create_and_merge_pull_request",
     "main_checkout_synced",
     "session_finished"
   ]);
   assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "issue_file_created"), false);
   assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "plan_made"), false);
-  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "project_validated"), false);
-  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "review_run"), false);
+  assert.equal(nonCodeMaintenance.steps.some((step) => step.id === "review_and_validate"), false);
   assert.equal(
     nonCodeMaintenance.steps.find((step) => step.id === "changes_accepted").workflow.rejectTo,
     "maintenance_conversation"
@@ -1732,7 +1818,7 @@ test("vibe64 workflow modules register workflow definitions with explicit cross-
 
   const nonCodeMaintenance = recordsById.get(maintenanceWorkflowDefinitionIds.NON_CODE_MAINTENANCE);
   const nonCodeMaintenanceStepIds = nonCodeMaintenance?.steps.map((step) => step.stepId) || [];
-  assert.equal(nonCodeMaintenanceStepIds.includes("project_validated"), false);
+  assert.equal(nonCodeMaintenanceStepIds.includes("review_and_validate"), false);
   assert.equal(nonCodeMaintenanceStepIds.includes("changes_accepted"), true);
   assert.equal(
     stepRecordsById.get("changes_accepted")?.moduleId,
@@ -2002,7 +2088,7 @@ test("vibe64 non-code maintenance definition starts with a reusable session labe
     assert.equal(await runtime.store.readArtifact("docs_definition", "issue_word"), "documentation\n");
     assert.equal(session.stepDefinitions.some((step) => step.id === "issue_file_created"), false);
     assert.equal(session.stepDefinitions.some((step) => step.id === "plan_made"), false);
-    assert.equal(session.stepDefinitions.some((step) => step.id === "project_validated"), false);
+    assert.equal(session.stepDefinitions.some((step) => step.id === "review_and_validate"), false);
     assert.equal(session.stepDefinitions.some((step) => step.id === "changes_accepted"), true);
 
     await runtime.advance("docs_definition");
@@ -2343,7 +2429,7 @@ test("vibe64 pull request resolution prompt uses the current-step helper contrac
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
         ...worktreeMetadata(targetRoot, "pull_request_resolution_prompt"),
         branch_pushed: "origin/vibe64/test-session"
@@ -2353,12 +2439,12 @@ test("vibe64 pull request resolution prompt uses the current-step helper contrac
 
     const afterAction = await runtime.runAction("pull_request_resolution_prompt", "resolve_pull_request");
 
-    assert.equal(afterAction.currentStep, "create_pull_request");
+    assert.equal(afterAction.currentStep, "create_and_merge_pull_request");
     assert.equal(afterAction.actionResult.status, "prompt_ready");
     assert.equal(afterAction.actionResult.promptId, "resolve_pull_request");
     assert.match(afterAction.actionResult.prompt, /Vibe64 current-step input helper/u);
     assert.match(afterAction.actionResult.prompt, /"kind": "ready"/u);
-    assert.match(afterAction.actionResult.prompt, /"stepId": "create_pull_request"/u);
+    assert.match(afterAction.actionResult.prompt, /"stepId": "create_and_merge_pull_request"/u);
     assert.match(afterAction.actionResult.prompt, /"stepStatus": "awaiting_agent_result"/u);
     assert.match(afterAction.actionResult.prompt, /Do not write workflow artifacts directly/u);
     assert.match(afterAction.actionResult.prompt, /write the same question or blocker in normal Codex response text/u);
@@ -2543,35 +2629,39 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
     assert.ok(missingIssue.intents.some((intent) => intent.id === "use_existing_issue" && intent.enabled === true));
 
     const prSession = await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
+        ...worktreeMetadata(targetRoot, "editable_artifact_pr"),
         branch_pushed: "origin/vibe64/test-session"
       },
       sessionId: "editable_artifact_pr"
     });
-    assert.equal(prSession.stepMachine.status, "awaiting_agent_result");
+    assert.equal(prSession.stepMachine.status, "ready");
     assert.equal(prSession.presentation.screen.input, undefined);
+
+    const draftingPr = await runtime.runAction("editable_artifact_pr", "resolve_pull_request", {});
+    assert.equal(draftingPr.stepMachine.status, "awaiting_agent_result");
+    assert.equal(draftingPr.actionResult.status, "prompt_ready");
 
     const waitingPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
       kind: "waiting_for_input",
       message: "Which target branch should this use?",
       source: "codex",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "awaiting_agent_result"
     });
     assert.equal(waitingPr.stepMachine.status, "waiting_for_input");
-    assert.equal(waitingPr.next.disabledReason, "Resolve the pull request input request before continuing.");
+    assert.equal(waitingPr.next.disabledReason, "Answer Codex before continuing.");
 
-    const resumedPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
+    const resumedPr = await runtime.runIntent("editable_artifact_pr", "talk_to_codex", {
       fields: {
         response: "Use main."
       },
-      kind: "user_response",
-      source: "ui",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "waiting_for_input"
     });
     assert.equal(resumedPr.stepMachine.status, "awaiting_agent_result");
+    assert.equal(resumedPr.actionResult.input.response, "Use main.");
 
     const confirmedPr = await runtime.submitCurrentStepInput("editable_artifact_pr", {
       fields: {
@@ -2580,7 +2670,7 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       },
       kind: "ready",
       source: "codex",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "awaiting_agent_result"
     });
     assert.equal(confirmedPr.stepMachine.status, "confirm_files");
@@ -2589,11 +2679,11 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       "body"
     ]);
     assert.equal(
-      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_pull_request.title.txt"),
+      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_and_merge_pull_request.title.txt"),
       "PR title\n"
     );
     assert.equal(
-      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_pull_request.body.md"),
+      await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_and_merge_pull_request.body.md"),
       "PR body\n"
     );
   });
@@ -2685,10 +2775,13 @@ test("vibe64 issue question state only exposes the Codex answer path", async () 
     assert.equal(waiting.stepMachine.status, "waiting_for_input");
     assert.equal(waiting.presentation.screen.kind, "conversation");
     assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
-    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "continue_step"]);
+    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "let_codex_decide"]);
     assert.equal(waiting.intents[0].actionId, "draft_issue");
     assert.equal(waiting.intents[0].label, "Send to Codex");
-    assert.equal(waiting.intents[1].enabled, false);
+    assert.equal(waiting.intents[1].enabled, true);
+    assert.deepEqual(waiting.intents[1].submitFields, {
+      conversationRequest: "Proceed with reasonable assumptions. I do not need to answer these questions."
+    });
     assert.equal(
       waiting.intents.some((intent) => intent.id === "draft_issue" || intent.id === "create_issue_on_gh"),
       false
@@ -2920,7 +3013,7 @@ test("vibe64 runtime presents waiting_for_input as the same Codex conversation i
     assert.equal(waiting.presentation.screen.input.submitTarget, "intent");
     assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
     assert.equal(waiting.presentation.screen.message, "What food should I use?");
-    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "continue_step"]);
+    assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex"]);
     assert.equal(waiting.intents[0].actionId, "agent_conversation");
     assert.deepEqual(waiting.intents[0].input?.questionSugar, {
       fieldName: "conversationRequest",
@@ -2928,10 +3021,6 @@ test("vibe64 runtime presents waiting_for_input as the same Codex conversation i
       source: "latest_assistant_message"
     });
     assert.equal(waiting.intents[0].inputFields[0].name, "conversationRequest");
-    assert.equal(waiting.intents[1].label, "Next step");
-    assert.equal(waiting.intents[1].enabled, false);
-    assert.equal(waiting.intents[1].disabledReason, "Answer Codex before continuing.");
-
     const afterAnswer = await runtime.runIntent("prompt_response_resume", "talk_to_codex", {
       fields: {
         conversationRequest: "Use Pescara."
@@ -2947,7 +3036,7 @@ test("vibe64 runtime presents waiting_for_input as the same Codex conversation i
   });
 });
 
-test("vibe64 presentation keeps Next step on conversation screens without stop config", () => {
+test("vibe64 presentation omits unavailable continue controls while Codex waits for input", () => {
   const waiting = applyWorkflowPresentation({
     actions: [
       {
@@ -2999,10 +3088,7 @@ test("vibe64 presentation keeps Next step on conversation screens without stop c
     workflowPresentation: null
   });
 
-  assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "continue_step"]);
-  assert.equal(waiting.intents[1].label, "Next step");
-  assert.equal(waiting.intents[1].enabled, false);
-  assert.equal(waiting.intents[1].disabledReason, "Answer Codex before continuing.");
+  assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex"]);
 });
 
 test("chat-with-ai step instructions make completion ownership explicit", () => {
@@ -3464,11 +3550,12 @@ test("vibe64 project validation requires code index and automated checks", async
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "project_validated",
-      sessionId: "project_validated"
+      initialStep: "review_and_validate",
+      metadata: worktreeMetadata(targetRoot, "review_and_validate"),
+      sessionId: "review_and_validate"
     });
 
-    const beforeIndex = await runtime.getSession("project_validated");
+    const beforeIndex = await runtime.getSession("review_and_validate");
     assert.equal(beforeIndex.next.enabled, false);
     assert.deepEqual(beforeIndex.actions.map((action) => ({
       enabled: action.enabled,
@@ -3476,6 +3563,10 @@ test("vibe64 project validation requires code index and automated checks", async
     })), [
       {
         enabled: true,
+        id: "run_deslop"
+      },
+      {
+        enabled: false,
         id: "update_code_index"
       },
       {
@@ -3484,30 +3575,38 @@ test("vibe64 project validation requires code index and automated checks", async
       }
     ]);
 
-    await runtime.store.writeMetadataValue("project_validated", "code_index_updated", "yes");
-    const afterIndex = await runtime.getSession("project_validated");
-    assert.equal(afterIndex.next.enabled, false);
-    assert.equal(afterIndex.actions[1].enabled, true);
+    await runtime.store.writeMetadataValue("review_and_validate", "review_deslop_completed", "yes");
+    const afterReview = await runtime.getSession("review_and_validate");
+    assert.equal(afterReview.next.enabled, false);
+    assert.equal(afterReview.actions[1].enabled, true);
 
-    await runtime.store.writeMetadataValue("project_validated", "automated_checks_passed", "yes");
-    const afterChecks = await runtime.getSession("project_validated");
+    await runtime.store.writeMetadataValue("review_and_validate", "code_index_updated", "yes");
+    const afterIndex = await runtime.getSession("review_and_validate");
+    assert.equal(afterIndex.next.enabled, false);
+    assert.equal(afterIndex.actions[2].enabled, true);
+
+    await runtime.store.writeMetadataValue("review_and_validate", "automated_checks_passed", "yes");
+    const afterChecks = await runtime.getSession("review_and_validate");
     assert.equal(afterChecks.next.enabled, true);
     assert.equal(afterChecks.next.stepId, "changes_accepted");
 
-    const afterHumanReview = await runtime.advance("project_validated");
+    const afterHumanReview = await runtime.advance("review_and_validate");
     assert.equal(afterHumanReview.currentStep, "changes_accepted");
     assert.equal(afterHumanReview.currentStepDefinition.label, "Final review");
-    assert.equal(afterHumanReview.next.stepId, "report_created");
+    assert.equal(afterHumanReview.next.stepId, "report_and_update_knowledge");
 
-    const reportStep = await runtime.advance("project_validated");
-    assert.equal(reportStep.currentStep, "report_created");
+    const reportStep = await runtime.advance("review_and_validate");
+    assert.equal(reportStep.currentStep, "report_and_update_knowledge");
     assert.equal(reportStep.next.enabled, false);
-    assert.equal(reportStep.next.disabledReason, "Write the session report before updating project knowledge.");
+    assert.equal(reportStep.next.disabledReason, "Write the report and update project knowledge before continuing.");
 
-    await runtime.store.writeArtifact("project_validated", "report.md", "# Report\n");
-    const afterReport = await runtime.getSession("project_validated");
-    assert.equal(afterReport.next.enabled, true);
-    assert.equal(afterReport.next.stepId, "project_knowledge_updated");
+    await runtime.store.writeArtifact("review_and_validate", "report.md", "# Report\n");
+    const afterReport = await runtime.getSession("review_and_validate");
+    assert.equal(afterReport.next.enabled, false);
+    await runtime.store.writeMetadataValue("review_and_validate", "project_knowledge_updated", "yes");
+    const afterKnowledge = await runtime.getSession("review_and_validate");
+    assert.equal(afterKnowledge.next.enabled, true);
+    assert.equal(afterKnowledge.next.stepId, "changes_committed");
   });
 });
 

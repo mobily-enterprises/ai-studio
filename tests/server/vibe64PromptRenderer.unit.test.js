@@ -324,7 +324,7 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
     },
     session: {
       ...baseSession,
-      currentStep: "review_run"
+      currentStep: "review_and_validate"
     }
   });
   const makePlan = await renderer.renderPrompt({

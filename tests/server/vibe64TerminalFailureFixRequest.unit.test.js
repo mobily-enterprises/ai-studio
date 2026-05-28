@@ -25,7 +25,7 @@ test("terminal failure fix requests capture the last 200 terminal lines", () => 
 
 test("terminal failure fix requests are built from server session state", () => {
   const request = terminalFailureFixRequestForSession({
-    currentStep: "project_validated",
+    currentStep: "review_and_validate",
     sessionId: "session-1",
     stepMachine: {
       status: "waiting_for_input"
@@ -47,7 +47,7 @@ test("terminal failure fix requests are built from server session state", () => 
   assert.equal(request.ok, true);
   assert.equal(request.outputTail, "older\nlatest failure");
   assert.match(request.prompt, /"kind": "consider_resolved"/u);
-  assert.match(request.prompt, /"stepId": "project_validated"/u);
+  assert.match(request.prompt, /"stepId": "review_and_validate"/u);
   assert.match(request.prompt, /"stepStatus": "waiting_for_input"/u);
   assert.match(request.prompt, /"kind": "waiting_for_input"/u);
   assert.match(request.prompt, /write the same question or blocker in normal Codex response text/u);
@@ -68,7 +68,7 @@ test("session Fix Codex prompts use ephemeral job reporting instead of session h
     attemptedCommand: "bash -lc 'npm run build'",
     closeError: "Command exited with code 1",
     commandPreview: "npm run build",
-    currentStep: "project_validated",
+    currentStep: "review_and_validate",
     exitCode: "1",
     output: "latest failure",
     sessionId: "session-1",

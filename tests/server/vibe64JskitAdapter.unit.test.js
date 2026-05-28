@@ -500,7 +500,7 @@ test("jskit deslop prompt checks framework-shaped helpers before accepting them"
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "review_run",
+      initialStep: "review_and_validate",
       metadata: worktreeMetadata(targetRoot, "jskit_deslop_prompt"),
       sessionId: "jskit_deslop_prompt"
     });
@@ -549,8 +549,9 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     assert.equal(issueSubmitted.actions.find((action) => action.id === "create_issue_on_gh")?.enabled, false);
 
     await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
+        ...worktreeMetadata(targetRoot, "jskit_pr"),
         branch_pushed: "vibe64/jskit_pr"
       },
       sessionId: "jskit_pr"
@@ -561,8 +562,8 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     assert.equal(prBeforeFileActions.open_pr, false);
     assert.equal(prBeforeFileActions.create_pr_on_gh, false);
 
-    await runtime.store.writeArtifact("jskit_pr", "tmp/create_pull_request.title.txt", "PR title\n");
-    await runtime.store.writeArtifact("jskit_pr", "tmp/create_pull_request.body.md", "PR body\n");
+    await runtime.store.writeArtifact("jskit_pr", "tmp/create_and_merge_pull_request.title.txt", "PR title\n");
+    await runtime.store.writeArtifact("jskit_pr", "tmp/create_and_merge_pull_request.body.md", "PR body\n");
     const prReady = await runtime.getSession("jskit_pr");
     const prReadyActions = enabledByActionId(prReady.actions);
     assert.equal(prReadyActions.open_pr, false);
@@ -571,9 +572,13 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     await runtime.store.writeMetadataValue("jskit_pr", "pr_url", "https://github.com/example/repo/pull/24");
     const prSubmitted = await runtime.getSession("jskit_pr");
     const prSubmittedActions = enabledByActionId(prSubmitted.actions);
-    assert.equal(prSubmitted.next.enabled, true);
+    assert.equal(prSubmitted.next.enabled, false);
     assert.equal(prSubmittedActions.open_pr, true);
+    assert.equal(prSubmittedActions.resolve_pull_request, false);
     assert.equal(prSubmittedActions.create_pr_on_gh, false);
+    assert.equal(prSubmittedActions.prepare_for_merge, true);
+    assert.equal(prSubmittedActions.merge_pr, true);
+    assert.equal(prSubmittedActions.skip_merge, true);
   });
 });
 
@@ -586,14 +591,17 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     });
 
     await runtime.createSession({
-      initialStep: "pr_merged",
+      initialStep: "create_and_merge_pull_request",
       metadata: worktreeMetadata(targetRoot, "jskit_merge"),
       sessionId: "jskit_merge"
     });
     const mergeWithoutPr = await runtime.getSession("jskit_merge");
     assert.deepEqual(enabledByActionId(mergeWithoutPr.actions), {
+      create_pr_on_gh: false,
       merge_pr: false,
+      open_pr: false,
       prepare_for_merge: false,
+      resolve_pull_request: true,
       skip_merge: false
     });
 
@@ -601,8 +609,11 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     await runtime.store.writeMetadataValue("jskit_merge", "pr_url", "https://github.com/example/repo/pull/24");
     const mergeReady = await runtime.getSession("jskit_merge");
     assert.deepEqual(enabledByActionId(mergeReady.actions), {
+      create_pr_on_gh: false,
       merge_pr: true,
+      open_pr: true,
       prepare_for_merge: true,
+      resolve_pull_request: false,
       skip_merge: true
     });
 

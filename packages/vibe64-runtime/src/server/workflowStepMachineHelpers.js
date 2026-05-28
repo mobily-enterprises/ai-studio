@@ -33,6 +33,12 @@ const STEP_INPUT_KIND = Object.freeze({
   WAITING_FOR_INPUT: "waiting_for_input"
 });
 
+const LET_CODEX_DECIDE_INPUT = Object.freeze({
+  id: "let_codex_decide",
+  label: "Let Codex decide",
+  message: "Proceed with reasonable assumptions. I do not need to answer these questions."
+});
+
 function machineState(status, details = {}) {
   return {
     ...details,
@@ -225,9 +231,18 @@ function commandFailureInteraction({
 function promptWaitingForInputInteraction({
   actionId = "",
   prompt = "Codex needs more information before this step can continue.",
+  skipInput = null,
   submitLabel = "Send to Codex",
   title = "Talk to Codex"
 } = {}) {
+  const normalizedSkipInput = skipInput && typeof skipInput === "object" && !Array.isArray(skipInput)
+    ? {
+        id: normalizeText(skipInput.id || "let_codex_decide"),
+        label: normalizeText(skipInput.label || "Let Codex decide"),
+        message: normalizeText(skipInput.message),
+        style: normalizeText(skipInput.style || "secondary")
+      }
+    : null;
   return {
     actionId: normalizeText(actionId),
     fields: [
@@ -243,6 +258,7 @@ function promptWaitingForInputInteraction({
     intentId: "talk_to_codex",
     kind: "conversation",
     prompt,
+    ...(normalizedSkipInput?.message ? { skipInput: normalizedSkipInput } : {}),
     submitKind: "",
     submitLabel,
     title
@@ -346,6 +362,7 @@ function promptStepWaitingForInputView(context = {}, machine = {}, state = {}, o
     interaction: promptWaitingForInputInteraction({
       actionId: normalizeText(options.actionId || machine.promptActionId),
       prompt: options.prompt || state.message || "Codex needs more information before this step can continue.",
+      skipInput: options.skipInput,
       title: options.title || "Talk to Codex"
     }),
     next: nextForSession(context.session, {
@@ -929,6 +946,7 @@ function commandStepView(context = {}, machine = {}, state = {}, {
 }
 
 export {
+  LET_CODEX_DECIDE_INPUT,
   STEP_INPUT_KIND,
   STEP_STATUS,
   actionCompleted,
@@ -961,5 +979,6 @@ export {
   submitCommandFailureInput,
   unsupportedInputKind,
   writeCommandActionFinishedState,
+  writePromptResponseArtifact,
   writeState
 };

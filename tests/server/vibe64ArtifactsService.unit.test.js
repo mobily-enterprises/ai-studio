@@ -123,9 +123,11 @@ test("Vibe64 artifacts service saves semantic pull request step input", async ()
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
+      metadata: worktreeMetadata(targetRoot, "step_input_pr"),
       sessionId: "step_input_pr"
     });
+    await runtime.runAction("step_input_pr", "resolve_pull_request", {});
     await runtime.store.writeConversationUserMessage("step_input_pr", {
       text: "Draft the pull request."
     });
@@ -137,7 +139,7 @@ test("Vibe64 artifacts service saves semantic pull request step input", async ()
     const saved = await service.submitCurrentStepInput("step_input_pr", {
       kind: "ready",
       source: "codex",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "awaiting_agent_result",
       fields: {
         title: "Add booking dashboard",
@@ -147,11 +149,11 @@ test("Vibe64 artifacts service saves semantic pull request step input", async ()
 
     assert.equal(saved.ok, true);
     assert.equal(
-      await runtime.store.readArtifact("step_input_pr", "tmp/create_pull_request.title.txt"),
+      await runtime.store.readArtifact("step_input_pr", "tmp/create_and_merge_pull_request.title.txt"),
       "Add booking dashboard\n"
     );
     assert.equal(
-      await runtime.store.readArtifact("step_input_pr", "tmp/create_pull_request.body.md"),
+      await runtime.store.readArtifact("step_input_pr", "tmp/create_and_merge_pull_request.body.md"),
       "## Summary\nCreate the booking dashboard.\n"
     );
     const updatedSession = await runtime.getSession("step_input_pr");
@@ -312,9 +314,11 @@ test("Vibe64 artifacts service rejects UI input while a step waits for Codex", a
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
+      metadata: worktreeMetadata(targetRoot, "step_input_pr_ui_waiting"),
       sessionId: "step_input_pr_ui_waiting"
     });
+    await runtime.runAction("step_input_pr_ui_waiting", "resolve_pull_request", {});
 
     const service = createService({
       projectService: projectServiceForRuntime(runtime)
@@ -327,7 +331,7 @@ test("Vibe64 artifacts service rejects UI input while a step waits for Codex", a
       },
       kind: "ready",
       source: "ui",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "awaiting_agent_result"
     });
 
@@ -595,8 +599,9 @@ test("Vibe64 artifacts service keeps pull request command failures inside the pu
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "create_pull_request",
+      initialStep: "create_and_merge_pull_request",
       metadata: {
+        ...worktreeMetadata(targetRoot, "step_input_pr_failure"),
         branch_pushed: "vibe64/test-pr"
       },
       sessionId: "step_input_pr_failure"
@@ -604,6 +609,7 @@ test("Vibe64 artifacts service keeps pull request command failures inside the pu
     const service = createService({
       projectService: projectServiceForRuntime(runtime)
     });
+    await runtime.runAction("step_input_pr_failure", "resolve_pull_request", {});
     await service.submitCurrentStepInput("step_input_pr_failure", {
       fields: {
         body: "## Summary\nBody.\n",
@@ -611,7 +617,7 @@ test("Vibe64 artifacts service keeps pull request command failures inside the pu
       },
       kind: "ready",
       source: "codex",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "awaiting_agent_result"
     });
     await runtime.recordCommandActionStarted("step_input_pr_failure", "create_pr_on_gh");
@@ -630,7 +636,7 @@ test("Vibe64 artifacts service keeps pull request command failures inside the pu
     const saved = await service.submitCurrentStepInput("step_input_pr_failure", {
       kind: "user_response",
       source: "ui",
-      stepId: "create_pull_request",
+      stepId: "create_and_merge_pull_request",
       stepStatus: "waiting_for_input",
       text: "The branch has been pushed."
     });
@@ -668,7 +674,7 @@ test("Vibe64 artifacts service reads server-owned artifact previews by semantic 
       targetRoot
     });
     await runtime.createSession({
-      initialStep: "report_created",
+      initialStep: "report_and_update_knowledge",
       sessionId: "artifact_invalid"
     });
     await runtime.store.writeArtifact("artifact_invalid", "report.md", "Report\n");

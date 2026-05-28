@@ -148,24 +148,24 @@ test.describe("live Vibe64 session workflow", () => {
       enabled: ["Run deep UI check", "Next step"]
     });
 
-    await goNextToStep(page, "review_run");
-    await assertChecklistControls(page, "review_run", {
+    await goNextToStep(page, "review_and_validate");
+    await assertChecklistControls(page, "review_and_validate", {
       enabled: ["Run deslop", "Next step"]
     });
 
-    await goNextToStep(page, "project_validated");
-    await assertChecklistControls(page, "project_validated", {
+    await goNextToStep(page, "review_and_validate");
+    await assertChecklistControls(page, "review_and_validate", {
       disabled: ["Run automated checks", "Next step"],
       enabled: ["Update code index"]
     });
 
     await markMetadataAndReload(page, "code_index_updated", "yes");
-    await assertChecklistControls(page, "project_validated", {
+    await assertChecklistControls(page, "review_and_validate", {
       disabled: ["Next step"],
       enabled: ["Update code index", "Run automated checks"]
     });
     await markMetadataAndReload(page, "automated_checks_passed", "yes");
-    await assertChecklistControls(page, "project_validated", {
+    await assertChecklistControls(page, "review_and_validate", {
       enabled: ["Update code index", "Run automated checks", "Next step"]
     });
 
@@ -175,18 +175,18 @@ test.describe("live Vibe64 session workflow", () => {
       enabled: ["Review diff", "Run app", "Next step"]
     });
 
-    await goNextToStep(page, "report_created");
-    await assertChecklistControls(page, "report_created", {
+    await goNextToStep(page, "report_and_update_knowledge");
+    await assertChecklistControls(page, "report_and_update_knowledge", {
       disabled: ["Edit report", "Next step"],
       enabled: ["Write report"]
     });
     await writeReportArtifact(page, `# Report\n\nChecklist report for ${runId}.\n`);
-    await assertChecklistControls(page, "report_created", {
+    await assertChecklistControls(page, "report_and_update_knowledge", {
       enabled: ["Edit report", "Write report", "Next step"]
     });
 
-    await goNextToStep(page, "project_knowledge_updated");
-    await assertChecklistControls(page, "project_knowledge_updated", {
+    await goNextToStep(page, "report_and_update_knowledge");
+    await assertChecklistControls(page, "report_and_update_knowledge", {
       enabled: ["Update project knowledge", "Next step"]
     });
 
@@ -202,33 +202,27 @@ test.describe("live Vibe64 session workflow", () => {
       enabled: ["Commit and push changes", "Next step"]
     });
 
-    await goNextToStep(page, "create_pull_request");
-    await assertChecklistControls(page, "create_pull_request", {
+    await goNextToStep(page, "create_and_merge_pull_request");
+    await assertChecklistControls(page, "create_and_merge_pull_request", {
       disabled: ["Create PR on GH", "Next step"],
       enabled: ["Draft PR"]
     });
 
     await writePullRequestArtifact(page, `# ${fixtureTitle("checklist-pr")}\n\nChecklist contract draft.\n`);
-    await assertChecklistControls(page, "create_pull_request", {
+    await assertChecklistControls(page, "create_and_merge_pull_request", {
       disabled: ["Draft PR", "Open PR", "Next step"],
       enabled: ["Create PR on GH", "Update PR"]
     });
 
     await markMetadataAndReload(page, "pr_url", "https://github.com/mercmobily/studio-ai-e2e-repo/pull/999999");
     await markMetadataAndReload(page, "pr_source", "created");
-    await assertChecklistControls(page, "create_pull_request", {
-      disabled: ["Create PR on GH", "Draft PR"],
-      enabled: ["Open PR", "Next step"]
-    });
-
-    await goNextToStep(page, "pr_merged");
-    await assertChecklistControls(page, "pr_merged", {
+    await assertChecklistControls(page, "create_and_merge_pull_request", {
       disabled: ["Next step"],
-      enabled: ["Prepare for merge", "Merge", "Do not merge"]
+      enabled: ["Open PR", "Prepare for merge", "Merge", "Do not merge"]
     });
 
     await markMetadataAndReload(page, "pr_merged", "yes");
-    await assertChecklistControls(page, "pr_merged", {
+    await assertChecklistControls(page, "create_and_merge_pull_request", {
       enabled: ["Next step"]
     });
 
@@ -294,17 +288,17 @@ test.describe("live Vibe64 session workflow", () => {
     await goNextToStep(page, "plan_and_execute");
     await goNextToStep(page, "implementation_reviewed");
     await goNextToStep(page, "deep_ui_check_run");
-    await goNextToStep(page, "review_run");
-    await goNextToStep(page, "project_validated");
+    await goNextToStep(page, "review_and_validate");
+    await goNextToStep(page, "review_and_validate");
 
     await writeWorktreeFile(page, `e2e-fixtures/${runId}-new-pr.txt`, `New PR path ${runId}\n`);
     await runCommandAndWaitForMetadata(page, "Update code index", "code_index_updated", UI_COMMAND_TIMEOUT_MS);
     await runCommandAndWaitForMetadata(page, "Run automated checks", "automated_checks_passed", UI_COMMAND_TIMEOUT_MS);
     await goNextToStep(page, "changes_accepted");
     await reviewDiff(page, `${runId}-new-pr.txt`);
-    await goNextToStep(page, "report_created");
+    await goNextToStep(page, "report_and_update_knowledge");
     await writeReportArtifact(page, `# Report\n\nNew PR path ${runId}.\n`);
-    await goNextToStep(page, "project_knowledge_updated");
+    await goNextToStep(page, "report_and_update_knowledge");
     await goNextToStep(page, "changes_committed");
     await runCommandAndWaitForMetadata(page, "Commit and push changes", "accepted_commit", UI_COMMAND_TIMEOUT_MS);
 
@@ -314,7 +308,7 @@ test.describe("live Vibe64 session workflow", () => {
       addCleanupTask(async () => deleteRemoteBranch(pushedBranch));
     }
 
-    await goNextToStep(page, "create_pull_request");
+    await goNextToStep(page, "create_and_merge_pull_request");
     await writePullRequestArtifact(page, `# ${fixtureTitle("new-pr")}\n\nCreated by ${runId}.\n`);
     await runCommandAndWaitForMetadata(page, "Create PR on GH", "pr_url", UI_COMMAND_TIMEOUT_MS);
 
@@ -323,7 +317,7 @@ test.describe("live Vibe64 session workflow", () => {
     expect(prUrl).toContain("/pull/");
     addCleanupTask(async () => closeGithubPr(prUrl));
 
-    await goNextToStep(page, "pr_merged");
+    await goNextToStep(page, "create_and_merge_pull_request");
     await expectButtonEnabled(page, "Prepare for merge");
     await expectButtonEnabled(page, "Merge");
     await runCommandAndWaitForMetadata(page, "Merge", "pr_merged", UI_COMMAND_TIMEOUT_MS);
@@ -355,8 +349,8 @@ test.describe("live Vibe64 session workflow", () => {
     await goNextToStep(page, "plan_and_execute");
     await goNextToStep(page, "implementation_reviewed");
     await goNextToStep(page, "deep_ui_check_run");
-    await goNextToStep(page, "review_run");
-    await goNextToStep(page, "project_validated");
+    await goNextToStep(page, "review_and_validate");
+    await goNextToStep(page, "review_and_validate");
     await markMetadata(page, "code_index_updated", "yes");
     await markMetadata(page, "automated_checks_passed", "yes");
     await page.reload({
@@ -364,9 +358,9 @@ test.describe("live Vibe64 session workflow", () => {
     });
     await goNextToStep(page, "changes_accepted");
     await writeWorktreeFile(page, `e2e-fixtures/${runId}-existing-stacked-pr.txt`, `Existing stacked PR path ${runId}\n`);
-    await goNextToStep(page, "report_created");
+    await goNextToStep(page, "report_and_update_knowledge");
     await writeReportArtifact(page, `# Report\n\nExisting PR path ${runId}.\n`);
-    await goNextToStep(page, "project_knowledge_updated");
+    await goNextToStep(page, "report_and_update_knowledge");
     await goNextToStep(page, "changes_committed");
     await runCommandAndWaitForMetadata(page, "Commit and push changes", "accepted_commit", UI_COMMAND_TIMEOUT_MS);
 
@@ -376,7 +370,7 @@ test.describe("live Vibe64 session workflow", () => {
       addCleanupTask(async () => deleteRemoteBranch(pushedBranch));
     }
 
-    await goNextToStep(page, "create_pull_request");
+    await goNextToStep(page, "create_and_merge_pull_request");
     await writePullRequestArtifact(page, `# ${fixtureTitle("stacked-pr")}\n\nStacked on ${pullRequest.url}.\n`);
     await runCommandAndWaitForMetadata(page, "Create PR on GH", "pr_url", UI_COMMAND_TIMEOUT_MS);
 

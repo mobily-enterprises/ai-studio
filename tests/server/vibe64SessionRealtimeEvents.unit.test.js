@@ -38,7 +38,7 @@ test("Vibe64 session service event includes session revision context when availa
   const event = vibe64SessionChangedServiceEvent();
   const payload = event.realtime.payload({
     result: {
-      currentStep: "project_validated",
+      currentStep: "review_and_validate",
       revision: 7,
       sessionId: "session-with-state",
       stepMachine: {
@@ -49,7 +49,7 @@ test("Vibe64 session service event includes session revision context when availa
   });
 
   assert.deepEqual(payload, {
-    currentStep: "project_validated",
+    currentStep: "review_and_validate",
     revision: 7,
     sessionId: "session-with-state",
     stepRevision: 3,

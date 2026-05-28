@@ -305,6 +305,52 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByRole("button", { name: "Create issue on GH" })).toHaveCount(0);
   });
 
+  test("advances through completed existing issue work definitions", async ({ page }) => {
+    const advances: string[] = [];
+    const session = existingIssueDoneSession();
+    await mockVibe64Session(page, session, {
+      onAdvance: () => {
+        advances.push(String(session.currentStep || ""));
+        Object.assign(session, sessionPayload({
+          currentStep: "plan_and_execute",
+          currentStepDefinition: {
+            id: "plan_and_execute",
+            label: "Plan and execute"
+          },
+          presentation: {
+            auto: {
+              nextOperation: {
+                executable: false,
+                kind: "stop",
+                reason: "Waiting for Codex."
+              }
+            },
+            screen: {
+              kind: "ready",
+              sections: [],
+              title: "Plan and execute"
+            },
+            step: {
+              id: "plan_and_execute",
+              label: "Plan and execute",
+              status: "ready"
+            }
+          },
+          stepMachine: {
+            status: "ready",
+            stepId: "plan_and_execute"
+          }
+        }));
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect.poll(() => advances).toEqual(["issue_file_created"]);
+    await expect(page.getByRole("heading", { name: "Plan and execute" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Define work" })).toHaveCount(0);
+  });
+
   test("continues from server state when a command stream closes after server completion", async ({ page }) => {
     await mockCommandTerminalSocketThatCloses(page);
     const advances: unknown[] = [];
@@ -2428,6 +2474,92 @@ function existingPrIssueSkipSession(overrides: Record<string, unknown> = {}) {
       message: "Describe the work before continuing.",
       phase: "choose_source",
       status: "ready",
+      stepId: "issue_file_created"
+    },
+    ...overrides
+  });
+}
+
+function existingIssueDoneSession(overrides: Record<string, unknown> = {}) {
+  const intents = [
+    {
+      enabled: true,
+      id: "continue_step",
+      label: "Next step",
+      operation: "continue",
+      style: "primary"
+    }
+  ];
+  return sessionPayload({
+    actions: [
+      {
+        disabledReason: "The GitHub issue state is already resolved.",
+        enabled: false,
+        id: "create_issue_on_gh",
+        label: "Create issue on GH"
+      },
+      {
+        disabledReason: "Work details are already saved.",
+        enabled: false,
+        id: "draft_issue",
+        label: "Describe work"
+      }
+    ],
+    currentStep: "issue_file_created",
+    currentStepDefinition: {
+      id: "issue_file_created",
+      label: "Define work"
+    },
+    intents,
+    metadata: {
+      github_issue_mode: "reuse",
+      issue_url: "https://github.com/example/project/issues/12",
+      work_source: "existing_issue"
+    },
+    next: {
+      disabledReason: "",
+      enabled: true,
+      label: "Next step",
+      stepId: "plan_and_execute",
+      visible: true
+    },
+    presentation: {
+      auto: {
+        nextOperation: {
+          executable: true,
+          id: "session-advance:plan_and_execute",
+          kind: "advance",
+          label: "Next step",
+          route: "session-advance"
+        }
+      },
+      intents,
+      screen: {
+        kind: "ready",
+        sections: [],
+        title: "Define work"
+      },
+      step: {
+        id: "issue_file_created",
+        label: "Define work",
+        status: "done"
+      }
+    },
+    stepDefinitions: [
+      {
+        id: "issue_file_created",
+        label: "Define work",
+        status: "current"
+      },
+      {
+        id: "plan_and_execute",
+        label: "Plan and execute",
+        status: "pending"
+      }
+    ],
+    stepMachine: {
+      phase: "existing_selected",
+      status: "done",
       stepId: "issue_file_created"
     },
     ...overrides

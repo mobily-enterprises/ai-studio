@@ -319,8 +319,8 @@ async function writePullRequestArtifact(page: Page, body: string) {
   });
   await expect.poll(async () => {
     const session = await latestSession(page);
-    return session.artifactReadiness?.["tmp/create_pull_request.title.txt"]?.nonEmpty === true &&
-      session.artifactReadiness?.["tmp/create_pull_request.body.md"]?.nonEmpty === true;
+    return session.artifactReadiness?.["tmp/create_and_merge_pull_request.title.txt"]?.nonEmpty === true &&
+      session.artifactReadiness?.["tmp/create_and_merge_pull_request.body.md"]?.nonEmpty === true;
   }, {
     timeout: 30_000
   }).toBe(true);

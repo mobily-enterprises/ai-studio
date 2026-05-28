@@ -9,10 +9,10 @@ import {
 } from "../workflowArtifacts.js";
 import { when } from "../workflowConditions.js";
 import {
+  LET_CODEX_DECIDE_INPUT,
   STEP_INPUT_KIND,
   STEP_STATUS,
   actionCreatedMetadata,
-  allMetadataExists,
   artifactIsReady,
   artifactText,
   assertAgentResultSource,
@@ -23,7 +23,6 @@ import {
   disableAction,
   machineState,
   markCommandActionStarted,
-  markPromptActionStarted,
   metadataExists,
   nextForSession,
   normalizeMachineInput,
@@ -45,10 +44,8 @@ const sessionCreatedStepId = "session_created";
 const workSourceSelectedStepId = "work_source_selected";
 const worktreeCreatedStepId = "worktree_created";
 const dependenciesInstalledStepId = "dependencies_installed";
-const projectValidatedStepId = "project_validated";
 const changesCommittedStepId = "changes_committed";
-const createPullRequestStepId = "create_pull_request";
-const prMergedStepId = "pr_merged";
+const createAndMergePullRequestStepId = "create_and_merge_pull_request";
 const mainCheckoutSyncedStepId = "main_checkout_synced";
 const sessionFinishedStepId = "session_finished";
 const installDependenciesActionId = "install_dependencies";
@@ -66,7 +63,7 @@ async function skipMergeAndFinish(ctx = {}) {
 }
 
 const coreLifecycleWorkflowIntentHandlers = deepFreeze({
-  [prMergedStepId]: {
+  [createAndMergePullRequestStepId]: {
     merge_and_sync: recordMergeIntent,
     skip_merge: skipMergeAndFinish
   }
@@ -256,62 +253,6 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       metadata: [dependenciesInstalledMetadataName, "dependencies_path"]
     }
   },
-  [projectValidatedStepId]: {
-    actions: [
-      {
-        adapterCapability: "update_code_index",
-        icon: "sync",
-        id: "update_code_index",
-        label: "Update code index",
-        type: "command"
-      },
-      {
-        adapterCapability: "run_automated_checks",
-        enabledWhen: [when.metadataExists("code_index_updated")],
-        enabledWhenReason: "Update the code index before running automated checks.",
-        icon: "run",
-        id: "run_automated_checks",
-        label: "Run automated checks",
-        type: "command"
-      }
-    ],
-    autopilot: {
-      actionSequence: [
-        {
-          actionId: "update_code_index",
-          completeWhen: [when.metadataExists("code_index_updated")],
-          label: "Update code index"
-        },
-        {
-          actionId: "run_automated_checks",
-          completeWhen: [when.metadataExists("automated_checks_passed")],
-          label: "Run automated checks"
-        }
-      ],
-      label: "Validate project"
-    },
-    description: "Update the adapter-provided code index and run automated checks.",
-    id: projectValidatedStepId,
-    label: "Validate project",
-    next: {
-      disabledReason: "Update the code index and run automated checks successfully before continuing.",
-      enabledWhen: [
-        when.metadataExists("code_index_updated"),
-        when.metadataExists("automated_checks_passed")
-      ]
-    },
-    rewindCleanup: {
-      actionResults: ["update_code_index", "run_automated_checks"],
-      metadata: [
-        "code_index_command_source",
-        "code_index_package_manager",
-        "code_index_path",
-        "code_index_updated",
-        "automated_checks_package_manager",
-        "automated_checks_passed"
-      ]
-    }
-  },
   [changesCommittedStepId]: {
     actions: [
       {
@@ -342,7 +283,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       metadata: ["accepted_commit", "branch_pushed"]
     }
   },
-  [createPullRequestStepId]: {
+  [createAndMergePullRequestStepId]: {
     actions: [
       {
         enabledWhen: [when.metadataExists("pr_url")],
@@ -354,7 +295,12 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       },
       {
         disabledReason: "Pull request details are already ready for review.",
-        disabledWhen: [when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT)],
+        disabledWhen: [
+          when.any(
+            when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT),
+            when.metadataExists("pr_url")
+          )
+        ],
         id: "resolve_pull_request",
         label: "Draft PR",
         promptId: "resolve_pull_request",
@@ -375,61 +321,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         id: "create_pr_on_gh",
         label: "Create PR on GH",
         type: "command"
-      }
-    ],
-    autopilot: {
-      actionSequence: [
-        {
-          actionId: "resolve_pull_request",
-          completeWhen: [when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT)],
-          label: "Draft PR"
-        },
-        {
-          actionId: "create_pr_on_gh",
-          completeWhen: [when.metadataExists("pr_url")],
-          label: "Create PR on GH"
-        }
-      ],
-      label: "Create pull request"
-    },
-    description: "Submit the pull request body and create the GitHub pull request.",
-    id: createPullRequestStepId,
-    label: "Create pull request",
-    next: {
-      disabledReason: "Create the pull request before continuing.",
-      enabledWhen: [when.metadataExists("pr_url")]
-    },
-    rewindCleanup: {
-      actionResults: ["create_pr_on_gh"],
-      artifacts: [
-        PULL_REQUEST_BODY_DRAFT_ARTIFACT,
-        PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
-        "create_pull_request.url.txt",
-        "create_pull_request.number.txt",
-        "create_pull_request.source.txt"
-      ],
-      metadata: [
-        {
-          name: "pr_url",
-          unlessMetadata: {
-            name: "pr_source",
-            value: "existing"
-          }
-        },
-        "pr_number",
-        "pr_title",
-        {
-          name: "pr_source",
-          unlessMetadata: {
-            name: "pr_source",
-            value: "existing"
-          }
-        }
-      ]
-    }
-  },
-  [prMergedStepId]: {
-    actions: [
+      },
       {
         disabledReason: "Create the pull request before preparing for merge.",
         disabledWhen: [
@@ -471,14 +363,25 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       }
     ],
     autopilot: {
-      kind: "merge_review",
-      stop: true
+      actionSequence: [
+        {
+          actionId: "resolve_pull_request",
+          completeWhen: [when.allArtifactsReady(PULL_REQUEST_TITLE_DRAFT_ARTIFACT, PULL_REQUEST_BODY_DRAFT_ARTIFACT)],
+          label: "Draft PR"
+        },
+        {
+          actionId: "create_pr_on_gh",
+          completeWhen: [when.metadataExists("pr_url")],
+          label: "Create PR on GH"
+        }
+      ],
+      label: "Create and merge PR"
     },
-    description: "Prepare and merge the pull request.",
-    id: prMergedStepId,
-    label: "Merge PR",
+    description: "Submit the pull request body, create the GitHub pull request, then merge or skip merging.",
+    id: createAndMergePullRequestStepId,
+    label: "Create and merge PR",
     next: {
-      disabledReason: "Merge the pull request or choose not to merge before continuing.",
+      disabledReason: "Create the pull request and merge it or choose not to merge before continuing.",
       enabledWhen: [
         when.any(
           when.metadataExists("pr_merged"),
@@ -520,8 +423,35 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       }
     },
     rewindCleanup: {
-      actionResults: ["prepare_for_merge", "merge_pr", "skip_merge"],
-      metadata: ["pr_merged", "merge_skipped", "autopilot_merge_intent"]
+      actionResults: ["resolve_pull_request", "create_pr_on_gh", "prepare_for_merge", "merge_pr", "skip_merge"],
+      artifacts: [
+        PULL_REQUEST_BODY_DRAFT_ARTIFACT,
+        PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
+        "create_and_merge_pull_request.url.txt",
+        "create_and_merge_pull_request.number.txt",
+        "create_and_merge_pull_request.source.txt"
+      ],
+      metadata: [
+        {
+          name: "pr_url",
+          unlessMetadata: {
+            name: "pr_source",
+            value: "existing"
+          }
+        },
+        "pr_number",
+        "pr_title",
+        {
+          name: "pr_source",
+          unlessMetadata: {
+            name: "pr_source",
+            value: "existing"
+          }
+        },
+        "pr_merged",
+        "merge_skipped",
+        "autopilot_merge_intent"
+      ]
     }
   },
   [mainCheckoutSyncedStepId]: {
@@ -948,47 +878,6 @@ const dependenciesInstalledMachine = {
   }
 };
 
-const projectValidatedMachine = {
-  stepId: projectValidatedStepId,
-
-  initialState(context = {}) {
-    return allMetadataExists(context.session, ["code_index_updated", "automated_checks_passed"])
-      ? machineState(STEP_STATUS.DONE)
-      : machineState(STEP_STATUS.READY);
-  },
-
-  async view(context = {}) {
-    let state = await readState(context, this);
-    if (allMetadataExists(context.session, ["code_index_updated", "automated_checks_passed"])) {
-      state = machineState(STEP_STATUS.DONE);
-    }
-    return commandStepView(context, this, state, {
-      disabledReason: "Update the code index and run automated checks successfully before continuing.",
-      failurePrompt: "The project validation command failed. Explain what should happen, then retry validation.",
-      failureTitle: "Validation needs attention"
-    });
-  },
-
-  async submitInput(context = {}) {
-    return submitCommandFailureInput(context, this);
-  },
-
-  async actionStarted(context = {}) {
-    return markCommandActionStarted(context, this, ["update_code_index", "run_automated_checks"]);
-  },
-
-  async actionFinished(context = {}) {
-    return writeCommandActionFinishedState(context, this, {
-      actionIds: ["update_code_index", "run_automated_checks"],
-      done: allMetadataExists(await context.runtime.getSession(context.session.sessionId), [
-        "code_index_updated",
-        "automated_checks_passed"
-      ]),
-      failureTitle: "Validation needs attention"
-    });
-  }
-};
-
 const changesCommittedMachine = {
   stepId: changesCommittedStepId,
 
@@ -1027,37 +916,137 @@ const changesCommittedMachine = {
   }
 };
 
-const pullRequestMergedMachine = {
+const pullRequestPhase = Object.freeze({
+  CREATING_PR: "creating_pr",
+  DRAFTING: "drafting",
+  MERGE_READY: "merge_ready",
+  MERGING: "merging",
+  PREPARING_MERGE: "preparing_merge",
+  REVIEW_DRAFT: "review_draft"
+});
+
+function mergeDecisionRecorded(session = {}) {
+  return metadataExists(session, "pr_merged") || metadataExists(session, "merge_skipped");
+}
+
+function mergeReviewAutopilot() {
+  return {
+    kind: "merge_review",
+    stage: null,
+    stop: true
+  };
+}
+
+const createAndMergePullRequestMachine = {
   promptActionId: "prepare_for_merge",
-  stepId: prMergedStepId,
+  stepId: createAndMergePullRequestStepId,
 
   initialState(context = {}) {
-    return metadataExists(context.session, "pr_merged") || metadataExists(context.session, "merge_skipped")
-      ? machineState(STEP_STATUS.DONE)
-      : machineState(STEP_STATUS.READY);
+    if (mergeDecisionRecorded(context.session)) {
+      return machineState(STEP_STATUS.DONE);
+    }
+    if (metadataExists(context.session, "pr_url")) {
+      return machineState(STEP_STATUS.READY, {
+        phase: pullRequestPhase.MERGE_READY
+      });
+    }
+    return pullRequestFilesAreReady(context.session)
+      ? machineState(STEP_STATUS.CONFIRM_FILES, {
+          phase: pullRequestPhase.REVIEW_DRAFT
+        })
+      : machineState(STEP_STATUS.READY, {
+          phase: pullRequestPhase.DRAFTING
+        });
   },
 
   async view(context = {}) {
     let state = await readState(context, this);
-    if (metadataExists(context.session, "pr_merged") || metadataExists(context.session, "merge_skipped")) {
+    if (mergeDecisionRecorded(context.session)) {
       state = machineState(STEP_STATUS.DONE);
+    } else if (metadataExists(context.session, "pr_url") && ![
+      STEP_STATUS.AWAITING_AGENT_RESULT,
+      STEP_STATUS.ATTEMPTING_EXECUTION,
+      STEP_STATUS.WAITING_FOR_INPUT
+    ].includes(state.status)) {
+      state = machineState(STEP_STATUS.READY, {
+        phase: pullRequestPhase.MERGE_READY,
+        promptComplete: state.promptComplete === true
+      });
+    } else if (
+      pullRequestFilesAreReady(context.session) &&
+      state.status !== STEP_STATUS.CONFIRM_FILES &&
+      ![pullRequestPhase.CREATING_PR, pullRequestPhase.PREPARING_MERGE, pullRequestPhase.MERGING].includes(state.phase)
+    ) {
+      state = machineState(STEP_STATUS.CONFIRM_FILES, {
+        phase: pullRequestPhase.REVIEW_DRAFT
+      });
     }
+
     switch (state.status) {
       case STEP_STATUS.DONE:
         return promptStepDoneView(context, this, state);
 
+      case STEP_STATUS.CONFIRM_FILES: {
+        const values = await readPullRequestFieldValues(context);
+        return {
+          interaction: pullRequestInputInteraction(values),
+          next: nextForSession(context.session, {
+            disabledReason: "Create the pull request before choosing whether to merge."
+          }),
+          stepMachine: publicState(this, {
+            ...state,
+            message: state.message || "Review the pull request draft."
+          })
+        };
+      }
+
       case STEP_STATUS.WAITING_FOR_INPUT:
+        if ([pullRequestPhase.CREATING_PR, pullRequestPhase.MERGING].includes(state.phase)) {
+          return {
+            actions: disableAction(
+              context.session,
+              state.phase === pullRequestPhase.MERGING ? "merge_pr" : "create_pr_on_gh",
+              state.phase === pullRequestPhase.MERGING
+                ? "Resolve the merge command before retrying."
+                : "Resolve the pull request command before retrying."
+            ),
+            interaction: commandFailureInteraction({
+              prompt: state.message || "The pull request command failed. Explain what should happen, then retry.",
+              title: state.title || "Pull request needs attention"
+            }),
+            next: nextForSession(context.session, {
+              disabledReason: "Resolve the pull request command before continuing."
+            }),
+            stepMachine: publicState(this, state)
+          };
+        }
         return promptStepWaitingForInputView(context, this, {
           ...state,
-          message: state.message || "The merge step needs input before it can continue."
+          message: state.message || "The pull request step needs input before it can continue."
+        }, {
+          actionId: state.phase === pullRequestPhase.DRAFTING ? "resolve_pull_request" : "prepare_for_merge",
+          prompt: state.message || "The pull request step needs input before it can continue.",
+          skipInput: LET_CODEX_DECIDE_INPUT,
+          title: state.phase === pullRequestPhase.DRAFTING ? "Pull request needs input" : "Merge needs input"
         });
 
       case STEP_STATUS.READY:
+        if (state.phase === pullRequestPhase.MERGE_READY) {
+          return {
+            next: nextForSession(context.session, {
+              disabledReason: "Merge the pull request or choose not to merge before continuing."
+            }),
+            stepMachine: publicState(this, state),
+            workflowAutopilot: mergeReviewAutopilot()
+          };
+        }
+        return promptStepWaitingView(context, this, state, "Create the pull request before choosing whether to merge.");
+
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.FAILED:
       default:
-        return promptStepWaitingView(context, this, state, "Merge the pull request or choose not to merge before continuing.");
+        return promptStepWaitingView(context, this, state, "Create the pull request and merge it or choose not to merge before continuing.");
     }
   },
 
@@ -1065,52 +1054,103 @@ const pullRequestMergedMachine = {
     const state = await readState(context, this);
     const input = normalizeMachineInput(context.input);
     switch (state.status) {
-      case STEP_STATUS.READY:
       case STEP_STATUS.AWAITING_AGENT_RESULT:
       case STEP_STATUS.WAITING_FOR_INPUT:
+      case STEP_STATUS.CONFIRM_FILES:
       case STEP_STATUS.FAILED:
         if (state.status === STEP_STATUS.AWAITING_AGENT_RESULT) {
           assertAgentResultSource(context.session, input);
         }
         if (input.kind === STEP_INPUT_KIND.WAITING_FOR_INPUT) {
           await writeState(context, this, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-            from: state.status === STEP_STATUS.ATTEMPTING_EXECUTION
-              ? STEP_STATUS.ATTEMPTING_EXECUTION
-              : STEP_STATUS.AWAITING_AGENT_RESULT,
             message: input.message,
+            phase: state.phase || pullRequestPhase.DRAFTING,
             source: input.source
           }));
           return;
         }
         if (input.kind === STEP_INPUT_KIND.USER_RESPONSE || input.kind === STEP_INPUT_KIND.CONSIDER_RESOLVED) {
+          if (state.phase === pullRequestPhase.CREATING_PR) {
+            await writeState(context, this, pullRequestFilesAreReady(context.session)
+              ? machineState(STEP_STATUS.CONFIRM_FILES, {
+                  message: input.message,
+                  phase: pullRequestPhase.REVIEW_DRAFT,
+                  response: input.text || input.fields.response,
+                  source: input.source
+                })
+              : machineState(STEP_STATUS.READY, {
+                  message: input.message,
+                  phase: pullRequestPhase.DRAFTING,
+                  response: input.text || input.fields.response,
+                  source: input.source
+                }));
+            return;
+          }
           await writeState(context, this, machineState(STEP_STATUS.READY, {
+            phase: state.phase || pullRequestPhase.MERGE_READY,
             response: input.text || input.fields.response,
             source: input.source
           }));
           return;
         }
-        if (input.kind === STEP_INPUT_KIND.READY) {
+        if (input.kind === STEP_INPUT_KIND.READY && state.phase === pullRequestPhase.PREPARING_MERGE) {
           await writeState(context, this, machineState(STEP_STATUS.READY, {
             message: input.message,
+            phase: pullRequestPhase.MERGE_READY,
             promptComplete: true,
+            source: input.source
+          }));
+          return;
+        }
+        if (input.kind === STEP_INPUT_KIND.READY || input.kind === STEP_INPUT_KIND.CONFIRM_FILES) {
+          await writePullRequestFieldValues(context, input.fields);
+          await writeState(context, this, machineState(STEP_STATUS.CONFIRM_FILES, {
+            phase: pullRequestPhase.REVIEW_DRAFT,
             source: input.source
           }));
           return;
         }
         throw unsupportedInputKind(input.kind, this.stepId);
 
+      case STEP_STATUS.READY:
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.DONE:
       default:
-        throw vibe64Error("The merge step cannot accept input right now.", "vibe64_step_input_not_available");
+        throw vibe64Error("The pull request step cannot accept input right now.", "vibe64_step_input_not_available");
     }
   },
 
   async actionStarted(context = {}) {
-    if (context.actionId === "prepare_for_merge") {
-      return markPromptActionStarted(context, this, "prepare_for_merge");
+    const state = await readState(context, this);
+    if (context.actionId === "resolve_pull_request") {
+      await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
+        phase: pullRequestPhase.DRAFTING,
+        response: state.response,
+        source: state.source
+      }));
+      return;
     }
-    return markCommandActionStarted(context, this, ["merge_pr"]);
+    if (context.actionId === "prepare_for_merge") {
+      await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
+        phase: pullRequestPhase.PREPARING_MERGE,
+        response: state.response,
+        source: state.source
+      }));
+      return;
+    }
+    if (context.actionId === "create_pr_on_gh") {
+      await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
+        actionId: context.actionId,
+        phase: pullRequestPhase.CREATING_PR
+      }));
+      return;
+    }
+    if (context.actionId === "merge_pr") {
+      await writeState(context, this, machineState(STEP_STATUS.ATTEMPTING_EXECUTION, {
+        actionId: context.actionId,
+        phase: pullRequestPhase.MERGING
+      }));
+    }
   },
 
   async actionFinished(context = {}) {
@@ -1118,25 +1158,56 @@ const pullRequestMergedMachine = {
       await writeState(context, this, machineState(STEP_STATUS.DONE));
       return;
     }
-    return writeCommandActionFinishedState(context, this, {
-      actionIds: ["merge_pr"],
-      done: await actionCreatedMetadata(context, "pr_merged"),
-      failureTitle: "Merge needs attention"
-    });
+    if (context.actionId === "create_pr_on_gh") {
+      await writeState(context, this, await actionCreatedMetadata(context, "pr_url")
+        ? machineState(STEP_STATUS.READY, {
+            phase: pullRequestPhase.MERGE_READY
+          })
+        : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.ATTEMPTING_EXECUTION,
+            message: normalizeText(context.actionResult?.message),
+            output: normalizeText(context.actionResult?.output),
+            phase: pullRequestPhase.CREATING_PR,
+            title: "Pull request needs attention"
+          }));
+      return;
+    }
+    if (context.actionId === "merge_pr") {
+      await writeState(context, this, await actionCreatedMetadata(context, "pr_merged")
+        ? machineState(STEP_STATUS.DONE)
+        : machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+            from: STEP_STATUS.ATTEMPTING_EXECUTION,
+            message: normalizeText(context.actionResult?.message),
+            output: normalizeText(context.actionResult?.output),
+            phase: pullRequestPhase.MERGING,
+            title: "Merge needs attention"
+          }));
+    }
   },
 
   inputCompletionMessage(context = {}) {
     const input = normalizeMachineInput(context.input);
     return input.kind === STEP_INPUT_KIND.READY
-      ? "Merge preparation completed."
+      ? (context.session.stepMachine?.phase === pullRequestPhase.PREPARING_MERGE
+          ? "Merge preparation completed."
+          : "Pull request draft submitted for review.")
       : "";
   },
 
-  promptInstruction() {
-    return currentStepHelperInstruction({
-      doneMeaning: "The pull request and main checkout are ready for the merge command.",
-      waitingForInputMeaning: "The merge preparation found a blocker that needs user input."
-    });
+  promptInstruction({ action = {} } = {}) {
+    return normalizeText(action.id) === "prepare_for_merge"
+      ? currentStepHelperInstruction({
+          doneMeaning: "The pull request and main checkout are ready for the merge command.",
+          waitingForInputMeaning: "The merge preparation found a blocker that needs user input."
+        })
+      : currentStepHelperInstruction({
+          doneFields: {
+            body: "Markdown pull request body",
+            title: "Pull request title"
+          },
+          doneMeaning: "The pull request title and body are ready for user confirmation.",
+          waitingForInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
+        });
   }
 };
 
@@ -1275,7 +1346,7 @@ function pullRequestInputInteraction(values = {}) {
     prompt: "Review the pull request details. Save changes here, or continue to create the GitHub pull request.",
     submitKind: STEP_INPUT_KIND.CONFIRM_FILES,
     submitLabel: "Update PR",
-    title: "Create pull request"
+    title: "Create and merge PR"
   };
 }
 
@@ -1301,73 +1372,14 @@ const coreLifecycleSteps = Object.freeze([
     machine: dependenciesInstalledMachine
   },
   {
-    definition: coreLifecycleStepDefinitionsById[projectValidatedStepId],
-    id: projectValidatedStepId,
-    machine: projectValidatedMachine
-  },
-  {
     definition: coreLifecycleStepDefinitionsById[changesCommittedStepId],
     id: changesCommittedStepId,
     machine: changesCommittedMachine
   },
   {
-    config: {
-      command: {
-        actionId: "create_pr_on_gh",
-        doneMetadata: "pr_url",
-        failureState: (context = {}) => machineState(STEP_STATUS.WAITING_FOR_INPUT, {
-          from: STEP_STATUS.ATTEMPTING_EXECUTION,
-          message: normalizeText(context.actionResult?.message),
-          output: normalizeText(context.actionResult?.output)
-        })
-      },
-      completionMessage: "Pull request draft submitted for review.",
-      done: (session = {}) => metadataExists(session, "pr_url"),
-      draftOrigin: "prompt",
-      draftReady: pullRequestFilesAreReady,
-      interaction: (_status, values = {}) => pullRequestInputInteraction(values),
-      nextWhenConfirmed: {
-        disabledReason: "Create the pull request before continuing."
-      },
-      nextWhenDrafting: {
-        disabledReason: "Resolve the pull request content before continuing."
-      },
-      nextWhenWaitingForInput: {
-        disabledReason: "Resolve the pull request input request before continuing."
-      },
-      nextWhenWorking: {
-        disabledReason: "Create the pull request before continuing."
-      },
-      onWaitingActions: (context = {}) => disableAction(context.session, "create_pr_on_gh", "Resolve the pull request input request before retrying."),
-      promptInstruction() {
-        return currentStepHelperInstruction({
-          doneFields: {
-            body: "Markdown pull request body",
-            title: "Pull request title"
-          },
-          doneMeaning: "The pull request title and body are ready for user confirmation.",
-          waitingForInputMeaning: "You cannot draft the pull request without a user decision or missing repository context."
-        });
-      },
-      readValues: readPullRequestFieldValues,
-      saveValues: writePullRequestFieldValues,
-      unsupportedDoneMessage: "The pull request step cannot accept input right now.",
-      userResponseResumeStatus: (state = {}) => state.from === STEP_STATUS.ATTEMPTING_EXECUTION
-        ? STEP_STATUS.CONFIRM_FILES
-        : STEP_STATUS.AWAITING_AGENT_RESULT,
-      waitingInteraction: (state = {}) => commandFailureInteraction({
-        prompt: state.message || "Codex needs more information before the pull request can continue.",
-        title: "Pull request needs input"
-      })
-    },
-    definition: coreLifecycleStepDefinitionsById[createPullRequestStepId],
-    factoryId: "editable_artifact_review",
-    id: createPullRequestStepId
-  },
-  {
-    definition: coreLifecycleStepDefinitionsById[prMergedStepId],
-    id: prMergedStepId,
-    machine: pullRequestMergedMachine
+    definition: coreLifecycleStepDefinitionsById[createAndMergePullRequestStepId],
+    id: createAndMergePullRequestStepId,
+    machine: createAndMergePullRequestMachine
   },
   {
     definition: coreLifecycleStepDefinitionsById[mainCheckoutSyncedStepId],
@@ -1394,10 +1406,8 @@ const _testing = deepFreeze({
     workSourceSelectedStepId,
     worktreeCreatedStepId,
     dependenciesInstalledStepId,
-    projectValidatedStepId,
     changesCommittedStepId,
-    createPullRequestStepId,
-    prMergedStepId,
+    createAndMergePullRequestStepId,
     mainCheckoutSyncedStepId,
     sessionFinishedStepId
   ]

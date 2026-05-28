@@ -158,9 +158,9 @@ describe("Vibe64 session panel model", () => {
           label: "Final review"
         },
         {
-          id: "pr_merged",
+          id: "create_and_merge_pull_request",
           index: 16,
-          label: "Merge PR"
+          label: "Create and merge PR"
         },
         {
           id: "session_finished",
@@ -182,7 +182,7 @@ describe("Vibe64 session panel model", () => {
       { canRewind: false, id: "implementation_reviewed", label: "Human review", state: "pending" },
       { canRewind: false, id: "deep_ui_check_run", label: "Run deep UI check", state: "pending" },
       { canRewind: false, id: "changes_accepted", label: "Final review", state: "pending" },
-      { canRewind: false, id: "pr_merged", label: "Merge PR", state: "pending" },
+      { canRewind: false, id: "create_and_merge_pull_request", label: "Create and merge PR", state: "pending" },
       { canRewind: false, id: "session_finished", label: "Congratulations!", state: "pending" }
     ]);
   });

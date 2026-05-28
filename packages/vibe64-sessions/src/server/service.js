@@ -125,7 +125,7 @@ async function recordConversationUserMessage(runtime, sessionId, {
   if (!shouldRecordConversationUserMessage(actionResult)) {
     return null;
   }
-  const text = conversationRequestText(input);
+  const text = conversationRequestText(input) || conversationRequestText(actionResult?.input);
   if (!text || typeof runtime?.store?.writeConversationUserMessage !== "function") {
     return null;
   }
