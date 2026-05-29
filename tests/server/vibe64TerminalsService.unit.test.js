@@ -94,6 +94,9 @@ import {
   STUDIO_MYSQL_CLIENT_CONFIG_DIR
 } from "@local/studio-terminal-core/server/studioToolHome";
 import {
+  githubSshToHttpsGitEnv
+} from "@local/studio-terminal-core/server/gitGithubTransport";
+import {
   runtimeNetworkName
 } from "@local/studio-terminal-core/server/runtimeContainers";
 import {
@@ -659,6 +662,9 @@ test("Vibe64 command terminal joins the target runtime network before the image"
   assert.ok(args.includes(`${supportDirectory}:${supportDirectory}:ro`));
   assert.ok(args.includes(`MYSQL_HOST=${JSKIT_MARIADB_HOST}`));
   assert.ok(args.includes(`MYSQL_PWD=${JSKIT_MARIADB_ROOT_PASSWORD}`));
+  for (const [key, value] of Object.entries(githubSshToHttpsGitEnv())) {
+    assertDockerEnv(args, key, value);
+  }
   assert.equal(dockerEnvValue(args, COMMAND_RESULT_ENV), `${resultDirectory}/result.tsv`);
 
   const startupScript = args.at(-1);

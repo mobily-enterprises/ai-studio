@@ -10,7 +10,9 @@ export default defineConfig({
     timeout: 5000
   },
   reporter: process.env.CI ? "github" : "list",
+  testDir: "./tests/e2e",
   timeout: 30_000,
+  workers: 1,
   use: {
     baseURL,
     trace: "retain-on-failure"

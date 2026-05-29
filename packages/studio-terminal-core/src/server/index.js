@@ -1,5 +1,6 @@
 export * from "./containerRuntime.js";
 export * from "./dockerRuntime.js";
+export * from "./gitGithubTransport.js";
 export * from "./gitToolchainMounts.js";
 export * from "./launchTargetTerminal.js";
 export * from "./managedDatabases.js";

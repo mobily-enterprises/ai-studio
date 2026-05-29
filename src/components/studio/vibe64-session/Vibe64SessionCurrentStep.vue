@@ -59,42 +59,27 @@
       {{ stepInput.error }}
     </v-alert>
 
-    <template v-if="selectedWorkflowControlVisible">
-      <template
-        v-for="field in selectedControlFields"
-        :key="field.name"
-      >
-        <v-textarea
-          v-if="field.kind === 'textarea'"
-          auto-grow
-          class="studio-ai-sessions__issue-request-input"
-          :disabled="workflowControlsRunning"
-          hide-details="auto"
-          :label="field.label"
-          :model-value="selectedControlValues[field.name] || ''"
-          :placeholder="field.placeholder"
-          :rows="field.rows || 4"
-          variant="outlined"
-          @update:model-value="updateSelectedControlValue(field.name, $event)"
-        />
-        <v-text-field
-          v-else
-          class="studio-ai-sessions__issue-request-input"
-          :disabled="workflowControlsRunning"
-          hide-details="auto"
-          :label="field.label"
-          :model-value="selectedControlValues[field.name] || ''"
-          :placeholder="field.placeholder"
-          variant="outlined"
-          @update:model-value="updateSelectedControlValue(field.name, $event)"
-        />
-      </template>
-    </template>
+    <Vibe64WorkflowControlForm
+      v-if="selectedWorkflowControlVisible"
+      :can-submit-selected-control="canSubmitSelectedControl"
+      :running="workflowControlsRunning"
+      :selected-control="selectedControl"
+      :selected-control-fields="selectedControlFields"
+      :selected-control-values="selectedControlValues"
+      :workflow-controls="workflowButtonControls"
+      @activate-control="activateWorkflowControl"
+      @cancel="clearSelectedControl"
+      @submit="submitSelectedWorkflowControl"
+      @update-value="updateSelectedControlValue"
+    />
 
-    <div class="studio-ai-sessions__actions">
+    <div
+      v-else
+      class="studio-ai-sessions__actions"
+    >
       <template v-if="workflowControlsAvailable">
         <v-btn
-          v-if="workflowControlsUseActionFallback && !selectedWorkflowControlVisible"
+          v-if="workflowControlsUseActionFallback"
           color="primary"
           variant="flat"
           :disabled="page.busy || !stepInput.canSubmit"
@@ -105,48 +90,8 @@
           {{ stepInput.interaction?.submitLabel || "Submit" }}
         </v-btn>
 
-        <template v-if="selectedWorkflowControlVisible">
-          <v-btn
-            color="primary"
-            :disabled="!canSubmitSelectedControl"
-            :loading="workflowControlsRunning"
-            :prepend-icon="mdiSend"
-            type="button"
-            variant="flat"
-            @click="submitSelectedWorkflowControl"
-          >
-            {{ selectedControl.label }}
-          </v-btn>
-
-          <v-btn
-            :disabled="workflowControlsRunning"
-            :prepend-icon="mdiClose"
-            type="button"
-            variant="tonal"
-            @click="clearSelectedControl"
-          >
-            Cancel
-          </v-btn>
-
-          <v-btn
-            v-for="control in workflowButtonControls"
-            :key="control.id"
-            :color="control.buttonColor"
-            :disabled="control.disabled"
-            :loading="control.loading"
-            :prepend-icon="control.icon"
-            :title="control.disabledReason || control.label"
-            type="button"
-            :variant="control.buttonVariant"
-            @click="activateWorkflowControl(control.sourceControl || control)"
-          >
-            {{ control.label }}
-          </v-btn>
-        </template>
-
         <v-btn
           v-for="control in workflowButtonControls"
-          v-else
           :key="control.id"
           :color="control.buttonColor"
           :disabled="control.disabled"
@@ -205,81 +150,27 @@
     v-else-if="workflowControlsAvailable"
     class="studio-ai-sessions__workflow-controls"
   >
-    <template v-if="selectedWorkflowControlVisible">
-      <template
-        v-for="field in selectedControlFields"
-        :key="field.name"
-      >
-        <v-textarea
-          v-if="field.kind === 'textarea'"
-          auto-grow
-          class="studio-ai-sessions__issue-request-input"
-          :disabled="workflowControlsRunning"
-          hide-details="auto"
-          :label="field.label"
-          :model-value="selectedControlValues[field.name] || ''"
-          :placeholder="field.placeholder"
-          :rows="field.rows || 4"
-          variant="outlined"
-          @update:model-value="updateSelectedControlValue(field.name, $event)"
-        />
-        <v-text-field
-          v-else
-          class="studio-ai-sessions__issue-request-input"
-          :disabled="workflowControlsRunning"
-          hide-details="auto"
-          :label="field.label"
-          :model-value="selectedControlValues[field.name] || ''"
-          :placeholder="field.placeholder"
-          variant="outlined"
-          @update:model-value="updateSelectedControlValue(field.name, $event)"
-        />
-      </template>
-    </template>
+    <Vibe64WorkflowControlForm
+      v-if="selectedWorkflowControlVisible"
+      as-form
+      :can-submit-selected-control="canSubmitSelectedControl"
+      :running="workflowControlsRunning"
+      :selected-control="selectedControl"
+      :selected-control-fields="selectedControlFields"
+      :selected-control-values="selectedControlValues"
+      :workflow-controls="workflowButtonControls"
+      @activate-control="activateWorkflowControl"
+      @cancel="clearSelectedControl"
+      @submit="submitSelectedWorkflowControl"
+      @update-value="updateSelectedControlValue"
+    />
 
-    <div class="studio-ai-sessions__actions">
-      <template v-if="selectedWorkflowControlVisible">
-        <v-btn
-          color="primary"
-          :disabled="!canSubmitSelectedControl"
-          :loading="workflowControlsRunning"
-          :prepend-icon="mdiSend"
-          type="button"
-          variant="flat"
-          @click="submitSelectedWorkflowControl"
-        >
-          {{ selectedControl.label }}
-        </v-btn>
-
-        <v-btn
-          :disabled="workflowControlsRunning"
-          :prepend-icon="mdiClose"
-          type="button"
-          variant="tonal"
-          @click="clearSelectedControl"
-        >
-          Cancel
-        </v-btn>
-
-        <v-btn
-          v-for="control in workflowButtonControls"
-          :key="control.id"
-          :color="control.buttonColor"
-          :disabled="control.disabled"
-          :loading="control.loading"
-          :prepend-icon="control.icon"
-          :title="control.disabledReason || control.label"
-          type="button"
-          :variant="control.buttonVariant"
-          @click="activateWorkflowControl(control.sourceControl || control)"
-        >
-          {{ control.label }}
-        </v-btn>
-      </template>
-
+    <div
+      v-else
+      class="studio-ai-sessions__actions"
+    >
       <v-btn
         v-for="control in workflowButtonControls"
-        v-else
         :key="control.id"
         :color="control.buttonColor"
         :disabled="control.disabled"
@@ -373,13 +264,12 @@ import { computed, ref } from "vue";
 import {
   mdiArrowRight,
   mdiCheck,
-  mdiClose,
   mdiFileCompare,
-  mdiRefresh,
-  mdiSend
+  mdiRefresh
 } from "@mdi/js";
 import Vibe64BackgroundTasks from "@/components/studio/vibe64-session/Vibe64BackgroundTasks.vue";
 import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64SessionActionButton.vue";
+import Vibe64WorkflowControlForm from "@/components/studio/vibe64-session/Vibe64WorkflowControlForm.vue";
 import {
   useVibe64AutopilotComposer
 } from "@/composables/useVibe64AutopilotComposer.js";

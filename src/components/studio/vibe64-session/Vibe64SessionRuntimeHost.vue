@@ -5,8 +5,7 @@
       :class="`studio-ai-sessions__layout--${sessionMode}`"
     >
       <Vibe64AutopilotView
-        v-show="sessionMode === 'autopilot'"
-        :aria-hidden="sessionMode === 'autopilot' ? null : 'true'"
+        v-if="sessionMode === 'autopilot'"
         :actions="actions"
         :active="autopilotModeActive"
         :automation-enabled="autopilotAutomationEnabled"
@@ -27,10 +26,8 @@
       />
 
       <div
-        v-show="sessionMode === 'inspect'"
-        :aria-hidden="sessionMode === 'inspect' ? null : 'true'"
+        v-if="sessionMode === 'inspect'"
         class="studio-ai-sessions__inspect-slot"
-        :inert="sessionMode !== 'inspect'"
       >
         <Vibe64SessionWorkspace
           class="studio-ai-sessions__inspect-workspace"

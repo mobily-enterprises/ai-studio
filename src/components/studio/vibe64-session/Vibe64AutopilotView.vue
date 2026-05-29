@@ -232,42 +232,29 @@
           {{ stepInput.error }}
         </v-alert>
 
-        <div
+        <Vibe64WorkflowControlForm
           v-if="selectedStepInputControlVisible"
           class="studio-autopilot__inline-control"
-        >
-          <template
-            v-for="field in selectedControlFields"
-            :key="field.name"
-          >
-            <v-textarea
-              v-if="field.kind === 'textarea'"
-              auto-grow
-              class="studio-autopilot__input"
-              :disabled="running"
-              :label="field.label"
-              :model-value="selectedControlValues[field.name] || ''"
-              :placeholder="field.placeholder"
-              :rows="field.rows || 4"
-              variant="outlined"
-              @update:model-value="updateSelectedControlValue(field.name, $event)"
-            />
-            <v-text-field
-              v-else
-              class="studio-autopilot__input"
-              :disabled="running"
-              :label="field.label"
-              :model-value="selectedControlValues[field.name] || ''"
-              :placeholder="field.placeholder"
-              variant="outlined"
-              @update:model-value="updateSelectedControlValue(field.name, $event)"
-            />
-          </template>
-        </div>
+          :can-submit-selected-control="canSubmitSelectedControl"
+          layout="center"
+          :running="running"
+          :selected-control="selectedControl"
+          :selected-control-fields="selectedControlFields"
+          :selected-control-values="selectedControlValues"
+          sticky-actions
+          :workflow-controls="workflowButtonControls"
+          @activate-control="activateWorkflowButtonControl"
+          @cancel="clearSelectedControl"
+          @submit="submitSelectedWorkflowControl"
+          @update-value="updateSelectedControlValue"
+        />
 
-        <div class="studio-autopilot__actions">
+        <div
+          v-else
+          class="studio-autopilot__actions"
+        >
           <v-btn
-            v-if="!selectedStepInputControlVisible && !stepInputHasWorkflowIntents"
+            v-if="!stepInputHasWorkflowIntents"
             color="primary"
             :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
             :disabled="page.busy || !stepInput.canSubmit"
@@ -276,30 +263,6 @@
             type="submit"
           >
             {{ stepInput.interaction?.submitLabel || "Submit" }}
-          </v-btn>
-
-          <v-btn
-            v-if="selectedStepInputControlVisible"
-            color="primary"
-            :disabled="!canSubmitSelectedControl"
-            :loading="running"
-            :prepend-icon="mdiSend"
-            type="button"
-            variant="flat"
-            @click="submitSelectedWorkflowControl"
-          >
-            {{ selectedControl.label }}
-          </v-btn>
-
-          <v-btn
-            v-if="selectedStepInputControlVisible"
-            :disabled="running"
-            :prepend-icon="mdiClose"
-            type="button"
-            variant="tonal"
-            @click="clearSelectedControl"
-          >
-            Cancel
           </v-btn>
 
           <v-btn
@@ -318,7 +281,7 @@
           </v-btn>
 
           <template
-            v-if="!selectedStepInputControlVisible && !stepInputHasWorkflowIntents && !workflowButtonControls.length"
+            v-if="!stepInputHasWorkflowIntents && !workflowButtonControls.length"
           >
             <Vibe64SessionActionButton
               v-for="action in actions.currentActions"
@@ -394,15 +357,20 @@
           title="Codex"
         />
 
-        <Vibe64AutopilotComposer
+        <Vibe64WorkflowControlForm
           v-if="selectedScreenControlVisible"
+          as-form
+          attach-textarea
+          class="studio-autopilot__control-form"
+          :cancel-visible="!selectedControlIsPrimary"
           :can-submit-selected-control="canSubmitSelectedControl"
+          layout="split"
           :running="running"
           :selected-control="selectedControl"
           :selected-control-fields="selectedControlFields"
-          :selected-control-is-primary="selectedControlIsPrimary"
           :selected-control-values="selectedControlValues"
           :session-id="sessionId"
+          :textarea-rows="3"
           :workflow-controls="workflowButtonControls"
           @activate-control="activateControl"
           @cancel="clearSelectedControl"
@@ -452,7 +420,6 @@ import {
   mdiInformationOutline,
   mdiRefresh,
   mdiRobotOutline,
-  mdiSend,
   mdiStopCircleOutline
 } from "@mdi/js";
 import {
@@ -461,12 +428,12 @@ import {
 import Vibe64FixCodexDialog from "@/components/studio/Vibe64FixCodexDialog.vue";
 import Vibe64LaunchControls from "@/components/studio/Vibe64LaunchControls.vue";
 import Vibe64BackgroundTasks from "@/components/studio/vibe64-session/Vibe64BackgroundTasks.vue";
-import Vibe64AutopilotComposer from "@/components/studio/vibe64-session/Vibe64AutopilotComposer.vue";
 import Vibe64AutopilotNavigation from "@/components/studio/vibe64-session/Vibe64AutopilotNavigation.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64HeadlessCommandOutput from "@/components/studio/vibe64-session/Vibe64HeadlessCommandOutput.vue";
 import Vibe64ReportPreview from "@/components/studio/vibe64-session/Vibe64ReportPreview.vue";
 import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64SessionActionButton.vue";
+import Vibe64WorkflowControlForm from "@/components/studio/vibe64-session/Vibe64WorkflowControlForm.vue";
 import {
   useVibe64AutopilotComposer
 } from "@/composables/useVibe64AutopilotComposer.js";

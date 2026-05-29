@@ -6,6 +6,9 @@ import {
   buildDoctorToolchainArgs
 } from "@local/setup-doctor-core/server/doctorToolchain";
 import {
+  githubSshToHttpsGitEnv
+} from "@local/studio-terminal-core/server/gitGithubTransport";
+import {
   STUDIO_BASE_TOOLCHAIN_IMAGE,
   STUDIO_PLAYWRIGHT_BROWSERS_PATH,
   STUDIO_PLAYWRIGHT_BROWSERS_VOLUME,
@@ -24,10 +27,17 @@ function assertPlaywrightBrowserCache(args) {
   assertDockerEnv(args, "PLAYWRIGHT_BROWSERS_PATH", STUDIO_PLAYWRIGHT_BROWSERS_PATH);
 }
 
+function assertGithubSshTransportRewrite(args) {
+  for (const [key, value] of Object.entries(githubSshToHttpsGitEnv())) {
+    assertDockerEnv(args, key, value);
+  }
+}
+
 test("doctor toolchain commands run with the shared Studio tool-home ownership contract", () => {
   const args = buildDoctorToolchainArgs(["npm", "prefix", "-g"]);
 
   assertPlaywrightBrowserCache(args);
+  assertGithubSshTransportRewrite(args);
   assert.ok(args.includes(`HOME=${STUDIO_TOOL_HOME_PATH}`));
   assert.ok(args.includes(`NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`));
   assert.ok(args.includes(`VIBE64_HOST_UID=${process.getuid()}`));
@@ -57,6 +67,7 @@ test("doctor toolchain host-user commands use a temporary writable home", () => 
   });
 
   assertPlaywrightBrowserCache(args);
+  assertGithubSshTransportRewrite(args);
   assert.equal(args.includes(`${STUDIO_TOOL_HOME_VOLUME}:${STUDIO_TOOL_HOME_PATH}`), false);
   assert.equal(args.includes(`NPM_CONFIG_PREFIX=${STUDIO_TOOL_HOME_NPM_PREFIX}`), false);
   assert.ok(args.includes("HOME=/tmp/studio-home"));

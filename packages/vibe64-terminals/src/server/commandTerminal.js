@@ -13,6 +13,9 @@ import {
   removeDockerContainer
 } from "@local/studio-terminal-core/server/containerRuntime";
 import {
+  githubSshToHttpsGitEnv
+} from "@local/studio-terminal-core/server/gitGithubTransport";
+import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
@@ -175,7 +178,10 @@ function commandTerminalArgs({
       studioUserStartupScript([command, ...args])
     ],
     containerName,
-    env,
+    env: {
+      ...env,
+      ...githubSshToHttpsGitEnv()
+    },
     image,
     kind: "command-terminal",
     mounts: [

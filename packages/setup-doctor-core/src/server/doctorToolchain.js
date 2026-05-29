@@ -4,6 +4,9 @@ import {
   gitToolchainMountArgs
 } from "@local/studio-terminal-core/server/gitToolchainMounts";
 import {
+  githubSshToHttpsGitDockerEnvArgs
+} from "@local/studio-terminal-core/server/gitGithubTransport";
+import {
   targetRuntimeNetworkDockerArgs
 } from "@local/studio-terminal-core/server/runtimeContainers";
 import {
@@ -108,6 +111,7 @@ function buildDoctorToolchainArgs(commandArgs, options = {}) {
     "run",
     "--rm",
     ...toolchainHomeDockerArgs(extraArgs),
+    ...githubSshToHttpsGitDockerEnvArgs(),
     "--label",
     STUDIO_TOOLCHAIN_CONTAINER_LABEL,
     "--label",
