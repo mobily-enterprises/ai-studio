@@ -59,44 +59,197 @@
       {{ stepInput.error }}
     </v-alert>
 
+    <template v-if="selectedWorkflowControlVisible">
+      <template
+        v-for="field in selectedControlFields"
+        :key="field.name"
+      >
+        <v-textarea
+          v-if="field.kind === 'textarea'"
+          auto-grow
+          class="studio-ai-sessions__issue-request-input"
+          :disabled="workflowControlsRunning"
+          hide-details="auto"
+          :label="field.label"
+          :model-value="selectedControlValues[field.name] || ''"
+          :placeholder="field.placeholder"
+          :rows="field.rows || 4"
+          variant="outlined"
+          @update:model-value="updateSelectedControlValue(field.name, $event)"
+        />
+        <v-text-field
+          v-else
+          class="studio-ai-sessions__issue-request-input"
+          :disabled="workflowControlsRunning"
+          hide-details="auto"
+          :label="field.label"
+          :model-value="selectedControlValues[field.name] || ''"
+          :placeholder="field.placeholder"
+          variant="outlined"
+          @update:model-value="updateSelectedControlValue(field.name, $event)"
+        />
+      </template>
+    </template>
+
     <div class="studio-ai-sessions__actions">
-      <v-btn
-        v-if="actions.currentNext?.visible"
-        class="studio-ai-sessions__next-step-button"
-        color="primary"
-        variant="tonal"
-        :disabled="page.busy || stepInput.saving || actions.currentNext.enabled !== true"
-        :loading="stepInput.saving || actions.advanceCommand.isRunning"
-        :prepend-icon="mdiArrowRight"
-        :title="actions.currentNext.disabledReason || actions.currentNext.label || 'Next step'"
-        @click="goNextFromStepInput"
-      >
-        {{ actions.currentNext.label || "Next step" }}
-      </v-btn>
+      <template v-if="workflowControlsAvailable">
+        <template v-if="selectedWorkflowControlVisible">
+          <v-btn
+            color="primary"
+            :disabled="!canSubmitSelectedControl"
+            :loading="workflowControlsRunning"
+            :prepend-icon="mdiSend"
+            type="button"
+            variant="flat"
+            @click="submitSelectedWorkflowControl"
+          >
+            {{ selectedControl.label }}
+          </v-btn>
 
-      <v-btn
-        v-if="!stepInputHasWorkflowIntents"
-        color="primary"
-        :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
-        :disabled="page.busy || !stepInput.canSubmit"
-        :loading="stepInput.saving"
-        :prepend-icon="mdiCheck"
-        type="submit"
-      >
-        {{ stepInput.interaction?.submitLabel || "Submit" }}
-      </v-btn>
+          <v-btn
+            :disabled="workflowControlsRunning"
+            :prepend-icon="mdiClose"
+            type="button"
+            variant="tonal"
+            @click="clearSelectedControl"
+          >
+            Cancel
+          </v-btn>
+        </template>
 
-      <Vibe64SessionActionButton
-        v-for="action in actions.currentActions"
-        :key="action.id"
-        :action="action"
-        :actions="actions"
-        :before-run="runActionFromStepInput"
-        :busy="page.busy || stepInput.saving"
-        variant="tonal"
-      />
+        <v-btn
+          v-for="control in workflowButtonControls"
+          v-else
+          :key="control.id"
+          :color="control.buttonColor"
+          :disabled="control.disabled"
+          :loading="control.loading"
+          :prepend-icon="control.icon"
+          type="button"
+          :variant="control.buttonVariant"
+          @click="activateWorkflowControl(control.sourceControl || control)"
+        >
+          {{ control.label }}
+        </v-btn>
+      </template>
+
+      <template v-else>
+        <v-btn
+          v-if="actions.currentNext?.visible"
+          class="studio-ai-sessions__next-step-button"
+          color="primary"
+          variant="tonal"
+          :disabled="page.busy || stepInput.saving || actions.currentNext.enabled !== true"
+          :loading="stepInput.saving || actions.advanceCommand.isRunning"
+          :prepend-icon="mdiArrowRight"
+          :title="actions.currentNext.disabledReason || actions.currentNext.label || 'Next step'"
+          @click="goNextFromStepInput"
+        >
+          {{ actions.currentNext.label || "Next step" }}
+        </v-btn>
+
+        <v-btn
+          v-if="!stepInputHasWorkflowIntents"
+          color="primary"
+          :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
+          :disabled="page.busy || !stepInput.canSubmit"
+          :loading="stepInput.saving"
+          :prepend-icon="mdiCheck"
+          type="submit"
+        >
+          {{ stepInput.interaction?.submitLabel || "Submit" }}
+        </v-btn>
+
+        <Vibe64SessionActionButton
+          v-for="action in actions.currentActions"
+          :key="action.id"
+          :action="action"
+          :actions="actions"
+          :before-run="runActionFromStepInput"
+          :busy="page.busy || stepInput.saving"
+          variant="tonal"
+        />
+      </template>
     </div>
   </form>
+
+  <div
+    v-else-if="workflowControlsAvailable"
+    class="studio-ai-sessions__workflow-controls"
+  >
+    <template v-if="selectedWorkflowControlVisible">
+      <template
+        v-for="field in selectedControlFields"
+        :key="field.name"
+      >
+        <v-textarea
+          v-if="field.kind === 'textarea'"
+          auto-grow
+          class="studio-ai-sessions__issue-request-input"
+          :disabled="workflowControlsRunning"
+          hide-details="auto"
+          :label="field.label"
+          :model-value="selectedControlValues[field.name] || ''"
+          :placeholder="field.placeholder"
+          :rows="field.rows || 4"
+          variant="outlined"
+          @update:model-value="updateSelectedControlValue(field.name, $event)"
+        />
+        <v-text-field
+          v-else
+          class="studio-ai-sessions__issue-request-input"
+          :disabled="workflowControlsRunning"
+          hide-details="auto"
+          :label="field.label"
+          :model-value="selectedControlValues[field.name] || ''"
+          :placeholder="field.placeholder"
+          variant="outlined"
+          @update:model-value="updateSelectedControlValue(field.name, $event)"
+        />
+      </template>
+    </template>
+
+    <div class="studio-ai-sessions__actions">
+      <template v-if="selectedWorkflowControlVisible">
+        <v-btn
+          color="primary"
+          :disabled="!canSubmitSelectedControl"
+          :loading="workflowControlsRunning"
+          :prepend-icon="mdiSend"
+          type="button"
+          variant="flat"
+          @click="submitSelectedWorkflowControl"
+        >
+          {{ selectedControl.label }}
+        </v-btn>
+
+        <v-btn
+          :disabled="workflowControlsRunning"
+          :prepend-icon="mdiClose"
+          type="button"
+          variant="tonal"
+          @click="clearSelectedControl"
+        >
+          Cancel
+        </v-btn>
+      </template>
+
+      <v-btn
+        v-for="control in workflowButtonControls"
+        v-else
+        :key="control.id"
+        :color="control.buttonColor"
+        :disabled="control.disabled"
+        :loading="control.loading"
+        :prepend-icon="control.icon"
+        type="button"
+        :variant="control.buttonVariant"
+        @click="activateWorkflowControl(control.sourceControl || control)"
+      >
+        {{ control.label }}
+      </v-btn>
+    </div>
+  </div>
 
   <div v-else class="studio-ai-sessions__actions">
     <v-btn
@@ -147,7 +300,7 @@
   </v-alert>
 
   <v-alert
-    v-if="actions.currentStepDisabledReason"
+    v-if="actions.currentStepDisabledReason && !workflowControlsAvailable"
     type="info"
     variant="tonal"
     density="compact"
@@ -156,27 +309,52 @@
     {{ actions.currentStepDisabledReason }}
   </v-alert>
 
+  <v-alert
+    v-if="workflowClientControlError"
+    type="warning"
+    variant="tonal"
+    density="compact"
+    class="studio-ai-sessions__notice"
+  >
+    {{ workflowClientControlError }}
+  </v-alert>
+
   <p v-if="page.copyStatus" class="text-caption text-medium-emphasis mb-0">
     {{ page.copyStatus }}
   </p>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   mdiArrowRight,
   mdiCheck,
-  mdiFileCompare
+  mdiClose,
+  mdiFileCompare,
+  mdiRefresh,
+  mdiSend
 } from "@mdi/js";
 import Vibe64BackgroundTasks from "@/components/studio/vibe64-session/Vibe64BackgroundTasks.vue";
 import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64SessionActionButton.vue";
 import {
+  useVibe64AutopilotComposer
+} from "@/composables/useVibe64AutopilotComposer.js";
+import {
   useVibe64BackgroundTasks
 } from "@/composables/useVibe64BackgroundTasks.js";
+import {
+  runVibe64ClientControl
+} from "@/lib/vibe64ClientControlDispatcher.js";
 import {
   controlSavesCurrentStepInputBeforeRun,
   currentStepInputHasDecisionControls
 } from "@/lib/vibe64CurrentStepInputDecision.js";
+import {
+  VIBE64_CLIENT_CONTROL_ICON_TOKENS,
+  controlHasClientAction,
+  controlIconToken,
+  controlStateActive
+} from "@/lib/vibe64PresentationControls.js";
 
 const props = defineProps({
   actions: {
@@ -212,17 +390,146 @@ const props = defineProps({
 const stepInputHasWorkflowIntents = computed(() => (
   currentStepInputHasDecisionControls(props.session, props.stepInput.interaction)
 ));
+const workflowClientControlError = ref("");
+const workflowControls = computed(() => {
+  const sessionIntents = Array.isArray(props.session?.intents) ? props.session.intents : null;
+  const presentationIntents = Array.isArray(props.session?.presentation?.intents)
+    ? props.session.presentation.intents
+    : null;
+  const interactionIntents = Array.isArray(props.stepInput?.interaction?.intents)
+    ? props.stepInput.interaction.intents
+    : [];
+  return (sessionIntents || presentationIntents || interactionIntents)
+    .filter((intent) => intent && intent.id && intent.label);
+});
+const workflowControlsAvailable = computed(() => workflowControls.value.length > 0);
+const workflowControlsRunning = computed(() => Boolean(
+  props.page.busy ||
+  props.stepInput.saving ||
+  props.actions.runIntentCommand?.isRunning
+));
+const workflowButtonControls = computed(() => {
+  return screenControls.value.map((control) => ({
+    ...control,
+    buttonColor: control.style === "primary" ? "primary" : undefined,
+    buttonVariant: control.style === "primary" ? "flat" : "tonal",
+    disabled: workflowControlDisabled(control),
+    icon: workflowControlIcon(control),
+    loading: workflowControlLoading(control),
+    sourceControl: control
+  }));
+});
+const {
+  activateControl,
+  canSubmitSelectedControl,
+  clearSelectedControl,
+  screenControls,
+  selectedControl,
+  selectedControlFields,
+  selectedControlValues,
+  submitSelectedControl,
+  updateSelectedControlValue
+} = useVibe64AutopilotComposer({
+  controls: workflowControls,
+  isControlDisabled: workflowControlDisabled,
+  onRunClientControl: runWorkflowClientControl,
+  onRunControl: runWorkflowIntent,
+  running: workflowControlsRunning
+});
+const selectedWorkflowControlVisible = computed(() => Boolean(
+  workflowControlsAvailable.value &&
+  selectedControl.value &&
+  selectedControlFields.value.length
+));
+
+function workflowControlDisabled(control = {}) {
+  return Boolean(
+    workflowControlsRunning.value ||
+    control.enabled !== true ||
+    controlStateActive(control, "disabledWhen", {
+      diff: props.diff,
+      review: props.review
+    })
+  );
+}
+
+function workflowControlLoading(control = {}) {
+  return Boolean(
+    workflowControlsRunning.value ||
+    controlStateActive(control, "loadingWhen", {
+      diff: props.diff,
+      review: props.review
+    })
+  );
+}
+
+function workflowControlIcon(control = {}) {
+  if (controlIconToken(control) === VIBE64_CLIENT_CONTROL_ICON_TOKENS.DIFF) {
+    return mdiFileCompare;
+  }
+  if (control.style === "primary") {
+    return mdiCheck;
+  }
+  return mdiRefresh;
+}
+
+async function runWorkflowClientControl(control = {}) {
+  workflowClientControlError.value = "";
+  try {
+    const result = await runVibe64ClientControl(control, {
+      diff: props.diff,
+      refreshSessionData: props.refreshSessionData,
+      session: props.session,
+      sessionId: props.session?.sessionId || ""
+    });
+    if (result?.ok === false) {
+      workflowClientControlError.value = String(result.error || "The requested control could not run.");
+      return false;
+    }
+    return result;
+  } catch (error) {
+    workflowClientControlError.value = String(error?.message || error || "The requested control could not run.");
+    return false;
+  }
+}
+
+async function runWorkflowIntent(control = {}, options = {}) {
+  if (controlHasClientAction(control)) {
+    return runWorkflowClientControl(control);
+  }
+  return await props.actions.runIntent(control, {
+    fields: options?.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
+      ? options.fields
+      : {}
+  }) !== false;
+}
 
 async function saveStepInputBeforeDecision(control = {}) {
   const nextStepControl = control?.kind === "next";
+  const shouldSave = nextStepControl
+    ? stepInputHasWorkflowIntents.value
+    : controlSavesCurrentStepInputBeforeRun(control);
   if (
     !props.stepInput.visible ||
-    !stepInputHasWorkflowIntents.value ||
-    (!nextStepControl && !controlSavesCurrentStepInputBeforeRun(control))
+    !shouldSave
   ) {
     return true;
   }
   return await props.stepInput.submit();
+}
+
+async function activateWorkflowControl(control = {}) {
+  if (await saveStepInputBeforeDecision(control) === false) {
+    return false;
+  }
+  return activateControl(control);
+}
+
+async function submitSelectedWorkflowControl() {
+  if (await saveStepInputBeforeDecision(selectedControl.value) === false) {
+    return false;
+  }
+  return submitSelectedControl();
 }
 
 async function goNextFromStepInput() {
@@ -242,6 +549,7 @@ async function submitStepInputForm() {
   }
   await props.stepInput.submit();
 }
+
 const {
   backgroundTaskError,
   retryBackgroundTask,
@@ -262,7 +570,8 @@ const {
   justify-content: flex-start;
 }
 
-.studio-ai-sessions__step-input {
+.studio-ai-sessions__step-input,
+.studio-ai-sessions__workflow-controls {
   display: grid;
   gap: 0.65rem;
 }

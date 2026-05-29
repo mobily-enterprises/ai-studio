@@ -103,6 +103,11 @@ const sessionTerminalFailureFixInputValidator = deepFreeze({
       noTrim: false,
       required: false
     },
+    attemptedCommand: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
     closeError: {
       type: "string",
       noTrim: false,

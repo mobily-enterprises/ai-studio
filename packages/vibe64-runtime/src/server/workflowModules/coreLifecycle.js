@@ -5,7 +5,8 @@ import {
 import { deepFreeze } from "@local/vibe64-core/server/deepFreeze";
 import {
   PULL_REQUEST_BODY_DRAFT_ARTIFACT,
-  PULL_REQUEST_TITLE_DRAFT_ARTIFACT
+  PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
+  REPORT_ARTIFACT
 } from "../workflowArtifacts.js";
 import { when } from "../workflowConditions.js";
 import {
@@ -51,6 +52,9 @@ const installDependenciesActionId = "install_dependencies";
 const dependenciesInstalledMetadataName = "dependencies_installed";
 const syncMainCheckoutActionId = "sync_main_checkout";
 const mainCheckoutSyncedMetadataName = "main_checkout_synced";
+const mergePreparationSummaryMetadataName = "merge_preparation_summary";
+const finalReportStartMarker = "<!-- vibe64:final-report:start -->";
+const finalReportEndMarker = "<!-- vibe64:final-report:end -->";
 
 async function recordMergeIntent(ctx = {}) {
   await ctx.writeMetadata("autopilot_merge_intent", "merge_and_sync");
@@ -321,6 +325,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         icon: "github",
         id: "create_pr_on_gh",
         label: "Create PR on GH",
+        saveCurrentStepInputBeforeRun: true,
         type: "command"
       },
       {
@@ -472,7 +477,8 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         "pr_merged",
         mainCheckoutSyncedMetadataName,
         "merge_skipped",
-        "autopilot_merge_intent"
+        "autopilot_merge_intent",
+        mergePreparationSummaryMetadataName
       ]
     }
   },
@@ -1130,6 +1136,7 @@ const createAndMergePullRequestMachine = {
           return;
         }
         if (input.kind === STEP_INPUT_KIND.READY && state.phase === pullRequestPhase.PREPARING_MERGE) {
+          await writeMergePreparationSummary(context, input.fields.mergePreparationSummary);
           await writeState(context, this, machineState(STEP_STATUS.READY, {
             message: input.message,
             phase: pullRequestPhase.MERGE_READY,
@@ -1254,6 +1261,9 @@ const createAndMergePullRequestMachine = {
   promptInstruction({ action = {} } = {}) {
     return normalizeText(action.id) === "prepare_for_merge"
       ? currentStepHelperInstruction({
+          doneFields: {
+            mergePreparationSummary: "Markdown summary of extra merge-preparation work performed after pull request creation. Leave empty when no extra work was needed."
+          },
           doneMeaning: "The pull request and main checkout are ready for the merge command.",
           waitingForInputMeaning: "The merge preparation found a blocker that needs user input."
         })
@@ -1327,6 +1337,7 @@ async function readPullRequestFieldValues(context = {}) {
 async function writePullRequestFieldValues(context = {}, fields = {}) {
   const title = requireInputValue(fields.title, "Pull request title is required.");
   const body = requireInputValue(fields.body, "Pull request body is required.");
+  const bodyWithReport = await pullRequestBodyWithFinalReport(context, body);
   await Promise.all([
     context.runtime.store.writeArtifact(
       context.session.sessionId,
@@ -1336,9 +1347,50 @@ async function writePullRequestFieldValues(context = {}, fields = {}) {
     context.runtime.store.writeArtifact(
       context.session.sessionId,
       PULL_REQUEST_BODY_DRAFT_ARTIFACT,
-      artifactText(body)
+      artifactText(bodyWithReport)
     )
   ]);
+}
+
+async function pullRequestBodyWithFinalReport(context = {}, body = "") {
+  const normalizedBody = normalizeText(body);
+  if (normalizedBody.includes(finalReportStartMarker)) {
+    return normalizedBody;
+  }
+  const report = normalizeText(await context.runtime.store.readArtifact(context.session.sessionId, REPORT_ARTIFACT));
+  if (!report) {
+    return normalizedBody;
+  }
+  return [
+    normalizedBody,
+    "",
+    finalReportStartMarker,
+    "## Vibe64 final report",
+    "",
+    "<details>",
+    "<summary>Final session report</summary>",
+    "",
+    report,
+    "",
+    "</details>",
+    finalReportEndMarker
+  ].join("\n");
+}
+
+async function writeMergePreparationSummary(context = {}, summary = "") {
+  const normalizedSummary = normalizeText(summary);
+  if (normalizedSummary) {
+    await context.runtime.store.writeMetadataValue(
+      context.session.sessionId,
+      mergePreparationSummaryMetadataName,
+      normalizedSummary
+    );
+    return;
+  }
+  await context.runtime.store.deleteMetadataValue(
+    context.session.sessionId,
+    mergePreparationSummaryMetadataName
+  );
 }
 
 function pullRequestInputInteraction(values = {}) {
@@ -1364,7 +1416,7 @@ function pullRequestInputInteraction(values = {}) {
     kind: "collect_input_run_command",
     prompt: "Review the pull request details. Save changes here, or continue to create the GitHub pull request.",
     submitKind: STEP_INPUT_KIND.CONFIRM_FILES,
-    submitLabel: "Update PR",
+    submitLabel: "Save draft",
     title: "Create pull request, possibly merge"
   };
 }

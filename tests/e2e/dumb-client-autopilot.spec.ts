@@ -2084,7 +2084,114 @@ test.describe("Autopilot dumb client contract", () => {
     ]);
   });
 
-  test("renders current-step input fields in Inspect", async ({ page }) => {
+  test("renders current-step actions alongside save-only input forms in Autopilot", async ({ page }) => {
+    const commandRequests: unknown[] = [];
+    const stepInputs: unknown[] = [];
+    const session = sessionPayload({
+      actions: [
+        {
+          dispatchRoute: "command-terminal",
+          enabled: true,
+          id: "create_pr_on_gh",
+          label: "Create PR on GH",
+          saveCurrentStepInputBeforeRun: true,
+          type: "command",
+          visible: true
+        }
+      ],
+      currentStep: "create_and_merge_pull_request",
+      currentStepDefinition: {
+        id: "create_and_merge_pull_request",
+        label: "Create pull request, possibly merge"
+      },
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "input"
+          }
+        },
+        screen: {
+          input: {
+            fields: [
+              {
+                kind: "text",
+                label: "Pull request title",
+                name: "title",
+                value: "Draft title"
+              },
+              {
+                kind: "textarea",
+                label: "Pull request body",
+                name: "body",
+                value: "Draft body"
+              }
+            ],
+            kind: "collect_input_run_command",
+            prompt: "Review the pull request details.",
+            submitKind: "confirm_files",
+            submitTarget: "current-step-input",
+            submitLabel: "Save draft",
+            title: "Create pull request, possibly merge"
+          },
+          kind: "confirm_files",
+          message: "Review the pull request details.",
+          sections: [],
+          title: "Create pull request, possibly merge"
+        },
+        step: {
+          id: "create_and_merge_pull_request",
+          label: "Create pull request, possibly merge",
+          status: "confirm_files"
+        }
+      },
+      stepMachine: {
+        status: "confirm_files",
+        stepId: "create_and_merge_pull_request"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      onCommandTerminalStart: (body) => {
+        commandRequests.push(body);
+      },
+      onStepInput: (body) => {
+        stepInputs.push(body);
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const autopilot = page.locator(".studio-autopilot");
+    await expect(autopilot.getByRole("button", { name: "Save draft" })).toBeVisible();
+    await expect(autopilot.getByRole("button", { name: "Create PR on GH" })).toBeVisible();
+    await autopilot.getByLabel("Pull request title").fill("Edited PR title");
+    await autopilot.getByRole("button", { name: "Create PR on GH" }).click();
+
+    await expect.poll(() => stepInputs).toEqual([
+      {
+        fields: {
+          body: "Draft body",
+          title: "Edited PR title"
+        },
+        kind: "confirm_files",
+        source: "ui",
+        stepId: "create_and_merge_pull_request",
+        stepStatus: "confirm_files"
+      }
+    ]);
+    await expect.poll(() => commandRequests).toEqual([
+      {
+        actionId: "create_pr_on_gh",
+        advanceOnSuccess: false,
+        input: {}
+      }
+    ]);
+  });
+
+  test("renders workflow controls with current-step input fields in Inspect", async ({ page }) => {
+    const intentRequests: unknown[] = [];
+    const stepInputs: unknown[] = [];
     const intents = [
       {
         enabled: true,
@@ -2093,9 +2200,39 @@ test.describe("Autopilot dumb client contract", () => {
         label: "Use this description",
         saveCurrentStepInputBeforeRun: true,
         style: "primary"
+      },
+      {
+        actionId: "reject_issue_draft",
+        enabled: true,
+        id: "reject_issue_draft",
+        inputFields: [
+          {
+            kind: "textarea",
+            label: "What should change?",
+            name: "feedback",
+            placeholder: "Tell Codex how to improve the saved issue draft.",
+            requiredMessage: "Explain what should change before sending the improvement request."
+          }
+        ],
+        label: "Send improvement request",
+        style: "secondary"
       }
     ];
     const session = sessionPayload({
+      actions: [
+        {
+          enabled: false,
+          id: "draft_issue",
+          label: "Describe work",
+          visible: true
+        },
+        {
+          enabled: false,
+          id: "create_issue_on_gh",
+          label: "Create issue on GH",
+          visible: true
+        }
+      ],
       currentStep: "issue_file_created",
       currentStepDefinition: {
         id: "issue_file_created",
@@ -2135,6 +2272,7 @@ test.describe("Autopilot dumb client contract", () => {
           },
           kind: "confirm_files",
           message: "Review the work details, then continue without creating a GitHub issue.",
+          primaryIntentId: "",
           sections: [],
           title: "Define work"
         },
@@ -2157,7 +2295,14 @@ test.describe("Autopilot dumb client contract", () => {
         stepId: "issue_file_created"
       }
     });
-    await mockVibe64Session(page, session);
+    await mockVibe64Session(page, session, {
+      onIntent: (body) => {
+        intentRequests.push(body);
+      },
+      onStepInput: (body) => {
+        stepInputs.push(body);
+      }
+    });
 
     await page.goto(`${BASE_URL}/home?mode=inspect`);
 
@@ -2166,6 +2311,49 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(inspect.getByLabel("Session label")).toHaveValue("a-txt");
     await expect(inspect.getByLabel("Work description")).toHaveValue("Create an empty file named `a.txt` in the active Vibe64 worktree root.");
     await expect(inspect.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+    await expect(inspect.getByRole("button", { name: "Next step" })).toHaveCount(0);
+    await expect(inspect.getByRole("button", { name: "Describe work" })).toHaveCount(0);
+    await expect(inspect.getByRole("button", { name: "Create issue on GH" })).toHaveCount(0);
+    await expect(inspect.getByRole("button", { name: "Use this description" })).toBeVisible();
+    await expect(inspect.getByRole("button", { name: "Send improvement request" })).toBeVisible();
+
+    await inspect.getByRole("button", { name: "Send improvement request" }).click();
+    await expect(inspect.getByLabel("What should change?")).toBeVisible();
+    await inspect.getByLabel("What should change?").fill("Make the acceptance criteria stricter.");
+    await inspect.getByRole("button", { name: "Send improvement request" }).click();
+    await expect.poll(() => intentRequests).toEqual([
+      {
+        fields: {
+          feedback: "Make the acceptance criteria stricter."
+        },
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
+    await expect.poll(() => stepInputs).toEqual([]);
+
+    intentRequests.length = 0;
+    await inspect.getByRole("button", { name: "Use this description" }).click();
+    await expect.poll(() => stepInputs).toEqual([
+      {
+        fields: {
+          body: "Create an empty file named `a.txt` in the active Vibe64 worktree root.",
+          title: "Add empty a.txt to worktree root",
+          word: "a-txt"
+        },
+        kind: "confirm_files",
+        source: "ui",
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
+    await expect.poll(() => intentRequests).toEqual([
+      {
+        fields: {},
+        stepId: "issue_file_created",
+        stepStatus: "confirm_files"
+      }
+    ]);
   });
 });
 
@@ -2190,7 +2378,7 @@ async function mockVibe64Session(
     onAction?: (actionId: string, body: unknown) => void;
     onAdvance?: () => void;
     onCommandTerminalClose?: () => void;
-    onCommandTerminalStart?: () => Record<string, unknown> | void;
+    onCommandTerminalStart?: (body?: Record<string, unknown>) => Record<string, unknown> | void;
     onCodexTerminalStart?: () => void;
     onCodexTurnContinue?: () => void;
     onIntent?: (body: unknown) => void;
@@ -2259,7 +2447,7 @@ async function mockVibe64Session(
       return;
     }
     if (method === "POST" && url.pathname.endsWith("/command-terminal")) {
-      const commandTerminal = onCommandTerminalStart();
+      const commandTerminal = onCommandTerminalStart(request.postDataJSON() || {});
       await fulfillJson(route, {
         commandPreview: "echo test",
         id: "server-command-terminal",

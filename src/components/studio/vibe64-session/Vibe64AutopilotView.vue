@@ -316,6 +316,18 @@
             >
               {{ control.label }}
             </v-btn>
+
+            <template v-if="!stepInputHasWorkflowIntents">
+              <Vibe64SessionActionButton
+                v-for="action in actions.currentActions"
+                :key="action.id"
+                :action="action"
+                :actions="stepInputActionHandlers"
+                :before-run="runActionFromStepInput"
+                :busy="page.busy || stepInput.saving"
+                variant="tonal"
+              />
+            </template>
           </template>
         </div>
       </form>
@@ -441,6 +453,9 @@ import {
   mdiSend,
   mdiStopCircleOutline
 } from "@mdi/js";
+import {
+  VIBE64_ACTION_DISPATCH_ROUTES as ACTION_DISPATCH_ROUTES
+} from "@local/vibe64-core/shared";
 import Vibe64FixCodexDialog from "@/components/studio/Vibe64FixCodexDialog.vue";
 import Vibe64LaunchControls from "@/components/studio/Vibe64LaunchControls.vue";
 import Vibe64BackgroundTasks from "@/components/studio/vibe64-session/Vibe64BackgroundTasks.vue";
@@ -449,6 +464,7 @@ import Vibe64AutopilotNavigation from "@/components/studio/vibe64-session/Vibe64
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64HeadlessCommandOutput from "@/components/studio/vibe64-session/Vibe64HeadlessCommandOutput.vue";
 import Vibe64ReportPreview from "@/components/studio/vibe64-session/Vibe64ReportPreview.vue";
+import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64SessionActionButton.vue";
 import {
   useVibe64AutopilotComposer
 } from "@/composables/useVibe64AutopilotComposer.js";
@@ -559,6 +575,7 @@ const {
   nextOperationKey,
   recoverStuckStep,
   retry,
+  runCommandAction,
   runNextOperation,
   runPresentedIntent,
   running,
@@ -743,6 +760,10 @@ const workflowButtonControls = computed(() => {
     sourceControl: control
   }));
 });
+const stepInputActionHandlers = computed(() => ({
+  ...props.actions,
+  runAction: runActionAfterStepInput
+}));
 
 function sectionVisible(kind = "") {
   return screenSections.value.some((section) => section?.kind === kind);
@@ -798,6 +819,17 @@ async function submitSelectedWorkflowControl() {
     return false;
   }
   return submitSelectedControl();
+}
+
+async function runActionFromStepInput(action = {}) {
+  return saveCurrentStepInputForControl(action);
+}
+
+async function runActionAfterStepInput(action = {}) {
+  if (String(action.dispatchRoute || "") === ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL) {
+    return runCommandAction(action);
+  }
+  return props.actions.runAction(action);
 }
 
 async function retryFromCommandFailure() {

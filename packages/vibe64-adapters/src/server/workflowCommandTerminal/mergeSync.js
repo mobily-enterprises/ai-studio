@@ -21,6 +21,7 @@ function mergePrScript({
   session = {}
 } = {}) {
   const prUrl = normalizeText(session.metadata?.pr_url);
+  const mergePreparationSummary = normalizeText(session.metadata?.merge_preparation_summary);
   const mergeFlag = {
     merge: "--merge",
     rebase: "--rebase",
@@ -30,8 +31,37 @@ function mergePrScript({
     "set -e",
     beforeMergeScript,
     `printf '[studio] Merging pull request %s\\n' ${shellQuote(prUrl)}`,
-    `gh pr merge ${shellQuote(prUrl)} ${mergeFlag}`
+    `gh pr merge ${shellQuote(prUrl)} ${mergeFlag}`,
+    mergePreparationCommentScript({
+      prUrl,
+      summary: mergePreparationSummary
+    })
   ].filter(Boolean).join("\n");
+}
+
+function mergePreparationCommentScript({
+  prUrl = "",
+  summary = ""
+} = {}) {
+  const normalizedSummary = normalizeText(summary);
+  if (!normalizedSummary) {
+    return "";
+  }
+  const comment = [
+    "## Vibe64 merge preparation",
+    "",
+    "Additional merge-preparation work was performed after this pull request was created and before it was merged.",
+    "",
+    normalizedSummary
+  ].join("\n");
+  return [
+    `MERGE_PREPARATION_COMMENT_FILE="$(mktemp)"`,
+    `printf '%s\\n' ${shellQuote(comment)} > "$MERGE_PREPARATION_COMMENT_FILE"`,
+    `if ! gh pr comment ${shellQuote(prUrl)} --body-file "$MERGE_PREPARATION_COMMENT_FILE"; then`,
+    `  printf '[studio] Merge-preparation comment failed; pull request was already merged.\\n' >&2`,
+    "fi",
+    `rm -f "$MERGE_PREPARATION_COMMENT_FILE"`
+  ].join("\n");
 }
 
 function syncMainCheckoutScript({

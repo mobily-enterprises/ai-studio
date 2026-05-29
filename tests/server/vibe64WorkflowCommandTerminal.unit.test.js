@@ -159,6 +159,57 @@ test("merge PR command does not write missing hook objects into the shell script
   });
 });
 
+test("merge PR command comments with merge preparation work after a successful merge", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createGitRepository(targetRoot);
+
+    const spec = await mergePrTerminalSpec({
+      session: {
+        metadata: {
+          merge_preparation_summary: "- Resolved a merge conflict before merging.",
+          pr_url: "https://github.com/example/project/pull/12",
+          worktree_path: targetRoot
+        },
+        targetRoot
+      },
+      targetRoot
+    });
+
+    assert.equal(spec.ok, true);
+    const script = spec.args.at(-1);
+    const mergeIndex = script.indexOf("gh pr merge https://github.com/example/project/pull/12 --merge");
+    const commentIndex = script.indexOf("gh pr comment https://github.com/example/project/pull/12 --body-file");
+    assert.ok(mergeIndex > -1);
+    assert.ok(commentIndex > -1);
+    assert.ok(commentIndex > mergeIndex);
+    assert.match(script, /## Vibe64 merge preparation/u);
+    assert.match(script, /Resolved a merge conflict before merging\./u);
+    assert.match(script, /if ! gh pr comment/u);
+  });
+});
+
+test("merge PR command does not comment when no merge preparation work was recorded", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await createGitRepository(targetRoot);
+
+    const spec = await mergePrTerminalSpec({
+      session: {
+        metadata: {
+          pr_url: "https://github.com/example/project/pull/12",
+          worktree_path: targetRoot
+        },
+        targetRoot
+      },
+      targetRoot
+    });
+
+    assert.equal(spec.ok, true);
+    const script = spec.args.at(-1);
+    assert.match(script, /gh pr merge https:\/\/github\.com\/example\/project\/pull\/12 --merge/u);
+    assert.doesNotMatch(script, /gh pr comment/u);
+  });
+});
+
 test("merge PR command accepts structured before-merge hook scripts", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     await createGitRepository(targetRoot);

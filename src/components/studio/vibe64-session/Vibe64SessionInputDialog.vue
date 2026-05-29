@@ -64,6 +64,8 @@
 </template>
 
 <script setup>
+import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
+
 const props = defineProps({
   input: {
     default: () => ({}),

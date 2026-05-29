@@ -144,6 +144,11 @@ const sessionTerminalFixFields = {
     noTrim: false,
     required: false
   },
+  currentStep: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
   exitCode: {
     type: "string",
     noTrim: false,
@@ -166,6 +171,11 @@ const sessionTerminalFixFields = {
   },
   sessionId: sessionIdField,
   shellTarget: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  stepStatus: {
     type: "string",
     noTrim: false,
     required: false

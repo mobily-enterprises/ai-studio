@@ -9,20 +9,12 @@
   >
     <template #actions>
       <v-btn
-        :disabled="!terminalSessionId || terminalExited"
-        size="small"
-        variant="text"
-        @click="sendCtrlC"
-      >
-        Ctrl-C
-      </v-btn>
-      <v-btn
         :disabled="!terminalSessionId"
         size="small"
         variant="text"
         @click="closeTerminal"
       >
-        Close
+        {{ terminalExited ? "Close" : "Stop job" }}
       </v-btn>
     </template>
   </Vibe64TerminalFrame>
@@ -67,7 +59,6 @@ const {
   closeTerminalSocket,
   connectTerminalSocket,
   disposeTerminalUi,
-  sendCtrlC,
   setupTerminalUi,
   terminalCommandPreview,
   terminalError,

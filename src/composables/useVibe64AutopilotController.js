@@ -650,6 +650,51 @@ function useVibe64AutopilotController({
     }
   }
 
+  async function runCommandAction(action = {}) {
+    if (!autopilotEnabled.value || running.value) {
+      vibe64SessionDebugLog("client.autopilot.runCommandAction.skipped", {
+        actionId: String(action.id || ""),
+        enabled: autopilotEnabled.value,
+        running: running.value,
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
+      return false;
+    }
+    clearFailure({
+      clearCommandResult: true
+    });
+    stopRequested = false;
+    active.value = true;
+    activeStage.value = String(action.label || action.id || "Command");
+    try {
+      await runCommandTerminalOperation({
+        actionId: String(action.id || ""),
+        advanceOnSuccess: action.advanceOnSuccess === true,
+        id: `manual-command:${String(action.id || "")}`,
+        kind: "action",
+        label: String(action.label || action.id || "Command"),
+        route: OPERATION_ROUTES.COMMAND_TERMINAL
+      });
+      return !visibleFailure.value;
+    } catch (error) {
+      vibe64SessionDebugLog("client.autopilot.runCommandAction.error", {
+        actionId: String(action.id || ""),
+        error: vibe64SessionDebugError(error),
+        sessionId: String(currentSession.value?.sessionId || "")
+      });
+      stopWithFailure({
+        actionId: String(action.id || ""),
+        actionLabel: String(action.label || action.id || "Command"),
+        error: String(error?.message || error || "Command action failed."),
+        source: "manual_command"
+      });
+      return false;
+    } finally {
+      active.value = false;
+      activeStage.value = "";
+    }
+  }
+
   function canRunPresentedIntent(intent = {}) {
     const autopilotCanRun = autopilotEnabled.value;
     const intentIsEnabled = intent.enabled === true;
@@ -801,6 +846,7 @@ function useVibe64AutopilotController({
     nextOperationKey,
     recoverStuckStep,
     retry,
+    runCommandAction,
     runNextOperation,
     runPresentedIntent,
     running,

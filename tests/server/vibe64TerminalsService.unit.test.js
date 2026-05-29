@@ -21,6 +21,12 @@ import {
   featureActions as terminalFeatureActions
 } from "../../packages/vibe64-terminals/src/server/actions.js";
 import {
+  sessionTerminalFixInputValidator
+} from "../../packages/vibe64-terminals/src/server/inputSchemas.js";
+import {
+  sessionTerminalFailureFixInputValidator
+} from "../../packages/vibe64-sessions/src/server/inputSchemas.js";
+import {
   codexSessionBriefingPrompt,
   codexTerminalArgs
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
@@ -1674,4 +1680,32 @@ test("Vibe64 session terminal fix action starts an ephemeral Fix Codex job", asy
       sessionId: "fix-session"
     }
   ]);
+});
+
+test("Vibe64 terminal failure fix schemas accept the browser terminal-failure context", () => {
+  const context = {
+    actionId: "run_automated_checks",
+    actionLabel: "Run automated checks",
+    attemptedCommand: "npm run verify",
+    closeError: "Run automated checks failed with exit code 1.",
+    commandPreview: "npm run verify",
+    currentStep: "review_and_validate",
+    exitCode: "1",
+    output: "eslint failed",
+    sessionId: "2026-05-28_16-18-28",
+    stepStatus: "waiting_for_input",
+    terminalKind: "command",
+    terminalSessionId: "terminal-1",
+    terminalStatus: "exited",
+    userMessage: ""
+  };
+
+  const directFixResult = sessionTerminalFixInputValidator.schema.create(context);
+  assert.deepEqual(directFixResult.errors, {});
+  assert.equal(directFixResult.validatedObject.currentStep, "review_and_validate");
+  assert.equal(directFixResult.validatedObject.stepStatus, "waiting_for_input");
+
+  const promptRequestResult = sessionTerminalFailureFixInputValidator.schema.create(context);
+  assert.deepEqual(promptRequestResult.errors, {});
+  assert.equal(promptRequestResult.validatedObject.attemptedCommand, "npm run verify");
 });

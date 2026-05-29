@@ -211,7 +211,7 @@ test.describe("live Vibe64 session workflow", () => {
     await writePullRequestArtifact(page, `# ${fixtureTitle("checklist-pr")}\n\nChecklist contract draft.\n`);
     await assertChecklistControls(page, "create_and_merge_pull_request", {
       disabled: ["Draft PR", "Open PR", "Next step"],
-      enabled: ["Create PR on GH", "Update PR"]
+      enabled: ["Create PR on GH", "Save draft"]
     });
 
     await markMetadataAndReload(page, "pr_url", "https://github.com/mercmobily/studio-ai-e2e-repo/pull/999999");

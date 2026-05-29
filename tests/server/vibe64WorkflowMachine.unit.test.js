@@ -1546,6 +1546,10 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "resolve_pull_request",
     "create_pr_on_gh"
   ]);
+  assert.equal(
+    createPullRequestStep.actions.find((action) => action.id === "create_pr_on_gh")?.saveCurrentStepInputBeforeRun,
+    true
+  );
   assert.equal(createPullRequestStep.interaction, undefined);
   assert.equal(createPullRequestStep.label, "Create pull request, possibly merge");
   assert.equal(createPullRequestStep.autopilot.label, "Create pull request, possibly merge");
@@ -2296,6 +2300,9 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
     assert.equal(afterAction.actionResult.codexPromptHandoff.prompt, afterAction.actionResult.prompt);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /Make a plan/u);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /\[\[VIBE64_CONTEXT_START\]\]/u);
+    const runningPromptAction = afterAction.actions.find((action) => action.id === "make_plan");
+    assert.equal(runningPromptAction?.enabled, false);
+    assert.equal(runningPromptAction?.disabledReason, "Wait for Codex to finish this step.");
 
     await runtime.submitCurrentStepInput("prompt_action", {
       kind: "ready",
@@ -2597,6 +2604,8 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       "title",
       "body"
     ]);
+    assert.equal(confirmedPr.presentation.screen.input.submitLabel, "Save draft");
+    assert.equal(confirmedPr.actions.find((action) => action.id === "create_pr_on_gh")?.saveCurrentStepInputBeforeRun, true);
     assert.equal(
       await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_and_merge_pull_request.title.txt"),
       "PR title\n"
@@ -2605,6 +2614,56 @@ test("editable artifact review steps preserve user-origin and prompt-origin draf
       await runtime.store.readArtifact("editable_artifact_pr", "tmp/create_and_merge_pull_request.body.md"),
       "PR body\n"
     );
+  });
+});
+
+test("vibe64 pull request draft includes the final report exactly once", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "create_and_merge_pull_request",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "pr_report_body"),
+        branch_pushed: "origin/vibe64/test-session"
+      },
+      sessionId: "pr_report_body"
+    });
+    await runtime.store.writeArtifact("pr_report_body", "report.md", "# Session report\n\nImplemented the requested change.\n");
+
+    await runtime.runAction("pr_report_body", "resolve_pull_request", {});
+    await runtime.submitCurrentStepInput("pr_report_body", {
+      fields: {
+        body: "PR body",
+        title: "PR title"
+      },
+      kind: "ready",
+      source: "codex",
+      stepId: "create_and_merge_pull_request",
+      stepStatus: "awaiting_agent_result"
+    });
+
+    const savedBody = await runtime.store.readArtifact("pr_report_body", "tmp/create_and_merge_pull_request.body.md");
+    assert.match(savedBody, /PR body/u);
+    assert.match(savedBody, /<!-- vibe64:final-report:start -->/u);
+    assert.match(savedBody, /## Vibe64 final report/u);
+    assert.match(savedBody, /# Session report/u);
+    assert.match(savedBody, /Implemented the requested change\./u);
+
+    await runtime.submitCurrentStepInput("pr_report_body", {
+      fields: {
+        body: savedBody,
+        title: "PR title"
+      },
+      kind: "confirm_files",
+      source: "user",
+      stepId: "create_and_merge_pull_request",
+      stepStatus: "confirm_files"
+    });
+
+    const resavedBody = await runtime.store.readArtifact("pr_report_body", "tmp/create_and_merge_pull_request.body.md");
+    assert.equal(resavedBody.match(/<!-- vibe64:final-report:start -->/ug)?.length, 1);
   });
 });
 
@@ -3190,6 +3249,71 @@ test("vibe64 runtime sends static adapter context once and references it later",
       secondPrompt.actionResult.promptContext.adapter.promptContext.environment_blueprint,
       "Large static environment blueprint"
     );
+  });
+});
+
+test("vibe64 runtime disables executable actions while a step machine is waiting on Codex", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "create_and_merge_pull_request",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "merge_prompt_busy"),
+        pr_url: "https://github.com/example/project/pull/99"
+      },
+      sessionId: "merge_prompt_busy"
+    });
+
+    const session = await runtime.runAction("merge_prompt_busy", "prepare_for_merge");
+    assert.equal(session.stepMachine.status, "awaiting_agent_result");
+    assert.equal(session.actions.find((action) => action.id === "open_pr")?.enabled, true);
+    assert.equal(session.actions.find((action) => action.id === "prepare_for_merge")?.enabled, false);
+    assert.equal(
+      session.actions.find((action) => action.id === "prepare_for_merge")?.disabledReason,
+      "Wait for Codex to finish this step."
+    );
+    assert.equal(session.actions.find((action) => action.id === "merge_pr")?.enabled, false);
+
+    await assert.rejects(
+      () => runtime.runAction("merge_prompt_busy", "merge_pr"),
+      {
+        code: "vibe64_action_disabled",
+        message: "Wait for Codex to finish this step."
+      }
+    );
+  });
+});
+
+test("vibe64 merge preparation stores an optional post-creation summary", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "create_and_merge_pull_request",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "merge_preparation_summary"),
+        pr_url: "https://github.com/example/project/pull/99"
+      },
+      sessionId: "merge_preparation_summary"
+    });
+
+    const promptSession = await runtime.runAction("merge_preparation_summary", "prepare_for_merge");
+    assert.match(promptSession.actionResult.prompt, /mergePreparationSummary/u);
+
+    const prepared = await runtime.submitCurrentStepInput("merge_preparation_summary", {
+      fields: {
+        mergePreparationSummary: "- Resolved a merge conflict before merging."
+      },
+      kind: "ready",
+      source: "codex",
+      stepId: "create_and_merge_pull_request",
+      stepStatus: "awaiting_agent_result"
+    });
+    assert.equal(prepared.stepMachine.status, "ready");
+    assert.equal(prepared.metadata.merge_preparation_summary, "- Resolved a merge conflict before merging.");
   });
 });
 

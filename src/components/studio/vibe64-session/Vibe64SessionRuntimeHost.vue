@@ -6,6 +6,7 @@
     >
       <Vibe64AutopilotView
         v-show="sessionMode === 'autopilot'"
+        :aria-hidden="sessionMode === 'autopilot' ? null : 'true'"
         :actions="actions"
         :active="autopilotModeActive"
         :automation-enabled="autopilotAutomationEnabled"
@@ -21,12 +22,15 @@
         :rewind-busy="Boolean(timeline.rewindCommand?.isRunning)"
         :rewind-to-step="timeline.rewindToStep"
         :session="selection.selectedSession"
+        :inert="sessionMode !== 'autopilot'"
         @busy-change="setAutopilotBusy"
       />
 
       <div
         v-show="sessionMode === 'inspect'"
+        :aria-hidden="sessionMode === 'inspect' ? null : 'true'"
         class="studio-ai-sessions__inspect-slot"
+        :inert="sessionMode !== 'inspect'"
       >
         <Vibe64SessionWorkspace
           class="studio-ai-sessions__inspect-workspace"

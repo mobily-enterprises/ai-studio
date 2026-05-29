@@ -627,7 +627,8 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     await assert.rejects(
       () => runtime.runAction("jskit_merge", "merge_pr"),
       {
-        code: "vibe64_command_requires_terminal"
+        code: "vibe64_action_disabled",
+        message: "Wait for Codex to finish this step."
       }
     );
 

@@ -59,6 +59,30 @@ function currentStepInputConversationText(runtime = null, session = {}, input = 
     : "";
 }
 
+function stepMachineBusyActionDisabledReason(stepMachine = {}) {
+  switch (normalizeText(stepMachine?.status)) {
+    case STEP_STATUS.ATTEMPTING_EXECUTION:
+      return "Wait for the current command to finish.";
+    case STEP_STATUS.AWAITING_AGENT_RESULT:
+      return "Wait for Codex to finish this step.";
+    default:
+      return "";
+  }
+}
+
+function disableBusyStepActions(actions = [], disabledReason = "") {
+  return (Array.isArray(actions) ? actions : []).map((action) => {
+    if (normalizeText(action.type) === "link") {
+      return action;
+    }
+    return {
+      ...action,
+      disabledReason,
+      enabled: false
+    };
+  });
+}
+
 async function applyStepMachineView(runtime, session = {}) {
   const machine = workflowStepMachine(runtime, session.currentStep);
   if (!machine) {
@@ -86,10 +110,14 @@ async function applyStepMachineView(runtime, session = {}) {
       stage: null
     };
   }
+  const busyActionDisabledReason = view.actions ? "" : stepMachineBusyActionDisabledReason(stepMachine);
+  const actions = view.actions || (busyActionDisabledReason
+    ? disableBusyStepActions(session.actions, busyActionDisabledReason)
+    : session.actions);
 
   return {
     ...session,
-    ...(view.actions ? { actions: view.actions } : {}),
+    actions,
     currentStepDefinition,
     ...(view.next ? { next: view.next } : {}),
     stepMachine,
