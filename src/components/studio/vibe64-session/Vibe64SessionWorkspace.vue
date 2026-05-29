@@ -8,6 +8,8 @@
       <template #current-step>
         <Vibe64SessionCurrentStep
           :actions="actions"
+          :active="active"
+          :conversation-log="conversationLog"
           :diff="dialogs.diff"
           :page="page"
           :refresh-session-data="refreshSessionData"
@@ -58,6 +60,14 @@ import Vibe64SessionTimeline from "@/components/studio/vibe64-session/Vibe64Sess
 
 defineProps({
   actions: {
+    default: () => ({}),
+    type: Object
+  },
+  active: {
+    default: true,
+    type: Boolean
+  },
+  conversationLog: {
     default: () => ({}),
     type: Object
   },

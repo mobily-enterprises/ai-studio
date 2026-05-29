@@ -78,6 +78,23 @@ function useVibe64AutopilotComposer({
     }
     return currentControls.value.find((control) => control.id === currentPrimaryIntentId.value) || null;
   });
+  const enabledInputControls = computed(() => {
+    return currentControls.value.filter((control) => (
+      control?.enabled === true &&
+      controlHasInputFields(control)
+    ));
+  });
+  const defaultInputControl = computed(() => {
+    if (
+      primaryScreenControl.value?.enabled === true &&
+      controlHasInputFields(primaryScreenControl.value)
+    ) {
+      return primaryScreenControl.value;
+    }
+    return enabledInputControls.value.length === 1
+      ? enabledInputControls.value[0]
+      : null;
+  });
   const screenControls = computed(() => {
     const selectedId = String(selectedControl.value?.id || "");
     return currentControls.value.filter((control) => control.id !== selectedId);
@@ -175,11 +192,22 @@ function useVibe64AutopilotComposer({
     return true;
   }
 
-  watch(primaryScreenControl, (control) => {
-    if (!control || control.enabled !== true || !controlHasInputFields(control)) {
+  watch(defaultInputControl, (control, previousControl) => {
+    if (!control) {
       return;
     }
-    if (!selectedControl.value || selectedControl.value.id === currentPrimaryIntentId.value) {
+    const selectedId = String(selectedControl.value?.id || "");
+    if (!selectedId) {
+      selectControl(control);
+      return;
+    }
+    if (selectedId === control.id) {
+      return;
+    }
+    if (
+      selectedId === previousControl?.id ||
+      selectedId === currentPrimaryIntentId.value
+    ) {
       selectControl(control);
     }
   }, {

@@ -35,6 +35,8 @@
         <Vibe64SessionWorkspace
           class="studio-ai-sessions__inspect-workspace"
           :actions="actions"
+          :active="props.active && sessionMode === 'inspect'"
+          :conversation-log="conversationLog"
           :dialogs="dialogs"
           :page="guardedPage"
           :refresh-session-data="sessionData.refreshSessionData"
@@ -234,7 +236,7 @@ const humanInputResponsePreview = proxyRefs(useVibe64HumanInputResponsePreview({
   session: selectedSession
 }));
 const conversationLog = proxyRefs(useVibe64ConversationLog({
-  active: computed(() => Boolean(props.active && props.sessionMode === "autopilot")),
+  active: computed(() => Boolean(props.active)),
   session: selectedSession
 }));
 const review = proxyRefs(sessionWorkflow.review);

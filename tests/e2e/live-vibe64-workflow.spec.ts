@@ -393,12 +393,10 @@ test.describe("live Vibe64 session workflow", () => {
 
     await createSession(page);
     await clickButton(page, "Use existing PR");
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await dialog.getByLabel("PR URL or number").fill(replacementPrRef);
-    await dialog.getByRole("button", {
+    await page.getByLabel("PR URL or number").fill(replacementPrRef);
+    await page.getByRole("button", {
       exact: true,
-      name: "Continue"
+      name: "Use existing PR"
     }).click();
     await expect(page.getByText("cannot be used as a stacked PR base because its head branch is not in this repository").first()).toBeVisible({
       timeout: 60_000

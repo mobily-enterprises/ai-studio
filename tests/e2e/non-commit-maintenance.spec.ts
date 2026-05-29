@@ -137,13 +137,9 @@ test.describe("non-commit maintenance agent chat", () => {
     await expect(page.getByText("Install dependencies finished.")).toBeVisible();
     await page.getByRole("button", { name: "Next step" }).click();
 
-    await page.getByRole("button", { name: "Ask Codex" }).click();
-    const inputDialog = page.getByRole("dialog").filter({
-      hasText: "Ask Codex"
-    });
-    await expect(inputDialog).toBeVisible();
-    await inputDialog.getByLabel("What do you want to ask Codex?").fill("Explain this local maintenance task.");
-    await inputDialog.getByRole("button", { name: "Continue" }).click();
+    const inspect = page.locator(".studio-ai-sessions__inspect-slot");
+    await inspect.getByLabel("What do you want to ask Codex?").fill("Explain this local maintenance task.");
+    await inspect.getByRole("button", { name: "Ask Codex" }).click();
 
     await expectMarkdownResponsePreview(page);
     await expectNoBrowserCodexTerminalInput(page);

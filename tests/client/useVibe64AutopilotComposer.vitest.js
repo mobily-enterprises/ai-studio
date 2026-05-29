@@ -55,6 +55,76 @@ describe("useVibe64AutopilotComposer", () => {
     expect(composer.screenControls.value.map((control) => control.id)).toEqual(["retry"]);
   });
 
+  it("selects the only enabled input control when no primary intent is provided", async () => {
+    const composer = useVibe64AutopilotComposer({
+      controls: ref([
+        {
+          enabled: true,
+          id: "open_diff",
+          label: "Review diff"
+        },
+        conversationControl({
+          id: "request_review_tweak",
+          label: "Ask AI for tweaks"
+        })
+      ]),
+      conversationLog: ref({}),
+      primaryIntentId: ref(""),
+      running: ref(false)
+    });
+
+    await nextTick();
+
+    expect(composer.selectedControl.value?.id).toBe("request_review_tweak");
+    expect(composer.screenControls.value.map((control) => control.id)).toEqual(["open_diff"]);
+  });
+
+  it("does not guess a default when multiple enabled input controls are available", async () => {
+    const composer = useVibe64AutopilotComposer({
+      controls: ref([
+        conversationControl({
+          id: "request_review_tweak",
+          label: "Ask AI for tweaks"
+        }),
+        conversationControl({
+          id: "reject",
+          label: "Reject"
+        })
+      ]),
+      conversationLog: ref({}),
+      primaryIntentId: ref(""),
+      running: ref(false)
+    });
+
+    await nextTick();
+
+    expect(composer.selectedControl.value).toBeNull();
+    expect(composer.screenControls.value.map((control) => control.id)).toEqual([
+      "request_review_tweak",
+      "reject"
+    ]);
+  });
+
+  it("does not select a disabled input control by default", async () => {
+    const composer = useVibe64AutopilotComposer({
+      controls: ref([
+        conversationControl({
+          enabled: false,
+          id: "request_review_tweak",
+          label: "Ask AI for tweaks"
+        })
+      ]),
+      conversationLog: ref({}),
+      primaryIntentId: ref(""),
+      running: ref(false)
+    });
+
+    await nextTick();
+
+    expect(composer.selectedControl.value).toBeNull();
+    expect(composer.screenControls.value.map((control) => control.id)).toEqual(["request_review_tweak"]);
+  });
+
   it("submits numbered Codex questions as one conversationRequest field", async () => {
     let submitted = null;
     const composer = useVibe64AutopilotComposer({

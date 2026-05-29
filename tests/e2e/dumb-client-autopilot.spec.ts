@@ -1951,12 +1951,10 @@ test.describe("Autopilot dumb client contract", () => {
     expect(createIssueBox).not.toBeNull();
     expect(viewport).not.toBeNull();
     expect((createIssueBox?.y || 0) + (createIssueBox?.height || 0)).toBeLessThanOrEqual(viewport?.height || 0);
-    await autopilot.getByRole("button", { name: "Send improvement request" }).click();
-
     await expect(autopilot.getByLabel("Issue title")).toBeVisible();
     await expect(autopilot.getByLabel("What should change?")).toBeVisible();
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
-    await expect(autopilot.getByRole("button", { name: "Create GitHub issue" })).toHaveCount(0);
+    await expect(autopilot.getByRole("button", { name: "Create GitHub issue" })).toBeVisible();
     await expect.poll(() => stepInputs).toEqual([]);
     await autopilot.getByLabel("What should change?").fill("Use a clearer title.");
     await autopilot.getByRole("button", { name: "Send improvement request" }).click();
@@ -2316,8 +2314,6 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(inspect.getByRole("button", { name: "Create issue on GH" })).toHaveCount(0);
     await expect(inspect.getByRole("button", { name: "Use this description" })).toBeVisible();
     await expect(inspect.getByRole("button", { name: "Send improvement request" })).toBeVisible();
-
-    await inspect.getByRole("button", { name: "Send improvement request" }).click();
     await expect(inspect.getByLabel("What should change?")).toBeVisible();
     await inspect.getByLabel("What should change?").fill("Make the acceptance criteria stricter.");
     await inspect.getByRole("button", { name: "Send improvement request" }).click();

@@ -302,32 +302,33 @@
             Cancel
           </v-btn>
 
-          <template v-else>
-            <v-btn
-              v-for="control in workflowButtonControls"
-              :key="control.id"
-              :color="control.buttonColor"
-              :disabled="control.disabled"
-              :loading="control.loading"
-              :prepend-icon="control.icon"
-              type="button"
-              :variant="control.buttonVariant"
-              @click="activateWorkflowButtonControl(control.sourceControl || control)"
-            >
-              {{ control.label }}
-            </v-btn>
+          <v-btn
+            v-for="control in workflowButtonControls"
+            :key="control.id"
+            :color="control.buttonColor"
+            :disabled="control.disabled"
+            :loading="control.loading"
+            :prepend-icon="control.icon"
+            :title="control.disabledReason || control.label"
+            type="button"
+            :variant="control.buttonVariant"
+            @click="activateWorkflowButtonControl(control.sourceControl || control)"
+          >
+            {{ control.label }}
+          </v-btn>
 
-            <template v-if="!stepInputHasWorkflowIntents">
-              <Vibe64SessionActionButton
-                v-for="action in actions.currentActions"
-                :key="action.id"
-                :action="action"
-                :actions="stepInputActionHandlers"
-                :before-run="runActionFromStepInput"
-                :busy="page.busy || stepInput.saving"
-                variant="tonal"
-              />
-            </template>
+          <template
+            v-if="!selectedStepInputControlVisible && !stepInputHasWorkflowIntents && !workflowButtonControls.length"
+          >
+            <Vibe64SessionActionButton
+              v-for="action in actions.currentActions"
+              :key="action.id"
+              :action="action"
+              :actions="stepInputActionHandlers"
+              :before-run="runActionFromStepInput"
+              :busy="page.busy || stepInput.saving"
+              variant="tonal"
+            />
           </template>
         </div>
       </form>
@@ -394,7 +395,7 @@
         />
 
         <Vibe64AutopilotComposer
-          v-if="selectedControl"
+          v-if="selectedScreenControlVisible"
           :can-submit-selected-control="canSubmitSelectedControl"
           :running="running"
           :selected-control="selectedControl"
@@ -420,6 +421,7 @@
             :disabled="control.disabled"
             :loading="control.loading"
             :prepend-icon="control.icon"
+            :title="control.disabledReason || control.label"
             type="button"
             :variant="control.buttonVariant"
             @click="activateControl(control.sourceControl || control)"
@@ -496,6 +498,10 @@ import {
   controlIconToken,
   controlStateActive as presentationControlStateActive
 } from "@/lib/vibe64PresentationControls.js";
+import {
+  currentStepWorkflowControls,
+  workflowControlSourceAction
+} from "@/lib/vibe64WorkflowControlModel.js";
 
 // Autopilot workflow meaning belongs to the server. This component renders the
 // current presentation and dispatches the server-provided intents.
@@ -621,7 +627,7 @@ const screenKind = computed(() => screenState.value.kind);
 const sessionId = computed(() => String(props.session?.sessionId || ""));
 const screenMessage = computed(() => String(screenState.value.message || ""));
 const screenSections = computed(() => Array.isArray(screenState.value.sections) ? screenState.value.sections : []);
-const primaryIntentId = computed(() => String(screenState.value.primaryIntentId || ""));
+const primaryIntentId = computed(() => props.active ? String(screenState.value.primaryIntentId || "") : "");
 const displayStatusText = computed(() => {
   if (stepInput.visible) {
     return stepInput.interaction?.title || screenState.value.title;
@@ -642,9 +648,14 @@ const stepInputHasWorkflowIntents = computed(() => Boolean(
   currentStepInputHasDecisionControls(props.session, stepInput.interaction)
 ));
 const selectedStepInputControlVisible = computed(() => Boolean(
+  props.active &&
   stepInputFormVisible.value &&
   selectedControl.value &&
   selectedControlFields.value.length
+));
+const selectedScreenControlVisible = computed(() => Boolean(
+  props.active &&
+  selectedControl.value
 ));
 const commandStatus = computed(() => commandRunning.value ? "running" : "");
 const commandTerminalError = computed(() => {
@@ -722,12 +733,11 @@ const conversationScrollKey = computed(() => [
   selectedControlFields.value.map((field) => field.name).join("|")
 ].join(":"));
 const allScreenControls = computed(() => {
-  const sessionIntents = Array.isArray(props.session?.intents) ? props.session.intents : null;
-  const presentationIntents = Array.isArray(props.session?.presentation?.intents)
-    ? props.session.presentation.intents
-    : [];
-  return (sessionIntents || presentationIntents)
-    .filter((intent) => intent && intent.id && intent.label);
+  return currentStepWorkflowControls({
+    actions: props.actions?.currentActions || [],
+    interaction: stepInput.interaction,
+    session: props.session
+  });
 });
 const {
   activateControl,
@@ -745,7 +755,7 @@ const {
   controls: allScreenControls,
   isControlDisabled: controlDisabled,
   onRunClientControl: runClientControl,
-  onRunControl: (control, options) => runPresentedIntent(control, options),
+  onRunControl: runWorkflowControl,
   primaryIntentId,
   running
 });
@@ -832,6 +842,26 @@ async function runActionAfterStepInput(action = {}) {
   return props.actions.runAction(action);
 }
 
+async function runWorkflowControl(control = {}, options = {}) {
+  const sourceAction = workflowControlSourceAction(control);
+  if (!sourceAction) {
+    return runPresentedIntent(control, options);
+  }
+  if (String(sourceAction.dispatchRoute || "") === ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL) {
+    return runCommandAction(sourceAction);
+  }
+  const fields = options?.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
+    ? options.fields
+    : {};
+  const response = await props.actions.runAction(sourceAction, {
+    input: fields
+  });
+  await props.refreshSessionData();
+  await nextTick();
+  await runNextOperation();
+  return response !== false;
+}
+
 async function retryFromCommandFailure() {
   if (stepInput.interaction?.kind === "command_failure_response" && stepInput.visible) {
     clearFailure({
@@ -904,6 +934,7 @@ async function runClientControl(control = {}) {
 
 function controlDisabled(control = {}) {
   return Boolean(
+    props.page.busy ||
     running.value ||
     stepInput.saving ||
     control.enabled !== true ||
@@ -912,10 +943,21 @@ function controlDisabled(control = {}) {
 }
 
 function controlLoading(control = {}) {
+  const sourceAction = workflowControlSourceAction(control);
+  if (sourceAction) {
+    return Boolean(
+      props.actions.runActionCommand?.isRunning &&
+      props.actions.activeActionId === sourceAction.id
+    );
+  }
   return Boolean(running.value || stepInput.saving || controlStateActive(control, "loadingWhen"));
 }
 
 function controlIcon(control = {}) {
+  const sourceAction = workflowControlSourceAction(control);
+  if (sourceAction && typeof props.actions.actionIcon === "function") {
+    return props.actions.actionIcon(sourceAction);
+  }
   if (controlIconToken(control) === VIBE64_CLIENT_CONTROL_ICON_TOKENS.DIFF) {
     return mdiFileCompare;
   }

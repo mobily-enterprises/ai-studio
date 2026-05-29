@@ -104,7 +104,7 @@ async function chooseNewBranch(page: Page) {
 
 async function chooseExistingPr(page: Page, prRef: string) {
   await clickButton(page, "Use existing PR");
-  await fillInputDialog(page, "PR URL or number", prRef);
+  await fillInlineWorkflowInput(page, "PR URL or number", prRef, "Use existing PR");
   const session = await expectSessionMetadata(page, "work_source", "existing_pr");
   expect(session.metadata?.source_pr_url || "").toContain("/pull/");
   await expectStep(page, "worktree_created");
@@ -112,21 +112,18 @@ async function chooseExistingPr(page: Page, prRef: string) {
 
 async function useExistingIssue(page: Page, issueRef: string) {
   await clickButton(page, "Solve existing issue");
-  await fillInputDialog(page, "Issue URL or number", issueRef);
+  await fillInlineWorkflowInput(page, "Issue URL or number", issueRef, "Solve existing issue");
   const session = await expectSessionMetadataContains(page, "issue_url", "/issues/");
   expect(session.metadata?.issue_source).toBe("existing");
   await expectButtonEnabled(page, "Next step");
 }
 
-async function fillInputDialog(page: Page, label: string, value: string) {
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel(label).fill(value);
-  await dialog.getByRole("button", {
+async function fillInlineWorkflowInput(page: Page, label: string, value: string, submitLabel: string) {
+  await page.getByLabel(label).fill(value);
+  await page.getByRole("button", {
     exact: true,
-    name: "Continue"
+    name: submitLabel
   }).click();
-  await expect(dialog).toHaveCount(0);
 }
 
 async function goNextToStep(page: Page, stepId: string) {

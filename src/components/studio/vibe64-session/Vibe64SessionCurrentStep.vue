@@ -93,6 +93,18 @@
 
     <div class="studio-ai-sessions__actions">
       <template v-if="workflowControlsAvailable">
+        <v-btn
+          v-if="workflowControlsUseActionFallback && !selectedWorkflowControlVisible"
+          color="primary"
+          variant="flat"
+          :disabled="page.busy || !stepInput.canSubmit"
+          :loading="stepInput.saving"
+          :prepend-icon="mdiCheck"
+          type="submit"
+        >
+          {{ stepInput.interaction?.submitLabel || "Submit" }}
+        </v-btn>
+
         <template v-if="selectedWorkflowControlVisible">
           <v-btn
             color="primary"
@@ -115,6 +127,21 @@
           >
             Cancel
           </v-btn>
+
+          <v-btn
+            v-for="control in workflowButtonControls"
+            :key="control.id"
+            :color="control.buttonColor"
+            :disabled="control.disabled"
+            :loading="control.loading"
+            :prepend-icon="control.icon"
+            :title="control.disabledReason || control.label"
+            type="button"
+            :variant="control.buttonVariant"
+            @click="activateWorkflowControl(control.sourceControl || control)"
+          >
+            {{ control.label }}
+          </v-btn>
         </template>
 
         <v-btn
@@ -125,6 +152,7 @@
           :disabled="control.disabled"
           :loading="control.loading"
           :prepend-icon="control.icon"
+          :title="control.disabledReason || control.label"
           type="button"
           :variant="control.buttonVariant"
           @click="activateWorkflowControl(control.sourceControl || control)"
@@ -232,6 +260,21 @@
         >
           Cancel
         </v-btn>
+
+        <v-btn
+          v-for="control in workflowButtonControls"
+          :key="control.id"
+          :color="control.buttonColor"
+          :disabled="control.disabled"
+          :loading="control.loading"
+          :prepend-icon="control.icon"
+          :title="control.disabledReason || control.label"
+          type="button"
+          :variant="control.buttonVariant"
+          @click="activateWorkflowControl(control.sourceControl || control)"
+        >
+          {{ control.label }}
+        </v-btn>
       </template>
 
       <v-btn
@@ -242,6 +285,7 @@
         :disabled="control.disabled"
         :loading="control.loading"
         :prepend-icon="control.icon"
+        :title="control.disabledReason || control.label"
         type="button"
         :variant="control.buttonVariant"
         @click="activateWorkflowControl(control.sourceControl || control)"
@@ -355,9 +399,21 @@ import {
   controlIconToken,
   controlStateActive
 } from "@/lib/vibe64PresentationControls.js";
+import {
+  currentStepWorkflowControls,
+  workflowControlSourceAction
+} from "@/lib/vibe64WorkflowControlModel.js";
 
 const props = defineProps({
   actions: {
+    default: () => ({}),
+    type: Object
+  },
+  active: {
+    default: true,
+    type: Boolean
+  },
+  conversationLog: {
     default: () => ({}),
     type: Object
   },
@@ -392,22 +448,25 @@ const stepInputHasWorkflowIntents = computed(() => (
 ));
 const workflowClientControlError = ref("");
 const workflowControls = computed(() => {
-  const sessionIntents = Array.isArray(props.session?.intents) ? props.session.intents : null;
-  const presentationIntents = Array.isArray(props.session?.presentation?.intents)
-    ? props.session.presentation.intents
-    : null;
-  const interactionIntents = Array.isArray(props.stepInput?.interaction?.intents)
-    ? props.stepInput.interaction.intents
-    : [];
-  return (sessionIntents || presentationIntents || interactionIntents)
-    .filter((intent) => intent && intent.id && intent.label);
+  return currentStepWorkflowControls({
+    actions: props.actions?.currentActions || [],
+    interaction: props.stepInput?.interaction,
+    session: props.session
+  });
 });
 const workflowControlsAvailable = computed(() => workflowControls.value.length > 0);
+const workflowControlsUseActionFallback = computed(() => Boolean(
+  workflowControls.value.length &&
+  workflowControls.value.every((control) => workflowControlSourceAction(control))
+));
 const workflowControlsRunning = computed(() => Boolean(
   props.page.busy ||
   props.stepInput.saving ||
   props.actions.runIntentCommand?.isRunning
 ));
+const primaryIntentId = computed(() => props.active
+  ? String(props.session?.presentation?.screen?.primaryIntentId || "")
+  : "");
 const workflowButtonControls = computed(() => {
   return screenControls.value.map((control) => ({
     ...control,
@@ -430,13 +489,16 @@ const {
   submitSelectedControl,
   updateSelectedControlValue
 } = useVibe64AutopilotComposer({
+  conversationLog: computed(() => props.conversationLog),
   controls: workflowControls,
   isControlDisabled: workflowControlDisabled,
   onRunClientControl: runWorkflowClientControl,
   onRunControl: runWorkflowIntent,
+  primaryIntentId,
   running: workflowControlsRunning
 });
 const selectedWorkflowControlVisible = computed(() => Boolean(
+  props.active &&
   workflowControlsAvailable.value &&
   selectedControl.value &&
   selectedControlFields.value.length
@@ -454,6 +516,13 @@ function workflowControlDisabled(control = {}) {
 }
 
 function workflowControlLoading(control = {}) {
+  const sourceAction = workflowControlSourceAction(control);
+  if (sourceAction) {
+    return Boolean(
+      props.actions.runActionCommand?.isRunning &&
+      props.actions.activeActionId === sourceAction.id
+    );
+  }
   return Boolean(
     workflowControlsRunning.value ||
     controlStateActive(control, "loadingWhen", {
@@ -464,6 +533,10 @@ function workflowControlLoading(control = {}) {
 }
 
 function workflowControlIcon(control = {}) {
+  const sourceAction = workflowControlSourceAction(control);
+  if (sourceAction && typeof props.actions.actionIcon === "function") {
+    return props.actions.actionIcon(sourceAction);
+  }
   if (controlIconToken(control) === VIBE64_CLIENT_CONTROL_ICON_TOKENS.DIFF) {
     return mdiFileCompare;
   }
@@ -494,13 +567,20 @@ async function runWorkflowClientControl(control = {}) {
 }
 
 async function runWorkflowIntent(control = {}, options = {}) {
+  const fields = options?.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
+    ? options.fields
+    : {};
+  const sourceAction = workflowControlSourceAction(control);
+  if (sourceAction) {
+    return await props.actions.runAction(sourceAction, {
+      input: fields
+    }) !== false;
+  }
   if (controlHasClientAction(control)) {
     return runWorkflowClientControl(control);
   }
   return await props.actions.runIntent(control, {
-    fields: options?.fields && typeof options.fields === "object" && !Array.isArray(options.fields)
-      ? options.fields
-      : {}
+    fields
   }) !== false;
 }
 
@@ -544,6 +624,10 @@ async function runActionFromStepInput(action = {}) {
 }
 
 async function submitStepInputForm() {
+  if (selectedWorkflowControlVisible.value) {
+    await submitSelectedWorkflowControl();
+    return;
+  }
   if (stepInputHasWorkflowIntents.value) {
     return;
   }
