@@ -101,7 +101,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } from "vue";
+import { computed, onMounted, proxyRefs, ref, unref, watch } from "vue";
 import {
   mdiRobotOutline
 } from "@mdi/js";
@@ -318,6 +318,7 @@ const codexTerminalActivity = ref({
   busy: false,
   scope: "",
   sessionId: "",
+  streaming: false,
   terminalSessionId: "",
   working: false
 });
@@ -329,24 +330,6 @@ const codexTerminalPresentation = computed(() => {
     ? presentation
     : {};
 });
-const codexTerminalPreviewClock = ref(Date.now());
-let codexTerminalPreviewTimer = null;
-const codexTerminalPreviewVisibleUntilMs = computed(() => {
-  const visibleUntil = String(codexTerminalPresentation.value.visibleUntil || "");
-  const time = Date.parse(visibleUntil);
-  return Number.isFinite(time) ? time : 0;
-});
-const codexTerminalPreviewWithinWindow = computed(() => {
-  const visibleUntil = codexTerminalPreviewVisibleUntilMs.value;
-  return Boolean(visibleUntil && codexTerminalPreviewClock.value <= visibleUntil);
-});
-const serverCodexTerminalPreviewVisible = computed(() => Boolean(
-  props.active &&
-  props.sessionMode === "autopilot" &&
-  codexTerminalPresentation.value.visible === true &&
-  codexTerminalPresentation.value.terminalSessionId &&
-  codexTerminalPreviewWithinWindow.value
-));
 const autopilotCodexTerminalVisible = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
@@ -370,27 +353,18 @@ const hiddenCodexTerminalActivityVisible = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
   !codexTerminalForegroundVisible.value &&
-  codexTerminalActivity.value.active &&
+  codexTerminalActivity.value.streaming &&
   codexTerminalActivity.value.scope === "session" &&
   codexTerminalActivity.value.sessionId === selectedSessionId.value
 ));
 const codexTerminalPreviewVisible = computed(() => Boolean(
-  serverCodexTerminalPreviewVisible.value ||
   hiddenCodexTerminalActivityVisible.value
-));
-const codexRunningScreenActive = computed(() => Boolean(
-  props.active &&
-  props.sessionMode === "autopilot" &&
-  selectedSession.value?.presentation?.screen?.kind === "codex_running"
 ));
 const autopilotInteractionLocked = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
   !codexTerminalForegroundVisible.value &&
-  (
-    codexTerminalPreviewVisible.value ||
-    codexRunningScreenActive.value
-  )
+  codexTerminalPreviewVisible.value
 ));
 const autopilotViewInert = computed(() => Boolean(
   props.sessionMode !== "autopilot" ||
@@ -483,13 +457,17 @@ function emitGlobalCodexTerminalUpdate(payload = {}) {
 }
 
 function handleCodexActivityChange(payload = {}) {
+  const busy = Boolean(payload.busy);
+  const streaming = Boolean(payload.streaming);
+  const working = Boolean(payload.working);
   const activity = {
-    active: Boolean(payload.active || payload.busy || payload.working),
-    busy: Boolean(payload.busy),
+    active: Boolean(payload.active || busy || streaming || working),
+    busy,
     scope: String(payload.scope || ""),
     sessionId: String(payload.sessionId || ""),
+    streaming,
     terminalSessionId: String(payload.terminalSessionId || ""),
-    working: Boolean(payload.working)
+    working
   };
   if (activity.scope !== "session" || activity.sessionId !== selectedSessionId.value) {
     return;
@@ -515,36 +493,10 @@ function artifactReadinessVersion(readiness = {}) {
     .join("|");
 }
 
-function clearCodexTerminalPreviewTimer() {
-  if (!codexTerminalPreviewTimer) {
-    return;
-  }
-  globalThis.clearTimeout(codexTerminalPreviewTimer);
-  codexTerminalPreviewTimer = null;
-}
-
-function scheduleCodexTerminalPreviewExpiry() {
-  clearCodexTerminalPreviewTimer();
-  codexTerminalPreviewClock.value = Date.now();
-  const visibleUntil = codexTerminalPreviewVisibleUntilMs.value;
-  if (!visibleUntil || !props.active || props.sessionMode !== "autopilot") {
-    return;
-  }
-  const delay = Math.max(0, visibleUntil - Date.now()) + 25;
-  codexTerminalPreviewTimer = globalThis.setTimeout(() => {
-    codexTerminalPreviewTimer = null;
-    codexTerminalPreviewClock.value = Date.now();
-  }, delay);
-}
-
 onMounted(() => {
   emitToolbarControls();
   emitBusy();
   emitPageError();
-});
-
-onBeforeUnmount(() => {
-  clearCodexTerminalPreviewTimer();
 });
 
 watch(interactionBusy, emitBusy, {
@@ -596,22 +548,12 @@ watch(() => [
     busy: false,
     scope: "",
     sessionId: "",
+    streaming: false,
     terminalSessionId: "",
     working: false
   };
 }, {
   flush: "post"
-});
-
-watch(() => [
-  props.active ? "active" : "inactive",
-  props.sessionMode,
-  serverCodexTerminalPreviewVisible.value ? "visible" : "hidden",
-  codexTerminalPresentation.value.terminalSessionId || "",
-  codexTerminalPresentation.value.visibleUntil || ""
-].join("|"), scheduleCodexTerminalPreviewExpiry, {
-  flush: "post",
-  immediate: true
 });
 
 </script>

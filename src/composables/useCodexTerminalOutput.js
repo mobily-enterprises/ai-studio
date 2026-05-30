@@ -10,6 +10,7 @@ import {
 import { createCodexPromptEchoFilters } from "@/lib/codexPromptEchoFilters.js";
 
 const CODEX_ACTIVITY_QUIET_MS = 2200;
+const TERMINAL_STREAM_QUIET_MS = 650;
 const CODEX_ACTIVITY_BUFFER_LENGTH = 8192;
 const TERMINAL_REPAINT_VISIBLE_TEXT_LIMIT = 12;
 const TERMINAL_ESCAPE_CHARACTER = String.fromCharCode(27);
@@ -136,12 +137,14 @@ function useCodexTerminalOutput({
 } = {}) {
   const codexBusy = ref(false);
   const codexWorking = ref(false);
+  const terminalStreaming = ref(false);
   const promptEchoFilters = createCodexPromptEchoFilters();
 
   let terminalDisplayTimer = null;
   let terminalOutputChangedTimer = null;
   let codexActivityBuffer = "";
   let codexIdleTimer = null;
+  let terminalStreamingTimer = null;
   let codexBusyOutputVersion = 0;
   let terminalHasOutput = false;
   let terminalOutputTail = "";
@@ -178,8 +181,35 @@ function useCodexTerminalOutput({
     emitBusyChanged?.({
       busy: codexBusy.value,
       sessionId: unref(sessionId),
+      streaming: terminalStreaming.value,
       working: codexWorking.value
     });
+  }
+
+  function clearTerminalStreamingTimer() {
+    if (!terminalStreamingTimer) {
+      return;
+    }
+    globalThis.clearTimeout(terminalStreamingTimer);
+    terminalStreamingTimer = null;
+  }
+
+  function setTerminalStreaming(nextStreaming) {
+    const streaming = Boolean(nextStreaming);
+    if (terminalStreaming.value === streaming) {
+      return;
+    }
+    terminalStreaming.value = streaming;
+    emitCodexActivityChanged();
+  }
+
+  function markTerminalStreaming() {
+    setTerminalStreaming(true);
+    clearTerminalStreamingTimer();
+    terminalStreamingTimer = globalThis.setTimeout(() => {
+      terminalStreamingTimer = null;
+      setTerminalStreaming(false);
+    }, TERMINAL_STREAM_QUIET_MS);
   }
 
   function setCodexBusy(nextBusy) {
@@ -433,7 +463,7 @@ function useCodexTerminalOutput({
     if (!outputChunk) {
       return;
     }
-    markCodexBusy();
+    markTerminalStreaming();
     if (terminalOutputLooksLikeSmallCursorRepaint(outputChunk)) {
       noteTerminalActivityWithoutOutput();
       if (displayChunkCanAppendRaw(outputChunk)) {
@@ -465,6 +495,8 @@ function useCodexTerminalOutput({
     clearTerminalDisplayTimer();
     clearTerminalOutputChanged();
     clearPendingDisplay();
+    clearTerminalStreamingTimer();
+    setTerminalStreaming(false);
     clearCodexBusy();
     clearCodexWorking();
     codexActivityBuffer = "";
@@ -496,6 +528,7 @@ function useCodexTerminalOutput({
     markCodexBusy,
     removePromptEchoFilter: promptEchoFilters.remove,
     resetTerminalOutput,
+    terminalStreaming,
     writeTerminalOutput
   };
 }

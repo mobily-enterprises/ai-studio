@@ -798,7 +798,7 @@ test.describe("Autopilot dumb client contract", () => {
     await expect.poll(() => commandTerminalStarts).toBe(2);
   });
 
-  test("attaches to the server-owned Codex terminal preview without sending terminal input", async ({ page }) => {
+  test("attaches to the server-owned Codex terminal and previews only live output", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     let codexTerminalStartRequests = 0;
     const session = sessionPayload({
@@ -831,12 +831,12 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "Codex is thinking...",
+            label: "",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
-            visible: true,
-            visibleUntil: new Date(Date.now() + 10_000).toISOString()
+            visible: false,
+            visibleUntil: ""
           }
         }
       },
@@ -853,13 +853,28 @@ test.describe("Autopilot dumb client contract", () => {
 
     await page.goto(`${BASE_URL}/home`);
 
-    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
-    await expect(page.getByText("Codex is thinking...")).toBeVisible();
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Codex is thinking..." })).toHaveCount(0);
     await expect.poll(() => codexTerminalStartRequests).toBe(0);
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
     ))).toEqual([]);
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __vibe64CodexTerminalSocketCount?: () => number }).__vibe64CodexTerminalSocketCount?.() || 0
+    ))).toBe(1);
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __vibe64PushCodexTerminalOutput: (output: string) => void;
+      }).__vibe64PushCodexTerminalOutput("Working (1s)\r");
+    });
+
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toBeVisible();
+    await page.waitForTimeout(700);
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toHaveCount(0);
   });
 
   test("opens the selected session Codex terminal from Autopilot", async ({ page }) => {
@@ -938,7 +953,7 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByRole("button", { name: "Codex terminal" })).toHaveCount(0);
   });
 
-  test("keeps the server-owned Codex terminal preview behind input while transmitting", async ({ page }) => {
+  test("keeps live Codex terminal output behind input while output streams", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     const session = sessionPayload({
       codexTerminal: {
@@ -985,12 +1000,12 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "Codex is thinking...",
+            label: "",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
-            visible: true,
-            visibleUntil: new Date(Date.now() + 10_000).toISOString()
+            visible: false,
+            visibleUntil: ""
           }
         }
       },
@@ -1004,22 +1019,39 @@ test.describe("Autopilot dumb client contract", () => {
     await page.goto(`${BASE_URL}/home`);
 
     await expect(page.getByLabel("Response")).toBeVisible();
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __vibe64CodexTerminalSocketCount?: () => number }).__vibe64CodexTerminalSocketCount?.() || 0
+    ))).toBe(1);
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __vibe64PushCodexTerminalOutput: (output: string) => void;
+      }).__vibe64PushCodexTerminalOutput("Working (1s)\r");
+    });
+
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toBeVisible();
+    await expect(page.locator(".studio-autopilot")).toHaveAttribute("inert", "");
+    await page.waitForTimeout(700);
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toHaveCount(0);
+    await expect(page.locator(".studio-autopilot")).not.toHaveAttribute("inert", "");
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
     ))).toEqual([]);
   });
 
-  test("hides the server-owned Codex terminal preview after the byte activity window expires", async ({ page }) => {
+  test("hides the server-owned Codex terminal preview when the Codex turn is idle", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     const session = sessionPayload({
       codexTerminal: {
         commandPreview: "codex",
         id: "server-codex-terminal",
-        lastInputAt: new Date(Date.now() - 10_000).toISOString(),
+        lastInputAt: new Date().toISOString(),
         lastInputBytes: 2048,
         status: "running",
-        transmitting: true
+        transmitting: false
       },
       presentation: {
         auto: {
@@ -1054,8 +1086,8 @@ test.describe("Autopilot dumb client contract", () => {
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
-            visible: true,
-            visibleUntil: new Date(Date.now() - 5000).toISOString()
+            visible: false,
+            visibleUntil: ""
           }
         }
       },
@@ -1072,7 +1104,7 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
   });
 
-  test("shows the hidden session Codex terminal preview when output streams in Autopilot", async ({ page }) => {
+  test("shows the hidden session Codex terminal preview only while output streams", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     const session = sessionPayload({
       codexTerminal: {
@@ -1131,6 +1163,10 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByLabel("Response")).toBeVisible();
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
     await expect(page.locator(".studio-autopilot")).not.toHaveAttribute("inert", "");
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __vibe64CodexTerminalSocketCount?: () => number }).__vibe64CodexTerminalSocketCount?.() || 0
+    ))).toBe(1);
+
     await page.evaluate(() => {
       (window as unknown as {
         __vibe64PushCodexTerminalOutput: (output: string) => void;
@@ -1139,6 +1175,10 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
     await expect(page.locator(".studio-autopilot")).toHaveAttribute("inert", "");
     await expect(page.getByText("Codex is thinking...")).toBeVisible();
+
+    await page.waitForTimeout(700);
+    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
+    await expect(page.locator(".studio-autopilot")).not.toHaveAttribute("inert", "");
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
     ))).toEqual([]);
@@ -2612,6 +2652,12 @@ async function mockCodexTerminalPreviewSocket(page: Page) {
         this.dispatchEvent(new CloseEvent("close"));
       }
     }
+
+    (window as unknown as {
+      __vibe64CodexTerminalSocketCount: () => number;
+    }).__vibe64CodexTerminalSocketCount = () => codexSockets
+      .filter((socket) => socket.readyState === MockWebSocket.OPEN)
+      .length;
 
     window.WebSocket = MockWebSocket as unknown as typeof WebSocket;
   });

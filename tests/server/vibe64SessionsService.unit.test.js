@@ -44,13 +44,13 @@ function oldTerminalActivity() {
   };
 }
 
-function assertCodexPreviewVisible(presentation = {}, terminalSessionId = "") {
-  assert.equal(presentation.label, "Codex is thinking...");
+function assertCodexPreviewHidden(presentation = {}, terminalSessionId = "") {
+  assert.equal(presentation.label, "");
   assert.equal(presentation.readOnlyInAutopilot, true);
   assert.equal(presentation.renderer, "codex_terminal");
   assert.equal(presentation.terminalSessionId, terminalSessionId);
-  assert.equal(presentation.visible, true);
-  assert.ok(Date.parse(presentation.visibleUntil));
+  assert.equal(presentation.visible, false);
+  assert.equal(presentation.visibleUntil, "");
 }
 
 test("session action closes terminals when the action archives the session", async () => {
@@ -187,7 +187,7 @@ test("session prompt action injects the rendered Codex handoff from the server",
   assert.equal(session.codexTerminal.lastInputBytes, 24);
   assert.equal(session.codexTerminal.status, "running");
   assert.equal(session.codexTerminal.transmitting, true);
-  assertCodexPreviewVisible(session.presentation.terminal.codex, "codex-terminal-1");
+  assertCodexPreviewHidden(session.presentation.terminal.codex, "codex-terminal-1");
   assert.deepEqual(deliveries, [
     {
       promptHandoff: handoff,
@@ -448,7 +448,7 @@ test("session prompt action fails visibly when server-side Codex delivery fails"
   assert.equal(result.error, "Codex terminal is not running.");
 });
 
-test("session presentation keeps the Codex preview while recent terminal input activity is active", async () => {
+test("session presentation exposes the Codex terminal without using turn state for preview visibility", async () => {
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -489,7 +489,7 @@ test("session presentation keeps the Codex preview while recent terminal input a
   assert.equal(session.codexTerminal.id, "codex-terminal-active");
   assert.equal(session.codexTerminal.transmitting, true);
   assert.ok(Date.parse(session.codexTerminal.lastInputAt));
-  assertCodexPreviewVisible(session.presentation.terminal.codex, "codex-terminal-active");
+  assertCodexPreviewHidden(session.presentation.terminal.codex, "codex-terminal-active");
 });
 
 test("session inspect reads existing Codex terminal state without preparing it", async () => {
@@ -544,7 +544,7 @@ test("session inspect reads existing Codex terminal state without preparing it",
   assert.equal(session.codexTerminal.id, "codex-terminal-restored");
 });
 
-test("session presentation hides the Codex preview when the terminal has no recent byte activity", async () => {
+test("session presentation hides the Codex preview when there is no transmitting turn", async () => {
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -640,7 +640,7 @@ test("session presentation ignores Codex output activity for terminal preview vi
   });
 });
 
-test("session presentation ignores old terminal input for terminal preview visibility", async () => {
+test("session presentation ignores Codex turn state for preview visibility", async () => {
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -680,17 +680,10 @@ test("session presentation ignores old terminal input for terminal preview visib
   const session = await service.inspectSession("session-1");
 
   assert.equal(session.codexTerminal.transmitting, true);
-  assert.deepEqual(session.presentation.terminal.codex, {
-    label: "",
-    readOnlyInAutopilot: true,
-    renderer: "codex_terminal",
-    terminalSessionId: "codex-terminal-old-input",
-    visible: false,
-    visibleUntil: ""
-  });
+  assertCodexPreviewHidden(session.presentation.terminal.codex, "codex-terminal-old-input");
 });
 
-test("session presentation keeps a fresh awaiting Codex turn in waiting state", async () => {
+test("session presentation does not show the Codex terminal preview for stale non-transmitting waits", async () => {
   const waitStartedAt = new Date().toISOString();
   const service = createService({
     projectService: {
@@ -745,10 +738,14 @@ test("session presentation keeps a fresh awaiting Codex turn in waiting state", 
   assert.equal(session.presentation.screen.showProgress, true);
   assert.equal(session.presentation.screen.title, "Codex is thinking...");
   assert.deepEqual(session.presentation.intents, []);
-  assert.equal(session.presentation.terminal.codex.label, "Codex is thinking...");
-  assert.equal(session.presentation.terminal.codex.terminalSessionId, "codex-terminal-fresh-wait");
-  assert.equal(session.presentation.terminal.codex.visible, true);
-  assert.ok(Date.parse(session.presentation.terminal.codex.visibleUntil));
+  assert.deepEqual(session.presentation.terminal.codex, {
+    label: "",
+    readOnlyInAutopilot: true,
+    renderer: "codex_terminal",
+    terminalSessionId: "codex-terminal-fresh-wait",
+    visible: false,
+    visibleUntil: ""
+  });
 });
 
 test("session creation waits for an unsynced merged session", async () => {

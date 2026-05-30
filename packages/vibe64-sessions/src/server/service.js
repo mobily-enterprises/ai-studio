@@ -143,52 +143,16 @@ async function sessionWithLatestRevision(runtime, session = {}) {
   };
 }
 
-const CODEX_TERMINAL_ACTIVITY_PREVIEW_MS = 2500;
-
-function timeMs(value = "") {
-  const time = Date.parse(String(value || ""));
-  return Number.isFinite(time) ? time : 0;
-}
-
-function latestCodexTerminalInputActivity(terminal = {}) {
-  const inputAt = timeMs(terminal.lastInputAt);
-  if (!inputAt) {
-    return null;
-  }
-  return {
-    activityAt: inputAt,
-    label: terminal.activityLabel || "Codex is thinking...",
-    visibleUntil: new Date(inputAt + CODEX_TERMINAL_ACTIVITY_PREVIEW_MS).toISOString()
-  };
-}
-
-function latestCodexTerminalPresentationActivity(terminal = {}) {
-  return [
-    latestCodexTerminalInputActivity(terminal)
-  ]
-    .filter(Boolean)
-    .sort((left, right) => timeMs(right.visibleUntil) - timeMs(left.visibleUntil))[0] || null;
-}
-
 function codexTerminalPresentation(codexTerminal = null) {
   const terminal = objectValue(codexTerminal);
   const terminalSessionId = String(terminal.id || "").trim();
-  const nowMs = Date.now();
-  const latestActivity = latestCodexTerminalPresentationActivity(terminal);
-  const visibleUntilMs = timeMs(latestActivity?.visibleUntil);
-  const visible = Boolean(
-    terminalSessionId &&
-    terminal.status !== "exited" &&
-    latestActivity &&
-    nowMs <= visibleUntilMs
-  );
   return {
-    label: visible ? latestActivity.label || "" : "",
+    label: "",
     readOnlyInAutopilot: true,
     renderer: "codex_terminal",
     terminalSessionId,
-    visible,
-    visibleUntil: visible ? latestActivity?.visibleUntil || "" : ""
+    visible: false,
+    visibleUntil: ""
   };
 }
 

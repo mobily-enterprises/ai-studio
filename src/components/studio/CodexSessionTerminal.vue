@@ -237,8 +237,10 @@ const canUseTerminal = computed(() => {
   return Boolean(
     terminalStreamActive.value &&
     sessionId.value &&
-    sessionWorktree.value &&
-    (props.allowStart || serverTerminalSession.value.id)
+    (
+      serverTerminalSession.value.id ||
+      (props.allowStart && sessionWorktree.value)
+    )
   );
 });
 const canStartTerminal = computed(() => {
@@ -283,10 +285,13 @@ const {
   clearCodexBusy,
   clearCodexWorking,
   clearPromptEchoFilters,
+  codexBusy,
+  codexWorking,
   flushTerminalOutput,
   getTerminalOutput,
   markCodexBusy,
   resetTerminalOutput,
+  terminalStreaming,
   writeTerminalOutput
 } = useCodexTerminalOutput({
   appendDisplay: appendTerminalDisplay,
@@ -423,13 +428,17 @@ function applyServerPromptEchoFilter(session = {}) {
 }
 
 function emitCodexActivityChanged(payload = {}) {
+  const busy = Object.hasOwn(payload, "busy") ? Boolean(payload.busy) : Boolean(codexBusy.value);
+  const working = Object.hasOwn(payload, "working") ? Boolean(payload.working) : Boolean(codexWorking.value);
+  const streaming = Object.hasOwn(payload, "streaming") ? Boolean(payload.streaming) : Boolean(terminalStreaming.value);
   emit("activity-change", {
-    active: Boolean(payload.busy || payload.working),
-    busy: Boolean(payload.busy),
+    active: Boolean(streaming),
+    busy,
     scope: props.scope,
     sessionId: String(payload.sessionId || terminalScopeId.value || ""),
+    streaming,
     terminalSessionId: terminalSessionId.value || serverTerminalSession.value.id || "",
-    working: Boolean(payload.working)
+    working
   });
 }
 
