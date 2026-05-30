@@ -1,5 +1,6 @@
 import {
   sessionActionInputValidator,
+  sessionAdvanceInputValidator,
   sessionCreateInputValidator,
   sessionIdInputValidator,
   sessionIntentInputValidator,
@@ -187,7 +188,7 @@ const featureActions = Object.freeze([
     kind: "command",
     channels: ["api", "automation", "internal"],
     surfaces: ["home"],
-    input: sessionIdInputValidator,
+    input: sessionAdvanceInputValidator,
     output: null,
     idempotency: "optional",
     audit: {
@@ -196,7 +197,10 @@ const featureActions = Object.freeze([
     observability: {},
     async execute(input, context, deps) {
       void context;
-      return deps.featureService.advanceSession(input.sessionId);
+      return deps.featureService.advanceSession(input.sessionId, {
+        stepId: input.stepId || "",
+        stepStatus: input.stepStatus || ""
+      });
     }
   },
   {

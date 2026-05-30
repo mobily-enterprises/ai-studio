@@ -9,6 +9,7 @@ import {
 } from "@mdi/js";
 
 import {
+  blockingVibe64SessionPageError,
   vibe64ActionIcon,
   vibe64PromptHandoffFromSession,
   vibe64SessionLimits,
@@ -73,6 +74,37 @@ describe("Vibe64 session panel model", () => {
       },
       sessionMode: "inspect"
     })).toBe(false);
+  });
+
+  it("shows only blocking session page load errors", () => {
+    expect(blockingVibe64SessionPageError({
+      runtimePageError: "Terminal failed.",
+      selectedSession: {
+        sessionId: "session-1"
+      },
+      selectedSessionLoadError: "Request failed.",
+      sessionListLoadError: "List failed.",
+      sessions: [{ sessionId: "session-1" }]
+    })).toBe("Terminal failed.");
+
+    expect(blockingVibe64SessionPageError({
+      selectedSession: {
+        sessionId: "session-1"
+      },
+      selectedSessionLoadError: "Request failed.",
+      sessionListLoadError: "List failed.",
+      sessions: [{ sessionId: "session-1" }]
+    })).toBe("");
+
+    expect(blockingVibe64SessionPageError({
+      sessionListLoadError: "List failed.",
+      sessions: []
+    })).toBe("List failed.");
+
+    expect(blockingVibe64SessionPageError({
+      selectedSessionLoadError: "Selected session failed.",
+      sessions: [{ sessionId: "session-1" }]
+    })).toBe("Selected session failed.");
   });
 
   it("builds timeline rows with current, pending, done, and rewind state", () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -19,9 +20,48 @@ import {
 } from "@local/vibe64-adapters/server/adapters/laravel/constants";
 import {
   createFixCodexJobStore,
-  fixCodexReportInstructions
+  fixCodexReportInstructions,
+  prepareFixCodexReportHelper
 } from "../../packages/vibe64-terminals/src/server/fixCodexJobs.js";
 import { withTemporaryRoot } from "./vibe64TestHelpers.js";
+
+function runNodeScript(scriptPath = "", args = [], env = {}, stdin = "") {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      scriptPath,
+      ...args
+    ], {
+      env: {
+        ...process.env,
+        ...env
+      },
+      stdio: [
+        "pipe",
+        "pipe",
+        "pipe"
+      ]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.stdin.end(stdin);
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      resolve({
+        code,
+        stderr,
+        stdout
+      });
+    });
+  });
+}
 
 test("project tool registry validates models and lists tools deterministically", async () => {
   const registry = createProjectToolRegistry();
@@ -265,7 +305,49 @@ test("Fix Codex report instructions expose the mounted helper command", () => {
   });
 
   assert.match(instructions, /VIBE64_FIX_CODEX_REPORT_HELPER/u);
+  assert.match(instructions, /before your final response/u);
+  assert.match(instructions, /not complete until this helper command returns ok/u);
   assert.match(instructions, /"status":"fixed"/u);
   assert.match(instructions, /"jobId": "job-1"/u);
   assert.match(instructions, /"token": "secret-token"/u);
+});
+
+test("Fix Codex report helper accepts --json with stdin payload", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createFixCodexJobStore({
+      clock: () => new Date("2026-05-27T01:02:03.000Z")
+    });
+    const { job, token } = store.createJob({
+      scope: "project",
+      subject: "Unit tool",
+      targetRoot
+    });
+    const helper = await prepareFixCodexReportHelper({
+      fixJobStore: store,
+      jobId: job.id,
+      targetRoot,
+      token
+    });
+    const socketPath = path.join(
+      helper.mount.source,
+      path.basename(helper.env.VIBE64_FIX_CODEX_REPORT_SOCKET)
+    );
+
+    const result = await runNodeScript(helper.env.VIBE64_FIX_CODEX_REPORT_HELPER, [
+      "--json"
+    ], {
+      ...helper.env,
+      VIBE64_FIX_CODEX_REPORT_SOCKET: socketPath
+    }, JSON.stringify({
+      message: "Configuration intentionally fails.",
+      status: "blocked",
+      verificationSummary: "No repository-owned fix available."
+    }));
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const response = JSON.parse(result.stdout);
+    assert.equal(response.ok, true);
+    assert.equal(response.fixJob.status, "blocked");
+    assert.equal(response.fixJob.message, "Configuration intentionally fails.");
+  });
 });

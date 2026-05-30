@@ -26,6 +26,9 @@ import {
   vibe64SessionDebugSummary
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 import {
+  terminalFailureOutputTail
+} from "@local/vibe64-runtime/server/terminalFailureFixRequest";
+import {
   ensureTargetRuntimeNetwork
 } from "@local/studio-terminal-core/server/runtimeContainers";
 import {
@@ -215,6 +218,7 @@ async function writeActionTerminalResult({
   commandLifecycleId = "",
   exitCode,
   input = {},
+  output = "",
   resultFile = {},
   runtime,
   session = {},
@@ -314,6 +318,13 @@ async function writeActionTerminalResult({
   const message = completed
     ? spec.successMessage || `${action.label || action.id} completed.`
     : spec.failureMessage || `${action.label || action.id} failed with exit code ${exitCode}.`;
+  const failureContext = completed ? {} : {
+    attemptedCommand: commandInvocation(spec),
+    commandPreview: String(spec.commandPreview || ""),
+    exitCode,
+    output: terminalFailureOutputTail(output),
+    terminalSessionId
+  };
   const actionResult = await runtime.store.writeActionResult(
     session.sessionId,
     action.id,
@@ -321,6 +332,7 @@ async function writeActionTerminalResult({
       actionLabel: action.label,
       actionType: "command",
       artifacts: {},
+      ...failureContext,
       input,
       message,
       metadata,
@@ -936,7 +948,7 @@ function createCommandTerminalController({
               },
               namespace,
               namespaceLimitPrefix: namespace,
-              onClose: async ({ exitCode, id }) => {
+              onClose: async ({ exitCode, id, output }) => {
                 const onCloseStartedAtMs = Date.now();
                 const activeResultFile = resultFile || {};
                 vibe64SessionDebugLog("server.commandTerminal.onClose.start", {
@@ -967,6 +979,7 @@ function createCommandTerminalController({
                       commandLifecycleId,
                       exitCode,
                       input: commandInput,
+                      output,
                       resultFile: activeResultFile,
                       runtime,
                       session: startedSession,

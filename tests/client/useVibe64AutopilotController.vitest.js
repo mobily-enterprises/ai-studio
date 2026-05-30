@@ -108,6 +108,28 @@ describe("useVibe64AutopilotController", () => {
     });
   });
 
+  it("passes the server operation state snapshot when advancing", async () => {
+    const context = createControllerContext({
+      operation: {
+        executable: true,
+        id: "session-advance:step_b",
+        kind: "advance",
+        label: "Next step",
+        route: "session-advance",
+        stepId: "step_a",
+        stepStatus: "ready"
+      }
+    });
+
+    await context.controller.runNextOperation();
+
+    expect(context.actions.advanceSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      stepId: "step_a",
+      stepStatus: "ready"
+    });
+  });
+
   it("reports blocked presented intents as not accepted", async () => {
     const context = createControllerContext({
       intentResponse: {
@@ -212,6 +234,62 @@ describe("useVibe64AutopilotController", () => {
 
     expect(context.session.value.currentStep).toBe("step_b");
     expect(context.actions.advanceSession).not.toHaveBeenCalled();
+  });
+
+  it("surfaces persisted command failures after a reload", async () => {
+    const context = createControllerContext({
+      actionResults: [
+        {
+          actionId: "run_automated_checks",
+          actionLabel: "Run automated checks",
+          actionType: "command",
+          at: "2026-05-30T12:54:38.018Z",
+          attemptedCommand: "npm run verify",
+          commandPreview: "npm run verify",
+          exitCode: 1,
+          message: "Run automated checks failed with exit code 1.",
+          output: "eslint failed",
+          status: "blocked",
+          stepId: "step_a",
+          terminalSessionId: "terminal-1"
+        }
+      ],
+      operation: {
+        executable: false,
+        kind: "wait",
+        reason: "Resolve validation failure"
+      },
+      screen: {
+        input: {
+          fields: [
+            {
+              kind: "textarea",
+              label: "Retry note",
+              name: "response"
+            }
+          ],
+          kind: "command_failure_response",
+          submitLabel: "Retry command",
+          title: "Validation needs attention"
+        },
+        kind: "input",
+        title: "Validation needs attention"
+      },
+      stepStatus: "waiting_for_input"
+    });
+
+    expect(context.controller.screenState.value.kind).toBe("command");
+    expect(context.controller.commandResult.value).toMatchObject({
+      actionId: "run_automated_checks",
+      attemptedCommand: "npm run verify",
+      commandPreview: "npm run verify",
+      error: "Run automated checks failed with exit code 1.",
+      exitCode: 1,
+      ok: false,
+      output: "eslint failed",
+      sessionId: "session-1",
+      terminalSessionId: "terminal-1"
+    });
   });
 
   it("refreshes stale command-start conflicts instead of showing command failure", async () => {
@@ -348,6 +426,7 @@ describe("useVibe64AutopilotController", () => {
 });
 
 function createControllerContext({
+  actionResults = [],
   commandCompletesWithServerAdvance = false,
   commandCompletionRefreshAttempts = 6,
   commandCompletionStaleRefreshes = 0,
@@ -378,6 +457,7 @@ function createControllerContext({
     recoveryAvailable
   }));
   const session = ref(sessionView({
+    actionResults,
     command: commandPresentation.value,
     intents,
     operation,
@@ -397,6 +477,7 @@ function createControllerContext({
   function syncSession(values = {}) {
     const currentPresentation = session.value?.presentation || {};
     session.value = sessionView({
+      actionResults,
       command: commandPresentation.value,
       intents,
       operation: values.operation || currentPresentation.auto?.nextOperation || operation,
@@ -626,6 +707,7 @@ function createControllerContext({
 }
 
 function sessionView({
+  actionResults = [],
   command = commandPresentationView(),
   intents = [],
   operation = {},
@@ -645,6 +727,7 @@ function sessionView({
   };
   return {
     actions: [],
+    actionResults,
     commandLifecycles: [],
     currentCommandLifecycle: null,
     currentStep: stepId,

@@ -30,7 +30,7 @@ function projectServiceForRuntime(runtime) {
   };
 }
 
-function runNodeScript(scriptPath = "", args = [], env = {}) {
+function runNodeScript(scriptPath = "", args = [], env = {}, stdin = "") {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       scriptPath,
@@ -41,7 +41,7 @@ function runNodeScript(scriptPath = "", args = [], env = {}) {
         ...env
       },
       stdio: [
-        "ignore",
+        "pipe",
         "pipe",
         "pipe"
       ]
@@ -56,6 +56,7 @@ function runNodeScript(scriptPath = "", args = [], env = {}) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
+    child.stdin.end(stdin);
     child.once("error", reject);
     child.once("exit", (code) => {
       resolve({
@@ -500,6 +501,50 @@ test("Vibe64 current-step helper submits through the same server path", async ()
     assert.equal(response.stepMachine.status, "confirm_files");
     assert.equal(await runtime.store.readArtifact("step_input_helper", "issue_title"), "Add booking dashboard\n");
     assert.deepEqual(changedSessionIds, ["step_input_helper"]);
+  });
+});
+
+test("Vibe64 current-step helper accepts --json with stdin payload", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      metadata: worktreeMetadata(targetRoot, "step_input_helper_stdin"),
+      sessionId: "step_input_helper_stdin"
+    });
+    await runtime.runAction("step_input_helper_stdin", "draft_issue", {
+      conversationRequest: "Create a booking dashboard."
+    });
+    const projectService = projectServiceForRuntime(runtime);
+    const session = await runtime.getSession("step_input_helper_stdin");
+    const helper = await prepareCurrentStepInputHelper({
+      projectService,
+      session,
+      targetRoot
+    });
+
+    const result = await runNodeScript(helper.env.VIBE64_CURRENT_STEP_INPUT_HELPER, [
+      "--json"
+    ], {
+      ...helper.env,
+      VIBE64_CURRENT_STEP_INPUT_SOCKET: helperSocketHostPath(targetRoot)
+    }, JSON.stringify({
+      fields: {
+        body: "Create a booking dashboard.",
+        title: "Add booking dashboard",
+        word: "Booking"
+      },
+      kind: "ready",
+      stepId: "issue_file_created",
+      stepStatus: "awaiting_agent_result"
+    }));
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const response = JSON.parse(result.stdout);
+    assert.equal(response.ok, true);
+    assert.equal(response.stepMachine.status, "confirm_files");
   });
 });
 

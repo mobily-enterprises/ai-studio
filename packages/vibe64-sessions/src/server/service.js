@@ -371,15 +371,17 @@ function createService({
   }
 
   return Object.freeze({
-    async advanceSession(sessionId) {
+    async advanceSession(sessionId, expected = {}) {
       const startedAtMs = Date.now();
       vibe64SessionDebugLog("server.service.advanceSession.start", {
+        expectedStepId: String(expected?.stepId || ""),
+        expectedStepStatus: String(expected?.stepStatus || ""),
         sessionId
       });
       return sessionResult(async () => {
         try {
           const runtime = await projectService.createRuntime();
-          const session = await runtime.advance(sessionId);
+          const session = await runtime.advance(sessionId, expected);
           const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, session);
           vibe64SessionDebugLog("server.service.advanceSession.done", {
             ...sessionServiceDebugResponse(enrichedSession),

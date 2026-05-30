@@ -98,7 +98,14 @@ function registerRoutes(
 
   routes.actionRoute("POST", "/sessions/:sessionId/advance", {
     actionId: ACTION_ADVANCE_SESSION,
-    buildInput: sessionInput,
+    buildInput(request) {
+      const body = routes.requestBody(request);
+      return {
+        sessionId: request.params.sessionId,
+        stepId: body.stepId,
+        stepStatus: body.stepStatus
+      };
+    },
     summary: "Advance an Vibe64 session."
   });
 

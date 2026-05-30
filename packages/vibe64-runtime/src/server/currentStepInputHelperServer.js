@@ -105,7 +105,8 @@ function readStdin() {
 async function payloadTextFromArgs(args) {
   const jsonIndex = args.indexOf("--json");
   if (jsonIndex >= 0) {
-    return args[jsonIndex + 1] || "";
+    const nextArg = args[jsonIndex + 1] || "";
+    return nextArg && !nextArg.startsWith("--") ? nextArg : readStdin();
   }
   return readStdin();
 }

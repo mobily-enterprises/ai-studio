@@ -172,6 +172,23 @@ function refreshRecommendedStateError(error, session = {}, operationOutcome = "s
   return error;
 }
 
+function assertAdvanceMatchesCurrentState(session = {}, expected = {}) {
+  const expectedStepId = normalizeText(expected.stepId);
+  const expectedStepStatus = normalizeText(expected.stepStatus);
+  if (!expectedStepId && !expectedStepStatus) {
+    return;
+  }
+  if (
+    expectedStepId !== normalizeText(session.currentStep) ||
+    expectedStepStatus !== normalizeText(session.stepMachine?.status)
+  ) {
+    throw refreshRecommendedStateError(vibe64Error(
+      `Reload state. This advance was prepared for ${expectedStepId || "(missing step)"}:${expectedStepStatus || "(missing status)"}, but the current workflow state is ${session.currentStep || "(no current step)"}:${session.stepMachine?.status || "(no machine status)"}.`,
+      "vibe64_advance_state_changed"
+    ), session, "stale_operation");
+  }
+}
+
 function currentAction(session, actionId) {
   return session.actions.find((action) => action.id === actionId) || null;
 }
@@ -1172,9 +1189,11 @@ class Vibe64SessionRuntime {
     }
   }
 
-  async advance(sessionId) {
+  async advance(sessionId, expected = {}) {
     const startedAtMs = Date.now();
     vibe64SessionDebugLog("server.runtime.advance.start", {
+      expectedStepId: String(expected?.stepId || ""),
+      expectedStepStatus: String(expected?.stepStatus || ""),
       sessionId
     });
     try {
@@ -1185,6 +1204,7 @@ class Vibe64SessionRuntime {
           nextVisible: session.next?.visible !== false,
           nextDisabledReason: String(session.next?.disabledReason || "")
         });
+        assertAdvanceMatchesCurrentState(session, expected);
         if (!session.next?.visible || !session.next.enabled || !session.next.stepId) {
           vibe64SessionDebugLog("server.runtime.advance.blocked", {
             ...vibe64SessionDebugSummary(session),

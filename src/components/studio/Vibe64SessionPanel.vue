@@ -168,6 +168,7 @@ import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64Sessi
 import Vibe64ShellControls from "@/components/studio/Vibe64ShellControls.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
+  blockingVibe64SessionPageError,
   inspectDiffButtonVisible
 } from "@/lib/vibe64SessionPanelModel.js";
 import {
@@ -258,12 +259,13 @@ const inspectDiffVisible = computed(() => {
     sessionMode: sessionMode.value
   });
 });
-const pageError = computed(() => (
-  sessionData.sessionList.loadError ||
-  sessionData.selectedSessionView?.loadError ||
-  selectedRuntimeState.value?.pageError ||
-  ""
-));
+const pageError = computed(() => blockingVibe64SessionPageError({
+  runtimePageError: selectedRuntimeState.value?.pageError,
+  selectedSession: selection.selectedSession,
+  selectedSessionLoadError: sessionData.selectedSessionView?.loadError,
+  sessionListLoadError: sessionData.sessionList.loadError,
+  sessions: toolbar.sessions || []
+}));
 
 function ensureRuntimeState(sessionId = "") {
   const key = String(sessionId || "");

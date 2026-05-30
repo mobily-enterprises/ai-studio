@@ -56,6 +56,32 @@ function inspectDiffButtonVisible({
     typeof diff.openDialog === "function";
 }
 
+function blockingVibe64SessionPageError({
+  runtimePageError = "",
+  selectedSession = null,
+  selectedSessionLoadError = "",
+  sessionListLoadError = "",
+  sessions = []
+} = {}) {
+  const runtimeError = String(runtimePageError || "").trim();
+  if (runtimeError) {
+    return runtimeError;
+  }
+
+  const hasSelectedSession = Boolean(selectedSession?.sessionId || selectedSession);
+  const listError = String(sessionListLoadError || "").trim();
+  if (listError && !hasSelectedSession && sessions.length < 1) {
+    return listError;
+  }
+
+  const selectedError = String(selectedSessionLoadError || "").trim();
+  if (selectedError && !hasSelectedSession) {
+    return selectedError;
+  }
+
+  return "";
+}
+
 function enrichVibe64SessionForDisplay(session = null) {
   if (!session) {
     return null;
@@ -180,6 +206,7 @@ function shortVibe64SessionId(sessionId = "") {
 
 export {
   vibe64ActionIcon,
+  blockingVibe64SessionPageError,
   vibe64PromptHandoffFromSession,
   vibe64SessionFacts,
   vibe64SessionLimits,

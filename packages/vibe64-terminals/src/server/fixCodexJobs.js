@@ -12,6 +12,12 @@ import {
   vibe64ErrorResponse,
   vibe64StatusCode
 } from "@local/vibe64-core/server/serverResponses";
+import {
+  closeTerminalSession
+} from "@local/studio-terminal-core/server/terminalSessions";
+import {
+  fixCodexTerminalNamespace
+} from "./terminalShared.js";
 
 const FIX_CODEX_JOB_STATUSES = new Set(["fixed", "blocked"]);
 const FIX_CODEX_HELPER_SOCKET_CONTAINER_DIR = "/vibe64-fix-helper";
@@ -134,6 +140,20 @@ function createFixCodexJobStore({
 
 const defaultFixCodexJobStore = createFixCodexJobStore();
 
+async function reportFixCodexJob({
+  fixJobStore,
+  input = {},
+  jobId = ""
+} = {}) {
+  const fixJob = fixJobStore.reportJob(jobId, input);
+  if (fixJob.terminalSessionId) {
+    await closeTerminalSession(fixJob.terminalSessionId, {
+      namespace: fixCodexTerminalNamespace(jobId)
+    });
+  }
+  return fixJob;
+}
+
 function helperRuntimeHostDir(targetRoot = "") {
   return path.join(path.resolve(targetRoot), ".vibe64", "runtime");
 }
@@ -204,7 +224,8 @@ function readStdin() {
 async function payloadTextFromArgs(args) {
   const jsonIndex = args.indexOf("--json");
   if (jsonIndex >= 0) {
-    return args[jsonIndex + 1] || "";
+    const nextArg = args[jsonIndex + 1] || "";
+    return nextArg && !nextArg.startsWith("--") ? nextArg : readStdin();
   }
   return readStdin();
 }
@@ -336,7 +357,11 @@ async function ensureFixCodexHelperServer({
 
     try {
       const input = await readRequestJson(request);
-      const job = fixJobStore.reportJob(input.jobId, input);
+      const job = await reportFixCodexJob({
+        fixJobStore,
+        input,
+        jobId: input.jobId
+      });
       sendJson(response, 200, {
         fixJob: job,
         ok: true
@@ -392,13 +417,15 @@ function fixCodexReportInstructions({
 } = {}) {
   return [
     "Fix Codex reporting:",
-    "When the fix is complete or blocked, report exactly once using the local Vibe64 Fix Codex callback.",
+    "When the fix is complete or blocked, report exactly once using the local Vibe64 Fix Codex callback before your final response.",
+    "Do not finish with only a natural-language summary. The repair is not complete until this helper command returns ok.",
     "Preferred helper command:",
     `node "$VIBE64_FIX_CODEX_REPORT_HELPER" --json '${JSON.stringify({
       status: "fixed",
       message: "What changed or what blocked the fix.",
       verificationSummary: "Commands run and results, or why verification was not possible."
     })}'`,
+    "After the helper reports ok, give a short final summary. If the helper fails, report that failure in the terminal instead of claiming the fix is complete.",
     "Callback fields:",
     JSON.stringify({
       jobId: job.id || "",
@@ -416,5 +443,6 @@ export {
   defaultFixCodexJobStore,
   fixCodexReportInstructions,
   prepareFixCodexReportHelper,
-  publicFixCodexJob
+  publicFixCodexJob,
+  reportFixCodexJob
 };

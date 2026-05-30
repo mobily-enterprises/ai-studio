@@ -248,7 +248,9 @@ function useVibe64SessionActions({
   }
 
   async function runAdvanceCommand({
-    sessionId = unref(selectedSessionId)
+    sessionId = unref(selectedSessionId),
+    stepId = "",
+    stepStatus = ""
   } = {}) {
     const normalizedSessionId = String(sessionId || "").trim();
     if (!normalizedSessionId || advanceRunning.value) {
@@ -261,6 +263,10 @@ function useVibe64SessionActions({
       const response = await usersWebHttpClient.request(
         vibe64SessionPath(sessionsApiPath.value, normalizedSessionId, "/advance"),
         {
+          body: {
+            stepId: String(stepId || ""),
+            stepStatus: String(stepStatus || "")
+          },
           method: "POST",
           ...LOCAL_STUDIO_COMMAND_OPTIONS
         }
@@ -491,7 +497,9 @@ function useVibe64SessionActions({
   }
 
   async function advanceSession({
-    sessionId = unref(selectedSessionId)
+    sessionId = unref(selectedSessionId),
+    stepId = "",
+    stepStatus = ""
   } = {}) {
     const normalizedSessionId = String(sessionId || "").trim();
     const busy = readRefOrGetterBoolean(commandBusy);
@@ -512,7 +520,9 @@ function useVibe64SessionActions({
     });
     try {
       const response = await advanceCommand.run({
-        sessionId: normalizedSessionId
+        sessionId: normalizedSessionId,
+        stepId,
+        stepStatus
       });
       vibe64SessionDebugLog("client.sessionActions.advanceSession.done", {
         ...vibe64SessionDebugSummary(response || selectedSession.value || {}),

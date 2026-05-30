@@ -1051,8 +1051,20 @@ function createVibe64SessionStore({
         normalizedActionId
       );
       const attemptNumber = Number.parseInt(attemptFileName.slice(0, 6), 10);
+      const codexPromptHandoff = result.codexPromptHandoff &&
+        typeof result.codexPromptHandoff === "object" &&
+        !Array.isArray(result.codexPromptHandoff)
+        ? {
+            ...result.codexPromptHandoff,
+            actionId: normalizedActionId,
+            attemptFile: attemptFileName,
+            attemptNumber,
+            handoffId: `${attemptFileName}:${String(result.codexPromptHandoff.promptId || normalizedActionId).trim() || normalizedActionId}`
+          }
+        : result.codexPromptHandoff;
       const record = {
         ...result,
+        ...(codexPromptHandoff ? { codexPromptHandoff } : {}),
         actionId: normalizedActionId,
         attemptFile: attemptFileName,
         attemptNumber,

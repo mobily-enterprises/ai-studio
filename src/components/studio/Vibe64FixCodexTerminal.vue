@@ -58,6 +58,7 @@ const {
   applyTerminalSession,
   closeTerminalSocket,
   connectTerminalSocket,
+  disposeTerminalDisplay,
   disposeTerminalUi,
   setupTerminalUi,
   terminalCommandPreview,
@@ -95,6 +96,12 @@ async function closeTerminal() {
 
 watch(() => [jobId.value, props.terminal?.id || ""].join(":"), attachTerminal, {
   immediate: true
+});
+
+watch(terminalExited, (exited) => {
+  if (exited) {
+    disposeTerminalDisplay();
+  }
 });
 
 onBeforeUnmount(() => {

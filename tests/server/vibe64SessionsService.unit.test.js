@@ -409,6 +409,77 @@ test("session service records workflow audit messages from action results", asyn
   ]);
 });
 
+test("session service records workflow input text before action audit fallback", async () => {
+  const conversationLog = [];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return {
+              revision: conversationLog.length + 1,
+              sessionId,
+              status: VIBE64_SESSION_STATUS.ACTIVE
+            };
+          },
+          async runIntent(sessionId, intentId, input) {
+            return {
+              actionResult: {
+                auditMessage: "Make a plan.",
+                input,
+                intentId,
+                status: "prompt_ready"
+              },
+              sessionId,
+              status: VIBE64_SESSION_STATUS.ACTIVE
+            };
+          },
+          store: {
+            async readConversationLog() {
+              return conversationLog;
+            },
+            async writeConversationUserMessage(_sessionId, { text }) {
+              const turn = {
+                assistant: null,
+                messages: [
+                  {
+                    at: "2026-05-25T01:02:03.000Z",
+                    role: "user",
+                    text
+                  }
+                ],
+                turnId: "000001",
+                user: {
+                  at: "2026-05-25T01:02:03.000Z",
+                  role: "user",
+                  text
+                }
+              };
+              conversationLog.push(turn);
+              return turn;
+            }
+          }
+        };
+      }
+    },
+    setupServices: readySetupServices()
+  });
+
+  await service.runSessionIntent("session-1", "reject", {
+    fields: {
+      feedback: "Revise the implementation before finalizing."
+    },
+    stepId: "changes_accepted",
+    stepStatus: "ready"
+  });
+  const read = await service.readSessionConversationLog("session-1");
+
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.conversationLog.map((turn) => turn.user.text), [
+    "Revise the implementation before finalizing."
+  ]);
+});
+
 test("session prompt action fails visibly when server-side Codex delivery fails", async () => {
   const service = createService({
     projectService: {

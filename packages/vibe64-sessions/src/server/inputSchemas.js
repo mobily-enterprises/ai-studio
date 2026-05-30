@@ -34,6 +34,27 @@ const sessionIdInputValidator = deepFreeze({
   mode: "patch"
 });
 
+const sessionAdvanceInputValidator = deepFreeze({
+  schema: createSchema({
+    sessionId: {
+      type: "string",
+      noTrim: false,
+      required: true
+    },
+    stepId: {
+      type: "string",
+      noTrim: false,
+      required: false
+    },
+    stepStatus: {
+      type: "string",
+      noTrim: false,
+      required: false
+    }
+  }),
+  mode: "patch"
+});
+
 const sessionActionInputValidator = deepFreeze({
   schema: createSchema({
     actionId: {
@@ -200,6 +221,7 @@ const sessionRewindInputValidator = deepFreeze({
 
 export {
   sessionActionInputValidator,
+  sessionAdvanceInputValidator,
   sessionCreateInputValidator,
   sessionIdInputValidator,
   sessionIntentInputValidator,

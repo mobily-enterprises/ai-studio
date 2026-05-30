@@ -73,7 +73,8 @@ import {
 import {
   defaultFixCodexJobStore,
   fixCodexReportInstructions,
-  prepareFixCodexReportHelper
+  prepareFixCodexReportHelper,
+  reportFixCodexJob
 } from "./fixCodexJobs.js";
 
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -83,7 +84,7 @@ const CODEX_BOOT_MIN_AGE_MS = 1800;
 const CODEX_BOOT_QUIET_MS = 900;
 const CODEX_BOOT_TIMEOUT_MS = 12000;
 const CODEX_KEY_PAUSE_MS = 180;
-const CODEX_THREAD_CAPTURE_TIMEOUT_MS = 12000;
+const CODEX_THREAD_CAPTURE_TIMEOUT_MS = 30000;
 const PROMPT_INJECTION_PREFIX = "\u001b[200~";
 const PROMPT_INJECTION_SUFFIX = "\u001b[201~\r";
 const DEBUG_PROMPTS_ENABLED = String(process.env.DEBUG_PROMPTS || "").trim() === "1";
@@ -230,6 +231,84 @@ function normalizeCodexPromptHandoffOutputStart(value) {
   }
   const outputStart = Number(normalizedValue);
   return Number.isSafeInteger(outputStart) && outputStart >= 0 ? outputStart : 0;
+}
+
+function normalizeCodexPromptHandoffId(value) {
+  const normalizedValue = String(value || "").trim();
+  if (
+    !normalizedValue ||
+    normalizedValue.length > 512 ||
+    normalizedValue.includes("\n") ||
+    normalizedValue.includes("\r")
+  ) {
+    return "";
+  }
+  return normalizedValue;
+}
+
+function codexPromptHandoffLooksValid(handoff = null) {
+  return Boolean(
+    handoff &&
+    typeof handoff === "object" &&
+    !Array.isArray(handoff) &&
+    handoff.kind === "codex_prompt_handoff" &&
+    (String(handoff.terminalInput || "").trim() || String(handoff.prompt || "").trim())
+  );
+}
+
+function pendingCodexPromptHandoffId(attempt = {}) {
+  const handoffId = normalizeCodexPromptHandoffId(attempt.codexPromptHandoff?.handoffId);
+  if (handoffId) {
+    return handoffId;
+  }
+  const attemptFile = normalizeText(attempt.attemptFile);
+  const promptId = normalizeText(attempt.codexPromptHandoff?.promptId || attempt.promptId || attempt.actionId);
+  return attemptFile && promptId ? `${attemptFile}:${promptId}` : "";
+}
+
+function deliveredCodexPromptHandoffId(session = {}) {
+  const deliveredHandoffId = normalizeCodexPromptHandoffId(session.metadata?.codex_prompt_handoff_id);
+  if (!deliveredHandoffId) {
+    return "";
+  }
+  const deliveredTerminalSessionId = normalizeText(session.metadata?.codex_prompt_handoff_terminal_id);
+  const activeTerminal = activeCodexTerminal(session);
+  if (
+    codexThreadIdForWorkdir(session, terminalWorktreePath(session)) ||
+    (deliveredTerminalSessionId && deliveredTerminalSessionId === normalizeText(activeTerminal?.id))
+  ) {
+    return deliveredHandoffId;
+  }
+  return "";
+}
+
+function latestPendingCodexPromptHandoff(session = {}) {
+  if (normalizeText(session.stepMachine?.status) !== "awaiting_agent_result") {
+    return null;
+  }
+  const deliveredHandoffId = deliveredCodexPromptHandoffId(session);
+  const latestAttempt = (Array.isArray(session.actionAttempts) ? session.actionAttempts : [])
+    .filter((attempt) => (
+      normalizeText(attempt.status) === "prompt_ready" &&
+      normalizeText(attempt.stepId) === normalizeText(session.currentStep) &&
+      codexPromptHandoffLooksValid(attempt.codexPromptHandoff)
+    ))
+    .sort((left, right) => Number(left.attemptNumber || 0) - Number(right.attemptNumber || 0))
+    .at(-1);
+  if (!latestAttempt) {
+    return null;
+  }
+  const handoffId = pendingCodexPromptHandoffId(latestAttempt);
+  if (!handoffId || handoffId === deliveredHandoffId) {
+    return null;
+  }
+  return {
+    ...latestAttempt.codexPromptHandoff,
+    actionId: normalizeText(latestAttempt.actionId),
+    attemptFile: normalizeText(latestAttempt.attemptFile),
+    attemptNumber: Number(latestAttempt.attemptNumber || 0),
+    handoffId
+  };
 }
 
 function extractCodexThreadId(output = "") {
@@ -1354,20 +1433,13 @@ function createCodexTerminalController({
             session,
             terminalSessionId
           });
-          if (!threadId) {
-            bootstrapResult = {
-              ok: false,
-              error: "Codex thread ID could not be captured."
-            };
+          if (threadId) {
+            const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
+            if (threadReady.ok === false) {
+              bootstrapResult = threadReady;
+            }
+            session = await runtime.getSession(sessionId);
           }
-        }
-
-        if (bootstrapResult.ok !== false && needsThreadCapture) {
-          const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
-          if (threadReady.ok === false) {
-            bootstrapResult = threadReady;
-          }
-          session = await runtime.getSession(sessionId);
         }
 
         if (bootstrapResult.ok !== false) {
@@ -1427,7 +1499,12 @@ function createCodexTerminalController({
     return promise;
   }
 
-  async function injectPromptIntoCodex(sessionId, handoff = {}) {
+  async function injectPromptIntoReadyCodex({
+    handoff = {},
+    runtime,
+    session,
+    terminalSessionId
+  } = {}) {
     const terminalInput = codexPromptHandoffTerminalInput(handoff);
     if (!terminalInput) {
       return {
@@ -1435,15 +1512,13 @@ function createCodexTerminalController({
         error: "Codex prompt handoff is empty."
       };
     }
-
-    const bootstrap = await ensureCodexThreadReady(sessionId);
-    if (bootstrap.ok === false) {
-      return bootstrap;
+    const sessionId = normalizeText(session?.sessionId);
+    if (!sessionId || !terminalSessionId) {
+      return {
+        ok: false,
+        error: "Codex prompt delivery is missing a session or terminal."
+      };
     }
-
-    const runtime = await projectService.createRuntime();
-    const session = await runtime.getSession(sessionId);
-    const terminalSessionId = bootstrap.terminalSessionId || bootstrap.id;
     const signature = codexPromptHandoffSignature(sessionId);
     const turnMetadataResult = await markCodexTerminalTransmitting(
       sessionId,
@@ -1474,9 +1549,14 @@ function createCodexTerminalController({
     }
 
     await runtime.store.mutateSession(sessionId, async () => {
+      const handoffId = normalizeCodexPromptHandoffId(handoff.handoffId);
       await Promise.all([
         runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_signature", signature),
-        runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart))
+        runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_output_start", String(outputStart)),
+        runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_terminal_id", terminalSessionId),
+        ...(handoffId ? [
+          runtime.store.writeMetadataValue(sessionId, "codex_prompt_handoff_id", handoffId)
+        ] : [])
       ]);
     });
     await publishPromptInjected(sessionId, {
@@ -1495,6 +1575,60 @@ function createCodexTerminalController({
       codexPromptHandoffOutputStart: outputStart,
       codexPromptHandoffSignature: signature,
       terminalSessionId
+    };
+  }
+
+  async function injectPromptIntoCodex(sessionId, handoff = {}) {
+    const terminalInput = codexPromptHandoffTerminalInput(handoff);
+    if (!terminalInput) {
+      return {
+        ok: false,
+        error: "Codex prompt handoff is empty."
+      };
+    }
+
+    const bootstrap = await ensureCodexThreadReady(sessionId);
+    if (bootstrap.ok === false) {
+      return bootstrap;
+    }
+
+    const runtime = await projectService.createRuntime();
+    const session = await runtime.getSession(sessionId);
+    return injectPromptIntoReadyCodex({
+      handoff,
+      runtime,
+      session,
+      terminalSessionId: bootstrap.terminalSessionId || bootstrap.id
+    });
+  }
+
+  async function injectLatestPendingCodexPrompt(sessionId, terminalResponse = {}) {
+    if (terminalResponse?.ok === false) {
+      return terminalResponse;
+    }
+    const terminalSessionId = terminalResponse.terminalSessionId || terminalResponse.id;
+    if (!terminalSessionId) {
+      return terminalResponse;
+    }
+    const runtime = await projectService.createRuntime();
+    const session = await runtime.getSession(sessionId);
+    const handoff = latestPendingCodexPromptHandoff(session);
+    if (!handoff) {
+      return terminalResponse;
+    }
+    const delivery = await injectPromptIntoReadyCodex({
+      handoff,
+      runtime,
+      session,
+      terminalSessionId
+    });
+    if (delivery?.ok === false) {
+      return delivery;
+    }
+    return {
+      ...terminalResponse,
+      ...delivery,
+      pendingCodexPromptInjected: true
     };
   }
 
@@ -1578,8 +1712,13 @@ function createCodexTerminalController({
 
     async reportFixJob(jobId, input = {}) {
       return vibe64Result(async () => {
+        const fixJob = await reportFixCodexJob({
+          fixJobStore,
+          input,
+          jobId
+        });
         return {
-          fixJob: fixJobStore.reportJob(jobId, input),
+          fixJob,
           ok: true
         };
       });
@@ -1587,7 +1726,10 @@ function createCodexTerminalController({
 
     async ensureThread(sessionId) {
       return vibe64Result(async () => {
-        return ensureCodexThreadReady(sessionId);
+        return injectLatestPendingCodexPrompt(
+          sessionId,
+          await ensureCodexThreadReady(sessionId)
+        );
       });
     },
 
@@ -1605,7 +1747,10 @@ function createCodexTerminalController({
 
     async startTerminal(sessionId) {
       return vibe64Result(async () => {
-        return ensureCodexThreadReady(sessionId);
+        return injectLatestPendingCodexPrompt(
+          sessionId,
+          await ensureCodexThreadReady(sessionId)
+        );
       });
     },
 

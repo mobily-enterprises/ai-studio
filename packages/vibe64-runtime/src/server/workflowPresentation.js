@@ -154,6 +154,14 @@ function inputPresentation(input = {}, {
   };
 }
 
+function sentenceFromLabel(label = "") {
+  const normalizedLabel = normalizeText(label);
+  if (!normalizedLabel) {
+    return "";
+  }
+  return /[.!?]$/u.test(normalizedLabel) ? normalizedLabel : `${normalizedLabel}.`;
+}
+
 function intent(id, {
   actionId = "",
   auditMessage = "",
@@ -747,7 +755,9 @@ function advanceOperation(session = {}) {
     id: `${OPERATION_ROUTES.SESSION_ADVANCE}:${session.next?.stepId || "next"}`,
     kind: "advance",
     label: session.next?.label || "Continue",
-    route: OPERATION_ROUTES.SESSION_ADVANCE
+    route: OPERATION_ROUTES.SESSION_ADVANCE,
+    stepId: normalizeText(session.currentStep),
+    stepStatus: stepMachineStatus(session)
   };
 }
 
@@ -1326,6 +1336,18 @@ function workflowIntentContext(runtime, session = {}, selectedIntent = {}, field
   };
 }
 
+function intentFieldAuditText(fields = {}) {
+  if (!isPlainObject(fields)) {
+    return "";
+  }
+  return normalizeText(
+    fields.conversationRequest ||
+    fields.feedback ||
+    fields.message ||
+    fields.response
+  );
+}
+
 async function runWorkflowIntentHandler(runtime, session = {}, selectedIntent = {}, fields = {}) {
   const handler = workflowIntentHandlerForSession(runtime, session, selectedIntent.id);
   if (!handler) {
@@ -1353,8 +1375,16 @@ async function runBuiltinWorkflowIntent(runtime, session = {}, selectedIntent = 
   );
 }
 
-async function withIntentAuditMessage(runtime, session = {}, selectedIntent = {}, resultSession = {}) {
-  const auditMessage = normalizeText(selectedIntent.auditMessage);
+async function withIntentAuditMessage(runtime, session = {}, selectedIntent = {}, resultSession = {}, fields = {}) {
+  if (
+    resultSession?.actionResult?.recordsConversationTurn === true ||
+    normalizeText(resultSession?.actionResult?.auditMessage)
+  ) {
+    return resultSession;
+  }
+  const auditMessage = intentFieldAuditText(fields) ||
+    normalizeText(selectedIntent.auditMessage) ||
+    sentenceFromLabel(selectedIntent.label);
   if (!auditMessage || typeof runtime?.store?.writeConversationUserMessage !== "function") {
     return resultSession;
   }
@@ -1399,7 +1429,7 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
     intentConfig,
     fields
   );
-  return withIntentAuditMessage(runtime, session, selectedIntent, resultSession);
+  return withIntentAuditMessage(runtime, session, selectedIntent, resultSession, fields);
 }
 
 export {

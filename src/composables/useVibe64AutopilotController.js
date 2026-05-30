@@ -154,6 +154,41 @@ function resultSessionId(result = {}) {
   return String(result?.sessionId || "").trim();
 }
 
+function actionResultTime(result = {}) {
+  const time = new Date(result.at || "").getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function persistedCommandFailureResult(session = {}) {
+  if (!serverPresentsCommandFailureInput(session)) {
+    return null;
+  }
+  const currentStep = String(session?.currentStep || "").trim();
+  const failedResult = (Array.isArray(session?.actionResults) ? session.actionResults : [])
+    .filter((result) => String(result?.actionType || "") === "command")
+    .filter((result) => String(result?.status || "") === "blocked")
+    .filter((result) => !currentStep || String(result?.stepId || "") === currentStep)
+    .slice()
+    .sort((left, right) => actionResultTime(left) - actionResultTime(right))
+    .at(-1);
+  if (!failedResult) {
+    return null;
+  }
+  return {
+    actionId: String(failedResult.actionId || ""),
+    actionLabel: String(failedResult.actionLabel || failedResult.actionId || "Command"),
+    attemptedCommand: String(failedResult.attemptedCommand || ""),
+    commandPreview: String(failedResult.commandPreview || ""),
+    error: String(failedResult.message || `${failedResult.actionLabel || failedResult.actionId || "Command"} failed.`),
+    exitCode: failedResult.exitCode ?? null,
+    ok: false,
+    output: String(failedResult.output || ""),
+    sessionId: String(session?.sessionId || ""),
+    source: "action_result",
+    terminalSessionId: String(failedResult.terminalSessionId || "")
+  };
+}
+
 function useVibe64AutopilotController({
   actions = {},
   commandCompletionRefreshAttempts = COMMAND_COMPLETION_REFRESH_ATTEMPTS,
@@ -180,9 +215,19 @@ function useVibe64AutopilotController({
   const nextOperation = computed(() => currentOperation(currentSession.value));
   const currentSessionId = computed(() => String(currentSession.value?.sessionId || ""));
   const rawCommandResult = computed(() => readRefOrGetterValue(commandRunner.lastResult) || lastCommandResult.value || null);
+  const rawCommandResultForCurrentSession = computed(() => {
+    const result = rawCommandResult.value;
+    if (!result) {
+      return null;
+    }
+    const resultId = resultSessionId(result);
+    return !resultId || resultId === currentSessionId.value ? result : null;
+  });
+  const serverCommandResult = computed(() => persistedCommandFailureResult(currentSession.value));
+  const effectiveCommandResult = computed(() => rawCommandResultForCurrentSession.value || serverCommandResult.value || null);
   const rawCommandRunning = computed(() => readRefOrGetterValue(commandRunner.running) === true);
   const commandSessionId = computed(() => (
-    resultSessionId(rawCommandResult.value) ||
+    resultSessionId(effectiveCommandResult.value) ||
     String(readRefOrGetterValue(commandRunner.activeSessionId) || activeCommandSessionId.value || "")
   ));
   const commandVisibleForCurrentSession = computed(() => Boolean(
@@ -190,12 +235,12 @@ function useVibe64AutopilotController({
     commandSessionId.value === currentSessionId.value
   ));
   const commandOutput = computed(() => commandVisibleForCurrentSession.value
-    ? String(readRefOrGetterValue(commandRunner.output) || "")
+    ? String(readRefOrGetterValue(commandRunner.output) || effectiveCommandResult.value?.output || "")
     : "");
   const commandPreview = computed(() => commandVisibleForCurrentSession.value
-    ? String(readRefOrGetterValue(commandRunner.commandPreview) || "")
+    ? String(readRefOrGetterValue(commandRunner.commandPreview) || effectiveCommandResult.value?.commandPreview || "")
     : "");
-  const commandResult = computed(() => commandVisibleForCurrentSession.value ? rawCommandResult.value : null);
+  const commandResult = computed(() => commandVisibleForCurrentSession.value ? effectiveCommandResult.value : null);
   const commandRunning = computed(() => rawCommandRunning.value && commandVisibleForCurrentSession.value);
   const commandFailed = computed(() => commandResult.value?.ok === false);
   const visibleFailure = computed(() => {
@@ -578,9 +623,11 @@ function useVibe64AutopilotController({
     await nextTick();
   }
 
-  async function dispatchSessionAdvanceOperation() {
+  async function dispatchSessionAdvanceOperation(operation = {}) {
     await actions.advanceSession?.({
-      sessionId: currentSession.value?.sessionId || ""
+      sessionId: currentSession.value?.sessionId || "",
+      stepId: operation.stepId || currentSession.value?.currentStep || "",
+      stepStatus: operation.stepStatus || currentSession.value?.stepMachine?.status || ""
     });
     await refreshAfterServerOperation();
   }

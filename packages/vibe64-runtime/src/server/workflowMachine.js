@@ -247,15 +247,31 @@ function normalizeInputFields(fields = [], actionId = "") {
   return normalizedFields;
 }
 
+function sentenceFromLabel(label = "") {
+  const normalizedLabel = normalizeText(label);
+  if (!normalizedLabel) {
+    return "";
+  }
+  return /[.!?]$/u.test(normalizedLabel) ? normalizedLabel : `${normalizedLabel}.`;
+}
+
+function defaultActionAuditMessage(action = {}, type = "") {
+  if (normalizeText(type) === "link") {
+    return "";
+  }
+  return sentenceFromLabel(action.label || action.id);
+}
+
 function normalizeAction(action = {}, stepId = "") {
   const id = normalizeText(action.id);
   if (!id) {
     throw vibe64Error(`Vibe64 workflow step ${stepId} has an action without an id.`, "vibe64_workflow_action_id_missing");
   }
   const type = normalizeText(action.type || "command");
+  const label = normalizeText(action.label || id);
   return {
     adapterCapability: normalizeText(action.adapterCapability),
-    auditMessage: normalizeText(action.auditMessage),
+    auditMessage: normalizeText(action.auditMessage) || defaultActionAuditMessage({ ...action, id, label }, type),
     advanceOnSuccess: action.advanceOnSuccess === true,
     disabledReason: normalizeText(action.disabledReason),
     disabledWhenReason: normalizeText(action.disabledWhenReason || action.disabledReason),
@@ -266,7 +282,7 @@ function normalizeAction(action = {}, stepId = "") {
     icon: normalizeText(action.icon),
     id,
     inputFields: normalizeInputFields(action.inputFields, id),
-    label: normalizeText(action.label || id),
+    label,
     promptId: type === "prompt" ? normalizeText(action.promptId || id) : "",
     recordsConversationTurn: action.recordsConversationTurn === true,
     saveCurrentStepInputBeforeRun: action.saveCurrentStepInputBeforeRun === true,
@@ -543,6 +559,9 @@ function publicActionDefinition(action) {
   }
   if (action.adapterCapability) {
     definition.adapterCapability = action.adapterCapability;
+  }
+  if (action.auditMessage) {
+    definition.auditMessage = action.auditMessage;
   }
   if (action.promptId) {
     definition.promptId = action.promptId;

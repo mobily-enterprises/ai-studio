@@ -432,6 +432,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
             label: "Review diff"
           },
           {
+            auditMessage: "Initial human review accepted.",
             id: "accept_review",
             label: "Looks good, continue",
             style: "primary",
@@ -482,11 +483,13 @@ const coreCodingStepDefinitionsById = deepFreeze({
         intents: [
           {
             actionId: "run_deep_ui_check",
+            auditMessage: "Run user interface check.",
             id: "run_optional_check",
             style: "primary",
             type: "action"
           },
           {
+            auditMessage: "User interface check skipped.",
             enabledWhen: "has_next_step",
             id: "skip_optional_check",
             label: "Skip"
@@ -620,6 +623,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
             label: "Review diff"
           },
           {
+            auditMessage: "Final human review accepted.",
             id: "accept_review",
             label: "Accept and finalize",
             style: "primary",

@@ -697,6 +697,39 @@ test("vibe64 runtime exposes server-owned presentation and intents for Autopilot
   });
 });
 
+test("vibe64 session advance rejects stale step operations", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    const session = await runtime.createSession({
+      initialStep: "implementation_reviewed",
+      sessionId: "stale_advance"
+    });
+
+    assert.equal(session.presentation.auto.nextOperation.kind, "wait");
+    assert.equal(session.presentation.auto.nextOperation.reason, "user");
+
+    await assert.rejects(
+      () => runtime.advance("stale_advance", {
+        stepId: "plan_and_execute",
+        stepStatus: "done"
+      }),
+      (error) => {
+        assert.equal(error.code, "vibe64_advance_state_changed");
+        assert.equal(error.operationOutcome, "stale_operation");
+        assert.equal(error.refreshRecommended, true);
+        assert.equal(error.currentStep, "implementation_reviewed");
+        assert.equal(error.stepStatus, "ready");
+        return true;
+      }
+    );
+
+    const afterRejectedAdvance = await runtime.getSession("stale_advance");
+    assert.equal(afterRejectedAdvance.currentStep, "implementation_reviewed");
+  });
+});
+
 test("vibe64 runtime auto-advances completed non-persistent Autopilot stops", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
@@ -1277,6 +1310,49 @@ test("vibe64 runtime runs server-owned intents and rejects stale intent submissi
       }),
       /not available|Reload state/u
     );
+  });
+});
+
+test("vibe64 runtime records conversation audit turns for workflow actions and intents", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+
+    await runtime.createSession({
+      initialStep: "plan_and_execute",
+      metadata: worktreeMetadata(targetRoot, "action_audit_default"),
+      sessionId: "action_audit_default"
+    });
+    const promptAction = await runtime.runAction("action_audit_default", "make_plan");
+    assert.equal(promptAction.actionResult.auditMessage, "Make a plan.");
+
+    await runtime.createSession({
+      initialStep: "implementation_reviewed",
+      sessionId: "initial_review_audit"
+    });
+    const initialReview = await runtime.getSession("initial_review_audit");
+    await runtime.runIntent("initial_review_audit", "accept_review", {
+      stepId: initialReview.currentStep,
+      stepStatus: initialReview.stepMachine.status
+    });
+    assert.deepEqual((await runtime.store.readConversationLog("initial_review_audit")).map((turn) => turn.user.text), [
+      "Initial human review accepted."
+    ]);
+
+    await runtime.createSession({
+      initialStep: "deep_ui_check_run",
+      sessionId: "ui_skip_audit"
+    });
+    const uiCheck = await runtime.getSession("ui_skip_audit");
+    await runtime.runIntent("ui_skip_audit", "skip_optional_check", {
+      stepId: uiCheck.currentStep,
+      stepStatus: uiCheck.stepMachine.status
+    });
+    assert.deepEqual((await runtime.store.readConversationLog("ui_skip_audit")).map((turn) => turn.user.text), [
+      "User interface check skipped."
+    ]);
+
   });
 });
 
@@ -2166,6 +2242,7 @@ test("vibe64 runtime shows current-step actions from the workflow", async () => 
     assert.deepEqual(session.actions, [
       {
         adapterCapability: "create_worktree",
+        auditMessage: "Create worktree.",
         disabledReason: "",
         dispatchRoute: "command-terminal",
         enabled: true,
@@ -2218,6 +2295,7 @@ test("vibe64 runtime runAction records non-command action results without advanc
       attemptFile: "000001-record_review.json",
       attemptNumber: 1,
       at: "2026-05-16T01:02:03.000Z",
+      auditMessage: "Record review.",
       input: {
         dryRun: true
       },
@@ -3632,6 +3710,7 @@ test("vibe64 runtime keeps disabled actions visible and rejects execution with t
     const session = await runtime.getSession("disabled_action");
     assert.deepEqual(session.actions, [
       {
+        auditMessage: "Blocked action.",
         disabledReason: "Waiting for metadata: ready.",
         dispatchRoute: "command-terminal",
         enabled: false,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -27,8 +28,13 @@ import {
 } from "../../packages/vibe64-sessions/src/server/inputSchemas.js";
 import {
   codexSessionBriefingPrompt,
+  createCodexTerminalController,
   codexTerminalArgs
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
+import {
+  createFixCodexJobStore,
+  prepareFixCodexReportHelper
+} from "../../packages/vibe64-terminals/src/server/fixCodexJobs.js";
 import {
   COMMAND_RESULT_ENV
 } from "../../packages/vibe64-terminals/src/server/commandTerminalResults.js";
@@ -41,6 +47,7 @@ import {
 } from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
 import {
   codexTerminalNamespace,
+  fixCodexTerminalNamespace,
   globalCodexTerminalNamespace
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
 import {
@@ -49,6 +56,7 @@ import {
 } from "../../packages/vibe64-terminals/src/server/shellTerminal.js";
 import {
   closeTerminalSession,
+  countRunningTerminalSessions,
   startTerminalSession,
   updateTerminalSessionMetadata
 } from "@local/studio-terminal-core/server/terminalSessions";
@@ -215,6 +223,52 @@ async function waitForArrayLength(entries, expectedLength, timeoutMs = POST_COMM
     await delay(5);
   }
   assert.equal(entries.length, expectedLength);
+}
+
+async function waitForNoRunningTerminals(namespace, timeoutMs = POST_COMMIT_TEST_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (countRunningTerminalSessions({ namespace }) > 0 && Date.now() < deadline) {
+    await delay(5);
+  }
+  assert.equal(countRunningTerminalSessions({ namespace }), 0);
+}
+
+function runNodeScript(scriptPath = "", args = [], env = {}, stdin = "") {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      scriptPath,
+      ...args
+    ], {
+      env: {
+        ...process.env,
+        ...env
+      },
+      stdio: [
+        "pipe",
+        "pipe",
+        "pipe"
+      ]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.stdin.end(stdin);
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      resolve({
+        code,
+        stderr,
+        stdout
+      });
+    });
+  });
 }
 
 test("Vibe64 Codex terminal joins the target runtime network before the image", () => {
@@ -989,6 +1043,103 @@ test("Vibe64 command terminal records action results and metadata after success"
 	  });
 	});
 
+test("Vibe64 command terminal persists failed command context for reload-stable repair", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      adapter: new UnitCommandAdapter(),
+      targetRoot,
+      workflow: {
+        id: "unit-terminal-failure-context",
+        steps: [
+          {
+            actions: [
+              {
+                adapterCapability: "unit_command",
+                id: "unit_command",
+                label: "Unit command",
+                type: "command"
+              }
+            ],
+            id: "unit_step",
+            label: "Unit step"
+          }
+        ]
+      }
+    });
+    await runtime.createSession({
+      sessionId: "terminal_failure_context"
+    });
+
+    let closeTerminal = async () => null;
+    const command = createCommandTerminalController({
+      ensureRuntimeNetwork: async () => null,
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        },
+        async projectConfigEnvironment() {
+          return {
+            VIBE64_CONFIG_DIR: path.join(targetRoot, ".vibe64", "config")
+          };
+        }
+      },
+      removeContainer: async () => null,
+      resolveToolchainImage: async () => ({
+        image: "unit-command-toolchain:1.0.0",
+        label: "Unit command toolchain",
+        ok: true
+      }),
+      startTerminal: (options) => {
+        const id = "unit-command-failure-terminal";
+        closeTerminal = async () => {
+          await options.onClose({
+            exitCode: 1,
+            id,
+            output: "first line\neslint failed on unit file"
+          });
+        };
+        return {
+          commandPreview: options.commandPreview,
+          id,
+          ok: true,
+          status: "running"
+        };
+      }
+    });
+
+    const terminal = await command.startTerminal("terminal_failure_context", {
+      actionId: "unit_command"
+    });
+    assert.equal(terminal.ok, true);
+
+    await closeTerminal();
+
+    const session = await runtime.getSession("terminal_failure_context");
+    assert.match(session.actionResults[0]?.attemptedCommand, /^bash -lc /u);
+    assert.match(session.actionResults[0]?.attemptedCommand, /dynamic_done/u);
+    assert.deepEqual(session.actionResults.map((result) => ({
+      actionId: result.actionId,
+      commandPreview: result.commandPreview,
+      exitCode: result.exitCode,
+      message: result.message,
+      output: result.output,
+      status: result.status,
+      terminalSessionId: result.terminalSessionId
+    })), [
+      {
+        actionId: "unit_command",
+        commandPreview: "bash command result",
+        exitCode: 1,
+        message: "Unit command failed with exit code 1.",
+        output: "first line\neslint failed on unit file",
+        status: "blocked",
+        terminalSessionId: "unit-command-failure-terminal"
+      }
+    ]);
+  });
+});
+
 test("Vibe64 command terminal accepts completion after unrelated session metadata changes", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
@@ -1655,6 +1806,108 @@ test("Vibe64 session terminal fix action starts an ephemeral Fix Codex job", asy
       sessionId: "fix-session"
     }
   ]);
+});
+
+test("Fix Codex report closes the ephemeral Codex terminal", async () => {
+  const fixJobStore = createFixCodexJobStore();
+  const { job, token } = fixJobStore.createJob({
+    scope: "project",
+    subject: "Failing deploy",
+    targetRoot: "/workspace/project"
+  });
+  const namespace = fixCodexTerminalNamespace(job.id);
+  const terminal = startTerminalSession({
+    args: [
+      "-e",
+      "process.stdin.resume(); setInterval(() => {}, 1000);"
+    ],
+    command: process.execPath,
+    commandPreview: "codex fix",
+    namespace
+  });
+  assert.equal(terminal.ok, true);
+  fixJobStore.attachTerminal(job.id, terminal.id);
+
+  const controller = createCodexTerminalController({
+    fixJobStore,
+    projectService: {}
+  });
+
+  try {
+    const report = await controller.reportFixJob(job.id, {
+      message: "Configuration intentionally fails.",
+      status: "blocked",
+      token,
+      verificationSummary: "No repository-owned fix available."
+    });
+
+    assert.equal(report.ok, true);
+    assert.equal(report.fixJob.status, "blocked");
+    assert.equal(report.fixJob.terminalSessionId, terminal.id);
+    await waitForNoRunningTerminals(namespace);
+  } finally {
+    await closeTerminalSession(terminal.id, {
+      namespace
+    });
+  }
+});
+
+test("Fix Codex helper report closes the ephemeral Codex terminal", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const fixJobStore = createFixCodexJobStore();
+    const { job, token } = fixJobStore.createJob({
+      scope: "project",
+      subject: "Failing deploy",
+      targetRoot
+    });
+    const namespace = fixCodexTerminalNamespace(job.id);
+    const terminal = startTerminalSession({
+      args: [
+        "-e",
+        "process.stdin.resume(); setInterval(() => {}, 1000);"
+      ],
+      command: process.execPath,
+      commandPreview: "codex fix",
+      namespace
+    });
+    assert.equal(terminal.ok, true);
+    fixJobStore.attachTerminal(job.id, terminal.id);
+
+    const helper = await prepareFixCodexReportHelper({
+      fixJobStore,
+      jobId: job.id,
+      targetRoot,
+      token
+    });
+    const socketPath = path.join(
+      helper.mount.source,
+      path.basename(helper.env.VIBE64_FIX_CODEX_REPORT_SOCKET)
+    );
+
+    try {
+      const result = await runNodeScript(helper.env.VIBE64_FIX_CODEX_REPORT_HELPER, [
+        "--json"
+      ], {
+        ...helper.env,
+        VIBE64_FIX_CODEX_REPORT_SOCKET: socketPath
+      }, JSON.stringify({
+        message: "Configuration intentionally fails.",
+        status: "blocked",
+        verificationSummary: "No repository-owned fix available."
+      }));
+
+      assert.equal(result.code, 0, result.stderr || result.stdout);
+      const response = JSON.parse(result.stdout);
+      assert.equal(response.ok, true);
+      assert.equal(response.fixJob.status, "blocked");
+      assert.equal(response.fixJob.terminalSessionId, terminal.id);
+      await waitForNoRunningTerminals(namespace);
+    } finally {
+      await closeTerminalSession(terminal.id, {
+        namespace
+      });
+    }
+  });
 });
 
 test("Vibe64 terminal failure fix schemas accept the browser terminal-failure context", () => {

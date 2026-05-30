@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTION_ADVANCE_SESSION,
   ACTION_CREATE_SESSION,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG
@@ -137,6 +138,52 @@ test("session conversation log route forwards the session id", async () => {
       actionId: ACTION_READ_SESSION_CONVERSATION_LOG,
       input: {
         sessionId: "session-1"
+      }
+    });
+  });
+});
+
+test("session advance route forwards the expected step state", async () => {
+  await withLocalRequestBypass(async () => {
+    const app = testRouteApp();
+    registerRoutes(app, {
+      routeRelativePath: "vibe64",
+      routeSurface: "home"
+    });
+
+    const route = findRegisteredRoute(app, {
+      method: "POST",
+      path: "/api/vibe64/sessions/:sessionId/advance"
+    });
+    assert.ok(route);
+
+    let executedAction = null;
+    const reply = testReply();
+    await route.handler({
+      input: {
+        body: {
+          stepId: "plan_and_execute",
+          stepStatus: "done"
+        }
+      },
+      params: {
+        sessionId: "session-1"
+      },
+      async executeAction(action) {
+        executedAction = action;
+        return {
+          ok: true
+        };
+      }
+    }, reply);
+
+    assert.equal(reply.statusCode, 200);
+    assert.deepEqual(executedAction, {
+      actionId: ACTION_ADVANCE_SESSION,
+      input: {
+        sessionId: "session-1",
+        stepId: "plan_and_execute",
+        stepStatus: "done"
       }
     });
   });

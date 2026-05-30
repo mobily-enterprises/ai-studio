@@ -261,6 +261,45 @@ test("vibe64 session store persists background task status with retry metadata",
   });
 });
 
+test("vibe64 session store assigns stable ids to Codex prompt handoffs", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createVibe64SessionStore({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "prompt_handoff_ids"
+    });
+
+    const actionResult = await store.writeActionResult("prompt_handoff_ids", "make_plan", {
+      codexPromptHandoff: {
+        kind: "codex_prompt_handoff",
+        prompt: "Make a plan.",
+        promptId: "make_plan",
+        terminalInput: "Make a plan."
+      },
+      status: "prompt_ready",
+      stepId: "plan_and_execute"
+    });
+
+    assert.equal(actionResult.codexPromptHandoff.handoffId, "000001-make_plan.json:make_plan");
+    assert.equal(actionResult.codexPromptHandoff.actionId, "make_plan");
+    assert.equal(actionResult.codexPromptHandoff.attemptFile, "000001-make_plan.json");
+    assert.equal(actionResult.codexPromptHandoff.attemptNumber, 1);
+
+    const sessionActionResult = await store.readActionResult("prompt_handoff_ids", "make_plan");
+    const session = await store.readSession("prompt_handoff_ids");
+    assert.equal(
+      sessionActionResult.codexPromptHandoff.handoffId,
+      "000001-make_plan.json:make_plan"
+    );
+    assert.equal(
+      session.actionAttempts[0].codexPromptHandoff.handoffId,
+      "000001-make_plan.json:make_plan"
+    );
+  });
+});
+
 test("vibe64 session store persists conversation turns as one file per message", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createVibe64SessionStore({

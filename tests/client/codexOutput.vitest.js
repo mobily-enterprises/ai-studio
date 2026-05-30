@@ -47,6 +47,10 @@ describe("codexOutput terminal utilities", () => {
       "CODEX_THREAD_ID",
       "123e4567-e89b-12d3-a456-426614174000"
     ].join("\n"))).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(extractCodexThreadId([
+      "• You ran echo $CODEX_THREAD_ID",
+      "  └ 019e7876-a528-7b70-9356-1530050052e1"
+    ].join("\n"))).toBe("019e7876-a528-7b70-9356-1530050052e1");
     expect(isCodexThreadId("v0.130.0")).toBe(false);
   });
 
