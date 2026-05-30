@@ -62,9 +62,9 @@ test("vibe64 prompt renderer renders explicit session context into prompt templa
   });
 });
 
-test("vibe64 prompt renderer falls back to the generic prompt", async () => {
+test("vibe64 prompt renderer falls back to the fallback prompt", async () => {
   await withTemporaryRoot(async (promptPackRoot) => {
-    await writeFile(path.join(promptPackRoot, "generic.txt"), "Generic {{action.label}} for {{session.currentStep}}.", "utf8");
+    await writeFile(path.join(promptPackRoot, "fallback.txt"), "Fallback {{action.label}} for {{session.currentStep}}.", "utf8");
     const renderer = new PromptRenderer({
       promptPackRoot
     });
@@ -80,7 +80,7 @@ test("vibe64 prompt renderer falls back to the generic prompt", async () => {
       }
     });
 
-    assert.equal(rendered.prompt, "Generic Missing specific prompt for example_step.");
+    assert.equal(rendered.prompt, "Fallback Missing specific prompt for example_step.");
   });
 });
 

@@ -12,7 +12,7 @@ import {
   missingInformationPolicyInstruction
 } from "./promptQuestionPolicy.js";
 
-const DEFAULT_PROMPT_ID = "generic";
+const DEFAULT_PROMPT_ID = "fallback";
 const DEFAULT_SYSTEM_PROMPT_PACK_ROOT = fileURLToPath(new URL("./systemPrompts", import.meta.url));
 const PROMPT_OVERRIDES_DIR = "prompts";
 const PROMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;

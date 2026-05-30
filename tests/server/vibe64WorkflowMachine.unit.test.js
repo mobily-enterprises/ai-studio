@@ -2336,7 +2336,7 @@ test("vibe64 pull request resolution prompt uses the current-step helper contrac
       recursive: true
     });
     await writeFile(
-      path.join(promptPackRoot, "generic.txt"),
+      path.join(promptPackRoot, "fallback.txt"),
       "{{systemStandard}}",
       "utf8"
     );
