@@ -80,19 +80,6 @@
             </li>
           </ol>
         </div>
-
-        <div
-          v-else-if="turn.pending"
-          class="studio-conversation-log__pending"
-        >
-          <v-progress-circular
-            color="primary"
-            indeterminate
-            size="16"
-            width="2"
-          />
-          <span>Waiting for Codex...</span>
-        </div>
       </article>
       <div
         ref="bottomElement"
@@ -179,7 +166,6 @@ const displayTurns = computed(() => (Array.isArray(props.turns) ? props.turns : 
     assistant: displayMessage(turn.assistant, {
       allowNumberedQuestions: true
     }),
-    pending: turn.pending === true,
     turnId: String(turn.turnId || index + 1),
     user: displayMessage(turn.user)
   }))
@@ -198,7 +184,6 @@ function messageScrollKey(message = null) {
 function turnScrollKey(turn = {}) {
   return [
     turn.turnId,
-    turn.pending ? "pending" : "settled",
     messageScrollKey(turn.user),
     messageScrollKey(turn.assistant)
   ].join(":");
@@ -349,15 +334,6 @@ watch(scrollTrigger, () => {
   line-height: 1.35;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.studio-conversation-log__pending {
-  align-items: center;
-  color: rgb(var(--v-theme-on-surface-variant));
-  display: flex;
-  font-size: 0.84rem;
-  gap: 0.45rem;
-  padding: 0.15rem 0.25rem;
 }
 
 .studio-conversation-log__bottom {

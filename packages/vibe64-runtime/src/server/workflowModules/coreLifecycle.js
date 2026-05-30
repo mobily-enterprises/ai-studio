@@ -299,6 +299,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         type: "link"
       },
       {
+        auditMessage: "Draft pull request.",
         disabledReason: "Pull request details are already ready for review.",
         disabledWhen: [
           when.any(
@@ -313,6 +314,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       },
       {
         adapterCapability: "create_pr_on_gh",
+        auditMessage: "Pull request draft accepted; creating GitHub pull request.",
         disabledReason: "Commit and push changes before creating the GitHub pull request.",
         disabledWhen: [when.metadataExists("pr_url")],
         disabledWhenReason: "The GitHub pull request already exists.",
@@ -329,6 +331,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         type: "command"
       },
       {
+        auditMessage: "Prepare pull request for merge.",
         disabledReason: "Create the pull request before preparing for merge.",
         disabledWhen: [
           when.metadataExists("pr_merged"),
@@ -343,6 +346,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       },
       {
         adapterCapability: "merge_pr",
+        auditMessage: "Merge pull request.",
         disabledReason: "Create the pull request before merging.",
         disabledWhen: [
           when.metadataExists("pr_merged"),
@@ -357,6 +361,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       },
       {
         adapterCapability: syncMainCheckoutActionId,
+        auditMessage: "Update main checkout after merge.",
         disabledReason: "Merge the pull request before syncing the main checkout.",
         disabledWhen: [
           when.metadataExists(mainCheckoutSyncedMetadataName),
@@ -374,6 +379,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         type: "command"
       },
       {
+        auditMessage: "Pull request will not be merged.",
         disabledReason: "A merge decision has already been recorded.",
         disabledWhen: [
           when.metadataExists("pr_merged"),
@@ -429,12 +435,14 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       stop: {
         intents: [
           {
+            auditMessage: "Merge pull request and update main checkout.",
             enabledWhenAction: "prepare_for_merge",
             id: "merge_and_sync",
             label: "Merge and update main checkout",
             style: "primary"
           },
           {
+            auditMessage: "Pull request will not be merged.",
             enabledWhenAction: "skip_merge",
             id: "skip_merge",
             label: "Do not merge"
@@ -1251,11 +1259,22 @@ const createAndMergePullRequestMachine = {
 
   inputCompletionMessage(context = {}) {
     const input = normalizeMachineInput(context.input);
-    return input.kind === STEP_INPUT_KIND.READY
-      ? (context.session.stepMachine?.phase === pullRequestPhase.PREPARING_MERGE
-          ? "Merge preparation completed."
-          : "Pull request draft submitted for review.")
-      : "";
+    if (input.kind !== STEP_INPUT_KIND.READY && input.kind !== STEP_INPUT_KIND.CONFIRM_FILES) {
+      return "";
+    }
+    if (
+      context.session.stepMachine?.phase === pullRequestPhase.PREPARING_MERGE ||
+      Object.hasOwn(input.fields || {}, "mergePreparationSummary")
+    ) {
+      return "Merge preparation completed.";
+    }
+    if (input.source === "codex") {
+      return pullRequestDraftConversationMessage(input, "Proposed");
+    }
+    if (input.source === "ui") {
+      return pullRequestDraftConversationMessage(input, "Saved");
+    }
+    return "Pull request draft submitted for review.";
   },
 
   promptInstruction({ action = {} } = {}) {
@@ -1391,6 +1410,24 @@ async function writeMergePreparationSummary(context = {}, summary = "") {
     context.session.sessionId,
     mergePreparationSummaryMetadataName
   );
+}
+
+function conversationSection(label = "", value = "") {
+  return [
+    `${label}:`,
+    normalizeText(value) || "(empty)"
+  ].join("\n");
+}
+
+function pullRequestDraftConversationMessage(input = {}, verb = "Proposed") {
+  const fields = input.fields || {};
+  return [
+    `${verb} pull request draft.`,
+    "",
+    conversationSection("Title", fields.title),
+    "",
+    conversationSection("Body", fields.body)
+  ].join("\n");
 }
 
 function pullRequestInputInteraction(values = {}) {

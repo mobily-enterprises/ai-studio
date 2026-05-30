@@ -255,6 +255,7 @@ function normalizeAction(action = {}, stepId = "") {
   const type = normalizeText(action.type || "command");
   return {
     adapterCapability: normalizeText(action.adapterCapability),
+    auditMessage: normalizeText(action.auditMessage),
     advanceOnSuccess: action.advanceOnSuccess === true,
     disabledReason: normalizeText(action.disabledReason),
     disabledWhenReason: normalizeText(action.disabledWhenReason || action.disabledReason),

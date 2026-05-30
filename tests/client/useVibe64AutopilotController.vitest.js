@@ -438,7 +438,7 @@ function createControllerContext({
         screen: {
           kind: "codex_running",
           showProgress: true,
-          title: "Terminal is transmitting..."
+          title: "Codex is thinking..."
         }
       });
     }),

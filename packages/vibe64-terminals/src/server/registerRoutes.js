@@ -140,12 +140,6 @@ function registerRoutes(
     return terminalService().startCodexTerminal(request.params.sessionId);
   });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/codex-terminal/continue", {
-    summary: "Continue the current Vibe64 Codex turn."
-  }, (request) => {
-    return terminalService().continueCodexTurn(request.params.sessionId);
-  });
-
   routes.actionRoute("POST", "/sessions/:sessionId/codex-attachments", {
     actionId: ACTION_UPLOAD_CODEX_ATTACHMENT,
     body: codexAttachmentInputValidator,

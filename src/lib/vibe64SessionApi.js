@@ -144,10 +144,6 @@ async function readVibe64GlobalCodexTerminalState() {
   return studioHttpClient.get(vibe64GlobalCodexTerminalEndpoint());
 }
 
-async function continueVibe64CodexTurn(sessionId) {
-  return studioHttpClient.post(`${vibe64CodexTerminalEndpoint(sessionId)}/continue`, {});
-}
-
 async function closeVibe64CodexTerminal(sessionId, terminalSessionId) {
   return studioHttpClient.delete(vibe64CodexTerminalEndpoint(sessionId, terminalSessionId));
 }
@@ -231,7 +227,6 @@ export {
   closeVibe64CommandTerminal,
   closeVibe64ProjectToolTerminal,
   buildVibe64TerminalFailureFixRequest,
-  continueVibe64CodexTurn,
   readVibe64GlobalCodexTerminalState,
   readVibe64ArtifactReadiness,
   readVibe64SessionDiff,

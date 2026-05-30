@@ -604,6 +604,9 @@ const displayStatusText = computed(() => {
 const statusTitleIsCodexChat = computed(() => String(displayStatusText.value || "").trim() === "Talk to Codex");
 const statusTitleVisible = computed(() => !statusTitleIsCodexChat.value);
 const displayRunning = computed(() => Boolean(screenState.value.showProgress));
+const codexRunningStatusSuppressed = computed(() => Boolean(
+  screenKind.value === "codex_running"
+));
 const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
 const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command"));
 const stepInputFormVisible = computed(() => Boolean(
@@ -653,7 +656,11 @@ const autopilotBusy = computed(() => Boolean(props.active && (
   stepInput.saving
 )));
 const navigationBusy = computed(() => Boolean(props.page?.busy || autopilotBusy.value || props.rewindBusy));
-const mainStatusVisible = computed(() => !commandTerminalVisible.value && !conversationLogVisible.value);
+const mainStatusVisible = computed(() => Boolean(
+  !codexRunningStatusSuppressed.value &&
+  !commandTerminalVisible.value &&
+  !conversationLogVisible.value
+));
 const standaloneFailureVisible = computed(() => screenKind.value === "failure");
 const screenStopAction = computed(() => String(screenState.value.stopAction || ""));
 const serverScreenVisible = computed(() => Boolean(

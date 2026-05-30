@@ -158,6 +158,7 @@ function qaWorkflowGroup({
 function createIssueOnGithubAction() {
   return {
     adapterCapability: "create_issue_on_gh",
+    auditMessage: "Issue draft accepted; creating GitHub issue.",
     disabledReason: "Create the issue file before submitting it to GitHub.",
     disabledWhen: [when.metadataExists("issue_url")],
     disabledWhenReason: "The GitHub issue already exists.",
@@ -785,6 +786,31 @@ function inputResponseText(input = {}) {
   return normalizeText(input.text || input.fields?.response || input.fields?.conversationRequest);
 }
 
+function conversationSection(label = "", value = "") {
+  const normalizedValue = normalizeText(value);
+  return [
+    `${label}:`,
+    normalizedValue || "(empty)"
+  ].join("\n");
+}
+
+function issueDraftConversationMessage(context = {}, input = {}, {
+  proposed = false
+} = {}) {
+  const fields = input?.fields || {};
+  const createGithubIssue = githubIssueShouldBeCreated(context.session);
+  const subject = createGithubIssue ? "issue draft" : "work description";
+  return [
+    `${proposed ? "Proposed" : "Saved"} ${subject}.`,
+    "",
+    conversationSection(createGithubIssue ? "Issue title" : "Work title", fields.title),
+    "",
+    conversationSection("Session label", fields.word),
+    "",
+    conversationSection(createGithubIssue ? "Issue body" : "Work description", fields.body)
+  ].join("\n");
+}
+
 async function readIssueFieldValues(context = {}) {
   const [title, body, word] = await Promise.all([
     context.runtime.store.readArtifact(context.session.sessionId, ISSUE_TITLE_ARTIFACT),
@@ -844,6 +870,9 @@ function issueInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, values = 
         {
           id: "continue_step",
           label: createGithubIssue ? "Create GitHub issue" : "Use this description",
+          auditMessage: createGithubIssue
+            ? "Issue draft accepted; creating GitHub issue."
+            : "Work description accepted.",
           saveCurrentStepInputBeforeRun: true,
           style: "primary",
           type: createGithubIssue ? "action" : "continue",
@@ -947,13 +976,32 @@ function issueDraftPromptIsActive(state = {}) {
   ].includes(state.status);
 }
 
+function workflowActionEnabled(session = {}, actionId = "") {
+  const normalizedActionId = normalizeText(actionId);
+  return Boolean((Array.isArray(session.actions) ? session.actions : [])
+    .find((action) => action.id === normalizedActionId)?.enabled);
+}
+
+function issueDraftResponseActionId(context = {}, state = {}) {
+  const stateActionId = normalizeText(state.promptActionId);
+  if (stateActionId) {
+    return stateActionId;
+  }
+  return workflowActionEnabled(context.session, rejectIssueDraftActionId)
+    ? rejectIssueDraftActionId
+    : draftIssueActionId;
+}
+
 async function submitIssueDraftAgentResult(context = {}, machine = {}, input = {}) {
   assertAgentResultSource(context.session, input);
+  const state = await readState(context, machine);
+  const promptActionId = issueDraftResponseActionId(context, state);
   switch (input.kind) {
     case STEP_INPUT_KIND.WAITING_FOR_INPUT:
       await writeState(context, machine, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
         message: input.message,
         phase: issueFilePhase.DRAFTING,
+        promptActionId,
         response: inputResponseText(input),
         source: input.source
       }));
@@ -1053,6 +1101,7 @@ const issueFileMachine = {
           };
         }
         return promptStepWaitingForInputView(context, this, state, {
+          actionId: issueDraftResponseActionId(context, state),
           prompt: state.message || "Codex needs more information before it can draft the issue.",
           skipInput: LET_CODEX_DECIDE_INPUT,
           title: "Describe the issue"
@@ -1118,7 +1167,8 @@ const issueFileMachine = {
   async actionStarted(context = {}) {
     if (context.actionId === draftIssueActionId) {
       await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
-        phase: issueFilePhase.DRAFTING
+        phase: issueFilePhase.DRAFTING,
+        promptActionId: context.actionId
       }));
       return;
     }
@@ -1132,7 +1182,8 @@ const issueFileMachine = {
 
     if (context.actionId === rejectIssueDraftActionId) {
       await writeState(context, this, machineState(STEP_STATUS.AWAITING_AGENT_RESULT, {
-        phase: issueFilePhase.DRAFTING
+        phase: issueFilePhase.DRAFTING,
+        promptActionId: context.actionId
       }));
     }
   },
@@ -1224,6 +1275,12 @@ const issueFileMachine = {
     const input = normalizeMachineInput(context.input);
     if (![STEP_INPUT_KIND.READY, STEP_INPUT_KIND.CONFIRM_FILES].includes(input.kind)) {
       return "";
+    }
+    if (input.source === "codex") {
+      return issueDraftConversationMessage(context, input, { proposed: true });
+    }
+    if (input.source === "ui") {
+      return issueDraftConversationMessage(context, input);
     }
     return githubIssueShouldBeSkipped(context.session)
       ? "Work description saved."

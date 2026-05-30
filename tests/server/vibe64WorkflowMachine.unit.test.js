@@ -2755,15 +2755,75 @@ test("vibe64 issue question state only exposes the Codex answer path", async () 
     assert.equal(waiting.presentation.screen.primaryIntentId, "talk_to_codex");
     assert.deepEqual(waiting.intents.map((intent) => intent.id), ["talk_to_codex", "let_codex_decide"]);
     assert.equal(waiting.intents[0].actionId, "draft_issue");
+    assert.equal(waiting.intents[0].enabled, true);
     assert.equal(waiting.intents[0].label, "Send to Codex");
     assert.equal(waiting.intents[1].enabled, true);
+    assert.deepEqual(waiting.intents[1].inputFields, []);
     assert.deepEqual(waiting.intents[1].submitFields, {
-      conversationRequest: "Proceed with reasonable assumptions. I do not need to answer these questions."
+      conversationRequest: "You decide."
     });
     assert.equal(
       waiting.intents.some((intent) => intent.id === "draft_issue" || intent.id === "create_issue_on_gh"),
       false
     );
+
+    await runtime.createSession({
+      initialStep: "issue_file_created",
+      metadata: {
+        ...worktreeMetadata(targetRoot, "issue_question_after_reject"),
+        github_issue_mode: "skip",
+        issue_source: "none",
+        work_source: "description"
+      },
+      sessionId: "issue_question_after_reject"
+    });
+    await runtime.runAction("issue_question_after_reject", "draft_issue", {
+      conversationRequest: "Create a small test file."
+    });
+    await runtime.submitCurrentStepInput("issue_question_after_reject", {
+      fields: {
+        body: "Create a small test file.",
+        title: "Create test file",
+        word: "test-file"
+      },
+      kind: "ready",
+      source: "codex",
+      stepId: "issue_file_created",
+      stepStatus: "awaiting_agent_result"
+    });
+    await runtime.runIntent("issue_question_after_reject", "reject_issue_draft", {
+      fields: {
+        feedback: "Ask me questions before revising."
+      },
+      stepId: "issue_file_created",
+      stepStatus: "confirm_files"
+    });
+    await runtime.submitCurrentStepInput("issue_question_after_reject", {
+      kind: "waiting_for_input",
+      message: "[1] What file name should be used?\n[2] Where should it be created?",
+      source: "codex",
+      stepId: "issue_file_created",
+      stepStatus: "awaiting_agent_result"
+    });
+
+    const waitingAfterReject = await runtime.getSession("issue_question_after_reject");
+    assert.equal(waitingAfterReject.stepMachine.status, "waiting_for_input");
+    assert.equal(waitingAfterReject.presentation.screen.input.actionId, "reject_issue_draft");
+    assert.deepEqual(waitingAfterReject.intents.map((intent) => intent.id), ["talk_to_codex", "let_codex_decide"]);
+    assert.equal(waitingAfterReject.intents[0].actionId, "reject_issue_draft");
+    assert.equal(waitingAfterReject.intents[0].enabled, true);
+    assert.deepEqual(waitingAfterReject.intents[1].inputFields, []);
+
+    const answeredAfterReject = await runtime.runIntent("issue_question_after_reject", "talk_to_codex", {
+      fields: {
+        conversationRequest: "[1] question-answer.txt\n[2] Project root"
+      },
+      stepId: "issue_file_created",
+      stepStatus: "waiting_for_input"
+    });
+    assert.equal(answeredAfterReject.stepMachine.status, "awaiting_agent_result");
+    assert.equal(answeredAfterReject.actionResult.actionId, "reject_issue_draft");
+    assert.equal(answeredAfterReject.actionResult.input.conversationRequest, "[1] question-answer.txt\n[2] Project root");
   });
 });
 

@@ -16,7 +16,8 @@ import {
   githubSshToHttpsGitEnv
 } from "@local/studio-terminal-core/server/gitGithubTransport";
 import {
-  vibe64Error
+  vibe64Error,
+  normalizeText
 } from "@local/vibe64-core/server/core";
 import {
   vibe64SessionDebugDurationMs,
@@ -70,6 +71,16 @@ function actionById(session = {}, actionId = "") {
 
 function actionRunsInCommandTerminal(action = {}) {
   return action.dispatchRoute === ACTION_DISPATCH_ROUTES.COMMAND_TERMINAL || action.type === "command";
+}
+
+async function recordCommandAuditMessage(runtime, sessionId = "", action = {}) {
+  const auditMessage = normalizeText(action.auditMessage);
+  if (!auditMessage || typeof runtime?.store?.writeConversationUserMessage !== "function") {
+    return null;
+  }
+  return runtime.store.writeConversationUserMessage(sessionId, {
+    text: auditMessage
+  });
 }
 
 function commandTerminalContainerName({
@@ -1038,6 +1049,9 @@ function createCommandTerminalController({
                 message: String(terminal.error || "Command terminal could not start."),
                 status: "blocked"
               });
+            }
+            if (terminal?.ok !== false) {
+              await recordCommandAuditMessage(runtime, sessionId, action);
             }
             vibe64SessionDebugLog("server.commandTerminal.start.done", {
               actionId: action.id,

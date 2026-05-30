@@ -47,7 +47,7 @@ test.describe("Autopilot dumb client contract", () => {
           kind: "codex_running",
           sections: [],
           showProgress: true,
-          title: "Terminal is transmitting..."
+          title: "Codex is thinking..."
         };
       }
     });
@@ -60,7 +60,8 @@ test.describe("Autopilot dumb client contract", () => {
         body: {}
       }
     ]);
-    await expect(page.getByRole("heading", { name: "Terminal is transmitting..." })).toBeVisible();
+    await expect(page.getByText("Codex is thinking...")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Codex is thinking..." })).toHaveCount(0);
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64ForbiddenTextSeen?: boolean }).__vibe64ForbiddenTextSeen === true
     ))).toBe(false);
@@ -322,7 +323,7 @@ test.describe("Autopilot dumb client contract", () => {
               nextOperation: {
                 executable: false,
                 kind: "stop",
-                reason: "Waiting for Codex."
+                reason: "Codex is thinking."
               }
             },
             screen: {
@@ -821,7 +822,7 @@ test.describe("Autopilot dumb client contract", () => {
           message: "Wait for Codex to finish the current step.",
           sections: [],
           showProgress: true,
-          title: "Terminal is transmitting..."
+          title: "Codex is thinking..."
         },
         step: {
           id: "server_step",
@@ -830,7 +831,7 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "Terminal is transmitting...",
+            label: "Codex is thinking...",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
@@ -852,8 +853,9 @@ test.describe("Autopilot dumb client contract", () => {
 
     await page.goto(`${BASE_URL}/home`);
 
-    await expect(page.getByRole("heading", { name: "Terminal is transmitting..." })).toBeVisible();
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toBeVisible();
+    await expect(page.getByText("Codex is thinking...")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Codex is thinking..." })).toHaveCount(0);
     await expect.poll(() => codexTerminalStartRequests).toBe(0);
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
@@ -936,232 +938,6 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByRole("button", { name: "Codex terminal" })).toHaveCount(0);
   });
 
-  test("runs the server-presented Codex continuation control from Autopilot", async ({ page }) => {
-    let continuationRequests = 0;
-    const continuationIntent = {
-      actionId: "",
-      control: {
-        action: "continue_codex_turn",
-        disabledWhen: [],
-        icon: "",
-        loadingWhen: []
-      },
-      disabledReason: "",
-      enabled: true,
-      id: "continue_codex_turn",
-      inputFields: [],
-      label: "Ask Codex to continue",
-      style: "primary"
-    };
-    const session = sessionPayload({
-      intents: [continuationIntent],
-      presentation: {
-        auto: {
-          nextOperation: {
-            executable: false,
-            kind: "wait",
-            reason: "codex"
-          }
-        },
-        intents: [continuationIntent],
-        screen: {
-          icon: "warning",
-          kind: "codex_attention",
-          message: "Codex has not reported progress for the current step.",
-          sections: [],
-          showProgress: false,
-          title: "Codex needs attention"
-        },
-        step: {
-          id: "server_step",
-          label: "Server step",
-          status: "awaiting_agent_result"
-        }
-      },
-      stepMachine: {
-        status: "awaiting_agent_result",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session, {
-      onCodexTurnContinue: () => {
-        continuationRequests += 1;
-      }
-    });
-
-    await page.goto(`${BASE_URL}/home`);
-
-    await expect(page.getByRole("heading", { name: "Codex needs attention" })).toBeVisible();
-    await page.getByRole("button", { name: "Ask Codex to continue" }).click();
-
-    await expect.poll(() => continuationRequests).toBe(1);
-  });
-
-  test("does not refresh-loop when a headless Codex terminal consumes server state", async ({ page }) => {
-    await mockCodexTerminalPreviewSocket(page);
-    let sessionReads = 0;
-    const continuationIntent = {
-      actionId: "",
-      control: {
-        action: "continue_codex_turn",
-        disabledWhen: [],
-        icon: "",
-        loadingWhen: []
-      },
-      disabledReason: "",
-      enabled: true,
-      id: "continue_codex_turn",
-      inputFields: [],
-      label: "Ask Codex to continue",
-      style: "primary"
-    };
-    const session = sessionPayload({
-      codexTerminal: {
-        commandPreview: "codex",
-        id: "server-codex-terminal",
-        status: "running",
-        transmitting: false
-      },
-      intents: [continuationIntent],
-      presentation: {
-        auto: {
-          nextOperation: {
-            executable: false,
-            kind: "wait",
-            reason: "codex"
-          }
-        },
-        intents: [continuationIntent],
-        screen: {
-          icon: "warning",
-          kind: "codex_attention",
-          message: "Codex has not reported progress for the current step.",
-          sections: [],
-          showProgress: false,
-          title: "Codex needs attention"
-        },
-        step: {
-          id: "server_step",
-          label: "Server step",
-          status: "awaiting_agent_result"
-        }
-      },
-      stepMachine: {
-        status: "awaiting_agent_result",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session, {
-      onSessionRead: () => {
-        sessionReads += 1;
-      }
-    });
-
-    await page.goto(`${BASE_URL}/home`);
-    await expect(page.getByRole("heading", { name: "Codex needs attention" })).toBeVisible();
-    await page.waitForTimeout(1000);
-
-    expect(sessionReads).toBeLessThanOrEqual(2);
-  });
-
-  test("refreshes an expired Codex wait presentation after Inspect and returns with a continuation control", async ({ page }) => {
-    await mockInspectTerminalSockets(page);
-    let refreshAtMs = 0;
-    const continuationIntent = {
-      actionId: "",
-      control: {
-        action: "continue_codex_turn",
-        disabledWhen: [],
-        icon: "",
-        loadingWhen: []
-      },
-      disabledReason: "",
-      enabled: true,
-      id: "continue_codex_turn",
-      inputFields: [],
-      label: "Ask Codex to continue",
-      style: "primary"
-    };
-    const session = sessionPayload({
-      codexTerminal: {
-        commandPreview: "codex",
-        id: "server-codex-terminal",
-        status: "running",
-        transmitting: false
-      },
-      intents: [],
-      presentation: {
-        auto: {
-          nextOperation: {
-            executable: false,
-            kind: "wait",
-            reason: "codex"
-          }
-        },
-        intents: [],
-        refreshAt: new Date(Date.now() + 5000).toISOString(),
-        refreshReason: "codex_wait",
-        screen: {
-          icon: "progress",
-          kind: "codex_running",
-          message: "Wait for Codex to finish the current step.",
-          sections: [],
-          showProgress: true,
-          title: "Waiting for Codex..."
-        },
-        step: {
-          id: "server_step",
-          label: "Server step",
-          status: "awaiting_agent_result"
-        }
-      },
-      stepMachine: {
-        status: "awaiting_agent_result",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session, {
-      onSessionRead: () => {
-        if (!refreshAtMs) {
-          refreshAtMs = Date.now() + 1200;
-          session.presentation = {
-            ...session.presentation,
-            refreshAt: new Date(refreshAtMs).toISOString()
-          };
-        }
-        if (Date.now() < refreshAtMs) {
-          return;
-        }
-        session.intents = [continuationIntent];
-        session.presentation = {
-          ...session.presentation,
-          intents: [continuationIntent],
-          refreshAt: "",
-          refreshReason: "",
-          screen: {
-            icon: "warning",
-            kind: "codex_attention",
-            message: "Codex has not reported progress for the current step.",
-            sections: [],
-            showProgress: false,
-            title: "Codex needs attention"
-          }
-        };
-      }
-    });
-
-    await page.goto(`${BASE_URL}/home`);
-    await expect(page.getByRole("heading", { name: "Waiting for Codex..." })).toBeVisible();
-
-    await page.getByRole("button", { name: "Inspect" }).click();
-    await expect(page.locator(".codex-terminal__host")).toBeVisible();
-    await page.getByRole("button", { name: "Autopilot" }).click();
-    await expect(page.getByRole("heading", { name: "Waiting for Codex..." })).toBeVisible();
-
-    await expect(page.getByRole("heading", { name: "Codex needs attention" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Ask Codex to continue" })).toBeVisible();
-  });
-
   test("keeps the server-owned Codex terminal preview behind input while transmitting", async ({ page }) => {
     await mockCodexTerminalPreviewSocket(page);
     const session = sessionPayload({
@@ -1209,7 +985,7 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "Terminal is transmitting...",
+            label: "Codex is thinking...",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
@@ -1274,7 +1050,7 @@ test.describe("Autopilot dumb client contract", () => {
         },
         terminal: {
           codex: {
-            label: "Terminal is transmitting...",
+            label: "Codex is thinking...",
             readOnlyInAutopilot: true,
             renderer: "codex_terminal",
             terminalSessionId: "server-codex-terminal",
@@ -1366,65 +1142,6 @@ test.describe("Autopilot dumb client contract", () => {
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
     ))).toEqual([]);
-  });
-
-  test("ignores stale Codex terminal preview presentation without a byte activity expiry", async ({ page }) => {
-    await mockCodexTerminalPreviewSocket(page);
-    const session = sessionPayload({
-      codexTerminal: {
-        commandPreview: "codex",
-        id: "server-codex-terminal",
-        status: "running",
-        transmitting: true
-      },
-      presentation: {
-        auto: {
-          nextOperation: {
-            executable: false,
-            kind: "wait",
-            reason: "input"
-          }
-        },
-        screen: {
-          input: {
-            fields: [
-              {
-                kind: "textarea",
-                label: "Response",
-                name: "response"
-              }
-            ],
-            prompt: "What should Codex do next?",
-            submitTarget: "current-step-input",
-            submitLabel: "Send to Codex",
-            title: "Talk to Codex"
-          },
-          kind: "input",
-          message: "What should Codex do next?",
-          sections: [],
-          title: "Talk to Codex"
-        },
-        terminal: {
-          codex: {
-            label: "Terminal is transmitting...",
-            readOnlyInAutopilot: true,
-            renderer: "codex_terminal",
-            terminalSessionId: "server-codex-terminal",
-            visible: true
-          }
-        }
-      },
-      stepMachine: {
-        status: "waiting_for_input",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session);
-
-    await page.goto(`${BASE_URL}/home`);
-
-    await expect(page.getByLabel("Response")).toBeVisible();
-    await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
   });
 
   test("renders server-provided intents and posts the chosen intent without client workflow knowledge", async ({ page }) => {
@@ -1594,94 +1311,6 @@ test.describe("Autopilot dumb client contract", () => {
       }
     ]);
     expect(advances).toBe(0);
-  });
-
-  test("shows the conversation pending indicator only while Codex is awaited", async ({ page }) => {
-    const session = sessionPayload({
-      presentation: {
-        screen: {
-          kind: "conversation",
-          sections: [
-            {
-              kind: "response_preview"
-            }
-          ],
-          title: "Talk to Codex"
-        },
-        step: {
-          id: "server_step",
-          label: "Talk to Codex",
-          status: "awaiting_agent_result"
-        }
-      },
-      stepMachine: {
-        status: "awaiting_agent_result",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session, {
-      conversationLog: [
-        {
-          turnId: "turn-1",
-          user: {
-            at: "2026-05-25T01:02:00.000Z",
-            role: "user",
-            text: "Please inspect the current state."
-          }
-        }
-      ]
-    });
-
-    await page.goto(`${BASE_URL}/home`);
-
-    const conversation = page.getByLabel("Conversation history");
-    await expect(conversation).toBeVisible();
-    await expect(conversation.getByText("Please inspect the current state.")).toBeVisible();
-    await expect(conversation.getByText("Waiting for Codex...")).toBeVisible();
-  });
-
-  test("does not show a stale conversation pending indicator for settled user-only turns", async ({ page }) => {
-    const session = sessionPayload({
-      presentation: {
-        screen: {
-          kind: "conversation",
-          sections: [
-            {
-              kind: "response_preview"
-            }
-          ],
-          title: "Initial human review"
-        },
-        step: {
-          id: "server_step",
-          label: "Initial human review",
-          status: "confirm_files"
-        }
-      },
-      stepMachine: {
-        status: "confirm_files",
-        stepId: "server_step"
-      }
-    });
-    await mockVibe64Session(page, session, {
-      conversationLog: [
-        {
-          turnId: "turn-1",
-          user: {
-            at: "2026-05-25T01:02:00.000Z",
-            role: "user",
-            text: "Make the file name lower case."
-          }
-        }
-      ]
-    });
-
-    await page.goto(`${BASE_URL}/home`);
-
-    const conversation = page.getByLabel("Conversation history");
-    await expect(conversation).toBeVisible();
-    await expect(conversation.getByText("Make the file name lower case.")).toBeVisible();
-    await expect(conversation.getByText("Waiting for Codex...")).toHaveCount(0);
   });
 
   test("aligns the Inspect shell terminal bottom with the Codex terminal", async ({ page }) => {
@@ -2571,7 +2200,6 @@ async function mockVibe64Session(
     onAdvance = () => undefined,
     onCommandTerminalClose = () => undefined,
     onCommandTerminalStart = () => undefined,
-    onCodexTurnContinue = () => undefined,
     onIntent = () => undefined,
     onSessionRead = () => undefined,
     onStepInput = () => undefined,
@@ -2586,7 +2214,6 @@ async function mockVibe64Session(
     onCommandTerminalClose?: () => void;
     onCommandTerminalStart?: (body?: Record<string, unknown>) => Record<string, unknown> | void;
     onCodexTerminalStart?: () => void;
-    onCodexTurnContinue?: () => void;
     onIntent?: (body: unknown) => void;
     onSessionRead?: (session: Record<string, unknown>) => void;
     onShellTerminalClose?: () => void;
@@ -2605,18 +2232,6 @@ async function mockVibe64Session(
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
-    if (method === "POST" && /\/codex-terminal\/continue\/?$/u.test(url.pathname)) {
-      onCodexTurnContinue();
-      await fulfillJson(route, {
-        codexContinueInjected: true,
-        commandPreview: "codex",
-        id: "server-codex-terminal",
-        ok: true,
-        status: "running",
-        terminalSessionId: "server-codex-terminal"
-      });
-      return;
-    }
     if (method === "POST" && url.pathname.endsWith("/codex-terminal")) {
       onCodexTerminalStart();
       await fulfillJson(route, {

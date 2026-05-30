@@ -331,16 +331,9 @@ const codexTerminalPresentation = computed(() => {
 });
 const codexTerminalPreviewClock = ref(Date.now());
 let codexTerminalPreviewTimer = null;
-let presentationRefreshTimer = null;
-let lastPresentationRefreshKey = "";
 const codexTerminalPreviewVisibleUntilMs = computed(() => {
   const visibleUntil = String(codexTerminalPresentation.value.visibleUntil || "");
   const time = Date.parse(visibleUntil);
-  return Number.isFinite(time) ? time : 0;
-});
-const presentationRefreshAtMs = computed(() => {
-  const refreshAt = String(selectedSession.value?.presentation?.refreshAt || "");
-  const time = Date.parse(refreshAt);
   return Number.isFinite(time) ? time : 0;
 });
 const codexTerminalPreviewWithinWindow = computed(() => {
@@ -385,11 +378,19 @@ const codexTerminalPreviewVisible = computed(() => Boolean(
   serverCodexTerminalPreviewVisible.value ||
   hiddenCodexTerminalActivityVisible.value
 ));
+const codexRunningScreenActive = computed(() => Boolean(
+  props.active &&
+  props.sessionMode === "autopilot" &&
+  selectedSession.value?.presentation?.screen?.kind === "codex_running"
+));
 const autopilotInteractionLocked = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
-  codexTerminalPreviewVisible.value &&
-  !codexTerminalForegroundVisible.value
+  !codexTerminalForegroundVisible.value &&
+  (
+    codexTerminalPreviewVisible.value ||
+    codexRunningScreenActive.value
+  )
 ));
 const autopilotViewInert = computed(() => Boolean(
   props.sessionMode !== "autopilot" ||
@@ -522,14 +523,6 @@ function clearCodexTerminalPreviewTimer() {
   codexTerminalPreviewTimer = null;
 }
 
-function clearPresentationRefreshTimer() {
-  if (!presentationRefreshTimer) {
-    return;
-  }
-  globalThis.clearTimeout(presentationRefreshTimer);
-  presentationRefreshTimer = null;
-}
-
 function scheduleCodexTerminalPreviewExpiry() {
   clearCodexTerminalPreviewTimer();
   codexTerminalPreviewClock.value = Date.now();
@@ -544,35 +537,6 @@ function scheduleCodexTerminalPreviewExpiry() {
   }, delay);
 }
 
-function schedulePresentationRefresh() {
-  clearPresentationRefreshTimer();
-  const refreshAt = presentationRefreshAtMs.value;
-  if (!refreshAt || !props.active || !props.sessionId) {
-    return;
-  }
-  const refreshKey = `${props.sessionId}:${refreshAt}`;
-  if (lastPresentationRefreshKey === refreshKey) {
-    return;
-  }
-  const delay = Math.max(25, refreshAt - Date.now() + 25);
-  presentationRefreshTimer = globalThis.setTimeout(async () => {
-    presentationRefreshTimer = null;
-    lastPresentationRefreshKey = refreshKey;
-    if (!props.active || !props.sessionId) {
-      return;
-    }
-    try {
-      await props.sessionData.refreshSessionData();
-    } catch (error) {
-      vibe64SessionDebugLog("client.sessionRuntimeHost.presentationRefresh.error", {
-        error: String(error?.message || error || "Session presentation refresh failed."),
-        refreshAt: new Date(refreshAt).toISOString(),
-        sessionId: props.sessionId
-      });
-    }
-  }, delay);
-}
-
 onMounted(() => {
   emitToolbarControls();
   emitBusy();
@@ -581,7 +545,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearCodexTerminalPreviewTimer();
-  clearPresentationRefreshTimer();
 });
 
 watch(interactionBusy, emitBusy, {
@@ -651,14 +614,6 @@ watch(() => [
   immediate: true
 });
 
-watch(() => [
-  props.active ? "active" : "inactive",
-  props.sessionId,
-  presentationRefreshAtMs.value || ""
-].join("|"), schedulePresentationRefresh, {
-  flush: "post",
-  immediate: true
-});
 </script>
 
 <style scoped>
@@ -678,6 +633,7 @@ watch(() => [
 }
 
 .studio-ai-sessions__layout--autopilot {
+  --studio-ai-sessions-autopilot-codex-height: min(42rem, 72vh);
   grid-template-columns: minmax(0, 1fr);
   position: relative;
 }
@@ -764,7 +720,7 @@ watch(() => [
   align-self: start;
   grid-column: 1;
   grid-row: 1;
-  height: min(18rem, 38vh);
+  height: var(--studio-ai-sessions-autopilot-codex-height);
   justify-self: center;
   margin-top: 0;
   max-width: min(64rem, calc(100% - 2rem));
@@ -779,7 +735,7 @@ watch(() => [
   grid-column: 1;
   grid-row: 1;
   justify-self: stretch;
-  min-height: min(42rem, 72vh);
+  min-height: var(--studio-ai-sessions-autopilot-codex-height);
   pointer-events: auto;
   z-index: 5;
 }

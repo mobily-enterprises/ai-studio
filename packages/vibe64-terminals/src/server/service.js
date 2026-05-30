@@ -111,10 +111,6 @@ function createService({
       return codex.injectGlobalCodexPrompt(handoff);
     },
 
-    continueCodexTurn(sessionId) {
-      return codex.continueTurn(sessionId);
-    },
-
     ensureCodexThread(sessionId) {
       return codex.ensureThread(sessionId);
     },

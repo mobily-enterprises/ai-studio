@@ -209,10 +209,12 @@ function actionResultRecord(action, session, input, handlerResult = {}) {
   const result = { ...(handlerResult || {}) };
   delete result.recordsConversationTurn;
   const recordsConversationTurn = action.recordsConversationTurn === true;
+  const auditMessage = normalizeText(action.auditMessage);
   return {
     ...result,
     actionLabel: action.label,
     actionType: action.type,
+    ...(auditMessage ? { auditMessage } : {}),
     input,
     message: normalizeText(result.message),
     ...(recordsConversationTurn ? { recordsConversationTurn: true } : {}),
@@ -382,6 +384,11 @@ async function recordCurrentStepConversationMessage(runtime, session = {}, input
   }
   if (inputSource === "codex") {
     return runtime.store.writeConversationAssistantMessage(session.sessionId, {
+      text
+    });
+  }
+  if (inputSource === "ui") {
+    return runtime.store.writeConversationUserMessage(session.sessionId, {
       text
     });
   }

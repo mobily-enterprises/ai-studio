@@ -36,7 +36,7 @@ const STEP_INPUT_KIND = Object.freeze({
 const LET_CODEX_DECIDE_INPUT = Object.freeze({
   id: "let_codex_decide",
   label: "Let Codex decide",
-  message: "Proceed with reasonable assumptions. I do not need to answer these questions."
+  message: "You decide."
 });
 
 function machineState(status, details = {}) {
@@ -361,7 +361,7 @@ function promptStepDoneView(context = {}, machine = {}, state = {}) {
 function promptStepWaitingForInputView(context = {}, machine = {}, state = {}, options = {}) {
   return {
     interaction: promptWaitingForInputInteraction({
-      actionId: normalizeText(options.actionId || machine.promptActionId),
+      actionId: normalizeText(options.actionId || state.promptActionId || machine.promptActionId),
       prompt: options.prompt || state.message || "Codex needs more information before this step can continue.",
       skipInput: options.skipInput,
       title: options.title || "Talk to Codex"

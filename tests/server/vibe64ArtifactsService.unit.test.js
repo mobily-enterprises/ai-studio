@@ -79,6 +79,9 @@ test("Vibe64 artifacts service saves semantic issue step input", async () => {
     });
     await runtime.createSession({
       initialStep: "issue_file_created",
+      metadata: {
+        github_issue_mode: "create"
+      },
       sessionId: "step_input_issue"
     });
 
@@ -88,6 +91,7 @@ test("Vibe64 artifacts service saves semantic issue step input", async () => {
 
     const saved = await service.submitCurrentStepInput("step_input_issue", {
       kind: "ready",
+      source: "ui",
       stepId: "issue_file_created",
       stepStatus: "ready",
       fields: {
@@ -107,8 +111,29 @@ test("Vibe64 artifacts service saves semantic issue step input", async () => {
     const updatedSession = await runtime.getSession("step_input_issue");
     assert.equal(updatedSession.sessionName, "Booking");
     assert.equal(updatedSession.stepMachine.status, "confirm_files");
-    assert.equal(updatedSession.next.enabled, true);
+    assert.equal(updatedSession.next.enabled, false);
     assert.equal(updatedSession.next.stepId, "plan_and_execute");
+    const conversationLog = await runtime.store.readConversationLog("step_input_issue");
+    assert.deepEqual(conversationLog.map((turn) => [
+      turn.user?.text || "",
+      turn.assistant?.text || ""
+    ]), [
+      [
+        [
+          "Saved issue draft.",
+          "",
+          "Issue title:",
+          "Add booking dashboard",
+          "",
+          "Session label:",
+          "Booking",
+          "",
+          "Issue body:",
+          "Create a booking dashboard."
+        ].join("\n"),
+        ""
+      ]
+    ]);
   });
 });
 
@@ -165,7 +190,16 @@ test("Vibe64 artifacts service saves semantic pull request step input", async ()
     ]), [
       [
         "Draft the pull request.",
-        "Pull request draft submitted for review."
+        [
+          "Proposed pull request draft.",
+          "",
+          "Title:",
+          "Add booking dashboard",
+          "",
+          "Body:",
+          "## Summary",
+          "Create the booking dashboard."
+        ].join("\n")
       ]
     ]);
   });
@@ -256,7 +290,18 @@ test("Vibe64 artifacts service closes structured Codex helper turns in the conve
     ]), [
       [
         "Create a file called P.txt in the project root.",
-        "Issue draft submitted for review."
+        [
+          "Proposed work description.",
+          "",
+          "Work title:",
+          "Create lowercase p.txt",
+          "",
+          "Session label:",
+          "p",
+          "",
+          "Work description:",
+          "Create an empty file named p.txt in the project root."
+        ].join("\n")
       ]
     ]);
   });

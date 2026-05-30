@@ -33,9 +33,6 @@ import {
   prepareCurrentStepInputHelper
 } from "@local/vibe64-runtime/server/currentStepInputHelperServer";
 import {
-  STEP_STATUS
-} from "@local/vibe64-runtime/server/workflowStepMachines";
-import {
   promptSessionBriefing
 } from "@local/vibe64-adapters/server/promptRenderer";
 import {
@@ -107,7 +104,6 @@ const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const CODEX_BOOTSTRAP_TASK_ID = "codex_bootstrap";
 const START_CODEX_TERMINAL_CONTROL_ACTION = "start_codex_terminal";
-const CONTINUE_CODEX_TURN_PROMPT = "Continue work";
 const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 const GLOBAL_CODEX_TERMINAL_SCOPE = "global";
@@ -128,31 +124,6 @@ function retryableTerminalFailure(result = {}) {
   return {
     ...result,
     retryable: false
-  };
-}
-
-function codexContinueTurnRejected(session = {}) {
-  const status = normalizeText(session.stepMachine?.status);
-  if (status === STEP_STATUS.AWAITING_AGENT_RESULT) {
-    return null;
-  }
-  return {
-    ok: false,
-    retryable: false,
-    stepMachineStatus: status,
-    error: "Codex can only be continued while the current step is waiting for Codex."
-  };
-}
-
-async function readCodexContinueTurnSession(runtime, sessionId) {
-  const session = await runtime.getSession(sessionId);
-  const rejection = codexContinueTurnRejected(session);
-  if (rejection) {
-    return rejection;
-  }
-  return {
-    ok: true,
-    session
   };
 }
 
@@ -386,7 +357,7 @@ function codexTurnLabel(reason = "") {
     case "codex-prompt-injection-started":
       return "Sending prompt to Codex...";
     default:
-      return "Terminal is transmitting...";
+      return "Codex is thinking...";
   }
 }
 
@@ -1508,83 +1479,6 @@ function createCodexTerminalController({
     };
   }
 
-  async function continueCodexTurn(sessionId) {
-    const normalizedSessionId = normalizeText(sessionId);
-    if (!normalizedSessionId) {
-      return {
-        ok: false,
-        error: "Vibe64 session ID is required."
-      };
-    }
-
-    const runtime = await projectService.createRuntime();
-    let sessionResult = await readCodexContinueTurnSession(runtime, normalizedSessionId);
-    if (sessionResult.ok === false) {
-      return sessionResult;
-    }
-
-    const bootstrap = await ensureCodexThreadReady(normalizedSessionId);
-    if (bootstrap.ok === false) {
-      return bootstrap;
-    }
-
-    sessionResult = await readCodexContinueTurnSession(runtime, normalizedSessionId);
-    if (sessionResult.ok === false) {
-      return sessionResult;
-    }
-
-    const session = sessionResult.session;
-    const terminalSessionId = bootstrap.terminalSessionId || bootstrap.id || activeCodexTerminal(session)?.id || "";
-    if (!terminalSessionId) {
-      return {
-        ok: false,
-        error: "Codex terminal is not running."
-      };
-    }
-
-    const signature = codexPromptHandoffSignature(normalizedSessionId);
-    const turnMetadataResult = await markCodexTerminalTransmitting(
-      normalizedSessionId,
-      terminalSessionId,
-      signature,
-      "codex-turn-continue-started"
-    );
-    if (turnMetadataResult.ok === false) {
-      return turnMetadataResult;
-    }
-
-    const ready = await waitForCodexReady(normalizedSessionId, terminalSessionId);
-    if (ready.ok === false) {
-      await markCodexTerminalIdle(normalizedSessionId, terminalSessionId, "codex-turn-continue-failed");
-      return ready;
-    }
-
-    sessionResult = await readCodexContinueTurnSession(runtime, normalizedSessionId);
-    if (sessionResult.ok === false) {
-      await markCodexTerminalIdle(normalizedSessionId, terminalSessionId, "codex-turn-continue-rejected");
-      return sessionResult;
-    }
-
-    const injected = await writePromptIntoCodexTerminal(
-      normalizedSessionId,
-      terminalSessionId,
-      CONTINUE_CODEX_TURN_PROMPT
-    );
-    if (injected.ok === false) {
-      await markCodexTerminalIdle(normalizedSessionId, terminalSessionId, "codex-turn-continue-failed");
-      return injected;
-    }
-
-    await publishPromptInjected(normalizedSessionId, {
-      reason: "codex-turn-continue-injected"
-    });
-    return {
-      ...withCodexState(injected, sessionResult.session),
-      codexContinueInjected: true,
-      terminalSessionId
-    };
-  }
-
   return Object.freeze({
     closeGlobalTerminal(terminalSessionId) {
       return closeTerminalSession(terminalSessionId, {
@@ -1669,12 +1563,6 @@ function createCodexTerminalController({
           fixJob: fixJobStore.reportJob(jobId, input),
           ok: true
         };
-      });
-    },
-
-    async continueTurn(sessionId) {
-      return vibe64Result(async () => {
-        return continueCodexTurn(sessionId);
       });
     },
 

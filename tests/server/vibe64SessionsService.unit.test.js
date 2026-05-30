@@ -12,10 +12,6 @@ import {
 import {
   _testing as coreMaintenanceTesting
 } from "@local/vibe64-runtime/server/workflowModules/coreMaintenance";
-import {
-  VIBE64_CLIENT_CONTROL_ACTIONS
-} from "@local/vibe64-core/shared";
-
 const maintenanceWorkflowDefinitionIds = coreMaintenanceTesting.workflowDefinitionIds;
 
 function readySetupServices() {
@@ -48,12 +44,8 @@ function oldTerminalActivity() {
   };
 }
 
-function staleIso(ms = 60_000) {
-  return new Date(Date.now() - ms).toISOString();
-}
-
 function assertCodexPreviewVisible(presentation = {}, terminalSessionId = "") {
-  assert.equal(presentation.label, "Terminal is transmitting...");
+  assert.equal(presentation.label, "Codex is thinking...");
   assert.equal(presentation.readOnlyInAutopilot, true);
   assert.equal(presentation.renderer, "codex_terminal");
   assert.equal(presentation.terminalSessionId, terminalSessionId);
@@ -353,6 +345,70 @@ test("session service records conversation prompts from the action result contra
   ]);
 });
 
+test("session service records workflow audit messages from action results", async () => {
+  const conversationLog = [];
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return {
+              revision: conversationLog.length + 1,
+              sessionId,
+              status: VIBE64_SESSION_STATUS.ACTIVE
+            };
+          },
+          async runAction(sessionId, actionId) {
+            return {
+              actionResult: {
+                actionId,
+                auditMessage: "Pull request draft accepted; creating GitHub pull request.",
+                status: "completed"
+              },
+              sessionId,
+              status: VIBE64_SESSION_STATUS.ACTIVE
+            };
+          },
+          store: {
+            async readConversationLog() {
+              return conversationLog;
+            },
+            async writeConversationUserMessage(_sessionId, { text }) {
+              const turn = {
+                assistant: null,
+                messages: [
+                  {
+                    at: "2026-05-25T01:02:03.000Z",
+                    role: "user",
+                    text
+                  }
+                ],
+                turnId: "000001",
+                user: {
+                  at: "2026-05-25T01:02:03.000Z",
+                  role: "user",
+                  text
+                }
+              };
+              conversationLog.push(turn);
+              return turn;
+            }
+          }
+        };
+      }
+    },
+    setupServices: readySetupServices()
+  });
+
+  await service.runSessionAction("session-1", "create_pr_on_gh");
+  const read = await service.readSessionConversationLog("session-1");
+
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.conversationLog.map((turn) => turn.user.text), [
+    "Pull request draft accepted; creating GitHub pull request."
+  ]);
+});
+
 test("session prompt action fails visibly when server-side Codex delivery fails", async () => {
   const service = createService({
     projectService: {
@@ -584,7 +640,7 @@ test("session presentation ignores Codex output activity for terminal preview vi
   });
 });
 
-test("session presentation ignores stale Codex turn metadata for terminal preview visibility", async () => {
+test("session presentation ignores old terminal input for terminal preview visibility", async () => {
   const service = createService({
     projectService: {
       async createRuntime() {
@@ -607,9 +663,9 @@ test("session presentation ignores stale Codex turn metadata for terminal previe
       async codexTerminalState(sessionId) {
         return {
           codexTerminal: {
-            activityLabel: "Terminal is transmitting...",
+            activityLabel: "Codex is thinking...",
             commandPreview: "codex",
-            id: "codex-terminal-stale",
+            id: "codex-terminal-old-input",
             ...oldTerminalActivity(),
             status: "running",
             transmitting: true
@@ -628,92 +684,10 @@ test("session presentation ignores stale Codex turn metadata for terminal previe
     label: "",
     readOnlyInAutopilot: true,
     renderer: "codex_terminal",
-    terminalSessionId: "codex-terminal-stale",
+    terminalSessionId: "codex-terminal-old-input",
     visible: false,
-    visibleUntil: new Date(Date.parse(session.codexTerminal.lastInputAt) + 2500).toISOString()
+    visibleUntil: ""
   });
-});
-
-test("session presentation offers Codex continuation when an awaiting turn is stale", async () => {
-  const service = createService({
-    projectService: {
-      async createRuntime() {
-        return {
-          async getSession(sessionId) {
-            return {
-              presentation: {
-                auto: {
-                  nextOperation: {
-                    executable: false,
-                    kind: "wait",
-                    reason: "codex"
-                  }
-                },
-                intents: [],
-                screen: {
-                  icon: "progress",
-                  kind: "codex_running",
-                  message: "Wait for Codex to finish the current step.",
-                  sections: [],
-                  showProgress: true,
-                  title: "Terminal is transmitting..."
-                }
-              },
-              sessionId,
-              status: VIBE64_SESSION_STATUS.ACTIVE,
-              stepMachine: {
-                at: staleIso(),
-                status: "awaiting_agent_result",
-                stepId: "plan_and_execute"
-              }
-            };
-          }
-        };
-      }
-    },
-    terminalService: {
-      async codexTerminalState(sessionId) {
-        return {
-          codexTerminal: {
-            commandPreview: "codex",
-            id: "codex-terminal-stale-wait",
-            lastInputAt: staleIso(),
-            lastInputBytes: 9,
-            status: "running",
-            transmitting: false
-          },
-          ok: true,
-          sessionId
-        };
-      }
-    }
-  });
-
-  const session = await service.inspectSession("session-1");
-
-  assert.equal(session.presentation.screen.kind, "codex_attention");
-  assert.equal(session.presentation.screen.showProgress, false);
-  assert.equal(session.presentation.screen.title, "Codex needs attention");
-  const expectedIntents = [
-    {
-      actionId: "",
-      control: {
-        action: VIBE64_CLIENT_CONTROL_ACTIONS.CONTINUE_CODEX_TURN,
-        disabledWhen: [],
-        icon: "",
-        loadingWhen: []
-      },
-      disabledReason: "",
-      enabled: true,
-      id: "continue_codex_turn",
-      inputFields: [],
-      label: "Ask Codex to continue",
-      style: "primary"
-    }
-  ];
-  assert.deepEqual(session.intents, expectedIntents);
-  assert.deepEqual(session.presentation.intents, expectedIntents);
-  assert.equal(session.presentation.refreshAt, "");
 });
 
 test("session presentation keeps a fresh awaiting Codex turn in waiting state", async () => {
@@ -731,7 +705,7 @@ test("session presentation keeps a fresh awaiting Codex turn in waiting state", 
                   kind: "codex_running",
                   sections: [],
                   showProgress: true,
-                  title: "Terminal is transmitting..."
+                  title: "Codex is thinking..."
                 }
               },
               sessionId,
@@ -769,204 +743,12 @@ test("session presentation keeps a fresh awaiting Codex turn in waiting state", 
 
   assert.equal(session.presentation.screen.kind, "codex_running");
   assert.equal(session.presentation.screen.showProgress, true);
-  assert.equal(session.presentation.screen.title, "Terminal is transmitting...");
+  assert.equal(session.presentation.screen.title, "Codex is thinking...");
   assert.deepEqual(session.presentation.intents, []);
-  assert.ok(Date.parse(session.presentation.refreshAt));
-  assert.equal(session.presentation.refreshReason, "codex_wait");
-  assert.equal(session.presentation.terminal.codex.label, "Waiting for Codex...");
+  assert.equal(session.presentation.terminal.codex.label, "Codex is thinking...");
   assert.equal(session.presentation.terminal.codex.terminalSessionId, "codex-terminal-fresh-wait");
   assert.equal(session.presentation.terminal.codex.visible, true);
   assert.ok(Date.parse(session.presentation.terminal.codex.visibleUntil));
-});
-
-test("session presentation does not treat stale manual terminal input as Codex progress", async () => {
-  const stepStartedAt = staleIso();
-  const service = createService({
-    projectService: {
-      async createRuntime() {
-        return {
-          async getSession(sessionId) {
-            return {
-              metadata: {
-                codex_prompt_handoff_signature: `${sessionId}:${Date.now() - 120_000}`
-              },
-              presentation: {
-                intents: [],
-                screen: {
-                  icon: "progress",
-                  kind: "codex_running",
-                  sections: [],
-                  showProgress: true,
-                  title: "Terminal is transmitting..."
-                }
-              },
-              sessionId,
-              status: VIBE64_SESSION_STATUS.ACTIVE,
-              stepMachine: {
-                at: stepStartedAt,
-                status: "awaiting_agent_result",
-                stepId: "plan_and_execute"
-              }
-            };
-          }
-        };
-      }
-    },
-    terminalService: {
-      async codexTerminalState(sessionId) {
-        return {
-          codexTerminal: {
-            activityStartedAt: staleIso(120_000),
-            commandPreview: "codex",
-            id: "codex-terminal-manual-input",
-            lastInputAt: staleIso(10_000),
-            lastInputBytes: 1,
-            status: "running",
-            transmitting: true
-          },
-          ok: true,
-          sessionId
-        };
-      }
-    }
-  });
-
-  const session = await service.inspectSession("session-1");
-
-  assert.equal(session.presentation.screen.kind, "codex_attention");
-  assert.equal(session.presentation.screen.showProgress, false);
-  assert.equal(session.presentation.intents[0].id, "continue_codex_turn");
-  assert.equal(session.presentation.intents[0].label, "Ask Codex to continue");
-  assert.equal(session.presentation.refreshAt, "");
-});
-
-test("session presentation keeps a stale Codex wait running while current-turn output is fresh", async () => {
-  const stepStartedAt = staleIso();
-  const service = createService({
-    projectService: {
-      async createRuntime() {
-        return {
-          async getSession(sessionId) {
-            return {
-              metadata: {
-                codex_prompt_handoff_signature: `${sessionId}:${Date.now() - 120_000}`
-              },
-              presentation: {
-                intents: [],
-                screen: {
-                  icon: "progress",
-                  kind: "codex_running",
-                  sections: [],
-                  showProgress: true,
-                  title: "Terminal is transmitting..."
-                }
-              },
-              sessionId,
-              status: VIBE64_SESSION_STATUS.ACTIVE,
-              stepMachine: {
-                at: stepStartedAt,
-                status: "awaiting_agent_result",
-                stepId: "plan_and_execute"
-              }
-            };
-          }
-        };
-      }
-    },
-    terminalService: {
-      async codexTerminalState(sessionId) {
-        return {
-          codexTerminal: {
-            activityStartedAt: staleIso(120_000),
-            commandPreview: "codex",
-            id: "codex-terminal-output-after-stale",
-            lastOutputAt: new Date().toISOString(),
-            lastOutputBytes: 512,
-            status: "running",
-            transmitting: true
-          },
-          ok: true,
-          sessionId
-        };
-      }
-    }
-  });
-
-  const session = await service.inspectSession("session-1");
-
-  assert.equal(session.presentation.screen.kind, "codex_running");
-  assert.equal(session.presentation.screen.showProgress, true);
-  assert.equal(session.presentation.screen.title, "Waiting for Codex...");
-  assert.deepEqual(session.presentation.intents, []);
-  assert.ok(Date.parse(session.presentation.refreshAt));
-  assert.equal(session.presentation.refreshReason, "codex_wait");
-  assert.equal(session.presentation.terminal.codex.label, "Waiting for Codex...");
-  assert.equal(session.presentation.terminal.codex.terminalSessionId, "codex-terminal-output-after-stale");
-  assert.equal(session.presentation.terminal.codex.visible, true);
-  assert.ok(Date.parse(session.presentation.terminal.codex.visibleUntil));
-});
-
-test("session presentation offers Codex continuation when current-turn output is stale", async () => {
-  const stepStartedAt = staleIso();
-  const service = createService({
-    projectService: {
-      async createRuntime() {
-        return {
-          async getSession(sessionId) {
-            return {
-              metadata: {
-                codex_prompt_handoff_signature: `${sessionId}:${Date.now() - 120_000}`
-              },
-              presentation: {
-                intents: [],
-                screen: {
-                  icon: "progress",
-                  kind: "codex_running",
-                  sections: [],
-                  showProgress: true,
-                  title: "Terminal is transmitting..."
-                }
-              },
-              sessionId,
-              status: VIBE64_SESSION_STATUS.ACTIVE,
-              stepMachine: {
-                at: stepStartedAt,
-                status: "awaiting_agent_result",
-                stepId: "plan_and_execute"
-              }
-            };
-          }
-        };
-      }
-    },
-    terminalService: {
-      async codexTerminalState(sessionId) {
-        return {
-          codexTerminal: {
-            activityStartedAt: staleIso(120_000),
-            commandPreview: "codex",
-            id: "codex-terminal-output-stale",
-            lastOutputAt: staleIso(45_000),
-            lastOutputBytes: 512,
-            status: "running",
-            transmitting: true
-          },
-          ok: true,
-          sessionId
-        };
-      }
-    }
-  });
-
-  const session = await service.inspectSession("session-1");
-
-  assert.equal(session.presentation.screen.kind, "codex_attention");
-  assert.equal(session.presentation.screen.showProgress, false);
-  assert.equal(session.presentation.intents[0].label, "Ask Codex to continue");
-  assert.equal(session.presentation.refreshAt, "");
-  assert.equal(session.presentation.terminal.codex.terminalSessionId, "codex-terminal-output-stale");
-  assert.equal(session.presentation.terminal.codex.visible, false);
-  assert.equal(session.presentation.terminal.codex.visibleUntil, "");
 });
 
 test("session creation waits for an unsynced merged session", async () => {

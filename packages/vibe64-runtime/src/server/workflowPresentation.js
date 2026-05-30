@@ -156,6 +156,7 @@ function inputPresentation(input = {}, {
 
 function intent(id, {
   actionId = "",
+  auditMessage = "",
   disabledReason = "",
   enabled = true,
   control = null,
@@ -170,9 +171,11 @@ function intent(id, {
   const controlPresentation = isPlainObject(control) ? normalizeControlPresentation(control) : null;
   const intentInputPresentation = isPlainObject(input) ? input : null;
   const intentSubmitFields = isPlainObject(submitFields) ? submitFields : null;
+  const normalizedAuditMessage = normalizeText(auditMessage);
   const normalizedOperation = normalizeText(operation);
   return {
     actionId: normalizeText(actionId),
+    ...(normalizedAuditMessage ? { auditMessage: normalizedAuditMessage } : {}),
     ...(controlPresentation ? { control: controlPresentation } : {}),
     disabledReason: enabled ? "" : normalizeText(disabledReason || "This action is not available right now."),
     enabled: enabled === true,
@@ -246,11 +249,13 @@ function intentForAction(id, action = {}, options = {}) {
 }
 
 function continueIntent(session = {}, {
+  auditMessage = "",
   id = INTENT_IDS.CONTINUE_STEP,
   label = "",
   saveCurrentStepInputBeforeRun = false
 } = {}) {
   return intent(normalizeText(id) || INTENT_IDS.CONTINUE_STEP, {
+    auditMessage,
     disabledReason: session.next?.disabledReason || "",
     enabled: nextIsReady(session),
     label: label || session.next?.label || "Continue",
@@ -347,6 +352,7 @@ function intentFromConfig(session = {}, config = {}) {
   }
   if (normalizeText(config.type) === "continue") {
     return continueIntent(session, {
+      auditMessage: config.auditMessage,
       id,
       label: config.label,
       saveCurrentStepInputBeforeRun: config.saveCurrentStepInputBeforeRun === true
@@ -355,6 +361,7 @@ function intentFromConfig(session = {}, config = {}) {
   if (normalizeText(config.type) === "reject") {
     const enabled = Boolean(rejectTargetStepId(session));
     return intent(id, {
+      auditMessage: config.auditMessage,
       disabledReason: enabled ? "" : "This workflow does not define a rejection target for the current step.",
       enabled,
       inputFields: config.inputFields,
@@ -367,6 +374,7 @@ function intentFromConfig(session = {}, config = {}) {
     const stage = stageAction(session);
     const action = actionById(session, config.actionId || stage?.actionId || "");
     return intentForAction(id, action, {
+      auditMessage: config.auditMessage,
       disabledReason: config.disabledReason || "",
       inputFields: config.inputFields,
       label: config.label || "",
@@ -378,6 +386,7 @@ function intentFromConfig(session = {}, config = {}) {
   const enabled = configuredIntentEnabled(session, config);
   return intent(id, {
     actionId: config.actionId || "",
+    auditMessage: config.auditMessage,
     control: config.control,
     disabledReason: action?.disabledReason || configuredIntentDisabledReason(session, config, enabled),
     enabled: action ? action.enabled === true && enabled : enabled,
@@ -482,7 +491,10 @@ function conversationSkipIntent(interaction = {}, action = {}) {
   if (!skipInput || !message) {
     return null;
   }
-  return intentForAction(skipInput.id || "let_codex_decide", action, {
+  return intent(skipInput.id || "let_codex_decide", {
+    actionId: action?.id || "",
+    disabledReason: action?.disabledReason || "",
+    enabled: action?.enabled === true,
     label: skipInput.label || "Let Codex decide",
     style: skipInput.style || "secondary",
     submitFields: {
@@ -568,7 +580,7 @@ function waitingPresentation(session = {}) {
       icon: "progress",
       message: "Wait for Codex to finish the current step.",
       showProgress: true,
-      title: "Terminal is transmitting..."
+      title: "Codex is thinking..."
     })
   };
 }
@@ -865,7 +877,7 @@ function promptPresentation(session = {}) {
     case STEP_STATUS.ATTEMPTING_EXECUTION:
       return {
         state: "waiting_for_agent",
-        statusText: "Waiting for Codex."
+        statusText: "Codex is thinking."
       };
     case STEP_STATUS.CONFIRM_FILES:
     case STEP_STATUS.WAITING_FOR_INPUT:
@@ -1341,6 +1353,20 @@ async function runBuiltinWorkflowIntent(runtime, session = {}, selectedIntent = 
   );
 }
 
+async function withIntentAuditMessage(runtime, session = {}, selectedIntent = {}, resultSession = {}) {
+  const auditMessage = normalizeText(selectedIntent.auditMessage);
+  if (!auditMessage || typeof runtime?.store?.writeConversationUserMessage !== "function") {
+    return resultSession;
+  }
+  await runtime.store.writeConversationUserMessage(session.sessionId, {
+    text: auditMessage
+  });
+  return {
+    ...await runtime.getSession(session.sessionId),
+    ...(resultSession?.actionResult ? { actionResult: resultSession.actionResult } : {})
+  };
+}
+
 async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input = {}) {
   const session = await runtime.getSession(sessionId);
   const normalizedIntentId = normalizeText(intentId);
@@ -1366,16 +1392,14 @@ async function runWorkflowIntent(runtime, sessionId = "", intentId = "", input =
     ...intentFields(input)
   };
   const handledSession = await runWorkflowIntentHandler(runtime, session, selectedIntent, fields);
-  if (handledSession) {
-    return handledSession;
-  }
-  return runBuiltinWorkflowIntent(
+  const resultSession = handledSession || await runBuiltinWorkflowIntent(
     runtime,
     session,
     selectedIntent,
     intentConfig,
     fields
   );
+  return withIntentAuditMessage(runtime, session, selectedIntent, resultSession);
 }
 
 export {
