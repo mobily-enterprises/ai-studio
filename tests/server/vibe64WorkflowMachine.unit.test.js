@@ -1190,10 +1190,7 @@ test("vibe64 runtime exposes and runs the server-owned conversation intent", asy
     await writeFile(
       path.join(promptPackRoot, "agent_conversation.txt"),
       [
-        "Agent conversation",
-        "",
-        "Action input:",
-        "{{input.json}}"
+        "Agent conversation"
       ].join("\n"),
       "utf8"
     );
@@ -2276,7 +2273,12 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
     });
     await runtime.createSession({
       initialStep: "plan_and_execute",
-      metadata: worktreeMetadata(targetRoot, "prompt_action"),
+      metadata: {
+        ...worktreeMetadata(targetRoot, "prompt_action"),
+        codex_prompt_handoff_signature: "hidden",
+        dependencies_path: path.join(targetRoot, "prompt_action", "node_modules"),
+        github_issue_mode: "skip"
+      },
       sessionId: "prompt_action"
     });
 
@@ -2288,8 +2290,15 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
     assert.deepEqual(afterAction.completedSteps, []);
     assert.equal(afterAction.actionResult.status, "prompt_ready");
     assert.equal(afterAction.actionResult.promptId, "make_plan");
+    assert.match(afterAction.actionResult.prompt, /Vibe64 workflow context:/u);
+    assert.match(afterAction.actionResult.prompt, /- worktree path: /u);
+    assert.match(afterAction.actionResult.prompt, /Relevant workflow facts:\n(?:- .+\n)*- github_issue_mode: skip/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /codex_prompt_handoff_signature/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /dependencies_path/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /worktree_path:/u);
+    assert.match(afterAction.actionResult.prompt, /User\/request input:\n- scope: unit test/u);
     assert.match(afterAction.actionResult.prompt, /Run the Vibe64 prompt action: Make a plan/u);
-    assert.match(afterAction.actionResult.prompt, /"scope": "unit test"/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /"scope": "unit test"/u);
     assert.match(afterAction.actionResult.prompt, /Vibe64 step completion contract:/u);
     assert.match(afterAction.actionResult.prompt, /"kind": "ready"/u);
     assert.match(afterAction.actionResult.prompt, /"stepStatus": "awaiting_agent_result"/u);
@@ -2298,7 +2307,7 @@ test("vibe64 runtime prompt actions render Codex handoff data without advancing"
     assert.equal(afterAction.actionResult.codexPromptHandoff.kind, "codex_prompt_handoff");
     assert.equal(afterAction.actionResult.codexPromptHandoff.codex.mode, "inject_prompt");
     assert.equal(afterAction.actionResult.codexPromptHandoff.prompt, afterAction.actionResult.prompt);
-    assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /Make a plan/u);
+    assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /^Make a plan\n\n\[\[VIBE64_CONTEXT_START\]\]/u);
     assert.match(afterAction.actionResult.codexPromptHandoff.terminalInput, /\[\[VIBE64_CONTEXT_START\]\]/u);
     const runningPromptAction = afterAction.actions.find((action) => action.id === "make_plan");
     assert.equal(runningPromptAction?.enabled, false);
@@ -2983,10 +2992,7 @@ test("vibe64 runtime prompt handoff shows the action input outside hidden termin
     await writeFile(
       path.join(promptPackRoot, "agent_conversation.txt"),
       [
-        "Agent conversation",
-        "",
-        "Action input:",
-        "{{input.json}}"
+        "Agent conversation"
       ].join("\n"),
       "utf8"
     );
@@ -3016,7 +3022,8 @@ test("vibe64 runtime prompt handoff shows the action input outside hidden termin
       afterAction.actionResult.codexPromptHandoff.terminalInput,
       /^Explain this codebase\.\n\n\[\[VIBE64_CONTEXT_START\]\]/u
     );
-    assert.match(afterAction.actionResult.codexPromptHandoff.prompt, /"conversationRequest": "Explain this codebase\."/u);
+    assert.match(afterAction.actionResult.codexPromptHandoff.prompt, /User\/request input:\n- conversationRequest: Explain this codebase\./u);
+    assert.doesNotMatch(afterAction.actionResult.codexPromptHandoff.prompt, /"conversationRequest": "Explain this codebase\."/u);
     assert.equal((await runtime.getSession("agent_prompt_visible_input")).currentStep, "maintenance_conversation");
   });
 });
@@ -3286,7 +3293,8 @@ test("vibe64 runtime sends static adapter context once and references it later",
 
     const firstPrompt = await runtime.runAction("session_briefing_once", "make_plan");
     assert.match(firstPrompt.actionResult.prompt, /Vibe64 session briefing/u);
-    assert.match(firstPrompt.actionResult.prompt, /Large static project summary/u);
+    assert.doesNotMatch(firstPrompt.actionResult.prompt, /Large static project summary/u);
+    assert.match(firstPrompt.actionResult.prompt, /Adapter project facts are runtime-only Studio metadata/u);
     assert.match(firstPrompt.actionResult.prompt, /Large static environment blueprint/u);
     assert.match(firstPrompt.actionResult.prompt, /large-static-config/u);
 

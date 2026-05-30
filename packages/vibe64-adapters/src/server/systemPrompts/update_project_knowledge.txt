@@ -2,21 +2,4 @@ Update project knowledge
 
 Vibe64 standard project-knowledge instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
 Update the project knowledge artifact referenced by the adapter prompt context. Preserve useful existing information, remove stale claims, and keep the result concise enough to maintain. If the adapter does not provide a project knowledge location, report that clearly instead of inventing one.

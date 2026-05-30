@@ -2,33 +2,15 @@ Make a plan
 
 Vibe64 standard planning instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-- artifacts root: {{session.artifactsRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
 Work anchor source of truth:
-- If the saved work artifacts exist, read them before planning:
-  - `{{session.artifactsRoot}}/issue_title`
-  - `{{session.artifactsRoot}}/issue.md`
-  - `{{session.artifactsRoot}}/issue_word`
+- If the saved work artifacts exist, read them from the artifacts root listed in Vibe64 workflow context before planning:
+  - `issue_title`
+  - `issue.md`
+  - `issue_word`
 - Treat those artifacts as the work title, work description, and Vibe64 session word for this plan.
 - When `github_issue_mode` is `create` or `reuse`, the work artifacts describe the GitHub issue context. Use `issue_url` and `issue_number` metadata only as references. Do not call GitHub to rediscover the issue content unless the artifacts are missing or empty.
-- When `github_issue_mode` is `skip`, do not require or create a GitHub issue before planning. Plan from the saved work artifacts, the current Codex conversation, Action input, adapter facts, and project files.
+- When `github_issue_mode` is `skip`, do not require or create a GitHub issue before planning. Plan from the saved work artifacts, the current Codex conversation, User/request input, adapter facts, and project files.
 - If `work_source` is `existing_pr` and issue artifacts are absent, use the source PR metadata as the work anchor instead: `source_pr_url`, `source_pr_title`, `source_pr_head_ref`, and `source_pr_head_sha`.
-- For an existing PR work anchor, do not require or create an issue before planning. Plan from the PR context, the current Codex conversation, Action input, adapter facts, and project files.
+- For an existing PR work anchor, do not require or create an issue before planning. Plan from the PR context, the current Codex conversation, User/request input, adapter facts, and project files.
 
-Create a clear, ordered implementation plan as your normal Codex response. Use the work anchor, current Codex conversation, Action input, adapter facts, and project files as context. Do not modify files while creating the plan. Do not run shell commands just to display the plan.
+Create a clear, ordered implementation plan as your normal Codex response. Use the work anchor, current Codex conversation, User/request input, adapter facts, and project files as context. Do not modify files while creating the plan. Do not run shell commands just to display the plan.

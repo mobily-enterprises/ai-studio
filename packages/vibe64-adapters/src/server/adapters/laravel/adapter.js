@@ -234,24 +234,11 @@ async function laravelFacts({
   adapter = null,
   commands = [],
   composerJson = null,
-  config = {},
-  markers = [],
-  packageJson = null,
-  packageManager = {},
-  targetRoot = ""
+  markers = []
 } = {}) {
-  const promptContext = await laravelPromptContext({
-    composerJson,
-    config,
-    markers,
-    packageJson,
-    packageManager,
-    targetRoot
-  });
   return {
     capabilities: adapter?.workflowCapabilities() || {},
     commands,
-    promptContext,
     summary: setupSummary({
       composerJson,
       markers

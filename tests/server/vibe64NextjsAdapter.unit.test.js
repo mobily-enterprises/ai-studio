@@ -91,24 +91,28 @@ test("nextjs adapter exposes project facts, commands, and prompt context", async
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.equal(facts.summary, "Next.js project type selected.");
-    assert.equal(facts.promptContext.adapter, "nextjs");
-    assert.equal(facts.promptContext.package_name, "example-nextjs-app");
-    assert.equal(facts.promptContext.router_mode, "app");
-    assert.equal(facts.promptContext.package_manager, "npm");
-    assert.equal(facts.promptContext.database_runtime, "postgres");
-    assert.equal(facts.promptContext.data_layer, "prisma");
-    assert.match(facts.promptContext.data_layer_blueprint, /Data layer: Prisma/u);
-    assert.match(facts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
-    assert.match(facts.promptContext.environment_blueprint, /Data layer: Prisma/u);
-    assert.match(facts.promptContext.environment_blueprint, /Seed language: TypeScript/u);
-    assert.match(facts.promptContext.environment_blueprint, /Source layout: src\/app/u);
-    assert.match(facts.promptContext.environment_blueprint, /Styling: Tailwind CSS/u);
-    assert.equal(facts.promptContext.next_dependency, "true");
-    assert.equal(facts.promptContext.seed_language, "typescript");
-    assert.equal(facts.promptContext.seed_source_layout, "src");
-    assert.equal(facts.promptContext.valid_nextjs_markers, "true");
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.adapter, "nextjs");
+    assert.equal(promptContext.package_name, "example-nextjs-app");
+    assert.equal(promptContext.router_mode, "app");
+    assert.equal(promptContext.package_manager, "npm");
+    assert.equal(promptContext.database_runtime, "postgres");
+    assert.equal(promptContext.data_layer, "prisma");
+    assert.match(promptContext.data_layer_blueprint, /Data layer: Prisma/u);
+    assert.match(promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
+    assert.match(promptContext.environment_blueprint, /Data layer: Prisma/u);
+    assert.match(promptContext.environment_blueprint, /Seed language: TypeScript/u);
+    assert.match(promptContext.environment_blueprint, /Source layout: src\/app/u);
+    assert.match(promptContext.environment_blueprint, /Styling: Tailwind CSS/u);
+    assert.equal(promptContext.next_dependency, "true");
+    assert.equal(promptContext.seed_language, "typescript");
+    assert.equal(promptContext.seed_source_layout, "src");
+    assert.equal(promptContext.valid_nextjs_markers, "true");
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
     assert.equal(facts.capabilities.update_code_index, true);
@@ -128,7 +132,7 @@ test("nextjs adapter composes prompt blueprints from independent config choices"
     await createNextjsProject(targetRoot);
     const adapter = createNextjsTargetAdapter();
 
-    const mysqlPrismaFacts = await adapter.inspect({
+    const mysqlPrismaPromptContext = await adapter.getPromptContext({
       config: {
         values: {
           nextjs_data_layer: "prisma",
@@ -138,13 +142,13 @@ test("nextjs adapter composes prompt blueprints from independent config choices"
       targetRoot
     });
 
-    assert.equal(mysqlPrismaFacts.promptContext.database_runtime, "mysql");
-    assert.equal(mysqlPrismaFacts.promptContext.data_layer, "prisma");
-    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /Database runtime: MySQL/u);
-    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /Data layer: Prisma/u);
-    assert.match(mysqlPrismaFacts.promptContext.environment_blueprint, /provider as mysql/u);
+    assert.equal(mysqlPrismaPromptContext.database_runtime, "mysql");
+    assert.equal(mysqlPrismaPromptContext.data_layer, "prisma");
+    assert.match(mysqlPrismaPromptContext.environment_blueprint, /Database runtime: MySQL/u);
+    assert.match(mysqlPrismaPromptContext.environment_blueprint, /Data layer: Prisma/u);
+    assert.match(mysqlPrismaPromptContext.environment_blueprint, /provider as mysql/u);
 
-    const postgresDrizzleFacts = await adapter.inspect({
+    const postgresDrizzlePromptContext = await adapter.getPromptContext({
       config: {
         values: {
           nextjs_data_layer: "drizzle",
@@ -158,15 +162,15 @@ test("nextjs adapter composes prompt blueprints from independent config choices"
       targetRoot
     });
 
-    assert.equal(postgresDrizzleFacts.promptContext.database_runtime, "postgres");
-    assert.equal(postgresDrizzleFacts.promptContext.data_layer, "drizzle");
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Data layer: Drizzle/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /PostgreSQL dialect/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Bundler: Webpack/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Linter: Biome/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Source layout: root app/u);
-    assert.match(postgresDrizzleFacts.promptContext.environment_blueprint, /Styling: none/u);
+    assert.equal(postgresDrizzlePromptContext.database_runtime, "postgres");
+    assert.equal(postgresDrizzlePromptContext.data_layer, "drizzle");
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Data layer: Drizzle/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /PostgreSQL dialect/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Bundler: Webpack/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Linter: Biome/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Source layout: root app/u);
+    assert.match(postgresDrizzlePromptContext.environment_blueprint, /Styling: none/u);
   });
 });
 

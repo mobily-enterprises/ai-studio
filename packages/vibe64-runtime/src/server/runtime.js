@@ -9,12 +9,16 @@ import {
   adapterView
 } from "@local/vibe64-adapters/server/adapter";
 import {
+  isPlainObject,
   vibe64Error,
   normalizeText
 } from "@local/vibe64-core/server/core";
 import {
   promptSessionBriefing
 } from "@local/vibe64-adapters/server/promptRenderer";
+import {
+  missingInformationPolicyInstruction
+} from "@local/vibe64-adapters/server/promptQuestionPolicy";
 import {
   STUDIO_CONTEXT_END_MARKER,
   STUDIO_CONTEXT_START_MARKER,
@@ -298,6 +302,193 @@ function promptSessionWithStaticContextReferences(session = {}) {
   };
 }
 
+function sortedObjectEntries(value = {}) {
+  return Object.entries(isPlainObject(value) ? value : {})
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function promptContextScalarText(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return normalizeText(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
+}
+
+function promptContextScalarLines({
+  indent = "",
+  label = "",
+  value = undefined
+} = {}) {
+  const text = promptContextScalarText(value);
+  const normalizedLabel = normalizeText(label);
+  if (!text.includes("\n")) {
+    return [`${indent}- ${normalizedLabel ? `${normalizedLabel}: ` : ""}${text || "(empty)"}`];
+  }
+  return [
+    `${indent}- ${normalizedLabel ? `${normalizedLabel}:` : ""}`.trimEnd(),
+    ...text.split(/\r?\n/u).map((line) => `${indent}  ${line}`)
+  ];
+}
+
+function promptContextEntryLines({
+  indent = "",
+  label = "",
+  value = undefined
+} = {}) {
+  const normalizedLabel = normalizeText(label);
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      return [`${indent}- ${normalizedLabel ? `${normalizedLabel}: ` : ""}(none)`];
+    }
+    return [
+      `${indent}- ${normalizedLabel}:`,
+      ...value.flatMap((entry) => {
+        if (isPlainObject(entry) || Array.isArray(entry)) {
+          return promptContextValueLines(entry, `${indent}  `);
+        }
+        return promptContextScalarLines({
+          indent: `${indent}  `,
+          value: entry
+        });
+      })
+    ];
+  }
+  if (isPlainObject(value)) {
+    return [
+      `${indent}- ${normalizedLabel}:`,
+      ...promptContextValueLines(value, `${indent}  `)
+    ];
+  }
+  return promptContextScalarLines({
+    indent,
+    label: normalizedLabel,
+    value
+  });
+}
+
+function promptContextValueLines(value = {}, indent = "") {
+  const entries = sortedObjectEntries(value);
+  if (!entries.length) {
+    return [`${indent}- (none)`];
+  }
+  return entries.flatMap(([label, entryValue]) => promptContextEntryLines({
+    indent,
+    label,
+    value: entryValue
+  }));
+}
+
+function promptContextSection(title = "", value = {}) {
+  return [
+    `${title}:`,
+    ...promptContextValueLines(value)
+  ].join("\n");
+}
+
+const HIDDEN_WORKFLOW_METADATA_PREFIXES = Object.freeze([
+  "codex_",
+  "terminal_"
+]);
+
+const WORKFLOW_METADATA_CONTEXT_REPLACEMENTS = new Set([
+  "dependencies_path",
+  "worktree_path"
+]);
+
+function workflowMetadataIsPromptRelevant(name = "", value = undefined) {
+  const normalizedName = normalizeText(name);
+  if (!normalizedName) {
+    return false;
+  }
+  if (HIDDEN_WORKFLOW_METADATA_PREFIXES.some((prefix) => normalizedName.startsWith(prefix))) {
+    return false;
+  }
+  if (WORKFLOW_METADATA_CONTEXT_REPLACEMENTS.has(normalizedName)) {
+    return false;
+  }
+  if (typeof value === "string" && !normalizeText(value)) {
+    return false;
+  }
+  if (Array.isArray(value) && !value.length) {
+    return false;
+  }
+  if (isPlainObject(value) && !Object.keys(value).length) {
+    return false;
+  }
+  return value !== null && value !== undefined;
+}
+
+function promptWorkflowFacts(metadata = {}) {
+  return Object.fromEntries(
+    sortedObjectEntries(metadata)
+      .filter(([name, value]) => workflowMetadataIsPromptRelevant(name, value))
+  );
+}
+
+function workflowContextLine(label = "", value = "") {
+  const text = normalizeText(value);
+  return text ? `- ${label}: ${text}` : "";
+}
+
+function promptWorkflowContext({
+  action = {},
+  includeSessionPaths = true,
+  session = {}
+} = {}) {
+  const promptId = normalizeText(action.promptId || action.id);
+  return [
+    "Vibe64 workflow context:",
+    workflowContextLine("action", action.label || action.id),
+    workflowContextLine("action id", action.id),
+    workflowContextLine("prompt", promptId),
+    workflowContextLine("session id", session.sessionId || session.id),
+    workflowContextLine("current step", session.currentStep),
+    workflowContextLine("step status", session.stepMachine?.status),
+    workflowContextLine("session status", session.status),
+    ...(includeSessionPaths
+      ? [
+        workflowContextLine("target root", session.targetRoot),
+        workflowContextLine("worktree path", session.worktreePath || session.metadata?.worktree_path || session.worktree),
+        workflowContextLine("artifacts root", session.artifactsRoot)
+      ]
+      : [])
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function promptWithWorkflowContext({
+  action = {},
+  includeSessionPaths = true,
+  input = {},
+  prompt = "",
+  session = {}
+} = {}) {
+  return [
+    promptWorkflowContext({
+      action,
+      includeSessionPaths,
+      session
+    }),
+    promptContextSection("User/request input", input),
+    promptContextSection("Relevant workflow facts", promptWorkflowFacts(session.metadata)),
+    "Missing information policy:\n" + missingInformationPolicyInstruction(),
+    String(prompt || "").trim()
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function promptWithSessionBriefing({
   prompt = "",
   session = {},
@@ -356,21 +547,6 @@ function inputFieldEntries(action = {}, input = {}) {
     .filter((entry) => entry.name && entry.value);
 }
 
-function scalarInputEntries(input = {}) {
-  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-  return Object.keys(source)
-    .sort((left, right) => left.localeCompare(right))
-    .map((name) => [name, source[name]])
-    .map(([name, value]) => ({
-      label: normalizeText(name),
-      name: normalizeText(name),
-      value: typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-        ? normalizeText(value)
-        : ""
-    }))
-    .filter((entry) => entry.name && entry.value);
-}
-
 function inputObject(input = {}) {
   return input && typeof input === "object" && !Array.isArray(input) ? input : {};
 }
@@ -397,16 +573,20 @@ async function recordCurrentStepConversationMessage(runtime, session = {}, input
 
 function visiblePromptFromActionInput(action = {}, input = {}) {
   const entries = inputFieldEntries(action, input);
-  const visibleEntries = entries.length ? entries : scalarInputEntries(input);
-  if (!visibleEntries.length) {
+  if (!entries.length) {
     return "";
   }
-  if (visibleEntries.length === 1) {
-    return visibleEntries[0].value;
+  if (entries.length === 1) {
+    return entries[0].value;
   }
-  return visibleEntries
+  return entries
     .map((entry) => `${entry.label}:\n${entry.value}`)
     .join("\n\n");
+}
+
+function visiblePromptForPromptAction(action = {}, input = {}) {
+  return visiblePromptFromActionInput(action, input) ||
+    normalizeText(action.label || action.promptId || action.id);
 }
 
 class Vibe64SessionRuntime {
@@ -790,8 +970,15 @@ class Vibe64SessionRuntime {
       session: actionPromptSession,
       store: this.store
     });
-    const promptWithBriefing = promptWithSessionBriefing({
+    const promptWithActionContext = promptWithWorkflowContext({
+      action,
+      includeSessionPaths: !sessionBriefingIncluded,
+      input,
       prompt: renderedPrompt.prompt,
+      session: promptSession
+    });
+    const promptWithBriefing = promptWithSessionBriefing({
+      prompt: promptWithActionContext,
       session: promptSession,
       sessionBriefingIncluded
     });
@@ -805,7 +992,7 @@ class Vibe64SessionRuntime {
       codexPromptHandoff: buildCodexPromptHandoff({
         ...renderedPrompt,
         prompt,
-        visiblePrompt: visiblePromptFromActionInput(action, input)
+        visiblePrompt: visiblePromptForPromptAction(action, input)
       }),
       prompt,
       promptContext: renderedPrompt.context,

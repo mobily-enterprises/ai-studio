@@ -2,24 +2,7 @@ Prepare for merge
 
 Vibe64 standard merge-preparation instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
-Use the recorded PR URL from session metadata.
+Use the recorded PR URL from Relevant workflow facts.
 
 Treat "ready for merge" as both of these being true:
 - The GitHub pull request is mergeable.

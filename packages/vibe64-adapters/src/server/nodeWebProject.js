@@ -166,13 +166,11 @@ function nodeWebPromptContextBase({
 function nodeWebAdapterFacts({
   adapter = null,
   commands = [],
-  promptContext = {},
   summary = ""
 } = {}) {
   return adapterProjectFacts({
     capabilities: adapter?.workflowCapabilities() || {},
     commands,
-    promptContext,
     summary
   });
 }

@@ -87,31 +87,40 @@ test("jskit adapter exposes selected-project facts, commands, and prompt context
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.deepEqual(detection, {
       detected: true,
       reason: ""
     });
     assert.equal(facts.summary, "JSKIT project type selected.");
-    assert.equal(facts.promptContext.package_name, "example-jskit-app");
-    assert.equal(facts.promptContext.scripts, "build, test");
-    assert.equal(facts.promptContext.blueprint_exists, "true");
-    assert.equal(facts.promptContext.blueprint_relative_path, ".jskit/APP_BLUEPRINT.md");
-    assert.equal(facts.promptContext.blueprint_path, path.join(targetRoot, ".jskit/APP_BLUEPRINT.md"));
-    assert.match(facts.promptContext.agent_guide_contract, /guide\/agent\/index\.md/u);
-    assert.match(facts.promptContext.agent_guide_contract, /app-setup\/database-layer\.md/u);
-    assert.match(facts.promptContext.agent_guide_contract, /Use individual `npx jskit generate \.\.\. help` commands only/u);
-    assert.match(facts.promptContext.tooling_contract, /npx jskit helper-map update/u);
-    assert.match(facts.promptContext.tooling_contract, /New JSKIT-owned files must be created/u);
-    assert.match(facts.promptContext.tooling_contract, /Before writing generic helpers for JSON:API documents/u);
-    assert.match(facts.promptContext.tooling_contract, /search JSKIT package exports and agent-doc references first/u);
-    assert.match(facts.promptContext.generator_discovery_commands, /npx jskit list-placements --json/u);
-    assert.doesNotMatch(facts.promptContext.generator_discovery_commands, /generate .* help/u);
-    assert.match(facts.promptContext.placement_contract, /agent-friendly placement docs/u);
-    assert.match(facts.promptContext.placement_contract, /node_modules\/@jskit-ai\/agent-docs\/patterns\/placements\.md/u);
-    assert.match(facts.promptContext.database_contract, /Configured database runtime: none/u);
-    assert.match(facts.promptContext.environment_blueprint, /Use `npx jskit \.\.\.`/u);
-    assert.equal(facts.promptContext.valid_jskit_markers, "true");
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.package_name, "example-jskit-app");
+    assert.equal(promptContext.scripts, "build, test");
+    assert.equal(promptContext.blueprint_exists, "true");
+    assert.equal(promptContext.blueprint_relative_path, ".jskit/APP_BLUEPRINT.md");
+    assert.equal(promptContext.blueprint_path, path.join(targetRoot, ".jskit/APP_BLUEPRINT.md"));
+    assert.match(promptContext.agent_guide_contract, /guide\/agent\/index\.md/u);
+    assert.match(promptContext.agent_guide_contract, /app-setup\/database-layer\.md/u);
+    assert.match(promptContext.agent_guide_contract, /Use individual `npx jskit generate \.\.\. help` commands only/u);
+    assert.doesNotMatch(promptContext.tooling_contract, /helper-map update/u);
+    assert.doesNotMatch(promptContext.tooling_contract, /generated code index/u);
+    assert.doesNotMatch(promptContext.tooling_contract, /helper map/u);
+    assert.match(promptContext.tooling_contract, /New JSKIT-owned files must be created/u);
+    assert.match(promptContext.tooling_contract, /Before writing generic helpers for JSON:API documents/u);
+    assert.match(promptContext.tooling_contract, /search JSKIT package exports and agent-doc references first/u);
+    assert.match(promptContext.generator_discovery_commands, /npx jskit list-placements --json/u);
+    assert.doesNotMatch(promptContext.generator_discovery_commands, /helper-map update/u);
+    assert.doesNotMatch(promptContext.generator_discovery_commands, /helper-map --json/u);
+    assert.doesNotMatch(promptContext.generator_discovery_commands, /generate .* help/u);
+    assert.match(promptContext.placement_contract, /agent-friendly placement docs/u);
+    assert.match(promptContext.placement_contract, /node_modules\/@jskit-ai\/agent-docs\/patterns\/placements\.md/u);
+    assert.match(promptContext.database_contract, /Configured database runtime: none/u);
+    assert.equal(Object.hasOwn(promptContext, "environment_blueprint"), false);
+    assert.equal(Object.hasOwn(promptContext, "seed_issue_guidance"), false);
+    assert.equal(promptContext.valid_jskit_markers, "true");
     assert.deepEqual(Object.keys(facts.capabilities).sort(), capabilityIds());
     assert.equal(facts.capabilities.update_code_index, true);
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
@@ -123,24 +132,25 @@ test("jskit adapter reflects configured database runtime in prompt context", asy
     await createJskitProject(targetRoot);
     const adapter = createJskitTargetAdapter();
 
-    const facts = await adapter.inspect({
-      config: {
-        values: {
-          jskit_database_runtime: "mysql"
-        }
-      },
+    const mysqlConfig = {
+      values: {
+        jskit_database_runtime: "mysql"
+      }
+    };
+    const promptContext = await adapter.getPromptContext({
+      config: mysqlConfig,
       targetRoot
     });
 
-    assert.equal(facts.promptContext.database_runtime, "mysql");
-    assert.match(facts.promptContext.database_contract, /Configured database runtime: mysql/u);
-    assert.match(facts.promptContext.database_contract, /Never create migration files directly/u);
-    assert.match(facts.promptContext.database_contract, /Every table added for application data must have `npx jskit generate crud-server-generator scaffold \.\.\.` run for it/u);
-    assert.match(facts.promptContext.database_contract, /json-rest-api/u);
-    assert.match(facts.promptContext.database_contract, /not direct Knex queries/u);
-    assert.match(facts.promptContext.database_contract, /Do not store durable application data in JSON files/u);
+    assert.equal(promptContext.database_runtime, "mysql");
+    assert.match(promptContext.database_contract, /Configured database runtime: mysql/u);
+    assert.match(promptContext.database_contract, /Never create migration files directly/u);
+    assert.match(promptContext.database_contract, /Every table added for application data must have `npx jskit generate crud-server-generator scaffold \.\.\.` run for it/u);
+    assert.match(promptContext.database_contract, /json-rest-api/u);
+    assert.match(promptContext.database_contract, /not direct Knex queries/u);
+    assert.match(promptContext.database_contract, /Do not store durable application data in JSON files/u);
 
-    const invalidConfigFacts = await adapter.inspect({
+    const invalidPromptContext = await adapter.getPromptContext({
       config: {
         values: {
           jskit_database_runtime: "sqlite"
@@ -149,8 +159,17 @@ test("jskit adapter reflects configured database runtime in prompt context", asy
       targetRoot
     });
 
-    assert.equal(invalidConfigFacts.promptContext.database_runtime, "none");
-    assert.match(invalidConfigFacts.promptContext.seed_issue_guidance, /tenancy\/workspaces/u);
+    assert.equal(invalidPromptContext.database_runtime, "none");
+    assert.equal(Object.hasOwn(invalidPromptContext, "seed_issue_guidance"), false);
+
+    await withTemporaryRoot(async (unseededRoot) => {
+      const seedPromptContext = await adapter.getPromptContext({
+        targetRoot: unseededRoot
+      });
+
+      assert.equal(seedPromptContext.valid_jskit_markers, "false");
+      assert.match(seedPromptContext.seed_issue_guidance, /tenancy\/workspaces/u);
+    });
   });
 });
 
@@ -334,10 +353,13 @@ test("jskit adapter reports missing markers without pretending project type sele
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.equal(detection.detected, true);
     assert.match(facts.summary, /Missing markers/u);
-    assert.equal(facts.promptContext.valid_jskit_markers, "false");
+    assert.equal(promptContext.valid_jskit_markers, "false");
     assert.deepEqual(Object.keys(facts.capabilities).sort(), capabilityIds());
   });
 });
@@ -477,9 +499,8 @@ test("jskit execute-plan prompt requires generators, placements, and database mo
     assert.match(afterPrompt.actionResult.prompt, /<SQL>/u);
     assert.match(afterPrompt.actionResult.prompt, /VIBE64_MYSQL_USER/u);
     assert.match(afterPrompt.actionResult.prompt, /MYSQL_DATABASE/u);
-    assert.match(afterPrompt.actionResult.prompt, /database host reachable from the terminal/u);
-    assert.match(afterPrompt.actionResult.prompt, /database password used by mysql and mariadb clients/u);
-    assert.match(afterPrompt.actionResult.prompt, /generatorTokenHints/u);
+    assert.match(afterPrompt.actionResult.prompt, /env vars: MYSQL_DATABASE, MYSQL_HOST, MYSQL_PWD, MYSQL_TCP_PORT, VIBE64_MYSQL_USER/u);
+    assert.match(afterPrompt.actionResult.prompt, /generator tokens: database=\$MYSQL_DATABASE/u);
     assert.match(afterPrompt.actionResult.prompt, /Do not inspect Docker/u);
     assert.match(afterPrompt.actionResult.prompt, /read the agent-friendly placement docs before implementation/u);
     assert.match(afterPrompt.actionResult.prompt, /node_modules\/@jskit-ai\/agent-docs\/patterns\/placements\.md/u);

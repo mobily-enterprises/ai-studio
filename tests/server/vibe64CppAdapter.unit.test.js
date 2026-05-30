@@ -81,26 +81,30 @@ test("cpp adapter exposes project facts, commands, defaults, and prompt context"
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.equal(facts.summary, "C++ project type selected.");
-    assert.equal(facts.promptContext.adapter, "cpp");
-    assert.equal(facts.promptContext.build_system, "cmake");
-    assert.equal(facts.promptContext.build_type, "debug");
-    assert.equal(facts.promptContext.build_type_cmake, "Debug");
-    assert.equal(facts.promptContext.cmake_project_name, "cpp_demo");
-    assert.equal(facts.promptContext.cmake_targets, "executable:cpp_demo");
-    assert.equal(facts.promptContext.cpp_standard, "C++20");
-    assert.equal(facts.promptContext.cpp_standard_number, "20");
-    assert.equal(facts.promptContext.detected_build_system, "cmake");
-    assert.equal(facts.promptContext.project_kind, "executable");
-    assert.equal(facts.promptContext.testing, "enabled");
-    assert.equal(facts.promptContext.valid_cpp_markers, "true");
-    assert.match(facts.promptContext.header_files, /include\/cpp_demo\.hpp/u);
-    assert.match(facts.promptContext.source_files, /src\/main\.cpp/u);
-    assert.match(facts.promptContext.environment_blueprint, /Build system: CMake/u);
-    assert.match(facts.promptContext.environment_blueprint, /C\+\+ standard: C\+\+20/u);
-    assert.match(facts.promptContext.environment_blueprint, /Project kind: executable/u);
-    assert.match(facts.promptContext.environment_blueprint, /Testing: enabled/u);
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.adapter, "cpp");
+    assert.equal(promptContext.build_system, "cmake");
+    assert.equal(promptContext.build_type, "debug");
+    assert.equal(promptContext.build_type_cmake, "Debug");
+    assert.equal(promptContext.cmake_project_name, "cpp_demo");
+    assert.equal(promptContext.cmake_targets, "executable:cpp_demo");
+    assert.equal(promptContext.cpp_standard, "C++20");
+    assert.equal(promptContext.cpp_standard_number, "20");
+    assert.equal(promptContext.detected_build_system, "cmake");
+    assert.equal(promptContext.project_kind, "executable");
+    assert.equal(promptContext.testing, "enabled");
+    assert.equal(promptContext.valid_cpp_markers, "true");
+    assert.match(promptContext.header_files, /include\/cpp_demo\.hpp/u);
+    assert.match(promptContext.source_files, /src\/main\.cpp/u);
+    assert.match(promptContext.environment_blueprint, /Build system: CMake/u);
+    assert.match(promptContext.environment_blueprint, /C\+\+ standard: C\+\+20/u);
+    assert.match(promptContext.environment_blueprint, /Project kind: executable/u);
+    assert.match(promptContext.environment_blueprint, /Testing: enabled/u);
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
     assert.equal(facts.capabilities.install_dependencies, true);
@@ -123,10 +127,10 @@ test("cpp adapter composes prompt blueprints from independent config choices", a
     await createCppProject(targetRoot);
     const adapter = createCppTargetAdapter();
 
-    const facts = await adapter.inspect({
+    const promptContext = await adapter.getPromptContext({
       config: {
         values: {
-      cpp_build_system: "make",
+          cpp_build_system: "make",
           cpp_build_type: "release",
           cpp_cxx_standard: "cpp23",
           cpp_project_kind: "library",
@@ -136,18 +140,18 @@ test("cpp adapter composes prompt blueprints from independent config choices", a
       targetRoot
     });
 
-    assert.equal(facts.promptContext.build_system, "make");
-    assert.equal(facts.promptContext.build_type, "release");
-    assert.equal(facts.promptContext.build_type_cmake, "Release");
-    assert.equal(facts.promptContext.cpp_standard, "C++23");
-    assert.equal(facts.promptContext.cpp_standard_number, "23");
-    assert.equal(facts.promptContext.project_kind, "library");
-    assert.equal(facts.promptContext.testing, "none");
-    assert.match(facts.promptContext.environment_blueprint, /Build system: Make/u);
-    assert.match(facts.promptContext.environment_blueprint, /C\+\+ standard: C\+\+23/u);
-    assert.match(facts.promptContext.environment_blueprint, /Project kind: library/u);
-    assert.match(facts.promptContext.environment_blueprint, /Testing: none/u);
-    assert.match(facts.promptContext.environment_blueprint, /Use Release for Studio-managed/u);
+    assert.equal(promptContext.build_system, "make");
+    assert.equal(promptContext.build_type, "release");
+    assert.equal(promptContext.build_type_cmake, "Release");
+    assert.equal(promptContext.cpp_standard, "C++23");
+    assert.equal(promptContext.cpp_standard_number, "23");
+    assert.equal(promptContext.project_kind, "library");
+    assert.equal(promptContext.testing, "none");
+    assert.match(promptContext.environment_blueprint, /Build system: Make/u);
+    assert.match(promptContext.environment_blueprint, /C\+\+ standard: C\+\+23/u);
+    assert.match(promptContext.environment_blueprint, /Project kind: library/u);
+    assert.match(promptContext.environment_blueprint, /Testing: none/u);
+    assert.match(promptContext.environment_blueprint, /Use Release for Studio-managed/u);
   });
 });
 

@@ -5,41 +5,34 @@ const base = repoName ? `/${repoName}/` : "/";
 
 export default defineConfig({
   title: "vibe64",
-  description: "A local checklist-driven AI coding studio for serious product work.",
+  description: "AI coding with real development workflow.",
   base,
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ["meta", { name: "theme-color", content: "#111827" }],
+    ["meta", { name: "theme-color", content: "#fff8ef" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:title", content: "vibe64" }],
     [
       "meta",
       {
         property: "og:description",
-        content: "Checklist-driven AI coding sessions with durable state, adapters, setup doctors, terminals, and prompt handoff."
+        content: "Vibe64 turns AI coding into isolated worktrees, best-practice prompts, review gates, validation, and safer delivery."
       }
     ]
   ],
   themeConfig: {
     siteTitle: "vibe64",
     nav: [
-      { text: "Workflow", link: "/workflow" },
-      { text: "Adapters", link: "/adapters" },
-      { text: "Setup", link: "/setup" },
-      { text: "GitHub", link: "https://github.com/mobily-enterprises/vibe64" }
+      { text: "Why Vibe64", link: "/" },
+      { text: "Supported tech", link: "/supported-tech" },
+      { text: "Start Building", link: "/start-building" }
     ],
-    search: {
-      provider: "local"
-    },
     outline: {
       level: [2, 3]
     },
-    socialLinks: [
-      { icon: "github", link: "https://github.com/mobily-enterprises/vibe64" }
-    ],
     footer: {
-      message: "vibe64 product site",
+      message: "AI coding with real development workflow.",
       copyright: "Copyright 2026 Mobily Enterprises"
     }
   }

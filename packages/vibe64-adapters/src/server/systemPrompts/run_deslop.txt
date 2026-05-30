@@ -2,24 +2,7 @@ Run deslop
 
 Vibe64 standard review/deslop instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
 Code index policy:
-If session metadata includes `code_index_path`, read that generated code index before reviewing helper-like code, duplicated methods, shared service functions, provider wiring, or reusable project structures. Treat duplicates against that index as concrete deslop findings.
+If Relevant workflow facts include `code_index_path`, read that generated code index before reviewing helper-like code, duplicated methods, shared service functions, provider wiring, or reusable project structures. Treat duplicates against that index as concrete deslop findings.
 
 Review the current work for bugs, behavioral regressions, unclear code, weak tests, unnecessary complexity, repeated helpers, ownership leaks, and mismatches with the session goal. Lead with concrete findings. Mark findings as [high], [medium] or [low]. Run one subagent per discovered problem, getting it to make targeted changes to fix it. Repeat the whole process (discovery, subagents run), and stop when only [low] issues are reported. At the end, report what you changed, which checks ran, and what remains unresolved.

@@ -79,10 +79,9 @@ const JSKIT_PREPARE_WORKTREE_SCRIPT_PATH = fileURLToPath(new URL("./prepareWorkt
 const JSKIT_ALLOW_SELF_TARGET_CONFIG = "jskit_allow_self_target";
 const JSKIT_DATABASE_RUNTIME_CONFIG = "jskit_database_runtime";
 const JSKIT_TOOLING_CONTRACT = [
-  "Use `npx jskit ...` from the repository root for JSKIT inspection, modules, generators, helper maps, and verification.",
+  "Use `npx jskit ...` from the repository root for JSKIT inspection, modules, generators, and verification.",
   "New JSKIT-owned files must be created by `npx jskit generate ...`, `npx jskit add ...`, or another documented JSKIT CLI command before manual edits.",
   "Do not hand-create packages, package descriptors, provider entrypoints, route files, resource modules, database modules, migrations, generated client surfaces, page trees, or package glue.",
-  "Before adding helpers, composables, service functions, maps, package glue, or provider wiring, run `npx jskit helper-map update` and inspect `.jskit/helper-map.md` or `npx jskit helper-map --json`.",
   "Before writing generic helpers for JSON:API documents, route ownership, workspace params, CRUD repositories, dates, normalization, transport, or generated resource data, search JSKIT package exports and agent-doc references first. Do not implement framework-shaped helpers locally unless no exported JSKIT helper exists and the decision is called out.",
   "For application features, read the agent-friendly JSKIT guide first, then inspect the JSKIT catalog with `npx jskit list`, `npx jskit list generators`, and `npx jskit show <package>`.",
   "After generator output exists, make only narrow manual edits on top of generated files when the generator cannot express the requested behavior."
@@ -103,9 +102,7 @@ const JSKIT_PLACEMENT_CONTRACT = [
 const JSKIT_GENERATOR_DISCOVERY_COMMANDS = [
   "npx jskit list",
   "npx jskit list generators",
-  "npx jskit list-placements --json",
-  "npx jskit helper-map update",
-  "npx jskit helper-map --json"
+  "npx jskit list-placements --json"
 ].join("\n");
 const JSKIT_CONFIG_FIELDS = deepFreeze([
   {
@@ -220,61 +217,48 @@ function jskitPromptContext({
     ? path.join(targetRoot, JSKIT_BLUEPRINT_RELATIVE_PATH)
     : JSKIT_BLUEPRINT_RELATIVE_PATH);
   const databaseRuntime = selectedJskitConfigValue(config, JSKIT_DATABASE_RUNTIME_CONFIG);
+  const databaseContract = jskitDatabaseContract(databaseRuntime);
+  const seedRequired = !allMarkersExist(markers);
   return {
     adapter: "jskit",
     blueprint_exists: String(Boolean(blueprintExists)),
     blueprint_path: normalizeText(resolvedBlueprintPath),
     blueprint_relative_path: JSKIT_BLUEPRINT_RELATIVE_PATH,
-    database_contract: jskitDatabaseContract(databaseRuntime),
+    database_contract: databaseContract,
     database_runtime: databaseRuntime,
-    environment_blueprint: [
-      JSKIT_AGENT_GUIDE_CONTRACT,
-      JSKIT_TOOLING_CONTRACT,
-      JSKIT_PLACEMENT_CONTRACT,
-      jskitDatabaseContract(databaseRuntime)
-    ].join("\n\n"),
     agent_guide_contract: JSKIT_AGENT_GUIDE_CONTRACT,
     generator_discovery_commands: JSKIT_GENERATOR_DISCOVERY_COMMANDS,
     package_name: normalizeText(packageJson.name),
     placement_contract: JSKIT_PLACEMENT_CONTRACT,
     scripts: packageScripts(packageJson).join(", "),
-    seed_issue_guidance: [
-      "Seed a JSKIT application by discovering the framework modules and local development settings needed before product feature work starts.",
-      "Ask about JSKIT setup choices, not business entities or detailed screens yet.",
-      "Questions should cover: app name/title, auth/users, tenancy/workspaces, database package, assistant/OpenAI usage, file uploads/storage, realtime, email/dev mail, payments, mobile/Capacitor, demo data, and any fake local dev API keys needed by those modules.",
-      "Development secrets are allowed in this conversation because they are local fake values for ignored .env files. Ask for them when a selected module needs them.",
-      "Create a seed issue whose acceptance criteria include the exact JSKIT commands Codex should run, especially `npx @jskit-ai/create-app ...`, `npx jskit list`, `npx jskit show <package>`, and the `npx jskit add ...` or generator commands needed for the selected modules.",
-      "The seed issue should produce a runnable foundation app, .env local development values, installed dependencies, and generated JSKIT metadata."
-    ].join("\n"),
+    ...(seedRequired
+      ? {
+        seed_issue_guidance: [
+          "Seed a JSKIT application by discovering the framework modules and local development settings needed before product feature work starts.",
+          "Ask about JSKIT setup choices, not business entities or detailed screens yet.",
+          "Questions should cover: app name/title, auth/users, tenancy/workspaces, database package, assistant/OpenAI usage, file uploads/storage, realtime, email/dev mail, payments, mobile/Capacitor, demo data, and any fake local dev API keys needed by those modules.",
+          "Development secrets are allowed in this conversation because they are local fake values for ignored .env files. Ask for them when a selected module needs them.",
+          "Create a seed issue whose acceptance criteria include the exact JSKIT commands Codex should run, especially `npx @jskit-ai/create-app ...`, `npx jskit list`, `npx jskit show <package>`, and the `npx jskit add ...` or generator commands needed for the selected modules.",
+          "The seed issue should produce a runnable foundation app, .env local development values, installed dependencies, and generated JSKIT metadata."
+        ].join("\n")
+      }
+      : {}),
     target_root: normalizeText(targetRoot),
     tooling_contract: JSKIT_TOOLING_CONTRACT,
-    valid_jskit_markers: String(allMarkersExist(markers))
+    valid_jskit_markers: String(!seedRequired)
   };
 }
 
 function jskitFacts({
   adapter = null,
-  blueprintExists = false,
   commands = [],
-  blueprintPath = "",
-  config = {},
-  markers = [],
-  packageJson = {},
-  targetRoot = ""
+  markers = []
 } = {}) {
   return adapterProjectFacts({
     capabilities: jskitAdapterCapabilities({
       adapter
     }),
     commands,
-    promptContext: jskitPromptContext({
-      blueprintExists,
-      blueprintPath,
-      config,
-      markers,
-      packageJson,
-      targetRoot
-    }),
     summary: setupSummary(markers),
     workflow: {
       seedRequired: !allMarkersExist(markers)

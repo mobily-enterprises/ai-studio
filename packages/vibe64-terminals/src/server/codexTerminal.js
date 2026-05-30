@@ -86,6 +86,7 @@ const CODEX_KEY_PAUSE_MS = 180;
 const CODEX_THREAD_CAPTURE_TIMEOUT_MS = 12000;
 const PROMPT_INJECTION_PREFIX = "\u001b[200~";
 const PROMPT_INJECTION_SUFFIX = "\u001b[201~\r";
+const DEBUG_PROMPTS_ENABLED = String(process.env.DEBUG_PROMPTS || "").trim() === "1";
 const ESCAPE_CHARACTER = String.fromCharCode(27);
 const BELL_CHARACTER = String.fromCharCode(7);
 const STANDALONE_TERMINAL_CONTROL_CHARACTERS = [
@@ -256,12 +257,28 @@ function extractCodexThreadId(output = "") {
 }
 
 function codexPromptHandoffTerminalInput(handoff = {}) {
+  if (DEBUG_PROMPTS_ENABLED) {
+    const prompt = String(handoff.prompt || "");
+    if (prompt) {
+      return prompt;
+    }
+  }
   const terminalInput = normalizeText(handoff.terminalInput);
   if (terminalInput) {
     return terminalInput;
   }
   const prompt = normalizeText(handoff.prompt);
-  return prompt ? wrapPromptWithStudioContext(prompt) : "";
+  return prompt ? codexPromptInput(prompt) : "";
+}
+
+function codexPromptInput(prompt = "", visiblePrompt = "") {
+  const source = String(prompt || "");
+  if (!source) {
+    return "";
+  }
+  return DEBUG_PROMPTS_ENABLED
+    ? source
+    : wrapPromptWithStudioContext(source, visiblePrompt);
 }
 
 function codexPromptHandoffSignature(sessionId = "") {
@@ -443,7 +460,7 @@ function codexSessionBriefingPrompt(session = {}) {
     "Session briefing instruction:",
     "Keep this Vibe64 briefing as the source of truth for this Codex session. Do not start project work from this briefing alone. Reply exactly: Vibe64 session briefing loaded."
   ].join("\n").trim();
-  return wrapPromptWithStudioContext(prompt, "Load Vibe64 session briefing.");
+  return codexPromptInput(prompt, "Load Vibe64 session briefing.");
 }
 
 function codexStartupScript(codexThreadId = "") {
@@ -1132,7 +1149,7 @@ function createCodexTerminalController({
       }
       await writeTerminalSession(
         terminalResponse.id,
-        `${PROMPT_INJECTION_PREFIX}${wrapPromptWithStudioContext(fullPrompt)}${PROMPT_INJECTION_SUFFIX}`,
+        `${PROMPT_INJECTION_PREFIX}${codexPromptInput(fullPrompt)}${PROMPT_INJECTION_SUFFIX}`,
         {
           namespace
         }

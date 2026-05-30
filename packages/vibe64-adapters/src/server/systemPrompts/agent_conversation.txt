@@ -2,25 +2,7 @@ Agent conversation
 
 Vibe64 interactive Codex conversation instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-- artifacts root: {{session.artifactsRoot}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
-Use `conversationRequest` from Action input as the user's latest request.
+Use `conversationRequest` from User/request input as the user's latest request.
 
 This is an interactive conversation step. The user may send several requests, inspect the work, run the app, and steer you before moving to the next workflow step.
 
@@ -32,8 +14,8 @@ General rules:
 - Do not modify Vibe64 session internals or artifact files.
 
 Workflow-specific behavior:
-- If `session.currentStep` is `implementation_reviewed`, the user is reviewing the implemented work before slower checks. Make only the focused tweak requested by `conversationRequest`, run the focused checks that prove it when practical, and submit the response through the current-step input helper.
-- If `session.currentStep` is `changes_accepted`, the user is doing final review after validation. Make only the requested final tweak. Vibe64 will send the workflow back through review and validation after this prompt completes.
+- If current step is `implementation_reviewed`, the user is reviewing the implemented work before slower checks. Make only the focused tweak requested by `conversationRequest`, run the focused checks that prove it when practical, and submit the response through the current-step input helper.
+- If current step is `changes_accepted`, the user is doing final review after validation. Make only the requested final tweak. Vibe64 will send the workflow back through review and validation after this prompt completes.
 - If this step needs to show a response in Vibe64, submit that response through the current-step input helper.
 - For other workflow definitions, answer, inspect, or edit according to the user's request and the current step contract.
 

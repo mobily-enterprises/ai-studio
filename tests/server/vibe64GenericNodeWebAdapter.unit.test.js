@@ -92,30 +92,34 @@ test("generic Node web adapter exposes detected facts, commands, and configurabl
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.match(facts.summary, /Generic Node web app selected/u);
-    assert.equal(facts.promptContext.adapter, "node-web");
-    assert.equal(facts.promptContext.package_name, "example-node-web-app");
-    assert.equal(facts.promptContext.package_manager, "npm");
-    assert.equal(facts.promptContext.router_mode, "unknown");
-    assert.equal(facts.promptContext.client_library, "react");
-    assert.equal(facts.promptContext.client_library_label, "React");
-    assert.equal(facts.promptContext.client_library_source, "auto-detected");
-    assert.equal(facts.promptContext.detected_client_libraries, "React");
-    assert.equal(facts.promptContext.framework_hints, "Vite");
-    assert.match(facts.promptContext.source_locations, /src/u);
-    assert.match(facts.promptContext.entrypoint_files, /src\/main\.jsx/u);
-    assert.match(facts.promptContext.config_files, /vite\.config\.js/u);
-    assert.equal(facts.promptContext.automated_check_script, "test");
-    assert.equal(facts.promptContext["valid_node-web_markers"], "true");
-    assert.equal(facts.promptContext.valid_node_web_markers, "true");
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.adapter, "node-web");
+    assert.equal(promptContext.package_name, "example-node-web-app");
+    assert.equal(promptContext.package_manager, "npm");
+    assert.equal(promptContext.router_mode, "unknown");
+    assert.equal(promptContext.client_library, "react");
+    assert.equal(promptContext.client_library_label, "React");
+    assert.equal(promptContext.client_library_source, "auto-detected");
+    assert.equal(promptContext.detected_client_libraries, "React");
+    assert.equal(promptContext.framework_hints, "Vite");
+    assert.match(promptContext.source_locations, /src/u);
+    assert.match(promptContext.entrypoint_files, /src\/main\.jsx/u);
+    assert.match(promptContext.config_files, /vite\.config\.js/u);
+    assert.equal(promptContext.automated_check_script, "test");
+    assert.equal(promptContext["valid_node-web_markers"], "true");
+    assert.equal(promptContext.valid_node_web_markers, "true");
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
     assert.equal(facts.capabilities.install_dependencies, true);
     assert.equal(facts.capabilities.run_automated_checks, true);
     assert.equal(facts.capabilities.update_code_index, true);
 
-    const configuredFacts = await adapter.inspect({
+    const configuredPromptContext = await adapter.getPromptContext({
       config: {
         values: {
           [GENERIC_NODE_WEB_CLIENT_LIBRARY_CONFIG]: "vue"
@@ -124,9 +128,9 @@ test("generic Node web adapter exposes detected facts, commands, and configurabl
       targetRoot
     });
 
-    assert.equal(configuredFacts.promptContext.client_library, "vue");
-    assert.equal(configuredFacts.promptContext.client_library_label, "Vue");
-    assert.equal(configuredFacts.promptContext.client_library_source, "configured");
+    assert.equal(configuredPromptContext.client_library, "vue");
+    assert.equal(configuredPromptContext.client_library_label, "Vue");
+    assert.equal(configuredPromptContext.client_library_source, "configured");
     assert.equal((await adapter.getDefaultConfig())[GENERIC_NODE_WEB_CLIENT_LIBRARY_CONFIG], "auto");
   });
 });
@@ -148,17 +152,17 @@ test("generic Node web adapter detects framework hints from config files without
     ]);
     const adapter = createGenericNodeWebTargetAdapter();
 
-    const facts = await adapter.inspect({
+    const promptContext = await adapter.getPromptContext({
       targetRoot
     });
 
-    assert.equal(facts.promptContext.framework_hints, "Astro");
-    assert.equal(facts.promptContext.router_mode, "routes");
-    assert.match(facts.promptContext.source_locations, /src\/routes/u);
-    assert.match(facts.promptContext.config_files, /astro\.config\.ts/u);
-    assert.match(facts.promptContext.config_files, /tailwind\.config\.mjs/u);
-    assert.match(facts.promptContext.config_files, /eslint\.config\.mjs/u);
-    assert.match(facts.promptContext.test_locations, /tests/u);
+    assert.equal(promptContext.framework_hints, "Astro");
+    assert.equal(promptContext.router_mode, "routes");
+    assert.match(promptContext.source_locations, /src\/routes/u);
+    assert.match(promptContext.config_files, /astro\.config\.ts/u);
+    assert.match(promptContext.config_files, /tailwind\.config\.mjs/u);
+    assert.match(promptContext.config_files, /eslint\.config\.mjs/u);
+    assert.match(promptContext.test_locations, /tests/u);
   });
 });
 
@@ -174,9 +178,12 @@ test("generic Node web adapter disables automated checks when no verification sc
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
     const automatedChecksCommand = facts.commands.find((command) => command.id === "run_automated_checks");
 
-    assert.equal(facts.promptContext.automated_check_script, "");
+    assert.equal(promptContext.automated_check_script, "");
     assert.equal(facts.capabilities.run_automated_checks, false);
     assert.equal(automatedChecksCommand.available, false);
     assert.match(automatedChecksCommand.disabledReason, /No vibe64:verify/u);

@@ -217,11 +217,8 @@ function genericNodeWebPromptContext({
 function genericNodeWebFacts({
   adapter = null,
   commands = [],
-  config = {},
   markers = [],
-  packageJson = null,
-  packageManager = {},
-  targetRoot = ""
+  packageJson = null
 } = {}) {
   return adapterProjectFacts({
     capabilities: adapter ? genericNodeWebCapabilities(adapter, {
@@ -229,13 +226,6 @@ function genericNodeWebFacts({
     }) : {},
     commands: genericNodeWebCommands(commands, {
       packageJson
-    }),
-    promptContext: genericNodeWebPromptContext({
-      config,
-      markers,
-      packageJson,
-      packageManager,
-      targetRoot
     }),
     summary: setupSummary({
       markers,

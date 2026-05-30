@@ -221,19 +221,11 @@ function vinextFacts({
   adapter = null,
   commands = [],
   markers = [],
-  packageJson = null,
-  packageManager = {},
-  targetRoot = ""
+  packageJson = null
 } = {}) {
   return nodeWebAdapterFacts({
     adapter,
     commands,
-    promptContext: vinextPromptContext({
-      markers,
-      packageJson,
-      packageManager,
-      targetRoot
-    }),
     summary: setupSummary({
       markers,
       packageJson

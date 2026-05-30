@@ -109,17 +109,21 @@ test("laravel adapter exposes project facts, commands, defaults, and prompt cont
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.equal(facts.summary, "Laravel project type selected.");
-    assert.equal(facts.promptContext.adapter, "laravel");
-    assert.equal(facts.promptContext.package_name, "example/laravel-app");
-    assert.equal(facts.promptContext.frontend_package_manager, "npm");
-    assert.equal(facts.promptContext.database_runtime, "sqlite");
-    assert.equal(facts.promptContext.laravel_dependency, "true");
-    assert.equal(facts.promptContext.valid_laravel_markers, "true");
-    assert.match(facts.promptContext.environment_blueprint, /Database runtime: SQLite/u);
-    assert.match(facts.promptContext.environment_blueprint, /chosen in the seed workflow/u);
-    assert.match(facts.promptContext.seed_issue_guidance, /starter kit/u);
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.adapter, "laravel");
+    assert.equal(promptContext.package_name, "example/laravel-app");
+    assert.equal(promptContext.frontend_package_manager, "npm");
+    assert.equal(promptContext.database_runtime, "sqlite");
+    assert.equal(promptContext.laravel_dependency, "true");
+    assert.equal(promptContext.valid_laravel_markers, "true");
+    assert.match(promptContext.environment_blueprint, /Database runtime: SQLite/u);
+    assert.match(promptContext.environment_blueprint, /chosen in the seed workflow/u);
+    assert.match(promptContext.seed_issue_guidance, /starter kit/u);
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
     assert.equal(facts.capabilities.update_code_index, true);
@@ -136,7 +140,7 @@ test("laravel adapter keeps seed choices in prompt guidance instead of setup con
     await createLaravelProject(targetRoot);
     const adapter = createLaravelTargetAdapter();
 
-    const facts = await adapter.inspect({
+    const promptContext = await adapter.getPromptContext({
       config: {
         values: {
           laravel_database_runtime: "postgres"
@@ -145,11 +149,11 @@ test("laravel adapter keeps seed choices in prompt guidance instead of setup con
       targetRoot
     });
 
-    assert.equal(facts.promptContext.database_runtime, "postgres");
-    assert.match(facts.promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
-    assert.match(facts.promptContext.environment_blueprint, /Ask the user during seed issue definition/u);
-    assert.match(facts.promptContext.seed_issue_guidance, /authentication provider/u);
-    assert.match(facts.promptContext.seed_issue_guidance, /fake local dev service keys/u);
+    assert.equal(promptContext.database_runtime, "postgres");
+    assert.match(promptContext.environment_blueprint, /Database runtime: PostgreSQL/u);
+    assert.match(promptContext.environment_blueprint, /Ask the user during seed issue definition/u);
+    assert.match(promptContext.seed_issue_guidance, /authentication provider/u);
+    assert.match(promptContext.seed_issue_guidance, /fake local dev service keys/u);
   });
 });
 

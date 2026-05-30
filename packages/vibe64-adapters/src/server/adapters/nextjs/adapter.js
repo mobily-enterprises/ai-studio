@@ -221,22 +221,12 @@ async function nextjsPromptContext({
 async function nextjsFacts({
   adapter = null,
   commands = [],
-  config = {},
   markers = [],
-  packageJson = null,
-  packageManager = {},
-  targetRoot = ""
+  packageJson = null
 } = {}) {
   return nodeWebAdapterFacts({
     adapter,
     commands,
-    promptContext: await nextjsPromptContext({
-      config,
-      markers,
-      packageJson,
-      packageManager,
-      targetRoot
-    }),
     summary: setupSummary({
       markers,
       packageJson

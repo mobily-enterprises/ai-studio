@@ -341,15 +341,43 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
   });
 
   assert.match(executePlan.prompt, /Code index policy:/u);
-  assert.match(executePlan.prompt, /If session metadata includes `code_index_path`, read that generated code index before adding helpers/u);
+  assert.match(executePlan.prompt, /If Relevant workflow facts include `code_index_path`, read that generated code index before adding helpers/u);
   assert.match(executePlan.prompt, /Fast check policy:/u);
   assert.match(executePlan.prompt, /Do not run the full test suite/u);
   assert.match(executePlan.prompt, /Run only the narrow fast check or checks that directly prove the implementation/u);
-  assert.match(executePlan.prompt, /\.jskit\/helper-map\.md/u);
   assert.match(runDeslop.prompt, /Code index policy:/u);
-  assert.match(runDeslop.prompt, /If session metadata includes `code_index_path`, read that generated code index before reviewing helper-like code/u);
-  assert.match(runDeslop.prompt, /\.jskit\/helper-map\.md/u);
+  assert.match(runDeslop.prompt, /If Relevant workflow facts include `code_index_path`, read that generated code index before reviewing helper-like code/u);
   assert.doesNotMatch(makePlan.prompt, /Code index policy:/u);
+});
+
+test("draft issue standard prompt reads github issue mode from automatic action context", async () => {
+  const renderer = new PromptRenderer({
+    promptPackRoot: SYSTEM_PROMPT_PACK_ROOT,
+    systemPromptPackRoot: false
+  });
+
+  const rendered = await renderer.renderPrompt({
+    action: {
+      id: "draft_issue",
+      label: "Describe work",
+      promptId: "draft_issue",
+      type: "prompt"
+    },
+    session: {
+      currentStep: "issue_file_created",
+      metadata: {
+        github_issue_mode: "create",
+        work_source: "new_issue"
+      },
+      sessionId: "draft_issue_prompt",
+      targetRoot: "/workspace/example"
+    }
+  });
+
+  const instructionIndex = rendered.prompt.indexOf("If Relevant workflow facts show `github_issue_mode` as `create`");
+  assert.notEqual(instructionIndex, -1);
+  assert.match(rendered.prompt, /Use `github_issue_mode` from Relevant workflow facts/u);
+  assert.equal(rendered.prompt.includes("{{session.metadata.json}}"), false);
 });
 
 test("agent conversation prompt keeps simple conversation out of project preflight work", async () => {
@@ -402,6 +430,7 @@ test("vibe64 missing-information policy uses the shared question batch limit", (
 
 test("vibe64 prompt renderer can mask static context after the session briefing", () => {
   const rendered = renderPromptTemplate([
+    "Commands: {{adapter.commands.json}}",
     "Facts: {{adapter.facts.json}}",
     "Blueprint: {{adapter.promptContext.environment_blueprint}}",
     "Services: {{adapter.managedServices.json}}",
@@ -410,6 +439,12 @@ test("vibe64 prompt renderer can mask static context after the session briefing"
     "Context: {{context.json}}"
   ].join("\n"), {
     adapter: {
+      commands: [
+        {
+          id: "large_static_command",
+          label: "Large static command"
+        }
+      ],
       facts: {
         summary: "Large static project summary"
       },
@@ -434,6 +469,8 @@ test("vibe64 prompt renderer can mask static context after the session briefing"
 
   assert.match(rendered, /Vibe64 session briefing/u);
   assert.match(rendered, /adapter\.promptContext\.environment_blueprint/u);
+  assert.match(rendered, /Adapter commands are runtime-only Studio metadata/u);
+  assert.doesNotMatch(rendered, /Large static command/u);
   assert.doesNotMatch(rendered, /Large static project summary/u);
   assert.doesNotMatch(rendered, /Large static database service/u);
   assert.doesNotMatch(rendered, /Large static environment blueprint/u);
@@ -443,22 +480,87 @@ test("vibe64 prompt renderer can mask static context after the session briefing"
 test("vibe64 session briefing contains the static adapter setup once", () => {
   const briefing = promptSessionBriefing({
     adapter: {
+      commands: [
+        {
+          available: true,
+          id: "noisy_top_level_command",
+          label: "Noisy top-level command"
+        }
+      ],
       facts: {
+        capabilities: {
+          noisy_runtime_capability: true
+        },
+        commands: [
+          {
+            available: true,
+            id: "noisy_runtime_command",
+            label: "Noisy runtime command"
+          }
+        ],
         summary: "Prompt-aware project"
       },
       id: "fake",
       label: "Fake adapter",
       managedServices: [
         {
-          label: "Managed database"
+          alternateCheckCommand: "mariadb --execute=\"SELECT 1\"",
+          alternateClient: "mariadb",
+          alternateCommand: "mariadb --execute=\"<SQL>\"",
+          checkCommand: "mysql --execute=\"SELECT 1\"",
+          client: "mysql",
+          command: "mysql --execute=\"<SQL>\"",
+          environment: {
+            MYSQL_DATABASE: "database name",
+            MYSQL_HOST: "database host"
+          },
+          generatorTokenHints: {
+            database: "$MYSQL_DATABASE",
+            host: "$MYSQL_HOST"
+          },
+          id: "managed-db",
+          interactiveCommand: "mysql",
+          kind: "database",
+          label: "Managed database",
+          notes: [
+            "Noisy service note"
+          ],
+          runtime: "mysql"
         }
       ],
       promptContext: {
-        environment_blueprint: "Static environment blueprint"
+        agent_guide_contract: "Read the guide.",
+        adapter: "fake",
+        blueprint_path: "/workspace/.jskit/APP_BLUEPRINT.md",
+        blueprint_relative_path: ".jskit/APP_BLUEPRINT.md",
+        database_contract: "Use the configured database runtime.",
+        database_runtime: "mysql",
+        generator_discovery_commands: "npx jskit list",
+        package_name: "briefing-app",
+        target_root: "/workspace",
+        tooling_contract: "Use generated JSKIT files."
       }
     },
     config: {
-      packageManager: "npm"
+      fields: [
+        {
+          id: "packageManager",
+          label: "Package manager",
+          type: "string"
+        }
+      ],
+      fieldValues: {
+        packageManager: {
+          filePath: "/workspace/.vibe64/config/packageManager",
+          saved: true,
+          value: "npm"
+        }
+      },
+      projectType: "fake",
+      ready: true,
+      values: {
+        packageManager: "npm"
+      }
     },
     session: {
       artifactsRoot: "/workspace/.vibe64/session/artifacts",
@@ -472,10 +574,33 @@ test("vibe64 session briefing contains the static adapter setup once", () => {
   });
 
   assert.match(briefing, /Vibe64 session briefing/u);
-  assert.match(briefing, /Prompt-aware project/u);
-  assert.match(briefing, /Static environment blueprint/u);
-  assert.match(briefing, /Managed database/u);
+  assert.doesNotMatch(briefing, /Adapter project facts/u);
+  assert.doesNotMatch(briefing, /Prompt-aware project/u);
+  assert.doesNotMatch(briefing, /noisy_runtime_capability/u);
+  assert.doesNotMatch(briefing, /noisy_runtime_command/u);
+  assert.doesNotMatch(briefing, /noisy_top_level_command/u);
+  assert.doesNotMatch(briefing, /Noisy top-level command/u);
+  assert.match(briefing, /Summary:\n- blueprint relative path: \.jskit\/APP_BLUEPRINT\.md\n- database runtime: mysql\n- package name: briefing-app/u);
+  assert.doesNotMatch(briefing, /Summary:[\s\S]*blueprint path: \/workspace\/\.jskit\/APP_BLUEPRINT\.md[\s\S]*Agent guide contract/u);
+  assert.doesNotMatch(briefing, /Summary:[\s\S]*target root: \/workspace[\s\S]*Agent guide contract/u);
+  assert.doesNotMatch(briefing, /Summary:[\s\S]*adapter: fake[\s\S]*Agent guide contract/u);
+  assert.match(briefing, /Agent guide contract:\nRead the guide\./u);
+  assert.match(briefing, /Tooling contract:\nUse generated JSKIT files\./u);
+  assert.match(briefing, /Database contract:\nUse the configured database runtime\./u);
+  assert.match(briefing, /Generator discovery commands:\nnpx jskit list/u);
+  assert.doesNotMatch(briefing, /"agent_guide_contract"/u);
+  assert.match(briefing, /Managed services:\n- Managed database \(managed-db, database, mysql\)/u);
+  assert.match(briefing, /check: mysql --execute="SELECT 1"/u);
+  assert.match(briefing, /run SQL: mysql --execute="<SQL>"/u);
+  assert.match(briefing, /fallback client: mariadb/u);
+  assert.match(briefing, /env vars: MYSQL_DATABASE, MYSQL_HOST/u);
+  assert.match(briefing, /generator tokens: database=\$MYSQL_DATABASE, host=\$MYSQL_HOST/u);
+  assert.doesNotMatch(briefing, /interactiveCommand/u);
+  assert.doesNotMatch(briefing, /Noisy service note/u);
   assert.match(briefing, /packageManager/u);
+  assert.match(briefing, /"values": \{\n {4}"packageManager": "npm"\n {2}\}/u);
+  assert.doesNotMatch(briefing, /fieldValues/u);
+  assert.doesNotMatch(briefing, /\/workspace\/\.vibe64\/config\/packageManager/u);
   assert.match(briefing, /Generated code index path: \.vibe64\/code-index\.md/u);
 });
 

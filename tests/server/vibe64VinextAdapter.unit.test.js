@@ -61,14 +61,18 @@ test("vinext adapter exposes project facts, commands, and prompt context", async
     const facts = await adapter.inspect({
       targetRoot
     });
+    const promptContext = await adapter.getPromptContext({
+      targetRoot
+    });
 
     assert.equal(facts.summary, "Vinext project type selected.");
-    assert.equal(facts.promptContext.adapter, "vinext");
-    assert.equal(facts.promptContext.package_name, "example-vinext-app");
-    assert.equal(facts.promptContext.router_mode, "app");
-    assert.equal(facts.promptContext.package_manager, "npm");
-    assert.equal(facts.promptContext.vinext_dependency, "true");
-    assert.equal(facts.promptContext.valid_vinext_markers, "true");
+    assert.equal(Object.hasOwn(facts, "promptContext"), false);
+    assert.equal(promptContext.adapter, "vinext");
+    assert.equal(promptContext.package_name, "example-vinext-app");
+    assert.equal(promptContext.router_mode, "app");
+    assert.equal(promptContext.package_manager, "npm");
+    assert.equal(promptContext.vinext_dependency, "true");
+    assert.equal(promptContext.valid_vinext_markers, "true");
     assert.deepEqual(facts.commands.map((command) => command.id), commandIds());
     assert.equal(facts.capabilities.create_worktree, true);
     assert.equal(facts.capabilities.update_code_index, true);

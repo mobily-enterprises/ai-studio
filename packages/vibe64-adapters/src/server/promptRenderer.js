@@ -25,8 +25,21 @@ const MANAGED_SERVICE_POLICY = [
   "Do not inspect Docker, Docker Compose, container names, runtime networks, localhost sockets, getent, mysqladmin, mariadb-admin, pg_isready, or host port probes for normal managed-service work.",
   "If the listed client command cannot connect, report that the managed service is not ready or ask for the missing external detail; do not invent alternate credentials or infrastructure."
 ].join(" ");
-const STATIC_CONTEXT_REFERENCE = "Use the Vibe64 session briefing already provided for adapter facts, adapter prompt context, managed services, managed service policy, and project config.";
+const STATIC_CONTEXT_REFERENCE = "Use the Vibe64 session briefing already provided for adapter prompt context, managed services, managed service policy, and project config.";
 const STATIC_CONTEXT_REFERENCE_MODE = "reference";
+const PROMPT_CONTEXT_BRIEFING_SECTIONS = Object.freeze([
+  ["agent_guide_contract", "Agent guide contract"],
+  ["tooling_contract", "Tooling contract"],
+  ["placement_contract", "Placement contract"],
+  ["database_contract", "Database contract"],
+  ["generator_discovery_commands", "Generator discovery commands"],
+  ["seed_issue_guidance", "Seed issue guidance"],
+  ["environment_blueprint", "Environment blueprint"]
+]);
+const PROMPT_CONTEXT_SUMMARY_OMITTED_KEYS = new Set([
+  "adapter",
+  "target_root"
+]);
 
 function assertPromptId(promptId) {
   const normalizedPromptId = normalizeText(promptId);
@@ -224,8 +237,8 @@ function contextWithStaticReferences(context = {}) {
     ...context,
     adapter: {
       ...context.adapter,
-      commands: staticJsonReference("Adapter commands are in the Vibe64 session briefing."),
-      facts: staticJsonReference("Adapter project facts are in the Vibe64 session briefing."),
+      commands: staticJsonReference("Adapter commands are runtime-only Studio metadata and are not included in the Codex briefing."),
+      facts: staticJsonReference("Adapter project facts are runtime-only Studio metadata and are not included in the Codex briefing."),
       managedServices: staticJsonReference("Managed service connection details and policy are in the Vibe64 session briefing."),
       promptContext: staticJsonReference("Adapter prompt context is in the Vibe64 session briefing.")
     },
@@ -248,10 +261,166 @@ function currentStepInputHelperBriefing() {
     "- Command: node \"$VIBE64_CURRENT_STEP_INPUT_HELPER\"",
     "- Pass one JSON object on stdin or with --json.",
     "- Include `kind`, `stepId`, and `stepStatus` exactly for the current workflow state.",
-    "- The current values are in Action context as `session.currentStep` and `session.stepMachine.status`.",
+    "- The current values are listed in Vibe64 workflow context as current step and step status.",
     "- Use `fields` for structured form values, `message` for questions to the user, and `text` for plain user responses.",
     "- If the helper reports Reload state or a state mismatch, stop and ask the user to reload the current step."
   ].join("\n");
+}
+
+function isPromptContextBriefingSection(key = "", value = null) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (PROMPT_CONTEXT_BRIEFING_SECTIONS.some(([sectionKey]) => sectionKey === key)) {
+    return true;
+  }
+  return /(?:_contract|_guidance|_commands|_blueprint)$/u.test(key) &&
+    (typeof value === "string" || Array.isArray(value) || isPlainObject(value));
+}
+
+function promptContextBriefingLabel(key = "") {
+  const explicitSection = PROMPT_CONTEXT_BRIEFING_SECTIONS.find(([sectionKey]) => sectionKey === key);
+  if (explicitSection) {
+    return explicitSection[1];
+  }
+  return normalizeText(key)
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function promptContextBriefingValue(value) {
+  return typeof value === "string"
+    ? value
+    : stableJson(value);
+}
+
+function promptContextSummaryLabel(key = "") {
+  return normalizeText(key)
+    .split("_")
+    .filter(Boolean)
+    .join(" ");
+}
+
+function promptContextSummaryValue(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === true || value === false) {
+    return value ? "true" : "false";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeText(item)).filter(Boolean).join(", ");
+  }
+  return stableJson(value).replace(/\n\s*/gu, " ");
+}
+
+function shouldOmitPromptContextSummaryKey(source = {}, key = "") {
+  if (PROMPT_CONTEXT_SUMMARY_OMITTED_KEYS.has(key)) {
+    return true;
+  }
+  return key === "blueprint_path" && normalizeText(source.blueprint_relative_path);
+}
+
+function promptContextSummaryLines(source = {}, sectionKeySet = new Set()) {
+  return Object.keys(source)
+    .filter((key) => !sectionKeySet.has(key))
+    .filter((key) => !shouldOmitPromptContextSummaryKey(source, key))
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => `- ${promptContextSummaryLabel(key)}: ${promptContextSummaryValue(source[key])}`);
+}
+
+function briefingAdapterPromptContext(promptContext = {}) {
+  const source = isPlainObject(promptContext) ? promptContext : {};
+  const sourceKeys = Object.keys(source);
+  if (sourceKeys.length === 0) {
+    return stableJson({});
+  }
+  const sectionKeys = [
+    ...PROMPT_CONTEXT_BRIEFING_SECTIONS
+      .map(([key]) => key)
+      .filter((key) => Object.hasOwn(source, key) && isPromptContextBriefingSection(key, source[key])),
+    ...sourceKeys
+      .sort((left, right) => left.localeCompare(right))
+      .filter((key) => !PROMPT_CONTEXT_BRIEFING_SECTIONS.some(([sectionKey]) => sectionKey === key))
+    .filter((key) => isPromptContextBriefingSection(key, source[key]))
+  ];
+  if (sectionKeys.length === 0) {
+    return stableJson(source);
+  }
+  const sectionKeySet = new Set(sectionKeys);
+  const summaryLines = promptContextSummaryLines(source, sectionKeySet);
+  const lines = [];
+  if (summaryLines.length > 0) {
+    lines.push("Summary:", ...summaryLines, "");
+  }
+  for (const key of sectionKeys) {
+    lines.push(`${promptContextBriefingLabel(key)}:`, promptContextBriefingValue(source[key]), "");
+  }
+  return lines.join("\n").trim();
+}
+
+function briefingManagedService(service = {}) {
+  const source = isPlainObject(service) ? service : {};
+  const label = normalizeText(source.label || source.id || "Managed service");
+  const descriptors = [
+    normalizeText(source.id),
+    normalizeText(source.kind),
+    normalizeText(source.runtime)
+  ].filter(Boolean);
+  const lines = [
+    descriptors.length > 0
+      ? `- ${label} (${descriptors.join(", ")})`
+      : `- ${label}`
+  ];
+  const serviceFields = [
+    ["check", source.checkCommand],
+    ["run SQL", source.command],
+    ["fallback client", source.alternateClient],
+    ["fallback check", source.alternateCheckCommand],
+    ["fallback run SQL", source.alternateCommand]
+  ];
+  for (const [labelText, value] of serviceFields) {
+    const normalizedValue = normalizeText(value);
+    if (normalizedValue) {
+      lines.push(`  - ${labelText}: ${normalizedValue}`);
+    }
+  }
+  const environmentKeys = Object.keys(isPlainObject(source.environment) ? source.environment : {})
+    .sort((left, right) => left.localeCompare(right));
+  if (environmentKeys.length > 0) {
+    lines.push(`  - env vars: ${environmentKeys.join(", ")}`);
+  }
+  const generatorTokens = Object.entries(isPlainObject(source.generatorTokenHints) ? source.generatorTokenHints : {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${normalizeText(value)}`)
+    .filter((entry) => !entry.endsWith("="));
+  if (generatorTokens.length > 0) {
+    lines.push(`  - generator tokens: ${generatorTokens.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function briefingManagedServices(services = []) {
+  if (!Array.isArray(services) || services.length === 0) {
+    return "No managed services configured.";
+  }
+  return services.map((service) => briefingManagedService(service)).join("\n");
+}
+
+function briefingProjectConfig(config = {}) {
+  const source = isPlainObject(config) ? config : {};
+  const values = isPlainObject(source.values)
+    ? source.values
+    : {};
+  return {
+    invalid: Array.isArray(source.invalid) ? source.invalid : [],
+    missing: Array.isArray(source.missing) ? source.missing : [],
+    projectType: normalizeText(source.projectType),
+    ready: source.ready === true,
+    values: stableValue(values)
+  };
 }
 
 function promptSessionBriefing(contextInput = {}) {
@@ -278,20 +447,17 @@ function promptSessionBriefing(contextInput = {}) {
     `- id: ${context.adapter.id}`,
     `- label: ${context.adapter.label}`,
     "",
-    "Adapter project facts:",
-    stableJson(context.adapter.facts),
-    "",
     "Adapter prompt context:",
-    stableJson(context.adapter.promptContext),
+    briefingAdapterPromptContext(context.adapter.promptContext),
     "",
     "Managed services:",
-    stableJson(context.adapter.managedServices),
+    briefingManagedServices(context.adapter.managedServices),
     "",
     "Managed service policy:",
     MANAGED_SERVICE_POLICY,
     "",
     "Project config:",
-    stableJson(context.config),
+    stableJson(briefingProjectConfig(context.config)),
     "",
     "Code index policy:",
     codeIndexPolicy,
@@ -309,11 +475,11 @@ function promptTemplateTokens(contextInput) {
     "action.label": context.action.label,
     "action.promptId": context.action.promptId,
     "adapter.commands.json": referenceStaticContext
-      ? stableJson(staticJsonReference("Adapter commands are in the Vibe64 session briefing."))
+      ? stableJson(staticJsonReference("Adapter commands are runtime-only Studio metadata and are not included in the Codex briefing."))
       : stableJson(context.adapter.commands),
     "adapter.detection.json": stableJson(context.adapter.detection),
     "adapter.facts.json": referenceStaticContext
-      ? stableJson(staticJsonReference("Adapter project facts are in the Vibe64 session briefing."))
+      ? stableJson(staticJsonReference("Adapter project facts are runtime-only Studio metadata and are not included in the Codex briefing."))
       : stableJson(context.adapter.facts),
     "adapter.id": context.adapter.id,
     "adapter.label": context.adapter.label,

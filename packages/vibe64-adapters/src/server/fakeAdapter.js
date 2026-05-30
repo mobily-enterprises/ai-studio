@@ -27,7 +27,6 @@ function fakePromptContext({
 }
 
 function fakePromptText({
-  input = {},
   promptId = "",
   session = {}
 } = {}) {
@@ -38,10 +37,7 @@ function fakePromptText({
     promptJson(session.adapter?.facts || {}),
     "",
     "Adapter prompt context:",
-    promptJson(session.adapter?.promptContext || {}),
-    "",
-    "Action input:",
-    promptJson(input)
+    promptJson(session.adapter?.promptContext || {})
   ].join("\n");
 }
 
@@ -78,8 +74,7 @@ class FakeTargetAdapter extends TargetAdapter {
     return adapterProjectFacts({
       ...this.facts,
       capabilities: this.capabilities,
-      commands: this.commands,
-      promptContext: this.promptContext
+      commands: this.commands
     });
   }
 
@@ -120,7 +115,6 @@ class FakeTargetAdapter extends TargetAdapter {
         session
       }),
       prompt: fakePromptText({
-        input,
         promptId,
         session
       }),

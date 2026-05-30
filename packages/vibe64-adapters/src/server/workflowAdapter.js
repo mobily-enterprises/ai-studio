@@ -340,9 +340,7 @@ class Vibe64DescribedWorkflowTargetAdapter extends Vibe64WorkflowTargetAdapter {
   }
 
   async getPromptContext({ facts = {}, targetRoot, ...context } = {}) {
-    if (facts.promptContext) {
-      return facts.promptContext;
-    }
+    void facts;
     return this.promptContextFactory({
       ...await this.projectInspection(targetRoot || process.cwd(), context),
       config: context.config || {}

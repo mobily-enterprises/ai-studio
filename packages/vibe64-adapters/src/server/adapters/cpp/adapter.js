@@ -222,26 +222,13 @@ async function cppPromptContext({
 
 async function cppFacts({
   adapter = null,
-  cmakeProject = {},
   commands = [],
-  config = {},
   cppFiles = {},
-  makeTargets = [],
-  markers = [],
-  targetRoot = ""
+  markers = []
 } = {}) {
-  const promptContext = await cppPromptContext({
-    cmakeProject,
-    config,
-    cppFiles,
-    makeTargets,
-    markers,
-    targetRoot
-  });
   return adapterProjectFacts({
     capabilities: adapter?.workflowCapabilities() || {},
     commands,
-    promptContext,
     summary: setupSummary({
       cppFiles,
       markers

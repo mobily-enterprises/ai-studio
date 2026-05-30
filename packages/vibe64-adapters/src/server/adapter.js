@@ -123,7 +123,6 @@ function adapterProjectFacts(input = {}) {
   return {
     capabilities: normalizeCapabilityMap(input.capabilities),
     commands: Array.isArray(input.commands) ? input.commands.map(adapterCommand) : [],
-    promptContext: normalizeStringMap(input.promptContext),
     summary: normalizeText(input.summary),
     workflow: normalizeWorkflowFacts(input.workflow)
   };
@@ -159,13 +158,8 @@ function promptJson(value = {}) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
-function defaultPromptText(action = {}, input = {}) {
-  return [
-    `Run the Vibe64 prompt action: ${normalizeText(action.label || promptIdForAction(action))}.`,
-    "",
-    "Action input:",
-    promptJson(input)
-  ].join("\n");
+function defaultPromptText(action = {}) {
+  return `Run the Vibe64 prompt action: ${normalizeText(action.label || promptIdForAction(action))}.`;
 }
 
 function adapterView({

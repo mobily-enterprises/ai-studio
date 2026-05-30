@@ -1,18 +1,5 @@
 Draft pull request details for Vibe64.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- worktree path: {{session.worktreePath}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-Action context:
-{{session.stepMachine.json}}
-
-{{prompt.sessionBriefingReference}}
-
 Goal:
 - Inspect the current repository state and draft the pull request title and body.
 - Do not create the pull request.

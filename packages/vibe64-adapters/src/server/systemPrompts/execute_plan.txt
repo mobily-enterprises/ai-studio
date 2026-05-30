@@ -2,25 +2,8 @@ Execute plan
 
 Vibe64 standard implementation instructions.
 
-Session:
-- id: {{session.id}}
-- current step: {{session.currentStep}}
-- target root: {{session.targetRoot}}
-- worktree path: {{session.worktreePath}}
-
-Known session metadata:
-{{session.metadata.json}}
-
-{{prompt.sessionBriefingReference}}
-
-Action input:
-{{input.json}}
-
-Missing information policy:
-{{prompt.missingInformationPolicy}}
-
 Code index policy:
-If session metadata includes `code_index_path`, read that generated code index before adding helpers, shared methods, service functions, provider wiring, or other reusable project code. Prefer existing helpers and structures from that index over redefining them.
+If Relevant workflow facts include `code_index_path`, read that generated code index before adding helpers, shared methods, service functions, provider wiring, or other reusable project code. Prefer existing helpers and structures from that index over redefining them.
 
 Fast check policy:
 Do not run the full test suite, full project verification, slow end-to-end checks, or broad UI review in this step. Run only the narrow fast check or checks that directly prove the implementation you changed. Leave broad validation to the dedicated validation and review steps.
