@@ -9,13 +9,13 @@
     :style="terminalRootStyle"
   >
     <div
-      v-if="compactMode"
-      class="studio-ai-sessions__codex-attention"
+      class="studio-ai-sessions__codex-terminal-shell"
       :class="{
-        'studio-ai-sessions__codex-attention--collapsed': compactTerminalCollapsed
+        'studio-ai-sessions__codex-attention': compactMode,
+        'studio-ai-sessions__codex-attention--collapsed': compactMode && compactTerminalCollapsed
       }"
     >
-      <header class="studio-ai-sessions__codex-attention-header">
+      <header v-if="compactMode" class="studio-ai-sessions__codex-attention-header">
         <div class="studio-ai-sessions__codex-attention-icon">
           <v-icon :icon="mdiRobotOutline" size="28" />
         </div>
@@ -60,39 +60,28 @@
           />
         </div>
       </header>
-      <div v-if="codexRecoveryError" class="studio-ai-sessions__codex-attention-error">
+      <div v-if="compactMode && codexRecoveryError" class="studio-ai-sessions__codex-attention-error">
         {{ codexRecoveryError }}
       </div>
       <CodexSessionTerminal
-        class="studio-ai-sessions__codex-terminal studio-ai-sessions__codex-terminal--attention"
+        class="studio-ai-sessions__codex-terminal"
+        ref="codexTerminalComponent"
+        :class="{
+          'studio-ai-sessions__codex-terminal--attention': compactMode
+        }"
         :allow-start="allowCodexStart"
-        auto-focus
-        :display-mode="compactTerminalDisplayMode"
-        :listen-when-hidden="listenCodexWhenHidden || compactTerminalCollapsed"
+        :auto-focus="codexAutoFocus"
+        :display-mode="codexTerminalDisplayMode"
+        :listen-when-hidden="codexListenWhenHidden"
         :read-only="codexReadOnly"
         :scope="codexScope"
         :session="session"
         :terminal="codexTerminalState"
-        :visible="!compactTerminalCollapsed"
+        :visible="codexTerminalVisible"
         @activity-change="handleCodexActivityChange"
         @session-update="handleCodexSessionUpdate"
       />
     </div>
-
-    <CodexSessionTerminal
-      v-else
-      class="studio-ai-sessions__codex-terminal"
-      :allow-start="allowCodexStart"
-      :display-mode="displayMode"
-      :listen-when-hidden="listenCodexWhenHidden"
-      :read-only="codexReadOnly"
-      :scope="codexScope"
-      :session="session"
-      :terminal="codexTerminalState"
-      :visible="displayMode !== 'headless'"
-      @activity-change="handleCodexActivityChange"
-      @session-update="handleCodexSessionUpdate"
-    />
 
     <div
       v-if="displayMode !== 'headless' && commandOutputVisible"
@@ -145,7 +134,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   mdiClose,
   mdiConsoleLine,
@@ -214,6 +203,7 @@ const emit = defineEmits(["codex-activity-change", "codex-session-update"]);
 
 const commandTerminalExpanded = ref(true);
 const compactTerminalCollapsed = ref(false);
+const codexTerminalComponent = ref(null);
 const {
   fixDialogOpen,
   fixJob,
@@ -222,6 +212,24 @@ const {
 } = useVibe64FixCodexDialog();
 const compactMode = computed(() => props.displayMode === "compact");
 const compactTerminalDisplayMode = computed(() => compactTerminalCollapsed.value ? "headless" : "compact");
+const codexTerminalDisplayMode = computed(() => compactMode.value ? compactTerminalDisplayMode.value : props.displayMode);
+const codexTerminalVisible = computed(() => compactMode.value
+  ? !compactTerminalCollapsed.value
+  : props.displayMode !== "headless");
+const codexAutoFocus = computed(() => Boolean(
+  !props.codexReadOnly &&
+  (
+    props.displayMode === "full" ||
+    compactMode.value
+  )
+));
+const codexListenWhenHidden = computed(() => Boolean(
+  props.listenCodexWhenHidden ||
+  (
+    compactMode.value &&
+    compactTerminalCollapsed.value
+  )
+));
 const codexRecoveryAvailable = computed(() => typeof props.codexRecovery?.resume === "function");
 const codexRecoveryBusy = computed(() => Boolean(props.codexRecovery?.running));
 const codexRecoveryError = computed(() => String(props.codexRecovery?.error || ""));
@@ -259,6 +267,7 @@ function hideCompactTerminal() {
 
 function showCompactTerminal() {
   compactTerminalCollapsed.value = false;
+  focusCodexTerminalSoon();
 }
 
 async function resumeCodexFromAttention() {
@@ -270,6 +279,23 @@ async function resumeCodexFromAttention() {
     return;
   }
   compactTerminalCollapsed.value = true;
+}
+
+function focusCodexTerminalSoon() {
+  void nextTick(async () => {
+    const terminal = codexTerminalComponent.value;
+    if (!terminal || typeof terminal.focusTerminal !== "function") {
+      return;
+    }
+    terminal.focusTerminal();
+    for (const delayMs of [50, 150, 300]) {
+      globalThis.setTimeout(() => {
+        if (codexTerminalVisible.value && codexAutoFocus.value && !props.codexReadOnly) {
+          terminal.focusTerminal();
+        }
+      }, delayMs);
+    }
+  });
 }
 
 watch(() => props.commandTerminal.startKey, () => {
@@ -294,6 +320,20 @@ watch(() => props.displayMode, (displayMode) => {
     compactTerminalCollapsed.value = false;
   }
 });
+
+watch(() => [
+  codexTerminalDisplayMode.value,
+  codexTerminalVisible.value ? "visible" : "hidden",
+  codexAutoFocus.value ? "autofocus" : "manual",
+  props.codexReadOnly ? "readonly" : "writable"
+].join("|"), () => {
+  if (codexTerminalVisible.value && codexAutoFocus.value && !props.codexReadOnly) {
+    focusCodexTerminalSoon();
+  }
+}, {
+  flush: "post",
+  immediate: true
+});
 </script>
 
 <style scoped>
@@ -304,6 +344,12 @@ watch(() => props.displayMode, (displayMode) => {
 }
 
 .studio-ai-sessions__codex-terminal {
+  min-height: 0;
+  min-width: 0;
+}
+
+.studio-ai-sessions__codex-terminal-shell {
+  display: grid;
   min-height: 0;
   min-width: 0;
 }

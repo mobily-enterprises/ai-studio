@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  codexTrustPromptLooksActive,
   createStudioContextDisplayFilter,
   extractCodexThreadId,
   isCodexThreadId,
@@ -28,36 +27,6 @@ describe("codexOutput terminal utilities", () => {
       "\u001B[31mhello\u001B[0m\r",
       "\u001B[25;1H\u001B[?25h"
     ].join(""));
-  });
-
-  it("detects Codex trust prompts", () => {
-    const output = [
-      "Do you trust the contents of this directory?",
-      "Yes, continue",
-      "No, quit",
-      "Press enter to continue"
-    ].join("\n");
-
-    expect(codexTrustPromptLooksActive(output)).toBe(true);
-    expect(codexTrustPromptLooksActive([
-      output,
-      "",
-      "OpenAI Codex",
-      "Load Vibe64 session briefing."
-    ].join("\n"))).toBe(false);
-    expect(codexTrustPromptLooksActive("> ready")).toBe(false);
-  });
-
-  it("detects Codex trust prompts rendered with cursor-position controls", () => {
-    const output = [
-      "\u001B[6;3HDo\u001B[6;6Hyou\u001B[6;10Htrust\u001B[6;16Hthe\u001B[6;20Hcontents\u001B[6;29Hof\u001B[6;32Hthis\u001B[6;37Hdirectory?",
-      "\u001B[10;1H› 1. Yes, continue",
-      "\u001B[11;3H2.\u001B[11;6HNo,\u001B[11;10Hquit",
-      "\u001B[13;3HPress enter to continue"
-    ].join("");
-
-    expect(codexTrustPromptLooksActive(output)).toBe(true);
-    expect(codexTrustPromptLooksActive(`${output}\u001B[2J\u001B[HOpenAI Codex`)).toBe(false);
   });
 
   it("extracts thread ids from explicit terminal metadata", () => {

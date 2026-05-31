@@ -2142,7 +2142,7 @@ test("vibe64 runtime auto-starts the initial seed conversation only before Codex
     assert.equal(initial.presentation.auto.nextOperation.actionId, "define_seed_application");
     assert.equal(
       initial.presentation.auto.nextOperation.input.conversationRequest,
-      "Ask me the setup choices you need to seed this application."
+      "Ask me one simple setup question at a time. Explain what each answer changes in the app."
     );
 
     await runtime.store.writeStepState("seed_conversation_auto_start", "seed_application_defined", {

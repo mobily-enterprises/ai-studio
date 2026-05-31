@@ -28,7 +28,6 @@ import {
 } from "../../packages/vibe64-sessions/src/server/inputSchemas.js";
 import {
   codexSessionBriefingPrompt,
-  codexTrustPromptLooksActive,
   createCodexTerminalController,
   codexTerminalArgs
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
@@ -471,7 +470,7 @@ test("Vibe64 Codex terminal mounts linked git metadata for worktree roots", asyn
   });
 });
 
-test("Vibe64 Codex terminal state separates running from transmitting", async () => {
+test("Vibe64 Codex terminal state separates running from agent turn state", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sessionId = "codex_turn_state";
     const sessionRoot = path.join(targetRoot, ".vibe64", "sessions", "active", sessionId);
@@ -519,6 +518,9 @@ test("Vibe64 Codex terminal state separates running from transmitting", async ()
     try {
       let state = await terminalService.codexTerminalState(sessionId);
       assert.equal(state.codexTerminal.status, "running");
+      assert.equal(state.codexTerminal.agentTurnActive, false);
+      assert.equal(state.codexTerminal.agentTurnState, "idle");
+      assert.equal(state.codexTerminal.attentionRequired, false);
       assert.equal(state.codexTerminal.transmitting, false);
 
       assert.equal(updateTerminalSessionMetadata(terminal.id, {
@@ -527,7 +529,24 @@ test("Vibe64 Codex terminal state separates running from transmitting", async ()
         namespace
       }).ok, true);
       state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.agentTurnActive, true);
+      assert.equal(state.codexTerminal.agentTurnState, "active");
+      assert.equal(state.codexTerminal.attentionRequired, false);
       assert.equal(state.codexTerminal.transmitting, true);
+
+      assert.equal(updateTerminalSessionMetadata(terminal.id, {
+        codexTurnAttentionMessage: "Codex has been quiet while Vibe64 is waiting for a response.",
+        codexTurnAttentionReason: "quiet_timeout",
+        codexTurnState: "attention_required"
+      }, {
+        namespace
+      }).ok, true);
+      state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.agentTurnActive, false);
+      assert.equal(state.codexTerminal.agentTurnState, "attention_required");
+      assert.equal(state.codexTerminal.attentionRequired, true);
+      assert.equal(state.codexTerminal.attentionReason, "quiet_timeout");
+      assert.equal(state.codexTerminal.transmitting, false);
 
       assert.equal(updateTerminalSessionMetadata(terminal.id, {
         codexTurnState: "idle"
@@ -535,6 +554,8 @@ test("Vibe64 Codex terminal state separates running from transmitting", async ()
         namespace
       }).ok, true);
       state = await terminalService.codexTerminalState(sessionId);
+      assert.equal(state.codexTerminal.agentTurnActive, false);
+      assert.equal(state.codexTerminal.agentTurnState, "idle");
       assert.equal(state.codexTerminal.transmitting, false);
     } finally {
       await closeTerminalSession(terminal.id, {
@@ -630,7 +651,7 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
       args: [
         "-e",
         [
-          "process.stdout.write('ready\\n');",
+          "process.stdout.write('Do you trust this directory? Yes, continue. Press enter to continue\\n');",
           "let threadIdSent = false;",
           "process.stdin.setEncoding('utf8');",
           "process.stdin.on('data', (chunk) => {",
@@ -788,23 +809,6 @@ test("Vibe64 Codex bootstrap failure is persisted as a visible background task",
       "codex-bootstrap-failed"
     ]);
   });
-});
-
-test("Vibe64 Codex trust prompt detection tolerates cursor-position rendering", () => {
-  const output = [
-    "\u001B[6;3HDo\u001B[6;6Hyou\u001B[6;10Htrust\u001B[6;16Hthe\u001B[6;20Hcontents\u001B[6;29Hof\u001B[6;32Hthis\u001B[6;37Hdirectory?",
-    "\u001B[10;1H› 1. Yes, continue",
-    "\u001B[11;3H2.\u001B[11;6HNo,\u001B[11;10Hquit",
-    "\u001B[13;3HPress enter to continue"
-  ].join("");
-
-  assert.equal(codexTrustPromptLooksActive(output), true);
-  assert.equal(codexTrustPromptLooksActive([
-    output,
-    "\nOpenAI Codex\n",
-    "Load Vibe64 session briefing.\n"
-  ].join("")), false);
-  assert.equal(codexTrustPromptLooksActive("> ready"), false);
 });
 
 test("Vibe64 shell terminal joins the target runtime network before the image", () => {

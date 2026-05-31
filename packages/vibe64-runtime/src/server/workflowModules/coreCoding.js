@@ -198,8 +198,8 @@ const coreCodingStepDefinitionsById = deepFreeze({
             kind: "textarea",
             label: "What kind of app should Vibe64 seed?",
             name: "conversationRequest",
-            placeholder: "Describe the app foundation, modules, auth, database, and local development needs.",
-            requiredMessage: "Describe what Vibe64 should seed, or ask Codex what choices it needs."
+            placeholder: "Describe what the app should do for people, or let Codex ask simple setup questions.",
+            requiredMessage: "Describe what Vibe64 should seed, or ask Codex to ask simple setup questions."
           }
         ],
         label: "Discuss seed choices",
@@ -224,7 +224,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
         action: {
           actionId: draftSeedApplicationActionId,
           input: {
-            conversationRequest: "Ask me the setup choices you need to seed this application."
+            conversationRequest: "Ask me one simple setup question at a time. Explain what each answer changes in the app."
           },
           label: "Discuss seed choices",
           statuses: [STEP_STATUS.WAITING_FOR_INPUT],
@@ -1026,7 +1026,7 @@ function seedDefinitionInputInteraction(status = STEP_STATUS.WAITING_FOR_INPUT, 
 function seedDefinitionConversationInteraction(state = {}) {
   return promptWaitingForInputInteraction({
     actionId: draftSeedApplicationActionId,
-    prompt: state.message || "Tell Codex what kind of application to seed, or ask it to identify the setup choices it needs.",
+    prompt: state.message || "Tell Codex what kind of application to seed, or ask it to ask simple setup questions.",
     submitLabel: "Send to Codex",
     title: "Seed application"
   });

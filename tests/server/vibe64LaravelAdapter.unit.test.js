@@ -248,6 +248,10 @@ test("laravel seed issue definition uses the current-step input contract before 
     assert.match(afterPrompt.actionResult.prompt, /defining the initial seed work/u);
     assert.match(afterPrompt.actionResult.prompt, /Laravel seed guidance/u);
     assert.match(afterPrompt.actionResult.prompt, /starter kit/u);
+    assert.match(afterPrompt.actionResult.prompt, /Ask one simple question at a time/u);
+    assert.match(afterPrompt.actionResult.prompt, /normal app owner/u);
+    assert.match(afterPrompt.actionResult.prompt, /what the answer changes in the app/u);
+    assert.match(afterPrompt.actionResult.prompt, /Do not make the user choose from framework module names/u);
     assert.match(afterPrompt.actionResult.prompt, /Vibe64 step completion contract/u);
 
     const afterInput = await runtime.submitCurrentStepInput("laravel_seed_prompt", {

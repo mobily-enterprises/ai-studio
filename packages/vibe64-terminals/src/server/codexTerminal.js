@@ -96,17 +96,8 @@ const CODEX_THREAD_COMMAND = "echo $CODEX_THREAD_ID";
 const CODEX_BOOT_MIN_AGE_MS = 1800;
 const CODEX_BOOT_QUIET_MS = 900;
 const CODEX_BOOT_TIMEOUT_MS = 12000;
-const CODEX_TRUST_PROMPT_ACTIVE_TAIL_LENGTH = 16 * 1024;
-const CODEX_TRUST_PROMPT_CONTINUE_MARKER = "pressentertocontinue";
-const CODEX_TRUST_PROMPT_RESOLVED_TRAILING_LENGTH = 256;
-const CODEX_TRUST_PROMPT_RESOLVED_MARKERS = Object.freeze([
-  "codexthreadid",
-  "loadvibe64sessionbriefing",
-  "openaicodex",
-  "tabtoqueuemessage",
-  "vibe64sessionbriefing",
-  "working"
-]);
+const CODEX_TURN_SETTLE_MS = CODEX_BOOT_QUIET_MS;
+const CODEX_TURN_UNKNOWN_QUIET_MS = 5000;
 const CODEX_KEY_PAUSE_MS = 180;
 const CODEX_THREAD_CAPTURE_TIMEOUT_MS = 30000;
 const PROMPT_INJECTION_PREFIX = "\u001b[200~";
@@ -134,6 +125,8 @@ const MAX_OPEN_CODEX_TERMINALS = 3;
 const STUDIO_DAEMON_ID = crypto.randomUUID();
 const GLOBAL_CODEX_TERMINAL_SCOPE = "global";
 const CODEX_TURN_STATE = Object.freeze({
+  ACTIVE: "active",
+  ATTENTION_REQUIRED: "attention_required",
   IDLE: "idle",
   TRANSMITTING: "transmitting"
 });
@@ -183,36 +176,17 @@ function stripTerminalControlSequences(value = "") {
     .replace(STANDALONE_TERMINAL_CONTROL_PATTERN, "");
 }
 
-function compactTerminalText(value = "") {
-  return stripTerminalControlSequences(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "");
-}
-
-function activeTrustPromptTranscriptTail(output = "") {
-  return String(output || "").slice(-CODEX_TRUST_PROMPT_ACTIVE_TAIL_LENGTH);
-}
-
-function compactTrustPromptTailLooksResolved(text = "") {
-  const continueIndex = String(text || "").lastIndexOf(CODEX_TRUST_PROMPT_CONTINUE_MARKER);
-  if (continueIndex < 0) {
-    return false;
+function normalizeCodexTurnState(value = "") {
+  const state = normalizeText(value);
+  switch (state) {
+    case CODEX_TURN_STATE.ACTIVE:
+    case CODEX_TURN_STATE.TRANSMITTING:
+      return CODEX_TURN_STATE.ACTIVE;
+    case CODEX_TURN_STATE.ATTENTION_REQUIRED:
+      return CODEX_TURN_STATE.ATTENTION_REQUIRED;
+    default:
+      return CODEX_TURN_STATE.IDLE;
   }
-  const trailingText = text.slice(continueIndex + CODEX_TRUST_PROMPT_CONTINUE_MARKER.length);
-  if (!trailingText) {
-    return false;
-  }
-  return trailingText.length > CODEX_TRUST_PROMPT_RESOLVED_TRAILING_LENGTH ||
-    CODEX_TRUST_PROMPT_RESOLVED_MARKERS.some((marker) => trailingText.includes(marker));
-}
-
-function codexTrustPromptLooksActive(output = "") {
-  const text = compactTerminalText(activeTrustPromptTranscriptTail(output));
-  return text.includes("doyoutrustthecontentsofthisdirectory") &&
-    text.includes("yescontinue") &&
-    text.includes("noquit") &&
-    text.includes(CODEX_TRUST_PROMPT_CONTINUE_MARKER) &&
-    !compactTrustPromptTailLooksResolved(text);
 }
 
 function savedCodexWorkdir(session = {}) {
@@ -442,11 +416,19 @@ function codexTerminalStatus(terminal = null) {
   if (!terminal) {
     return null;
   }
+  const agentTurnState = normalizeCodexTurnState(terminal.metadata?.codexTurnState);
+  const agentTurnActive = agentTurnState === CODEX_TURN_STATE.ACTIVE;
+  const attentionRequired = agentTurnState === CODEX_TURN_STATE.ATTENTION_REQUIRED;
   return {
     activityLabel: terminal.metadata?.codexTurnLabel || "",
     activityStartedAt: terminal.metadata?.codexTurnStartedAt || "",
     activityFinishedAt: terminal.metadata?.codexTurnFinishedAt || "",
     activityReason: terminal.metadata?.codexTurnReason || "",
+    agentTurnActive,
+    agentTurnState,
+    attentionMessage: terminal.metadata?.codexTurnAttentionMessage || "",
+    attentionReason: terminal.metadata?.codexTurnAttentionReason || "",
+    attentionRequired,
     commandPreview: terminal.commandPreview || "",
     id: terminal.id || "",
     inputVersion: terminal.inputVersion || 0,
@@ -456,7 +438,7 @@ function codexTerminalStatus(terminal = null) {
     lastOutputBytes: terminal.lastOutputBytes || 0,
     outputVersion: terminal.outputVersion || 0,
     status: terminal.status || "",
-    transmitting: terminal.metadata?.codexTurnState === CODEX_TURN_STATE.TRANSMITTING
+    transmitting: agentTurnActive
   };
 }
 
@@ -515,23 +497,48 @@ function codexTurnLabel(reason = "") {
   }
 }
 
-function transmittingCodexTurnMetadata(signature = "", reason = "") {
+function activeCodexTurnMetadata(signature = "", reason = "", {
+  outputStart = 0
+} = {}) {
+  const normalizedOutputStart = normalizeCodexPromptHandoffOutputStart(outputStart);
   return {
+    codexTurnAttentionMessage: "",
+    codexTurnAttentionReason: "",
     codexTurnFinishedAt: "",
     codexTurnLabel: codexTurnLabel(reason),
+    codexTurnOutputStart: String(normalizedOutputStart),
     codexTurnReason: normalizeText(reason),
     codexTurnSignature: signature,
     codexTurnStartedAt: new Date().toISOString(),
-    codexTurnState: CODEX_TURN_STATE.TRANSMITTING
+    codexTurnState: CODEX_TURN_STATE.ACTIVE
   };
 }
 
 function idleCodexTurnMetadata() {
   return {
+    codexTurnAttentionMessage: "",
+    codexTurnAttentionReason: "",
     codexTurnLabel: "",
+    codexTurnOutputStart: "",
     codexTurnReason: "",
     codexTurnFinishedAt: new Date().toISOString(),
     codexTurnState: CODEX_TURN_STATE.IDLE
+  };
+}
+
+function attentionCodexTurnMetadata({
+  message = "",
+  reason = ""
+} = {}) {
+  const attentionReason = normalizeText(reason || "attention_required");
+  return {
+    codexTurnAttentionMessage: normalizeText(message),
+    codexTurnAttentionReason: attentionReason,
+    codexTurnFinishedAt: new Date().toISOString(),
+    codexTurnLabel: "Codex needs attention.",
+    codexTurnOutputStart: "",
+    codexTurnReason: attentionReason,
+    codexTurnState: CODEX_TURN_STATE.ATTENTION_REQUIRED
   };
 }
 
@@ -715,6 +722,97 @@ function createCodexTerminalController({
   publishSessionChanged = async () => null
 } = {}) {
   const codexBootstrapPromises = new Map();
+  const codexTurnWatchdogTimers = new Map();
+
+  function codexTurnWatchdogKey(sessionId = "", terminalSessionId = "") {
+    return `${normalizeText(sessionId)}:${normalizeText(terminalSessionId)}`;
+  }
+
+  function clearCodexTurnWatchdog(sessionId = "", terminalSessionId = "") {
+    const key = codexTurnWatchdogKey(sessionId, terminalSessionId);
+    const timer = codexTurnWatchdogTimers.get(key);
+    if (!timer) {
+      return;
+    }
+    globalThis.clearTimeout(timer);
+    codexTurnWatchdogTimers.delete(key);
+  }
+
+  function clearCodexTurnWatchdogsForSession(sessionId = "") {
+    const prefix = `${normalizeText(sessionId)}:`;
+    for (const [key, timer] of codexTurnWatchdogTimers.entries()) {
+      if (key.startsWith(prefix)) {
+        globalThis.clearTimeout(timer);
+        codexTurnWatchdogTimers.delete(key);
+      }
+    }
+  }
+
+  function scheduleCodexTurnWatchdog(sessionId = "", terminalSessionId = "", {
+    delayMs = CODEX_TURN_SETTLE_MS
+  } = {}) {
+    const normalizedSessionId = normalizeText(sessionId);
+    const normalizedTerminalSessionId = normalizeText(terminalSessionId);
+    if (!normalizedSessionId || !normalizedTerminalSessionId) {
+      return;
+    }
+    const key = codexTurnWatchdogKey(normalizedSessionId, normalizedTerminalSessionId);
+    const existingTimer = codexTurnWatchdogTimers.get(key);
+    if (existingTimer) {
+      globalThis.clearTimeout(existingTimer);
+    }
+    const timer = globalThis.setTimeout(() => {
+      codexTurnWatchdogTimers.delete(key);
+      void checkCodexTurnWatchdog(normalizedSessionId, normalizedTerminalSessionId);
+    }, Math.max(0, Number(delayMs || 0)));
+    codexTurnWatchdogTimers.set(key, timer);
+  }
+
+  async function checkCodexTurnWatchdog(sessionId = "", terminalSessionId = "") {
+    const snapshot = codexTerminalSnapshot(sessionId, terminalSessionId);
+    const turnState = normalizeCodexTurnState(snapshot.metadata?.codexTurnState);
+    if (snapshot.ok === false || turnState !== CODEX_TURN_STATE.ACTIVE) {
+      return;
+    }
+    if (snapshot.status === "exited") {
+      await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+        message: "Codex exited before finishing the current Vibe64 step.",
+        reason: "terminal_exited"
+      });
+      return;
+    }
+
+    const lastOutputAt = Date.parse(snapshot.lastOutputAt || "");
+    const turnStartedAt = Date.parse(snapshot.metadata?.codexTurnStartedAt || "");
+    const quietSince = Number.isFinite(lastOutputAt)
+      ? lastOutputAt
+      : Number.isFinite(turnStartedAt)
+        ? turnStartedAt
+        : Date.now();
+    const quietMs = Date.now() - quietSince;
+    if (quietMs < CODEX_TURN_SETTLE_MS) {
+      scheduleCodexTurnWatchdog(sessionId, terminalSessionId, {
+        delayMs: CODEX_TURN_SETTLE_MS - quietMs
+      });
+      return;
+    }
+    if (quietMs >= CODEX_TURN_UNKNOWN_QUIET_MS) {
+      vibe64SessionDebugLog("server.codex.turn.quietTimeout", {
+        quietMs,
+        sessionId,
+        terminalSessionId,
+        turnReason: normalizeText(snapshot.metadata?.codexTurnReason)
+      });
+      await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+        message: "Codex has been quiet while Vibe64 is waiting for a response.",
+        reason: "quiet_timeout"
+      });
+      return;
+    }
+    scheduleCodexTurnWatchdog(sessionId, terminalSessionId, {
+      delayMs: CODEX_TURN_UNKNOWN_QUIET_MS - quietMs
+    });
+  }
 
   async function startCodexTerminalSession(sessionId) {
     const runtime = await projectService.createRuntime();
@@ -768,6 +866,7 @@ function createCodexTerminalController({
     });
     const currentStepInputHelper = await prepareCurrentStepInputHelper({
       onSessionChanged: async (changedSessionId) => {
+        clearCodexTurnWatchdogsForSession(changedSessionId);
         clearCodexTurnsForSession(changedSessionId);
         await publishSessionChanged(changedSessionId, {
           reason: "current-step-input-helper"
@@ -812,11 +911,17 @@ function createCodexTerminalController({
       },
       namespace,
       onClose: async ({ id }) => {
+        clearCodexTurnWatchdog(sessionId, id);
         await removeDockerContainer(codexContainerName({
           sessionId,
           terminalId: id
         }));
         await cleanupCodexAttachments(targetRoot, sessionId);
+      },
+      onOutput: ({ session: terminalSession }) => {
+        if (normalizeCodexTurnState(terminalSession.metadata?.codexTurnState) === CODEX_TURN_STATE.ACTIVE) {
+          scheduleCodexTurnWatchdog(sessionId, terminalSession.id);
+        }
       },
       reuseRunning: (terminalSession) => {
         return terminalSession.metadata?.targetRoot === targetRoot &&
@@ -926,10 +1031,8 @@ function createCodexTerminalController({
 
   async function waitForCodexReady(sessionId, terminalSessionId) {
     const waitStartedAt = Date.now();
-    let readyStartedAt = Date.now();
     let lastOutput = "";
     let lastChangedAt = Date.now();
-    let trustPromptActive = false;
     let lastLoggedStatus = "";
     while (true) {
       const snapshot = codexTerminalSnapshot(sessionId, terminalSessionId);
@@ -939,8 +1042,7 @@ function createCodexTerminalController({
         vibe64SessionDebugLog("server.codex.waitForReady.status", {
           ...codexTerminalDebugSummary(snapshot),
           sessionId,
-          terminalSessionId,
-          trustPromptActive
+          terminalSessionId
         });
       }
       if (snapshot.ok === false || snapshot.status === "exited") {
@@ -949,8 +1051,7 @@ function createCodexTerminalController({
           durationMs: vibe64SessionDebugDurationMs(waitStartedAt),
           error: snapshot.error || "Codex terminal is not running.",
           sessionId,
-          terminalSessionId,
-          trustPromptActive
+          terminalSessionId
         });
         return {
           ok: false,
@@ -962,45 +1063,7 @@ function createCodexTerminalController({
         lastOutput = output;
         lastChangedAt = Date.now();
       }
-      if (codexTrustPromptLooksActive(output)) {
-        if (!trustPromptActive) {
-          trustPromptActive = true;
-          vibe64SessionDebugLog("server.codex.waitForReady.trustPrompt", {
-            ...codexTerminalDebugSummary(snapshot),
-            durationMs: vibe64SessionDebugDurationMs(waitStartedAt),
-            sessionId,
-            terminalSessionId
-          });
-        }
-        if (Date.now() - waitStartedAt > CODEX_BOOT_TIMEOUT_MS) {
-          vibe64SessionDebugLog("server.codex.waitForReady.trustPromptTimeout", {
-            ...codexTerminalDebugSummary(snapshot),
-            durationMs: vibe64SessionDebugDurationMs(waitStartedAt),
-            sessionId,
-            terminalSessionId
-          });
-          return {
-            ok: false,
-            attentionRequired: true,
-            error: "Answer the Codex trust prompt before continuing the Vibe64 agent.",
-            retryable: true
-          };
-        }
-        readyStartedAt = Date.now();
-        lastChangedAt = Date.now();
-        await delay(250);
-        continue;
-      }
-      if (trustPromptActive) {
-        trustPromptActive = false;
-        vibe64SessionDebugLog("server.codex.waitForReady.trustPromptCleared", {
-          ...codexTerminalDebugSummary(snapshot),
-          durationMs: vibe64SessionDebugDurationMs(waitStartedAt),
-          sessionId,
-          terminalSessionId
-        });
-      }
-      if (Date.now() - readyStartedAt > CODEX_BOOT_TIMEOUT_MS) {
+      if (Date.now() - waitStartedAt > CODEX_BOOT_TIMEOUT_MS) {
         vibe64SessionDebugLog("server.codex.waitForReady.timeoutAccepted", {
           ...codexTerminalDebugSummary(snapshot),
           durationMs: vibe64SessionDebugDurationMs(waitStartedAt),
@@ -1014,7 +1077,7 @@ function createCodexTerminalController({
       }
       if (
         output &&
-        Date.now() - readyStartedAt >= CODEX_BOOT_MIN_AGE_MS &&
+        Date.now() - waitStartedAt >= CODEX_BOOT_MIN_AGE_MS &&
         Date.now() - lastChangedAt >= CODEX_BOOT_QUIET_MS
       ) {
         vibe64SessionDebugLog("server.codex.waitForReady.quiet", {
@@ -1155,8 +1218,11 @@ function createCodexTerminalController({
     );
   }
 
-  async function markCodexTerminalTransmitting(sessionId, terminalSessionId, signature, reason) {
-    vibe64SessionDebugLog("server.codex.turn.transmitting", {
+  async function markCodexTerminalTurnActive(sessionId, terminalSessionId, signature, reason, {
+    outputStart = 0
+  } = {}) {
+    vibe64SessionDebugLog("server.codex.turn.active", {
+      outputStart,
       reason,
       sessionId,
       signature,
@@ -1165,11 +1231,14 @@ function createCodexTerminalController({
     const result = updateCodexTerminalMetadata(
       sessionId,
       terminalSessionId,
-      transmittingCodexTurnMetadata(signature, reason)
+      activeCodexTurnMetadata(signature, reason, {
+        outputStart
+      })
     );
     if (result.ok === false) {
       return result;
     }
+    scheduleCodexTurnWatchdog(sessionId, terminalSessionId);
     await publishSessionChanged(sessionId, {
       reason
     });
@@ -1177,6 +1246,7 @@ function createCodexTerminalController({
   }
 
   async function markCodexTerminalIdle(sessionId, terminalSessionId, reason) {
+    clearCodexTurnWatchdog(sessionId, terminalSessionId);
     vibe64SessionDebugLog("server.codex.turn.idle", {
       reason,
       sessionId,
@@ -1189,6 +1259,35 @@ function createCodexTerminalController({
     );
     await publishSessionChanged(sessionId, {
       reason
+    });
+    return result;
+  }
+
+  async function markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+    message = "",
+    reason = ""
+  } = {}) {
+    clearCodexTurnWatchdog(sessionId, terminalSessionId);
+    const attentionReason = normalizeText(reason || "attention_required");
+    vibe64SessionDebugLog("server.codex.turn.attentionRequired", {
+      attentionReason,
+      message,
+      sessionId,
+      terminalSessionId
+    });
+    const result = updateCodexTerminalMetadata(
+      sessionId,
+      terminalSessionId,
+      attentionCodexTurnMetadata({
+        message,
+        reason: attentionReason
+      })
+    );
+    if (result.ok === false) {
+      return result;
+    }
+    await publishSessionChanged(sessionId, {
+      reason: `codex-turn-${attentionReason}`
     });
     return result;
   }
@@ -1206,12 +1305,6 @@ function createCodexTerminalController({
         };
       }
       const output = String(snapshot.output || "");
-      if (codexTrustPromptLooksActive(output)) {
-        return {
-          ok: false,
-          error: "Answer the Codex trust prompt before sending this project tool prompt."
-        };
-      }
       if (output !== lastOutput) {
         lastOutput = output;
         lastChangedAt = Date.now();
@@ -1297,12 +1390,6 @@ function createCodexTerminalController({
         };
       }
       const output = String(snapshot.output || "");
-      if (codexTrustPromptLooksActive(output)) {
-        return {
-          ok: false,
-          error: "Answer the Codex trust prompt before sending this fix prompt."
-        };
-      }
       if (output !== lastOutput) {
         lastOutput = output;
         lastChangedAt = Date.now();
@@ -1700,7 +1787,7 @@ function createCodexTerminalController({
         terminalSessionId
       });
       const signature = codexBootstrapSignature(sessionId);
-      const turnMetadata = await markCodexTerminalTransmitting(
+      const turnMetadata = await markCodexTerminalTurnActive(
         sessionId,
         terminalSessionId,
         signature,
@@ -1767,11 +1854,18 @@ function createCodexTerminalController({
           }
         }
       } finally {
-        await markCodexTerminalIdle(
-          sessionId,
-          terminalSessionId,
-          "codex-thread-bootstrap-finished"
-        );
+        if (bootstrapResult.ok === false && bootstrapResult.attentionRequired === true) {
+          await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+            message: errorMessage(bootstrapResult),
+            reason: "codex-bootstrap-attention"
+          });
+        } else {
+          await markCodexTerminalIdle(
+            sessionId,
+            terminalSessionId,
+            "codex-thread-bootstrap-finished"
+          );
+        }
       }
 
       if (bootstrapResult.ok === false) {
@@ -1852,23 +1946,18 @@ function createCodexTerminalController({
         error: "Codex prompt delivery is missing a session or terminal."
       };
     }
-    const signature = codexPromptHandoffSignature(sessionId);
-    const turnMetadataResult = await markCodexTerminalTransmitting(
-      sessionId,
-      terminalSessionId,
-      signature,
-      "codex-prompt-injection-started"
-    );
-    if (turnMetadataResult.ok === false) {
-      return turnMetadataResult;
-    }
-
     const ready = await waitForCodexReady(sessionId, terminalSessionId);
     if (ready.ok === false) {
-      await markCodexTerminalIdle(sessionId, terminalSessionId, "codex-prompt-injection-failed");
+      if (ready.attentionRequired === true) {
+        await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+          message: errorMessage(ready),
+          reason: "codex-ready-attention"
+        });
+      }
       return ready;
     }
 
+    const signature = codexPromptHandoffSignature(sessionId);
     const snapshot = codexTerminalSnapshot(sessionId, terminalSessionId);
     const outputStart = String(snapshot.output || "").length;
     const injected = await writePromptIntoCodexTerminal(
@@ -1877,8 +1966,19 @@ function createCodexTerminalController({
       terminalInput
     );
     if (injected.ok === false) {
-      await markCodexTerminalIdle(sessionId, terminalSessionId, "codex-prompt-injection-failed");
       return injected;
+    }
+    const turnMetadataResult = await markCodexTerminalTurnActive(
+      sessionId,
+      terminalSessionId,
+      signature,
+      "codex-prompt-injection-started",
+      {
+        outputStart
+      }
+    );
+    if (turnMetadataResult.ok === false) {
+      return turnMetadataResult;
     }
 
     await runtime.store.mutateSession(sessionId, async () => {
@@ -2288,7 +2388,6 @@ function createCodexTerminalController({
 }
 
 export {
-  codexTrustPromptLooksActive,
   codexSessionBriefingPrompt,
   codexTerminalArgs,
   createCodexTerminalController

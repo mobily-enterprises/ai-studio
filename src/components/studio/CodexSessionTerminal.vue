@@ -41,7 +41,12 @@
             @dragleave.prevent="handleAttachmentDragLeave"
             @drop.prevent="handleAttachmentDrop"
           >
-            <div ref="terminalHost" class="codex-terminal__host" @click="focusTerminal" />
+            <div
+              ref="terminalHost"
+              class="codex-terminal__host"
+              @click="focusTerminal"
+              @pointerdown.capture="focusTerminal"
+            />
             <div v-if="attachmentDragActive || attachmentUploading" class="codex-terminal__drop-overlay">
               <v-sheet class="codex-terminal__drop-card" rounded="lg" elevation="10">
                 <v-icon :icon="mdiPaperclip" size="28" />
@@ -584,6 +589,18 @@ watch(terminalDisplayActive, (visible, previousVisible) => {
 }, {
   flush: "post",
   immediate: true
+});
+
+watch(terminalHost, (host) => {
+  if (host && terminalDisplayActive.value && props.autoFocus && !props.readOnly) {
+    void focusWritableTerminalWhenShown(true);
+  }
+}, {
+  flush: "post"
+});
+
+defineExpose({
+  focusTerminal: () => focusWritableTerminalWhenShown(terminalDisplayActive.value)
 });
 
 </script>

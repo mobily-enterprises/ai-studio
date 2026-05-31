@@ -56,7 +56,7 @@ function useCodexTerminalViewport({
 
   function focusTerminal() {
     terminalInstance?.focus?.();
-    terminalFocused.value = true;
+    syncFocus();
     window.setTimeout(syncFocus, 0);
   }
 
