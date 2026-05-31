@@ -34,6 +34,17 @@ const STANDALONE_TERMINAL_CONTROL_PATTERN = new RegExp(`[${STANDALONE_TERMINAL_C
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const CODEX_THREAD_ID_TOKEN_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu;
 const CODEX_TRUST_PROMPT_PATTERN = /Do you trust the contents of this directory\?/u;
+const CODEX_TRUST_PROMPT_ACTIVE_TAIL_LENGTH = 16 * 1024;
+const CODEX_TRUST_PROMPT_CONTINUE_MARKER = "pressentertocontinue";
+const CODEX_TRUST_PROMPT_RESOLVED_TRAILING_LENGTH = 256;
+const CODEX_TRUST_PROMPT_RESOLVED_MARKERS = Object.freeze([
+  "codexthreadid",
+  "loadvibe64sessionbriefing",
+  "openaicodex",
+  "tabtoqueuemessage",
+  "vibe64sessionbriefing",
+  "working"
+]);
 const ESCAPE_TERMINAL_STRING_INTRODUCERS = new Set(["]", "P", "X", "^", "_"]);
 const STRING_TERMINATORS = new Set([BELL_CHARACTER, STRING_TERMINATOR_CHARACTER]);
 
@@ -115,6 +126,23 @@ function compactTerminalText(value = "") {
   return stripTerminalControlSequences(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "");
+}
+
+function activeTrustPromptTranscriptTail(output = "") {
+  return String(output || "").slice(-CODEX_TRUST_PROMPT_ACTIVE_TAIL_LENGTH);
+}
+
+function compactTrustPromptTailLooksResolved(text = "") {
+  const continueIndex = String(text || "").lastIndexOf(CODEX_TRUST_PROMPT_CONTINUE_MARKER);
+  if (continueIndex < 0) {
+    return false;
+  }
+  const trailingText = text.slice(continueIndex + CODEX_TRUST_PROMPT_CONTINUE_MARKER.length);
+  if (!trailingText) {
+    return false;
+  }
+  return trailingText.length > CODEX_TRUST_PROMPT_RESOLVED_TRAILING_LENGTH ||
+    CODEX_TRUST_PROMPT_RESOLVED_MARKERS.some((marker) => trailingText.includes(marker));
 }
 
 function terminalControlSequenceCanReplay(source = "", startIndex = 0) {
@@ -328,18 +356,22 @@ function isCodexThreadId(value) {
 }
 
 function codexTrustPromptLooksActive(output) {
-  const source = stripTerminalControlSequences(output);
+  const activeOutput = activeTrustPromptTranscriptTail(output);
+  const source = stripTerminalControlSequences(activeOutput);
   if (CODEX_TRUST_PROMPT_PATTERN.test(source)) {
     const promptTail = source.slice(source.search(CODEX_TRUST_PROMPT_PATTERN));
+    const compactPromptTail = compactTerminalText(promptTail);
     return promptTail.includes("Yes, continue") &&
       promptTail.includes("No, quit") &&
-      promptTail.includes("Press enter to continue");
+      promptTail.includes("Press enter to continue") &&
+      !compactTrustPromptTailLooksResolved(compactPromptTail);
   }
-  const compactSource = compactTerminalText(output);
+  const compactSource = compactTerminalText(activeOutput);
   return compactSource.includes("doyoutrustthecontentsofthisdirectory") &&
     compactSource.includes("yescontinue") &&
     compactSource.includes("noquit") &&
-    compactSource.includes("pressentertocontinue");
+    compactSource.includes(CODEX_TRUST_PROMPT_CONTINUE_MARKER) &&
+    !compactTrustPromptTailLooksResolved(compactSource);
 }
 
 function extractCodexThreadId(output) {

@@ -73,6 +73,7 @@
 
       <Vibe64SessionTerminals
         :allow-codex-start="codexTerminalCanStart"
+        :codex-recovery="codexRecovery"
         :codex-terminal="codexTerminal"
         :codex-read-only="codexTerminalReadOnly"
         :codex-scope="codexTerminalScope"
@@ -141,6 +142,9 @@ import {
   vibe64SessionDebugLog,
   vibe64SessionDebugSummary
 } from "@/lib/vibe64SessionDebugLog.js";
+import {
+  startVibe64CodexTerminal
+} from "@/lib/vibe64SessionApi.js";
 
 const props = defineProps({
   active: {
@@ -306,6 +310,8 @@ const codexTerminalActivity = ref({
   terminalSessionId: "",
   working: false
 });
+const codexRecoveryRunning = ref(false);
+const codexRecoveryError = ref("");
 const autopilotModeActive = computed(() => Boolean(props.active && props.sessionMode === "autopilot"));
 const autopilotAutomationEnabled = computed(() => props.sessionMode === "autopilot");
 const codexTerminalPresentation = computed(() => {
@@ -395,6 +401,11 @@ const codexTerminalListenWhenHidden = computed(() => Boolean(
   !autopilotCodexTerminalVisible.value &&
   selectedCodexTerminalId.value
 ));
+const codexRecovery = computed(() => ({
+  error: codexRecoveryError.value,
+  resume: resumeCodexFromAttention,
+  running: codexRecoveryRunning.value
+}));
 const interactionBusy = computed(() => Boolean(
   page.busy ||
   autopilotBusy.value ||
@@ -471,6 +482,49 @@ function handleCodexActivityChange(payload = {}) {
     sessionId: props.sessionId
   });
   codexTerminalActivity.value = activity;
+}
+
+async function resumeCodexFromAttention() {
+  const sessionId = selectedSessionId.value || props.sessionId;
+  if (!sessionId || codexRecoveryRunning.value) {
+    return {
+      ok: false,
+      error: codexRecoveryRunning.value ? "Codex recovery is already running." : "No Vibe64 session is selected."
+    };
+  }
+  codexRecoveryRunning.value = true;
+  codexRecoveryError.value = "";
+  clearCodexQuietTerminalTimer();
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexRecovery.start", {
+    sessionId
+  });
+  try {
+    const result = await startVibe64CodexTerminal(sessionId);
+    if (result?.ok === false) {
+      throw new Error(result.error || "Codex could not continue.");
+    }
+    codexTerminalQuietTooLong.value = false;
+    await props.sessionData.refreshSessionData();
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexRecovery.done", {
+      sessionId,
+      terminalSessionId: String(result?.terminalSessionId || result?.id || "")
+    });
+    return result || {
+      ok: true
+    };
+  } catch (error) {
+    codexRecoveryError.value = String(error?.message || error || "Codex could not continue.");
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexRecovery.error", {
+      error: codexRecoveryError.value,
+      sessionId
+    });
+    return {
+      ok: false,
+      error: codexRecoveryError.value
+    };
+  } finally {
+    codexRecoveryRunning.value = false;
+  }
 }
 
 function clearCodexQuietTerminalTimer() {
@@ -556,6 +610,7 @@ watch(() => [
     terminalSessionId: "",
     working: false
   };
+  codexRecoveryError.value = "";
   resetCodexQuietTerminalState();
 }, {
   flush: "post"

@@ -157,6 +157,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  autoFocus: {
+    type: Boolean,
+    default: false
+  },
   scope: {
     type: String,
     default: "session",
@@ -408,23 +412,53 @@ function ensureTerminalReady() {
 }
 
 function serverPromptEchoText(session = {}) {
+  const echoInput = String(session?.codexPromptHandoffEchoInput || "");
+  if (echoInput) {
+    return echoInput;
+  }
   const handoff = runtimeCodexPromptHandoff(session);
   return String(handoff?.terminalInput || handoff?.prompt || "");
+}
+
+function serverPromptEchoFilters(session = {}) {
+  const filters = [];
+  const briefingPrompt = String(session?.codexSessionBriefingEchoInput || "");
+  const briefingOutputStart = Number(session?.codexSessionBriefingOutputStart);
+  if (Number.isSafeInteger(briefingOutputStart) && briefingOutputStart >= 0 && briefingPrompt) {
+    filters.push({
+      outputStart: briefingOutputStart,
+      prompt: briefingPrompt
+    });
+  }
+  const prompt = serverPromptEchoText(session);
+  const outputStart = Number(session?.codexPromptHandoffOutputStart);
+  if (Number.isSafeInteger(outputStart) && outputStart >= 0 && prompt) {
+    filters.push({
+      outputStart,
+      prompt
+    });
+  }
+  return filters;
 }
 
 function applyServerPromptEchoFilter(session = {}) {
   if (globalScope.value) {
     return;
   }
-  const outputStart = Number(session?.codexPromptHandoffOutputStart);
-  const prompt = serverPromptEchoText(session);
-  if (!Number.isSafeInteger(outputStart) || outputStart < 0 || !prompt) {
-    return;
-  }
-  addPromptEchoFilter({
+  let filterAdded = false;
+  for (const {
     outputStart,
     prompt
-  });
+  } of serverPromptEchoFilters(session)) {
+    const filterId = addPromptEchoFilter({
+      outputStart,
+      prompt
+    });
+    filterAdded = filterAdded || Boolean(filterId);
+  }
+  if (filterAdded) {
+    writeTerminalOutput(getTerminalOutput());
+  }
 }
 
 function emitCodexActivityChanged(payload = {}) {
@@ -512,6 +546,13 @@ async function focusWritableTerminalWhenShown(visible) {
   if (await setupTerminalUi()) {
     fitTerminal();
     focusTerminal();
+    for (const delayMs of [50, 150, 300]) {
+      globalThis.setTimeout(() => {
+        if (terminalDisplayActive.value && props.autoFocus && !props.readOnly && !terminalFocused.value) {
+          focusTerminal();
+        }
+      }, delayMs);
+    }
   }
 }
 
@@ -537,11 +578,12 @@ watch(() => props.displayMode, async (displayMode) => {
 });
 
 watch(terminalDisplayActive, (visible, previousVisible) => {
-  if (visible && !previousVisible) {
+  if (visible && (previousVisible === false || props.autoFocus)) {
     void focusWritableTerminalWhenShown(visible);
   }
 }, {
-  flush: "post"
+  flush: "post",
+  immediate: true
 });
 
 </script>

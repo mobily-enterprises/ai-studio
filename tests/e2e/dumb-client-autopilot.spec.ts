@@ -862,6 +862,8 @@ test.describe("Autopilot dumb client contract", () => {
       (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
     ))).toEqual([]);
     await page.waitForTimeout(5100);
+    await expect(page.getByText("Your agent needs attention")).toBeVisible();
+    await expect(page.getByText("Check the terminal for a prompt")).toBeVisible();
     await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toBeVisible();
     await expect(page.locator(".studio-autopilot")).not.toHaveAttribute("inert", "");
     await expect.poll(async () => page.evaluate(() => (
@@ -877,6 +879,17 @@ test.describe("Autopilot dumb client contract", () => {
     await expect.poll(async () => page.evaluate(() => (
       ((window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []).join("")
     ))).toContain("yes");
+
+    await page.getByTitle("Hide agent terminal").click();
+    await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Show terminal" })).toBeVisible();
+    await page.getByRole("button", { name: "Show terminal" }).click();
+    await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      const host = document.querySelector(".studio-ai-sessions__terminals--compact .codex-terminal__host");
+      const activeElement = document.activeElement;
+      return Boolean(host && activeElement && host.contains(activeElement));
+    })).toBe(true);
 
     await page.evaluate(() => {
       (window as unknown as {
@@ -903,6 +916,11 @@ test.describe("Autopilot dumb client contract", () => {
     ))).toContain("still here");
     await page.waitForTimeout(4500);
     await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue agent" })).toBeVisible();
+    await page.getByRole("button", { name: "Continue agent" }).click();
+    await expect.poll(() => codexTerminalStartRequests).toBe(1);
+    await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toHaveCount(0);
+    await expect(page.getByText("Your agent needs attention")).toHaveCount(0);
   });
 
   test("does not expose the selected session Codex terminal from Autopilot", async ({ page }) => {

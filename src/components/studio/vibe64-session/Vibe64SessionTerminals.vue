@@ -3,10 +3,84 @@
     class="studio-ai-sessions__terminals"
     :class="{
       'studio-ai-sessions__terminals--compact': displayMode === 'compact',
+      'studio-ai-sessions__terminals--compact-collapsed': compactTerminalCollapsed,
       'studio-ai-sessions__terminals--headless': displayMode === 'headless'
     }"
+    :style="terminalRootStyle"
   >
+    <div
+      v-if="compactMode"
+      class="studio-ai-sessions__codex-attention"
+      :class="{
+        'studio-ai-sessions__codex-attention--collapsed': compactTerminalCollapsed
+      }"
+    >
+      <header class="studio-ai-sessions__codex-attention-header">
+        <div class="studio-ai-sessions__codex-attention-icon">
+          <v-icon :icon="mdiRobotOutline" size="28" />
+        </div>
+        <div class="studio-ai-sessions__codex-attention-copy">
+          <strong>Your agent needs attention</strong>
+          <span>Check the terminal for a prompt, stalled command, or other reason it stopped moving.</span>
+        </div>
+        <div class="studio-ai-sessions__codex-attention-actions">
+          <v-btn
+            v-if="codexRecoveryAvailable"
+            class="studio-ai-sessions__codex-attention-action"
+            color="primary"
+            :loading="codexRecoveryBusy"
+            :prepend-icon="mdiPlayCircleOutline"
+            size="small"
+            type="button"
+            variant="flat"
+            @click="resumeCodexFromAttention"
+          >
+            Continue agent
+          </v-btn>
+          <v-btn
+            v-if="compactTerminalCollapsed"
+            class="studio-ai-sessions__codex-attention-action"
+            :prepend-icon="mdiConsoleLine"
+            size="small"
+            type="button"
+            variant="tonal"
+            @click="showCompactTerminal"
+          >
+            Show terminal
+          </v-btn>
+          <v-btn
+            v-else
+            class="studio-ai-sessions__codex-attention-action"
+            :icon="mdiClose"
+            size="small"
+            title="Hide agent terminal"
+            type="button"
+            variant="text"
+            @click="hideCompactTerminal"
+          />
+        </div>
+      </header>
+      <div v-if="codexRecoveryError" class="studio-ai-sessions__codex-attention-error">
+        {{ codexRecoveryError }}
+      </div>
+      <CodexSessionTerminal
+        class="studio-ai-sessions__codex-terminal studio-ai-sessions__codex-terminal--attention"
+        :allow-start="allowCodexStart"
+        auto-focus
+        :display-mode="compactTerminalDisplayMode"
+        :listen-when-hidden="listenCodexWhenHidden || compactTerminalCollapsed"
+        :read-only="codexReadOnly"
+        :scope="codexScope"
+        :session="session"
+        :terminal="codexTerminalState"
+        :visible="!compactTerminalCollapsed"
+        @activity-change="handleCodexActivityChange"
+        @session-update="handleCodexSessionUpdate"
+      />
+    </div>
+
     <CodexSessionTerminal
+      v-else
       class="studio-ai-sessions__codex-terminal"
       :allow-start="allowCodexStart"
       :display-mode="displayMode"
@@ -72,6 +146,12 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import {
+  mdiClose,
+  mdiConsoleLine,
+  mdiPlayCircleOutline,
+  mdiRobotOutline
+} from "@mdi/js";
 import Vibe64FixCodexDialog from "@/components/studio/Vibe64FixCodexDialog.vue";
 import Vibe64CommandTerminal from "@/components/studio/Vibe64CommandTerminal.vue";
 import Vibe64HeadlessCommandOutput from "@/components/studio/vibe64-session/Vibe64HeadlessCommandOutput.vue";
@@ -105,6 +185,10 @@ const props = defineProps({
     default: null,
     type: Object
   },
+  codexRecovery: {
+    default: null,
+    type: Object
+  },
   displayMode: {
     default: "full",
     type: String
@@ -129,12 +213,23 @@ const props = defineProps({
 const emit = defineEmits(["codex-activity-change", "codex-session-update"]);
 
 const commandTerminalExpanded = ref(true);
+const compactTerminalCollapsed = ref(false);
 const {
   fixDialogOpen,
   fixJob,
   fixTerminal,
   openFixCodexDialog
 } = useVibe64FixCodexDialog();
+const compactMode = computed(() => props.displayMode === "compact");
+const compactTerminalDisplayMode = computed(() => compactTerminalCollapsed.value ? "headless" : "compact");
+const codexRecoveryAvailable = computed(() => typeof props.codexRecovery?.resume === "function");
+const codexRecoveryBusy = computed(() => Boolean(props.codexRecovery?.running));
+const codexRecoveryError = computed(() => String(props.codexRecovery?.error || ""));
+const terminalRootStyle = computed(() => {
+  return compactMode.value && compactTerminalCollapsed.value
+    ? { height: "auto" }
+    : null;
+});
 const commandOutputVisible = computed(() => Boolean(
   props.showCommandOutput &&
   (props.commandTerminal.visible || props.headlessCommandTerminal.visible)
@@ -158,6 +253,25 @@ function handleCodexActivityChange(payload = {}) {
   emit("codex-activity-change", payload);
 }
 
+function hideCompactTerminal() {
+  compactTerminalCollapsed.value = true;
+}
+
+function showCompactTerminal() {
+  compactTerminalCollapsed.value = false;
+}
+
+async function resumeCodexFromAttention() {
+  if (!codexRecoveryAvailable.value || codexRecoveryBusy.value) {
+    return;
+  }
+  const result = await props.codexRecovery.resume();
+  if (result?.ok === false) {
+    return;
+  }
+  compactTerminalCollapsed.value = true;
+}
+
 watch(() => props.commandTerminal.startKey, () => {
   if (props.commandTerminal.visible) {
     commandTerminalExpanded.value = true;
@@ -172,6 +286,13 @@ watch(() => props.commandTerminal.visible, (visible) => {
 
 watch(() => props.session?.sessionId || "", () => {
   commandTerminalExpanded.value = true;
+  compactTerminalCollapsed.value = false;
+});
+
+watch(() => props.displayMode, (displayMode) => {
+  if (displayMode !== "compact") {
+    compactTerminalCollapsed.value = false;
+  }
 });
 </script>
 
@@ -200,6 +321,100 @@ watch(() => props.session?.sessionId || "", () => {
   height: 36rem;
   max-width: 72rem;
   width: 100%;
+}
+
+.studio-ai-sessions__terminals--compact-collapsed {
+  max-width: min(42rem, 100%);
+}
+
+.studio-ai-sessions__codex-attention {
+  background: rgba(var(--v-theme-surface), 0.98);
+  border: 1px solid rgba(var(--v-theme-primary), 0.28);
+  border-radius: 8px;
+  box-shadow: 0 1rem 2.8rem rgba(22, 31, 44, 0.22);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.studio-ai-sessions__codex-attention--collapsed {
+  height: auto;
+}
+
+.studio-ai-sessions__codex-attention-header {
+  align-items: center;
+  background:
+    linear-gradient(90deg, rgba(var(--v-theme-primary), 0.13), rgba(var(--v-theme-surface), 0.98) 72%);
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.18);
+  display: flex;
+  gap: 0.75rem;
+  min-height: 4.2rem;
+  padding: 0.65rem 0.8rem;
+}
+
+.studio-ai-sessions__codex-attention-icon {
+  align-items: center;
+  background: rgba(var(--v-theme-primary), 0.12);
+  border: 1px solid rgba(var(--v-theme-primary), 0.22);
+  border-radius: 999px;
+  color: rgb(var(--v-theme-primary));
+  display: flex;
+  flex: 0 0 auto;
+  height: 2.7rem;
+  justify-content: center;
+  width: 2.7rem;
+}
+
+.studio-ai-sessions__codex-attention-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.studio-ai-sessions__codex-attention-copy strong {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.06rem;
+  font-weight: 720;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.studio-ai-sessions__codex-attention-copy span {
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.studio-ai-sessions__codex-attention-action {
+  flex: 0 0 auto;
+}
+
+.studio-ai-sessions__codex-attention-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.studio-ai-sessions__codex-attention-error {
+  background: rgba(var(--v-theme-error), 0.08);
+  border-bottom: 1px solid rgba(var(--v-theme-error), 0.18);
+  color: rgb(var(--v-theme-error));
+  font-size: 0.88rem;
+  line-height: 1.35;
+  padding: 0.5rem 0.85rem;
+}
+
+.studio-ai-sessions__codex-terminal--attention {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.55rem;
 }
 
 .studio-ai-sessions__command-overlay {

@@ -39,6 +39,12 @@ describe("codexOutput terminal utilities", () => {
     ].join("\n");
 
     expect(codexTrustPromptLooksActive(output)).toBe(true);
+    expect(codexTrustPromptLooksActive([
+      output,
+      "",
+      "OpenAI Codex",
+      "Load Vibe64 session briefing."
+    ].join("\n"))).toBe(false);
     expect(codexTrustPromptLooksActive("> ready")).toBe(false);
   });
 
@@ -51,6 +57,7 @@ describe("codexOutput terminal utilities", () => {
     ].join("");
 
     expect(codexTrustPromptLooksActive(output)).toBe(true);
+    expect(codexTrustPromptLooksActive(`${output}\u001B[2J\u001B[HOpenAI Codex`)).toBe(false);
   });
 
   it("extracts thread ids from explicit terminal metadata", () => {

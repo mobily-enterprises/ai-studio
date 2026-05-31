@@ -541,6 +541,154 @@ test("Vibe64 Codex terminal state separates running from transmitting", async ()
   });
 });
 
+test("Vibe64 Codex terminal resumes a pending prompt through the active terminal", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "codex_resume_pending_prompt";
+    const sessionRoot = path.join(targetRoot, ".vibe64", "sessions", "active", sessionId);
+    const worktree = path.join(sessionRoot, "worktree");
+    await mkdir(worktree, {
+      recursive: true
+    });
+    const actionResult = {
+      actionId: "define_seed_application",
+      attemptFile: "000001-define_seed_application.json",
+      attemptNumber: 1,
+      codexPromptHandoff: {
+        actionId: "define_seed_application",
+        attemptFile: "000001-define_seed_application.json",
+        attemptNumber: 1,
+        handoffId: "000001-define_seed_application.json:define_seed_application",
+        kind: "codex_prompt_handoff",
+        prompt: "Ask the user for seed choices.",
+        promptId: "define_seed_application",
+        terminalInput: "Ask the user for seed choices."
+      },
+      status: "prompt_ready",
+      stepId: "seed_application_defined"
+    };
+    const session = {
+      actionAttempts: [actionResult],
+      completedSteps: ["worktree_created"],
+      currentStep: "seed_application_defined",
+      metadata: {
+        worktree_path: worktree
+      },
+      presentation: {
+        backgroundTasks: []
+      },
+      sessionId,
+      sessionRoot,
+      stepMachine: {
+        status: "awaiting_agent_result"
+      },
+      targetRoot
+    };
+    const backgroundTasks = new Map();
+    const runtime = {
+      async getSession() {
+        return session;
+      },
+      async promptSessionForAction() {
+        return session;
+      },
+      store: {
+        async mutateSession(_sessionId, operation) {
+          return operation();
+        },
+        async writeBackgroundTaskEvent(_sessionId, taskId, {
+          event = {},
+          patch = {}
+        } = {}) {
+          const previous = backgroundTasks.get(taskId) || {
+            events: [],
+            id: taskId
+          };
+          const task = {
+            ...previous,
+            ...patch,
+            events: [
+              ...(Array.isArray(previous.events) ? previous.events : []),
+              event
+            ],
+            id: taskId,
+            status: patch.status || event.status || previous.status || ""
+          };
+          backgroundTasks.set(taskId, task);
+          session.presentation.backgroundTasks = [...backgroundTasks.values()];
+          return task;
+        },
+        async writeMetadataValue(_sessionId, name, value) {
+          session.metadata[name] = String(value || "").trim();
+        }
+      }
+    };
+    const namespace = codexTerminalNamespace(sessionId);
+    const terminal = startTerminalSession({
+      args: [
+        "-e",
+        [
+          "process.stdout.write('ready\\n');",
+          "let threadIdSent = false;",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => {",
+          "  if (!threadIdSent && String(chunk).includes('CODEX_THREAD_ID')) {",
+          "    threadIdSent = true;",
+          "    process.stdout.write('CODEX_THREAD_ID\\n00000000-0000-4000-8000-000000000123\\n');",
+          "  }",
+          "});",
+          "process.stdin.resume();",
+          "setInterval(() => {}, 1000);"
+        ].join("")
+      ],
+      command: process.execPath,
+      commandPreview: "codex",
+      metadata: {
+        targetRoot,
+        workdir: worktree
+      },
+      namespace
+    });
+    assert.equal(terminal.ok, true);
+
+    const terminalService = createService({
+      projectService: {
+        targetRoot,
+        async createRuntime() {
+          return runtime;
+        }
+      }
+    });
+
+    try {
+      const result = await terminalService.startCodexTerminal(sessionId);
+      assert.equal(result.ok, true);
+      assert.equal(result.resumedPendingCodexPrompt, true);
+      assert.equal(result.pendingCodexPromptInjected, true);
+      assert.equal(result.terminalSessionId, terminal.id);
+
+      assert.equal(session.metadata.codex_thread_id, "00000000-0000-4000-8000-000000000123");
+      assert.equal(session.metadata.codex_workdir, worktree);
+      assert.equal(result.codexThreadId, "00000000-0000-4000-8000-000000000123");
+      assert.equal(session.metadata.codex_prompt_handoff_id, actionResult.codexPromptHandoff.handoffId);
+      assert.match(session.metadata.codex_prompt_handoff_echo_input, /Load Vibe64 session briefing\./u);
+      assert.match(session.metadata.codex_prompt_handoff_echo_input, /Ask the user for seed choices\./u);
+      assert.equal(session.metadata.codex_prompt_handoff_terminal_id, terminal.id);
+      assert.equal(session.metadata.codex_session_briefing_delivered, "yes");
+      assert.equal(session.metadata.codex_session_briefing_delivery, "terminal_prompt_handoff");
+      assert.equal(result.codexSessionBriefingDelivered, true);
+      assert.match(result.codexPromptHandoffEchoInput, /Ask the user for seed choices\./u);
+      assert.equal(
+        session.presentation.backgroundTasks.find((task) => task.id === "codex_bootstrap")?.status,
+        "ready"
+      );
+    } finally {
+      await closeTerminalSession(terminal.id, {
+        namespace
+      });
+    }
+  });
+});
+
 test("Vibe64 Codex bootstrap failure is persisted as a visible background task", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
@@ -592,6 +740,11 @@ test("Vibe64 Codex trust prompt detection tolerates cursor-position rendering", 
   ].join("");
 
   assert.equal(codexTrustPromptLooksActive(output), true);
+  assert.equal(codexTrustPromptLooksActive([
+    output,
+    "\nOpenAI Codex\n",
+    "Load Vibe64 session briefing.\n"
+  ].join("")), false);
   assert.equal(codexTrustPromptLooksActive("> ready"), false);
 });
 
