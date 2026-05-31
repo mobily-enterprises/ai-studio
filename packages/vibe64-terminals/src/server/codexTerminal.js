@@ -81,7 +81,15 @@ import {
   prepareFixCodexReportHelper,
   reportFixCodexJob
 } from "./fixCodexJobs.js";
+import {
+  AGENT_TERMINAL_IDENTITY_STATUS,
+  AGENT_TERMINAL_RESUME_STRATEGY,
+  agentTerminalIdentityForWorkdir,
+  agentTerminalIdentityState,
+  ensureAgentTerminalIdentity
+} from "./agentTerminalIdentity.js";
 
+const CODEX_AGENT_PROVIDER = "codex";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const CODEX_THREAD_ID_TOKEN_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu;
 const CODEX_THREAD_COMMAND = "echo $CODEX_THREAD_ID";
@@ -537,7 +545,14 @@ function codexState(session = {}) {
   const metadata = session.metadata || {};
   const workdir = terminalWorktreePath(session);
   const codexThreadId = codexThreadIdForWorkdir(session, workdir);
+  const agentIdentity = codexAgentIdentityState(session, workdir);
   return {
+    agentConversationId: agentIdentity?.conversationId || "",
+    agentIdentity,
+    agentIdentityProvider: agentIdentity?.provider || CODEX_AGENT_PROVIDER,
+    agentIdentityStatus: agentIdentity?.status || "",
+    agentResumeStrategy: agentIdentity?.resumeStrategy || "",
+    agentWorkdir: agentIdentity?.workdir || workdir,
     codexWorkdir: workdir,
     codexPromptHandoffEchoInput: String(metadata.codex_prompt_handoff_echo_input || ""),
     codexPromptHandoffOutputStart: normalizeCodexPromptHandoffOutputStart(metadata.codex_prompt_handoff_output_start),
@@ -553,18 +568,49 @@ function codexState(session = {}) {
 }
 
 function codexThreadIdForWorkdir(session = {}, workdir = "") {
-  const codexThreadId = normalizeCodexThreadId(session.metadata?.codex_thread_id);
-  if (!codexThreadId) {
-    return "";
-  }
+  return codexReadyIdentityForWorkdir(session, workdir)?.conversationId || "";
+}
 
+function codexReadyIdentityForWorkdir(session = {}, workdir = "") {
   const normalizedWorkdir = workdir ? path.resolve(workdir) : terminalWorktreePath(session);
-  const recordedWorkdir = savedCodexWorkdir(session);
-  if (!normalizedWorkdir || !recordedWorkdir || recordedWorkdir !== normalizedWorkdir) {
-    return "";
+  const identity = agentTerminalIdentityForWorkdir(session, {
+    provider: CODEX_AGENT_PROVIDER,
+    validateConversationId: normalizeCodexThreadId,
+    workdir: normalizedWorkdir
+  });
+  if (identity) {
+    return identity;
   }
 
-  return codexThreadId;
+  const legacyThreadId = normalizeCodexThreadId(session.metadata?.codex_thread_id);
+  const recordedWorkdir = savedCodexWorkdir(session);
+  if (legacyThreadId && normalizedWorkdir && recordedWorkdir === normalizedWorkdir) {
+    return {
+      capturedAt: "",
+      conversationId: legacyThreadId,
+      provider: CODEX_AGENT_PROVIDER,
+      resumeStrategy: AGENT_TERMINAL_RESUME_STRATEGY.PROVIDER_NATIVE,
+      source: "codex_legacy_metadata",
+      status: AGENT_TERMINAL_IDENTITY_STATUS.READY,
+      terminalSessionId: "",
+      workdir: recordedWorkdir
+    };
+  }
+
+  return null;
+}
+
+function codexAgentIdentityState(session = {}, workdir = "") {
+  const readyIdentity = codexReadyIdentityForWorkdir(session, workdir);
+  if (readyIdentity) {
+    return readyIdentity;
+  }
+
+  return agentTerminalIdentityState(session, {
+    provider: CODEX_AGENT_PROVIDER,
+    validateConversationId: normalizeCodexThreadId,
+    workdir: workdir ? path.resolve(workdir) : terminalWorktreePath(session)
+  });
 }
 
 function withCodexState(response = {}, session = {}) {
@@ -935,6 +981,7 @@ function createCodexTerminalController({
           });
           return {
             ok: false,
+            attentionRequired: true,
             error: "Answer the Codex trust prompt before continuing the Vibe64 agent.",
             retryable: true
           };
@@ -1008,7 +1055,7 @@ function createCodexTerminalController({
     };
   }
 
-  async function captureCodexThreadId({ runtime, session, terminalSessionId }) {
+  async function captureCodexThreadId({ session, terminalSessionId }) {
     const workdir = terminalWorktreePath(session);
     const existingThreadId = codexThreadIdForWorkdir(session, workdir);
     if (existingThreadId) {
@@ -1024,12 +1071,6 @@ function createCodexTerminalController({
       const snapshot = codexTerminalSnapshot(session.sessionId, terminalSessionId);
       const threadId = extractCodexThreadId(snapshot.output || "");
       if (threadId) {
-        await runtime.store.mutateSession(session.sessionId, async () => {
-          await Promise.all([
-            runtime.store.writeMetadataValue(session.sessionId, "codex_thread_id", threadId),
-            runtime.store.writeMetadataValue(session.sessionId, "codex_workdir", workdir)
-          ]);
-        });
         return threadId;
       }
       await delay(250);
@@ -1038,27 +1079,44 @@ function createCodexTerminalController({
   }
 
   async function ensureCapturedCodexThreadId({ runtime, session, terminalSessionId }) {
-    const sessionId = normalizeText(session?.sessionId);
-    const workdir = terminalWorktreePath(session);
-    const existingThreadId = codexThreadIdForWorkdir(session, workdir);
-    if (existingThreadId) {
-      return {
-        ok: true,
-        session,
-        threadId: existingThreadId
-      };
-    }
-
-    const ready = await waitForCodexReady(sessionId, terminalSessionId);
-    if (ready.ok === false) {
-      return ready;
-    }
-
-    const threadId = await captureCodexThreadId({
+    const identityResult = await ensureAgentTerminalIdentity({
+      adapter: {
+        captureIdentity: async (input) => {
+          const threadId = await captureCodexThreadId(input);
+          return threadId ? {
+            conversationId: threadId
+          } : null;
+        },
+        displayName: "Codex",
+        legacyMetadataForIdentity: (identity) => ({
+          codex_thread_id: identity.conversationId,
+          codex_workdir: identity.workdir
+        }),
+        provider: CODEX_AGENT_PROVIDER,
+        readIdentity: (currentSession, workdir) => codexReadyIdentityForWorkdir(currentSession, workdir),
+        resumeStrategy: AGENT_TERMINAL_RESUME_STRATEGY.PROVIDER_NATIVE,
+        validateConversationId: normalizeCodexThreadId,
+        waitUntilReady: ({ sessionId, terminalSessionId: currentTerminalSessionId }) => (
+          waitForCodexReady(sessionId, currentTerminalSessionId)
+        ),
+        workdir: terminalWorktreePath
+      },
       runtime,
       session,
       terminalSessionId
     });
+    const sessionId = normalizeText(session?.sessionId);
+    if (identityResult.ok === false) {
+      if (identityResult.attentionRequired !== true) {
+        vibe64SessionDebugLog("server.codex.threadCapture.failed", {
+          sessionId,
+          terminalSessionId
+        });
+      }
+      return identityResult;
+    }
+
+    const threadId = normalizeCodexThreadId(identityResult.identity?.conversationId);
     if (!threadId) {
       vibe64SessionDebugLog("server.codex.threadCapture.failed", {
         sessionId,
@@ -1073,7 +1131,8 @@ function createCodexTerminalController({
 
     return {
       ok: true,
-      session: await runtime.getSession(sessionId),
+      identity: identityResult.identity,
+      session: identityResult.session,
       threadId
     };
   }

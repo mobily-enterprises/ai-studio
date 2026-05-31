@@ -855,7 +855,7 @@ test.describe("Autopilot dumb client contract", () => {
 
     await expect(page.locator(".studio-ai-sessions__terminals--autopilot-preview")).toHaveCount(0);
     await expect(page.locator(".studio-ai-sessions__terminals--compact")).toHaveCount(0);
-    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toHaveCount(0);
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Codex is thinking..." })).toHaveCount(0);
     await expect.poll(() => codexTerminalStartRequests).toBe(0);
     await expect.poll(async () => page.evaluate(() => (
@@ -865,6 +865,7 @@ test.describe("Autopilot dumb client contract", () => {
     await expect(page.getByText("Your agent needs attention")).toBeVisible();
     await expect(page.getByText("Check the terminal for a prompt")).toBeVisible();
     await expect(page.locator(".studio-ai-sessions__terminals--compact .codex-terminal__host")).toBeVisible();
+    await expect(page.locator(".studio-ai-sessions__codex-thinking-overlay")).toHaveCount(0);
     await expect(page.locator(".studio-autopilot")).not.toHaveAttribute("inert", "");
     await expect.poll(async () => page.evaluate(() => (
       (window as unknown as { __vibe64CodexTerminalSocketCount?: () => number }).__vibe64CodexTerminalSocketCount?.() || 0

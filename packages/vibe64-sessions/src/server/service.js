@@ -163,6 +163,12 @@ function withCodexTerminalState(session = {}, terminalState = {}) {
   const presentation = objectValue(session.presentation);
   return {
     ...session,
+    agentConversationId: terminalState.agentConversationId || session.agentConversationId || "",
+    agentIdentity: terminalState.agentIdentity || session.agentIdentity || null,
+    agentIdentityProvider: terminalState.agentIdentityProvider || session.agentIdentityProvider || "",
+    agentIdentityStatus: terminalState.agentIdentityStatus || session.agentIdentityStatus || "",
+    agentResumeStrategy: terminalState.agentResumeStrategy || session.agentResumeStrategy || "",
+    agentWorkdir: terminalState.agentWorkdir || session.agentWorkdir || "",
     codexTerminal: terminalState.codexTerminal || null,
     codexWorkdir: terminalState.codexWorkdir || session.codexWorkdir || "",
     codexPromptHandoffOutputStart: terminalState.codexPromptHandoffOutputStart ?? session.codexPromptHandoffOutputStart,

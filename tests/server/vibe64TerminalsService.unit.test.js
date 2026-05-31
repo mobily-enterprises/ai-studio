@@ -37,6 +37,9 @@ import {
   prepareFixCodexReportHelper
 } from "../../packages/vibe64-terminals/src/server/fixCodexJobs.js";
 import {
+  ensureAgentTerminalIdentity
+} from "../../packages/vibe64-terminals/src/server/agentTerminalIdentity.js";
+import {
   COMMAND_RESULT_ENV
 } from "../../packages/vibe64-terminals/src/server/commandTerminalResults.js";
 import {
@@ -668,6 +671,15 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
 
       assert.equal(session.metadata.codex_thread_id, "00000000-0000-4000-8000-000000000123");
       assert.equal(session.metadata.codex_workdir, worktree);
+      assert.equal(session.metadata.agent_identity_provider, "codex");
+      assert.equal(session.metadata.agent_identity_status, "ready");
+      assert.equal(session.metadata.agent_identity_conversation_id, "00000000-0000-4000-8000-000000000123");
+      assert.equal(session.metadata.agent_identity_workdir, worktree);
+      assert.equal(session.metadata.agent_identity_resume_strategy, "provider-native");
+      assert.equal(session.metadata.agent_identity_terminal_session_id, terminal.id);
+      assert.equal(result.agentIdentity.provider, "codex");
+      assert.equal(result.agentIdentity.status, "ready");
+      assert.equal(result.agentIdentity.conversationId, "00000000-0000-4000-8000-000000000123");
       assert.equal(result.codexThreadId, "00000000-0000-4000-8000-000000000123");
       assert.equal(session.metadata.codex_prompt_handoff_id, actionResult.codexPromptHandoff.handoffId);
       assert.match(session.metadata.codex_prompt_handoff_echo_input, /Load Vibe64 session briefing\./u);
@@ -687,6 +699,53 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
       });
     }
   });
+});
+
+test("agent terminal identity records user attention as a recoverable state", async () => {
+  const session = {
+    metadata: {},
+    sessionId: "agent_identity_attention_required"
+  };
+  const runtime = {
+    async getSession() {
+      return session;
+    },
+    store: {
+      async mutateSession(_sessionId, operation) {
+        return operation();
+      },
+      async writeMetadataValue(_sessionId, name, value) {
+        session.metadata[name] = String(value || "").trim();
+      }
+    }
+  };
+
+  const result = await ensureAgentTerminalIdentity({
+    adapter: {
+      captureIdentity: async () => {
+        throw new Error("capture should wait for user attention first");
+      },
+      provider: "codex",
+      resumeStrategy: "provider-native",
+      waitUntilReady: async () => ({
+        attentionRequired: true,
+        error: "Answer the terminal prompt before continuing.",
+        ok: false,
+        retryable: true
+      }),
+      workdir: () => "/tmp/vibe64-agent-identity-attention"
+    },
+    runtime,
+    session,
+    terminalSessionId: "attention-terminal"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.attentionRequired, true);
+  assert.equal(session.metadata.agent_identity_provider, "codex");
+  assert.equal(session.metadata.agent_identity_status, "attention_required");
+  assert.equal(session.metadata.agent_identity_terminal_session_id, "attention-terminal");
+  assert.equal(session.metadata.agent_identity_error, "Answer the terminal prompt before continuing.");
 });
 
 test("Vibe64 Codex bootstrap failure is persisted as a visible background task", async () => {

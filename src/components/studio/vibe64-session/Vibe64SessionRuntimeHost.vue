@@ -355,8 +355,12 @@ const autopilotCodexTerminalVisible = computed(() => Boolean(
 ));
 const autopilotCodexWorkingVisible = computed(() => Boolean(
   serverSaysCodexIsWorking.value &&
+  selectedCodexTerminalId.value &&
   !autopilotCodexTerminalVisible.value &&
-  codexTerminalStreaming.value
+  (
+    codexTerminalStreaming.value ||
+    codexTerminalListenWhenHidden.value
+  )
 ));
 const autopilotInteractionLocked = computed(() => Boolean(
   props.active &&
