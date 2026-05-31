@@ -26,4 +26,17 @@ export default {
 [data-testid="jskit-shell-drawer"] ~ .v-main {
   --v-layout-left: var(--studio-shell-primary-drawer-width) !important;
 }
+
+body.studio-shell-drawer-hidden [data-testid="jskit-shell-drawer"] {
+  display: none !important;
+  width: 0 !important;
+}
+
+body.studio-shell-drawer-hidden [data-testid="jskit-shell-drawer"] ~ .v-main {
+  --v-layout-left: 0px !important;
+}
+
+body.studio-shell-drawer-hidden [aria-label="Toggle navigation menu"] {
+  display: none !important;
+}
 </style>

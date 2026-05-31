@@ -24,6 +24,8 @@ import {
 import {
   studioHttpClient
 } from "@/lib/studioHttp.js";
+import { useStudioShellDrawer } from "@/composables/useStudioShellDrawer.js";
+import Vibe64HomeWorkspaceMenu from "@/components/studio/Vibe64HomeWorkspaceMenu.vue";
 
 const route = useRoute();
 const pageTitle = ref("");
@@ -36,6 +38,10 @@ const projectSelectionResource = useEndpointResource({
 });
 const targetRoot = computed(() => String(projectSelectionResource.data.value?.targetRoot || "").trim());
 const targetFolderName = computed(() => finalPathSegment(targetRoot.value));
+
+useStudioShellDrawer({
+  hidden: true
+});
 
 function finalPathSegment(pathValue = "") {
   const normalizedPath = String(pathValue || "").trim().replace(/[\\/]+$/u, "");
@@ -90,7 +96,9 @@ watch(
       <div
         id="studio-home-app-bar-actions"
         class="studio-home-shell-actions"
-      />
+      >
+        <Vibe64HomeWorkspaceMenu />
+      </div>
     </template>
     <RouterView v-slot="{ Component }">
       <component
@@ -107,6 +115,7 @@ watch(
   display: flex;
   gap: 0.45rem;
   min-width: 0;
+  padding-left: 1rem;
 }
 
 .studio-home-shell-title {

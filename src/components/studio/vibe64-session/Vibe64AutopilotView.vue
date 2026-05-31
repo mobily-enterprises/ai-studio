@@ -1,354 +1,68 @@
 <template>
   <section class="studio-autopilot">
-    <Vibe64AutopilotNavigation
-      class="studio-autopilot__nav"
-      :busy="navigationBusy"
-      layout="rail"
-      :steps="autopilotSteps"
-      @rewind="rewindToAutopilotStep"
-    />
-
-    <div
-      class="studio-autopilot__stage"
-      :class="{
-        'studio-autopilot__stage--failure': standaloneFailureVisible
-      }"
-    >
-      <div
-        v-if="commandTerminalVisible"
-        class="studio-autopilot__command-terminal-stage"
-      >
-        <Vibe64HeadlessCommandOutput
-          class="studio-autopilot__command-terminal-output"
-          :command-preview="commandPreview"
-          compact
-          :error="commandTerminalError"
-          :failed="commandTerminalFailed"
-          :output="commandTerminalText"
-          :running="commandRunning"
-          :status="commandStatus"
-          title="Autopilot command"
-        />
-        <div class="studio-autopilot__command-terminal-overlay">
-          <strong>{{ commandOverlayTitle }}</strong>
-          <template v-if="commandTerminalFailed">
-            <span>{{ commandFailureSummary }}</span>
-            <div class="studio-autopilot__actions">
-              <v-btn
-                color="primary"
-                :prepend-icon="mdiRefresh"
-                size="small"
-                type="button"
-                variant="tonal"
-                @click="retryFromCommandFailure"
-              >
-                Retry command
-              </v-btn>
-              <v-btn
-                color="primary"
-                :prepend-icon="mdiRobotOutline"
-                size="small"
-                type="button"
-                variant="tonal"
-                @click="requestCommandAiFix"
-              >
-                Get AI to fix it
-              </v-btn>
-            </div>
-          </template>
-          <template v-else>
-            <span>{{ displayStatusText }}</span>
-            <v-btn
-              v-if="commandRunning"
-              class="studio-autopilot__stop-button"
-              :prepend-icon="mdiStopCircleOutline"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="stopCommandAction"
-            >
-              Stop command
-            </v-btn>
-          </template>
-        </div>
-      </div>
-
-      <div v-if="mainStatusVisible" class="studio-autopilot__status-bar">
-        <v-progress-circular
-          v-if="displayRunning"
-          class="studio-autopilot__cog"
-          color="primary"
-          indeterminate
-          :size="48"
-          :width="3"
-        >
-          <v-icon :icon="mdiCog" size="24" />
-        </v-progress-circular>
-
-        <v-icon
-          v-else-if="screenState.icon === 'warning'"
-          color="warning"
-          :icon="mdiAlertCircleOutline"
-          size="34"
-        />
-
-        <v-icon
-          v-else-if="screenState.icon === 'success'"
-          color="success"
-          :icon="mdiCheckCircleOutline"
-          size="36"
-        />
-
-        <v-icon
-          v-else
-          color="primary"
-          :icon="mdiCog"
-          size="34"
-        />
-
-        <div
-          v-if="headerScreenMessageVisible"
-          class="studio-autopilot__screen-message studio-autopilot__screen-message--inline"
-          :class="{
-            'studio-autopilot__screen-message--warning': standaloneFailureVisible
-          }"
-        >
-          <v-icon
-            :icon="standaloneFailureVisible ? mdiAlertCircleOutline : mdiInformationOutline"
-            size="19"
-          />
-          <span>{{ screenMessage }}</span>
-        </div>
-
-        <div v-else-if="statusTitleVisible" class="studio-autopilot__status">
-          <h2>{{ displayStatusText }}</h2>
-          <div
-            v-if="screenStopAction || stuckRecoveryAvailable"
-            class="studio-autopilot__status-actions"
-          >
-            <v-btn
-              v-if="screenStopAction"
-              class="studio-autopilot__stop-button"
-              :prepend-icon="mdiClose"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="stopScreenAction"
-            >
-              Stop Autopilot
-            </v-btn>
-            <v-btn
-              v-if="stuckRecoveryAvailable"
-              class="studio-autopilot__stop-button"
-              :loading="stuckRecoveryRunning"
-              :prepend-icon="mdiRefresh"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="recoverStuckStep"
-            >
-              Recover step
-            </v-btn>
-          </div>
-        </div>
-      </div>
-
-      <Vibe64BackgroundTasks
-        v-if="visibleBackgroundTasks.length || backgroundTaskError"
-        :error="backgroundTaskError"
-        :retrying-task-id="retryingBackgroundTaskId"
-        :tasks="visibleBackgroundTasks"
-        @retry="retryBackgroundTask"
+    <section class="studio-autopilot__chat-panel" aria-label="Session chat">
+      <Vibe64SessionToolbar
+        v-if="sessionToolbarVisible"
+        :abandon="sessionAbandon"
+        compact
+        :max-visible-sessions="3"
+        :selected-session-id="sessionId"
+        :selection-closed="sessionSelectionClosed"
+        :toolbar="sessionToolbar"
       />
 
-      <v-alert
-        v-if="actionResultNoticeVisible"
-        class="studio-autopilot__notice"
-        :type="props.actions.actionResultType"
-        variant="tonal"
-        density="compact"
-      >
-        {{ props.actions.actionResultMessage }}
-      </v-alert>
+      <Vibe64AutopilotNavigation
+        class="studio-autopilot__nav"
+        :busy="navigationBusy"
+        :executing="workflowExecuting"
+        layout="icons"
+        :steps="autopilotSteps"
+        @rewind="rewindToAutopilotStep"
+      />
 
-      <v-alert
-        v-if="clientControlErrorVisible"
-        class="studio-autopilot__notice"
-        type="warning"
-        variant="tonal"
-        density="compact"
+      <div
+        class="studio-autopilot__chat-body"
+        :class="{ 'studio-autopilot__chat-body--artifact': chatArtifactVisible }"
       >
-        {{ clientControlError }}
-      </v-alert>
-
-      <form
-        v-if="stepInputFormVisible"
-        class="studio-autopilot__input-form"
-        @submit.prevent="submitStepInputForm"
-      >
-        <p
-          v-if="stepInput.prompt"
-          class="text-body-2 text-medium-emphasis mb-0"
-        >
-          {{ stepInput.prompt }}
-        </p>
-
-        <template
-          v-for="field in stepInput.fields"
-          :key="field.name"
-        >
-          <v-textarea
-            v-if="field.kind === 'textarea'"
-            auto-grow
-            class="studio-autopilot__input"
-            :disabled="page.busy || stepInput.saving"
-            hide-details="auto"
-            :label="field.label"
-            :model-value="stepInput.values[field.name] || ''"
-            :placeholder="field.placeholder"
-            :rows="field.rows || 8"
-            variant="outlined"
-            @update:model-value="stepInput.updateValue(field.name, $event)"
-          />
-          <v-text-field
-            v-else
-            class="studio-autopilot__input"
-            :disabled="page.busy || stepInput.saving"
-            hide-details="auto"
-            :label="field.label"
-            :model-value="stepInput.values[field.name] || ''"
-            :placeholder="field.placeholder"
-            variant="outlined"
-            @update:model-value="stepInput.updateValue(field.name, $event)"
-          />
-        </template>
+        <Vibe64BackgroundTasks
+          v-if="visibleBackgroundTasks.length || backgroundTaskError"
+          :error="backgroundTaskError"
+          :retrying-task-id="retryingBackgroundTaskId"
+          :tasks="visibleBackgroundTasks"
+          @retry="retryBackgroundTask"
+        />
 
         <v-alert
-          v-if="stepInput.error"
+          v-if="actionResultNoticeVisible"
+          class="studio-autopilot__notice"
+          :type="props.actions.actionResultType"
+          variant="tonal"
+          density="compact"
+        >
+          {{ props.actions.actionResultMessage }}
+        </v-alert>
+
+        <v-alert
+          v-if="clientControlErrorVisible"
+          class="studio-autopilot__notice"
           type="warning"
           variant="tonal"
           density="compact"
         >
-          {{ stepInput.error }}
+          {{ clientControlError }}
         </v-alert>
-
-        <Vibe64WorkflowControlForm
-          v-if="selectedStepInputControlVisible"
-          class="studio-autopilot__inline-control"
-          :can-submit-selected-control="canSubmitSelectedControl"
-          layout="center"
-          :running="running"
-          :selected-control="selectedControl"
-          :selected-control-fields="selectedControlFields"
-          :selected-control-values="selectedControlValues"
-          sticky-actions
-          :workflow-controls="workflowButtonControls"
-          @activate-control="activateWorkflowButtonControl"
-          @cancel="clearSelectedControl"
-          @submit="submitSelectedWorkflowControl"
-          @update-value="updateSelectedControlValue"
-        />
-
-        <div
-          v-else
-          class="studio-autopilot__actions"
-        >
-          <v-btn
-            v-if="!stepInputHasWorkflowIntents"
-            color="primary"
-            :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
-            :disabled="page.busy || !stepInput.canSubmit"
-            :loading="stepInput.saving"
-            :prepend-icon="mdiCheck"
-            type="submit"
-          >
-            {{ stepInput.interaction?.submitLabel || "Submit" }}
-          </v-btn>
-
-          <v-btn
-            v-for="control in workflowButtonControls"
-            :key="control.id"
-            :color="control.buttonColor"
-            :disabled="control.disabled"
-            :loading="control.loading"
-            :prepend-icon="control.icon"
-            :title="control.disabledReason || control.label"
-            type="button"
-            :variant="control.buttonVariant"
-            @click="activateWorkflowButtonControl(control.sourceControl || control)"
-          >
-            {{ control.label }}
-          </v-btn>
-
-          <template
-            v-if="!stepInputHasWorkflowIntents && !workflowButtonControls.length"
-          >
-            <Vibe64SessionActionButton
-              v-for="action in actions.currentActions"
-              :key="action.id"
-              :action="action"
-              :actions="stepInputActionHandlers"
-              :before-run="runActionFromStepInput"
-              :busy="page.busy || stepInput.saving"
-              variant="tonal"
-            />
-          </template>
-        </div>
-      </form>
-
-      <div
-        v-else-if="serverScreenVisible"
-        class="studio-autopilot__server-screen"
-        :class="{
-          'studio-autopilot__server-screen--with-response': responseContentVisible
-        }"
-      >
-        <div
-          v-if="bodyScreenMessageVisible"
-          class="studio-autopilot__screen-message"
-          :class="{
-            'studio-autopilot__screen-message--warning': standaloneFailureVisible
-          }"
-        >
-          <v-icon
-            :icon="standaloneFailureVisible ? mdiAlertCircleOutline : mdiInformationOutline"
-            size="19"
-          />
-          <span>{{ screenMessage }}</span>
-        </div>
-
-        <Vibe64LaunchControls
-          v-if="launchControlsVisible"
-          button-label="Try it!"
-          button-size="x-large"
-          button-variant="flat"
-          :busy="running"
-          prominent
-          :session="session"
-          :window-displayed="props.active"
-          workflow-command
-        />
 
         <Vibe64ReportPreview
           v-if="reportPreviewVisible"
+          class="studio-autopilot__artifact"
           :error="reportPreview.error"
           :loading="reportPreview.loading"
           :text="reportPreview.text"
         />
 
-        <Vibe64ConversationLog
-          v-if="conversationLogVisible"
-          class="studio-autopilot__response-content"
-          :error="conversationLog.error"
-          :loading="conversationLog.loading"
-          :scroll-key="conversationScrollKey"
-          :turns="conversationLog.turns"
-          :visible="conversationLog.visible"
-        />
-
         <Vibe64ReportPreview
-          v-if="responsePreviewVisible"
-          class="studio-autopilot__response-content studio-autopilot__response-preview"
+          v-else-if="responsePreviewVisible"
+          class="studio-autopilot__artifact studio-autopilot__response-preview"
           empty-text="Codex response is not ready yet."
           :error="responsePreviewError"
           :loading="responsePreviewLoading"
@@ -357,8 +71,200 @@
           title="Codex"
         />
 
+        <template v-else>
+          <Vibe64ConversationLog
+            v-if="conversationLogVisible"
+            class="studio-autopilot__conversation"
+            :error="conversationLog.error"
+            :loading="conversationLog.loading"
+            :scroll-key="conversationScrollKey"
+            :turns="conversationLog.turns"
+            :visible="conversationLog.visible"
+          />
+
+          <div v-if="mainStatusVisible" class="studio-autopilot__status-bar">
+            <v-icon
+              v-if="screenState.icon === 'warning'"
+              color="warning"
+              :icon="mdiAlertCircleOutline"
+              size="24"
+            />
+
+            <v-icon
+              v-else-if="screenState.icon === 'success'"
+              color="success"
+              :icon="mdiCheckCircleOutline"
+              size="24"
+            />
+
+            <v-icon
+              v-else
+              color="primary"
+              :icon="mdiRobotOutline"
+              size="24"
+            />
+
+            <div
+              v-if="bodyScreenMessageVisible"
+              class="studio-autopilot__screen-message"
+              :class="{
+                'studio-autopilot__screen-message--warning': standaloneFailureVisible
+              }"
+            >
+              <span>{{ screenMessage }}</span>
+            </div>
+
+            <div v-else-if="statusTitleVisible" class="studio-autopilot__status">
+              <h2>{{ displayStatusText }}</h2>
+              <div
+                v-if="screenStopAction || stuckRecoveryAvailable"
+                class="studio-autopilot__status-actions"
+              >
+                <v-btn
+                  v-if="screenStopAction"
+                  class="studio-autopilot__stop-button"
+                  :prepend-icon="mdiClose"
+                  size="small"
+                  type="button"
+                  variant="tonal"
+                  @click="stopScreenAction"
+                >
+                  Stop Autopilot
+                </v-btn>
+                <v-btn
+                  v-if="stuckRecoveryAvailable"
+                  class="studio-autopilot__stop-button"
+                  :loading="stuckRecoveryRunning"
+                  :prepend-icon="mdiRefresh"
+                  size="small"
+                  type="button"
+                  variant="tonal"
+                  @click="recoverStuckStep"
+                >
+                  Recover step
+                </v-btn>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <form
+          v-if="stepInputFormVisible"
+          class="studio-autopilot__input-form"
+          @submit.prevent="submitStepInputForm"
+        >
+          <p
+            v-if="stepInput.prompt"
+            class="text-body-2 text-medium-emphasis mb-0"
+          >
+            {{ stepInput.prompt }}
+          </p>
+
+          <template
+            v-for="field in stepInput.fields"
+            :key="field.name"
+          >
+            <v-textarea
+              v-if="field.kind === 'textarea'"
+              auto-grow
+              class="studio-autopilot__input"
+              :disabled="page.busy || stepInput.saving"
+              hide-details="auto"
+              :label="field.label"
+              :model-value="stepInput.values[field.name] || ''"
+              :placeholder="field.placeholder"
+              :rows="field.rows || 5"
+              variant="outlined"
+              @update:model-value="stepInput.updateValue(field.name, $event)"
+            />
+            <v-text-field
+              v-else
+              class="studio-autopilot__input"
+              :disabled="page.busy || stepInput.saving"
+              hide-details="auto"
+              :label="field.label"
+              :model-value="stepInput.values[field.name] || ''"
+              :placeholder="field.placeholder"
+              variant="outlined"
+              @update:model-value="stepInput.updateValue(field.name, $event)"
+            />
+          </template>
+
+          <v-alert
+            v-if="stepInput.error"
+            type="warning"
+            variant="tonal"
+            density="compact"
+          >
+            {{ stepInput.error }}
+          </v-alert>
+
+          <Vibe64WorkflowControlForm
+            v-if="selectedStepInputControlVisible"
+            class="studio-autopilot__inline-control"
+            :can-submit-selected-control="canSubmitSelectedControl"
+            layout="center"
+            :running="running"
+            :selected-control="selectedControl"
+            :selected-control-fields="selectedControlFields"
+            :selected-control-values="selectedControlValues"
+            sticky-actions
+            :workflow-controls="workflowButtonControls"
+            @activate-control="activateWorkflowButtonControl"
+            @cancel="clearSelectedControl"
+            @submit="submitSelectedWorkflowControl"
+            @update-value="updateSelectedControlValue"
+          />
+
+          <div
+            v-else
+            class="studio-autopilot__actions"
+          >
+            <v-btn
+              v-if="!stepInputHasWorkflowIntents"
+              color="primary"
+              :variant="stepInputHasWorkflowIntents ? 'tonal' : 'flat'"
+              :disabled="page.busy || !stepInput.canSubmit"
+              :loading="stepInput.saving"
+              :prepend-icon="mdiCheck"
+              type="submit"
+            >
+              {{ stepInput.interaction?.submitLabel || "Submit" }}
+            </v-btn>
+
+            <v-btn
+              v-for="control in workflowButtonControls"
+              :key="control.id"
+              :color="control.buttonColor"
+              :disabled="control.disabled"
+              :loading="control.loading"
+              :prepend-icon="control.icon"
+              :title="control.disabledReason || control.label"
+              type="button"
+              :variant="control.buttonVariant"
+              @click="activateWorkflowButtonControl(control.sourceControl || control)"
+            >
+              {{ control.label }}
+            </v-btn>
+
+            <template
+              v-if="!stepInputHasWorkflowIntents && !workflowButtonControls.length"
+            >
+              <Vibe64SessionActionButton
+                v-for="action in actions.currentActions"
+                :key="action.id"
+                :action="action"
+                :actions="stepInputActionHandlers"
+                :before-run="runActionFromStepInput"
+                :busy="page.busy || stepInput.saving"
+                variant="tonal"
+              />
+            </template>
+          </div>
+        </form>
+
         <Vibe64WorkflowControlForm
-          v-if="selectedScreenControlVisible"
+          v-if="selectedScreenControlVisible && !stepInputFormVisible"
           as-form
           attach-textarea
           class="studio-autopilot__control-form"
@@ -379,7 +285,7 @@
         />
 
         <div
-          v-if="workflowButtonControls.length && !selectedControl"
+          v-if="workflowButtonControls.length && !selectedControl && !stepInputFormVisible"
           class="studio-autopilot__actions studio-autopilot__screen-actions"
         >
           <v-btn
@@ -398,7 +304,143 @@
           </v-btn>
         </div>
       </div>
-    </div>
+
+      <div
+        v-if="thinkingVisible"
+        class="studio-autopilot__thinking"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="studio-autopilot__thinking-mark" />
+        <span>Thinking...</span>
+      </div>
+    </section>
+
+    <section class="studio-autopilot__preview-panel" aria-label="App preview">
+      <div
+        v-if="workspacePanelVisible"
+        class="studio-autopilot__workspace-panel"
+      >
+        <header class="studio-autopilot__workspace-header">
+          <div>
+            <p class="studio-autopilot__workspace-eyebrow">Workspace</p>
+            <h2>{{ workspacePanelTitle }}</h2>
+          </div>
+          <p>{{ workspacePanelDescription }}</p>
+        </header>
+
+        <div class="studio-autopilot__workspace-body">
+          <Vibe64SetupPanel
+            v-if="workspacePaneValue === 'setup'"
+            v-model="setupPanelTab"
+          />
+
+          <ProjectTypeGate
+            v-else-if="workspacePaneValue === 'configure'"
+            configure-project
+          />
+
+          <TargetScriptsPanel
+            v-else-if="workspacePaneValue === 'run'"
+            mode="autopilot"
+          />
+
+          <Vibe64SessionHistoryPanel
+            v-else-if="workspacePaneValue === 'history'"
+            v-model="historyArchive"
+          />
+        </div>
+      </div>
+
+      <div
+        v-if="commandSpyVisible"
+        class="studio-autopilot__command-spy"
+        :class="{ 'studio-autopilot__command-spy--expanded': commandSpyExpanded }"
+      >
+        <div class="studio-autopilot__command-spy-header">
+          <div class="studio-autopilot__command-spy-title">
+            <v-icon :icon="mdiConsoleLine" size="18" />
+            <span>{{ commandOverlayTitle }}</span>
+          </div>
+          <div class="studio-autopilot__command-spy-actions">
+            <v-btn
+              v-if="commandRunning"
+              :prepend-icon="mdiStopCircleOutline"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="stopCommandAction"
+            >
+              Stop
+            </v-btn>
+            <v-btn
+              v-if="commandTerminalFailed"
+              :prepend-icon="mdiRefresh"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="retryFromCommandFailure"
+            >
+              Retry
+            </v-btn>
+            <v-btn
+              v-if="commandTerminalFailed"
+              :prepend-icon="mdiRobotOutline"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="requestCommandAiFix"
+            >
+              Fix
+            </v-btn>
+            <v-btn
+              :icon="commandSpyExpanded ? mdiChevronUp : mdiChevronDown"
+              size="small"
+              :title="commandSpyExpanded ? 'Collapse command output' : 'Expand command output'"
+              type="button"
+              variant="text"
+              @click="commandSpyExpanded = !commandSpyExpanded"
+            />
+          </div>
+        </div>
+        <p v-if="!commandSpyExpanded" class="studio-autopilot__command-spy-summary">
+          {{ commandTerminalFailed ? commandFailureSummary : commandTerminalSummary }}
+        </p>
+        <Vibe64HeadlessCommandOutput
+          v-else
+          class="studio-autopilot__command-terminal-output"
+          :action-id="commandResult?.actionId || ''"
+          :action-label="commandResult?.actionLabel || ''"
+          :attempted-command="commandResult?.attemptedCommand || ''"
+          :command-preview="commandPreview"
+          compact
+          :error="commandTerminalError"
+          :exit-code="commandResult?.exitCode ?? null"
+          :failed="commandTerminalFailed"
+          :output="commandTerminalText"
+          :running="commandRunning"
+          :session-id="sessionId"
+          :status="commandStatus"
+          :terminal-session-id="commandResult?.terminalSessionId || ''"
+          title="Autopilot command"
+          @fix-requested="openFixCodexDialog"
+        />
+      </div>
+
+      <Vibe64LaunchControls
+        v-show="workspacePaneValue === 'preview'"
+        auto-start-target-id="dev"
+        button-label="Run"
+        button-size="small"
+        button-variant="tonal"
+        :busy="false"
+        class="studio-autopilot__preview-launch"
+        embedded-preview
+        :session="session"
+        :window-displayed="props.active"
+        workflow-command
+      />
+    </section>
 
     <Vibe64FixCodexDialog
       v-model="fixDialogOpen"
@@ -414,10 +456,11 @@ import {
   mdiAlertCircleOutline,
   mdiCheck,
   mdiCheckCircleOutline,
+  mdiChevronDown,
+  mdiChevronUp,
   mdiClose,
-  mdiCog,
+  mdiConsoleLine,
   mdiFileCompare,
-  mdiInformationOutline,
   mdiRefresh,
   mdiRobotOutline,
   mdiStopCircleOutline
@@ -427,12 +470,17 @@ import {
 } from "@local/vibe64-core/shared";
 import Vibe64FixCodexDialog from "@/components/studio/Vibe64FixCodexDialog.vue";
 import Vibe64LaunchControls from "@/components/studio/Vibe64LaunchControls.vue";
+import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
+import TargetScriptsPanel from "@/components/studio/TargetScriptsPanel.vue";
 import Vibe64BackgroundTasks from "@/components/studio/vibe64-session/Vibe64BackgroundTasks.vue";
 import Vibe64AutopilotNavigation from "@/components/studio/vibe64-session/Vibe64AutopilotNavigation.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64HeadlessCommandOutput from "@/components/studio/vibe64-session/Vibe64HeadlessCommandOutput.vue";
 import Vibe64ReportPreview from "@/components/studio/vibe64-session/Vibe64ReportPreview.vue";
 import Vibe64SessionActionButton from "@/components/studio/vibe64-session/Vibe64SessionActionButton.vue";
+import Vibe64SessionHistoryPanel from "@/components/studio/Vibe64SessionHistoryPanel.vue";
+import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
+import Vibe64SetupPanel from "@/components/studio/Vibe64SetupPanel.vue";
 import Vibe64WorkflowControlForm from "@/components/studio/vibe64-session/Vibe64WorkflowControlForm.vue";
 import {
   useVibe64AutopilotComposer
@@ -491,6 +539,10 @@ const props = defineProps({
     default: () => [],
     type: Array
   },
+  codexThinking: {
+    default: false,
+    type: Boolean
+  },
   commandRunner: {
     default: null,
     type: Object
@@ -531,9 +583,25 @@ const props = defineProps({
     default: null,
     type: Function
   },
+  sessionAbandon: {
+    default: () => ({}),
+    type: Object
+  },
   session: {
     default: null,
     type: Object
+  },
+  sessionSelectionClosed: {
+    default: false,
+    type: Boolean
+  },
+  sessionToolbar: {
+    default: () => ({}),
+    type: Object
+  },
+  workspacePane: {
+    default: "preview",
+    type: String
   }
 });
 
@@ -580,6 +648,9 @@ const {
   fixTerminal,
   openFixCodexDialog
 } = useVibe64FixCodexDialog();
+const commandSpyExpanded = ref(false);
+const historyArchive = ref("completed");
+const setupPanelTab = ref("studio-setup");
 
 const stepInput = proxyRefs(useVibe64StepInputForm({
   onSaved: async () => {
@@ -592,6 +663,34 @@ const stepInput = proxyRefs(useVibe64StepInputForm({
 
 const screenKind = computed(() => screenState.value.kind);
 const sessionId = computed(() => String(props.session?.sessionId || ""));
+const workspacePaneValue = computed(() => normalizeWorkspacePane(props.workspacePane));
+const workspacePanelVisible = computed(() => workspacePaneValue.value !== "preview");
+const workspacePanelTitle = computed(() => workspacePanelCopy.value.title);
+const workspacePanelDescription = computed(() => workspacePanelCopy.value.description);
+const workspacePanelCopy = computed(() => {
+  const copy = {
+    configure: {
+      description: "Edit the Vibe64 settings used to prepare this project.",
+      title: "Configure"
+    },
+    history: {
+      description: "Review completed and abandoned sessions.",
+      title: "Session History"
+    },
+    run: {
+      description: "Run starred target project scripts without leaving the session.",
+      title: "Run"
+    },
+    setup: {
+      description: "Check machine, account, adapter, and project readiness.",
+      title: "Setup"
+    }
+  };
+  return copy[workspacePaneValue.value] || {
+    description: "Show the running app.",
+    title: "Preview"
+  };
+});
 const screenMessage = computed(() => String(screenState.value.message || ""));
 const screenSections = computed(() => Array.isArray(screenState.value.sections) ? screenState.value.sections : []);
 const primaryIntentId = computed(() => props.active ? String(screenState.value.primaryIntentId || "") : "");
@@ -614,8 +713,7 @@ const commandTerminalFailed = computed(() => commandResult.value?.ok === false);
 const commandTerminalVisible = computed(() => Boolean(screenKind.value === "command"));
 const stepInputFormVisible = computed(() => Boolean(
   stepInput.visible &&
-  !displayRunning.value &&
-  !commandTerminalVisible.value
+  !displayRunning.value
 ));
 const stepInputHasWorkflowIntents = computed(() => Boolean(
   currentStepInputHasDecisionControls(props.session, stepInput.interaction)
@@ -647,6 +745,7 @@ const commandOverlayTitle = computed(() => {
     ? "Command needs attention."
     : "Command running.";
 });
+const commandTerminalSummary = computed(() => commandPreview.value || displayStatusText.value || "Running command.");
 const commandTerminalText = computed(() => {
   const output = stripTerminalControlSequences(commandOutput.value);
   const resultOutput = stripTerminalControlSequences(commandResult.value?.output || "");
@@ -656,9 +755,33 @@ const commandTerminalText = computed(() => {
 const autopilotBusy = computed(() => Boolean(props.active && (
   running.value ||
   displayRunning.value ||
+  commandRunning.value ||
   stepInput.saving
 )));
 const navigationBusy = computed(() => Boolean(props.page?.busy || autopilotBusy.value || props.rewindBusy));
+const workflowExecuting = computed(() => Boolean(
+  props.codexThinking ||
+  autopilotBusy.value ||
+  commandRunning.value
+));
+const thinkingVisible = computed(() => Boolean(
+  props.codexThinking ||
+  running.value ||
+  displayRunning.value ||
+  commandRunning.value ||
+  stepInput.saving
+));
+const sessionToolbarVisible = computed(() => Boolean(
+  Array.isArray(props.sessionToolbar?.sessions) &&
+  props.sessionToolbar.sessions.length
+));
+const commandSpyVisible = computed(() => Boolean(
+  commandTerminalVisible.value ||
+  commandRunning.value ||
+  commandTerminalFailed.value ||
+  commandPreview.value ||
+  commandOutput.value
+));
 const mainStatusVisible = computed(() => Boolean(
   !codexRunningStatusSuppressed.value &&
   !commandTerminalVisible.value &&
@@ -666,19 +789,9 @@ const mainStatusVisible = computed(() => Boolean(
 ));
 const standaloneFailureVisible = computed(() => screenKind.value === "failure");
 const screenStopAction = computed(() => String(screenState.value.stopAction || ""));
-const serverScreenVisible = computed(() => Boolean(
-  !displayRunning.value &&
-  !commandTerminalVisible.value
-));
-const headerScreenMessageVisible = computed(() => Boolean(
-  serverScreenVisible.value &&
-  screenMessage.value &&
-  statusTitleIsCodexChat.value
-));
 const responsePreviewText = computed(() => String(props.humanInputResponsePreview?.text || ""));
 const responsePreviewError = computed(() => String(props.humanInputResponsePreview?.error || ""));
 const responsePreviewLoading = computed(() => Boolean(props.humanInputResponsePreview?.loading));
-const launchControlsVisible = computed(() => sectionVisible("launch_controls"));
 const reportPreviewVisible = computed(() => Boolean(sectionVisible("report_preview") && props.reportPreview?.visible));
 const conversationLogVisible = computed(() => Boolean(
   sectionVisible("response_preview") &&
@@ -690,7 +803,6 @@ const conversationBodyOwnsMessage = computed(() => Boolean(
 ));
 const bodyScreenMessageVisible = computed(() => Boolean(
   screenMessage.value &&
-  !headerScreenMessageVisible.value &&
   !conversationBodyOwnsMessage.value
 ));
 const responsePreviewVisible = computed(() => Boolean(
@@ -702,16 +814,12 @@ const responsePreviewVisible = computed(() => Boolean(
     responsePreviewLoading.value
   )
 ));
-const responseContentVisible = computed(() => Boolean(
-  conversationLogVisible.value ||
-  responsePreviewVisible.value
-));
+const chatArtifactVisible = computed(() => Boolean(reportPreviewVisible.value || responsePreviewVisible.value));
 const actionResultNoticeVisible = computed(() => Boolean(
-  props.actions?.actionResultMessage &&
-  !commandTerminalVisible.value
+  props.actions?.actionResultMessage
 ));
 const clientControlError = ref("");
-const clientControlErrorVisible = computed(() => Boolean(clientControlError.value && !commandTerminalVisible.value));
+const clientControlErrorVisible = computed(() => Boolean(clientControlError.value));
 const conversationScrollKey = computed(() => [
   sessionId.value,
   conversationLogVisible.value ? "conversation-visible" : "conversation-hidden",
@@ -763,6 +871,12 @@ const stepInputActionHandlers = computed(() => ({
 
 function sectionVisible(kind = "") {
   return screenSections.value.some((section) => section?.kind === kind);
+}
+
+function normalizeWorkspacePane(value = "") {
+  return ["configure", "history", "preview", "run", "setup"].includes(value)
+    ? value
+    : "preview";
 }
 
 function emitBusyState() {
@@ -984,44 +1098,67 @@ watch(() => [
 
 <style scoped>
 .studio-autopilot {
-  align-items: stretch;
   display: grid;
-  gap: 1rem;
+  gap: 0.9rem;
   min-height: 0;
   min-width: 0;
 }
 
-.studio-autopilot__stage {
-  align-content: start;
-  align-items: start;
-  border: 1px solid rgba(var(--v-theme-outline), 0.24);
+.studio-autopilot__chat-panel,
+.studio-autopilot__preview-panel {
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.16);
   border-radius: 8px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.studio-autopilot__chat-panel {
   display: grid;
   gap: 0.5rem;
-  justify-items: center;
-  min-height: 18rem;
-  padding: 0.2rem 1rem 1rem;
-  text-align: left;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  padding: 0.65rem;
 }
 
-.studio-autopilot__stage--failure {
+.studio-autopilot__chat-body {
   align-content: start;
-  padding-top: clamp(1.25rem, 7vh, 4rem);
+  display: grid;
+  gap: 0.55rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.1rem;
+  scrollbar-gutter: stable;
 }
 
-.studio-autopilot__cog :deep(.v-icon) {
-  animation: studio-autopilot-cog-spin 1.7s linear infinite;
+.studio-autopilot__chat-body--artifact {
+  align-content: stretch;
+}
+
+.studio-autopilot__conversation,
+.studio-autopilot__artifact {
+  min-height: 0;
+}
+
+.studio-autopilot__conversation {
+  align-self: stretch;
+  display: grid;
+}
+
+.studio-autopilot__artifact :deep(.studio-report-preview__body),
+.studio-autopilot__response-preview :deep(.studio-report-preview__body) {
+  max-height: none;
+  min-height: 0;
 }
 
 .studio-autopilot__status-bar {
   align-items: center;
+  background: rgba(var(--v-theme-primary), 0.06);
+  border: 1px solid rgba(var(--v-theme-primary), 0.16);
+  border-radius: 8px;
   display: flex;
-  gap: 0.65rem;
-  justify-content: center;
-  max-width: 54rem;
-  min-height: 2.5rem;
+  gap: 0.6rem;
+  padding: 0.55rem 0.65rem;
   text-align: left;
-  width: 100%;
 }
 
 .studio-autopilot__status {
@@ -1033,77 +1170,25 @@ watch(() => [
 }
 
 .studio-autopilot__status h2 {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
   font-weight: 720;
   letter-spacing: 0;
-  line-height: 1.15;
+  line-height: 1.18;
   margin: 0;
 }
 
-.studio-autopilot__command-terminal-stage {
-  display: grid;
-  height: min(30rem, 58vh);
-  justify-self: center;
-  max-width: min(64rem, 100%);
-  min-height: 18rem;
-  place-items: stretch;
-  position: relative;
-  text-align: left;
-  width: 100%;
-}
-
-.studio-autopilot__command-terminal-overlay {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(20, 30, 46, 0.16);
-  border-radius: 8px;
-  box-shadow: 0 1rem 2.5rem rgba(13, 24, 42, 0.18);
-  color: #182235;
-  display: flex;
-  flex-direction: column;
-  font-size: 1rem;
-  gap: 0.35rem;
-  justify-content: center;
-  left: 50%;
+.studio-autopilot__screen-message {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 0.88rem;
   line-height: 1.35;
-  max-width: min(34rem, calc(100% - 2rem));
-  padding: 1rem 1.25rem;
-  pointer-events: auto;
-  position: absolute;
-  text-align: center;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(34rem, calc(100% - 2rem));
 }
 
-.studio-autopilot__command-terminal-output {
-  height: 100%;
-  opacity: 0.34;
-  text-align: left;
+.studio-autopilot__screen-message--warning {
+  color: rgb(var(--v-theme-warning));
 }
 
-.studio-autopilot__command-terminal-output :deep(.studio-headless-command-output__text) {
-  border: 0;
-  border-radius: 8px;
-  font-size: 0.78rem;
-  line-height: 1.42;
-  padding: 0.85rem;
-}
-
-.studio-autopilot__command-terminal-overlay strong {
-  font-size: 1.1rem;
-}
-
-.studio-autopilot__command-fix-note {
-  text-align: left;
-  width: 100%;
-}
-
-.studio-autopilot__stop-button {
-  margin-top: 0;
-}
-
-.studio-autopilot__status-actions {
+.studio-autopilot__status-actions,
+.studio-autopilot__actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
@@ -1111,126 +1196,23 @@ watch(() => [
 }
 
 .studio-autopilot__actions {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .studio-autopilot__input-form,
-.studio-autopilot__server-screen {
+.studio-autopilot__control-form {
   display: grid;
   gap: 0.55rem;
-  max-width: 52rem;
+  min-width: 0;
   width: 100%;
-}
-
-.studio-autopilot__input-form {
-  align-self: stretch;
-  max-height: min(100%, calc(100dvh - 7rem));
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 0.25rem;
-  scrollbar-gutter: stable;
 }
 
 .studio-autopilot__input-form > .studio-autopilot__actions {
   background: rgb(var(--v-theme-surface));
-  border-top: 1px solid rgba(var(--v-theme-outline), 0.18);
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.14);
   bottom: 0;
-  margin-top: 0;
-  padding-block: 0.55rem 0.25rem;
+  padding-block: 0.55rem 0.15rem;
   position: sticky;
-  z-index: 1;
-}
-
-.studio-autopilot__notice {
-  max-width: 52rem;
-  width: 100%;
-}
-
-.studio-autopilot__server-screen {
-  align-items: center;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.studio-autopilot__server-screen--with-response {
-  padding-bottom: 0.45rem;
-}
-
-.studio-autopilot__screen-message {
-  align-items: center;
-  background: rgba(var(--v-theme-info), 0.1);
-  border: 1px solid rgba(var(--v-theme-info), 0.24);
-  border-radius: 8px;
-  color: rgb(var(--v-theme-info));
-  display: flex;
-  font-size: 0.9rem;
-  gap: 0.55rem;
-  justify-self: stretch;
-  line-height: 1.35;
-  min-height: 2.25rem;
-  padding: 0.42rem 0.65rem;
-}
-
-.studio-autopilot__screen-message--inline {
-  flex: 1 1 auto;
-  width: auto;
-}
-
-.studio-autopilot__screen-message span {
-  color: rgb(var(--v-theme-on-surface));
-  min-width: 0;
-}
-
-.studio-autopilot__screen-message--warning {
-  background: rgba(var(--v-theme-warning), 0.1);
-  border-color: rgba(var(--v-theme-warning), 0.28);
-  color: rgb(var(--v-theme-warning));
-}
-
-.studio-autopilot__response-content {
-  align-self: stretch;
-  min-height: 0;
-}
-
-.studio-autopilot__response-preview :deep(.studio-report-preview__body) {
-  max-height: min(34rem, max(14rem, calc(100dvh - 25rem)));
-}
-
-.studio-autopilot__server-screen--with-response .studio-autopilot__response-content {
-  align-self: stretch;
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.studio-autopilot__server-screen--with-response .studio-autopilot__response-content :deep(.studio-conversation-log__body) {
-  min-height: 0;
-}
-
-.studio-autopilot__server-screen--with-response .studio-autopilot__response-preview :deep(.studio-report-preview__body) {
-  max-height: none;
-  min-height: 0;
-}
-
-.studio-autopilot__server-screen--with-response .studio-autopilot__control-form {
-  align-self: end;
-  flex: 0 0 auto;
-  min-height: max-content;
-  padding-bottom: 0.15rem;
-}
-
-.studio-autopilot__server-screen--with-response .studio-autopilot__screen-actions {
-  align-self: end;
-  flex: 0 0 auto;
-  margin-top: 0;
 }
 
 .studio-autopilot__input {
@@ -1238,42 +1220,198 @@ watch(() => [
   width: 100%;
 }
 
-.studio-autopilot__screen-actions {
-  justify-content: flex-end;
-  margin-top: auto;
+.studio-autopilot__notice {
   width: 100%;
 }
 
-@keyframes studio-autopilot-cog-spin {
-  from {
-    transform: rotate(0deg);
+.studio-autopilot__screen-actions {
+  justify-content: flex-end;
+}
+
+.studio-autopilot__thinking {
+  align-items: center;
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.14);
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  display: flex;
+  font-size: 0.9rem;
+  gap: 0.5rem;
+  min-height: 2.35rem;
+  padding-top: 0.35rem;
+}
+
+.studio-autopilot__thinking-mark {
+  animation: studio-autopilot-thinking-pulse 1s ease-in-out infinite;
+  background: rgb(var(--v-theme-primary));
+  border-radius: 999px;
+  box-shadow: 0 0 0 0.24rem rgba(var(--v-theme-primary), 0.12);
+  height: 0.48rem;
+  width: 0.48rem;
+}
+
+.studio-autopilot__preview-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  position: relative;
+}
+
+.studio-autopilot__preview-launch {
+  min-height: 0;
+}
+
+.studio-autopilot__workspace-panel {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.85rem;
+}
+
+.studio-autopilot__workspace-header {
+  align-items: start;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.14);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding-bottom: 0.75rem;
+}
+
+.studio-autopilot__workspace-header h2,
+.studio-autopilot__workspace-header p {
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.studio-autopilot__workspace-header h2 {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.12rem;
+  font-weight: 760;
+  line-height: 1.1;
+}
+
+.studio-autopilot__workspace-header > p {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  flex: 0 1 28rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.studio-autopilot__workspace-eyebrow {
+  color: rgba(var(--v-theme-primary), 0.84);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.studio-autopilot__workspace-body {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 0.1rem;
+  scrollbar-gutter: stable;
+}
+
+.studio-autopilot__command-spy {
+  background: rgba(var(--v-theme-surface), 0.96);
+  border: 1px solid rgba(var(--v-theme-primary), 0.18);
+  border-radius: 8px;
+  box-shadow: 0 0.5rem 1.4rem rgba(15, 23, 42, 0.12);
+  left: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  z-index: 4;
+}
+
+.studio-autopilot__command-spy--expanded {
+  bottom: 0.75rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.studio-autopilot__command-spy-header {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.studio-autopilot__command-spy-title,
+.studio-autopilot__command-spy-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.studio-autopilot__command-spy-title {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 720;
+}
+
+.studio-autopilot__command-spy-summary {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  font-size: 0.82rem;
+  line-height: 1.3;
+  margin: 0.35rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-autopilot__command-terminal-output {
+  height: 100%;
+  margin-top: 0.5rem;
+  min-height: 0;
+  text-align: left;
+}
+
+.studio-autopilot__command-terminal-output :deep(.studio-headless-command-output__text) {
+  border: 0;
+  border-radius: 8px;
+  min-height: 0;
+}
+
+@keyframes studio-autopilot-thinking-pulse {
+  0%,
+  100% {
+    opacity: 0.46;
+    transform: scale(0.88);
   }
 
-  to {
-    transform: rotate(360deg);
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
   }
 }
 
 @media (min-width: 981px) {
   .studio-autopilot {
-    align-content: start;
-    column-gap: var(--studio-ai-sessions-layout-gap, 0.9rem);
-    grid-template-columns:
-      var(--studio-ai-sessions-inspect-main-column, minmax(18rem, 0.78fr))
-      var(--studio-ai-sessions-codex-terminal-column, minmax(30rem, 1.22fr));
+    grid-template-columns: minmax(21rem, 0.34fr) minmax(34rem, 0.66fr);
     height: 100%;
     overflow: hidden;
   }
+}
 
-  .studio-autopilot__nav {
-    justify-self: start;
-    width: min(15rem, 100%);
+@media (max-width: 980px) {
+  .studio-autopilot {
+    grid-template-rows: minmax(18rem, auto) minmax(24rem, 60vh);
   }
 
-  .studio-autopilot__stage {
-    min-height: 0;
-    overflow: hidden;
-    scrollbar-gutter: stable;
+  .studio-autopilot__workspace-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-autopilot__workspace-header > p {
+    flex-basis: auto;
+    text-align: left;
   }
 }
 </style>

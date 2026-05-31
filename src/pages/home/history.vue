@@ -16,44 +16,9 @@
       <ProjectTypeGate>
         <template #default>
           <SetupReadinessGate>
-            <div class="studio-session-history__controls">
-              <v-sheet class="studio-session-history__tabs" rounded="lg" border>
-                <v-tabs
-                  v-model="selectedArchive"
-                  color="primary"
-                  density="comfortable"
-                  grow
-                >
-                  <v-tab
-                    v-for="tab in archiveTabs"
-                    :key="tab.value"
-                    :value="tab.value"
-                  >
-                    {{ tab.label }}
-                  </v-tab>
-                </v-tabs>
-              </v-sheet>
-
-              <v-btn
-                class="studio-session-history__refresh"
-                :loading="archiveLoading"
-                :prepend-icon="mdiRefresh"
-                size="small"
-                variant="tonal"
-                @click="refreshArchive"
-              >
-                Refresh
-              </v-btn>
-            </div>
-
-            <ArchivedVibe64Sessions
-              ref="archiveSessions"
-              :key="selectedArchive"
-              :archive="selectedArchiveConfig.archive"
-              :empty-text="selectedArchiveConfig.emptyText"
-              :empty-title="selectedArchiveConfig.emptyTitle"
-              :show-refresh="false"
-              @loading-changed="archiveLoading = $event"
+            <Vibe64SessionHistoryPanel
+              :model-value="selectedArchive"
+              @update:model-value="selectedArchive = $event"
             />
           </SetupReadinessGate>
         </template>
@@ -63,37 +28,15 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { mdiRefresh } from "@mdi/js";
-import ArchivedVibe64Sessions from "@/components/studio/ArchivedVibe64Sessions.vue";
 import ProjectSelectionGate from "@/components/studio/ProjectSelectionGate.vue";
 import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 import SetupReadinessGate from "@/components/studio/SetupReadinessGate.vue";
-
-const archiveTabs = [
-  {
-    archive: "completed",
-    emptyText: "Completed sessions will appear here after a session is finalized.",
-    emptyTitle: "No completed sessions",
-    label: "Completed",
-    value: "completed"
-  },
-  {
-    archive: "abandoned",
-    emptyText: "Abandoned sessions will appear here after their worktrees are removed.",
-    emptyTitle: "No abandoned sessions",
-    label: "Abandoned",
-    value: "abandoned"
-  }
-];
+import Vibe64SessionHistoryPanel from "@/components/studio/Vibe64SessionHistoryPanel.vue";
 
 const route = useRoute();
 const router = useRouter();
-const archiveLoading = ref(false);
-const archiveSessions = ref(null);
-
-const archiveByValue = Object.fromEntries(archiveTabs.map((tab) => [tab.value, tab]));
 
 function firstQueryValue(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -121,14 +64,6 @@ const selectedArchive = computed({
     replaceTabQuery(normalizeArchive(value));
   }
 });
-
-const selectedArchiveConfig = computed(() => {
-  return archiveByValue[selectedArchive.value] || archiveByValue.completed;
-});
-
-function refreshArchive() {
-  archiveSessions.value?.refresh?.();
-}
 
 watch(
   () => route.query.tab,
@@ -174,47 +109,9 @@ watch(
   margin: 0 0 0.2rem;
 }
 
-.studio-session-history__controls {
-  align-items: center;
-  display: flex;
-  gap: 0.75rem;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.studio-session-history__tabs {
-  flex: 1 1 26rem;
-  max-width: 30rem;
-  overflow: hidden;
-  width: auto;
-}
-
-.studio-session-history__tabs :deep(.v-tab) {
-  min-height: 48px;
-}
-
-.studio-session-history__refresh {
-  flex: 0 0 auto;
-  min-height: 48px;
-}
-
 @media (max-width: 640px) {
   .studio-session-history {
     max-width: 100%;
-  }
-
-  .studio-session-history__controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .studio-session-history__tabs {
-    max-width: 100%;
-    width: 100%;
-  }
-
-  .studio-session-history__refresh {
-    align-self: flex-end;
   }
 }
 </style>

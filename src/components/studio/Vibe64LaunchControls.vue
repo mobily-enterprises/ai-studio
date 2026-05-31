@@ -2,98 +2,138 @@
   <div
     v-if="visible"
     class="vibe64-launch-controls"
-    :class="{ 'vibe64-launch-controls--prominent': prominent }"
+    :class="{
+      'vibe64-launch-controls--embedded': embeddedPreview,
+      'vibe64-launch-controls--prominent': prominent
+    }"
   >
-    <div
-      v-if="terminalDockVisible"
-      class="vibe64-launch-controls__dock"
-      :title="terminalTitle"
-    >
-      <span
-        class="vibe64-launch-controls__status-dot"
-        :class="`vibe64-launch-controls__status-dot--${terminalIndicatorState}`"
-        :aria-label="terminalIndicatorLabel"
-        :title="terminalIndicatorLabel"
-      />
+    <div class="vibe64-launch-controls__toolbar">
+      <div
+        v-if="terminalDockVisible"
+        class="vibe64-launch-controls__dock"
+        :title="terminalTitle"
+      >
+        <span
+          class="vibe64-launch-controls__status-dot"
+          :class="`vibe64-launch-controls__status-dot--${terminalIndicatorState}`"
+          :aria-label="terminalIndicatorLabel"
+          :title="terminalIndicatorLabel"
+        />
 
-      <v-btn
-        v-for="action in launchActions"
-        :key="action.id || action.href"
-        :icon="mdiOpenInNew"
+        <v-btn
+          v-for="action in launchActions"
+          :key="action.id || action.href"
+          :icon="mdiOpenInNew"
+          size="small"
+          :title="action.label || action.href"
+          variant="text"
+          @click="openAction(action)"
+        />
+
+        <v-btn
+          v-if="terminalCanRetry"
+          :disabled="operationBusy"
+          :icon="mdiRefresh"
+          size="small"
+          title="Retry"
+          variant="text"
+          @click="retryTerminal"
+        />
+
+        <v-btn
+          v-if="terminalCanRestart"
+          :disabled="operationBusy"
+          :icon="mdiRestart"
+          size="small"
+          title="Restart"
+          variant="text"
+          @click="restartTerminal"
+        />
+
+        <v-btn
+          :icon="mdiConsoleLine"
+          size="small"
+          title="Show launch terminal"
+          variant="text"
+          @click="expandTerminal"
+        />
+      </div>
+
+      <v-menu v-else-if="!terminalVisible && launchTargets.length > 0" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            class="vibe64-launch-controls__run-button"
+            color="primary"
+            :disabled="runMenuDisabled"
+            :loading="loading"
+            :prepend-icon="mdiPlayCircleOutline"
+            :size="buttonSize"
+            title="Run target"
+            :variant="buttonVariant"
+          >
+            {{ buttonLabel }}
+          </v-btn>
+        </template>
+
+        <v-list class="vibe64-launch-controls__menu" density="compact">
+          <v-list-item
+            v-for="launchTarget in launchTargets"
+            :key="launchTarget.id"
+            :disabled="launchButtonsDisabled || launchTarget.available === false"
+            :prepend-icon="mdiPlayCircleOutline"
+            :subtitle="launchTarget.disabledReason || ''"
+            :title="launchTarget.label"
+            @click="run(launchTarget)"
+          />
+        </v-list>
+      </v-menu>
+
+      <v-chip
+        v-if="loadError"
+        color="warning"
         size="small"
-        :title="action.label || action.href"
-        variant="text"
-        @click="openAction(action)"
-      />
+        variant="tonal"
+        :title="loadError"
+      >
+        Launch unavailable
+      </v-chip>
 
       <v-btn
-        v-if="terminalCanRetry"
-        :disabled="operationBusy"
+        v-if="embeddedPreview && previewBaseUrl"
         :icon="mdiRefresh"
         size="small"
-        title="Retry"
+        title="Reload preview"
         variant="text"
-        @click="retryTerminal"
-      />
-
-      <v-btn
-        v-if="terminalCanRestart"
-        :disabled="operationBusy"
-        :icon="mdiRestart"
-        size="small"
-        title="Restart"
-        variant="text"
-        @click="restartTerminal"
-      />
-
-      <v-btn
-        :icon="mdiConsoleLine"
-        size="small"
-        title="Show launch terminal"
-        variant="text"
-        @click="expandTerminal"
+        @click="reloadPreview"
       />
     </div>
 
-    <v-menu v-else-if="!terminalVisible && launchTargets.length > 0" location="bottom end">
-      <template #activator="{ props: menuProps }">
-        <v-btn
-          v-bind="menuProps"
-          class="vibe64-launch-controls__run-button"
-          color="primary"
-          :disabled="runMenuDisabled"
-          :loading="loading"
-          :prepend-icon="mdiPlayCircleOutline"
-          :size="buttonSize"
-          title="Run target"
-          :variant="buttonVariant"
-        >
-          {{ buttonLabel }}
-        </v-btn>
-      </template>
-
-      <v-list class="vibe64-launch-controls__menu" density="compact">
-        <v-list-item
-          v-for="launchTarget in launchTargets"
-          :key="launchTarget.id"
-          :disabled="launchButtonsDisabled || launchTarget.available === false"
-          :prepend-icon="mdiPlayCircleOutline"
-          :subtitle="launchTarget.disabledReason || ''"
-          :title="launchTarget.label"
-          @click="run(launchTarget)"
-        />
-      </v-list>
-    </v-menu>
-
-    <v-chip
-      v-if="loadError"
-      color="warning"
-      size="small"
-      variant="tonal"
-      :title="loadError"
+    <div
+      v-if="embeddedPreview"
+      class="vibe64-launch-controls__preview"
     >
-      Launch unavailable
-    </v-chip>
+      <iframe
+        v-if="previewUrl"
+        :key="previewUrl"
+        class="vibe64-launch-controls__preview-frame"
+        :src="previewUrl"
+        title="App preview"
+      />
+      <div
+        v-else
+        class="vibe64-launch-controls__preview-empty"
+      >
+        <v-progress-circular
+          v-if="loading || terminalIsRunning"
+          color="primary"
+          indeterminate
+          size="22"
+          width="2"
+        />
+        <span>{{ previewEmptyText }}</span>
+      </div>
+    </div>
 
     <Vibe64FloatingTerminalWindow
       :displayed="terminalDisplayed"
@@ -214,7 +254,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   mdiChevronDown,
   mdiClose,
@@ -253,6 +293,14 @@ const props = defineProps({
   buttonVariant: {
     default: "tonal",
     type: String
+  },
+  autoStartTargetId: {
+    default: "",
+    type: String
+  },
+  embeddedPreview: {
+    default: false,
+    type: Boolean
   },
   prominent: {
     default: false,
@@ -323,6 +371,7 @@ const {
   terminalWindowStorageKey,
   visible
 } = useVibe64LaunchControls({
+  autoStartTargetId: () => props.autoStartTargetId,
   windowDisplayed: () => props.windowDisplayed,
   busy: () => props.busy,
   session: () => props.session
@@ -358,6 +407,28 @@ const workflowAiFixVisible = computed(() => Boolean(
     terminalError.value
   )
 ));
+const previewReloadKey = ref(0);
+const previewBaseUrl = computed(() => String(launchActions.value[0]?.href || ""));
+const previewUrl = computed(() => {
+  if (!previewBaseUrl.value) {
+    return "";
+  }
+  const separator = previewBaseUrl.value.includes("?") ? "&" : "?";
+  return `${previewBaseUrl.value}${separator}vibe64_reload=${previewReloadKey.value}`;
+});
+const previewEmptyText = computed(() => {
+  if (loading.value) {
+    return "Loading preview targets.";
+  }
+  if (terminalIsRunning.value) {
+    return "Starting preview.";
+  }
+  return "Run the app to show the preview.";
+});
+
+function reloadPreview() {
+  previewReloadKey.value += 1;
+}
 
 async function requestAiFix() {
   if (!workflowAiFixVisible.value) {
@@ -392,6 +463,31 @@ async function requestAiFix() {
   gap: 0.45rem;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.vibe64-launch-controls__toolbar {
+  align-items: center;
+  display: flex;
+  gap: 0.45rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.vibe64-launch-controls--embedded {
+  align-items: stretch;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  justify-content: stretch;
+  padding: 0.6rem;
+}
+
+.vibe64-launch-controls--embedded .vibe64-launch-controls__toolbar {
+  justify-content: flex-end;
 }
 
 .vibe64-launch-controls--prominent .vibe64-launch-controls__run-button {
@@ -454,6 +550,35 @@ async function requestAiFix() {
 .vibe64-launch-controls__menu {
   max-width: min(20rem, 92vw);
   min-width: min(14rem, 92vw);
+}
+
+.vibe64-launch-controls__preview {
+  background:
+    linear-gradient(180deg, rgba(var(--v-theme-primary), 0.035), rgba(var(--v-theme-surface), 0.86)),
+    rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.12);
+  border-radius: 8px;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vibe64-launch-controls__preview-frame {
+  background: white;
+  border: 0;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.vibe64-launch-controls__preview-empty {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  display: flex;
+  gap: 0.55rem;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 1rem;
 }
 
 .vibe64-launch-controls__terminal {

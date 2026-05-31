@@ -1,13 +1,16 @@
 <template>
-  <div class="studio-ai-sessions__toolbar">
+  <div
+    class="studio-ai-sessions__toolbar"
+    :class="{ 'studio-ai-sessions__toolbar--compact': compact }"
+  >
     <div class="studio-ai-sessions__tabs">
       <v-chip
-        v-for="sessionItem in toolbar.sessions"
+        v-for="sessionItem in visibleSessions"
         :key="sessionItem.sessionId"
         :color="sessionItem.sessionId === selectedSessionId ? 'primary' : 'default'"
         :variant="sessionItem.sessionId === selectedSessionId ? 'flat' : 'tonal'"
         class="studio-ai-sessions__tab"
-        size="large"
+        :size="compact ? 'small' : 'large'"
         @click="toolbar.selectSession(sessionItem.sessionId)"
       >
         <span
@@ -29,6 +32,31 @@
           @click.stop="abandon.request"
         />
       </v-chip>
+
+      <v-menu
+        v-if="hiddenSessions.length"
+        location="bottom start"
+      >
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            :icon="mdiDotsHorizontal"
+            size="small"
+            title="More sessions"
+            variant="tonal"
+          />
+        </template>
+
+        <v-list density="compact" class="studio-ai-sessions__session-menu">
+          <v-list-item
+            v-for="sessionItem in hiddenSessions"
+            :key="sessionItem.sessionId"
+            :active="sessionItem.sessionId === selectedSessionId"
+            :title="sessionTabLabel(sessionItem)"
+            @click="toolbar.selectSession(sessionItem.sessionId)"
+          />
+        </v-list>
+      </v-menu>
 
       <v-menu
         v-if="showWorkflowDefinitionMenu"
@@ -90,6 +118,7 @@ import { computed, ref } from "vue";
 import {
   mdiChevronDown,
   mdiClose,
+  mdiDotsHorizontal,
   mdiPlus
 } from "@mdi/js";
 
@@ -109,6 +138,14 @@ const props = defineProps({
   toolbar: {
     default: () => ({}),
     type: Object
+  },
+  compact: {
+    default: false,
+    type: Boolean
+  },
+  maxVisibleSessions: {
+    default: 0,
+    type: Number
   }
 });
 
@@ -122,6 +159,25 @@ function sessionTabLabel(sessionItem = {}) {
 
 const workflowDefinitions = computed(() => {
   return Array.isArray(props.toolbar.workflowDefinitions) ? props.toolbar.workflowDefinitions : [];
+});
+const allSessions = computed(() => Array.isArray(props.toolbar.sessions) ? props.toolbar.sessions : []);
+const visibleSessions = computed(() => {
+  const limit = Math.max(0, Number(props.maxVisibleSessions || 0));
+  if (limit < 1 || allSessions.value.length <= limit) {
+    return allSessions.value;
+  }
+  const selectedIndex = allSessions.value.findIndex((sessionItem) => sessionItem.sessionId === props.selectedSessionId);
+  if (selectedIndex < 0 || selectedIndex < limit) {
+    return allSessions.value.slice(0, limit);
+  }
+  return [
+    ...allSessions.value.slice(0, Math.max(0, limit - 1)),
+    allSessions.value[selectedIndex]
+  ];
+});
+const hiddenSessions = computed(() => {
+  const visibleIds = new Set(visibleSessions.value.map((sessionItem) => sessionItem.sessionId));
+  return allSessions.value.filter((sessionItem) => !visibleIds.has(sessionItem.sessionId));
 });
 const showWorkflowDefinitionMenu = computed(() => {
   return props.toolbar.createSessionMode === "select" && workflowDefinitions.value.length > 0;
@@ -176,6 +232,11 @@ function createSessionFromDefinition(definitionId = "") {
   min-width: min(22rem, calc(100vw - 2rem));
 }
 
+.studio-ai-sessions__session-menu {
+  max-width: min(18rem, 88vw);
+  min-width: min(12rem, 88vw);
+}
+
 .studio-ai-sessions__definition-menu :deep(.v-list-item-subtitle) {
   white-space: normal;
 }
@@ -196,6 +257,14 @@ function createSessionFromDefinition(definitionId = "") {
 
 .studio-ai-sessions__status-dot--finished {
   background: rgb(var(--v-theme-success));
+}
+
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tabs {
+  flex-wrap: nowrap;
+}
+
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab {
+  max-width: 9rem;
 }
 
 @media (max-width: 640px) {

@@ -122,6 +122,7 @@ function buildVibe64TimelineSteps(session = {}) {
       description,
       done,
       id: step.id,
+      icon: vibe64TimelineStepIcon(step),
       index: Number.isFinite(Number(step.index)) ? Number(step.index) : fallbackIndex,
       label: step.label || step.id,
       rewindLabel: step.label || step.id,
@@ -134,6 +135,41 @@ function buildVibe64TimelineSteps(session = {}) {
 
 function buildVibe64AutopilotNavigationSteps(session = {}) {
   return buildVibe64TimelineSteps(session);
+}
+
+function vibe64TimelineStepIcon(step = {}) {
+  const id = String(step.id || "");
+  if (id.includes("session")) {
+    return mdiIdentifier;
+  }
+  if (id.includes("worktree")) {
+    return mdiFolderOutline;
+  }
+  if (id.includes("seed") || id.includes("issue")) {
+    return mdiMessagePlusOutline;
+  }
+  if (id.includes("plan") || id.includes("validate")) {
+    return mdiProgressCheck;
+  }
+  if (id.includes("execute")) {
+    return mdiPlay;
+  }
+  if (id.includes("dependencies")) {
+    return mdiCodeBraces;
+  }
+  if (id.includes("review") || id.includes("accepted")) {
+    return mdiCheck;
+  }
+  if (id.includes("report") || id.includes("knowledge")) {
+    return mdiFileDocumentOutline;
+  }
+  if (id.includes("commit")) {
+    return mdiSourceCommit;
+  }
+  if (id.includes("pull_request") || id.includes("merge")) {
+    return mdiGithub;
+  }
+  return mdiRobotOutline;
 }
 
 function vibe64PromptHandoffFromSession(session = {}) {

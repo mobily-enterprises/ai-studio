@@ -10,6 +10,7 @@
         :active="autopilotModeActive"
         :automation-enabled="autopilotAutomationEnabled"
         :autopilot-steps="autopilotNavigationSteps"
+        :codex-thinking="autopilotInteractionLocked"
         :command-runner="autopilotCommandRunner"
         :conversation-log="conversationLog"
         :diff="dialogs.diff"
@@ -20,30 +21,14 @@
         :review="review"
         :rewind-busy="Boolean(timeline.rewindCommand?.isRunning)"
         :rewind-to-step="timeline.rewindToStep"
+        :session-abandon="dialogs.abandon"
         :session="selection.selectedSession"
+        :session-selection-closed="selection.isClosed"
+        :session-toolbar="autopilotSessionToolbar"
+        :workspace-pane="props.workspacePane"
         :inert="autopilotViewInert"
         @busy-change="setAutopilotBusy"
       />
-
-      <div
-        v-if="autopilotInteractionLocked"
-        class="studio-ai-sessions__codex-thinking-overlay"
-        role="status"
-        aria-live="polite"
-      >
-        <div class="studio-ai-sessions__codex-thinking-status">
-          <v-progress-circular
-            class="studio-ai-sessions__codex-thinking-spinner"
-            color="primary"
-            indeterminate
-            :size="48"
-            :width="3"
-          >
-            <v-icon :icon="mdiRobotOutline" size="24" />
-          </v-progress-circular>
-          <strong>Codex is thinking...</strong>
-        </div>
-      </div>
 
       <div
         v-if="sessionMode === 'inspect'"
@@ -98,9 +83,6 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } from "vue";
-import {
-  mdiRobotOutline
-} from "@mdi/js";
 import Vibe64AutopilotView from "@/components/studio/vibe64-session/Vibe64AutopilotView.vue";
 import Vibe64SessionDialogs from "@/components/studio/vibe64-session/Vibe64SessionDialogs.vue";
 import Vibe64SessionTerminals from "@/components/studio/vibe64-session/Vibe64SessionTerminals.vue";
@@ -163,6 +145,10 @@ const props = defineProps({
     default: "autopilot",
     type: String
   },
+  workspacePane: {
+    default: "preview",
+    type: String
+  }
 });
 
 const emit = defineEmits([
@@ -195,6 +181,7 @@ const sessionScopedData = {
   canCreateSession: props.sessionData.canCreateSession,
   clearSelectedSession: props.sessionData.clearSelectedSession,
   createSessionCommand: props.sessionData.createSessionCommand,
+  createSessionMode: props.sessionData.createSessionMode,
   createSessionTitle: props.sessionData.createSessionTitle,
   isSelectedSessionClosed,
   pageLoading: props.sessionData.pageLoading,
@@ -210,8 +197,20 @@ const sessionScopedData = {
   shortSessionId: props.sessionData.shortSessionId,
   statusColor: props.sessionData.statusColor,
   statusLabel: props.sessionData.statusLabel,
-  timelineSteps
+  timelineSteps,
+  workflowDefinitions: props.sessionData.workflowDefinitions
 };
+const autopilotSessionToolbar = proxyRefs({
+  canCreateSession: props.sessionData.canCreateSession,
+  createSession: props.sessionData.createSession,
+  createSessionCommand: props.sessionData.createSessionCommand,
+  createSessionMode: props.sessionData.createSessionMode,
+  createSessionTitle: props.sessionData.createSessionTitle,
+  selectSession: props.sessionData.selectSessionId,
+  sessions: props.sessionData.sessions,
+  shortSessionId: props.sessionData.shortSessionId,
+  workflowDefinitions: props.sessionData.workflowDefinitions
+});
 const sessionWorkflow = useVibe64SessionWorkflow({
   sessionData: sessionScopedData
 });
@@ -387,8 +386,7 @@ const autopilotInteractionLocked = computed(() => Boolean(
   autopilotCodexWorkingVisible.value
 ));
 const autopilotViewInert = computed(() => Boolean(
-  props.sessionMode !== "autopilot" ||
-  autopilotInteractionLocked.value
+  props.sessionMode !== "autopilot"
 ));
 const codexTerminalDisplayMode = computed(() => {
   if (!props.active) {

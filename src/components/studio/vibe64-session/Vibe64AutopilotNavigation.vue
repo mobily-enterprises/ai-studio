@@ -4,7 +4,10 @@
     class="studio-autopilot-nav"
     :class="[
       `studio-autopilot-nav--${layout}`,
-      { 'studio-autopilot-nav--expanded': mobileStepsOpen }
+      {
+        'studio-autopilot-nav--executing': executing,
+        'studio-autopilot-nav--expanded': mobileStepsOpen
+      }
     ]"
     aria-label="Autopilot progress"
   >
@@ -27,6 +30,7 @@
           class="studio-autopilot-nav__step"
           :class="`studio-autopilot-nav__step--${step.state}`"
           :aria-current="step.current ? 'step' : undefined"
+          :title="step.label"
         >
           <span class="studio-autopilot-nav__step-icon">
             <v-icon :icon="stepIcon(step)" size="16" />
@@ -42,20 +46,22 @@
           <v-btn
             v-bind="menuProps"
             :disabled="busy || !hasJumpableSteps"
-            :prepend-icon="mdiUndoVariant"
+            :icon="compactLayout ? mdiUndoVariant : undefined"
+            :prepend-icon="compactLayout ? undefined : mdiUndoVariant"
             size="small"
+            title="Jump back"
             type="button"
             variant="tonal"
           >
-            Jump back
+            <template v-if="!compactLayout">Jump back</template>
           </v-btn>
         </template>
 
         <v-list density="compact" class="studio-autopilot-nav__jump-list">
           <v-list-item
-            v-for="step in jumpableSteps"
+            v-for="step in rewindMenuSteps"
             :key="step.id"
-            :disabled="busy"
+            :disabled="busy || !step.canRewind || step.current"
             :prepend-icon="mdiUndoVariant"
             :title="step.rewindLabel || step.label"
             @click="requestRewind(step)"
@@ -116,6 +122,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  executing: {
+    default: false,
+    type: Boolean
+  },
   layout: {
     default: "bar",
     type: String
@@ -131,11 +141,13 @@ const mobileStepsOpen = ref(false);
 const pendingStep = ref(null);
 const confirmationOpen = ref(false);
 
+const compactLayout = computed(() => props.layout === "icons");
 const railLayout = computed(() => props.layout === "rail");
 const currentStep = computed(() => props.steps.find((step) => step.current) || props.steps[0] || null);
 const currentStepLabel = computed(() => currentStep.value?.label || "Steps");
 const mobileToggleLabel = computed(() => `Steps: ${currentStepLabel.value}`);
 const jumpableSteps = computed(() => props.steps.filter((step) => step.canRewind && !step.current));
+const rewindMenuSteps = computed(() => props.steps.filter((step) => !step.current));
 const hasJumpableSteps = computed(() => jumpableSteps.value.length > 0);
 const pendingStepLabel = computed(() => pendingStep.value?.rewindLabel || pendingStep.value?.label || "this point");
 
@@ -166,6 +178,9 @@ function confirmRewind() {
 }
 
 function stepIcon(step = {}) {
+  if (step.icon) {
+    return step.icon;
+  }
   if (step.state === "done") {
     return mdiCheckCircle;
   }
@@ -278,6 +293,51 @@ watch(currentStepLabel, () => {
   justify-self: stretch;
 }
 
+.studio-autopilot-nav--icons {
+  gap: 0.35rem;
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__content {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__steps {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.28rem;
+  overflow-x: auto;
+  padding-block: 0.1rem;
+  scrollbar-width: thin;
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__step {
+  border-radius: 999px;
+  flex: 0 0 auto;
+  height: 1.9rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.9rem;
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__step-label {
+  display: none;
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__step--done {
+  background: rgba(var(--v-theme-success), 0.09);
+  border-color: rgba(var(--v-theme-success), 0.34);
+}
+
+.studio-autopilot-nav--icons .studio-autopilot-nav__step--current {
+  background: rgba(var(--v-theme-warning), 0.12);
+  border-color: rgba(var(--v-theme-warning), 0.54);
+  color: rgb(var(--v-theme-warning));
+}
+
+.studio-autopilot-nav--icons.studio-autopilot-nav--executing .studio-autopilot-nav__step--current .studio-autopilot-nav__step-icon {
+  animation: studio-autopilot-nav-current-pulse 1.1s ease-in-out infinite;
+}
+
 @media (max-width: 980px) {
   .studio-autopilot-nav--rail {
     align-self: auto;
@@ -313,6 +373,19 @@ watch(currentStepLabel, () => {
 
   .studio-autopilot-nav--rail :deep(.v-btn) {
     justify-self: stretch;
+  }
+}
+
+@keyframes studio-autopilot-nav-current-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
   }
 }
 </style>

@@ -138,6 +138,7 @@ function launchTerminalIsReady(metadata = {}) {
 }
 
 function useVibe64LaunchControls({
+  autoStartTargetId = () => "",
   busy = () => false,
   session = null,
   windowDisplayed = () => true
@@ -145,10 +146,12 @@ function useVibe64LaunchControls({
   const paths = usePaths();
   const operationBusy = ref(false);
   const terminalExpanded = ref(false);
+  const autoStartKey = ref("");
   let attachedTerminalId = "";
 
   const selectedSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(selectedSession.value?.sessionId || ""));
+  const requestedAutoStartTargetId = computed(() => String(readRefOrGetterValue(autoStartTargetId) || "").trim());
   const canLoadLaunchTargets = computed(() => Boolean(
     sessionId.value &&
     launchTargetWorktreePath(selectedSession.value || {})
@@ -263,6 +266,15 @@ function useVibe64LaunchControls({
   const status = computed(() => launchTargetsResource.data.value || {});
   const launchTargets = computed(() => {
     return Array.isArray(status.value.launchTargets) ? status.value.launchTargets : [];
+  });
+  const autoStartTarget = computed(() => {
+    if (!requestedAutoStartTargetId.value) {
+      return null;
+    }
+    return launchTargets.value.find((target) => (
+      target.id === requestedAutoStartTargetId.value &&
+      target.available !== false
+    )) || null;
   });
   const activeTerminal = computed(() => {
     const terminalStatusValue = status.value.activeTerminal;
@@ -578,11 +590,41 @@ function useVibe64LaunchControls({
 
   watch(sessionId, () => {
     attachedTerminalId = "";
+    autoStartKey.value = "";
     closeTerminalSocket();
     disposeTerminalDisplay();
     resetTerminalSessionState();
     resetTerminalDisplay();
     terminalExpanded.value = false;
+  });
+
+  watch(() => [
+    sessionId.value,
+    requestedAutoStartTargetId.value,
+    launchTargetsResource.isLoading.value ? "loading" : "ready",
+    terminalVisible.value ? "terminal-visible" : "terminal-hidden",
+    operationBusy.value ? "busy" : "idle",
+    autoStartTarget.value?.id || ""
+  ].join("|"), () => {
+    const target = autoStartTarget.value;
+    const key = `${sessionId.value}:${target?.id || ""}`;
+    if (
+      !sessionId.value ||
+      !target ||
+      launchTargetsResource.isLoading.value ||
+      terminalVisible.value ||
+      operationBusy.value ||
+      autoStartKey.value === key
+    ) {
+      return;
+    }
+    autoStartKey.value = key;
+    void run(target, {
+      applyDefaultDisplay: false
+    });
+  }, {
+    flush: "post",
+    immediate: true
   });
 
   onBeforeUnmount(() => {

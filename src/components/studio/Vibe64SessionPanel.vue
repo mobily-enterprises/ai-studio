@@ -1,6 +1,9 @@
 <template>
   <v-sheet rounded="lg" class="studio-ai-sessions studio-screen__panel">
-    <div class="studio-ai-sessions__header">
+    <div
+      v-if="pageError || panelSessionToolbarVisible"
+      class="studio-ai-sessions__header"
+    >
       <StudioErrorNotice
         v-if="pageError"
         title="Vibe64 sessions could not load"
@@ -9,6 +12,7 @@
       />
 
       <Vibe64SessionToolbar
+        v-if="panelSessionToolbarVisible"
         :abandon="selectedAbandon"
         :selected-session-id="selection.selectedSessionId"
         :selection-closed="selection.isClosed"
@@ -59,7 +63,7 @@
           />
 
           <Vibe64LaunchControls
-            v-if="selectedToolbarSession"
+            v-if="selectedToolbarSession && sessionMode === 'inspect'"
             :key="`launch:${selectedToolbarSession.sessionId}`"
             button-size="large"
             button-variant="flat"
@@ -127,6 +131,7 @@
         :session-data="sessionData"
         :session-id="selection.selectedSessionId"
         :session-mode="sessionMode"
+        :workspace-pane="workspacePane"
         @busy-change="setRuntimeBusy"
         @page-error-change="setRuntimePageError"
         @toolbar-controls-ready="setRuntimeToolbarControls"
@@ -211,8 +216,17 @@ const {
 const modeSwitchTarget = computed(() => sessionMode.value === "inspect" ? "autopilot" : "inspect");
 const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "Inspect" : "Autopilot");
 const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
+const workspacePane = computed(() => (
+  sessionMode.value === "autopilot"
+    ? normalizeWorkspacePane(route.query.pane)
+    : "preview"
+));
 const pageLoading = sessionData.pageLoading;
 const toolbarActionsVisible = computed(() => true);
+const panelSessionToolbarVisible = computed(() => Boolean(
+  sessionMode.value === "inspect" ||
+  !selection.selectedSession
+));
 const globalCodexTerminalController = {
   sessionUpdate: updateGlobalCodexTerminalState
 };
@@ -301,6 +315,12 @@ function setSessionMode(mode = "autopilot") {
 
 function switchSessionMode() {
   setSessionMode(modeSwitchTarget.value);
+}
+
+function normalizeWorkspacePane(value = "") {
+  return ["configure", "history", "preview", "run", "setup"].includes(value)
+    ? value
+    : "preview";
 }
 
 function openGlobalCodexTerminal() {

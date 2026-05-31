@@ -10,6 +10,18 @@
 
 <template>
   <ShellLayout>
+    <template #top-left>
+      <div class="setup__shell-heading">
+        <h1 class="setup__shell-title">Setup</h1>
+      </div>
+    </template>
+
+    <template #top-right>
+      <div class="setup__shell-actions">
+        <Vibe64HomeWorkspaceMenu />
+      </div>
+    </template>
+
     <section class="setup" aria-labelledby="setup-title">
       <header class="setup__header">
         <p class="setup__eyebrow">Studio readiness</p>
@@ -19,51 +31,10 @@
       <ProjectSelectionGate>
         <ProjectTypeGate>
           <template #default>
-            <div class="setup__tabs">
-              <v-tabs
-                :model-value="activeTab"
-                aria-label="Setup sections"
-                color="primary"
-                density="comfortable"
-                show-arrows
-                @update:model-value="selectTab"
-              >
-                <v-tab
-                  v-for="tab in tabs"
-                  :id="tabId(tab.value)"
-                  :key="tab.value"
-                  :aria-controls="panelId(tab.value)"
-                  :value="tab.value"
-                >
-                  {{ tab.label }}
-                </v-tab>
-              </v-tabs>
-            </div>
-
-            <div
-              :id="panelId(activeTab)"
-              class="setup__panel"
-              role="tabpanel"
-              tabindex="0"
-              :aria-labelledby="tabId(activeTab)"
-            >
-              <StudioSetupDoctorScreen
-                v-if="activeTab === 'studio-setup'"
-                @select-tab="selectTab"
-              />
-              <AccountsSetup
-                v-else-if="activeTab === 'accounts'"
-                @continue="selectTab('adapter-setup')"
-              />
-              <AdapterSetupDoctorScreen
-                v-else-if="activeTab === 'adapter-setup'"
-                @select-tab="selectTab"
-              />
-              <ProjectSetupDoctorScreen
-                v-else-if="activeTab === 'project-setup'"
-                @select-tab="selectTab"
-              />
-            </div>
+            <Vibe64SetupPanel
+              :model-value="activeTab"
+              @update:model-value="selectTab"
+            />
           </template>
         </ProjectTypeGate>
       </ProjectSelectionGate>
@@ -75,13 +46,11 @@
 import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ShellLayout from "@/components/ShellLayout.vue";
-import AccountsSetup from "@/components/studio/AccountsSetup.vue";
-import ProjectSelectionGate from "@/components/studio/ProjectSelectionGate.vue";
 import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
-
-import AdapterSetupDoctorScreen from "../components/studio/AdapterSetupDoctorScreen.vue";
-import ProjectSetupDoctorScreen from "../components/studio/ProjectSetupDoctorScreen.vue";
-import StudioSetupDoctorScreen from "../components/studio/StudioSetupDoctorScreen.vue";
+import ProjectSelectionGate from "@/components/studio/ProjectSelectionGate.vue";
+import Vibe64HomeWorkspaceMenu from "@/components/studio/Vibe64HomeWorkspaceMenu.vue";
+import Vibe64SetupPanel from "@/components/studio/Vibe64SetupPanel.vue";
+import { useStudioShellDrawer } from "@/composables/useStudioShellDrawer.js";
 
 const tabs = [
   { label: "Studio Setup", value: "studio-setup" },
@@ -95,6 +64,10 @@ const tabValues = new Set(tabs.map((tab) => tab.value));
 const route = useRoute();
 const router = useRouter();
 
+useStudioShellDrawer({
+  hidden: true
+});
+
 function normalizeTab(value) {
   return typeof value === "string" && tabValues.has(value) ? value : "";
 }
@@ -104,14 +77,6 @@ function fallbackTab() {
 }
 
 const activeTab = computed(() => normalizeTab(route.query.tab) || fallbackTab());
-
-function tabId(tab) {
-  return `setup-tab-${tab}`;
-}
-
-function panelId(tab) {
-  return `setup-panel-${tab}`;
-}
 
 function tabRoute(tab) {
   return {
@@ -175,19 +140,28 @@ watch(
   line-height: 1;
 }
 
-.setup__tabs {
-  margin-bottom: 0.75rem;
-  overflow-x: auto;
-  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-}
-
-.setup__panel {
+.setup__shell-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
   min-width: 0;
 }
 
-:deep(.v-tab) {
-  min-height: 48px;
-  letter-spacing: 0;
-  text-transform: none;
+.setup__shell-heading {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+  padding-left: 1rem;
 }
+
+.setup__shell-title {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.2rem;
+  font-weight: 760;
+  line-height: 1.2;
+  margin: 0;
+  min-width: 0;
+}
+
 </style>
