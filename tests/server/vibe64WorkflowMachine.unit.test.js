@@ -2529,6 +2529,8 @@ test("vibe64 pull request resolution prompt uses the current-step helper contrac
     assert.match(afterAction.actionResult.prompt, /"stepId": "create_and_merge_pull_request"/u);
     assert.match(afterAction.actionResult.prompt, /"stepStatus": "awaiting_agent_result"/u);
     assert.match(afterAction.actionResult.prompt, /Do not write workflow artifacts directly/u);
+    assert.match(afterAction.actionResult.prompt, /Vibe64 will show the current state/u);
+    assert.doesNotMatch(afterAction.actionResult.prompt, /ask the user to reload the current step/u);
     assert.match(afterAction.actionResult.prompt, /write the same question or blocker in normal Codex response text/u);
     assert.match(afterAction.actionResult.prompt, /Keep the visible question text and the helper `message` equivalent/u);
     assert.ok(afterAction.actionResult.prompt.includes(questionBatchLimitInstruction()));

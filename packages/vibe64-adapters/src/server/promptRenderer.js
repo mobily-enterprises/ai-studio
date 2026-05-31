@@ -263,7 +263,7 @@ function currentStepInputHelperBriefing() {
     "- Include `kind`, `stepId`, and `stepStatus` exactly for the current workflow state.",
     "- The current values are listed in Vibe64 workflow context as current step and step status.",
     "- Use `fields` for structured form values, `message` for questions to the user, and `text` for plain user responses.",
-    "- If the helper reports Reload state or a state mismatch, stop and ask the user to reload the current step."
+    "- If the helper reports Reload state or a state mismatch, stop immediately; Vibe64 will show the current state."
   ].join("\n");
 }
 

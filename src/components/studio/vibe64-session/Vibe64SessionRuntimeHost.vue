@@ -333,6 +333,19 @@ const serverSaysCodexIsWorking = computed(() => Boolean(
     selectedSession.value?.presentation?.screen?.showProgress === true
   )
 ));
+const codexBootstrapNeedsTerminalAttention = computed(() => {
+  if (!props.active || props.sessionMode !== "autopilot") {
+    return false;
+  }
+  return (Array.isArray(selectedSession.value?.presentation?.backgroundTasks)
+    ? selectedSession.value.presentation.backgroundTasks
+    : []
+  ).some((task) => (
+    String(task?.id || "") === "codex_bootstrap" &&
+    String(task?.status || "") === "failed" &&
+    Boolean(String(task?.terminalSessionId || ""))
+  ));
+});
 const codexTerminalQuietTooLong = ref(false);
 let codexQuietTerminalTimer = null;
 const codexTerminalActivityMatchesSelectedSession = computed(() => {
@@ -348,16 +361,23 @@ const codexTerminalStreaming = computed(() => Boolean(
   codexTerminalActivityMatchesSelectedSession.value &&
   codexTerminalActivity.value.streaming
 ));
+const codexTerminalActive = computed(() => Boolean(
+  codexTerminalActivityMatchesSelectedSession.value &&
+  codexTerminalActivity.value.active
+));
 const autopilotCodexTerminalVisible = computed(() => Boolean(
-  serverSaysCodexIsWorking.value &&
-  codexTerminalQuietTooLong.value
+  codexBootstrapNeedsTerminalAttention.value ||
+  (
+    serverSaysCodexIsWorking.value &&
+    codexTerminalQuietTooLong.value
+  )
 ));
 const autopilotCodexWorkingVisible = computed(() => Boolean(
   serverSaysCodexIsWorking.value &&
   selectedCodexTerminalId.value &&
   !autopilotCodexTerminalVisible.value &&
   (
-    codexTerminalStreaming.value ||
+    codexTerminalActive.value ||
     codexTerminalListenWhenHidden.value
   )
 ));
@@ -520,6 +540,7 @@ async function resumeCodexFromAttention() {
     };
   } catch (error) {
     codexRecoveryError.value = String(error?.message || error || "Codex could not continue.");
+    await props.sessionData.refreshSessionData().catch(() => null);
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexRecovery.error", {
       error: codexRecoveryError.value,
       sessionId
@@ -625,10 +646,13 @@ watch(() => [
 watch(() => [
   serverSaysCodexIsWorking.value ? "expected" : "idle",
   selectedCodexTerminalId.value,
-  codexTerminalStreaming.value ? "streaming" : "quiet"
+  codexBootstrapNeedsTerminalAttention.value ? "bootstrap-attention" : "bootstrap-ok",
+  codexTerminalActive.value ? "active" : "quiet"
 ].join("|"), () => {
   clearCodexQuietTerminalTimer();
   vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.evaluate", {
+    codexBootstrapNeedsTerminalAttention: codexBootstrapNeedsTerminalAttention.value,
+    codexTerminalActive: codexTerminalActive.value,
     codexTerminalQuietTooLong: codexTerminalQuietTooLong.value,
     codexTerminalStreaming: codexTerminalStreaming.value,
     selectedCodexTerminalId: selectedCodexTerminalId.value,
@@ -638,11 +662,13 @@ watch(() => [
   if (
     !serverSaysCodexIsWorking.value
   ) {
-    codexTerminalQuietTooLong.value = false;
+    codexTerminalQuietTooLong.value = codexBootstrapNeedsTerminalAttention.value;
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.reset", {
+      codexBootstrapNeedsTerminalAttention: codexBootstrapNeedsTerminalAttention.value,
       selectedCodexTerminalId: selectedCodexTerminalId.value,
       serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
       sessionId: props.sessionId,
+      terminalActive: codexTerminalActive.value,
       streaming: codexTerminalStreaming.value
     });
     return;
@@ -651,14 +677,16 @@ watch(() => [
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.keepSurfaced", {
       selectedCodexTerminalId: selectedCodexTerminalId.value,
       sessionId: props.sessionId,
+      terminalActive: codexTerminalActive.value,
       streaming: codexTerminalStreaming.value
     });
     return;
   }
-  if (codexTerminalStreaming.value) {
+  if (codexTerminalActive.value) {
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.waitForQuiet", {
       selectedCodexTerminalId: selectedCodexTerminalId.value,
-      sessionId: props.sessionId
+      sessionId: props.sessionId,
+      streaming: codexTerminalStreaming.value
     });
     return;
   }
@@ -671,12 +699,20 @@ watch(() => [
     codexQuietTerminalTimer = null;
     if (
       serverSaysCodexIsWorking.value &&
-      !codexTerminalStreaming.value
+      !codexTerminalActive.value
     ) {
-      codexTerminalQuietTooLong.value = true;
       vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.fire", {
         selectedCodexTerminalId: selectedCodexTerminalId.value,
         sessionId: props.sessionId
+      });
+      void resumeCodexFromAttention().then((result) => {
+        if (
+          result?.ok === false &&
+          serverSaysCodexIsWorking.value &&
+          !codexTerminalActive.value
+        ) {
+          codexTerminalQuietTooLong.value = true;
+        }
       });
     }
   }, CODEX_QUIET_TERMINAL_DELAY_MS);

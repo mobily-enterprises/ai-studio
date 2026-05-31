@@ -290,9 +290,14 @@ async function resumeCodexFromAttention() {
     return;
   }
   hideCompactTerminal();
-  const result = await props.codexRecovery.resume();
-  if (result?.ok === false) {
-    return;
+  try {
+    const result = await props.codexRecovery.resume();
+    if (result?.ok === false) {
+      showCompactTerminal();
+    }
+  } catch (error) {
+    showCompactTerminal();
+    throw error;
   }
 }
 

@@ -84,6 +84,7 @@ test("vibe64 runtime exposes fake adapter facts, commands, and enabled actions",
     assert.deepEqual(session.actions, [
       {
         adapterCapability: "toy_command",
+        auditMessage: "Toy command.",
         disabledReason: "",
         dispatchRoute: "command-terminal",
         enabled: true,
@@ -122,6 +123,7 @@ test("vibe64 runtime disables actions when the adapter lacks a required capabili
     assert.deepEqual(session.actions, [
       {
         adapterCapability: "toy_command",
+        auditMessage: "Toy command.",
         disabledReason: "Fake adapter does not support capability: toy_command.",
         dispatchRoute: "command-terminal",
         enabled: false,

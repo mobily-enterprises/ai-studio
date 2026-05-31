@@ -51,7 +51,8 @@ import {
 import {
   codexTerminalNamespace,
   fixCodexTerminalNamespace,
-  globalCodexTerminalNamespace
+  globalCodexTerminalNamespace,
+  stableHash
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
 import {
   resolveShellTerminalCwd,
@@ -447,6 +448,17 @@ test("Vibe64 Codex terminal renders the session briefing for explicit delivery",
     /resume 00000000-0000-4000-8000-000000000001/u
   );
   assert.doesNotMatch(resumedArgs.at(-1), /Vibe64 session briefing/u);
+
+  const workdirResumeArgs = codexTerminalArgs({
+    codexThreadId: `codex-latest:${stableHash("/workspace/project/.vibe64/sessions/active/startup_prompt/worktree")}`,
+    containerName: "vibe64-codex-startup-resume-latest",
+    sessionId: "startup_prompt",
+    targetRoot: "/workspace/project",
+    terminalId: "startup-terminal",
+    worktree: "/workspace/project/.vibe64/sessions/active/startup_prompt/worktree"
+  });
+  assert.match(workdirResumeArgs.at(-1), /resume --last/u);
+  assert.doesNotMatch(workdirResumeArgs.at(-1), /resume [0-9a-f-]{36}/u);
 });
 
 test("Vibe64 Codex terminal mounts linked git metadata for worktree roots", async () => {
@@ -651,13 +663,13 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
       args: [
         "-e",
         [
-          "process.stdout.write('Do you trust this directory? Yes, continue. Press enter to continue\\n');",
-          "let threadIdSent = false;",
+          "process.stdout.write('OpenAI Codex\\ngpt-5.5 xhigh \\u00b7 /workspace/example\\n');",
           "process.stdin.setEncoding('utf8');",
           "process.stdin.on('data', (chunk) => {",
-          "  if (!threadIdSent && String(chunk).includes('CODEX_THREAD_ID')) {",
-          "    threadIdSent = true;",
-          "    process.stdout.write('CODEX_THREAD_ID\\n00000000-0000-4000-8000-000000000123\\n');",
+          "  if (String(chunk).includes('Load Vibe64 session briefing.')) {",
+          "    process.stdout.write('Vibe64 session briefing loaded.\\ngpt-5.5 xhigh \\u00b7 /workspace/example\\n');",
+          "  } else if (String(chunk).includes('Ask the user for seed choices.')) {",
+          "    process.stdout.write('Seed choices prompt received.\\ngpt-5.5 xhigh \\u00b7 /workspace/example\\n');",
           "  }",
           "});",
           "process.stdin.resume();",
@@ -690,25 +702,27 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
       assert.equal(result.pendingCodexPromptInjected, true);
       assert.equal(result.terminalSessionId, terminal.id);
 
-      assert.equal(session.metadata.codex_thread_id, "00000000-0000-4000-8000-000000000123");
+      const expectedConversationId = `codex-latest:${stableHash(worktree)}`;
+      assert.equal(session.metadata.codex_thread_id, undefined);
       assert.equal(session.metadata.codex_workdir, worktree);
       assert.equal(session.metadata.agent_identity_provider, "codex");
       assert.equal(session.metadata.agent_identity_status, "ready");
-      assert.equal(session.metadata.agent_identity_conversation_id, "00000000-0000-4000-8000-000000000123");
+      assert.equal(session.metadata.agent_identity_conversation_id, expectedConversationId);
       assert.equal(session.metadata.agent_identity_workdir, worktree);
       assert.equal(session.metadata.agent_identity_resume_strategy, "provider-native");
       assert.equal(session.metadata.agent_identity_terminal_session_id, terminal.id);
       assert.equal(result.agentIdentity.provider, "codex");
       assert.equal(result.agentIdentity.status, "ready");
-      assert.equal(result.agentIdentity.conversationId, "00000000-0000-4000-8000-000000000123");
-      assert.equal(result.codexThreadId, "00000000-0000-4000-8000-000000000123");
+      assert.equal(result.agentIdentity.conversationId, expectedConversationId);
+      assert.equal(result.agentConversationId, expectedConversationId);
+      assert.equal(result.codexThreadId, "");
       assert.equal(session.metadata.codex_prompt_handoff_id, actionResult.codexPromptHandoff.handoffId);
-      assert.match(session.metadata.codex_prompt_handoff_echo_input, /Load Vibe64 session briefing\./u);
+      assert.match(session.metadata.codex_session_briefing_echo_input, /Load Vibe64 session briefing\./u);
       assert.match(session.metadata.codex_prompt_handoff_echo_input, /Ask the user for seed choices\./u);
       assert.equal(session.metadata.codex_prompt_handoff_terminal_id, terminal.id);
       assert.equal(session.metadata.codex_session_briefing_delivered, "yes");
-      assert.equal(session.metadata.codex_session_briefing_delivery, "terminal_prompt_handoff");
-      assert.equal(result.codexSessionBriefingDelivered, true);
+      assert.equal(session.metadata.codex_session_briefing_delivery, "terminal_bootstrap");
+      assert.equal(result.codexSessionBriefingDelivered, false);
       assert.match(result.codexPromptHandoffEchoInput, /Ask the user for seed choices\./u);
       assert.equal(
         session.presentation.backgroundTasks.find((task) => task.id === "codex_bootstrap")?.status,
@@ -721,6 +735,159 @@ test("Vibe64 Codex terminal resumes a pending prompt through the active terminal
     }
   });
 });
+
+for (const startupPromptCase of [
+  {
+    expectedReason: /trust/u,
+    name: "trust prompt",
+    output: [
+      "Do you trust the contents of this directory?",
+      "Working with untrusted contents comes with higher risk of prompt injection.",
+      "Press enter to continue"
+    ].join("\n")
+  },
+  {
+    expectedReason: /update|upgrade/u,
+    name: "upgrade prompt",
+    output: [
+      "A new version of Codex is available.",
+      "Install the upgrade now?",
+      "Press enter to continue"
+    ].join("\n")
+  }
+]) {
+  test(`Vibe64 Codex bootstrap exposes the active terminal for ${startupPromptCase.name}`, async () => {
+    await withTemporaryRoot(async (targetRoot) => {
+      const sessionId = `codex_boot_${startupPromptCase.name.replace(/\W+/gu, "_")}`;
+      const sessionRoot = path.join(targetRoot, ".vibe64", "sessions", "active", sessionId);
+      const worktree = path.join(sessionRoot, "worktree");
+      await mkdir(worktree, {
+        recursive: true
+      });
+      const actionResult = {
+        actionId: "seed_application_defined",
+        attemptFile: `000001-${sessionId}.json`,
+        attemptNumber: 1,
+        codexPromptHandoff: {
+          handoffId: `handoff-${sessionId}`,
+          kind: "codex_prompt_handoff",
+          prompt: "Ask the user for seed choices.",
+          promptId: "seed_application_defined",
+          terminalInput: "Ask the user for seed choices."
+        },
+        status: "prompt_ready",
+        stepId: "seed_application_defined"
+      };
+      const session = {
+        actionAttempts: [actionResult],
+        completedSteps: ["worktree_created"],
+        currentStep: "seed_application_defined",
+        metadata: {
+          worktree_path: worktree
+        },
+        presentation: {
+          backgroundTasks: []
+        },
+        sessionId,
+        sessionRoot,
+        stepMachine: {
+          status: "awaiting_agent_result"
+        },
+        targetRoot
+      };
+      const backgroundTasks = new Map();
+      const runtime = {
+        async getSession() {
+          return session;
+        },
+        async promptSessionForAction() {
+          return session;
+        },
+        store: {
+          async mutateSession(_sessionId, operation) {
+            return operation();
+          },
+          async writeBackgroundTaskEvent(_sessionId, taskId, {
+            event = {},
+            patch = {}
+          } = {}) {
+            const previous = backgroundTasks.get(taskId) || {
+              events: [],
+              id: taskId
+            };
+            const task = {
+              ...previous,
+              ...patch,
+              events: [
+                ...(Array.isArray(previous.events) ? previous.events : []),
+                event
+              ],
+              id: taskId,
+              status: patch.status || event.status || previous.status || ""
+            };
+            backgroundTasks.set(taskId, task);
+            session.presentation.backgroundTasks = [...backgroundTasks.values()];
+            return task;
+          },
+          async writeMetadataValue(_sessionId, name, value) {
+            session.metadata[name] = String(value || "").trim();
+          }
+        }
+      };
+      const namespace = codexTerminalNamespace(sessionId);
+      const terminal = startTerminalSession({
+        args: [
+          "-e",
+          [
+            `process.stdout.write(${JSON.stringify(`${startupPromptCase.output}\n`)});`,
+            "process.stdin.resume();",
+            "setInterval(() => {}, 1000);"
+          ].join("")
+        ],
+        command: process.execPath,
+        commandPreview: "codex",
+        metadata: {
+          targetRoot,
+          workdir: worktree
+        },
+        namespace
+      });
+      assert.equal(terminal.ok, true);
+
+      const terminalService = createService({
+        projectService: {
+          targetRoot,
+          async createRuntime() {
+            return runtime;
+          }
+        }
+      });
+
+      try {
+        const result = await terminalService.startCodexTerminal(sessionId);
+        const task = session.presentation.backgroundTasks.find((entry) => entry.id === "codex_bootstrap");
+        const terminalState = await terminalService.codexTerminalState(sessionId);
+
+        assert.equal(result.ok, false);
+        assert.equal(result.attentionRequired, true);
+        assert.match(result.error, startupPromptCase.expectedReason);
+        assert.equal(task.status, "failed");
+        assert.equal(task.terminalSessionId, terminal.id);
+        assert.match(task.error, startupPromptCase.expectedReason);
+        assert.equal(session.metadata.agent_identity_status, "attention_required");
+        assert.equal(session.metadata.agent_identity_terminal_session_id, terminal.id);
+        assert.equal(terminalState.codexTerminal.id, terminal.id);
+        assert.equal(terminalState.codexTerminal.attentionRequired, true);
+        assert.match(terminalState.codexTerminal.attentionMessage, startupPromptCase.expectedReason);
+        assert.equal(session.metadata.codex_prompt_handoff_id, undefined);
+      } finally {
+        await closeTerminalSession(terminal.id, {
+          namespace
+        });
+      }
+    });
+  });
+}
 
 test("agent terminal identity records user attention as a recoverable state", async () => {
   const session = {

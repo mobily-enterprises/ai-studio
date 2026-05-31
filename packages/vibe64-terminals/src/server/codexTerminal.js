@@ -1,8 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
-import stripAnsi from "strip-ansi";
-
 import {
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
@@ -88,35 +86,30 @@ import {
   agentTerminalIdentityState,
   ensureAgentTerminalIdentity
 } from "./agentTerminalIdentity.js";
+import {
+  CODEX_BOOT_POLL_MS,
+  CODEX_BOOT_MAX_RESTARTS,
+  CODEX_BOOT_READY_QUIET_MS,
+  CODEX_BOOT_RESULT_STATE,
+  CODEX_BOOT_SCREEN_STATE,
+  CODEX_BOOT_TOTAL_TIMEOUT_MS,
+  CODEX_BOOT_UNKNOWN_QUIET_MS,
+  classifyCodexBootScreen,
+  codexBootAttentionMessage,
+  codexBootShouldRestartAfterExit
+} from "./codexBootAdapter.js";
 
 const CODEX_AGENT_PROVIDER = "codex";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const CODEX_THREAD_ID_TOKEN_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu;
-const CODEX_THREAD_COMMAND = "echo $CODEX_THREAD_ID";
+const CODEX_LATEST_RESUME_ID_PATTERN = /^codex-latest:[0-9a-f]{12}$/u;
 const CODEX_BOOT_MIN_AGE_MS = 1800;
 const CODEX_BOOT_QUIET_MS = 900;
 const CODEX_BOOT_TIMEOUT_MS = 12000;
 const CODEX_TURN_SETTLE_MS = CODEX_BOOT_QUIET_MS;
 const CODEX_TURN_UNKNOWN_QUIET_MS = 5000;
-const CODEX_KEY_PAUSE_MS = 180;
 const DEBUG_PROMPTS_ENABLED = String(process.env.DEBUG_PROMPTS || "").trim() === "1";
-const CODEX_THREAD_CAPTURE_TIMEOUT_MS = DEBUG_PROMPTS_ENABLED ? 10 * 60_000 : 30_000;
 const PROMPT_INJECTION_PREFIX = "\u001b[200~";
 const PROMPT_INJECTION_SUFFIX = "\u001b[201~\r";
-const ESCAPE_CHARACTER = String.fromCharCode(27);
-const BELL_CHARACTER = String.fromCharCode(7);
-const STANDALONE_TERMINAL_CONTROL_CHARACTERS = [
-  `${String.fromCharCode(0)}-${String.fromCharCode(8)}`,
-  String.fromCharCode(11),
-  String.fromCharCode(12),
-  `${String.fromCharCode(14)}-${String.fromCharCode(31)}`,
-  `${String.fromCharCode(127)}-${String.fromCharCode(159)}`
-].join("");
-const OSC_PATTERN = new RegExp(`${ESCAPE_CHARACTER}\\][\\s\\S]*?(?:${BELL_CHARACTER}|${ESCAPE_CHARACTER}\\\\)`, "gu");
-const TERMINAL_STRING_PATTERN = new RegExp(`${ESCAPE_CHARACTER}[PX^_][\\s\\S]*?(?:${BELL_CHARACTER}|${ESCAPE_CHARACTER}\\\\)`, "gu");
-const CSI_PATTERN = new RegExp(`${ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]`, "gu");
-const ESCAPE_SEQUENCE_PATTERN = new RegExp(`${ESCAPE_CHARACTER}[ -/]*[@-~]`, "gu");
-const STANDALONE_TERMINAL_CONTROL_PATTERN = new RegExp(`[${STANDALONE_TERMINAL_CONTROL_CHARACTERS}]`, "gu");
 const CODEX_SESSION_MODEL = "gpt-5.5";
 const CODEX_SESSION_REASONING_EFFORT = "xhigh";
 const CODEX_BOOTSTRAP_TASK_ID = "codex_bootstrap";
@@ -164,16 +157,6 @@ function codexTerminalDebugSummary(snapshot = {}) {
     outputVersion: Number(snapshot.outputVersion || 0),
     status: String(snapshot.status || "")
   };
-}
-
-function stripTerminalControlSequences(value = "") {
-  const source = String(value || "")
-    .replace(OSC_PATTERN, "")
-    .replace(TERMINAL_STRING_PATTERN, "")
-    .replace(CSI_PATTERN, "")
-    .replace(ESCAPE_SEQUENCE_PATTERN, "");
-  return stripAnsi(source)
-    .replace(STANDALONE_TERMINAL_CONTROL_PATTERN, "");
 }
 
 function normalizeCodexTurnState(value = "") {
@@ -238,6 +221,26 @@ function normalizeCodexThreadId(value) {
     return "";
   }
   return threadId.toLowerCase();
+}
+
+function codexLatestResumeConversationId(workdir = "") {
+  const normalizedWorkdir = workdir ? path.resolve(workdir) : "";
+  return normalizedWorkdir ? `codex-latest:${stableHash(normalizedWorkdir)}` : "";
+}
+
+function normalizeCodexConversationId(value, {
+  workdir = ""
+} = {}) {
+  const normalizedValue = normalizeText(value);
+  const threadId = normalizeCodexThreadId(normalizedValue);
+  if (threadId) {
+    return threadId;
+  }
+  if (!CODEX_LATEST_RESUME_ID_PATTERN.test(normalizedValue)) {
+    return "";
+  }
+  const expectedLocator = codexLatestResumeConversationId(workdir);
+  return !expectedLocator || normalizedValue === expectedLocator ? normalizedValue : "";
 }
 
 function normalizeCodexPromptHandoffSignature(sessionId, signature) {
@@ -306,7 +309,7 @@ function deliveredCodexPromptHandoffId(session = {}) {
   const deliveredTerminalSessionId = normalizeText(session.metadata?.codex_prompt_handoff_terminal_id);
   const activeTerminal = activeCodexTerminal(session);
   if (
-    codexThreadIdForWorkdir(session, terminalWorktreePath(session)) ||
+    codexConversationIdForWorkdir(session, terminalWorktreePath(session)) ||
     (deliveredTerminalSessionId && deliveredTerminalSessionId === normalizeText(activeTerminal?.id))
   ) {
     return deliveredHandoffId;
@@ -341,30 +344,6 @@ function latestPendingCodexPromptHandoff(session = {}) {
     attemptNumber: Number(latestAttempt.attemptNumber || 0),
     handoffId
   };
-}
-
-function extractCodexThreadId(output = "") {
-  const lines = stripTerminalControlSequences(output)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-    if (!lines[lineIndex].includes("CODEX_THREAD_ID")) {
-      continue;
-    }
-    for (const nextLine of lines.slice(lineIndex + 1, lineIndex + 8)) {
-      CODEX_THREAD_ID_TOKEN_PATTERN.lastIndex = 0;
-      const token = [...nextLine.matchAll(CODEX_THREAD_ID_TOKEN_PATTERN)]
-        .map((match) => match[0])
-        .find((value) => normalizeCodexThreadId(value));
-      if (token) {
-        return token.toLowerCase();
-      }
-    }
-  }
-
-  return "";
 }
 
 function codexPromptHandoffTerminalInput(handoff = {}) {
@@ -551,7 +530,8 @@ function clearCodexTurnsForSession(sessionId = "") {
 function codexState(session = {}) {
   const metadata = session.metadata || {};
   const workdir = terminalWorktreePath(session);
-  const codexThreadId = codexThreadIdForWorkdir(session, workdir);
+  const codexConversationId = codexConversationIdForWorkdir(session, workdir);
+  const codexThreadId = normalizeCodexThreadId(codexConversationId);
   const agentIdentity = codexAgentIdentityState(session, workdir);
   return {
     agentConversationId: agentIdentity?.conversationId || "",
@@ -574,15 +554,21 @@ function codexState(session = {}) {
   };
 }
 
-function codexThreadIdForWorkdir(session = {}, workdir = "") {
+function codexConversationIdForWorkdir(session = {}, workdir = "") {
   return codexReadyIdentityForWorkdir(session, workdir)?.conversationId || "";
+}
+
+function codexThreadIdForWorkdir(session = {}, workdir = "") {
+  return normalizeCodexThreadId(codexConversationIdForWorkdir(session, workdir));
 }
 
 function codexReadyIdentityForWorkdir(session = {}, workdir = "") {
   const normalizedWorkdir = workdir ? path.resolve(workdir) : terminalWorktreePath(session);
   const identity = agentTerminalIdentityForWorkdir(session, {
     provider: CODEX_AGENT_PROVIDER,
-    validateConversationId: normalizeCodexThreadId,
+    validateConversationId: (value) => normalizeCodexConversationId(value, {
+      workdir: normalizedWorkdir
+    }),
     workdir: normalizedWorkdir
   });
   if (identity) {
@@ -608,6 +594,7 @@ function codexReadyIdentityForWorkdir(session = {}, workdir = "") {
 }
 
 function codexAgentIdentityState(session = {}, workdir = "") {
+  const normalizedWorkdir = workdir ? path.resolve(workdir) : terminalWorktreePath(session);
   const readyIdentity = codexReadyIdentityForWorkdir(session, workdir);
   if (readyIdentity) {
     return readyIdentity;
@@ -615,8 +602,10 @@ function codexAgentIdentityState(session = {}, workdir = "") {
 
   return agentTerminalIdentityState(session, {
     provider: CODEX_AGENT_PROVIDER,
-    validateConversationId: normalizeCodexThreadId,
-    workdir: workdir ? path.resolve(workdir) : terminalWorktreePath(session)
+    validateConversationId: (value) => normalizeCodexConversationId(value, {
+      workdir: normalizedWorkdir
+    }),
+    workdir: normalizedWorkdir
   });
 }
 
@@ -650,6 +639,7 @@ function codexSessionBriefingPrompt(session = {}) {
 
 function codexStartupScript(codexThreadId = "") {
   const normalizedThreadId = normalizeCodexThreadId(codexThreadId);
+  const resumeLatestForWorkdir = !normalizedThreadId && normalizeCodexConversationId(codexThreadId);
   const codexReasoningConfig = `model_reasoning_effort="${CODEX_SESSION_REASONING_EFFORT}"`;
   const codexCommand = [
     "codex",
@@ -658,7 +648,8 @@ function codexStartupScript(codexThreadId = "") {
     "-c",
     codexReasoningConfig,
     "--dangerously-bypass-approvals-and-sandbox",
-    ...(normalizedThreadId ? ["resume", normalizedThreadId] : [])
+    ...(normalizedThreadId ? ["resume", normalizedThreadId] : []),
+    ...(resumeLatestForWorkdir ? ["resume", "--last"] : [])
   ];
   return studioUserStartupScript(codexCommand);
 }
@@ -884,7 +875,7 @@ function createCodexTerminalController({
     const namespace = codexTerminalNamespace(sessionId);
     const terminalResponse = startTerminalSession({
       args: ({ id }) => codexTerminalArgs({
-        codexThreadId: codexThreadIdForWorkdir(session, workdir),
+        codexThreadId: codexConversationIdForWorkdir(session, workdir),
         containerName: codexContainerName({
           sessionId,
           terminalId: id
@@ -1096,102 +1087,158 @@ function createCodexTerminalController({
     }
   }
 
-  async function sendCodexShellCommand(sessionId, terminalSessionId, command) {
-    const keySequence = [
-      command,
-      "\r"
-    ];
-    for (const input of keySequence) {
-      const result = writeCodexTerminalInput(sessionId, terminalSessionId, input);
-      if (result.ok === false) {
-        return result;
-      }
-      await delay(CODEX_KEY_PAUSE_MS);
-    }
+  function codexBootAttentionResult(classification = {}, {
+    error = "",
+    reason = ""
+  } = {}) {
+    const bootClassification = {
+      confidence: classification.confidence || "low",
+      reason: classification.reason || reason || "attention_required",
+      state: classification.state || CODEX_BOOT_SCREEN_STATE.UNKNOWN
+    };
     return {
-      ok: true
+      attentionRequired: true,
+      bootClassification,
+      bootState: CODEX_BOOT_RESULT_STATE.ATTENTION_REQUIRED,
+      error: normalizeText(error) || codexBootAttentionMessage(bootClassification),
+      ok: false,
+      retryable: true
     };
   }
 
-  async function captureCodexThreadId({ session, terminalSessionId }) {
-    const workdir = terminalWorktreePath(session);
-    const existingThreadId = codexThreadIdForWorkdir(session, workdir);
-    if (existingThreadId) {
-      return existingThreadId;
-    }
-
-    const sendResult = await sendCodexShellCommand(session.sessionId, terminalSessionId, CODEX_THREAD_COMMAND);
-    if (sendResult.ok === false) {
-      return "";
-    }
-    const startedAt = Date.now();
-    while (Date.now() - startedAt <= CODEX_THREAD_CAPTURE_TIMEOUT_MS) {
-      const snapshot = codexTerminalSnapshot(session.sessionId, terminalSessionId);
-      const threadId = extractCodexThreadId(snapshot.output || "");
-      if (threadId) {
-        return threadId;
-      }
-      await delay(250);
-    }
-    return "";
+  function codexBootExitedResult(snapshot = {}) {
+    return {
+      bootState: CODEX_BOOT_RESULT_STATE.EXITED_BEFORE_READY,
+      error: snapshot.error || "Codex exited before it was ready.",
+      ok: false,
+      restartable: true,
+      retryable: true
+    };
   }
 
-  async function ensureCapturedCodexThreadId({ runtime, session, terminalSessionId }) {
-    const identityResult = await ensureAgentTerminalIdentity({
+  async function waitForCodexBootReadyForInput(sessionId, terminalSessionId) {
+    const startedAt = Date.now();
+    let lastOutput = "";
+    let lastChangedAt = Date.now();
+    let lastClassificationKey = "";
+    while (Date.now() - startedAt <= CODEX_BOOT_TOTAL_TIMEOUT_MS) {
+      const snapshot = codexTerminalSnapshot(sessionId, terminalSessionId);
+      if (snapshot.ok === false || snapshot.status === "exited") {
+        vibe64SessionDebugLog("server.codex.boot.exitedBeforeReady", {
+          ...codexTerminalDebugSummary(snapshot),
+          durationMs: vibe64SessionDebugDurationMs(startedAt),
+          sessionId,
+          terminalSessionId
+        });
+        return codexBootExitedResult(snapshot);
+      }
+
+      const output = String(snapshot.output || "");
+      if (output !== lastOutput) {
+        lastOutput = output;
+        lastChangedAt = Date.now();
+      }
+
+      const quietMs = Date.now() - lastChangedAt;
+      const classification = classifyCodexBootScreen(output);
+      const classificationKey = [
+        classification.state,
+        classification.reason,
+        classification.confidence
+      ].join(":");
+      if (classificationKey !== lastClassificationKey) {
+        lastClassificationKey = classificationKey;
+        vibe64SessionDebugLog("server.codex.boot.classified", {
+          classification,
+          ...codexTerminalDebugSummary(snapshot),
+          quietMs,
+          sessionId,
+          terminalSessionId
+        });
+      }
+
+      if (classification.state === CODEX_BOOT_SCREEN_STATE.BLOCKED) {
+        return codexBootAttentionResult(classification);
+      }
+
+      if (
+        classification.state === CODEX_BOOT_SCREEN_STATE.READY &&
+        quietMs >= CODEX_BOOT_READY_QUIET_MS
+      ) {
+        return {
+          bootClassification: classification,
+          bootState: CODEX_BOOT_RESULT_STATE.READY,
+          ok: true,
+          output
+        };
+      }
+
+      if (
+        output &&
+        quietMs >= CODEX_BOOT_UNKNOWN_QUIET_MS &&
+        classification.state !== CODEX_BOOT_SCREEN_STATE.READY
+      ) {
+        return codexBootAttentionResult({
+          confidence: classification.confidence || "low",
+          reason: classification.reason === "unknown" ? "unknown_quiet" : classification.reason,
+          state: classification.state
+        });
+      }
+
+      await delay(CODEX_BOOT_POLL_MS);
+    }
+
+    return codexBootAttentionResult({
+      confidence: "low",
+      reason: "unknown_quiet",
+      state: CODEX_BOOT_SCREEN_STATE.UNKNOWN
+    }, {
+      error: "Codex did not reach a ready prompt during startup."
+    });
+  }
+
+  async function ensureCapturedCodexIdentity({ runtime, session, terminalSessionId }) {
+    const workdir = terminalWorktreePath(session);
+    const result = await ensureAgentTerminalIdentity({
       adapter: {
-        captureIdentity: async (input) => {
-          const threadId = await captureCodexThreadId(input);
-          return threadId ? {
-            conversationId: threadId
-          } : null;
-        },
+        captureIdentity: ({ workdir: currentWorkdir }) => ({
+          conversationId: codexLatestResumeConversationId(currentWorkdir),
+          resumeStrategy: AGENT_TERMINAL_RESUME_STRATEGY.PROVIDER_NATIVE
+        }),
         displayName: "Codex",
         legacyMetadataForIdentity: (identity) => ({
-          codex_thread_id: identity.conversationId,
           codex_workdir: identity.workdir
         }),
         provider: CODEX_AGENT_PROVIDER,
-        readIdentity: (currentSession, workdir) => codexReadyIdentityForWorkdir(currentSession, workdir),
+        readIdentity: (currentSession, currentWorkdir) => codexReadyIdentityForWorkdir(currentSession, currentWorkdir),
         resumeStrategy: AGENT_TERMINAL_RESUME_STRATEGY.PROVIDER_NATIVE,
-        validateConversationId: normalizeCodexThreadId,
-        waitUntilReady: ({ sessionId, terminalSessionId: currentTerminalSessionId }) => (
-          waitForCodexReady(sessionId, currentTerminalSessionId)
-        ),
+        validateConversationId: (value) => normalizeCodexConversationId(value, {
+          workdir
+        }),
+        waitUntilReady: async () => {
+          const ready = await waitForCodexBootReadyForInput(session.sessionId, terminalSessionId);
+          if (ready.ok === false) {
+            return ready;
+          }
+          return deliverSessionBriefing({
+            runtime,
+            session,
+            terminalSessionId
+          });
+        },
         workdir: terminalWorktreePath
       },
       runtime,
       session,
       terminalSessionId
     });
-    const sessionId = normalizeText(session?.sessionId);
-    if (identityResult.ok === false) {
-      if (identityResult.attentionRequired !== true) {
-        vibe64SessionDebugLog("server.codex.threadCapture.failed", {
-          sessionId,
-          terminalSessionId
-        });
-      }
-      return identityResult;
-    }
-
-    const threadId = normalizeCodexThreadId(identityResult.identity?.conversationId);
-    if (!threadId) {
-      vibe64SessionDebugLog("server.codex.threadCapture.failed", {
-        sessionId,
-        terminalSessionId
-      });
-      return {
-        ok: false,
-        error: "Codex session id could not be saved. Restart Codex from Vibe64 before continuing this agent.",
-        retryable: true
-      };
-    }
-
+    const conversationId = normalizeCodexConversationId(result.identity?.conversationId, {
+      workdir
+    });
     return {
-      ok: true,
-      identity: identityResult.identity,
-      session: identityResult.session,
-      threadId
+      ...result,
+      conversationId,
+      threadId: normalizeCodexThreadId(conversationId)
     };
   }
 
@@ -1731,161 +1778,209 @@ function createCodexTerminalController({
   async function ensureCodexThreadReadyNow(sessionId) {
     const runtime = await projectService.createRuntime();
     try {
-      let session = await runtime.getSession(sessionId);
-      const workdir = terminalWorktreePath(session);
-      const existingTerminal = activeCodexTerminal(session);
-      const needsThreadCapture = !codexThreadIdForWorkdir(session, workdir);
-      const needsBriefing = !sessionBriefingIsDelivered(session);
-      if (!existingTerminal || needsThreadCapture || needsBriefing) {
-        await writeCodexBootstrapRunning(runtime, sessionId, {
-          kind: "started",
-          message: "Preparing Codex for this session."
-        });
-      }
-      const terminalResponse = await startCodexTerminalSession(sessionId);
-      vibe64SessionDebugLog("server.codex.bootstrap.terminalResponse", {
-        ...codexTerminalDebugSummary(terminalResponse),
-        ok: terminalResponse?.ok !== false,
-        sessionId,
-        terminalSessionId: String(terminalResponse?.id || "")
-      });
-      if (terminalResponse.ok === false) {
-        return writeCodexBootstrapFailure(runtime, sessionId, terminalResponse);
-      }
-
-      if (!needsThreadCapture && !needsBriefing) {
-        if (!existingTerminal) {
-          const ready = await waitForCodexReady(sessionId, terminalResponse.id);
-          if (ready.ok === false) {
-            return writeCodexBootstrapFailure(runtime, sessionId, ready, {
-              terminalSessionId: terminalResponse.id
-            });
-          }
+      let restartCount = 0;
+      while (true) {
+        let session = await runtime.getSession(sessionId);
+        const workdir = terminalWorktreePath(session);
+        const existingTerminal = activeCodexTerminal(session);
+        const needsIdentityCapture = !codexConversationIdForWorkdir(session, workdir);
+        const needsBriefing = !sessionBriefingIsDelivered(session);
+        if (!existingTerminal || needsIdentityCapture || needsBriefing) {
+          await writeCodexBootstrapRunning(runtime, sessionId, {
+            kind: restartCount > 0 ? "terminal_restarting" : "started",
+            message: restartCount > 0
+              ? "Restarting Codex after it exited during startup."
+              : "Preparing Codex for this session."
+          });
         }
-        await writeCodexBootstrapReady(runtime, sessionId, terminalResponse.id);
-        await publishSessionChanged(sessionId, {
-          reason: "codex-terminal-ready"
-        });
-        return withCodexState(terminalResponse, session);
-      }
-
-      const terminalSessionId = terminalResponse.id;
-      vibe64SessionDebugLog("server.codex.bootstrap.started", {
-        needsBriefing,
-        needsThreadCapture,
-        sessionId,
-        terminalSessionId
-      });
-      await writeCodexBootstrapRunning(runtime, sessionId, {
-        kind: "terminal_started",
-        message: "Preparing Codex thread.",
-        terminalSessionId
-      });
-      const signature = codexBootstrapSignature(sessionId);
-      const turnMetadata = await markCodexTerminalTurnActive(
-        sessionId,
-        terminalSessionId,
-        signature,
-        "codex-thread-bootstrap-started"
-      );
-      if (turnMetadata.ok === false) {
-        return writeCodexBootstrapFailure(runtime, sessionId, turnMetadata, {
-          terminalSessionId
-        });
-      }
-
-      let bootstrapResult = {
-        ok: true
-      };
-      try {
-        const ready = await waitForCodexReady(sessionId, terminalSessionId);
-        if (ready.ok === false) {
-          bootstrapResult = ready;
-        }
-        vibe64SessionDebugLog("server.codex.bootstrap.readyCheck", {
-          ok: bootstrapResult.ok !== false,
+        const terminalResponse = await startCodexTerminalSession(sessionId);
+        vibe64SessionDebugLog("server.codex.bootstrap.terminalResponse", {
+          ...codexTerminalDebugSummary(terminalResponse),
+          ok: terminalResponse?.ok !== false,
+          restartCount,
           sessionId,
-          terminalSessionId
+          terminalSessionId: String(terminalResponse?.id || "")
         });
+        if (terminalResponse.ok === false) {
+          return writeCodexBootstrapFailure(runtime, sessionId, terminalResponse);
+        }
 
-        if (bootstrapResult.ok !== false && needsThreadCapture) {
-          const threadCapture = await ensureCapturedCodexThreadId({
-            runtime,
-            session,
-            terminalSessionId
-          });
-          if (threadCapture.ok === false) {
-            bootstrapResult = threadCapture;
-          }
-          vibe64SessionDebugLog("server.codex.bootstrap.threadCapture", {
-            captured: Boolean(threadCapture.threadId),
-            sessionId,
-            terminalSessionId,
-            threadId: String(threadCapture.threadId || "")
-          });
-          if (threadCapture.threadId) {
-            const threadReady = await waitForCodexReady(sessionId, terminalSessionId);
-            if (threadReady.ok === false) {
-              bootstrapResult = threadReady;
+        const terminalSessionId = terminalResponse.id;
+        if (!needsIdentityCapture && !needsBriefing) {
+          if (!existingTerminal) {
+            const ready = await waitForCodexBootReadyForInput(sessionId, terminalSessionId);
+            if (
+              ready.ok === false &&
+              ready.bootState === CODEX_BOOT_RESULT_STATE.EXITED_BEFORE_READY &&
+              codexBootShouldRestartAfterExit({
+                handoffStarted: false,
+                restartCount
+              })
+            ) {
+              restartCount += 1;
+              continue;
             }
-            session = threadCapture.session;
+            if (ready.ok === false) {
+              if (ready.attentionRequired === true) {
+                await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+                  message: errorMessage(ready),
+                  reason: "codex-bootstrap-attention"
+                });
+              }
+              return writeCodexBootstrapFailure(runtime, sessionId, ready, {
+                terminalSessionId
+              });
+            }
           }
+          await writeCodexBootstrapReady(runtime, sessionId, terminalSessionId);
+          await publishSessionChanged(sessionId, {
+            reason: "codex-terminal-ready"
+          });
+          return withCodexState(terminalResponse, session);
         }
 
-        if (bootstrapResult.ok !== false) {
-          const briefing = await deliverSessionBriefing({
-            runtime,
-            session,
-            terminalSessionId
-          });
-          vibe64SessionDebugLog("server.codex.bootstrap.briefing", {
-            delivered: briefing.delivered === true,
-            ok: briefing.ok !== false,
-            sessionId,
-            terminalSessionId
-          });
-          if (briefing.ok === false) {
-            bootstrapResult = briefing;
-          }
-        }
-      } finally {
-        if (bootstrapResult.ok === false && bootstrapResult.attentionRequired === true) {
-          await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
-            message: errorMessage(bootstrapResult),
-            reason: "codex-bootstrap-attention"
-          });
-        } else {
-          await markCodexTerminalIdle(
-            sessionId,
-            terminalSessionId,
-            "codex-thread-bootstrap-finished"
-          );
-        }
-      }
-
-      if (bootstrapResult.ok === false) {
-        vibe64SessionDebugLog("server.codex.bootstrap.failed", {
-          error: errorMessage(bootstrapResult),
+        vibe64SessionDebugLog("server.codex.bootstrap.started", {
+          needsBriefing,
+          needsIdentityCapture,
+          restartCount,
           sessionId,
           terminalSessionId
         });
-        return writeCodexBootstrapFailure(runtime, sessionId, bootstrapResult, {
+        await writeCodexBootstrapRunning(runtime, sessionId, {
+          kind: "terminal_started",
+          message: needsIdentityCapture ? "Preparing Codex session." : "Preparing Codex prompt.",
           terminalSessionId
         });
-      }
+        const signature = codexBootstrapSignature(sessionId);
+        const turnMetadata = await markCodexTerminalTurnActive(
+          sessionId,
+          terminalSessionId,
+          signature,
+          "codex-thread-bootstrap-started"
+        );
+        if (turnMetadata.ok === false) {
+          return writeCodexBootstrapFailure(runtime, sessionId, turnMetadata, {
+            terminalSessionId
+          });
+        }
 
-      session = await runtime.getSession(sessionId);
-      await writeCodexBootstrapReady(runtime, sessionId, terminalSessionId);
-      vibe64SessionDebugLog("server.codex.bootstrap.ready", {
-        codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
-        sessionId,
-        terminalSessionId
-      });
-      return {
-        ...withCodexState(codexTerminalSnapshot(sessionId, terminalSessionId), session),
-        codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
-        terminalSessionId
-      };
+        let bootstrapResult = {
+          ok: true
+        };
+        let restartBoot = false;
+        try {
+          if (needsIdentityCapture) {
+            const identityCapture = await ensureCapturedCodexIdentity({
+              runtime,
+              session,
+              terminalSessionId
+            });
+            if (identityCapture.ok === false) {
+              bootstrapResult = identityCapture;
+            }
+            vibe64SessionDebugLog("server.codex.bootstrap.identityCapture", {
+              captured: Boolean(identityCapture.conversationId),
+              conversationId: String(identityCapture.conversationId || ""),
+              ok: identityCapture.ok !== false,
+              restartCount,
+              sessionId,
+              terminalSessionId
+            });
+            if (identityCapture.ok !== false) {
+              session = identityCapture.session;
+            }
+          } else {
+            const ready = await waitForCodexBootReadyForInput(sessionId, terminalSessionId);
+            if (ready.ok === false) {
+              bootstrapResult = ready;
+            }
+          }
+
+          if (
+            bootstrapResult.ok === false &&
+            bootstrapResult.bootState === CODEX_BOOT_RESULT_STATE.EXITED_BEFORE_READY &&
+            codexBootShouldRestartAfterExit({
+              handoffStarted: false,
+              restartCount
+            })
+          ) {
+            restartBoot = true;
+          }
+
+          if (bootstrapResult.ok !== false && needsBriefing) {
+            const briefing = await deliverSessionBriefing({
+              runtime,
+              session,
+              terminalSessionId
+            });
+            vibe64SessionDebugLog("server.codex.bootstrap.briefing", {
+              delivered: briefing.delivered === true,
+              ok: briefing.ok !== false,
+              sessionId,
+              terminalSessionId
+            });
+            if (briefing.ok === false) {
+              bootstrapResult = briefing;
+            }
+          }
+        } finally {
+          if (restartBoot) {
+            await markCodexTerminalIdle(
+              sessionId,
+              terminalSessionId,
+              "codex-boot-restarting"
+            );
+          } else if (bootstrapResult.ok === false && bootstrapResult.attentionRequired === true) {
+            await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+              message: errorMessage(bootstrapResult),
+              reason: "codex-bootstrap-attention"
+            });
+          } else {
+            await markCodexTerminalIdle(
+              sessionId,
+              terminalSessionId,
+              "codex-thread-bootstrap-finished"
+            );
+          }
+        }
+
+        if (restartBoot) {
+          restartCount += 1;
+          vibe64SessionDebugLog("server.codex.bootstrap.restart", {
+            maxRestarts: CODEX_BOOT_MAX_RESTARTS,
+            restartCount,
+            sessionId,
+            terminalSessionId
+          });
+          continue;
+        }
+
+        if (bootstrapResult.ok === false) {
+          vibe64SessionDebugLog("server.codex.bootstrap.failed", {
+            error: errorMessage(bootstrapResult),
+            sessionId,
+            terminalSessionId
+          });
+          return writeCodexBootstrapFailure(runtime, sessionId, bootstrapResult, {
+            terminalSessionId
+          });
+        }
+
+        session = await runtime.getSession(sessionId);
+        await writeCodexBootstrapReady(runtime, sessionId, terminalSessionId);
+        vibe64SessionDebugLog("server.codex.bootstrap.ready", {
+          codexIdentityReady: Boolean(codexConversationIdForWorkdir(session, terminalWorktreePath(session))),
+          codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
+          sessionId,
+          terminalSessionId
+        });
+        return {
+          ...withCodexState(codexTerminalSnapshot(sessionId, terminalSessionId), session),
+          codexIdentityReady: Boolean(codexConversationIdForWorkdir(session, terminalWorktreePath(session))),
+          codexThreadReady: Boolean(codexThreadIdForWorkdir(session, terminalWorktreePath(session))),
+          terminalSessionId
+        };
+      }
     } catch (error) {
       vibe64SessionDebugLog("server.codex.bootstrap.error", {
         error: vibe64SessionDebugError(error),
@@ -1941,7 +2036,7 @@ function createCodexTerminalController({
         error: "Codex prompt delivery is missing a session or terminal."
       };
     }
-    const ready = await waitForCodexReady(sessionId, terminalSessionId);
+    const ready = await waitForCodexBootReadyForInput(sessionId, terminalSessionId);
     if (ready.ok === false) {
       if (ready.attentionRequired === true) {
         await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
@@ -2105,17 +2200,26 @@ function createCodexTerminalController({
       message: "Continuing Codex after terminal attention.",
       terminalSessionId
     });
-    const threadCapture = await ensureCapturedCodexThreadId({
+    const identityCapture = await ensureCapturedCodexIdentity({
       runtime,
       session,
       terminalSessionId
     });
-    if (threadCapture.ok === false) {
-      return writeCodexBootstrapFailure(runtime, sessionId, threadCapture, {
+    if (identityCapture.ok === false) {
+      if (identityCapture.bootState === CODEX_BOOT_RESULT_STATE.EXITED_BEFORE_READY) {
+        return null;
+      }
+      if (identityCapture.attentionRequired === true) {
+        await markCodexTerminalAttentionRequired(sessionId, terminalSessionId, {
+          message: errorMessage(identityCapture),
+          reason: "codex-bootstrap-attention"
+        });
+      }
+      return writeCodexBootstrapFailure(runtime, sessionId, identityCapture, {
         terminalSessionId
       });
     }
-    session = threadCapture.session;
+    session = identityCapture.session;
 
     const briefing = await pendingSessionBriefingInput({
       runtime,
