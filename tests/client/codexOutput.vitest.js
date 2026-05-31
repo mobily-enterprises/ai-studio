@@ -42,6 +42,17 @@ describe("codexOutput terminal utilities", () => {
     expect(codexTrustPromptLooksActive("> ready")).toBe(false);
   });
 
+  it("detects Codex trust prompts rendered with cursor-position controls", () => {
+    const output = [
+      "\u001B[6;3HDo\u001B[6;6Hyou\u001B[6;10Htrust\u001B[6;16Hthe\u001B[6;20Hcontents\u001B[6;29Hof\u001B[6;32Hthis\u001B[6;37Hdirectory?",
+      "\u001B[10;1H› 1. Yes, continue",
+      "\u001B[11;3H2.\u001B[11;6HNo,\u001B[11;10Hquit",
+      "\u001B[13;3HPress enter to continue"
+    ].join("");
+
+    expect(codexTrustPromptLooksActive(output)).toBe(true);
+  });
+
   it("extracts thread ids from explicit terminal metadata", () => {
     expect(extractCodexThreadId([
       "CODEX_THREAD_ID",

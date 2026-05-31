@@ -96,7 +96,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, proxyRefs, ref, unref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } from "vue";
 import {
   mdiRobotOutline
 } from "@mdi/js";
@@ -166,6 +166,8 @@ const emit = defineEmits([
   "page-error-change",
   "toolbar-controls-ready"
 ]);
+
+const CODEX_QUIET_TERMINAL_DELAY_MS = 5000;
 
 const selectedSessionId = computed(() => props.sessionId);
 const selectedListSession = computed(() => {
@@ -313,14 +315,42 @@ const codexTerminalPresentation = computed(() => {
     : {};
 });
 const selectedCodexTerminalId = computed(() => String(
-  selectedSession.value?.codexTerminal?.id || ""
+  selectedSession.value?.codexTerminal?.id ||
+  codexTerminalPresentation.value.terminalSessionId ||
+  ""
 ));
-const autopilotCodexWorkingVisible = computed(() => Boolean(
+const serverSaysCodexIsWorking = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
-  codexTerminalActivity.value.active &&
-  codexTerminalActivity.value.scope === "session" &&
-  codexTerminalActivity.value.sessionId === selectedSessionId.value
+  (
+    selectedSession.value?.presentation?.prompt?.state === "waiting_for_agent" ||
+    selectedSession.value?.presentation?.screen?.showProgress === true
+  )
+));
+const codexTerminalQuietTooLong = ref(false);
+let codexQuietTerminalTimer = null;
+const codexTerminalActivityMatchesSelectedSession = computed(() => {
+  const activity = codexTerminalActivity.value;
+  if (activity.scope !== "session" || activity.sessionId !== selectedSessionId.value) {
+    return false;
+  }
+  return !selectedCodexTerminalId.value ||
+    !activity.terminalSessionId ||
+    activity.terminalSessionId === selectedCodexTerminalId.value;
+});
+const codexTerminalStreaming = computed(() => Boolean(
+  codexTerminalActivityMatchesSelectedSession.value &&
+  codexTerminalActivity.value.streaming
+));
+const autopilotCodexTerminalVisible = computed(() => Boolean(
+  serverSaysCodexIsWorking.value &&
+  selectedCodexTerminalId.value &&
+  codexTerminalQuietTooLong.value
+));
+const autopilotCodexWorkingVisible = computed(() => Boolean(
+  serverSaysCodexIsWorking.value &&
+  !autopilotCodexTerminalVisible.value &&
+  codexTerminalStreaming.value
 ));
 const autopilotInteractionLocked = computed(() => Boolean(
   props.active &&
@@ -338,6 +368,9 @@ const codexTerminalDisplayMode = computed(() => {
   if (props.sessionMode === "inspect") {
     return "full";
   }
+  if (autopilotCodexTerminalVisible.value) {
+    return "compact";
+  }
   return "headless";
 });
 const codexTerminalCanStart = computed(() => Boolean(
@@ -348,6 +381,9 @@ const codexTerminalReadOnly = computed(() => {
   if (props.sessionMode === "inspect") {
     return false;
   }
+  if (autopilotCodexTerminalVisible.value) {
+    return false;
+  }
   return codexTerminalPresentation.value.readOnlyInAutopilot !== false;
 });
 const codexTerminalScope = computed(() => "session");
@@ -355,6 +391,8 @@ const activeCodexTerminalState = computed(() => null);
 const codexTerminalListenWhenHidden = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
+  serverSaysCodexIsWorking.value &&
+  !autopilotCodexTerminalVisible.value &&
   selectedCodexTerminalId.value
 ));
 const interactionBusy = computed(() => Boolean(
@@ -420,9 +458,32 @@ function handleCodexActivityChange(payload = {}) {
     activity.terminalSessionId &&
     activity.terminalSessionId !== selectedCodexTerminalId.value
   ) {
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexActivity.ignored", {
+      activity,
+      expectedTerminalSessionId: selectedCodexTerminalId.value,
+      sessionId: props.sessionId
+    });
     return;
   }
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexActivity", {
+    activity,
+    serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
+    sessionId: props.sessionId
+  });
   codexTerminalActivity.value = activity;
+}
+
+function clearCodexQuietTerminalTimer() {
+  if (!codexQuietTerminalTimer) {
+    return;
+  }
+  globalThis.clearTimeout(codexQuietTerminalTimer);
+  codexQuietTerminalTimer = null;
+}
+
+function resetCodexQuietTerminalState() {
+  clearCodexQuietTerminalTimer();
+  codexTerminalQuietTooLong.value = false;
 }
 
 function artifactReadinessVersion(readiness = {}) {
@@ -495,8 +556,98 @@ watch(() => [
     terminalSessionId: "",
     working: false
   };
+  resetCodexQuietTerminalState();
 }, {
   flush: "post"
+});
+
+watch(() => [
+  serverSaysCodexIsWorking.value ? "expected" : "idle",
+  selectedCodexTerminalId.value,
+  codexTerminalStreaming.value ? "streaming" : "quiet"
+].join("|"), () => {
+  clearCodexQuietTerminalTimer();
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.evaluate", {
+    codexTerminalQuietTooLong: codexTerminalQuietTooLong.value,
+    codexTerminalStreaming: codexTerminalStreaming.value,
+    selectedCodexTerminalId: selectedCodexTerminalId.value,
+    serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
+    sessionId: props.sessionId
+  });
+  if (
+    !serverSaysCodexIsWorking.value ||
+    !selectedCodexTerminalId.value
+  ) {
+    codexTerminalQuietTooLong.value = false;
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.reset", {
+      selectedCodexTerminalId: selectedCodexTerminalId.value,
+      serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
+      sessionId: props.sessionId,
+      streaming: codexTerminalStreaming.value
+    });
+    return;
+  }
+  if (codexTerminalQuietTooLong.value) {
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.keepSurfaced", {
+      selectedCodexTerminalId: selectedCodexTerminalId.value,
+      sessionId: props.sessionId,
+      streaming: codexTerminalStreaming.value
+    });
+    return;
+  }
+  if (codexTerminalStreaming.value) {
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.waitForQuiet", {
+      selectedCodexTerminalId: selectedCodexTerminalId.value,
+      sessionId: props.sessionId
+    });
+    return;
+  }
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.schedule", {
+    delayMs: CODEX_QUIET_TERMINAL_DELAY_MS,
+    selectedCodexTerminalId: selectedCodexTerminalId.value,
+    sessionId: props.sessionId
+  });
+  codexQuietTerminalTimer = globalThis.setTimeout(() => {
+    codexQuietTerminalTimer = null;
+    if (
+      serverSaysCodexIsWorking.value &&
+      selectedCodexTerminalId.value &&
+      !codexTerminalStreaming.value
+    ) {
+      codexTerminalQuietTooLong.value = true;
+      vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.fire", {
+        selectedCodexTerminalId: selectedCodexTerminalId.value,
+        sessionId: props.sessionId
+      });
+    }
+  }, CODEX_QUIET_TERMINAL_DELAY_MS);
+}, {
+  flush: "post",
+  immediate: true
+});
+
+watch(() => [
+  codexTerminalDisplayMode.value,
+  autopilotCodexWorkingVisible.value ? "working" : "not-working",
+  autopilotCodexTerminalVisible.value ? "terminal-visible" : "terminal-hidden",
+  autopilotInteractionLocked.value ? "locked" : "unlocked"
+].join("|"), () => {
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexDisplay", {
+    autopilotCodexTerminalVisible: autopilotCodexTerminalVisible.value,
+    autopilotCodexWorkingVisible: autopilotCodexWorkingVisible.value,
+    autopilotInteractionLocked: autopilotInteractionLocked.value,
+    displayMode: codexTerminalDisplayMode.value,
+    selectedCodexTerminalId: selectedCodexTerminalId.value,
+    serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
+    sessionId: props.sessionId
+  });
+}, {
+  flush: "post",
+  immediate: true
+});
+
+onBeforeUnmount(() => {
+  clearCodexQuietTerminalTimer();
 });
 
 </script>
@@ -531,6 +682,18 @@ watch(() => [
   grid-row: 1;
   position: relative;
   z-index: 2;
+}
+
+.studio-ai-sessions__layout--autopilot > .studio-ai-sessions__terminals--compact {
+  align-self: start;
+  grid-column: 1;
+  grid-row: 1;
+  height: min(36rem, calc(100% - 3rem));
+  justify-self: center;
+  margin-top: 1.5rem;
+  max-width: min(72rem, calc(100% - 2rem));
+  position: relative;
+  z-index: 5;
 }
 
 .studio-ai-sessions__codex-thinking-overlay {

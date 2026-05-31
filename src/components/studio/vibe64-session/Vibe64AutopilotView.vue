@@ -603,7 +603,10 @@ const displayStatusText = computed(() => {
 });
 const statusTitleIsCodexChat = computed(() => String(displayStatusText.value || "").trim() === "Talk to Codex");
 const statusTitleVisible = computed(() => !statusTitleIsCodexChat.value);
-const displayRunning = computed(() => Boolean(screenState.value.showProgress));
+const displayRunning = computed(() => Boolean(
+  screenState.value.showProgress &&
+  screenKind.value !== "codex_running"
+));
 const codexRunningStatusSuppressed = computed(() => Boolean(
   screenKind.value === "codex_running"
 ));
@@ -652,7 +655,7 @@ const commandTerminalText = computed(() => {
 });
 const autopilotBusy = computed(() => Boolean(props.active && (
   running.value ||
-  screenState.value.showProgress === true ||
+  displayRunning.value ||
   stepInput.saving
 )));
 const navigationBusy = computed(() => Boolean(props.page?.busy || autopilotBusy.value || props.rewindBusy));

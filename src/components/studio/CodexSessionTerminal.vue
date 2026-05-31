@@ -504,6 +504,17 @@ function toggleExpanded() {
   }
 }
 
+async function focusWritableTerminalWhenShown(visible) {
+  if (!visible || props.readOnly) {
+    return;
+  }
+  await nextTick();
+  if (await setupTerminalUi()) {
+    fitTerminal();
+    focusTerminal();
+  }
+}
+
 watch(() => props.session, (session) => {
   applyServerPromptEchoFilter(session || {});
 }, {
@@ -523,6 +534,14 @@ watch(() => props.displayMode, async (displayMode) => {
   }
   await nextTick();
   fitTerminal();
+});
+
+watch(terminalDisplayActive, (visible, previousVisible) => {
+  if (visible && !previousVisible) {
+    void focusWritableTerminalWhenShown(visible);
+  }
+}, {
+  flush: "post"
 });
 
 </script>

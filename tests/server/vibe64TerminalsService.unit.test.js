@@ -28,6 +28,7 @@ import {
 } from "../../packages/vibe64-sessions/src/server/inputSchemas.js";
 import {
   codexSessionBriefingPrompt,
+  codexTrustPromptLooksActive,
   createCodexTerminalController,
   codexTerminalArgs
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
@@ -580,6 +581,18 @@ test("Vibe64 Codex bootstrap failure is persisted as a visible background task",
       "codex-bootstrap-failed"
     ]);
   });
+});
+
+test("Vibe64 Codex trust prompt detection tolerates cursor-position rendering", () => {
+  const output = [
+    "\u001B[6;3HDo\u001B[6;6Hyou\u001B[6;10Htrust\u001B[6;16Hthe\u001B[6;20Hcontents\u001B[6;29Hof\u001B[6;32Hthis\u001B[6;37Hdirectory?",
+    "\u001B[10;1H› 1. Yes, continue",
+    "\u001B[11;3H2.\u001B[11;6HNo,\u001B[11;10Hquit",
+    "\u001B[13;3HPress enter to continue"
+  ].join("");
+
+  assert.equal(codexTrustPromptLooksActive(output), true);
+  assert.equal(codexTrustPromptLooksActive("> ready"), false);
 });
 
 test("Vibe64 shell terminal joins the target runtime network before the image", () => {

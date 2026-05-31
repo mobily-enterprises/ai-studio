@@ -111,6 +111,12 @@ function stripTerminalControlSequences(value) {
     .replace(STANDALONE_TERMINAL_CONTROL_PATTERN, "");
 }
 
+function compactTerminalText(value = "") {
+  return stripTerminalControlSequences(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "");
+}
+
 function terminalControlSequenceCanReplay(source = "", startIndex = 0) {
   const character = source[startIndex] || "";
   if (character === ESCAPE_CHARACTER) {
@@ -323,14 +329,17 @@ function isCodexThreadId(value) {
 
 function codexTrustPromptLooksActive(output) {
   const source = stripTerminalControlSequences(output);
-  const promptIndex = source.search(CODEX_TRUST_PROMPT_PATTERN);
-  if (promptIndex < 0) {
-    return false;
+  if (CODEX_TRUST_PROMPT_PATTERN.test(source)) {
+    const promptTail = source.slice(source.search(CODEX_TRUST_PROMPT_PATTERN));
+    return promptTail.includes("Yes, continue") &&
+      promptTail.includes("No, quit") &&
+      promptTail.includes("Press enter to continue");
   }
-  const promptTail = source.slice(promptIndex);
-  return promptTail.includes("Yes, continue") &&
-    promptTail.includes("No, quit") &&
-    promptTail.includes("Press enter to continue");
+  const compactSource = compactTerminalText(output);
+  return compactSource.includes("doyoutrustthecontentsofthisdirectory") &&
+    compactSource.includes("yescontinue") &&
+    compactSource.includes("noquit") &&
+    compactSource.includes("pressentertocontinue");
 }
 
 function extractCodexThreadId(output) {

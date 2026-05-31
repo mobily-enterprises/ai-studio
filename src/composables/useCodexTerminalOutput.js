@@ -8,6 +8,9 @@ import {
   stripTerminalControlSequences
 } from "@/lib/codexOutput.js";
 import { createCodexPromptEchoFilters } from "@/lib/codexPromptEchoFilters.js";
+import {
+  vibe64SessionDebugLog
+} from "@/lib/vibe64SessionDebugLog.js";
 
 const CODEX_ACTIVITY_QUIET_MS = 2200;
 const TERMINAL_STREAM_QUIET_MS = 650;
@@ -178,12 +181,14 @@ function useCodexTerminalOutput({
   }
 
   function emitCodexActivityChanged() {
-    emitBusyChanged?.({
+    const payload = {
       busy: codexBusy.value,
       sessionId: unref(sessionId),
       streaming: terminalStreaming.value,
       working: codexWorking.value
-    });
+    };
+    vibe64SessionDebugLog("client.codexTerminal.activity", payload);
+    emitBusyChanged?.(payload);
   }
 
   function clearTerminalStreamingTimer() {
@@ -199,6 +204,10 @@ function useCodexTerminalOutput({
     if (terminalStreaming.value === streaming) {
       return;
     }
+    vibe64SessionDebugLog("client.codexTerminal.streaming", {
+      sessionId: unref(sessionId),
+      streaming
+    });
     terminalStreaming.value = streaming;
     emitCodexActivityChanged();
   }
