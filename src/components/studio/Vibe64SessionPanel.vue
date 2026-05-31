@@ -122,6 +122,7 @@
 
     <div v-else class="studio-ai-sessions__runtime-stack">
       <Vibe64SessionRuntimeHost
+        :key="selection.selectedSessionId"
         active
         :session-data="sessionData"
         :session-id="selection.selectedSessionId"

@@ -224,7 +224,7 @@ const coreCodingStepDefinitionsById = deepFreeze({
         action: {
           actionId: draftSeedApplicationActionId,
           input: {
-            conversationRequest: "Ask me one simple setup question at a time. Explain what each answer changes in the app."
+            conversationRequest: "Let's talk about my new project."
           },
           label: "Discuss seed choices",
           statuses: [STEP_STATUS.WAITING_FOR_INPUT],
