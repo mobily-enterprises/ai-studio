@@ -1,8 +1,9 @@
 import { onBeforeUnmount, watchEffect } from "vue";
+import { useShellLayoutState } from "@jskit-ai/shell-web/client/composables/useShellLayoutState";
 
 const DRAWER_HIDDEN_CLASS = "studio-shell-drawer-hidden";
 
-function setDrawerHidden(hidden) {
+function setDrawerToggleHidden(hidden) {
   if (typeof document === "undefined") {
     return;
   }
@@ -10,11 +11,25 @@ function setDrawerHidden(hidden) {
 }
 
 export function useStudioShellDrawer({ hidden }) {
+  const {
+    drawerDefaultOpen,
+    setDrawerDefaultOpen,
+    setDrawerOpen
+  } = useShellLayoutState();
+  const originalDrawerDefaultOpen = drawerDefaultOpen.value;
+
   watchEffect(() => {
-    setDrawerHidden(typeof hidden === "function" ? hidden() : hidden);
+    const drawerHidden = Boolean(typeof hidden === "function" ? hidden() : hidden);
+    setDrawerToggleHidden(drawerHidden);
+    if (drawerHidden) {
+      setDrawerDefaultOpen(false);
+      setDrawerOpen(false);
+    }
   });
 
   onBeforeUnmount(() => {
-    setDrawerHidden(false);
+    setDrawerToggleHidden(false);
+    setDrawerDefaultOpen(originalDrawerDefaultOpen);
+    setDrawerOpen(originalDrawerDefaultOpen);
   });
 }

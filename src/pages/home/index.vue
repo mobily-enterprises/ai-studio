@@ -87,12 +87,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .generated-ui-screen {
   --generated-ui-screen-title-size: clamp(1.2rem, 1.7vw, 1.55rem);
-  --generated-ui-screen-panel-padding: 0.5rem 0.625rem;
+  --generated-ui-screen-panel-padding: 0;
 }
 
 .studio-screen {
-  margin-inline: auto;
-  max-width: min(96rem, calc(100vw - 2rem));
+  margin-inline: 0;
+  max-width: none;
   min-height: 0;
   width: 100%;
 }
@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
         100dvh
         - var(--v-layout-top, 0px)
         - var(--v-layout-bottom, 0px)
-        - 1.75rem
+        - 1.25rem
         - env(safe-area-inset-bottom, 0px)
       );
     overflow: hidden;
@@ -161,6 +161,10 @@ onBeforeUnmount(() => {
   .studio-screen__gate-scroll :deep(.project-type-gate .studio-ai-sessions) {
     flex: 1 1 auto;
     min-height: 0;
+  }
+
+  .studio-screen__gate-scroll :deep(.project-type-gate .studio-ai-sessions--autopilot) {
+    padding: 0;
   }
 
   .studio-screen__gate-scroll :deep(.project-type-setup),

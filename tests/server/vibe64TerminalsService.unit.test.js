@@ -1304,6 +1304,8 @@ test("Vibe64 command terminal records action results and metadata after success"
       }),
       startTerminal: (options) => {
         const id = "unit-command-terminal";
+        assert.equal(options.maxRunning, 1);
+        assert.equal(options.reuseRunning, false);
         startedCommand = options.command;
         startedDockerArgs = options.args({
           id,

@@ -4,110 +4,120 @@
     class="vibe64-launch-controls"
     :class="{
       'vibe64-launch-controls--embedded': embeddedPreview,
+      'vibe64-launch-controls--toolbar-teleported': toolbarTeleportTarget,
       'vibe64-launch-controls--prominent': prominent
     }"
   >
-    <div class="vibe64-launch-controls__toolbar">
+    <Teleport
+      defer
+      :disabled="!toolbarTeleportTarget"
+      :to="toolbarTeleportTarget || 'body'"
+    >
       <div
-        v-if="terminalDockVisible"
-        class="vibe64-launch-controls__dock"
-        :title="terminalTitle"
+        class="vibe64-launch-controls__toolbar"
+        :class="{ 'vibe64-launch-controls__toolbar--teleported': toolbarTeleportTarget }"
       >
-        <span
-          class="vibe64-launch-controls__status-dot"
-          :class="`vibe64-launch-controls__status-dot--${terminalIndicatorState}`"
-          :aria-label="terminalIndicatorLabel"
-          :title="terminalIndicatorLabel"
-        />
+        <div
+          v-if="terminalDockVisible"
+          class="vibe64-launch-controls__dock"
+          :title="terminalTitle"
+        >
+          <span
+            class="vibe64-launch-controls__status-dot"
+            :class="`vibe64-launch-controls__status-dot--${terminalIndicatorState}`"
+            :aria-label="terminalIndicatorLabel"
+            :title="terminalIndicatorLabel"
+          />
 
-        <v-btn
-          v-for="action in launchActions"
-          :key="action.id || action.href"
-          :icon="mdiOpenInNew"
+          <v-btn
+            v-for="action in launchActions"
+            :key="action.id || action.href"
+            :icon="mdiOpenInNew"
+            size="small"
+            :title="action.label || action.href"
+            variant="text"
+            @click="openAction(action)"
+          />
+
+          <v-btn
+            v-if="terminalCanRetry"
+            :disabled="operationBusy"
+            :icon="mdiRefresh"
+            size="small"
+            title="Retry"
+            variant="text"
+            @click="retryTerminal"
+          />
+
+          <v-btn
+            v-if="terminalCanRestart"
+            :disabled="operationBusy"
+            :icon="mdiRestart"
+            size="small"
+            title="Restart"
+            variant="text"
+            @click="restartTerminal"
+          />
+
+          <v-btn
+            :icon="mdiConsoleLine"
+            size="small"
+            title="Show launch terminal"
+            variant="text"
+            @click="expandTerminal"
+          />
+        </div>
+
+        <v-menu v-else-if="!terminalVisible && launchTargets.length > 0" location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              class="vibe64-launch-controls__run-button"
+              color="primary"
+              :disabled="runMenuDisabled"
+              :loading="loading"
+              :prepend-icon="mdiPlayCircleOutline"
+              :size="buttonSize"
+              title="Run target"
+              :variant="buttonVariant"
+            >
+              {{ buttonLabel }}
+            </v-btn>
+          </template>
+
+          <v-list class="vibe64-launch-controls__menu" density="compact">
+            <v-list-item
+              v-for="launchTarget in launchTargets"
+              :key="launchTarget.id"
+              :disabled="launchButtonsDisabled || launchTarget.available === false"
+              :prepend-icon="mdiPlayCircleOutline"
+              :subtitle="launchTarget.disabledReason || ''"
+              :title="launchTarget.label"
+              @click="run(launchTarget)"
+            />
+          </v-list>
+        </v-menu>
+
+        <v-chip
+          v-if="loadError"
+          color="warning"
           size="small"
-          :title="action.label || action.href"
-          variant="text"
-          @click="openAction(action)"
-        />
+          variant="tonal"
+          :title="loadError"
+        >
+          Launch unavailable
+        </v-chip>
 
         <v-btn
-          v-if="terminalCanRetry"
-          :disabled="operationBusy"
+          v-if="embeddedPreview && previewBaseUrl"
           :icon="mdiRefresh"
           size="small"
-          title="Retry"
+          title="Reload preview"
           variant="text"
-          @click="retryTerminal"
-        />
-
-        <v-btn
-          v-if="terminalCanRestart"
-          :disabled="operationBusy"
-          :icon="mdiRestart"
-          size="small"
-          title="Restart"
-          variant="text"
-          @click="restartTerminal"
-        />
-
-        <v-btn
-          :icon="mdiConsoleLine"
-          size="small"
-          title="Show launch terminal"
-          variant="text"
-          @click="expandTerminal"
+          @click="reloadPreview"
         />
       </div>
-
-      <v-menu v-else-if="!terminalVisible && launchTargets.length > 0" location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <v-btn
-            v-bind="menuProps"
-            class="vibe64-launch-controls__run-button"
-            color="primary"
-            :disabled="runMenuDisabled"
-            :loading="loading"
-            :prepend-icon="mdiPlayCircleOutline"
-            :size="buttonSize"
-            title="Run target"
-            :variant="buttonVariant"
-          >
-            {{ buttonLabel }}
-          </v-btn>
-        </template>
-
-        <v-list class="vibe64-launch-controls__menu" density="compact">
-          <v-list-item
-            v-for="launchTarget in launchTargets"
-            :key="launchTarget.id"
-            :disabled="launchButtonsDisabled || launchTarget.available === false"
-            :prepend-icon="mdiPlayCircleOutline"
-            :subtitle="launchTarget.disabledReason || ''"
-            :title="launchTarget.label"
-            @click="run(launchTarget)"
-          />
-        </v-list>
-      </v-menu>
-
-      <v-chip
-        v-if="loadError"
-        color="warning"
-        size="small"
-        variant="tonal"
-        :title="loadError"
-      >
-        Launch unavailable
-      </v-chip>
-
-      <v-btn
-        v-if="embeddedPreview && previewBaseUrl"
-        :icon="mdiRefresh"
-        size="small"
-        title="Reload preview"
-        variant="text"
-        @click="reloadPreview"
-      />
-    </div>
+    </Teleport>
 
     <div
       v-if="embeddedPreview"
@@ -318,6 +328,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  toolbarTeleportTarget: {
+    default: "",
+    type: String
+  },
   windowDisplayed: {
     type: Boolean,
     default: true
@@ -408,6 +422,7 @@ const workflowAiFixVisible = computed(() => Boolean(
   )
 ));
 const previewReloadKey = ref(0);
+const toolbarTeleportTarget = computed(() => String(props.toolbarTeleportTarget || "").trim());
 const previewBaseUrl = computed(() => String(launchActions.value[0]?.href || ""));
 const previewUrl = computed(() => {
   if (!previewBaseUrl.value) {
@@ -477,7 +492,7 @@ async function requestAiFix() {
   align-items: stretch;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-outline), 0.16);
-  border-radius: 8px;
+  border-radius: 14px;
   display: grid;
   gap: 0.55rem;
   grid-template-rows: auto minmax(0, 1fr);
@@ -486,8 +501,16 @@ async function requestAiFix() {
   padding: 0.6rem;
 }
 
+.vibe64-launch-controls--toolbar-teleported {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .vibe64-launch-controls--embedded .vibe64-launch-controls__toolbar {
   justify-content: flex-end;
+}
+
+.vibe64-launch-controls__toolbar--teleported {
+  flex: 0 0 auto;
 }
 
 .vibe64-launch-controls--prominent .vibe64-launch-controls__run-button {
@@ -557,7 +580,7 @@ async function requestAiFix() {
     linear-gradient(180deg, rgba(var(--v-theme-primary), 0.035), rgba(var(--v-theme-surface), 0.86)),
     rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-outline), 0.12);
-  border-radius: 8px;
+  border-radius: 12px;
   display: grid;
   min-height: 0;
   overflow: hidden;

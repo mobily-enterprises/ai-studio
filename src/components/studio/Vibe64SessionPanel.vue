@@ -1,5 +1,9 @@
 <template>
-  <v-sheet rounded="lg" class="studio-ai-sessions studio-screen__panel">
+  <v-sheet
+    rounded="lg"
+    class="studio-ai-sessions studio-screen__panel"
+    :class="{ 'studio-ai-sessions--autopilot': sessionMode === 'autopilot' }"
+  >
     <div
       v-if="pageError || panelSessionToolbarVisible"
       class="studio-ai-sessions__header"
@@ -376,6 +380,15 @@ watch(sessionData.sessions, (sessions = []) => {
   min-height: 0;
 }
 
+.studio-ai-sessions--autopilot {
+  background: transparent;
+  border-radius: 0 !important;
+  box-shadow: none;
+  gap: 0;
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+}
+
 .studio-ai-sessions__empty {
   padding: 0.9rem;
 }
@@ -404,11 +417,19 @@ watch(sessionData.sessions, (sessions = []) => {
   min-height: 0;
 }
 
+.studio-ai-sessions--autopilot .studio-ai-sessions__runtime-stack {
+  height: 100%;
+}
+
 @media (min-width: 981px) {
   .studio-ai-sessions {
     grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
     overflow: hidden;
+  }
+
+  .studio-ai-sessions--autopilot {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .studio-ai-sessions__runtime-stack {

@@ -437,6 +437,7 @@
         class="studio-autopilot__preview-launch"
         embedded-preview
         :session="session"
+        toolbar-teleport-target="#studio-home-app-bar-actions"
         :window-displayed="props.active"
         workflow-command
       />
@@ -1098,8 +1099,10 @@ watch(() => [
 
 <style scoped>
 .studio-autopilot {
+  background: rgb(var(--v-theme-background));
   display: grid;
-  gap: 0.9rem;
+  gap: 0.75rem;
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
@@ -1107,22 +1110,24 @@ watch(() => [
 .studio-autopilot__chat-panel,
 .studio-autopilot__preview-panel {
   background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-outline), 0.16);
-  border-radius: 8px;
+  border: 1px solid rgba(var(--v-theme-outline), 0.14);
+  border-radius: 14px;
+  box-shadow: 0 0.75rem 2rem rgba(15, 23, 42, 0.06);
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .studio-autopilot__chat-panel {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.55rem;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   padding: 0.65rem;
 }
 
 .studio-autopilot__chat-body {
-  align-content: start;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.55rem;
   min-height: 0;
   overflow-y: auto;
@@ -1142,6 +1147,8 @@ watch(() => [
 .studio-autopilot__conversation {
   align-self: stretch;
   display: grid;
+  flex: 1 1 auto;
+  min-height: min(16rem, 40vh);
 }
 
 .studio-autopilot__artifact :deep(.studio-report-preview__body),
@@ -1154,7 +1161,7 @@ watch(() => [
   align-items: center;
   background: rgba(var(--v-theme-primary), 0.06);
   border: 1px solid rgba(var(--v-theme-primary), 0.16);
-  border-radius: 8px;
+  border-radius: 12px;
   display: flex;
   gap: 0.6rem;
   padding: 0.55rem 0.65rem;
@@ -1203,6 +1210,7 @@ watch(() => [
 .studio-autopilot__control-form {
   display: grid;
   gap: 0.55rem;
+  margin-top: auto;
   min-width: 0;
   width: 100%;
 }
@@ -1226,6 +1234,7 @@ watch(() => [
 
 .studio-autopilot__screen-actions {
   justify-content: flex-end;
+  margin-top: auto;
 }
 
 .studio-autopilot__thinking {
@@ -1251,11 +1260,11 @@ watch(() => [
 .studio-autopilot__preview-panel {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
   position: relative;
 }
 
 .studio-autopilot__preview-launch {
+  height: 100%;
   min-height: 0;
 }
 
@@ -1318,7 +1327,7 @@ watch(() => [
 .studio-autopilot__command-spy {
   background: rgba(var(--v-theme-surface), 0.96);
   border: 1px solid rgba(var(--v-theme-primary), 0.18);
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: 0 0.5rem 1.4rem rgba(15, 23, 42, 0.12);
   left: 0.75rem;
   padding: 0.55rem 0.65rem;
@@ -1374,7 +1383,7 @@ watch(() => [
 
 .studio-autopilot__command-terminal-output :deep(.studio-headless-command-output__text) {
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   min-height: 0;
 }
 
@@ -1393,7 +1402,7 @@ watch(() => [
 
 @media (min-width: 981px) {
   .studio-autopilot {
-    grid-template-columns: minmax(21rem, 0.34fr) minmax(34rem, 0.66fr);
+    grid-template-columns: minmax(24rem, 30rem) minmax(0, 1fr);
     height: 100%;
     overflow: hidden;
   }
@@ -1401,7 +1410,7 @@ watch(() => [
 
 @media (max-width: 980px) {
   .studio-autopilot {
-    grid-template-rows: minmax(18rem, auto) minmax(24rem, 60vh);
+    grid-template-rows: minmax(28rem, 52vh) minmax(24rem, 1fr);
   }
 
   .studio-autopilot__workspace-header {

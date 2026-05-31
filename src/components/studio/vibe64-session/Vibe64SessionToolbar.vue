@@ -67,16 +67,16 @@
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
+            aria-label="New session"
+            class="studio-ai-sessions__create-button"
             color="primary"
-            variant="tonal"
-            :append-icon="mdiChevronDown"
             :disabled="!toolbar.canCreateSession"
+            :icon="mdiPlus"
             :loading="toolbar.createSessionCommand.isRunning"
-            :prepend-icon="mdiPlus"
+            size="small"
             :title="toolbar.createSessionTitle"
-          >
-            New Session
-          </v-btn>
+            variant="tonal"
+          />
         </template>
 
         <v-list
@@ -99,16 +99,17 @@
 
       <v-btn
         v-else
+        aria-label="New session"
+        class="studio-ai-sessions__create-button"
         color="primary"
-        variant="tonal"
         :disabled="!toolbar.canCreateSession"
+        :icon="mdiPlus"
         :loading="toolbar.createSessionCommand.isRunning"
-        :prepend-icon="mdiPlus"
+        size="small"
         :title="toolbar.createSessionTitle"
         @click="toolbar.createSession()"
-      >
-        New Session
-      </v-btn>
+        variant="tonal"
+      />
     </div>
   </div>
 </template>
@@ -116,7 +117,6 @@
 <script setup>
 import { computed, ref } from "vue";
 import {
-  mdiChevronDown,
   mdiClose,
   mdiDotsHorizontal,
   mdiPlus
@@ -225,6 +225,12 @@ function createSessionFromDefinition(definitionId = "") {
 
 .studio-ai-sessions__tab-abandon :deep(.v-icon) {
   font-size: 1.15rem;
+}
+
+.studio-ai-sessions__create-button {
+  border-radius: 999px;
+  min-height: 2.2rem;
+  min-width: 2.2rem;
 }
 
 .studio-ai-sessions__definition-menu {

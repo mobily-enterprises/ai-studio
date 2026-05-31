@@ -1037,7 +1037,7 @@ function createCommandTerminalController({
                   ]);
                 }
               },
-              reuseRunning: true
+              reuseRunning: false
             });
             await writeCommandLifecycleEvent({
               lifecycleId: commandLifecycleId,
