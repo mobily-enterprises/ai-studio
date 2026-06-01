@@ -1,8 +1,7 @@
 <template>
   <v-sheet
     rounded="lg"
-    class="studio-ai-sessions studio-screen__panel"
-    :class="{ 'studio-ai-sessions--autopilot': sessionMode === 'autopilot' }"
+    class="studio-ai-sessions studio-ai-sessions--autopilot studio-screen__panel"
   >
     <div
       v-if="pageError || panelSessionToolbarVisible"
@@ -36,59 +35,6 @@
           @global-codex-open="openGlobalCodexTerminal"
           @global-codex-update="updateGlobalCodexTerminalState"
         />
-
-        <template v-if="selection.selectedSession">
-          <div
-            v-if="sessionMode === 'inspect'"
-            class="studio-ai-sessions__inspect-tools"
-          >
-            <v-btn
-              v-if="inspectDiffVisible"
-              class="studio-ai-sessions__inspect-button"
-              :disabled="selectedReview.diffDisabled"
-              :loading="selectedDiff.loading"
-              :prepend-icon="mdiFileCompare"
-              size="small"
-              :title="selectedReview.diffTitle"
-              type="button"
-              variant="tonal"
-              @click="selectedDiff.openDialog"
-            >
-              Review diff
-            </v-btn>
-          </div>
-
-          <Vibe64ShellControls
-            v-for="shellSession in shellToolbarSessions"
-            :key="`shell:${shellSession.sessionId}`"
-            :session="shellSession"
-            :show-activator="shellControlsActive(shellSession)"
-            :window-displayed="shellControlsActive(shellSession)"
-          />
-
-          <Vibe64LaunchControls
-            v-if="selectedToolbarSession && sessionMode === 'inspect'"
-            :key="`launch:${selectedToolbarSession.sessionId}`"
-            button-size="large"
-            button-variant="flat"
-            :busy="false"
-            class="studio-ai-sessions__run-controls"
-            prominent
-            :session="selectedToolbarSession"
-            window-displayed
-            workflow-command
-          />
-
-          <v-btn
-            class="studio-ai-sessions__mode-switch"
-            :prepend-icon="modeSwitchIcon"
-            type="button"
-            variant="tonal"
-            @click="switchSessionMode"
-          >
-            {{ modeSwitchLabel }}
-          </v-btn>
-        </template>
       </div>
     </Teleport>
 
@@ -134,7 +80,7 @@
         active
         :session-data="sessionData"
         :session-id="selection.selectedSessionId"
-        :session-mode="sessionMode"
+        session-mode="autopilot"
         :workspace-pane="workspacePane"
         @busy-change="setRuntimeBusy"
         @page-error-change="setRuntimePageError"
@@ -146,36 +92,21 @@
 
 <script setup>
 import { computed, proxyRefs, reactive, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import {
-  mdiFileCompare,
-  mdiPlayCircleOutline,
-  mdiTune
-} from "@mdi/js";
-import Vibe64LaunchControls from "@/components/studio/Vibe64LaunchControls.vue";
+import { useRoute } from "vue-router";
 import Vibe64ProjectTools from "@/components/studio/Vibe64ProjectTools.vue";
 import Vibe64SessionRuntimeHost from "@/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue";
 import Vibe64SessionTerminals from "@/components/studio/vibe64-session/Vibe64SessionTerminals.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
-import Vibe64ShellControls from "@/components/studio/Vibe64ShellControls.vue";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 import {
-  blockingVibe64SessionPageError,
-  inspectDiffButtonVisible
+  blockingVibe64SessionPageError
 } from "@/lib/vibe64SessionPanelModel.js";
 import {
   useVibe64SessionData
 } from "@/composables/useVibe64SessionData.js";
-import {
-  useVibe64SessionMode
-} from "@/composables/useVibe64SessionMode.js";
-import {
-  vibe64SessionDebugLog
-} from "@/lib/vibe64SessionDebugLog.js";
 
 const emit = defineEmits(["title-change"]);
 const route = useRoute();
-const router = useRouter();
 
 const fallbackAbandon = {
   command: {
@@ -209,52 +140,17 @@ const toolbar = proxyRefs({
   workflowDefinitions: sessionData.workflowDefinitions
 });
 
-const {
-  sessionMode,
-  setSessionMode: storeSessionMode
-} = useVibe64SessionMode({
-  route,
-  router,
-  selectedSessionId: sessionData.selectedSessionId
-});
-const modeSwitchTarget = computed(() => sessionMode.value === "inspect" ? "autopilot" : "inspect");
-const modeSwitchLabel = computed(() => modeSwitchTarget.value === "inspect" ? "Inspect" : "Autopilot");
-const modeSwitchIcon = computed(() => modeSwitchTarget.value === "inspect" ? mdiTune : mdiPlayCircleOutline);
-const workspacePane = computed(() => (
-  sessionMode.value === "autopilot"
-    ? normalizeWorkspacePane(route.query.pane)
-    : "preview"
-));
+const workspacePane = computed(() => normalizeWorkspacePane(route.query.pane));
 const pageLoading = sessionData.pageLoading;
 const toolbarActionsVisible = computed(() => true);
 const panelSessionToolbarVisible = computed(() => Boolean(
-  sessionMode.value === "inspect" ||
   !selection.selectedSession
 ));
 const globalCodexTerminalController = {
   sessionUpdate: updateGlobalCodexTerminalState
 };
-const selectedToolbarSession = computed(() => {
-  return selection.selectedSession ||
-    (toolbar.sessions || []).find((session) => session.sessionId === selection.selectedSessionId) ||
-    null;
-});
-const shellToolbarSessions = computed(() => {
-  return (toolbar.sessions || [])
-    .map((session) => sessionData.sessionForId(session.sessionId) || session)
-    .filter((session) => session?.sessionId);
-});
 const selectedRuntimeState = computed(() => runtimeStateBySessionId[selection.selectedSessionId] || null);
 const selectedAbandon = computed(() => selectedRuntimeState.value?.toolbarControls?.abandon || fallbackAbandon);
-const selectedDiff = computed(() => selectedRuntimeState.value?.toolbarControls?.diff || {});
-const selectedReview = computed(() => selectedRuntimeState.value?.toolbarControls?.review || {});
-const inspectDiffVisible = computed(() => {
-  return inspectDiffButtonVisible({
-    diff: selectedDiff.value,
-    selectedSession: selection.selectedSession,
-    sessionMode: sessionMode.value
-  });
-});
 const pageError = computed(() => blockingVibe64SessionPageError({
   runtimePageError: selectedRuntimeState.value?.pageError,
   selectedSession: selection.selectedSession,
@@ -308,19 +204,6 @@ function setRuntimePageError({
   }
 }
 
-function setSessionMode(mode = "autopilot") {
-  vibe64SessionDebugLog("client.sessionPanel.setSessionMode", {
-    fromMode: sessionMode.value,
-    selectedSessionId: String(selection.selectedSessionId || ""),
-    toMode: mode
-  });
-  storeSessionMode(mode);
-}
-
-function switchSessionMode() {
-  setSessionMode(modeSwitchTarget.value);
-}
-
 function normalizeWorkspacePane(value = "") {
   return ["configure", "history", "preview", "run", "setup"].includes(value)
     ? value
@@ -344,24 +227,6 @@ function updateGlobalCodexTerminalState(payload = {}) {
     status: String(payload.codexTerminalStatus || payload.status || "")
   };
 }
-
-function shellControlsActive(session = {}) {
-  return Boolean(
-    sessionMode.value === "inspect" &&
-    session?.sessionId &&
-    session.sessionId === selection.selectedSessionId
-  );
-}
-
-watch(sessionMode, () => {
-  vibe64SessionDebugLog("client.sessionPanel.sessionMode.changed", {
-    selectedSessionId: String(selection.selectedSessionId || ""),
-    sessionMode: sessionMode.value
-  });
-  if (selection.selectedSessionId) {
-    void sessionData.refreshSessionData();
-  }
-});
 
 watch(sessionData.sessions, (sessions = []) => {
   const visibleSessionIds = new Set(sessions.map((session) => session.sessionId));
@@ -395,7 +260,7 @@ watch(sessionData.sessions, (sessions = []) => {
 
 .studio-ai-sessions__empty-layout {
   --studio-ai-sessions-codex-terminal-column: minmax(30rem, 1.22fr);
-  --studio-ai-sessions-inspect-main-column: minmax(18rem, 0.78fr);
+  --studio-ai-sessions-main-column: minmax(18rem, 0.78fr);
   --studio-ai-sessions-layout-gap: 0.9rem;
   display: grid;
   gap: var(--studio-ai-sessions-layout-gap);
@@ -440,7 +305,7 @@ watch(sessionData.sessions, (sessions = []) => {
 
   .studio-ai-sessions__empty-layout--with-terminal {
     align-items: stretch;
-    grid-template-columns: var(--studio-ai-sessions-inspect-main-column) var(--studio-ai-sessions-codex-terminal-column);
+    grid-template-columns: var(--studio-ai-sessions-main-column) var(--studio-ai-sessions-codex-terminal-column);
     height: 100%;
     overflow: hidden;
   }
@@ -455,37 +320,9 @@ watch(sessionData.sessions, (sessions = []) => {
   min-width: 0;
 }
 
-.studio-ai-sessions__inspect-tools,
-.studio-ai-sessions__mode-switch,
-.studio-ai-sessions__run-controls,
-.studio-ai-sessions__inspect-button {
-  flex: 0 0 auto;
-}
-
-.studio-ai-sessions__inspect-tools {
-  align-items: center;
-  display: flex;
-  gap: 0.35rem;
-  min-width: 0;
-}
-
-.studio-ai-sessions__mode-switch {
-  min-width: 7.35rem;
-}
-
 @media (max-width: 600px) {
   .studio-ai-sessions__app-bar-actions {
     gap: 0.25rem;
-  }
-
-  .studio-ai-sessions__inspect-button {
-    min-width: 0;
-    padding-inline: 0.55rem;
-  }
-
-  .studio-ai-sessions__mode-switch {
-    min-width: 6.75rem;
-    padding-inline: 0.45rem;
   }
 }
 </style>

@@ -1,6 +1,38 @@
 <template>
-  <div v-if="sessionId" class="vibe64-shell-controls">
-    <v-menu v-if="showShellTargetMenu" location="bottom end">
+  <div
+    v-if="sessionId"
+    class="vibe64-shell-controls"
+    :class="{ 'vibe64-shell-controls--embedded': embedded }"
+  >
+    <div
+      v-if="embedded && !hasShellTabs"
+      class="vibe64-shell-controls__empty"
+    >
+      <p>Open a shell for this session.</p>
+      <div class="vibe64-shell-controls__empty-actions">
+        <v-btn
+          color="primary"
+          :disabled="!canCreateWorktreeShell"
+          :prepend-icon="mdiFolderOutline"
+          type="button"
+          variant="tonal"
+          @click="openShell('worktree')"
+        >
+          Worktree shell
+        </v-btn>
+        <v-btn
+          :disabled="!canCreateMainShell"
+          :prepend-icon="mdiSourceRepository"
+          type="button"
+          variant="tonal"
+          @click="openShell('main')"
+        >
+          Main repo shell
+        </v-btn>
+      </div>
+    </div>
+
+    <v-menu v-else-if="showShellTargetMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <v-btn
           v-bind="menuProps"
@@ -47,10 +79,12 @@
       v-if="hasShellTabs"
       defer
       to="body"
+      :disabled="embedded"
     >
       <div
         class="vibe64-shell-controls__inline-panel"
         :class="{
+          'vibe64-shell-controls__inline-panel--embedded': embedded,
           'vibe64-shell-controls__inline-panel--displayed': shellPanelOpen,
           'vibe64-shell-controls__inline-panel--hidden': !shellPanelOpen
         }"
@@ -169,6 +203,10 @@ import {
 } from "@/lib/vibe64ShellShortcuts.js";
 
 const props = defineProps({
+  embedded: {
+    type: Boolean,
+    default: false
+  },
   session: {
     type: Object,
     default: null
@@ -199,7 +237,14 @@ const canOpenMainShell = computed(() => Boolean(sessionId.value && !menuDisabled
 const canOpenWorktreeShell = computed(() => Boolean(canOpenMainShell.value && worktreePath.value));
 const hasShellTabs = computed(() => shellTabs.value.length > 0);
 const shellPanelAllowed = computed(() => props.windowDisplayed !== false);
-const shellPanelOpen = computed(() => Boolean(hasShellTabs.value && shellPanelAllowed.value && !shellPanelCollapsed.value));
+const shellPanelOpen = computed(() => Boolean(
+  hasShellTabs.value &&
+  shellPanelAllowed.value &&
+  (
+    props.embedded ||
+    !shellPanelCollapsed.value
+  )
+));
 const shellShortcutsActive = computed(() => shellPanelOpen.value);
 const activeShellTab = computed(() => shellTabs.value.find((tab) => tab.id === activeShellTabId.value) || null);
 const shellTabLimitReached = computed(() => shellTabs.value.length >= MAX_SHELL_TABS);
@@ -226,6 +271,9 @@ const shellActivatorTitle = computed(() => {
   return shellPanelOpen.value ? "Hide shells" : "Show shells";
 });
 const shellPanelStyle = computed(() => {
+  if (props.embedded) {
+    return {};
+  }
   const frame = shellPanelFrame.value;
   if (!shellPanelOpen.value || !frame) {
     return {};
@@ -391,6 +439,9 @@ function handleRunningChanged(tabId = "", nextRunning = false) {
 }
 
 function handleShellPanelExpandedChanged(tabId = "", expanded = true) {
+  if (props.embedded) {
+    return;
+  }
   if (tabId !== activeShellTabId.value) {
     return;
   }
@@ -441,6 +492,9 @@ function stopShellShortcuts() {
 }
 
 function visibleShellPanelTarget() {
+  if (props.embedded) {
+    return null;
+  }
   if (typeof document === "undefined") {
     return null;
   }
@@ -469,6 +523,9 @@ function syncShellPanelFrame() {
 
 async function startShellPanelFrameTracking() {
   stopShellPanelFrameTracking();
+  if (props.embedded) {
+    return;
+  }
   await nextTick();
   syncShellPanelFrame();
 
@@ -531,6 +588,37 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.vibe64-shell-controls--embedded {
+  align-items: stretch;
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.vibe64-shell-controls__empty {
+  align-content: center;
+  display: grid;
+  gap: 0.9rem;
+  justify-items: center;
+  min-height: 0;
+  padding: 1rem;
+  text-align: center;
+}
+
+.vibe64-shell-controls__empty p {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  margin: 0;
+}
+
+.vibe64-shell-controls__empty-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: center;
+}
+
 .vibe64-shell-controls__menu {
   max-width: min(22rem, 92vw);
   min-width: min(18rem, 92vw);
@@ -555,6 +643,11 @@ onBeforeUnmount(() => {
 .vibe64-shell-controls__inline-panel--displayed {
   position: fixed;
   z-index: 2600;
+}
+
+.vibe64-shell-controls__inline-panel--embedded.vibe64-shell-controls__inline-panel--displayed {
+  position: relative;
+  z-index: auto;
 }
 
 .vibe64-shell-controls__inline-panel--hidden {

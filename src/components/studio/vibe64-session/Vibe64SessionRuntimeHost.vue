@@ -1,79 +1,59 @@
 <template>
   <section class="studio-ai-session-runtime">
-    <div
-      class="studio-ai-sessions__layout"
-      :class="`studio-ai-sessions__layout--${sessionMode}`"
+    <Vibe64AutopilotView
+      :actions="actions"
+      :active="autopilotModeActive"
+      :automation-enabled="autopilotAutomationEnabled"
+      :autopilot-steps="autopilotNavigationSteps"
+      :codex-terminal-attention="codexBootstrapNeedsTerminalAttention"
+      :codex-thinking="autopilotInteractionLocked"
+      :command-runner="autopilotCommandRunner"
+      :conversation-log="conversationLog"
+      :diff="dialogs.diff"
+      :human-input-response-preview="humanInputResponsePreview"
+      :interrupt-codex-turn="interruptCodexTurn"
+      :page="guardedPage"
+      :refresh-session-data="sessionData.refreshSessionData"
+      :report-preview="reportPreview"
+      :review="review"
+      :rewind-busy="Boolean(timeline.rewindCommand?.isRunning)"
+      :rewind-to-step="timeline.rewindToStep"
+      :session-abandon="dialogs.abandon"
+      :session="selection.selectedSession"
+      :session-selection-closed="selection.isClosed"
+      :session-toolbar="autopilotSessionToolbar"
+      :workspace-pane="props.workspacePane"
+      @busy-change="setAutopilotBusy"
     >
-      <Vibe64AutopilotView
-        v-if="sessionMode === 'autopilot'"
-        :actions="actions"
-        :active="autopilotModeActive"
-        :automation-enabled="autopilotAutomationEnabled"
-        :autopilot-steps="autopilotNavigationSteps"
-        :codex-thinking="autopilotInteractionLocked"
-        :command-runner="autopilotCommandRunner"
-        :conversation-log="conversationLog"
-        :diff="dialogs.diff"
-        :human-input-response-preview="humanInputResponsePreview"
-        :interrupt-codex-turn="interruptCodexTurn"
-        :page="guardedPage"
-        :refresh-session-data="sessionData.refreshSessionData"
-        :report-preview="reportPreview"
-        :review="review"
-        :rewind-busy="Boolean(timeline.rewindCommand?.isRunning)"
-        :rewind-to-step="timeline.rewindToStep"
-        :session-abandon="dialogs.abandon"
-        :session="selection.selectedSession"
-        :session-selection-closed="selection.isClosed"
-        :session-toolbar="autopilotSessionToolbar"
-        :workspace-pane="props.workspacePane"
-        :inert="autopilotViewInert"
-        @busy-change="setAutopilotBusy"
-      />
-
-      <div
-        v-if="sessionMode === 'inspect'"
-        class="studio-ai-sessions__inspect-slot"
-      >
-        <Vibe64SessionWorkspace
-          class="studio-ai-sessions__inspect-workspace"
-          :actions="actions"
-          :active="props.active && sessionMode === 'inspect'"
-          :conversation-log="conversationLog"
-          :dialogs="dialogs"
-          :page="guardedPage"
-          :refresh-session-data="sessionData.refreshSessionData"
-          :report-preview="reportPreview"
-          :review="review"
-          :human-input-response-preview="humanInputResponsePreview"
-          :selection="selection"
-          :step-input="stepInput"
-          :timeline="timeline"
+      <template #shell-terminal="{ active: tabActive }">
+        <Vibe64ShellControls
+          embedded
+          :session="selection.selectedSession"
+          :show-activator="false"
+          :window-displayed="props.active && tabActive"
         />
+      </template>
 
-        <div
-          :id="shellPanelTargetId"
-          class="studio-ai-sessions__shell-terminal-target"
+      <template #ai-terminal="{ active: tabActive }">
+        <Vibe64SessionTerminals
+          ref="sessionTerminals"
+          class="studio-ai-sessions__tab-terminal"
+          :allow-codex-start="tabActive && codexTerminalCanStart"
+          :codex-recovery="codexRecovery"
+          :codex-terminal="codexTerminal"
+          :codex-read-only="tabActive ? false : codexTerminalReadOnly"
+          :codex-scope="codexTerminalScope"
+          :codex-terminal-state="activeCodexTerminalState"
+          :command-terminal="commandTerminal"
+          :display-mode="tabActive ? 'full' : 'headless'"
+          :headless-command-terminal="headlessCommandTerminal"
+          :listen-codex-when-hidden="codexTerminalListenWhenHidden || (!tabActive && Boolean(selectedCodexTerminalId))"
+          :session="selection.selectedSession"
+          :show-command-output="false"
+          @codex-activity-change="handleCodexActivityChange"
         />
-      </div>
-
-      <Vibe64SessionTerminals
-        ref="sessionTerminals"
-        :allow-codex-start="codexTerminalCanStart"
-        :codex-recovery="codexRecovery"
-        :codex-terminal="codexTerminal"
-        :codex-read-only="codexTerminalReadOnly"
-        :codex-scope="codexTerminalScope"
-        :codex-terminal-state="activeCodexTerminalState"
-        :command-terminal="commandTerminal"
-        :display-mode="codexTerminalDisplayMode"
-        :headless-command-terminal="headlessCommandTerminal"
-        :listen-codex-when-hidden="codexTerminalListenWhenHidden"
-        :session="selection.selectedSession"
-        :show-command-output="sessionMode === 'inspect'"
-        @codex-activity-change="handleCodexActivityChange"
-      />
-    </div>
+      </template>
+    </Vibe64AutopilotView>
 
     <Vibe64SessionDialogs
       :dialogs="dialogs"
@@ -88,7 +68,7 @@ import { computed, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } fr
 import Vibe64AutopilotView from "@/components/studio/vibe64-session/Vibe64AutopilotView.vue";
 import Vibe64SessionDialogs from "@/components/studio/vibe64-session/Vibe64SessionDialogs.vue";
 import Vibe64SessionTerminals from "@/components/studio/vibe64-session/Vibe64SessionTerminals.vue";
-import Vibe64SessionWorkspace from "@/components/studio/vibe64-session/Vibe64SessionWorkspace.vue";
+import Vibe64ShellControls from "@/components/studio/Vibe64ShellControls.vue";
 import {
   useVibe64HeadlessCommandRunner
 } from "@/composables/useVibe64HeadlessCommandRunner.js";
@@ -119,9 +99,6 @@ import {
   vibe64SessionStatusLabel,
   isClosedVibe64Session
 } from "@/lib/vibe64SessionViewModel.js";
-import {
-  vibe64ShellPanelTargetId
-} from "@/lib/vibe64ShellPanelTarget.js";
 import {
   vibe64SessionDebugLog,
   vibe64SessionDebugSummary
@@ -175,7 +152,6 @@ const selectedSessionTitle = computed(() => {
   return vibe64SessionDisplayTitle(selectedSession.value || {}) ||
     `Session ${props.sessionData.shortSessionId(props.sessionId)}`;
 });
-const shellPanelTargetId = computed(() => vibe64ShellPanelTargetId(props.sessionId));
 const isSelectedSessionClosed = computed(() => isClosedVibe64Session(selectedSession.value || {}));
 const sessionFacts = computed(() => vibe64SessionFacts(selectedSession.value || {}));
 const timelineSteps = computed(() => buildVibe64TimelineSteps(selectedSession.value));
@@ -252,7 +228,6 @@ const conversationLog = proxyRefs(useVibe64ConversationLog({
   session: selectedSession
 }));
 const review = proxyRefs(sessionWorkflow.review);
-const stepInput = proxyRefs(sessionWorkflow.stepInput);
 const selection = proxyRefs({
   facts: sessionFacts,
   isClosed: isSelectedSessionClosed,
@@ -316,8 +291,8 @@ const codexTerminalActivity = ref({
 const codexRecoveryRunning = ref(false);
 const codexRecoveryError = ref("");
 const codexControlReturnRunning = ref(false);
-const autopilotModeActive = computed(() => Boolean(props.active && props.sessionMode === "autopilot"));
-const autopilotAutomationEnabled = computed(() => props.sessionMode === "autopilot");
+const autopilotModeActive = computed(() => Boolean(props.active));
+const autopilotAutomationEnabled = computed(() => true);
 const codexTerminalPresentation = computed(() => {
   const presentation = selectedSession.value?.presentation?.terminal?.codex;
   return presentation && typeof presentation === "object" && !Array.isArray(presentation)
@@ -331,12 +306,10 @@ const selectedCodexTerminalId = computed(() => String(
 ));
 const codexPromptResponseExpected = computed(() => Boolean(
   props.active &&
-  props.sessionMode === "autopilot" &&
   selectedSession.value?.presentation?.prompt?.state === "waiting_for_agent"
 ));
 const codexProgressExpected = computed(() => Boolean(
   props.active &&
-  props.sessionMode === "autopilot" &&
   selectedSession.value?.presentation?.screen?.showProgress === true
 ));
 const serverSaysCodexIsWorking = computed(() => Boolean(
@@ -344,7 +317,7 @@ const serverSaysCodexIsWorking = computed(() => Boolean(
   codexProgressExpected.value
 ));
 const codexBootstrapNeedsTerminalAttention = computed(() => {
-  if (!props.active || props.sessionMode !== "autopilot") {
+  if (!props.active) {
     return false;
   }
   return (Array.isArray(selectedSession.value?.presentation?.backgroundTasks)
@@ -388,35 +361,18 @@ const autopilotCodexWorkingVisible = computed(() => Boolean(
 ));
 const autopilotInteractionLocked = computed(() => Boolean(
   props.active &&
-  props.sessionMode === "autopilot" &&
   autopilotCodexWorkingVisible.value
-));
-const autopilotViewInert = computed(() => Boolean(
-  props.sessionMode !== "autopilot"
 ));
 const codexTerminalDisplayMode = computed(() => {
   if (!props.active) {
     return "headless";
   }
-  if (props.sessionMode === "inspect") {
-    return "full";
-  }
-  if (autopilotCodexTerminalVisible.value) {
-    return "compact";
-  }
-  return "headless";
+  return autopilotCodexTerminalVisible.value ? "ai-terminal" : "headless";
 });
 const codexTerminalCanStart = computed(() => Boolean(
-  props.active &&
-  (
-    props.sessionMode === "inspect" ||
-    autopilotCodexTerminalVisible.value
-  )
+  props.active
 ));
 const codexTerminalReadOnly = computed(() => {
-  if (props.sessionMode === "inspect") {
-    return false;
-  }
   if (autopilotCodexTerminalVisible.value) {
     return false;
   }
@@ -426,7 +382,6 @@ const codexTerminalScope = computed(() => "session");
 const activeCodexTerminalState = computed(() => null);
 const codexTerminalListenWhenHidden = computed(() => Boolean(
   props.active &&
-  props.sessionMode === "autopilot" &&
   serverSaysCodexIsWorking.value &&
   !autopilotCodexTerminalVisible.value &&
   selectedCodexTerminalId.value
@@ -802,130 +757,19 @@ onBeforeUnmount(() => {
 <style scoped>
 .studio-ai-session-runtime {
   display: grid;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
-.studio-ai-sessions__layout {
-  --studio-ai-sessions-codex-terminal-column: minmax(30rem, 1.22fr);
-  --studio-ai-sessions-inspect-main-column: minmax(18rem, 0.78fr);
-  --studio-ai-sessions-layout-gap: 0.9rem;
-  align-items: flex-start;
-  display: grid;
-  gap: var(--studio-ai-sessions-layout-gap);
-  min-height: 0;
-}
-
-.studio-ai-sessions__layout--autopilot {
-  grid-template-columns: minmax(0, 1fr);
-  position: relative;
-}
-
-.studio-ai-sessions__layout--inspect {
-  grid-template-columns: var(--studio-ai-sessions-inspect-main-column) var(--studio-ai-sessions-codex-terminal-column);
-}
-
-.studio-ai-sessions__layout--autopilot > .studio-autopilot {
-  grid-column: 1;
-  grid-row: 1;
-  position: relative;
-  z-index: 2;
-}
-
-.studio-ai-sessions__layout--autopilot > .studio-ai-sessions__terminals--compact {
-  align-self: start;
-  grid-column: 1;
-  grid-row: 1;
-  height: min(36rem, calc(100% - 3rem));
-  justify-self: center;
-  margin-top: 1.5rem;
-  max-width: min(72rem, calc(100% - 2rem));
-  position: relative;
-  z-index: 5;
-}
-
-.studio-ai-sessions__codex-thinking-overlay {
-  display: flex;
-  justify-content: center;
-  left: 0;
-  pointer-events: none;
-  position: absolute;
-  right: 0;
-  top: 0.45rem;
-  z-index: 4;
-}
-
-.studio-ai-sessions__codex-thinking-status {
-  align-items: center;
-  background: rgba(var(--v-theme-surface), 0.88);
-  border: 1px solid rgba(var(--v-theme-primary), 0.22);
-  border-radius: 8px;
-  box-shadow: 0 0.4rem 1.1rem rgba(0, 0, 0, 0.12);
-  color: rgb(var(--v-theme-on-surface));
-  display: flex;
-  gap: 0.7rem;
-  min-height: 3.5rem;
-  padding: 0.35rem 0.8rem;
-}
-
-.studio-ai-sessions__codex-thinking-status strong {
-  font-size: 1.05rem;
-  font-weight: 720;
-  letter-spacing: 0;
-  line-height: 1.15;
-}
-
-.studio-ai-sessions__codex-thinking-spinner :deep(.v-icon) {
-  animation: studio-ai-sessions-codex-thinking-pulse 1.45s ease-in-out infinite;
-}
-
-@keyframes studio-ai-sessions-codex-thinking-pulse {
-  0%,
-  100% {
-    opacity: 0.58;
-    transform: scale(0.96);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.studio-ai-sessions__inspect-slot {
-  display: grid;
-  min-height: 0;
-  min-width: 0;
-  position: relative;
-}
-
-.studio-ai-sessions__inspect-workspace,
-.studio-ai-sessions__shell-terminal-target {
-  grid-area: 1 / 1;
+.studio-ai-sessions__tab-terminal {
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
 
-.studio-ai-sessions__shell-terminal-target {
-  pointer-events: none;
-  z-index: 3;
-}
-
-@media (max-width: 980px) {
-  .studio-ai-sessions__layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (min-width: 981px) {
-  .studio-ai-session-runtime,
-  .studio-ai-sessions__layout {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .studio-ai-sessions__layout {
-    align-items: stretch;
-  }
+.studio-ai-sessions__tab-terminal :deep(.studio-ai-sessions__codex-terminal-shell),
+.studio-ai-sessions__tab-terminal :deep(.studio-ai-sessions__codex-terminal) {
+  height: 100%;
 }
 </style>

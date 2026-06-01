@@ -1523,15 +1523,14 @@ test.describe("Autopilot dumb client contract", () => {
         },
         screen: {
           kind: "conversation",
-          message: "What would you like to do?",
+          message: "Ask Codex for changes.",
           primaryIntentId: "talk_to_codex",
           sections: [
             {
               kind: "response_preview"
             }
           ],
-          title: "Talk to Codex",
-          variant: "guide"
+          title: "Talk to Codex"
         },
         step: {
           id: "server_step",

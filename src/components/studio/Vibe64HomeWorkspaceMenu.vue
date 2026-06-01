@@ -55,7 +55,6 @@ const menuOpen = ref(false);
 const isHomeRoute = computed(() => route.path === "/home" || route.path === "/home/");
 const isAutopilotHome = computed(() => Boolean(
   isHomeRoute.value &&
-  route.query.mode !== "inspect" &&
   route.query.configure !== "project"
 ));
 const activePane = computed(() => normalizePane(route.query.pane));
@@ -129,41 +128,23 @@ function autopilotQueryForPane(pane = "preview") {
   return query;
 }
 
-function inspectQuery(extra = {}) {
-  return {
-    ...extra,
-    mode: "inspect"
-  };
-}
-
 function itemRoute(item = {}) {
-  if (isAutopilotHome.value && item.id !== "workspace") {
+  if (item.id !== "workspace") {
+    if (item.id === "setup") {
+      return { path: "/setup", query: {} };
+    }
+    if (item.id === "history") {
+      return { path: "/home/history", query: {} };
+    }
     return {
       path: "/home",
       query: autopilotQueryForPane(item.id)
     };
   }
-  switch (item.id) {
-    case "configure":
-      return {
-        path: "/home",
-        query: inspectQuery({ configure: "project" })
-      };
-    case "history":
-      return { path: "/home/history", query: {} };
-    case "run":
-      return {
-        path: "/home/target-scripts",
-        query: inspectQuery()
-      };
-    case "setup":
-      return { path: "/setup", query: {} };
-    default:
-      return {
-        path: "/home",
-        query: inspectQuery()
-      };
-  }
+  return {
+    path: "/home",
+    query: autopilotQueryForPane("preview")
+  };
 }
 
 function itemActive(item = {}) {
@@ -174,13 +155,13 @@ function itemActive(item = {}) {
     return isHomeRoute.value && route.query.configure !== "project";
   }
   if (item.id === "configure") {
-    return isHomeRoute.value && route.query.configure === "project";
+    return isHomeRoute.value && activePane.value === "configure";
   }
   if (item.id === "history") {
     return route.path === "/home/history";
   }
   if (item.id === "run") {
-    return route.path === "/home/target-scripts";
+    return isHomeRoute.value && activePane.value === "run";
   }
   if (item.id === "setup") {
     return route.path === "/setup";

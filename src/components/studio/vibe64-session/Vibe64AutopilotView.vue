@@ -368,95 +368,139 @@
         </div>
       </div>
 
-      <div
-        v-if="commandSpyVisible"
-        class="studio-autopilot__command-spy"
-        :class="{ 'studio-autopilot__command-spy--expanded': commandSpyExpanded }"
-      >
-        <div class="studio-autopilot__command-spy-header">
-          <div class="studio-autopilot__command-spy-title">
-            <v-icon :icon="mdiConsoleLine" size="18" />
-            <span>{{ commandOverlayTitle }}</span>
-          </div>
-          <div class="studio-autopilot__command-spy-actions">
-            <v-btn
-              v-if="commandRunning"
-              :prepend-icon="mdiStopCircleOutline"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="stopCommandAction"
-            >
-              Stop
-            </v-btn>
-            <v-btn
-              v-if="commandTerminalFailed"
-              :prepend-icon="mdiRefresh"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="retryFromCommandFailure"
-            >
-              Retry
-            </v-btn>
-            <v-btn
-              v-if="commandTerminalFailed"
-              :prepend-icon="mdiRobotOutline"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="requestCommandAiFix"
-            >
-              Fix
-            </v-btn>
-            <v-btn
-              :icon="commandSpyExpanded ? mdiChevronUp : mdiChevronDown"
-              size="small"
-              :title="commandSpyExpanded ? 'Collapse command output' : 'Expand command output'"
-              type="button"
-              variant="text"
-              @click="commandSpyExpanded = !commandSpyExpanded"
+      <template v-else>
+        <div class="studio-autopilot__preview-tabs" role="tablist" aria-label="Session workspace">
+          <button
+            v-for="tab in rightPaneTabs"
+            :key="tab.id"
+            type="button"
+            class="studio-autopilot__preview-tab"
+            :class="{ 'studio-autopilot__preview-tab--active': rightPaneTab === tab.id }"
+            :aria-selected="rightPaneTab === tab.id ? 'true' : 'false'"
+            role="tab"
+            @click="selectRightPaneTab(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <div
+          v-show="rightPaneTab === 'preview'"
+          class="studio-autopilot__right-pane-page"
+          role="tabpanel"
+        >
+          <div
+            v-if="commandSpyVisible"
+            class="studio-autopilot__command-spy"
+            :class="{ 'studio-autopilot__command-spy--expanded': commandSpyExpanded }"
+          >
+            <div class="studio-autopilot__command-spy-header">
+              <div class="studio-autopilot__command-spy-title">
+                <v-icon :icon="mdiConsoleLine" size="18" />
+                <span>{{ commandOverlayTitle }}</span>
+              </div>
+              <div class="studio-autopilot__command-spy-actions">
+                <v-btn
+                  v-if="commandRunning"
+                  :prepend-icon="mdiStopCircleOutline"
+                  size="small"
+                  type="button"
+                  variant="tonal"
+                  @click="stopCommandAction"
+                >
+                  Stop
+                </v-btn>
+                <v-btn
+                  v-if="commandTerminalFailed"
+                  :prepend-icon="mdiRefresh"
+                  size="small"
+                  type="button"
+                  variant="tonal"
+                  @click="retryFromCommandFailure"
+                >
+                  Retry
+                </v-btn>
+                <v-btn
+                  v-if="commandTerminalFailed"
+                  :prepend-icon="mdiRobotOutline"
+                  size="small"
+                  type="button"
+                  variant="tonal"
+                  @click="requestCommandAiFix"
+                >
+                  Fix
+                </v-btn>
+                <v-btn
+                  :icon="commandSpyExpanded ? mdiChevronUp : mdiChevronDown"
+                  size="small"
+                  :title="commandSpyExpanded ? 'Collapse command output' : 'Expand command output'"
+                  type="button"
+                  variant="text"
+                  @click="commandSpyExpanded = !commandSpyExpanded"
+                />
+              </div>
+            </div>
+            <p v-if="!commandSpyExpanded" class="studio-autopilot__command-spy-summary">
+              {{ commandTerminalFailed ? commandFailureSummary : commandTerminalSummary }}
+            </p>
+            <Vibe64HeadlessCommandOutput
+              v-else
+              class="studio-autopilot__command-terminal-output"
+              :action-id="commandResult?.actionId || ''"
+              :action-label="commandResult?.actionLabel || ''"
+              :attempted-command="commandResult?.attemptedCommand || ''"
+              :command-preview="commandPreview"
+              compact
+              :error="commandTerminalError"
+              :exit-code="commandResult?.exitCode ?? null"
+              :failed="commandTerminalFailed"
+              :output="commandTerminalText"
+              :running="commandRunning"
+              :session-id="sessionId"
+              :status="commandStatus"
+              :terminal-session-id="commandResult?.terminalSessionId || ''"
+              title="Autopilot command"
+              @fix-requested="openFixCodexDialog"
             />
           </div>
-        </div>
-        <p v-if="!commandSpyExpanded" class="studio-autopilot__command-spy-summary">
-          {{ commandTerminalFailed ? commandFailureSummary : commandTerminalSummary }}
-        </p>
-        <Vibe64HeadlessCommandOutput
-          v-else
-          class="studio-autopilot__command-terminal-output"
-          :action-id="commandResult?.actionId || ''"
-          :action-label="commandResult?.actionLabel || ''"
-          :attempted-command="commandResult?.attemptedCommand || ''"
-          :command-preview="commandPreview"
-          compact
-          :error="commandTerminalError"
-          :exit-code="commandResult?.exitCode ?? null"
-          :failed="commandTerminalFailed"
-          :output="commandTerminalText"
-          :running="commandRunning"
-          :session-id="sessionId"
-          :status="commandStatus"
-          :terminal-session-id="commandResult?.terminalSessionId || ''"
-          title="Autopilot command"
-          @fix-requested="openFixCodexDialog"
-        />
-      </div>
 
-      <Vibe64LaunchControls
-        v-show="workspacePaneValue === 'preview'"
-        auto-start-target-id="dev"
-        button-label="Run"
-        button-size="small"
-        button-variant="tonal"
-        :busy="false"
-        class="studio-autopilot__preview-launch"
-        embedded-preview
-        :session="session"
-        toolbar-teleport-target="#studio-home-app-bar-actions"
-        :window-displayed="props.active"
-        workflow-command
-      />
+          <Vibe64LaunchControls
+            auto-start-target-id="dev"
+            button-label="Run"
+            button-size="small"
+            button-variant="tonal"
+            :busy="false"
+            class="studio-autopilot__preview-launch"
+            embedded-preview
+            :session="session"
+            toolbar-teleport-target="#studio-home-app-bar-actions"
+            :window-displayed="props.active"
+            workflow-command
+          />
+        </div>
+
+        <div
+          v-show="rightPaneTab === 'dashboard'"
+          class="studio-autopilot__right-pane-page studio-autopilot__right-pane-page--empty"
+          role="tabpanel"
+        />
+
+        <div
+          v-show="rightPaneTab === 'shell'"
+          class="studio-autopilot__right-pane-page"
+          role="tabpanel"
+        >
+          <slot name="shell-terminal" :active="rightPaneTab === 'shell'" />
+        </div>
+
+        <div
+          v-show="rightPaneTab === 'ai-terminal'"
+          class="studio-autopilot__right-pane-page"
+          role="tabpanel"
+        >
+          <slot name="ai-terminal" :active="rightPaneTab === 'ai-terminal'" />
+        </div>
+      </template>
     </section>
 
     <Vibe64FixCodexDialog
@@ -557,6 +601,10 @@ const props = defineProps({
     type: Array
   },
   codexThinking: {
+    default: false,
+    type: Boolean
+  },
+  codexTerminalAttention: {
     default: false,
     type: Boolean
   },
@@ -671,7 +719,26 @@ const {
 } = useVibe64FixCodexDialog();
 const commandSpyExpanded = ref(false);
 const historyArchive = ref("completed");
+const rightPaneTab = ref("preview");
 const setupPanelTab = ref("studio-setup");
+const rightPaneTabs = Object.freeze([
+  {
+    id: "preview",
+    label: "Preview"
+  },
+  {
+    id: "dashboard",
+    label: "Dashboard"
+  },
+  {
+    id: "shell",
+    label: "Shell"
+  },
+  {
+    id: "ai-terminal",
+    label: "AI Terminal"
+  }
+]);
 
 const stepInput = proxyRefs(useVibe64StepInputForm({
   onSaved: async () => {
@@ -1033,6 +1100,13 @@ function normalizeWorkspacePane(value = "") {
     : "preview";
 }
 
+function selectRightPaneTab(tabId = "") {
+  if (!rightPaneTabs.some((tab) => tab.id === tabId)) {
+    return;
+  }
+  rightPaneTab.value = tabId;
+}
+
 function emitBusyState() {
   emit("busy-change", autopilotBusy.value);
 }
@@ -1264,6 +1338,20 @@ watch(() => [
   immediate: true
 });
 
+watch(() => props.codexTerminalAttention, (needsAttention) => {
+  if (needsAttention) {
+    selectRightPaneTab("ai-terminal");
+  }
+}, {
+  immediate: true
+});
+
+watch(workspacePaneValue, (pane) => {
+  if (pane !== "preview") {
+    selectRightPaneTab("preview");
+  }
+});
+
 </script>
 
 <style scoped>
@@ -1439,8 +1527,59 @@ watch(() => [
 
 .studio-autopilot__preview-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   position: relative;
+}
+
+.studio-autopilot__preview-tabs {
+  align-items: center;
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.12);
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 0.45rem 0.55rem;
+  scrollbar-width: none;
+}
+
+.studio-autopilot__preview-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-autopilot__preview-tab {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 720;
+  letter-spacing: 0;
+  line-height: 1.2;
+  padding: 0.38rem 0.78rem;
+}
+
+.studio-autopilot__preview-tab:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.studio-autopilot__preview-tab--active {
+  background: rgba(var(--v-theme-primary), 0.13);
+  color: rgb(var(--v-theme-primary));
+}
+
+.studio-autopilot__right-pane-page {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.studio-autopilot__right-pane-page--empty {
+  background: rgba(var(--v-theme-on-surface), 0.035);
 }
 
 .studio-autopilot__preview-launch {
