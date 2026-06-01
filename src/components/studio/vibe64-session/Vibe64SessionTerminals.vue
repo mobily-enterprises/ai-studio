@@ -285,6 +285,14 @@ function showCompactTerminal() {
   focusCodexTerminalSoon();
 }
 
+async function interruptCodexTerminal() {
+  const terminal = codexTerminalComponent.value;
+  if (!terminal || typeof terminal.sendEscape !== "function") {
+    return false;
+  }
+  return await terminal.sendEscape();
+}
+
 async function resumeCodexFromAttention() {
   if (!codexRecoveryAvailable.value || codexRecoveryBusy.value) {
     return;
@@ -355,6 +363,10 @@ watch(() => [
 }, {
   flush: "post",
   immediate: true
+});
+
+defineExpose({
+  interruptCodexTerminal
 });
 </script>
 

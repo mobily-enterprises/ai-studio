@@ -750,6 +750,32 @@ function createService({
       });
     },
 
+    async returnAgentControl(sessionId) {
+      const startedAtMs = Date.now();
+      vibe64SessionDebugLog("server.service.returnAgentControl.start", {
+        sessionId
+      });
+      return sessionResult(async () => {
+        try {
+          const runtime = await projectService.createRuntime();
+          const session = await runtime.returnControlFromAgentWait(sessionId);
+          const enrichedSession = await enrichSessionWithCodexTerminal(terminalService, session);
+          vibe64SessionDebugLog("server.service.returnAgentControl.done", {
+            ...sessionServiceDebugResponse(enrichedSession),
+            durationMs: vibe64SessionDebugDurationMs(startedAtMs)
+          });
+          return enrichedSession;
+        } catch (error) {
+          vibe64SessionDebugLog("server.service.returnAgentControl.error", {
+            durationMs: vibe64SessionDebugDurationMs(startedAtMs),
+            error: vibe64SessionDebugError(error),
+            sessionId
+          });
+          throw error;
+        }
+      });
+    },
+
     async listSessions(input = {}) {
       const startedAtMs = Date.now();
       vibe64SessionDebugLog("server.service.listSessions.start", {

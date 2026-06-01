@@ -8,6 +8,7 @@ import {
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RECOVER_STUCK_SESSION_STEP,
+  ACTION_RETURN_AGENT_CONTROL,
   ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION,
   ACTION_RUN_SESSION_INTENT
@@ -124,6 +125,12 @@ function registerRoutes(
     actionId: ACTION_RECOVER_STUCK_SESSION_STEP,
     buildInput: sessionInput,
     summary: "Recover an Vibe64 session step stuck in command execution."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/agent-control/return", {
+    actionId: ACTION_RETURN_AGENT_CONTROL,
+    buildInput: sessionInput,
+    summary: "Return a quiet Vibe64 agent turn back to user control."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/abandon", {

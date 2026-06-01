@@ -20,9 +20,11 @@
       >
         <Vibe64AutopilotPromptTextarea
           :model-value="selectedControlValues[field.name] || ''"
+          :attachments-enabled="attachmentsEnabled"
           class="vibe64-workflow-control-form__input"
-          :disabled="running"
-          label=""
+          :disabled="fieldsDisabled"
+          :label="field.label"
+          :placeholder="field.placeholder"
           :rows="field.rows || textareaRows"
           :session-id="sessionId"
           variant="outlined"
@@ -31,25 +33,26 @@
 
         <v-btn
           v-if="inlineSubmitForField(field)"
-          :aria-label="selectedControl.label"
+          :aria-label="inlineSubmitButtonLabel"
           class="vibe64-workflow-control-form__inline-submit"
-          color="primary"
-          :disabled="!canSubmitSelectedControl"
+          :class="{ 'vibe64-workflow-control-form__inline-submit--interrupt': interruptVisible }"
+          :color="interruptVisible ? 'error' : 'primary'"
+          :disabled="inlineSubmitButtonDisabled"
           icon
-          :loading="running"
-          :title="selectedControl.label"
+          :loading="inlineSubmitButtonLoading"
+          :title="inlineSubmitButtonLabel"
           type="button"
           variant="flat"
-          @click="submitFromButton"
+          @click="handleInlineSubmitButton"
         >
-          <v-icon :icon="mdiSend" size="20" />
+          <v-icon :icon="interruptVisible ? mdiStop : mdiSend" size="20" />
         </v-btn>
       </div>
       <v-textarea
         v-else-if="field.kind === 'textarea'"
         auto-grow
         class="vibe64-workflow-control-form__input"
-        :disabled="running"
+        :disabled="fieldsDisabled"
         hide-details="auto"
         :label="field.label"
         :model-value="selectedControlValues[field.name] || ''"
@@ -61,7 +64,7 @@
       <v-text-field
         v-else
         class="vibe64-workflow-control-form__input"
-        :disabled="running"
+        :disabled="fieldsDisabled"
         hide-details="auto"
         :label="field.label"
         :model-value="selectedControlValues[field.name] || ''"
@@ -131,13 +134,15 @@
 import { computed } from "vue";
 import {
   mdiClose,
-  mdiSend
+  mdiSend,
+  mdiStop
 } from "@mdi/js";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 
 const emit = defineEmits([
   "activate-control",
   "cancel",
+  "interrupt",
   "submit",
   "update-value"
 ]);
@@ -149,6 +154,10 @@ const props = defineProps({
   },
   attachTextarea: {
     default: false,
+    type: Boolean
+  },
+  attachmentsEnabled: {
+    default: true,
     type: Boolean
   },
   cancelVisible: {
@@ -165,6 +174,22 @@ const props = defineProps({
     type: String
   },
   inlineSubmit: {
+    default: false,
+    type: Boolean
+  },
+  inputDisabled: {
+    default: false,
+    type: Boolean
+  },
+  interruptDisabled: {
+    default: false,
+    type: Boolean
+  },
+  interruptLabel: {
+    default: "Stop Codex",
+    type: String
+  },
+  interruptVisible: {
     default: false,
     type: Boolean
   },
@@ -203,6 +228,7 @@ const props = defineProps({
 });
 
 const rootTag = computed(() => props.asForm ? "form" : "div");
+const fieldsDisabled = computed(() => Boolean(props.running || props.inputDisabled));
 const inlineSubmitActive = computed(() => Boolean(
   props.inlineSubmit &&
   props.attachTextarea &&
@@ -212,6 +238,15 @@ const actionsVisible = computed(() => Boolean(
   !inlineSubmitActive.value ||
   props.cancelVisible ||
   props.workflowControls.length
+));
+const inlineSubmitButtonLabel = computed(() => (
+  props.interruptVisible ? props.interruptLabel : props.selectedControl.label
+));
+const inlineSubmitButtonDisabled = computed(() => (
+  props.interruptVisible ? props.interruptDisabled : !props.canSubmitSelectedControl
+));
+const inlineSubmitButtonLoading = computed(() => Boolean(
+  props.running && !props.interruptVisible
 ));
 const inlineSubmitFieldName = computed(() => {
   if (!inlineSubmitActive.value) {
@@ -234,6 +269,14 @@ function submitFromForm() {
 
 function submitFromButton() {
   emit("submit");
+}
+
+function handleInlineSubmitButton() {
+  if (props.interruptVisible) {
+    emit("interrupt");
+    return;
+  }
+  submitFromButton();
 }
 </script>
 
@@ -278,6 +321,10 @@ function submitFromButton() {
 
 .vibe64-workflow-control-form :deep(.studio-autopilot-prompt-textarea .v-field-label) {
   color: rgba(var(--v-theme-on-surface), 0.82);
+  opacity: 1;
+}
+
+.vibe64-workflow-control-form :deep(.studio-autopilot-prompt-textarea .v-input--disabled) {
   opacity: 1;
 }
 
@@ -349,6 +396,10 @@ function submitFromButton() {
   position: absolute;
   right: 0.7rem;
   z-index: 2;
+}
+
+.vibe64-workflow-control-form__inline-submit--interrupt {
+  box-shadow: 0 0 0 3px rgba(var(--v-theme-error), 0.14);
 }
 
 .vibe64-workflow-control-form--split .vibe64-workflow-control-form__workflow-actions {

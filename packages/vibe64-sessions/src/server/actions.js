@@ -20,6 +20,7 @@ const ACTION_RUN_SESSION_INTENT = "feature.vibe64-sessions.intent.run";
 const ACTION_ADVANCE_SESSION = "feature.vibe64-sessions.advance";
 const ACTION_ABANDON_SESSION = "feature.vibe64-sessions.abandon";
 const ACTION_RECOVER_STUCK_SESSION_STEP = "feature.vibe64-sessions.step.stuck.recover";
+const ACTION_RETURN_AGENT_CONTROL = "feature.vibe64-sessions.agent-control.return";
 const ACTION_REWIND_SESSION = "feature.vibe64-sessions.rewind";
 
 const featureActions = Object.freeze([
@@ -240,6 +241,24 @@ const featureActions = Object.freeze([
     }
   },
   {
+    id: ACTION_RETURN_AGENT_CONTROL,
+    version: 1,
+    kind: "command",
+    channels: ["api", "automation", "internal"],
+    surfaces: ["home"],
+    input: sessionIdInputValidator,
+    output: null,
+    idempotency: "optional",
+    audit: {
+      actionName: ACTION_RETURN_AGENT_CONTROL
+    },
+    observability: {},
+    async execute(input, context, deps) {
+      void context;
+      return deps.featureService.returnAgentControl(input.sessionId);
+    }
+  },
+  {
     id: ACTION_ABANDON_SESSION,
     version: 1,
     kind: "command",
@@ -269,6 +288,7 @@ export {
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RECOVER_STUCK_SESSION_STEP,
+  ACTION_RETURN_AGENT_CONTROL,
   ACTION_REWIND_SESSION,
   ACTION_RUN_SESSION_ACTION,
   ACTION_RUN_SESSION_INTENT,

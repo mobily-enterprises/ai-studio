@@ -180,6 +180,34 @@ async function recoverStuckStepMachineExecution(runtime, session = {}, {
   }));
 }
 
+async function returnControlFromAgentWait(runtime, session = {}, {
+  inputPrompt = "What would you like to do?"
+} = {}) {
+  const machine = workflowStepMachine(runtime, session.currentStep);
+  if (!machine) {
+    throw vibe64Error(
+      `The current Vibe64 step cannot return control: ${session.currentStep || "(none)"}`,
+      "vibe64_agent_control_return_not_available"
+    );
+  }
+  const state = await readState({
+    runtime,
+    session
+  }, machine);
+  if (normalizeText(state.status) !== STEP_STATUS.AWAITING_AGENT_RESULT) {
+    return false;
+  }
+  await writeState({
+    runtime,
+    session
+  }, machine, machineState(STEP_STATUS.WAITING_FOR_INPUT, {
+    from: STEP_STATUS.AWAITING_AGENT_RESULT,
+    message: normalizeText(inputPrompt),
+    source: "system"
+  }));
+  return true;
+}
+
 async function recordStepMachineActionStarted(runtime, session = {}, actionId = "") {
   const machine = workflowStepMachine(runtime, session.currentStep);
   if (typeof machine?.actionStarted !== "function") {
@@ -213,5 +241,6 @@ export {
   recordStepMachineActionFinished,
   recordStepMachineActionStarted,
   recoverStuckStepMachineExecution,
+  returnControlFromAgentWait,
   saveStepMachineInput
 };

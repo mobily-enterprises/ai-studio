@@ -15,6 +15,7 @@
         :conversation-log="conversationLog"
         :diff="dialogs.diff"
         :human-input-response-preview="humanInputResponsePreview"
+        :interrupt-codex-turn="interruptCodexTurn"
         :page="guardedPage"
         :refresh-session-data="sessionData.refreshSessionData"
         :report-preview="reportPreview"
@@ -57,6 +58,7 @@
       </div>
 
       <Vibe64SessionTerminals
+        ref="sessionTerminals"
         :allow-codex-start="codexTerminalCanStart"
         :codex-recovery="codexRecovery"
         :codex-terminal="codexTerminal"
@@ -125,6 +127,7 @@ import {
   vibe64SessionDebugSummary
 } from "@/lib/vibe64SessionDebugLog.js";
 import {
+  returnVibe64AgentControl,
   startVibe64CodexTerminal
 } from "@/lib/vibe64SessionApi.js";
 
@@ -300,6 +303,7 @@ const headlessCommandTerminal = proxyRefs({
 });
 
 const autopilotBusy = ref(false);
+const sessionTerminals = ref(null);
 const codexTerminalActivity = ref({
   active: false,
   busy: false,
@@ -311,6 +315,7 @@ const codexTerminalActivity = ref({
 });
 const codexRecoveryRunning = ref(false);
 const codexRecoveryError = ref("");
+const codexControlReturnRunning = ref(false);
 const autopilotModeActive = computed(() => Boolean(props.active && props.sessionMode === "autopilot"));
 const autopilotAutomationEnabled = computed(() => props.sessionMode === "autopilot");
 const codexTerminalPresentation = computed(() => {
@@ -324,13 +329,19 @@ const selectedCodexTerminalId = computed(() => String(
   codexTerminalPresentation.value.terminalSessionId ||
   ""
 ));
-const serverSaysCodexIsWorking = computed(() => Boolean(
+const codexPromptResponseExpected = computed(() => Boolean(
   props.active &&
   props.sessionMode === "autopilot" &&
-  (
-    selectedSession.value?.presentation?.prompt?.state === "waiting_for_agent" ||
-    selectedSession.value?.presentation?.screen?.showProgress === true
-  )
+  selectedSession.value?.presentation?.prompt?.state === "waiting_for_agent"
+));
+const codexProgressExpected = computed(() => Boolean(
+  props.active &&
+  props.sessionMode === "autopilot" &&
+  selectedSession.value?.presentation?.screen?.showProgress === true
+));
+const serverSaysCodexIsWorking = computed(() => Boolean(
+  codexPromptResponseExpected.value ||
+  codexProgressExpected.value
 ));
 const codexBootstrapNeedsTerminalAttention = computed(() => {
   if (!props.active || props.sessionMode !== "autopilot") {
@@ -345,7 +356,6 @@ const codexBootstrapNeedsTerminalAttention = computed(() => {
     Boolean(String(task?.terminalSessionId || ""))
   ));
 });
-const codexTerminalQuietTooLong = ref(false);
 let codexQuietTerminalTimer = null;
 const codexTerminalActivityMatchesSelectedSession = computed(() => {
   const activity = codexTerminalActivity.value;
@@ -365,11 +375,7 @@ const codexTerminalActive = computed(() => Boolean(
   codexTerminalActivity.value.active
 ));
 const autopilotCodexTerminalVisible = computed(() => Boolean(
-  codexBootstrapNeedsTerminalAttention.value ||
-  (
-    serverSaysCodexIsWorking.value &&
-    codexTerminalQuietTooLong.value
-  )
+  codexBootstrapNeedsTerminalAttention.value
 ));
 const autopilotCodexWorkingVisible = computed(() => Boolean(
   serverSaysCodexIsWorking.value &&
@@ -527,7 +533,6 @@ async function resumeCodexFromAttention() {
     if (result?.ok === false) {
       throw new Error(result.error || "Codex could not continue.");
     }
-    codexTerminalQuietTooLong.value = false;
     await props.sessionData.refreshSessionData();
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexRecovery.done", {
       sessionId,
@@ -552,6 +557,72 @@ async function resumeCodexFromAttention() {
   }
 }
 
+async function returnControlFromQuietCodex() {
+  const sessionId = selectedSessionId.value || props.sessionId;
+  if (!sessionId || codexControlReturnRunning.value) {
+    return {
+      ok: false,
+      error: codexControlReturnRunning.value ? "Codex control is already returning." : "No Vibe64 session is selected."
+    };
+  }
+  codexControlReturnRunning.value = true;
+  clearCodexQuietTerminalTimer();
+  vibe64SessionDebugLog("client.sessionRuntimeHost.codexControlReturn.start", {
+    sessionId
+  });
+  try {
+    await interruptCodexTurn("quiet_return");
+    const result = await returnVibe64AgentControl(sessionId);
+    if (result?.ok === false) {
+      throw new Error(result.error || "Codex control could not be returned.");
+    }
+    await props.sessionData.refreshSessionData();
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexControlReturn.done", {
+      sessionId
+    });
+    return result || {
+      ok: true
+    };
+  } catch (error) {
+    const message = String(error?.message || error || "Codex control could not be returned.");
+    await props.sessionData.refreshSessionData().catch(() => null);
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexControlReturn.error", {
+      error: message,
+      sessionId
+    });
+    return {
+      ok: false,
+      error: message
+    };
+  } finally {
+    codexControlReturnRunning.value = false;
+  }
+}
+
+async function interruptCodexTurn(reason = "user_interrupt") {
+  if (!selectedCodexTerminalId.value) {
+    return false;
+  }
+  try {
+    const sent = await sessionTerminals.value?.interruptCodexTerminal?.();
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexInterrupt", {
+      reason,
+      sent: sent === true,
+      selectedCodexTerminalId: selectedCodexTerminalId.value,
+      sessionId: selectedSessionId.value || props.sessionId
+    });
+    return sent === true;
+  } catch (error) {
+    vibe64SessionDebugLog("client.sessionRuntimeHost.codexInterrupt.error", {
+      error: String(error?.message || error || "Codex interrupt failed."),
+      reason,
+      selectedCodexTerminalId: selectedCodexTerminalId.value,
+      sessionId: selectedSessionId.value || props.sessionId
+    });
+    return false;
+  }
+}
+
 function clearCodexQuietTerminalTimer() {
   if (!codexQuietTerminalTimer) {
     return;
@@ -562,7 +633,6 @@ function clearCodexQuietTerminalTimer() {
 
 function resetCodexQuietTerminalState() {
   clearCodexQuietTerminalTimer();
-  codexTerminalQuietTooLong.value = false;
 }
 
 function artifactReadinessVersion(readiness = {}) {
@@ -642,7 +712,8 @@ watch(() => [
 });
 
 watch(() => [
-  serverSaysCodexIsWorking.value ? "expected" : "idle",
+  codexPromptResponseExpected.value ? "prompt-expected" : "prompt-idle",
+  codexProgressExpected.value ? "progress-expected" : "progress-idle",
   selectedCodexTerminalId.value,
   codexBootstrapNeedsTerminalAttention.value ? "bootstrap-attention" : "bootstrap-ok",
   codexTerminalActive.value ? "active" : "quiet"
@@ -650,30 +721,20 @@ watch(() => [
   clearCodexQuietTerminalTimer();
   vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.evaluate", {
     codexBootstrapNeedsTerminalAttention: codexBootstrapNeedsTerminalAttention.value,
+    codexPromptResponseExpected: codexPromptResponseExpected.value,
+    codexProgressExpected: codexProgressExpected.value,
     codexTerminalActive: codexTerminalActive.value,
-    codexTerminalQuietTooLong: codexTerminalQuietTooLong.value,
     codexTerminalStreaming: codexTerminalStreaming.value,
     selectedCodexTerminalId: selectedCodexTerminalId.value,
     serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
     sessionId: props.sessionId
   });
-  if (
-    !serverSaysCodexIsWorking.value
-  ) {
-    codexTerminalQuietTooLong.value = codexBootstrapNeedsTerminalAttention.value;
+  if (!codexPromptResponseExpected.value || codexBootstrapNeedsTerminalAttention.value) {
     vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.reset", {
       codexBootstrapNeedsTerminalAttention: codexBootstrapNeedsTerminalAttention.value,
+      codexPromptResponseExpected: codexPromptResponseExpected.value,
       selectedCodexTerminalId: selectedCodexTerminalId.value,
       serverSaysCodexIsWorking: serverSaysCodexIsWorking.value,
-      sessionId: props.sessionId,
-      terminalActive: codexTerminalActive.value,
-      streaming: codexTerminalStreaming.value
-    });
-    return;
-  }
-  if (codexTerminalQuietTooLong.value) {
-    vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.keepSurfaced", {
-      selectedCodexTerminalId: selectedCodexTerminalId.value,
       sessionId: props.sessionId,
       terminalActive: codexTerminalActive.value,
       streaming: codexTerminalStreaming.value
@@ -696,22 +757,15 @@ watch(() => [
   codexQuietTerminalTimer = globalThis.setTimeout(() => {
     codexQuietTerminalTimer = null;
     if (
-      serverSaysCodexIsWorking.value &&
+      codexPromptResponseExpected.value &&
+      !codexBootstrapNeedsTerminalAttention.value &&
       !codexTerminalActive.value
     ) {
       vibe64SessionDebugLog("client.sessionRuntimeHost.codexQuiet.fire", {
         selectedCodexTerminalId: selectedCodexTerminalId.value,
         sessionId: props.sessionId
       });
-      void resumeCodexFromAttention().then((result) => {
-        if (
-          result?.ok === false &&
-          serverSaysCodexIsWorking.value &&
-          !codexTerminalActive.value
-        ) {
-          codexTerminalQuietTooLong.value = true;
-        }
-      });
+      void returnControlFromQuietCodex();
     }
   }, CODEX_QUIET_TERMINAL_DELAY_MS);
 }, {

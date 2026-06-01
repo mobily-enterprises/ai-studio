@@ -48,6 +48,7 @@ import {
   recordStepMachineActionFinished,
   recordStepMachineActionStarted,
   recoverStuckStepMachineExecution,
+  returnControlFromAgentWait,
   saveStepMachineInput
 } from "./workflowStepMachines.js";
 import {
@@ -1406,6 +1407,52 @@ class Vibe64SessionRuntime {
       });
     } catch (error) {
       vibe64SessionDebugLog("server.runtime.recoverStuckStep.error", {
+        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
+        error: vibe64SessionDebugError(error),
+        sessionId
+      });
+      throw error;
+    }
+  }
+
+  async returnControlFromAgentWait(sessionId, {
+    inputPrompt = "What would you like to do?",
+    message = "Control back to the user."
+  } = {}) {
+    const startedAtMs = Date.now();
+    vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.start", {
+      message,
+      sessionId
+    });
+    try {
+      return await this.store.mutateSession(sessionId, async () => {
+        const session = await this.getSession(sessionId);
+        if (session.status !== VIBE64_SESSION_STATUS.ACTIVE) {
+          vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.blocked", {
+            ...vibe64SessionDebugSummary(session),
+            reason: "closed_session"
+          });
+          throw vibe64Error("Closed Vibe64 sessions cannot return Codex control.", "vibe64_closed_session_agent_control");
+        }
+        const changed = await returnControlFromAgentWait(this, session, {
+          inputPrompt
+        });
+        if (changed && typeof this.store.writeConversationSystemMessage === "function") {
+          await this.store.writeConversationSystemMessage(session.sessionId, {
+            text: message
+          });
+        }
+        const updatedSession = await this.getSession(session.sessionId);
+        vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.done", {
+          ...vibe64SessionDebugSummary(updatedSession),
+          changed,
+          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
+          fromStepStatus: String(session.stepMachine?.status || "")
+        });
+        return updatedSession;
+      });
+    } catch (error) {
+      vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.error", {
         durationMs: vibe64SessionDebugDurationMs(startedAtMs),
         error: vibe64SessionDebugError(error),
         sessionId

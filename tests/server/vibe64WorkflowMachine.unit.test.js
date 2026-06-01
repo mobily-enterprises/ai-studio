@@ -3280,6 +3280,48 @@ test("vibe64 runtime presents waiting_for_input as the same Codex conversation i
   });
 });
 
+test("vibe64 runtime returns a quiet agent conversation turn to user control", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      clock: () => new Date("2026-05-16T01:02:03.000Z"),
+      targetRoot
+    });
+    await runtime.createSession({
+      initialStep: "maintenance_conversation",
+      metadata: worktreeMetadata(targetRoot, "agent_control_return"),
+      sessionId: "agent_control_return",
+      workflowDefinition: maintenanceWorkflowDefinitionIds.NON_COMMIT_MAINTENANCE
+    });
+
+    await runtime.runAction("agent_control_return", "agent_conversation", {
+      conversationRequest: "Explain this codebase."
+    });
+    const waitingForAgent = await runtime.getSession("agent_control_return");
+    assert.equal(waitingForAgent.stepMachine.status, "awaiting_agent_result");
+    assert.equal(waitingForAgent.presentation.prompt.state, "waiting_for_agent");
+
+    const returned = await runtime.returnControlFromAgentWait("agent_control_return");
+
+    assert.equal(returned.stepMachine.status, "waiting_for_input");
+    assert.equal(returned.presentation.prompt.state, "needs_user_input");
+    assert.equal(returned.presentation.screen.primaryIntentId, "talk_to_codex");
+    assert.equal(returned.presentation.screen.message, "What would you like to do?");
+    assert.deepEqual((await runtime.store.readConversationLog("agent_control_return")).map((turn) => turn.system?.text || ""), [
+      "Control back to the user."
+    ]);
+
+    const afterAnswer = await runtime.runIntent("agent_control_return", "talk_to_codex", {
+      fields: {
+        conversationRequest: "Try again."
+      },
+      stepId: returned.currentStep,
+      stepStatus: returned.stepMachine.status
+    });
+    assert.equal(afterAnswer.stepMachine.status, "awaiting_agent_result");
+    assert.equal(afterAnswer.actionResult.status, "prompt_ready");
+  });
+});
+
 test("vibe64 presentation omits unavailable continue controls while Codex waits for input", () => {
   const waiting = applyWorkflowPresentation({
     actions: [

@@ -17,6 +17,7 @@
       :hint="hint"
       :label="label"
       :persistent-hint="persistentHint"
+      :placeholder="placeholder"
       :rows="rows"
       :variant="variant"
       @update:model-value="$emit('update:modelValue', String($event || ''))"
@@ -57,6 +58,10 @@ import {
 const emit = defineEmits(["update:modelValue"]);
 
 const props = defineProps({
+  attachmentsEnabled: {
+    default: true,
+    type: Boolean
+  },
   autoGrow: {
     default: true,
     type: Boolean
@@ -85,6 +90,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  placeholder: {
+    default: "",
+    type: String
+  },
   rows: {
     default: 4,
     type: [Number, String]
@@ -99,9 +108,15 @@ const props = defineProps({
   }
 });
 
-const { uploadAttachment } = useVibe64CodexCommands();
+const codexCommands = props.attachmentsEnabled
+  ? useVibe64CodexCommands()
+  : null;
+const uploadAttachment = codexCommands?.uploadAttachment || (async () => ({
+  error: "Attachments are disabled for this prompt.",
+  ok: false
+}));
 const attachments = useCodexAttachments({
-  canUpload: () => !props.disabled,
+  canUpload: () => props.attachmentsEnabled && !props.disabled,
   onUploaded: async (uploaded = []) => {
     updatePromptWithAttachments(uploaded);
   },

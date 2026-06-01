@@ -536,6 +536,12 @@ async function sendCtrlC() {
   });
 }
 
+async function sendEscape() {
+  return sendTerminalData("\u001b", {
+    source: "user"
+  });
+}
+
 function toggleExpanded() {
   expanded.value = !expanded.value;
   if (expanded.value) {
@@ -600,7 +606,8 @@ watch(terminalHost, (host) => {
 });
 
 defineExpose({
-  focusTerminal: () => focusWritableTerminalWhenShown(terminalDisplayActive.value)
+  focusTerminal: () => focusWritableTerminalWhenShown(terminalDisplayActive.value),
+  sendEscape
 });
 
 </script>

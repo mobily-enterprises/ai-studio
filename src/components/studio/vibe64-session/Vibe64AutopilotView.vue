@@ -171,12 +171,12 @@
             class="studio-autopilot__inline-control"
             :can-submit-selected-control="canSubmitSelectedControl"
             layout="center"
-            :running="running"
+            :running="composerInputLocked"
             :selected-control="selectedControl"
             :selected-control-fields="selectedControlFields"
             :selected-control-values="selectedControlValues"
             sticky-actions
-            :workflow-controls="workflowButtonControls"
+            :workflow-controls="activeComposerWorkflowControls"
             @activate-control="activateWorkflowButtonControl"
             @cancel="clearSelectedControl"
             @submit="submitSelectedWorkflowControl"
@@ -265,25 +265,52 @@
             as-form
             attach-textarea
             class="studio-autopilot__control-form"
-            :cancel-visible="!selectedControlIsPrimary"
+            :cancel-visible="!composerInputLocked && !selectedControlIsPrimary"
             :can-submit-selected-control="canSubmitSelectedControl"
             inline-submit
+            :interrupt-visible="codexInterruptVisible"
             layout="split"
-            :running="running"
+            :running="composerInputLocked"
             :selected-control="selectedControl"
             :selected-control-fields="selectedControlFields"
             :selected-control-values="selectedControlValues"
             :session-id="sessionId"
             :textarea-rows="2"
-            :workflow-controls="workflowButtonControls"
+            :workflow-controls="activeComposerWorkflowControls"
             @activate-control="activateControl"
             @cancel="clearSelectedControl"
+            @interrupt="requestCodexInterrupt"
             @submit="submitSelectedControl"
             @update-value="updateSelectedControlValue"
           />
 
+          <Vibe64WorkflowControlForm
+            v-else-if="passiveComposerVisible"
+            as-form
+            attach-textarea
+            :attachments-enabled="false"
+            class="studio-autopilot__control-form"
+            :cancel-visible="false"
+            :can-submit-selected-control="false"
+            inline-submit
+            input-disabled
+            :interrupt-visible="codexInterruptVisible"
+            layout="split"
+            :running="passiveComposerBusy"
+            :selected-control="passiveComposerControl"
+            :selected-control-fields="passiveComposerFields"
+            :selected-control-values="passiveComposerValues"
+            :session-id="sessionId"
+            :textarea-rows="2"
+            :workflow-controls="activeComposerWorkflowControls"
+            @activate-control="activateControl"
+            @interrupt="requestCodexInterrupt"
+            @submit="submitPassiveComposer"
+            @update-value="updatePassiveComposer"
+          />
+
           <div
-            v-if="workflowButtonControls.length && !selectedControl"
+            v-if="workflowButtonControls.length && !selectedControl && !passiveComposerVisible"
             class="studio-autopilot__actions studio-autopilot__screen-actions"
           >
             <v-btn
@@ -549,6 +576,10 @@ const props = defineProps({
     default: () => ({}),
     type: Object
   },
+  interruptCodexTurn: {
+    default: async () => false,
+    type: Function
+  },
   page: {
     default: () => ({}),
     type: Object
@@ -749,6 +780,15 @@ const workflowExecuting = computed(() => Boolean(
   autopilotBusy.value ||
   commandRunning.value
 ));
+const composerInputLocked = computed(() => Boolean(
+  props.codexThinking ||
+  running.value ||
+  displayRunning.value ||
+  commandRunning.value ||
+  stepInput.saving ||
+  props.page?.busy
+));
+const codexInterruptVisible = computed(() => Boolean(props.codexThinking));
 const thinkingVisible = computed(() => Boolean(
   props.codexThinking ||
   running.value ||
@@ -783,10 +823,20 @@ const responsePreviewVisible = computed(() => Boolean(
   )
 ));
 const chatTakeoverVisible = computed(() => Boolean(reportPreviewVisible.value));
+const conversationLogReady = computed(() => Boolean(
+  props.conversationLog?.visible &&
+  !props.conversationLog?.loading
+));
+const conversationHasTurns = computed(() => Boolean(
+  Array.isArray(props.conversationLog?.turns) &&
+  props.conversationLog.turns.length
+));
 const screenMessageIsGuidance = computed(() => String(screenState.value.variant || "") === "guide");
 const guidanceScreenVisible = computed(() => Boolean(
   !chatTakeoverVisible.value &&
   screenMessageIsGuidance.value &&
+  conversationLogReady.value &&
+  !conversationHasTurns.value &&
   screenMessage.value &&
   !commandTerminalVisible.value
 ));
@@ -830,13 +880,35 @@ const statusActionsVisible = computed(() => Boolean(
 ));
 const composerVisible = computed(() => Boolean(
   !chatTakeoverVisible.value &&
-  (
-    stepInputFormVisible.value ||
-    selectedScreenControlVisible.value ||
-    workflowButtonControls.value.length ||
-    statusActionsVisible.value
-  )
+  props.active &&
+  props.session
 ));
+const passiveComposerVisible = computed(() => Boolean(
+  !stepInputFormVisible.value &&
+  !selectedScreenControlVisible.value
+));
+const passiveComposerBusy = computed(() => Boolean(
+  composerInputLocked.value ||
+  thinkingVisible.value
+));
+const passiveComposerFields = computed(() => [
+  {
+    kind: "textarea",
+    label: "What would you like to do?",
+    name: "message",
+    required: false,
+    value: ""
+  }
+]);
+const passiveComposerControl = computed(() => ({
+  id: "passive_composer",
+  inputFields: passiveComposerFields.value,
+  label: "Send",
+  style: "primary"
+}));
+const passiveComposerValues = computed(() => ({
+  message: ""
+}));
 const chatActivityMessages = computed(() => [
   guidanceActivityMessage.value,
   responsePreviewActivityMessage.value
@@ -903,7 +975,7 @@ const {
   onRunClientControl: runClientControl,
   onRunControl: runWorkflowControl,
   primaryIntentId,
-  running
+  running: composerInputLocked
 });
 const workflowButtonControls = computed(() => {
   return screenControls.value.map((control) => ({
@@ -916,6 +988,9 @@ const workflowButtonControls = computed(() => {
     sourceControl: control
   }));
 });
+const activeComposerWorkflowControls = computed(() => (
+  composerInputLocked.value ? [] : workflowButtonControls.value
+));
 const stepInputActionHandlers = computed(() => ({
   ...props.actions,
   runAction: runActionAfterStepInput
@@ -1008,6 +1083,21 @@ async function submitSelectedWorkflowControl() {
     return false;
   }
   return submitSelectedControl();
+}
+
+function submitPassiveComposer() {
+  return false;
+}
+
+function updatePassiveComposer() {
+  return false;
+}
+
+async function requestCodexInterrupt() {
+  if (!codexInterruptVisible.value) {
+    return false;
+  }
+  return await props.interruptCodexTurn();
 }
 
 async function runActionFromStepInput(action = {}) {
@@ -1114,6 +1204,7 @@ async function runClientControl(control = {}) {
 function controlDisabled(control = {}) {
   return Boolean(
     props.page.busy ||
+    props.codexThinking ||
     running.value ||
     stepInput.saving ||
     control.enabled !== true ||

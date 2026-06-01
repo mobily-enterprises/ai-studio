@@ -1435,6 +1435,273 @@ test.describe("Autopilot dumb client contract", () => {
     expect(advances).toBe(0);
   });
 
+  test("keeps a disabled composer visible when the session is temporarily not accepting input", async ({ page }) => {
+    const session = sessionPayload({
+      intents: [],
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "wait",
+            reason: "agent"
+          }
+        },
+        screen: {
+          kind: "conversation",
+          message: "Waiting for Codex.",
+          primaryIntentId: "",
+          sections: [
+            {
+              kind: "response_preview"
+            }
+          ],
+          title: "Waiting for Codex"
+        },
+        step: {
+          id: "server_step",
+          label: "Talk to Codex",
+          status: "awaiting_agent_result"
+        }
+      },
+      stepMachine: {
+        status: "awaiting_agent_result",
+        stepId: "server_step"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      conversationLog: [
+        {
+          turnId: "turn-1",
+          user: {
+            at: "2026-05-25T01:02:00.000Z",
+            role: "user",
+            text: "Please inspect the current state."
+          }
+        }
+      ]
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const composerInput = page.getByLabel("What would you like to do?");
+    await expect(composerInput).toBeVisible();
+    await expect(composerInput).toBeDisabled();
+  });
+
+  test("keeps the Codex composer stable and interrupts the active turn from the inline button", async ({ page }) => {
+    await mockCodexTerminalPreviewSocket(page);
+    const intentRequests: unknown[] = [];
+    const session = sessionPayload({
+      intents: [
+        {
+          enabled: true,
+          id: "talk_to_codex",
+          inputFields: [
+            {
+              kind: "textarea",
+              label: "What do you want to ask Codex?",
+              name: "conversationRequest"
+            }
+          ],
+          label: "Ask Codex",
+          style: "primary"
+        },
+        {
+          enabled: true,
+          id: "continue_step",
+          label: "Next step",
+          style: "primary"
+        }
+      ],
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "stop",
+            reason: "user"
+          }
+        },
+        screen: {
+          kind: "conversation",
+          message: "What would you like to do?",
+          primaryIntentId: "talk_to_codex",
+          sections: [
+            {
+              kind: "response_preview"
+            }
+          ],
+          title: "Talk to Codex",
+          variant: "guide"
+        },
+        step: {
+          id: "server_step",
+          label: "Talk to Codex",
+          status: "waiting_for_input"
+        }
+      },
+      stepMachine: {
+        status: "waiting_for_input",
+        stepId: "server_step"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      conversationLog: [
+        {
+          assistant: {
+            at: "2026-05-25T01:03:00.000Z",
+            role: "assistant",
+            text: "Previous Codex answer."
+          },
+          turnId: "turn-1",
+          user: {
+            at: "2026-05-25T01:02:00.000Z",
+            role: "user",
+            text: "Please inspect the current state."
+          }
+        }
+      ],
+      onIntent: (body) => {
+        intentRequests.push(body);
+        Object.assign(session, {
+          codexTerminal: {
+            commandPreview: "codex",
+            id: "server-codex-terminal",
+            status: "running"
+          },
+          presentation: {
+            ...session.presentation as Record<string, unknown>,
+            auto: {
+              nextOperation: {
+                executable: false,
+                kind: "wait",
+                reason: "agent"
+              }
+            },
+            prompt: {
+              state: "waiting_for_agent",
+              statusText: "Codex is thinking."
+            },
+            screen: {
+              ...((session.presentation as Record<string, unknown>).screen as Record<string, unknown>),
+              showProgress: true
+            },
+            step: {
+              id: "server_step",
+              label: "Talk to Codex",
+              status: "awaiting_agent_result"
+            },
+            terminal: {
+              codex: {
+                terminalSessionId: "server-codex-terminal"
+              }
+            }
+          },
+          stepMachine: {
+            status: "awaiting_agent_result",
+            stepId: "server_step"
+          }
+        });
+      }
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    const composerInput = page.getByLabel("What do you want to ask Codex?");
+    await composerInput.fill("Please tighten this up.");
+    await page.getByRole("button", { name: "Ask Codex" }).click();
+
+    await expect.poll(() => intentRequests).toHaveLength(1);
+    await expect(composerInput).toBeVisible();
+    await expect(composerInput).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Ask Codex" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Next step" })).toHaveCount(0);
+    const stopButton = page.getByRole("button", { name: "Stop Codex" });
+    await expect(stopButton).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __vibe64CodexTerminalSocketCount?: () => number }).__vibe64CodexTerminalSocketCount?.() || 0
+    ))).toBeGreaterThan(0);
+
+    await stopButton.click();
+
+    await expect.poll(async () => page.evaluate(() => (
+      (window as unknown as { __vibe64CodexTerminalInputs?: string[] }).__vibe64CodexTerminalInputs || []
+    ))).toContain("\u001b");
+  });
+
+  test("does not repeat the conversation starter after real chat history exists", async ({ page }) => {
+    const session = sessionPayload({
+      intents: [
+        {
+          enabled: true,
+          id: "talk_to_codex",
+          inputFields: [
+            {
+              kind: "textarea",
+              label: "What would you like to do?",
+              name: "conversationRequest"
+            }
+          ],
+          label: "Ask Codex",
+          style: "primary"
+        }
+      ],
+      presentation: {
+        auto: {
+          nextOperation: {
+            executable: false,
+            kind: "stop",
+            reason: "user"
+          }
+        },
+        screen: {
+          kind: "conversation",
+          message: "What would you like to do?",
+          primaryIntentId: "talk_to_codex",
+          sections: [
+            {
+              kind: "response_preview"
+            }
+          ],
+          title: "Talk to Codex",
+          variant: "guide"
+        },
+        step: {
+          id: "server_step",
+          label: "Talk to Codex",
+          status: "waiting_for_input"
+        }
+      },
+      stepMachine: {
+        status: "waiting_for_input",
+        stepId: "server_step"
+      }
+    });
+    await mockVibe64Session(page, session, {
+      conversationLog: [
+        {
+          assistant: {
+            at: "2026-05-25T01:03:00.000Z",
+            role: "assistant",
+            text: "Hello."
+          },
+          turnId: "turn-1",
+          user: {
+            at: "2026-05-25T01:02:00.000Z",
+            role: "user",
+            text: "Say hello."
+          }
+        }
+      ]
+    });
+
+    await page.goto(`${BASE_URL}/home`);
+
+    await expect(page.getByLabel("What would you like to do?")).toBeVisible();
+    await expect(page.locator(".studio-conversation-log__message-row--assistant", {
+      hasText: "What would you like to do?"
+    })).toHaveCount(0);
+  });
+
   test("aligns the Inspect shell terminal bottom with the Codex terminal", async ({ page }) => {
     await page.setViewportSize({
       height: 948,
