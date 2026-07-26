@@ -162,7 +162,7 @@ const JSKIT_TOOLING_CONTRACT = [
 ].join("\n");
 const JSKIT_AGENT_GUIDE_CONTRACT = [
   "Read the agent-friendly JSKIT guide before adding features: `node_modules/@jskit-ai/agent-docs/guide/agent/index.md` and the specific guide pages for the work.",
-  "For database and CRUD work, read `node_modules/@jskit-ai/agent-docs/guide/agent/app-setup/database-layer.md`, `node_modules/@jskit-ai/agent-docs/guide/agent/generators/crud-generators.md`, and `node_modules/@jskit-ai/agent-docs/patterns/crud-scaffolding.md` before choosing commands.",
+  "For database and CRUD work, read and follow the canonical contract at `node_modules/@jskit-ai/agent-docs/patterns/crud-scaffolding.md` before choosing commands.",
   "For UI, pages, links, menus, tabs, outlets, or placement work, read `node_modules/@jskit-ai/agent-docs/guide/agent/generators/ui-generators.md` and `node_modules/@jskit-ai/agent-docs/patterns/placements.md` before implementation.",
   "Use individual `npx jskit generate ... help` commands only when the guide and baseline discovery commands do not provide the exact syntax or option names needed for the current task."
 ].join("\n");
@@ -287,13 +287,31 @@ function jskitDatabaseContract(databaseRuntime) {
   }
   return [
     `Configured database runtime: ${databaseRuntime}.`,
-    "Use JSKIT database/runtime modules, resource modules, and generated CRUD/persistence scaffolds for durable data.",
-    "Never create migration files directly. Create or update the database table first, then run the server-side CRUD generator against that table.",
-    "Every table added for application data must have `npx jskit generate crud-server-generator scaffold ...` run for it, even when the first UI is small.",
-    "Feature code must access durable data through generated JSKIT/json-rest-api resource and CRUD APIs, not direct Knex queries.",
-    "Do not store durable application data in JSON files, in-memory maps, or custom filesystem stores.",
-    "Verify available database modules with `npx jskit list` and `npx jskit show @jskit-ai/database-runtime` before adding custom persistence."
+    "JSKIT owns schema, CRUD, migration, and persistence rules. Follow `node_modules/@jskit-ai/agent-docs/patterns/crud-scaffolding.md`; do not infer those rules from this Vibe64 prompt.",
+    "Use only the Vibe64-provided DB_* values and the designated managed development database for this project.",
+    "Never alter a production, legacy, historical, external, or otherwise valuable database while developing or verifying schema changes.",
+    "Run destructive checks and migration-from-zero verification only in a disposable database whose name is derived from `$DB_NAME`; never substitute another base database or credentials.",
+    "If `$DB_NAME` is missing or does not identify this project's managed development database, stop and report the Vibe64 setup problem."
   ].join("\n");
+}
+
+function resolveCanonicalJskitDevelopmentDatabaseName({
+  requireConfigured = false,
+  runtimeConfigEnv = {},
+  targetRoot = ""
+} = {}) {
+  const expectedDatabaseName = jskitMariaDbDatabaseName(targetRoot);
+  const configuredDatabaseName = normalizeText(runtimeConfigEnv.DB_NAME);
+  if (
+    (requireConfigured && !configuredDatabaseName) ||
+    (configuredDatabaseName && configuredDatabaseName !== expectedDatabaseName)
+  ) {
+    throw vibe64Error(
+      "JSKIT development DB_NAME does not match this project.",
+      "vibe64_development_database_identity_mismatch"
+    );
+  }
+  return expectedDatabaseName;
 }
 
 function jskitSeedDatabaseGuidance(databaseRuntime = "") {
@@ -941,14 +959,11 @@ class JskitTargetAdapter extends Vibe64DescribedWorkflowTargetAdapter {
     if (!jskitManagedDatabaseEnabled(config)) {
       return [];
     }
-    const expectedDatabaseName = jskitMariaDbDatabaseName(targetRoot);
-    const databaseName = normalizeText(runtimeConfigEnv.DB_NAME);
-    if (!databaseName || databaseName !== expectedDatabaseName) {
-      throw vibe64Error(
-        "JSKIT development DB_NAME does not match this project.",
-        "vibe64_development_database_identity_mismatch"
-      );
-    }
+    const databaseName = resolveCanonicalJskitDevelopmentDatabaseName({
+      requireConfigured: true,
+      runtimeConfigEnv,
+      targetRoot
+    });
     const [command, ...args] = jskitManagedMariaDbDevelopmentDatabaseDropCommandArgs({
       databaseName,
       serviceDataRoot,
@@ -979,7 +994,10 @@ class JskitTargetAdapter extends Vibe64DescribedWorkflowTargetAdapter {
     ) {
       return [];
     }
-    const databaseName = normalizeText(runtimeConfigEnv.DB_NAME) || jskitMariaDbDatabaseName(targetRoot);
+    const databaseName = resolveCanonicalJskitDevelopmentDatabaseName({
+      runtimeConfigEnv,
+      targetRoot
+    });
     const [command, ...args] = jskitManagedMariaDbDevelopmentDatabaseCommandArgs({
       databaseName,
       serviceDataRoot,

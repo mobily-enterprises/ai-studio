@@ -255,6 +255,21 @@ test("jskit adapter prepares the canonical development database without executin
   assert.equal(plans[0].id, "jskit-managed-mariadb");
   assert.match(plans[0].args.join(" "), /CREATE DATABASE IF NOT EXISTS/u);
   assert.match(plans[0].args.join(" "), new RegExp(databaseName, "u"));
+
+  await assert.rejects(
+    () => adapter.listExecutionEnvironmentPreparations({
+      config: {},
+      runtimeConfigPhases: [RUNTIME_CONFIG_PHASES.SERVER],
+      runtimeConfigEnv: {
+        DB_NAME: "another_project"
+      },
+      serviceDataRoot: "/var/lib/vibe64/unit-owner/services",
+      targetRoot
+    }),
+    {
+      code: "vibe64_development_database_identity_mismatch"
+    }
+  );
 });
 
 test("jskit adapter deletes only the canonical development DB_NAME", async () => {
@@ -315,7 +330,7 @@ test("jskit adapter exposes selected-project facts, commands, and prompt context
     assert.equal(promptContext.blueprint_relative_path, ".jskit/APP_BLUEPRINT.md");
     assert.equal(promptContext.blueprint_path, path.join(targetRoot, ".jskit/APP_BLUEPRINT.md"));
     assert.match(promptContext.agent_guide_contract, /guide\/agent\/index\.md/u);
-    assert.match(promptContext.agent_guide_contract, /app-setup\/database-layer\.md/u);
+    assert.match(promptContext.agent_guide_contract, /patterns\/crud-scaffolding\.md/u);
     assert.match(promptContext.agent_guide_contract, /Use individual `npx jskit generate \.\.\. help` commands only/u);
     assert.doesNotMatch(promptContext.tooling_contract, /helper-map update/u);
     assert.doesNotMatch(promptContext.tooling_contract, /generated code index/u);
@@ -488,11 +503,13 @@ test("jskit adapter reflects configured database runtime in prompt context", asy
     assert.equal(promptContext.app_auth_mode, JSKIT_AUTH_PROVIDER_NONE);
     assert.match(promptContext.app_auth_contract, /does not have user accounts or app login/u);
     assert.match(promptContext.database_contract, /Configured database runtime: mariadb/u);
-    assert.match(promptContext.database_contract, /Never create migration files directly/u);
-    assert.match(promptContext.database_contract, /Every table added for application data must have `npx jskit generate crud-server-generator scaffold \.\.\.` run for it/u);
-    assert.match(promptContext.database_contract, /json-rest-api/u);
-    assert.match(promptContext.database_contract, /not direct Knex queries/u);
-    assert.match(promptContext.database_contract, /Do not store durable application data in JSON files/u);
+    assert.match(promptContext.database_contract, /JSKIT owns schema, CRUD, migration, and persistence rules/u);
+    assert.match(promptContext.database_contract, /agent-docs\/patterns\/crud-scaffolding\.md/u);
+    assert.match(promptContext.database_contract, /Vibe64-provided DB_\*/u);
+    assert.match(promptContext.database_contract, /production, legacy, historical, external/u);
+    assert.match(promptContext.database_contract, /derived from `\$DB_NAME`/u);
+    assert.doesNotMatch(promptContext.database_contract, /Every table added for application data/u);
+    assert.doesNotMatch(promptContext.database_contract, /Never create migration files directly/u);
 
     const invalidPromptContext = await adapter.getPromptContext({
       config: {
@@ -1873,7 +1890,7 @@ test("jskit prompt actions include JSKIT prompt context", async () => {
     assert.match(afterPrompt.actionResult.prompt, /Do not bypass it, patch around it in the application/u);
     assert.match(afterPrompt.actionResult.prompt, /prefer adapting the existing generated file in place/u);
     assert.match(afterPrompt.actionResult.prompt, /Do not replace the generated structure with a separate custom implementation/u);
-    assert.match(afterPrompt.actionResult.prompt, /guide\/agent\/generators\/crud-generators\.md/u);
+    assert.match(afterPrompt.actionResult.prompt, /patterns\/crud-scaffolding\.md/u);
     assert.match(afterPrompt.actionResult.prompt, /Use individual `npx jskit generate \.\.\. help` commands only/u);
     assert.doesNotMatch(afterPrompt.actionResult.prompt, /npx jskit generate crud-server-generator scaffold help/u);
     assert.match(afterPrompt.actionResult.prompt, /Do not plan hand-created packages/u);
@@ -2029,10 +2046,12 @@ test("jskit execute-plan prompt requires generators, placements, and database mo
     assert.match(afterPrompt.actionResult.prompt, /read the agent-friendly placement docs before implementation/u);
     assert.match(afterPrompt.actionResult.prompt, /node_modules\/@jskit-ai\/agent-docs\/patterns\/placements\.md/u);
     assert.match(afterPrompt.actionResult.prompt, /Configured database runtime: mariadb/u);
-    assert.match(afterPrompt.actionResult.prompt, /Never create migration files directly/u);
-    assert.match(afterPrompt.actionResult.prompt, /run the server-side CRUD generator for every added table/u);
-    assert.match(afterPrompt.actionResult.prompt, /do not use direct Knex access from feature code/u);
-    assert.match(afterPrompt.actionResult.prompt, /Do not store durable application data in JSON files/u);
+    assert.match(afterPrompt.actionResult.prompt, /JSKIT owns schema, CRUD, migration, and persistence rules/u);
+    assert.match(afterPrompt.actionResult.prompt, /agent-docs\/patterns\/crud-scaffolding\.md/u);
+    assert.match(afterPrompt.actionResult.prompt, /production, legacy, historical, external/u);
+    assert.match(afterPrompt.actionResult.prompt, /derived from `\$DB_NAME`/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /Every table added for application data/u);
+    assert.doesNotMatch(afterPrompt.actionResult.prompt, /Never create migration files directly/u);
     assert.match(afterPrompt.actionResult.prompt, /crud-ui-generator crud/u);
     assertJskitUiVerificationContract(afterPrompt.actionResult.prompt);
   });

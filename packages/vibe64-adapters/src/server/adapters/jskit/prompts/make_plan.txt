@@ -8,7 +8,7 @@ JSKIT-specific planning guidance:
 - Plan new JSKIT-owned files through `npx jskit generate ...`, `npx jskit add ...`, or another documented JSKIT CLI command first.
 - Do not plan hand-created packages, package descriptors, provider entrypoints, route files, resource modules, database modules, migrations, generated client surfaces, page trees, or package glue unless the plan first explains why no JSKIT command can create the needed ownership skeleton.
 - For navigation links, menus, tabs, outlets, or placement targets, plan to read the agent-friendly placement docs and use JSKIT generator/link-placement conventions instead of hand-editing `src/placement.js`.
-- For persistence, follow the configured JSKIT database contract: create/update tables before generation, run the server-side CRUD generator for every added table, do not hand-write migrations, and do not plan direct Knex access from feature code.
+- For persistence, plan against JSKIT's canonical database/CRUD contract and Vibe64's configured database-targeting safety contract from the session briefing.
 - If the planned change touches browser-visible UI-owned files, include the targeted Playwright/browser workflow and JSKIT UI verification receipt step before final verification.
 - Include the focused verification path needed for the planned change.
 
