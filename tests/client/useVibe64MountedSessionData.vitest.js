@@ -131,26 +131,51 @@ describe("useVibe64MountedSessionData", () => {
     await nextTick();
     expect(controller.session.value.agentSession.turn.active).toBe(true);
 
-    const completionPayload = {
+    const successorPayload = {
       agentSession: {
         turn: {
-          active: false,
-          id: "turn-a",
-          state: "idle"
+          active: true,
+          id: "turn-b",
+          state: "active"
         }
       },
-      reason: "codex-app-server-turn-idle",
+      reason: "codex-app-server-turn-active",
       revision: 11,
       sessionId: "session-a"
     };
     const turnListener = realtimeMocks.events.find((listener) => listener.matches({
-      payload: completionPayload
+      payload: successorPayload
     }));
     expect(turnListener).toBeTruthy();
+    turnListener.onEvent({ payload: successorPayload });
+    await nextTick();
+    expect(controller.session.value.agentSession.turn).toMatchObject({
+      active: true,
+      id: "turn-b",
+      state: "active"
+    });
+    expect(controller.session.value.revision).toBe(11);
+
+    const completionPayload = {
+      agentSession: {
+        turn: {
+          active: false,
+          id: "turn-b",
+          state: "idle"
+        }
+      },
+      reason: "codex-app-server-turn-idle",
+      revision: 12,
+      sessionId: "session-a"
+    };
     turnListener.onEvent({ payload: completionPayload });
     await nextTick();
-    expect(controller.session.value.agentSession.turn.active).toBe(false);
-    expect(controller.session.value.revision).toBe(11);
+    expect(controller.session.value.agentSession.turn).toMatchObject({
+      active: false,
+      id: "turn-b",
+      state: "idle"
+    });
+    expect(controller.session.value.revision).toBe(12);
 
     realtimeMocks.socket.connected = true;
     realtimeMocks.handlers.get("connect")();

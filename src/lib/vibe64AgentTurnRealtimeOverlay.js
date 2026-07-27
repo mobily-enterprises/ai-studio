@@ -55,37 +55,6 @@ function latestAgentTurnRealtimeOverlay(current = null, candidate = null) {
   return current;
 }
 
-function agentTurnIdentity(agentSession = {}) {
-  const source = plainObjectValue(agentSession);
-  return {
-    threadId: String(plainObjectValue(source.thread).id || "").trim(),
-    turnId: String(plainObjectValue(source.turn).id || "").trim()
-  };
-}
-
-function agentTurnOverlayMatchesSession(session = {}, overlay = {}) {
-  const overlayIdentity = agentTurnIdentity(overlay.agentSession);
-  if (!overlayIdentity.threadId && !overlayIdentity.turnId) {
-    return true;
-  }
-  const sessionIdentity = agentTurnIdentity(session.agentSession);
-  if (
-    overlayIdentity.threadId &&
-    sessionIdentity.threadId &&
-    overlayIdentity.threadId !== sessionIdentity.threadId
-  ) {
-    return false;
-  }
-  if (
-    overlayIdentity.turnId &&
-    sessionIdentity.turnId &&
-    overlayIdentity.turnId !== sessionIdentity.turnId
-  ) {
-    return false;
-  }
-  return true;
-}
-
 function mergeAgentRunOverlay(agentRuns = [], overlayRun = {}) {
   const runs = Array.isArray(agentRuns) ? agentRuns : [];
   const runId = String(overlayRun.id || "").trim();
@@ -112,13 +81,16 @@ function mergeAgentRunOverlay(agentRuns = [], overlayRun = {}) {
 
 function sessionWithAgentTurnRealtimeOverlay(session = null, overlay = null) {
   const currentRevision = sessionRevision(session?.revision);
+  // Goal continuations and context replacement legitimately change provider
+  // identities. The fixed Vibe64 session ID scopes the event, and its monotonic
+  // revision orders it; comparing a newer turn to an older snapshot would
+  // permanently reject the successor's eventual completion.
   if (
     !session ||
     !overlay ||
     session?.ok === false ||
     session.sessionId !== overlay.sessionId ||
-    (currentRevision !== null && overlay.revision <= currentRevision) ||
-    !agentTurnOverlayMatchesSession(session, overlay)
+    (currentRevision !== null && overlay.revision <= currentRevision)
   ) {
     return session;
   }

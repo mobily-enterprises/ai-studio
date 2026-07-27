@@ -1031,7 +1031,7 @@ describe("mounted Vibe64 session state", () => {
     });
   });
 
-  it("orders assistant turn events and canonical session snapshots by revision", () => {
+  it("orders assistant turn events across successor identities by revision", () => {
     const session = {
       agentRuns: [
         {
@@ -1068,14 +1068,14 @@ describe("mounted Vibe64 session state", () => {
       },
       agentSession: {
         thread: {
-          id: "thread-1"
+          id: "thread-2"
         },
         turn: {
           active: true,
-          id: "turn-1",
+          id: "turn-2",
           state: "active",
           status: "inProgress",
-          threadId: "thread-1"
+          threadId: "thread-2"
         }
       },
       revision: 12,
@@ -1085,6 +1085,8 @@ describe("mounted Vibe64 session state", () => {
 
     expect(activeSession).not.toBe(session);
     expect(activeSession.agentSession.turn.active).toBe(true);
+    expect(activeSession.agentSession.thread.id).toBe("thread-2");
+    expect(activeSession.agentSession.turn.id).toBe("turn-2");
     expect(activeSession.agentSession.turn.state).toBe("active");
     expect(activeSession.agentRuns[0].state).toBe("active");
     expect(activeSession.revision).toBe(12);
@@ -1098,14 +1100,14 @@ describe("mounted Vibe64 session state", () => {
       },
       agentSession: {
         thread: {
-          id: "thread-1"
+          id: "thread-2"
         },
         turn: {
           active: false,
-          id: "turn-1",
+          id: "turn-2",
           state: "idle",
           status: "completed",
-          threadId: "thread-1"
+          threadId: "thread-2"
         }
       },
       revision: 13,
@@ -1114,6 +1116,8 @@ describe("mounted Vibe64 session state", () => {
     const idleSession = sessionWithAgentTurnRealtimeOverlay(session, idleOverlay);
 
     expect(idleSession.agentSession.turn.active).toBe(false);
+    expect(idleSession.agentSession.thread.id).toBe("thread-2");
+    expect(idleSession.agentSession.turn.id).toBe("turn-2");
     expect(idleSession.agentSession.turn.state).toBe("idle");
     expect(idleSession.agentRuns[0].state).toBe("completed");
     expect(idleSession.revision).toBe(13);
