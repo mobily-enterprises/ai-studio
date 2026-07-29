@@ -26,6 +26,11 @@ const COMPOSER_MESSAGE_EVENT_KINDS = Object.freeze({
   RETRIED: "composer-message-retried"
 });
 
+function composerMessageDeliveryAttempt(value, fallback = 1) {
+  const attempt = Number(value);
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : fallback;
+}
+
 function composerMessageRun(source = {}) {
   if (normalizeText(source?.id) === COMPOSER_MESSAGE_AGENT_RUN_ID) {
     return source;
@@ -94,6 +99,7 @@ function composerMessageRequests(source = {}) {
         displayFields: request.displayFields && typeof request.displayFields === "object" && !Array.isArray(request.displayFields)
           ? request.displayFields
           : {},
+        deliveryAttempt: composerMessageDeliveryAttempt(request.deliveryAttempt),
         error: "",
         fields: request.fields && typeof request.fields === "object" && !Array.isArray(request.fields)
           ? request.fields
@@ -132,6 +138,10 @@ function composerMessageRequests(source = {}) {
           ? retryRequest.agentSettings
           : current.agentSettings,
         attempts: 0,
+        deliveryAttempt: composerMessageDeliveryAttempt(
+          event.deliveryAttempt,
+          current.deliveryAttempt + 1
+        ),
         error: "",
         lastAttemptAt: "",
         operationOutcome: "",
@@ -144,7 +154,8 @@ function composerMessageRequests(source = {}) {
       });
     } else if (
       kind === COMPOSER_MESSAGE_EVENT_KINDS.DEFERRED &&
-      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED
+      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED &&
+      composerMessageDeliveryAttempt(event.deliveryAttempt, current.deliveryAttempt) === current.deliveryAttempt
     ) {
       requests.set(messageId, {
         ...current,
@@ -158,7 +169,8 @@ function composerMessageRequests(source = {}) {
       });
     } else if (
       kind === COMPOSER_MESSAGE_EVENT_KINDS.DELIVERED &&
-      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED
+      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED &&
+      composerMessageDeliveryAttempt(event.deliveryAttempt, current.deliveryAttempt) === current.deliveryAttempt
     ) {
       requests.set(messageId, {
         ...current,
@@ -173,7 +185,8 @@ function composerMessageRequests(source = {}) {
       });
     } else if (
       kind === COMPOSER_MESSAGE_EVENT_KINDS.FAILED &&
-      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED
+      current.state === COMPOSER_MESSAGE_STATES.ACCEPTED &&
+      composerMessageDeliveryAttempt(event.deliveryAttempt, current.deliveryAttempt) === current.deliveryAttempt
     ) {
       requests.set(messageId, {
         ...current,
@@ -241,6 +254,10 @@ function composerMessageBatch(requests = []) {
       conversationRequest: message
     },
     message,
+    messageAttempts: Object.fromEntries(messages.map((request) => [
+      request.messageId,
+      request.deliveryAttempt
+    ])),
     messageIds: messages.map((request) => request.messageId),
     messages,
     promptTemplateId: promptTemplateId && messages.every((request) => (
@@ -310,6 +327,7 @@ async function acceptComposerMessage(runtime, sessionId = "", input = {}) {
     }
     const run = await writeComposerMessageEvent(runtime, normalizedSessionId, {
       at: new Date().toISOString(),
+      deliveryAttempt: existing.deliveryAttempt + 1,
       kind: COMPOSER_MESSAGE_EVENT_KINDS.RETRIED,
       messageId: request.messageId,
       request: {
@@ -359,6 +377,7 @@ async function cancelComposerMessage(runtime, sessionId = "", messageId = "", in
 }
 
 async function settleComposerMessage(runtime, sessionId = "", messageId = "", {
+  deliveryAttempt = null,
   error = "",
   operationOutcome = "",
   outcome = COMPOSER_MESSAGE_SETTLEMENTS.DELIVERED,
@@ -389,8 +408,16 @@ async function settleComposerMessage(runtime, sessionId = "", messageId = "", {
   if (!current || current.state !== COMPOSER_MESSAGE_STATES.ACCEPTED) {
     return current || null;
   }
+  const expectedDeliveryAttempt = composerMessageDeliveryAttempt(
+    deliveryAttempt,
+    current.deliveryAttempt
+  );
+  if (current.deliveryAttempt !== expectedDeliveryAttempt) {
+    return current;
+  }
   const run = await writeComposerMessageEvent(runtime, normalizedSessionId, {
     at: new Date().toISOString(),
+    deliveryAttempt: expectedDeliveryAttempt,
     error: normalizeText(error),
     kind: eventKind,
     messageId: normalizedMessageId,

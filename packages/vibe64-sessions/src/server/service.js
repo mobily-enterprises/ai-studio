@@ -148,6 +148,21 @@ function normalizedInputText(value = "") {
   return String(value || "").trim();
 }
 
+function composerMessageDeliveryAttempt(message = {}) {
+  const attempt = Number(message?.deliveryAttempt);
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : 1;
+}
+
+function composerHandoffOwnsMessageAttempt(handoff = null, message = {}) {
+  const messageId = normalizedInputText(message?.messageId);
+  if (!messageId || !handoff?.submissionIds?.includes(messageId)) {
+    return false;
+  }
+  const handoffAttempt = Number(handoff.submissionAttempts?.[messageId]);
+  return (Number.isSafeInteger(handoffAttempt) && handoffAttempt > 0 ? handoffAttempt : 1) ===
+    composerMessageDeliveryAttempt(message);
+}
+
 async function sessionControlView(runtime, sessionId = "") {
   return runtime.getSession(sessionId, {
     inspectSource: false
@@ -907,19 +922,34 @@ async function prepareComposerHandoffForQueuedMessages(runtime, session = {}, ha
     ...(Array.isArray(handoff.clientSubmissionIds) ? handoff.clientSubmissionIds : []),
     ...(Array.isArray(currentHandoff.submissionIds) ? currentHandoff.submissionIds : [])
   ].map((value) => normalizedInputText(value)).filter(Boolean));
+  const attachedMessageAttempts = {
+    ...(handoff.clientSubmissionAttempts && typeof handoff.clientSubmissionAttempts === "object" &&
+      !Array.isArray(handoff.clientSubmissionAttempts)
+      ? handoff.clientSubmissionAttempts
+      : {}),
+    ...currentHandoff.submissionAttempts
+  };
   const additionalMessages = pendingComposerMessages(currentSession)
-    .filter((request) => !attachedMessageIds.has(request.messageId));
+    .filter((request) => !composerHandoffOwnsMessageAttempt(currentHandoff, request));
   if (!additionalMessages.length) {
     return {
       ...handoff,
+      clientSubmissionAttempts: attachedMessageAttempts,
       clientSubmissionIds: [...attachedMessageIds]
     };
   }
   for (const request of additionalMessages) {
     attachedMessageIds.add(request.messageId);
+    attachedMessageAttempts[request.messageId] = composerMessageDeliveryAttempt(request);
   }
   await recordComposerMessageRequests(runtime, sessionId, additionalMessages);
-  await attachComposerHandoffMessages(runtime, sessionId, handoffId, [...attachedMessageIds]);
+  await attachComposerHandoffMessages(
+    runtime,
+    sessionId,
+    handoffId,
+    [...attachedMessageIds],
+    attachedMessageAttempts
+  );
   const additionalText = additionalMessages
     .map((request) => normalizedInputText(request.message))
     .filter(Boolean)
@@ -933,6 +963,7 @@ async function prepareComposerHandoffForQueuedMessages(runtime, session = {}, ha
   });
   return {
     ...handoff,
+    clientSubmissionAttempts: attachedMessageAttempts,
     clientSubmissionIds: [...attachedMessageIds],
     terminalInput: [
       normalizedInputText(handoff.terminalInput || handoff.prompt),
@@ -1360,6 +1391,7 @@ async function describeAgentProvider(terminalService, agentSettings = {}, sessio
 
 async function acceptComposerHandoff(terminalService, runtime, session = {}, {
   agentSettings = {},
+  submissionAttempts = {},
   submissionId = "",
   submissionIds = []
 } = {}) {
@@ -1375,6 +1407,7 @@ async function acceptComposerHandoff(terminalService, runtime, session = {}, {
     ? {
         ...handoff,
         clientSubmissionId,
+        clientSubmissionAttempts: submissionAttempts,
         clientSubmissionIds: [...new Set([
           clientSubmissionId,
           ...(Array.isArray(submissionIds) ? submissionIds : [])
@@ -1387,6 +1420,7 @@ async function acceptComposerHandoff(terminalService, runtime, session = {}, {
     handoff: deliveryHandoff,
     providerId: provider.providerId,
     state: COMPOSER_HANDOFF_STATES.ACCEPTED,
+    submissionAttempts: deliveryHandoff.clientSubmissionAttempts,
     submissionId,
     submissionIds: deliveryHandoff.clientSubmissionIds,
     transportId: provider.transportId
@@ -1622,7 +1656,7 @@ async function startComposerMessageTurn(terminalService, coordinator, {
   const currentSession = await sessionControlView(runtime, sessionId);
   const currentHandoff = composerHandoffSnapshot(currentSession);
   if (
-    batch.messageIds.every((id) => currentHandoff?.submissionIds?.includes(id)) &&
+    batch.messages.every((message) => composerHandoffOwnsMessageAttempt(currentHandoff, message)) &&
     currentHandoff.state !== COMPOSER_HANDOFF_STATES.FAILED
   ) {
     return {
@@ -1681,6 +1715,7 @@ async function startComposerMessageTurn(terminalService, coordinator, {
   }
   const accepted = await acceptComposerHandoff(terminalService, runtime, actionSession, {
     agentSettings: batch.agentSettings,
+    submissionAttempts: batch.messageAttempts,
     submissionId: messageId,
     submissionIds: batch.messageIds
   });
@@ -1739,7 +1774,10 @@ async function publishComposerMessageChanged(publishSessionChanged, runtime, ses
 async function settleComposerMessageRequests(runtime, sessionId = "", requests = [], settlement = {}) {
   const settled = [];
   for (const request of Array.isArray(requests) ? requests : []) {
-    const message = await settleComposerMessage(runtime, sessionId, request.messageId, settlement);
+    const message = await settleComposerMessage(runtime, sessionId, request.messageId, {
+      ...settlement,
+      deliveryAttempt: composerMessageDeliveryAttempt(request)
+    });
     if (message) {
       settled.push(message);
     }
@@ -1765,8 +1803,9 @@ async function drainComposerMessages(terminalService, coordinator, publishSessio
       return null;
     }
     const currentHandoff = composerHandoffSnapshot(currentSession);
-    const handoffMessageIds = new Set(currentHandoff?.submissionIds || []);
-    const handoffMessages = queuedMessages.filter((request) => handoffMessageIds.has(request.messageId));
+    const handoffMessages = queuedMessages.filter((request) => (
+      composerHandoffOwnsMessageAttempt(currentHandoff, request)
+    ));
     if (handoffMessages.length) {
       if (currentHandoff.state === COMPOSER_HANDOFF_STATES.FAILED) {
         await settleComposerMessageRequests(runtime, sessionId, handoffMessages, {
@@ -3021,6 +3060,7 @@ function createService({
       const queuedMessages = pendingComposerMessages(session);
       for (const message of queuedMessages) {
         await settleComposerMessage(runtime, normalizedSessionId, message.messageId, {
+          deliveryAttempt: composerMessageDeliveryAttempt(message),
           error: "Message was not sent because the assistant was stopped.",
           operationOutcome: "cancelled_by_user",
           outcome: COMPOSER_MESSAGE_SETTLEMENTS.FAILED

@@ -102,6 +102,10 @@ test("composer message batches preserve each durable message while combining pro
 
   const batch = composerMessageBatch(pendingComposerMessages(runtime.session));
   assert.deepEqual(batch.messageIds, ["message-1", "message-2"]);
+  assert.deepEqual(batch.messageAttempts, {
+    "message-1": 1,
+    "message-2": 1
+  });
   assert.equal(batch.message, "First provider message\n\nSecond provider message");
   assert.equal(
     batch.displayFields.conversationRequest,
@@ -207,6 +211,7 @@ test("composer message retries preserve identity and choose delivery again", asy
   let message = composerMessageRequests(runtime.session)[0];
   assert.equal(message.state, "failed");
   assert.equal(message.attempts, 1);
+  assert.equal(message.deliveryAttempt, 1);
 
   message = await acceptComposerMessage(runtime, runtime.session.sessionId, {
     agentSettings: {
@@ -217,6 +222,7 @@ test("composer message retries preserve identity and choose delivery again", asy
     originId: "browser-after-reload"
   });
   assert.equal(message.state, "accepted");
+  assert.equal(message.deliveryAttempt, 2);
   assert.equal(message.error, "");
   assert.equal(message.agentSettings.providerId, "future-provider");
   assert.equal(message.attempts, 0);
@@ -224,6 +230,17 @@ test("composer message retries preserve identity and choose delivery again", asy
   assert.equal(message.originId, "browser-after-reload");
 
   await settleComposerMessage(runtime, runtime.session.sessionId, "message-1", {
+    deliveryAttempt: 1,
+    error: "Late failure from the first delivery attempt",
+    operationOutcome: "stale_delivery_failure",
+    outcome: COMPOSER_MESSAGE_SETTLEMENTS.FAILED
+  });
+  message = composerMessageRequests(runtime.session)[0];
+  assert.equal(message.state, "accepted");
+  assert.equal(message.deliveryAttempt, 2);
+
+  await settleComposerMessage(runtime, runtime.session.sessionId, "message-1", {
+    deliveryAttempt: 2,
     operationOutcome: "started_new_turn",
     outcome: COMPOSER_MESSAGE_SETTLEMENTS.DELIVERED,
     threadId: "thread-1",

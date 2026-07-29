@@ -300,6 +300,7 @@ function createComposerHandoffCoordinator({
         ? {
             ...handoff,
             clientSubmissionId: state.submissionId,
+            clientSubmissionAttempts: state.submissionAttempts,
             clientSubmissionIds: state.submissionIds
           }
         : handoff,

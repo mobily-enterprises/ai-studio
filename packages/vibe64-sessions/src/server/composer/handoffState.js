@@ -6,7 +6,7 @@ import {
 } from "@local/vibe64-core/server/core";
 
 const COMPOSER_HANDOFF_AGENT_RUN_ID = "composer_handoff";
-const COMPOSER_HANDOFF_SCHEMA_VERSION = 1;
+const COMPOSER_HANDOFF_SCHEMA_VERSION = 2;
 const COMPOSER_HANDOFF_STATES = Object.freeze({
   ACCEPTED: "accepted",
   ACTIVE: "active",
@@ -61,6 +61,22 @@ const COMPOSER_HANDOFF_TRANSITIONS = Object.freeze({
 function normalizeState(value = "") {
   const state = normalizeText(value);
   return Object.values(COMPOSER_HANDOFF_STATES).includes(state) ? state : "";
+}
+
+function normalizeSubmissionAttempts(value = {}, submissionIds = []) {
+  const attempts = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
+  return Object.fromEntries((Array.isArray(submissionIds) ? submissionIds : [])
+    .map((messageId) => normalizeText(messageId))
+    .filter(Boolean)
+    .map((messageId) => {
+      const attempt = Number(attempts[messageId]);
+      return [
+        messageId,
+        Number.isSafeInteger(attempt) && attempt > 0 ? attempt : 1
+      ];
+    }));
 }
 
 function composerHandoffId(handoff = {}) {
@@ -329,6 +345,10 @@ function composerHandoffSnapshot(source = {}) {
     submissionId,
     ...(Array.isArray(run.clientSubmissionIds) ? run.clientSubmissionIds : [])
   ].map((value) => normalizeText(value)).filter(Boolean))];
+  const submissionAttempts = normalizeSubmissionAttempts(
+    run.clientSubmissionAttempts,
+    submissionIds
+  );
   return {
     acceptedAt: normalizeText(run.handoffAcceptedAt),
     activeAt: normalizeText(run.handoffActiveAt),
@@ -364,8 +384,11 @@ function composerHandoffSnapshot(source = {}) {
     id,
     pending: COMPOSER_HANDOFF_PENDING_STATES.has(state),
     providerId: normalizeText(run.provider),
-    schemaVersion: COMPOSER_HANDOFF_SCHEMA_VERSION,
+    schemaVersion: Number.isSafeInteger(Number(run.schemaVersion))
+      ? Number(run.schemaVersion)
+      : 1,
     state,
+    submissionAttempts,
     submissionId,
     submissionIds,
     threadId: normalizeText(run.providerThreadId),
@@ -470,6 +493,7 @@ async function transitionComposerHandoff(runtime, sessionId = "", {
   stepStatus = "",
   submissionId = "",
   submissionIds = [],
+  submissionAttempts = {},
   threadId = "",
   transportId = "",
   turnId = ""
@@ -506,9 +530,14 @@ async function transitionComposerHandoff(runtime, sessionId = "", {
     normalizedSubmissionId,
     ...(Array.isArray(submissionIds) ? submissionIds : [])
   ].map((value) => normalizeText(value)).filter(Boolean))];
+  const normalizedSubmissionAttempts = normalizeSubmissionAttempts(
+    submissionAttempts,
+    normalizedSubmissionIds
+  );
   const patch = {
     ...(accepted ? {
       clientSubmissionId: normalizedSubmissionId,
+      clientSubmissionAttempts: normalizedSubmissionAttempts,
       clientSubmissionIds: normalizedSubmissionIds,
       connectionReused: null,
       error: "",
@@ -547,7 +576,13 @@ async function transitionComposerHandoff(runtime, sessionId = "", {
   return composerHandoffSnapshot(run);
 }
 
-async function attachComposerHandoffMessages(runtime, sessionId = "", handoffId = "", messageIds = []) {
+async function attachComposerHandoffMessages(
+  runtime,
+  sessionId = "",
+  handoffId = "",
+  messageIds = [],
+  messageAttempts = {}
+) {
   const normalizedSessionId = normalizeText(sessionId);
   const normalizedHandoffId = normalizeText(handoffId);
   if (
@@ -568,9 +603,18 @@ async function attachComposerHandoffMessages(runtime, sessionId = "", handoffId 
     ...handoff.submissionIds,
     ...(Array.isArray(messageIds) ? messageIds : [])
   ].map((value) => normalizeText(value)).filter(Boolean))];
+  const submissionAttempts = normalizeSubmissionAttempts({
+    ...handoff.submissionAttempts,
+    ...(messageAttempts && typeof messageAttempts === "object" && !Array.isArray(messageAttempts)
+      ? messageAttempts
+      : {})
+  }, submissionIds);
   if (
     submissionIds.length === handoff.submissionIds.length &&
-    submissionIds.every((value, index) => value === handoff.submissionIds[index])
+    submissionIds.every((value, index) => (
+      value === handoff.submissionIds[index] &&
+      submissionAttempts[value] === handoff.submissionAttempts[value]
+    ))
   ) {
     return handoff;
   }
@@ -581,10 +625,12 @@ async function attachComposerHandoffMessages(runtime, sessionId = "", handoffId 
     {
       event: {
         kind: "composer-handoff-messages-attached",
+        messageAttempts: submissionAttempts,
         messageIds: submissionIds,
         state: normalizeText(run.state) || VIBE64_AGENT_RUN_STATE.STARTING
       },
       patch: {
+        clientSubmissionAttempts: submissionAttempts,
         clientSubmissionIds: submissionIds,
         updatedAt
       }

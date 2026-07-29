@@ -2077,6 +2077,121 @@ test("assistant message preparation failures remain durable and resendable", asy
   assert.equal(message.state, "failed");
 });
 
+test("resending a message after its handoff failed starts a fresh delivery attempt", async () => {
+  const sessionId = "session-message-handoff-retry";
+  const harness = composerMessageRuntimeHarness({
+    sessionId,
+    status: VIBE64_SESSION_STATUS.ACTIVE
+  });
+  const deliveredAttempts = [];
+  let deliveryCalls = 0;
+  let runActionCalls = 0;
+  harness.runtime.runAction = async (_sessionId, actionId, input) => {
+    runActionCalls += 1;
+    return harness.updateSession((session) => ({
+      ...session,
+      actionResult: {
+        actionId,
+        agentPromptHandoff: {
+          handoffId: `handoff-retry-${runActionCalls}`,
+          kind: "agent_prompt_handoff",
+          terminalInput: input.conversationRequest
+        },
+        input,
+        status: "prompt_ready"
+      }
+    }));
+  };
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return harness.runtime;
+      }
+    },
+    setupServices: readySetupServices(),
+    terminalService: {
+      async deliverAgentPrompt(_sessionId, handoff, options = {}) {
+        deliveryCalls += 1;
+        deliveredAttempts.push(handoff.clientSubmissionAttempts);
+        if (deliveryCalls === 1) {
+          return {
+            error: "Another assistant operation is starting. Try again in a moment.",
+            ok: false,
+            operationOutcome: "vibe64_agent_write_mode_busy",
+            retryable: true
+          };
+        }
+        await options.lifecycle({
+          state: "connecting"
+        });
+        await options.lifecycle({
+          state: "delivered",
+          threadId: "retry-thread",
+          turnId: "retry-turn"
+        });
+        await options.lifecycle({
+          state: "active",
+          threadId: "retry-thread",
+          turnId: "retry-turn"
+        });
+        return {
+          ok: true,
+          thread: {
+            id: "retry-thread"
+          },
+          turn: {
+            active: true,
+            id: "retry-turn"
+          }
+        };
+      },
+      async sendAgentMessage() {
+        return {
+          delivered: false,
+          newTurnRequired: true,
+          ok: true,
+          operationOutcome: "new_turn_required"
+        };
+      }
+    }
+  });
+
+  await service.sendAgentMessage(sessionId, {
+    composerSubmissionId: "retry-message-1",
+    message: "Continue"
+  });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (publicSessionResponse(harness.currentSession()).composerMessages[0]?.state === "failed") {
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(publicSessionResponse(harness.currentSession()).composerMessages[0].state, "failed");
+
+  await service.sendAgentMessage(sessionId, {
+    composerSubmissionId: "retry-message-1",
+    message: "Continue"
+  });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (publicSessionResponse(harness.currentSession()).composerMessages[0]?.state === "delivered") {
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const [message] = publicSessionResponse(harness.currentSession()).composerMessages;
+  assert.equal(message.state, "delivered");
+  assert.equal(message.threadId, "retry-thread");
+  assert.equal(message.turnId, "retry-turn");
+  assert.equal(runActionCalls, 2);
+  assert.equal(deliveryCalls, 2);
+  assert.deepEqual(deliveredAttempts, [{
+    "retry-message-1": 1
+  }, {
+    "retry-message-1": 2
+  }]);
+});
+
 test("failed assistant messages can be cancelled idempotently and cannot be resent", async () => {
   const sessionId = "session-message-cancel";
   const harness = composerMessageRuntimeHarness({

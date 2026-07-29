@@ -82,6 +82,9 @@ test("composer handoff state persists accepted, connecting, delivered, and activ
     handoff: promptHandoff(),
     providerId: "codex",
     state: COMPOSER_HANDOFF_STATES.ACCEPTED,
+    submissionAttempts: {
+      "optimistic-composer-1": 2
+    },
     submissionId: "optimistic-composer-1",
     transportId: "codex_app_server"
   });
@@ -89,17 +92,28 @@ test("composer handoff state persists accepted, connecting, delivered, and activ
   assert.equal(accepted.pending, true);
   assert.equal(accepted.submissionId, "optimistic-composer-1");
   assert.deepEqual(accepted.submissionIds, ["optimistic-composer-1"]);
+  assert.deepEqual(accepted.submissionAttempts, {
+    "optimistic-composer-1": 2
+  });
 
   const batched = await attachComposerHandoffMessages(
     runtime,
     runtime.session.sessionId,
     accepted.id,
-    ["optimistic-composer-1", "optimistic-composer-2"]
+    ["optimistic-composer-1", "optimistic-composer-2"],
+    {
+      "optimistic-composer-1": 2,
+      "optimistic-composer-2": 1
+    }
   );
   assert.deepEqual(batched.submissionIds, [
     "optimistic-composer-1",
     "optimistic-composer-2"
   ]);
+  assert.deepEqual(batched.submissionAttempts, {
+    "optimistic-composer-1": 2,
+    "optimistic-composer-2": 1
+  });
 
   const connecting = await transitionComposerHandoff(runtime, runtime.session.sessionId, {
     connectionReused: false,
