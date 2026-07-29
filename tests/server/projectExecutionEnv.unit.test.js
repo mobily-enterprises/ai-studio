@@ -8,6 +8,9 @@ import {
   JskitTargetAdapter
 } from "@local/vibe64-adapters/server/adapters/jskit/adapter";
 import {
+  jskitMariaDbDatabaseName
+} from "@local/vibe64-adapters/server/adapters/jskit/setupMariaDbRuntime";
+import {
   RUNTIME_CONFIG_PHASES
 } from "@local/vibe64-core/server/runtimeConfig";
 import {
@@ -59,7 +62,7 @@ test("JSKIT prepares and probes managed MariaDB before exposing an empty seed en
     const projectTargetRoot = path.join(root, "project");
     const serviceDataRoot = path.join(root, "services");
     const sourcePath = path.join(root, "sessions", "empty-seed", "source");
-    const databaseName = "empty_seed_database";
+    const databaseName = jskitMariaDbDatabaseName(projectTargetRoot);
     await Promise.all([
       mkdir(projectTargetRoot, {
         recursive: true
