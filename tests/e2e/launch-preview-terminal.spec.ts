@@ -31,6 +31,7 @@ type PreviewIdentitySelector = {
 type PreviewIdentitySelection = {
   displayName?: string;
   mode: string;
+  name?: string;
   selector?: PreviewIdentitySelector;
 };
 type PreviewIdentityExchangeResult = {
@@ -82,8 +83,8 @@ test("@preview-identity switches between real app identities and Guest without r
             email: selection.selector?.type === "email" ? selection.selector.value : "",
             login: selection.selector?.type === "login" ? selection.selector.value : "",
             selector: selection.selector,
-            userId: selection.mode === "viewer" ? "app-user-viewer" : "app-user-custom",
-            username: selection.mode === "viewer" ? "Ada App" : "Merc App"
+            userId: selection.name === "admin" ? "app-user-admin" : "app-user-custom",
+            username: selection.name === "admin" ? "Ada App" : "Merc App"
           },
       ok: true
     }),
@@ -100,7 +101,7 @@ test("@preview-identity switches between real app identities and Guest without r
   );
   await expect(identityButton).toHaveAttribute(
     "aria-label",
-    "Previewing as You — ada@example.com"
+    "Previewing as admin — ada@example.com"
   );
   await expect(page.locator(".vibe64-launch-controls__preview-overlay")).toHaveCount(0);
 
@@ -112,38 +113,32 @@ test("@preview-identity switches between real app identities and Guest without r
 
   await identityButton.click();
   await page.locator(".vibe64-launch-controls__identity-menu")
-    .getByText("Another app user…", { exact: true })
+    .getByText("worker", { exact: true })
     .click();
-  const customIdentity = page.getByLabel("Application user identifier");
-  const previewAsUserButton = page.getByRole("button", { name: "Preview as user" });
-  await customIdentity.fill("merc");
-  await customIdentity.press("Tab");
-  await expect(previewAsUserButton).toBeFocused();
-  await page.keyboard.press("Enter");
   await expect(identityButton).toHaveAttribute(
     "aria-label",
-    "Previewing as Merc App — merc"
+    "Previewing as worker — merc"
   );
 
   await page.reload();
   await expect(identityButton).toHaveAttribute(
     "aria-label",
-    "Previewing as You — ada@example.com"
+    "Previewing as admin — ada@example.com"
   );
   await identityButton.click();
   const identityMenu = page.locator(".vibe64-launch-controls__identity-menu");
-  await expect(identityMenu.getByText("Recent app users", { exact: true })).toBeVisible();
-  await expect(identityMenu.getByText("Login name", { exact: true })).toBeVisible();
-  await identityMenu.getByText("merc", { exact: true }).click();
+  await expect(identityMenu.getByText("Login name: merc", { exact: true })).toBeVisible();
+  await identityMenu.getByText("worker", { exact: true }).click();
   await expect(identityButton).toHaveAttribute(
     "aria-label",
-    "Previewing as Merc App — merc"
+    "Previewing as worker — merc"
   );
 
   expect(launchSession.getPreviewIdentitySelections()).toEqual([
     {
-      displayName: "Ada Viewer",
-      mode: "viewer",
+      displayName: "admin",
+      mode: "identity",
+      name: "admin",
       selector: {
         type: "email",
         value: "ada@example.com"
@@ -153,22 +148,27 @@ test("@preview-identity switches between real app identities and Guest without r
       mode: "guest"
     },
     {
-      mode: "user",
+      displayName: "worker",
+      mode: "identity",
+      name: "worker",
       selector: {
         type: "login",
         value: "merc"
       }
     },
     {
-      displayName: "Ada Viewer",
-      mode: "viewer",
+      displayName: "admin",
+      mode: "identity",
+      name: "admin",
       selector: {
         type: "email",
         value: "ada@example.com"
       }
     },
     {
-      mode: "user",
+      displayName: "worker",
+      mode: "identity",
+      name: "worker",
       selector: {
         type: "login",
         value: "merc"
@@ -200,7 +200,7 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
         identity: {
           email: selection.selector?.type === "email" ? selection.selector.value : "",
           selector: selection.selector,
-          userId: "app-user-viewer",
+          userId: "app-user-admin",
           username: "Ada App"
         },
         ok: true
@@ -213,29 +213,26 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
   await page.getByRole("button", { name: "Show preview controls" }).click();
 
   const identityButton = page.getByRole("button", {
-    name: "Previewing as You — ada@example.com"
+    name: "Previewing as admin — ada@example.com"
   });
   await expect(identityButton).toBeVisible();
   await identityButton.click();
   await page.locator(".vibe64-launch-controls__identity-menu")
-    .getByText("Another app user…", { exact: true })
+    .getByText("missing", { exact: true })
     .click();
-  await page.getByLabel("Application user identifier").fill("missing@example.com");
-  await page.getByRole("button", { name: "Preview as user" }).click();
 
   await expect(page.getByText("User not found.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", {
     name: "Preview identity failed: User not found."
   })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel" }).click();
   await page.getByRole("button", {
     name: "Preview identity failed: User not found."
   }).click();
   await page.locator(".vibe64-launch-controls__identity-menu")
-    .getByText("You", { exact: true })
+    .getByText("admin", { exact: true })
     .click();
   await expect(page.getByRole("button", {
-    name: "Previewing as You — ada@example.com"
+    name: "Previewing as admin — ada@example.com"
   })).toBeVisible();
 
   expect(launchSession.getLaunchStartPayloads()).toHaveLength(0);
@@ -1619,16 +1616,28 @@ async function mockLaunchSession(page: Page, {
 function previewIdentityCapability() {
   return {
     available: true,
-    defaultMode: "viewer",
+    defaultIdentityName: "admin",
+    defaultMode: "identity",
     disabledReason: "",
-    identityTypes: ["email", "login", "user-id"],
-    viewer: {
-      displayName: "Ada Viewer",
-      selector: {
+    identities: [
+      {
+        name: "admin",
         type: "email",
         value: "ada@example.com"
+      },
+      {
+        name: "worker",
+        type: "login",
+        value: "merc"
+      },
+      {
+        name: "missing",
+        type: "email",
+        value: "missing@example.com"
       }
-    }
+    ],
+    identityTypes: ["email", "login", "user-id"],
+    rejectedIdentities: []
   };
 }
 
@@ -1639,43 +1648,24 @@ function normalizePreviewIdentitySelection(
   const selection = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-  const mode = String(selection.mode || "viewer");
-  if (mode === "viewer") {
-    const viewer = capability?.viewer && typeof capability.viewer === "object" && !Array.isArray(capability.viewer)
-      ? capability.viewer as Record<string, unknown>
-      : {};
-    const selector = normalizePreviewIdentitySelector(viewer.selector);
-    return {
-      displayName: String(viewer.displayName || selector?.value || ""),
-      mode,
-      ...(selector ? { selector } : {})
-    };
-  }
-  if (mode === "user") {
-    const identityTypes = Array.isArray(capability?.identityTypes)
-      ? capability.identityTypes.map(String)
-      : ["email"];
-    const value = String(selection.identityValue || "").trim();
-    const explicitType = String(selection.identityType || "").trim();
-    const type = explicitType || (
-      value.includes("@") && identityTypes.includes("email")
-        ? "email"
-        : /^[1-9][0-9]*$/u.test(value) && identityTypes.includes("user-id")
-          ? "user-id"
-          : identityTypes.includes("login")
-            ? "login"
-            : identityTypes.includes("user-id")
-              ? "user-id"
-              : identityTypes[0]
-    );
-    const selector = normalizePreviewIdentitySelector({
-      type,
-      value
-    });
-    return {
-      mode,
-      ...(selector ? { selector } : {})
-    };
+  const mode = String(selection.mode || "identity");
+  if (mode === "identity") {
+    const identities = Array.isArray(capability?.identities)
+      ? capability.identities as Record<string, unknown>[]
+      : [];
+    const requestedName = String(selection.identityName || "").trim().toLowerCase();
+    const identity = requestedName && requestedName !== "default"
+      ? identities.find((entry) => String(entry.name || "") === requestedName)
+      : identities[0];
+    const selector = normalizePreviewIdentitySelector(identity);
+    return identity && selector
+      ? {
+          displayName: String(identity.name || ""),
+          mode,
+          name: String(identity.name || ""),
+          selector
+        }
+      : { mode };
   }
   return { mode: "guest" };
 }

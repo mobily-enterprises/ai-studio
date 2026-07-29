@@ -160,7 +160,7 @@ not treat `VIBE64_SYSTEM_ROOT` as a casual state-placement override.
 
 Applications opt into preview identity switching in their committed
 `vibe64.project.json`. The capability names an app-owned executable and the
-identifiers that app accepts:
+selector types that app accepts:
 
 ```json
 {
@@ -169,7 +169,6 @@ identifiers that app accepts:
       "protocol": "vibe64.preview-identity.command.v1",
       "command": [".vibe64/bin/preview-identity"],
       "identityTypes": ["email", "user-id"],
-      "viewerIdentityTypes": ["email"],
       "runtimes": ["node26"]
     }
   }
@@ -180,6 +179,36 @@ The executable must be a real executable file directly under `.vibe64/bin`.
 Vibe64 runs it from the application source root with the managed project
 environment. Launch adapters do not implement or infer application identity.
 
+Vibe64 stores one or more named application identities in project-local
+configuration. Each entry contains a Vibe64-facing name and one selector
+accepted by the application, for example:
+
+```json
+[
+  {
+    "name": "admin",
+    "type": "email",
+    "value": "admin@example.com"
+  },
+  {
+    "name": "worker",
+    "type": "login",
+    "value": "luca"
+  },
+  {
+    "name": "auditor",
+    "type": "user-id",
+    "value": "42"
+  }
+]
+```
+
+The first entry is the default. Managed Preview and Playwright select entries
+by name; callers cannot submit arbitrary application identifiers. Vibe64
+passes only the selected entry's `type` and `value` to the app-owned
+executable. These values are never inferred from, matched to, or otherwise
+tied to the signed-in Vibe64 account.
+
 Vibe64 supplies the launched process with:
 
 ```text
@@ -188,8 +217,7 @@ VIBE64_PREVIEW_IDENTITY_SECRET=<random per-launch secret>
 ```
 
 The command reads one protocol request as JSON from stdin and writes one JSON
-response to stdout. A login request carries either a typed selector or the
-current viewer identifiers explicitly allowed by `viewerIdentityTypes`:
+response to stdout. A login request carries the configured typed selector:
 
 ```json
 {

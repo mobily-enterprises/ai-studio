@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  defaultPreviewIdentityMode,
+  defaultPreviewIdentitySelection,
   launchPreviewAddressNavigationUrl,
   launchPreviewEmptyText,
   launchPreviewFrameUrl,
@@ -16,8 +16,7 @@ import {
   launchPreviewNotice,
   launchPreviewStatusText,
   launchToolbarDockShouldShow,
-  nextRecentPreviewIdentities,
-  normalizeRecentPreviewIdentities,
+  normalizeConfiguredPreviewIdentities,
   previewAddressDisplayText,
   previewOpeningOverlayVisible,
   previewRouteFromUrl,
@@ -344,19 +343,21 @@ describe("Vibe64 launch controls surface", () => {
   });
 
   it("presents confirmed, switching, guest, and recoverable failure identity states", () => {
-    const viewer = {
+    const configuredIdentity = {
       email: "ada@example.com",
-      mode: "viewer"
+      mode: "identity",
+      name: "admin"
     };
-    expect(previewIdentityLabelText({ identity: viewer })).toBe("You — ada@example.com");
+    expect(previewIdentityLabelText({ identity: configuredIdentity })).toBe("admin — ada@example.com");
     expect(previewIdentityLabelText({ identity: { mode: "guest" } })).toBe("Guest");
     expect(previewIdentityLabelText({
       identity: {
         email: "grace@example.com",
-        mode: "user",
+        mode: "identity",
+        name: "worker",
         username: "Grace"
       }
-    })).toBe("Grace — grace@example.com");
+    })).toBe("worker — grace@example.com");
     expect(previewIdentityTitleText({ busy: true })).toBe("Switching preview identity…");
     expect(previewIdentityTitleText({
       error: "User not found.",
@@ -368,42 +369,48 @@ describe("Vibe64 launch controls surface", () => {
       previewFrameRequestId: 4,
       previewUrl: "https://preview.example.test/home"
     })).toBe(true);
-    expect(defaultPreviewIdentityMode({
-      capability: { defaultMode: "viewer" },
-      viewer: { email: "ada@example.com" }
-    })).toBe("viewer");
-    expect(defaultPreviewIdentityMode({
-      capability: { defaultMode: "viewer" }
-    })).toBe("guest");
+    expect(defaultPreviewIdentitySelection({
+      capability: {
+        defaultIdentityName: "admin",
+        defaultMode: "identity"
+      }
+    })).toEqual({
+      identityName: "admin",
+      mode: "identity"
+    });
+    expect(defaultPreviewIdentitySelection({
+      capability: { defaultMode: "guest" }
+    })).toEqual({
+      mode: "guest"
+    });
   });
 
-  it("keeps the four most recent successful typed preview identities", () => {
-    expect(normalizeRecentPreviewIdentities([
-      " GRACE@EXAMPLE.COM ",
-      { type: "login", value: "merc" },
-      "grace@example.com",
-      "invalid",
-      null,
-      { selector: { type: "user-id", value: "user-7" } },
-      { type: "email", value: "ada@example.com" },
-      { type: "login", value: "fifth" }
+  it("normalizes configured identity names across app-owned selector types", () => {
+    expect(normalizeConfiguredPreviewIdentities([
+      { name: "admin", type: "email", value: " GRACE@EXAMPLE.COM " },
+      { name: "worker", type: "login", value: "merc" },
+      { name: "auditor", type: "user-id", value: "user-7" },
+      { name: "worker", type: "email", value: "duplicate@example.com" },
+      { name: "", type: "email", value: "invalid@example.com" }
     ])).toEqual([
-      { type: "email", value: "grace@example.com" },
-      { type: "login", value: "merc" },
-      { type: "user-id", value: "user-7" },
-      { type: "email", value: "ada@example.com" }
-    ]);
-
-    expect(nextRecentPreviewIdentities([
-      { type: "login", value: "lin" },
-      { type: "email", value: "grace@example.com" },
-      { type: "user-id", value: "user-7" },
-      { type: "login", value: "pat" }
-    ], { type: "email", value: "GRACE@EXAMPLE.COM" })).toEqual([
-      { type: "email", value: "grace@example.com" },
-      { type: "login", value: "lin" },
-      { type: "user-id", value: "user-7" },
-      { type: "login", value: "pat" }
+      {
+        name: "admin",
+        selector: { type: "email", value: "grace@example.com" },
+        type: "email",
+        value: "grace@example.com"
+      },
+      {
+        name: "worker",
+        selector: { type: "login", value: "merc" },
+        type: "login",
+        value: "merc"
+      },
+      {
+        name: "auditor",
+        selector: { type: "user-id", value: "user-7" },
+        type: "user-id",
+        value: "user-7"
+      }
     ]);
   });
 
@@ -423,12 +430,14 @@ describe("Vibe64 launch controls surface", () => {
         type: "email",
         value: "requested@example.com"
       },
-      mode: "viewer"
+      mode: "identity",
+      name: "admin"
     })).toEqual({
       displayName: "Ada",
       email: "ada@example.com",
       login: "",
-      mode: "viewer",
+      mode: "identity",
+      name: "admin",
       selector: {
         type: "email",
         value: "ada@example.com"

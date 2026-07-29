@@ -194,13 +194,14 @@
 
                 <v-list density="compact">
                   <v-list-item
-                    v-if="previewIdentityViewer"
-                    :active="previewIdentityCurrent?.mode === 'viewer'"
+                    v-for="identity in previewIdentityConfigured"
+                    :key="identity.name"
+                    :active="previewIdentityCurrent?.mode === 'identity' && previewIdentityCurrent?.name === identity.name"
                     :disabled="previewIdentityBusy"
                     :prepend-icon="mdiAccountCircleOutline"
-                    :subtitle="previewIdentityViewer.selector?.value || previewIdentityViewer.email || previewIdentityViewer.login || previewIdentityViewer.userId"
-                    title="You"
-                    @click="selectPreviewViewer"
+                    :subtitle="`${previewIdentityTypeLabel(identity.type)}: ${identity.value}`"
+                    :title="identity.name"
+                    @click="selectPreviewConfiguredIdentity(identity)"
                   />
                   <v-list-item
                     :active="previewIdentityCurrent?.mode === 'guest'"
@@ -209,27 +210,6 @@
                     subtitle="Use the app signed out"
                     title="Guest"
                     @click="selectPreviewGuest"
-                  />
-                  <v-list-subheader v-if="previewIdentityRecentUsers.length > 0">
-                    Recent app users
-                  </v-list-subheader>
-                  <v-list-item
-                    v-for="recentUser in previewIdentityRecentUsers"
-                    :key="`${recentUser.type}:${recentUser.value}`"
-                    :active="previewIdentityCurrent?.mode === 'user' && previewIdentityCurrent.selector?.type === recentUser.type && previewIdentityCurrent.selector?.value === recentUser.value"
-                    :disabled="previewIdentityBusy"
-                    :prepend-icon="mdiAccountCircleOutline"
-                    :subtitle="previewIdentityTypeLabel(recentUser.type)"
-                    :title="recentUser.value"
-                    @click="selectRecentPreviewIdentity(recentUser)"
-                  />
-                  <v-list-item
-                    :active="previewIdentityCurrent?.mode === 'user'"
-                    :disabled="previewIdentityBusy"
-                    :prepend-icon="mdiAccountPlusOutline"
-                    subtitle="The app user must already exist"
-                    title="Another app user…"
-                    @click="openPreviewIdentityDialog"
                   />
                 </v-list>
 
@@ -633,63 +613,6 @@
     />
 
     <v-dialog
-      v-model="previewIdentityDialogVisible"
-      max-width="520"
-    >
-      <v-card class="vibe64-launch-controls__identity-card">
-        <v-card-title>Preview as another app user</v-card-title>
-
-        <v-card-text>
-          <p>
-            {{ previewIdentityInputDescription }}
-          </p>
-
-          <v-text-field
-            v-model="previewIdentityCustomValue"
-            autofocus
-            autocomplete="off"
-            density="comfortable"
-            :label="previewIdentityInputLabel"
-            :type="previewIdentityInputType"
-            variant="outlined"
-            @keydown.enter.prevent="submitPreviewIdentityDialog"
-          />
-
-          <v-alert
-            v-if="previewIdentityDialogError"
-            density="compact"
-            type="error"
-            variant="tonal"
-          >
-            {{ previewIdentityDialogError }}
-          </v-alert>
-        </v-card-text>
-
-        <v-card-actions>
-          <v-spacer />
-          <!-- Keep the primary action first in DOM focus order after the identifier field. -->
-          <v-btn
-            class="vibe64-launch-controls__identity-submit"
-            color="primary"
-            :loading="previewIdentityBusy"
-            variant="flat"
-            @click="submitPreviewIdentityDialog"
-          >
-            Preview as user
-          </v-btn>
-          <v-btn
-            class="vibe64-launch-controls__identity-cancel"
-            :disabled="previewIdentityBusy"
-            variant="text"
-            @click="previewIdentityDialogVisible = false"
-          >
-            Cancel
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog
       v-model="previewOptionsDialogVisible"
       max-width="520"
     >
@@ -812,7 +735,6 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
   mdiAccountCircleOutline,
   mdiAccountOffOutline,
-  mdiAccountPlusOutline,
   mdiAccountSwitchOutline,
   mdiAlertCircleOutline,
   mdiArrowLeft,
@@ -938,7 +860,6 @@ const {
   movePreviewToolbar,
   openAction,
   operationBusy,
-  openPreviewIdentityDialog,
   openPreviewRoute,
   openPreviewOptions,
   previewBaseUrl,
@@ -960,19 +881,12 @@ const {
   previewFrameRequestId,
   previewIdentityAvailable,
   previewIdentityBusy,
+  previewIdentityConfigured,
   previewIdentityCurrent,
-  previewIdentityCustomValue,
-  previewIdentityDialogError,
-  previewIdentityDialogVisible,
   previewIdentityError,
-  previewIdentityInputDescription,
-  previewIdentityInputLabel,
-  previewIdentityInputType,
   previewIdentityLabel,
-  previewIdentityRecentUsers,
   previewIdentityTitle,
   previewIdentityTypeLabel,
-  previewIdentityViewer,
   previewIssue,
   previewIssueVisible,
   previewInFlightText,
@@ -1007,11 +921,9 @@ const {
   requestPreviewDiagnostics,
   resetPreviewAddressDraft,
   savePreviewOptions,
+  selectPreviewConfiguredIdentity,
   selectPreviewGuest,
-  selectRecentPreviewIdentity,
-  selectPreviewViewer,
   submitPreviewAddress,
-  submitPreviewIdentityDialog,
   submitPreviewRouteDialog,
   restartTerminal,
   retryTerminal,
@@ -1394,25 +1306,6 @@ onBeforeUnmount(() => {
 .vibe64-launch-controls__identity-error {
   margin: 0 0.75rem 0.75rem;
   overflow-wrap: anywhere;
-}
-
-.vibe64-launch-controls__identity-card :deep(.v-card-text) {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.vibe64-launch-controls__identity-card p {
-  color: rgba(var(--v-theme-on-surface), 0.72);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.vibe64-launch-controls__identity-cancel {
-  order: 1;
-}
-
-.vibe64-launch-controls__identity-submit {
-  order: 2;
 }
 
 .vibe64-launch-controls__attention-button {

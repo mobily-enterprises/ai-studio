@@ -27,8 +27,7 @@ test("Vibe64 project contract owns the app preview identity capability", () => {
     },
     identityTypes: ["email", "user-id", "email"],
     protocol: "vibe64.preview-identity.command.v1",
-    runtimes: ["node26", "node26"],
-    viewerIdentityTypes: ["email"]
+    runtimes: ["node26", "node26"]
   }));
 
   assert.deepEqual(parsed.capabilities.previewIdentity, {
@@ -40,8 +39,7 @@ test("Vibe64 project contract owns the app preview identity capability", () => {
     identityTypes: ["email", "user-id"],
     protocol: "vibe64.preview-identity.command.v1",
     runtimes: ["node26"],
-    timeoutMs: 10000,
-    viewerIdentityTypes: ["email"]
+    timeoutMs: 10000
   });
   assert.equal(sourceContractVibe64EntryIsAllowed("bin"), true);
 });

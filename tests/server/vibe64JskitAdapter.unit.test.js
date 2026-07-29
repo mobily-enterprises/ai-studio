@@ -155,8 +155,7 @@ async function writeJskitPreviewIdentityContract(root) {
         },
         identityTypes: ["email", "user-id"],
         protocol: "vibe64.preview-identity.command.v1",
-        runtimes: ["node26"],
-        viewerIdentityTypes: ["email"]
+        runtimes: ["node26"]
       }
     },
     config: {},

@@ -278,20 +278,14 @@ const launchTargetFields = {
 };
 
 const previewIdentityFields = {
-  identityType: {
-    type: "string",
-    enum: ["email", "login", "user-id"],
-    noTrim: false,
-    required: false
-  },
-  identityValue: {
+  identityName: {
     type: "string",
     noTrim: false,
     required: false
   },
   mode: {
     type: "string",
-    enum: ["viewer", "user", "guest"],
+    enum: ["identity", "guest"],
     noTrim: false,
     required: true
   }
@@ -433,12 +427,7 @@ const previewIdentityActionInputValidator = deepFreeze({
       noTrim: false,
       required: false
     },
-    sessionId: sessionIdField,
-    vibe64User: {
-      type: "object",
-      additionalProperties: true,
-      required: false
-    }
+    sessionId: sessionIdField
   }),
   mode: "patch"
 });

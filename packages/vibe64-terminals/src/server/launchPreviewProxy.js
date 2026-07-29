@@ -1733,10 +1733,7 @@ function normalizePreviewAuth(value = {}, {
     sessionRoot: String(value.sessionRoot || ""),
     targetHref: String(value.targetHref || targetHref || ""),
     targetRoot: String(value.targetRoot || ""),
-    terminalSessionId: String(value.terminalSessionId || ""),
-    viewerIdentityTypes: Array.isArray(value.viewerIdentityTypes)
-      ? value.viewerIdentityTypes.map((entry) => String(entry || "").trim()).filter(Boolean)
-      : []
+    terminalSessionId: String(value.terminalSessionId || "")
   };
 }
 
@@ -1756,8 +1753,7 @@ function previewAuthFingerprint(value = null) {
     value.sessionRoot,
     value.targetHref,
     value.targetRoot,
-    value.terminalSessionId,
-    value.viewerIdentityTypes
+    value.terminalSessionId
   ]);
 }
 

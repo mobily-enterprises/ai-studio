@@ -21,6 +21,9 @@ import {
   createStudioProjectContext
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
+  PREVIEW_APPLICATION_IDENTITIES_CONFIG
+} from "../../packages/vibe64-core/src/server/previewAuth.js";
+import {
   PROJECT_REPOSITORY_MODE_GITHUB,
   PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
@@ -2058,6 +2061,9 @@ test("Vibe64 project service saves project type and plain-file configuration", a
     assert.deepEqual(defaults.defaults.runtimeLock.selected.services.map((entry) => entry.id), ["mariadb"]);
     const mergeMethodField = defaults.defaults.fields.find((field) => field.id === "github_pr_merge_method");
     const userModeField = defaults.defaults.fields.find((field) => field.id === JSKIT_USER_MODE_CONFIG);
+    const previewApplicationIdentitiesField = defaults.defaults.fields.find(
+      (field) => field.id === PREVIEW_APPLICATION_IDENTITIES_CONFIG
+    );
     const databaseRuntimeField = defaults.defaults.fields.find((field) => field.id === "jskit_database_runtime");
     const databaseRuntimeChoice = defaults.defaults.runtimeChoices.find((choice) => choice.configFieldId === "jskit_database_runtime");
     assert.equal(defaults.defaults.fields.some((field) => field.id === "deploy_production_command"), false);
@@ -2074,8 +2080,13 @@ test("Vibe64 project service saves project type and plain-file configuration", a
       JSKIT_USER_MODE_USERS,
       JSKIT_USER_MODE_NONE
     ]);
+    assert.equal(previewApplicationIdentitiesField.required, false);
+    assert.equal(previewApplicationIdentitiesField.scope, "local");
+    assert.equal(previewApplicationIdentitiesField.sectionLabel, "Managed app access");
+    assert.equal(previewApplicationIdentitiesField.type, "named-identity-list");
     assert.deepEqual(defaults.defaults.fields.map((field) => field.id), [
       "github_pr_merge_method",
+      PREVIEW_APPLICATION_IDENTITIES_CONFIG,
       JSKIT_USER_MODE_CONFIG,
       "jskit_database_runtime"
     ]);
@@ -2094,13 +2105,37 @@ test("Vibe64 project service saves project type and plain-file configuration", a
     const savedConfig = await service.saveProjectConfig({
       values: {
         github_pr_merge_method: "squash",
-        jskit_database_runtime: "mariadb"
+        jskit_database_runtime: "mariadb",
+        [PREVIEW_APPLICATION_IDENTITIES_CONFIG]: [
+          {
+            name: "admin",
+            type: "email",
+            value: "admin@example.com"
+          },
+          {
+            name: "worker",
+            type: "login",
+            value: "luca"
+          }
+        ]
       }
     });
     assert.equal(savedConfig.ok, true);
     assert.equal(savedConfig.config.ready, true);
     assert.equal(savedConfig.config.values[JSKIT_USER_MODE_CONFIG], JSKIT_USER_MODE_USERS);
     assert.equal(savedConfig.config.values.github_pr_merge_method, "squash");
+    assert.deepEqual(savedConfig.config.values[PREVIEW_APPLICATION_IDENTITIES_CONFIG], [
+      {
+        name: "admin",
+        type: "email",
+        value: "admin@example.com"
+      },
+      {
+        name: "worker",
+        type: "login",
+        value: "luca"
+      }
+    ]);
     manifest = JSON.parse(await readFile(path.join(stateRoot, "vibe64.project.json"), "utf8"));
     assert.equal(manifest.config.github_pr_merge_method, "squash");
     assert.equal(manifest.config.jskit_database_runtime, "mariadb");
@@ -2111,11 +2146,33 @@ test("Vibe64 project service saves project type and plain-file configuration", a
     );
     const savedManifest = JSON.parse(await readFile(path.join(stateRoot, "vibe64.project.json"), "utf8"));
     assert.equal(savedManifest.config[JSKIT_USER_MODE_CONFIG], JSKIT_USER_MODE_USERS);
+    assert.equal(
+      Object.hasOwn(savedManifest.config, PREVIEW_APPLICATION_IDENTITIES_CONFIG),
+      false
+    );
     assert.deepEqual(Object.keys(savedManifest.config).sort(), [
       "github_pr_merge_method",
       "jskit_database_runtime",
       JSKIT_USER_MODE_CONFIG
     ]);
+    assert.deepEqual(
+      JSON.parse(await readFile(
+        path.join(localRoot, "runtime-config", PREVIEW_APPLICATION_IDENTITIES_CONFIG),
+        "utf8"
+      )),
+      [
+        {
+          name: "admin",
+          type: "email",
+          value: "admin@example.com"
+        },
+        {
+          name: "worker",
+          type: "login",
+          value: "luca"
+        }
+      ]
+    );
 
     const environment = await service.projectConfigEnvironment();
     assert.equal(environment.VIBE64_PROJECT_MANIFEST, path.join(stateRoot, "vibe64.project.json"));

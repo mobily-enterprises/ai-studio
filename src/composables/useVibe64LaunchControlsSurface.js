@@ -1,7 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   launchPreviewLocationStorageKey,
-  launchPreviewRecentUsersStorageKey,
   launchPreviewToolbarStorageKey,
   nextLaunchPreviewToolbarPosition,
   normalizeLaunchPreviewToolbarPosition,
@@ -45,7 +44,6 @@ import {
   previewRoutesForTarget
 } from "@/lib/vibe64PreviewRoutes.js";
 
-const RECENT_PREVIEW_IDENTITY_LIMIT = 4;
 const PREVIEW_IDENTITY_TYPE_EMAIL = "email";
 const PREVIEW_IDENTITY_TYPE_LOGIN = "login";
 const PREVIEW_IDENTITY_TYPE_USER_ID = "user-id";
@@ -255,13 +253,10 @@ function previewIdentityLabelText({
   const selectorValue = String(
     identity.selector?.value || identity.email || identity.login || identity.userId || ""
   ).trim();
-  if (identity.mode === "viewer") {
-    return selectorValue ? `You — ${selectorValue}` : "You";
-  }
-  const name = String(identity.displayName || identity.username || "").trim();
+  const name = String(identity.name || identity.displayName || "").trim();
   return name && name !== selectorValue
     ? `${name} — ${selectorValue}`
-    : selectorValue || "Selected user";
+    : name || selectorValue || "Selected app identity";
 }
 
 function previewIdentityTitleText({
@@ -300,50 +295,30 @@ function normalizePreviewIdentitySelector(value = {}) {
   };
 }
 
-function normalizeRecentPreviewIdentities(value = []) {
+function normalizeConfiguredPreviewIdentities(value = []) {
   if (!Array.isArray(value)) {
     return [];
   }
   const identities = [];
-  const seen = new Set();
+  const names = new Set();
   for (const entry of value) {
-    const legacyEmail = typeof entry === "string" ? entry : "";
-    const selector = normalizePreviewIdentitySelector(legacyEmail
-      ? {
-          type: PREVIEW_IDENTITY_TYPE_EMAIL,
-          value: legacyEmail
-        }
-      : entry?.selector || entry);
-    if (!selector) {
+    const name = String(entry?.name || "").trim().toLowerCase();
+    const selector = normalizePreviewIdentitySelector({
+      type: entry?.type,
+      value: entry?.value
+    });
+    if (!name || names.has(name) || !selector) {
       continue;
     }
-    const key = `${selector.type}\u0000${selector.value}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    identities.push(selector);
-    if (identities.length >= RECENT_PREVIEW_IDENTITY_LIMIT) {
-      break;
-    }
+    names.add(name);
+    identities.push({
+      name,
+      selector,
+      type: selector.type,
+      value: selector.value
+    });
   }
   return identities;
-}
-
-function nextRecentPreviewIdentities(current = [], selector = {}) {
-  return normalizeRecentPreviewIdentities([
-    selector,
-    ...normalizeRecentPreviewIdentities(current)
-  ]);
-}
-
-function normalizePreviewIdentityTypes(value = []) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return [...new Set(value
-    .map((type) => String(type || "").trim())
-    .filter((type) => PREVIEW_IDENTITY_TYPES.includes(type)))];
 }
 
 function previewIdentityTypeLabel(type = "") {
@@ -352,20 +327,6 @@ function previewIdentityTypeLabel(type = "") {
     [PREVIEW_IDENTITY_TYPE_LOGIN]: "Login name",
     [PREVIEW_IDENTITY_TYPE_USER_ID]: "User ID"
   }[String(type || "").trim()] || "User identifier";
-}
-
-function previewIdentityTypePhrase(identityTypes = []) {
-  const labels = identityTypes.map((type) => ({
-    [PREVIEW_IDENTITY_TYPE_EMAIL]: "email",
-    [PREVIEW_IDENTITY_TYPE_LOGIN]: "login name",
-    [PREVIEW_IDENTITY_TYPE_USER_ID]: "user ID"
-  }[type])).filter(Boolean);
-  if (labels.length < 2) {
-    return labels[0] || "identifier";
-  }
-  return labels.length === 2
-    ? labels.join(" or ")
-    : `${labels.slice(0, -1).join(", ")}, or ${labels.at(-1)}`;
 }
 
 function previewIdentityFromExchange(exchangeResult = {}, requestedIdentity = {}) {
@@ -392,11 +353,12 @@ function previewIdentityFromExchange(exchangeResult = {}, requestedIdentity = {}
   const username = String(identity.username || "").trim();
   return {
     displayName: String(
-      identity.displayName || username || requestedIdentity.displayName || selector?.value || ""
+      identity.displayName || username || requestedIdentity.displayName || requestedIdentity.name || selector?.value || ""
     ).trim(),
     email,
     login,
     mode: requestedIdentity.mode,
+    name: String(requestedIdentity.name || "").trim(),
     selector,
     userId,
     username
@@ -416,13 +378,18 @@ function previewLoadingOverlayShouldShow({
   }));
 }
 
-function defaultPreviewIdentityMode({
-  capability = null,
-  viewer = null
+function defaultPreviewIdentitySelection({
+  capability = null
 } = {}) {
-  return capability?.defaultMode === "viewer" && viewer
-    ? "viewer"
-    : "guest";
+  const name = String(capability?.defaultIdentityName || "").trim();
+  return capability?.defaultMode === "identity" && name
+    ? {
+        identityName: name,
+        mode: "identity"
+      }
+    : {
+        mode: "guest"
+      };
 }
 
 function createPreviewBridgeRequestRegistry() {
@@ -676,11 +643,7 @@ function useVibe64LaunchControlsSurface(props) {
   const previewDiagnosticsBusy = ref(false);
   const previewIdentityBusy = ref(false);
   const previewIdentityCurrent = ref(null);
-  const previewIdentityCustomValue = ref("");
-  const previewIdentityDialogError = ref("");
-  const previewIdentityDialogVisible = ref(false);
   const previewIdentityError = ref("");
-  const previewIdentityStoredRecentUsers = ref([]);
   const previewIdentityRequested = ref(null);
   let previewIdentityAutomaticAttempt = "";
   let previewIdentityLifecycle = "";
@@ -707,9 +670,6 @@ function useVibe64LaunchControlsSurface(props) {
   const previewToolbarExpanded = ref(false);
   const previewToolbarPosition = ref("center");
   const projectSlug = useVibe64ProjectSlug();
-  const previewIdentityRecentStorageKey = computed(() => (
-    launchPreviewRecentUsersStorageKey(projectSlug.value)
-  ));
   const toolbarTeleportTarget = computed(() => String(props.toolbarTeleportTarget || "").trim());
   const embeddedTerminalVisible = computed(() => Boolean(
     props.embeddedPreview &&
@@ -813,36 +773,8 @@ function useVibe64LaunchControlsSurface(props) {
     props.embeddedPreview &&
     previewIdentityCapability.value?.available === true
   ));
-  const previewIdentityTypes = computed(() => {
-    const configuredTypes = previewIdentityCapability.value?.identityTypes;
-    const advertisedTypes = normalizePreviewIdentityTypes(
-      configuredTypes
-    );
-    return Array.isArray(configuredTypes)
-      ? advertisedTypes
-      : [PREVIEW_IDENTITY_TYPE_EMAIL];
-  });
-  const previewIdentityRecentUsers = computed(() => {
-    const supportedTypes = new Set(previewIdentityTypes.value);
-    return previewIdentityStoredRecentUsers.value.filter((selector) => (
-      supportedTypes.has(selector.type)
-    ));
-  });
-  const previewIdentityInputLabel = computed(() => {
-    const [onlyType] = previewIdentityTypes.value;
-    return previewIdentityTypes.value.length === 1
-      ? `Application user ${previewIdentityTypeLabel(onlyType).toLowerCase()}`
-      : "Application user identifier";
-  });
-  const previewIdentityInputDescription = computed(() => (
-    `Enter an existing application user's ${previewIdentityTypePhrase(previewIdentityTypes.value)}. ` +
-    "Vibe64 will not create the user or change their roles, workspace, or application data."
-  ));
-  const previewIdentityInputType = computed(() => (
-    previewIdentityTypes.value.length === 1 &&
-    previewIdentityTypes.value[0] === PREVIEW_IDENTITY_TYPE_EMAIL
-      ? "email"
-      : "text"
+  const previewIdentityConfigured = computed(() => normalizeConfiguredPreviewIdentities(
+    previewIdentityCapability.value?.identities
   ));
   const previewIdentityLifecycleKey = computed(() => previewIdentityLifecycleIdentity({
     launchTargetId: activeLaunchTarget.value?.id || terminal.value?.metadata?.launchTargetId,
@@ -851,10 +783,6 @@ function useVibe64LaunchControlsSurface(props) {
     sessionId: props.session?.sessionId,
     terminalSessionId: terminalSessionId.value
   }));
-  const previewIdentityViewer = computed(() => {
-    const viewer = previewIdentityCapability.value?.viewer;
-    return viewer && typeof viewer === "object" && !Array.isArray(viewer) ? viewer : null;
-  });
   const previewIdentityLabel = computed(() => previewIdentityLabelText({
     busy: previewIdentityBusy.value,
     identity: previewIdentityCurrent.value
@@ -920,7 +848,7 @@ function useVibe64LaunchControlsSurface(props) {
       const requested = previewIdentityRequested.value;
       return requested?.mode === "guest"
         ? "Signing out of the preview…"
-        : `Opening preview as ${requested?.selector?.value || requested?.identityValue || "the selected user"}…`;
+        : `Opening preview as ${requested?.name || requested?.identityName || "the selected app identity"}…`;
     }
     return launchPreviewInFlightText({
       activeLaunchTarget: activeLaunchTarget.value,
@@ -1389,27 +1317,9 @@ function useVibe64LaunchControlsSurface(props) {
     previewIdentityReloadRequestId = 0;
   }
 
-  function loadRecentPreviewIdentities() {
-    previewIdentityStoredRecentUsers.value = normalizeRecentPreviewIdentities(
-      readLocalStorageJson(previewIdentityRecentStorageKey.value, [])
-    );
-  }
-
-  function rememberRecentPreviewIdentity(selector = {}) {
-    const recentUsers = nextRecentPreviewIdentities(
-      previewIdentityStoredRecentUsers.value,
-      selector
-    );
-    previewIdentityStoredRecentUsers.value = recentUsers;
-    writeLocalStorageJson(previewIdentityRecentStorageKey.value, recentUsers);
-  }
-
   function resetPreviewIdentityState() {
     completePreviewIdentityTransition();
     previewIdentityCurrent.value = null;
-    previewIdentityCustomValue.value = "";
-    previewIdentityDialogError.value = "";
-    previewIdentityDialogVisible.value = false;
     previewIdentityError.value = "";
   }
 
@@ -1426,28 +1336,22 @@ function useVibe64LaunchControlsSurface(props) {
     return true;
   }
 
-  async function selectPreviewIdentity(selection = {}, {
-    automatic = false
-  } = {}) {
+  async function selectPreviewIdentity(selection = {}) {
     if (previewIdentityBusy.value || !previewIdentityAvailable.value) {
       return false;
     }
-    const mode = String(selection.mode || "viewer").trim();
-    const identityType = String(selection.identityType || "").trim();
-    const rawIdentityValue = String(selection.identityValue || "").trim();
-    const identityValue = identityType === PREVIEW_IDENTITY_TYPE_EMAIL
-      ? rawIdentityValue.toLowerCase()
-      : rawIdentityValue;
-    const requested = mode === "user"
+    const mode = String(selection.mode || "identity").trim();
+    const identityName = String(selection.identityName || "").trim().toLowerCase();
+    const requested = mode === "identity"
       ? {
-          ...(identityType ? { identityType } : {}),
-          identityValue,
+          identityName,
           mode
         }
-      : { mode };
+      : {
+          mode: "guest"
+        };
     previewIdentityBusy.value = true;
     previewIdentityError.value = "";
-    previewIdentityDialogError.value = "";
     previewIdentityRequested.value = requested;
     try {
       const grantResult = await requestPreviewIdentityGrant(requested);
@@ -1461,20 +1365,11 @@ function useVibe64LaunchControlsSurface(props) {
       previewIdentityRequested.value = requestedIdentity;
       const exchangeResult = await requestPreviewIdentityExchange(grant);
       previewIdentityCurrent.value = previewIdentityFromExchange(exchangeResult, requestedIdentity);
-      if (mode === "user") {
-        rememberRecentPreviewIdentity(
-          previewIdentityCurrent.value.selector || requestedIdentity.selector
-        );
-      }
-      previewIdentityDialogVisible.value = false;
       reloadPreviewForIdentity("identity-selected");
       return true;
     } catch (error) {
       const message = String(error?.message || error || "Preview identity exchange failed.");
       previewIdentityError.value = message;
-      if (!automatic && mode === "user") {
-        previewIdentityDialogError.value = message;
-      }
       if (error?.signedOut === true) {
         previewIdentityCurrent.value = {
           mode: "guest"
@@ -1490,50 +1385,20 @@ function useVibe64LaunchControlsSurface(props) {
     }
   }
 
-  function selectPreviewViewer() {
+  function selectPreviewConfiguredIdentity(identity = {}) {
+    const identityName = String(identity?.name || "").trim();
+    if (!identityName) {
+      return false;
+    }
     return selectPreviewIdentity({
-      mode: "viewer"
+      identityName,
+      mode: "identity"
     });
   }
 
   function selectPreviewGuest() {
     return selectPreviewIdentity({
       mode: "guest"
-    });
-  }
-
-  async function selectRecentPreviewIdentity(selector = {}) {
-    const recentSelector = normalizePreviewIdentitySelector(selector);
-    if (!recentSelector) {
-      return false;
-    }
-    previewIdentityCustomValue.value = recentSelector.value;
-    const selected = await selectPreviewIdentity({
-      identityType: recentSelector.type,
-      identityValue: recentSelector.value,
-      mode: "user"
-    });
-    if (!selected) {
-      previewIdentityDialogVisible.value = true;
-    }
-    return selected;
-  }
-
-  function openPreviewIdentityDialog() {
-    previewIdentityCustomValue.value = "";
-    previewIdentityDialogError.value = "";
-    previewIdentityDialogVisible.value = true;
-  }
-
-  function submitPreviewIdentityDialog() {
-    const identityValue = String(previewIdentityCustomValue.value || "").trim();
-    if (!identityValue) {
-      previewIdentityDialogError.value = `Enter an existing application user's ${previewIdentityTypePhrase(previewIdentityTypes.value)}.`;
-      return false;
-    }
-    return selectPreviewIdentity({
-      identityValue,
-      mode: "user"
     });
   }
 
@@ -1547,15 +1412,9 @@ function useVibe64LaunchControlsSurface(props) {
       return false;
     }
     previewIdentityAutomaticAttempt = lifecycle;
-    const defaultMode = defaultPreviewIdentityMode({
-      capability: previewIdentityCapability.value,
-      viewer: previewIdentityViewer.value
-    });
-    void selectPreviewIdentity({
-      mode: defaultMode
-    }, {
-      automatic: true
-    });
+    void selectPreviewIdentity(defaultPreviewIdentitySelection({
+      capability: previewIdentityCapability.value
+    }));
     return true;
   }
   
@@ -1833,13 +1692,6 @@ function useVibe64LaunchControlsSurface(props) {
     immediate: true
   });
 
-  watch(previewIdentityRecentStorageKey, () => {
-    loadRecentPreviewIdentities();
-  }, {
-    flush: "sync",
-    immediate: true
-  });
-
   watch(previewIdentityAvailable, (available) => {
     if (available && previewFrameLoaded.value) {
       beginDefaultPreviewIdentity();
@@ -1981,20 +1833,12 @@ function useVibe64LaunchControlsSurface(props) {
     previewFrameRequestId,
     previewIdentityAvailable,
     previewIdentityBusy,
+    previewIdentityConfigured,
     previewIdentityCurrent,
-    previewIdentityCustomValue,
-    previewIdentityDialogError,
-    previewIdentityDialogVisible,
     previewIdentityError,
-    previewIdentityInputDescription,
-    previewIdentityInputLabel,
-    previewIdentityInputType,
     previewIdentityLabel,
-    previewIdentityRecentUsers,
     previewIdentityTitle,
     previewIdentityTypeLabel,
-    previewIdentityTypes,
-    previewIdentityViewer,
     previewIssue,
     previewIssueVisible,
     previewInFlightText,
@@ -2029,17 +1873,14 @@ function useVibe64LaunchControlsSurface(props) {
     copyPreviewUrl,
     openPreviewRoute,
     openPreviewOptions,
-    openPreviewIdentityDialog,
     recoverEmbeddedPreview,
     reloadPreview,
     retryLaunchStatus,
     requestPreviewDiagnostics,
     resetPreviewAddressDraft,
     savePreviewOptions,
+    selectPreviewConfiguredIdentity,
     selectPreviewGuest,
-    selectRecentPreviewIdentity,
-    selectPreviewViewer,
-    submitPreviewIdentityDialog,
     submitPreviewRouteDialog,
     submitPreviewAddress,
     restartTerminal,
@@ -2268,7 +2109,7 @@ function launchToolbarDockShouldShow({
 }
 
 export {
-  defaultPreviewIdentityMode,
+  defaultPreviewIdentitySelection,
   launchPreviewAddressNavigationUrl,
   launchPreviewEmptyText,
   launchPreviewFrameUrl,
@@ -2283,8 +2124,7 @@ export {
   launchPreviewNotice,
   launchPreviewStatusText,
   launchToolbarDockShouldShow,
-  nextRecentPreviewIdentities,
-  normalizeRecentPreviewIdentities,
+  normalizeConfiguredPreviewIdentities,
   previewOpeningOverlayVisible,
   previewAddressDisplayText,
   previewRouteFromUrl,

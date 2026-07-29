@@ -24,15 +24,10 @@ function previewIdentityCommandError(message = "", code = "vibe64_preview_identi
 }
 
 function commandRequestSubject(selection = {}) {
-  if (selection.subject) {
-    return selection.subject;
-  }
-  return selection.selector
-    ? {
-        kind: PREVIEW_IDENTITY_SUBJECT_SELECTOR,
-        selector: selection.selector
-      }
-    : null;
+  return {
+    kind: PREVIEW_IDENTITY_SUBJECT_SELECTOR,
+    selector: selection.selector
+  };
 }
 
 function previewIdentityCommandRequest(selection = {}, {

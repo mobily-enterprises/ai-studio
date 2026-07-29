@@ -892,8 +892,7 @@ test("launch preview proxy delegates identity exchange to the app-owned command"
       const previewAuth = {
         ...commandPreviewAuth(target.origin, "application-command"),
         identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
-        kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-        viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+        kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND
       };
       const preview = await registry.ensure({
         executePreviewIdentityCommand,
@@ -1756,8 +1755,7 @@ function commandPreviewAuth(targetOrigin = "", suffix = "identity") {
     sessionId: `session-${suffix}`,
     targetHref: `${targetOrigin}/home`,
     targetRoot: `/tmp/vibe64-preview-${suffix}`,
-    terminalSessionId: `terminal-${suffix}`,
-    viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+    terminalSessionId: `terminal-${suffix}`
   };
 }
 

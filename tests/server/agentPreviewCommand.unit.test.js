@@ -356,12 +356,12 @@ test("agent preview help distinguishes duplicate previews from explicit referenc
   assert.match(result.stdout, /Do not start a duplicate copy/u);
   assert.match(result.stdout, /distinct secondary application explicitly requested by the user/u);
   assert.match(result.stdout, /legacy reference app/u);
-  assert.match(result.stdout, /vibe64-playwright \[--identity <you\|guest\|existing-user-identifier>\] test/u);
+  assert.match(result.stdout, /vibe64-playwright \[--identity <default\|guest\|configured-name>\] test/u);
   assert.doesNotMatch(result.stdout, /only preview server the agent may use/u);
   assert.doesNotMatch(result.stdout, /any other development server/u);
 });
 
-test("agent preview identity authorization binds you to the trusted Vibe64 viewer", async () => {
+test("agent preview identity authorization uses configured names without Vibe64 viewer data", async () => {
   const sessionId = "preview-identity-session";
   const selections = [];
   const command = createAgentPreviewCommandService({
@@ -382,21 +382,14 @@ test("agent preview identity authorization binds you to the trusted Vibe64 viewe
     }
   });
 
-  assert.equal(command.registerViewer(sessionId, {
-    displayName: "Ada Lovelace",
-    email: "ADA@EXAMPLE.COM"
-  }), true);
-  assert.equal((await command.authorizeBrowserIdentity(sessionId, "you")).ok, true);
+  assert.equal((await command.authorizeBrowserIdentity(sessionId, "default")).ok, true);
   assert.equal((await command.authorizeBrowserIdentity(sessionId, "guest")).ok, true);
-  assert.equal((await command.authorizeBrowserIdentity(sessionId, "merc")).ok, true);
+  assert.equal((await command.authorizeBrowserIdentity(sessionId, "worker")).ok, true);
   assert.deepEqual(selections, [
     {
       input: {
-        mode: "viewer",
-        vibe64User: {
-          displayName: "Ada Lovelace",
-          email: "ada@example.com"
-        }
+        identityName: "default",
+        mode: "identity"
       },
       sessionId
     },
@@ -408,17 +401,14 @@ test("agent preview identity authorization binds you to the trusted Vibe64 viewe
     },
     {
       input: {
-        identityValue: "merc",
-        mode: "user"
+        identityName: "worker",
+        mode: "identity"
       },
       sessionId
     }
   ]);
 
   await command.closeAllForSession(sessionId);
-  const missingViewer = await command.authorizeBrowserIdentity(sessionId, "you");
-  assert.equal(missingViewer.ok, false);
-  assert.equal(missingViewer.code, "vibe64_agent_preview_viewer_unavailable");
   assert.equal(selections.length, 3);
 });
 
@@ -455,6 +445,14 @@ test("agent preview command ensures the managed preview and waits for readiness"
         href: "http://127.0.0.1:4100/"
       },
       previewIdentity: {
+        defaultIdentityName: "admin",
+        identities: [
+          {
+            name: "admin",
+            type: "email",
+            value: "admin@example.com"
+          }
+        ],
         identityTypes: ["email"]
       },
       previewTarget: {
@@ -509,6 +507,13 @@ test("agent preview command ensures the managed preview and waits for readiness"
         url: "http://127.0.0.1:4100/"
       }
     },
+    defaultIdentity: "admin",
+    identities: [
+      {
+        name: "admin",
+        type: "email"
+      }
+    ],
     identityTypes: ["email"],
     ensured: true,
     launchTargetId: "dev",
@@ -635,6 +640,8 @@ test("agent preview command delegates restart to the managed launch controller",
         url: "http://127.0.0.1:4100/app"
       }
     },
+    defaultIdentity: "",
+    identities: [],
     identityTypes: [],
     launchTargetId: "jskit-dev",
     ready: true,
@@ -840,29 +847,41 @@ test("managed preview browser selects real application identities inside its own
           }
         };
       }
-      const identityValue = input.mode === "viewer"
-        ? input.vibe64User.email
-        : input.identityValue;
-      const identityType = identityValue.includes("@") ? "email" : "login";
+      assert.equal(input.mode, "identity");
+      const configured = {
+        default: {
+          name: "admin",
+          type: "email",
+          value: "ada@example.com"
+        },
+        missing: {
+          name: "missing",
+          type: "email",
+          value: "missing@example.com"
+        },
+        worker: {
+          name: "worker",
+          type: "login",
+          value: "merc"
+        }
+      }[input.identityName];
+      assert.ok(configured);
       return {
-        grant: identityValue === "missing@example.com"
+        grant: configured.name === "missing"
           ? "grant:rejected-after-logout"
-          : `grant:${identityValue}`,
+          : `grant:${configured.value}`,
         ok: true,
         requestedIdentity: {
-          displayName: input.mode === "viewer" ? input.vibe64User.displayName : "",
-          mode: input.mode,
+          displayName: configured.name,
+          mode: "identity",
+          name: configured.name,
           selector: {
-            type: identityType,
-            value: identityValue
+            type: configured.type,
+            value: configured.value
           }
         }
       };
     }
-  });
-  commandService.registerViewer(sessionId, {
-    displayName: "Ada Lovelace",
-    email: "ada@example.com"
   });
   try {
     await createFakePlaywrightRuntime(runtimeRoot);
@@ -879,19 +898,20 @@ test("managed preview browser selects real application identities inside its own
       ...prepared.env
     };
 
-    const asViewer = await execFileAsync(prepared.hostWrapperPath, [
+    const asDefault = await execFileAsync(prepared.hostWrapperPath, [
       "browser",
       "identity",
-      "you"
+      "default"
     ], {
       env: commandEnv
     });
-    assert.doesNotMatch(asViewer.stdout, /grant:/u);
-    assert.deepEqual(JSON.parse(asViewer.stdout).identity, {
+    assert.doesNotMatch(asDefault.stdout, /grant:/u);
+    assert.deepEqual(JSON.parse(asDefault.stdout).identity, {
       displayName: "ada",
       email: "ada@example.com",
       login: "",
-      mode: "you",
+      mode: "identity",
+      name: "admin",
       selector: {
         type: "email",
         value: "ada@example.com"
@@ -903,7 +923,7 @@ test("managed preview browser selects real application identities inside its own
     const asExistingUser = JSON.parse((await execFileAsync(prepared.hostWrapperPath, [
       "browser",
       "identity",
-      "merc"
+      "worker"
     ], {
       env: commandEnv
     })).stdout);
@@ -911,7 +931,8 @@ test("managed preview browser selects real application identities inside its own
       displayName: "merc",
       email: "",
       login: "merc",
-      mode: "user",
+      mode: "identity",
+      name: "worker",
       selector: {
         type: "login",
         value: "merc"
@@ -924,7 +945,7 @@ test("managed preview browser selects real application identities inside its own
       execFileAsync(prepared.hostWrapperPath, [
         "browser",
         "identity",
-        "missing@example.com"
+        "missing"
       ], {
         env: commandEnv
       }),
@@ -952,11 +973,8 @@ test("managed preview browser selects real application identities inside its own
     assert.equal(selections.length, 4);
     assert.deepEqual(selections[0], {
       input: {
-        mode: "viewer",
-        vibe64User: {
-          displayName: "Ada Lovelace",
-          email: "ada@example.com"
-        }
+        identityName: "default",
+        mode: "identity"
       },
       sessionId
     });
@@ -979,13 +997,14 @@ test("managed preview writes authenticated Playwright state without changing the
     previewUrl,
     async selectPreviewIdentity(receivedSessionId, input) {
       assert.equal(receivedSessionId, sessionId);
-      assert.equal(input.mode, "viewer");
-      assert.equal(input.vibe64User.email, "ada@example.com");
+      assert.equal(input.mode, "identity");
+      assert.equal(input.identityName, "default");
       return {
         grant: "grant:ada@example.com",
         ok: true,
         requestedIdentity: {
-          mode: "viewer",
+          mode: "identity",
+          name: "admin",
           selector: {
             type: "email",
             value: "ada@example.com"
@@ -993,10 +1012,6 @@ test("managed preview writes authenticated Playwright state without changing the
         }
       };
     }
-  });
-  commandService.registerViewer(sessionId, {
-    displayName: "Ada Lovelace",
-    email: "ada@example.com"
   });
   try {
     await createFakePlaywrightRuntime(runtimeRoot);
@@ -1019,7 +1034,7 @@ test("managed preview writes authenticated Playwright state without changing the
     const written = JSON.parse((await execFileAsync(prepared.hostWrapperPath, [
       "browser",
       "storage-state",
-      "you",
+      "default",
       "--output",
       outputPath
     ], {

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-  PREVIEW_IDENTITY_SUBJECT_VIEWER
+  PREVIEW_IDENTITY_SUBJECT_SELECTOR
 } from "../../packages/vibe64-core/src/server/previewAuth.js";
 import {
   createPreviewIdentityCommandRunner,
@@ -16,23 +16,16 @@ function capability() {
     command: [".vibe64/bin/preview-identity"],
     identityTypes: ["email", "user-id"],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-    runtimes: ["node26"],
-    viewerIdentityTypes: ["email"]
+    runtimes: ["node26"]
   };
 }
 
-test("preview identity command request keeps the app-selected viewer subject structured", () => {
+test("preview identity command request contains only the resolved application selector", () => {
   const request = previewIdentityCommandRequest({
     operation: "login-as",
-    subject: {
-      displayName: "Ada",
-      identifiers: [
-        {
-          type: "email",
-          value: "ADA@EXAMPLE.COM"
-        }
-      ],
-      kind: PREVIEW_IDENTITY_SUBJECT_VIEWER
+    selector: {
+      type: "email",
+      value: "ADA@EXAMPLE.COM"
     }
   }, {
     requestId: "request-1",
@@ -44,14 +37,11 @@ test("preview identity command request keeps the app-selected viewer subject str
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
     requestId: "request-1",
     subject: {
-      displayName: "Ada",
-      identifiers: [
-        {
-          type: "email",
-          value: "ada@example.com"
-        }
-      ],
-      kind: PREVIEW_IDENTITY_SUBJECT_VIEWER
+      kind: PREVIEW_IDENTITY_SUBJECT_SELECTOR,
+      selector: {
+        type: "email",
+        value: "ada@example.com"
+      }
     },
     target: {
       href: "http://127.0.0.1:4100/home",

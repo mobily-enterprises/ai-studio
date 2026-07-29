@@ -181,7 +181,7 @@ function managedPreview(projectRoot = "", {
   }
 }
 
-function managedPlaywrightStorageState(projectRoot = "", identity = "you") {
+function managedPlaywrightStorageState(projectRoot = "", identity = "default") {
   const directory = mkdtempSync(path.join(
     path.resolve(process.env.TMPDIR || "/tmp"),
     "vibe64-playwright-auth-"
@@ -265,7 +265,7 @@ function run(command = "", args = [], options = {}) {
 }
 
 function managedExecution(runtime = {}, projectRoot = "", {
-  identity = "you",
+  identity = "default",
   identityExplicit = false
 } = {}) {
   const preview = managedPreview(projectRoot, {
@@ -288,7 +288,7 @@ function managedExecution(runtime = {}, projectRoot = "", {
 
 function parseInvocation(values = []) {
   const args = [...values];
-  let identity = "you";
+  let identity = "default";
   let identityExplicit = false;
   while (args.length > 0) {
     const option = String(args[0] || "");
@@ -304,7 +304,7 @@ function parseInvocation(values = []) {
       ? String(args.shift() || "").trim()
       : option.slice("--identity=".length).trim();
     if (!identity) {
-      fail("--identity requires you, guest, or an existing application user identifier.", 64);
+      fail("--identity requires default, guest, or a configured managed app identity name.", 64);
     }
   }
   return {
@@ -342,11 +342,11 @@ const {
 if (!command || command === "help" || command === "--help" || command === "-h") {
   process.stdout.write([
     "Usage:",
-    "  vibe64-playwright [--identity <you|guest|existing-user-identifier>] test [playwright test arguments]",
-    "  vibe64-playwright [--identity <you|guest|existing-user-identifier>] npm-run <package-script> [-- script arguments]",
+    "  vibe64-playwright [--identity <default|guest|configured-name>] test [playwright test arguments]",
+    "  vibe64-playwright [--identity <default|guest|configured-name>] npm-run <package-script> [-- script arguments]",
     "  vibe64-playwright status",
     "",
-    "The project keeps ordinary portable Playwright tests. Vibe64 ensures the managed preview, supplies PLAYWRIGHT_BASE_URL, selects the matching managed browser runtime, and defaults authenticated tests to the current Vibe64 viewer. Use --identity only for an explicitly authorized existing application identity."
+    "The project keeps ordinary portable Playwright tests. Vibe64 ensures the managed preview, supplies PLAYWRIGHT_BASE_URL, selects the matching managed browser runtime, and uses the project's default managed app identity. Use --identity to select another configured name or guest."
   ].join("\\n") + "\\n");
   process.exit(0);
 }

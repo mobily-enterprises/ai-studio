@@ -559,7 +559,8 @@ async function selectApplicationIdentity(input = {}) {
         ).trim(),
         email: String(identity.email || (selector?.type === "email" ? selector.value : "")).trim().toLowerCase(),
         login: String(identity.login || (selector?.type === "login" ? selector.value : "")).trim(),
-        mode: mode === "viewer" ? "you" : mode,
+        mode,
+        name: String(requestedIdentity.name || "").trim(),
         selector,
         userId: String(identity.userId || (selector?.type === "user-id" ? selector.value : "")).trim(),
         username: String(identity.username || "").trim()

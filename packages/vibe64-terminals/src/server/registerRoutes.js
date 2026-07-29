@@ -132,8 +132,7 @@ function registerRoutes(
     summary: "Read Vibe64 launch target status."
   }, (request) => {
     return terminalService().launchTargetStatus(request.params.sessionId, {
-      ...requestPublicRouting(request),
-      vibe64User: request.vibe64User || null
+      ...requestPublicRouting(request)
     });
   });
 
@@ -154,11 +153,13 @@ function registerRoutes(
     actionId: ACTION_SELECT_PREVIEW_IDENTITY,
     body: previewIdentityInputValidator,
     buildInput(request) {
-      return withVibe64User(request, {
-        ...routes.requestBody(request),
+      const body = routes.requestBody(request);
+      return {
+        identityName: String(body.identityName || ""),
+        mode: body.mode,
         ...requestPublicRouting(request),
         sessionId: request.params.sessionId
-      });
+      };
     },
     summary: "Select the application identity for this preview browser."
   });

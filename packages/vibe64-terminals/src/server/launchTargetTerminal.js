@@ -44,17 +44,12 @@ import {
 import {
   createPreviewIdentityGrant,
   normalizePreviewAuthKind,
-  normalizePreviewIdentitySelector,
   PREVIEW_IDENTITY_LOGIN_OPERATION,
   PREVIEW_IDENTITY_LOGOUT_OPERATION,
-  PREVIEW_IDENTITY_SELECTOR_EMAIL,
-  PREVIEW_IDENTITY_SELECTOR_LOGIN,
-  PREVIEW_IDENTITY_SELECTOR_USER_ID,
-  PREVIEW_IDENTITY_SUBJECT_VIEWER,
+  previewApplicationIdentitiesFromConfig,
   previewAuthEnvironment,
   previewAuthIdentityAvailable,
   previewAuthIdentityTypes,
-  previewAuthViewerIdentityTypes,
   previewAuthRequiresIdentitySecret,
   previewAuthProfilePath,
   previewAuthSecretPath,
@@ -868,7 +863,7 @@ function openTargetFromLaunchPreview(preview = {}, openTarget = null) {
 function launchStatusResponseFromPreviewStatus({
   launchTargets = [],
   previewStatus = {},
-  vibe64User = null
+  projectConfig = {}
 } = {}) {
   const preview = normalizeLaunchPreview(previewStatus.preview || {});
   const previewTarget = previewTargetFromLaunchPreview(preview);
@@ -881,9 +876,9 @@ function launchStatusResponseFromPreviewStatus({
     launchTargets,
     preview,
     previewIdentity: previewIdentityCapability({
+      projectConfig,
       preview,
-      terminal: previewStatus.activeTerminal,
-      vibe64User
+      terminal: previewStatus.activeTerminal
     }),
     previewTarget,
     lastLaunchTarget: previewStatus.lastLaunchTarget || null,
@@ -967,47 +962,14 @@ function previewAuthForLaunchTerminal(terminal = {}, {
     sessionRoot: String(metadata.sessionRoot || ""),
     targetHref,
     targetRoot: String(metadata.targetRoot || metadata.runRoot || ""),
-    terminalSessionId: String(terminal.id || ""),
-    viewerIdentityTypes: previewAuthViewerIdentityTypes({
-      identityTypes: metadata.previewIdentity?.identityTypes,
-      kind,
-      viewerIdentityTypes: metadata.previewIdentity?.viewerIdentityTypes
-    })
-  };
-}
-
-function previewIdentityViewer(vibe64User = null, identityTypes = []) {
-  const email = String(vibe64User?.email || "").trim().toLowerCase();
-  const login = String(vibe64User?.username || vibe64User?.login || "").trim();
-  const userId = String(vibe64User?.id || vibe64User?.userId || "").trim();
-  const identifiers = [
-    identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_EMAIL) && email
-      ? { type: PREVIEW_IDENTITY_SELECTOR_EMAIL, value: email }
-      : null,
-    identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_LOGIN) && login
-      ? { type: PREVIEW_IDENTITY_SELECTOR_LOGIN, value: login }
-      : null,
-    identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_USER_ID) && userId
-      ? { type: PREVIEW_IDENTITY_SELECTOR_USER_ID, value: userId }
-      : null
-  ].filter(Boolean);
-  const selector = identifiers[0] || null;
-  if (!selector) {
-    return null;
-  }
-  return {
-    displayName: String(
-      vibe64User?.displayName || vibe64User?.name || login || email || userId
-    ).trim() || selector.value,
-    identifiers,
-    selector
+    terminalSessionId: String(terminal.id || "")
   };
 }
 
 function previewIdentityCapability({
+  projectConfig = {},
   preview = {},
-  terminal = null,
-  vibe64User = null
+  terminal = null
 } = {}) {
   const previewReady = ["ready", "stale"].includes(String(preview.state || "")) && Boolean(preview.href);
   const previewAuthKind = normalizePreviewAuthKind(terminal?.metadata?.previewAuth);
@@ -1021,17 +983,17 @@ function previewIdentityCapability({
   const identityTypes = previewAuthIdentityTypes(previewAuth || {
     kind: previewAuthKind
   });
-  const viewerIdentityTypes = previewAuthViewerIdentityTypes(previewAuth || {
-    identityTypes,
-    kind: previewAuthKind
-  });
-  const viewer = previewIdentityViewer(vibe64User, viewerIdentityTypes);
+  const configuredIdentities = previewApplicationIdentitiesFromConfig(projectConfig);
+  const identities = configuredIdentities.filter((identity) => (
+    identityTypes.includes(identity.type)
+  ));
   const available = previewReady &&
     identityTypes.length > 0 &&
     previewAuthIdentityAvailable(previewAuth || {});
   return {
     available,
-    defaultMode: viewer ? "viewer" : "guest",
+    defaultIdentityName: identities[0]?.name || "",
+    defaultMode: identities.length > 0 ? "identity" : "guest",
     disabledReason: available
       ? ""
       : !previewReady
@@ -1041,68 +1003,19 @@ function previewIdentityCapability({
             ? "This preview does not advertise a supported application user identifier."
             : "Preview identity authorization is unavailable. Restart the preview."
           : "This preview does not support application identity switching.",
+    identities,
     identityTypes,
-    viewerIdentityTypes,
-    viewer
+    rejectedIdentities: configuredIdentities
+      .filter((identity) => !identityTypes.includes(identity.type))
+      .map((identity) => identity.name)
   };
 }
 
-function previewIdentityTypeDescription(identityTypes = []) {
-  const labels = identityTypes.map((type) => ({
-    [PREVIEW_IDENTITY_SELECTOR_EMAIL]: "email",
-    [PREVIEW_IDENTITY_SELECTOR_LOGIN]: "login name",
-    [PREVIEW_IDENTITY_SELECTOR_USER_ID]: "user ID"
-  }[type])).filter(Boolean);
-  if (labels.length < 2) {
-    return labels[0] || "user identifier";
-  }
-  return labels.length === 2
-    ? labels.join(" or ")
-    : `${labels.slice(0, -1).join(", ")}, or ${labels.at(-1)}`;
-}
-
-function inferredPreviewIdentitySelector({
-  identityType = "",
-  identityValue = ""
-} = {}, identityTypes = []) {
-  const value = String(identityValue || "").trim();
-  const explicitType = String(identityType || "").trim();
-  let type = explicitType;
-  if (!type && value.includes("@") && identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_EMAIL)) {
-    type = PREVIEW_IDENTITY_SELECTOR_EMAIL;
-  }
-  if (!type && /^[1-9][0-9]*$/u.test(value) && identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_USER_ID)) {
-    type = PREVIEW_IDENTITY_SELECTOR_USER_ID;
-  }
-  if (!type && identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_LOGIN)) {
-    type = PREVIEW_IDENTITY_SELECTOR_LOGIN;
-  }
-  if (!type && identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_USER_ID)) {
-    type = PREVIEW_IDENTITY_SELECTOR_USER_ID;
-  }
-  if (!type && identityTypes.includes(PREVIEW_IDENTITY_SELECTOR_EMAIL)) {
-    type = PREVIEW_IDENTITY_SELECTOR_EMAIL;
-  }
-  if (!type || !identityTypes.includes(type)) {
-    const error = new Error(
-      `Enter an existing application user's ${previewIdentityTypeDescription(identityTypes)}.`
-    );
-    error.code = "vibe64_preview_identity_selector_unsupported";
-    throw error;
-  }
-  return normalizePreviewIdentitySelector({
-    type,
-    value
-  });
-}
-
 function previewIdentitySelection(input = {}, {
-  identityTypes = [],
-  useViewerSubject = false,
-  viewerIdentityTypes = []
+  identities = []
 } = {}) {
-  const mode = String(input.mode || "viewer").trim();
-  if (!["viewer", "user", "guest"].includes(mode)) {
+  const mode = String(input.mode || "identity").trim();
+  if (!["identity", "guest"].includes(mode)) {
     const error = new Error("Preview identity mode is invalid.");
     error.code = "vibe64_preview_identity_mode_invalid";
     throw error;
@@ -1117,37 +1030,36 @@ function previewIdentitySelection(input = {}, {
       }
     };
   }
-  const viewer = previewIdentityViewer(
-    input.vibe64User,
-    viewerIdentityTypes
-  );
-  if (mode === "viewer" && !viewer) {
+  const requestedName = String(input.identityName || "").trim().toLowerCase();
+  const identity = requestedName && requestedName !== "default"
+    ? identities.find((entry) => entry.name === requestedName)
+    : identities[0];
+  if (!identity) {
+    const availableNames = identities.map((entry) => entry.name);
     const error = new Error(
-      `The signed-in Vibe64 user does not have a supported ${previewIdentityTypeDescription(identityTypes)} to match.`
+      requestedName && availableNames.length > 0
+        ? `Unknown managed app identity ${requestedName}. Choose one of: ${availableNames.join(", ")}.`
+        : "No managed app identity is configured for this project."
     );
-    error.code = "vibe64_preview_identity_viewer_missing";
+    error.code = requestedName
+      ? "vibe64_preview_identity_name_unknown"
+      : "vibe64_preview_identity_not_configured";
     throw error;
   }
-  const selector = mode === "viewer"
-    ? viewer.selector
-    : inferredPreviewIdentitySelector(input, identityTypes);
+  const selector = {
+    type: identity.type,
+    value: identity.value
+  };
   return {
     requestedIdentity: {
-      displayName: mode === "viewer" ? viewer.displayName : "",
+      displayName: identity.name,
       mode,
+      name: identity.name,
       selector
     },
     selection: {
       operation: PREVIEW_IDENTITY_LOGIN_OPERATION,
-      ...(mode === "viewer" && useViewerSubject
-        ? {
-            subject: {
-              displayName: viewer.displayName,
-              identifiers: viewer.identifiers,
-              kind: PREVIEW_IDENTITY_SUBJECT_VIEWER
-            }
-          }
-        : { selector })
+      selector
     }
   };
 }
@@ -2016,17 +1928,14 @@ function createLaunchTargetTerminalController({
         return launchStatusResponseFromPreviewStatus({
           launchTargets,
           previewStatus,
-          vibe64User: options.vibe64User || null
+          projectConfig: context.config
         });
       });
     },
 
     async selectPreviewIdentity(sessionId, input = {}, options = {}) {
       return vibe64Result(async () => {
-        const status = await controller.launchStatus(sessionId, {
-          ...options,
-          vibe64User: input.vibe64User || null
-        });
+        const status = await controller.launchStatus(sessionId, options);
         if (status?.ok === false) {
           const error = new Error(status.error || "Preview identity is unavailable.");
           error.code = status.code || "vibe64_preview_identity_unavailable";
@@ -2047,9 +1956,7 @@ function createLaunchTargetTerminalController({
           throw error;
         }
         const identity = previewIdentitySelection(input, {
-          identityTypes: status.previewIdentity?.identityTypes || [],
-          useViewerSubject: previewAuthIdentityAvailable(previewAuth || {}),
-          viewerIdentityTypes: status.previewIdentity?.viewerIdentityTypes || []
+          identities: status.previewIdentity?.identities || []
         });
         return {
           grant: createPreviewIdentityGrant(previewAuth, identity.selection),
@@ -2090,7 +1997,8 @@ function createLaunchTargetTerminalController({
         });
         const status = launchStatusResponseFromPreviewStatus({
           launchTargets,
-          previewStatus
+          previewStatus,
+          projectConfig: context.config
         });
         if (!status.openTarget.available) {
           return {

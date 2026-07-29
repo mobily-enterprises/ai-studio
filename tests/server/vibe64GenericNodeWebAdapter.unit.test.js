@@ -71,8 +71,7 @@ async function writeOnlinePreviewIdentityContract(root) {
         command: [".vibe64/bin/preview-identity.mjs"],
         identityTypes: ["login"],
         protocol: "vibe64.preview-identity.command.v1",
-        runtimes: ["node26"],
-        viewerIdentityTypes: ["login"]
+        runtimes: ["node26"]
       }
     },
     config: {},

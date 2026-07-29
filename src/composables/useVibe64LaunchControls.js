@@ -111,13 +111,6 @@ function launchPreviewLocationStorageKey(session = {}, projectSlug = currentProj
   );
 }
 
-function launchPreviewRecentUsersStorageKey(projectSlug = currentProjectSlugFromLocation()) {
-  return vibe64ProjectScopedStorageKey(
-    "vibe64:launch-preview-recent-users",
-    projectSlug
-  );
-}
-
 function launchPreviewOptionsStorageKey(
   session = {},
   projectSlug = currentProjectSlugFromLocation(),
@@ -818,8 +811,7 @@ function useVibe64LaunchControls({
       path: vibe64PreviewIdentityPath(sessionsApiPath.value, context.sessionId)
     }),
     buildRawPayload: (_model, { context }) => ({
-      ...(context.identityType ? { identityType: context.identityType } : {}),
-      ...(context.identityValue ? { identityValue: context.identityValue } : {}),
+      ...(context.identityName ? { identityName: context.identityName } : {}),
       mode: context.mode
     }),
     fallbackRunError: "Preview identity could not be selected.",
@@ -848,7 +840,7 @@ function useVibe64LaunchControls({
           available: false,
           defaultMode: "guest",
           disabledReason: "",
-          viewer: null
+          identities: []
         };
   });
   const previewState = computed(() => preview.value.state);
@@ -1224,21 +1216,18 @@ function useVibe64LaunchControls({
   }
 
   function requestPreviewIdentityGrant({
-    identityType = "",
-    identityValue = "",
-    mode = "viewer"
+    identityName = "",
+    mode = "identity"
   } = {}) {
     if (!sessionId.value || previewIdentity.value.available !== true) {
       throw new Error(
         previewIdentity.value.disabledReason || "This preview does not support application identity switching."
       );
     }
-    const normalizedIdentityType = String(identityType || "").trim();
-    const normalizedIdentityValue = String(identityValue || "").trim();
+    const normalizedIdentityName = String(identityName || "").trim();
     return selectPreviewIdentityCommand.run({
-      ...(normalizedIdentityType ? { identityType: normalizedIdentityType } : {}),
-      ...(normalizedIdentityValue ? { identityValue: normalizedIdentityValue } : {}),
-      mode: String(mode || "viewer").trim(),
+      ...(normalizedIdentityName ? { identityName: normalizedIdentityName } : {}),
+      mode: String(mode || "identity").trim(),
       sessionId: sessionId.value
     });
   }
@@ -1792,7 +1781,6 @@ export {
   launchStatusRetryDelay,
   launchStatusShouldRetry,
   launchPreviewLocationStorageKey,
-  launchPreviewRecentUsersStorageKey,
   launchTargetsRealtimeShouldRefresh,
   launchPreviewRequiresProxy,
   launchPreviewOptionsStorageKey,

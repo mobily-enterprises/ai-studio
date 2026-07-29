@@ -70,7 +70,7 @@ async function createProject(projectRoot, version) {
   ].join("\n") + "\n", "utf8");
 }
 
-function authenticatedStorageState(identity = "you") {
+function authenticatedStorageState(identity = "default") {
   return {
     cookies: [{
       domain: "127.0.0.1",
@@ -309,7 +309,7 @@ test("managed Playwright supplies and removes authenticated browser state", asyn
       fixture.prepared.hostWrapperPath,
       "http://127.0.0.1:4104/home"
     );
-    const expectedState = authenticatedStorageState("you");
+    const expectedState = authenticatedStorageState("default");
 
     const executed = JSON.parse((await execFileAsync(
       fixture.prepared.hostPlaywrightWrapperPath,
@@ -328,7 +328,7 @@ test("managed Playwright supplies and removes authenticated browser state", asyn
       code: "ENOENT"
     });
 
-    const explicitIdentity = "compas-owner@example.com";
+    const explicitIdentity = "admin";
     const explicit = JSON.parse((await execFileAsync(
       fixture.prepared.hostPlaywrightWrapperPath,
       ["--identity", explicitIdentity, "test", "--grep", "expanded jobs"],

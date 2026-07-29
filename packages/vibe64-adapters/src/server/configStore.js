@@ -20,12 +20,16 @@ import {
 import {
   deepFreeze
 } from "@local/vibe64-core/server/deepFreeze";
+import {
+  PREVIEW_APPLICATION_IDENTITIES_CONFIG,
+  normalizePreviewApplicationIdentities
+} from "@local/vibe64-core/server/previewAuth";
 
 const VIBE64_RUNTIME_DIR = "runtime";
 const VIBE64_RUNTIME_CONFIG_DIR = "runtime-config";
 const VIBE64_CONFIG_HELPER_FILE = "vibe64-config.sh";
 const CONFIG_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
-const CONFIG_FIELD_TYPES = new Set(["boolean", "path", "select", "string"]);
+const CONFIG_FIELD_TYPES = new Set(["boolean", "named-identity-list", "path", "select", "string"]);
 const CONFIG_FIELD_SCOPES = new Set(["shared", "local"]);
 
 const VIBE64_GENERAL_CONFIG_FIELDS = deepFreeze([
@@ -54,6 +58,17 @@ const VIBE64_GENERAL_CONFIG_FIELDS = deepFreeze([
     sectionId: "pull_requests",
     sectionLabel: "Pull requests",
     type: "select"
+  },
+  {
+    defaultValue: [],
+    description: "Add one or more named existing application accounts for authenticated managed Preview and Playwright. The first entry is the default. Each entry uses an identifier type understood by the app and is stored only in Vibe64 project state.",
+    id: PREVIEW_APPLICATION_IDENTITIES_CONFIG,
+    label: "Managed app identities",
+    required: false,
+    scope: "local",
+    sectionId: "managed_app_access",
+    sectionLabel: "Managed app access",
+    type: "named-identity-list"
   }
 ]);
 
@@ -162,6 +177,9 @@ function requiredConfigFieldMissing(field = {}, state = {}, values = {}, {
   if (field.type === "boolean") {
     return false;
   }
+  if (field.type === "named-identity-list") {
+    return !Array.isArray(state.value) || state.value.length === 0;
+  }
   if (!state.saved && !defaultedValuesSatisfyRequired) {
     return true;
   }
@@ -201,6 +219,9 @@ function valueForFile(value, field) {
   if (field.type === "boolean") {
     return value ? "true" : "false";
   }
+  if (field.type === "named-identity-list") {
+    return JSON.stringify(value);
+  }
   return normalizeText(value);
 }
 
@@ -211,12 +232,16 @@ function normalizeConfigValue(value, field) {
   if (field.type === "select") {
     return normalizeSelectValue(value, field);
   }
+  if (field.type === "named-identity-list") {
+    return normalizePreviewApplicationIdentities(value);
+  }
   return normalizeText(value);
 }
 
 function isSavedConfigValueError(error) {
   return error?.code === "vibe64_invalid_boolean_config" ||
-    error?.code === "vibe64_invalid_select_config";
+    error?.code === "vibe64_invalid_select_config" ||
+    error?.code === "vibe64_invalid_application_identities_config";
 }
 
 function invalidSavedConfigValue({
@@ -262,6 +287,12 @@ function normalizeConfigField(field = {}, {
   if (!CONFIG_FIELD_SCOPES.has(scope)) {
     throw vibe64Error(
       `Invalid Vibe64 config field scope: ${scope || "(empty)"}`,
+      "vibe64_invalid_config_field_scope"
+    );
+  }
+  if (type === "named-identity-list" && scope !== "local") {
+    throw vibe64Error(
+      "Managed app identities must use project-local Vibe64 config.",
       "vibe64_invalid_config_field_scope"
     );
   }

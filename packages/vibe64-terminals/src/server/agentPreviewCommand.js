@@ -190,15 +190,15 @@ function usageText() {
     "  vibe64-preview screenshot [--output <path>]",
     "  vibe64-preview browser ensure",
     "  vibe64-preview browser eval < playwright-code.js",
-    "  vibe64-preview browser identity <you|guest|existing-user-identifier>",
+    "  vibe64-preview browser identity <default|guest|configured-name>",
     "  vibe64-preview browser screenshot [--output <path>]",
     "  vibe64-preview browser status",
     "  vibe64-preview browser reset",
     "  vibe64-preview browser close",
     "  vibe64-preview logs [--lines <count>] [--json]",
     "  vibe64-preview restart [--wait] [--json] [--timeout-ms <ms>]",
-    "  vibe64-playwright [--identity <you|guest|existing-user-identifier>] test [playwright test arguments]",
-    "  vibe64-playwright [--identity <you|guest|existing-user-identifier>] npm-run <package-script> [-- script arguments]",
+    "  vibe64-playwright [--identity <default|guest|configured-name>] test [playwright test arguments]",
+    "  vibe64-playwright [--identity <default|guest|configured-name>] npm-run <package-script> [-- script arguments]",
     "",
     "Screenshot commands emit JSON metadata for a uniquely named, immutable PNG.",
     "This is the canonical preview server for the configured primary application.",
@@ -376,6 +376,14 @@ function previewStatusSummary(status = {}, {
     : [])
     .map(normalizeText)
     .filter(Boolean);
+  const identities = (Array.isArray(status.previewIdentity?.identities)
+    ? status.previewIdentity.identities
+    : [])
+    .map((identity) => ({
+      name: normalizeText(identity?.name),
+      type: normalizeText(identity?.type)
+    }))
+    .filter((identity) => identity.name && identity.type);
   return {
     currentPage: previewCurrentPage(previewState, {
       agentUrl: agentEndpoint?.url
@@ -385,6 +393,8 @@ function previewStatusSummary(status = {}, {
       agent: agentEndpoint,
       browser: browserEndpoint
     },
+    defaultIdentity: normalizeText(status.previewIdentity?.defaultIdentityName),
+    identities,
     identityTypes,
     launchTargetId: normalizeText(lastLaunchTarget.id || activeMetadata.launchTargetId),
     ready: previewReady(status),
@@ -405,6 +415,9 @@ function previewSummaryLines(summary = {}) {
     summary.currentPage?.route ? `Current page: ${summary.currentPage.route}` : "Current page: not observed",
     summary.currentPage?.agentUrl ? `Current page agent URL: ${summary.currentPage.agentUrl}` : "",
     summary.terminal?.id ? `Terminal: ${summary.terminal.id} (${summary.terminal.status || "unknown"})` : "",
+    summary.identities?.length
+      ? `Managed app identities: ${summary.identities.map((identity) => identity.name).join(", ")}`
+      : "Managed app identities: none configured",
     `Stale: ${summary.stale ? "yes" : "no"}`
   ].filter(Boolean);
 }
@@ -538,34 +551,10 @@ function createAgentPreviewCommandService({
   readSessionUiState = readSessionUiSyncStateForSession
 } = {}) {
   const browserWorkers = new Map();
-  const sessionViewers = new Map();
-
-  function registerViewer(sessionId = "", vibe64User = null) {
-    const normalizedSessionId = normalizeText(sessionId);
-    const email = normalizeText(vibe64User?.email).toLowerCase();
-    const login = normalizeText(vibe64User?.username || vibe64User?.login);
-    const userId = normalizeText(vibe64User?.id || vibe64User?.userId);
-    if (!normalizedSessionId) {
-      return false;
-    }
-    if (!email && !login && !userId) {
-      sessionViewers.delete(normalizedSessionId);
-      return false;
-    }
-    sessionViewers.set(normalizedSessionId, {
-      displayName: normalizeText(
-        vibe64User?.displayName || vibe64User?.name || login || email || userId
-      ) || login || email || userId,
-      ...(email ? { email } : {}),
-      ...(login ? { login, username: login } : {}),
-      ...(userId ? { id: userId, userId } : {})
-    });
-    return true;
-  }
 
   async function authorizeBrowserIdentity(sessionId = "", identity = "") {
     const normalizedSessionId = normalizeText(sessionId);
-    const requested = normalizeText(identity);
+    const requested = normalizeText(identity).toLowerCase();
     const reservedIdentity = requested.toLowerCase();
     if (!normalizedSessionId) {
       return responseError(
@@ -575,7 +564,7 @@ function createAgentPreviewCommandService({
     }
     if (!requested) {
       return responseError(
-        "Choose you, guest, or an existing application user's identifier.",
+        "Choose default, guest, or a configured managed app identity name.",
         "vibe64_agent_preview_identity_required"
       );
     }
@@ -585,27 +574,14 @@ function createAgentPreviewCommandService({
         "vibe64_agent_preview_identity_unavailable"
       );
     }
-    if (reservedIdentity === "you") {
-      const viewer = sessionViewers.get(normalizedSessionId);
-      if (!viewer) {
-        return responseError(
-          "The Vibe64 user who authorized this agent turn is unavailable. Send the agent a new message, then retry.",
-          "vibe64_agent_preview_viewer_unavailable"
-        );
-      }
-      return launchTarget.selectPreviewIdentity(normalizedSessionId, {
-        mode: "viewer",
-        vibe64User: viewer
-      });
-    }
     if (reservedIdentity === "guest") {
       return launchTarget.selectPreviewIdentity(normalizedSessionId, {
         mode: "guest"
       });
     }
     return launchTarget.selectPreviewIdentity(normalizedSessionId, {
-      identityValue: requested,
-      mode: "user"
+      identityName: requested,
+      mode: "identity"
     });
   }
 
@@ -629,7 +605,6 @@ function createAgentPreviewCommandService({
     const normalizedSessionId = normalizeText(sessionId);
     const sessionWorkers = browserWorkers.get(normalizedSessionId) || new Map();
     browserWorkers.delete(normalizedSessionId);
-    sessionViewers.delete(normalizedSessionId);
     let closed = 0;
     for (const descriptor of sessionWorkers.values()) {
       await closeRegisteredBrowserWorker(descriptor);
@@ -826,7 +801,6 @@ function createAgentPreviewCommandService({
     authorizeBrowserIdentity,
     closeAllForSession,
     registerBrowserWorker,
-    registerViewer,
     releaseControlForSession,
     run
   });

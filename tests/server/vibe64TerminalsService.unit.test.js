@@ -38,6 +38,7 @@ import {
 } from "@local/vibe64-core/server/runtimeConfig";
 import {
   APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
+  PREVIEW_APPLICATION_IDENTITIES_CONFIG,
   PREVIEW_IDENTITY_COMMAND_PROTOCOL,
   PREVIEW_IDENTITY_SELECTOR_EMAIL,
   PREVIEW_IDENTITY_SELECTOR_USER_ID,
@@ -1272,7 +1273,7 @@ test("launch status repairs a running preview from retained readiness-marker out
   }
 });
 
-test("launch preview identity grants use the trusted viewer and active terminal scope", async () => {
+test("launch preview identity grants resolve only named project application identities", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sessionId = "launch-preview-identity";
     const sessionRoot = testSessionRoot(targetRoot, sessionId);
@@ -1302,8 +1303,7 @@ test("launch preview identity grants use the trusted viewer and active terminal 
             PREVIEW_IDENTITY_SELECTOR_USER_ID
           ],
           protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-          sourceRoot: targetRoot,
-          viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+          sourceRoot: targetRoot
         },
         projectScope,
         sessionId,
@@ -1351,54 +1351,64 @@ test("launch preview identity grants use the trusted viewer and active terminal 
                 targetRoot
               };
             },
-            projectConfig: {}
+            projectConfig: {
+              values: {
+                [PREVIEW_APPLICATION_IDENTITIES_CONFIG]: [
+                  {
+                    name: "admin",
+                    type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+                    value: "ada@example.com"
+                  },
+                  {
+                    name: "auditor",
+                    type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
+                    value: "app-user-42"
+                  }
+                ]
+              }
+            }
           };
         }
       }
     });
-    const vibe64User = {
-      displayName: "Ada Lovelace",
-      email: " ADA@EXAMPLE.COM "
-    };
 
     try {
-      const status = await controller.launchStatus(sessionId, {
-        vibe64User
-      });
+      const status = await controller.launchStatus(sessionId);
       assert.equal(status.ok, true);
       assert.equal(status.preview.state, "ready");
       assert.deepEqual(status.previewIdentity, {
         available: true,
-        defaultMode: "viewer",
+        defaultIdentityName: "admin",
+        defaultMode: "identity",
         disabledReason: "",
+        identities: [
+          {
+            name: "admin",
+            type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+            value: "ada@example.com"
+          },
+          {
+            name: "auditor",
+            type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
+            value: "app-user-42"
+          }
+        ],
         identityTypes: [
           PREVIEW_IDENTITY_SELECTOR_EMAIL,
           PREVIEW_IDENTITY_SELECTOR_USER_ID
         ],
-        viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
-        viewer: {
-          displayName: "Ada Lovelace",
-          identifiers: [
-            {
-              type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
-              value: "ada@example.com"
-            }
-          ],
-          selector: {
-            type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
-            value: "ada@example.com"
-          }
-        }
+        rejectedIdentities: []
       });
 
       const selection = await controller.selectPreviewIdentity(sessionId, {
-        mode: "viewer",
-        vibe64User
+        identityName: "admin",
+        mode: "identity"
       });
       assert.equal(selection.ok, true);
       assert.deepEqual(selection.requestedIdentity, {
-        displayName: "Ada Lovelace",
-        mode: "viewer",
+        displayName: "admin",
+        mode: "identity",
+        name: "admin",
         selector: {
           type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
           value: "ada@example.com"
@@ -1412,31 +1422,25 @@ test("launch preview identity grants use the trusted viewer and active terminal 
         sessionId,
         targetHref,
         targetRoot,
-        terminalSessionId: terminal.id,
-        viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+        terminalSessionId: terminal.id
       });
       assert.deepEqual(verified.selection, {
         operation: "login-as",
-        subject: {
-          displayName: "Ada Lovelace",
-          identifiers: [
-            {
-              type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
-              value: "ada@example.com"
-            }
-          ],
-          kind: "viewer"
+        selector: {
+          type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+          value: "ada@example.com"
         }
       });
 
       const byUserId = await controller.selectPreviewIdentity(sessionId, {
-        identityValue: "app-user-42",
-        mode: "user"
+        identityName: "auditor",
+        mode: "identity"
       });
       assert.equal(byUserId.ok, true);
       assert.deepEqual(byUserId.requestedIdentity, {
-        displayName: "",
-        mode: "user",
+        displayName: "auditor",
+        mode: "identity",
+        name: "auditor",
         selector: {
           type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
           value: "app-user-42"
@@ -1450,8 +1454,7 @@ test("launch preview identity grants use the trusted viewer and active terminal 
         sessionId,
         targetHref,
         targetRoot,
-        terminalSessionId: terminal.id,
-        viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+        terminalSessionId: terminal.id
       }).selection, {
         operation: "login-as",
         selector: {
@@ -1460,16 +1463,12 @@ test("launch preview identity grants use the trusted viewer and active terminal 
         }
       });
 
-      const missingViewer = await controller.selectPreviewIdentity(sessionId, {
-        mode: "viewer",
-        vibe64User: {
-          displayName: "Merc",
-          uid: 1000,
-          username: "merc"
-        }
+      const unknownName = await controller.selectPreviewIdentity(sessionId, {
+        identityName: "you",
+        mode: "identity"
       });
-      assert.equal(missingViewer.ok, false);
-      assert.equal(missingViewer.code, "vibe64_preview_identity_viewer_missing");
+      assert.equal(unknownName.ok, false);
+      assert.equal(unknownName.code, "vibe64_preview_identity_name_unknown");
     } finally {
       await controller.closeAllForSession(sessionId);
     }

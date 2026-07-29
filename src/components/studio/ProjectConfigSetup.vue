@@ -149,6 +149,87 @@
                   </v-list-item>
                 </template>
               </v-select>
+              <div
+                v-else-if="field.type === 'named-identity-list'"
+                class="project-config-setup__identity-list"
+              >
+                <div
+                  v-for="(identity, identityIndex) in namedIdentityEntries(field)"
+                  :key="`${field.id}:${identityIndex}`"
+                  class="project-config-setup__identity"
+                >
+                  <div class="project-config-setup__identity-fields">
+                    <v-text-field
+                      v-model="identity.name"
+                      autocomplete="off"
+                      density="compact"
+                      label="Name"
+                      placeholder="admin"
+                      variant="outlined"
+                    />
+                    <v-select
+                      v-model="identity.type"
+                      density="compact"
+                      item-title="label"
+                      item-value="value"
+                      :items="applicationIdentityTypes"
+                      label="App identifier"
+                      variant="outlined"
+                    />
+                    <v-text-field
+                      v-model="identity.value"
+                      autocomplete="off"
+                      density="compact"
+                      label="Application value"
+                      :placeholder="namedIdentityPlaceholder(identity.type)"
+                      :type="identity.type === 'email' ? 'email' : 'text'"
+                      variant="outlined"
+                    />
+                  </div>
+                  <div class="project-config-setup__identity-actions">
+                    <v-chip
+                      v-if="identityIndex === 0"
+                      color="primary"
+                      size="small"
+                      variant="tonal"
+                    >
+                      Default
+                    </v-chip>
+                    <v-btn
+                      v-else
+                      size="small"
+                      variant="text"
+                      @click="makeNamedIdentityDefault(field, identityIndex)"
+                    >
+                      Make default
+                    </v-btn>
+                    <v-btn
+                      color="error"
+                      size="small"
+                      variant="text"
+                      @click="removeNamedIdentity(field, identityIndex)"
+                    >
+                      Remove
+                    </v-btn>
+                  </div>
+                </div>
+                <v-btn
+                  class="project-config-setup__identity-add"
+                  size="small"
+                  variant="outlined"
+                  @click="addNamedIdentity(field)"
+                >
+                  Add identity
+                </v-btn>
+                <v-alert
+                  v-if="fieldErrorMessages(field).length"
+                  density="compact"
+                  type="error"
+                  variant="tonal"
+                >
+                  {{ fieldErrorMessages(field).join(" ") }}
+                </v-alert>
+              </div>
               <v-text-field
                 v-else
                 v-model="formValues[field.id]"
@@ -211,6 +292,20 @@ const props = defineProps({
 
 const emit = defineEmits(["change-project-type", "save"]);
 const formValues = reactive({});
+const applicationIdentityTypes = Object.freeze([
+  {
+    label: "Email",
+    value: "email"
+  },
+  {
+    label: "Login name",
+    value: "login"
+  },
+  {
+    label: "User ID",
+    value: "user-id"
+  }
+]);
 
 const fields = computed(() => {
   return Array.isArray(props.state?.fields) ? props.state.fields : [];
@@ -257,13 +352,21 @@ const visibleSections = computed(() => {
 });
 
 function valueForField(field = {}) {
+  let value;
   if (Object.hasOwn(props.state?.values || {}, field.id)) {
-    return props.state.values[field.id];
+    value = props.state.values[field.id];
+  } else if (Object.hasOwn(props.state?.defaults || {}, field.id)) {
+    value = props.state.defaults[field.id];
+  } else {
+    value = field.type === "boolean" ? false : field.type === "named-identity-list" ? [] : "";
   }
-  if (Object.hasOwn(props.state?.defaults || {}, field.id)) {
-    return props.state.defaults[field.id];
-  }
-  return field.type === "boolean" ? false : "";
+  return field.type === "named-identity-list"
+    ? (Array.isArray(value) ? value : []).map((entry) => ({
+        name: String(entry?.name || ""),
+        type: String(entry?.type || ""),
+        value: String(entry?.value || "")
+      }))
+    : value;
 }
 
 function textFieldInputType(field = {}) {
@@ -301,6 +404,43 @@ function fieldDescription(field = {}) {
 
 function booleanChoiceLabel(field = {}) {
   return formValues[field.id] ? "Enabled" : "Disabled";
+}
+
+function namedIdentityEntries(field = {}) {
+  const value = formValues[field.id];
+  if (Array.isArray(value)) {
+    return value;
+  }
+  formValues[field.id] = [];
+  return formValues[field.id];
+}
+
+function addNamedIdentity(field = {}) {
+  namedIdentityEntries(field).push({
+    name: "",
+    type: "",
+    value: ""
+  });
+}
+
+function removeNamedIdentity(field = {}, index = -1) {
+  namedIdentityEntries(field).splice(index, 1);
+}
+
+function makeNamedIdentityDefault(field = {}, index = -1) {
+  const entries = namedIdentityEntries(field);
+  if (index <= 0 || index >= entries.length) {
+    return;
+  }
+  entries.unshift(entries.splice(index, 1)[0]);
+}
+
+function namedIdentityPlaceholder(type = "") {
+  return {
+    email: "admin@example.com",
+    login: "admin",
+    "user-id": "42"
+  }[String(type || "")] || "Application identifier";
 }
 
 function selectedOption(field = {}) {
@@ -597,6 +737,34 @@ watch(
   min-width: 0;
 }
 
+.project-config-setup__identity-list,
+.project-config-setup__identity {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.project-config-setup__identity {
+  border-bottom: 1px solid rgba(var(--v-theme-outline), 0.16);
+  padding-bottom: 0.55rem;
+}
+
+.project-config-setup__identity-fields {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(0, 0.65fr) minmax(0, 0.8fr) minmax(0, 1.25fr);
+}
+
+.project-config-setup__identity-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.project-config-setup__identity-add {
+  justify-self: start;
+}
+
 .project-config-setup__actions {
   display: flex;
   justify-content: flex-end;
@@ -625,6 +793,10 @@ watch(
   }
 
   .project-config-setup__field {
+    grid-template-columns: 1fr;
+  }
+
+  .project-config-setup__identity-fields {
     grid-template-columns: 1fr;
   }
 }

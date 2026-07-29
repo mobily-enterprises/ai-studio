@@ -7,17 +7,17 @@ import {
   PREVIEW_IDENTITY_LOGIN_OPERATION,
   PREVIEW_IDENTITY_LOGOUT_OPERATION,
   PREVIEW_IDENTITY_SELECTOR_EMAIL,
+  PREVIEW_IDENTITY_SELECTOR_LOGIN,
   PREVIEW_IDENTITY_SELECTOR_USER_ID,
   PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-  PREVIEW_IDENTITY_SUBJECT_VIEWER,
   createPreviewAuthSecret,
   createPreviewIdentityGrant,
+  normalizePreviewApplicationIdentities,
   normalizePreviewIdentityCommandCapability,
   normalizePreviewIdentitySelection,
   previewAuthEnvironment,
   previewAuthIdentityAvailable,
   previewAuthIdentityTypes,
-  previewAuthViewerIdentityTypes,
   verifyPreviewIdentityGrant
 } from "../../packages/vibe64-core/src/server/previewAuth.js";
 
@@ -31,7 +31,6 @@ function previewAuthFixture(overrides = {}) {
     targetHref: "http://127.0.0.1:4102/home",
     targetRoot: "/tmp/preview-auth-test",
     terminalSessionId: "terminal-preview-auth-test",
-    viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
     ...overrides
   };
 }
@@ -75,8 +74,7 @@ test("application command preview identity validates one direct app-owned invoca
     },
     identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL, PREVIEW_IDENTITY_SELECTOR_USER_ID],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-    runtimes: ["node26"],
-    viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+    runtimes: ["node26"]
   });
 
   assert.deepEqual(previewIdentity.command, [".vibe64/bin/preview-identity"]);
@@ -97,26 +95,15 @@ test("application command preview identity validates one direct app-owned invoca
     identityTypes: previewIdentity.identityTypes,
     kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND
   }), [PREVIEW_IDENTITY_SELECTOR_EMAIL, PREVIEW_IDENTITY_SELECTOR_USER_ID]);
-  assert.deepEqual(previewAuthViewerIdentityTypes({
-    identityTypes: previewIdentity.identityTypes,
-    kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-    viewerIdentityTypes: previewIdentity.viewerIdentityTypes
-  }), [PREVIEW_IDENTITY_SELECTOR_EMAIL]);
 });
 
-test("application command preview identity preserves an empty viewer mapping", () => {
-  const previewIdentity = normalizePreviewIdentityCommandCapability({
+test("application command preview identity rejects Vibe64 viewer mappings", () => {
+  assert.throws(() => normalizePreviewIdentityCommandCapability({
     command: [".vibe64/bin/preview-identity"],
-    identityTypes: [PREVIEW_IDENTITY_SELECTOR_USER_ID],
-    protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL
-  });
-
-  assert.deepEqual(previewIdentity.viewerIdentityTypes, []);
-  assert.deepEqual(previewAuthViewerIdentityTypes({
-    identityTypes: previewIdentity.identityTypes,
-    kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-    viewerIdentityTypes: previewIdentity.viewerIdentityTypes
-  }), []);
+    identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
+    protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
+    viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
+  }), /cannot derive application identities from the Vibe64 viewer/u);
 });
 
 test("application command preview identity rejects colliding environment aliases", () => {
@@ -147,40 +134,76 @@ test("application command preview identity requires an app-owned Vibe64 executab
   }), /app-owned file under \.vibe64\/bin/u);
 });
 
-test("application command grants carry the trusted viewer identifiers declared by the app", () => {
-  const previewAuth = previewAuthFixture({
-    identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL, PREVIEW_IDENTITY_SELECTOR_USER_ID],
-    kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-    viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
-  });
-  const grant = createPreviewIdentityGrant(previewAuth, {
+test("application command grants reject viewer subjects", () => {
+  assert.throws(() => createPreviewIdentityGrant(previewAuthFixture(), {
     operation: PREVIEW_IDENTITY_LOGIN_OPERATION,
     subject: {
-      displayName: "Ada",
-      identifiers: [
-        {
-          type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
-          value: "ADA@EXAMPLE.COM"
-        }
-      ],
-      kind: PREVIEW_IDENTITY_SUBJECT_VIEWER
+      kind: "viewer"
     }
-  });
-  const verified = verifyPreviewIdentityGrant(grant, previewAuth);
+  }), /requires an explicit application selector/u);
+});
 
-  assert.deepEqual(verified.selection, {
-    operation: PREVIEW_IDENTITY_LOGIN_OPERATION,
-    subject: {
-      displayName: "Ada",
-      identifiers: [
-        {
-          type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
-          value: "ada@example.com"
-        }
-      ],
-      kind: PREVIEW_IDENTITY_SUBJECT_VIEWER
+test("managed app identities normalize named app-owned selectors without a Vibe64 viewer", () => {
+  assert.deepEqual(normalizePreviewApplicationIdentities([
+    {
+      name: " Admin ",
+      type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+      value: " ADA@EXAMPLE.COM "
+    },
+    {
+      name: "worker",
+      type: PREVIEW_IDENTITY_SELECTOR_LOGIN,
+      value: "luca"
+    },
+    {
+      name: "auditor",
+      type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
+      value: "42"
     }
-  });
+  ]), [
+    {
+      name: "admin",
+      type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+      value: "ada@example.com"
+    },
+    {
+      name: "worker",
+      type: PREVIEW_IDENTITY_SELECTOR_LOGIN,
+      value: "luca"
+    },
+    {
+      name: "auditor",
+      type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
+      value: "42"
+    }
+  ]);
+  assert.throws(() => normalizePreviewApplicationIdentities([
+    {
+      name: "you",
+      type: PREVIEW_IDENTITY_SELECTOR_LOGIN,
+      value: "merc"
+    }
+  ]), /invalid name/u);
+  assert.throws(() => normalizePreviewApplicationIdentities([
+    {
+      name: "admin",
+      type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+      value: "ada@example.com",
+      vibe64User: "merc"
+    }
+  ]), /contain only name, type, and value/u);
+  assert.throws(() => normalizePreviewApplicationIdentities([
+    {
+      name: "admin",
+      type: PREVIEW_IDENTITY_SELECTOR_EMAIL,
+      value: "ada@example.com"
+    },
+    {
+      name: "admin",
+      type: PREVIEW_IDENTITY_SELECTOR_USER_ID,
+      value: "42"
+    }
+  ]), /duplicated/u);
 });
 
 test("preview identity grants verify once scoped data remains unchanged", () => {

@@ -161,10 +161,8 @@ const featureActions = Object.freeze([
     async execute(input, context, deps) {
       void context;
       return deps.featureService.selectPreviewIdentity(input.sessionId, {
-        identityType: input.identityType || "",
-        identityValue: input.identityValue || "",
-        mode: input.mode,
-        vibe64User: input.vibe64User || null
+        identityName: input.identityName || "",
+        mode: input.mode
       }, {
         publicHost: input.publicHost || "",
         publicProtocol: input.publicProtocol || ""

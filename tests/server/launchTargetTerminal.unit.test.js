@@ -76,8 +76,7 @@ async function installPreviewIdentityContract(targetRoot, {
         },
         identityTypes: ["email", "user-id"],
         protocol: "vibe64.preview-identity.command.v1",
-        runtimes: ["node26"],
-        viewerIdentityTypes: ["email"]
+        runtimes: ["node26"]
       }
     },
     config: {},
@@ -164,7 +163,6 @@ test("web launch resolves preview identity only from the committed Vibe64 projec
     assert.deepEqual(spec.metadata.previewIdentity.command, [".vibe64/bin/preview-identity"]);
     assert.deepEqual(spec.metadata.previewIdentity.identityTypes, ["email", "user-id"]);
     assert.equal(spec.metadata.previewIdentity.sourceRoot, fixture.targetRoot);
-    assert.deepEqual(spec.metadata.previewIdentity.viewerIdentityTypes, ["email"]);
     const env = spec.env({ id: "terminal-preview-identity" });
     assert.equal(env.APP_PREVIEW_IDENTITY_ENABLED, "true");
     assert.equal(env.VIBE64_PREVIEW_IDENTITY_ENABLED, "true");

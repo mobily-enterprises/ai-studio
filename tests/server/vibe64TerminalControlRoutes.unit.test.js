@@ -240,15 +240,16 @@ test("terminal action routes use the server Vibe64 user instead of body spoofing
         {
           actionId: ACTION_SELECT_PREVIEW_IDENTITY,
           body: {
-            mode: "viewer",
+            identityName: "admin",
+            mode: "identity",
             vibe64User: spoofedUser
           },
           expectedInput: {
-            mode: "viewer",
+            identityName: "admin",
+            mode: "identity",
             publicHost: "",
             publicProtocol: "",
-            sessionId: "session-1",
-            vibe64User: serverUser
+            sessionId: "session-1"
           },
           params: routeProjectParams({
             sessionId: "session-1"

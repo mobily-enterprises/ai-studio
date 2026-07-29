@@ -13,11 +13,19 @@ const PREVIEW_IDENTITY_GRANT_TTL_SECONDS = 60;
 const PREVIEW_IDENTITY_GRANT_SECRET = crypto.randomBytes(32);
 const PREVIEW_IDENTITY_LOGIN_OPERATION = "login-as";
 const PREVIEW_IDENTITY_LOGOUT_OPERATION = "logout";
-const PREVIEW_IDENTITY_SUBJECT_SELECTOR = "selector";
-const PREVIEW_IDENTITY_SUBJECT_VIEWER = "viewer";
 const PREVIEW_IDENTITY_SELECTOR_EMAIL = "email";
 const PREVIEW_IDENTITY_SELECTOR_LOGIN = "login";
 const PREVIEW_IDENTITY_SELECTOR_USER_ID = "user-id";
+const PREVIEW_IDENTITY_SUBJECT_SELECTOR = "selector";
+const PREVIEW_APPLICATION_IDENTITIES_CONFIG = "preview_application_identities";
+const PREVIEW_APPLICATION_IDENTITY_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
+const PREVIEW_APPLICATION_IDENTITY_RESERVED_NAMES = new Set([
+  "default",
+  "guest",
+  "you"
+]);
+const PREVIEW_APPLICATION_IDENTITY_FIELDS = new Set(["name", "type", "value"]);
+const PREVIEW_APPLICATION_IDENTITY_LIMIT = 32;
 const PREVIEW_IDENTITY_SELECTOR_TYPES = Object.freeze([
   PREVIEW_IDENTITY_SELECTOR_EMAIL,
   PREVIEW_IDENTITY_SELECTOR_LOGIN,
@@ -130,6 +138,97 @@ function normalizePreviewIdentityTypes(value = []) {
     .filter((entry) => PREVIEW_IDENTITY_SELECTOR_TYPES.includes(entry)))];
 }
 
+function previewApplicationIdentitiesError(message = "") {
+  const error = new Error(message || "Managed app identities are invalid.");
+  error.code = "vibe64_invalid_application_identities_config";
+  return error;
+}
+
+function previewApplicationIdentityEntries(value = []) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  const text = String(value || "").trim();
+  if (!text) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // Report the same field-level validation error as every other invalid shape.
+  }
+  throw previewApplicationIdentitiesError(
+    "Managed app identities must be a list of names, selector types, and application values."
+  );
+}
+
+function normalizePreviewApplicationIdentities(value = []) {
+  const entries = previewApplicationIdentityEntries(value);
+  if (entries.length > PREVIEW_APPLICATION_IDENTITY_LIMIT) {
+    throw previewApplicationIdentitiesError(
+      `Managed app identities cannot contain more than ${PREVIEW_APPLICATION_IDENTITY_LIMIT} entries.`
+    );
+  }
+  const names = new Set();
+  return entries.map((entry, index) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      Object.keys(entry).some((key) => !PREVIEW_APPLICATION_IDENTITY_FIELDS.has(key))
+    ) {
+      throw previewApplicationIdentitiesError(
+        `Managed app identity ${index + 1} must contain only name, type, and value.`
+      );
+    }
+    const name = String(entry.name || "").trim().toLowerCase();
+    if (
+      !PREVIEW_APPLICATION_IDENTITY_NAME_PATTERN.test(name) ||
+      PREVIEW_APPLICATION_IDENTITY_RESERVED_NAMES.has(name)
+    ) {
+      throw previewApplicationIdentitiesError(
+        `Managed app identity ${index + 1} has an invalid name. Use a short name such as admin or user.`
+      );
+    }
+    let selector;
+    try {
+      selector = normalizePreviewIdentitySelector({
+        type: entry.type,
+        value: entry.value
+      });
+    } catch {
+      throw previewApplicationIdentitiesError(
+        `Managed app identity ${name} has an invalid application selector.`
+      );
+    }
+    if (names.has(name)) {
+      throw previewApplicationIdentitiesError(
+        `Managed app identity name ${name} is duplicated.`
+      );
+    }
+    names.add(name);
+    return {
+      name,
+      type: selector.type,
+      value: selector.value
+    };
+  });
+}
+
+function previewApplicationIdentitiesFromConfig(projectConfig = {}) {
+  const values = projectConfig?.values &&
+    typeof projectConfig.values === "object" &&
+    !Array.isArray(projectConfig.values)
+    ? projectConfig.values
+    : projectConfig;
+  return normalizePreviewApplicationIdentities(
+    values?.[PREVIEW_APPLICATION_IDENTITIES_CONFIG] || []
+  );
+}
+
 function previewIdentityCommandError(message = "") {
   const error = new Error(message || "Preview identity command capability is invalid.");
   error.code = "vibe64_preview_identity_command_invalid";
@@ -158,6 +257,11 @@ function normalizePreviewIdentityCommandCapability(value = null) {
   if (typeof value !== "object" || Array.isArray(value)) {
     throw previewIdentityCommandError("Preview identity command capability must be an object.");
   }
+  if (Object.hasOwn(value, "viewerIdentityTypes")) {
+    throw previewIdentityCommandError(
+      "Preview identity commands cannot derive application identities from the Vibe64 viewer. Configure named application identities in Vibe64 instead."
+    );
+  }
   const protocol = String(value.protocol || "").trim();
   if (protocol !== PREVIEW_IDENTITY_COMMAND_PROTOCOL) {
     throw previewIdentityCommandError(
@@ -184,15 +288,6 @@ function normalizePreviewIdentityCommandCapability(value = null) {
   if (identityTypes.length < 1) {
     throw previewIdentityCommandError(
       "Preview identity command must advertise at least one supported application user identifier."
-    );
-  }
-  const requestedViewerTypes = Array.isArray(value.viewerIdentityTypes)
-    ? normalizePreviewIdentityTypes(value.viewerIdentityTypes)
-    : [PREVIEW_IDENTITY_SELECTOR_EMAIL].filter((type) => identityTypes.includes(type));
-  const viewerIdentityTypes = requestedViewerTypes.filter((type) => identityTypes.includes(type));
-  if (requestedViewerTypes.length !== viewerIdentityTypes.length) {
-    throw previewIdentityCommandError(
-      "Preview identity command viewer identifiers must also be supported application user identifiers."
     );
   }
   const environment = value.environment && typeof value.environment === "object" && !Array.isArray(value.environment)
@@ -226,8 +321,7 @@ function normalizePreviewIdentityCommandCapability(value = null) {
     runtimes: [...new Set((Array.isArray(value.runtimes) ? value.runtimes : [])
       .map((entry) => String(entry || "").trim())
       .filter(Boolean))],
-    timeoutMs,
-    viewerIdentityTypes
+    timeoutMs
   };
 }
 
@@ -261,22 +355,6 @@ function previewAuthIdentityTypes({
   return Array.isArray(identityTypes) && identityTypes.length > 0
     ? requested.filter((type) => supported.includes(type))
     : supported;
-}
-
-function previewAuthViewerIdentityTypes({
-  identityTypes = [],
-  kind = "",
-  viewerIdentityTypes = []
-} = {}) {
-  const provider = previewAuthProvider(kind);
-  const supported = normalizePreviewIdentityTypes(
-    provider?.viewerIdentityTypes || provider?.identityTypes || []
-  );
-  const requested = normalizePreviewIdentityTypes(viewerIdentityTypes);
-  const applicationTypes = normalizePreviewIdentityTypes(identityTypes);
-  return requested.filter((type) => (
-    supported.includes(type) && applicationTypes.includes(type)
-  ));
 }
 
 function previewAuthRequiresIdentitySecret({ kind = "" } = {}) {
@@ -340,8 +418,7 @@ const PREVIEW_AUTH_PROVIDERS = Object.freeze({
     environment: previewIdentityCommandEnvironment,
     identityCommand: true,
     identityTypes: PREVIEW_IDENTITY_SELECTOR_TYPES,
-    requiresIdentitySecret: true,
-    viewerIdentityTypes: PREVIEW_IDENTITY_SELECTOR_TYPES
+    requiresIdentitySecret: true
   }),
   [COOKIE_PROFILE_PREVIEW_AUTH_KIND]: Object.freeze({
     cookieHeader: cookieProfilePreviewAuthCookieHeader,
@@ -405,49 +482,14 @@ function normalizePreviewIdentitySelector(value = {}) {
   };
 }
 
-function normalizePreviewIdentitySubject(value = {}) {
-  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const kind = String(source.kind || PREVIEW_IDENTITY_SUBJECT_SELECTOR).trim();
-  if (kind === PREVIEW_IDENTITY_SUBJECT_SELECTOR) {
-    return {
-      kind,
-      selector: normalizePreviewIdentitySelector(source.selector)
-    };
-  }
-  if (kind !== PREVIEW_IDENTITY_SUBJECT_VIEWER) {
-    throw previewIdentityError(
-      "Preview identity subject kind is invalid.",
-      "vibe64_preview_identity_subject_invalid"
-    );
-  }
-  const identifiers = (Array.isArray(source.identifiers) ? source.identifiers : [])
-    .map((entry) => normalizePreviewIdentitySelector(entry));
-  const uniqueIdentifiers = [...new Map(
-    identifiers.map((entry) => [`${entry.type}\0${entry.value}`, entry])
-  ).values()];
-  if (uniqueIdentifiers.length < 1 || uniqueIdentifiers.length > PREVIEW_IDENTITY_SELECTOR_TYPES.length) {
-    throw previewIdentityError(
-      "Preview identity viewer requires at least one supported identifier.",
-      "vibe64_preview_identity_viewer_missing"
-    );
-  }
-  return {
-    displayName: String(source.displayName || "").trim().slice(0, 256),
-    identifiers: uniqueIdentifiers,
-    kind
-  };
-}
-
-function previewIdentitySelectionSelectors(selection = {}) {
-  if (selection?.subject?.kind === PREVIEW_IDENTITY_SUBJECT_VIEWER) {
-    return selection.subject.identifiers || [];
-  }
-  const selector = selection?.subject?.selector || selection?.selector;
-  return selector ? [selector] : [];
-}
-
 function normalizePreviewIdentitySelection(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (Object.hasOwn(source, "subject")) {
+    throw previewIdentityError(
+      "Preview identity login requires an explicit application selector.",
+      "vibe64_preview_identity_subject_unsupported"
+    );
+  }
   const operation = String(source.operation || PREVIEW_IDENTITY_LOGIN_OPERATION).trim();
   if (![PREVIEW_IDENTITY_LOGIN_OPERATION, PREVIEW_IDENTITY_LOGOUT_OPERATION].includes(operation)) {
     throw previewIdentityError(
@@ -458,9 +500,7 @@ function normalizePreviewIdentitySelection(value = {}) {
   return {
     operation,
     ...(operation === PREVIEW_IDENTITY_LOGIN_OPERATION
-      ? source.subject
-        ? { subject: normalizePreviewIdentitySubject(source.subject) }
-        : { selector: normalizePreviewIdentitySelector(source.selector) }
+      ? { selector: normalizePreviewIdentitySelector(source.selector) }
       : {})
   };
 }
@@ -503,13 +543,8 @@ function createPreviewIdentityGrant(previewAuth = {}, selection = {}, {
   }
   const normalizedSelection = normalizePreviewIdentitySelection(selection);
   if (normalizedSelection.operation === PREVIEW_IDENTITY_LOGIN_OPERATION) {
-    const allowedTypes = normalizedSelection.subject?.kind === PREVIEW_IDENTITY_SUBJECT_VIEWER
-      ? previewAuthViewerIdentityTypes(previewAuth)
-      : previewAuthIdentityTypes(previewAuth);
-    if (
-      previewIdentitySelectionSelectors(normalizedSelection)
-        .some((selector) => !allowedTypes.includes(selector.type))
-    ) {
+    const allowedTypes = previewAuthIdentityTypes(previewAuth);
+    if (!allowedTypes.includes(normalizedSelection.selector.type)) {
       throw previewIdentityError(
         "This preview does not support that application user identifier.",
         "vibe64_preview_identity_selector_unsupported"
@@ -757,10 +792,11 @@ export {
   PREVIEW_IDENTITY_SELECTOR_TYPES,
   PREVIEW_IDENTITY_SELECTOR_USER_ID,
   PREVIEW_IDENTITY_SUBJECT_SELECTOR,
-  PREVIEW_IDENTITY_SUBJECT_VIEWER,
+  PREVIEW_APPLICATION_IDENTITIES_CONFIG,
   VIBE64_SELF_PREVIEW_AUTH_KIND,
   createPreviewAuthSecret,
   createPreviewIdentityGrant,
+  normalizePreviewApplicationIdentities,
   normalizePreviewAuthKind,
   normalizePreviewIdentityCommandCapability,
   normalizePreviewIdentitySelector,
@@ -770,12 +806,12 @@ export {
   previewAuthEnvironment,
   previewAuthIdentityAvailable,
   previewAuthIdentityTypes,
-  previewAuthViewerIdentityTypes,
   previewAuthRequiresIdentitySecret,
   previewAuthProfilePath,
   previewAuthSecretPath,
   previewAuthUsesProfile,
   previewIdentityCommandEnvironment,
+  previewApplicationIdentitiesFromConfig,
   readPreviewAuthSecret,
   verifyPreviewIdentityGrant
 };
