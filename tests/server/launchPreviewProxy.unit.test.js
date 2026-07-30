@@ -9,6 +9,7 @@ import test from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
 
 import {
+  PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
   PREVIEW_IDENTITY_REQUEST_MESSAGE_TYPE,
   PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
   PREVIEW_LOCATION_MESSAGE_TYPE,
@@ -55,6 +56,7 @@ test("launch preview bridge injects once and reports target URLs", () => {
   });
 
   assert.match(injected, /data-vibe64-preview-bridge="1"/u);
+  assert.match(injected, new RegExp(PREVIEW_BRIDGE_READY_MESSAGE_TYPE, "u"));
   assert.match(injected, new RegExp(PREVIEW_LOCATION_MESSAGE_TYPE, "u"));
   assert.match(injected, new RegExp(PREVIEW_QUERY_MESSAGE_TYPE, "u"));
   assert.match(injected, new RegExp(PREVIEW_IDENTITY_REQUEST_MESSAGE_TYPE, "u"));

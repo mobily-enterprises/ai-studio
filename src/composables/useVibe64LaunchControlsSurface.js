@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from "vue";
 import {
   launchPreviewLocationStorageKey,
   launchPreviewToolbarStorageKey,
@@ -8,6 +8,7 @@ import {
   useVibe64LaunchControls
 } from "@/composables/useVibe64LaunchControls.js";
 import {
+  PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
   PREVIEW_BRIDGE_VERSION,
   PREVIEW_DIAGNOSTICS_REQUEST_MESSAGE_TYPE,
   PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE,
@@ -366,8 +367,7 @@ function previewIdentityFromExchange(exchangeResult = {}, requestedIdentity = {}
 }
 
 function isPreviewBridgeReadyMessage(value = {}) {
-  return String(value?.type || "") === PREVIEW_LOCATION_MESSAGE_TYPE &&
-    String(value?.reason || "").trim() === "ready";
+  return String(value?.type || "") === PREVIEW_BRIDGE_READY_MESSAGE_TYPE;
 }
 
 function previewLoadingOverlayShouldShow({
@@ -1640,6 +1640,7 @@ function useVibe64LaunchControlsSurface(props) {
   
   function isPreviewBridgeMessage(value = {}) {
     return [
+      PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
       PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE,
       PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
       PREVIEW_LOCATION_MESSAGE_TYPE
@@ -1676,9 +1677,10 @@ function useVibe64LaunchControlsSurface(props) {
       Math.max(0, Number(event?.data?.version) || 0)
     );
     if (bridgeReady) {
-      // The injected bridge is usable at DOMContentLoaded. Do not wait for
-      // unrelated images or other late subresources to finish loading.
+      // The bridge announces readiness as soon as its listeners are installed.
+      // Application modules and rendering may still be pending.
       markPreviewFrameReady(previewFrameRequestId.value, "bridge-ready");
+      return;
     }
     if (messageType === PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE) {
       const requestId = String(event.data?.requestId || "");
@@ -1814,7 +1816,7 @@ function useVibe64LaunchControlsSurface(props) {
     immediate: true
   });
   
-  onMounted(() => {
+  onBeforeMount(() => {
     window.addEventListener("message", handlePreviewBridgeMessage);
   });
   

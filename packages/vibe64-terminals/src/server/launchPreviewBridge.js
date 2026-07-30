@@ -1,4 +1,5 @@
 import {
+  PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
   PREVIEW_BRIDGE_VERSION,
   PREVIEW_DIAGNOSTICS_REQUEST_MESSAGE_TYPE,
   PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE,
@@ -16,6 +17,7 @@ function launchPreviewBridgeScript({
   targetOrigin = ""
 } = {}) {
   const config = JSON.stringify({
+    bridgeReadyMessageType: PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
     debug: debug === true,
     diagnosticsRequestMessageType: PREVIEW_DIAGNOSTICS_REQUEST_MESSAGE_TYPE,
     diagnosticsResponseMessageType: PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE,
@@ -703,6 +705,13 @@ function launchPreviewBridgeScript({
     publishLocation: () => publishLocation("manual"),
     version: config.version
   });
+  // This handshake means the bridge listeners are installed, not that the app
+  // has rendered. It must remain independent of application modules and
+  // DOMContentLoaded so a stalled module graph cannot strand preview controls.
+  window.parent.postMessage({
+    type: config.bridgeReadyMessageType,
+    version: config.version
+  }, "*");
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       publishLocation("ready");

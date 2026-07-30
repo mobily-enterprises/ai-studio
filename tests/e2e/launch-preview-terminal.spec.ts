@@ -706,10 +706,10 @@ test("@preview-lifecycle keeps the loading explanation visible until the iframe 
   await expect(page.locator(".vibe64-launch-controls__preview-overlay")).toHaveCount(0);
 });
 
-test("@preview-lifecycle becomes usable from the bridge handshake while a late asset is pending", async ({ page }) => {
+test("@preview-lifecycle becomes usable from the bridge handshake while an app module is pending", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
-    previewSubresourceDelayMs: 5000
+    previewModuleDelayMs: 5000
   });
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
@@ -718,7 +718,7 @@ test("@preview-lifecycle becomes usable from the bridge handshake while a late a
     page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")
   ).toBeVisible();
   await expect(page.locator(".vibe64-launch-controls__preview-overlay")).toHaveCount(0);
-  expect(launchSession.getPreviewSubresourceCompleted()).toBe(false);
+  expect(launchSession.getPreviewModuleCompleted()).toBe(false);
 });
 
 test("@preview-lifecycle lets a slow first iframe load finish without restarting it", async ({ page }) => {
@@ -1323,7 +1323,7 @@ async function mockLaunchSession(page: Page, {
   previewIdentityExchange = null,
   previewIdentityExchangeDelayMs = 0,
   previewResponseDelayMs = 0,
-  previewSubresourceDelayMs = 0,
+  previewModuleDelayMs = 0,
   session = sessionPayload(),
   sessionList = null,
   sourceEditorFiles = null,
@@ -1340,7 +1340,7 @@ async function mockLaunchSession(page: Page, {
   previewIdentityExchange?: ((selection: PreviewIdentitySelection) => PreviewIdentityExchangeResult) | null;
   previewIdentityExchangeDelayMs?: number;
   previewResponseDelayMs?: number;
-  previewSubresourceDelayMs?: number;
+  previewModuleDelayMs?: number;
   session?: ReturnType<typeof sessionPayload>;
   sessionList?: ReturnType<typeof sessionPayload>[] | null;
   sourceEditorFiles?: Record<string, string> | null;
@@ -1366,7 +1366,7 @@ async function mockLaunchSession(page: Page, {
   let launchStatusReadCount = 0;
   let launchStatusSequenceIndex = 0;
   let previewLoadCount = 0;
-  let previewSubresourceCompleted = false;
+  let previewModuleCompleted = false;
   let previewIdentityGrantSequence = 0;
   const previewServer = previewBootstrapToken
     ? await startPreviewAppServer({
@@ -1555,14 +1555,14 @@ async function mockLaunchSession(page: Page, {
     await page.route("http://127.0.0.1:49000/**", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname === "/vibe64-test-late-resource.svg") {
+      if (url.pathname === "/vibe64-test-late-module.js") {
         await new Promise((resolve) => {
-          setTimeout(resolve, previewSubresourceDelayMs);
+          setTimeout(resolve, previewModuleDelayMs);
         });
-        previewSubresourceCompleted = true;
+        previewModuleCompleted = true;
         await route.fulfill({
-          body: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\" />",
-          contentType: "image/svg+xml"
+          body: "window.__vibe64TestModuleLoaded = true;",
+          contentType: "application/javascript"
         });
         return;
       }
@@ -1608,7 +1608,7 @@ async function mockLaunchSession(page: Page, {
       }
       await route.fulfill({
         body: previewAppHtml({
-          lateSubresource: previewSubresourceDelayMs > 0,
+          lateModule: previewModuleDelayMs > 0,
           targetOrigin: new URL(TARGET_APP_URL).origin
         }),
         contentType: "text/html"
@@ -1637,8 +1637,8 @@ async function mockLaunchSession(page: Page, {
     getPreviewLoadCount() {
       return previewServer?.getLoadCount() || previewLoadCount;
     },
-    getPreviewSubresourceCompleted() {
-      return previewSubresourceCompleted;
+    getPreviewModuleCompleted() {
+      return previewModuleCompleted;
     },
     getPreviewIdentitySelections() {
       return [...previewIdentitySelections];
@@ -2199,17 +2199,17 @@ function sortSourceEditorTreeChildren(children: Array<Record<string, unknown>>) 
 }
 
 function previewAppHtml({
-  lateSubresource = false,
+  lateModule = false,
   targetOrigin = new URL(TARGET_APP_URL).origin
 }: {
-  lateSubresource?: boolean;
+  lateModule?: boolean;
   targetOrigin?: string;
 } = {}) {
-  const lateImage = lateSubresource
-    ? "<img alt=\"\" src=\"/vibe64-test-late-resource.svg\">"
+  const moduleScript = lateModule
+    ? "<script type=\"module\" src=\"/vibe64-test-late-module.js\"></script>"
     : "";
   return injectLaunchPreviewBridge(
-    `<!doctype html><html><head><title>Preview</title></head><body><div id="app">Preview app</div>${lateImage}</body></html>`,
+    `<!doctype html><html><head><title>Preview</title>${moduleScript}</head><body><div id="app">Preview app</div></body></html>`,
     {
       targetOrigin
     }

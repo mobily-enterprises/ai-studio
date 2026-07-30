@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PREVIEW_BRIDGE_READY_MESSAGE_TYPE
+} from "../../packages/vibe64-terminals/src/shared/launchPreviewProtocol.js";
+import {
   defaultPreviewIdentitySelection,
   launchPreviewAddressNavigationUrl,
   launchPreviewEmptyText,
@@ -113,17 +116,15 @@ describe("Vibe64 launch controls surface", () => {
 
   it("recognizes the preview bridge ready handshake without treating navigation as readiness", () => {
     expect(isPreviewBridgeReadyMessage({
-      reason: "ready",
-      type: "vibe64:preview-location"
+      type: PREVIEW_BRIDGE_READY_MESSAGE_TYPE
     })).toBe(true);
 
     expect(isPreviewBridgeReadyMessage({
-      reason: "pushState",
+      reason: "ready",
       type: "vibe64:preview-location"
     })).toBe(false);
 
     expect(isPreviewBridgeReadyMessage({
-      reason: "ready",
       type: "vibe64:preview-identity-response"
     })).toBe(false);
   });
