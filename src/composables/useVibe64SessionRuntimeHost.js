@@ -230,6 +230,12 @@ function agentTurnControlPayloadFromContext(context = {}) {
   });
 }
 
+function proxySessionDialogs(dialogs = {}) {
+  return Object.fromEntries(
+    Object.entries(dialogs).map(([name, dialog]) => [name, proxyRefs(dialog)])
+  );
+}
+
 function useVibe64SessionRuntimeHost(props, emit) {
   const selectedSessionId = computed(() => props.sessionId);
   const selectedListSession = computed(() => {
@@ -336,11 +342,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   const actions = proxyRefs(sessionWorkflow.actions);
   const agentTerminal = sessionWorkflow.agentTerminal;
   const commandTerminal = proxyRefs(sessionWorkflow.commandTerminal);
-  const dialogs = {
-    abandon: proxyRefs(sessionWorkflow.dialogs.abandon),
-    diff: proxyRefs(sessionWorkflow.dialogs.diff),
-    input: proxyRefs(sessionWorkflow.dialogs.input)
-  };
+  const dialogs = proxySessionDialogs(sessionWorkflow.dialogs);
   const page = proxyRefs(sessionWorkflow.page);
   const reportPreview = proxyRefs(useVibe64ReportPreview({
     active: reportPreviewActive,
@@ -919,6 +921,7 @@ export {
   artifactReadinessChangeRefreshDecision,
   agentTerminalStartAllowed,
   agentTurnControlPayloadFromContext,
+  proxySessionDialogs,
   runtimeHostAutopilotPageBusy,
   runtimeCapabilitiesState,
   runtimeControlsAreBusy,

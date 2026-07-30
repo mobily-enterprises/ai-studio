@@ -1,3 +1,4 @@
+import { ref } from "vue";
 import { describe, expect, it } from "vitest";
 import { validateSchemaPayload } from "@jskit-ai/kernel/shared/validators";
 
@@ -7,6 +8,7 @@ import {
   artifactReadinessChangeRefreshDecision,
   agentTerminalStartAllowed,
   agentTurnControlPayloadFromContext,
+  proxySessionDialogs,
   runtimeCapabilitiesState,
   runtimeControlsAreBusy,
   runtimeHostAutopilotPageBusy,
@@ -19,6 +21,27 @@ import {
 } from "../../src/composables/useVibe64SessionRuntimeHost.js";
 
 describe("Vibe64 session runtime host", () => {
+  it("projects every workflow dialog without a manually maintained allowlist", () => {
+    const finishOpen = ref(false);
+    const dialogs = proxySessionDialogs({
+      abandon: {
+        open: ref(true)
+      },
+      finish: {
+        open: finishOpen
+      }
+    });
+
+    expect(Object.keys(dialogs)).toEqual([
+      "abandon",
+      "finish"
+    ]);
+    expect(dialogs.finish.open).toBe(false);
+
+    finishOpen.value = true;
+    expect(dialogs.finish.open).toBe(true);
+  });
+
   it("keeps runtime controls busy until the selected session is stable", () => {
     expect(runtimeControlsAreBusy({
       active: true,
