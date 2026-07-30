@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, lstat, mkdir, readdir, readFile, readlink, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, readFile, readlink, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -1596,6 +1596,7 @@ test("vibe64 session store compacts closed sessions into closed status archives"
     await store.compactClosedSession("closed_session");
 
     await assertPathMissing(paths.sessionRoot);
+    await assertPathMissing(path.join(paths.closingSessionsRoot, "closed_session"));
     await assertPathMissing(paths.currentSessionAliasPath);
     await assertPathExists(archivePath);
     await assertPathExists(metadataPath);
@@ -1639,6 +1640,122 @@ test("vibe64 session store compacts closed sessions into closed status archives"
     assert.equal(archivedSession.archivePath, archivePath);
     assert.equal(archivedSession.sessionRoot, "");
     assert.equal(archivedSession.artifactsRoot, "");
+  });
+});
+
+test("vibe64 session store rejects writers queued behind the close barrier without corrupting the archive", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createTestSessionStore({
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "closing_session"
+    });
+    await store.writeArtifact("closing_session", "before-close.txt", "Included.\n");
+    await store.writeStatus("closing_session", VIBE64_SESSION_STATUS.FINISHED);
+
+    let allowMutationToFinish = () => null;
+    let mutationStarted = () => null;
+    const mutationGate = new Promise((resolve) => {
+      allowMutationToFinish = resolve;
+    });
+    const mutationEntered = new Promise((resolve) => {
+      mutationStarted = resolve;
+    });
+    const activeMutation = store.mutateSession("closing_session", async () => {
+      mutationStarted();
+      await mutationGate;
+    });
+    await mutationEntered;
+
+    const compaction = store.compactClosedSession("closing_session");
+    const lateWriteRejected = assert.rejects(
+      () => store.writeArtifact(
+        "closing_session",
+        "late-draft.txt",
+        "Must not recreate the active tree.\n"
+      ),
+      (error) => error?.code === "vibe64_session_closed"
+    );
+
+    allowMutationToFinish();
+    await Promise.all([
+      activeMutation,
+      compaction,
+      lateWriteRejected
+    ]);
+    assert.equal(
+      await store.readArtifact("closing_session", "before-close.txt"),
+      "Included.\n"
+    );
+    assert.equal(await store.artifactExists("closing_session", "late-draft.txt"), false);
+
+    const paths = resolveTestSessionPaths({
+      sessionId: "closing_session",
+      targetRoot
+    });
+    await assertPathMissing(paths.sessionRoot);
+    await assertPathMissing(path.join(paths.closingSessionsRoot, "closing_session"));
+  });
+});
+
+test("vibe64 session store resumes an interrupted closing-session archive", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createTestSessionStore({
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "detached_session"
+    });
+    await store.writeArtifact("detached_session", "summary.txt", "Still recoverable.\n");
+    await store.writeStatus("detached_session", VIBE64_SESSION_STATUS.FINISHED);
+    await store.updateCurrentSession("detached_session");
+
+    const paths = resolveTestSessionPaths({
+      sessionId: "detached_session",
+      targetRoot
+    });
+    const closingRoot = path.join(paths.closingSessionsRoot, "detached_session");
+    await mkdir(paths.closingSessionsRoot, {
+      recursive: true
+    });
+    await rename(paths.sessionRoot, closingRoot);
+
+    await store.compactClosedSession("detached_session");
+
+    await assertPathMissing(paths.sessionRoot);
+    await assertPathMissing(closingRoot);
+    await assertPathMissing(paths.currentSessionAliasPath);
+    assert.equal(
+      await store.readArtifact("detached_session", "summary.txt"),
+      "Still recoverable.\n"
+    );
+    assert.equal((await store.readSession("detached_session")).archived, true);
+  });
+});
+
+test("vibe64 closed-session listing completes an interrupted finalisation", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createTestSessionStore({
+      targetRoot
+    });
+    await store.createSession({
+      sessionId: "pending_archive"
+    });
+    await store.writeStatus("pending_archive", VIBE64_SESSION_STATUS.FINISHED);
+
+    const sessions = await store.listSessionSummaries({
+      statusGroup: "closed"
+    });
+
+    assert.deepEqual(sessions.map((session) => session.sessionId), ["pending_archive"]);
+    assert.equal(sessions[0].archived, true);
+    const paths = resolveTestSessionPaths({
+      sessionId: "pending_archive",
+      targetRoot
+    });
+    await assertPathMissing(paths.sessionRoot);
+    await assertPathMissing(path.join(paths.closingSessionsRoot, "pending_archive"));
   });
 });
 

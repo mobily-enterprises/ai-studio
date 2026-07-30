@@ -306,9 +306,13 @@ async function closedSessionResponseForCloseRetry(runtime, sessionId = "", close
     }
     throw error;
   });
-  return session && !isOpenVibe64Session(session)
-    ? sessionWithClientRefreshHint(session)
-    : null;
+  if (!session || isOpenVibe64Session(session)) {
+    return null;
+  }
+  const compactedSession = session.archived
+    ? session
+    : await runtime.compactClosedSessionIfNeeded(session) || session;
+  return sessionWithClientRefreshHint(compactedSession);
 }
 
 function agentSettingsInput(input = {}) {
@@ -560,6 +564,33 @@ async function writeStoredComposerDraft(runtime, draft = {}) {
     composerDraftArtifactPath(draft.controlId),
     `${JSON.stringify(draft, null, 2)}\n`
   );
+}
+
+async function publishStoredComposerDraft(runtime, draftInput = {}) {
+  const publishIfCurrent = async () => {
+    const existing = await readStoredComposerDraft(
+      runtime,
+      draftInput.sessionId,
+      draftInput.controlId
+    );
+    if (composerDraftInputIsStale(existing, draftInput)) {
+      return {
+        currentDraft: existing,
+        ok: true,
+        stale: true
+      };
+    }
+    const payload = {
+      ...draftInput,
+      revision: composerDraftRevision(existing?.revision) + 1
+    };
+    await writeStoredComposerDraft(runtime, persistedComposerDraftPayload(payload));
+    return {
+      draft: payload,
+      ok: true
+    };
+  };
+  return runtime.store.mutateSession(draftInput.sessionId, publishIfCurrent);
 }
 
 function sessionReadinessDisabledReason(readiness = {}) {
@@ -3271,23 +3302,18 @@ function createService({
         };
       }
       const runtime = await projectService.createRuntime(controlRuntimeScopeForSession(draftInput.sessionId));
-      const existing = await readStoredComposerDraft(runtime, draftInput.sessionId, draftInput.controlId);
-      if (composerDraftInputIsStale(existing, draftInput)) {
-        return {
-          currentDraft: existing,
-          ok: true,
-          stale: true
-        };
+      try {
+        return await publishStoredComposerDraft(runtime, draftInput);
+      } catch (error) {
+        if (normalizedInputText(error?.code) === "vibe64_session_closed") {
+          return {
+            closed: true,
+            ok: true,
+            sessionId: draftInput.sessionId
+          };
+        }
+        throw error;
       }
-      const payload = {
-        ...draftInput,
-        revision: composerDraftRevision(existing?.revision) + 1
-      };
-      await writeStoredComposerDraft(runtime, persistedComposerDraftPayload(payload));
-      return {
-        ok: true,
-        draft: payload
-      };
     },
 
     async broadcastSessionViewState(sessionId, input = {}) {
