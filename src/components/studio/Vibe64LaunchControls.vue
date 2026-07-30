@@ -197,7 +197,7 @@
                     v-for="identity in previewIdentityConfigured"
                     :key="identity.name"
                     :active="previewIdentityCurrent?.mode === 'identity' && previewIdentityCurrent?.name === identity.name"
-                    :disabled="previewIdentityBusy"
+                    :disabled="previewIdentitySelectionDisabled"
                     :prepend-icon="mdiAccountCircleOutline"
                     :subtitle="`${previewIdentityTypeLabel(identity.type)}: ${identity.value}`"
                     :title="identity.name"
@@ -205,7 +205,7 @@
                   />
                   <v-list-item
                     :active="previewIdentityCurrent?.mode === 'guest'"
-                    :disabled="previewIdentityBusy"
+                    :disabled="previewIdentitySelectionDisabled"
                     :prepend-icon="mdiAccountOffOutline"
                     subtitle="Use the app signed out"
                     title="Guest"
@@ -885,6 +885,7 @@ const {
   previewIdentityCurrent,
   previewIdentityError,
   previewIdentityLabel,
+  previewIdentitySelectionDisabled,
   previewIdentityTitle,
   previewIdentityTypeLabel,
   previewIssue,

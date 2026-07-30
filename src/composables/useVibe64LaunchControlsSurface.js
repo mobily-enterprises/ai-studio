@@ -365,6 +365,11 @@ function previewIdentityFromExchange(exchangeResult = {}, requestedIdentity = {}
   };
 }
 
+function isPreviewBridgeReadyMessage(value = {}) {
+  return String(value?.type || "") === PREVIEW_LOCATION_MESSAGE_TYPE &&
+    String(value?.reason || "").trim() === "ready";
+}
+
 function previewLoadingOverlayShouldShow({
   identityBusy = false,
   loadedFrameRequestId = 0,
@@ -798,6 +803,9 @@ function useVibe64LaunchControlsSurface(props) {
     previewUrl.value &&
     previewFrameRequestId.value > 0 &&
     previewLoadedFrameRequestId.value === previewFrameRequestId.value
+  ));
+  const previewIdentitySelectionDisabled = computed(() => Boolean(
+    previewIdentityBusy.value || !previewFrameLoaded.value
   ));
   const previewDiagnosticsAvailable = computed(() => Boolean(
     previewFrameLoaded.value &&
@@ -1337,7 +1345,10 @@ function useVibe64LaunchControlsSurface(props) {
   }
 
   async function selectPreviewIdentity(selection = {}) {
-    if (previewIdentityBusy.value || !previewIdentityAvailable.value) {
+    if (
+      previewIdentitySelectionDisabled.value ||
+      !previewIdentityAvailable.value
+    ) {
       return false;
     }
     const mode = String(selection.mode || "identity").trim();
@@ -1417,6 +1428,31 @@ function useVibe64LaunchControlsSurface(props) {
     }));
     return true;
   }
+
+  function markPreviewFrameReady(requestId, reason = "") {
+    const normalizedRequestId = Math.max(0, Number(requestId) || 0);
+    if (
+      !normalizedRequestId ||
+      normalizedRequestId !== previewFrameRequestId.value ||
+      !previewFrame.value?.contentWindow
+    ) {
+      return false;
+    }
+    if (previewLoadedFrameRequestId.value === normalizedRequestId) {
+      return false;
+    }
+    previewLoadedFrameRequestId.value = normalizedRequestId;
+    previewDebugLog("iframe.ready", {
+      reason,
+      requestId: normalizedRequestId
+    });
+    if (normalizedRequestId === previewIdentityReloadRequestId) {
+      completePreviewIdentityTransition();
+      return true;
+    }
+    beginDefaultPreviewIdentity();
+    return true;
+  }
   
   function handlePreviewFrameLoad(event) {
     const frame = event?.currentTarget || null;
@@ -1431,17 +1467,14 @@ function useVibe64LaunchControlsSurface(props) {
       });
       return;
     }
-    resetPreviewBridge("iframe-loaded");
-    previewLoadedFrameRequestId.value = requestId;
+    if (!previewFrameLoaded.value) {
+      resetPreviewBridge("iframe-loaded-without-bridge-ready");
+      markPreviewFrameReady(requestId, "iframe-load");
+    }
     previewDebugLog("iframe.loaded", {
       requestId
     });
     requestPreviewState();
-    if (requestId === previewIdentityReloadRequestId) {
-      completePreviewIdentityTransition();
-      return;
-    }
-    beginDefaultPreviewIdentity();
   }
   
   async function forceStartEmbeddedPreview() {
@@ -1633,11 +1666,20 @@ function useVibe64LaunchControlsSurface(props) {
       });
       return;
     }
+    const messageType = previewMessageType(event.data);
+    const bridgeReady = isPreviewBridgeReadyMessage(event.data);
+    if (bridgeReady && previewFrameLoaded.value) {
+      resetPreviewBridge("bridge-document-ready");
+    }
     previewBridgeVersion.value = Math.max(
       previewBridgeVersion.value,
       Math.max(0, Number(event?.data?.version) || 0)
     );
-    const messageType = previewMessageType(event.data);
+    if (bridgeReady) {
+      // The injected bridge is usable at DOMContentLoaded. Do not wait for
+      // unrelated images or other late subresources to finish loading.
+      markPreviewFrameReady(previewFrameRequestId.value, "bridge-ready");
+    }
     if (messageType === PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE) {
       const requestId = String(event.data?.requestId || "");
       previewBridgeRequests.resolve(requestId, event.data?.diagnostics || {});
@@ -1837,6 +1879,7 @@ function useVibe64LaunchControlsSurface(props) {
     previewIdentityCurrent,
     previewIdentityError,
     previewIdentityLabel,
+    previewIdentitySelectionDisabled,
     previewIdentityTitle,
     previewIdentityTypeLabel,
     previewIssue,
@@ -2114,6 +2157,7 @@ export {
   launchPreviewEmptyText,
   launchPreviewFrameUrl,
   previewFrameLifecycleIdentity,
+  isPreviewBridgeReadyMessage,
   previewIdentityFromExchange,
   previewIdentityLabelText,
   previewIdentityLifecycleIdentity,

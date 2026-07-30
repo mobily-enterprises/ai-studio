@@ -5,6 +5,7 @@ import {
   launchPreviewAddressNavigationUrl,
   launchPreviewEmptyText,
   launchPreviewFrameUrl,
+  isPreviewBridgeReadyMessage,
   previewFrameLifecycleIdentity,
   previewIdentityFromExchange,
   previewIdentityLabelText,
@@ -107,6 +108,23 @@ describe("Vibe64 launch controls surface", () => {
       loadedFrameRequestId: 1,
       previewFrameRequestId: 2,
       previewUrl: ""
+    })).toBe(false);
+  });
+
+  it("recognizes the preview bridge ready handshake without treating navigation as readiness", () => {
+    expect(isPreviewBridgeReadyMessage({
+      reason: "ready",
+      type: "vibe64:preview-location"
+    })).toBe(true);
+
+    expect(isPreviewBridgeReadyMessage({
+      reason: "pushState",
+      type: "vibe64:preview-location"
+    })).toBe(false);
+
+    expect(isPreviewBridgeReadyMessage({
+      reason: "ready",
+      type: "vibe64:preview-identity-response"
     })).toBe(false);
   });
 
