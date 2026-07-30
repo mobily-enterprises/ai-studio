@@ -724,6 +724,9 @@ function createComposerDraftTestService() {
       async createRuntime() {
         return {
           store: {
+            async mutateSession(_sessionId, operation) {
+              return operation();
+            },
             async readArtifact(sessionId, relativePath) {
               return artifacts.get(`${sessionId}:${relativePath}`) || "";
             },
@@ -852,6 +855,40 @@ test("composer draft submission start broadcasts the event but stores an empty d
   assert.equal(read.draft.text, "");
   assert.deepEqual(read.draft.fields, {
     conversationRequest: ""
+  });
+});
+
+test("composer draft publishing treats an already closed session as a harmless no-op", async () => {
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return {
+          store: {
+            async mutateSession() {
+              const error = new Error("Session closed.");
+              error.code = "vibe64_session_closed";
+              throw error;
+            }
+          }
+        };
+      }
+    }
+  });
+
+  const result = await service.broadcastComposerDraft("session-1", {
+    controlId: "talk_to_codex",
+    fieldName: "conversationRequest",
+    fields: {
+      conversationRequest: "Late browser draft"
+    },
+    originId: "origin-1",
+    projectSlug: "vibe64"
+  });
+
+  assert.deepEqual(result, {
+    closed: true,
+    ok: true,
+    sessionId: "session-1"
   });
 });
 
@@ -1008,8 +1045,9 @@ test("session action closes terminals when the action archives the session", asy
   ]);
 });
 
-test("session action treats a repeated close request as already archived", async () => {
+test("session action uses a repeated close request to complete an interrupted archive", async () => {
   let bootstrapCompletions = 0;
+  let compactCalls = 0;
   let runActionCalled = false;
   const service = createService({
     projectService: {
@@ -1018,9 +1056,16 @@ test("session action treats a repeated close request as already archived", async
       },
       async createRuntime() {
         return {
+          async compactClosedSessionIfNeeded(session) {
+            compactCalls += 1;
+            assert.equal(session.archived, undefined);
+            return {
+              ...session,
+              archived: true
+            };
+          },
           async getSession(sessionId) {
             return {
-              archived: true,
               metadata: {
                 work_source: "seed"
               },
@@ -1048,6 +1093,7 @@ test("session action treats a repeated close request as already archived", async
   assert.equal(session.status, VIBE64_SESSION_STATUS.FINISHED);
   assert.equal(session.archived, true);
   assert.equal(bootstrapCompletions, 1);
+  assert.equal(compactCalls, 1);
   assert.equal(runActionCalled, false);
   assert.deepEqual(session.clientRefresh, {
     includeList: true

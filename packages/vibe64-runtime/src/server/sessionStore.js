@@ -380,6 +380,16 @@ function sessionStatusMatchesListOptions(status, {
   return true;
 }
 
+function sessionListMayIncludeClosed({
+  statusGroup = "",
+  statuses = new Set()
+} = {}) {
+  return statusGroup !== "open" && (
+    statuses.size < 1 ||
+    [...statuses].some((status) => CLOSED_VIBE64_SESSION_STATUSES.has(status))
+  );
+}
+
 async function readTextIfExists(filePath) {
   try {
     return await readFile(filePath, "utf8");
@@ -793,6 +803,7 @@ function isoFromConversationTimestamp(timestamp = "") {
 
 function sessionPathsFromRoot({
   activeSessionsRoot = "",
+  closingSessionsRoot = "",
   closedSessionsRoot = "",
   currentSessionAliasPath = "",
   sessionId = "",
@@ -810,6 +821,7 @@ function sessionPathsFromRoot({
     agentTasksRoot: sessionRoot ? path.join(sessionRoot, "agent-tasks") : "",
     artifactsRoot: sessionRoot ? path.join(sessionRoot, "artifacts") : "",
     backgroundTasksRoot: sessionRoot ? path.join(sessionRoot, "background-tasks") : "",
+    closingSessionsRoot,
     closedSessionsRoot,
     commandLifecyclesRoot: sessionRoot ? path.join(sessionRoot, "command-lifecycle") : "",
     commandLogPath: sessionRoot ? path.join(sessionRoot, "command-log.jsonl") : "",
@@ -847,11 +859,13 @@ function resolveVibe64SessionPaths({
     ? path.join(path.resolve(projectSessionSourceRoot), "sessions")
     : "";
   const activeSessionsRoot = path.join(sessionsRoot, "active");
+  const closingSessionsRoot = path.join(sessionsRoot, "closing");
   const closedSessionsRoot = path.join(sessionsRoot, "closed");
   const normalizedSessionId = normalizeText(sessionId);
   const sessionRoot = normalizedSessionId ? path.join(activeSessionsRoot, assertValidVibe64SessionId(normalizedSessionId)) : "";
   return sessionPathsFromRoot({
     activeSessionsRoot,
+    closingSessionsRoot,
     closedSessionsRoot,
     currentSessionAliasPath: sourceSessionsRoot
       ? resolveVibe64CurrentSessionAliasPath(sourceSessionsRoot)
@@ -905,6 +919,10 @@ function closedSessionStagingRoot(rootPaths = {}) {
   return path.join(rootPaths.closedSessionsRoot, ".staging");
 }
 
+function closingSessionRoot(rootPaths = {}, sessionId = "") {
+  return path.join(rootPaths.closingSessionsRoot, assertValidVibe64SessionId(sessionId));
+}
+
 async function closedSessionRecordExists(rootPaths = {}, sessionId = "") {
   const normalizedSessionId = assertValidVibe64SessionId(sessionId);
   return (await Promise.all(CLOSED_VIBE64_SESSION_STATUS_LIST.map(async (status) => {
@@ -916,6 +934,7 @@ async function closedSessionRecordExists(rootPaths = {}, sessionId = "") {
 async function sessionRecordExists(rootPaths = {}, sessionId = "") {
   const normalizedSessionId = assertValidVibe64SessionId(sessionId);
   return await pathExists(path.join(rootPaths.activeSessionsRoot, normalizedSessionId)) ||
+    await pathExists(closingSessionRoot(rootPaths, normalizedSessionId)) ||
     await closedSessionRecordExists(rootPaths, normalizedSessionId);
 }
 
@@ -1074,6 +1093,7 @@ function createVibe64SessionStore({
     const rootPaths = paths();
     return sessionPathsFromRoot({
       activeSessionsRoot: rootPaths.activeSessionsRoot,
+      closingSessionsRoot: rootPaths.closingSessionsRoot,
       closedSessionsRoot: rootPaths.closedSessionsRoot,
       currentSessionAliasPath: rootPaths.currentSessionAliasPath,
       sessionId: assertValidVibe64SessionId(sessionId),
@@ -1087,9 +1107,31 @@ function createVibe64SessionStore({
   async function ensureActiveSessionRoot(sessionId) {
     const sessionPaths = paths(sessionId);
     if (!await pathExists(sessionPaths.manifestPath)) {
-      throw vibe64Error(`Unknown vibe64 session: ${sessionPaths.sessionId}`, "vibe64_session_not_found");
+      const closingSession = closingSessionPaths(sessionPaths.sessionId);
+      if (
+        await pathExists(closingSession.manifestPath) ||
+        await readClosedArchiveRecord(sessionPaths.sessionId)
+      ) {
+        throw vibe64Error(
+          `Vibe64 session is already closed: ${sessionPaths.sessionId}`,
+          "vibe64_session_closed"
+        );
+      }
+      throw vibe64Error(
+        `Unknown vibe64 session: ${sessionPaths.sessionId}`,
+        "vibe64_session_not_found"
+      );
     }
     return sessionPaths;
+  }
+
+  function closingSessionPaths(sessionId = "") {
+    const rootPaths = paths();
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    return pathsForSessionRoot(
+      normalizedSessionId,
+      closingSessionRoot(rootPaths, normalizedSessionId)
+    );
   }
 
   function closedArchiveRecordFromJson(value = {}, {
@@ -1306,20 +1348,50 @@ function createVibe64SessionStore({
     }
   }
 
+  async function readUnarchivedSessionIfPresent(sessionId, operation) {
+    for (const sessionPaths of [
+      paths(sessionId),
+      closingSessionPaths(sessionId)
+    ]) {
+      if (!await pathExists(sessionPaths.manifestPath)) {
+        continue;
+      }
+      try {
+        const value = await operation(sessionPaths, null);
+        if (await pathExists(sessionPaths.manifestPath)) {
+          return {
+            found: true,
+            value
+          };
+        }
+      } catch (error) {
+        // Closing only renames the tree; its contents do not change. Retry at
+        // the next location only when the manifest moved during this read.
+        if (await pathExists(sessionPaths.manifestPath)) {
+          throw error;
+        }
+      }
+    }
+    return {
+      found: false
+    };
+  }
+
   async function withReadableSessionPaths(sessionId, operation) {
     const activePaths = paths(sessionId);
-    if (await pathExists(activePaths.manifestPath)) {
-      return operation(activePaths, null);
+    const unarchivedRead = await readUnarchivedSessionIfPresent(sessionId, operation);
+    if (unarchivedRead.found) {
+      return unarchivedRead.value;
     }
-    const record = await readClosedArchiveRecord(sessionId);
-    if (record) {
-      return withExtractedClosedArchive(record, operation);
+    const publishedArchive = await readClosedArchiveRecord(sessionId);
+    if (publishedArchive) {
+      return withExtractedClosedArchive(publishedArchive, operation);
     }
     throw vibe64Error(`Unknown vibe64 session: ${activePaths.sessionId}`, "vibe64_session_not_found");
   }
 
   async function bumpSessionRevision(sessionPaths) {
-    const manifest = await readManifest(sessionPaths.sessionId);
+    const manifest = await readManifestFromPaths(sessionPaths);
     const nextManifest = {
       ...manifest,
       revision: revisionNumber(manifest.revision) + 1,
@@ -1340,8 +1412,8 @@ function createVibe64SessionStore({
   }
 
   async function mutateSession(sessionId, operation) {
-    const sessionPaths = await ensureActiveSessionRoot(sessionId);
-    const key = sessionPaths.sessionRoot;
+    const requestedPaths = paths(sessionId);
+    const key = requestedPaths.sessionRoot;
     const inheritedContext = sessionMutationContext.getStore();
     if (inheritedContext?.key === key && inheritedContext.participant?.active === true) {
       const participant = beginSessionOperation(inheritedContext.lease);
@@ -1349,31 +1421,36 @@ function createVibe64SessionStore({
         return await sessionMutationContext.run({
           key,
           lease: inheritedContext.lease,
-          participant
-        }, () => operation(sessionPaths));
+          participant,
+          sessionPaths: inheritedContext.sessionPaths
+        }, () => operation(inheritedContext.sessionPaths));
       } finally {
         finishSessionOperation(inheritedContext.lease, participant);
       }
     }
     return enqueueSessionMutation(key, async () => {
-      const release = await acquireSessionLock(sessionPaths, "mutation", {
+      const release = await acquireSessionLock(requestedPaths, "mutation", {
         waitMs: SESSION_MUTATION_LOCK_WAIT_MS
       });
       if (!release) {
         throw vibe64Error(
-          `Timed out waiting to update Vibe64 session: ${sessionPaths.sessionId}`,
+          `Timed out waiting to update Vibe64 session: ${requestedPaths.sessionId}`,
           "vibe64_session_mutation_lock_timeout"
         );
       }
-      const lease = createSessionOperationLease();
-      const participant = beginSessionOperation(lease);
       try {
+        // Resolve the active tree only after acquiring the stable session lock.
+        // A close operation may have detached it while this writer was queued.
+        const sessionPaths = await ensureActiveSessionRoot(requestedPaths.sessionId);
+        const lease = createSessionOperationLease();
+        const participant = beginSessionOperation(lease);
         let result;
         try {
           result = await sessionMutationContext.run({
             key,
             lease,
-            participant
+            participant,
+            sessionPaths
           }, () => operation(sessionPaths));
         } finally {
           finishSessionOperation(lease, participant);
@@ -2740,12 +2817,16 @@ function createVibe64SessionStore({
 
   async function readSessionSummary(sessionId) {
     const activePaths = paths(sessionId);
-    if (await pathExists(activePaths.manifestPath)) {
-      return readSessionSummaryFromPaths(activePaths);
+    const unarchivedRead = await readUnarchivedSessionIfPresent(
+      sessionId,
+      readSessionSummaryFromPaths
+    );
+    if (unarchivedRead.found) {
+      return unarchivedRead.value;
     }
-    const archiveRecord = await readClosedArchiveRecord(sessionId);
-    if (archiveRecord) {
-      return closedArchiveSummary(archiveRecord);
+    const publishedArchive = await readClosedArchiveRecord(sessionId);
+    if (publishedArchive) {
+      return closedArchiveSummary(publishedArchive);
     }
     throw vibe64Error(`Unknown vibe64 session: ${activePaths.sessionId}`, "vibe64_session_not_found");
   }
@@ -2808,9 +2889,160 @@ function createVibe64SessionStore({
     }
   }
 
+  async function requireClosedArchiveRecord(rootPaths, status, sessionId) {
+    const record = await readClosedArchiveRecordForStatus(rootPaths, status, sessionId);
+    if (!record) {
+      throw vibe64Error(
+        `Closed Vibe64 session archive is incomplete for ${sessionId}.`,
+        "vibe64_closed_session_archive_incomplete"
+      );
+    }
+    return record;
+  }
+
+  async function moveActiveSessionToClosing(activePaths, closingPaths) {
+    const moveSessionRoot = async () => {
+      await mkdir(activePaths.closingSessionsRoot, {
+        recursive: true
+      });
+      await rename(activePaths.sessionRoot, closingPaths.sessionRoot);
+    };
+    if (!activePaths.currentSessionAliasPath) {
+      return moveSessionRoot();
+    }
+    return enqueueSessionMutation(activePaths.currentSessionAliasPath, async () => {
+      await moveSessionRoot();
+      await clearVibe64CurrentSessionAliasIfMatches({
+        aliasPath: activePaths.currentSessionAliasPath,
+        sessionId: activePaths.sessionId
+      });
+    });
+  }
+
+  async function clearClosingSessionAlias(sessionPaths) {
+    if (!sessionPaths.currentSessionAliasPath) {
+      return;
+    }
+    await enqueueSessionMutation(sessionPaths.currentSessionAliasPath, () => (
+      clearVibe64CurrentSessionAliasIfMatches({
+        aliasPath: sessionPaths.currentSessionAliasPath,
+        sessionId: sessionPaths.sessionId
+      })
+    ));
+  }
+
+  async function detachClosedSessionForArchive(sessionId) {
+    const activePaths = paths(sessionId);
+    const closingPaths = closingSessionPaths(activePaths.sessionId);
+    const mutationKey = activePaths.sessionRoot;
+    const mutationContext = sessionMutationContext.getStore();
+    if (
+      mutationContext?.key === mutationKey &&
+      mutationContext.participant?.active === true
+    ) {
+      throw vibe64Error(
+        `Cannot compact Vibe64 session during an active mutation: ${activePaths.sessionId}`,
+        "vibe64_session_compact_during_mutation"
+      );
+    }
+    return enqueueSessionMutation(mutationKey, async () => {
+      const release = await acquireSessionLock(activePaths, "mutation", {
+        waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+      });
+      if (!release) {
+        throw vibe64Error(
+          `Timed out waiting to close Vibe64 session: ${activePaths.sessionId}`,
+          "vibe64_session_mutation_lock_timeout"
+        );
+      }
+      try {
+        const [activeExists, closingExists] = await Promise.all([
+          pathExists(activePaths.manifestPath),
+          pathExists(closingPaths.manifestPath)
+        ]);
+        if (activeExists && closingExists) {
+          throw vibe64Error(
+            `Vibe64 session exists in both active and closing state: ${activePaths.sessionId}`,
+            "vibe64_session_close_state_conflict"
+          );
+        }
+        if (closingExists) {
+          await clearClosingSessionAlias(closingPaths);
+          return;
+        }
+        if (!activeExists) {
+          if (await readClosedArchiveRecord(activePaths.sessionId)) {
+            return;
+          }
+          throw vibe64Error(
+            `Unknown vibe64 session: ${activePaths.sessionId}`,
+            "vibe64_session_not_found"
+          );
+        }
+        const status = await readStatusFromPaths(activePaths);
+        if (!CLOSED_VIBE64_SESSION_STATUSES.has(status)) {
+          throw vibe64Error(
+            `Cannot compact open Vibe64 session ${activePaths.sessionId} with status ${status}.`,
+            "vibe64_session_compact_open_status"
+          );
+        }
+
+        // Compression must never observe a mutable live tree. The atomic rename
+        // is the close barrier: earlier writers are included, and later writers
+        // re-check the active namespace after acquiring this same lock.
+        await moveActiveSessionToClosing(activePaths, closingPaths);
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  async function runSessionArchiveExclusive(sessionId, operation) {
+    const sessionPaths = paths(sessionId);
+    const archiveLockPath = sessionLockPath(sessionPaths, "archive");
+    return enqueueSessionMutation(archiveLockPath, async () => {
+      const release = await acquireSessionLock(sessionPaths, "archive", {
+        waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+      });
+      if (!release) {
+        throw vibe64Error(
+          `Timed out waiting to archive Vibe64 session: ${sessionPaths.sessionId}`,
+          "vibe64_session_archive_lock_timeout"
+        );
+      }
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+  }
+
   async function compactClosedSession(sessionId) {
+    // Detachment is the close barrier. Queue it before any archive work so a
+    // later writer can never overtake finalisation, even while another process
+    // is publishing the archive.
+    await detachClosedSessionForArchive(sessionId);
+    return runSessionArchiveExclusive(
+      sessionId,
+      () => compactClosedSessionExclusive(sessionId)
+    );
+  }
+
+  async function compactClosedSessionExclusive(sessionId) {
     const rootPaths = paths();
-    const sessionPaths = await ensureActiveSessionRoot(sessionId);
+    const sessionPaths = closingSessionPaths(sessionId);
+    if (!await pathExists(sessionPaths.manifestPath)) {
+      const archiveRecord = await readClosedArchiveRecord(sessionId);
+      if (!archiveRecord) {
+        throw vibe64Error(
+          `Unknown vibe64 session: ${assertValidVibe64SessionId(sessionId)}`,
+          "vibe64_session_not_found"
+        );
+      }
+      await validateClosedSessionArchive(archiveRecord.archivePath);
+      return archiveRecord;
+    }
     const status = await readStatusFromPaths(sessionPaths);
     if (!CLOSED_VIBE64_SESSION_STATUSES.has(status)) {
       throw vibe64Error(
@@ -2823,16 +3055,31 @@ function createVibe64SessionStore({
     const finalMetadataPath = closedSessionMetadataPath(rootPaths, status, sessionPaths.sessionId);
     const finalArchiveExists = await pathExists(finalArchivePath);
     const finalMetadataExists = await pathExists(finalMetadataPath);
-    if (finalArchiveExists || finalMetadataExists) {
-      if (finalArchiveExists && finalMetadataExists) {
-        await validateClosedSessionArchive(finalArchivePath);
-        await removeActiveSessionRoot(sessionPaths);
-        return readClosedArchiveRecordForStatus(rootPaths, status, sessionPaths.sessionId);
-      }
-      throw vibe64Error(
-        `Closed Vibe64 session archive is incomplete for ${sessionPaths.sessionId}.`,
-        "vibe64_closed_session_archive_incomplete"
+    if (finalArchiveExists && finalMetadataExists) {
+      const archiveRecord = await requireClosedArchiveRecord(
+        rootPaths,
+        status,
+        sessionPaths.sessionId
       );
+      await validateClosedSessionArchive(archiveRecord.archivePath);
+      await rm(sessionPaths.sessionRoot, {
+        force: true,
+        recursive: true
+      });
+      return archiveRecord;
+    }
+    if (finalArchiveExists || finalMetadataExists) {
+      // The closing tree is the durable source of truth until both published
+      // files exist. A process interruption between the two renames is retried
+      // from that immutable tree instead of stranding a half-closed session.
+      await Promise.all([
+        rm(finalArchivePath, {
+          force: true
+        }),
+        rm(finalMetadataPath, {
+          force: true
+        })
+      ]);
     }
 
     const stagedRoot = path.join(closedSessionStagingRoot(rootPaths), `${sessionPaths.sessionId}-${randomUUID()}`);
@@ -2858,13 +3105,13 @@ function createVibe64SessionStore({
         "-czf",
         stagedArchivePath,
         "-C",
-        rootPaths.activeSessionsRoot,
+        rootPaths.closingSessionsRoot,
         sessionPaths.sessionId
       ], {
         allowedRoots: [
           stagedRoot
         ],
-        cwd: rootPaths.activeSessionsRoot
+        cwd: rootPaths.closingSessionsRoot
       });
       if (!tarResult.ok) {
         throw vibe64Error(
@@ -2881,8 +3128,16 @@ function createVibe64SessionStore({
       archiveFinalized = true;
       await rename(stagedMetadataPath, finalMetadataPath);
       metadataFinalized = true;
-      await removeActiveSessionRoot(sessionPaths);
-      return readClosedArchiveRecordForStatus(rootPaths, status, sessionPaths.sessionId);
+      const archiveRecord = await requireClosedArchiveRecord(
+        rootPaths,
+        status,
+        sessionPaths.sessionId
+      );
+      await rm(sessionPaths.sessionRoot, {
+        force: true,
+        recursive: true
+      });
+      return archiveRecord;
     } catch (error) {
       if (!metadataFinalized) {
         await rm(stagedMetadataPath, {
@@ -2928,23 +3183,6 @@ function createVibe64SessionStore({
       return {
         sessionId: selectedSessionId
       };
-    });
-  }
-
-  async function removeActiveSessionRoot(sessionPaths) {
-    const removeSessionRoot = () => rm(sessionPaths.sessionRoot, {
-      force: true,
-      recursive: true
-    });
-    if (!sessionPaths.currentSessionAliasPath) {
-      return removeSessionRoot();
-    }
-    return enqueueSessionMutation(sessionPaths.currentSessionAliasPath, async () => {
-      await clearVibe64CurrentSessionAliasIfMatches({
-        aliasPath: sessionPaths.currentSessionAliasPath,
-        sessionId: sessionPaths.sessionId
-      });
-      await removeSessionRoot();
     });
   }
 
@@ -3038,58 +3276,75 @@ function createVibe64SessionStore({
     return readSession(resolvedSessionId);
   }
 
-  async function listSessions(options = {}) {
+  async function readUnarchivedSessionRecords() {
     const rootPaths = paths();
-    const activeSessionIds = sortedDirectoryNames(
-      await readDirectoryEntries(rootPaths.activeSessionsRoot),
-      isValidVibe64SessionId
-    );
+    const [activeEntries, closingEntries] = await Promise.all([
+      readDirectoryEntries(rootPaths.activeSessionsRoot),
+      readDirectoryEntries(rootPaths.closingSessionsRoot)
+    ]);
+    const activeSessionIds = sortedDirectoryNames(activeEntries, isValidVibe64SessionId);
+    const closingSessionIds = sortedDirectoryNames(closingEntries, isValidVibe64SessionId);
+    const sessionIds = [...new Set([
+      ...activeSessionIds,
+      ...closingSessionIds
+    ])].sort((left, right) => left.localeCompare(right));
+    return Promise.all(sessionIds.map(async (sessionId) => ({
+      sessionId,
+      status: await readStatus(sessionId)
+    })));
+  }
+
+  async function sessionRecordsForList(options = {}) {
     const listOptions = normalizeSessionListOptions(options);
-    const activeSessionRecords = listOptions.statusGroup || listOptions.statuses.size > 0
-      ? (await Promise.all(activeSessionIds.map(async (entrySessionId) => ({
-        sessionId: entrySessionId,
-        status: await readStatus(entrySessionId)
-      })))).filter(({ status }) => sessionStatusMatchesListOptions(status, listOptions))
-      : activeSessionIds.map((sessionId) => ({
-        sessionId,
-        status: ""
-      }));
-    const activeSessionIdSet = new Set(activeSessionIds);
-    const closedSessionRecords = (await readClosedArchiveRecords())
-      .filter((record) => !activeSessionIdSet.has(record.sessionId))
+    let unarchivedRecords = await readUnarchivedSessionRecords();
+    if (sessionListMayIncludeClosed(listOptions)) {
+      // A process can stop after recording the terminal status but before
+      // publishing the archive. Closed-session reads are the recovery boundary.
+      for (const record of unarchivedRecords) {
+        if (CLOSED_VIBE64_SESSION_STATUSES.has(record.status)) {
+          await compactClosedSession(record.sessionId);
+        }
+      }
+      unarchivedRecords = unarchivedRecords.filter((record) => (
+        !CLOSED_VIBE64_SESSION_STATUSES.has(record.status)
+      ));
+    }
+    unarchivedRecords = unarchivedRecords.filter(({ status }) => (
+      sessionStatusMatchesListOptions(status, listOptions)
+    ));
+    const unarchivedSessionIds = new Set(unarchivedRecords.map((record) => record.sessionId));
+    const archivedRecords = (await readClosedArchiveRecords())
+      .filter((record) => !unarchivedSessionIds.has(record.sessionId))
       .filter((record) => sessionStatusMatchesListOptions(record.status, listOptions));
+    return {
+      archivedRecords,
+      unarchivedRecords
+    };
+  }
+
+  async function listSessions(options = {}) {
+    const {
+      archivedRecords,
+      unarchivedRecords
+    } = await sessionRecordsForList(options);
     const sessionIds = [
-      ...activeSessionRecords.map((record) => record.sessionId),
-      ...closedSessionRecords.map((record) => record.sessionId)
+      ...unarchivedRecords.map((record) => record.sessionId),
+      ...archivedRecords.map((record) => record.sessionId)
     ].sort((left, right) => left.localeCompare(right));
     return Promise.all(sessionIds.map((entrySessionId) => readSession(entrySessionId)));
   }
 
   async function listSessionSummaries(options = {}) {
-    const rootPaths = paths();
-    const activeSessionIds = sortedDirectoryNames(
-      await readDirectoryEntries(rootPaths.activeSessionsRoot),
-      isValidVibe64SessionId
-    );
-    const listOptions = normalizeSessionListOptions(options);
-    const activeSessionRecords = listOptions.statusGroup || listOptions.statuses.size > 0
-      ? (await Promise.all(activeSessionIds.map(async (entrySessionId) => ({
-        sessionId: entrySessionId,
-        status: await readStatus(entrySessionId)
-      })))).filter(({ status }) => sessionStatusMatchesListOptions(status, listOptions))
-      : activeSessionIds.map((sessionId) => ({
-        sessionId,
-        status: ""
-      }));
-    const activeSessionIdSet = new Set(activeSessionIds);
-    const activeSummaries = await Promise.all(activeSessionRecords.map((record) => readSessionSummary(record.sessionId)));
-    const closedSummaries = (await readClosedArchiveRecords())
-      .filter((record) => !activeSessionIdSet.has(record.sessionId))
-      .map(closedArchiveSummary)
-      .filter((summary) => sessionStatusMatchesListOptions(summary.status, listOptions));
+    const {
+      archivedRecords,
+      unarchivedRecords
+    } = await sessionRecordsForList(options);
+    const unarchivedSummaries = await Promise.all(unarchivedRecords.map((record) => (
+      readSessionSummary(record.sessionId)
+    )));
     return [
-      ...activeSummaries,
-      ...closedSummaries
+      ...unarchivedSummaries,
+      ...archivedRecords.map(closedArchiveSummary)
     ].sort((left, right) => normalizeText(left.sessionId).localeCompare(normalizeText(right.sessionId)));
   }
 
