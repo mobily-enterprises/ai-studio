@@ -13,10 +13,15 @@
     :abandon="dialogs.abandon"
     :short-session-id="shortSessionId"
   />
+
+  <Vibe64SessionFinishDialog
+    :finish="dialogs.finish"
+  />
 </template>
 
 <script setup>
 import Vibe64SessionAbandonDialog from "@/components/studio/vibe64-session/Vibe64SessionAbandonDialog.vue";
+import Vibe64SessionFinishDialog from "@/components/studio/vibe64-session/Vibe64SessionFinishDialog.vue";
 import Vibe64SessionInputDialog from "@/components/studio/vibe64-session/Vibe64SessionInputDialog.vue";
 import {
   defineVibe64AsyncComponent

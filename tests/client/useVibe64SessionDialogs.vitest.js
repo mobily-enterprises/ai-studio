@@ -204,4 +204,61 @@ describe("useVibe64SessionDialogs", () => {
     expect(refreshSourceSafety).toHaveBeenCalledTimes(1);
     expect(dialogs.abandon.sourceSafety.value.unsafe).toBe(true);
   });
+
+  it("uses the existing source-safety state while confirming Finish", async () => {
+    const refreshSourceSafety = vi.fn(async () => null);
+    const sourceSafety = ref({
+      available: true,
+      changedFileCount: 2,
+      initialized: true,
+      refresh: refreshSourceSafety,
+      unsafe: true,
+      unpushedCommitCount: 1
+    });
+    const dialogs = useVibe64SessionDialogs({
+      activeActionId: ref(""),
+      clearSelectedSession: vi.fn(),
+      isSelectedSessionClosed: ref(false),
+      refreshSessionData: vi.fn(async () => null),
+      runActionCommand: {
+        run: vi.fn()
+      },
+      selectedSessionId: ref("session-1"),
+      selectedSessionTitle: ref("Session one"),
+      sessionsApiPath: ref("/api/app/project/example/vibe64/sessions"),
+      sourceSafety
+    });
+
+    const confirmation = dialogs.finish.request();
+
+    expect(dialogs.finish.open.value).toBe(true);
+    expect(dialogs.finish.sourceSafety.value).toBe(sourceSafety.value);
+    expect(refreshSourceSafety).not.toHaveBeenCalled();
+
+    dialogs.finish.confirm();
+
+    await expect(confirmation).resolves.toBe(true);
+    expect(dialogs.finish.open.value).toBe(false);
+  });
+
+  it("cancels a pending Finish confirmation when session state is cleared", async () => {
+    const dialogs = useVibe64SessionDialogs({
+      activeActionId: ref(""),
+      clearSelectedSession: vi.fn(),
+      isSelectedSessionClosed: ref(false),
+      refreshSessionData: vi.fn(async () => null),
+      runActionCommand: {
+        run: vi.fn()
+      },
+      selectedSessionId: ref("session-1"),
+      selectedSessionTitle: ref("Session one"),
+      sessionsApiPath: ref("/api/app/project/example/vibe64/sessions")
+    });
+    const confirmation = dialogs.finish.request();
+
+    dialogs.clear();
+
+    await expect(confirmation).resolves.toBe(false);
+    expect(dialogs.finish.open.value).toBe(false);
+  });
 });

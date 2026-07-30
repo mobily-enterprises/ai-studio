@@ -42,13 +42,15 @@ function useVibe64SessionDialogs({
   const abandonDialogSessionTitle = ref("");
   const abandonClosingSessionId = ref("");
   const abandonClosingSessionTitle = ref("");
+  const finishDialogOpen = ref(false);
   const inputDialogAction = ref(null);
   const inputDialogError = ref("");
   const inputDialogOpen = ref(false);
   const inputDialogSubmitting = ref(false);
   const inputDialogValues = ref({});
   const resolvedSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || ""));
-  const abandonSourceSafety = computed(() => readRefOrGetterValue(sourceSafety) || {});
+  const sessionSourceSafety = computed(() => readRefOrGetterValue(sourceSafety) || {});
+  let finishConfirmationResolve = null;
 
   const {
     clearDiffDialog,
@@ -133,7 +135,7 @@ function useVibe64SessionDialogs({
     abandonDialogSessionId.value = unref(selectedSessionId);
     abandonDialogSessionTitle.value = unref(selectedSessionTitle);
     abandonDialogOpen.value = true;
-    void abandonSourceSafety.value?.refresh?.();
+    void sessionSourceSafety.value?.refresh?.();
   }
 
   function cancelAbandonSession() {
@@ -148,7 +150,7 @@ function useVibe64SessionDialogs({
       !abandonDialogSessionId.value ||
       abandonClosingSessionId.value ||
       abandonCommand.isRunning ||
-      abandonSourceSafety.value?.loading
+      sessionSourceSafety.value?.loading
     ) {
       return;
     }
@@ -220,9 +222,35 @@ function useVibe64SessionDialogs({
     inputDialogValues.value = {};
   }
 
+  function resolveFinishConfirmation(confirmed = false) {
+    const resolve = finishConfirmationResolve;
+    finishConfirmationResolve = null;
+    finishDialogOpen.value = false;
+    resolve?.(confirmed === true);
+  }
+
+  function requestFinishConfirmation() {
+    if (finishConfirmationResolve) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      finishConfirmationResolve = resolve;
+      finishDialogOpen.value = true;
+    });
+  }
+
+  function cancelFinishConfirmation() {
+    resolveFinishConfirmation(false);
+  }
+
+  function acceptFinishConfirmation() {
+    resolveFinishConfirmation(true);
+  }
+
   function clear() {
     clearAbandonDialog();
     clearDiffDialog();
+    cancelFinishConfirmation();
     clearInputDialog();
   }
 
@@ -238,7 +266,7 @@ function useVibe64SessionDialogs({
       request: requestAbandonSelectedSession,
       sessionId: abandonDialogSessionId,
       sessionTitle: abandonDialogSessionTitle,
-      sourceSafety: abandonSourceSafety
+      sourceSafety: sessionSourceSafety
     },
     busy,
     clear,
@@ -251,6 +279,13 @@ function useVibe64SessionDialogs({
       open: diffDialogOpen,
       openDialog: openDiffDialog,
       payload: diffPayload
+    },
+    finish: {
+      cancel: cancelFinishConfirmation,
+      confirm: acceptFinishConfirmation,
+      open: finishDialogOpen,
+      request: requestFinishConfirmation,
+      sourceSafety: sessionSourceSafety
     },
     input: {
       close: closeInputDialog,

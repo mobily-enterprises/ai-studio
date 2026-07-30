@@ -83,6 +83,7 @@ const MAX_OPEN_VIBE64_SESSIONS = 3;
 const NOVICE_MAX_OPEN_VIBE64_SESSIONS = 1;
 const AGENT_SESSION_WORKTREE_UNAVAILABLE_CODE = "vibe64_session_worktree_unavailable";
 const AGENT_TURN_ALREADY_RUNNING_CODE = "vibe64_agent_turn_already_running";
+const AGENT_MESSAGE_ACTION_MISSING_CODE = "vibe64_agent_message_action_missing";
 const AGENT_TURN_RESULT_MISSING_MESSAGE = "The assistant finished this turn, but Vibe64 did not receive its result text. Retry the step.";
 const VIBE64_ACTION_DISABLED_CODE = "vibe64_action_disabled";
 const VIBE64_ADVANCE_STATE_CHANGED_CODE = "vibe64_advance_state_changed";
@@ -105,6 +106,10 @@ const COMPOSER_DRAFT_KIND = Object.freeze({
 const COMPOSER_MESSAGE_AUTOMATIC_RETRY_LIMIT = 8;
 const COMPOSER_MESSAGE_AUTOMATIC_RETRY_WINDOW_MS = 30_000;
 const COMPOSER_MESSAGE_RETRY_EXHAUSTED_ERROR = "The assistant stayed unavailable for this message. Resend it to try again.";
+const RETRYABLE_COMPOSER_MESSAGE_DELIVERY_CODES = new Set([
+  AGENT_MESSAGE_ACTION_MISSING_CODE,
+  VIBE64_ACTION_DISABLED_CODE
+]);
 
 async function completeProjectBootstrapForFinishedSetupSession(projectService = {}, session = {}) {
   if (
@@ -1697,7 +1702,7 @@ async function startComposerMessageTurn(terminalService, coordinator, {
   const messageActionId = normalizedInputText(messageAction?.id);
   if (!messageActionId) {
     const error = new Error("The current workflow does not expose an assistant message action.");
-    error.code = "vibe64_agent_message_action_missing";
+    error.code = AGENT_MESSAGE_ACTION_MISSING_CODE;
     throw error;
   }
   const actionStartedAtMs = Date.now();
@@ -1959,11 +1964,12 @@ async function drainComposerMessages(terminalService, coordinator, publishSessio
         });
       }
     } catch (error) {
+      const operationOutcome = normalizedInputText(error?.code) || "message_delivery_failed";
       result = {
         error: error?.message || String(error),
         ok: false,
-        operationOutcome: error?.code || "message_delivery_failed",
-        retryable: normalizedInputText(error?.code) === VIBE64_ACTION_DISABLED_CODE
+        operationOutcome,
+        retryable: RETRYABLE_COMPOSER_MESSAGE_DELIVERY_CODES.has(operationOutcome)
       };
     }
     if (!isPlainObject(result)) {

@@ -129,6 +129,7 @@ function useVibe64SessionWorkflow({
     onRewindSuccess: clearSessionTransientState,
     openInputDialog: (action) => workflow.dialogs?.input.openDialog(action),
     refreshSessionData,
+    requestFinishConfirmation: () => workflow.dialogs?.finish.request(),
     selectedSession,
     selectedSessionId,
     sessionsApiPath
@@ -217,6 +218,7 @@ function useVibe64SessionWorkflow({
     dialogs: {
       abandon: workflow.dialogs.abandon,
       diff: workflow.dialogs.diff,
+      finish: workflow.dialogs.finish,
       input: {
         close: workflow.dialogs.input.close,
         error: workflow.dialogs.input.error,

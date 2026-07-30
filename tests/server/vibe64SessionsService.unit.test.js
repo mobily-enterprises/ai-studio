@@ -2960,6 +2960,115 @@ test("assistant message automatic retries terminate as a resendable chat failure
   assert.match(message.error, /Resend it/u);
 });
 
+test("assistant messages wait for the workflow conversation action during setup advancement", async () => {
+  const sessionId = "session-message-before-conversation-step";
+  const harness = composerMessageRuntimeHarness({
+    actions: [],
+    currentStep: "dependencies_installed",
+    sessionId,
+    status: VIBE64_SESSION_STATUS.ACTIVE
+  });
+  const runActionIds = [];
+  harness.runtime.runAction = async (_sessionId, actionId, input) => {
+    runActionIds.push(actionId);
+    return harness.updateSession((session) => ({
+      ...session,
+      actionResult: {
+        actionId,
+        agentPromptHandoff: {
+          handoffId: "setup-race-handoff",
+          kind: "agent_prompt_handoff",
+          terminalInput: input.conversationRequest
+        },
+        input,
+        status: "prompt_ready"
+      }
+    }));
+  };
+  let providerCalls = 0;
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return harness.runtime;
+      }
+    },
+    setupServices: readySetupServices(),
+    terminalService: {
+      async deliverAgentPrompt(_sessionId, _handoff, options = {}) {
+        await options.lifecycle({
+          state: "connecting"
+        });
+        await options.lifecycle({
+          state: "delivered",
+          threadId: "setup-race-thread",
+          turnId: "setup-race-turn"
+        });
+        await options.lifecycle({
+          state: "active",
+          threadId: "setup-race-thread",
+          turnId: "setup-race-turn"
+        });
+        return {
+          ok: true,
+          thread: {
+            id: "setup-race-thread"
+          },
+          turn: {
+            active: true,
+            id: "setup-race-turn"
+          }
+        };
+      },
+      async sendAgentMessage() {
+        providerCalls += 1;
+        if (providerCalls === 1) {
+          setImmediate(() => {
+            harness.updateSession((session) => ({
+              ...session,
+              actions: [
+                {
+                  dispatchRoute: "session-message",
+                  enabled: true,
+                  id: "agent_conversation",
+                  recordsConversationTurn: true,
+                  type: "prompt"
+                }
+              ],
+              currentStep: "maintenance_conversation"
+            }));
+          });
+        }
+        return {
+          delivered: false,
+          newTurnRequired: true,
+          ok: true,
+          operationOutcome: "new_turn_required"
+        };
+      }
+    }
+  });
+
+  const accepted = await service.sendAgentMessage(sessionId, {
+    composerSubmissionId: "setup-race-message",
+    message: "Tell me whether the previous session left changes."
+  });
+  assert.equal(accepted.accepted, true);
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const [message] = publicSessionResponse(harness.currentSession()).composerMessages;
+    if (message?.state === "delivered") {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  const [message] = publicSessionResponse(harness.currentSession()).composerMessages;
+  assert.equal(message.state, "delivered");
+  assert.equal(message.operationOutcome, "started_new_turn");
+  assert.deepEqual(runActionIds, ["agent_conversation"]);
+  assert.ok(providerCalls >= 2);
+});
+
 test("messages queued during an active delivery are sent as the next ordered batch", async () => {
   const sessionId = "session-active-message-batch";
   const harness = composerMessageRuntimeHarness({

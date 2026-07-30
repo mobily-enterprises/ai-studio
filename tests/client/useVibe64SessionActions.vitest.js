@@ -155,4 +155,61 @@ describe("useVibe64SessionActions refresh ownership", () => {
     expect(commandTerminal.clear).toHaveBeenCalledTimes(1);
     expect(refreshSessionData).toHaveBeenCalledTimes(1);
   });
+
+  it("runs Finish only after its confirmation is accepted", async () => {
+    const requestFinishConfirmation = vi.fn(async () => true);
+    const actions = useVibe64SessionActions({
+      commandBusy: () => false,
+      commandTerminal: {
+        clear: vi.fn()
+      },
+      refreshSessionData: vi.fn(async () => null),
+      requestFinishConfirmation,
+      selectedSession: ref({
+        currentStep: "local_session_finished"
+      }),
+      selectedSessionId: ref("session-1"),
+      sessionsApiPath: ref("/api/app/example/vibe64/sessions")
+    });
+    const finishAction = {
+      enabled: true,
+      id: "finish_session",
+      label: "Finish",
+      type: "finish"
+    };
+
+    await actions.runAction(finishAction);
+
+    expect(requestFinishConfirmation).toHaveBeenCalledWith(finishAction);
+    expect(actions.runActionCommand.run).toHaveBeenCalledTimes(1);
+    expect(actions.runActionCommand.run).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: "finish_session",
+      sessionId: "session-1"
+    }));
+  });
+
+  it("does not run Finish when its confirmation is cancelled", async () => {
+    const actions = useVibe64SessionActions({
+      commandBusy: () => false,
+      commandTerminal: {
+        clear: vi.fn()
+      },
+      refreshSessionData: vi.fn(async () => null),
+      requestFinishConfirmation: vi.fn(async () => false),
+      selectedSession: ref({
+        currentStep: "local_session_finished"
+      }),
+      selectedSessionId: ref("session-1"),
+      sessionsApiPath: ref("/api/app/example/vibe64/sessions")
+    });
+
+    await actions.runAction({
+      enabled: true,
+      id: "finish_session",
+      label: "Finish",
+      type: "finish"
+    });
+
+    expect(actions.runActionCommand.run).not.toHaveBeenCalled();
+  });
 });

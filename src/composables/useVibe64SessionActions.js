@@ -93,6 +93,7 @@ function useVibe64SessionActions({
   onRewindSuccess = () => null,
   openInputDialog = () => null,
   refreshSessionData,
+  requestFinishConfirmation = async () => false,
   selectedSession,
   selectedSessionId,
   sessionsApiPath
@@ -637,6 +638,9 @@ function useVibe64SessionActions({
         reason: !unref(selectedSessionId) ? "missing_session" : !action.id ? "missing_action" : busy ? "busy" : "action_disabled",
         sessionId: String(unref(selectedSessionId) || "")
       });
+      return;
+    }
+    if (action.type === "finish" && await requestFinishConfirmation(action) !== true) {
       return;
     }
     const providedInput = options.input && typeof options.input === "object" && !Array.isArray(options.input)
