@@ -201,8 +201,8 @@ function repositoryCommitAcceptanceScript(repositoryProfile = {}) {
   return githubPrCommitAcceptanceScript();
 }
 
-async function canonicalGitRepositoryMounts(repositoryProfile = {}, session = {}) {
-  if (!repositoryProfile.canonicalGit) {
+async function gitCacheRepositoryMounts(repositoryProfile = {}, session = {}) {
+  if (!repositoryProfile.canonicalGit && !repositoryProfile.githubPr) {
     return [];
   }
   const canonicalRepositoryPath = normalizeText(session.metadata?.source_cache_path);
@@ -239,7 +239,7 @@ function mainCheckoutMounts(repositoryProfile = {}, session = {}) {
 
 async function commitChangesMounts(repositoryProfile = {}, session = {}) {
   return [
-    ...await canonicalGitRepositoryMounts(repositoryProfile, session),
+    ...await gitCacheRepositoryMounts(repositoryProfile, session),
     ...mainCheckoutMounts(repositoryProfile, session)
   ];
 }
@@ -252,6 +252,7 @@ function commitChangesScript(session = {}) {
   const mainCheckoutRoot = normalizeText(session.metadata?.main_checkout_root);
   const workSource = normalizeText(session.metadata?.work_source);
   const canonicalRepositoryPath = normalizeText(session.metadata?.source_cache_path);
+  const sourceRemoteUrl = normalizeText(session.metadata?.source_remote_url);
   const baseBranch = normalizeText(session.metadata?.base_branch) ||
     normalizeText(session.metadata?.source_pr_head_ref) ||
     normalizeText(session.metadata?.source_pr_base_ref) ||
@@ -263,6 +264,7 @@ function commitChangesScript(session = {}) {
     `MAIN_CHECKOUT_ROOT=${shellQuote(mainCheckoutRoot)}`,
     `WORK_SOURCE=${shellQuote(workSource)}`,
     `CANONICAL_REPOSITORY_PATH=${shellQuote(canonicalRepositoryPath)}`,
+    `SOURCE_REMOTE_URL=${shellQuote(sourceRemoteUrl)}`,
     `COMMIT_TITLE="$(cat ${shellQuote(workTitlePath)} 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')"`,
     "if [ -z \"$COMMIT_TITLE\" ]; then",
     `  COMMIT_TITLE="$(cat ${shellQuote(issueTitlePath)} 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')"`,
@@ -299,7 +301,40 @@ function commitChangesScript(session = {}) {
     "  fi",
     "  printf '%s\\n' \"$LOCAL_BASE_REF\"",
     "}",
-    ...repositoryCommitAcceptanceScript(repositoryProfile)
+    ...(repositoryProfile.githubPr ? [
+      "refresh_github_cache_after_push() {",
+      "  (",
+      "    set -e",
+      "    if [ -z \"$CANONICAL_REPOSITORY_PATH\" ]; then",
+      "      exit 0",
+      "    fi",
+      "    mkdir -p \"$(dirname \"$CANONICAL_REPOSITORY_PATH\")\"",
+      "    if command -v flock >/dev/null 2>&1; then",
+      "      exec 9>\"${CANONICAL_REPOSITORY_PATH}.refresh.lock\"",
+      "      flock 9",
+      "    fi",
+      "    if [ ! -d \"$CANONICAL_REPOSITORY_PATH\" ]; then",
+      "      if [ -z \"$SOURCE_REMOTE_URL\" ]; then",
+      "        exit 1",
+      "      fi",
+      "      git clone --bare \"$SOURCE_REMOTE_URL\" \"$CANONICAL_REPOSITORY_PATH\"",
+      "      exit 0",
+      "    fi",
+      "    if [ -n \"$SOURCE_REMOTE_URL\" ]; then",
+      "      if git -C \"$CANONICAL_REPOSITORY_PATH\" remote get-url origin >/dev/null 2>&1; then",
+      "        git -C \"$CANONICAL_REPOSITORY_PATH\" remote set-url origin \"$SOURCE_REMOTE_URL\"",
+      "      else",
+      "        git -C \"$CANONICAL_REPOSITORY_PATH\" remote add origin \"$SOURCE_REMOTE_URL\"",
+      "      fi",
+      "    fi",
+      "    git -C \"$CANONICAL_REPOSITORY_PATH\" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
+      "  )",
+      "}",
+      ...repositoryCommitAcceptanceScript(repositoryProfile),
+      "if ! refresh_github_cache_after_push; then",
+      "  printf '[studio] Push succeeded, but Vibe64 could not refresh the shared Git cache. The next authoritative repository read will refresh it.\\n' >&2",
+      "fi"
+    ] : repositoryCommitAcceptanceScript(repositoryProfile))
   ].join("\n");
 }
 

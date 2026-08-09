@@ -43,6 +43,33 @@ const CODEX_GIT_COMMAND_SOCKET_NAME = "command.sock";
 const CODEX_GIT_COMMAND_WRAPPER_NAMES = Object.freeze(["git", "gh"]);
 const CODEX_GIT_COMMAND_INPUT_MAX_BYTES = 20 * 1024 * 1024;
 const CODEX_GIT_COMMAND_TIMEOUT_MS = 120_000;
+const CODEX_GIT_CACHE_REFRESH_SCRIPT = `
+set -e
+cache_path="$1"
+remote_url="$2"
+lock_path="\${cache_path}.refresh.lock"
+mkdir -p "$(dirname "$cache_path")"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_path"
+  flock 9
+fi
+if [ ! -d "$cache_path" ]; then
+  if [ -z "$remote_url" ]; then
+    printf '[studio] Git cache is missing and its remote URL is unavailable.\\n' >&2
+    exit 1
+  fi
+  git clone --bare "$remote_url" "$cache_path"
+  exit 0
+fi
+if [ -n "$remote_url" ]; then
+  if git -C "$cache_path" remote get-url origin >/dev/null 2>&1; then
+    git -C "$cache_path" remote set-url origin "$remote_url"
+  else
+    git -C "$cache_path" remote add origin "$remote_url"
+  fi
+fi
+git -C "$cache_path" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+`;
 const VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV = "VIBE64_CODEX_GIT_COMMAND_SESSION_ID";
 const VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV = "VIBE64_CODEX_GIT_COMMAND_SOCKET";
 const VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV = "VIBE64_CODEX_GIT_COMMAND_TOKEN";
@@ -276,6 +303,161 @@ function responseError(message = "", code = "vibe64_codex_git_command_failed", e
     error: message,
     ok: false
   };
+}
+
+function commandUpdatesGithubRepository(command = "", args = []) {
+  const normalizedCommand = normalizeText(command);
+  const normalizedArgs = (Array.isArray(args) ? args : []).map(normalizeText);
+  if (normalizedCommand === "git") {
+    return normalizedArgs.includes("push");
+  }
+  if (normalizedCommand !== "gh") {
+    return false;
+  }
+  const prIndex = normalizedArgs.indexOf("pr");
+  return prIndex >= 0 && normalizedArgs[prIndex + 1] === "merge";
+}
+
+function trustedSessionGitCachePath(value = "") {
+  const normalized = normalizeText(value);
+  if (!normalized || !path.isAbsolute(normalized)) {
+    return "";
+  }
+  const resolved = path.resolve(normalized);
+  if (
+    path.basename(resolved) !== "repository.git" ||
+    path.basename(path.dirname(resolved)) !== "git-cache"
+  ) {
+    return "";
+  }
+  return resolved;
+}
+
+async function readSessionGitCacheDescriptor(projectService = {}, sessionId = "") {
+  if (typeof projectService.createSessionStore !== "function") {
+    return null;
+  }
+  const store = await projectService.createSessionStore({
+    sessionId
+  });
+  if (typeof store?.readMetadataValue !== "function") {
+    return null;
+  }
+  const [
+    cachePath,
+    remoteUrl
+  ] = await Promise.all([
+    store.readMetadataValue(sessionId, "source_cache_path"),
+    store.readMetadataValue(sessionId, "source_remote_url")
+  ]);
+  const trustedCachePath = trustedSessionGitCachePath(cachePath);
+  return trustedCachePath
+    ? {
+        cachePath: trustedCachePath,
+        remoteUrl: normalizeText(remoteUrl)
+      }
+    : null;
+}
+
+function logGitCacheRefresh(logger = null, result = {}, fields = {}) {
+  const ok = result?.ok === true;
+  return logOperationalEvent(logger, ok ? "info" : "warn", {
+    cachePath: normalizeText(fields.cachePath),
+    code: ok ? "" : normalizeText(result?.code),
+    command: normalizeText(fields.command),
+    component: "vibe64.codex_git_command",
+    error: ok ? "" : commandOutput(result),
+    event: "vibe64.codex_git_cache_refresh.finished",
+    ok,
+    sessionId: normalizeText(fields.sessionId)
+  }, ok
+    ? "Vibe64 refreshed the project Git cache after a remote mutation."
+    : "Vibe64 could not refresh the project Git cache after a successful remote mutation.");
+}
+
+async function refreshSessionGitCacheAfterRemoteMutation({
+  actor = {},
+  command = "",
+  env = process.env,
+  gatewayCommandRunner,
+  gatewayUserKey = "",
+  logger = null,
+  projectService,
+  session = {},
+  sessionId = "",
+  toolHome = {}
+} = {}) {
+  let descriptor;
+  try {
+    descriptor = await readSessionGitCacheDescriptor(projectService, sessionId);
+  } catch (error) {
+    const result = responseError(
+      normalizeText(error?.message) || "Vibe64 could not read the project Git cache metadata.",
+      normalizeText(error?.code) || "vibe64_codex_git_cache_metadata_unreadable"
+    );
+    logGitCacheRefresh(logger, result, {
+      command,
+      sessionId
+    });
+    return result;
+  }
+  if (!descriptor) {
+    return {
+      ok: true,
+      skipped: true
+    };
+  }
+  const cacheRoot = path.dirname(descriptor.cachePath);
+  let result;
+  try {
+    result = await gatewayCommandRunner({
+      actor: "owner-user",
+      allowedRoots: [
+        actor.targetRoot,
+        cacheRoot
+      ],
+      args: [
+        "-c",
+        CODEX_GIT_CACHE_REFRESH_SCRIPT,
+        "vibe64-git-cache-refresh",
+        descriptor.cachePath,
+        descriptor.remoteUrl
+      ],
+      command: "bash",
+      cwd: actor.targetRoot,
+      envPolicy: "auth",
+      gitSafeDirectories: [
+        actor.targetRoot,
+        descriptor.cachePath
+      ],
+      gitTransport: "github-https",
+      mode: "capture",
+      project: {
+        ownerUserKey: toolHome.ownerUserKey,
+        tenant: env.VIBE64_WORKSPACE || env.VIBE64_RUNTIME_NAMESPACE || ""
+      },
+      purpose: "github",
+      runtimes: ["git"],
+      session: {
+        metadata: session.metadata || {},
+        sessionId,
+        targetRoot: actor.targetRoot
+      },
+      timeout: CODEX_GIT_COMMAND_TIMEOUT_MS,
+      userKey: gatewayUserKey
+    });
+  } catch (error) {
+    result = responseError(
+      normalizeText(error?.message) || "Vibe64 could not refresh the project Git cache.",
+      normalizeText(error?.code) || "vibe64_codex_git_cache_refresh_failed"
+    );
+  }
+  logGitCacheRefresh(logger, result, {
+    cachePath: descriptor.cachePath,
+    command,
+    sessionId
+  });
+  return result;
 }
 
 function noGithubGitCommandActorFromSession(session = {}, {
@@ -596,7 +778,24 @@ function createCodexGitCommandService({
       timeout: CODEX_GIT_COMMAND_TIMEOUT_MS,
       userKey: gatewayUserKey
     });
+    const cacheRefresh = result.ok === true &&
+      actor.githubRequired !== false &&
+      commandUpdatesGithubRepository(command, args)
+      ? await refreshSessionGitCacheAfterRemoteMutation({
+          actor,
+          command,
+          env,
+          gatewayCommandRunner,
+          gatewayUserKey,
+          logger,
+          projectService,
+          session,
+          sessionId,
+          toolHome
+        })
+      : null;
     return finish({
+      ...(cacheRefresh ? { cacheRefresh } : {}),
       code: result.ok ? "" : "vibe64_codex_git_command_failed",
       error: result.ok ? "" : commandOutput(result),
       exitCode: Number(result.exitCode ?? (result.ok ? 0 : 1)),

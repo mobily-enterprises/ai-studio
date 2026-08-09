@@ -304,7 +304,7 @@ function createWorktreeScript({
     "  else",
     "    git -C \"$VIBE64_GIT_CACHE_PATH\" remote add origin \"$VIBE64_GIT_REMOTE_URL\"",
     "  fi",
-    "  git -C \"$VIBE64_GIT_CACHE_PATH\" fetch --prune origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
+    "  git -C \"$VIBE64_GIT_CACHE_PATH\" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
     "}",
     "default_branch_from_cache() {",
     "  if [ -n \"$VIBE64_GIT_DEFAULT_BRANCH\" ]; then",

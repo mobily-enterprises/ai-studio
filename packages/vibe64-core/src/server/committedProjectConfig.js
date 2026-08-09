@@ -236,21 +236,39 @@ function readCommittedProjectConfigFromText({
   try {
     manifest = parseProjectManifestText(manifestText);
   } catch (error) {
+    if (error?.code === "vibe64_project_manifest_invalid_json") {
+      return committedProjectManifestInvalid(
+        "Committed vibe64.project.json contains invalid JSON. Repair and commit the file before opening this project.",
+        {
+          ...common,
+          causeCode: error.code
+        }
+      );
+    }
     if (error?.code === "vibe64_project_manifest_object_required") {
       return committedProjectManifestInvalid(
         "Committed vibe64.project.json must contain a JSON object.",
-        common
+        {
+          ...common,
+          causeCode: error.code
+        }
       );
     }
     if (error?.code === "vibe64_project_manifest_schema_unsupported") {
       return committedProjectManifestInvalid(
         "Committed vibe64.project.json uses an unsupported schema or schema version.",
-        common
+        {
+          ...common,
+          causeCode: error.code
+        }
       );
     }
     return committedProjectManifestInvalid(
-      "Committed vibe64.project.json contains invalid JSON. Repair and commit the file before opening this project.",
-      common
+      normalizeText(error?.message) || "Committed vibe64.project.json is invalid. Repair and commit the file before opening this project.",
+      {
+        ...common,
+        causeCode: normalizeText(error?.code)
+      }
     );
   }
   if (!manifest.projectType) {

@@ -1236,8 +1236,10 @@ test("commit command always pushes the session branch for existing PR sessions",
           source_pr_head_ref: "feature-base",
           source_pr_head_repo: "example/project",
           pr_source: "existing",
+          source_cache_path: path.join(targetRoot, ".cache", "git-cache", "repository.git"),
           source_pr_update_mode: "direct",
-          source_path: targetRoot
+          source_path: targetRoot,
+          source_remote_url: "https://github.com/example/project.git"
         }),
         metadataRoot: path.join(targetRoot, ".vibe64", "metadata"),
         sessionId: "test-session",
@@ -1250,12 +1252,20 @@ test("commit command always pushes the session branch for existing PR sessions",
     const script = spec.args.at(-1);
     assert.match(script, /BASE_BRANCH=feature-base/u);
     assert.equal(spec.requiresHostGithubCredentials, true);
+    assert.deepEqual(spec.mounts, [
+      {
+        source: path.join(targetRoot, ".cache", "git-cache"),
+        target: path.join(targetRoot, ".cache", "git-cache")
+      }
+    ]);
     assert.doesNotMatch(script, /gh auth token/u);
     assert.doesNotMatch(script, /vibe64_enable_github_git_auth/u);
     assert.match(script, /git push -u origin "\$CURRENT_BRANCH"/u);
     assert.match(script, /if ! git remote get-url origin/u);
     assert.match(script, /gh repo fork "\$UPSTREAM_REPOSITORY" --clone=false --remote=false/u);
     assert.match(script, /git push -u vibe64-fork "\$CURRENT_BRANCH"/u);
+    assert.match(script, /refresh_github_cache_after_push/u);
+    assert.match(script, /fetch --prune --atomic origin/u);
     assert.match(script, /VIBE64_COMMAND_FACT_VALUE="\$CURRENT_BRANCH"/u);
     assert.match(script, /fact:set\\t%s\\t%s\\n' branch_pushed/u);
     assert.match(script, /fact:set\\t%s\\t%s\\n' branch_push_remote/u);

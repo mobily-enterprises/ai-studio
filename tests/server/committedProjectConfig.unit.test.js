@@ -7,10 +7,32 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  createCommittedGitSourceReader
+  createCommittedGitSourceReader,
+  readCommittedProjectConfigFromText
 } from "../../packages/vibe64-core/src/server/committedProjectConfig.js";
 
 const execFileAsync = promisify(execFile);
+
+test("committed project config preserves semantic manifest validation errors", () => {
+  const result = readCommittedProjectConfigFromText({
+    manifestText: JSON.stringify({
+      capabilities: {
+        previewIdentity: {
+          viewerIdentityTypes: ["email"]
+        }
+      },
+      projectType: "jskit",
+      schema: "vibe64.project",
+      schemaVersion: 1
+    })
+  });
+
+  assert.equal(result.available, false);
+  assert.equal(result.code, "vibe64_committed_project_manifest_invalid");
+  assert.equal(result.causeCode, "vibe64_preview_identity_command_invalid");
+  assert.match(result.message, /cannot derive application identities/u);
+  assert.doesNotMatch(result.message, /invalid JSON/u);
+});
 
 test("committed Git source reader preserves binary files and exposes their blob IDs", async () => {
   const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-committed-source-"));

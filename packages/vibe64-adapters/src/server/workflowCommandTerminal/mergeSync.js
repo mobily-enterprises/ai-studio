@@ -105,7 +105,7 @@ function syncMainCheckoutScript({
     "else",
     "  printf '[studio] Refreshing Git cache for %s.\\n' \"$VIBE64_GIT_REMOTE_URL\"",
     "  git -C \"$VIBE64_GIT_CACHE_PATH\" remote set-url origin \"$VIBE64_GIT_REMOTE_URL\"",
-    "  git -C \"$VIBE64_GIT_CACHE_PATH\" fetch --prune origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
+    "  git -C \"$VIBE64_GIT_CACHE_PATH\" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
     "fi",
     "printf '[studio] Git cache is current for %s.\\n' \"$BASE_BRANCH\""
   ].join("\n");

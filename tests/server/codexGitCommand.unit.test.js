@@ -101,9 +101,11 @@ function githubSession(root = "", sessionId = "github-session") {
       session_git_command_actor_thread_id: "thread-1",
       session_git_command_actor_user_key: user.username,
       session_git_command_actor_workdir: sourcePath,
+      source_cache_path: path.join(root, "runtime", "git-cache", "repository.git"),
       source_kind: "session_clone",
       source_path: sourcePath,
       source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
+      source_remote_url: "https://github.com/owner/repo.git",
       workflow_repository_profile: WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR
     },
     sessionId,
@@ -430,5 +432,117 @@ test("Codex gh command runs GitHub repository commands as the stored OS actor", 
     assert.equal(gatewayCall.userKey, user.username);
     assert.equal(gatewayCall.project.ownerUserKey, user.username);
     assert.equal(gatewayCall.session.metadata.session_git_command_actor_user_key, user.username);
+  });
+});
+
+test("Codex git command refreshes the shared cache after a successful push", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root, "github-push-session");
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    const calls = [];
+    const service = serviceForSession(session, {
+      async runGatewayCommand(request) {
+        calls.push(request);
+        return {
+          exitCode: 0,
+          ok: true,
+          stdout: calls.length === 1 ? "pushed\n" : "refreshed\n"
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["push", "origin", "HEAD:refs/heads/main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stdout, "pushed\n");
+    assert.equal(result.cacheRefresh.ok, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].command, "git");
+    assert.deepEqual(calls[0].args, ["push", "origin", "HEAD:refs/heads/main"]);
+    assert.equal(calls[1].command, "bash");
+    assert.equal(calls[1].args[0], "-c");
+    assert.match(calls[1].args[1], /fetch --prune --atomic origin/u);
+    assert.equal(calls[1].args[3], session.metadata.source_cache_path);
+    assert.equal(calls[1].args[4], session.metadata.source_remote_url);
+    assert.deepEqual(calls[1].allowedRoots, [
+      session.metadata.source_path,
+      path.dirname(session.metadata.source_cache_path)
+    ]);
+  });
+});
+
+test("Codex git command preserves push success when cache refresh fails", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root, "github-push-refresh-failure");
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    let calls = 0;
+    const service = serviceForSession(session, {
+      async runGatewayCommand() {
+        calls += 1;
+        return calls === 1
+          ? {
+              exitCode: 0,
+              ok: true,
+              stdout: "pushed\n"
+            }
+          : {
+              code: "vibe64_command_failed",
+              error: "fetch failed",
+              exitCode: 1,
+              ok: false,
+              stderr: "fetch failed"
+            };
+      }
+    });
+
+    const result = await service.run({
+      args: ["push", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, "pushed\n");
+    assert.equal(result.cacheRefresh.ok, false);
+    assert.equal(calls, 2);
+  });
+});
+
+test("Codex git command does not refresh the shared cache after a rejected push", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root, "github-rejected-push-session");
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    let calls = 0;
+    const service = serviceForSession(session, {
+      async runGatewayCommand() {
+        calls += 1;
+        return {
+          exitCode: 1,
+          ok: false,
+          stderr: "rejected"
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["push", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+    assert.equal(result.cacheRefresh, undefined);
   });
 });
