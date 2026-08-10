@@ -177,8 +177,8 @@ describe("vibe64WorkflowControlModel", () => {
       {
         enabled: false,
         disabledReason: "Create the pull request before syncing.",
-        id: "sync_main_checkout",
-        label: "Refresh Git cache"
+        id: "refresh_github_mirror",
+        label: "Refresh GitHub mirror"
       },
       {
         disabled: true,

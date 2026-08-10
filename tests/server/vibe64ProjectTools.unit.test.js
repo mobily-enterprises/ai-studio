@@ -227,7 +227,7 @@ test("defaulted required project config fields do not block readiness while empt
   });
 });
 
-test("Git cache refresh is not exposed as a user-facing project tool", async () => {
+test("GitHub mirror refresh is not exposed as a user-facing project tool", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = createService({
       targetRoot

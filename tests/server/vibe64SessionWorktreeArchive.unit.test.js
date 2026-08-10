@@ -369,8 +369,11 @@ test("archive removes a session clone when the runtime target root is the source
 test("archives session clone commits into a saved bundle", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const baseCommit = await createGitProject(targetRoot);
-    const cachePath = path.join(path.dirname(targetRoot), "repository.git");
-    await git(path.dirname(targetRoot), ["clone", "--bare", targetRoot, cachePath]);
+    const githubMirrorPath = path.join(path.dirname(targetRoot), "github-mirror", "repository.git");
+    await mkdir(path.dirname(githubMirrorPath), {
+      recursive: true
+    });
+    await git(path.dirname(targetRoot), ["clone", "--bare", targetRoot, githubMirrorPath]);
     const runtime = new Vibe64SessionRuntime({
       adapter: new ArchiveTestAdapter(),
       targetRoot
@@ -382,7 +385,7 @@ test("archives session clone commits into a saved bundle", async () => {
         base_branch: "main",
         base_commit: baseCommit,
         branch: "vibe64/session_clone_bundle",
-        source_cache_path: cachePath,
+        github_mirror_path: githubMirrorPath,
         source_default_branch: "main",
         source_remote_url: targetRoot,
         ...sourceMetadata(targetRoot, sessionId)

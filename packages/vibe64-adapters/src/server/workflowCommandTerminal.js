@@ -10,8 +10,8 @@ import {
 } from "./workflowCommandTerminal/issuePr.js";
 import {
   mergePrTerminalSpec,
-  syncMainCheckoutTerminalSpec
-} from "./workflowCommandTerminal/mergeSync.js";
+  refreshGithubMirrorTerminalSpec
+} from "./workflowCommandTerminal/pullRequestMerge.js";
 import {
   createWorktreeBranch,
   createWorktreePath,
@@ -29,7 +29,7 @@ const COMMAND_TERMINAL_SPECS = Object.freeze({
   install_dependencies: installDependenciesTerminalSpec,
   merge_pr: mergePrTerminalSpec,
   run_automated_checks: runAutomatedChecksTerminalSpec,
-  sync_main_checkout: syncMainCheckoutTerminalSpec,
+  refresh_github_mirror: refreshGithubMirrorTerminalSpec,
   update_code_index: updateCodeIndexTerminalSpec
 });
 

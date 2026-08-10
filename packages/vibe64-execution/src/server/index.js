@@ -102,6 +102,16 @@ export {
   stableHash
 } from "./shellText.js";
 export {
+  CANONICAL_REPOSITORY_BACKUP_NAME,
+  CANONICAL_REPOSITORY_PRE_RECEIVE_HOOK_SOURCE,
+  CANONICAL_REPOSITORY_PUSH_OPTION,
+  GITHUB_MIRROR_REFRESH_SCRIPT,
+  canonicalRepositoryBackupPath,
+  canonicalRepositoryInitializeScript,
+  canonicalRepositoryInstallRefScript,
+  githubMirrorRefreshInvocation
+} from "./repositoryStorage.js";
+export {
   uniqueStrings
 } from "./normalize.js";
 export {

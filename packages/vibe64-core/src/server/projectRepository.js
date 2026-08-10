@@ -2,6 +2,12 @@ import {
   isPlainObject,
   normalizeText
 } from "./core.js";
+import {
+  PROJECT_CANONICAL_REPOSITORY_DIR,
+  PROJECT_GITHUB_MIRROR_DIR,
+  resolveProjectCanonicalRepositoryPath,
+  resolveProjectGithubMirrorPath
+} from "./projectState.js";
 
 const PROJECT_REPOSITORY_MODE_GITHUB = "github";
 const PROJECT_REPOSITORY_MODE_MANAGED_GIT = "managed_git";
@@ -34,6 +40,44 @@ function normalizeRepositoryMode(value = "") {
     return mode;
   }
   return "";
+}
+
+function projectRepositoryStorageRole({
+  mode = "",
+  projectRoot = ""
+} = {}) {
+  const repositoryMode = normalizeRepositoryMode(mode);
+  if (repositoryMode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
+    return {
+      directory: PROJECT_CANONICAL_REPOSITORY_DIR,
+      durable: true,
+      inactivePath: resolveProjectGithubMirrorPath({
+        projectRoot
+      }),
+      inactivePathField: "githubMirrorPath",
+      label: "Canonical repository",
+      path: resolveProjectCanonicalRepositoryPath({
+        projectRoot
+      }),
+      pathField: "canonicalRepositoryPath"
+    };
+  }
+  if (repositoryMode === PROJECT_REPOSITORY_MODE_GITHUB) {
+    return {
+      directory: PROJECT_GITHUB_MIRROR_DIR,
+      durable: false,
+      inactivePath: resolveProjectCanonicalRepositoryPath({
+        projectRoot
+      }),
+      inactivePathField: "canonicalRepositoryPath",
+      label: "GitHub mirror",
+      path: resolveProjectGithubMirrorPath({
+        projectRoot
+      }),
+      pathField: "githubMirrorPath"
+    };
+  }
+  return null;
 }
 
 function normalizeWorkflowRepositoryProfile(value = "") {
@@ -215,6 +259,7 @@ export {
   normalizeProjectRepository,
   normalizeRepositoryMode,
   normalizeWorkflowRepositoryProfile,
+  projectRepositoryStorageRole,
   projectRequiresGithubConnection,
   projectRepositoryMetadataFromInput,
   projectRepositoryView,

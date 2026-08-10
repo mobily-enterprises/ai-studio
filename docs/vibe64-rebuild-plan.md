@@ -356,7 +356,7 @@ Checklist:
 - [ ] `Create PR on GH` is an action.
 - [ ] `Prepare for merge` is a prompt action.
 - [ ] `Merge` is a command action.
-- [ ] `Refresh Git cache` is a command action inside the pull request merge step.
+- [ ] `Refresh GitHub mirror` is a command action inside the pull request merge step.
 - [ ] `Finish` is an action.
 
 Acceptance:
@@ -1120,7 +1120,7 @@ Acceptance:
 
 - A JSKIT project can progress from plan creation to committed accepted changes.
 
-### SLICE 8: JSKIT PR, Merge, Sync, Finish
+### SLICE 8: JSKIT PR, Merge, Mirror Refresh, Finish
 
 Goal: Complete the JSKIT endgame using the new runtime.
 
@@ -1132,7 +1132,7 @@ Instructions:
 - Store `pr_url` as the durable PR fact.
 - Implement prepare-for-merge prompt action.
 - Implement merge as a deterministic command action.
-- Implement sync-main-checkout as a deterministic command action.
+- Implement GitHub mirror refresh as a deterministic command action.
 - Implement finish action.
 - Keep buttons visible and disabled until their conditions are met.
 
@@ -1145,9 +1145,9 @@ Checklist:
 - [x] Prepare-for-merge action requires `pr_url`.
 - [x] Merge action requires `pr_url`.
 - [x] Successful merge writes PR outcome.
-- [x] Sync-main-checkout requires `pr_url` and merged outcome.
+- [x] GitHub mirror refresh requires `pr_url` and merged outcome.
 - [x] Finish delegates target cleanup and marks the session finished.
-- [x] Fast tests cover PR state, merge result handling, sync gating, and finish status.
+- [x] Fast tests cover PR state, merge result handling, mirror-refresh gating, and finish status.
 
 Acceptance:
 

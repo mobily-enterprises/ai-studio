@@ -147,14 +147,16 @@ function commandResultDirectoryRoot({
   if (sourcePath && path.isAbsolute(sourcePath)) {
     return path.dirname(sourcePath);
   }
-  const cachePath = normalizeText(successMetadata.source_cache_path) ||
-    normalizeText(metadata.source_cache_path);
-  if (cachePath && path.isAbsolute(cachePath)) {
-    const resolvedCachePath = path.resolve(cachePath);
-    const cacheParent = path.dirname(resolvedCachePath);
-    return path.basename(resolvedCachePath).endsWith(".git")
-      ? path.dirname(cacheParent)
-      : cacheParent;
+  const repositoryStoragePath = normalizeText(successMetadata.canonical_repository_path) ||
+    normalizeText(successMetadata.github_mirror_path) ||
+    normalizeText(metadata.canonical_repository_path) ||
+    normalizeText(metadata.github_mirror_path);
+  if (repositoryStoragePath && path.isAbsolute(repositoryStoragePath)) {
+    const resolvedRepositoryStoragePath = path.resolve(repositoryStoragePath);
+    const repositoryStorageParent = path.dirname(resolvedRepositoryStoragePath);
+    return path.basename(resolvedRepositoryStoragePath).endsWith(".git")
+      ? path.dirname(repositoryStorageParent)
+      : repositoryStorageParent;
   }
   const checkoutRoot = normalizeText(successMetadata.main_checkout_root) ||
     normalizeText(metadata.main_checkout_root) ||
@@ -179,14 +181,14 @@ function commandTerminalGitSafeDirectories({
   const successMetadata = normalizePlainObject(spec?.successMetadata);
   return absoluteUniqueGitPaths([
     targetRoot,
-    workdir,
-    terminalWorktreePath(session),
-    successMetadata.source_path,
-    successMetadata.source_cache_path,
+    ...managedSourcePermissionPaths({
+      metadata,
+      sourcePath: terminalWorktreePath(session),
+      successMetadata,
+      workdir
+    }),
     successMetadata.main_checkout_root,
     successMetadata.work_source,
-    metadata.source_path,
-    metadata.source_cache_path,
     metadata.main_checkout_root,
     metadata.work_source
   ]);

@@ -13,6 +13,12 @@ import {
   updateTerminalSessionMetadata
 } from "@local/vibe64-execution/server/terminalSessions";
 import {
+  CANONICAL_REPOSITORY_PRE_RECEIVE_HOOK_SOURCE,
+  GITHUB_ACCOUNT_MODE_LOCAL,
+  canonicalRepositoryBackupPath,
+  composeGithubTerminalHome,
+  githubCredentialContext,
+  normalizeGithubAccountMode,
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
@@ -81,12 +87,6 @@ import {
   startMirrorRemoteBranchTerminal as startSharedMirrorRemoteBranchTerminal
 } from "@local/setup-doctor-core/server/setupDoctorGit";
 import {
-  GITHUB_ACCOUNT_MODE_LOCAL,
-  composeGithubTerminalHome,
-  githubCredentialContext,
-  normalizeGithubAccountMode
-} from "@local/vibe64-execution/server";
-import {
   terminalOwnerFromGithubToolHome,
   terminalOwnerMetadata
 } from "@local/studio-terminal-core/server/terminalOwnership";
@@ -97,6 +97,7 @@ import {
   WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE,
   normalizeRepositoryMode,
   normalizeWorkflowRepositoryProfile,
+  projectRepositoryStorageRole,
   workflowRepositoryProfileForMode
 } from "@local/vibe64-core/server/projectRepository";
 import {
@@ -116,6 +117,7 @@ const AUTOMATIC_REPAIR_POLL_MS = 250;
 const REPAIRABLE_STATUSES = Object.freeze(["blocked", "fail", "hard-stop"]);
 const PROJECT_SETUP_REPOSITORY_PROFILE_GITHUB = WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR;
 const PROJECT_SETUP_REPOSITORY_PROFILE_LOCAL = WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE;
+const PROJECT_REPOSITORY_STORAGE_CHECK_ID = "repository-storage";
 const READY_CACHE_NON_PROJECT_ENTRIES = new Set([
   ".git",
   "node_modules"
@@ -272,19 +274,46 @@ async function readTextFile(filePath) {
   }
 }
 
-async function pathIsReadable(filePath = "") {
+async function lstatOrNull(filePath = "") {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    return await lstat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+async function pathEntryExists(filePath = "") {
+  return Boolean(await lstatOrNull(filePath));
+}
+
+async function pathIsSymlink(filePath = "") {
+  return (await lstatOrNull(filePath))?.isSymbolicLink() === true;
+}
+
+async function pathHasAccess(filePath = "", mode = fsConstants.R_OK) {
   if (!filePath) {
     return false;
   }
   try {
-    await access(filePath, fsConstants.R_OK);
+    await access(filePath, mode);
     return true;
   } catch {
     return false;
   }
 }
 
-async function runGitCache(gitDir = "", args = []) {
+function pathIsReadable(filePath = "") {
+  return pathHasAccess(filePath, fsConstants.R_OK);
+}
+
+function pathIsExecutable(filePath = "") {
+  return pathHasAccess(filePath, fsConstants.X_OK);
+}
+
+async function runRepositoryGit(gitDir = "", args = []) {
   const resolvedGitDir = path.resolve(gitDir);
   const result = await runVibe64Command({
     actor: "daemon",
@@ -303,7 +332,7 @@ async function runGitCache(gitDir = "", args = []) {
     timeout: 30_000
   });
   if (result.ok === false) {
-    throw new Error(String(result.stderr || result.stdout || result.output || result.error || "Git cache command failed.").trim());
+    throw new Error(String(result.stderr || result.stdout || result.output || result.error || "Repository storage command failed.").trim());
   }
   return String(result.stdout || "").trim();
 }
@@ -323,7 +352,7 @@ function projectRepositoryDefaultBranch(project = {}) {
   return normalizeSetupText(project.repository?.defaultBranch);
 }
 
-async function gitCacheRefIsMissing(gitDir = "", ref = "") {
+async function repositoryRefIsMissing(gitDir = "", ref = "") {
   const normalizedRef = normalizeSetupText(ref);
   if (!normalizedRef) {
     return true;
@@ -337,6 +366,60 @@ async function gitCacheRefIsMissing(gitDir = "", ref = "") {
     return !head;
   }
   return !normalizeSetupText(await readGitRefSha(gitDir, normalizedRef));
+}
+
+async function canonicalRepositoryPolicyProblem(gitDir = "") {
+  const backupPath = canonicalRepositoryBackupPath(gitDir);
+  const repositoryRoot = path.dirname(gitDir);
+  if (
+    await pathIsSymlink(repositoryRoot) ||
+    await pathIsSymlink(gitDir) ||
+    await pathIsSymlink(backupPath) ||
+    await pathIsSymlink(path.join(repositoryRoot, "mutation.lock")) ||
+    await pathIsSymlink(path.join(gitDir, "hooks")) ||
+    await pathIsSymlink(path.join(gitDir, "hooks", "pre-receive"))
+  ) {
+    return "Canonical repository storage must not use symlinked role paths.";
+  }
+  if (!await pathIsReadable(backupPath)) {
+    return `Canonical backup repository is missing: ${backupPath}`;
+  }
+  try {
+    const [
+      backupBare,
+      atomicPushes,
+      guardedPushes,
+      hooksPath,
+      denyDeletes,
+      denyNonFastForwards
+    ] = await Promise.all([
+      runRepositoryGit(backupPath, ["rev-parse", "--is-bare-repository"]),
+      runRepositoryGit(gitDir, ["config", "--get", "receive.advertiseAtomic"]),
+      runRepositoryGit(gitDir, ["config", "--get", "receive.advertisePushOptions"]),
+      runRepositoryGit(gitDir, ["config", "--get", "core.hooksPath"]).catch(() => ""),
+      runRepositoryGit(gitDir, ["config", "--get", "receive.denyDeletes"]),
+      runRepositoryGit(gitDir, ["config", "--get", "receive.denyNonFastForwards"])
+    ]);
+    if (backupBare !== "true") {
+      return `Canonical backup storage is not a bare repository: ${backupPath}`;
+    }
+    if ([atomicPushes, guardedPushes, denyDeletes, denyNonFastForwards].some((value) => value !== "true")) {
+      return "Canonical repository mutation safeguards are not fully enabled.";
+    }
+    if (hooksPath) {
+      return `Canonical repository hooks are redirected by core.hooksPath: ${hooksPath}`;
+    }
+  } catch (error) {
+    return String(error?.message || error || "Canonical repository storage policy could not be read.");
+  }
+  const hookPath = path.join(gitDir, "hooks", "pre-receive");
+  if (!await pathIsExecutable(hookPath)) {
+    return `Canonical repository mutation guard is missing or not executable: ${hookPath}`;
+  }
+  if ((await readTextFile(hookPath)).trim() !== CANONICAL_REPOSITORY_PRE_RECEIVE_HOOK_SOURCE.trim()) {
+    return `Canonical repository mutation guard does not match the active Vibe64 policy: ${hookPath}`;
+  }
+  return "";
 }
 
 async function sortedDirectoryNames(root = "") {
@@ -425,6 +508,191 @@ function seedBootstrapReadiness(seedSession = null) {
     state: "waiting",
     title: blocked ? "Seed needs attention" : "Seed in progress"
   };
+}
+
+function projectRepositoryStorage(project = {}) {
+  const repositoryMode = normalizeRepositoryMode(project?.repositoryMode || project?.repository?.mode);
+  const projectRoot = normalizeSetupText(project?.projectRoot || project?.path);
+  if (!projectRoot || !path.isAbsolute(projectRoot)) {
+    return {
+      problem: "Repository storage requires an absolute project root."
+    };
+  }
+  const role = projectRepositoryStorageRole({
+    mode: repositoryMode,
+    projectRoot
+  });
+  if (!role) {
+    return null;
+  }
+  const configuredPath = normalizeSetupText(project?.[role.pathField]);
+  let problem = "";
+  if (!configuredPath) {
+    problem = `The project has no ${role.pathField} assignment.`;
+  } else if (path.resolve(configuredPath) !== role.path) {
+    problem = `The project ${role.pathField} does not match its repository role.`;
+  } else if (normalizeSetupText(project?.[role.inactivePathField])) {
+    problem = `The project cannot also assign ${role.inactivePathField}.`;
+  }
+  return {
+    ...role,
+    problem
+  };
+}
+
+function repositoryStorageResult(createCheck, storage, details = {}) {
+  return createCheck({
+    id: PROJECT_REPOSITORY_STORAGE_CHECK_ID,
+    label: storage?.label || "Repository storage",
+    ...details
+  });
+}
+
+function disposableMirrorResult(storage, observed = "") {
+  return repositoryStorageResult(passCheck, storage, {
+    expected: "The disposable GitHub mirror can be recreated before use.",
+    observed,
+    explanation: "GitHub remains authoritative. The next mirror use will attempt a locked refresh before reading it."
+  });
+}
+
+function canonicalRepositoryRefFailure(storage, error) {
+  return repositoryStorageResult(blockedCheck, storage, {
+    expected: "The canonical repository can resolve the committed project ref.",
+    observed: String(error?.stderr || error?.message || error),
+    explanation: "Restore or repair the canonical repository before project-level setup is ready."
+  });
+}
+
+async function checkProjectRepositoryStorage(context = {}) {
+  const defaultBranch = context.projectDefaultBranch || projectRepositoryDefaultBranch(context.project || {});
+  const storage = projectRepositoryStorage(context.project || {});
+  if (!storage) {
+    return repositoryStorageResult(blockedCheck, null, {
+      expected: "The project repository mode selects canonical storage or a GitHub mirror.",
+      observed: "The project repository mode has no storage contract.",
+      explanation: "Repair the project repository metadata before project-level setup is ready."
+    });
+  }
+  if (storage.problem) {
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "Exactly one repository storage role is assigned at its canonical project path.",
+      observed: storage.problem,
+      explanation: "Repair the project repository metadata before project-level setup continues."
+    });
+  }
+  const inactiveStorageRoot = path.dirname(storage.inactivePath);
+  if (await pathEntryExists(inactiveStorageRoot)) {
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "Only the repository storage assigned to the current mode exists.",
+      observed: `Inactive repository storage still exists: ${inactiveStorageRoot}`,
+      explanation: "Complete the repository-mode transition before project-level setup continues."
+    });
+  }
+
+  const gitDir = storage.path;
+  const storageRoot = path.dirname(gitDir);
+  if (await pathIsSymlink(storageRoot)) {
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "Repository storage uses its physical project role directory.",
+      observed: `Repository storage directory is a symlink: ${storageRoot}`,
+      explanation: "Replace the symlinked role directory before project-level setup continues."
+    });
+  }
+  if (await pathIsSymlink(gitDir)) {
+    if (!storage.durable) {
+      return disposableMirrorResult(storage, `GitHub mirror is a symlink and will be replaced: ${gitDir}`);
+    }
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "The canonical repository is physical durable storage.",
+      observed: `Canonical repository is a symlink: ${gitDir}`,
+      explanation: "Restore the canonical repository within its assigned project role."
+    });
+  }
+  if (!await pathIsReadable(gitDir)) {
+    if (!storage.durable) {
+      return disposableMirrorResult(storage, `GitHub mirror is not materialized: ${gitDir}`);
+    }
+    return repositoryStorageResult(blockedCheck, storage, {
+      expected: "The durable canonical repository exists and can read committed refs.",
+      observed: `Missing canonical repository: ${gitDir}`,
+      explanation: "Restore the canonical repository from backup before project-level setup continues."
+    });
+  }
+
+  let bare;
+  try {
+    bare = await runRepositoryGit(gitDir, ["rev-parse", "--is-bare-repository"]);
+  } catch (error) {
+    if (!storage.durable) {
+      return disposableMirrorResult(storage, String(error?.stderr || error?.message || error));
+    }
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "The canonical repository is a readable bare Git repository.",
+      observed: String(error?.stderr || error?.message || error),
+      explanation: "Studio cannot inspect committed project state until the canonical repository is restored."
+    });
+  }
+  if (bare !== "true") {
+    const observed = `rev-parse --is-bare-repository returned: ${bare || "(empty)"}`;
+    if (!storage.durable) {
+      return disposableMirrorResult(storage, observed);
+    }
+    return repositoryStorageResult(hardStopCheck, storage, {
+      expected: "The canonical repository is a bare Git repository.",
+      observed,
+      explanation: "The canonical repository path is invalid. Restore it from backup."
+    });
+  }
+
+  if (storage.durable) {
+    const policyProblem = await canonicalRepositoryPolicyProblem(gitDir);
+    if (policyProblem) {
+      return repositoryStorageResult(hardStopCheck, storage, {
+        expected: "Canonical storage has a guarded mutation path and a readable bare backup repository.",
+        observed: policyProblem,
+        explanation: "Reinitialize the canonical repository storage policy before accepting mutations."
+      });
+    }
+  }
+
+  const ref = defaultBranch ? `refs/heads/${defaultBranch}` : "HEAD";
+  let commit;
+  try {
+    commit = await runRepositoryGit(gitDir, ["rev-parse", "--verify", `${ref}^{commit}`]);
+  } catch (error) {
+    if (!storage.durable) {
+      return disposableMirrorResult(storage, `${ref} is unavailable in the current mirror snapshot.`);
+    }
+    if (!await repositoryRefIsMissing(gitDir, ref)) {
+      return canonicalRepositoryRefFailure(storage, error);
+    }
+    const seedSession = await readProjectSetupSessionState(
+      context.projectRuntimeRoot,
+      PROJECT_SETUP_KIND_SEED
+    );
+    if (!projectUsesBootstrapRepository(context.project) && !seedSession) {
+      return canonicalRepositoryRefFailure(storage, error);
+    }
+    context.committedBaselineDeferred = true;
+    context.committedBaselineRef = ref;
+    context.readiness = seedBootstrapReadiness(seedSession);
+    return repositoryStorageResult(passCheck, storage, {
+      expected: "The canonical repository is a readable bare Git repository.",
+      observed: `${ref} has no committed baseline yet.`,
+      explanation: "The seed workflow will create the first committed project ref."
+    });
+  }
+
+  return repositoryStorageResult(passCheck, storage, {
+    expected: storage.durable
+      ? "The durable canonical repository exists and can read committed refs."
+      : "The disposable GitHub mirror is a readable snapshot.",
+    observed: `${ref}: ${commit}`,
+    explanation: storage.durable
+      ? "Canonical mutations are guarded and copy their previous ref to backup storage."
+      : "GitHub remains authoritative; this mirror is only a best-effort snapshot."
+  });
 }
 
 async function gitDirectoryForTargetRoot(targetRoot) {
@@ -2136,14 +2404,6 @@ function createService({
       : currentTargetRoot();
   }
 
-  function projectGitCacheRepository(project = {}) {
-    const gitCacheRoot = String(project?.gitCacheRoot || "").trim();
-    if (gitCacheRoot) {
-      return path.join(path.resolve(gitCacheRoot), "repository.git");
-    }
-    return path.join(projectRuntimeRootForSetup(project), "git-cache", "repository.git");
-  }
-
   async function projectWiringChecks({
     context: setupContext = null,
     githubProvider = null
@@ -2236,92 +2496,16 @@ function createService({
               `mode: ${repositoryMode}`,
               context.projectDefaultBranch ? `default: ${context.projectDefaultBranch}` : ""
             ].filter(Boolean).join("\n"),
-            explanation: "Project Setup uses the catalog repository mode and project Git cache without requiring GitHub metadata."
+            explanation: "Project Setup uses the catalog repository mode and its explicitly assigned repository storage."
           });
         }
       },
       {
-        expected: "The project Git cache exists and can read committed refs.",
-        id: "git-cache",
-        label: "Git cache",
-        async run() {
-          const defaultBranch = context.projectDefaultBranch || projectRepositoryDefaultBranch(context.project || {});
-          const gitDir = projectGitCacheRepository(context.project || {});
-          if (!await pathIsReadable(gitDir)) {
-            return blockedCheck({
-              id: "git-cache",
-              label: "Git cache",
-              expected: "The project Git cache exists and can read committed refs.",
-              observed: `Missing Git cache: ${gitDir}`,
-              explanation: "Refresh or create the project Git cache before project-level setup is ready."
-            });
-          }
-          let bare = "";
-          try {
-            bare = await runGitCache(gitDir, ["rev-parse", "--is-bare-repository"]);
-          } catch (error) {
-            return hardStopCheck({
-              id: "git-cache",
-              label: "Git cache",
-              expected: "The project Git cache is a readable bare Git repository.",
-              observed: String(error?.stderr || error?.message || error),
-              explanation: "Studio cannot inspect committed project state until the Git cache is readable."
-            });
-          }
-          if (bare !== "true") {
-            return hardStopCheck({
-              id: "git-cache",
-              label: "Git cache",
-              expected: "The project Git cache is a bare Git repository.",
-              observed: `rev-parse --is-bare-repository returned: ${bare || "(empty)"}`,
-              explanation: "The project Git cache path exists but is not the expected bare repository."
-            });
-          }
-          const ref = defaultBranch ? `refs/heads/${defaultBranch}` : "HEAD";
-          let commit = "";
-          try {
-            commit = await runGitCache(gitDir, ["rev-parse", "--verify", `${ref}^{commit}`]);
-          } catch (error) {
-            if (await gitCacheRefIsMissing(gitDir, ref)) {
-              const seedSession = await readProjectSetupSessionState(
-                context.projectRuntimeRoot,
-                PROJECT_SETUP_KIND_SEED
-              );
-              if (!projectUsesBootstrapRepository(context.project) && !seedSession) {
-                return blockedCheck({
-                  id: "git-cache",
-                  label: "Git cache",
-                  expected: "The project Git cache can resolve the committed project ref.",
-                  observed: String(error?.stderr || error?.message || error),
-                  explanation: "Fetch or repair the project Git cache before project-level setup is ready."
-                });
-              }
-              context.committedBaselineDeferred = true;
-              context.committedBaselineRef = ref;
-              context.readiness = seedBootstrapReadiness(seedSession);
-              return passCheck({
-                id: "git-cache",
-                label: "Git cache",
-                expected: "The project Git cache is a readable bare Git repository.",
-                observed: `${ref} has no committed baseline yet.`,
-                explanation: "The Git cache is readable; the seed workflow will create the first committed project ref."
-              });
-            }
-            return blockedCheck({
-              id: "git-cache",
-              label: "Git cache",
-              expected: "The project Git cache can resolve the committed project ref.",
-              observed: String(error?.stderr || error?.message || error),
-              explanation: "Fetch or repair the project Git cache before project-level setup is ready."
-            });
-          }
-          return passCheck({
-            id: "git-cache",
-            label: "Git cache",
-            expected: "The project Git cache exists and can read committed refs.",
-            observed: `${ref}: ${commit}`,
-            explanation: "Committed project state can be read without checking out a source tree."
-          });
+        expected: "The repository storage contract matches the project repository mode.",
+        id: PROJECT_REPOSITORY_STORAGE_CHECK_ID,
+        label: "Repository storage",
+        run() {
+          return checkProjectRepositoryStorage(context);
         }
       },
       {
@@ -2460,7 +2644,7 @@ function createService({
               label: "Ready",
               expected: "Project-level setup has a committed project baseline.",
               observed: "Waiting for the seed workflow to create the first committed project baseline.",
-              explanation: "Project Setup will become ready after the seed baseline is committed and the Git cache can resolve it."
+              explanation: "Project Setup will become ready after the seed baseline is committed and the canonical repository can resolve it."
             });
           }
           return readyStage();

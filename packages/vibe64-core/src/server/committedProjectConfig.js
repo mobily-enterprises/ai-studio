@@ -13,8 +13,9 @@ import {
   readProjectRecordMetadata
 } from "./projectBootstrapConfig.js";
 import {
-  resolveProjectGitCacheRoot
-} from "./projectState.js";
+  normalizeProjectRepository,
+  projectRepositoryStorageRole
+} from "./projectRepository.js";
 import {
   VIBE64_PROJECT_MANIFEST_FILE,
   parseProjectManifestText
@@ -22,7 +23,6 @@ import {
 
 const COMMITTED_PROJECT_TYPE_FIELD = "projectType";
 const COMMITTED_PROJECT_CONFIG_VALUES_DIR = VIBE64_PROJECT_MANIFEST_FILE;
-const COMMITTED_PROJECT_CONFIG_GIT_CACHE_REPOSITORY = "repository.git";
 const VIBE64_COMMITTED_PROJECT_CONFIG_READER_SERVICE = "feature.vibe64-project.committed-config-reader";
 const DEFAULT_COMMITTED_SOURCE_FILE_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -521,57 +521,82 @@ function committedProjectConfigRefFromMetadata(metadata = {}) {
   return `refs/heads/${defaultBranch}`;
 }
 
-async function readCommittedProjectConfigFromGitCache({
+function committedRepositoryStorage(mode = "", projectRoot = "") {
+  if (!projectRoot) {
+    return null;
+  }
+  const role = projectRepositoryStorageRole({
+    mode,
+    projectRoot
+  });
+  if (!role) {
+    return null;
+  }
+  return {
+    ...role,
+    missingCode: role.durable
+      ? "vibe64_committed_project_canonical_repository_missing"
+      : "vibe64_committed_project_github_mirror_missing",
+    sourceType: role.directory
+  };
+}
+
+async function readCommittedProjectConfigFromRepositoryStorage({
   metadata = null,
+  projectRoot = "",
   projectRecordPath = "",
   projectRuntimeRoot = "",
-  ref = "",
-  targetRoot = ""
+  ref = ""
 } = {}) {
   const resolvedRuntimeRoot = normalizeText(projectRuntimeRoot)
     ? path.resolve(projectRuntimeRoot)
     : "";
-  const resolvedTargetRoot = normalizeText(targetRoot)
-    ? path.resolve(targetRoot)
+  const resolvedProjectRoot = normalizeText(projectRoot)
+    ? path.resolve(projectRoot)
     : "";
-  const gitCacheRoot = normalizeText(projectRecordPath) && resolvedTargetRoot
-    ? resolvedTargetRoot
-    : resolvedRuntimeRoot;
-  const gitCacheRepository = gitCacheRoot
-    ? path.join(resolveProjectGitCacheRoot({
-        projectRuntimeRoot: gitCacheRoot
-      }), COMMITTED_PROJECT_CONFIG_GIT_CACHE_REPOSITORY)
-    : "";
-  if (!gitCacheRepository || !await pathExists(gitCacheRepository)) {
-    return committedConfigUnavailable(
-      "vibe64_committed_project_git_cache_missing",
-      "Committed project config is unavailable because the project Git cache is missing.",
-      {
-        gitDir: gitCacheRepository,
-        projectRuntimeRoot: resolvedRuntimeRoot,
-        targetRoot: resolvedTargetRoot,
-        sourceType: "git-cache"
-      }
-    );
-  }
   const projectMetadata = isPlainObject(metadata)
     ? metadata
     : await readProjectRecordMetadata(projectRecordPath);
+  const repository = normalizeProjectRepository(projectMetadata.repository);
+  const storage = committedRepositoryStorage(repository?.mode, resolvedProjectRoot);
+  if (!storage) {
+    return committedConfigUnavailable(
+      "vibe64_committed_project_repository_storage_unassigned",
+      "Committed project config is unavailable because the project repository mode has no repository storage role.",
+      {
+        projectRuntimeRoot: resolvedRuntimeRoot,
+        projectRoot: resolvedProjectRoot,
+        sourceType: "repository-storage"
+      }
+    );
+  }
+  if (!await pathExists(storage.path)) {
+    return committedConfigUnavailable(
+      storage.missingCode,
+      `Committed project config is unavailable because the project ${storage.label.toLowerCase()} is missing.`,
+      {
+        gitDir: storage.path,
+        projectRuntimeRoot: resolvedRuntimeRoot,
+        projectRoot: resolvedProjectRoot,
+        sourceType: storage.sourceType
+      }
+    );
+  }
   const resolvedRef = normalizeText(ref) || committedProjectConfigRefFromMetadata(projectMetadata);
   return readCommittedConfigFromGit({
-    gitDir: gitCacheRepository,
+    gitDir: storage.path,
     ref: resolvedRef,
-    sourceType: "git-cache"
+    sourceType: storage.sourceType
   });
 }
 
 async function readCommittedProjectConfigFromRepositoryReader({
   committedProjectConfigReader = null,
   metadata = {},
+  projectRoot = "",
   projectRecordPath = "",
   projectRuntimeRoot = "",
   ref = "",
-  targetRoot = "",
   vibe64User = null
 } = {}) {
   if (typeof committedProjectConfigReader?.readCommittedProjectConfig !== "function") {
@@ -582,10 +607,10 @@ async function readCommittedProjectConfigFromRepositoryReader({
   try {
     result = await committedProjectConfigReader.readCommittedProjectConfig({
       metadata,
+      projectRoot,
       projectRecordPath,
       projectRuntimeRoot,
       ref: normalizeText(ref) || committedProjectConfigRefFromMetadata(metadata),
-      targetRoot,
       vibe64User
     });
   } catch (error) {
@@ -621,12 +646,12 @@ async function readCommittedProjectConfigFromRepositoryReader({
 
 async function readCommittedProjectConfig({
   committedProjectConfigReader = null,
+  projectRoot = "",
   projectRecordPath = "",
   projectRuntimeRoot = "",
   ref = "",
   sourceReadMode = "git",
   sourceRoot = "",
-  targetRoot = "",
   vibe64User = null
 } = {}) {
   const resolvedSourceRoot = normalizeText(sourceRoot);
@@ -641,33 +666,32 @@ async function readCommittedProjectConfig({
   const repositoryConfig = await readCommittedProjectConfigFromRepositoryReader({
     committedProjectConfigReader,
     metadata,
+    projectRoot,
     projectRecordPath,
     projectRuntimeRoot,
     ref,
-    targetRoot,
     vibe64User
   });
   if (repositoryConfig) {
     return repositoryConfig;
   }
-  return readCommittedProjectConfigFromGitCache({
+  return readCommittedProjectConfigFromRepositoryStorage({
     metadata,
+    projectRoot,
     projectRecordPath,
     projectRuntimeRoot,
-    ref,
-    targetRoot
+    ref
   });
 }
 
 export {
-  COMMITTED_PROJECT_CONFIG_GIT_CACHE_REPOSITORY,
   COMMITTED_PROJECT_CONFIG_VALUES_DIR,
   COMMITTED_PROJECT_TYPE_FIELD,
   VIBE64_COMMITTED_PROJECT_CONFIG_READER_SERVICE,
   committedProjectConfigRefFromMetadata,
   createCommittedGitSourceReader,
   readCommittedProjectConfig,
-  readCommittedProjectConfigFromGitCache,
+  readCommittedProjectConfigFromRepositoryStorage,
   readCommittedProjectConfigFromText,
   readCommittedProjectConfigFromSource
 };

@@ -173,12 +173,12 @@ function createVibe64CommittedProjectAdapterContext({
   async function readCommittedConfig() {
     return readCommittedProjectConfig({
       committedProjectConfigReader,
+      projectRoot: targetRoot,
       projectRecordPath,
       projectRuntimeRoot: resolvedProjectLocalRoot,
       ref,
       sourceReadMode,
       sourceRoot,
-      targetRoot,
       vibe64User
     });
   }

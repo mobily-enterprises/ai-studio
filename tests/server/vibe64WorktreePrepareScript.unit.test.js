@@ -48,6 +48,9 @@ import {
   WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
   WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
 } from "@local/vibe64-core/server/projectRepository";
+import {
+  resolveProjectGithubMirrorPath
+} from "@local/vibe64-core/server/projectState";
 import { withTemporaryRoot } from "./vibe64TestHelpers.js";
 
 function runCommand(command, args, {
@@ -404,15 +407,17 @@ test("create worktree creates an isolated clone from project repository metadata
         fullName: "example/project"
       })
     }, null, 2)}\n`);
-    const cachePath = path.join(targetRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(cachePath), {
+    const githubMirrorPath = resolveProjectGithubMirrorPath({
+      projectRoot: targetRoot
+    });
+    await mkdir(path.dirname(githubMirrorPath), {
       recursive: true
     });
-    runCommand("git", ["init", "--bare", cachePath], {
+    runCommand("git", ["init", "--bare", githubMirrorPath], {
       cwd: tempRoot
     });
-    runGit(cachePath, ["fetch", remoteRoot, "+refs/heads/*:refs/heads/*"]);
-    assert.equal(runGit(cachePath, ["remote"]), "");
+    runGit(githubMirrorPath, ["fetch", remoteRoot, "+refs/heads/*:refs/heads/*"]);
+    assert.equal(runGit(githubMirrorPath, ["remote"]), "");
 
     const sessionRoot = path.join(targetRoot, "sessions", "active", "metadata-remote");
     const sourcePath = testSessionSourcePath(targetRoot, "metadata-remote");
@@ -434,7 +439,7 @@ test("create worktree creates an isolated clone from project repository metadata
     assert.equal(spec.successMetadata.source_kind, "session_clone");
     assert.equal(spec.successMetadata.source_remote_url, remoteRoot);
     assert.equal(spec.commandPreview, `git clone ${remoteRoot} ${sourcePath}`);
-    assert.match(spec.args.at(-1), /git clone --single-branch --branch "\$BASE_BRANCH" "\$VIBE64_GIT_CACHE_PATH"/u);
+    assert.match(spec.args.at(-1), /git clone --single-branch --branch "\$BASE_BRANCH" "\$VIBE64_GITHUB_MIRROR_PATH"/u);
     assert.match(spec.args.at(-1), /remote set-url origin "\$VIBE64_GIT_REMOTE_URL"/u);
     assert.doesNotMatch(spec.args.at(-1), /--reference-if-able/u);
 
@@ -476,8 +481,8 @@ test("create worktree creates an isolated clone from project repository metadata
       runGit(sourcePath, ["rev-parse", "--verify", "HEAD"])
     );
     assert.equal(runGit(sourcePath, ["rev-list", "--count", "HEAD", "--not", "--remotes"]), "0");
-    assert.equal(runGit(cachePath, ["rev-parse", "--is-bare-repository"]), "true");
-    assert.equal(runGit(cachePath, ["remote", "get-url", "origin"]), remoteRoot);
+    assert.equal(runGit(githubMirrorPath, ["rev-parse", "--is-bare-repository"]), "true");
+    assert.equal(runGit(githubMirrorPath, ["remote", "get-url", "origin"]), remoteRoot);
     assert.notEqual(runCommandResult("git", ["-C", targetRoot, "worktree", "list", "--porcelain"]).status, 0);
   });
 });
@@ -1039,7 +1044,7 @@ test("create worktree terminal specs branch existing PR sessions from the source
     assert.equal(spec.successMetadata.base_commit, "abc123");
 
     const script = spec.args.at(-1);
-    assert.match(script, /git clone --single-branch --branch "\$CLONE_BASE_BRANCH" "\$VIBE64_GIT_CACHE_PATH"/u);
+    assert.match(script, /git clone --single-branch --branch "\$CLONE_BASE_BRANCH" "\$VIBE64_GITHUB_MIRROR_PATH"/u);
     assert.match(script, /remote set-url origin "\$VIBE64_GIT_REMOTE_URL"/u);
     assert.doesNotMatch(script, /--reference-if-able/u);
     assert.match(script, /git -C .* fetch origin "pull\/\$SOURCE_PR_NUMBER\/head:\$PR_FETCH_REF"/u);

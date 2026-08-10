@@ -21,6 +21,10 @@ import {
   createStudioProjectContext
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
+  resolveProjectCanonicalRepositoryPath,
+  resolveProjectGithubMirrorPath
+} from "../../packages/vibe64-core/src/server/projectState.js";
+import {
   PREVIEW_APPLICATION_IDENTITIES_CONFIG
 } from "../../packages/vibe64-core/src/server/previewAuth.js";
 import {
@@ -108,6 +112,17 @@ async function createGitProject(root, remotes = {}) {
       cwd: root
     });
   }
+}
+
+async function createGithubMirror(projectRoot, sourceRepository) {
+  const mirrorPath = resolveProjectGithubMirrorPath({
+    projectRoot
+  });
+  await mkdir(path.dirname(mirrorPath), {
+    recursive: true
+  });
+  await execFileAsync("git", ["clone", "--bare", sourceRepository, mirrorPath]);
+  return mirrorPath;
 }
 
 function createServiceForTemporaryTarget(targetRoot, options = {}) {
@@ -262,7 +277,10 @@ test("Vibe64 project service exposes project selection before project-specific s
     assert.equal(created.currentProject.projectRuntimeRoot, expectedRuntimeRoot);
     assert.equal(created.currentProject.projectLocalRoot, expectedRuntimeRoot);
     assert.equal(created.currentProject.projectRecordPath, expectedRecordPath);
-    assert.equal(created.currentProject.gitCacheRoot, path.join(expectedProjectRoot, "git-cache"));
+    assert.equal(created.currentProject.canonicalRepositoryPath, resolveProjectCanonicalRepositoryPath({
+      projectRoot: expectedProjectRoot
+    }));
+    assert.equal(created.currentProject.githubMirrorPath, "");
 
     const routedCurrentProject = await service.runInProjectContext(
       "example-app",
@@ -699,7 +717,7 @@ test("Vibe64 project service resolves config environments for a selected catalog
   });
 });
 
-test("Vibe64 project dashboard Env reads committed git-cache and ignores active session config", async () => {
+test("Vibe64 project dashboard Env reads the committed GitHub mirror and ignores active session config", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const sourceRepo = path.join(root, "source-repo");
@@ -725,11 +743,7 @@ test("Vibe64 project dashboard Env reads committed git-cache and ignores active 
     const projectRoot = path.join(projectsRoot, "catalog-app");
     const runtimeRoot = projectContext.projectRuntimeRootForSlug("catalog-app");
     const recordPath = projectContext.projectRecordPathForSlug("catalog-app");
-    const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(gitCacheRepository), {
-      recursive: true
-    });
-    await execFileAsync("git", ["clone", "--bare", sourceRepo, gitCacheRepository]);
+    await createGithubMirror(projectRoot, sourceRepo);
 
     const sessionSourceA = path.join(projectRoot, "sessions", "active", "session-a", "source");
     const sessionSourceB = path.join(projectRoot, "sessions", "active", "session-b", "source");
@@ -781,7 +795,7 @@ test("Vibe64 project dashboard Env reads committed git-cache and ignores active 
   });
 });
 
-test("Vibe64 project dashboard Env reads local-source project baseline without git-cache", async () => {
+test("Vibe64 project dashboard Env reads the local-source project baseline", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const projectContext = createStudioProjectContext({
@@ -886,7 +900,7 @@ test("Vibe64 project dashboard Env reports missing committed config without choo
     assert.equal(dashboardEnv.env.ok, false);
     assert.equal(
       dashboardEnv.env.unavailable.code,
-      "vibe64_committed_project_git_cache_missing"
+      "vibe64_committed_project_github_mirror_missing"
     );
     assert.doesNotMatch(
       dashboardEnv.env.unavailable.code,
@@ -942,7 +956,7 @@ test("Vibe64 project dashboard Env saves runtime-local user values when baseline
 
     assert.equal(saved.ok, true);
     assert.equal(saved.env.ok, false);
-    assert.equal(saved.env.unavailable.code, "vibe64_committed_project_git_cache_missing");
+    assert.equal(saved.env.unavailable.code, "vibe64_committed_project_github_mirror_missing");
     assert.equal(savedRecord.value, "********");
     assert.equal(userValues.records.find((record) => record.key === "OPENAI_API_KEY")?.value, "sk-unavailable");
   });
@@ -1427,7 +1441,7 @@ test("source-backed setup retires a stale bootstrap adapter selection", async ()
   });
 });
 
-test("Vibe64 project service keeps a config-only JSKIT Git cache in the seed workflow", async () => {
+test("Vibe64 project service keeps a config-only JSKIT GitHub mirror in the seed workflow", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const sourceRoot = path.join(root, "source");
@@ -1453,11 +1467,7 @@ test("Vibe64 project service keeps a config-only JSKIT Git cache in the seed wor
     const projectRoot = path.join(projectsRoot, "catalog-app");
     const runtimeRoot = projectContext.projectRuntimeRootForSlug("catalog-app");
     const recordPath = projectContext.projectRecordPathForSlug("catalog-app");
-    const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(gitCacheRepository), {
-      recursive: true
-    });
-    await execFileAsync("git", ["clone", "--bare", sourceRoot, gitCacheRepository]);
+    await createGithubMirror(projectRoot, sourceRoot);
     const service = createService({
       projectContext
     });
@@ -1474,12 +1484,12 @@ test("Vibe64 project service keeps a config-only JSKIT Git cache in the seed wor
     assert.equal(projectType.ok, true);
     assert.equal(projectType.projectType.ready, true);
     assert.equal(projectType.projectType.projectType, "jskit");
-    assert.equal(projectType.projectType.sourceType, "git-cache");
+    assert.equal(projectType.projectType.sourceType, "github-mirror");
 
     const projectConfig = await runWithProjectRequestContext(requestContext, () => service.readProjectConfig());
     assert.equal(projectConfig.ok, true);
     assert.equal(projectConfig.config.ready, true);
-    assert.equal(projectConfig.config.sourceType, "git-cache");
+    assert.equal(projectConfig.config.sourceType, "github-mirror");
     assert.equal(projectConfig.config.values.github_pr_merge_method, "merge");
     assert.equal(projectConfig.config.values.jskit_database_runtime, "mariadb");
 
@@ -1498,14 +1508,14 @@ test("Vibe64 project service keeps a config-only JSKIT Git cache in the seed wor
     }));
     assert.equal(preSourceSessionProjectType.ok, true);
     assert.equal(preSourceSessionProjectType.projectType.ready, true);
-    assert.equal(preSourceSessionProjectType.projectType.sourceType, "git-cache");
+    assert.equal(preSourceSessionProjectType.projectType.sourceType, "github-mirror");
 
     const preSourceSessionProjectConfig = await runWithProjectRequestContext(requestContext, () => service.readProjectConfig({
       sessionId: "pre-source-session"
     }));
     assert.equal(preSourceSessionProjectConfig.ok, true);
     assert.equal(preSourceSessionProjectConfig.config.ready, true);
-    assert.equal(preSourceSessionProjectConfig.config.sourceType, "git-cache");
+    assert.equal(preSourceSessionProjectConfig.config.sourceType, "github-mirror");
 
     const preSourceSessionConfigEnvironment = await runWithProjectRequestContext(requestContext, () => service.projectConfigEnvironment({
       sessionId: "pre-source-session"
@@ -1575,7 +1585,7 @@ test("Vibe64 project service keeps a config-only JSKIT Git cache in the seed wor
   });
 });
 
-test("Vibe64 project service reads existing GitHub project config without requiring a Git cache", async () => {
+test("Vibe64 project service supports an authoritative injected GitHub config reader", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const projectContext = createStudioProjectContext({
@@ -1647,7 +1657,7 @@ test("Vibe64 project service reads existing GitHub project config without requir
     assert.equal(missingReader.ok, true);
     assert.equal(missingReader.projectType.ready, false);
     assert.equal(missingReader.projectType.status, "unavailable");
-    assert.equal(missingReader.projectType.errorCode, "vibe64_committed_project_git_cache_missing");
+    assert.equal(missingReader.projectType.errorCode, "vibe64_committed_project_github_mirror_missing");
 
     const valid = await runWithProjectRequestContext(requestContext, () => service.readProjectType());
     assert.equal(valid.ok, true);
@@ -1658,7 +1668,9 @@ test("Vibe64 project service reads existing GitHub project config without requir
     assert.equal(calls[0].metadata.repository.mode, PROJECT_REPOSITORY_MODE_GITHUB);
     assert.equal(calls[0].ref, "refs/heads/main");
     assert.deepEqual(calls[0].vibe64User, vibe64User);
-    await assert.rejects(() => access(path.join(projectRoot, "git-cache", "repository.git")), {
+    await assert.rejects(() => access(resolveProjectGithubMirrorPath({
+      projectRoot
+    })), {
       code: "ENOENT"
     });
 
@@ -1721,7 +1733,7 @@ test("Vibe64 project service reads existing GitHub project config without requir
   });
 });
 
-test("Vibe64 project service ignores stale bootstrap config when committed git-cache config exists", async () => {
+test("Vibe64 project service ignores stale bootstrap config when committed GitHub mirror config exists", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const sourceRoot = path.join(root, "source");
@@ -1749,11 +1761,7 @@ test("Vibe64 project service ignores stale bootstrap config when committed git-c
     const projectRoot = path.join(projectsRoot, "dogandgroom");
     const runtimeRoot = projectContext.projectRuntimeRootForSlug("dogandgroom");
     const recordPath = projectContext.projectRecordPathForSlug("dogandgroom");
-    const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(gitCacheRepository), {
-      recursive: true
-    });
-    await execFileAsync("git", ["clone", "--bare", sourceRoot, gitCacheRepository]);
+    await createGithubMirror(projectRoot, sourceRoot);
 
     const projectRecord = JSON.parse(await readFile(recordPath, "utf8"));
     projectRecord.bootstrapConfig = {
@@ -1785,20 +1793,20 @@ test("Vibe64 project service ignores stale bootstrap config when committed git-c
     assert.equal(projectType.ok, true);
     assert.equal(projectType.projectType.ready, true);
     assert.equal(projectType.projectType.projectType, "jskit");
-    assert.equal(projectType.projectType.sourceType, "git-cache");
+    assert.equal(projectType.projectType.sourceType, "github-mirror");
     assert.notEqual(projectType.projectType.bootstrap, true);
 
     const projectConfig = await runWithProjectRequestContext(requestContext, () => service.readProjectConfig());
     assert.equal(projectConfig.ok, true);
     assert.equal(projectConfig.config.ready, true);
-    assert.equal(projectConfig.config.sourceType, "git-cache");
+    assert.equal(projectConfig.config.sourceType, "github-mirror");
     assert.notEqual(projectConfig.config.bootstrap, true);
     assert.equal(projectConfig.config.values.github_pr_merge_method, "merge");
     assert.equal(projectConfig.config.values.jskit_database_runtime, "mariadb");
 
     const runtime = await runWithProjectRequestContext(requestContext, () => service.createRuntime());
     const creationOptions = await runtime.workflowDefinitionCreationOptions();
-    assert.equal(runtime.projectConfig.sourceType, "git-cache");
+    assert.equal(runtime.projectConfig.sourceType, "github-mirror");
     assert.equal(runtime.projectConfig.values.jskit_database_runtime, "mariadb");
     assert.equal(creationOptions.seedRequired, false);
     assert.equal(creationOptions.mode, "select");
@@ -1848,11 +1856,7 @@ test("Vibe64 project service reads committed config when active session sources 
     const projectRoot = path.join(projectsRoot, "catalog-app");
     const runtimeRoot = projectContext.projectRuntimeRootForSlug("catalog-app");
     const recordPath = projectContext.projectRecordPathForSlug("catalog-app");
-    const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(gitCacheRepository), {
-      recursive: true
-    });
-    await execFileAsync("git", ["clone", "--bare", sourceRoot, gitCacheRepository]);
+    await createGithubMirror(projectRoot, sourceRoot);
     await writeVibe64SourceConfig(path.join(projectRoot, "sessions", "active", "session-a", "source"), {
       databaseRuntime: "postgres"
     });
@@ -1894,7 +1898,7 @@ test("Vibe64 project service reads committed config when active session sources 
     const creationOptions = await runtime.workflowDefinitionCreationOptions();
 
     assert.equal(runtime.adapter.id, "jskit");
-    assert.equal(runtime.projectConfig.sourceType, "git-cache");
+    assert.equal(runtime.projectConfig.sourceType, "github-mirror");
     assert.equal(runtime.projectConfig.values.jskit_database_runtime, "mariadb");
     assert.equal(creationOptions.seedRequired, false);
     assert.equal(creationOptions.mode, "select");
@@ -3273,11 +3277,7 @@ test("Vibe64 project service deletes only a new project's canonical development 
     });
     const targetRoot = path.join(projectContext.projectsRoot, "cleanup-app");
     const databaseName = jskitMariaDbDatabaseName(targetRoot);
-    const gitCacheRepository = path.join(targetRoot, "git-cache", "repository.git");
-    await mkdir(path.dirname(gitCacheRepository), {
-      recursive: true
-    });
-    await execFileAsync("git", ["clone", "--bare", sourceRoot, gitCacheRepository]);
+    await createGithubMirror(targetRoot, sourceRoot);
     const commands = [];
     const service = createService({
       projectContext,

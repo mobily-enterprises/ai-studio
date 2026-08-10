@@ -3,6 +3,7 @@ import process from "node:process";
 import { mkdir, readFile } from "node:fs/promises";
 
 import {
+  GITHUB_MIRROR_REFRESH_SCRIPT,
   shellQuote
 } from "@local/vibe64-execution/server";
 import {
@@ -65,6 +66,10 @@ import {
   repositoryCommandProfileForSession
 } from "./repositoryCommandProfile.js";
 import {
+  pathsResolveEqual,
+  sessionRepositoryStorage
+} from "./sessionRepositoryStorage.js";
+import {
   gitWorktreeStatus,
   readBranchCommitIfPresent,
   readCurrentBranchIfPresent,
@@ -89,25 +94,6 @@ function createWorktreeBranch(session = {}) {
   return `vibe64/${session.sessionId}`;
 }
 
-function projectRuntimeRootFromSession(session = {}, projectRuntimeRoot = "") {
-  const sessionRoot = normalizeText(session.sessionRoot);
-  if (sessionRoot) {
-    return path.dirname(path.dirname(path.dirname(sessionRoot)));
-  }
-  const normalizedRuntimeRoot = normalizeText(projectRuntimeRoot);
-  return normalizedRuntimeRoot ? path.resolve(normalizedRuntimeRoot) : "";
-}
-
-function createGitCachePath(session = {}, context = {}) {
-  const repositoryProfile = repositoryCommandProfileForSession(session);
-  if (repositoryProfile.localSource) {
-    return "";
-  }
-  const projectSourceRoot = normalizeText(context.targetRoot || session.targetRoot);
-  const runtimeRoot = projectSourceRoot || projectRuntimeRootFromSession(session, context.projectLocalRoot);
-  return runtimeRoot ? path.join(runtimeRoot, "git-cache", "repository.git") : "";
-}
-
 function sourcePathAuthority({
   context = {},
   session = {},
@@ -120,7 +106,7 @@ function sourcePathAuthority({
   if (
     expectedManagedPath &&
     sourcePath &&
-    path.resolve(sourcePath) === path.resolve(expectedManagedPath)
+    pathsResolveEqual(sourcePath, expectedManagedPath)
   ) {
     return SESSION_SOURCE_PATH_AUTHORITY_MANAGED;
   }
@@ -209,18 +195,20 @@ function sessionSourceParentMount(sourcePath = "") {
 
 function createWorktreeScript({
   branch = "",
-  cachePath = "",
+  canonicalRepositoryPath = "",
   defaultBranch = "",
+  githubMirrorPath = "",
   prepareWorktreeScriptPath = "",
-  repositoryProfile = repositoryCommandProfileForSession(session),
   remoteUrl = "",
   session = {},
+  repositoryProfile = repositoryCommandProfileForSession(session),
   targetRoot = "",
   worktreePath = ""
 } = {}) {
   const quotedBranch = shellQuote(branch);
-  const quotedCachePath = shellQuote(cachePath);
+  const quotedCanonicalRepositoryPath = shellQuote(canonicalRepositoryPath);
   const quotedDefaultBranch = shellQuote(defaultBranch);
+  const quotedGithubMirrorPath = shellQuote(githubMirrorPath);
   const quotedLocalSourceBranch = shellQuote(PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH);
   const quotedPrepareWorktreeScriptPath = shellQuote(normalizeText(prepareWorktreeScriptPath));
   const quotedRemoteUrl = shellQuote(remoteUrl);
@@ -238,10 +226,12 @@ function createWorktreeScript({
     `export VIBE64_TARGET_ROOT=${quotedTargetRoot}`,
     `export VIBE64_SOURCE_ROOT=${quotedWorktreePath}`,
     `export VIBE64_MAIN_CHECKOUT_ROOT=${quotedTargetRoot}`,
-    `VIBE64_GIT_CACHE_PATH=${quotedCachePath}`,
+    `VIBE64_CANONICAL_REPOSITORY_PATH=${quotedCanonicalRepositoryPath}`,
+    `VIBE64_GITHUB_MIRROR_PATH=${quotedGithubMirrorPath}`,
     `VIBE64_GIT_REMOTE_URL=${quotedRemoteUrl}`,
     `VIBE64_GIT_DEFAULT_BRANCH=${quotedDefaultBranch}`,
     `VIBE64_PREPARE_WORKTREE_SCRIPT=${quotedPrepareWorktreeScriptPath}`,
+    "VIBE64_GITHUB_MIRROR_READY=no",
     "prepare_vibe64_worktree() {",
     ...(repositoryProfile.githubPr ? [
       `  if ! git -C ${quotedWorktreePath} config --fixed-value --get-all remote.origin.fetch ${quotedSessionBranchFetchRefspec} >/dev/null; then`,
@@ -256,7 +246,12 @@ function createWorktreeScript({
     recordCommandFactScript("source_kind", "session_clone"),
     recordCommandFactScript("source_path", "\"$VIBE64_SOURCE_ROOT\""),
     recordCommandFactScript("main_checkout_root", "\"$VIBE64_MAIN_CHECKOUT_ROOT\""),
-    recordCommandFactScript("source_cache_path", "\"$VIBE64_GIT_CACHE_PATH\""),
+    ...(repositoryProfile.githubPr
+      ? [recordCommandFactScript("github_mirror_path", "\"$VIBE64_GITHUB_MIRROR_PATH\"")]
+      : []),
+    ...(repositoryProfile.canonicalGit
+      ? [recordCommandFactScript("canonical_repository_path", "\"$VIBE64_CANONICAL_REPOSITORY_PATH\"")]
+      : []),
     recordCommandFactScript("source_remote_url", "\"$VIBE64_GIT_REMOTE_URL\""),
     recordCommandFactScript("source_default_branch", "\"$BASE_BRANCH\""),
     "}",
@@ -278,55 +273,66 @@ function createWorktreeScript({
     "  if [ -z \"$alternates_file\" ] || [ ! -s \"$alternates_file\" ]; then",
     "    return 0",
     "  fi",
-    "  printf '[studio] Dissociating session clone from Git cache alternates.\\n'",
+    "  printf '[studio] Dissociating session clone from repository-storage alternates.\\n'",
     "  git -C \"$VIBE64_SOURCE_ROOT\" repack -a -d",
     "  rm -f \"$alternates_file\"",
     "}",
     "remote_url_from_target() {",
     `  git -C ${quotedTargetRoot} remote get-url origin 2>/dev/null || true`,
     "}",
-    "ensure_remote_cache() {",
+    "refresh_github_mirror() {",
     "  if [ -z \"$VIBE64_GIT_REMOTE_URL\" ]; then",
     "    return 1",
     "  fi",
-    "  if [ -z \"$VIBE64_GIT_CACHE_PATH\" ]; then",
+    "  if [ -z \"$VIBE64_GITHUB_MIRROR_PATH\" ]; then",
     "    return 1",
     "  fi",
-    "  mkdir -p \"$(dirname \"$VIBE64_GIT_CACHE_PATH\")\"",
-    "  if [ ! -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    "    printf '[studio] Creating Git cache for %s.\\n' \"$VIBE64_GIT_REMOTE_URL\"",
-    "    git clone --bare \"$VIBE64_GIT_REMOTE_URL\" \"$VIBE64_GIT_CACHE_PATH\"",
-    "    return 0",
-    "  fi",
-    "  printf '[studio] Refreshing Git cache for %s.\\n' \"$VIBE64_GIT_REMOTE_URL\"",
-    "  if git -C \"$VIBE64_GIT_CACHE_PATH\" remote get-url origin >/dev/null 2>&1; then",
-    "    git -C \"$VIBE64_GIT_CACHE_PATH\" remote set-url origin \"$VIBE64_GIT_REMOTE_URL\"",
-    "  else",
-    "    git -C \"$VIBE64_GIT_CACHE_PATH\" remote add origin \"$VIBE64_GIT_REMOTE_URL\"",
-    "  fi",
-    "  git -C \"$VIBE64_GIT_CACHE_PATH\" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
+    `  bash -c ${shellQuote(GITHUB_MIRROR_REFRESH_SCRIPT)} vibe64-github-mirror-refresh "$VIBE64_GITHUB_MIRROR_PATH" "$VIBE64_GIT_REMOTE_URL"`,
     "}",
-    "default_branch_from_cache() {",
+    "default_branch_from_repository() {",
     "  if [ -n \"$VIBE64_GIT_DEFAULT_BRANCH\" ]; then",
     "    printf '%s\\n' \"$VIBE64_GIT_DEFAULT_BRANCH\"",
     "    return 0",
     "  fi",
-    "  if [ -n \"$VIBE64_GIT_CACHE_PATH\" ] && [ -d \"$VIBE64_GIT_CACHE_PATH\" ] && [ -n \"$(git -C \"$VIBE64_GIT_CACHE_PATH\" for-each-ref --format='%(refname)' refs/heads | head -n 1)\" ]; then",
-    "    git -C \"$VIBE64_GIT_CACHE_PATH\" symbolic-ref -q --short HEAD 2>/dev/null | sed 's#^refs/heads/##' || true",
-    "  fi",
+    ...(repositoryProfile.githubPr ? [
+      "  if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ] && [ -d \"$VIBE64_GITHUB_MIRROR_PATH\" ] && [ -n \"$(git --git-dir \"$VIBE64_GITHUB_MIRROR_PATH\" for-each-ref --format='%(refname)' refs/heads | head -n 1)\" ]; then",
+      "    git --git-dir \"$VIBE64_GITHUB_MIRROR_PATH\" symbolic-ref -q --short HEAD 2>/dev/null | sed 's#^refs/heads/##' || true",
+      "  fi"
+    ] : repositoryProfile.canonicalGit ? [
+      "  if [ -n \"$VIBE64_CANONICAL_REPOSITORY_PATH\" ] && [ -d \"$VIBE64_CANONICAL_REPOSITORY_PATH\" ] && [ -n \"$(git --git-dir \"$VIBE64_CANONICAL_REPOSITORY_PATH\" for-each-ref --format='%(refname)' refs/heads | head -n 1)\" ]; then",
+      "    git --git-dir \"$VIBE64_CANONICAL_REPOSITORY_PATH\" symbolic-ref -q --short HEAD 2>/dev/null | sed 's#^refs/heads/##' || true",
+      "  fi"
+    ] : []),
     "}",
-    "remote_cache_has_branch() {",
+    "bare_repository_has_branch() {",
+    "  repository_path=\"$1\"",
+    "  branch_name=\"$2\"",
+    "  if [ -z \"$repository_path\" ] || [ -z \"$branch_name\" ] || [ ! -d \"$repository_path\" ]; then",
+    "    return 1",
+    "  fi",
+    "  git --git-dir \"$repository_path\" rev-parse --verify \"refs/heads/$branch_name^{commit}\" >/dev/null 2>&1",
+    "}",
+    "bare_repository_has_any_head() {",
+    "  repository_path=\"$1\"",
+    "  if [ -z \"$repository_path\" ] || [ ! -d \"$repository_path\" ]; then",
+    "    return 1",
+    "  fi",
+    "  test -n \"$(git --git-dir \"$repository_path\" for-each-ref --format='%(refname)' refs/heads | head -n 1)\"",
+    "}",
+    "github_source_has_branch() {",
     "  branch_name=\"$1\"",
-    "  if [ -z \"$branch_name\" ] || [ -z \"$VIBE64_GIT_CACHE_PATH\" ] || [ ! -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    "    return 1",
+    "  if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ]; then",
+    "    bare_repository_has_branch \"$VIBE64_GITHUB_MIRROR_PATH\" \"$branch_name\"",
+    "    return $?",
     "  fi",
-    "  git -C \"$VIBE64_GIT_CACHE_PATH\" rev-parse --verify \"refs/heads/$branch_name^{commit}\" >/dev/null 2>&1",
+    "  git ls-remote --exit-code --heads \"$VIBE64_GIT_REMOTE_URL\" \"refs/heads/$branch_name\" >/dev/null 2>&1",
     "}",
-    "remote_cache_has_any_head() {",
-    "  if [ -z \"$VIBE64_GIT_CACHE_PATH\" ] || [ ! -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    "    return 1",
+    "github_source_has_any_head() {",
+    "  if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ]; then",
+    "    bare_repository_has_any_head \"$VIBE64_GITHUB_MIRROR_PATH\"",
+    "    return $?",
     "  fi",
-    "  test -n \"$(git -C \"$VIBE64_GIT_CACHE_PATH\" for-each-ref --format='%(refname)' refs/heads | head -n 1)\"",
+    "  test -n \"$(git ls-remote --heads \"$VIBE64_GIT_REMOTE_URL\" 2>/dev/null | head -n 1)\"",
     "}",
     "require_local_source_main_branch() {",
     `  BASE_BRANCH=${quotedLocalSourceBranch}`,
@@ -356,7 +362,7 @@ function createWorktreeScript({
     `    BASE_BRANCH="$(git -C ${quotedWorktreePath} symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"`,
     "  fi",
     "  if [ -z \"$BASE_BRANCH\" ]; then",
-    "    BASE_BRANCH=\"$(default_branch_from_cache | head -n 1 | sed 's/[[:space:]]*$//')\"",
+    "    BASE_BRANCH=\"$(default_branch_from_repository | head -n 1 | sed 's/[[:space:]]*$//')\"",
     "  fi",
     "  if [ -z \"$BASE_BRANCH\" ]; then",
     "    BASE_BRANCH=main",
@@ -371,8 +377,8 @@ function createWorktreeScript({
     "  prepare_vibe64_worktree",
     "}",
     "clone_remote_default_branch() {",
-    "  if [ -n \"$VIBE64_GIT_CACHE_PATH\" ] && [ -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    `    git clone --single-branch --branch "$BASE_BRANCH" "$VIBE64_GIT_CACHE_PATH" ${quotedWorktreePath}`,
+    "  if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ]; then",
+    `    git clone --single-branch --branch "$BASE_BRANCH" "$VIBE64_GITHUB_MIRROR_PATH" ${quotedWorktreePath}`,
     `    git -C ${quotedWorktreePath} remote set-url origin "$VIBE64_GIT_REMOTE_URL"`,
     "  else",
     `    git clone --single-branch --branch "$BASE_BRANCH" "$VIBE64_GIT_REMOTE_URL" ${quotedWorktreePath}`,
@@ -380,8 +386,8 @@ function createWorktreeScript({
     "}",
     "clone_empty_remote_repository() {",
     "  printf '[studio] Remote repository has no branches; creating local base branch %s.\\n' \"$BASE_BRANCH\"",
-    "  if [ -n \"$VIBE64_GIT_CACHE_PATH\" ] && [ -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    `    git clone "$VIBE64_GIT_CACHE_PATH" ${quotedWorktreePath}`,
+    "  if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ]; then",
+    `    git clone "$VIBE64_GITHUB_MIRROR_PATH" ${quotedWorktreePath}`,
     `    git -C ${quotedWorktreePath} remote set-url origin "$VIBE64_GIT_REMOTE_URL"`,
     "  else",
     `    git clone "$VIBE64_GIT_REMOTE_URL" ${quotedWorktreePath}`,
@@ -394,18 +400,22 @@ function createWorktreeScript({
     "  if [ -z \"$VIBE64_GIT_REMOTE_URL\" ]; then",
     "    return 1",
     "  fi",
-    "  ensure_remote_cache",
-    "  BASE_BRANCH=\"$(default_branch_from_cache | head -n 1 | sed 's/[[:space:]]*$//')\"",
+    "  if refresh_github_mirror; then",
+    "    VIBE64_GITHUB_MIRROR_READY=yes",
+    "  else",
+    "    printf '[studio] GitHub mirror refresh failed; cloning from GitHub directly.\\n' >&2",
+    "  fi",
+    "  BASE_BRANCH=\"$(default_branch_from_repository | head -n 1 | sed 's/[[:space:]]*$//')\"",
     "  if [ -z \"$BASE_BRANCH\" ]; then",
     "    BASE_BRANCH=main",
     "  fi",
     `  mkdir -p "$(dirname ${quotedWorktreePath})"`,
-    "  if remote_cache_has_branch \"$BASE_BRANCH\"; then",
+    "  if github_source_has_branch \"$BASE_BRANCH\"; then",
     "    clone_remote_default_branch",
     `    git -C ${quotedWorktreePath} fetch origin "$BASE_BRANCH"`,
     `    BASE_COMMIT="$(git -C ${quotedWorktreePath} rev-parse --verify "origin/$BASE_BRANCH^{commit}")"`,
     "  else",
-    "    if remote_cache_has_any_head; then",
+    "    if github_source_has_any_head; then",
     "      printf '[studio] Remote branch %s was not found. Check the repository default branch.\\n' \"$BASE_BRANCH\" >&2",
     "      exit 1",
     "    fi",
@@ -420,31 +430,29 @@ function createWorktreeScript({
     "  return 0",
     "}",
     "clone_from_canonical_git() {",
-    "  if [ -z \"$VIBE64_GIT_CACHE_PATH\" ]; then",
+    "  if [ -z \"$VIBE64_CANONICAL_REPOSITORY_PATH\" ]; then",
     "    printf '[studio] Cannot clone Vibe64 Git because the canonical repository path is unknown.\\n' >&2",
     "    exit 1",
     "  fi",
-    "  mkdir -p \"$(dirname \"$VIBE64_GIT_CACHE_PATH\")\"",
-    "  if [ ! -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-    "    printf '[studio] Initializing Vibe64 Git repository at %s.\\n' \"$VIBE64_GIT_CACHE_PATH\"",
-    "    git init --bare \"$VIBE64_GIT_CACHE_PATH\"",
+    "  if [ ! -d \"$VIBE64_CANONICAL_REPOSITORY_PATH\" ] || [ \"$(git --git-dir \"$VIBE64_CANONICAL_REPOSITORY_PATH\" rev-parse --is-bare-repository 2>/dev/null || true)\" != \"true\" ]; then",
+    "    printf '[studio] The canonical Vibe64 Git repository is missing or invalid: %s.\\n' \"$VIBE64_CANONICAL_REPOSITORY_PATH\" >&2",
+    "    exit 1",
     "  fi",
-    "  BASE_BRANCH=\"$(default_branch_from_cache | head -n 1 | sed 's/[[:space:]]*$//')\"",
+    "  BASE_BRANCH=\"$(default_branch_from_repository | head -n 1 | sed 's/[[:space:]]*$//')\"",
     "  if [ -z \"$BASE_BRANCH\" ]; then",
     "    BASE_BRANCH=main",
     "  fi",
-    "  git --git-dir \"$VIBE64_GIT_CACHE_PATH\" symbolic-ref HEAD \"refs/heads/$BASE_BRANCH\" >/dev/null 2>&1 || true",
     `  mkdir -p "$(dirname ${quotedWorktreePath})"`,
-    "  if remote_cache_has_branch \"$BASE_BRANCH\"; then",
-    `    git clone --single-branch --branch "$BASE_BRANCH" "$VIBE64_GIT_CACHE_PATH" ${quotedWorktreePath}`,
+    "  if bare_repository_has_branch \"$VIBE64_CANONICAL_REPOSITORY_PATH\" \"$BASE_BRANCH\"; then",
+    `    git clone --single-branch --branch "$BASE_BRANCH" "$VIBE64_CANONICAL_REPOSITORY_PATH" ${quotedWorktreePath}`,
     `    BASE_COMMIT="$(git -C ${quotedWorktreePath} rev-parse --verify "HEAD^{commit}")"`,
     "  else",
-    "    if remote_cache_has_any_head; then",
+    "    if bare_repository_has_any_head \"$VIBE64_CANONICAL_REPOSITORY_PATH\"; then",
     "      printf '[studio] Vibe64 Git branch %s was not found. Check the repository default branch.\\n' \"$BASE_BRANCH\" >&2",
     "      exit 1",
     "    fi",
     "    printf '[studio] Vibe64 Git repository has no branches; creating local base branch %s.\\n' \"$BASE_BRANCH\"",
-    `    git clone "$VIBE64_GIT_CACHE_PATH" ${quotedWorktreePath}`,
+    `    git clone "$VIBE64_CANONICAL_REPOSITORY_PATH" ${quotedWorktreePath}`,
     `    git -C ${quotedWorktreePath} checkout --orphan "$BASE_BRANCH"`,
     `    git -C ${quotedWorktreePath} commit --allow-empty -m "Initial commit"`,
     `    BASE_COMMIT="$(git -C ${quotedWorktreePath} rev-parse --verify HEAD)"`,
@@ -452,7 +460,7 @@ function createWorktreeScript({
     recordCommandFactScript("base_branch", "\"$BASE_BRANCH\""),
     recordCommandFactScript("base_commit", "\"$BASE_COMMIT\""),
     "  record_session_clone_facts",
-    `  git -C ${quotedWorktreePath} remote set-url origin "$VIBE64_GIT_CACHE_PATH"`,
+    `  git -C ${quotedWorktreePath} remote set-url origin "$VIBE64_CANONICAL_REPOSITORY_PATH"`,
     `  git -C ${quotedWorktreePath} checkout -B ${quotedBranch} "$BASE_COMMIT"`,
     "  remove_session_clone_local_branch \"$BASE_BRANCH\"",
     "  ensure_session_clone_self_contained",
@@ -512,14 +520,18 @@ function createWorktreeScript({
       "  printf '[studio] Existing PR sessions require a GitHub remote URL.\\n' >&2",
       "  exit 1",
       "fi",
-      "ensure_remote_cache",
-      "CLONE_BASE_BRANCH=\"$(default_branch_from_cache | head -n 1 | sed 's/[[:space:]]*$//')\"",
+      "if refresh_github_mirror; then",
+      "  VIBE64_GITHUB_MIRROR_READY=yes",
+      "else",
+      "  printf '[studio] GitHub mirror refresh failed; cloning from GitHub directly.\\n' >&2",
+      "fi",
+      "CLONE_BASE_BRANCH=\"$(default_branch_from_repository | head -n 1 | sed 's/[[:space:]]*$//')\"",
       "if [ -z \"$CLONE_BASE_BRANCH\" ]; then",
       "  CLONE_BASE_BRANCH=main",
       "fi",
       `mkdir -p "$(dirname ${quotedWorktreePath})"`,
-      "if [ -n \"$VIBE64_GIT_CACHE_PATH\" ] && [ -d \"$VIBE64_GIT_CACHE_PATH\" ]; then",
-      `  git clone --single-branch --branch "$CLONE_BASE_BRANCH" "$VIBE64_GIT_CACHE_PATH" ${quotedWorktreePath}`,
+      "if [ \"$VIBE64_GITHUB_MIRROR_READY\" = \"yes\" ]; then",
+      `  git clone --single-branch --branch "$CLONE_BASE_BRANCH" "$VIBE64_GITHUB_MIRROR_PATH" ${quotedWorktreePath}`,
       `  git -C ${quotedWorktreePath} remote set-url origin "$VIBE64_GIT_REMOTE_URL"`,
       "else",
       `  git clone --single-branch --branch "$CLONE_BASE_BRANCH" "$VIBE64_GIT_REMOTE_URL" ${quotedWorktreePath}`,
@@ -873,13 +885,17 @@ async function createWorktreeTerminalSpec({
     : "";
   const defaultBranch = normalizeText(session.metadata?.source_default_branch) ||
     normalizeText(projectGithubRepository?.defaultBranch);
-  let cachePath = "";
-  if (!repositoryProfile.localSource) {
-    cachePath = normalizeText(session.metadata?.source_cache_path) || createGitCachePath(session, {
-      ...context,
-      targetRoot: resolvedTargetRoot
-    });
+  const repositoryStorage = sessionRepositoryStorage(session, {
+    projectRoot: resolvedTargetRoot
+  });
+  if (!repositoryStorage.ok) {
+    return {
+      ok: false,
+      message: repositoryStorage.message
+    };
   }
+  const canonicalRepositoryPath = repositoryStorage.canonicalRepositoryPath;
+  const githubMirrorPath = repositoryStorage.githubMirrorPath;
   if (!sourcePath || !branch) {
     return {
       ok: false,
@@ -907,8 +923,9 @@ async function createWorktreeTerminalSpec({
   return {
     args: ["-lc", createWorktreeScript({
       branch,
-      cachePath,
+      canonicalRepositoryPath,
       defaultBranch,
+      githubMirrorPath,
       prepareWorktreeScriptPath,
       repositoryProfile,
       remoteUrl,
@@ -917,7 +934,7 @@ async function createWorktreeTerminalSpec({
       worktreePath: sourcePath
     })],
     command: "bash",
-    commandPreview: `git clone ${repositoryProfile.canonicalGit ? cachePath : remoteUrl || resolvedTargetRoot} ${sourcePath}`,
+    commandPreview: `git clone ${repositoryProfile.canonicalGit ? canonicalRepositoryPath : remoteUrl || resolvedTargetRoot} ${sourcePath}`,
     cwd: resolvedTargetRoot,
     mounts: [
       ...prepareWorktreeScriptMount(prepareWorktreeScriptPath),
@@ -937,8 +954,9 @@ async function createWorktreeTerminalSpec({
       baseBranch: metadataBaseBranch,
       baseCommit: metadataBaseCommit,
       branch,
-      cachePath,
+      canonicalRepositoryPath,
       defaultBranch,
+      githubMirrorPath,
       mainCheckoutRoot: resolvedTargetRoot,
       remoteUrl,
       sourcePath,

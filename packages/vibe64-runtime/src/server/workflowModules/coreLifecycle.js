@@ -55,8 +55,8 @@ const createAndMergePullRequestStepId = "create_and_merge_pull_request";
 const sessionFinishedStepId = "session_finished";
 const installDependenciesActionId = "install_dependencies";
 const dependenciesInstalledMetadataName = "dependencies_installed";
-const syncMainCheckoutActionId = "sync_main_checkout";
-const mainCheckoutSyncedMetadataName = "main_checkout_synced";
+const refreshGithubMirrorActionId = "refresh_github_mirror";
+const githubMirrorRefreshAttemptedMetadataName = "github_mirror_refresh_attempted";
 const mergePreparationSummaryMetadataName = "merge_preparation_summary";
 const finalReportStartMarker = "<!-- vibe64:final-report:start -->";
 const finalReportEndMarker = "<!-- vibe64:final-report:end -->";
@@ -123,7 +123,7 @@ async function sessionSourceCommandSucceeded(context = {}) {
 }
 
 async function recordMergeIntent(ctx = {}) {
-  await ctx.writeMetadata("autopilot_merge_intent", "merge_and_sync");
+  await ctx.writeMetadata("autopilot_merge_intent", "merge_and_refresh_mirror");
   return ctx.getSession();
 }
 
@@ -135,7 +135,7 @@ async function skipMergeAndFinish(ctx = {}) {
 
 const coreLifecycleWorkflowIntentHandlers = deepFreeze({
   [createAndMergePullRequestStepId]: {
-    merge_and_sync: recordMergeIntent,
+    merge_and_refresh_mirror: recordMergeIntent,
     skip_merge: skipMergeAndFinish
   }
 });
@@ -416,7 +416,6 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         "branch_push_remote",
         "canonical_git_saved",
         "local_commit_only",
-        "main_checkout_synced",
         "pr_head_owner",
         "pr_head_repository"
       ]
@@ -512,27 +511,27 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         type: "command"
       },
       {
-        adapterCapability: syncMainCheckoutActionId,
-        auditMessage: "Refresh Git cache after merge.",
+        adapterCapability: refreshGithubMirrorActionId,
+        auditMessage: "Refresh GitHub mirror after merge.",
         composerMenu: {
           icon: "sync",
-          label: "Refresh Git cache",
+          label: "Refresh GitHub mirror",
           order: 150
         },
-        disabledReason: "Merge the pull request before refreshing the Git cache.",
+        disabledReason: "Merge the pull request before refreshing the GitHub mirror.",
         disabledWhen: [
-          when.metadataExists(mainCheckoutSyncedMetadataName),
+          when.metadataExists(githubMirrorRefreshAttemptedMetadataName),
           when.metadataExists("merge_skipped")
         ],
-        disabledWhenReason: "The Git cache refresh has already been resolved.",
+        disabledWhenReason: "The GitHub mirror refresh has already been resolved.",
         enabledWhen: [
           when.metadataExists("pr_url"),
           when.metadataExists("pr_merged")
         ],
-        enabledWhenReason: "Merge the pull request before refreshing the Git cache.",
+        enabledWhenReason: "Merge the pull request before refreshing the GitHub mirror.",
         icon: "sync",
-        id: syncMainCheckoutActionId,
-        label: "Refresh Git cache",
+        id: refreshGithubMirrorActionId,
+        label: "Refresh GitHub mirror",
         type: "command"
       },
       {
@@ -571,7 +570,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
       disabledReason: "Share the changes, then finish or skip finishing them before continuing.",
       enabledWhen: [
         when.any(
-          when.metadataExists(mainCheckoutSyncedMetadataName),
+          when.metadataExists(githubMirrorRefreshAttemptedMetadataName),
           when.metadataExists("merge_skipped")
         )
       ]
@@ -582,20 +581,20 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
           mergeActionId: "merge_pr",
           mergedMetadataName: "pr_merged",
           metadataName: "autopilot_merge_intent",
-          metadataValue: "merge_and_sync",
+          metadataValue: "merge_and_refresh_mirror",
           prepareActionId: "prepare_for_merge",
-          syncActionId: syncMainCheckoutActionId,
-          syncedMetadataName: mainCheckoutSyncedMetadataName,
+          refreshActionId: refreshGithubMirrorActionId,
+          refreshAttemptedMetadataName: githubMirrorRefreshAttemptedMetadataName,
           skippedMetadataName: "merge_skipped"
         }
       },
       stop: {
         intents: [
           {
-            auditMessage: "Merge pull request and refresh Git cache.",
+            auditMessage: "Merge pull request and refresh GitHub mirror.",
             enabledWhenAction: "prepare_for_merge",
-            id: "merge_and_sync",
-            label: "Merge and refresh cache",
+            id: "merge_and_refresh_mirror",
+            label: "Merge and refresh mirror",
             style: "primary"
           },
           {
@@ -607,14 +606,14 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         ],
         screen: {
           kind: "merge",
-          message: "The pull request is ready. Merge it and refresh the Git cache, or finish without merging.",
+          message: "The pull request is ready. Merge it and refresh the GitHub mirror, or finish without merging.",
           sections: ["report_preview"],
           title: "Merge pull request?"
         }
       }
     },
     rewindCleanup: {
-      actionResults: ["resolve_pull_request", "create_pr_on_gh", "prepare_for_merge", "merge_pr", syncMainCheckoutActionId, "skip_merge"],
+      actionResults: ["resolve_pull_request", "create_pr_on_gh", "prepare_for_merge", "merge_pr", refreshGithubMirrorActionId, "skip_merge"],
       artifacts: [
         PULL_REQUEST_BODY_DRAFT_ARTIFACT,
         PULL_REQUEST_TITLE_DRAFT_ARTIFACT,
@@ -640,7 +639,7 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
           }
         },
         "pr_merged",
-        mainCheckoutSyncedMetadataName,
+        githubMirrorRefreshAttemptedMetadataName,
         "merge_skipped",
         "autopilot_merge_intent",
         mergePreparationSummaryMetadataName
@@ -655,7 +654,8 @@ const coreLifecycleStepDefinitionsById = deepFreeze({
         enabledWhen: [
           when.any(
             localOnlyCommitCompleteCondition,
-            when.metadataExists(mainCheckoutSyncedMetadataName),
+            canonicalGitCommitCompleteCondition,
+            when.metadataExists(githubMirrorRefreshAttemptedMetadataName),
             when.metadataExists("merge_skipped")
           )
         ],
@@ -1130,18 +1130,19 @@ const pullRequestPhase = Object.freeze({
   MERGING: "merging",
   PREPARING_MERGE: "preparing_merge",
   REVIEW_DRAFT: "review_draft",
-  SYNC_READY: "sync_ready",
-  SYNCING_MAIN: "syncing_main"
+  MIRROR_REFRESH_READY: "mirror_refresh_ready",
+  REFRESHING_MIRROR: "refreshing_mirror"
 });
 
 function pullRequestStepComplete(session = {}) {
-  return metadataExists(session, mainCheckoutSyncedMetadataName) ||
+  return metadataExists(session, githubMirrorRefreshAttemptedMetadataName) ||
     metadataExists(session, "merge_skipped") ||
-    localOnlyCommitComplete(session);
+    localOnlyCommitComplete(session) ||
+    canonicalGitCommitComplete(session);
 }
 
-function mainCheckoutSyncPending(session = {}) {
-  return metadataExists(session, "pr_merged") && !metadataExists(session, mainCheckoutSyncedMetadataName);
+function githubMirrorRefreshPending(session = {}) {
+  return metadataExists(session, "pr_merged") && !metadataExists(session, githubMirrorRefreshAttemptedMetadataName);
 }
 
 function mergeReviewAutopilot() {
@@ -1160,9 +1161,9 @@ const createAndMergePullRequestMachine = {
     if (pullRequestStepComplete(context.session)) {
       return machineState(STEP_STATUS.DONE);
     }
-    if (mainCheckoutSyncPending(context.session)) {
+    if (githubMirrorRefreshPending(context.session)) {
       return machineState(STEP_STATUS.READY, {
-        phase: pullRequestPhase.SYNC_READY
+        phase: pullRequestPhase.MIRROR_REFRESH_READY
       });
     }
     if (metadataExists(context.session, "pr_url")) {
@@ -1183,12 +1184,12 @@ const createAndMergePullRequestMachine = {
     let state = await readState(context, this);
     if (pullRequestStepComplete(context.session)) {
       state = machineState(STEP_STATUS.DONE);
-    } else if (mainCheckoutSyncPending(context.session) && ![
+    } else if (githubMirrorRefreshPending(context.session) && ![
       STEP_STATUS.ATTEMPTING_EXECUTION,
       STEP_STATUS.WAITING_FOR_INPUT
     ].includes(state.status)) {
       state = machineState(STEP_STATUS.READY, {
-        phase: pullRequestPhase.SYNC_READY
+        phase: pullRequestPhase.MIRROR_REFRESH_READY
       });
     } else if (metadataExists(context.session, "pr_url") && ![
       STEP_STATUS.AWAITING_AGENT_RESULT,
@@ -1206,7 +1207,7 @@ const createAndMergePullRequestMachine = {
         pullRequestPhase.CREATING_PR,
         pullRequestPhase.PREPARING_MERGE,
         pullRequestPhase.MERGING,
-        pullRequestPhase.SYNCING_MAIN
+        pullRequestPhase.REFRESHING_MIRROR
       ].includes(state.phase)
     ) {
       state = machineState(STEP_STATUS.CONFIRM_FILES, {
@@ -1233,31 +1234,31 @@ const createAndMergePullRequestMachine = {
       }
 
       case STEP_STATUS.WAITING_FOR_INPUT:
-        if ([pullRequestPhase.CREATING_PR, pullRequestPhase.MERGING, pullRequestPhase.SYNCING_MAIN].includes(state.phase)) {
+        if ([pullRequestPhase.CREATING_PR, pullRequestPhase.MERGING, pullRequestPhase.REFRESHING_MIRROR].includes(state.phase)) {
           const waitingActionId = state.phase === pullRequestPhase.MERGING
             ? "merge_pr"
-            : (state.phase === pullRequestPhase.SYNCING_MAIN ? syncMainCheckoutActionId : "create_pr_on_gh");
+            : (state.phase === pullRequestPhase.REFRESHING_MIRROR ? refreshGithubMirrorActionId : "create_pr_on_gh");
           return {
             actions: disableAction(
               context.session,
               waitingActionId,
               state.phase === pullRequestPhase.MERGING
                 ? "Resolve the merge command before retrying."
-                : (state.phase === pullRequestPhase.SYNCING_MAIN
-                    ? "Resolve the Git cache refresh command before retrying."
+                : (state.phase === pullRequestPhase.REFRESHING_MIRROR
+                    ? "Resolve the GitHub mirror refresh command before retrying."
                     : "Resolve the pull request command before retrying.")
             ),
             interaction: commandFailureInteraction({
-              prompt: state.message || (state.phase === pullRequestPhase.SYNCING_MAIN
-                ? "The Git cache refresh command failed. Explain what should happen, then retry it."
+              prompt: state.message || (state.phase === pullRequestPhase.REFRESHING_MIRROR
+                ? "The GitHub mirror refresh command failed. Explain what should happen, then retry it."
                 : "The pull request command failed. Explain what should happen, then retry."),
-              title: state.title || (state.phase === pullRequestPhase.SYNCING_MAIN
-                ? "Git cache refresh needs attention"
+              title: state.title || (state.phase === pullRequestPhase.REFRESHING_MIRROR
+                ? "GitHub mirror refresh needs attention"
                 : "Pull request needs attention")
             }),
             next: nextForSession(context.session, {
-              disabledReason: state.phase === pullRequestPhase.SYNCING_MAIN
-                ? "Resolve the Git cache refresh command before continuing."
+              disabledReason: state.phase === pullRequestPhase.REFRESHING_MIRROR
+                ? "Resolve the GitHub mirror refresh command before continuing."
                 : "Resolve the pull request command before continuing."
             }),
             stepMachine: publicState(this, state)
@@ -1277,16 +1278,16 @@ const createAndMergePullRequestMachine = {
         if (state.phase === pullRequestPhase.MERGE_READY) {
           return {
             next: nextForSession(context.session, {
-              disabledReason: "Merge the pull request and refresh the Git cache, or choose not to merge before continuing."
+              disabledReason: "Merge the pull request and refresh the GitHub mirror, or choose not to merge before continuing."
             }),
             stepMachine: publicState(this, state),
             workflowAutopilot: mergeReviewAutopilot()
           };
         }
-        if (state.phase === pullRequestPhase.SYNC_READY) {
+        if (state.phase === pullRequestPhase.MIRROR_REFRESH_READY) {
           return {
             next: nextForSession(context.session, {
-              disabledReason: "Refresh the Git cache after merging before continuing."
+              disabledReason: "Refresh the GitHub mirror after merging before continuing."
             }),
             stepMachine: publicState(this, state),
             workflowAutopilot: mergeReviewAutopilot()
@@ -1298,7 +1299,7 @@ const createAndMergePullRequestMachine = {
       case STEP_STATUS.ATTEMPTING_EXECUTION:
       case STEP_STATUS.FAILED:
       default:
-        return promptStepWaitingView(context, this, state, "Create the pull request, then merge and refresh the Git cache or choose not to merge before continuing.");
+        return promptStepWaitingView(context, this, state, "Create the pull request, then merge and refresh the GitHub mirror or choose not to merge before continuing.");
     }
   },
 
@@ -1336,9 +1337,9 @@ const createAndMergePullRequestMachine = {
                 }));
             return;
           }
-          if (state.phase === pullRequestPhase.SYNCING_MAIN) {
+          if (state.phase === pullRequestPhase.REFRESHING_MIRROR) {
             await writeState(context, this, machineState(STEP_STATUS.READY, {
-              phase: pullRequestPhase.SYNC_READY,
+              phase: pullRequestPhase.MIRROR_REFRESH_READY,
               response: inputResponseText(input),
               source: input.source
             }));
@@ -1411,10 +1412,10 @@ const createAndMergePullRequestMachine = {
       }));
       return;
     }
-    if (context.actionId === syncMainCheckoutActionId) {
+    if (context.actionId === refreshGithubMirrorActionId) {
       await writeState(context, this, commandAttemptState(state, {
         actionId: context.actionId,
-        phase: pullRequestPhase.SYNCING_MAIN
+        phase: pullRequestPhase.REFRESHING_MIRROR
       }));
     }
   },
@@ -1439,7 +1440,7 @@ const createAndMergePullRequestMachine = {
     if (context.actionId === "merge_pr") {
       await writeState(context, this, await actionCreatedMetadata(context, "pr_merged")
         ? machineState(STEP_STATUS.READY, {
-            phase: pullRequestPhase.SYNC_READY
+            phase: pullRequestPhase.MIRROR_REFRESH_READY
           })
         : commandFailureState(context, state, {
             phase: pullRequestPhase.MERGING,
@@ -1447,12 +1448,12 @@ const createAndMergePullRequestMachine = {
           }));
       return;
     }
-    if (context.actionId === syncMainCheckoutActionId) {
-      await writeState(context, this, await actionCreatedMetadata(context, mainCheckoutSyncedMetadataName)
+    if (context.actionId === refreshGithubMirrorActionId) {
+      await writeState(context, this, await actionCreatedMetadata(context, githubMirrorRefreshAttemptedMetadataName)
         ? machineState(STEP_STATUS.DONE)
         : commandFailureState(context, state, {
-            phase: pullRequestPhase.SYNCING_MAIN,
-            title: "Git cache refresh needs attention"
+            phase: pullRequestPhase.REFRESHING_MIRROR,
+            title: "GitHub mirror refresh needs attention"
           }));
     }
   },
@@ -1483,7 +1484,7 @@ const createAndMergePullRequestMachine = {
           doneFields: {
             mergePreparationSummary: "Markdown summary of extra merge-preparation work performed after pull request creation. Leave empty when no extra work was needed."
           },
-          doneMeaning: "The pull request is ready for the merge command and the Git cache can be refreshed afterward.",
+          doneMeaning: "The pull request is ready for the merge command and the GitHub mirror can be refreshed afterward.",
           optionalDoneFields: ["mergePreparationSummary"],
           waitingForInputMeaning: "The merge preparation found a blocker that needs user input."
         })

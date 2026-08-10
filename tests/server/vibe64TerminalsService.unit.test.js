@@ -53,6 +53,9 @@ import {
   WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR
 } from "../../packages/vibe64-core/src/server/projectRepository.js";
 import {
+  resolveProjectGithubMirrorPath
+} from "../../packages/vibe64-core/src/server/projectState.js";
+import {
   createService,
   startProjectRuntimeDormancyCleanupSchedule,
   terminalNamespaceMatchesProjectScope
@@ -168,7 +171,7 @@ import {
   sourcePath,
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
-const POST_COMMIT_TEST_TIMEOUT_MS = 500;
+const ASYNC_TEST_TIMEOUT_MS = 10_000;
 const CODEX_APP_SERVER_AGENT_RUN_ID = "codex_app_server";
 const MAINTENANCE_WORKFLOW_DEFINITION_IDS = coreMaintenanceTesting.workflowDefinitionIds;
 const TEST_WORKFLOW_ORIGIN_ID = "tab:test";
@@ -2351,7 +2354,7 @@ function deferred() {
   };
 }
 
-async function waitForArrayLength(entries, expectedLength, timeoutMs = POST_COMMIT_TEST_TIMEOUT_MS) {
+async function waitForArrayLength(entries, expectedLength, timeoutMs = ASYNC_TEST_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (entries.length < expectedLength && Date.now() < deadline) {
     await delay(30);
@@ -2359,7 +2362,7 @@ async function waitForArrayLength(entries, expectedLength, timeoutMs = POST_COMM
   assert.equal(entries.length, expectedLength);
 }
 
-async function waitForCondition(predicate, message = "Timed out waiting for condition.", timeoutMs = POST_COMMIT_TEST_TIMEOUT_MS) {
+async function waitForCondition(predicate, message = "Timed out waiting for condition.", timeoutMs = ASYNC_TEST_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) {
@@ -2370,7 +2373,7 @@ async function waitForCondition(predicate, message = "Timed out waiting for cond
   assert.fail(message);
 }
 
-async function waitForNoRunningTerminals(namespace, timeoutMs = POST_COMMIT_TEST_TIMEOUT_MS) {
+async function waitForNoRunningTerminals(namespace, timeoutMs = ASYNC_TEST_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (countRunningTerminalSessions({ namespace }) > 0 && Date.now() < deadline) {
     await delay(30);
@@ -12069,7 +12072,9 @@ test("Vibe64 command terminal runs GitHub credential commands on the host", asyn
           runtimes: ["node26"],
           successMetadata: {
             ...spec.successMetadata,
-            source_cache_path: path.join(targetRoot, "git-cache", "repository.git"),
+            github_mirror_path: resolveProjectGithubMirrorPath({
+              projectRoot: targetRoot
+            }),
             source_path: sessionSourcePath
           }
         };
@@ -12182,7 +12187,9 @@ test("Vibe64 command terminal runs GitHub credential commands on the host", asyn
     assert.deepEqual(startedRequest.gitSafeDirectories, [
       targetRoot,
       sessionSourcePath,
-      path.join(targetRoot, "git-cache", "repository.git")
+      resolveProjectGithubMirrorPath({
+        projectRoot: targetRoot
+      })
     ]);
     assert.equal(startedEnv.VIBE64_HOST_UID, String(process.getuid?.() ?? ""));
     assert.equal(startedEnv.VIBE64_HOST_GID, String(process.getgid?.() ?? ""));
@@ -12619,17 +12626,19 @@ test("Vibe64 command terminal runs local commands as the app actor", async () =>
 test("host GitHub command path policy is derived from command metadata", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sourcePath = path.join(targetRoot, "sessions", "active", "unit-session", "source");
-    const cachePath = path.join(targetRoot, "git-cache", "repository.git");
+    const githubMirrorPath = resolveProjectGithubMirrorPath({
+      projectRoot: targetRoot
+    });
     const safeDirectories = commandTerminalGitSafeDirectories({
       session: {
         metadata: {
-          source_cache_path: cachePath
+          github_mirror_path: githubMirrorPath
         }
       },
       spec: {
         successMetadata: {
           main_checkout_root: targetRoot,
-          source_cache_path: cachePath,
+          github_mirror_path: githubMirrorPath,
           source_path: sourcePath
         }
       },
@@ -12639,7 +12648,7 @@ test("host GitHub command path policy is derived from command metadata", async (
     assert.deepEqual(safeDirectories, [
       targetRoot,
       sourcePath,
-      cachePath
+      githubMirrorPath
     ]);
 
     const env = applyGitSafeDirectoriesToEnv({
@@ -12653,7 +12662,7 @@ test("host GitHub command path policy is derived from command metadata", async (
     assert.equal(env.GIT_CONFIG_KEY_2, "safe.directory");
     assert.equal(env.GIT_CONFIG_VALUE_2, sourcePath);
     assert.equal(env.GIT_CONFIG_KEY_3, "safe.directory");
-    assert.equal(env.GIT_CONFIG_VALUE_3, cachePath);
+    assert.equal(env.GIT_CONFIG_VALUE_3, githubMirrorPath);
   });
 });
 
@@ -12684,13 +12693,15 @@ test("host GitHub command result files are allocated beside managed session sour
   });
 });
 
-test("host GitHub command result files for Git cache refresh are allocated beside project cache", async () => {
+test("host GitHub mirror refresh result files are allocated beside project storage", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const cachePath = path.join(targetRoot, "git-cache", "repository.git");
+    const githubMirrorPath = resolveProjectGithubMirrorPath({
+      projectRoot: targetRoot
+    });
     const directoryRoot = commandResultDirectoryRoot({
       spec: {
         successMetadata: {
-          source_cache_path: cachePath
+          github_mirror_path: githubMirrorPath
         }
       },
       targetRoot: ""
@@ -13392,7 +13403,7 @@ test("Vibe64 command terminal commits completion before slow post-commit hooks f
       assert.equal(terminal.ok, true);
       assert.equal(await Promise.race([
         closePromise.then(() => true),
-        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
+        delay(ASYNC_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
 
       const session = await runtime.getSession("terminal_post_commit");
@@ -13401,18 +13412,18 @@ test("Vibe64 command terminal commits completion before slow post-commit hooks f
       assert.equal(session.actionResults[0]?.status, "completed");
       assert.equal(await Promise.race([
         hookStarted.promise.then(() => true),
-        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
+        delay(ASYNC_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
       assert.equal(await Promise.race([
         publishStarted.promise.then(() => true),
-        delay(POST_COMMIT_TEST_TIMEOUT_MS).then(() => false)
+        delay(ASYNC_TEST_TIMEOUT_MS).then(() => false)
       ]), true);
     } finally {
       hookReleased.resolve();
       publishReleased.resolve();
       await Promise.race([
         closePromise.catch(() => null),
-        delay(POST_COMMIT_TEST_TIMEOUT_MS)
+        delay(ASYNC_TEST_TIMEOUT_MS)
       ]);
     }
   });

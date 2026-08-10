@@ -6,9 +6,13 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT,
   WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
   WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
 } from "@local/vibe64-core/server/projectRepository";
+import {
+  CANONICAL_REPOSITORY_PUSH_OPTION
+} from "@local/vibe64-execution/server";
 import {
   currentOsUser
 } from "@local/vibe64-core/server/osUserIdentity";
@@ -88,6 +92,7 @@ function localSourceSession(root = "", sessionId = "local-source-session") {
 
 function githubSession(root = "", sessionId = "github-session") {
   const sourcePath = path.join(root, "managed", "sessions", "active", sessionId, "source");
+  const projectRoot = path.join(root, "opened-repo");
   const user = currentOsUser();
   return {
     id: sessionId,
@@ -101,7 +106,8 @@ function githubSession(root = "", sessionId = "github-session") {
       session_git_command_actor_thread_id: "thread-1",
       session_git_command_actor_user_key: user.username,
       session_git_command_actor_workdir: sourcePath,
-      source_cache_path: path.join(root, "runtime", "git-cache", "repository.git"),
+      github_mirror_path: path.join(projectRoot, "github-mirror", "repository.git"),
+      main_checkout_root: projectRoot,
       source_kind: "session_clone",
       source_path: sourcePath,
       source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
@@ -110,8 +116,15 @@ function githubSession(root = "", sessionId = "github-session") {
     },
     sessionId,
     sessionRoot: path.join(root, "state", "sessions", "active", sessionId),
-    targetRoot: path.join(root, "opened-repo")
+    targetRoot: projectRoot
   };
+}
+
+function canonicalSession(root = "", sessionId = "canonical-session") {
+  const session = localSourceSession(root, sessionId);
+  session.metadata.canonical_repository_path = path.join(session.targetRoot, "canonical-repository", "repository.git");
+  session.metadata.workflow_repository_profile = WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT;
+  return session;
 }
 
 function serviceForSession(session = {}, {
@@ -435,7 +448,7 @@ test("Codex gh command runs GitHub repository commands as the stored OS actor", 
   });
 });
 
-test("Codex git command refreshes the shared cache after a successful push", async () => {
+test("Codex git command refreshes the GitHub mirror after a successful push", async () => {
   await withTemporaryRoot(async (root) => {
     const session = githubSession(root, "github-push-session");
     await mkdir(session.metadata.source_path, {
@@ -461,23 +474,54 @@ test("Codex git command refreshes the shared cache after a successful push", asy
 
     assert.equal(result.ok, true);
     assert.equal(result.stdout, "pushed\n");
-    assert.equal(result.cacheRefresh.ok, true);
+    assert.equal(result.mirrorRefresh.ok, true);
     assert.equal(calls.length, 2);
     assert.equal(calls[0].command, "git");
     assert.deepEqual(calls[0].args, ["push", "origin", "HEAD:refs/heads/main"]);
     assert.equal(calls[1].command, "bash");
     assert.equal(calls[1].args[0], "-c");
     assert.match(calls[1].args[1], /fetch --prune --atomic origin/u);
-    assert.equal(calls[1].args[3], session.metadata.source_cache_path);
+    assert.equal(calls[1].args[3], session.metadata.github_mirror_path);
     assert.equal(calls[1].args[4], session.metadata.source_remote_url);
     assert.deepEqual(calls[1].allowedRoots, [
       session.metadata.source_path,
-      path.dirname(session.metadata.source_cache_path)
+      path.dirname(session.metadata.github_mirror_path)
     ]);
   });
 });
 
-test("Codex git command preserves push success when cache refresh fails", async () => {
+test("Codex git command rejects a mirror path outside the project repository role", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root, "github-invalid-mirror-session");
+    session.metadata.github_mirror_path = path.join(root, "other-project", "github-mirror", "repository.git");
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    let calls = 0;
+    const service = serviceForSession(session, {
+      async runGatewayCommand() {
+        calls += 1;
+        return {
+          exitCode: 0,
+          ok: true,
+          stdout: "pushed\n"
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["push", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.mirrorRefresh.skipped, true);
+    assert.equal(calls, 1);
+  });
+});
+
+test("Codex git command preserves push success when GitHub mirror refresh fails", async () => {
   await withTemporaryRoot(async (root) => {
     const session = githubSession(root, "github-push-refresh-failure");
     await mkdir(session.metadata.source_path, {
@@ -512,12 +556,12 @@ test("Codex git command preserves push success when cache refresh fails", async 
     assert.equal(result.ok, true);
     assert.equal(result.exitCode, 0);
     assert.equal(result.stdout, "pushed\n");
-    assert.equal(result.cacheRefresh.ok, false);
+    assert.equal(result.mirrorRefresh.ok, false);
     assert.equal(calls, 2);
   });
 });
 
-test("Codex git command does not refresh the shared cache after a rejected push", async () => {
+test("Codex git command does not refresh the GitHub mirror after a rejected push", async () => {
   await withTemporaryRoot(async (root) => {
     const session = githubSession(root, "github-rejected-push-session");
     await mkdir(session.metadata.source_path, {
@@ -543,6 +587,81 @@ test("Codex git command does not refresh the shared cache after a rejected push"
 
     assert.equal(result.ok, false);
     assert.equal(calls, 1);
-    assert.equal(result.cacheRefresh, undefined);
+    assert.equal(result.mirrorRefresh, undefined);
+  });
+});
+
+test("Codex git command guards canonical pushes independently of the prompt", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = canonicalSession(root);
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    let gatewayCall = null;
+    const service = serviceForSession(session, {
+      async runGatewayCommand(request) {
+        gatewayCall = request;
+        return {
+          exitCode: 0,
+          ok: true
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["push", "origin", "HEAD:refs/heads/main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(gatewayCall.args, [
+      "push",
+      "--atomic",
+      `--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}`,
+      "origin",
+      "HEAD:refs/heads/main"
+    ]);
+  });
+});
+
+test("Codex git command identifies the Git subcommand before guarding canonical pushes", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = canonicalSession(root);
+    await mkdir(session.metadata.source_path, {
+      recursive: true
+    });
+    const calls = [];
+    const service = serviceForSession(session, {
+      async runGatewayCommand(request) {
+        calls.push(request);
+        return {
+          exitCode: 0,
+          ok: true
+        };
+      }
+    });
+
+    await service.run({
+      args: ["show", "push"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+    await service.run({
+      args: ["-C", session.metadata.source_path, "push", "--no-atomic", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.deepEqual(calls[0].args, ["show", "push"]);
+    assert.deepEqual(calls[1].args, [
+      "-C",
+      session.metadata.source_path,
+      "push",
+      "--atomic",
+      `--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}`,
+      "origin",
+      "main"
+    ]);
   });
 });

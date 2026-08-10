@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  CANONICAL_REPOSITORY_PUSH_OPTION,
+  GITHUB_MIRROR_REFRESH_SCRIPT,
   shellQuote
 } from "@local/vibe64-execution/server";
 import {
@@ -17,6 +19,9 @@ import {
 import {
   repositoryCommandProfileForSession
 } from "./repositoryCommandProfile.js";
+import {
+  sessionRepositoryStorage
+} from "./sessionRepositoryStorage.js";
 import {
   gitWorktreeCommandSpec
 } from "./shellHelpers.js";
@@ -40,7 +45,6 @@ function localSourceCommitAcceptanceScript() {
     "git -C \"$MAIN_CHECKOUT_ROOT\" merge --ff-only FETCH_HEAD",
     recordCommandFactScript("accepted_commit", "\"$ACCEPTED_COMMIT\""),
     recordCommandFactScript("local_commit_only", "yes"),
-    recordCommandFactScript("main_checkout_synced", "yes"),
     "printf '[studio] Local editor checkout updated to %s.\\n' \"$ACCEPTED_COMMIT\""
   ];
 }
@@ -51,12 +55,10 @@ function canonicalGitCommitAcceptanceScript() {
     "  printf '[studio] Cannot save to Vibe64 Git because the canonical repository path is unknown.\\n' >&2",
     "  exit 1",
     "fi",
-    "mkdir -p \"$(dirname \"$CANONICAL_REPOSITORY_PATH\")\"",
-    "if [ ! -d \"$CANONICAL_REPOSITORY_PATH\" ]; then",
-    "  printf '[studio] Initializing Vibe64 Git repository at %s.\\n' \"$CANONICAL_REPOSITORY_PATH\"",
-    "  git init --bare \"$CANONICAL_REPOSITORY_PATH\"",
+    "if [ ! -d \"$CANONICAL_REPOSITORY_PATH\" ] || [ \"$(git --git-dir \"$CANONICAL_REPOSITORY_PATH\" rev-parse --is-bare-repository 2>/dev/null || true)\" != \"true\" ]; then",
+    "  printf '[studio] The canonical Vibe64 Git repository is missing or invalid: %s.\\n' \"$CANONICAL_REPOSITORY_PATH\" >&2",
+    "  exit 1",
     "fi",
-    "git --git-dir \"$CANONICAL_REPOSITORY_PATH\" symbolic-ref HEAD \"refs/heads/$BASE_BRANCH\" >/dev/null 2>&1 || true",
     "if git remote get-url origin >/dev/null 2>&1; then",
     "  git remote set-url origin \"$CANONICAL_REPOSITORY_PATH\"",
     "else",
@@ -75,10 +77,9 @@ function canonicalGitCommitAcceptanceScript() {
     "fi",
     "ACCEPTED_COMMIT=\"$(git rev-parse --verify HEAD)\"",
     "printf '[studio] Saving accepted commit %s to Vibe64 Git branch %s.\\n' \"$ACCEPTED_COMMIT\" \"$BASE_BRANCH\"",
-    "git push origin \"HEAD:refs/heads/$BASE_BRANCH\"",
+    `git push --atomic --push-option=${CANONICAL_REPOSITORY_PUSH_OPTION} origin "HEAD:refs/heads/$BASE_BRANCH"`,
     recordCommandFactScript("accepted_commit", "\"$ACCEPTED_COMMIT\""),
     recordCommandFactScript("canonical_git_saved", "yes"),
-    recordCommandFactScript("main_checkout_synced", "yes"),
     "printf '[studio] Vibe64 Git repository updated to %s.\\n' \"$ACCEPTED_COMMIT\""
   ];
 }
@@ -113,7 +114,6 @@ function githubPrCommitAcceptanceScript() {
     "  git -C \"$MAIN_CHECKOUT_ROOT\" merge --ff-only FETCH_HEAD",
     recordCommandFactScript("accepted_commit", "\"$ACCEPTED_COMMIT\""),
     recordCommandFactScript("local_commit_only", "yes"),
-    recordCommandFactScript("main_checkout_synced", "yes"),
     "  printf '[studio] Local editor checkout updated to %s.\\n' \"$ACCEPTED_COMMIT\"",
     "  exit 0",
     "fi",
@@ -201,15 +201,12 @@ function repositoryCommitAcceptanceScript(repositoryProfile = {}) {
   return githubPrCommitAcceptanceScript();
 }
 
-async function gitCacheRepositoryMounts(repositoryProfile = {}, session = {}) {
-  if (!repositoryProfile.canonicalGit && !repositoryProfile.githubPr) {
+async function repositoryStorageMounts(repositoryStorage = {}) {
+  const repositoryStoragePath = normalizeText(repositoryStorage.path);
+  if (!repositoryStoragePath || !path.isAbsolute(repositoryStoragePath)) {
     return [];
   }
-  const canonicalRepositoryPath = normalizeText(session.metadata?.source_cache_path);
-  if (!canonicalRepositoryPath || !path.isAbsolute(canonicalRepositoryPath)) {
-    return [];
-  }
-  const repositoryParent = path.dirname(canonicalRepositoryPath);
+  const repositoryParent = path.dirname(repositoryStoragePath);
   await mkdir(repositoryParent, {
     recursive: true
   });
@@ -237,21 +234,22 @@ function mainCheckoutMounts(repositoryProfile = {}, session = {}) {
   ];
 }
 
-async function commitChangesMounts(repositoryProfile = {}, session = {}) {
+async function commitChangesMounts(repositoryProfile = {}, repositoryStorage = {}, session = {}) {
   return [
-    ...await gitCacheRepositoryMounts(repositoryProfile, session),
+    ...await repositoryStorageMounts(repositoryStorage),
     ...mainCheckoutMounts(repositoryProfile, session)
   ];
 }
 
-function commitChangesScript(session = {}) {
+function commitChangesScript(session = {}, repositoryStorage = {}) {
   const repositoryProfile = repositoryCommandProfileForSession(session);
   const workTitlePath = metadataFilePath(session, "work_title");
   const issueTitlePath = metadataFilePath(session, "issue_title");
   const targetRoot = normalizeText(session.targetRoot);
   const mainCheckoutRoot = normalizeText(session.metadata?.main_checkout_root);
   const workSource = normalizeText(session.metadata?.work_source);
-  const canonicalRepositoryPath = normalizeText(session.metadata?.source_cache_path);
+  const canonicalRepositoryPath = normalizeText(repositoryStorage.canonicalRepositoryPath);
+  const githubMirrorPath = normalizeText(repositoryStorage.githubMirrorPath);
   const sourceRemoteUrl = normalizeText(session.metadata?.source_remote_url);
   const baseBranch = normalizeText(session.metadata?.base_branch) ||
     normalizeText(session.metadata?.source_pr_head_ref) ||
@@ -264,6 +262,7 @@ function commitChangesScript(session = {}) {
     `MAIN_CHECKOUT_ROOT=${shellQuote(mainCheckoutRoot)}`,
     `WORK_SOURCE=${shellQuote(workSource)}`,
     `CANONICAL_REPOSITORY_PATH=${shellQuote(canonicalRepositoryPath)}`,
+    `GITHUB_MIRROR_PATH=${shellQuote(githubMirrorPath)}`,
     `SOURCE_REMOTE_URL=${shellQuote(sourceRemoteUrl)}`,
     `COMMIT_TITLE="$(cat ${shellQuote(workTitlePath)} 2>/dev/null | head -n 1 | sed 's/[[:space:]]*$//')"`,
     "if [ -z \"$COMMIT_TITLE\" ]; then",
@@ -302,37 +301,12 @@ function commitChangesScript(session = {}) {
     "  printf '%s\\n' \"$LOCAL_BASE_REF\"",
     "}",
     ...(repositoryProfile.githubPr ? [
-      "refresh_github_cache_after_push() {",
-      "  (",
-      "    set -e",
-      "    if [ -z \"$CANONICAL_REPOSITORY_PATH\" ]; then",
-      "      exit 0",
-      "    fi",
-      "    mkdir -p \"$(dirname \"$CANONICAL_REPOSITORY_PATH\")\"",
-      "    if command -v flock >/dev/null 2>&1; then",
-      "      exec 9>\"${CANONICAL_REPOSITORY_PATH}.refresh.lock\"",
-      "      flock 9",
-      "    fi",
-      "    if [ ! -d \"$CANONICAL_REPOSITORY_PATH\" ]; then",
-      "      if [ -z \"$SOURCE_REMOTE_URL\" ]; then",
-      "        exit 1",
-      "      fi",
-      "      git clone --bare \"$SOURCE_REMOTE_URL\" \"$CANONICAL_REPOSITORY_PATH\"",
-      "      exit 0",
-      "    fi",
-      "    if [ -n \"$SOURCE_REMOTE_URL\" ]; then",
-      "      if git -C \"$CANONICAL_REPOSITORY_PATH\" remote get-url origin >/dev/null 2>&1; then",
-      "        git -C \"$CANONICAL_REPOSITORY_PATH\" remote set-url origin \"$SOURCE_REMOTE_URL\"",
-      "      else",
-      "        git -C \"$CANONICAL_REPOSITORY_PATH\" remote add origin \"$SOURCE_REMOTE_URL\"",
-      "      fi",
-      "    fi",
-      "    git -C \"$CANONICAL_REPOSITORY_PATH\" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'",
-      "  )",
+      "refresh_github_mirror_after_push() {",
+      `  bash -c ${shellQuote(GITHUB_MIRROR_REFRESH_SCRIPT)} vibe64-github-mirror-refresh "$GITHUB_MIRROR_PATH" "$SOURCE_REMOTE_URL"`,
       "}",
       ...repositoryCommitAcceptanceScript(repositoryProfile),
-      "if ! refresh_github_cache_after_push; then",
-      "  printf '[studio] Push succeeded, but Vibe64 could not refresh the shared Git cache. The next authoritative repository read will refresh it.\\n' >&2",
+      "if ! refresh_github_mirror_after_push; then",
+      "  printf '[studio] Push succeeded, but Vibe64 could not refresh the disposable GitHub mirror. The next mirror use will retry.\\n' >&2",
       "fi"
     ] : repositoryCommitAcceptanceScript(repositoryProfile))
   ].join("\n");
@@ -340,20 +314,33 @@ function commitChangesScript(session = {}) {
 
 async function commitChangesTerminalSpec({ session = {} } = {}) {
   const repositoryProfile = repositoryCommandProfileForSession(session);
+  if (!repositoryProfile.workflowRepositoryProfile) {
+    return {
+      ok: false,
+      message: "Cannot commit session changes before the repository profile is assigned."
+    };
+  }
   if (repositoryProfile.localSource && !normalizeText(session.metadata?.main_checkout_root)) {
     return {
       ok: false,
       message: "Local source commit requires main_checkout_root metadata."
     };
   }
+  const repositoryStorage = sessionRepositoryStorage(session, {
+    projectRoot: normalizeText(session.metadata?.main_checkout_root) || session.targetRoot,
+    requireConfigured: !repositoryProfile.localSource
+  });
+  if (!repositoryStorage.ok) {
+    return repositoryStorage;
+  }
   return gitWorktreeCommandSpec({
     applySuccessFacts: commitChangesSuccessMetadataFromFacts,
     commandPreview: "git add -A && git commit",
     label: "Commit changes",
-    mounts: await commitChangesMounts(repositoryProfile, session),
+    mounts: await commitChangesMounts(repositoryProfile, repositoryStorage, session),
     requiresHostGithubCredentials: repositoryProfile.githubAuthRequired,
     runtimes: repositoryProfile.githubAuthRequired ? ["gh"] : [],
-    script: commitChangesScript(session),
+    script: commitChangesScript(session, repositoryStorage),
     session
   });
 }

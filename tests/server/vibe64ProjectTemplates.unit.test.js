@@ -216,8 +216,7 @@ test("project templates materialize managed canonical Git as one root commit", a
     const seedRoot = path.join(root, "seed");
     const targetRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const gitCacheRoot = path.join(targetRoot, "git-cache");
-    const repositoryPath = path.join(gitCacheRoot, "repository.git");
+    const repositoryPath = path.join(targetRoot, "canonical-repository", "repository.git");
     await createSeedRepository(seedRoot);
     await mkdir(targetRoot, {
       recursive: true
@@ -225,7 +224,7 @@ test("project templates materialize managed canonical Git as one root commit", a
 
     const result = await applyProjectTemplate({
       project: {
-        gitCacheRoot,
+        canonicalRepositoryPath: repositoryPath,
         repository: {
           defaultBranch: "main",
           mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
@@ -252,8 +251,7 @@ test("project templates push one root commit to an empty GitHub-backed destinati
     const seedRoot = path.join(root, "seed");
     const targetRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const gitCacheRoot = path.join(targetRoot, "git-cache");
-    const repositoryPath = path.join(gitCacheRoot, "repository.git");
+    const repositoryPath = path.join(targetRoot, "github-mirror", "repository.git");
     const remotePath = path.join(root, "destination.git");
     await createSeedRepository(seedRoot);
     await mkdir(targetRoot, {
@@ -264,7 +262,7 @@ test("project templates push one root commit to an empty GitHub-backed destinati
     const result = await applyProjectTemplate({
       env: {},
       project: {
-        gitCacheRoot,
+        githubMirrorPath: repositoryPath,
         githubRepository: {
           cloneUrl: remotePath,
           fullName: "local/destination"
@@ -366,14 +364,14 @@ test("concurrent project template requests serialize and only one can commit", a
     const seedRoot = path.join(root, "seed");
     const targetRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const gitCacheRoot = path.join(targetRoot, "git-cache");
+    const canonicalRepositoryPath = path.join(targetRoot, "canonical-repository", "repository.git");
     await createSeedRepository(seedRoot);
     await mkdir(targetRoot, {
       recursive: true
     });
     const options = {
       project: {
-        gitCacheRoot,
+        canonicalRepositoryPath,
         repository: {
           defaultBranch: "main",
           mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
@@ -397,7 +395,7 @@ test("concurrent project template requests serialize and only one can commit", a
       assert.equal(rejected.reason.code, "vibe64_project_template_destination_not_empty");
     }
     await assertSingleRootCommit(targetRoot, {
-      gitDir: path.join(gitCacheRoot, "repository.git")
+      gitDir: canonicalRepositoryPath
     });
   });
 });

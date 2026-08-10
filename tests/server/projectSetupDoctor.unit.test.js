@@ -19,7 +19,9 @@ import {
   APP_CREDENTIAL_SCOPE,
   GITHUB_ACCOUNT_MODE_LOCAL,
   GITHUB_ACCOUNT_MODE_USER,
-  USER_CREDENTIAL_SCOPE
+  USER_CREDENTIAL_SCOPE,
+  canonicalRepositoryInitializeScript,
+  canonicalRepositoryInstallRefScript
 } from "@local/vibe64-execution/server";
 import {
   closeTerminalSession,
@@ -41,6 +43,7 @@ import {
 } from "@local/setup-doctor-core/server/githubCliAuth";
 import {
   PROJECT_REPOSITORY_MODE_GITHUB,
+  PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR
 } from "@local/vibe64-core/server/projectRepository";
 import {
@@ -131,13 +134,29 @@ async function createCommittedGitRepository(root) {
   runGit(root, ["commit", "-m", "Initial commit"]);
 }
 
-async function createEmptyBareGitCache(projectRoot) {
-  const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-  await mkdir(path.dirname(gitCacheRepository), {
-    recursive: true
+async function createCanonicalRepository(projectRoot, sourceRepository = "") {
+  const repositoryPath = path.join(projectRoot, "canonical-repository", "repository.git");
+  const initialized = spawnSync("bash", ["-lc", canonicalRepositoryInitializeScript({
+    defaultBranch: "main",
+    repositoryPath
+  })], {
+    cwd: projectRoot,
+    encoding: "utf8"
   });
-  runGit(projectRoot, ["init", "--bare", gitCacheRepository]);
-  return gitCacheRepository;
+  assert.equal(initialized.status, 0, initialized.stderr || initialized.stdout);
+  if (sourceRepository) {
+    const installed = spawnSync("bash", ["-lc", canonicalRepositoryInstallRefScript({
+      repositoryPath,
+      sourceRef: "refs/heads/main",
+      sourceRepository,
+      targetRef: "refs/heads/main"
+    })], {
+      cwd: projectRoot,
+      encoding: "utf8"
+    });
+    assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  }
+  return repositoryPath;
 }
 
 async function createManagedBootstrapProject(projectRoot, {
@@ -146,21 +165,22 @@ async function createManagedBootstrapProject(projectRoot, {
   slug = "bootstrap-app"
 } = {}) {
   const projectRecordPath = path.join(projectRoot, "project.json");
-  const githubRepository = {
-    defaultBranch,
-    fullName: `example/${slug}`,
-    url: `https://github.com/example/${slug}`
+  const repository = {
+    defaultBranch: defaultBranch || "main",
+    mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
   };
   await writeFile(projectRecordPath, JSON.stringify({
-    githubRepository
+    repository
   }), "utf8");
   return {
     applicationMode,
-    githubRepository,
+    canonicalRepositoryPath: path.join(projectRoot, "canonical-repository", "repository.git"),
     projectRecordPath,
     projectLocalRoot: projectRoot,
     projectRoot,
     projectRuntimeRoot: projectRoot,
+    repository,
+    repositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT,
     selected: true,
     slug
   };
@@ -568,14 +588,7 @@ test("Project Setup stream is tree-free for managed project homes with multiple 
   await withTemporaryRoot(async (projectRoot) => {
     await withTemporaryRoot(async (sourceRepo) => {
       await createCommittedGitRepository(sourceRepo);
-      const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-      await mkdir(path.dirname(gitCacheRepository), {
-        recursive: true
-      });
-      const clone = spawnSync("git", ["clone", "--bare", sourceRepo, gitCacheRepository], {
-        encoding: "utf8"
-      });
-      assert.equal(clone.status, 0, clone.stderr || clone.stdout);
+      const canonicalRepositoryPath = await createCanonicalRepository(projectRoot, sourceRepo);
       const activeSessionsRoot = path.join(projectRoot, "sessions", "active");
       await mkdir(path.join(activeSessionsRoot, "session-a", "source"), {
         recursive: true
@@ -584,25 +597,21 @@ test("Project Setup stream is tree-free for managed project homes with multiple 
         recursive: true
       });
       const projectRecordPath = path.join(projectRoot, "project.json");
-      await writeFile(projectRecordPath, JSON.stringify({
-        githubRepository: {
-          defaultBranch: "main",
-          fullName: "example/catalog-app",
-          url: "https://github.com/example/catalog-app"
-        }
-      }), "utf8");
+      const repository = {
+        defaultBranch: "main",
+        mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
+      };
+      await writeFile(projectRecordPath, JSON.stringify({ repository }), "utf8");
       let createRuntimeCalls = 0;
       let projectConfigEnvironmentCalls = 0;
       const project = {
-        githubRepository: {
-          defaultBranch: "main",
-          fullName: "example/catalog-app",
-          url: "https://github.com/example/catalog-app"
-        },
+        canonicalRepositoryPath,
         projectRecordPath,
         projectLocalRoot: projectRoot,
         projectRoot,
         projectRuntimeRoot: projectRoot,
+        repository,
+        repositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT,
         selected: true,
         slug: "catalog-app"
       };
@@ -653,7 +662,7 @@ test("Project Setup stream is tree-free for managed project homes with multiple 
                 projectType: "jskit",
                 ready: true,
                 ref: "refs/heads/main",
-                sourceType: "git-cache",
+                sourceType: "canonical-repository",
                 status: "ready"
               }
             };
@@ -675,7 +684,7 @@ test("Project Setup stream is tree-free for managed project homes with multiple 
       assert.deepEqual(status.stages.map((stage) => stage.id), [
         "project-record",
         "project-repository",
-        "git-cache",
+        "repository-storage",
         "project-metadata",
         "committed-config",
         "ready"
@@ -684,17 +693,16 @@ test("Project Setup stream is tree-free for managed project homes with multiple 
   });
 });
 
-test("Project Setup reads catalog Git cache from the project record git cache root", async () => {
+test("Project Setup reads the catalog GitHub mirror from its explicit project role", async () => {
   await withTemporaryRoot(async (runtimeRoot) => {
     await withTemporaryRoot(async (sourceRoot) => {
       await withTemporaryRoot(async (sourceRepo) => {
         await createCommittedGitRepository(sourceRepo);
-        const gitCacheRoot = path.join(sourceRoot, "git-cache");
-        const gitCacheRepository = path.join(gitCacheRoot, "repository.git");
-        await mkdir(gitCacheRoot, {
+        const githubMirrorPath = path.join(sourceRoot, "github-mirror", "repository.git");
+        await mkdir(path.dirname(githubMirrorPath), {
           recursive: true
         });
-        const clone = spawnSync("git", ["clone", "--bare", sourceRepo, gitCacheRepository], {
+        const clone = spawnSync("git", ["clone", "--bare", sourceRepo, githubMirrorPath], {
           encoding: "utf8"
         });
         assert.equal(clone.status, 0, clone.stderr || clone.stdout);
@@ -710,7 +718,7 @@ test("Project Setup reads catalog Git cache from the project record git cache ro
           }
         }), "utf8");
         const project = {
-          gitCacheRoot,
+          githubMirrorPath,
           githubRepository: {
             defaultBranch: "main",
             fullName: "example/catalog-app",
@@ -770,7 +778,7 @@ test("Project Setup reads catalog Git cache from the project record git cache ro
                   projectType: "jskit",
                   ready: true,
                   ref: "refs/heads/main",
-                  sourceType: "git-cache",
+                  sourceType: "github-mirror",
                   status: "ready"
                 }
               };
@@ -783,10 +791,10 @@ test("Project Setup reads catalog Git cache from the project record git cache ro
           emit() {}
         });
 
-        const gitCacheStage = status.stages.find((stage) => stage.id === "git-cache");
-        assert.equal(gitCacheStage?.status, "pass");
-        assert.match(gitCacheStage?.observed || "", /^refs\/heads\/main: /u);
-        assert.doesNotMatch(gitCacheStage?.observed || "", /Missing Git cache/u);
+        const repositoryStorageStage = status.stages.find((stage) => stage.id === "repository-storage");
+        assert.equal(repositoryStorageStage?.status, "pass");
+        assert.match(repositoryStorageStage?.observed || "", /^refs\/heads\/main: /u);
+        assert.doesNotMatch(repositoryStorageStage?.observed || "", /not materialized/u);
       });
     });
   });
@@ -796,14 +804,7 @@ test("Project Setup waits for active existing-app initialization to commit proje
   await withTemporaryRoot(async (projectRoot) => {
     await withTemporaryRoot(async (sourceRepo) => {
       await createCommittedGitRepository(sourceRepo);
-      const gitCacheRepository = path.join(projectRoot, "git-cache", "repository.git");
-      await mkdir(path.dirname(gitCacheRepository), {
-        recursive: true
-      });
-      const clone = spawnSync("git", ["clone", "--bare", sourceRepo, gitCacheRepository], {
-        encoding: "utf8"
-      });
-      assert.equal(clone.status, 0, clone.stderr || clone.stdout);
+      await createCanonicalRepository(projectRoot, sourceRepo);
 
       const project = await createManagedBootstrapProject(projectRoot, {
         applicationMode: PROJECT_APPLICATION_MODE_EXISTING,
@@ -890,7 +891,7 @@ test("Project Setup waits for active existing-app initialization to commit proje
 
 test("Project Setup reports seed required instead of blocked for an empty Vibe64-created repo", async () => {
   await withTemporaryRoot(async (projectRoot) => {
-    await createEmptyBareGitCache(projectRoot);
+    await createCanonicalRepository(projectRoot);
     const project = await createManagedBootstrapProject(projectRoot, {
       slug: "seed-required-app"
     });
@@ -936,19 +937,19 @@ test("Project Setup reports seed required instead of blocked for an empty Vibe64
     assert.deepEqual(status.stages.map((stage) => [stage.id, stage.status]), [
       ["project-record", "pass"],
       ["project-repository", "pass"],
-      ["git-cache", "pass"],
+      ["repository-storage", "pass"],
       ["project-metadata", "pass"],
       ["committed-config", "pending"],
       ["ready", "pending"]
     ]);
     assert.doesNotMatch(JSON.stringify(status), /Needed a single revision/u);
-    assert.match(status.stages.find((stage) => stage.id === "git-cache")?.observed || "", /no committed baseline/u);
+    assert.match(status.stages.find((stage) => stage.id === "repository-storage")?.observed || "", /no committed baseline/u);
   });
 });
 
 test("Project Setup reports seed in progress for an empty Vibe64-created repo with an active seed session", async () => {
   await withTemporaryRoot(async (projectRoot) => {
-    await createEmptyBareGitCache(projectRoot);
+    await createCanonicalRepository(projectRoot);
     const project = await createManagedBootstrapProject(projectRoot, {
       slug: "seed-active-app"
     });

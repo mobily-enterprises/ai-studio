@@ -217,17 +217,17 @@ test.describe("live Vibe64 session workflow", () => {
     await markMetadataAndReload(page, "pr_url", "https://github.com/mercmobily/studio-ai-e2e-repo/pull/999999");
     await markMetadataAndReload(page, "pr_source", "created");
     await assertChecklistControls(page, "create_and_merge_pull_request", {
-      disabled: ["Next step", "Refresh Git cache"],
+      disabled: ["Next step", "Refresh GitHub mirror"],
       enabled: ["Open PR", "Prepare for merge", "Merge", "Do not merge"]
     });
 
     await markMetadataAndReload(page, "pr_merged", "yes");
     await assertChecklistControls(page, "create_and_merge_pull_request", {
       disabled: ["Next step"],
-      enabled: ["Refresh Git cache"]
+      enabled: ["Refresh GitHub mirror"]
     });
 
-    await markMetadataAndReload(page, "main_checkout_synced", "yes");
+    await markMetadataAndReload(page, "github_mirror_refresh_attempted", "yes");
     await assertChecklistControls(page, "create_and_merge_pull_request", {
       enabled: ["Next step"]
     });
@@ -275,7 +275,7 @@ test.describe("live Vibe64 session workflow", () => {
     await expectButtonEnabled(page, "Next step");
   });
 
-  test("runs the full new-branch path through PR creation, merge, sync, and finish", async ({ page }) => {
+  test("runs the full new-branch path through PR creation, merge, mirror refresh, and finish", async ({ page }) => {
     const issue = await createFixtureIssue("new-pr-source-issue");
 
     await createNewBranchSessionAtIssueStep(page);
@@ -317,7 +317,7 @@ test.describe("live Vibe64 session workflow", () => {
     await expectButtonEnabled(page, "Merge");
     await runCommandAndWaitForMetadata(page, "Merge", "pr_merged", UI_COMMAND_TIMEOUT_MS);
 
-    await runCommandAndWaitForMetadata(page, "Refresh Git cache", "main_checkout_synced", UI_COMMAND_TIMEOUT_MS);
+    await runCommandAndWaitForMetadata(page, "Refresh GitHub mirror", "github_mirror_refresh_attempted", UI_COMMAND_TIMEOUT_MS);
 
     await goNextToStep(page, "session_finished");
     await clickButton(page, "Archive");

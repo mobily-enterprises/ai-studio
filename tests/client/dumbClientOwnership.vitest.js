@@ -21,7 +21,7 @@ const SERVER_OWNED_WORKFLOW_WORDS = Object.freeze([
   "implementation_reviewed",
   "issue_file_created",
   "local_session_finished",
-  "main_checkout_synced",
+  "github_mirror_refresh_attempted",
   "make_plan",
   "make_seed_plan",
   "merge_pr",

@@ -514,8 +514,8 @@ function validateWorkflowContract(workflow = {}) {
     if (Object.keys(mergeIntent).length > 0) {
       requireActionReference(failures, actionIds, mergeIntent.prepareActionId, `${context}.presentation.automation.mergeIntent.prepareActionId`);
       requireActionReference(failures, actionIds, mergeIntent.mergeActionId, `${context}.presentation.automation.mergeIntent.mergeActionId`);
-      if (normalizedText(mergeIntent.syncActionId)) {
-        requireActionReference(failures, actionIds, mergeIntent.syncActionId, `${context}.presentation.automation.mergeIntent.syncActionId`);
+      if (normalizedText(mergeIntent.refreshActionId)) {
+        requireActionReference(failures, actionIds, mergeIntent.refreshActionId, `${context}.presentation.automation.mergeIntent.refreshActionId`);
       }
       if (normalizedText(mergeIntent.metadataValue) && !allIntentIds.has(normalizedText(mergeIntent.metadataValue))) {
         addMissingReference(failures, {
@@ -681,7 +681,7 @@ test("vibe64 runtime returns a recoverable session when live source inspection f
       initialStep: "session_finished",
       metadata: {
         ...sourceMetadata(targetRoot, "inspection-failure-finish"),
-        main_checkout_synced: "yes"
+        github_mirror_refresh_attempted: "yes"
       },
       sessionId: "inspection-failure-finish"
     });
@@ -1591,16 +1591,16 @@ test("vibe64 runtime presentation snapshots come from workflow step metadata", a
           route: ""
         },
         enabledIntentIds: [
-          "merge_and_sync",
+          "merge_and_refresh_mirror",
           "skip_merge"
         ],
         intentIds: [
-          "merge_and_sync",
+          "merge_and_refresh_mirror",
           "skip_merge"
         ],
         screen: {
           kind: "merge",
-          message: "The pull request is ready. Merge it and refresh the Git cache, or finish without merging.",
+          message: "The pull request is ready. Merge it and refresh the GitHub mirror, or finish without merging.",
           primaryIntentId: "",
           sections: ["report_preview"],
           title: "Merge pull request?",
@@ -1905,7 +1905,7 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       adapter: new FakeTargetAdapter({
         capabilities: {
           merge_pr: true,
-          sync_main_checkout: true
+          refresh_github_mirror: true
         }
       }),
       targetRoot
@@ -2003,20 +2003,20 @@ test("vibe64 runtime owns final-review follow-up and merge decision intents", as
       },
       sessionId: "presentation_merge_intents"
     });
-    const mergeReview = await runtime.runIntent("presentation_merge_intents", "merge_and_sync");
+    const mergeReview = await runtime.runIntent("presentation_merge_intents", "merge_and_refresh_mirror");
     assert.equal(mergeReview.presentation.auto.nextOperation.kind, "action");
     assert.equal(mergeReview.presentation.auto.nextOperation.executable, true);
     assert.equal(mergeReview.presentation.auto.nextOperation.route, "session-action");
     assert.equal(mergeReview.presentation.auto.nextOperation.actionId, "prepare_for_merge");
 
     await runtime.store.writeMetadataValue("presentation_merge_intents", "pr_merged", "yes");
-    const syncPending = await runtime.getSession("presentation_merge_intents");
-    assert.equal(syncPending.next.enabled, false);
-    assert.equal(syncPending.presentation.auto.nextOperation.kind, "command");
-    assert.equal(syncPending.presentation.auto.nextOperation.executable, true);
-    assert.equal(syncPending.presentation.auto.nextOperation.actionId, "sync_main_checkout");
+    const mirrorRefreshPending = await runtime.getSession("presentation_merge_intents");
+    assert.equal(mirrorRefreshPending.next.enabled, false);
+    assert.equal(mirrorRefreshPending.presentation.auto.nextOperation.kind, "command");
+    assert.equal(mirrorRefreshPending.presentation.auto.nextOperation.executable, true);
+    assert.equal(mirrorRefreshPending.presentation.auto.nextOperation.actionId, "refresh_github_mirror");
 
-    await runtime.store.writeMetadataValue("presentation_merge_intents", "main_checkout_synced", "yes");
+    await runtime.store.writeMetadataValue("presentation_merge_intents", "github_mirror_refresh_attempted", "yes");
     const mergeComplete = await runtime.getSession("presentation_merge_intents");
     assert.equal(mergeComplete.next.enabled, true);
     assert.equal(mergeComplete.presentation.auto.nextOperation.kind, "advance");
@@ -2134,7 +2134,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     "create_pr_on_gh",
     "prepare_for_merge",
     "merge_pr",
-    "sync_main_checkout",
+    "refresh_github_mirror",
     "skip_merge"
   ]);
   assert.deepEqual(createPullRequestStep.autopilot.actionSequence.map((action) => action.actionId), [
@@ -2160,7 +2160,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     undefined
   );
   assert.equal(
-    typeof bigFeature.intentHandlers.create_and_merge_pull_request.merge_and_sync,
+    typeof bigFeature.intentHandlers.create_and_merge_pull_request.merge_and_refresh_mirror,
     "function"
   );
   assert.equal(
@@ -2210,7 +2210,7 @@ test("vibe64 workflow definitions are ordered step lists with self-contained ste
     /managed browser/u
   );
   assert.equal(
-    typeof initializeExistingApplication.intentHandlers.create_and_merge_pull_request.merge_and_sync,
+    typeof initializeExistingApplication.intentHandlers.create_and_merge_pull_request.merge_and_refresh_mirror,
     "function"
   );
 });
@@ -3121,7 +3121,7 @@ test("vibe64 workflow finishes local seed commits without requiring a pull reque
       metadata: {
         accepted_commit: "abc123",
         local_commit_only: "yes",
-        main_checkout_synced: "yes",
+        github_mirror_refresh_attempted: "yes",
         workflow_definition: VIBE64_WORKFLOW_DEFINITION_IDS.SEED_APPLICATION,
         work_source: "seed"
       },
@@ -3205,7 +3205,7 @@ test("vibe64 workflow completes commit step only after remote push or local-only
         ...sourceMetadata(targetRoot, "local_only_commit_complete"),
         accepted_commit: "def456",
         local_commit_only: "yes",
-        main_checkout_synced: "yes"
+        github_mirror_refresh_attempted: "yes"
       },
       sessionId: "local_only_commit_complete"
     });
@@ -3219,7 +3219,7 @@ test("vibe64 workflow completes commit step only after remote push or local-only
         ...sourceMetadata(targetRoot, "canonical_git_commit_complete"),
         accepted_commit: "789abc",
         canonical_git_saved: "yes",
-        main_checkout_synced: "yes"
+        github_mirror_refresh_attempted: "yes"
       },
       sessionId: "canonical_git_commit_complete"
     });
@@ -3243,7 +3243,7 @@ test("non-GitHub repository workflows finish after the saved commit step", async
         ...sourceMetadata(targetRoot, "canonical_git_finish_after_save"),
         accepted_commit: "789abc",
         canonical_git_saved: "yes",
-        main_checkout_synced: "yes"
+        github_mirror_refresh_attempted: "yes"
       },
       sessionId: "canonical_git_finish_after_save"
     });
@@ -3269,7 +3269,7 @@ test("non-GitHub repository workflows finish after the saved commit step", async
         ...sourceMetadata(targetRoot, "local_source_finish_after_apply"),
         accepted_commit: "def456",
         local_commit_only: "yes",
-        main_checkout_synced: "yes"
+        github_mirror_refresh_attempted: "yes"
       },
       sessionId: "local_source_finish_after_apply"
     });
@@ -3300,7 +3300,7 @@ test("vibe64 workflow keeps finish session retryable after archive failure", asy
       metadata: {
         accepted_commit: "abc123",
         local_commit_only: "yes",
-        main_checkout_synced: "yes",
+        github_mirror_refresh_attempted: "yes",
         workflow_definition: VIBE64_WORKFLOW_DEFINITION_IDS.SEED_APPLICATION,
         work_source: "seed"
       },

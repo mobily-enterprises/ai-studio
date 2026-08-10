@@ -541,7 +541,7 @@ test("execute and deslop standard prompts explicitly point Codex at the generate
   assert.match(runDeslop.prompt, /`vibe64\.project\.json`/u);
   assert.match(runDeslop.prompt, /`vibe64\.runtime-lock\.json`/u);
   assert.match(runDeslop.prompt, /Do not delete, move, or overwrite source contract files to clean a diff/u);
-  assert.match(runDeslop.prompt, /Do not commit or rewrite runtime-local state/u);
+  assert.match(runDeslop.prompt, /Do not commit or rewrite Vibe64-owned project storage/u);
   assert.doesNotMatch(makePlan.prompt, /Code index policy:/u);
 });
 
@@ -905,9 +905,9 @@ test("vibe64 session briefing contains the static adapter setup once", () => {
   assert.match(briefing, /`vibe64\.project\.json`/u);
   assert.match(briefing, /`vibe64\.runtime-lock\.json`/u);
   assert.match(briefing, /Committed source contract files/u);
-  assert.match(briefing, /Runtime-local Vibe64 state includes project `runtime-config\/\*`/u);
+  assert.match(briefing, /Vibe64-owned project storage includes `runtime-config\/\*`/u);
   assert.match(briefing, /Do not delete, move, or overwrite committed source contract files/u);
-  assert.match(briefing, /Do not commit or rewrite runtime-local Vibe64 state/u);
+  assert.match(briefing, /Do not commit or rewrite Vibe64-owned project storage/u);
   assert.match(briefing, /Generated code index path: \.vibe64\/code-index\.md/u);
   assert.match(briefing, /Vibe64 agent result routing:/u);
   assert.match(briefing, /Ordinary interactive conversation turns use the normal assistant response/u);

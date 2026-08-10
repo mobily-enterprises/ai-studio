@@ -413,7 +413,6 @@ async function archiveSessionSource({
     source_recovery_base_commit: metadataValue(session, "base_commit"),
     source_recovery_branch: branch,
     source_recovery_bundle_artifact: branchBundleArtifact,
-    source_recovery_cache_path: metadataValue(session, "source_cache_path"),
     source_recovery_default_branch: metadataValue(session, "source_default_branch") || metadataValue(session, "base_branch"),
     source_recovery_dirty: dirtyArtifacts.dirty ? "yes" : "no",
     source_recovery_excluded_untracked_count: String(dirtyArtifacts.excludedUntrackedCount || 0),

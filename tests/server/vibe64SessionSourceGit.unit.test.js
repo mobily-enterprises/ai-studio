@@ -70,7 +70,7 @@ async function createReferencedSessionSource(targetRoot, {
 } = {}) {
   const parentRoot = path.dirname(targetRoot);
   const originPath = path.join(parentRoot, "origin");
-  const cachePath = path.join(parentRoot, "git-cache", "repository.git");
+  const referenceRepositoryPath = path.join(parentRoot, "reference-repository", "repository.git");
   const sourcePath = testManagedSourcePath(targetRoot, "unit-session");
   const cloneSessionSource = async () => {
     await mkdir(path.dirname(sourcePath), {
@@ -79,29 +79,29 @@ async function createReferencedSessionSource(targetRoot, {
     await git(parentRoot, [
       "clone",
       "--reference-if-able",
-      cachePath,
+      referenceRepositoryPath,
       originPath,
       sourcePath
     ]);
   };
   await createGitProject(originPath);
-  await mkdir(path.dirname(cachePath), {
+  await mkdir(path.dirname(referenceRepositoryPath), {
     recursive: true
   });
-  await git(parentRoot, ["clone", "--bare", originPath, cachePath]);
+  await git(parentRoot, ["clone", "--bare", originPath, referenceRepositoryPath]);
   if (cloneSource) {
     await cloneSessionSource();
   }
   return {
-    cachePath,
+    referenceRepositoryPath,
     cloneSessionSource,
     sourcePath
   };
 }
 
-test("session source Git helper removes runtime git-cache alternates", async () => {
+test("session source Git helper removes reference-repository alternates", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const { cachePath, sourcePath } = await createReferencedSessionSource(targetRoot);
+    const { referenceRepositoryPath, sourcePath } = await createReferencedSessionSource(targetRoot);
     const alternatesPath = await sessionSourceGitAlternatesPath(sourcePath);
     assert.equal(await pathExists(alternatesPath), true);
 
@@ -110,7 +110,7 @@ test("session source Git helper removes runtime git-cache alternates", async () 
     assert.equal(result.repaired, true);
     assert.equal(await pathExists(alternatesPath), false);
 
-    await rename(cachePath, `${cachePath}.removed`);
+    await rename(referenceRepositoryPath, `${referenceRepositoryPath}.removed`);
     assert.match(await git(sourcePath, ["rev-parse", "--verify", "HEAD"]), /^[0-9a-f]{40}$/u);
     assert.equal(await git(sourcePath, ["status", "--short"]), "");
   });

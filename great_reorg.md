@@ -65,7 +65,8 @@ Vibe64-owned state should be separable from the source checkout:
 projectHome/
   state/
   local/
-    git-cache/repository.git
+    canonical-repository/repository.git     # managed_git only
+    github-mirror/repository.git            # github only; disposable
     sessions/active/<session-id>/source     # sessionSource
     deployments/sources/<release-id>        # publishSource
     deployments/releases/<release-id>/artifact/workspace
@@ -80,7 +81,8 @@ The tenant project directory is project home only, not a source checkout:
   state/
     project.json                               # Online binding
   local/
-    git-cache/repository.git
+    canonical-repository/repository.git        # managed_git only
+    github-mirror/repository.git               # github only; disposable
     sessions/active/<session-id>/source
     deployments/sources/<release-id>
     deployments/releases/<release-id>/artifact/workspace

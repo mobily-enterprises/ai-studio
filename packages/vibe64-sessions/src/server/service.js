@@ -2297,16 +2297,16 @@ function firstOpenSession(sessions = []) {
   return (Array.isArray(sessions) ? sessions : []).find(isOpenVibe64Session) || null;
 }
 
-function sessionNeedsMainCheckoutSync(session = {}) {
+function sessionNeedsGithubMirrorRefresh(session = {}) {
   const metadata = session.metadata || {};
   return isOpenVibe64Session(session) &&
     String(metadata.pr_merged || "").trim() &&
-    !String(metadata.main_checkout_synced || "").trim() &&
+    !String(metadata.github_mirror_refresh_attempted || "").trim() &&
     !String(metadata.merge_skipped || "").trim();
 }
 
-function mainCheckoutSyncBlocker(sessions = []) {
-  return sessions.find(sessionNeedsMainCheckoutSync) || null;
+function githubMirrorRefreshBlocker(sessions = []) {
+  return sessions.find(sessionNeedsGithubMirrorRefresh) || null;
 }
 
 function sessionListResponse(sessions = [], {
@@ -2692,11 +2692,11 @@ function sessionCreationPlan({
       })
     };
   }
-  const syncBlocker = mainCheckoutSyncBlocker(existingOpenSessions);
-  if (syncBlocker) {
-    const message = `Session ${syncBlocker.sessionId} has merged a pull request but has not refreshed the Git cache. Run Refresh Git cache there before starting another session.`;
+  const mirrorRefreshBlocker = githubMirrorRefreshBlocker(existingOpenSessions);
+  if (mirrorRefreshBlocker) {
+    const message = `Session ${mirrorRefreshBlocker.sessionId} has merged a pull request but has not refreshed the GitHub mirror. Run Refresh GitHub mirror there before starting another session.`;
     return {
-      blockedCode: "main_checkout_sync_required",
+      blockedCode: "github_mirror_refresh_required",
       response: blockedSessionCreationResponse({
         creation: {
           ...creation,
@@ -2705,7 +2705,7 @@ function sessionCreationPlan({
         },
         existingOpenSessions,
         limits,
-        code: "main_checkout_sync_required",
+        code: "github_mirror_refresh_required",
         message
       })
     };

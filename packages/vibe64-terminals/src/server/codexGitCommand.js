@@ -18,8 +18,16 @@ import {
   sanitizeLogText
 } from "@local/vibe64-core/server/logging";
 import {
+  CANONICAL_REPOSITORY_PUSH_OPTION,
+  githubMirrorRefreshInvocation,
   runVibe64Command
 } from "@local/vibe64-execution/server";
+import {
+  WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT
+} from "@local/vibe64-core/server/projectRepository";
+import {
+  resolveProjectGithubMirrorPath
+} from "@local/vibe64-core/server/projectState";
 import {
   vibe64ErrorResponse,
   vibe64StatusCode
@@ -43,33 +51,16 @@ const CODEX_GIT_COMMAND_SOCKET_NAME = "command.sock";
 const CODEX_GIT_COMMAND_WRAPPER_NAMES = Object.freeze(["git", "gh"]);
 const CODEX_GIT_COMMAND_INPUT_MAX_BYTES = 20 * 1024 * 1024;
 const CODEX_GIT_COMMAND_TIMEOUT_MS = 120_000;
-const CODEX_GIT_CACHE_REFRESH_SCRIPT = `
-set -e
-cache_path="$1"
-remote_url="$2"
-lock_path="\${cache_path}.refresh.lock"
-mkdir -p "$(dirname "$cache_path")"
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$lock_path"
-  flock 9
-fi
-if [ ! -d "$cache_path" ]; then
-  if [ -z "$remote_url" ]; then
-    printf '[studio] Git cache is missing and its remote URL is unavailable.\\n' >&2
-    exit 1
-  fi
-  git clone --bare "$remote_url" "$cache_path"
-  exit 0
-fi
-if [ -n "$remote_url" ]; then
-  if git -C "$cache_path" remote get-url origin >/dev/null 2>&1; then
-    git -C "$cache_path" remote set-url origin "$remote_url"
-  else
-    git -C "$cache_path" remote add origin "$remote_url"
-  fi
-fi
-git -C "$cache_path" fetch --prune --atomic origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
-`;
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "--config-env",
+  "--exec-path",
+  "--git-dir",
+  "--namespace",
+  "--super-prefix",
+  "--work-tree",
+  "-C",
+  "-c"
+]);
 const VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV = "VIBE64_CODEX_GIT_COMMAND_SESSION_ID";
 const VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV = "VIBE64_CODEX_GIT_COMMAND_SOCKET";
 const VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV = "VIBE64_CODEX_GIT_COMMAND_TOKEN";
@@ -305,11 +296,36 @@ function responseError(message = "", code = "vibe64_codex_git_command_failed", e
   };
 }
 
+function gitSubcommandIndex(args = []) {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = normalizeText(args[index]);
+    if (!value) {
+      continue;
+    }
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(value)) {
+      index += 1;
+      continue;
+    }
+    if (value === "--") {
+      return index + 1 < args.length ? index + 1 : -1;
+    }
+    if (!value.startsWith("-")) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function gitPushIndex(args = []) {
+  const index = gitSubcommandIndex(args);
+  return index >= 0 && normalizeText(args[index]) === "push" ? index : -1;
+}
+
 function commandUpdatesGithubRepository(command = "", args = []) {
   const normalizedCommand = normalizeText(command);
   const normalizedArgs = (Array.isArray(args) ? args : []).map(normalizeText);
   if (normalizedCommand === "git") {
-    return normalizedArgs.includes("push");
+    return gitPushIndex(normalizedArgs) >= 0;
   }
   if (normalizedCommand !== "gh") {
     return false;
@@ -318,22 +334,64 @@ function commandUpdatesGithubRepository(command = "", args = []) {
   return prIndex >= 0 && normalizedArgs[prIndex + 1] === "merge";
 }
 
-function trustedSessionGitCachePath(value = "") {
-  const normalized = normalizeText(value);
-  if (!normalized || !path.isAbsolute(normalized)) {
-    return "";
-  }
-  const resolved = path.resolve(normalized);
+function gitCommandArgsForSession(session = {}, command = "", args = []) {
+  let normalizedArgs = Array.isArray(args) ? args.map((arg) => String(arg)) : [];
+  const pushIndex = gitPushIndex(normalizedArgs);
   if (
-    path.basename(resolved) !== "repository.git" ||
-    path.basename(path.dirname(resolved)) !== "git-cache"
+    normalizeText(command) !== "git" ||
+    pushIndex < 0 ||
+    normalizeText(session.metadata?.workflow_repository_profile) !== WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT
+  ) {
+    return normalizedArgs;
+  }
+  normalizedArgs = normalizedArgs.filter((arg, index) => (
+    index <= pushIndex || normalizeText(arg) !== "--no-atomic"
+  ));
+  const pushArgs = normalizedArgs.slice(pushIndex + 1);
+  const hasAtomic = pushArgs.some((arg) => normalizeText(arg) === "--atomic");
+  const hasMutationOption = pushArgs.some((arg, index) => {
+    const value = normalizeText(arg);
+    return value === `--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}` ||
+      value === `-o=${CANONICAL_REPOSITORY_PUSH_OPTION}` ||
+      ((value === "--push-option" || value === "-o") && normalizeText(pushArgs[index + 1]) === CANONICAL_REPOSITORY_PUSH_OPTION);
+  });
+  const requiredOptions = [
+    ...(hasAtomic ? [] : ["--atomic"]),
+    ...(hasMutationOption ? [] : [`--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}`])
+  ];
+  if (requiredOptions.length === 0) {
+    return normalizedArgs;
+  }
+  return [
+    ...normalizedArgs.slice(0, pushIndex + 1),
+    ...requiredOptions,
+    ...normalizedArgs.slice(pushIndex + 1)
+  ];
+}
+
+function trustedSessionGithubMirrorPath({
+  mirrorPath = "",
+  projectRoot = ""
+} = {}) {
+  const normalizedMirrorPath = normalizeText(mirrorPath);
+  const normalizedProjectRoot = normalizeText(projectRoot);
+  if (
+    !normalizedMirrorPath ||
+    !normalizedProjectRoot ||
+    !path.isAbsolute(normalizedMirrorPath) ||
+    !path.isAbsolute(normalizedProjectRoot)
   ) {
     return "";
   }
-  return resolved;
+  const expectedMirrorPath = resolveProjectGithubMirrorPath({
+    projectRoot: normalizedProjectRoot
+  });
+  return path.resolve(normalizedMirrorPath) === path.resolve(expectedMirrorPath)
+    ? expectedMirrorPath
+    : "";
 }
 
-async function readSessionGitCacheDescriptor(projectService = {}, sessionId = "") {
+async function readSessionGithubMirrorDescriptor(projectService = {}, sessionId = "") {
   if (typeof projectService.createSessionStore !== "function") {
     return null;
   }
@@ -344,38 +402,43 @@ async function readSessionGitCacheDescriptor(projectService = {}, sessionId = ""
     return null;
   }
   const [
-    cachePath,
+    mirrorPath,
+    projectRoot,
     remoteUrl
   ] = await Promise.all([
-    store.readMetadataValue(sessionId, "source_cache_path"),
+    store.readMetadataValue(sessionId, "github_mirror_path"),
+    store.readMetadataValue(sessionId, "main_checkout_root"),
     store.readMetadataValue(sessionId, "source_remote_url")
   ]);
-  const trustedCachePath = trustedSessionGitCachePath(cachePath);
-  return trustedCachePath
+  const trustedMirrorPath = trustedSessionGithubMirrorPath({
+    mirrorPath,
+    projectRoot
+  });
+  return trustedMirrorPath
     ? {
-        cachePath: trustedCachePath,
+        mirrorPath: trustedMirrorPath,
         remoteUrl: normalizeText(remoteUrl)
       }
     : null;
 }
 
-function logGitCacheRefresh(logger = null, result = {}, fields = {}) {
+function logGithubMirrorRefresh(logger = null, result = {}, fields = {}) {
   const ok = result?.ok === true;
   return logOperationalEvent(logger, ok ? "info" : "warn", {
-    cachePath: normalizeText(fields.cachePath),
+    mirrorPath: normalizeText(fields.mirrorPath),
     code: ok ? "" : normalizeText(result?.code),
     command: normalizeText(fields.command),
     component: "vibe64.codex_git_command",
     error: ok ? "" : commandOutput(result),
-    event: "vibe64.codex_git_cache_refresh.finished",
+    event: "vibe64.codex_github_mirror_refresh.finished",
     ok,
     sessionId: normalizeText(fields.sessionId)
   }, ok
-    ? "Vibe64 refreshed the project Git cache after a remote mutation."
-    : "Vibe64 could not refresh the project Git cache after a successful remote mutation.");
+    ? "Vibe64 refreshed the project GitHub mirror after a remote mutation."
+    : "Vibe64 could not refresh the project GitHub mirror after a successful remote mutation.");
 }
 
-async function refreshSessionGitCacheAfterRemoteMutation({
+async function refreshSessionGithubMirrorAfterRemoteMutation({
   actor = {},
   command = "",
   env = process.env,
@@ -389,13 +452,13 @@ async function refreshSessionGitCacheAfterRemoteMutation({
 } = {}) {
   let descriptor;
   try {
-    descriptor = await readSessionGitCacheDescriptor(projectService, sessionId);
+    descriptor = await readSessionGithubMirrorDescriptor(projectService, sessionId);
   } catch (error) {
     const result = responseError(
-      normalizeText(error?.message) || "Vibe64 could not read the project Git cache metadata.",
-      normalizeText(error?.code) || "vibe64_codex_git_cache_metadata_unreadable"
+      normalizeText(error?.message) || "Vibe64 could not read the project GitHub mirror metadata.",
+      normalizeText(error?.code) || "vibe64_codex_github_mirror_metadata_unreadable"
     );
-    logGitCacheRefresh(logger, result, {
+    logGithubMirrorRefresh(logger, result, {
       command,
       sessionId
     });
@@ -407,28 +470,26 @@ async function refreshSessionGitCacheAfterRemoteMutation({
       skipped: true
     };
   }
-  const cacheRoot = path.dirname(descriptor.cachePath);
+  const mirrorRoot = path.dirname(descriptor.mirrorPath);
   let result;
   try {
+    const [refreshCommand, ...refreshArgs] = githubMirrorRefreshInvocation({
+      mirrorPath: descriptor.mirrorPath,
+      remoteUrl: descriptor.remoteUrl
+    });
     result = await gatewayCommandRunner({
       actor: "owner-user",
       allowedRoots: [
         actor.targetRoot,
-        cacheRoot
+        mirrorRoot
       ],
-      args: [
-        "-c",
-        CODEX_GIT_CACHE_REFRESH_SCRIPT,
-        "vibe64-git-cache-refresh",
-        descriptor.cachePath,
-        descriptor.remoteUrl
-      ],
-      command: "bash",
+      args: refreshArgs,
+      command: refreshCommand,
       cwd: actor.targetRoot,
       envPolicy: "auth",
       gitSafeDirectories: [
         actor.targetRoot,
-        descriptor.cachePath
+        descriptor.mirrorPath
       ],
       gitTransport: "github-https",
       mode: "capture",
@@ -448,12 +509,12 @@ async function refreshSessionGitCacheAfterRemoteMutation({
     });
   } catch (error) {
     result = responseError(
-      normalizeText(error?.message) || "Vibe64 could not refresh the project Git cache.",
-      normalizeText(error?.code) || "vibe64_codex_git_cache_refresh_failed"
+      normalizeText(error?.message) || "Vibe64 could not refresh the project GitHub mirror.",
+      normalizeText(error?.code) || "vibe64_codex_github_mirror_refresh_failed"
     );
   }
-  logGitCacheRefresh(logger, result, {
-    cachePath: descriptor.cachePath,
+  logGithubMirrorRefresh(logger, result, {
+    mirrorPath: descriptor.mirrorPath,
     command,
     sessionId
   });
@@ -667,7 +728,7 @@ function createCodexGitCommandService({
   async function run(input = {}) {
     const startedAtMs = Date.now();
     const command = normalizeText(input.command);
-    const args = Array.isArray(input.args) ? input.args.map((arg) => String(arg)) : [];
+    let args = Array.isArray(input.args) ? input.args.map((arg) => String(arg)) : [];
     const sessionId = normalizeText(input.sessionId);
     const baseFields = {
       args,
@@ -696,6 +757,8 @@ function createCodexGitCommandService({
     // sessions). Keep this hot path structurally bounded—never hide a full
     // session read here behind caching or throttling.
     const session = await readGitCommandSession(projectService, sessionId);
+    args = gitCommandArgsForSession(session, command, args);
+    baseFields.args = args;
     const actor = gitCommandActorFromSession(session, {
       command
     });
@@ -778,10 +841,10 @@ function createCodexGitCommandService({
       timeout: CODEX_GIT_COMMAND_TIMEOUT_MS,
       userKey: gatewayUserKey
     });
-    const cacheRefresh = result.ok === true &&
+    const mirrorRefresh = result.ok === true &&
       actor.githubRequired !== false &&
       commandUpdatesGithubRepository(command, args)
-      ? await refreshSessionGitCacheAfterRemoteMutation({
+      ? await refreshSessionGithubMirrorAfterRemoteMutation({
           actor,
           command,
           env,
@@ -795,7 +858,7 @@ function createCodexGitCommandService({
         })
       : null;
     return finish({
-      ...(cacheRefresh ? { cacheRefresh } : {}),
+      ...(mirrorRefresh ? { mirrorRefresh } : {}),
       code: result.ok ? "" : "vibe64_codex_git_command_failed",
       error: result.ok ? "" : commandOutput(result),
       exitCode: Number(result.exitCode ?? (result.ok ? 0 : 1)),

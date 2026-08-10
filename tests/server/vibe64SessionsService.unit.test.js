@@ -6452,7 +6452,7 @@ test("session presentation does not show the Codex terminal preview for stale wo
   });
 });
 
-test("session creation waits for an unsynced merged session", async () => {
+test("session creation waits for a merged session with a pending mirror refresh", async () => {
   let createSessionCalled = false;
   const existingSessions = [
     {
@@ -6494,7 +6494,7 @@ test("session creation waits for an unsynced merged session", async () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.equal(result.errors[0].code, "main_checkout_sync_required");
+  assert.equal(result.errors[0].code, "github_mirror_refresh_required");
   assert.equal(createSessionCalled, false);
 });
 

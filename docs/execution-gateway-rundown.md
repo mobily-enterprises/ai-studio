@@ -619,11 +619,14 @@ await runVibe64Command({
   actor: "daemon",
   purpose: "setup",
   mode: "capture",
-  command: "git",
-  args: ["init", "--bare", repositoryPath],
-  cwd: gitCacheRoot,
-  allowedRoots: [gitCacheRoot],
-  gitSafeDirectories: [gitCacheRoot],
+  command: "bash",
+  args: ["-lc", canonicalRepositoryInitializeScript({
+    defaultBranch,
+    repositoryPath
+  })],
+  cwd: canonicalRepositoryRoot,
+  allowedRoots: [canonicalRepositoryRoot],
+  gitSafeDirectories: [canonicalRepositoryRoot],
   envPolicy: "project",
   runtimes: ["git"],
   timeout: 30000

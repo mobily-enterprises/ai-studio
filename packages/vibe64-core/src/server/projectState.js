@@ -13,7 +13,9 @@ const PROJECT_STATE_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
 const PROJECT_RECORD_FILE = "project.json";
 const PROJECT_SESSIONS_DIR = "sessions";
 const PROJECT_DEPLOYMENTS_DIR = "deployments";
-const PROJECT_GIT_CACHE_DIR = "git-cache";
+const PROJECT_CANONICAL_REPOSITORY_DIR = "canonical-repository";
+const PROJECT_GITHUB_MIRROR_DIR = "github-mirror";
+const PROJECT_REPOSITORY_DIR = "repository.git";
 const PROJECT_RUNTIME_DIR = "runtime";
 const PROJECT_RUNTIME_CONFIG_DIR = "runtime-config";
 const PROJECT_INFO_CACHE_FILE = "projectInfoCache.json";
@@ -104,12 +106,28 @@ function resolveProjectDeploymentsRoot({
   }), PROJECT_DEPLOYMENTS_DIR);
 }
 
-function resolveProjectGitCacheRoot({
-  projectRuntimeRoot = process.cwd()
-} = {}) {
+function resolveProjectRepositoryStoragePath(projectRoot = "", storageDirectory = "") {
+  const normalizedProjectRoot = normalizeText(projectRoot);
+  if (!normalizedProjectRoot || !path.isAbsolute(normalizedProjectRoot)) {
+    const error = new Error("Repository storage requires an absolute project root.");
+    error.code = "vibe64_repository_storage_project_root_invalid";
+    throw error;
+  }
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
-  }), PROJECT_GIT_CACHE_DIR);
+    projectRoot: normalizedProjectRoot
+  }), storageDirectory, PROJECT_REPOSITORY_DIR);
+}
+
+function resolveProjectCanonicalRepositoryPath({
+  projectRoot = ""
+} = {}) {
+  return resolveProjectRepositoryStoragePath(projectRoot, PROJECT_CANONICAL_REPOSITORY_DIR);
+}
+
+function resolveProjectGithubMirrorPath({
+  projectRoot = ""
+} = {}) {
+  return resolveProjectRepositoryStoragePath(projectRoot, PROJECT_GITHUB_MIRROR_DIR);
 }
 
 function resolveProjectRuntimeFilesRoot({
@@ -138,8 +156,10 @@ function resolveProjectInfoCachePath({
 
 export {
   PROJECT_DEPLOYMENTS_DIR,
-  PROJECT_GIT_CACHE_DIR,
+  PROJECT_CANONICAL_REPOSITORY_DIR,
+  PROJECT_GITHUB_MIRROR_DIR,
   PROJECT_INFO_CACHE_FILE,
+  PROJECT_REPOSITORY_DIR,
   PROJECT_RECORD_FILE,
   PROJECT_RUNTIME_CONFIG_DIR,
   PROJECT_RUNTIME_DIR,
@@ -149,7 +169,8 @@ export {
   resolveProjectContractRoot,
   resolveProjectRecordPath,
   resolveProjectDeploymentsRoot,
-  resolveProjectGitCacheRoot,
+  resolveProjectCanonicalRepositoryPath,
+  resolveProjectGithubMirrorPath,
   resolveProjectHomeLocalRoot,
   resolveProjectHomeStateRoot,
   resolveProjectInfoCachePath,

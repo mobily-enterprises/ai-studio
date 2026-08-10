@@ -64,6 +64,7 @@ import {
   WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
   normalizeRepositoryMode,
   normalizeWorkflowRepositoryProfile,
+  projectRepositoryStorageRole,
   workflowRepositoryProfileForMode
 } from "@local/vibe64-core/server/projectRepository";
 import {
@@ -125,7 +126,8 @@ function resolveVibe64TargetRoot(targetRoot) {
 
 function projectSelectionRecord({
   applicationMode = "",
-  gitCacheRoot = "",
+  canonicalRepositoryPath = "",
+  githubMirrorPath = "",
   githubRepository = null,
   projectRecordPath = "",
   projectLocalRoot = "",
@@ -144,8 +146,9 @@ function projectSelectionRecord({
     ...(normalizeProjectApplicationMode(applicationMode)
       ? { applicationMode: normalizeProjectApplicationMode(applicationMode) }
       : {}),
+    canonicalRepositoryPath,
     external: false,
-    gitCacheRoot,
+    githubMirrorPath,
     name: slug,
     projectRecordPath,
     path: projectRoot,
@@ -179,7 +182,8 @@ function projectSelectionRecord({
 function requestProjectSelectionRecord(projectContext = {}, catalogProject = {}) {
   return projectSelectionRecord({
     applicationMode: catalogProject.applicationMode,
-    gitCacheRoot: catalogProject.gitCacheRoot,
+    canonicalRepositoryPath: catalogProject.canonicalRepositoryPath,
+    githubMirrorPath: catalogProject.githubMirrorPath,
     githubRepository: catalogProject.githubRepository,
     projectRecordPath: projectContext.projectRecordPath || catalogProject.projectRecordPath,
     projectLocalRoot: projectContext.projectLocalRoot || catalogProject.projectLocalRoot,
@@ -235,6 +239,10 @@ const COMMITTED_PROJECT_TYPE_SETUP_BLOCKING_ERRORS = new Set([
   "vibe64_committed_project_git_ref_unavailable",
   "vibe64_committed_project_manifest_invalid",
   "vibe64_committed_project_repository_unreadable"
+]);
+const COMMITTED_PROJECT_TYPE_REPOSITORY_STORAGE_MISSING_ERRORS = new Set([
+  "vibe64_committed_project_canonical_repository_missing",
+  "vibe64_committed_project_github_mirror_missing"
 ]);
 
 function selfTargetAutoSelectProjectRepro(env = process.env) {
@@ -548,11 +556,17 @@ function createService({
     const repositoryMode = await projectRepositoryMode(targetRootValue);
     const sourceRoot = selectedSourceRoot ||
       (repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE ? targetRootValue : "");
+    const repositoryStorage = sourceRoot
+      ? null
+      : projectRepositoryStorageRole({
+          mode: repositoryMode,
+          projectRoot: targetRootValue
+        });
     return {
       configSource: "committed",
       label: "Project baseline",
       repositoryMode,
-      rootKind: sourceRoot ? "project-root" : "git-cache",
+      rootKind: sourceRoot ? "project-root" : repositoryStorage?.directory || "",
       sourceReadMode: repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE ? "filesystem" : "git",
       sourceRoot,
       targetRoot: targetRootValue,
@@ -653,7 +667,8 @@ function createService({
     const projects = listed.projects
       .map((project) => projectSelectionRecord({
         applicationMode: project.applicationMode,
-        gitCacheRoot: project.gitCacheRoot,
+        canonicalRepositoryPath: project.canonicalRepositoryPath,
+        githubMirrorPath: project.githubMirrorPath,
         githubRepository: project.githubRepository,
         projectRecordPath: project.projectRecordPath,
         projectLocalRoot: project.projectLocalRoot,
@@ -1073,7 +1088,7 @@ function createService({
     ) {
       return projectType;
     }
-    if (projectType.errorCode !== "vibe64_committed_project_git_cache_missing") {
+    if (!COMMITTED_PROJECT_TYPE_REPOSITORY_STORAGE_MISSING_ERRORS.has(projectType.errorCode)) {
       return null;
     }
     const metadata = await readProjectRecordMetadata(projectRecordPath(currentTargetRoot()));

@@ -19,7 +19,6 @@ import {
   resolveProjectRuntimeRoot,
   resolveProjectSessionsRoot,
   resolveProjectDeploymentsRoot,
-  resolveProjectGitCacheRoot,
   resolveProjectRuntimeFilesRoot,
   resolveProjectRuntimeConfigRoot,
   resolveSourceConfigRoot
@@ -51,6 +50,7 @@ import {
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   normalizeProjectGithubRepository,
   projectRepositoryMetadataFromInput,
+  projectRepositoryStorageRole,
   projectRepositoryView
 } from "./projectRepository.js";
 import {
@@ -306,6 +306,12 @@ function workspaceProjectRecord({
 } = {}) {
   const resolvedPath = normalizeRoot(projectPath);
   const repositoryFields = projectRepositoryView(metadata);
+  const repositoryStorage = resolvedPath
+    ? projectRepositoryStorageRole({
+        mode: repositoryFields.repositoryMode,
+        projectRoot: resolvedPath
+      })
+    : null;
   const bootstrap = Object.keys(metadata).length
     ? normalizeProjectBootstrap(metadata.bootstrap)
     : null;
@@ -319,10 +325,8 @@ function workspaceProjectRecord({
       ? { bootstrapConfig: normalizeProjectBootstrapConfig(metadata.bootstrapConfig) }
       : {}),
     ...repositoryFields,
-    gitCacheRoot: resolvedPath
-      ? resolveProjectGitCacheRoot({
-          projectRuntimeRoot: resolvedPath
-        })
+    canonicalRepositoryPath: repositoryStorage?.pathField === "canonicalRepositoryPath"
+      ? repositoryStorage.path
       : "",
     deploymentsRoot: projectRuntimeRoot
       ? resolveProjectDeploymentsRoot({
@@ -336,6 +340,9 @@ function workspaceProjectRecord({
     projectRecordPath,
     projectRuntimeRoot,
     projectSessionSourceRoot,
+    githubMirrorPath: repositoryStorage?.pathField === "githubMirrorPath"
+      ? repositoryStorage.path
+      : "",
     runtimeConfigRoot: projectRuntimeRoot
       ? resolveProjectRuntimeConfigRoot({
           projectRuntimeRoot

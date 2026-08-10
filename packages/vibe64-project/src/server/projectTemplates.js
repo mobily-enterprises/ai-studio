@@ -10,7 +10,10 @@ import path from "node:path";
 import {
   GITHUB_ACCOUNT_MODE_LOCAL,
   VIBE64_GITHUB_ACCOUNT_MODE_ENV,
+  canonicalRepositoryInitializeScript,
+  canonicalRepositoryInstallRefScript,
   githubCredentialContext,
+  githubMirrorRefreshInvocation,
   normalizeGithubAccountMode,
   runVibe64Command
 } from "@local/vibe64-execution/server";
@@ -22,7 +25,8 @@ import {
 } from "@local/vibe64-core/server/projectRepository";
 import { isPlainObject } from "@local/vibe64-core/server/core";
 import {
-  resolveProjectGitCacheRoot
+  resolveProjectCanonicalRepositoryPath,
+  resolveProjectGithubMirrorPath
 } from "@local/vibe64-core/server/projectState";
 
 const PROJECT_TEMPLATE_SOURCE_REF = "refs/vibe64/template-source";
@@ -206,12 +210,52 @@ function projectGithubCloneUrl(project = {}) {
   return normalizeText(repository?.cloneUrl) || (fullName ? `https://github.com/${fullName}.git` : "");
 }
 
-function projectGitCacheRepository(project = {}, targetRoot = "") {
-  const explicitGitCacheRoot = normalizeText(project.gitCacheRoot);
-  const gitCacheRoot = explicitGitCacheRoot || resolveProjectGitCacheRoot({
-    projectRuntimeRoot: targetRoot
+function projectRepositoryStoragePath({
+  code = "vibe64_project_repository_storage_path_invalid",
+  explicitPath = "",
+  resolvePath,
+  targetRoot = ""
+} = {}) {
+  const configuredPath = normalizeText(explicitPath);
+  const expectedPath = targetRoot && typeof resolvePath === "function"
+    ? resolvePath({
+        projectRoot: targetRoot
+      })
+    : "";
+  if (
+    configuredPath &&
+    (
+      !path.isAbsolute(configuredPath) ||
+      (expectedPath && path.resolve(configuredPath) !== path.resolve(expectedPath))
+    )
+  ) {
+    throw templateError(
+      code,
+      "The project repository storage path does not match its repository mode.",
+      {
+        statusCode: 409
+      }
+    );
+  }
+  return configuredPath || expectedPath;
+}
+
+function projectCanonicalRepositoryPath(project = {}, targetRoot = "") {
+  return projectRepositoryStoragePath({
+    code: "vibe64_project_canonical_repository_path_invalid",
+    explicitPath: project.canonicalRepositoryPath,
+    resolvePath: resolveProjectCanonicalRepositoryPath,
+    targetRoot
   });
-  return gitCacheRoot ? path.join(gitCacheRoot, "repository.git") : "";
+}
+
+function projectGithubMirrorPath(project = {}, targetRoot = "") {
+  return projectRepositoryStoragePath({
+    code: "vibe64_project_github_mirror_path_invalid",
+    explicitPath: project.githubMirrorPath,
+    resolvePath: resolveProjectGithubMirrorPath,
+    targetRoot
+  });
 }
 
 async function pathIsDirectory(value = "") {
@@ -259,7 +303,7 @@ function commandFailure(result = {}, fallbackMessage = "Git command failed.") {
   );
 }
 
-async function runGit(args = [], {
+async function runTemplateCommand(command = "git", args = [], {
   actor = "daemon",
   allowedRoots = [],
   credentialHome = null,
@@ -273,7 +317,7 @@ async function runGit(args = [], {
     actor,
     allowedRoots,
     args,
-    command: "git",
+    command,
     ...(credentialHome ? { credentialHome } : {}),
     cwd,
     envPolicy: "project",
@@ -289,6 +333,14 @@ async function runGit(args = [], {
     throw commandFailure(result);
   }
   return commandOutput(result);
+}
+
+function runGit(args = [], options = {}) {
+  return runTemplateCommand("git", args, options);
+}
+
+function runShell(script = "", options = {}) {
+  return runTemplateCommand("bash", ["-lc", script], options);
 }
 
 async function gitOutputOrEmpty(args = [], options = {}) {
@@ -370,7 +422,7 @@ async function canonicalGitEligibility({
   runCommand,
   targetRoot
 } = {}) {
-  const repositoryPath = projectGitCacheRepository(project, targetRoot);
+  const repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
   if (!repositoryPath || !await pathIsDirectory(repositoryPath)) {
     return eligibility(true);
   }
@@ -434,16 +486,12 @@ async function projectTemplateEligibility({
     return eligibility(false, "vibe64_project_template_repository_unsupported", "This project repository cannot use ready-made templates.");
   }
 
-  const canonicalEligibility = await canonicalGitEligibility({
-    project,
-    runCommand,
-    targetRoot
-  });
-  if (!canonicalEligibility.eligible) {
-    return canonicalEligibility;
-  }
-  if (mode !== PROJECT_REPOSITORY_MODE_GITHUB) {
-    return canonicalEligibility;
+  if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
+    return canonicalGitEligibility({
+      project,
+      runCommand,
+      targetRoot
+    });
   }
 
   if (!checkGithubRemote) {
@@ -674,65 +722,36 @@ async function ensureCanonicalRepository(repositoryPath = "", branch = "main", {
   await mkdir(repositoryRoot, {
     recursive: true
   });
-  if (!await pathIsDirectory(repositoryPath)) {
-    await runGit(["init", "--bare", repositoryPath], {
-      allowedRoots: [targetRoot, repositoryRoot, repositoryPath],
-      cwd: repositoryRoot,
-      runCommand
-    });
-  }
-  await runGit(["--git-dir", repositoryPath, "symbolic-ref", "HEAD", `refs/heads/${branch}`], {
+  await runShell(canonicalRepositoryInitializeScript({
+    defaultBranch: branch,
+    repositoryPath
+  }), {
     allowedRoots: [targetRoot, repositoryRoot, repositoryPath],
-    cwd: targetRoot,
+    cwd: repositoryRoot,
     runCommand
   });
 }
 
 async function materializeCanonicalGit({
   branch,
-  commit,
   project,
   runCommand,
   sourceRepositoryPath,
   targetRoot,
   temporaryRoot
 } = {}) {
-  const repositoryPath = projectGitCacheRepository(project, targetRoot);
+  const repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
   await ensureCanonicalRepository(repositoryPath, branch, {
     runCommand,
     targetRoot
   });
-  await runGit([
-    "--git-dir",
+  await runShell(canonicalRepositoryInstallRefScript({
     repositoryPath,
-    "fetch",
-    "--no-tags",
-    sourceRepositoryPath,
-    `${PROJECT_TEMPLATE_MATERIALIZED_REF}:${PROJECT_TEMPLATE_DESTINATION_REF}`
-  ], {
+    sourceRef: PROJECT_TEMPLATE_MATERIALIZED_REF,
+    sourceRepository: sourceRepositoryPath,
+    targetRef: `refs/heads/${branch}`
+  }), {
     allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath, temporaryRoot, sourceRepositoryPath],
-    cwd: targetRoot,
-    runCommand
-  });
-  await runGit(["--git-dir", repositoryPath, "update-ref", `refs/heads/${branch}`, commit], {
-    allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
-    cwd: targetRoot,
-    runCommand
-  });
-  await runGit(["--git-dir", repositoryPath, "update-ref", "-d", PROJECT_TEMPLATE_DESTINATION_REF], {
-    allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
-    cwd: targetRoot,
-    runCommand
-  });
-  return repositoryPath;
-}
-
-async function removeCanonicalBranch(repositoryPath = "", branch = "main", {
-  runCommand,
-  targetRoot
-} = {}) {
-  await gitOutputOrEmpty(["--git-dir", repositoryPath, "update-ref", "-d", `refs/heads/${branch}`], {
-    allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
     cwd: targetRoot,
     runCommand
   });
@@ -757,8 +776,9 @@ async function pushGithubDestination({
       "--git-dir",
       repositoryPath,
       "push",
+      "--atomic",
       cloneUrl,
-      `refs/heads/${branch}:refs/heads/${branch}`
+      `${PROJECT_TEMPLATE_MATERIALIZED_REF}:refs/heads/${branch}`
     ], {
       ...githubOptions,
       allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
@@ -779,29 +799,69 @@ async function pushGithubDestination({
   }
 }
 
+async function refreshGithubMirror({
+  env,
+  input,
+  project,
+  runCommand,
+  targetRoot
+} = {}) {
+  const cloneUrl = projectGithubCloneUrl(project);
+  const mirrorPath = projectGithubMirrorPath(project, targetRoot);
+  if (!cloneUrl || !mirrorPath) {
+    return false;
+  }
+  try {
+    const [command, ...args] = githubMirrorRefreshInvocation({
+      mirrorPath,
+      remoteUrl: cloneUrl
+    });
+    await runTemplateCommand(command, args, {
+      ...githubCommandOptions(input, {
+        env
+      }),
+      allowedRoots: [targetRoot, path.dirname(mirrorPath), mirrorPath],
+      cwd: targetRoot,
+      runCommand
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function verifyMaterializedCommit({
   branch,
+  commit,
+  env,
+  input,
   mode,
   project,
   runCommand,
+  sourceRepositoryPath,
   sourceRoot,
   targetRoot
 } = {}) {
-  const repositoryPath = mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
-    ? ""
-    : projectGitCacheRepository(project, targetRoot);
+  let repositoryPath = "";
+  let verifiedRef = `refs/heads/${branch}`;
+  if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
+    repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
+  } else if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
+    repositoryPath = sourceRepositoryPath;
+    verifiedRef = PROJECT_TEMPLATE_MATERIALIZED_REF;
+  }
   const gitPrefix = repositoryPath ? ["--git-dir", repositoryPath] : [];
   const cwd = repositoryPath ? targetRoot : sourceRoot;
   const allowedRoots = repositoryPath
     ? [targetRoot, path.dirname(repositoryPath), repositoryPath]
     : [sourceRoot];
   const [count, parents] = await Promise.all([
-    runGit([...gitPrefix, "rev-list", "--count", `refs/heads/${branch}`], {
+    runGit([...gitPrefix, "rev-list", "--count", verifiedRef], {
       allowedRoots,
       cwd,
       runCommand
     }),
-    runGit([...gitPrefix, "rev-list", "--parents", "-n", "1", `refs/heads/${branch}`], {
+    runGit([...gitPrefix, "rev-list", "--parents", "-n", "1", verifiedRef], {
       allowedRoots,
       cwd,
       runCommand
@@ -812,6 +872,23 @@ async function verifyMaterializedCommit({
       "vibe64_project_template_commit_invalid",
       "The project template did not produce exactly one initial commit."
     );
+  }
+  if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
+    const refs = await remoteGithubRefs(project, input, {
+      env,
+      runCommand,
+      targetRoot
+    });
+    const remoteCommit = normalizeText(refs
+      .split(/\r?\n/u)
+      .map((line) => line.trim().split(/\s+/u))
+      .find(([, ref]) => ref === `refs/heads/${branch}`)?.[0]);
+    if (remoteCommit !== commit) {
+      throw templateError(
+        "vibe64_project_template_remote_commit_mismatch",
+        "The GitHub repository did not retain the materialized project template commit."
+      );
+    }
   }
 }
 
@@ -880,7 +957,6 @@ async function applyProjectTemplate({
     const mode = projectRepositoryMode(project, sourceRoot);
     const branch = projectDefaultBranch(project);
     const temporaryRoot = await createTemporaryRoot(projectRuntimeRoot, targetRoot);
-    let canonicalRepositoryPath = "";
     try {
       const sourceRepositoryPath = await createTemplateSourceRepository(template, {
         runCommand,
@@ -904,43 +980,44 @@ async function applyProjectTemplate({
           sourceRoot: sourceRoot || targetRoot,
           temporaryRoot
         });
-      } else {
-        canonicalRepositoryPath = await materializeCanonicalGit({
+      } else if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
+        await materializeCanonicalGit({
           branch,
-          commit,
           project,
           runCommand,
           sourceRepositoryPath,
           targetRoot,
           temporaryRoot
         });
-        if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
-          try {
-            await pushGithubDestination({
-              branch,
-              commit,
-              env,
-              input,
-              project,
-              repositoryPath: canonicalRepositoryPath,
-              runCommand,
-              targetRoot
-            });
-          } catch (error) {
-            await removeCanonicalBranch(canonicalRepositoryPath, branch, {
-              runCommand,
-              targetRoot
-            });
-            throw error;
-          }
-        }
+      } else {
+        await pushGithubDestination({
+          branch,
+          commit,
+          env,
+          input,
+          project,
+          repositoryPath: sourceRepositoryPath,
+          runCommand,
+          targetRoot
+        });
+        await refreshGithubMirror({
+          env,
+          input,
+          project,
+          runCommand,
+          targetRoot
+        });
       }
 
       await verifyMaterializedCommit({
         branch,
+        commit,
+        env,
+        input,
         mode,
         project,
         runCommand,
+        sourceRepositoryPath,
         sourceRoot: sourceRoot || targetRoot,
         targetRoot
       });

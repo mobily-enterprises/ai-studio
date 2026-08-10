@@ -82,7 +82,7 @@ Make Vibe64 workflow ownership unambiguous:
   - [ ] `session_finished`
   - [ ] `local_session_finished`
   - [ ] `implementation_reviewed`
-  - [ ] `main_checkout_synced`
+  - [ ] `github_mirror_refresh_attempted`
   - [ ] `pr_merged`
   - [ ] `project_validated`
   - [ ] `changes_accepted`
@@ -320,22 +320,22 @@ prompt: {
 - [ ] Server decides whether the current screen is merge.
 - [ ] Server provides merge title, message, and choices.
 - [ ] Server exposes merge choices as intents:
-  - [ ] merge and sync
+  - [ ] merge and refresh mirror
   - [ ] do not merge
   - [ ] cancel or recover from merge failure if needed
-- [ ] Server owns the compound `merge and sync` sequence.
+- [ ] Server owns the compound `merge and refresh mirror` sequence.
 - [ ] Server decides whether `prepare_for_merge` is required.
 - [ ] Server decides whether `merge_pr` is required.
-- [ ] Server decides whether shared checkout sync should run after merge.
+- [ ] Server decides whether the GitHub mirror refresh should run after merge.
 - [ ] Server owns the `do not merge` sequence.
 - [ ] Client no longer runs `prepare_for_merge` then `merge_pr` manually.
-- [ ] Client no longer special-cases `main_checkout_synced`.
+- [ ] Client no longer special-cases `github_mirror_refresh_attempted`.
 - [ ] Client no longer knows the `skip_merge` action ID.
-- [ ] Keep merge-and-sync server code readable as a step-by-step sequence.
+- [ ] Keep merge-and-refresh server code readable as a step-by-step sequence.
 - [ ] Avoid a reusable sequence engine unless another real sequence proves it is needed.
 - [ ] Make every merge step failure message explicit and user-facing.
 - [ ] Add focused Playwright coverage that merge screen rendering comes entirely from server presentation.
-- [ ] Add focused Playwright coverage that merge-and-sync and do-not-merge dispatch server-declared intents rather than client-side action sequences.
+- [ ] Add focused Playwright coverage that merge-and-refresh and do-not-merge dispatch server-declared intents rather than client-side action sequences.
 
 ## Optional Check Ownership
 
@@ -416,7 +416,7 @@ prompt: {
 - [ ] Phase 1: add server `presentation` while keeping existing client behavior.
 - [ ] Phase 2: add server `intents` and intent endpoint.
 - [ ] Phase 3: move review screen decisions to server presentation/intents.
-- [ ] Phase 4: move merge screen decisions and compound merge/sync logic to server intents.
+- [ ] Phase 4: move merge screen decisions and compound merge/mirror-refresh logic to server intents.
 - [ ] Phase 5: move optional check decisions to server intents.
 - [ ] Phase 6: move command failure recovery choices to server presentation/intents.
 - [ ] Phase 7: simplify Autopilot client to render presentation and dispatch generic operations.
@@ -436,7 +436,7 @@ prompt: {
 - [x] Server unit test: review step exposes server-owned review intents.
 - [x] Server unit test: final review tweak intent rewinds/reruns according to server logic.
 - [ ] Server unit test: reject/replan intent chooses the correct target server-side.
-- [x] Server unit test: merge-and-sync intent runs the correct server-owned sequence.
+- [x] Server unit test: merge-and-refresh intent runs the correct server-owned sequence.
 - [x] Server unit test: skip-merge intent runs the correct server-owned sequence.
 - [x] Server unit test: optional check exposes run/skip intents.
 - [x] Server unit test: stale intent submission is rejected.

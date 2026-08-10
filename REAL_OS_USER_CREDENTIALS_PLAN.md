@@ -639,7 +639,9 @@ Important distinction:
 
 - Current non-GitHub online projects are still Git-backed. They use
   `repository.mode = "managed_git"` and a canonical bare repository at
-  `<project>/git-cache/repository.git`.
+  `<project>/canonical-repository/repository.git`.
+- GitHub projects keep only a disposable local mirror at
+  `<project>/github-mirror/repository.git`; GitHub remains authoritative.
 - Current CLI/local projects use `repository.mode = "local_source"` and the
   opened local source repository as canonical source.
 - There is not currently a "no Git at all" repository mode. The product
@@ -851,7 +853,7 @@ not under daemon-private state.
 
 This layer replaces the current overloaded use of `projectRuntimeRoot` /
 `projectLocalRoot` where one path can mean project metadata, session metadata,
-Git cache, runtime files, and source root depending on mode.
+repository storage, runtime files, and source root depending on mode.
 
 ### Privileged Helper Client
 

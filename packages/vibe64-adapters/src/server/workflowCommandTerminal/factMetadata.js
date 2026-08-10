@@ -22,8 +22,9 @@ function sourceMetadata({
   baseBranch = "",
   baseCommit = "",
   branch = "",
-  cachePath = "",
+  canonicalRepositoryPath = "",
   defaultBranch = "",
+  githubMirrorPath = "",
   mainCheckoutRoot = "",
   remoteUrl = "",
   sourcePath = "",
@@ -33,7 +34,6 @@ function sourceMetadata({
     base_branch: baseBranch,
     base_commit: baseCommit,
     branch,
-    source_cache_path: cachePath,
     source_default_branch: defaultBranch || baseBranch,
     source_kind: "session_clone",
     source_path: sourcePath,
@@ -41,6 +41,12 @@ function sourceMetadata({
   };
   if (mainCheckoutRoot) {
     metadata.main_checkout_root = mainCheckoutRoot;
+  }
+  if (canonicalRepositoryPath) {
+    metadata.canonical_repository_path = canonicalRepositoryPath;
+  }
+  if (githubMirrorPath) {
+    metadata.github_mirror_path = githubMirrorPath;
   }
   if (sourcePathAuthority) {
     metadata.source_path_authority = sourcePathAuthority;
@@ -59,8 +65,9 @@ function createWorktreeSuccessMetadataFromFacts({ facts = {}, session = {} } = {
   const baseMetadata = metadataFromFacts(facts, [
     "base_branch",
     "base_commit",
+    "canonical_repository_path",
+    "github_mirror_path",
     "main_checkout_root",
-    "source_cache_path",
     "source_default_branch",
     "source_kind",
     "source_path",
@@ -103,7 +110,6 @@ function commitChangesSuccessMetadataFromFacts({ facts = {} } = {}) {
       "branch_push_remote",
       "canonical_git_saved",
       "local_commit_only",
-      "main_checkout_synced",
       "pr_head_owner",
       "pr_head_repository"
     ])

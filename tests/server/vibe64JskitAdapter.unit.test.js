@@ -2176,12 +2176,12 @@ test("jskit issue and pull-request steps are gated by artifacts and metadata", a
     assert.equal(prSubmittedActions.create_pr_on_gh, false);
     assert.equal(prSubmittedActions.prepare_for_merge, true);
     assert.equal(prSubmittedActions.merge_pr, true);
-    assert.equal(prSubmittedActions.sync_main_checkout, false);
+    assert.equal(prSubmittedActions.refresh_github_mirror, false);
     assert.equal(prSubmittedActions.skip_merge, true);
   });
 });
 
-test("jskit merge, sync, and finish steps follow current metadata gates", async () => {
+test("jskit merge, mirror refresh, and finish steps follow current metadata gates", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     await createJskitProject(targetRoot);
     const runtime = new Vibe64SessionRuntime({
@@ -2201,7 +2201,7 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       open_pr: false,
       prepare_for_merge: false,
       resolve_pull_request: true,
-      sync_main_checkout: false,
+      refresh_github_mirror: false,
       skip_merge: false
     });
 
@@ -2214,14 +2214,14 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       open_pr: true,
       prepare_for_merge: true,
       resolve_pull_request: false,
-      sync_main_checkout: false,
+      refresh_github_mirror: false,
       skip_merge: true
     });
 
     const afterPrepare = await runtime.runAction("jskit_merge", "prepare_for_merge");
     assert.equal(afterPrepare.actionResult.promptId, "prepare_for_merge");
     assert.match(afterPrepare.actionResult.prompt, /Prepare the JSKIT pull request for merge/u);
-    assert.match(afterPrepare.actionResult.prompt, /Git cache can be refreshed/u);
+    assert.match(afterPrepare.actionResult.prompt, /GitHub mirror can be refreshed/u);
     await assert.rejects(
       () => runtime.runAction("jskit_merge", "merge_pr"),
       {
@@ -2235,13 +2235,13 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
       metadata: {
         pr_url: "https://github.com/example/repo/pull/24"
       },
-      sessionId: "jskit_sync_blocked"
+      sessionId: "jskit_mirror_refresh_blocked"
     });
-    const syncBlocked = await runtime.getSession("jskit_sync_blocked");
-    const syncBlockedAction = syncBlocked.actions.find((action) => action.id === "sync_main_checkout");
-    assert.equal(syncBlockedAction.enabled, false);
-    assert.equal(syncBlockedAction.disabledReason, "Merge the pull request before refreshing the Git cache.");
-    assert.equal(syncBlocked.next.enabled, false);
+    const mirrorRefreshBlocked = await runtime.getSession("jskit_mirror_refresh_blocked");
+    const mirrorRefreshBlockedAction = mirrorRefreshBlocked.actions.find((action) => action.id === "refresh_github_mirror");
+    assert.equal(mirrorRefreshBlockedAction.enabled, false);
+    assert.equal(mirrorRefreshBlockedAction.disabledReason, "Merge the pull request before refreshing the GitHub mirror.");
+    assert.equal(mirrorRefreshBlocked.next.enabled, false);
 
     await runtime.createSession({
       initialStep: "create_and_merge_pull_request",
@@ -2249,11 +2249,11 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
         pr_merged: "yes",
         pr_url: "https://github.com/example/repo/pull/24"
       },
-      sessionId: "jskit_sync"
+      sessionId: "jskit_mirror_refresh"
     });
-    const syncReady = await runtime.getSession("jskit_sync");
-    assert.equal(syncReady.actions.find((action) => action.id === "sync_main_checkout").enabled, true);
-    assert.equal(syncReady.next.enabled, false);
+    const mirrorRefreshReady = await runtime.getSession("jskit_mirror_refresh");
+    assert.equal(mirrorRefreshReady.actions.find((action) => action.id === "refresh_github_mirror").enabled, true);
+    assert.equal(mirrorRefreshReady.next.enabled, false);
 
     await runtime.createSession({
       initialStep: "session_finished",
@@ -2268,7 +2268,7 @@ test("jskit merge, sync, and finish steps follow current metadata gates", async 
     await runtime.createSession({
       initialStep: "session_finished",
       metadata: {
-        main_checkout_synced: "yes",
+        github_mirror_refresh_attempted: "yes",
         pr_url: "https://github.com/example/repo/pull/24"
       },
       sessionId: "jskit_finish"

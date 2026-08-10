@@ -1084,20 +1084,20 @@ function mergeOperation(session = {}, config = {}) {
   const metadata = session.metadata || {};
   const skippedMetadataName = requiredPresentationValue(config, "skippedMetadataName", "merge automation");
   const mergedMetadataName = requiredPresentationValue(config, "mergedMetadataName", "merge automation");
-  const syncActionId = normalizeText(config.syncActionId);
-  const syncedMetadataName = normalizeText(config.syncedMetadataName);
+  const refreshActionId = normalizeText(config.refreshActionId);
+  const refreshAttemptedMetadataName = normalizeText(config.refreshAttemptedMetadataName);
   if (normalizeText(metadata[skippedMetadataName])) {
     return nextIsReady(session)
       ? advanceOperation(session)
       : stopOperation(session.next?.disabledReason || "");
   }
   if (normalizeText(metadata[mergedMetadataName])) {
-    if (syncActionId && syncedMetadataName && !normalizeText(metadata[syncedMetadataName])) {
+    if (refreshActionId && refreshAttemptedMetadataName && !normalizeText(metadata[refreshAttemptedMetadataName])) {
       if (stepMachineIsWaitingForCodex(session) || stepMachineNeedsInput(session)) {
         return waitOperation(automationWaitReason(session));
       }
       return actionOperation(session, {
-        actionId: syncActionId
+        actionId: refreshActionId
       });
     }
     return nextIsReady(session)

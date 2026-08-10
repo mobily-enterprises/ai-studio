@@ -47,9 +47,11 @@ function managedSourcePermissionPaths({
     workdir,
     sourcePath,
     successMetadata?.source_path,
-    successMetadata?.source_cache_path,
     metadata?.source_path,
-    metadata?.source_cache_path
+    successMetadata?.canonical_repository_path,
+    successMetadata?.github_mirror_path,
+    metadata?.canonical_repository_path,
+    metadata?.github_mirror_path
   ]);
 }
 

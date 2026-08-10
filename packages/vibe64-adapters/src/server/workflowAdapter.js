@@ -62,8 +62,8 @@ const VIBE64_WORKFLOW_COMMANDS = deepFreeze([
     label: "Run automated checks"
   },
   {
-    id: "sync_main_checkout",
-    label: "Refresh Git cache"
+    id: "refresh_github_mirror",
+    label: "Refresh GitHub mirror"
   },
   {
     id: "update_code_index",
