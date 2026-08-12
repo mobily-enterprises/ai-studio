@@ -515,6 +515,9 @@ import {
 import {
   writeClipboardText
 } from "@/lib/clipboard.js";
+import {
+  sourceEditorDocumentChanges
+} from "@/lib/vibe64SourceEditorDocumentChanges.js";
 
 const SOURCE_EDITOR_TREE_STATE_STORAGE_KEY = "vibe64:source-editor:tree-state";
 
@@ -564,6 +567,7 @@ const emit = defineEmits(["ask-codex-about-file"]);
 
 const editorElement = ref(null);
 let editorView = null;
+let renderedEditorPath = "";
 let resettingEditor = false;
 const editor = useVibe64SourceEditor({
   active: () => props.active,
@@ -1014,25 +1018,49 @@ function createEditor() {
       ]
     })
   });
+  renderedEditorPath = editor.selectedPath.value;
 }
 
 function replaceEditorDocument() {
   if (!editorView) {
     return;
   }
+  const selectedPath = editor.selectedPath.value;
+  const sameFile = renderedEditorPath === selectedPath;
+  const currentText = editorView.state.doc.toString();
+  const changes = editorView.state.changes(sameFile
+    ? sourceEditorDocumentChanges(currentText, editor.text.value)
+    : [{
+        from: 0,
+        insert: editor.text.value,
+        to: currentText.length
+      }]);
+  const effects = [
+    languageCompartment.reconfigure(languageExtension(selectedPath)),
+    lineWrappingCompartment.reconfigure(sourceEditorLineWrappingExtension(selectedPath))
+  ];
+  const cursorRequest = editor.cursorRequest.value;
+  const explicitCursorRequest = (
+    cursorRequest?.path === selectedPath &&
+    Number(cursorRequest.line || 0) > 0
+  );
+  if (sameFile && !explicitCursorRequest) {
+    const scrollSnapshot = editorView.scrollSnapshot().map(changes);
+    if (scrollSnapshot) {
+      effects.unshift(scrollSnapshot);
+    }
+  }
+
   resettingEditor = true;
-  editorView.dispatch({
-    changes: {
-      from: 0,
-      insert: editor.text.value,
-      to: editorView.state.doc.length
-    },
-    effects: [
-      languageCompartment.reconfigure(languageExtension(editor.selectedPath.value)),
-      lineWrappingCompartment.reconfigure(sourceEditorLineWrappingExtension(editor.selectedPath.value))
-    ]
-  });
-  resettingEditor = false;
+  try {
+    editorView.dispatch({
+      changes,
+      effects
+    });
+  } finally {
+    resettingEditor = false;
+  }
+  renderedEditorPath = selectedPath;
   applyCursorRequest();
 }
 
@@ -1210,6 +1238,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   editorView?.destroy();
   editorView = null;
+  renderedEditorPath = "";
 });
 </script>
 

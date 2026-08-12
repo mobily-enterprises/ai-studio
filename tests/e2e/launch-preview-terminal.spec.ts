@@ -1067,7 +1067,10 @@ test("chat source links open the editor and editor autosaves file changes", asyn
   await expect(page.getByText("node_modules/pkg/hidden.js")).toHaveCount(0);
 });
 
-test("source editor refresh reloads the open file as well as the tree", async ({ page }) => {
+test("source editor refresh reloads the open file and preserves its viewport", async ({ page }) => {
+  const originalText = Array.from({ length: 240 }, (_, index) => (
+    `const sourceLine${String(index + 1).padStart(3, "0")} = ${index + 1};`
+  )).join("\n") + "\n";
   await mockLaunchTerminalSocket(page);
   const sourceEditor = await mockLaunchSession(page, {
     conversationLog: [
@@ -1081,19 +1084,43 @@ test("source editor refresh reloads the open file as well as the tree", async ({
       }
     ],
     sourceEditorFiles: {
-      "src/App.js": "const status = 'ready';\n"
+      "src/App.js": originalText
     }
   });
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
   await page.getByRole("link", {
     name: "src/App.js"
   }).click();
-  await expect(page.locator(".cm-content")).toContainText("const status = 'ready';");
+  const scroller = page.locator(".cm-scroller");
+  await scroller.evaluate((element) => {
+    element.scrollTop = 1800;
+  });
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(1_000);
+  const viewport = await scroller.evaluate((element) => {
+    const scrollerBounds = element.getBoundingClientRect();
+    const visibleLines = [...element.querySelectorAll(".cm-line")].filter((line) => {
+      const lineBounds = line.getBoundingClientRect();
+      return lineBounds.bottom > scrollerBounds.top && lineBounds.top < scrollerBounds.bottom;
+    });
+    return {
+      line: visibleLines[Math.floor(visibleLines.length / 2)]?.textContent || "",
+      scrollTop: element.scrollTop
+    };
+  });
+  expect(viewport.line).toMatch(/^const sourceLine\d{3} = \d+;$/u);
 
-  sourceEditor.setText("src/App.js", "const status = 'changed on disk';\n");
+  const changedLine = viewport.line.replace(";", " + 1;");
+  sourceEditor.setText(
+    "src/App.js",
+    `const insertedAboveViewport = true;\n${originalText.replace(viewport.line, changedLine)}`
+  );
   await page.getByTitle("Refresh files").click();
 
-  await expect(page.locator(".cm-content")).toContainText("const status = 'changed on disk';");
+  await expect(page.locator(".cm-content")).toContainText(changedLine);
+  await expect.poll(async () => (
+    await scroller.evaluate((element) => element.scrollTop) - viewport.scrollTop
+  )).toBeGreaterThan(5);
+  expect(await scroller.evaluate((element) => element.scrollTop) - viewport.scrollTop).toBeLessThan(50);
   expect(sourceEditor.getTreeRequests().length).toBeGreaterThan(1);
 });
 
