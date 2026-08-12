@@ -3049,6 +3049,7 @@ function createCodexTerminalController({
       if (eventType === "event_msg" && payloadType === "agent_message" && phase && phase !== "final_answer") {
         return {
           explicit: Boolean(phase),
+          phase,
           source: "event",
           text: normalizeText(
             codexAppServerContentText(payload.message) ||
@@ -3073,6 +3074,7 @@ function createCodexTerminalController({
     }
     return {
       explicit: ["commentary", "progress", "status", "thinking"].includes(phase),
+      phase,
       source: "item",
       text
     };
@@ -3081,7 +3083,13 @@ function createCodexTerminalController({
   function codexAppServerLiveProgressText(notification = {}) {
     const candidate = codexAppServerLiveProgressCandidate(notification);
     const text = normalizeText(candidate?.text);
-    if (!text || text.length > CODEX_APP_SERVER_LIVE_PROGRESS_MAX_LENGTH) {
+    if (!text) {
+      return "";
+    }
+    if (candidate?.phase === "commentary") {
+      return text;
+    }
+    if (text.length > CODEX_APP_SERVER_LIVE_PROGRESS_MAX_LENGTH) {
       return "";
     }
     if (text.includes("\n") || text.includes("\r") || text.includes("```")) {

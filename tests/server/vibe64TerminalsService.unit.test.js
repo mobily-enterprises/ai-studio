@@ -6540,6 +6540,38 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
       "I am checking the generated app.",
       "Inspecting remaining CSS."
     ]);
+    const explicitCommentaryText = [
+      "Yes — the status controls use the framework command composable with a compact action model.",
+      "That is the correct seam because these are user-triggered mutations, while the queue remains a resource read.",
+      "Both stay inside the framework route and runtime plumbing, with no page-owned transport code or raw network request anywhere."
+    ].join(" ");
+    assert.ok(explicitCommentaryText.length > 320);
+    const publishCountBeforeExplicitCommentary = publishSessionEvents.length;
+    providerSubscribers[0]({
+      method: "item/completed",
+      params: {
+        item: {
+          content: [
+            {
+              text: explicitCommentaryText,
+              type: "text"
+            }
+          ],
+          id: "assistant-commentary-1",
+          phase: "commentary",
+          type: "assistantMessage"
+        },
+        threadId: "00000000-0000-4000-8000-000000000004",
+        turnId: "codex-app-server-turn-1"
+      }
+    });
+    await delay(5);
+    assert.equal(publishSessionEvents.length, publishCountBeforeExplicitCommentary + 1);
+    assert.equal(publishSessionReasons.at(-1), "codex-app-server-live-progress");
+    assert.equal(
+      publishSessionEvents.at(-1)?.payload?.conversationLogPatch?.turn?.thinking?.at(-1)?.text,
+      explicitCommentaryText
+    );
     const publishCountBeforeAnonymousProgress = publishSessionEvents.length;
     providerSubscribers[0]({
       method: "codex/event",
@@ -6719,7 +6751,8 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
       "Checked the app-server prompt delivery result.",
       "Preparing to verify UI layouts",
       "I am checking the generated app.",
-      "Inspecting remaining CSS."
+      "Inspecting remaining CSS.",
+      explicitCommentaryText
     ]);
     const publishReasonBeforeTerminalTurn = publishSessionReasons.at(-1);
     providerSubscribers[0]({
@@ -6781,7 +6814,8 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
       "Checked the app-server prompt delivery result.",
       "Preparing to verify UI layouts",
       "I am checking the generated app.",
-      "Inspecting remaining CSS."
+      "Inspecting remaining CSS.",
+      explicitCommentaryText
     ]);
     assert.equal(publishSessionReasons.at(-1), "codex-app-server-turn-active");
     providerSubscribers[0]({
