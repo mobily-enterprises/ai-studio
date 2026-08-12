@@ -302,14 +302,17 @@ async function copyKey(key = "") {
 
 .runtime-config-records-table__secret-value {
   align-items: center;
-  display: flex;
+  display: grid;
   gap: 0.25rem;
+  grid-template-columns: minmax(0, 1fr) auto;
   max-width: 32rem;
+  min-width: 12rem;
 }
 
 .runtime-config-records-table__secret-value code {
-  overflow-wrap: anywhere;
-  white-space: normal;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .runtime-config-records-table__edit {
