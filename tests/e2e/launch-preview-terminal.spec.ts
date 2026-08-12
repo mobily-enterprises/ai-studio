@@ -1067,6 +1067,36 @@ test("chat source links open the editor and editor autosaves file changes", asyn
   await expect(page.getByText("node_modules/pkg/hidden.js")).toHaveCount(0);
 });
 
+test("source editor refresh reloads the open file as well as the tree", async ({ page }) => {
+  await mockLaunchTerminalSocket(page);
+  const sourceEditor = await mockLaunchSession(page, {
+    conversationLog: [
+      {
+        assistant: {
+          at: "2026-05-24T00:00:00.000Z",
+          role: "assistant",
+          text: "Open [src/App.js](src/App.js)."
+        },
+        turnId: "turn-source-refresh"
+      }
+    ],
+    sourceEditorFiles: {
+      "src/App.js": "const status = 'ready';\n"
+    }
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await page.getByRole("link", {
+    name: "src/App.js"
+  }).click();
+  await expect(page.locator(".cm-content")).toContainText("const status = 'ready';");
+
+  sourceEditor.setText("src/App.js", "const status = 'changed on disk';\n");
+  await page.getByTitle("Refresh files").click();
+
+  await expect(page.locator(".cm-content")).toContainText("const status = 'changed on disk';");
+  expect(sourceEditor.getTreeRequests().length).toBeGreaterThan(1);
+});
+
 test("source explanations keep live progress compact and answers above the follow-up composer", async ({ page }) => {
   const sourcePath = "src/pages/home/receivals/[recordId]/edit.vue";
   const sourceRoot = `${sessionRuntimeRoot(SESSION_ID)}/source`;
@@ -1498,6 +1528,22 @@ async function mockLaunchSession(page: Page, {
       }));
       return;
     }
+    if (sourceEditor && method === "GET" && url.pathname.endsWith("/source-editor/changes/stream")) {
+      await route.fulfill({
+        body: [
+          "retry: 60000",
+          "event: vibe64.source-editor.sync.ready",
+          `data: ${JSON.stringify({
+            path: url.searchParams.get("path") || "",
+            sessionId: SESSION_ID
+          })}`,
+          ""
+        ].join("\n"),
+        contentType: "text/event-stream; charset=utf-8",
+        status: 200
+      });
+      return;
+    }
     if (sourceEditor && method === "GET" && url.pathname.endsWith("/source-editor/files")) {
       await fulfillJson(route, sourceEditor.listFiles(url.searchParams.get("q") || ""));
       return;
@@ -1630,6 +1676,9 @@ async function mockLaunchSession(page: Page, {
     },
     getSavedText(path: string) {
       return sourceEditor?.getText(path) || "";
+    },
+    setText(path: string, text: string) {
+      sourceEditor?.setText(path, text);
     },
     getTreeRequests() {
       return sourceEditor?.getTreeRequests() || [];
@@ -1879,7 +1928,11 @@ function createSourceEditorMock(initialFiles: Record<string, string>) {
     readTree,
     resolvePath,
     saveFile,
-    search
+    search,
+    setText(path: string, text: string) {
+      files.set(path, text);
+      version += 1;
+    }
   };
 }
 

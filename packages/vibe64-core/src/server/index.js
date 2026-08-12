@@ -4,6 +4,7 @@ export * from "./composerRealtimeEvents.js";
 export * from "./committedProjectConfig.js";
 export * from "./deepFreeze.js";
 export * from "./doctorCheckItems.js";
+export * from "./eventStream.js";
 export * from "./featureRoutes.js";
 export * from "./localhostCheckBypass.js";
 export * from "./launchPreviewProxyEnv.js";

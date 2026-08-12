@@ -14,6 +14,8 @@ const VIBE64_COMPOSER_CHANGED_EVENT = "vibe64.composer.changed";
 const VIBE64_SESSION_VIEW_CHANGED_EVENT = "vibe64.session.view.changed";
 const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.changed";
 const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
+const VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT = "vibe64.source-editor.sync.error";
+const VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT = "vibe64.source-editor.sync.ready";
 const DEFAULT_MAX_OPEN_SESSIONS = 3;
 const SELECTED_SESSION_STORAGE_KEY = "vibe64:selected-session-id";
 
@@ -195,6 +197,12 @@ function vibe64SourceEditorOpenFilePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/source-editor/open-file");
 }
 
+function vibe64SourceEditorChangesStreamPath(sessionsApiPath = "", sessionId = "", sourcePath = "") {
+  const basePath = vibe64SessionPath(sessionsApiPath, sessionId, "/source-editor/changes/stream");
+  const normalizedPath = String(sourcePath || "").trim();
+  return normalizedPath ? `${basePath}?path=${encodeURIComponent(normalizedPath)}` : basePath;
+}
+
 function vibe64SourceEditorExplanationsPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/source-editor/explanations");
 }
@@ -323,6 +331,8 @@ export {
   VIBE64_SESSION_VIEW_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT,
   VIBE64_API_SUFFIX,
   VIBE64_CURRENT_SESSION_API_SUFFIX,
   VIBE64_SESSIONS_API_SUFFIX,
@@ -357,6 +367,7 @@ export {
   vibe64SessionQueryKey,
   selectedSessionStorageKey,
   vibe64SourceEditorCreateFilePath,
+  vibe64SourceEditorChangesStreamPath,
   vibe64SourceEditorExplanationFollowupsPath,
   vibe64SourceEditorExplanationFollowupsStreamPath,
   vibe64SourceEditorExplanationPath,

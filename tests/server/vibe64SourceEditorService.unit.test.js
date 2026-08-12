@@ -18,6 +18,10 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
+  VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT
+} from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
+import {
   defaultVibe64SourceExplanationAgentSettings,
   normalizeVibe64AgentSettings
 } from "../../packages/vibe64-runtime/src/shared/agentSettings.js";
@@ -45,6 +49,7 @@ async function createSourceEditorFixture({
   extraFiles = [],
   preexpandedDirectories = [],
   preloadDirectories = [],
+  sourceFileObserver = null,
   terminalService = null
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-source-editor-"));
@@ -124,6 +129,7 @@ async function createSourceEditorFixture({
         };
       }
     },
+    sourceFileObserver,
     terminalService
   });
 
@@ -163,6 +169,101 @@ test("source editor tree excludes paths from the adapter policy", async () => {
     assert.equal(response.tree.children[0].loaded, false);
     assert.deepEqual(response.tree.children[0].children, []);
   } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor observes only an explicitly opened, policy-approved file", async () => {
+  let closeStream = null;
+  let observed = null;
+  let observerListener = null;
+  let unsubscribed = false;
+  let markObserverSubscribed;
+  const observerSubscribed = new Promise((resolve) => {
+    markObserverSubscribed = resolve;
+  });
+  const sourceFileObserver = {
+    close() {},
+    subscribe(options, listener) {
+      observed = options;
+      observerListener = listener;
+      markObserverSubscribed();
+      return () => {
+        unsubscribed = true;
+      };
+    }
+  };
+  const fixture = await createSourceEditorFixture({
+    extraFiles: [{
+      path: ".git/config",
+      text: "[core]\n"
+    }],
+    sourceFileObserver
+  });
+  try {
+    const emitted = [];
+    const streaming = fixture.service.streamFileChanges({
+      path: "src/app.js",
+      sessionId: "session-1"
+    }, {
+      emit(event, payload) {
+        emitted.push({
+          event,
+          payload
+        });
+      },
+      isClosed: () => false,
+      onClose(handler) {
+        closeStream = handler;
+      }
+    });
+    await observerSubscribed;
+
+    assert.deepEqual(observed, {
+      relativePath: "src/app.js",
+      sourceRoot: fixture.sourceRoot
+    });
+    observerListener({
+      kind: "ready"
+    });
+    observerListener({
+      kind: "change",
+      updatedAt: "2026-08-13T00:00:00.000Z"
+    });
+    assert.equal(emitted[0].event, VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT);
+    assert.deepEqual(emitted[1], {
+      event: VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
+      payload: {
+        originId: "filesystem",
+        path: "src/app.js",
+        sessionId: "session-1",
+        updatedAt: "2026-08-13T00:00:00.000Z"
+      }
+    });
+
+    closeStream();
+    await streaming;
+    assert.equal(unsubscribed, true);
+
+    for (const excludedPath of [
+      ".git/config",
+      "dist/bundle.js",
+      "node_modules/pkg/index.js"
+    ]) {
+      await assert.rejects(() => fixture.service.streamFileChanges({
+        path: excludedPath,
+        sessionId: "session-1"
+      }, {
+        emit() {},
+        isClosed: () => false,
+        onClose() {}
+      }), /excluded by the project adapter/u);
+    }
+  } finally {
+    fixture.service.close();
     await rm(fixture.root, {
       force: true,
       recursive: true

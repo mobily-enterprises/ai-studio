@@ -7,6 +7,9 @@ import {
 } from "@local/vibe64-runtime/shared";
 
 import {
+  useVibe64SourceEditorFileSync
+} from "@/composables/useVibe64SourceEditorFileSync.js";
+import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   vibe64SourceEditorCreateFilePath,
@@ -460,6 +463,27 @@ function loadedDirectoryPaths(root = null, directoryPath = "") {
   return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
 }
 
+function loadedTreeDirectoryPaths(root = null) {
+  const paths = [];
+  function visit(node = null) {
+    if (!node || node.type !== "directory") {
+      return;
+    }
+    const normalizedPath = normalizeEditorPath(node.path);
+    if (normalizedPath && node.loaded === true) {
+      paths.push(normalizedPath);
+    }
+    for (const child of Array.isArray(node.children) ? node.children : []) {
+      visit(child);
+    }
+  }
+  visit(root);
+  return [...new Set(paths)].sort((left, right) => {
+    const depthDifference = left.split("/").length - right.split("/").length;
+    return depthDifference || left.localeCompare(right);
+  });
+}
+
 async function sourceEditorRequest(url = "", options = {}) {
   const payload = await getUsersWebHttpClient().request(url, options);
   if (payload?.ok === false) {
@@ -582,6 +606,7 @@ function appendSourceEditorExplanationMessages(explanation = null, messages = []
 }
 
 function useVibe64SourceEditor({
+  active = true,
   navigateReferencedSource = null,
   openSyncState = null,
   projectSlug,
@@ -630,6 +655,7 @@ function useVibe64SourceEditor({
   const treeDirectoryRequestIds = new Map();
   let createFileRequestId = 0;
   let fileRequestId = 0;
+  let fileRevalidationRequestId = 0;
   let fileMatchesRequestId = 0;
   let searchRequestId = 0;
   let explanationRequestId = 0;
@@ -638,13 +664,15 @@ function useVibe64SourceEditor({
   let autosaveTimer = null;
   let fileMatchesTimer = null;
   let searchTimer = null;
-  let queuedSave = false;
+  let pendingFileRevalidation = false;
+  let savePromise = null;
   let lastAppliedOpenSyncSignature = "";
 
   const currentSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
   const currentSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
   const currentProjectSlug = computed(() => String(readRefOrGetterValue(projectSlug) || "").trim());
   const currentOpenSyncState = computed(() => readRefOrGetterValue(openSyncState) || null);
+  const currentActive = computed(() => readRefOrGetterValue(active) !== false);
   const canLoad = computed(() => Boolean(currentSessionsApiPath.value && currentSessionId.value));
   const statusLabel = computed(() => {
     if (saveError.value) {
@@ -679,6 +707,27 @@ function useVibe64SourceEditor({
     onEvent: ({ payload = {} } = {}) => {
       void applyRemoteFileChange(payload);
     }
+  });
+
+  useVibe64SourceEditorFileSync({
+    active: computed(() => canLoad.value && currentActive.value),
+    onChange: (payload = {}) => {
+      void applyObservedFileChange(payload);
+    },
+    onError: (error = {}) => {
+      vibe64SessionDebugLog("client.sourceEditor.fileSync.error", {
+        error: String(error.error || "Source file observation failed."),
+        path: selectedPath.value,
+        sessionId: currentSessionId.value,
+        transient: error.transient === true
+      });
+    },
+    onReady: () => {
+      void revalidateSelectedFile();
+    },
+    path: selectedPath,
+    sessionId: currentSessionId,
+    sessionsApiPath: currentSessionsApiPath
   });
 
   useRealtimeEvent({
@@ -845,7 +894,12 @@ function useVibe64SourceEditor({
     }
   }
 
-  async function loadTree() {
+  async function loadTree({
+    preserveLoadedDirectories = true
+  } = {}) {
+    const directoriesToReload = preserveLoadedDirectories
+      ? loadedTreeDirectoryPaths(tree.value)
+      : [];
     const requestId = treeRequestId + 1;
     treeRequestId = requestId;
     tree.value = null;
@@ -866,6 +920,15 @@ function useVibe64SourceEditor({
     });
     if (requestId !== treeRequestId) {
       return;
+    }
+    for (const directoryPath of directoriesToReload) {
+      if (requestId !== treeRequestId || !findTreeDirectory(tree.value, directoryPath)) {
+        continue;
+      }
+      await loadDirectoryPage(directoryPath, {
+        append: false,
+        offset: 0
+      });
     }
     if (selectedRevealTree.value) {
       tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
@@ -897,23 +960,50 @@ function useVibe64SourceEditor({
     });
   }
 
+  function applyFileResponse(response = {}, {
+    column = 0,
+    fallbackPath = "",
+    line = 0
+  } = {}) {
+    const file = response.file || {};
+    const filePath = normalizeEditorPath(file.path || fallbackPath);
+    if (!filePath) {
+      return false;
+    }
+    selectedPath.value = filePath;
+    selectedRevealTree.value = normalizeTreeNode(response.revealTree);
+    if (selectedRevealTree.value) {
+      tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+    }
+    text.value = String(file.text || "");
+    savedHash.value = String(file.hash || "");
+    dirty.value = false;
+    revealLoadedFilePath(filePath);
+    cursorRequest.value = {
+      column: Number(column || 0) || 0,
+      line: Number(line || 0) || 0,
+      path: filePath,
+      version: loadedVersion.value + 1
+    };
+    loadedVersion.value += 1;
+    return true;
+  }
+
   async function openFile(filePath = "", options = {}) {
     const normalizedPath = normalizeEditorPath(filePath);
     if (!normalizedPath || !canLoad.value) {
-      return;
+      return false;
+    }
+    if ((dirty.value || saving.value) && !await saveNow()) {
+      return false;
     }
     const requestId = fileRequestId + 1;
     fileRequestId = requestId;
+    fileRevalidationRequestId += 1;
     loadError.value = "";
     saveError.value = "";
     loadingFile.value = true;
     loadingPath.value = normalizedPath;
-    if (dirty.value) {
-      await saveNow();
-    }
-    if (requestId !== fileRequestId) {
-      return;
-    }
     try {
       const response = await sourceEditorRequest(vibe64SourceEditorFilePath(
         currentSessionsApiPath.value,
@@ -921,32 +1011,24 @@ function useVibe64SourceEditor({
         normalizedPath
       ));
       if (requestId !== fileRequestId) {
-        return;
+        return false;
       }
-      const file = response.file || {};
-      selectedPath.value = normalizeEditorPath(file.path || normalizedPath);
-      selectedRevealTree.value = normalizeTreeNode(response.revealTree);
-      if (selectedRevealTree.value) {
-        tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+      if (!applyFileResponse(response, {
+        column: options.column,
+        fallbackPath: normalizedPath,
+        line: options.line
+      })) {
+        return false;
       }
-      text.value = String(file.text || "");
-      savedHash.value = String(file.hash || "");
-      dirty.value = false;
-      revealLoadedFilePath(selectedPath.value);
-      cursorRequest.value = {
-        column: Number(options.column || 0) || 0,
-        line: Number(options.line || 0) || 0,
-        path: selectedPath.value,
-        version: loadedVersion.value + 1
-      };
-      loadedVersion.value += 1;
       if (options.publish !== false) {
         publishOpenFile(selectedPath.value);
       }
+      return true;
     } catch (error) {
       if (requestId === fileRequestId) {
         loadError.value = String(error?.message || error || "Source file could not be loaded.");
       }
+      return false;
     } finally {
       if (requestId === fileRequestId) {
         loadingFile.value = false;
@@ -960,16 +1042,14 @@ function useVibe64SourceEditor({
     if (!normalizedPath || !canLoad.value || creatingFile.value) {
       return false;
     }
-    if (dirty.value) {
-      await saveNow();
-      if (dirty.value || saveError.value) {
-        return false;
-      }
+    if ((dirty.value || saving.value) && !await saveNow()) {
+      return false;
     }
     const createRequestId = createFileRequestId + 1;
     createFileRequestId = createRequestId;
     const fileSelectionRequestId = fileRequestId + 1;
     fileRequestId = fileSelectionRequestId;
+    fileRevalidationRequestId += 1;
     createFileError.value = "";
     loadError.value = "";
     saveError.value = "";
@@ -989,23 +1069,11 @@ function useVibe64SourceEditor({
       if (fileSelectionRequestId !== fileRequestId) {
         return false;
       }
-      const file = response.file || {};
-      selectedPath.value = normalizeEditorPath(file.path || normalizedPath);
-      selectedRevealTree.value = normalizeTreeNode(response.revealTree);
-      if (selectedRevealTree.value) {
-        tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+      if (!applyFileResponse(response, {
+        fallbackPath: normalizedPath
+      })) {
+        return false;
       }
-      text.value = String(file.text || "");
-      savedHash.value = String(file.hash || "");
-      dirty.value = false;
-      revealLoadedFilePath(selectedPath.value);
-      cursorRequest.value = {
-        column: 0,
-        line: 0,
-        path: selectedPath.value,
-        version: loadedVersion.value + 1
-      };
-      loadedVersion.value += 1;
       publishOpenFile(selectedPath.value);
       return true;
     } catch (error) {
@@ -1020,9 +1088,80 @@ function useVibe64SourceEditor({
     }
   }
 
+  async function revalidateSelectedFile() {
+    const pathAtRequest = selectedPath.value;
+    const sessionIdAtRequest = currentSessionId.value;
+    if (!pathAtRequest || !canLoad.value) {
+      return false;
+    }
+    if (saving.value) {
+      pendingFileRevalidation = true;
+      return false;
+    }
+    const requestId = fileRevalidationRequestId + 1;
+    fileRevalidationRequestId = requestId;
+    try {
+      const response = await sourceEditorRequest(vibe64SourceEditorFilePath(
+        currentSessionsApiPath.value,
+        sessionIdAtRequest,
+        pathAtRequest
+      ));
+      if (
+        requestId !== fileRevalidationRequestId ||
+        selectedPath.value !== pathAtRequest ||
+        currentSessionId.value !== sessionIdAtRequest
+      ) {
+        return false;
+      }
+      const nextHash = String(response.file?.hash || "");
+      if (dirty.value || saving.value) {
+        if (nextHash && nextHash !== savedHash.value) {
+          saveError.value = SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE;
+        } else if (saveError.value === SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE) {
+          saveError.value = "";
+        }
+        return false;
+      }
+      if (!nextHash || nextHash === savedHash.value) {
+        return false;
+      }
+      loadError.value = "";
+      return applyFileResponse(response, {
+        fallbackPath: pathAtRequest
+      });
+    } catch (error) {
+      if (
+        requestId === fileRevalidationRequestId &&
+        selectedPath.value === pathAtRequest &&
+        currentSessionId.value === sessionIdAtRequest
+      ) {
+        loadError.value = String(error?.message || error || "Source file could not be refreshed.");
+      }
+      return false;
+    }
+  }
+
+  async function applySelectedFileChange({
+    hash = "",
+    path = ""
+  } = {}) {
+    const changedPath = normalizeEditorPath(path);
+    const changedHash = normalizeSourceEditorSyncValue(hash);
+    if (!changedPath || changedPath !== selectedPath.value || (changedHash && changedHash === savedHash.value)) {
+      return;
+    }
+    if (saving.value) {
+      pendingFileRevalidation = true;
+      return;
+    }
+    if (dirty.value && changedHash) {
+      saveError.value = SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE;
+      return;
+    }
+    await revalidateSelectedFile();
+  }
+
   async function applyRemoteFileChange(payload = {}) {
-    const changedPath = normalizeEditorPath(payload.path);
-    const changedHash = normalizeSourceEditorSyncValue(payload.hash);
     if (
       !sourceEditorFileChangePayloadMatches({
         originId,
@@ -1030,19 +1169,21 @@ function useVibe64SourceEditor({
         payload,
         projectSlug: currentProjectSlug.value,
         sessionId: currentSessionId.value
-      }) ||
-      changedPath !== selectedPath.value ||
-      (changedHash && changedHash === savedHash.value)
+      })
     ) {
       return;
     }
-    if (dirty.value || saving.value) {
-      saveError.value = SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE;
+    await applySelectedFileChange(payload);
+  }
+
+  async function applyObservedFileChange(payload = {}) {
+    if (
+      normalizeSourceEditorSyncValue(payload.sessionId) !== currentSessionId.value ||
+      normalizeEditorPath(payload.path) !== selectedPath.value
+    ) {
       return;
     }
-    await openFile(changedPath, {
-      publish: false
-    });
+    await applySelectedFileChange(payload);
   }
 
   async function applyRemoteFileOpen(payload = {}) {
@@ -1678,50 +1819,58 @@ function useVibe64SourceEditor({
       : text.value;
   }
 
-  async function saveNow() {
+  async function saveDirtyBuffers() {
+    while (selectedPath.value && dirty.value) {
+      const pathAtSave = selectedPath.value;
+      const textAtSave = currentText();
+      const baseHashAtSave = savedHash.value;
+      saving.value = true;
+      saveError.value = "";
+      try {
+        const response = await sourceEditorRequest(vibe64SourceEditorFilePath(
+          currentSessionsApiPath.value,
+          currentSessionId.value
+        ), {
+          body: {
+            baseHash: baseHashAtSave,
+            originId,
+            path: pathAtSave,
+            projectSlug: currentProjectSlug.value,
+            text: textAtSave
+          },
+          method: "PUT"
+        });
+        if (selectedPath.value === pathAtSave) {
+          savedHash.value = String(response.file?.hash || "");
+          text.value = textAtSave;
+          dirty.value = currentText() !== textAtSave;
+        }
+      } catch (error) {
+        if (selectedPath.value === pathAtSave) {
+          saveError.value = String(error?.message || error || "Source file could not be saved.");
+        }
+        return false;
+      } finally {
+        saving.value = false;
+      }
+    }
+
+    if (pendingFileRevalidation) {
+      pendingFileRevalidation = false;
+      void revalidateSelectedFile();
+    }
+    return !dirty.value;
+  }
+
+  function saveNow() {
     clearAutosave();
-    if (!selectedPath.value || !dirty.value || saving.value) {
-      if (saving.value) {
-        queuedSave = true;
-      }
-      return;
+    if (savePromise) {
+      return savePromise;
     }
-    const pathAtSave = selectedPath.value;
-    const textAtSave = currentText();
-    const baseHashAtSave = savedHash.value;
-    saving.value = true;
-    saveError.value = "";
-    try {
-      const response = await sourceEditorRequest(vibe64SourceEditorFilePath(
-        currentSessionsApiPath.value,
-        currentSessionId.value
-      ), {
-        body: {
-          baseHash: baseHashAtSave,
-          originId,
-          path: pathAtSave,
-          projectSlug: currentProjectSlug.value,
-          text: textAtSave
-        },
-        method: "PUT"
-      });
-      if (selectedPath.value === pathAtSave) {
-        savedHash.value = String(response.file?.hash || "");
-        text.value = textAtSave;
-        dirty.value = currentText() !== textAtSave;
-      }
-    } catch (error) {
-      if (selectedPath.value === pathAtSave) {
-        saveError.value = String(error?.message || error || "Source file could not be saved.");
-      }
-    } finally {
-      saving.value = false;
-      if (queuedSave || (selectedPath.value === pathAtSave && currentText() !== textAtSave)) {
-        queuedSave = false;
-        dirty.value = true;
-        scheduleSave();
-      }
-    }
+    savePromise = saveDirtyBuffers().finally(() => {
+      savePromise = null;
+    });
+    return savePromise;
   }
 
   function openRequest(request = {}) {
@@ -1735,6 +1884,21 @@ function useVibe64SourceEditor({
     });
   }
 
+  async function refresh() {
+    await loadTree();
+    await revalidateSelectedFile();
+  }
+
+  function handleWindowFocus() {
+    if (currentActive.value && selectedPath.value) {
+      void revalidateSelectedFile();
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", handleWindowFocus);
+  }
+
   watch([currentSessionsApiPath, currentSessionId], async (_current, previous = []) => {
     clearExplanationStream();
     if (activeExplanation.value) {
@@ -1744,6 +1908,8 @@ function useVibe64SourceEditor({
       });
     }
     resetDiscoveryState();
+    fileRevalidationRequestId += 1;
+    pendingFileRevalidation = false;
     selectedPath.value = "";
     selectedRevealTree.value = null;
     text.value = "";
@@ -1752,7 +1918,9 @@ function useVibe64SourceEditor({
     activeExplanation.value = null;
     explanationFollowup.value = "";
     explanationAgentSettings.value = defaultVibe64SourceExplanationAgentSettings();
-    await loadTree();
+    await loadTree({
+      preserveLoadedDirectories: false
+    });
     cleanupAbandonedExplanations();
   }, {
     immediate: true
@@ -1775,6 +1943,9 @@ function useVibe64SourceEditor({
     clearAutosave();
     clearFileMatchesTimer();
     clearSearchTimer();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", handleWindowFocus);
+    }
     void disposeActiveExplanation();
     void saveNow();
   });
@@ -1812,7 +1983,7 @@ function useVibe64SourceEditor({
     openSearchResult,
     policy,
     preexpandedDirectoryPaths,
-    refresh: loadTree,
+    refresh,
     retryExplanation,
     revealedDirectoryPaths,
     saveError,

@@ -1,66 +1,10 @@
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
+import { sendVibe64EventStream } from "@local/vibe64-core/server/eventStream";
 
 const SYSTEM_GRAPH_SERVICE_ID = "feature.vibe64-system-graph.service";
 
 function systemGraphService(app) {
   return app.make(SYSTEM_GRAPH_SERVICE_ID);
-}
-
-function writeSystemSseEvent(rawReply, payload = {}) {
-  const eventType = String(payload.type || "system-update.progress").replace(/[^A-Za-z0-9._-]/gu, "-");
-  rawReply.write(`event: ${eventType}\n`);
-  rawReply.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-async function sendSystemUpdateStream(reply, run) {
-  if (!reply?.raw) {
-    throw new Error("System update streams require a Fastify reply with raw stream access.");
-  }
-  reply.hijack?.();
-  const rawReply = reply.raw;
-  let closed = false;
-  const markClosed = () => {
-    closed = true;
-  };
-  rawReply.on?.("close", markClosed);
-  rawReply.writeHead(200, {
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "X-Accel-Buffering": "no"
-  });
-  const heartbeat = setInterval(() => {
-    if (!closed) {
-      rawReply.write(": heartbeat\n\n");
-    }
-  }, 15000);
-  heartbeat.unref?.();
-  try {
-    await run({
-      emit: (payload) => {
-        if (!closed) {
-          writeSystemSseEvent(rawReply, payload);
-        }
-      },
-      isClosed: () => closed
-    });
-  } catch (error) {
-    if (!closed) {
-      writeSystemSseEvent(rawReply, {
-        error: {
-          code: String(error?.code || "vibe64_system_update_stream_failed"),
-          message: String(error?.message || error)
-        },
-        type: "system-update.stream-failed"
-      });
-    }
-  } finally {
-    clearInterval(heartbeat);
-    rawReply.off?.("close", markClosed);
-    if (!closed) {
-      rawReply.end();
-    }
-  }
 }
 
 function registerRoutes(
@@ -154,14 +98,26 @@ function registerRoutes(
   routes.serviceRoute("GET", "/system-graph/sessions/:sessionId/updates/:updateId/stream", {
     summary: "Stream runtime-local progress for one manual System update."
   }, async (request, reply) => {
-    await sendSystemUpdateStream(reply, ({ emit, isClosed }) => {
+    await sendVibe64EventStream(reply, ({ emit, isClosed }) => {
       return systemGraphService(app).streamUpdate({
         sessionId: request.params.sessionId,
         updateId: request.params.updateId
       }, {
-        emit,
+        emit(payload = {}) {
+          emit(payload.type || "system-update.progress", payload);
+        },
         isClosed
       });
+    }, {
+      errorEvent: "system-update.stream-failed",
+      errorPayload: (error) => ({
+        error: {
+          code: String(error?.code || "vibe64_system_update_stream_failed"),
+          message: String(error?.message || error)
+        },
+        type: "system-update.stream-failed"
+      }),
+      retryMs: 0
     });
   });
 

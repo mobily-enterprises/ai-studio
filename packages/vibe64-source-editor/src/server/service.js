@@ -28,10 +28,18 @@ import {
   sourceEditorSourceContractPathExcluded
 } from "@local/vibe64-adapters/server/sourceEditorFilePolicy";
 import {
+  VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT
+} from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
+import {
   defaultVibe64SourceExplanationAgentSettings,
   effectiveVibe64AgentSettings,
   normalizeVibe64AgentSettings
 } from "@local/vibe64-runtime/shared";
+import {
+  createSourceEditorFileObserver
+} from "./sourceChangeObserver.js";
 
 const SOURCE_EDITOR_CONFLICT_CODE = "vibe64_source_editor_conflict";
 const SOURCE_EDITOR_FILE_MATCH_LIMIT = 80;
@@ -87,7 +95,9 @@ function sourceEditorExplanationEffectiveAgentSettings(agentSettings = {}) {
 function createService({
   explanationFollowupGenerator = null,
   explanationGenerator = null,
+  logger = console,
   projectService,
+  sourceFileObserver = null,
   terminalService = null
 } = {}) {
   if (!projectService || typeof projectService.createRuntime !== "function") {
@@ -106,6 +116,9 @@ function createService({
       terminalService
     });
   const explanationChats = new Map();
+  const fileObserver = sourceFileObserver || createSourceEditorFileObserver({
+    logger
+  });
 
   async function sourceEditorContext(sessionId = "") {
     const normalizedSessionId = normalizeText(sessionId);
@@ -163,6 +176,12 @@ function createService({
           ok: true
         };
       });
+    },
+
+    async streamFileChanges(input = {}, stream = {}) {
+      const context = await sourceEditorContext(input.sessionId);
+      const file = await sourceEditorExistingFile(context, input.path);
+      return streamSourceEditorFileChanges(context, file, stream, fileObserver);
     },
 
     async broadcastOpenFile(input = {}) {
@@ -322,6 +341,85 @@ function createService({
           ok: true
         };
       });
+    },
+
+    close() {
+      fileObserver.close();
+    }
+  });
+}
+
+function streamSourceEditorFileChanges(context, file, stream, fileObserver) {
+  const {
+    emit,
+    isClosed,
+    onClose
+  } = stream;
+  if (
+    typeof emit !== "function" ||
+    typeof isClosed !== "function" ||
+    typeof onClose !== "function"
+  ) {
+    throw new TypeError("Source file change streams require emit(), isClosed(), and onClose().");
+  }
+  if (isClosed()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let finished = false;
+    let unsubscribe = null;
+    const finish = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      unsubscribe?.();
+      resolve();
+    };
+    onClose(finish);
+    unsubscribe = fileObserver.subscribe({
+      relativePath: file.relativePath,
+      sourceRoot: context.sourceRoot
+    }, (event = {}) => {
+      if (finished || isClosed()) {
+        return;
+      }
+      const payload = {
+        path: file.relativePath,
+        sessionId: context.sessionId
+      };
+      switch (event.kind) {
+        case "ready":
+          emit(VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT, payload);
+          break;
+        case "change":
+          emit(VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT, {
+            ...payload,
+            originId: "filesystem",
+            updatedAt: normalizeText(event.updatedAt) || new Date().toISOString()
+          });
+          break;
+        case "error":
+          try {
+            emit(VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT, {
+              ...payload,
+              error: normalizeText(event.error) || "Source file observation failed.",
+              fatal: false
+            });
+          } finally {
+            finish();
+          }
+          break;
+        case "closed":
+          finish();
+          break;
+        default:
+          break;
+      }
+    });
+    if (finished) {
+      unsubscribe();
     }
   });
 }

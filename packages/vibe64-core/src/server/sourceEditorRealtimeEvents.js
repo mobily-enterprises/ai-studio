@@ -1,5 +1,7 @@
 const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.changed";
 const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
+const VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT = "vibe64.source-editor.sync.error";
+const VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT = "vibe64.source-editor.sync.ready";
 const VIBE64_SOURCE_EDITOR_FILE_EVENT_ENTITY = "source_editor_file";
 const VIBE64_SOURCE_EDITOR_FILE_EVENT_SOURCE = "vibe64";
 const VIBE64_SOURCE_EDITOR_FILE_REALTIME_AUDIENCE = "all_clients";
@@ -118,6 +120,8 @@ function vibe64SourceEditorFileOpenedServiceEvent() {
 export {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
+  VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT,
   sourceEditorFileOpenRealtimePayload,
   sourceEditorFileRealtimePayload,
   vibe64SourceEditorFileChangedServiceEvent,

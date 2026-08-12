@@ -71,7 +71,7 @@
           :icon="mdiRefresh"
           :loading="editor.loadingTree.value"
           size="small"
-          title="Refresh file tree"
+          title="Refresh files"
           type="button"
           variant="text"
           @click="editor.refresh"
@@ -566,6 +566,7 @@ const editorElement = ref(null);
 let editorView = null;
 let resettingEditor = false;
 const editor = useVibe64SourceEditor({
+  active: () => props.active,
   navigateReferencedSource: (navigation) => props.navigateReferencedSource?.(navigation),
   openSyncState: () => props.openSyncState,
   projectSlug: () => props.projectSlug,

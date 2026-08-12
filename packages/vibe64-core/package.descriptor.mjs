@@ -29,6 +29,10 @@ export default Object.freeze({
           summary: "Shared route registration helpers for Vibe64 feature packages."
         },
         {
+          subpath: "./server/eventStream",
+          summary: "Shared Fastify server-sent event stream lifecycle helper."
+        },
+        {
           subpath: "./server/terminalWebSocketRoutes",
           summary: "Shared websocket registration helper for terminal-backed Studio routes."
         },

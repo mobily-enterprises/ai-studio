@@ -1,4 +1,8 @@
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
+import { sendVibe64EventStream } from "@local/vibe64-core/server/eventStream";
+import {
+  VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT
+} from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 
 const SOURCE_EDITOR_SERVICE_ID = "feature.vibe64-source-editor.service";
 
@@ -86,6 +90,30 @@ function registerRoutes(
       offset: query.offset,
       path: query.path,
       sessionId: request.params.sessionId
+    });
+  });
+
+  routes.serviceRoute("GET", "/sessions/:sessionId/source-editor/changes/stream", {
+    summary: "Stream changes to the source file currently open in a Vibe64 session."
+  }, async (request, reply) => {
+    const query = routes.requestQuery(request);
+    await sendVibe64EventStream(reply, ({ emit, isClosed, onClose }) => {
+      return sourceEditorService(app).streamFileChanges({
+        path: query.path,
+        sessionId: request.params.sessionId
+      }, {
+        emit,
+        isClosed,
+        onClose
+      });
+    }, {
+      errorEvent: VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
+      errorPayload: (error) => ({
+        error: String(error?.message || error || "Source file observation failed."),
+        fatal: true,
+        path: String(query.path || ""),
+        sessionId: request.params.sessionId
+      })
     });
   });
 

@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 const mocks = vi.hoisted(() => ({
   beforeUnmount: [],
+  fileSyncOptions: [],
   realtimeOptions: [],
   requestCalls: [],
   requestResults: []
@@ -21,6 +22,12 @@ vi.mock("vue", async (importOriginal) => {
 vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
   useRealtimeEvent(options) {
     mocks.realtimeOptions.push(options);
+  }
+}));
+
+vi.mock("@/composables/useVibe64SourceEditorFileSync.js", () => ({
+  useVibe64SourceEditorFileSync(options) {
+    mocks.fileSyncOptions.push(options);
   }
 }));
 
@@ -132,6 +139,7 @@ async function createLoadedEditor({
 describe("useVibe64SourceEditor", () => {
   beforeEach(() => {
     mocks.beforeUnmount.length = 0;
+    mocks.fileSyncOptions.length = 0;
     mocks.realtimeOptions.length = 0;
     mocks.requestCalls.length = 0;
     mocks.requestResults.length = 0;
@@ -172,6 +180,44 @@ describe("useVibe64SourceEditor", () => {
       }
     ]);
     expect(editor.savedHash.value).toBe("hash-2");
+    expect(editor.dirty.value).toBe(false);
+  });
+
+  it("coalesces concurrent saves and persists edits made during a save", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({
+      currentText
+    });
+    let finishFirstSave;
+    mocks.requestResults.push(new Promise((resolve) => {
+      finishFirstSave = resolve;
+    }));
+    currentText.value = "console.log('two');\n";
+    editor.updateText();
+    const saving = editor.saveNow();
+    await flushPromises();
+
+    currentText.value = "console.log('three');\n";
+    editor.updateText();
+    mocks.requestResults.push(fileResponse({
+      hash: "hash-3",
+      text: ""
+    }));
+    finishFirstSave(fileResponse({
+      hash: "hash-2",
+      text: ""
+    }));
+    await saving;
+
+    const saveBodies = mocks.requestCalls
+      .filter(([, options]) => options?.method === "PUT")
+      .map(([, options]) => options.body);
+    expect(saveBodies.map((body) => body.text)).toEqual([
+      "console.log('two');\n",
+      "console.log('three');\n"
+    ]);
+    expect(saveBodies[1].baseHash).toBe("hash-2");
+    expect(editor.savedHash.value).toBe("hash-3");
     expect(editor.dirty.value).toBe(false);
   });
 
@@ -521,5 +567,108 @@ describe("useVibe64SourceEditor", () => {
     expect(mocks.requestCalls).toHaveLength(requestCount);
     expect(editor.saveError.value).toBe(SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE);
     expect(editor.dirty.value).toBe(true);
+  });
+
+  it("reloads the clean open file after a direct filesystem change", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({
+      currentText
+    });
+    const fileSync = mocks.fileSyncOptions[0];
+    mocks.requestResults.push(fileResponse({
+      hash: "hash-2",
+      text: "console.log('filesystem');\n"
+    }));
+
+    fileSync.onChange({
+      path: "src/app.js",
+      sessionId: "session-1"
+    });
+    await flushPromises();
+
+    expect(mocks.requestCalls.at(-1)).toEqual([
+      "/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js",
+      {}
+    ]);
+    expect(editor.text.value).toBe("console.log('filesystem');\n");
+    expect(editor.savedHash.value).toBe("hash-2");
+    expect(editor.dirty.value).toBe(false);
+  });
+
+  it("refreshes both the file tree and a clean open file", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({
+      currentText
+    });
+    const requestCount = mocks.requestCalls.length;
+    mocks.requestResults.push(
+      treeResponse(),
+      fileResponse({
+        hash: "hash-2",
+        text: "console.log('refreshed');\n"
+      })
+    );
+
+    await editor.refresh();
+
+    expect(mocks.requestCalls.slice(requestCount).map(([url]) => url)).toEqual([
+      "/api/app/vibe64/sessions/session-1/source-editor/tree?limit=20",
+      "/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js"
+    ]);
+    expect(editor.text.value).toBe("console.log('refreshed');\n");
+    expect(editor.savedHash.value).toBe("hash-2");
+  });
+
+  it("preserves edits made while a file revalidation is in flight", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({
+      currentText
+    });
+    const {
+      SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE
+    } = await import("../../src/composables/useVibe64SourceEditor.js");
+    const fileSync = mocks.fileSyncOptions[0];
+    let resolveRefresh;
+    mocks.requestResults.push(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    fileSync.onReady();
+    await flushPromises();
+    currentText.value = "console.log('local');\n";
+    editor.updateText();
+    resolveRefresh(fileResponse({
+      hash: "hash-2",
+      text: "console.log('filesystem');\n"
+    }));
+    await flushPromises();
+
+    expect(currentText.value).toBe("console.log('local');\n");
+    expect(editor.text.value).toBe("console.log('one');\n");
+    expect(editor.savedHash.value).toBe("hash-1");
+    expect(editor.dirty.value).toBe(true);
+    expect(editor.saveError.value).toBe(SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE);
+  });
+
+  it("does not navigate away when saving the current file conflicts", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({
+      currentText
+    });
+    currentText.value = "console.log('local');\n";
+    editor.updateText();
+    mocks.requestResults.push({
+      error: "This file changed on disk. Reload it before saving.",
+      ok: false
+    });
+    const requestCount = mocks.requestCalls.length;
+
+    await expect(editor.openFile("src/other.js")).resolves.toBe(false);
+
+    expect(mocks.requestCalls).toHaveLength(requestCount + 1);
+    expect(mocks.requestCalls.at(-1)[1]?.method).toBe("PUT");
+    expect(editor.selectedPath.value).toBe("src/app.js");
+    expect(editor.dirty.value).toBe(true);
+    expect(editor.saveError.value).toBe("This file changed on disk. Reload it before saving.");
   });
 });

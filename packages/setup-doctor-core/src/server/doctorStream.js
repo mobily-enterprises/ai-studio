@@ -1,14 +1,4 @@
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function writeStreamEvent(rawReply, event, payload = {}) {
-  rawReply.write(`event: ${event}\n`);
-  rawReply.write(`data: ${JSON.stringify({
-    ...payload,
-    at: payload.at || nowIso()
-  })}\n\n`);
-}
+import { sendVibe64EventStream } from "@local/vibe64-core/server/eventStream";
 
 async function runDoctorStep({
   emit,
@@ -41,64 +31,33 @@ async function runDoctorStep({
 }
 
 async function sendDoctorEventStream(reply, run) {
-  if (!reply?.raw) {
-    throw new Error("sendDoctorEventStream requires a Fastify reply with raw stream access.");
-  }
+  await sendVibe64EventStream(reply, async ({ emit }) => {
+    const emitDoctorEvent = (event, payload = {}) => {
+      emit(event, {
+        ...payload,
+        at: payload.at || new Date().toISOString()
+      });
+    };
 
-  reply.hijack?.();
-
-  const rawReply = reply.raw;
-  let closed = false;
-  const markClosed = () => {
-    closed = true;
-  };
-
-  rawReply.on?.("close", markClosed);
-  rawReply.writeHead(200, {
-    "Cache-Control": "no-cache, no-transform",
-    "Connection": "keep-alive",
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "X-Accel-Buffering": "no"
-  });
-  rawReply.write("retry: 600000\n");
-  rawReply.write(": connected\n\n");
-
-  const heartbeat = setInterval(() => {
-    if (!closed) {
-      rawReply.write(": heartbeat\n\n");
-    }
-  }, 15000);
-  heartbeat.unref?.();
-
-  const emit = (event, payload = {}) => {
-    if (!closed) {
-      writeStreamEvent(rawReply, event, payload);
-    }
-  };
-
-  try {
-    emit("run.started", {});
+    emitDoctorEvent("run.started");
     const status = await run({
-      emit,
+      emit: emitDoctorEvent,
       runStep: (step) => runDoctorStep({
-        emit,
+        emit: emitDoctorEvent,
         ...step
       })
     });
-    emit("run.finished", {
+    emitDoctorEvent("run.finished", {
       status
     });
-  } catch (error) {
-    emit("run.error", {
+  }, {
+    errorEvent: "run.error",
+    errorPayload: (error) => ({
+      at: new Date().toISOString(),
       error: String(error?.message || error || "Doctor stream failed.")
-    });
-  } finally {
-    clearInterval(heartbeat);
-    rawReply.off?.("close", markClosed);
-    if (!closed) {
-      rawReply.end();
-    }
-  }
+    }),
+    retryMs: 600000
+  });
 }
 
 export {
