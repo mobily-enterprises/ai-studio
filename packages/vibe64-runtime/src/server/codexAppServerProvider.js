@@ -1165,6 +1165,8 @@ class CodexAppServerJsonRpcClient {
     this.requestTimeoutMs = normalizePositiveInteger(requestTimeoutMs, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
     this.WebSocketImpl = WebSocketImpl;
     this.nextRequestId = 1;
+    this.disconnectSubscribers = new Set();
+    this.lastDisconnectError = null;
     this.notificationSubscribers = new Set();
     this.pendingRequests = new Map();
     this.requestHandler = null;
@@ -1220,14 +1222,25 @@ class CodexAppServerJsonRpcClient {
         settle(reject, error?.error || error);
       }));
     });
+    this.lastDisconnectError = null;
     addSocketListener(socket, "message", (event) => this.handleMessage(event));
-    addSocketListener(socket, "close", () => {
-      if (this.socket === socket) {
-        this.connected = false;
-        this.socket = null;
+    const disconnect = (error = null) => {
+      if (this.socket !== socket) {
+        return;
       }
-      this.rejectPendingRequests(new Error("Codex app-server connection closed."));
-    });
+      this.connected = false;
+      this.socket = null;
+      const failure = error instanceof Error
+        ? error
+        : new Error("Codex app-server connection closed.");
+      this.rejectPendingRequests(failure);
+      this.lastDisconnectError = failure;
+      for (const subscriber of this.disconnectSubscribers) {
+        subscriber(failure);
+      }
+    };
+    addSocketListener(socket, "error", (event) => disconnect(event?.error || event));
+    addSocketListener(socket, "close", () => disconnect());
     return this;
   }
 
@@ -1257,6 +1270,23 @@ class CodexAppServerJsonRpcClient {
     this.notificationSubscribers.add(callback);
     return () => {
       this.notificationSubscribers.delete(callback);
+    };
+  }
+
+  onDisconnect(callback) {
+    if (typeof callback !== "function") {
+      return () => null;
+    }
+    this.disconnectSubscribers.add(callback);
+    if (this.lastDisconnectError) {
+      queueMicrotask(() => {
+        if (this.disconnectSubscribers.has(callback) && this.lastDisconnectError) {
+          callback(this.lastDisconnectError);
+        }
+      });
+    }
+    return () => {
+      this.disconnectSubscribers.delete(callback);
     };
   }
 
@@ -1378,6 +1408,7 @@ class CodexAppServerJsonRpcClient {
     const socket = this.socket;
     this.connected = false;
     this.socket = null;
+    this.lastDisconnectError = null;
     socket?.close?.();
   }
 }
