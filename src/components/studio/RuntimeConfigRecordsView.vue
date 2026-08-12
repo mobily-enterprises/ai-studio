@@ -13,9 +13,14 @@
         :environment-label="environmentLabel"
         :public-env-prefixes="publicEnvPrefixes"
         :records="editableRecords"
+        :revealed-secrets="revealedSecrets"
         :save-busy="saveBusy"
+        :secret-reveal-busy-key="secretRevealBusyKey"
+        :secret-reveal-enabled="secretRevealEnabled"
         show-actions
+        @hide-secret="$emit('hide-secret', $event)"
         @remove-record="$emit('remove-record', $event)"
+        @reveal-secret="$emit('reveal-secret', $event)"
         @save-record="$emit('save-record', $event)"
       />
       <p v-else class="runtime-config-records__empty">
@@ -42,6 +47,11 @@
             :environment-label="environmentLabel"
             :public-env-prefixes="publicEnvPrefixes"
             :records="systemRecords"
+            :revealed-secrets="revealedSecrets"
+            :secret-reveal-busy-key="secretRevealBusyKey"
+            :secret-reveal-enabled="secretRevealEnabled"
+            @hide-secret="$emit('hide-secret', $event)"
+            @reveal-secret="$emit('reveal-secret', $event)"
           />
         </v-expansion-panel-text>
       </v-expansion-panel>
@@ -54,7 +64,9 @@ import { computed } from "vue";
 import RuntimeConfigRecordsTable from "@/components/studio/RuntimeConfigRecordsTable.vue";
 
 defineEmits([
+  "hide-secret",
   "remove-record",
+  "reveal-secret",
   "save-record"
 ]);
 
@@ -79,7 +91,19 @@ const props = defineProps({
     default: () => [],
     type: Array
   },
+  revealedSecrets: {
+    default: () => ({}),
+    type: Object
+  },
   saveBusy: {
+    default: false,
+    type: Boolean
+  },
+  secretRevealBusyKey: {
+    default: "",
+    type: String
+  },
+  secretRevealEnabled: {
     default: false,
     type: Boolean
   },

@@ -22,7 +22,27 @@
           </button>
         </td>
         <td>
-          {{ recordValueLabel(record) }}
+          <div
+            v-if="record.secret"
+            class="runtime-config-records-table__secret-value"
+          >
+            <code>{{ recordValueLabel(record) }}</code>
+            <v-btn
+              v-if="secretRevealEnabled && record.valuePresent"
+              :aria-label="secretVisibilityLabel(record)"
+              :disabled="Boolean(secretRevealBusyKey) && secretRevealBusyKey !== record.key"
+              :loading="secretRevealBusyKey === record.key"
+              size="x-small"
+              type="button"
+              variant="text"
+              @click="toggleSecretVisibility(record)"
+            >
+              {{ secretVisibilityAction(record) }}
+            </v-btn>
+          </div>
+          <template v-else>
+            {{ recordValueLabel(record) }}
+          </template>
         </td>
         <td>
           <v-chip
@@ -87,7 +107,9 @@
 import { computed, ref } from "vue";
 
 const emit = defineEmits([
+  "hide-secret",
   "remove-record",
+  "reveal-secret",
   "save-record"
 ]);
 
@@ -104,7 +126,19 @@ const props = defineProps({
     default: () => [],
     type: Array
   },
+  revealedSecrets: {
+    default: () => ({}),
+    type: Object
+  },
   saveBusy: {
+    default: false,
+    type: Boolean
+  },
+  secretRevealBusyKey: {
+    default: "",
+    type: String
+  },
+  secretRevealEnabled: {
     default: false,
     type: Boolean
   },
@@ -167,9 +201,27 @@ function sourceLabel(source = "") {
 
 function recordValueLabel(record = {}) {
   if (record.secret) {
-    return record.valuePresent ? "********" : "";
+    return secretIsRevealed(record)
+      ? String(props.revealedSecrets[record.key] ?? "")
+      : (record.valuePresent ? "********" : "");
   }
   return String(record.value ?? "");
+}
+
+function secretIsRevealed(record = {}) {
+  return Boolean(record.key) && Object.hasOwn(props.revealedSecrets, record.key);
+}
+
+function secretVisibilityAction(record = {}) {
+  return secretIsRevealed(record) ? "Hide" : "Reveal";
+}
+
+function secretVisibilityLabel(record = {}) {
+  return `${secretVisibilityAction(record)} ${record.key || "secret"}`;
+}
+
+function toggleSecretVisibility(record = {}) {
+  emit(secretIsRevealed(record) ? "hide-secret" : "reveal-secret", record);
 }
 
 function recordStatus(record = {}) {
@@ -246,6 +298,18 @@ async function copyKey(key = "") {
 
 .runtime-config-records-table__chip {
   text-transform: none;
+}
+
+.runtime-config-records-table__secret-value {
+  align-items: center;
+  display: flex;
+  gap: 0.25rem;
+  max-width: 32rem;
+}
+
+.runtime-config-records-table__secret-value code {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .runtime-config-records-table__edit {
