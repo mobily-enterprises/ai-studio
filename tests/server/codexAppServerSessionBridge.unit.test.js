@@ -315,16 +315,26 @@ test("codex app-server bridge replaces unreadable session threads after an inval
       {
         assistant: {
           at: "2026-06-15T01:02:05.000Z",
+          role: "assistant",
           text: "Use the archive branch."
         },
+        commentary: [
+          {
+            at: "2026-06-15T01:02:04.500Z",
+            role: "commentary",
+            text: "I found the archive branch and I’m checking its scope."
+          }
+        ],
         thinking: [
           {
             at: "2026-06-15T01:02:04.000Z",
+            role: "thinking",
             text: "Checked the issue draft."
           }
         ],
         user: {
           at: "2026-06-15T01:02:03.000Z",
+          role: "user",
           text: "Can we talk about archive scope?"
         }
       }
@@ -404,6 +414,8 @@ test("codex app-server bridge replaces unreadable session threads after an inval
   assert.match(providerCalls[3].input, /Fresh provider thread:\nthread-replacement/u);
   assert.match(providerCalls[3].input, /Can we talk about archive scope\?/u);
   assert.match(providerCalls[3].input, /Checked the issue draft/u);
+  assert.match(providerCalls[3].input, /Assistant Commentary 1/u);
+  assert.match(providerCalls[3].input, /I found the archive branch and I’m checking its scope/u);
   assert.match(providerCalls[3].input, /Use the archive branch/u);
   assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "thread-replacement");
   assert.equal(metadataValue(runtime, "codex_app_server_replaced_thread_id"), "thread-stale");

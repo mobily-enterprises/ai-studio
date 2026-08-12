@@ -167,58 +167,63 @@
           </span>
         </div>
 
-        <div
-          v-if="turn.thinking.length"
-          class="studio-conversation-log__thinking"
+        <template
+          v-for="entry in turn.agentTimeline"
+          :key="entry.key"
         >
           <div
-            v-for="message in turn.thinking"
-            :key="`${message.at}:${message.text}`"
-            class="studio-conversation-log__thinking-message"
+            v-if="entry.role === 'thinking'"
+            class="studio-conversation-log__thinking"
           >
-            {{ message.text }}
-          </div>
-        </div>
-
-        <div
-          v-if="turn.assistant"
-          class="studio-conversation-log__message-row studio-conversation-log__message-row--assistant"
-        >
-          <div class="studio-conversation-log__assistant-header">
-            <span class="studio-conversation-log__avatar studio-conversation-log__avatar--assistant">
-              <v-icon :icon="mdiRobotOutline" size="16" />
-            </span>
-            <div class="studio-conversation-log__message-header">
-              <span>{{ assistantLabel }}</span>
+            <div
+              v-for="message in entry.messages"
+              :key="message.key"
+              class="studio-conversation-log__thinking-message"
+            >
+              {{ message.text }}
             </div>
           </div>
-          <div class="studio-conversation-log__message studio-conversation-log__message--assistant">
-            <LongTextPreviewBlocks
-              v-if="turn.assistant.blocks.length"
-              :blocks="turn.assistant.blocks"
-              @link-click="handleLongTextLinkClick"
-            />
-            <ol
-              v-if="turn.assistant.questions.length"
-              class="studio-conversation-log__questions"
-            >
-              <li
-                v-for="question in turn.assistant.questions"
-                :key="question.name"
-                class="studio-conversation-log__question"
-              >
-                <span class="studio-conversation-log__question-number">{{ question.number }}</span>
-                <span class="studio-conversation-log__question-text">{{ question.label }}</span>
-              </li>
-            </ol>
-          </div>
           <div
-            v-if="turn.assistant.displayAt"
-            class="studio-conversation-log__message-footer studio-conversation-log__message-footer--assistant"
+            v-else
+            class="studio-conversation-log__message-row studio-conversation-log__message-row--assistant"
+            :data-message-role="entry.role"
           >
-            <time>{{ turn.assistant.displayAt }}</time>
+            <div class="studio-conversation-log__assistant-header">
+              <span class="studio-conversation-log__avatar studio-conversation-log__avatar--assistant">
+                <v-icon :icon="mdiRobotOutline" size="16" />
+              </span>
+              <div class="studio-conversation-log__message-header">
+                <span>{{ assistantLabel }}</span>
+              </div>
+            </div>
+            <div class="studio-conversation-log__message studio-conversation-log__message--assistant">
+              <LongTextPreviewBlocks
+                v-if="entry.message.blocks.length"
+                :blocks="entry.message.blocks"
+                @link-click="handleLongTextLinkClick"
+              />
+              <ol
+                v-if="entry.message.questions.length"
+                class="studio-conversation-log__questions"
+              >
+                <li
+                  v-for="question in entry.message.questions"
+                  :key="question.name"
+                  class="studio-conversation-log__question"
+                >
+                  <span class="studio-conversation-log__question-number">{{ question.number }}</span>
+                  <span class="studio-conversation-log__question-text">{{ question.label }}</span>
+                </li>
+              </ol>
+            </div>
+            <div
+              v-if="entry.message.displayAt"
+              class="studio-conversation-log__message-footer studio-conversation-log__message-footer--assistant"
+            >
+              <time>{{ entry.message.displayAt }}</time>
+            </div>
           </div>
-        </div>
+        </template>
       </article>
 
       <div
@@ -375,6 +380,64 @@ function displayThinkingMessage(message = null) {
   };
 }
 
+function conversationAgentMessages(turn = {}) {
+  if (Array.isArray(turn.messages)) {
+    return turn.messages.filter((message) => (
+      ["assistant", "commentary", "thinking"].includes(String(message?.role || "").trim())
+    ));
+  }
+  return [
+    ...(Array.isArray(turn.thinking) ? turn.thinking : []),
+    ...(Array.isArray(turn.commentary) ? turn.commentary : []),
+    turn.assistant
+  ].filter(Boolean);
+}
+
+function conversationMessageKey(message = {}, index = 0) {
+  return [
+    String(message.messageId || "").trim(),
+    String(message.role || "").trim(),
+    String(message.at || "").trim(),
+    index
+  ].join(":");
+}
+
+function displayAgentTimeline(turn = {}) {
+  const timeline = [];
+  for (const [index, message] of conversationAgentMessages(turn).entries()) {
+    const role = String(message?.role || "").trim();
+    if (role === "thinking") {
+      const displayed = displayThinkingMessage(message);
+      if (!displayed) {
+        continue;
+      }
+      const keyedMessage = {
+        ...displayed,
+        key: conversationMessageKey(message, index)
+      };
+      const previous = timeline.at(-1);
+      if (previous?.role === "thinking") {
+        previous.messages.push(keyedMessage);
+        continue;
+      }
+      timeline.push({
+        key: `thinking:${keyedMessage.key}`,
+        messages: [keyedMessage],
+        role
+      });
+      continue;
+    }
+    timeline.push({
+      key: conversationMessageKey(message, index),
+      message: displayMessage(message, {
+        allowNumberedQuestions: true
+      }),
+      role
+    });
+  }
+  return timeline;
+}
+
 function handleLongTextLinkClick(payload = {}) {
   const target = sourceEditorLinkTarget({
     href: payload.href,
@@ -390,22 +453,17 @@ function handleLongTextLinkClick(payload = {}) {
 
 const displayTurns = computed(() => (Array.isArray(props.turns) ? props.turns : [])
   .map((turn, index) => ({
-    assistant: displayMessage(turn.assistant, {
-      allowNumberedQuestions: true
-    }),
+    agentTimeline: displayAgentTimeline(turn),
     optimistic: turn.optimistic && typeof turn.optimistic === "object" && !Array.isArray(turn.optimistic)
       ? turn.optimistic
       : null,
     system: displayMessage(turn.system),
-    thinking: Array.isArray(turn.thinking)
-      ? turn.thinking.map((message) => displayThinkingMessage(message)).filter(Boolean)
-      : [],
     turnId: String(turn.turnId || index + 1),
     user: displayMessage(turn.user, {
       preserveParagraphLineBreaks: true
     })
   }))
-  .filter((turn) => turn.system || turn.user || turn.thinking.length || turn.assistant));
+  .filter((turn) => turn.system || turn.user || turn.agentTimeline.length));
 
 const loadingIndicatorVisible = computed(() => Boolean(
   props.loading &&
@@ -441,29 +499,19 @@ function latestUserScrollKey(turns = []) {
   return "";
 }
 
-function latestAssistantScrollKey(turns = []) {
+function latestAgentScrollKey(turns = []) {
   const entries = Array.isArray(turns) ? turns : [];
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const turn = entries[index];
-    if (turn?.assistant) {
+    const timeline = Array.isArray(turn?.agentTimeline) ? turn.agentTimeline : [];
+    const latest = timeline.at(-1);
+    const message = latest?.role === "thinking"
+      ? latest.messages?.at(-1)
+      : latest?.message;
+    if (message) {
       return [
         turn.turnId,
-        messageScrollKey(turn.assistant)
-      ].join(":");
-    }
-  }
-  return "";
-}
-
-function latestThinkingScrollKey(turns = []) {
-  const entries = Array.isArray(turns) ? turns : [];
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const turn = entries[index];
-    const thinking = Array.isArray(turn?.thinking) ? turn.thinking : [];
-    if (thinking.length) {
-      return [
-        turn.turnId,
-        messageScrollKey(thinking[thinking.length - 1])
+        messageScrollKey(message)
       ].join(":");
     }
   }
@@ -477,8 +525,7 @@ const timelineScrollTrigger = computed(() => [
   props.scrollKey
 ].join(":"));
 const latestUserTurnScrollKey = computed(() => latestUserScrollKey(displayTurns.value));
-const latestAssistantTurnScrollKey = computed(() => latestAssistantScrollKey(displayTurns.value));
-const latestThinkingTurnScrollKey = computed(() => latestThinkingScrollKey(displayTurns.value));
+const latestAgentTurnScrollKey = computed(() => latestAgentScrollKey(displayTurns.value));
 const autoScrollEnabled = computed(() => Boolean(
   props.visible &&
   followingLatest.value
@@ -605,22 +652,7 @@ watch(() => [
 
 watch(() => [
   timelineScrollTrigger.value,
-  latestAssistantTurnScrollKey.value
-], ([timelineKey, value], [previousTimelineKey, previous] = []) => {
-  if (timelineKey !== previousTimelineKey) {
-    return;
-  }
-  if (!value || value === previous) {
-    return;
-  }
-  queueLiveBottomScroll();
-}, {
-  flush: "post"
-});
-
-watch(() => [
-  timelineScrollTrigger.value,
-  latestThinkingTurnScrollKey.value
+  latestAgentTurnScrollKey.value
 ], ([timelineKey, value], [previousTimelineKey, previous] = []) => {
   if (timelineKey !== previousTimelineKey) {
     return;

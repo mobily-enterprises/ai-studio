@@ -7,6 +7,7 @@ import {
 
 const MOUNTED_SESSION_IGNORED_REALTIME_REASONS = new Set([
   "assistant-response-bundle",
+  "codex-app-server-commentary",
   "codex-app-server-prompt-injected",
   "codex-app-server-ready",
   "codex-app-server-final-assistant-message",

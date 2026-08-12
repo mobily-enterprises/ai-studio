@@ -5600,6 +5600,56 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
         turnId: String(conversationLog.length + 1).padStart(6, "0")
       };
     }
+    async function writeConversationActivity(role, {
+      at = "",
+      requireOpenTurn = false,
+      text = ""
+    } = {}) {
+      const messageText = String(text || "").trim();
+      const messageAt = String(at || "").trim();
+      const lastTurn = conversationLog.at(-1) || null;
+      let turn = lastTurn?.user && !lastTurn.assistant ? lastTurn : null;
+      if (!turn && role === "thinking" && !requireOpenTurn && messageAt) {
+        if (
+          lastTurn &&
+          !lastTurn.system &&
+          !lastTurn.user &&
+          !lastTurn.assistant &&
+          !(lastTurn.commentary || []).length &&
+          Array.isArray(lastTurn.thinking) &&
+          lastTurn.thinking.some((message) => message.at === messageAt)
+        ) {
+          turn = lastTurn;
+        }
+      }
+      if (!turn) {
+        if (requireOpenTurn) {
+          return null;
+        }
+        turn = fakeConversationTurn({
+          assistant: null,
+          commentary: [],
+          thinking: [],
+          user: null
+        });
+        conversationLog.push(turn);
+      }
+      const messages = Array.isArray(turn[role]) ? turn[role] : [];
+      const existing = messageAt
+        ? messages.find((message) => message.at === messageAt)
+        : null;
+      if (existing) {
+        existing.text = messageText;
+      } else {
+        messages.push({
+          ...(messageAt ? { at: messageAt } : {}),
+          role,
+          text: messageText
+        });
+      }
+      turn[role] = messages;
+      return turn;
+    }
     const startupEvents = [];
     let createRuntimeCalls = 0;
     let getSessionCalls = 0;
@@ -5772,52 +5822,11 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
           }));
           return conversationLog.at(-1);
         },
-        async writeConversationThinkingMessage(_sessionId, {
-          at = "",
-          requireOpenTurn = false,
-          text = ""
-        } = {}) {
-          const messageText = String(text || "").trim();
-          const messageAt = String(at || "").trim();
-          const lastTurn = conversationLog.at(-1) || null;
-          let turn = lastTurn?.user && !lastTurn.assistant ? lastTurn : null;
-          if (!turn && !requireOpenTurn && messageAt) {
-            if (
-              lastTurn &&
-              !lastTurn.system &&
-              !lastTurn.user &&
-              !lastTurn.assistant &&
-              Array.isArray(lastTurn.thinking) &&
-              lastTurn.thinking.some((message) => message.at === messageAt)
-            ) {
-              turn = lastTurn;
-            }
-          }
-          if (!turn) {
-            if (requireOpenTurn) {
-              return null;
-            }
-            turn = fakeConversationTurn({
-              assistant: null,
-              thinking: [],
-              user: null
-            });
-            conversationLog.push(turn);
-          }
-          const thinking = Array.isArray(turn.thinking) ? turn.thinking : [];
-          const existing = messageAt
-            ? thinking.find((message) => message.at === messageAt)
-            : null;
-          if (existing) {
-            existing.text = messageText;
-          } else {
-            thinking.push({
-              ...(messageAt ? { at: messageAt } : {}),
-              text: messageText
-            });
-          }
-          turn.thinking = thinking;
-          return turn;
+        async writeConversationCommentaryMessage(_sessionId, options = {}) {
+          return writeConversationActivity("commentary", options);
+        },
+        async writeConversationThinkingMessage(_sessionId, options = {}) {
+          return writeConversationActivity("thinking", options);
         },
         async readConversationLog() {
           return conversationLog;
@@ -6567,9 +6576,9 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
     });
     await delay(5);
     assert.equal(publishSessionEvents.length, publishCountBeforeExplicitCommentary + 1);
-    assert.equal(publishSessionReasons.at(-1), "codex-app-server-live-progress");
+    assert.equal(publishSessionReasons.at(-1), "codex-app-server-commentary");
     assert.equal(
-      publishSessionEvents.at(-1)?.payload?.conversationLogPatch?.turn?.thinking?.at(-1)?.text,
+      publishSessionEvents.at(-1)?.payload?.conversationLogPatch?.turn?.commentary?.at(-1)?.text,
       explicitCommentaryText
     );
     const publishCountBeforeAnonymousProgress = publishSessionEvents.length;
@@ -6751,7 +6760,9 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
       "Checked the app-server prompt delivery result.",
       "Preparing to verify UI layouts",
       "I am checking the generated app.",
-      "Inspecting remaining CSS.",
+      "Inspecting remaining CSS."
+    ]);
+    assert.deepEqual((await runtime.store.readConversationLog()).flatMap((turn) => (turn.commentary || []).map((message) => message.text)).filter(Boolean), [
       explicitCommentaryText
     ]);
     const publishReasonBeforeTerminalTurn = publishSessionReasons.at(-1);
@@ -6814,8 +6825,7 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
       "Checked the app-server prompt delivery result.",
       "Preparing to verify UI layouts",
       "I am checking the generated app.",
-      "Inspecting remaining CSS.",
-      explicitCommentaryText
+      "Inspecting remaining CSS."
     ]);
     assert.equal(publishSessionReasons.at(-1), "codex-app-server-turn-active");
     providerSubscribers[0]({
@@ -6924,10 +6934,11 @@ test("Vibe64 Codex app-server prompt delivery records the resumable CLI thread",
     await delay(5);
     assert.equal(
       (await runtime.store.readConversationLog())
-        .flatMap((turn) => (turn.thinking || []).map((message) => message.text))
+        .flatMap((turn) => (turn.commentary || []).map((message) => message.text))
         .includes("Continuing the long-running goal."),
       true
     );
+    assert.equal(publishSessionReasons.at(-1), "codex-app-server-commentary");
     assert.equal(
       (await runtime.store.readConversationLog())
         .map((turn) => turn.assistant?.text)
@@ -9384,20 +9395,20 @@ test("Vibe64 Codex app-server recovers external goal turns from bounded snapshot
       itemId: "external-goal-item-2",
       turnId: activeTurnId
     });
-    let thinking = (await runtime.store.readConversationLog(sessionId))
-      .flatMap((turn) => turn.thinking || [])
+    let commentary = (await runtime.store.readConversationLog(sessionId))
+      .flatMap((turn) => turn.commentary || [])
       .map((message) => message.text);
-    assert.deepEqual(thinking, [
+    assert.deepEqual(commentary, [
       "Recovered external goal progress one.",
       "Recovered external goal progress two."
     ]);
 
     const repeated = await controller.reconcileThreads([sessionId]);
     assert.equal(repeated.ok, true, JSON.stringify(repeated));
-    thinking = (await runtime.store.readConversationLog(sessionId))
-      .flatMap((turn) => turn.thinking || [])
+    commentary = (await runtime.store.readConversationLog(sessionId))
+      .flatMap((turn) => turn.commentary || [])
       .map((message) => message.text);
-    assert.deepEqual(thinking, [
+    assert.deepEqual(commentary, [
       "Recovered external goal progress one.",
       "Recovered external goal progress two."
     ]);
@@ -9422,7 +9433,7 @@ test("Vibe64 Codex app-server recovers external goal turns from bounded snapshot
     });
     await waitForCondition(async () => {
       const progress = (await runtime.store.readConversationLog(sessionId))
-        .flatMap((turn) => turn.thinking || [])
+        .flatMap((turn) => turn.commentary || [])
         .map((message) => message.text);
       return progress.includes("Recovered external goal progress three.");
     }, "Live external-goal progress was not persisted.", 3_000);
@@ -9441,10 +9452,10 @@ test("Vibe64 Codex app-server recovers external goal turns from bounded snapshot
       itemId: "external-goal-summary-item-3",
       turnId: activeTurnId
     });
-    thinking = (await runtime.store.readConversationLog(sessionId))
-      .flatMap((turn) => turn.thinking || [])
+    commentary = (await runtime.store.readConversationLog(sessionId))
+      .flatMap((turn) => turn.commentary || [])
       .map((message) => message.text);
-    assert.deepEqual(thinking, [
+    assert.deepEqual(commentary, [
       "Recovered external goal progress one.",
       "Recovered external goal progress two.",
       "Recovered external goal progress three."

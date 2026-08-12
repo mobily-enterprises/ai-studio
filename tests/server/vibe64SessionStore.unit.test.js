@@ -814,6 +814,9 @@ test("vibe64 session store persists conversation turns as one file per message",
     await store.writeConversationThinkingMessage("conversation_log", {
       text: "Checked the current form structure."
     });
+    await store.writeConversationCommentaryMessage("conversation_log", {
+      text: "I found the form controls and I’m updating their layout."
+    });
     await store.writeConversationAssistantMessage("conversation_log", {
       text: "Change the form layout."
     });
@@ -833,6 +836,7 @@ test("vibe64 session store persists conversation turns as one file per message",
     assert.deepEqual(turnIds.sort(), ["000001", "000002", "000003"]);
     assert.deepEqual((await readdir(path.join(paths.conversationLogRoot, "000001"))).sort(), [
       "assistant.20260516T010203456Z.md",
+      "commentary.20260516T010203456Z.md",
       "thinking.20260516T010203456Z.md",
       "user.20260516T010203456Z.md"
     ]);
@@ -843,6 +847,13 @@ test("vibe64 session store persists conversation turns as one file per message",
           role: "assistant",
           text: "Change the form layout."
         },
+        commentary: [
+          {
+            at: "2026-05-16T01:02:03.456Z",
+            role: "commentary",
+            text: "I found the form controls and I’m updating their layout."
+          }
+        ],
         messages: [
           {
             at: "2026-05-16T01:02:03.456Z",
@@ -853,6 +864,11 @@ test("vibe64 session store persists conversation turns as one file per message",
             at: "2026-05-16T01:02:03.456Z",
             role: "thinking",
             text: "Checked the current form structure."
+          },
+          {
+            at: "2026-05-16T01:02:03.456Z",
+            role: "commentary",
+            text: "I found the form controls and I’m updating their layout."
           },
           {
             at: "2026-05-16T01:02:03.456Z",
@@ -876,6 +892,7 @@ test("vibe64 session store persists conversation turns as one file per message",
       },
       {
         assistant: null,
+        commentary: [],
         messages: [
           {
             at: "2026-05-16T01:02:03.456Z",
@@ -893,6 +910,7 @@ test("vibe64 session store persists conversation turns as one file per message",
       },
       {
         assistant: null,
+        commentary: [],
         messages: [
           {
             at: "2026-05-16T01:02:03.456Z",

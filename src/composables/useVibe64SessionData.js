@@ -60,6 +60,7 @@ const SESSION_LIST_IGNORED_REALTIME_REASONS = new Set([
   "codex-app-server-agent-result-missing",
   "codex-app-server-agent-result-provider-failed",
   "codex-app-server-blocked",
+  "codex-app-server-commentary",
   "codex-app-server-failed",
   "codex-app-server-final-assistant-message",
   "codex-app-server-live-progress",

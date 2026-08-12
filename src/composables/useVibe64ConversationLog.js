@@ -35,6 +35,7 @@ const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "codex-app-server-agent-result-invalid",
   "codex-app-server-agent-result-missing",
   "codex-app-server-agent-result-provider-failed",
+  "codex-app-server-commentary",
   "codex-app-server-final-assistant-message",
   "codex-app-server-live-progress",
   "codex-app-server-reasoning-summary",
@@ -64,9 +65,18 @@ function normalizeConversationMessage(message = {}) {
   }
   return {
     at: String(message.at || "").trim(),
+    ...(String(message.messageId || "").trim()
+      ? { messageId: String(message.messageId).trim() }
+      : {}),
     role,
     text
   };
+}
+
+function chronologicalConversationActivity(messages = []) {
+  return [...messages].sort((left, right) => (
+    String(left?.at || "").localeCompare(String(right?.at || ""))
+  ));
 }
 
 function normalizeConversationTurn(turn = {}, index = 0) {
@@ -75,16 +85,30 @@ function normalizeConversationTurn(turn = {}, index = 0) {
   }
   const user = normalizeConversationMessage(turn.user);
   const assistant = normalizeConversationMessage(turn.assistant);
+  const normalizedCommentary = Array.isArray(turn.commentary)
+    ? turn.commentary.map(normalizeConversationMessage).filter(Boolean)
+    : [];
   const system = normalizeConversationMessage(turn.system);
-  const thinking = Array.isArray(turn.thinking)
+  const normalizedThinking = Array.isArray(turn.thinking)
     ? turn.thinking.map(normalizeConversationMessage).filter(Boolean)
     : [];
-  if (!system && !user && !assistant && !thinking.length) {
+  const activityFromMessages = Array.isArray(turn.messages)
+    ? turn.messages
+      .map(normalizeConversationMessage)
+      .filter((message) => ["commentary", "thinking"].includes(message?.role))
+    : [];
+  const activity = activityFromMessages.length
+    ? activityFromMessages
+    : chronologicalConversationActivity([...normalizedThinking, ...normalizedCommentary]);
+  const commentary = activity.filter((message) => message.role === "commentary");
+  const thinking = activity.filter((message) => message.role === "thinking");
+  if (!system && !user && !assistant && !activity.length) {
     return null;
   }
   return {
     assistant,
-    messages: [system, user, ...thinking, assistant].filter(Boolean),
+    commentary,
+    messages: [system, user, ...activity, assistant].filter(Boolean),
     ...(system ? { system } : {}),
     thinking,
     turnId: String(turn.turnId || index + 1).trim(),
@@ -183,6 +207,7 @@ function conversationLogRealtimePatch(payload = {}) {
   if (
     ![
       "assistant-response-bundle",
+      "codex-app-server-commentary",
       "codex-app-server-final-assistant-message",
       "codex-app-server-reasoning-summary",
       "codex-app-server-live-progress",
@@ -197,6 +222,9 @@ function conversationLogRealtimePatch(payload = {}) {
     return null;
   }
   const assistant = normalizeConversationMessage(patch.turn.assistant);
+  const commentary = Array.isArray(patch.turn.commentary)
+    ? patch.turn.commentary.map(normalizeConversationMessage).filter(Boolean)
+    : [];
   const thinking = Array.isArray(patch.turn.thinking)
     ? patch.turn.thinking.map(normalizeConversationMessage).filter(Boolean)
     : [];
@@ -204,6 +232,9 @@ function conversationLogRealtimePatch(payload = {}) {
     ["codex-app-server-reasoning-summary", "codex-app-server-live-progress"].includes(reason) &&
     (!thinking.length || assistant)
   ) {
+    return null;
+  }
+  if (reason === "codex-app-server-commentary" && (!commentary.length || assistant)) {
     return null;
   }
   if (["assistant-response-bundle", "codex-app-server-final-assistant-message"].includes(reason) && !assistant) {

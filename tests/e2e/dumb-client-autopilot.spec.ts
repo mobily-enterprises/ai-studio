@@ -526,6 +526,82 @@ test.describe("Autopilot dumb client contract", () => {
     }
   });
 
+  test("renders Codex commentary like an answer while keeping reasoning compact", async ({ page }) => {
+    const commentaryText = "No—the full reload is unnecessary. I’ll update only the affected booking.";
+    const finalText = "The booking now updates in place.";
+    const thinkingText = "Reviewing the booking update path.";
+    await mockVibe64Session(page, sessionPayload(), {
+      conversationLog: [
+        {
+          assistant: {
+            at: "2026-08-12T13:59:18.000Z",
+            role: "assistant",
+            text: finalText
+          },
+          commentary: [
+            {
+              at: "2026-08-12T13:59:17.000Z",
+              messageId: "commentary-1",
+              role: "commentary",
+              text: commentaryText
+            }
+          ],
+          messages: [
+            {
+              at: "2026-08-12T13:59:16.000Z",
+              messageId: "thinking-1",
+              role: "thinking",
+              text: thinkingText
+            },
+            {
+              at: "2026-08-12T13:59:17.000Z",
+              messageId: "commentary-1",
+              role: "commentary",
+              text: commentaryText
+            }
+          ],
+          thinking: [
+            {
+              at: "2026-08-12T13:59:16.000Z",
+              messageId: "thinking-1",
+              role: "thinking",
+              text: thinkingText
+            }
+          ],
+          turnId: "turn-commentary",
+          user: {
+            at: "2026-08-12T13:59:00.000Z",
+            role: "user",
+            text: "Can this update just one booking?"
+          }
+        }
+      ]
+    });
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+    const commentary = page.locator('[data-message-role="commentary"]', {
+      hasText: commentaryText
+    });
+    const finalAnswer = page.locator('[data-message-role="assistant"]', {
+      hasText: finalText
+    });
+    const reasoning = page.locator(".studio-conversation-log__thinking-message", {
+      hasText: thinkingText
+    });
+    await expect(commentary).toBeVisible();
+    await expect(finalAnswer).toBeVisible();
+    await expect(reasoning).toBeVisible();
+
+    const fontSizes = await Promise.all([
+      commentary.locator(".studio-long-text-review__paragraph").first().evaluate((element) => getComputedStyle(element).fontSize),
+      finalAnswer.locator(".studio-long-text-review__paragraph").first().evaluate((element) => getComputedStyle(element).fontSize),
+      reasoning.evaluate((element) => getComputedStyle(element).fontSize)
+    ]);
+    expect(fontSizes[0]).toBe(fontSizes[1]);
+    expect(Number.parseFloat(fontSizes[0])).toBeGreaterThan(Number.parseFloat(fontSizes[2]));
+  });
+
   test("reloads the chat pane without refreshing the page", async ({ page }) => {
     const conversationLogReadPaths: string[] = [];
     const sessionReadPaths: string[] = [];

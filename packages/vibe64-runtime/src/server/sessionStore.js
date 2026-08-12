@@ -110,15 +110,20 @@ const AGENT_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const BACKGROUND_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const COMMAND_LIFECYCLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
+const CONVERSATION_ACTIVITY_ROLES = new Set([
+  "commentary",
+  "thinking"
+]);
 const CONVERSATION_MESSAGE_ROLES = deepFreeze([
   "assistant",
+  "commentary",
   "system",
   "thinking",
   "user"
 ]);
 const CONVERSATION_MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const CONVERSATION_MESSAGE_FILE_PATTERN =
-  /^(user|assistant|system|thinking)\.(\d{8}T\d{9}Z)(?:\.([A-Za-z0-9][A-Za-z0-9_-]{0,127}))?\.md$/u;
+  /^(user|assistant|commentary|system|thinking)\.(\d{8}T\d{9}Z)(?:\.([A-Za-z0-9][A-Za-z0-9_-]{0,127}))?\.md$/u;
 const CONVERSATION_TURN_ID_PATTERN = /^\d{6}$/u;
 const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "base_commit",
@@ -1063,6 +1068,16 @@ function nextConversationTurnId(turnIds = []) {
     .sort((left, right) => left - right)
     .at(-1) || 0;
   return String(latest + 1).padStart(6, "0");
+}
+
+function conversationTurnHasMessages(turn = {}) {
+  return Boolean(
+    turn.system ||
+    turn.user ||
+    turn.assistant ||
+    turn.commentary?.length ||
+    turn.thinking?.length
+  );
 }
 
 function createVibe64SessionStore({
@@ -2155,11 +2170,15 @@ function createVibe64SessionStore({
     )).filter((message) => message && message.text);
     const user = messages.find((message) => message.role === "user") || null;
     const assistant = messages.find((message) => message.role === "assistant") || null;
+    const commentary = messages.filter((message) => message.role === "commentary");
     const system = messages.find((message) => message.role === "system") || null;
     const thinking = messages.filter((message) => message.role === "thinking");
+    const activity = [...thinking, ...commentary]
+      .sort((left, right) => left.at.localeCompare(right.at));
     return {
       assistant,
-      messages: [system, user, ...thinking, assistant].filter(Boolean),
+      commentary,
+      messages: [system, user, ...activity, assistant].filter(Boolean),
       ...(system ? { system } : {}),
       thinking,
       turnId,
@@ -2219,7 +2238,7 @@ function createVibe64SessionStore({
       return "";
     }
     const turn = await readConversationTurn(sessionPaths, turnId);
-    if (turn.system || turn.user || turn.assistant || !turn.thinking.length) {
+    if (turn.system || turn.user || turn.assistant || turn.commentary.length || !turn.thinking.length) {
       return "";
     }
     return turn.thinking.some((message) => message.at === messageAt) ? turnId : "";
@@ -2232,7 +2251,7 @@ function createVibe64SessionStore({
   async function readConversationLogFromPaths(sessionPaths) {
     const turnIds = await conversationTurnIds(sessionPaths);
     const turns = await Promise.all(turnIds.map((turnId) => readConversationTurn(sessionPaths, turnId)));
-    return turns.filter((turn) => turn.system || turn.user || turn.assistant || turn.thinking.length);
+    return turns.filter(conversationTurnHasMessages);
   }
 
   async function readConversationLogPage(sessionId, options = {}) {
@@ -2243,7 +2262,7 @@ function createVibe64SessionStore({
     const turnIds = await conversationTurnIds(sessionPaths);
     const page = conversationLogPageTurnIds(turnIds, options);
     const turns = await Promise.all(page.turnIds.map((turnId) => readConversationTurn(sessionPaths, turnId)));
-    const conversationLog = turns.filter((turn) => turn.system || turn.user || turn.assistant || turn.thinking.length);
+    const conversationLog = turns.filter(conversationTurnHasMessages);
     return {
       conversationLog,
       pagination: {
@@ -2369,12 +2388,18 @@ function createVibe64SessionStore({
     });
   }
 
-  async function writeConversationThinkingMessage(sessionId, {
+  async function writeConversationActivityMessage(sessionId, role, {
     at = "",
     messageId = "",
     requireOpenTurn = false,
     text = ""
   } = {}) {
+    if (!CONVERSATION_ACTIVITY_ROLES.has(role)) {
+      throw vibe64Error(
+        `Invalid vibe64 conversation activity role: ${role || "(empty)"}`,
+        "vibe64_invalid_conversation_role"
+      );
+    }
     const messageText = normalizeText(text);
     const normalizedMessageId = normalizeText(messageId);
     if (!messageText) {
@@ -2392,19 +2417,29 @@ function createVibe64SessionStore({
       if (requireOpenTurn && !openTurnId) {
         return null;
       }
-      const thinkingOnlyTurnId = openTurnId ? "" : await tailThinkingOnlyConversationTurnId(sessionPaths, {
-        messageAt: at ? createdAt.toISOString() : ""
-      });
+      const thinkingOnlyTurnId = role === "thinking" && !openTurnId
+        ? await tailThinkingOnlyConversationTurnId(sessionPaths, {
+            messageAt: at ? createdAt.toISOString() : ""
+          })
+        : "";
       const turnId = openTurnId || thinkingOnlyTurnId || nextConversationTurnId(await conversationTurnIds(sessionPaths));
       await writeTextFile(
         path.join(
           conversationTurnRoot(sessionPaths, turnId),
-          conversationMessageFileName("thinking", createdAt, normalizedMessageId)
+          conversationMessageFileName(role, createdAt, normalizedMessageId)
         ),
         `${messageText}\n`
       );
       return readConversationTurn(sessionPaths, turnId);
     });
+  }
+
+  async function writeConversationCommentaryMessage(sessionId, options = {}) {
+    return writeConversationActivityMessage(sessionId, "commentary", options);
+  }
+
+  async function writeConversationThinkingMessage(sessionId, options = {}) {
+    return writeConversationActivityMessage(sessionId, "thinking", options);
   }
 
   async function writeConversationSystemMessage(sessionId, {
@@ -3408,6 +3443,7 @@ function createVibe64SessionStore({
     writeCompletedStep,
     upsertConversationAssistantMessage,
     writeConversationAssistantMessage,
+    writeConversationCommentaryMessage,
     writeConversationSystemMessage,
     writeConversationThinkingMessage,
     writeConversationUserMessage,

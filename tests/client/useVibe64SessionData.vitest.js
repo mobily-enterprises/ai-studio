@@ -687,6 +687,7 @@ describe("mounted Vibe64 session state", () => {
       "codex-app-server-agent-result-missing",
       "codex-app-server-agent-result-provider-failed",
       "codex-app-server-blocked",
+      "codex-app-server-commentary",
       "codex-app-server-failed",
       "codex-app-server-final-assistant-message",
       "codex-app-server-live-progress",
@@ -803,6 +804,7 @@ describe("mounted Vibe64 session state", () => {
 
     for (const reason of [
       "codex-app-server-prompt-injected",
+      "codex-app-server-commentary",
       "codex-app-server-final-assistant-message",
       "codex-app-server-live-progress",
       "codex-app-server-reasoning-summary",

@@ -354,8 +354,7 @@ describe("Vibe64AutopilotView command spy placement", () => {
     const conversationLogSource = fs.readFileSync(conversationLogPath, "utf8");
 
     expect(conversationLogSource).toContain("function latestUserScrollKey(turns = [])");
-    expect(conversationLogSource).toContain("function latestAssistantScrollKey(turns = [])");
-    expect(conversationLogSource).toContain("function latestThinkingScrollKey(turns = [])");
+    expect(conversationLogSource).toContain("function latestAgentScrollKey(turns = [])");
     expect(conversationLogSource).toContain("const timelineScrollTrigger = computed(() => [");
     expect(conversationLogSource).toContain("displayTurns.value.length ? \"has-turns\" : \"empty\"");
     expect(conversationLogSource).toContain("const initialScrollSettled = ref(false);");
@@ -364,11 +363,9 @@ describe("Vibe64AutopilotView command spy placement", () => {
     expect(conversationLogSource).toContain("function queueLiveBottomScroll(");
     expect(conversationLogSource).toContain("studio-conversation-log__body--settling");
     expect(conversationLogSource).toContain("const latestUserTurnScrollKey = computed(() => latestUserScrollKey(displayTurns.value));");
-    expect(conversationLogSource).toContain("const latestAssistantTurnScrollKey = computed(() => latestAssistantScrollKey(displayTurns.value));");
-    expect(conversationLogSource).toContain("const latestThinkingTurnScrollKey = computed(() => latestThinkingScrollKey(displayTurns.value));");
+    expect(conversationLogSource).toContain("const latestAgentTurnScrollKey = computed(() => latestAgentScrollKey(displayTurns.value));");
     expect(conversationLogSource).toContain("timelineScrollTrigger.value,\n  latestUserTurnScrollKey.value");
-    expect(conversationLogSource).toContain("timelineScrollTrigger.value,\n  latestAssistantTurnScrollKey.value");
-    expect(conversationLogSource).toContain("timelineScrollTrigger.value,\n  latestThinkingTurnScrollKey.value");
+    expect(conversationLogSource).toContain("timelineScrollTrigger.value,\n  latestAgentTurnScrollKey.value");
     expect(conversationLogSource).toContain("if (timelineKey !== previousTimelineKey) {");
     expect(conversationLogSource).toContain("behavior: \"smooth\"");
     expect(conversationLogSource).toContain("function queueLiveBottomScroll({\n  force = false\n} = {})");
@@ -548,6 +545,15 @@ describe("Vibe64AutopilotView command spy placement", () => {
     expect(conversationLogSource).not.toContain("studio-conversation-log__thinking-label");
     expect(conversationLogSource).not.toMatch(/>\s*Thinking\s*</u);
     expect(conversationLogSource).toContain(".studio-conversation-log__thinking-message {\n  white-space: pre-wrap;");
+  });
+
+  it("renders commentary through the prominent assistant presentation", () => {
+    const conversationLogSource = fs.readFileSync(conversationLogPath, "utf8");
+
+    expect(conversationLogSource).toContain("[\"assistant\", \"commentary\", \"thinking\"]");
+    expect(conversationLogSource).toContain("v-if=\"entry.role === 'thinking'\"");
+    expect(conversationLogSource).toContain("v-else\n            class=\"studio-conversation-log__message-row studio-conversation-log__message-row--assistant\"");
+    expect(conversationLogSource).toContain(":blocks=\"entry.message.blocks\"");
   });
 
   it("filters unavailable workflow and fallback action buttons instead of rendering disabled buttons", () => {

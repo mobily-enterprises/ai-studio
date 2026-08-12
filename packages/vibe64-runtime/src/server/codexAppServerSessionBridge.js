@@ -237,12 +237,36 @@ function conversationMessageLines(label = "", message = null) {
   ];
 }
 
+function conversationActivityMessages(turn = {}) {
+  const persistedOrder = Array.isArray(turn.messages)
+    ? turn.messages.filter((message) => (
+        ["commentary", "thinking"].includes(normalizeAgentText(message?.role))
+      ))
+    : [];
+  if (persistedOrder.length) {
+    return persistedOrder;
+  }
+  return [
+    ...(Array.isArray(turn.thinking) ? turn.thinking : []),
+    ...(Array.isArray(turn.commentary) ? turn.commentary : [])
+  ].sort((left, right) => (
+    normalizeAgentText(left?.at).localeCompare(normalizeAgentText(right?.at))
+  ));
+}
+
 function formatCodexRecoveryConversationTurn(turn = {}, index = 0) {
   const lines = [`## Turn ${index + 1}`];
   lines.push(...conversationMessageLines("System", turn.system));
   lines.push(...conversationMessageLines("User", turn.user));
-  for (const [thinkingIndex, thinking] of (Array.isArray(turn.thinking) ? turn.thinking : []).entries()) {
-    lines.push(...conversationMessageLines(`Assistant Thinking ${thinkingIndex + 1}`, thinking));
+  const activityCounts = {
+    commentary: 0,
+    thinking: 0
+  };
+  for (const message of conversationActivityMessages(turn)) {
+    const role = normalizeAgentText(message?.role) === "commentary" ? "commentary" : "thinking";
+    activityCounts[role] += 1;
+    const label = role === "commentary" ? "Assistant Commentary" : "Assistant Thinking";
+    lines.push(...conversationMessageLines(`${label} ${activityCounts[role]}`, message));
   }
   lines.push(...conversationMessageLines("Assistant", turn.assistant));
   return lines.length > 1 ? lines.join("\n\n") : "";

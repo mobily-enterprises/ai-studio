@@ -129,6 +129,14 @@ describe("useVibe64ConversationLog", () => {
             role: "assistant",
             text: "Done."
           },
+          commentary: [
+            {
+              at: "2026-05-25T01:02:45.000Z",
+              messageId: "codex-progress-1",
+              role: "commentary",
+              text: "I found the relevant form and I’m updating it now."
+            }
+          ],
           thinking: [
             {
               at: "2026-05-25T01:02:30.000Z",
@@ -159,6 +167,14 @@ describe("useVibe64ConversationLog", () => {
           role: "assistant",
           text: "Done."
         },
+        commentary: [
+          {
+            at: "2026-05-25T01:02:45.000Z",
+            messageId: "codex-progress-1",
+            role: "commentary",
+            text: "I found the relevant form and I’m updating it now."
+          }
+        ],
         messages: [
           {
             at: "2026-05-25T01:02:00.000Z",
@@ -169,6 +185,12 @@ describe("useVibe64ConversationLog", () => {
             at: "2026-05-25T01:02:30.000Z",
             role: "thinking",
             text: "Checked the current form state."
+          },
+          {
+            at: "2026-05-25T01:02:45.000Z",
+            messageId: "codex-progress-1",
+            role: "commentary",
+            text: "I found the relevant form and I’m updating it now."
           },
           {
             at: "2026-05-25T01:03:00.000Z",
@@ -277,6 +299,7 @@ describe("useVibe64ConversationLog", () => {
     })).toEqual([
       {
         assistant: null,
+        commentary: [],
         messages: [
           {
             at: "",
@@ -309,6 +332,7 @@ describe("useVibe64ConversationLog", () => {
     })).toEqual([
       {
         assistant: null,
+        commentary: [],
         messages: [
           {
             at: "",
@@ -547,6 +571,28 @@ describe("useVibe64ConversationLog", () => {
       sessionId: "session-1"
     })).toEqual({
       turn,
+      type: "upsert-turn"
+    });
+
+    const commentaryTurn = {
+      commentary: [
+        {
+          role: "commentary",
+          text: "I found the affected booking and I’m updating only that row."
+        }
+      ],
+      thinking: turn.thinking,
+      turnId: "000003"
+    };
+    expect(conversationLogRealtimePatch({
+      conversationLogPatch: {
+        turn: commentaryTurn,
+        type: "upsert-turn"
+      },
+      reason: "codex-app-server-commentary",
+      sessionId: "session-1"
+    })).toEqual({
+      turn: commentaryTurn,
       type: "upsert-turn"
     });
 

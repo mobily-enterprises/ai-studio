@@ -3645,7 +3645,8 @@ function createCodexTerminalController({
   }
 
   async function writeCodexAppServerLiveProgress(sessionId = "", threadId = "", notification = {}) {
-    // Live progress is durable thinking only; final assistant ownership stays with recordCodexAppServerFinalAssistantResult.
+    // Explicit commentary is user-facing progress. Reasoning and ambiguous
+    // progress remain thinking; final answers are recorded separately.
     const normalizedSessionId = normalizeText(sessionId);
     const normalizedThreadId = normalizeText(threadId);
     const candidate = codexAppServerLiveProgressCandidate(notification);
@@ -3697,11 +3698,15 @@ function createCodexTerminalController({
     codexAppServerLiveProgressFingerprints.add(fingerprintKey);
     let written = null;
     try {
-      written = await store.writeConversationThinkingMessage(normalizedSessionId, {
+      const role = candidate.phase === "commentary" ? "commentary" : "thinking";
+      const writer = role === "commentary"
+        ? store.writeConversationCommentaryMessage
+        : store.writeConversationThinkingMessage;
+      written = await writer.call(store, normalizedSessionId, {
         messageId: codexAppServerConversationMessageId(
           normalizedThreadId,
           codexAppServerNotificationTurnId(notification) || turn.turnId,
-          "thinking",
+          role,
           text
         ),
         requireOpenTurn: false,
@@ -3719,7 +3724,9 @@ function createCodexTerminalController({
             type: "upsert-turn"
           }
         },
-        reason: "codex-app-server-live-progress"
+        reason: role === "commentary"
+          ? "codex-app-server-commentary"
+          : "codex-app-server-live-progress"
       });
       return written;
     } catch (error) {
