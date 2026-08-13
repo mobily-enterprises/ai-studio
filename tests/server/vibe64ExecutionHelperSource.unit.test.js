@@ -50,6 +50,17 @@ test("execution helper gives release services the shared runtime PATH", async ()
   assert.match(source, /runRootCommandAllowFailure\("systemctl", \[\s*"reset-failed",\s*unitName/u);
 });
 
+test("execution helper gives daemon-owned services the shared primary group", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /function serviceAccountUnitLines\(owner = \{\}\)/u);
+  assert.equal(source.match(/\.\.\.serviceAccountUnitLines\(owner\)/gu)?.length, 2);
+  assert.match(source, /`Group=\$\{VIBE64_GROUP\}`/u);
+  assert.match(source, /"SupplementaryGroups=nix-users"/u);
+  assert.match(source, /"UMask=0007"/u);
+  assert.doesNotMatch(source, /`Group=\$\{systemdUnitSafeValue\(owner\.username\)\}`/u);
+});
+
 test("execution helper reports bounded release service diagnostics", async () => {
   const source = await helperSource();
 

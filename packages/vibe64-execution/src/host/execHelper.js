@@ -725,6 +725,15 @@ function managedSystemdUnitPath(unitName = "", owner = {}) {
   return path.join("/etc/systemd/system", assertValidManagedServiceUnitName(unitName, owner));
 }
 
+function serviceAccountUnitLines(owner = {}) {
+  return [
+    `User=${systemdUnitSafeValue(owner.username)}`,
+    `Group=${VIBE64_GROUP}`,
+    "SupplementaryGroups=nix-users",
+    "UMask=0007"
+  ];
+}
+
 function deploymentServiceUnit({
   environmentFile = "",
   owner = {},
@@ -745,9 +754,7 @@ function deploymentServiceUnit({
     "",
     "[Service]",
     "Type=simple",
-    `User=${systemdUnitSafeValue(owner.username)}`,
-    `Group=${systemdUnitSafeValue(owner.username)}`,
-    "SupplementaryGroups=vibe64 nix-users",
+    ...serviceAccountUnitLines(owner),
     `WorkingDirectory=${systemdUnitSafeValue(workingDirectory)}`,
     `EnvironmentFile=${systemdUnitSafeValue(environmentFile)}`,
     `Environment=PATH=${systemdUnitSafeValue(DEFAULT_PATH)}`,
@@ -781,9 +788,7 @@ function managedServiceUnit({
     "",
     "[Service]",
     `Type=${normalizedProcessModel}`,
-    `User=${systemdUnitSafeValue(owner.username)}`,
-    `Group=${systemdUnitSafeValue(owner.username)}`,
-    "SupplementaryGroups=vibe64 nix-users",
+    ...serviceAccountUnitLines(owner),
     `WorkingDirectory=${systemdUnitSafeValue(workingDirectory)}`,
     `Environment=PATH=${systemdUnitSafeValue(DEFAULT_PATH)}`,
     `Environment=TMPDIR=${systemdUnitSafeValue(workspaceTempRoot(owner.username))}`,
