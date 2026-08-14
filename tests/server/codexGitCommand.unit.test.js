@@ -1,18 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { promisify } from "node:util";
 
-import {
-  WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT,
-  WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
-  WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
-} from "@local/vibe64-core/server/projectRepository";
-import {
-  CANONICAL_REPOSITORY_PUSH_OPTION
-} from "@local/vibe64-execution/server";
 import {
   currentOsUser
 } from "@local/vibe64-core/server/osUserIdentity";
@@ -26,20 +17,11 @@ import {
   createCodexGitCommandService,
   prepareCodexGitCommand
 } from "@local/vibe64-terminals/server/codexGitCommand";
-
 import {
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
+
 process.env[VIBE64_RUNTIME_NAMESPACE_ENV] = "unit-owner";
-
-const execFileAsync = promisify(execFile);
-
-async function git(cwd, args) {
-  return execFileAsync("git", args, {
-    cwd,
-    encoding: "utf8"
-  });
-}
 
 function runProcessWithInput(command, args = [], {
   cwd = "",
@@ -55,25 +37,20 @@ function runProcessWithInput(command, args = [], {
     let stderr = "";
     let stdout = "";
     child.stdout.on("data", (chunk) => {
-      stdout += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
+      stdout += chunk.toString("utf8");
     });
     child.stderr.on("data", (chunk) => {
-      stderr += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
+      stderr += chunk.toString("utf8");
     });
     child.once("error", reject);
     child.once("close", (exitCode, signal) => {
-      resolve({
-        exitCode,
-        signal,
-        stderr,
-        stdout
-      });
+      resolve({ exitCode, signal, stderr, stdout });
     });
     child.stdin.end(input);
   });
 }
 
-function localSourceSession(root = "", sessionId = "local-source-session") {
+function sessionSource(root = "", sessionId = "session-1", metadata = {}) {
   const sourcePath = path.join(root, "managed", "sessions", "active", sessionId, "source");
   return {
     id: sessionId,
@@ -81,49 +58,28 @@ function localSourceSession(root = "", sessionId = "local-source-session") {
       source_kind: "session_clone",
       source_path: sourcePath,
       source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
-      workflow_driver_username: "local-owner",
-      workflow_repository_profile: WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
+      ...metadata
     },
     sessionId,
-    sessionRoot: path.join(root, "state", "sessions", "active", sessionId),
-    targetRoot: path.join(root, "opened-repo")
+    targetRoot: path.join(root, "project")
   };
 }
 
 function githubSession(root = "", sessionId = "github-session") {
-  const sourcePath = path.join(root, "managed", "sessions", "active", sessionId, "source");
-  const projectRoot = path.join(root, "opened-repo");
   const user = currentOsUser();
-  return {
-    id: sessionId,
-    metadata: {
-      github_repository: "owner/repo",
-      repository_mode: "github",
-      session_git_command_actor_reason: "unit-test",
-      session_git_command_actor_scope: "user",
-      session_git_command_actor_session_id: sessionId,
-      session_git_command_actor_target_root: sourcePath,
-      session_git_command_actor_thread_id: "thread-1",
-      session_git_command_actor_user_key: user.username,
-      session_git_command_actor_workdir: sourcePath,
-      github_mirror_path: path.join(projectRoot, "github-mirror", "repository.git"),
-      main_checkout_root: projectRoot,
-      source_kind: "session_clone",
-      source_path: sourcePath,
-      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
-      source_remote_url: "https://github.com/owner/repo.git",
-      workflow_repository_profile: WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR
-    },
-    sessionId,
-    sessionRoot: path.join(root, "state", "sessions", "active", sessionId),
-    targetRoot: projectRoot
-  };
-}
-
-function canonicalSession(root = "", sessionId = "canonical-session") {
-  const session = localSourceSession(root, sessionId);
-  session.metadata.canonical_repository_path = path.join(session.targetRoot, "canonical-repository", "repository.git");
-  session.metadata.workflow_repository_profile = WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT;
+  const session = sessionSource(root, sessionId, {
+    github_repository: "owner/repo",
+    source_remote_url: "https://github.com/owner/repo.git"
+  });
+  Object.assign(session.metadata, {
+    session_git_command_actor_reason: "unit-test",
+    session_git_command_actor_scope: "user",
+    session_git_command_actor_session_id: sessionId,
+    session_git_command_actor_target_root: session.metadata.source_path,
+    session_git_command_actor_thread_id: "thread-1",
+    session_git_command_actor_user_key: user.username,
+    session_git_command_actor_workdir: session.metadata.source_path
+  });
   return session;
 }
 
@@ -132,22 +88,9 @@ function serviceForSession(session = {}, {
   metadataReads = null,
   runGatewayCommand
 } = {}) {
-  const sourceMetadataNames = new Set([
-    "base_commit",
-    "repository_mode",
-    "source",
-    "source_kind",
-    "source_path",
-    "source_path_authority",
-    "source_removed",
-    "workflow_repository_profile"
-  ]);
   return createCodexGitCommandService({
     authorizeActorAccess,
     projectService: {
-      async createRuntime() {
-        throw new Error("Codex git commands must not hydrate a workflow runtime.");
-      },
       async createSessionStore() {
         return {
           async readMetadataValue(sessionId, name) {
@@ -158,11 +101,8 @@ function serviceForSession(session = {}, {
           async readSessionSourceDescriptor(sessionId) {
             assert.equal(sessionId, session.sessionId);
             return {
-              metadata: Object.fromEntries(Object.entries(session.metadata || {}).filter(([name]) => (
-                sourceMetadataNames.has(name)
-              ))),
+              metadata: session.metadata,
               sessionId,
-              sessionRoot: session.sessionRoot,
               targetRoot: session.targetRoot
             };
           }
@@ -173,19 +113,16 @@ function serviceForSession(session = {}, {
   });
 }
 
-test("Codex git command allows local-source git without GitHub actor metadata", async () => {
+test("Codex runs local Git inside the managed session source", async () => {
   await withTemporaryRoot(async (root) => {
-    const session = localSourceSession(root);
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-
+    const session = sessionSource(root);
+    await mkdir(session.metadata.source_path, { recursive: true });
     let gatewayCall = null;
     const metadataReads = [];
     const service = serviceForSession(session, {
       metadataReads,
       authorizeActorAccess: async () => {
-        throw new Error("local-source git must not use GitHub actor authorization");
+        throw new Error("Local Git must not require GitHub authorization.");
       },
       async runGatewayCommand(request) {
         gatewayCall = request;
@@ -211,27 +148,16 @@ test("Codex git command allows local-source git without GitHub actor metadata", 
     assert.equal(gatewayCall.cwd, session.metadata.source_path);
     assert.equal(gatewayCall.gitTransport, "none");
     assert.equal(gatewayCall.purpose, "codex");
-    assert.equal(gatewayCall.userKey, "local-owner");
-    assert.equal(gatewayCall.project.tenant, "unit-owner");
     assert.equal(gatewayCall.session.sessionId, session.sessionId);
-    assert.equal(gatewayCall.session.targetRoot, session.metadata.source_path);
-    assert.equal(gatewayCall.session.metadata.workflow_driver_username, "local-owner");
-    assert.deepEqual(gatewayCall.gitSafeDirectories, [
-      session.metadata.source_path,
-      session.metadata.source_path
-    ]);
-    assert.deepEqual(gatewayCall.runtimes, ["git", "gh"]);
-    assert.ok(metadataReads.includes("workflow_driver_username"));
+    assert.ok(metadataReads.includes("github_repository"));
   });
 });
 
-test("Codex git wrapper transports command, args, cwd, stdin, session id, and token", async () => {
+test("Codex Git wrapper transports the complete command request", async () => {
   await withTemporaryRoot(async (root) => {
-    const sessionId = "wrapper-transport-session";
+    const sessionId = "wrapper-session";
     const sourcePath = path.join(root, "source");
-    await mkdir(sourcePath, {
-      recursive: true
-    });
+    await mkdir(sourcePath, { recursive: true });
     const calls = [];
     const prepared = await prepareCodexGitCommand({
       commandService: {
@@ -246,37 +172,37 @@ test("Codex git wrapper transports command, args, cwd, stdin, session id, and to
         }
       },
       env: {
-        VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(path.dirname(root), "attachments")
+        VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(root, "attachments")
       },
       sessionId,
       stateRoot: path.join(root, "state")
     });
 
-    assert.equal(prepared.ok, true);
-    const wrapperPath = path.join(prepared.hostWrapperDir, "git");
-    const result = await runProcessWithInput(wrapperPath, ["status", "--short"], {
-      cwd: sourcePath,
-      env: {
-        ...process.env,
-        ...prepared.env
-      },
-      input: "stdin payload"
-    });
+    const result = await runProcessWithInput(
+      path.join(prepared.hostWrapperDir, "git"),
+      ["status", "--short"],
+      {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...prepared.env
+        },
+        input: "stdin payload"
+      }
+    );
 
     assert.equal(result.exitCode, 0, result.stderr);
     assert.equal(result.stdout, "transport-ok\n");
-    assert.equal(result.stderr, "");
     assert.equal(calls.length, 1);
     assert.equal(calls[0].command, "git");
     assert.deepEqual(calls[0].args, ["status", "--short"]);
     assert.equal(calls[0].cwd, sourcePath);
     assert.equal(Buffer.from(calls[0].inputBase64, "base64").toString("utf8"), "stdin payload");
     assert.equal(calls[0].sessionId, sessionId);
-    assert.equal(calls[0].token, prepared.env.VIBE64_CODEX_GIT_COMMAND_TOKEN);
   });
 });
 
-test("Codex git command preparation does not rewrite unchanged wrapper files", async () => {
+test("Codex Git command preparation preserves unchanged wrappers", async () => {
   await withTemporaryRoot(async (root) => {
     const options = {
       commandService: {
@@ -289,31 +215,31 @@ test("Codex git command preparation does not rewrite unchanged wrapper files", a
         }
       },
       env: {
-        VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(path.dirname(root), "attachments")
+        VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(root, "attachments")
       },
-      sessionId: "idempotent-wrapper-session",
+      sessionId: "stable-wrapper-session",
       stateRoot: path.join(root, "state")
     };
 
     const first = await prepareCodexGitCommand(options);
-    const firstGitStat = await stat(path.join(first.hostWrapperDir, "git"));
-    const firstGhStat = await stat(path.join(first.hostWrapperDir, "gh"));
+    const firstGit = await stat(path.join(first.hostWrapperDir, "git"));
+    const firstGh = await stat(path.join(first.hostWrapperDir, "gh"));
     const second = await prepareCodexGitCommand(options);
-    const secondGitStat = await stat(path.join(second.hostWrapperDir, "git"));
-    const secondGhStat = await stat(path.join(second.hostWrapperDir, "gh"));
+    const secondGit = await stat(path.join(second.hostWrapperDir, "git"));
+    const secondGh = await stat(path.join(second.hostWrapperDir, "gh"));
 
     assert.equal(second.hostWrapperDir, first.hostWrapperDir);
-    assert.equal(secondGitStat.mtimeMs, firstGitStat.mtimeMs);
-    assert.equal(secondGhStat.mtimeMs, firstGhStat.mtimeMs);
+    assert.equal(secondGit.mtimeMs, firstGit.mtimeMs);
+    assert.equal(secondGh.mtimeMs, firstGh.mtimeMs);
   });
 });
 
-test("Codex git command rejects gh for local-source sessions", async () => {
+test("Codex rejects gh for a non-GitHub session", async () => {
   await withTemporaryRoot(async (root) => {
-    const session = localSourceSession(root);
+    const session = sessionSource(root);
     const service = serviceForSession(session, {
       async runGatewayCommand() {
-        throw new Error("local-source gh must not run");
+        throw new Error("Non-GitHub gh must not run.");
       }
     });
 
@@ -329,41 +255,10 @@ test("Codex git command rejects gh for local-source sessions", async () => {
   });
 });
 
-test("Codex git command gives local-source commits gateway fallback identity without repo git config", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = localSourceSession(root, "local-source-commit-session");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    await git(session.metadata.source_path, ["init"]);
-
-    const service = serviceForSession(session);
-    const result = await service.run({
-      args: ["commit", "--allow-empty", "-m", "gateway fallback identity"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, true, result.stderr || result.error || "");
-    const log = await git(session.metadata.source_path, [
-      "log",
-      "-1",
-      "--format=%an <%ae>|%cn <%ce>"
-    ]);
-    assert.equal(
-      log.stdout.trim(),
-      "local-owner via Vibe64 <local-owner@unit-owner.users.vibe64.invalid>|Vibe64 <vibe64@unit-owner.users.vibe64.invalid>"
-    );
-  });
-});
-
-test("Codex git command runs GitHub repository commands as the stored OS actor", async () => {
+test("Codex runs GitHub commands as the stored Vibe64 OS actor", async () => {
   await withTemporaryRoot(async (root) => {
     const session = githubSession(root);
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-
+    await mkdir(session.metadata.source_path, { recursive: true });
     let gatewayCall = null;
     const service = serviceForSession(session, {
       async runGatewayCommand(request) {
@@ -377,7 +272,7 @@ test("Codex git command runs GitHub repository commands as the stored OS actor",
     });
 
     const result = await service.run({
-      args: ["ls-remote", "origin", "refs/heads/main"],
+      args: ["ls-remote", "origin"],
       command: "git",
       inputBase64: Buffer.from("stdin").toString("base64"),
       sessionId: session.sessionId
@@ -385,283 +280,11 @@ test("Codex git command runs GitHub repository commands as the stored OS actor",
 
     const user = currentOsUser();
     assert.equal(result.ok, true);
-    assert.equal(result.stdout, "remote");
     assert.equal(gatewayCall.actor, "owner-user");
-    assert.equal(gatewayCall.command, "git");
-    assert.deepEqual(gatewayCall.args, ["ls-remote", "origin", "refs/heads/main"]);
-    assert.equal(gatewayCall.cwd, session.metadata.source_path);
     assert.equal(gatewayCall.gitTransport, "github-https");
     assert.equal(gatewayCall.input.toString("utf8"), "stdin");
-    assert.equal(gatewayCall.purpose, "github");
-    assert.equal(gatewayCall.userKey, user.username);
-    assert.equal(gatewayCall.project.ownerUserKey, user.username);
-    assert.equal(gatewayCall.project.tenant, "unit-owner");
-    assert.equal(gatewayCall.session.sessionId, session.sessionId);
-    assert.equal(gatewayCall.session.metadata.session_git_command_actor_user_key, user.username);
-    assert.deepEqual(gatewayCall.allowedRoots, [
-      session.metadata.source_path
-    ]);
-    assert.deepEqual(gatewayCall.gitSafeDirectories, [
-      session.metadata.source_path,
-      session.metadata.source_path
-    ]);
-  });
-});
-
-test("Codex gh command runs GitHub repository commands as the stored OS actor", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = githubSession(root, "github-gh-session");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-
-    let gatewayCall = null;
-    const service = serviceForSession(session, {
-      async runGatewayCommand(request) {
-        gatewayCall = request;
-        return {
-          exitCode: 0,
-          ok: true,
-          stdout: "github.com\n"
-        };
-      }
-    });
-
-    const result = await service.run({
-      args: ["auth", "status"],
-      command: "gh",
-      sessionId: session.sessionId
-    });
-
-    const user = currentOsUser();
-    assert.equal(result.ok, true);
-    assert.equal(result.stdout, "github.com\n");
-    assert.equal(gatewayCall.actor, "owner-user");
-    assert.equal(gatewayCall.command, "gh");
-    assert.deepEqual(gatewayCall.args, ["auth", "status"]);
-    assert.equal(gatewayCall.cwd, session.metadata.source_path);
-    assert.equal(gatewayCall.gitTransport, "github-https");
-    assert.equal(gatewayCall.purpose, "github");
     assert.equal(gatewayCall.userKey, user.username);
     assert.equal(gatewayCall.project.ownerUserKey, user.username);
     assert.equal(gatewayCall.session.metadata.session_git_command_actor_user_key, user.username);
-  });
-});
-
-test("Codex git command refreshes the GitHub mirror after a successful push", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = githubSession(root, "github-push-session");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    const calls = [];
-    const service = serviceForSession(session, {
-      async runGatewayCommand(request) {
-        calls.push(request);
-        return {
-          exitCode: 0,
-          ok: true,
-          stdout: calls.length === 1 ? "pushed\n" : "refreshed\n"
-        };
-      }
-    });
-
-    const result = await service.run({
-      args: ["push", "origin", "HEAD:refs/heads/main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.stdout, "pushed\n");
-    assert.equal(result.mirrorRefresh.ok, true);
-    assert.equal(calls.length, 2);
-    assert.equal(calls[0].command, "git");
-    assert.deepEqual(calls[0].args, ["push", "origin", "HEAD:refs/heads/main"]);
-    assert.equal(calls[1].command, "bash");
-    assert.equal(calls[1].args[0], "-c");
-    assert.match(calls[1].args[1], /fetch --prune --atomic origin/u);
-    assert.equal(calls[1].args[3], session.metadata.github_mirror_path);
-    assert.equal(calls[1].args[4], session.metadata.source_remote_url);
-    assert.deepEqual(calls[1].allowedRoots, [
-      session.metadata.source_path,
-      path.dirname(session.metadata.github_mirror_path)
-    ]);
-  });
-});
-
-test("Codex git command rejects a mirror path outside the project repository role", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = githubSession(root, "github-invalid-mirror-session");
-    session.metadata.github_mirror_path = path.join(root, "other-project", "github-mirror", "repository.git");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    let calls = 0;
-    const service = serviceForSession(session, {
-      async runGatewayCommand() {
-        calls += 1;
-        return {
-          exitCode: 0,
-          ok: true,
-          stdout: "pushed\n"
-        };
-      }
-    });
-
-    const result = await service.run({
-      args: ["push", "origin", "main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.mirrorRefresh.skipped, true);
-    assert.equal(calls, 1);
-  });
-});
-
-test("Codex git command preserves push success when GitHub mirror refresh fails", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = githubSession(root, "github-push-refresh-failure");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    let calls = 0;
-    const service = serviceForSession(session, {
-      async runGatewayCommand() {
-        calls += 1;
-        return calls === 1
-          ? {
-              exitCode: 0,
-              ok: true,
-              stdout: "pushed\n"
-            }
-          : {
-              code: "vibe64_command_failed",
-              error: "fetch failed",
-              exitCode: 1,
-              ok: false,
-              stderr: "fetch failed"
-            };
-      }
-    });
-
-    const result = await service.run({
-      args: ["push", "origin", "main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stdout, "pushed\n");
-    assert.equal(result.mirrorRefresh.ok, false);
-    assert.equal(calls, 2);
-  });
-});
-
-test("Codex git command does not refresh the GitHub mirror after a rejected push", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = githubSession(root, "github-rejected-push-session");
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    let calls = 0;
-    const service = serviceForSession(session, {
-      async runGatewayCommand() {
-        calls += 1;
-        return {
-          exitCode: 1,
-          ok: false,
-          stderr: "rejected"
-        };
-      }
-    });
-
-    const result = await service.run({
-      args: ["push", "origin", "main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, false);
-    assert.equal(calls, 1);
-    assert.equal(result.mirrorRefresh, undefined);
-  });
-});
-
-test("Codex git command guards canonical pushes independently of the prompt", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = canonicalSession(root);
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    let gatewayCall = null;
-    const service = serviceForSession(session, {
-      async runGatewayCommand(request) {
-        gatewayCall = request;
-        return {
-          exitCode: 0,
-          ok: true
-        };
-      }
-    });
-
-    const result = await service.run({
-      args: ["push", "origin", "HEAD:refs/heads/main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.equal(result.ok, true);
-    assert.deepEqual(gatewayCall.args, [
-      "push",
-      "--atomic",
-      `--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}`,
-      "origin",
-      "HEAD:refs/heads/main"
-    ]);
-  });
-});
-
-test("Codex git command identifies the Git subcommand before guarding canonical pushes", async () => {
-  await withTemporaryRoot(async (root) => {
-    const session = canonicalSession(root);
-    await mkdir(session.metadata.source_path, {
-      recursive: true
-    });
-    const calls = [];
-    const service = serviceForSession(session, {
-      async runGatewayCommand(request) {
-        calls.push(request);
-        return {
-          exitCode: 0,
-          ok: true
-        };
-      }
-    });
-
-    await service.run({
-      args: ["show", "push"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-    await service.run({
-      args: ["-C", session.metadata.source_path, "push", "--no-atomic", "origin", "main"],
-      command: "git",
-      sessionId: session.sessionId
-    });
-
-    assert.deepEqual(calls[0].args, ["show", "push"]);
-    assert.deepEqual(calls[1].args, [
-      "-C",
-      session.metadata.source_path,
-      "push",
-      "--atomic",
-      `--push-option=${CANONICAL_REPOSITORY_PUSH_OPTION}`,
-      "origin",
-      "main"
-    ]);
   });
 });

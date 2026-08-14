@@ -5,9 +5,9 @@ import {
   useRealtimeSocket
 } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { getUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
@@ -45,10 +45,7 @@ const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "codex-app-server-message-delivered",
   "session-agent-message-cancelled",
   "session-agent-message-delivered",
-  "session-agent-message-failed",
-  "session-action-run",
-  "session-intent-run",
-  "session-rewound"
+  "session-agent-message-failed"
 ]);
 const CONVERSATION_LOG_PAGE_LIMIT = 20;
 
@@ -291,7 +288,7 @@ function applyConversationLogPatch(payload = {}, patch = null, options = {}) {
 
 function sessionIsAwaitingCodex(session = {}) {
   const source = session && typeof session === "object" && !Array.isArray(session) ? session : {};
-  return String(source.stepMachine?.status || source.presentation?.step?.status || "").trim() === "awaiting_agent_result";
+  return source.agentSession?.turn?.active === true;
 }
 
 function conversationLogRealtimeShouldRefresh({ payload = {} } = {}, sessionId = "") {
@@ -312,15 +309,10 @@ function conversationLogRecoveryStateKey(session = {}) {
   return [
     source.sessionId,
     source.status,
-    source.currentStep,
-    source.nextStepId,
-    source.stepStatus,
-    source.stepMachine?.status,
-    source.stepMachine?.nextStepId,
-    source.presentation?.step?.status,
-    source.presentation?.step?.nextStepId,
-    source.presentation?.auto?.nextOperation?.id,
-    source.presentation?.auto?.nextOperation?.actionId
+    source.revision,
+    source.updatedAt,
+    source.agentSession?.turn?.active ? "active" : "idle",
+    source.agentSession?.turn?.id
   ].map((value) => String(value || "").trim()).join("|");
 }
 
@@ -329,7 +321,7 @@ function useVibe64ConversationLog({
   session
 } = {}) {
   const paths = usePaths();
-  const httpClient = getUsersWebHttpClient();
+  const httpClient = getHttpWebClient();
   const queryClient = useQueryClient();
   const projectSlug = useVibe64ProjectSlug();
   const currentSession = computed(() => readRefOrGetterValue(session) || null);
@@ -457,9 +449,6 @@ function useVibe64ConversationLog({
       });
       if (applyRealtimeConversationLogPatch(payload)) {
         return null;
-      }
-      if (String(payload.reason || "").trim() === "session-rewound") {
-        olderPages.value = [];
       }
       return reloadConversationLog();
     }

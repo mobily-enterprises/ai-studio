@@ -31,14 +31,14 @@ describe("vibe64 stale operation classification", () => {
     });
   });
 
-  it("recognizes older code-only stale 409s", () => {
+  it("recognizes code-only stale command starts", () => {
     expect(isVibe64StaleOperation({
-      code: "vibe64_step_input_state_changed",
+      code: "vibe64_stale_command_start",
       status: 409
     })).toBe(true);
 
     expect(vibe64StaleOperationResult({
-      code: "vibe64_step_input_state_changed",
+      code: "vibe64_stale_command_start",
       status: 409
     })).toMatchObject({
       operationOutcome: "stale_operation",

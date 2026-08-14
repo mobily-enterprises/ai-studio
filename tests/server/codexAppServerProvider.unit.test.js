@@ -43,6 +43,9 @@ import {
   stableHash,
   VIBE64_INTERACTIVE_RUNTIME_PACKS
 } from "@local/vibe64-execution/server";
+import {
+  genesisPackageBinDirectory
+} from "@local/vibe64-genesis/server";
 
 async function withTemporaryDirectory(callback) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "vibe64-codex-provider-"));
@@ -606,7 +609,7 @@ test("codex provider replaces a live runtime when the execution context changes"
     };
     const oldSession = {
       metadata: {
-        workflow_driver_username: "old-user"
+        session_git_command_actor_user_key: "old-user"
       },
       sessionId: "old-session"
     };
@@ -616,7 +619,7 @@ test("codex provider replaces a live runtime when the execution context changes"
     };
     const newSession = {
       metadata: {
-        workflow_driver_username: "merc"
+        session_git_command_actor_user_key: "merc"
       },
       sessionId: "session-1"
     };
@@ -717,7 +720,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     };
     const session = {
       metadata: {
-        workflow_driver_username: "merc"
+        session_git_command_actor_user_key: "merc"
       },
       sessionId: "session-1",
       targetRoot
@@ -782,7 +785,10 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.equal(runCall.userKey, "merc");
     assert.ok(runCall.runtimes.includes("mariadb"));
     assert.ok(runCall.runtimes.includes("playwright"));
-    assert.equal(runCall.shimDirs[0], gitCommandWrapperHostDir);
+    assert.deepEqual(runCall.shimDirs, [
+      gitCommandWrapperHostDir,
+      genesisPackageBinDirectory()
+    ]);
     const envProbe = await runVibe64Command({
       ...runCall,
       args: [

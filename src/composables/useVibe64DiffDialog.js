@@ -1,10 +1,10 @@
 import { computed, ref, unref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import {
-  resolveResponseErrorMessage
-} from "@/lib/vibe64ResponseErrors.js";
+  vibe64ApiResponseError
+} from "@/lib/vibe64ApiResponses.js";
 import {
   readRefOrGetterBoolean
 } from "@/lib/vueRefOrGetterValue.js";
@@ -55,7 +55,7 @@ function useVibe64DiffDialog({
   });
   const diffError = computed(() => String(
     localDiffError.value ||
-    (diffPayload.value?.ok === false ? resolveResponseErrorMessage(diffPayload.value, "Diff inspection failed.") : "") ||
+    (diffPayload.value?.ok === false ? vibe64ApiResponseError(diffPayload.value, "Diff inspection failed.") : "") ||
     diffResource.loadError.value ||
     ""
   ));

@@ -10,10 +10,6 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  normalizeDisposablePath,
-  relativePathIsDisposable
-} from "@local/vibe64-adapters/server/disposablePaths";
-import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 
@@ -46,7 +42,7 @@ async function runCommand(command, args = [], {
     gitSafeDirectories: command === "git" ? [cwd] : [],
     maxBuffer,
     mode: "capture",
-    purpose: "setup",
+    purpose: "source",
     runtimes,
     timeout
   });
@@ -74,8 +70,6 @@ function metadataValue(session = {}, name = "") {
 function recoverySessionName(session = {}) {
   return normalizeText(session.sessionName) ||
     metadataValue(session, "source_recovery_session_name") ||
-    metadataValue(session, "issue_word") ||
-    metadataValue(session, "work_word") ||
     normalizeText(session.sessionId);
 }
 
@@ -84,28 +78,11 @@ function recoveryWorktreePath(session = {}) {
     sessionSourcePath(session);
 }
 
-async function adapterDisposableWorktreePaths(adapter, context = {}) {
-  const adapterValue = typeof adapter?.worktreeArchiveExclusions === "function"
-    ? await adapter.worktreeArchiveExclusions(context)
-    : adapter?.worktreeArchiveExclusions;
-  return (Array.isArray(adapterValue) ? adapterValue : [])
-    .map(normalizeDisposablePath)
-    .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right));
-}
-
 function parseNullSeparatedPaths(value = "") {
   return String(value || "")
     .split("\0")
-    .map(normalizeDisposablePath)
+    .map((entry) => normalizeText(entry).replaceAll("\\", "/").replace(/^\.\//u, ""))
     .filter(Boolean);
-}
-
-function gitExcludePathspecs(disposablePaths = []) {
-  return disposablePaths
-    .map(normalizeDisposablePath)
-    .filter(Boolean)
-    .map((entry) => `:(exclude)${entry}`);
 }
 
 async function writeMetadataValues(store, sessionId, values = {}) {
@@ -167,17 +144,14 @@ async function removeSessionOwnedWorktreeDirectory({
 
 async function writeDirtyRecoveryArtifacts({
   artifactsRoot = "",
-  disposablePaths = [],
   session = {},
   store,
   worktreePath = ""
 } = {}) {
-  const pathspecExcludes = gitExcludePathspecs(disposablePaths);
   const statusResult = await runGit(worktreePath, [
     "status",
     "--porcelain=v1",
-    "--untracked-files=normal",
-    ...(pathspecExcludes.length ? ["--", ".", ...pathspecExcludes] : [])
+    "--untracked-files=normal"
   ], {
     timeout: 15_000
   });
@@ -191,7 +165,6 @@ async function writeDirtyRecoveryArtifacts({
   if (!dirty) {
     return {
       dirty: false,
-      excludedUntrackedCount: 0,
       patchArtifact: "",
       untrackedArtifact: "",
       untrackedCount: 0
@@ -224,8 +197,7 @@ async function writeDirtyRecoveryArtifacts({
     "ls-files",
     "--others",
     "--exclude-standard",
-    "-z",
-    ...(pathspecExcludes.length ? ["--", ".", ...pathspecExcludes] : [])
+    "-z"
   ], {
     timeout: 15_000
   });
@@ -236,14 +208,9 @@ async function writeDirtyRecoveryArtifacts({
     );
   }
   const untrackedPaths = parseNullSeparatedPaths(untrackedResult.stdout);
-  const retainedUntrackedPaths = untrackedPaths.filter((relativePath) => {
-    return !relativePathIsDisposable(relativePath, disposablePaths);
-  });
-  const excludedUntrackedCount = untrackedPaths.length - retainedUntrackedPaths.length;
-  if (retainedUntrackedPaths.length < 1) {
+  if (untrackedPaths.length < 1) {
     return {
       dirty: true,
-      excludedUntrackedCount,
       patchArtifact,
       untrackedArtifact: "",
       untrackedCount: 0
@@ -255,7 +222,7 @@ async function writeDirtyRecoveryArtifacts({
   await mkdir(path.dirname(listPath), {
     recursive: true
   });
-  await writeFile(listPath, `${retainedUntrackedPaths.join("\0")}\0`, "utf8");
+  await writeFile(listPath, `${untrackedPaths.join("\0")}\0`, "utf8");
   const tarResult = await runCommand("tar", [
     "--null",
     "-czf",
@@ -279,10 +246,9 @@ async function writeDirtyRecoveryArtifacts({
 
   return {
     dirty: true,
-    excludedUntrackedCount,
     patchArtifact,
     untrackedArtifact: RECOVERY_UNTRACKED_ARTIFACT,
-    untrackedCount: retainedUntrackedPaths.length
+    untrackedCount: untrackedPaths.length
   };
 }
 
@@ -332,7 +298,6 @@ async function writeBranchRecoveryBundle({
 }
 
 async function archiveSessionSource({
-  adapter = null,
   reason = "archive",
   session = {},
   store
@@ -367,7 +332,6 @@ async function archiveSessionSource({
       "vibe64_worktree_archive_path_not_session_owned"
     );
   }
-  const targetRoot = normalizeText(session.targetRoot);
   const sessionId = normalizeText(session.sessionId);
   const sessionName = recoverySessionName(session);
   const branch = worktreeIsGitWorktree
@@ -379,23 +343,15 @@ async function archiveSessionSource({
   const remoteUrl = worktreeIsGitWorktree
     ? await readWorktreeGitFact(worktreePath, ["remote", "get-url", "origin"], metadataValue(session, "source_remote_url"))
     : metadataValue(session, "source_recovery_remote_url") || metadataValue(session, "source_remote_url");
-  const disposablePaths = await adapterDisposableWorktreePaths(adapter, {
-    reason,
-    session,
-    targetRoot,
-    worktreePath
-  });
   const dirtyArtifacts = worktreeIsGitWorktree
     ? await writeDirtyRecoveryArtifacts({
       artifactsRoot: session.artifactsRoot,
-      disposablePaths,
       session,
       store,
       worktreePath
     })
     : {
       dirty: false,
-      excludedUntrackedCount: 0,
       patchArtifact: metadataValue(session, "source_recovery_patch_artifact"),
       untrackedArtifact: metadataValue(session, "source_recovery_untracked_artifact"),
       untrackedCount: Number(metadataValue(session, "source_recovery_untracked_count") || 0)
@@ -415,7 +371,6 @@ async function archiveSessionSource({
     source_recovery_bundle_artifact: branchBundleArtifact,
     source_recovery_default_branch: metadataValue(session, "source_default_branch") || metadataValue(session, "base_branch"),
     source_recovery_dirty: dirtyArtifacts.dirty ? "yes" : "no",
-    source_recovery_excluded_untracked_count: String(dirtyArtifacts.excludedUntrackedCount || 0),
     source_recovery_head: head,
     source_recovery_kind: recoveryKind,
     source_recovery_patch_artifact: dirtyArtifacts.patchArtifact,
@@ -445,6 +400,5 @@ async function archiveSessionSource({
 }
 
 export {
-  archiveSessionSource,
-  relativePathIsDisposable
+  archiveSessionSource
 };

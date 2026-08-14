@@ -1,14 +1,12 @@
 import { computed } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import {
   VIBE64_API_SUFFIX,
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
   vibe64AgentTerminalPath,
-  vibe64CommandTerminalPath,
-  vibe64FixCodexTerminalPath,
   vibe64GlobalCodexTerminalPath
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
@@ -144,51 +142,11 @@ function useVibe64TerminalCommands({
     return await runClose(vibe64GlobalCodexTerminalPath(vibe64ApiPath.value, normalizedTerminalSessionId));
   }
 
-  async function startCommandTerminal(sessionId = "", input = {}) {
-    const normalizedSessionId = normalizedId(sessionId);
-    if (!normalizedSessionId) {
-      return commandMissingResponse("Vibe64 session id is required.");
-    }
-    return await runStart(
-      vibe64CommandTerminalPath(sessionsApiPath.value, normalizedSessionId),
-      vibe64RealtimeOriginPayload(plainObject(input))
-    );
-  }
-
-  async function closeCommandTerminal(sessionId = "", terminalSessionId = "") {
-    const normalizedSessionId = normalizedId(sessionId);
-    const normalizedTerminalSessionId = normalizedId(terminalSessionId);
-    if (!normalizedSessionId || !normalizedTerminalSessionId) {
-      return commandMissingResponse("Command terminal id is required.");
-    }
-    return await runClose(vibe64CommandTerminalPath(
-      sessionsApiPath.value,
-      normalizedSessionId,
-      normalizedTerminalSessionId
-    ));
-  }
-
-  async function closeFixCodexTerminal(jobId = "", terminalSessionId = "") {
-    const normalizedJobId = normalizedId(jobId);
-    const normalizedTerminalSessionId = normalizedId(terminalSessionId);
-    if (!normalizedJobId || !normalizedTerminalSessionId) {
-      return commandMissingResponse("Fix Codex terminal id is required.");
-    }
-    return await runClose(vibe64FixCodexTerminalPath(
-      vibe64ApiPath.value,
-      normalizedJobId,
-      normalizedTerminalSessionId
-    ));
-  }
-
   return {
     closeAgentTerminal,
-    closeCommandTerminal,
-    closeFixCodexTerminal,
     closeGlobalCodexTerminal,
     closeTerminalCommand,
     startAgentTerminal,
-    startCommandTerminal,
     startGlobalCodexTerminal,
     startTerminalCommand
   };

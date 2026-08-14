@@ -18,9 +18,6 @@ import {
   PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
   PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
-  WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT,
-  WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
-  WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE,
   projectRepositoryView
 } from "../../packages/vibe64-core/src/server/projectRepository.js";
 import {
@@ -34,14 +31,8 @@ import {
   createProjectBootstrap
 } from "../../packages/vibe64-core/src/server/projectLifecycle.js";
 import {
-  saveProjectBootstrapConfig
-} from "../../packages/vibe64-core/src/server/projectBootstrapConfig.js";
-import {
   writeProjectRuntimeOpenState
 } from "../../packages/vibe64-core/src/server/projectRuntimeOpenState.js";
-import {
-  committedProjectConfigRefFromMetadata
-} from "../../packages/vibe64-core/src/server/committedProjectConfig.js";
 import {
   resolveVibe64Roots
 } from "../../packages/vibe64-core/src/server/studioRoots.js";
@@ -89,23 +80,6 @@ async function createGitProject(projectRoot, remotes = {}) {
     await runGit(projectRoot, ["remote", "add", name, remoteUrl]);
   }
 }
-
-test("committed project config requires the canonical repository branch", () => {
-  assert.equal(committedProjectConfigRefFromMetadata({
-    repository: {
-      defaultBranch: "main"
-    }
-  }), "refs/heads/main");
-  assert.throws(() => committedProjectConfigRefFromMetadata({
-    repository: {
-      github: {
-        defaultBranch: "main"
-      }
-    }
-  }), {
-    code: "vibe64_committed_project_repository_metadata_invalid"
-  });
-});
 
 test("Studio project context starts without a selected project when no explicit target is provided", async () => {
   await withTemporaryRoot(async (root) => {
@@ -608,7 +582,6 @@ test("Studio project context resolves GitHub capability from explicit target rem
     });
     const originListed = await originContext.listProjects();
     assert.equal(originListed.currentProject.repositoryMode, PROJECT_REPOSITORY_MODE_LOCAL_SOURCE);
-    assert.equal(originListed.currentProject.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE);
     assert.equal(originListed.currentProject.githubRepository.fullName, "example/origin-target");
     assert.equal(originListed.currentProject.githubRepository.source, undefined);
 
@@ -624,7 +597,6 @@ test("Studio project context resolves GitHub capability from explicit target rem
     });
     const singleNonOriginListed = await singleNonOriginContext.listProjects();
     assert.equal(singleNonOriginListed.currentProject.repositoryMode, PROJECT_REPOSITORY_MODE_LOCAL_SOURCE);
-    assert.equal(singleNonOriginListed.currentProject.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE);
     assert.equal(singleNonOriginListed.currentProject.githubRepository.fullName, "example/single-non-origin-target");
     assert.equal(singleNonOriginListed.currentProject.githubRepository.source, undefined);
 
@@ -641,7 +613,6 @@ test("Studio project context resolves GitHub capability from explicit target rem
     });
     const ambiguousListed = await ambiguousContext.listProjects();
     assert.equal(ambiguousListed.currentProject.repositoryMode, PROJECT_REPOSITORY_MODE_LOCAL_SOURCE);
-    assert.equal(ambiguousListed.currentProject.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE);
     assert.equal(ambiguousListed.currentProject.githubRepository, undefined);
   });
 });
@@ -721,7 +692,6 @@ test("Project repository view reads GitHub metadata only from repository contrac
   });
 
   assert.equal(currentView.repositoryMode, PROJECT_REPOSITORY_MODE_GITHUB);
-  assert.equal(currentView.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR);
   assert.equal(currentView.repository.mode, PROJECT_REPOSITORY_MODE_GITHUB);
   assert.equal(currentView.repository.defaultBranch, "main");
   assert.equal(currentView.repository.github.fullName, "example/current-app");
@@ -736,7 +706,6 @@ test("Project repository view reads GitHub metadata only from repository contrac
   });
 
   assert.equal(oldShapeView.repositoryMode, undefined);
-  assert.equal(oldShapeView.workflowRepositoryProfile, undefined);
   assert.equal(oldShapeView.repository, undefined);
   assert.equal(oldShapeView.githubRepository, undefined);
 });
@@ -808,7 +777,6 @@ test("Studio project context reads project records and ignores source config as 
 
     assert.deepEqual(listed.projects.map((project) => project.slug), ["canonical-app"]);
     assert.equal(listed.projects[0].repositoryMode, PROJECT_REPOSITORY_MODE_GITHUB);
-    assert.equal(listed.projects[0].workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR);
     assert.equal(listed.projects[0].githubRepository.fullName, "example/canonical-app");
     assert.equal(listed.projects[0].runtime.open, true);
     assert.equal(listed.projects[0].projectRecordPath, recordPath);
@@ -840,7 +808,6 @@ test("Studio project context lists and reads managed Git catalog records", async
 
     assert.equal(created.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
     assert.equal(created.project.applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
-    assert.equal(created.project.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT);
     assert.equal(created.project.githubRepository, undefined);
 
     const listed = await context.listWorkspaceProjects();
@@ -850,7 +817,6 @@ test("Studio project context lists and reads managed Git catalog records", async
     assert.equal(listed.projects[0].applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
     assert.equal(listed.projects[0].repository.defaultBranch, "main");
     assert.equal(listed.projects[0].repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(listed.projects[0].workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT);
     assert.equal(listed.projects[0].githubRepository, undefined);
 
     const read = await context.readWorkspaceProject({
@@ -859,7 +825,6 @@ test("Studio project context lists and reads managed Git catalog records", async
 
     assert.equal(read.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
     assert.equal(read.project.applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
-    assert.equal(read.project.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT);
     assert.equal(read.project.githubRepository, undefined);
   });
 });
@@ -878,7 +843,6 @@ test("Studio project context defaults new catalog records to managed Git metadat
     });
 
     assert.equal(created.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(created.project.workflowRepositoryProfile, WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT);
     assert.equal(created.project.githubRepository, undefined);
 
     const recordText = await readFile(context.projectRecordPathForSlug("default-managed-app"), "utf8");
@@ -914,19 +878,10 @@ test("Studio project context keeps bootstrap pending through template setup and 
       }
     );
 
-    await Promise.all([
-      context.recordWorkspaceProjectTemplate({
-        commit: templateCommit,
-        slug: "template-app"
-      }),
-      saveProjectBootstrapConfig({
-        projectRecordPath: context.projectRecordPathForSlug("template-app"),
-        projectType: "jskit",
-        values: {
-          user_mode: "users"
-        }
-      })
-    ]);
+    await context.recordWorkspaceProjectTemplate({
+      commit: templateCommit,
+      slug: "template-app"
+    });
 
     const pending = await context.readWorkspaceProject({
       slug: "template-app"
@@ -948,10 +903,6 @@ test("Studio project context keeps bootstrap pending through template setup and 
       status: "complete",
       templateCommit
     });
-    assert.equal(metadata.bootstrapConfig.projectType, "jskit");
-    assert.deepEqual(metadata.bootstrapConfig.values, {
-      user_mode: "users"
-    });
   });
 });
 
@@ -959,12 +910,7 @@ test("Studio project context requires catalog metadata in the project record", a
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const projectRoot = path.join(projectsRoot, "uncataloged-app");
-    await writeTestFile(path.join(projectRoot, "vibe64.project.json"), `${JSON.stringify({
-      schema: "vibe64.project",
-      schemaVersion: 1,
-      projectType: "jskit",
-      config: {}
-    }, null, 2)}\n`);
+    await writeTestFile(path.join(projectRoot, "unmanaged-source.txt"), "leave this file alone\n");
     const context = createStudioProjectContext({
       explicitProjectsRoot: projectsRoot,
       env: {},
@@ -994,8 +940,10 @@ test("Studio project context requires catalog metadata in the project record", a
     await assert.rejects(() => access(context.projectRecordPathForSlug("uncataloged-app")), {
       code: "ENOENT"
     });
-    const manifest = JSON.parse(await readFile(path.join(projectRoot, "vibe64.project.json"), "utf8"));
-    assert.equal(manifest.projectType, "jskit");
+    assert.equal(
+      await readFile(path.join(projectRoot, "unmanaged-source.txt"), "utf8"),
+      "leave this file alone\n"
+    );
   });
 });
 

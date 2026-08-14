@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific project-knowledge guidance:
-- Update the project knowledge artifact referenced by the adapter prompt context.
-- Preserve useful facts about Laravel version, starter kit, database runtime, package manager, testing framework, Boost setting, routing, auth, migrations, queues, frontend assets, and verification commands.
-- Remove stale claims and keep the artifact concise enough to maintain.

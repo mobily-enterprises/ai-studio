@@ -29,7 +29,6 @@ function expectedCurrentDirectoryStartupSlug() {
 
 test("server CLI starts local editor mode for the current directory with no target", () => {
   assert.deepEqual(parseStartupArgs([]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: expectedCurrentDirectoryStartupSlug(),
@@ -48,35 +47,30 @@ test("server CLI starts local editor mode for the current directory with no targ
 
 test("server CLI accepts one target directory and opens local editor mode", () => {
   assert.deepEqual(parseStartupArgs(["alpha_1"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "alpha_1",
     targetRoot: path.resolve("alpha_1")
   });
   assert.deepEqual(parseStartupArgs(["--no-open", "beta-2"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: false,
     runtimeMode: "local",
     startupSlug: "beta-2",
     targetRoot: path.resolve("beta-2")
   });
   assert.deepEqual(parseStartupArgs(["--open", "beta-2"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "beta-2",
     targetRoot: path.resolve("beta-2")
   });
   assert.deepEqual(parseStartupArgs(["--project", "beta-2"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "beta-2",
     targetRoot: path.resolve("beta-2")
   });
   assert.deepEqual(parseStartupArgs(["--project=beta-2"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "beta-2",
@@ -101,28 +95,24 @@ test("server CLI accepts one target directory and opens local editor mode", () =
 
 test("server CLI accepts target paths as local editor mode", () => {
   assert.deepEqual(parseStartupArgs(["."]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: expectedCurrentDirectoryStartupSlug(),
     targetRoot: path.resolve(".")
   });
   assert.deepEqual(parseStartupArgs(["/tmp/My App"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "my-app",
     targetRoot: path.resolve("/tmp/My App")
   });
   assert.deepEqual(parseStartupArgs(["--no-open", "."]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: false,
     runtimeMode: "local",
     startupSlug: expectedCurrentDirectoryStartupSlug(),
     targetRoot: path.resolve(".")
   });
   assert.deepEqual(parseStartupArgs(["--open", "../app"]), {
-    jskitLockPath: ".jskit/lock.json",
     openOnStart: true,
     runtimeMode: "local",
     startupSlug: "app",
@@ -164,7 +154,6 @@ test("server CLI enables browser lifecycle shutdown for local editor mode", () =
     targetRoot: "/workspace/vibe64"
   }), {
     browserLifecycleShutdown: true,
-    jskitLockPath: ".jskit/lock.json",
     port: 3001,
     runtimeMode: "local",
     startupSlug: "vibe64",
@@ -179,7 +168,6 @@ test("server CLI enables browser lifecycle shutdown for local editor mode", () =
     targetRoot: "/workspace/vibe64"
   }), {
     browserLifecycleShutdown: true,
-    jskitLockPath: ".jskit/lock.json",
     port: undefined,
     runtimeMode: "local",
     startupSlug: "vibe64",
@@ -196,7 +184,6 @@ test("server CLI enables browser lifecycle shutdown for local editor mode", () =
     targetRoot: "/workspace/vibe64"
   }), {
     browserLifecycleShutdown: true,
-    jskitLockPath: ".jskit/lock.json",
     port: undefined,
     runtimeMode: "local",
     startupSlug: "vibe64",

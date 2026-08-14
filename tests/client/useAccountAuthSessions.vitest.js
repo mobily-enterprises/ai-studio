@@ -197,7 +197,6 @@ describe("useAccountAuthSessions", () => {
 
   it("updates auth-session state from scoped realtime events", async () => {
     const accounts = {
-      invalidateCapabilities: vi.fn(),
       loadError: "",
       readAuthSession: vi.fn(),
       refresh: vi.fn(),
@@ -247,8 +246,6 @@ describe("useAccountAuthSessions", () => {
     await flushAsyncWork();
 
     expect(accounts.refresh).not.toHaveBeenCalled();
-    expect(accounts.invalidateCapabilities).not.toHaveBeenCalled();
-
     realtimeHandler({
       session: {
         account: {
@@ -264,15 +261,6 @@ describe("useAccountAuthSessions", () => {
 
     expect(accounts.readAuthSession).not.toHaveBeenCalled();
     expect(accounts.refresh).toHaveBeenCalledTimes(1);
-    expect(accounts.invalidateCapabilities).toHaveBeenCalledWith({
-      event: "client.auth.session.realtime",
-      payload: {
-        accountId: "codex",
-        authSessionId: "auth-session-1",
-        connected: true,
-        status: "connected"
-      }
-    });
     expect(authSessions.activeSessionFor("codex")).toBe(null);
   });
 

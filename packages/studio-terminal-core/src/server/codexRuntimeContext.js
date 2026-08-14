@@ -7,6 +7,9 @@ import {
 } from "../../../vibe64-core/src/server/studioRoots.js";
 import {
   commandCallerEnv,
+  envRecord,
+  normalizeText,
+  recordValue,
   VIBE64_INTERACTIVE_RUNTIME_PACKS,
   uniqueStrings,
   resolveCommandEnv
@@ -14,25 +17,6 @@ import {
 import {
   codexCredentialContext
 } from "@local/vibe64-execution/server";
-
-function recordValue(value) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
-}
-
-function envRecord(value) {
-  return Object.fromEntries(Object.entries(recordValue(value))
-    .map(([key, envValue]) => [
-      normalizeText(key),
-      String(envValue ?? "")
-    ])
-    .filter(([key]) => Boolean(key)));
-}
-
-function normalizeText(value = "") {
-  return String(value || "").trim();
-}
 
 function normalizeAbsolutePath(value = "") {
   const normalized = normalizeText(value);

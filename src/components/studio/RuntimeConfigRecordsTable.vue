@@ -4,7 +4,6 @@
       <tr>
         <th>Key</th>
         <th>Value</th>
-        <th>Visibility</th>
         <th>Source</th>
         <th>Status</th>
         <th v-if="showActions">Actions</th>
@@ -43,16 +42,6 @@
           <template v-else>
             {{ recordValueLabel(record) }}
           </template>
-        </td>
-        <td>
-          <v-chip
-            class="runtime-config-records-table__chip"
-            :color="recordVisibility(record) === 'Public' ? 'primary' : 'secondary'"
-            size="x-small"
-            variant="tonal"
-          >
-            {{ recordVisibility(record) }}
-          </v-chip>
         </td>
         <td>{{ sourceLabel(record.source) }}</td>
         <td>
@@ -104,7 +93,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { ref } from "vue";
 
 const emit = defineEmits([
   "hide-secret",
@@ -117,10 +106,6 @@ const props = defineProps({
   environmentLabel: {
     default: "environment",
     type: String
-  },
-  publicEnvPrefixes: {
-    default: () => [],
-    type: Array
   },
   records: {
     default: () => [],
@@ -149,7 +134,6 @@ const props = defineProps({
 });
 
 const draftValues = ref({});
-const publicEnvPrefixes = computed(() => Array.isArray(props.publicEnvPrefixes) ? props.publicEnvPrefixes : []);
 
 function recordKey(record = {}) {
   return `${record.scope || props.environmentLabel}:${record.key || ""}`;
@@ -172,31 +156,12 @@ function setDraftValue(record = {}, value = "") {
   };
 }
 
-function keyIsPublic(key = "") {
-  const text = String(key || "").trim();
-  return Boolean(text) && publicEnvPrefixes.value.some((prefix) => text.startsWith(prefix));
-}
-
-function recordVisibility(record = {}) {
-  return keyIsPublic(record.key) ? "Public" : "Server";
-}
-
 function sourceLabel(source = "") {
   return {
-    adapter: "Adapter",
-    "assistant_contract": "Assistant",
-    "jskit-local-default": "Adapter Default",
-    "jskit-managed-mariadb": "Managed Database",
-    "jskit-local-auth": "JSKIT Local Auth",
-    "jskit-supabase-auth": "JSKIT Supabase",
-    managed_database: "Managed Database",
-    "project-config": "Project Config",
     system: "System",
     user: "User",
-    user_override: "User",
-    vibe64_deployment: "Vibe64",
-    vibe64: "Vibe64"
-  }[source] || source || "Generated";
+    user_override: "User"
+  }[source] || source || "System";
 }
 
 function recordValueLabel(record = {}) {

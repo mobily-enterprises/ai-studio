@@ -4,6 +4,6 @@ App-local JSKIT module scaffold.
 
 ## Next Steps
 
-- Define runtime providers in `package.descriptor.mjs`.
+- Define runtime providers in the top-level `jskit` object in `package.json`.
 - Add client/server exports under `src/`.
-- Keep package version in sync with descriptor version.
+- Keep package identity and description in the standard top-level npm fields.

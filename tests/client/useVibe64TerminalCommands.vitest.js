@@ -5,11 +5,11 @@ const commandMocks = vi.hoisted(() => ({
   useCommand: vi.fn()
 }));
 
-vi.mock("@jskit-ai/users-web/client/composables/useCommand", () => ({
+vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
   useCommand: commandMocks.useCommand
 }));
 
-vi.mock("@jskit-ai/users-web/client/composables/usePaths", () => ({
+vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
   usePaths: () => ({
     api: (suffix) => `/api${suffix}`
   })
@@ -40,9 +40,9 @@ describe("useVibe64TerminalCommands", () => {
     }));
   });
 
-  it("turns stale terminal starts into refreshable results instead of generic failures", async () => {
+  it("turns stale AI terminal starts into refreshable results instead of generic failures", async () => {
     commandMocks.runError = {
-      code: "vibe64_action_disabled",
+      code: "vibe64_stale_command_start",
       details: {
         operationOutcome: "state_rejected",
         refreshRecommended: true
@@ -53,10 +53,8 @@ describe("useVibe64TerminalCommands", () => {
       sessionsApiPath: "/api/app/example/vibe64/sessions"
     });
 
-    await expect(commands.startCommandTerminal("session-1", {
-      actionId: "create_source"
-    })).rejects.toMatchObject({
-      code: "vibe64_action_disabled",
+    await expect(commands.startAgentTerminal("session-1")).rejects.toMatchObject({
+      code: "vibe64_stale_command_start",
       ok: false,
       operationOutcome: "state_rejected",
       refreshRecommended: true,

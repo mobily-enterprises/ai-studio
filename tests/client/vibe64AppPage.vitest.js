@@ -112,25 +112,25 @@ describe("Vibe64 app page", () => {
   it("keeps project pane navigation scoped to the project that passed setup gates", () => {
     expect(projectPaneNavigationReady({
       projectSlug: "beepollen",
-      projectTypeReady: true,
+      foundationReady: true,
       readyProjectSlug: "beepollen"
     })).toBe(true);
 
     expect(projectPaneNavigationReady({
       projectSlug: "beepollen",
-      projectTypeReady: true,
+      foundationReady: true,
       readyProjectSlug: "compas-next"
     })).toBe(false);
 
     expect(projectPaneNavigationReady({
       projectSlug: "beepollen",
-      projectTypeReady: false,
+      foundationReady: false,
       readyProjectSlug: "beepollen"
     })).toBe(false);
 
     expect(projectPaneNavigationReady({
       projectSlug: "",
-      projectTypeReady: true,
+      foundationReady: true,
       readyProjectSlug: "beepollen"
     })).toBe(false);
   });

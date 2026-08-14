@@ -1,6 +1,0 @@
-{{systemStandard}}
-
-Vinext-specific project-knowledge guidance:
-- Update the Vinext project knowledge artifact referenced by the adapter prompt context.
-- Preserve useful facts about migration state, routing mode, package manager, Vinext scripts, Vite behavior, Cloudflare runtime decisions, and compatibility limits.
-- Remove stale claims and keep the artifact concise enough to maintain.

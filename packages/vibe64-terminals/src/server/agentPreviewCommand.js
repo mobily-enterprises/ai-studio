@@ -27,6 +27,11 @@ import {
 import {
   writeExecutableFileIfChanged
 } from "./writeExecutableFileIfChanged.js";
+import {
+  readJsonCommandRequest,
+  sendJsonCommandResponse,
+  shortCommandHash
+} from "./unixJsonCommand.js";
 
 const AGENT_PREVIEW_COMMAND_NAME = "vibe64-preview";
 const AGENT_PLAYWRIGHT_COMMAND_NAME = "vibe64-playwright";
@@ -67,14 +72,6 @@ function normalizeText(value = "") {
   return String(value || "").trim();
 }
 
-function stableHash(value = "") {
-  return crypto
-    .createHash("sha256")
-    .update(String(value || ""))
-    .digest("hex")
-    .slice(0, 16);
-}
-
 function wrapperHostPath(wrapperHostDir = "") {
   return path.join(wrapperHostDir, AGENT_PREVIEW_COMMAND_NAME);
 }
@@ -99,47 +96,18 @@ function commandSocketHostPath(wrapperHostDir = "") {
   return path.join(wrapperHostDir, AGENT_PREVIEW_COMMAND_SOCKET_NAME);
 }
 
-function readRequestBuffer(request, {
-  maxBytes = AGENT_PREVIEW_COMMAND_REQUEST_MAX_BYTES
-} = {}) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    request.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        const error = new Error("Vibe64 preview command input is too large.");
-        error.code = "vibe64_agent_preview_command_input_too_large";
-        reject(error);
-        request.destroy(error);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.once("error", reject);
-    request.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-  });
-}
-
 async function readRequestJson(request) {
-  const text = await readRequestBuffer(request);
-  try {
-    const parsed = JSON.parse(text || "{}");
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    const error = new Error("Vibe64 preview command input must be valid JSON.");
-    error.code = "vibe64_agent_preview_command_invalid_json";
-    throw error;
-  }
-}
-
-function sendJson(response, statusCode, payload = {}) {
-  const text = JSON.stringify(payload);
-  response.writeHead(statusCode, {
-    "Content-Length": Buffer.byteLength(text),
-    "Content-Type": "application/json"
+  return readJsonCommandRequest(request, {
+    invalidJsonError: {
+      code: "vibe64_agent_preview_command_invalid_json",
+      message: "Vibe64 preview command input must be valid JSON."
+    },
+    maxBytes: AGENT_PREVIEW_COMMAND_REQUEST_MAX_BYTES,
+    tooLargeError: {
+      code: "vibe64_agent_preview_command_input_too_large",
+      message: "Vibe64 preview command input is too large."
+    }
   });
-  response.end(text);
 }
 
 async function writeWrapper({
@@ -815,7 +783,7 @@ function commandServerToken({
   socketPath = "",
   wrapperHostDir = ""
 } = {}) {
-  return stableHash([
+  return shortCommandHash([
     "agent-preview-command-token",
     normalizeText(sessionId),
     normalizeText(socketPath),
@@ -1129,16 +1097,16 @@ async function ensureAgentPreviewCommandServer({
     const server = http.createServer(async (request, response) => {
       try {
         if (request.method !== "POST" || !AGENT_PREVIEW_COMMAND_ROUTES.has(request.url)) {
-          sendJson(response, 404, responseError("Unknown Vibe64 preview command route.", "vibe64_agent_preview_command_route_not_found"));
+          sendJsonCommandResponse(response, 404, responseError("Unknown Vibe64 preview command route.", "vibe64_agent_preview_command_route_not_found"));
           return;
         }
         const input = await readRequestJson(request);
         if (!verifyRequestToken(input, token) || normalizeText(input.sessionId) !== normalizeText(sessionId)) {
-          sendJson(response, 403, responseError("Vibe64 preview command token is invalid.", "vibe64_agent_preview_command_token_invalid"));
+          sendJsonCommandResponse(response, 403, responseError("Vibe64 preview command token is invalid.", "vibe64_agent_preview_command_token_invalid"));
           return;
         }
         if (request.url === "/agent-preview-command/health") {
-          sendJson(response, 200, {
+          sendJsonCommandResponse(response, 200, {
             ok: true,
             sessionId: normalizeText(sessionId)
           });
@@ -1149,11 +1117,11 @@ async function ensureAgentPreviewCommandServer({
             sessionId,
             input.identity
           );
-          sendJson(response, vibe64StatusCode(payload), payload);
+          sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
           return;
         }
         if (request.url === "/agent-preview-command/run") {
-          sendJson(response, 200, await commandService.run(input));
+          sendJsonCommandResponse(response, 200, await commandService.run(input));
           return;
         }
       } catch (error) {
@@ -1161,7 +1129,7 @@ async function ensureAgentPreviewCommandServer({
           fallbackCode: "vibe64_agent_preview_command_request_failed",
           fallbackMessage: "Vibe64 preview command request failed."
         });
-        sendJson(response, vibe64StatusCode(payload), payload);
+        sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
       }
     });
     const listenResult = await new Promise((resolve, reject) => {

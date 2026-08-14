@@ -1,16 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
-  VIBE64_STATE_DIR,
   vibe64Error,
   isPlainObject,
   isMissingPathError,
   normalizeTargetRoot,
   normalizeText,
-  plainClone,
   pathExists
 } from "@local/vibe64-core/server/core";
 import { deepFreeze } from "@local/vibe64-core/server/deepFreeze";
@@ -22,58 +20,26 @@ import {
   resolveVibe64CurrentSessionAliasPath,
   updateVibe64CurrentSessionAlias
 } from "./currentSessionAlias.js";
-import {
-  VIBE64_AGENT_TASK_STATES
-} from "../shared/agentTasks.js";
-
-const VIBE64_SESSION_SCHEMA_VERSION = 1;
+const VIBE64_SESSION_SCHEMA_VERSION = 2;
 const VIBE64_CLOSED_SESSION_ARCHIVE_SCHEMA_VERSION = 1;
-const PRIVATE_INPUT_SCHEMA_VERSION = 1;
-const VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION = 1;
-const VIBE64_INITIAL_STEP = "session_created";
-const ISSUE_WORD_ARTIFACT = "issue_word";
-const WORK_WORD_ARTIFACT = "work_word";
-const REPORT_ARTIFACT = "report.md";
-const ISSUE_WORD_MAX_LENGTH = 24;
+const SESSION_LABEL_METADATA = "label";
+const SESSION_LABEL_MAX_LENGTH = 120;
 const VIBE64_SESSION_STATUS = deepFreeze({
   ABANDONED: "abandoned",
   ACTIVE: "active",
-  BLOCKED: "blocked",
-  FINISHED: "finished"
+  BLOCKED: "blocked"
 });
 const VIBE64_SESSION_STATUSES = new Set(Object.values(VIBE64_SESSION_STATUS));
-const CLOSED_VIBE64_SESSION_STATUSES = new Set([
-  VIBE64_SESSION_STATUS.ABANDONED,
-  VIBE64_SESSION_STATUS.FINISHED
-]);
 const CLOSED_VIBE64_SESSION_STATUS_LIST = [
-  VIBE64_SESSION_STATUS.ABANDONED,
-  VIBE64_SESSION_STATUS.FINISHED
+  VIBE64_SESSION_STATUS.ABANDONED
 ];
+const CLOSED_VIBE64_SESSION_STATUSES = new Set(CLOSED_VIBE64_SESSION_STATUS_LIST);
 const CLOSED_SESSION_ARCHIVE_KIND = "vibe64.closed_session_archive";
 const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
-  "accepted_commit",
   "base_branch",
   "base_commit",
   "branch",
-  "canonical_repository_path",
-  "canonical_git_saved",
-  "github_mirror_refresh_attempted",
-  "github_mirror_path",
-  "issue_title",
-  "issue_url",
-  "issue_word",
-  "local_commit_only",
   "main_checkout_root",
-  "merge_skipped",
-  "pr_merged",
-  "pr_url",
-  "pull_request_path",
-  "session_branch",
-  "session_finished",
-  "source_pr_title",
-  "source_pr_update_mode",
-  "source_pr_url",
   "source_default_branch",
   "source_kind",
   "source_path",
@@ -83,7 +49,6 @@ const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "source_recovery_bundle_artifact",
   "source_recovery_default_branch",
   "source_recovery_dirty",
-  "source_recovery_excluded_untracked_count",
   "source_recovery_head",
   "source_recovery_kind",
   "source_recovery_patch_artifact",
@@ -95,21 +60,13 @@ const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "source_recovery_untracked_artifact",
   "source_recovery_untracked_count",
   "source_remote_url",
-  "source_removed",
-  "work_source",
-  "work_word",
-  "workflow_definition"
+  "source_removed"
 ]);
 const CLOSED_SESSION_ARCHIVE_TIMEOUT_MS = 60_000;
 const COMMAND_BUFFER_BYTES = 50 * 1024 * 1024;
-const ARTIFACT_READINESS_CONTENT_HASH_BYTES = 64 * 1024;
-const ACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-const ACTION_ATTEMPT_FILE_PATTERN = /^(\d{6})-([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.json$/u;
 const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
-const AGENT_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const BACKGROUND_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
-const COMMAND_LIFECYCLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const CONVERSATION_ACTIVITY_ROLES = new Set([
   "commentary",
   "thinking"
@@ -132,24 +89,10 @@ const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "source_kind",
   "source_path",
   "source_path_authority",
-  "source_removed",
-  "workflow_repository_profile"
+  "source_removed"
 ]);
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
-const PRIVATE_INPUT_FILE_PATTERN = /^(\d{6})-([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.json$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-const STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-const COMMAND_LIFECYCLE_PHASE_RANK = Object.freeze({
-  starting: 10,
-  started: 20,
-  terminal_exited: 30,
-  result_writing: 40,
-  result_written: 50,
-  advanced: 60,
-  post_commit_running: 70,
-  done: 80,
-  failed: 90
-});
 const BACKGROUND_TASK_STATUS = Object.freeze({
   FAILED: "failed",
   READY: "ready",
@@ -192,37 +135,8 @@ function isValidVibe64SessionId(sessionId) {
   return SESSION_ID_PATTERN.test(normalizedSessionId);
 }
 
-function artifactFingerprint(text = "") {
-  return createHash("sha256").update(String(text || "")).digest("hex");
-}
-
-function artifactMetadataFingerprint(fileStat) {
-  return artifactFingerprint([
-    "metadata",
-    fileStat.size,
-    fileStat.mtimeMs,
-    fileStat.ctimeMs
-  ].join(":"));
-}
-
-function isSafeStepId(stepId) {
-  return STEP_ID_PATTERN.test(normalizeText(stepId));
-}
-
-function isSafeActionId(actionId) {
-  return ACTION_ID_PATTERN.test(normalizeText(actionId));
-}
-
-function isSafeCommandLifecycleId(lifecycleId) {
-  return COMMAND_LIFECYCLE_ID_PATTERN.test(normalizeText(lifecycleId));
-}
-
 function isSafeAgentRunId(runId) {
   return AGENT_RUN_ID_PATTERN.test(normalizeText(runId));
-}
-
-function isSafeAgentTaskId(taskId) {
-  return AGENT_TASK_ID_PATTERN.test(normalizeText(taskId));
 }
 
 function isSafeBackgroundTaskId(taskId) {
@@ -245,33 +159,6 @@ function assertSafeMetadataName(name) {
   return normalizedName;
 }
 
-function assertSafeStepId(stepId) {
-  const normalizedStepId = normalizeText(stepId);
-  if (!isSafeStepId(normalizedStepId)) {
-    throw vibe64Error(`Invalid vibe64 step id: ${normalizedStepId || "(empty)"}`, "vibe64_invalid_step_id");
-  }
-  return normalizedStepId;
-}
-
-function assertSafeActionId(actionId) {
-  const normalizedActionId = normalizeText(actionId);
-  if (!isSafeActionId(normalizedActionId)) {
-    throw vibe64Error(`Invalid vibe64 action id: ${normalizedActionId || "(empty)"}`, "vibe64_invalid_action_id");
-  }
-  return normalizedActionId;
-}
-
-function assertSafeCommandLifecycleId(lifecycleId) {
-  const normalizedLifecycleId = normalizeText(lifecycleId);
-  if (!isSafeCommandLifecycleId(normalizedLifecycleId)) {
-    throw vibe64Error(
-      `Invalid vibe64 command lifecycle id: ${normalizedLifecycleId || "(empty)"}`,
-      "vibe64_invalid_command_lifecycle_id"
-    );
-  }
-  return normalizedLifecycleId;
-}
-
 function assertSafeAgentRunId(runId) {
   const normalizedRunId = normalizeText(runId);
   if (!isSafeAgentRunId(normalizedRunId)) {
@@ -281,17 +168,6 @@ function assertSafeAgentRunId(runId) {
     );
   }
   return normalizedRunId;
-}
-
-function assertSafeAgentTaskId(taskId) {
-  const normalizedTaskId = normalizeText(taskId);
-  if (!isSafeAgentTaskId(normalizedTaskId)) {
-    throw vibe64Error(
-      `Invalid vibe64 agent task id: ${normalizedTaskId || "(empty)"}`,
-      "vibe64_invalid_agent_task_id"
-    );
-  }
-  return normalizedTaskId;
 }
 
 function assertSafeBackgroundTaskId(taskId) {
@@ -430,27 +306,6 @@ async function writeJsonFile(filePath, value) {
   }
 }
 
-async function writePrivateJsonFile(filePath, value) {
-  const directory = path.dirname(filePath);
-  const tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
-  await mkdir(directory, {
-    mode: 0o700,
-    recursive: true
-  });
-  try {
-    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600
-    });
-    await rename(tempPath, filePath);
-  } catch (error) {
-    await rm(tempPath, {
-      force: true
-    });
-    throw error;
-  }
-}
-
 async function runCommand(command, args = [], {
   allowedRoots = [],
   cwd = "",
@@ -470,7 +325,7 @@ async function runCommand(command, args = [], {
     envPolicy: "session",
     maxBuffer,
     mode: "capture",
-    purpose: "setup",
+    purpose: "source",
     timeout
   });
   return {
@@ -487,16 +342,10 @@ function revisionNumber(value) {
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
 }
 
-function stepRevisionNumber(value) {
-  const revision = Number(value);
-  return Number.isSafeInteger(revision) && revision >= 1 ? revision : 1;
-}
-
 function normalizeManifest(manifest = {}) {
   return {
     ...manifest,
-    revision: revisionNumber(manifest.revision),
-    stepRevision: stepRevisionNumber(manifest.stepRevision)
+    revision: revisionNumber(manifest.revision)
   };
 }
 
@@ -511,12 +360,10 @@ function withRevisionMarker(value, manifest = {}, sessionId = "") {
       ? {
           ...value.manifest,
           revision: normalizedManifest.revision,
-          stepRevision: normalizedManifest.stepRevision,
           updatedAt: normalizeText(normalizedManifest.updatedAt)
         }
       : value.manifest,
     revision: normalizedManifest.revision,
-    stepRevision: normalizedManifest.stepRevision,
     updatedAt: normalizeText(normalizedManifest.updatedAt)
   };
 }
@@ -695,42 +542,6 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
   }
 }
 
-function normalizePromptContextSnapshot(snapshot = {}) {
-  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.adapter)) {
-    return null;
-  }
-  return {
-    adapter: plainClone(snapshot.adapter),
-    createdAt: normalizeText(snapshot.createdAt),
-    schemaVersion: snapshot.schemaVersion === VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
-      ? VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
-      : VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
-  };
-}
-
-function normalizeCommandLifecyclePhase(value = "") {
-  const phase = normalizeText(value);
-  return COMMAND_LIFECYCLE_PHASE_RANK[phase] ? phase : "";
-}
-
-function commandLifecyclePhaseRank(value = "") {
-  return COMMAND_LIFECYCLE_PHASE_RANK[normalizeCommandLifecyclePhase(value)] || 0;
-}
-
-function latestCommandLifecyclePhase(previousPhase = "", nextPhase = "") {
-  const normalizedPreviousPhase = normalizeCommandLifecyclePhase(previousPhase);
-  const normalizedNextPhase = normalizeCommandLifecyclePhase(nextPhase);
-  if (!normalizedNextPhase) {
-    return normalizedPreviousPhase;
-  }
-  if (!normalizedPreviousPhase) {
-    return normalizedNextPhase;
-  }
-  return commandLifecyclePhaseRank(normalizedNextPhase) >= commandLifecyclePhaseRank(normalizedPreviousPhase)
-    ? normalizedNextPhase
-    : normalizedPreviousPhase;
-}
-
 async function readDirectoryEntries(directoryPath) {
   try {
     return await readdir(directoryPath, {
@@ -756,22 +567,6 @@ function sortedDirectoryNames(entries, isAllowedName) {
     .filter((entry) => entry.isDirectory() && isAllowedName(entry.name))
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
-}
-
-async function sortedArtifactPaths(rootPath, relativeDirectory = "") {
-  const directoryPath = relativeDirectory ? path.join(rootPath, ...relativeDirectory.split("/")) : rootPath;
-  const entries = await readDirectoryEntries(directoryPath);
-  const files = sortedFileNames(entries, (name) => ARTIFACT_PATH_SEGMENT_PATTERN.test(name))
-    .map((name) => relativeDirectory ? `${relativeDirectory}/${name}` : name);
-  const directories = sortedDirectoryNames(entries, (name) => ARTIFACT_PATH_SEGMENT_PATTERN.test(name));
-  const nestedFiles = await Promise.all(directories.map((directoryName) => {
-    const nestedDirectory = relativeDirectory ? `${relativeDirectory}/${directoryName}` : directoryName;
-    return sortedArtifactPaths(rootPath, nestedDirectory);
-  }));
-  return [
-    ...files,
-    ...nestedFiles.flat()
-  ].sort((left, right) => left.localeCompare(right));
 }
 
 function toDate(value) {
@@ -818,32 +613,21 @@ function sessionPathsFromRoot({
   targetRoot = ""
 } = {}) {
   return {
-    actionsRoot: sessionRoot ? path.join(sessionRoot, "actions") : "",
-    actionAttemptsRoot: sessionRoot ? path.join(sessionRoot, "action-attempts") : "",
     activeSessionsRoot,
     agentRunsRoot: sessionRoot ? path.join(sessionRoot, "agent-runs") : "",
-    agentTasksCurrentPath: sessionRoot ? path.join(sessionRoot, "agent-tasks", "current") : "",
-    agentTasksRoot: sessionRoot ? path.join(sessionRoot, "agent-tasks") : "",
     artifactsRoot: sessionRoot ? path.join(sessionRoot, "artifacts") : "",
     backgroundTasksRoot: sessionRoot ? path.join(sessionRoot, "background-tasks") : "",
     closingSessionsRoot,
     closedSessionsRoot,
-    commandLifecyclesRoot: sessionRoot ? path.join(sessionRoot, "command-lifecycle") : "",
-    commandLogPath: sessionRoot ? path.join(sessionRoot, "command-log.jsonl") : "",
     conversationLogRoot: sessionRoot ? path.join(sessionRoot, "conversation-log") : "",
     currentSessionAliasPath,
-    currentStepPath: sessionRoot ? path.join(sessionRoot, "current_step") : "",
     manifestPath: sessionRoot ? path.join(sessionRoot, "session.json") : "",
     metadataRoot: sessionRoot ? path.join(sessionRoot, "metadata") : "",
-    privateInputsRoot: sessionRoot ? path.join(sessionRoot, "private-inputs") : "",
-    promptContextSnapshotPath: sessionRoot ? path.join(sessionRoot, "prompt-context.json") : "",
     sessionId,
     sessionRoot,
     sessionsRoot,
     stateRoot,
     statusPath: sessionRoot ? path.join(sessionRoot, "status") : "",
-    stepStatesRoot: sessionRoot ? path.join(sessionRoot, "step-state") : "",
-    stepsRoot: sessionRoot ? path.join(sessionRoot, "steps") : "",
     targetRoot
   };
 }
@@ -947,11 +731,8 @@ function metadataFilePath(sessionPaths, name) {
   return path.join(sessionPaths.metadataRoot, assertSafeMetadataName(name));
 }
 
-function sessionNameFromIssueWord(issueWord = "") {
-  return normalizeText(issueWord)
-    .split(/\s+/u)
-    .map((word) => word.replaceAll(/[^A-Za-z0-9_-]/gu, "").slice(0, ISSUE_WORD_MAX_LENGTH))
-    .find(Boolean) || "";
+function normalizeSessionLabel(value = "") {
+  return normalizeText(value).slice(0, SESSION_LABEL_MAX_LENGTH);
 }
 
 function assertSafeArtifactPath(relativePath) {
@@ -978,62 +759,12 @@ function artifactFilePath(sessionPaths, relativePath) {
   return artifactPath;
 }
 
-function actionResultFilePath(sessionPaths, actionId) {
-  return path.join(sessionPaths.actionsRoot, assertSafeActionId(actionId));
-}
-
-function actionAttemptFilePath(sessionPaths, attemptFileName) {
-  const normalizedFileName = normalizeText(attemptFileName);
-  if (!ACTION_ATTEMPT_FILE_PATTERN.test(normalizedFileName)) {
-    throw vibe64Error(`Invalid vibe64 action attempt file: ${normalizedFileName || "(empty)"}`, "vibe64_invalid_action_attempt");
-  }
-  return path.join(sessionPaths.actionAttemptsRoot, normalizedFileName);
-}
-
-function assertSafePrivateInputOwnerId(ownerId) {
-  const normalizedOwnerId = normalizeText(ownerId);
-  if (!ACTION_ID_PATTERN.test(normalizedOwnerId)) {
-    throw vibe64Error(
-      `Invalid vibe64 private input owner: ${normalizedOwnerId || "(empty)"}`,
-      "vibe64_invalid_private_input_owner"
-    );
-  }
-  return normalizedOwnerId;
-}
-
-function privateInputFilePath(sessionPaths, fileName) {
-  const normalizedFileName = normalizeText(fileName);
-  if (!PRIVATE_INPUT_FILE_PATTERN.test(normalizedFileName)) {
-    throw vibe64Error(
-      `Invalid vibe64 private input file: ${normalizedFileName || "(empty)"}`,
-      "vibe64_invalid_private_input_file"
-    );
-  }
-  return path.join(sessionPaths.privateInputsRoot, normalizedFileName);
-}
-
 function agentRunFilePath(sessionPaths, runId) {
   return path.join(sessionPaths.agentRunsRoot, `${assertSafeAgentRunId(runId)}.json`);
 }
 
-function agentTaskFilePath(sessionPaths, taskId) {
-  return path.join(sessionPaths.agentTasksRoot, `${assertSafeAgentTaskId(taskId)}.json`);
-}
-
 function backgroundTaskFilePath(sessionPaths, taskId) {
   return path.join(sessionPaths.backgroundTasksRoot, `${assertSafeBackgroundTaskId(taskId)}.json`);
-}
-
-function commandLifecycleFilePath(sessionPaths, lifecycleId) {
-  return path.join(sessionPaths.commandLifecyclesRoot, `${assertSafeCommandLifecycleId(lifecycleId)}.json`);
-}
-
-function completedStepFilePath(sessionPaths, stepId) {
-  return path.join(sessionPaths.stepsRoot, assertSafeStepId(stepId));
-}
-
-function stepStateFilePath(sessionPaths, stepId) {
-  return path.join(sessionPaths.stepStatesRoot, assertSafeStepId(stepId));
 }
 
 function conversationTurnRoot(sessionPaths, turnId) {
@@ -1250,17 +981,12 @@ function createVibe64SessionStore({
     const manifest = isPlainObject(summary.manifest) ? summary.manifest : {};
     const createdAt = normalizeText(summary.createdAt || manifest.createdAt);
     const updatedAt = normalizeText(summary.updatedAt || manifest.updatedAt || createdAt);
-    const completedStepCount = Number(summary.completedStepCount);
     return {
-      completedStepCount: Number.isSafeInteger(completedStepCount) && completedStepCount >= 0
-        ? completedStepCount
-        : 0,
       createdAt,
-      currentStep: normalizeText(summary.currentStep),
       manifest: {
         createdAt,
         revision: revisionNumber(summary.revision ?? manifest.revision),
-        stepRevision: stepRevisionNumber(summary.stepRevision ?? manifest.stepRevision),
+        runtimeKind: normalizeText(manifest.runtimeKind),
         updatedAt
       },
       metadata: closedArchiveIndexMetadata(summary.metadata),
@@ -1269,7 +995,6 @@ function createVibe64SessionStore({
       sessionName: normalizeText(summary.sessionName),
       sessionRoot: "",
       status: assertVibe64SessionStatus(status || summary.status),
-      stepRevision: stepRevisionNumber(summary.stepRevision ?? manifest.stepRevision),
       targetRoot: normalizeText(summary.targetRoot),
       updatedAt
     };
@@ -1416,16 +1141,6 @@ function createVibe64SessionStore({
     return nextManifest;
   }
 
-  async function bumpSessionStepRevision(sessionPaths) {
-    const manifest = await readManifestFromPaths(sessionPaths);
-    const nextManifest = {
-      ...manifest,
-      stepRevision: stepRevisionNumber(manifest.stepRevision) + 1
-    };
-    await writeJsonFile(sessionPaths.manifestPath, nextManifest);
-    return nextManifest;
-  }
-
   async function mutateSession(sessionId, operation) {
     const requestedPaths = paths(sessionId);
     const key = requestedPaths.sessionRoot;
@@ -1547,57 +1262,22 @@ function createVibe64SessionStore({
     return normalizeText(await readTextIfExists(sessionPaths.statusPath)) || VIBE64_SESSION_STATUS.ACTIVE;
   }
 
-  async function writeCurrentStep(sessionId, currentStep) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const nextStep = normalizeText(currentStep) || VIBE64_INITIAL_STEP;
-      const previousStep = normalizeText(await readTextIfExists(sessionPaths.currentStepPath)) || VIBE64_INITIAL_STEP;
-      await writeTextFile(sessionPaths.currentStepPath, `${nextStep}\n`);
-      if (previousStep !== nextStep) {
-        await bumpSessionStepRevision(sessionPaths);
-      }
-    });
-  }
-
-  async function readCurrentStep(sessionId) {
-    return withReadableSessionPaths(sessionId, readCurrentStepFromPaths);
-  }
-
-  async function readCurrentStepFromPaths(sessionPaths) {
-    return normalizeText(await readTextIfExists(sessionPaths.currentStepPath)) || VIBE64_INITIAL_STEP;
-  }
-
   async function writeMetadataValue(sessionId, name, value) {
     return mutateSession(sessionId, async (sessionPaths) => {
       await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
     });
   }
 
-  async function writeIssueWordMetadata(sessionId, issueWord) {
+  async function writeSessionLabel(sessionId, sessionLabel) {
     return mutateSession(sessionId, async (sessionPaths) => {
-      const sessionName = sessionNameFromIssueWord(issueWord);
+      const sessionName = normalizeSessionLabel(sessionLabel);
       if (!sessionName) {
-        await rm(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), {
+        await rm(metadataFilePath(sessionPaths, SESSION_LABEL_METADATA), {
           force: true
         });
         return "";
       }
-      await writeTextFile(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), `${sessionName}\n`);
-      return sessionName;
-    });
-  }
-
-  async function writeSessionLabel(sessionId, sessionLabel) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const sessionName = sessionNameFromIssueWord(sessionLabel);
-      if (!sessionName) {
-        return "";
-      }
-      await Promise.all([
-        writeTextFile(metadataFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), `${sessionName}\n`),
-        writeTextFile(metadataFilePath(sessionPaths, WORK_WORD_ARTIFACT), `${sessionName}\n`),
-        writeTextFile(artifactFilePath(sessionPaths, ISSUE_WORD_ARTIFACT), `${sessionName}\n`),
-        writeTextFile(artifactFilePath(sessionPaths, WORK_WORD_ARTIFACT), `${sessionName}\n`)
-      ]);
+      await writeTextFile(metadataFilePath(sessionPaths, SESSION_LABEL_METADATA), `${sessionName}\n`);
       return sessionName;
     });
   }
@@ -1658,12 +1338,7 @@ function createVibe64SessionStore({
   }
 
   async function sessionNameForSession(sessionPaths, metadata = {}) {
-    const existingSessionName = sessionNameFromIssueWord(metadata[ISSUE_WORD_ARTIFACT]);
-    if (existingSessionName) {
-      return existingSessionName;
-    }
-
-    return sessionNameFromIssueWord(await readTextIfExists(artifactFilePath(sessionPaths, ISSUE_WORD_ARTIFACT)));
+    return normalizeSessionLabel(metadata[SESSION_LABEL_METADATA]) || sessionPaths.sessionId;
   }
 
   async function writeArtifact(sessionId, relativePath, text) {
@@ -1678,95 +1353,6 @@ function createVibe64SessionStore({
     return withReadableSessionPaths(sessionId, (sessionPaths) => {
       return readTextIfExists(artifactFilePath(sessionPaths, relativePath));
     });
-  }
-
-  async function deleteArtifact(sessionId, relativePath) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      await rm(artifactFilePath(sessionPaths, relativePath), {
-        force: true
-      });
-    });
-  }
-
-  async function deleteArtifacts(sessionId, relativePaths = []) {
-    await Promise.all(relativePaths.map((relativePath) => deleteArtifact(sessionId, relativePath)));
-  }
-
-  async function readArtifactReadiness(sessionId) {
-    return withReadableSessionPaths(sessionId, readArtifactReadinessFromPaths);
-  }
-
-  async function readArtifactReadinessFromPaths(sessionPaths) {
-    const names = await sortedArtifactPaths(sessionPaths.artifactsRoot);
-    const entries = await Promise.all(names.map(async (name) => {
-      const filePath = artifactFilePath(sessionPaths, name);
-      let fileStat;
-      try {
-        fileStat = await stat(filePath);
-      } catch (error) {
-        if (isMissingPathError(error)) {
-          return null;
-        }
-        throw error;
-      }
-      if (!fileStat.isFile()) {
-        return null;
-      }
-      if (fileStat.size > ARTIFACT_READINESS_CONTENT_HASH_BYTES) {
-        return [
-          name,
-          {
-            exists: true,
-            fingerprint: artifactMetadataFingerprint(fileStat),
-            nonEmpty: fileStat.size > 0
-          }
-        ];
-      }
-      const text = await readTextIfExists(filePath);
-      return [
-        name,
-        {
-          exists: true,
-          fingerprint: artifactFingerprint(text),
-          nonEmpty: Boolean(normalizeText(text))
-        }
-      ];
-    }));
-    return Object.fromEntries(entries.filter(Boolean));
-  }
-
-  async function artifactExists(sessionId, relativePath) {
-    return withReadableSessionPaths(sessionId, (sessionPaths) => {
-      return pathExists(artifactFilePath(sessionPaths, relativePath));
-    });
-  }
-
-  async function appendCommandLogEntry(sessionId, entry = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const payload = {
-        ...entry,
-        at: normalizeText(entry.at) || now().toISOString()
-      };
-      await mkdir(path.dirname(sessionPaths.commandLogPath), {
-        recursive: true
-      });
-      await writeFile(sessionPaths.commandLogPath, `${JSON.stringify(payload)}\n`, {
-        encoding: "utf8",
-        flag: "a"
-      });
-    });
-  }
-
-  async function readCommandLog(sessionId) {
-    return withReadableSessionPaths(sessionId, readCommandLogFromPaths);
-  }
-
-  async function readCommandLogFromPaths(sessionPaths) {
-    return (await readTextIfExists(sessionPaths.commandLogPath))
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
   }
 
   async function readAgentRunFromPath(sessionPaths, runId) {
@@ -1860,92 +1446,6 @@ function createVibe64SessionStore({
       await writeJsonFile(agentRunFilePath(sessionPaths, normalizedRunId), record);
       return record;
     });
-  }
-
-  async function readAgentTaskFromPath(sessionPaths, taskId) {
-    const normalizedTaskId = assertSafeAgentTaskId(taskId);
-    const taskText = await readTextIfExists(agentTaskFilePath(sessionPaths, normalizedTaskId));
-    if (!taskText) {
-      return null;
-    }
-    try {
-      return normalizedAgentTaskRecord(JSON.parse(taskText), normalizedTaskId);
-    } catch {
-      throw vibe64Error(
-        `Invalid vibe64 agent task: ${normalizedTaskId}`,
-        "vibe64_invalid_agent_task"
-      );
-    }
-  }
-
-  async function readAgentTask(sessionId, taskId) {
-    return withReadableSessionPaths(sessionId, (sessionPaths) => (
-      readAgentTaskFromPath(sessionPaths, taskId)
-    ));
-  }
-
-  async function readAgentTasksFromPaths(sessionPaths) {
-    const taskNames = sortedFileNames(
-      await readDirectoryEntries(sessionPaths.agentTasksRoot),
-      (name) => name.endsWith(".json") && isSafeAgentTaskId(name.slice(0, -".json".length))
-    );
-    const tasks = await Promise.all(taskNames.map((fileName) => (
-      readAgentTaskFromPath(sessionPaths, fileName.slice(0, -".json".length))
-    )));
-    return tasks
-      .filter(Boolean)
-      .sort((left, right) => (
-        normalizeText(left.createdAt).localeCompare(normalizeText(right.createdAt)) ||
-        left.id.localeCompare(right.id)
-      ));
-  }
-
-  async function readAgentTasks(sessionId) {
-    return withReadableSessionPaths(sessionId, readAgentTasksFromPaths);
-  }
-
-  async function readCurrentAgentTaskFromPaths(sessionPaths) {
-    const taskId = normalizeText(await readTextIfExists(sessionPaths.agentTasksCurrentPath));
-    return taskId ? readAgentTaskFromPath(sessionPaths, taskId) : null;
-  }
-
-  async function readCurrentAgentTask(sessionId) {
-    return withReadableSessionPaths(sessionId, readCurrentAgentTaskFromPaths);
-  }
-
-  function normalizedAgentTaskRecord(task = {}, taskId = task?.id) {
-    const normalizedTaskId = assertSafeAgentTaskId(taskId);
-    const state = normalizeText(task?.state);
-    if (!isPlainObject(task) || !Object.values(VIBE64_AGENT_TASK_STATES).includes(state)) {
-      throw vibe64Error("Invalid vibe64 agent task record.", "vibe64_invalid_agent_task");
-    }
-    return {
-      ...task,
-      id: normalizedTaskId,
-      state,
-      turns: Array.isArray(task.turns) ? task.turns.filter(isPlainObject) : []
-    };
-  }
-
-  async function writeAgentTaskRecord(sessionPaths, task = {}, {
-    current = false
-  } = {}) {
-    const record = normalizedAgentTaskRecord(task);
-    await writeJsonFile(agentTaskFilePath(sessionPaths, record.id), record);
-    if (current) {
-      await writeTextFile(sessionPaths.agentTasksCurrentPath, `${record.id}\n`);
-    }
-    return record;
-  }
-
-  async function writeAgentTask(sessionId, task = {}) {
-    return mutateSession(sessionId, (sessionPaths) => writeAgentTaskRecord(sessionPaths, task));
-  }
-
-  async function writeCurrentAgentTask(sessionId, task = {}) {
-    return mutateSession(sessionId, (sessionPaths) => writeAgentTaskRecord(sessionPaths, task, {
-      current: true
-    }));
   }
 
   async function readBackgroundTaskFromPath(sessionPaths, taskId) {
@@ -2046,102 +1546,6 @@ function createVibe64SessionStore({
         record.error = "";
       }
       await writeJsonFile(backgroundTaskFilePath(sessionPaths, normalizedTaskId), record);
-      return record;
-    });
-  }
-
-  async function readCommandLifecycleFromPath(sessionPaths, lifecycleId) {
-    const normalizedLifecycleId = assertSafeCommandLifecycleId(lifecycleId);
-    const lifecycleText = await readTextIfExists(commandLifecycleFilePath(sessionPaths, normalizedLifecycleId));
-    if (!lifecycleText) {
-      return null;
-    }
-    try {
-      const record = JSON.parse(lifecycleText);
-      return isPlainObject(record)
-        ? {
-            ...record,
-            events: Array.isArray(record.events) ? record.events.filter(isPlainObject) : [],
-            id: normalizedLifecycleId,
-            phase: normalizeCommandLifecyclePhase(record.phase || record.status),
-            status: normalizeCommandLifecyclePhase(record.phase || record.status)
-          }
-        : null;
-    } catch {
-      throw vibe64Error(
-        `Invalid vibe64 command lifecycle: ${normalizedLifecycleId}`,
-        "vibe64_invalid_command_lifecycle"
-      );
-    }
-  }
-
-  async function readCommandLifecycle(sessionId, lifecycleId) {
-    return withReadableSessionPaths(sessionId, (sessionPaths) => readCommandLifecycleFromPath(sessionPaths, lifecycleId));
-  }
-
-  async function readCommandLifecycles(sessionId) {
-    return withReadableSessionPaths(sessionId, readCommandLifecyclesFromPaths);
-  }
-
-  async function readCommandLifecyclesFromPaths(sessionPaths) {
-    const lifecycleNames = sortedFileNames(
-      await readDirectoryEntries(sessionPaths.commandLifecyclesRoot),
-      (name) => name.endsWith(".json") && isSafeCommandLifecycleId(name.slice(0, -".json".length))
-    );
-    const lifecycles = await Promise.all(lifecycleNames.map((fileName) => {
-      return readCommandLifecycleFromPath(sessionPaths, fileName.slice(0, -".json".length));
-    }));
-    return lifecycles
-      .filter(Boolean)
-      .sort((left, right) => {
-        const timeComparison = normalizeText(left.updatedAt).localeCompare(normalizeText(right.updatedAt));
-        return timeComparison || normalizeText(left.id).localeCompare(normalizeText(right.id));
-      });
-  }
-
-  async function writeCommandLifecycleEvent(sessionId, lifecycleId, {
-    event = {},
-    patch = {}
-  } = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const normalizedLifecycleId = assertSafeCommandLifecycleId(lifecycleId);
-      const previous = await readCommandLifecycleFromPath(sessionPaths, normalizedLifecycleId) || {
-        events: [],
-        id: normalizedLifecycleId
-      };
-      const eventAt = normalizeText(event.at || patch.updatedAt) || now().toISOString();
-      const requestedPhase = normalizeCommandLifecyclePhase(
-        patch.phase || patch.status || event.phase || event.status
-      );
-      const phase = latestCommandLifecyclePhase(previous.phase || previous.status, requestedPhase);
-      const outcome = normalizeText(patch.outcome || event.outcome || previous.outcome);
-      const eventRecord = {
-        ...event,
-        at: eventAt,
-        kind: normalizeText(event.kind || requestedPhase || "updated"),
-        outcome,
-        phase: requestedPhase || phase,
-        status: requestedPhase || phase
-      };
-      const record = {
-        ...previous,
-        ...patch,
-        events: [
-          ...(Array.isArray(previous.events) ? previous.events : []),
-          eventRecord
-        ],
-        finishedAt: normalizeText(patch.finishedAt || previous.finishedAt),
-        id: normalizedLifecycleId,
-        outcome,
-        phase,
-        startedAt: normalizeText(previous.startedAt || patch.startedAt) || eventAt,
-        status: phase,
-        updatedAt: eventAt
-      };
-      if (phase === "done" || phase === "failed") {
-        record.finishedAt = record.finishedAt || eventAt;
-      }
-      await writeJsonFile(commandLifecycleFilePath(sessionPaths, normalizedLifecycleId), record);
       return record;
     });
   }
@@ -2460,290 +1864,6 @@ function createVibe64SessionStore({
     });
   }
 
-  async function actionAttemptFileNames(sessionPaths) {
-    return sortedFileNames(
-      await readDirectoryEntries(sessionPaths.actionAttemptsRoot),
-      (name) => ACTION_ATTEMPT_FILE_PATTERN.test(name)
-    );
-  }
-
-  async function privateInputFileNames(sessionPaths) {
-    return sortedFileNames(
-      await readDirectoryEntries(sessionPaths.privateInputsRoot),
-      (name) => PRIVATE_INPUT_FILE_PATTERN.test(name)
-    );
-  }
-
-  function nextActionAttemptFileName(existingFileNames = [], actionId = "") {
-    const nextNumber = existingFileNames
-      .map((fileName) => ACTION_ATTEMPT_FILE_PATTERN.exec(fileName))
-      .filter(Boolean)
-      .map((match) => Number.parseInt(match[1], 10))
-      .filter((number) => Number.isSafeInteger(number) && number > 0)
-      .sort((left, right) => left - right)
-      .at(-1) || 0;
-    return `${String(nextNumber + 1).padStart(6, "0")}-${assertSafeActionId(actionId)}.json`;
-  }
-
-  function nextPrivateInputFileName(existingFileNames = [], ownerId = "") {
-    const nextNumber = existingFileNames
-      .map((fileName) => PRIVATE_INPUT_FILE_PATTERN.exec(fileName))
-      .filter(Boolean)
-      .map((match) => Number.parseInt(match[1], 10))
-      .filter((number) => Number.isSafeInteger(number) && number > 0)
-      .sort((left, right) => left - right)
-      .at(-1) || 0;
-    return `${String(nextNumber + 1).padStart(6, "0")}-${assertSafePrivateInputOwnerId(ownerId)}.json`;
-  }
-
-  async function writePrivateInput(sessionId, ownerId, input = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const normalizedOwnerId = assertSafePrivateInputOwnerId(ownerId);
-      const fileName = nextPrivateInputFileName(
-        await privateInputFileNames(sessionPaths),
-        normalizedOwnerId
-      );
-      const record = {
-        fields: Array.isArray(input.fields) ? input.fields : [],
-        owner: isPlainObject(input.owner) ? input.owner : {
-          id: normalizedOwnerId
-        },
-        schemaVersion: PRIVATE_INPUT_SCHEMA_VERSION,
-        sessionId: sessionPaths.sessionId,
-        stepId: normalizeText(input.stepId),
-        stepStatus: normalizeText(input.stepStatus),
-        values: isPlainObject(input.values) ? input.values : {},
-        writtenAt: now().toISOString()
-      };
-      const filePath = privateInputFilePath(sessionPaths, fileName);
-      await writePrivateJsonFile(filePath, record);
-      return {
-        fields: record.fields,
-        fileName,
-        path: filePath,
-        relativePath: `private-inputs/${fileName}`,
-        schemaVersion: PRIVATE_INPUT_SCHEMA_VERSION,
-        writtenAt: record.writtenAt
-      };
-    });
-  }
-
-  async function writeActionResult(sessionId, actionId, result = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const normalizedActionId = assertSafeActionId(actionId);
-      const attemptFileName = nextActionAttemptFileName(
-        await actionAttemptFileNames(sessionPaths),
-        normalizedActionId
-      );
-      const attemptNumber = Number.parseInt(attemptFileName.slice(0, 6), 10);
-      const agentPromptHandoff = result.agentPromptHandoff &&
-        typeof result.agentPromptHandoff === "object" &&
-        !Array.isArray(result.agentPromptHandoff)
-        ? {
-            ...result.agentPromptHandoff,
-            actionId: normalizedActionId,
-            attemptFile: attemptFileName,
-            attemptNumber,
-            handoffId: `${attemptFileName}:${normalizeText(result.agentPromptHandoff.promptId) || normalizedActionId}`
-          }
-        : result.agentPromptHandoff;
-      const record = {
-        ...result,
-        ...(agentPromptHandoff ? { agentPromptHandoff } : {}),
-        actionId: normalizedActionId,
-        attemptFile: attemptFileName,
-        attemptNumber,
-        at: normalizeText(result.at) || now().toISOString()
-      };
-      await writeJsonFile(actionAttemptFilePath(sessionPaths, attemptFileName), record);
-      await writeJsonFile(actionResultFilePath(sessionPaths, normalizedActionId), record);
-      return record;
-    });
-  }
-
-  async function readActionResult(sessionId, actionId) {
-    return withReadableSessionPaths(sessionId, (sessionPaths) => readActionResultFromPaths(sessionPaths, actionId));
-  }
-
-  async function readActionResultFromPaths(sessionPaths, actionId) {
-    const normalizedActionId = assertSafeActionId(actionId);
-    const actionText = await readTextIfExists(actionResultFilePath(sessionPaths, normalizedActionId));
-    if (!actionText) {
-      return null;
-    }
-    try {
-      return JSON.parse(actionText);
-    } catch {
-      throw vibe64Error(`Invalid vibe64 action result: ${normalizedActionId}`, "vibe64_invalid_action_result");
-    }
-  }
-
-  async function deleteActionResult(sessionId, actionId) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      await rm(actionResultFilePath(sessionPaths, actionId), {
-        force: true
-      });
-    });
-  }
-
-  async function deleteActionResults(sessionId, actionIds = []) {
-    await Promise.all(actionIds.map((actionId) => deleteActionResult(sessionId, actionId)));
-  }
-
-  async function readActionResults(sessionId) {
-    return withReadableSessionPaths(sessionId, readActionResultsFromPaths);
-  }
-
-  async function readActionResultsFromPaths(sessionPaths) {
-    const actionNames = sortedFileNames(await readDirectoryEntries(sessionPaths.actionsRoot), isSafeActionId);
-    const actionResults = await Promise.all(actionNames.map((actionName) => readActionResultFromPaths(sessionPaths, actionName)));
-    return actionResults.filter(Boolean);
-  }
-
-  async function readActionAttempt(sessionPaths, fileName) {
-    const attemptText = await readTextIfExists(actionAttemptFilePath(sessionPaths, fileName));
-    if (!attemptText) {
-      return null;
-    }
-    try {
-      return JSON.parse(attemptText);
-    } catch {
-      throw vibe64Error(`Invalid vibe64 action attempt: ${fileName}`, "vibe64_invalid_action_attempt");
-    }
-  }
-
-  async function readActionAttempts(sessionId) {
-    return withReadableSessionPaths(sessionId, readActionAttemptsFromPaths);
-  }
-
-  async function readActionAttemptsFromPaths(sessionPaths) {
-    const fileNames = await actionAttemptFileNames(sessionPaths);
-    const attempts = await Promise.all(fileNames.map((fileName) => readActionAttempt(sessionPaths, fileName)));
-    return attempts.filter(Boolean);
-  }
-
-  async function writePromptContextSnapshot(sessionId, snapshot = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const record = normalizePromptContextSnapshot(snapshot);
-      if (!record) {
-        throw vibe64Error(
-          "Invalid vibe64 prompt context snapshot.",
-          "vibe64_invalid_prompt_context_snapshot"
-        );
-      }
-      await writeJsonFile(sessionPaths.promptContextSnapshotPath, record);
-      return record;
-    });
-  }
-
-  async function readPromptContextSnapshot(sessionId) {
-    return withReadableSessionPaths(sessionId, readPromptContextSnapshotFromPaths);
-  }
-
-  async function readPromptContextSnapshotFromPaths(sessionPaths) {
-    const snapshotText = await readTextIfExists(sessionPaths.promptContextSnapshotPath);
-    if (!snapshotText) {
-      return null;
-    }
-    try {
-      const snapshot = normalizePromptContextSnapshot(JSON.parse(snapshotText));
-      if (!snapshot) {
-        throw new Error("Invalid prompt context snapshot.");
-      }
-      return snapshot;
-    } catch {
-      throw vibe64Error(
-        `Invalid vibe64 prompt context snapshot: ${sessionPaths.sessionId}`,
-        "vibe64_invalid_prompt_context_snapshot"
-      );
-    }
-  }
-
-  async function deletePromptContextSnapshot(sessionId) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      await rm(sessionPaths.promptContextSnapshotPath, {
-        force: true
-      });
-    });
-  }
-
-  async function writeCompletedStep(sessionId, stepId, {
-    message = ""
-  } = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const normalizedStepId = assertSafeStepId(stepId);
-      const record = {
-        at: now().toISOString(),
-        message: normalizeText(message),
-        stepId: normalizedStepId
-      };
-      await writeJsonFile(completedStepFilePath(sessionPaths, normalizedStepId), record);
-      return record;
-    });
-  }
-
-  async function readCompletedSteps(sessionId) {
-    return withReadableSessionPaths(sessionId, readCompletedStepsFromPaths);
-  }
-
-  async function readCompletedStepsFromPaths(sessionPaths) {
-    return sortedFileNames(await readDirectoryEntries(sessionPaths.stepsRoot), isSafeStepId);
-  }
-
-  async function deleteCompletedStep(sessionId, stepId) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      await rm(completedStepFilePath(sessionPaths, stepId), {
-        force: true
-      });
-    });
-  }
-
-  async function deleteCompletedSteps(sessionId, stepIds = []) {
-    await Promise.all(stepIds.map((stepId) => deleteCompletedStep(sessionId, stepId)));
-  }
-
-  async function readStepState(sessionId, stepId) {
-    return withReadableSessionPaths(sessionId, (sessionPaths) => readStepStateFromPaths(sessionPaths, stepId));
-  }
-
-  async function readStepStateFromPaths(sessionPaths, stepId) {
-    const stateText = await readTextIfExists(stepStateFilePath(sessionPaths, stepId));
-    if (!stateText) {
-      return null;
-    }
-    try {
-      const state = JSON.parse(stateText);
-      return isPlainObject(state) ? state : null;
-    } catch {
-      throw vibe64Error(`Invalid vibe64 step state: ${assertSafeStepId(stepId)}`, "vibe64_invalid_step_state");
-    }
-  }
-
-  async function writeStepState(sessionId, stepId, state = {}) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      const normalizedStepId = assertSafeStepId(stepId);
-      const record = {
-        ...state,
-        at: normalizeText(state.at) || now().toISOString(),
-        stepId: normalizedStepId
-      };
-      await writeJsonFile(stepStateFilePath(sessionPaths, normalizedStepId), record);
-      return record;
-    });
-  }
-
-  async function deleteStepState(sessionId, stepId) {
-    return mutateSession(sessionId, async (sessionPaths) => {
-      await rm(stepStateFilePath(sessionPaths, stepId), {
-        force: true
-      });
-    });
-  }
-
-  async function deleteStepStates(sessionId, stepIds = []) {
-    await Promise.all(stepIds.map((stepId) => deleteStepState(sessionId, stepId)));
-  }
-
   async function readManifest(sessionId) {
     return withReadableSessionPaths(sessionId, readManifestFromPaths);
   }
@@ -2765,77 +1885,34 @@ function createVibe64SessionStore({
     const [
       manifest,
       status,
-      currentStep,
       metadata,
-      completedSteps,
-      artifactReadiness,
-      actionResults,
-      actionAttempts,
       agentRuns,
-      agentTask,
-      backgroundTasks,
-      commandLifecycles,
-      promptContextSnapshot
+      backgroundTasks
     ] = await Promise.all([
       readManifestFromPaths(sessionPaths),
       readStatusFromPaths(sessionPaths),
-      readCurrentStepFromPaths(sessionPaths),
       readMetadataFromPaths(sessionPaths),
-      readCompletedStepsFromPaths(sessionPaths),
-      readArtifactReadinessFromPaths(sessionPaths),
-      readActionResultsFromPaths(sessionPaths),
-      readActionAttemptsFromPaths(sessionPaths),
       readAgentRunsFromPaths(sessionPaths),
-      readCurrentAgentTaskFromPaths(sessionPaths),
-      readBackgroundTasksFromPaths(sessionPaths),
-      readCommandLifecyclesFromPaths(sessionPaths),
-      readPromptContextSnapshotFromPaths(sessionPaths)
+      readBackgroundTasksFromPaths(sessionPaths)
     ]);
     const archived = Boolean(archiveRecord);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
-    const reportReady = artifactReadiness[REPORT_ARTIFACT]?.nonEmpty === true;
-    const currentCommandLifecycle = commandLifecycles
-      .filter((lifecycle) => {
-        return normalizeText(lifecycle.stepId) === currentStep &&
-          stepRevisionNumber(lifecycle.stepRevision) === stepRevisionNumber(manifest.stepRevision);
-      })
-      .at(-1) || null;
     return {
-      actionResults,
-      actionAttempts,
-      actionAttemptsRoot: archived ? "" : sessionPaths.actionAttemptsRoot,
-      actionsRoot: archived ? "" : sessionPaths.actionsRoot,
       agentRuns,
       agentRunsRoot: archived ? "" : sessionPaths.agentRunsRoot,
-      agentTask,
-      agentTasksRoot: archived ? "" : sessionPaths.agentTasksRoot,
-      artifactReadiness,
       artifactsRoot: archived ? "" : sessionPaths.artifactsRoot,
       backgroundTasks,
       backgroundTasksRoot: archived ? "" : sessionPaths.backgroundTasksRoot,
-      commandLifecycles,
-      commandLifecyclesRoot: archived ? "" : sessionPaths.commandLifecyclesRoot,
-      currentCommandLifecycle,
-      commandLogPath: archived ? "" : sessionPaths.commandLogPath,
-      completedSteps,
       conversationLogRoot: archived ? "" : sessionPaths.conversationLogRoot,
-      currentStep,
       manifest,
       metadata,
       metadataRoot: archived ? "" : sessionPaths.metadataRoot,
-      privateInputsRoot: archived ? "" : sessionPaths.privateInputsRoot,
-      promptContextSnapshot,
-      promptContextSnapshotPath: archived ? "" : sessionPaths.promptContextSnapshotPath,
-      reportPath: !archived && reportReady ? artifactFilePath(sessionPaths, REPORT_ARTIFACT) : "",
       revision: revisionNumber(manifest.revision),
       sessionId: sessionPaths.sessionId,
       sessionName,
       sessionRoot: archived ? "" : sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
       status,
-      stepRevision: stepRevisionNumber(manifest.stepRevision),
-      stepStatesRoot: archived ? "" : sessionPaths.stepStatesRoot,
-      stepsRoot: archived ? "" : sessionPaths.stepsRoot,
       targetRoot: sessionPaths.targetRoot,
       updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt),
       ...(archived
@@ -2870,29 +1947,19 @@ function createVibe64SessionStore({
     const [
       manifest,
       status,
-      currentStep,
-      metadata,
-      completedSteps
+      metadata
     ] = await Promise.all([
       readManifestFromPaths(sessionPaths),
       readStatusFromPaths(sessionPaths),
-      readCurrentStepFromPaths(sessionPaths),
-      readMetadataFromPaths(sessionPaths),
-      readCompletedStepsFromPaths(sessionPaths)
+      readMetadataFromPaths(sessionPaths)
     ]);
-    const stepMachine = currentStep
-      ? await readStepStateFromPaths(sessionPaths, currentStep)
-      : null;
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
     return {
-      completedStepCount: completedSteps.length,
-      completedSteps,
       createdAt: normalizeText(manifest.createdAt),
-      currentStep,
       manifest: {
         createdAt: normalizeText(manifest.createdAt),
         revision: revisionNumber(manifest.revision),
-        stepRevision: stepRevisionNumber(manifest.stepRevision),
+        runtimeKind: normalizeText(manifest.runtimeKind),
         updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
       },
       metadata,
@@ -2902,8 +1969,6 @@ function createVibe64SessionStore({
       sessionRoot: sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
       status,
-      stepMachine,
-      stepRevision: stepRevisionNumber(manifest.stepRevision),
       targetRoot: sessionPaths.targetRoot,
       updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
     };
@@ -3222,9 +2287,8 @@ function createVibe64SessionStore({
   }
 
   async function createSession({
-    adapterId = "",
-    initialStep = VIBE64_INITIAL_STEP,
     metadata = {},
+    runtimeKind = "",
     sessionId = "",
     status = VIBE64_SESSION_STATUS.ACTIVE
   } = {}) {
@@ -3253,16 +2317,7 @@ function createVibe64SessionStore({
       throw error;
     }
     await Promise.all([
-      mkdir(sessionPaths.actionsRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.actionAttemptsRoot, {
-        recursive: true
-      }),
       mkdir(sessionPaths.agentRunsRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.agentTasksRoot, {
         recursive: true
       }),
       mkdir(sessionPaths.artifactsRoot, {
@@ -3271,38 +2326,23 @@ function createVibe64SessionStore({
       mkdir(sessionPaths.backgroundTasksRoot, {
         recursive: true
       }),
-      mkdir(sessionPaths.commandLifecyclesRoot, {
-        recursive: true
-      }),
       mkdir(sessionPaths.metadataRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.privateInputsRoot, {
-        mode: 0o700,
-        recursive: true
-      }),
-      mkdir(sessionPaths.stepStatesRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.stepsRoot, {
         recursive: true
       })
     ]);
-    const normalizedAdapterId = normalizeText(adapterId);
+    const normalizedRuntimeKind = normalizeText(runtimeKind);
     const manifest = {
-      ...(normalizedAdapterId ? { adapterId: normalizedAdapterId } : {}),
+      ...(normalizedRuntimeKind ? { runtimeKind: normalizedRuntimeKind } : {}),
       createdAt,
       product: "vibe64",
       revision: 1,
       schemaVersion: VIBE64_SESSION_SCHEMA_VERSION,
       sessionId: resolvedSessionId,
-      stepRevision: 1,
       targetRoot: sessionPaths.targetRoot,
       updatedAt: createdAt
     };
     await Promise.all([
       writeJsonFile(sessionPaths.manifestPath, manifest),
-      writeTextFile(sessionPaths.currentStepPath, `${normalizeText(initialStep) || VIBE64_INITIAL_STEP}\n`),
       writeTextFile(sessionPaths.statusPath, `${normalizedStatus}\n`),
       ...Object.entries(normalizedMetadata).map(([name, value]) => {
         return writeTextFile(metadataFilePath(sessionPaths, name), `${value}\n`);
@@ -3384,95 +2424,52 @@ function createVibe64SessionStore({
   }
 
   return {
-    appendCommandLogEntry,
-    artifactExists,
     createSession,
     compactClosedSession,
-    deleteActionResult,
-    deleteActionResults,
-    deleteArtifact,
-    deleteArtifacts,
-    deleteCompletedStep,
-    deleteCompletedSteps,
     deleteMetadataValue,
     deleteMetadataValues,
-    deletePromptContextSnapshot,
-    deleteStepState,
-    deleteStepStates,
     listSessions,
     listSessionSummaries,
     mutateSession,
     paths,
     readArtifact,
-    readArtifactReadiness,
-    readActionAttempts,
-    readActionResult,
-    readActionResults,
     readAgentRun,
     readAgentRuns,
-    readAgentTask,
-    readAgentTasks,
-    readCurrentAgentTask,
     readBackgroundTask,
     readBackgroundTasks,
-    readCommandLifecycle,
-    readCommandLifecycles,
-    readCommandLog,
-    readCompletedSteps,
     readConversationLog,
     readConversationLogPage,
-    readCurrentStep,
     readManifest,
     readMetadata,
     readMetadataValue,
-    readPromptContextSnapshot,
     readSession,
     readSessionSourceDescriptor,
     readSessionSummary,
     readStatus,
-    readStepState,
     runSessionExclusive,
     updateCurrentSession,
     writeArtifact,
     writeAgentRunEvent,
-    writeAgentTask,
-    writeCurrentAgentTask,
     writeBackgroundTaskEvent,
-    writeCommandLifecycleEvent,
-    writeActionResult,
-    writeCompletedStep,
     upsertConversationAssistantMessage,
     writeConversationAssistantMessage,
     writeConversationCommentaryMessage,
     writeConversationSystemMessage,
     writeConversationThinkingMessage,
     writeConversationUserMessage,
-    writeCurrentStep,
-    writeIssueWordMetadata,
     writeMetadataValue,
-    writePrivateInput,
-    writePromptContextSnapshot,
     writeSessionLabel,
-    writeStepState,
     writeStatus
   };
 }
 
 export {
-  VIBE64_INITIAL_STEP,
-  PRIVATE_INPUT_SCHEMA_VERSION,
-  VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION,
   VIBE64_AGENT_RUN_STATE,
   VIBE64_SESSION_SCHEMA_VERSION,
   VIBE64_SESSION_STATUS,
-  VIBE64_STATE_DIR,
   assertVibe64SessionStatus,
-  assertSafeActionId,
-  assertSafeStepId,
   assertValidVibe64SessionId,
   createVibe64SessionStore,
-  isSafeActionId,
-  isSafeStepId,
   isValidVibe64SessionId,
   normalizeVibe64AgentRunState,
   resolveVibe64SessionPaths,

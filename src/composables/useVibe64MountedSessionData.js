@@ -4,8 +4,8 @@ import {
   useRealtimeEvent,
   useRealtimeSocket
 } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { getUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
@@ -14,12 +14,6 @@ import {
   latestAgentTurnRealtimeOverlay,
   sessionWithAgentTurnRealtimeOverlay
 } from "@/lib/vibe64AgentTurnRealtimeOverlay.js";
-import {
-  composerMenuProjectionFromRealtimePayload,
-  sessionComposerMenuNeedsRefresh,
-  sessionComposerMenuProjection,
-  sessionWithCachedComposerMenu
-} from "@/lib/vibe64SessionComposerMenuProjection.js";
 import {
   latestSessionDetailRecord,
   mountedSessionDetailLoadState,
@@ -66,7 +60,6 @@ function useVibe64MountedSessionData({
 } = {}) {
   const projectSlug = useVibe64ProjectSlug();
   const detailRecord = ref(null);
-  const composerMenu = ref(null);
   const agentTurnOverlay = ref(null);
   const agentConnectionStatus = ref("disconnected");
   const activeSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
@@ -88,10 +81,9 @@ function useVibe64MountedSessionData({
     ),
     activeSessionId.value
   ]);
-  const detailReadQuery = computed(() => ({
-    includeComposerMenu: "1",
-    ...(projectSlug.value ? { projectSlug: projectSlug.value } : {})
-  }));
+  const detailReadQuery = computed(() => (
+    projectSlug.value ? { projectSlug: projectSlug.value } : {}
+  ));
   const detailResource = useEndpointResource({
     enabled: computed(() => Boolean(activeSessionId.value && activeSessionsApiPath.value)),
     fallbackLoadError: "Vibe64 session could not be loaded.",
@@ -128,29 +120,12 @@ function useVibe64MountedSessionData({
   ));
   const session = computed(() => enrichVibe64SessionForDisplay(
     sessionWithAgentTurnRealtimeOverlay(
-      sessionWithCachedComposerMenu(baseSession.value, composerMenu.value),
+      baseSession.value,
       agentTurnOverlay.value
     )
   ));
 
   let refreshInFlight = null;
-  let requestedComposerMenuSignature = "";
-
-  function rememberComposerMenu(candidate = null) {
-    const projection = sessionComposerMenuProjection(candidate);
-    if (!projection.signature || !Array.isArray(projection.items)) {
-      return false;
-    }
-    composerMenu.value = {
-      itemCount: projection.itemCount ?? projection.items.length,
-      items: projection.items,
-      signature: projection.signature
-    };
-    if (requestedComposerMenuSignature === projection.signature) {
-      requestedComposerMenuSignature = "";
-    }
-    return true;
-  }
 
   function acceptSessionResponse(candidate = null) {
     const nextRecord = latestSessionDetailRecord(
@@ -158,7 +133,6 @@ function useVibe64MountedSessionData({
       candidate,
       activeSessionId.value
     );
-    rememberComposerMenu(candidate);
     if (!nextRecord || nextRecord === detailRecord.value) {
       return false;
     }
@@ -215,20 +189,6 @@ function useVibe64MountedSessionData({
     });
   }
 
-  function refreshComposerMenuInBackground(signature = "", reason = "") {
-    requestedComposerMenuSignature = signature;
-    void refresh({ reason }).catch(() => {
-      // A later event, selection, or reconnect can retry the fixed-session refresh.
-    }).finally(() => {
-      if (
-        requestedComposerMenuSignature === signature &&
-        composerMenu.value?.signature !== signature
-      ) {
-        requestedComposerMenuSignature = "";
-      }
-    });
-  }
-
   useRealtimeEvent({
     enabled: computed(() => Boolean(activeSessionId.value)),
     event: VIBE64_SESSION_CHANGED_EVENT,
@@ -251,28 +211,6 @@ function useVibe64MountedSessionData({
         threadId: String(overlay.agentSession?.thread?.id || ""),
         turnId: String(overlay.agentSession?.turn?.id || "")
       });
-    }
-  });
-
-  useRealtimeEvent({
-    enabled: computed(() => Boolean(activeSessionId.value)),
-    event: VIBE64_SESSION_CHANGED_EVENT,
-    matches: ({ payload = {} } = {}) => Boolean(
-      composerMenuProjectionFromRealtimePayload(payload, activeSessionId.value)
-    ),
-    onEvent: ({ payload = {} } = {}) => {
-      const projection = composerMenuProjectionFromRealtimePayload(payload, activeSessionId.value);
-      if (
-        !projection ||
-        projection.signature === composerMenu.value?.signature ||
-        projection.signature === requestedComposerMenuSignature
-      ) {
-        return;
-      }
-      refreshComposerMenuInBackground(
-        projection.signature,
-        "composer-menu-signature"
-      );
     }
   });
 
@@ -300,7 +238,7 @@ function useVibe64MountedSessionData({
         return null;
       }
       if (sessionRecordHasActiveAgentWork(session.value)) {
-        const result = await getUsersWebHttpClient().request(
+        const result = await getHttpWebClient().request(
           vibe64SessionPath(
             activeSessionsApiPath.value,
             activeSessionId.value,
@@ -406,27 +344,12 @@ function useVibe64MountedSessionData({
     immediate: true
   });
 
-  watch(() => sessionComposerMenuNeedsRefresh(session.value, composerMenu.value), (needsRefresh) => {
-    if (!needsRefresh || detailResource.isFetching?.value) {
-      return;
-    }
-    const signature = sessionComposerMenuProjection(session.value).signature;
-    if (!signature || signature === requestedComposerMenuSignature) {
-      return;
-    }
-    refreshComposerMenuInBackground(signature, "composer-menu-cache-miss");
-  }, {
-    flush: "post",
-    immediate: true
-  });
-
   watch(detailState, (state) => {
     vibe64SessionDebugLog("client.mountedSession.detailState", {
       loading: state.loading === true,
       ready: state.ready === true,
       sessionId: state.sessionId,
-      state: state.state,
-      suppressPassiveComposer: state.suppressPassiveComposer === true
+      state: state.state
     });
   }, {
     immediate: true

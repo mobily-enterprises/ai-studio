@@ -1,43 +1,9 @@
 import {
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  writeFile
-} from "node:fs/promises";
-import path from "node:path";
-
-import {
-  closeTerminalSession,
-  closeTerminalSessionsForNamespace,
-  resizeTerminalSession,
-  subscribeTerminalSession,
-  writeTerminalSession
-} from "@local/vibe64-execution/server/terminalSessions";
-import {
-  runVibe64Command
-} from "@local/vibe64-execution/server";
-import {
   vibe64Result
 } from "@local/vibe64-core/server/serverResponses";
 import {
-  currentProjectScopeKey
-} from "@local/vibe64-core/server/projectRequestContext";
-import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
-import {
-  projectRequiresGithubConnection
-} from "@local/vibe64-core/server/projectRepository";
-import {
-  normalizeSetupOptions,
-  readVibe64CapabilitySetupReadiness,
-  readVibe64StudioReadiness,
-  readVibe64SetupReadiness
-} from "@local/vibe64-runtime/server/setupReadiness";
-import {
-  vibe64SessionDebugLog
-} from "@local/vibe64-runtime/server/sessionDebugLog";
 import {
   resolveStudioTargetRoot
 } from "@local/vibe64-core/server/studioRoots";
@@ -45,20 +11,13 @@ import {
   projectServiceTargetRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
-  shellQuote
-} from "@local/vibe64-execution/server";
-import {
-  loadProjectExecutionEnvRecords
-} from "@local/vibe64-terminals/server/projectExecutionEnv";
+  inspectGenesisLaunch
+} from "@local/vibe64-genesis/server";
 
-const PROJECT_SCRIPT_SOURCE = "project";
-const ADAPTER_SCRIPT_SOURCE = "adapter";
-const PROJECT_SCRIPTS_DIR = ".vibe64/scripts";
-const STARRED_TARGET_SCRIPTS_CONFIG = "runtime-config/current-app/starred_scripts";
-const TARGET_SCRIPT_TERMINAL_NAMESPACE = "current-app-target-script";
-const PROJECT_SCRIPT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
-const CONNECTIONS_DASHBOARD_ROUTE = "?tab=studio-setup";
-const SETUP_DASHBOARD_ROUTE = "?tab=studio-setup";
+const EXPECTED_UNCONFIGURED_CODES = new Set([
+  "BLUEPRINT_REQUIRED",
+  "STACK_REQUIRED"
+]);
 
 function resolveCurrentAppRoot(appRoot) {
   return resolveStudioTargetRoot({
@@ -66,994 +25,122 @@ function resolveCurrentAppRoot(appRoot) {
   });
 }
 
-function targetScriptTerminalNamespacePrefix() {
-  return `${TARGET_SCRIPT_TERMINAL_NAMESPACE}:${currentProjectScopeKey()}:`;
-}
-
-function targetScriptTerminalNamespace() {
-  return `${targetScriptTerminalNamespacePrefix()}target`;
-}
-
-function emptyTargetScripts() {
-  return {
-    config: {
-      exists: false,
-      path: STARRED_TARGET_SCRIPTS_CONFIG
-    },
-    ok: true,
-    scriptCount: 0,
-    scripts: [],
-    starredScriptIds: []
-  };
-}
-
-function currentAppBeforeProjectType(targetRoot, projectType = {}) {
-  return {
-    adapter: "",
-    adapterReady: false,
-    appPath: "/",
-    config: {},
-    directories: [],
-    git: {
-      enabled: false
-    },
-    localPackages: {
-      appPackageName: "",
-      packages: []
-    },
-    markers: [],
-    ok: true,
-    projectType,
-    ready: false,
-    root: targetRoot,
-    targetScripts: emptyTargetScripts()
-  };
-}
-
-function currentAppBeforeSetup(targetRoot, projectType = {}, setup = {}) {
-  return {
-    ...currentAppBeforeProjectType(targetRoot, projectType),
-    projectType,
-    setup
-  };
-}
-
-function currentAppBeforeProjectConfig(targetRoot, projectType = {}, projectConfig = {}) {
-  return {
-    ...currentAppBeforeProjectType(targetRoot, projectType),
-    projectConfig,
-    projectType
-  };
-}
-
-function targetScriptError(code, message, extra = {}) {
-  return {
-    ...extra,
-    error: message,
-    errors: [
-      {
-        code,
-        message
-      }
-    ],
-    ok: false
-  };
-}
-
-function dashboardFix(route = "", label = "") {
-  return {
-    label,
-    route
-  };
-}
-
-function capability(enabled, reason = "", fix = null) {
-  return {
-    enabled: enabled === true,
-    fix,
-    reason: enabled === true ? "" : String(reason || "")
-  };
-}
-
-function connectionRows(connections = {}) {
-  if (Array.isArray(connections.connections)) {
-    return connections.connections;
-  }
-  return [];
-}
-
-function connectionById(rows = [], connectionId = "", fallbackLabel = "") {
-  const connection = rows.find((item) => String(item?.id || "") === connectionId);
-  return connection || {
-    connected: false,
-    id: connectionId,
-    label: fallbackLabel || connectionId,
-    message: `${fallbackLabel || connectionId} is not connected.`,
-    status: "unknown"
-  };
-}
-
-function connectionRecord(connection = {}) {
-  const connected = connection.ready === true || connection.connected === true;
-  return {
-    connected,
-    fix: connection.fix && typeof connection.fix === "object" && !Array.isArray(connection.fix)
-      ? {
-          label: String(connection.fix.label || ""),
-          route: String(connection.fix.route || "")
-        }
-      : null,
-    id: String(connection.id || ""),
-    label: String(connection.label || connection.id || ""),
-    message: String(connection.message || ""),
-    ready: connected,
-    scopeLabel: String(connection.scopeLabel || ""),
-    status: String(connection.status || (connected ? "connected" : "not_connected")),
-    username: String(connection.username || "")
-  };
-}
-
-function connectionDebugSummary(connection = {}) {
-  return {
-    connected: connection.connected === true,
-    id: String(connection.id || ""),
-    message: String(connection.message || ""),
-    ready: connection.ready === true,
-    status: String(connection.status || ""),
-    username: String(connection.username || "")
-  };
-}
-
-function connectionRowsDebugSummary(rows = []) {
-  return Array.isArray(rows)
-    ? rows.map((connection) => connectionDebugSummary(connectionRecord(connection)))
-    : [];
-}
-
-function firstBlockedCapability(capabilities = []) {
-  return capabilities.find((item) => item.enabled !== true && item.reason) || null;
-}
-
-function automaticSetupReason(setup = {}) {
-  return String(setup.message || "Finish automatic setup before using this capability.");
-}
-
-function connectionSetupFix(connection = {}) {
-  return connection.fix || dashboardFix(CONNECTIONS_DASHBOARD_ROUTE, "Open Setup");
-}
-
 function currentAppResult(operation) {
   return vibe64Result(operation, {
-    fallbackCode: "vibe64_current_app_request_failed",
-    fallbackMessage: "Current app request failed."
+    fallbackCode: "vibe64_current_app_inspection_failed",
+    fallbackMessage: "The current app could not be inspected."
   });
 }
 
-function targetScriptId(source, name) {
-  return `${source}:${String(name || "").trim()}`;
-}
-
-function parseScriptId(id = "") {
-  const normalizedId = String(id || "").trim();
-  const separatorIndex = normalizedId.indexOf(":");
-  if (separatorIndex < 1) {
-    return null;
-  }
-  const source = normalizedId.slice(0, separatorIndex);
-  const name = normalizedId.slice(separatorIndex + 1);
-  if (!source || !name || normalizedId.includes(",") || normalizedId.includes("\n") || normalizedId.includes("\r")) {
-    return null;
-  }
+function unconfiguredCurrentApp(root = "", message = "") {
   return {
-    id: normalizedId,
-    name,
-    source
-  };
-}
-
-function normalizeScriptId(value) {
-  return parseScriptId(value)?.id || "";
-}
-
-function isProjectScriptName(value) {
-  return PROJECT_SCRIPT_NAME_PATTERN.test(String(value || ""));
-}
-
-function normalizeScriptRecord(script = {}, source = "") {
-  const normalizedSource = String(source || "").trim();
-  const name = String(script.name || "").trim();
-  const id = normalizeScriptId(script.id) || targetScriptId(normalizedSource, name);
-  const parsed = parseScriptId(id);
-  if (!parsed || parsed.source !== normalizedSource || parsed.name !== name || !name) {
-    return null;
-  }
-  return {
-    command: String(script.command || ""),
-    id,
-    label: String(script.label || name),
-    name,
-    source: normalizedSource,
-    starredByDefault: script.starredByDefault === true
-  };
-}
-
-function sortedUniqueScriptIds(scriptIds = []) {
-  return [...new Set(scriptIds.map(normalizeScriptId).filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right));
-}
-
-async function readStarredScriptConfig(projectRuntimeRoot) {
-  try {
-    const source = await readFile(path.join(projectRuntimeRoot, STARRED_TARGET_SCRIPTS_CONFIG), "utf8");
-    return {
-      exists: true,
-      scriptIds: sortedUniqueScriptIds(source.split(/[,\r\n]+/gu))
-    };
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return {
-        exists: false,
-        scriptIds: []
-      };
-    }
-    throw new Error(`Cannot read ${STARRED_TARGET_SCRIPTS_CONFIG}: ${String(error?.message || error)}`);
-  }
-}
-
-async function writeStarredScriptConfig(projectRuntimeRoot, scriptIds = []) {
-  const configPath = path.join(projectRuntimeRoot, STARRED_TARGET_SCRIPTS_CONFIG);
-  await mkdir(path.dirname(configPath), {
-    recursive: true
-  });
-  const sortedScriptIds = sortedUniqueScriptIds(scriptIds);
-  await writeFile(configPath, sortedScriptIds.length > 0 ? `${sortedScriptIds.join(",")}\n` : "", "utf8");
-  return {
-    exists: true,
-    scriptIds: sortedScriptIds
-  };
-}
-
-async function removeStarredScriptConfig(projectRuntimeRoot) {
-  await rm(path.join(projectRuntimeRoot, STARRED_TARGET_SCRIPTS_CONFIG), {
-    force: true
-  });
-  return {
-    exists: false,
-    scriptIds: []
-  };
-}
-
-async function readProjectScripts(targetRoot) {
-  const scriptsRoot = path.join(targetRoot, PROJECT_SCRIPTS_DIR);
-  let entries = [];
-  try {
-    entries = await readdir(scriptsRoot, {
-      withFileTypes: true
-    });
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  return entries
-    .filter((entry) => entry.isFile() && isProjectScriptName(entry.name))
-    .map((entry) => {
-      const relativePath = path.posix.join(PROJECT_SCRIPTS_DIR, entry.name);
-      return {
-        command: `bash ${relativePath}`,
-        id: targetScriptId(PROJECT_SCRIPT_SOURCE, entry.name),
-        label: entry.name,
-        name: entry.name,
-        path: relativePath,
-        source: PROJECT_SCRIPT_SOURCE
-      };
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function normalizeAdapterScripts(response = {}) {
-  return (Array.isArray(response.scripts) ? response.scripts : [])
-    .map((script) => normalizeScriptRecord(script, ADAPTER_SCRIPT_SOURCE))
-    .filter(Boolean);
-}
-
-function mergeTargetScripts(adapterScripts = [], projectScripts = []) {
-  return [...adapterScripts, ...projectScripts]
-    .sort((left, right) => {
-      if (left.source !== right.source) {
-        return left.source === ADAPTER_SCRIPT_SOURCE ? -1 : 1;
-      }
-      return left.name.localeCompare(right.name);
-    });
-}
-
-function resolveStarredScriptIds(scripts = [], config = {}) {
-  const availableIds = new Set(scripts.map((script) => script.id));
-  const configuredIds = sortedUniqueScriptIds(config.scriptIds || [])
-    .filter((scriptId) => availableIds.has(scriptId));
-  if (config.exists) {
-    return configuredIds;
-  }
-  return scripts
-    .filter((script) => script.starredByDefault)
-    .map((script) => script.id);
-}
-
-function targetScriptsResponse({
-  config = {},
-  scripts = []
-} = {}) {
-  const starredScriptIds = resolveStarredScriptIds(scripts, config);
-  const starredSet = new Set(starredScriptIds);
-  return {
-    config: {
-      exists: config.exists === true,
-      path: STARRED_TARGET_SCRIPTS_CONFIG
-    },
+    components: [],
+    diagnostics: [],
+    message: message || "Genesis does not declare a launch target for this project yet.",
     ok: true,
-    scriptCount: scripts.length,
-    scripts: scripts.map((script) => ({
-      ...script,
-      starred: starredSet.has(script.id)
-    })),
-    starredScriptIds
+    ready: false,
+    resources: [],
+    root,
+    runtimeRequirements: [],
+    stackHash: "",
+    status: "unconfigured",
+    targets: []
   };
 }
 
-function validateStarredScriptIds(scriptIds = [], scripts = []) {
-  const availableIds = new Set(scripts.map((script) => script.id));
-  const requestedScriptIds = Array.isArray(scriptIds) ? scriptIds : [];
-  const malformed = requestedScriptIds
-    .map((scriptId) => String(scriptId || "").trim())
-    .filter((scriptId) => !normalizeScriptId(scriptId));
-  const normalized = sortedUniqueScriptIds(requestedScriptIds);
-  const invalid = normalized.filter((scriptId) => !availableIds.has(scriptId));
-  const rejected = [...malformed, ...invalid];
-  if (rejected.length > 0) {
-    return targetScriptError(
-      "invalid_target_script",
-      `Unknown target script${rejected.length === 1 ? "" : "s"}: ${rejected.join(", ")}.`,
-      {
-        invalidScriptIds: rejected
-      }
-    );
-  }
+function launchView(root = "", launch = {}) {
   return {
+    components: Array.isArray(launch.components) ? launch.components : [],
+    diagnostics: Array.isArray(launch.diagnostics) ? launch.diagnostics : [],
     ok: true,
-    scriptIds: normalized
-  };
-}
-
-function normalizeSessionId(value = "") {
-  return String(value || "").trim();
-}
-
-function projectScriptStartupScript(script = {}) {
-  return [
-    "set +e",
-    `printf '\\n[studio] $ %s\\n\\n' ${shellQuote(script.command)}`,
-    `bash ${shellQuote(script.path)}`,
-    "status=$?",
-    "printf '\\n[studio] project script exited with code %s\\n' \"$status\"",
-    "exit \"$status\""
-  ].join("\n");
-}
-
-function projectScriptTerminalSpec(script = {}, targetRoot = "") {
-  return {
-    args: ["-lc", projectScriptStartupScript(script)],
-    command: "bash",
-    commandPreview: script.command,
-    cwd: targetRoot,
-    metadata: {
-      scriptId: script.id,
-      scriptSource: PROJECT_SCRIPT_SOURCE
-    },
-    ok: true
+    ready: launch.status === "ready",
+    resources: Array.isArray(launch.resources) ? launch.resources : [],
+    root,
+    runtimeRequirements: Array.isArray(launch.runtimeRequirements) ? launch.runtimeRequirements : [],
+    stackHash: String(launch.stackHash || ""),
+    status: String(launch.status || "unconfigured"),
+    targets: Array.isArray(launch.targets) ? launch.targets : []
   };
 }
 
 function createService({
   appRoot = "",
-  projectService,
-  runCommand = runVibe64Command,
-  setupOptions = {},
-  setupServices = {}
+  env = process.env,
+  inspectLaunch = inspectGenesisLaunch,
+  projectService
 } = {}) {
   if (!projectService || typeof projectService.createRuntime !== "function") {
     throw new TypeError("createService requires feature.vibe64-project.service.");
   }
-  const normalizedSetupOptions = normalizeSetupOptions(setupOptions);
 
-  function currentTargetRoot() {
+  function selectedProjectRoot() {
     if (String(appRoot || "").trim()) {
       return resolveCurrentAppRoot(appRoot);
     }
     if (typeof projectService.currentProjectSourceRoot === "function") {
-      const sourceRoot = String(projectService.currentProjectSourceRoot() || "").trim();
-      if (sourceRoot) {
-        return sourceRoot;
-      }
+      return String(projectService.currentProjectSourceRoot() || "").trim();
     }
     return projectServiceTargetRoot(projectService);
   }
 
-  async function sessionRuntime() {
-    return projectService.createRuntime({
-      skipProjectConfig: true,
-      sourceSetupRequired: false
-    });
-  }
-
-  async function sessionTargetRoot(input = {}) {
-    const sessionId = normalizeSessionId(input?.sessionId);
+  async function rootForInput(input = {}) {
+    const sessionId = String(input.sessionId || "").trim();
     if (!sessionId) {
-      return "";
+      return selectedProjectRoot();
     }
-    const runtime = await sessionRuntime();
-    if (!runtime || typeof runtime.getSession !== "function") {
-      return "";
-    }
-    const session = await runtime.getSession(sessionId);
-    return sessionSourcePath(session);
-  }
-
-  async function targetRootForInput(input = {}) {
-    const sessionId = normalizeSessionId(input?.sessionId);
-    const sessionRoot = await sessionTargetRoot(input);
-    if (sessionId && !sessionRoot) {
-      const error = new Error("Create the session source before running target scripts.");
+    const runtime = await projectService.createRuntime({
+      inspectSource: false
+    });
+    const session = await runtime.getSession(sessionId, {
+      inspectSource: false
+    });
+    const root = sessionSourcePath(session);
+    if (!root) {
+      const error = new Error("The selected session does not have a source directory.");
       error.code = "vibe64_session_source_required";
       error.sessionId = sessionId;
       throw error;
     }
-    const targetRoot = sessionRoot || currentTargetRoot();
-    if (!targetRoot) {
-      const error = new Error("Choose a project before using current-app tools.");
-      error.code = "vibe64_project_not_selected";
-      throw error;
-    }
-    return targetRoot;
+    return root;
   }
 
-  function requireProjectRuntimeRoot() {
-    const runtimeRoot = typeof projectService.currentProjectRuntimeRoot === "function"
-      ? String(projectService.currentProjectRuntimeRoot() || "").trim()
-      : typeof projectService.currentProjectLocalRoot === "function"
-        ? String(projectService.currentProjectLocalRoot() || "").trim()
-        : "";
-    if (!runtimeRoot) {
-      const error = new Error("Choose a project before using current-app tools.");
-      error.code = "vibe64_project_not_selected";
-      throw error;
-    }
-    return runtimeRoot;
-  }
-
-  function noProjectSelectedSetupReadiness() {
+  async function projectEnvironment(input = {}) {
+    const userEnvironment = typeof projectService.projectUserEnvironment === "function"
+      ? await projectService.projectUserEnvironment({
+          scope: "dev",
+          sessionId: input.sessionId
+        })
+      : {};
     return {
-      currentStage: {
-        id: "project-selection",
-        label: "Project selection"
-      },
-      message: "Choose a project before checking setup.",
-      ready: false,
-      stages: []
+      ...env,
+      ...userEnvironment
     };
-  }
-
-  async function readProjectTypeState() {
-    const readProjectType = typeof projectService.readProjectType === "function"
-      ? projectService.readProjectType.bind(projectService)
-      : typeof projectService.readCommittedProjectType === "function"
-        ? projectService.readCommittedProjectType.bind(projectService)
-        : null;
-    const response = readProjectType
-      ? await readProjectType()
-      : null;
-    return response?.projectType || {};
-  }
-
-  async function readProjectConfigState() {
-    const readProjectConfig = typeof projectService.readProjectConfig === "function"
-      ? projectService.readProjectConfig.bind(projectService)
-      : typeof projectService.readCommittedProjectConfig === "function"
-        ? projectService.readCommittedProjectConfig.bind(projectService)
-        : null;
-    const response = readProjectConfig
-      ? await readProjectConfig()
-      : null;
-    return response?.config || {};
-  }
-
-  async function createRuntime(input = {}) {
-    return projectService.createRuntime(input);
-  }
-
-  function setupStageInput(input = {}) {
-    return {
-      vibe64User: input?.vibe64User || null,
-      refresh: input?.refresh === true
-    };
-  }
-
-  function setupReadinessOptions(options = {}) {
-    return {
-      ...options,
-      ...normalizedSetupOptions
-    };
-  }
-
-  async function setupReadiness(options = {}) {
-    if (!currentTargetRoot()) {
-      return noProjectSelectedSetupReadiness();
-    }
-    return readVibe64SetupReadiness(setupServices, setupReadinessOptions({
-      ...options,
-      input: setupStageInput(options.input || options)
-    }));
-  }
-
-  async function capabilitySetupReadiness(options = {}) {
-    if (!currentTargetRoot()) {
-      return noProjectSelectedSetupReadiness();
-    }
-    return readVibe64CapabilitySetupReadiness(setupServices, setupReadinessOptions({
-      ...options,
-      input: setupStageInput(options.input || options)
-    }));
-  }
-
-  async function connectionReadiness(input = {}) {
-    const connectionSetupService = setupServices.connectionSetupService;
-    if (!connectionSetupService || typeof connectionSetupService.getStatus !== "function") {
-      vibe64SessionDebugLog("server.currentApp.connectionReadiness.unavailable", {
-        targetRoot: currentTargetRoot()
-      });
-      return {
-        connections: [],
-        blockedReason: "Connection status service is not available.",
-        ok: false,
-        ready: false,
-        targetRoot: currentTargetRoot(),
-        updatedAt: new Date().toISOString()
-      };
-    }
-    vibe64SessionDebugLog("server.currentApp.connectionReadiness.start", {
-      refresh: input?.refresh === true || String(input?.refresh || "") === "true",
-      targetRoot: currentTargetRoot()
-    });
-    const result = await connectionSetupService.getStatus(setupStageInput(input));
-    const rows = connectionRows(result);
-    vibe64SessionDebugLog("server.currentApp.connectionReadiness.done", {
-      connections: connectionRowsDebugSummary(rows),
-      blockedReason: String(result.blockedReason || ""),
-      ok: result.ok !== false,
-      ready: result.ready === true,
-      targetRoot: currentTargetRoot()
-    });
-    return result;
-  }
-
-  async function currentProjectCapabilityRecord() {
-    if (typeof projectService?.listProjects === "function") {
-      const selection = await projectService.listProjects();
-      if (selection?.currentProject) {
-        return selection.currentProject;
-      }
-    }
-    return projectService?.selectedProject || {};
-  }
-
-  function capabilityState({
-    connections = {},
-    githubRequired = false,
-    sessionSetup = {},
-    setup = {}
-  } = {}) {
-    const rows = connectionRows(connections);
-    const github = connectionRecord(connectionById(rows, "github", "Git"));
-    const codex = connectionRecord(connectionById(rows, "codex", "Codex"));
-    const selectedAiProvider = {
-      ...codex,
-      selected: true
-    };
-    const aiReady = selectedAiProvider.ready === true;
-    const githubReady = github.ready === true;
-    const githubSessionReady = githubRequired ? githubReady : true;
-    const setupReady = setup.ready === true;
-    const sessionSetupReady = sessionSetup.ready === true;
-    const setupFix = dashboardFix(
-      normalizedSetupOptions.includeStudioSetup === false ? "?tab=project-setup" : SETUP_DASHBOARD_ROUTE,
-      "Open Setup"
-    );
-    const aiFix = connectionSetupFix(selectedAiProvider);
-    const githubFix = connectionSetupFix(github);
-    const chatCapability = capability(
-      aiReady && sessionSetupReady,
-      aiReady ? automaticSetupReason(sessionSetup) : "Finish AI account setup before using chat.",
-      aiReady ? setupFix : aiFix
-    );
-    const createSessionCapability = capability(
-      aiReady && githubSessionReady && sessionSetupReady,
-      firstBlockedCapability([
-        capability(aiReady, "Finish AI account setup before starting a session.", aiFix),
-        ...(githubRequired
-          ? [capability(githubReady, "Finish git connection setup before starting Git-backed session work.", githubFix)]
-          : []),
-        capability(sessionSetupReady, automaticSetupReason(sessionSetup), setupFix)
-      ])?.reason || "",
-      firstBlockedCapability([
-        capability(aiReady, "Finish AI account setup before starting a session.", aiFix),
-        ...(githubRequired
-          ? [capability(githubReady, "Finish git connection setup before starting Git-backed session work.", githubFix)]
-          : []),
-        capability(sessionSetupReady, automaticSetupReason(sessionSetup), setupFix)
-      ])?.fix || null
-    );
-
-    return {
-      capabilities: {
-        chat: chatCapability,
-        createSession: createSessionCapability,
-        githubWorkflow: capability(githubReady, "Finish git connection setup before using Git-backed workflow actions.", githubFix),
-        app: capability(true),
-        preview: capability(setupReady, automaticSetupReason(setup), setupFix),
-        runScripts: capability(true)
-      },
-      connections: {
-        ai: {
-          message: aiReady ? "Codex is selected and authenticated." : selectedAiProvider.message,
-          providers: [selectedAiProvider],
-          ready: aiReady,
-          selectedProviderId: "codex"
-        },
-        github,
-        ready: aiReady && githubSessionReady,
-        rows
-      }
-    };
-  }
-
-  async function studioReadiness(options = {}) {
-    if (!currentTargetRoot()) {
-      return noProjectSelectedSetupReadiness();
-    }
-    return readVibe64StudioReadiness(setupServices, setupReadinessOptions({
-      ...options,
-      input: setupStageInput(options.input || options)
-    }));
-  }
-
-  function requireAdapterMethodFromRuntime(runtime = {}, methodName = "") {
-    const activeAdapter = runtime?.adapter;
-    if (typeof activeAdapter?.[methodName] !== "function") {
-      throw new Error(`Active Vibe64 adapter does not implement ${methodName}().`);
-    }
-    return activeAdapter[methodName].bind(activeAdapter);
-  }
-
-  async function requireAdapterMethod(methodName, input = {}) {
-    return requireAdapterMethodFromRuntime(await createRuntime(input), methodName);
-  }
-
-  async function listAdapterScripts(input = {}) {
-    const targetRoot = await targetRootForInput(input);
-    const runtime = await createRuntime(input);
-    const listTargetScripts = requireAdapterMethodFromRuntime(runtime, "listCurrentAppTargetScripts");
-    const response = await listTargetScripts({
-      config: runtime.projectConfig,
-      targetRoot
-    });
-    if (response?.ok === false) {
-      return response;
-    }
-    return {
-      ok: true,
-      scripts: normalizeAdapterScripts(response)
-    };
-  }
-
-  async function listAvailableTargetScripts(input = {}) {
-    const targetRoot = await targetRootForInput(input);
-    const [adapterScripts, projectScripts] = await Promise.all([
-      listAdapterScripts(input),
-      readProjectScripts(targetRoot)
-    ]);
-    if (adapterScripts.ok === false) {
-      return adapterScripts;
-    }
-    return {
-      ok: true,
-      scripts: mergeTargetScripts(adapterScripts.scripts, projectScripts)
-    };
-  }
-
-  async function terminalSpecForScript(script, {
-    runtime = null,
-    targetRoot = ""
-  } = {}) {
-    if (script.source === PROJECT_SCRIPT_SOURCE) {
-      return projectScriptTerminalSpec(script, targetRoot);
-    }
-
-    const createTerminalSpec = requireAdapterMethodFromRuntime(runtime, "createCurrentAppTargetScriptTerminalSpec");
-    return createTerminalSpec({
-      config: runtime.projectConfig,
-      input: {
-        scriptId: script.id
-      },
-      targetRoot
-    });
   }
 
   return Object.freeze({
-    async inspectCurrentApp(input = {}, options = {}) {
-      void options;
+    async inspectCurrentApp(input = {}) {
       return currentAppResult(async () => {
-        const targetRoot = currentTargetRoot();
-        const projectType = await readProjectTypeState();
-        if (projectType.ready !== true) {
-          return currentAppBeforeProjectType(targetRoot, projectType);
+        const root = await rootForInput(input);
+        if (!root) {
+          return unconfiguredCurrentApp("", "Choose a project source or session before inspecting Genesis launch targets.");
         }
-        const projectConfig = await readProjectConfigState();
-        if (projectConfig.ready !== true) {
-          return currentAppBeforeProjectConfig(targetRoot, projectType, projectConfig);
-        }
-        const setup = await capabilitySetupReadiness({
-          input
-        });
-        if (setup.ready !== true) {
-          return currentAppBeforeSetup(targetRoot, projectType, setup);
-        }
-        const runtime = await createRuntime();
-        const projectRuntimeRoot = requireProjectRuntimeRoot();
-        const inspectCurrentApp = await requireAdapterMethod("inspectCurrentApp");
-        const [currentApp, availableScripts, scriptConfig] = await Promise.all([
-          inspectCurrentApp({
-            config: runtime.projectConfig,
-            includeGit: input?.includeGit !== false,
-            targetRoot
-          }),
-          listAvailableTargetScripts(input),
-          readStarredScriptConfig(projectRuntimeRoot)
-        ]);
-        return {
-          ...currentApp,
-          targetScripts: availableScripts.ok === false
-            ? availableScripts
-            : targetScriptsResponse({
-                config: scriptConfig,
-                scripts: availableScripts.scripts
-              })
-        };
-      });
-    },
-
-    async inspectSetupReadiness(input = {}) {
-      return currentAppResult(() => setupReadiness({
-        input
-      }));
-    },
-
-    async inspectConnectionSetup(input = {}) {
-      return currentAppResult(() => connectionReadiness(input));
-    },
-
-    async inspectCapabilities(input = {}) {
-      return currentAppResult(async () => {
-        vibe64SessionDebugLog("server.currentApp.capabilities.inspect.start", {
-          targetRoot: currentTargetRoot()
-        });
-        const [setup, sessionSetup, connections, currentProject] = await Promise.all([
-          capabilitySetupReadiness({
-            input
-          }),
-          studioReadiness({
-            input
-          }),
-          connectionReadiness(input),
-          currentProjectCapabilityRecord()
-        ]);
-        const githubRequired = projectRequiresGithubConnection(currentProject);
-        const state = capabilityState({
-          connections,
-          githubRequired,
-          sessionSetup,
-          setup
-        });
-        vibe64SessionDebugLog("server.currentApp.capabilities.inspect.done", {
-          connections: connectionRowsDebugSummary(connectionRows(connections)),
-          aiReady: state.connections.ai.ready === true,
-          blockedReason: String(connections.blockedReason || ""),
-          chatEnabled: state.capabilities.chat.enabled === true,
-          createSessionEnabled: state.capabilities.createSession.enabled === true,
-          createSessionReason: String(state.capabilities.createSession.reason || ""),
-          githubRequired,
-          githubReady: state.connections.github.ready === true,
-          previewEnabled: state.capabilities.preview.enabled === true,
-          sessionSetupReady: sessionSetup.ready === true,
-          setupReady: setup.ready === true,
-          targetRoot: currentTargetRoot()
-        });
-        return {
-          ...state,
-          ok: true,
-          setup,
-          targetRoot: currentTargetRoot(),
-          updatedAt: new Date().toISOString()
-        };
-      });
-    },
-
-    async streamSetupReadiness(options = {}) {
-      return currentAppResult(() => setupReadiness({
-        emit: options.emit || null,
-        input: setupStageInput(options)
-      }));
-    },
-
-    async listTargetScripts(input = {}) {
-      return currentAppResult(async () => {
-        const projectRuntimeRoot = requireProjectRuntimeRoot();
-        const [availableScripts, config] = await Promise.all([
-          listAvailableTargetScripts(input),
-          readStarredScriptConfig(projectRuntimeRoot)
-        ]);
-        if (availableScripts.ok === false) {
-          return availableScripts;
-        }
-        return targetScriptsResponse({
-          config,
-          scripts: availableScripts.scripts
-        });
-      });
-    },
-
-    async saveStarredTargetScripts(input = {}) {
-      return currentAppResult(async () => {
-        const projectRuntimeRoot = requireProjectRuntimeRoot();
-        const availableScripts = await listAvailableTargetScripts(input);
-        if (availableScripts.ok === false) {
-          return availableScripts;
-        }
-        const validation = validateStarredScriptIds(input?.scriptIds, availableScripts.scripts);
-        if (validation.ok === false) {
-          return validation;
-        }
-        const config = await writeStarredScriptConfig(projectRuntimeRoot, validation.scriptIds);
-        return targetScriptsResponse({
-          config,
-          scripts: availableScripts.scripts
-        });
-      });
-    },
-
-    async resetStarredTargetScripts(input = {}) {
-      return currentAppResult(async () => {
-        const projectRuntimeRoot = requireProjectRuntimeRoot();
-        const availableScripts = await listAvailableTargetScripts(input);
-        if (availableScripts.ok === false) {
-          return availableScripts;
-        }
-        const config = await removeStarredScriptConfig(projectRuntimeRoot);
-        return targetScriptsResponse({
-          config,
-          scripts: availableScripts.scripts
-        });
-      });
-    },
-
-    async startTargetScriptTerminal(input = {}) {
-      return currentAppResult(async () => {
-        const targetRoot = await targetRootForInput(input);
-        const scriptId = normalizeScriptId(input?.scriptId);
-        if (!scriptId) {
-          return targetScriptError("missing_target_script", "scriptId must identify a target script.");
-        }
-        const availableScripts = await listAvailableTargetScripts(input);
-        if (availableScripts.ok === false) {
-          return availableScripts;
-        }
-        const script = availableScripts.scripts.find((item) => item.id === scriptId);
-        if (!script) {
-          return targetScriptError("invalid_target_script", `Unknown target script: ${scriptId}.`);
-        }
-
-        const runtime = await createRuntime(input);
-        const spec = await terminalSpecForScript(script, {
-          runtime,
-          targetRoot
-        });
-        if (spec?.ok === false) {
-          return spec;
-        }
-        if (!spec || typeof spec !== "object") {
-          return targetScriptError(
-            "invalid_target_script_terminal_spec",
-            "The active Vibe64 adapter returned an invalid target script terminal spec."
-          );
-        }
-
-        const sessionId = normalizeSessionId(input?.sessionId);
-        const session = sessionId && typeof runtime?.getSession === "function"
-          ? await runtime.getSession(sessionId)
-          : {};
-        const executionEnv = await loadProjectExecutionEnvRecords({
-          action: {
-            commandPreview: spec.commandPreview,
-            id: script.id,
-            label: script.label
-          },
-          projectService,
-          runCommand,
-          runtime,
-          session,
-          sourcePath: targetRoot,
-          spec,
-          target: "command",
-          targetRoot
-        });
-        const namespace = targetScriptTerminalNamespace();
-        if (spec.closeExisting !== false) {
-          await closeTerminalSessionsForNamespace(namespace);
-        }
-        return runCommand({
-          args: spec.args,
-          command: spec.command,
-          cwd: spec.cwd || targetRoot,
-          env: spec.env || {},
-          envPolicy: "project",
-          mode: "pty",
-          project: {
-            config: runtime?.projectConfig || {},
-            configEnv: executionEnv.projectConfigEnv,
-            runtimeConfigEnv: executionEnv.runtimeConfigEnv,
-            targetRoot
-          },
-          purpose: "terminal",
-          terminal: {
-            commandPreview: spec.commandPreview,
-            maxRunning: spec.maxRunning || 1,
-            metadata: spec.metadata || {},
-            namespace,
-            namespaceLimitPrefix: targetScriptTerminalNamespacePrefix(),
-            onClose: spec.onClose,
-            reuseRunning: spec.reuseRunning === true
+        try {
+          return launchView(root, await inspectLaunch({
+            environment: await projectEnvironment(input),
+            projectRoot: root
+          }));
+        } catch (error) {
+          if (!EXPECTED_UNCONFIGURED_CODES.has(String(error?.code || ""))) {
+            throw error;
           }
-        });
-      });
-    },
-
-    async subscribeTargetScriptTerminal(terminalSessionId, subscriber) {
-      return subscribeTerminalSession(terminalSessionId, subscriber, {
-        namespace: targetScriptTerminalNamespace()
-      });
-    },
-
-    writeTargetScriptTerminal(terminalSessionId, data) {
-      return writeTerminalSession(terminalSessionId, data, {
-        namespace: targetScriptTerminalNamespace()
-      });
-    },
-
-    resizeTargetScriptTerminal(terminalSessionId, size) {
-      return resizeTerminalSession(terminalSessionId, size, {
-        namespace: targetScriptTerminalNamespace()
-      });
-    },
-
-    closeTargetScriptTerminal(terminalSessionId) {
-      return closeTerminalSession(terminalSessionId, {
-        namespace: targetScriptTerminalNamespace()
+          return unconfiguredCurrentApp(root, String(error?.message || ""));
+        }
       });
     }
   });
 }
 
 export {
-  TARGET_SCRIPT_TERMINAL_NAMESPACE,
   createService,
   resolveCurrentAppRoot
 };

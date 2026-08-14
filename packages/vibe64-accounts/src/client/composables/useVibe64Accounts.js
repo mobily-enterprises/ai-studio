@@ -1,8 +1,8 @@
 import { computed, ref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useQueryClient } from "@tanstack/vue-query";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import {
   CODEX_RECONNECT_REQUIRED_CODE,
   CODEX_RECONNECT_REQUIRED_MESSAGE
@@ -18,9 +18,6 @@ import {
   VIBE64_ACCOUNTS_GIT_IDENTITY_API_SUFFIX,
   accountsQueryKey
 } from "../lib/accountsGateApi.js";
-import {
-  invalidateVibe64CapabilitiesQueryClient
-} from "/src/lib/vibe64CapabilitiesInvalidation.js";
 
 function accountsResourceQueryKey() {
   return computed(() => accountsQueryKey(VIBE64_SURFACE_ID, ROUTE_VISIBILITY_PUBLIC, ""));
@@ -244,16 +241,8 @@ function useVibe64Accounts({
     queryClient.setQueryData(statusQueryKey.value, statusWithCodexReconnectRequired);
   }
 
-  function invalidateCapabilities(context = {}) {
-    return invalidateVibe64CapabilitiesQueryClient(queryClient, {
-      debugEventPrefix: "client.auth.capabilities.invalidate",
-      ...context
-    });
-  }
-
   return {
     cancelAuthSession,
-    invalidateCapabilities,
     isLoading: statusResource.isLoading,
     loadError: statusResource.loadError,
     logoutCommand,

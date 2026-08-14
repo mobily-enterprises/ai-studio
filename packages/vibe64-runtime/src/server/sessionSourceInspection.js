@@ -5,24 +5,10 @@ import {
 
 const SOURCE_INSPECTION_KINDS = Object.freeze({
   MERGE_CONFLICT: "merge_conflict",
-  PLATFORM_ERROR: "platform_error",
-  SOURCE_ERROR: "source_error"
+  PLATFORM_ERROR: "platform_error"
 });
 
-const PROJECT_MANIFEST_SOURCE_ERROR_CODES = new Set([
-  "vibe64_committed_project_manifest_invalid",
-  "vibe64_project_manifest_invalid_json",
-  "vibe64_project_manifest_object_required",
-  "vibe64_project_manifest_schema_unsupported"
-]);
-
-function isSourceMetadataError(error = null) {
-  const code = normalizeText(error?.code);
-  return PROJECT_MANIFEST_SOURCE_ERROR_CODES.has(code) ||
-    /^vibe64_invalid_[a-z0-9_]*json$/u.test(code);
-}
-
-function sourceInspectionFailure(error = null, {
+function sourceInspectionFailure({
   merge = null
 } = {}) {
   const conflictedFiles = Array.isArray(merge?.conflictedFiles)
@@ -40,15 +26,6 @@ function sourceInspectionFailure(error = null, {
       }
     };
   }
-  if (isSourceMetadataError(error)) {
-    return {
-      error: {
-        code: normalizeText(error?.code),
-        message: "Application source metadata is invalid and must be repaired."
-      },
-      kind: SOURCE_INSPECTION_KINDS.SOURCE_ERROR
-    };
-  }
   return {
     error: {
       code: "vibe64_source_inspection_unavailable",
@@ -60,12 +37,9 @@ function sourceInspectionFailure(error = null, {
 
 function sourceInspectionDisabledReason(inspection = {}) {
   if (inspection.kind === SOURCE_INSPECTION_KINDS.MERGE_CONFLICT) {
-    return "Resolve the source conflicts before running this workflow operation.";
+    return "Resolve the source conflicts before changing this session source.";
   }
-  if (inspection.kind === SOURCE_INSPECTION_KINDS.SOURCE_ERROR) {
-    return "Repair the application source metadata before running this workflow operation.";
-  }
-  return "Application inspection must recover before running this workflow operation.";
+  return "Application inspection must recover before changing this session source.";
 }
 
 function sourceInspectionBlockedError(inspection = {}) {
@@ -86,7 +60,6 @@ function assertSourceInspectionHealthy(inspection = null) {
 export {
   SOURCE_INSPECTION_KINDS,
   assertSourceInspectionHealthy,
-  isSourceMetadataError,
   sourceInspectionDisabledReason,
   sourceInspectionFailure
 };

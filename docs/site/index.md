@@ -1,6 +1,6 @@
 ---
 title: Why Vibe64
-description: Vibe64 helps AI coding stay tidy, checked, and easy to understand.
+description: Vibe64 gives AI a safe workspace and the project context needed to make understandable, verifiable changes.
 layout: doc
 aside: false
 ---
@@ -8,15 +8,15 @@ aside: false
 <main class="vibe-marketing vibe-home">
 <section class="vibe-hero">
 <div class="vibe-hero__inner">
-<div class="vibe-mode-pill" aria-label="Vibe64 modes">
-<span>Safe place</span>
-<span>Clear task</span>
+<div class="vibe-mode-pill" aria-label="Vibe64 principles">
+<span>Safe workspace</span>
+<span>Project context</span>
 <em>Checked</em>
 </div>
 <h1>Make beautiful apps, inside and out</h1>
 <p>
-Vibe64 will turn your ideas into beautiful apps -- beautiful outside (what people see) and
-outside (the code inside).
+Vibe64 gives your coding agent an isolated place to work, while Genesis explains
+what the product is, how the code is organised, and which technology rules apply.
 </p>
 <div class="vibe-prompt-box">
 <div class="vibe-prompt-box__text">Make a change to my project</div>
@@ -33,20 +33,21 @@ outside (the code inside).
 <article class="vibe-showcase-card">
 <div class="vibe-showcase-copy">
 <p class="vibe-step"><strong>01</strong> / 04 <span>Your real project stays safe</span></p>
-<h2>Follow a safe workflow without even noticing.</h2>
+<h2>Each task gets an isolated Git workspace.</h2>
 <p>
-Create a safe copy of your program, change it, test it. If the change is good, you can keep it. If it is wrong, your main project is safe.
+Try the change, inspect the diff, run checks, and keep it only when it is ready.
+Unrelated work in the main checkout stays outside the session.
 </p>
 <a class="vibe-button vibe-button--primary" href="/start-building">Start building</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--worktree" aria-hidden="true">
 <div class="vibe-browser-mock">
-<div class="vibe-browser-bar"><span></span><span></span><span></span><em>vibe64/safe-place</em></div>
+<div class="vibe-browser-bar"><span></span><span></span><span></span><em>vibe64/session</em></div>
 <div class="vibe-workflow-board">
 <div><b>task</b><span>one clear job</span></div>
-<div><b>safe place</b><span>ready to try</span></div>
-<div><b>real project</b><span>left alone</span></div>
-<div><b>status</b><span>ready to check</span></div>
+<div><b>workspace</b><span>isolated</span></div>
+<div><b>main project</b><span>left alone</span></div>
+<div><b>status</b><span>ready to review</span></div>
 </div>
 </div>
 </div>
@@ -54,44 +55,44 @@ Create a safe copy of your program, change it, test it. If the change is good, y
 
 <article class="vibe-showcase-card vibe-showcase-card--reverse">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>02</strong> / 04 <span>Pick your tech</span></p>
-<h2>Choose what your project is built with. Vibe64 deals with the details.</h2>
+<p class="vibe-step"><strong>02</strong> / 04 <span>Context belongs to the project</span></p>
+<h2>Genesis gives the agent intent, structure, and technology guidance.</h2>
 <p>
-Different projects have different habits. Vibe64 looks at the project and gives
-the AI clear instructions, so it uses the right tools, follows the right style,
-and avoids making up its own way of doing things.
+The Blueprint records product intent. Program explains public operations by
+subsystem. Stack selects relevant guidance, skills, resources, indexers, and
+verification commands without forcing every project into a Vibe64 project type.
 </p>
-<a class="vibe-button vibe-button--primary" href="/supported-tech">Supported tech</a>
+<a class="vibe-button vibe-button--primary" href="/supported-tech">Technology support</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--prompt" aria-hidden="true">
 <div class="vibe-terminal-mock">
-<p>Project rules</p>
-<code>Use what the project already has.</code>
-<code>Check the work before saying it is done.</code>
-<code>Do not invent a second way to solve the same thing.</code>
+<p>Project guidance</p>
+<code>Use existing public operations and helpers.</code>
+<code>Follow the selected Stack and Agent Skills.</code>
+<code>Verify the concrete result.</code>
 </div>
 </div>
 </article>
 
 <article class="vibe-showcase-card">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>03</strong> / 04 <span>Checked before you keep it</span></p>
-<h2>Vibe64 helps catch messy AI work before it becomes part of the project.</h2>
+<p class="vibe-step"><strong>03</strong> / 04 <span>Understand what changed</span></p>
+<h2>Review the code, its checks, and two useful views of the system.</h2>
 <p>
-AI can be fast and still leave a mess. Vibe64 helps look for rushed code,
-repeated helpers, missing checks, and unclear changes, then prepares a useful
-summary so a person can review it properly.
+Machine City maps files and functions. Program City shows the smaller conceptual
+view of subsystems and public operations. Both are derived navigation aids, not
+claims that an AI proved the whole application correct.
 </p>
 <a class="vibe-button vibe-button--primary" href="/start-building">Start building</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--review" aria-hidden="true">
 <div class="vibe-pr-mock">
-<div class="vibe-pr-mock__top">Review note</div>
+<div class="vibe-pr-mock__top">Review evidence</div>
 <ul>
-<li><span></span> Messy code check complete</li>
-<li><span></span> Project checks passed</li>
-<li><span></span> Summary attached</li>
-<li><span></span> Risks listed clearly</li>
+<li><span></span> Git diff available</li>
+<li><span></span> Declared checks run</li>
+<li><span></span> Program explanation available</li>
+<li><span></span> Risks stated clearly</li>
 </ul>
 </div>
 </div>
@@ -99,21 +100,21 @@ summary so a person can review it properly.
 
 <article class="vibe-showcase-card vibe-showcase-card--reverse">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>04</strong> / 04 <span>The toolbox is explicit</span></p>
-<h2>Use the tools on the machine, with checks before work starts.</h2>
+<p class="vibe-step"><strong>04</strong> / 04 <span>Execution stays controlled</span></p>
+<h2>Vibe64 owns the machine-facing work.</h2>
 <p>
-Vibe64 checks the host tools it will actually run. Common jobs like getting the
-latest changes, opening the database, and deploying can become clear buttons
-instead of secret notes.
+Vibe64 owns Git credentials, session processes, ports, previews, proxying, and
+its exact managed browser runtime. Genesis describes project requirements;
+Vibe64 decides whether this host can run them safely.
 </p>
 <a class="vibe-button vibe-button--primary" href="/start-building">Start building</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--runtime" aria-hidden="true">
 <div class="vibe-runtime-mock">
-<div>database <span>ready</span></div>
-<div>tools <span>ready</span></div>
-<div>deploy <span>confirm</span></div>
-<div>latest work <span>up to date</span></div>
+<div>Git <span>controlled</span></div>
+<div>runtime <span>pinned</span></div>
+<div>browser <span>managed</span></div>
+<div>preview <span>isolated</span></div>
 </div>
 </div>
 </article>
@@ -128,32 +129,27 @@ instead of secret notes.
 <div class="vibe-faq-list">
 <details class="vibe-faq-item" open>
 <summary>Is Vibe64 free?</summary>
-<p>Yes. It is open source. You may still pay for your own AI provider, GitHub, hosting, or servers, but Vibe64 is not asking you to buy a bigger plan to unlock basic development habits.</p>
-</details>
-
-<details class="vibe-faq-item">
-<summary>What are Vibe64 credits?</summary>
-<p>There are no Vibe64 credits. We are not inventing a pretend currency for running tools in your own project. If an AI provider or cloud service has limits, those limits belong to that service.</p>
+<p>Yes. It is open source. Your AI provider, Git host, hosting provider, or other services may still have their own costs and limits.</p>
 </details>
 
 <details class="vibe-faq-item">
 <summary>Does Vibe64 replace developers?</summary>
-<p>No. It gives AI a better place to work and gives developers a better way to review the result. You still decide what matters, what is correct, and what is worth shipping.</p>
+<p>No. It gives an agent better context and a safer place to work. People still decide what is intended, what is correct, and what should ship.</p>
 </details>
 
 <details class="vibe-faq-item">
-<summary>Is this no-code?</summary>
-<p>No. Vibe64 is for people building real software. It helps AI follow Git, project tools, checks, reviews, and release practices instead of pretending hard engineering decisions disappeared.</p>
+<summary>Does it replace Git, Codex, or my framework?</summary>
+<p>No. Vibe64 coordinates Git and the coding agent you use. Genesis supplies portable project context. Your source, framework, tools, and tests remain the application.</p>
 </details>
 
 <details class="vibe-faq-item">
 <summary>What happens when the AI gets it wrong?</summary>
-<p>That is exactly why Vibe64 exists. The work starts somewhere safe, gets checked, and can be fixed or thrown away before it damages the real project.</p>
+<p>The work remains isolated. Review the diff and evidence, ask for another change, or discard the session without declaring the mistake to be intended behavior.</p>
 </details>
 
 <details class="vibe-faq-item">
 <summary>Will it work with my stack?</summary>
-<p>If Vibe64 understands your project type, it can give the AI better instructions right away. If it does not, the open source answer is simple: add an adapter, ask for one, or help make the existing one better.</p>
+<p>A blank Genesis project assumes no technology. Select the Stack components that describe the project, or adopt an existing codebase and add them later. Vibe64 does not require a fixed project-type adapter.</p>
 </details>
 </div>
 </div>

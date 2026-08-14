@@ -22,17 +22,6 @@
           >
             Refresh
           </v-btn>
-          <v-btn
-            :disabled="envUnavailable"
-            :loading="materializeBusy"
-            color="primary"
-            size="small"
-            type="button"
-            variant="flat"
-            @click="materialize"
-          >
-            Regenerate
-          </v-btn>
         </template>
         <slot
           name="tab-actions"
@@ -81,60 +70,6 @@
         Missing {{ environmentLabel }} value(s): {{ missingRecords.map((record) => record.key).join(", ") }}
       </v-alert>
 
-      <section v-if="!envUnavailable" class="env-panel__sync">
-        <div class="env-panel__section-heading">
-          <div>
-            <h2>Generated files</h2>
-            <p>
-              Adapter {{ env.adapterId || "none" }}
-            </p>
-          </div>
-          <v-chip
-            :color="syncStatusColor"
-            size="x-small"
-            variant="tonal"
-          >
-            {{ syncState.synced ? "synced" : "needs sync" }}
-          </v-chip>
-        </div>
-        <v-table density="compact">
-          <thead>
-            <tr>
-              <th>Root</th>
-              <th>Target</th>
-              <th>Status</th>
-              <th>Last generated</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="root in syncRoots" :key="rootStatusKey(root)">
-              <tr v-for="target in root.targets" :key="`${rootStatusKey(root)}:${target.relativePath}`">
-                <td>
-                  <div class="env-panel__root">
-                    <strong>{{ root.label || root.rootKind }}</strong>
-                    <span>{{ root.path }}</span>
-                  </div>
-                </td>
-                <td>{{ target.relativePath }}</td>
-                <td>
-                  <v-chip
-                    :color="targetStatusColor(target.status)"
-                    size="x-small"
-                    variant="tonal"
-                  >
-                    {{ target.status }}
-                  </v-chip>
-                </td>
-                <td>{{ generatedAtLabel(target.generatedAt) }}</td>
-              </tr>
-            </template>
-            <tr v-if="syncRowsEmpty">
-              <td colspan="4">No generated file targets for {{ environmentLabel }}.</td>
-            </tr>
-          </tbody>
-        </v-table>
-      </section>
-
       <section v-if="expectedMissingRecords.length" class="env-panel__expected">
         <div class="env-panel__section-heading env-panel__section-heading--inline">
           <h2>Expected user values</h2>
@@ -176,7 +111,6 @@
         />
         <v-checkbox
           v-model="newValue.secret"
-          :disabled="newValueKeyPublic"
           density="compact"
           hide-details
           label="Secret"
@@ -197,7 +131,6 @@
         editable-empty-text="No user Env values."
         editable-title="User values"
         :environment-label="environmentLabel"
-        :public-env-prefixes="publicEnvPrefixes"
         :records="records"
         :save-busy="saveBusy"
         system-title="System values"
@@ -214,10 +147,10 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import RuntimeConfigRecordsView from "@/components/studio/RuntimeConfigRecordsView.vue";
 import {
@@ -225,10 +158,8 @@ import {
 } from "@/lib/vibe64RequestConfig.js";
 import {
   ENV_ENDPOINT,
-  ENV_MATERIALIZE_ENDPOINT,
   ENV_USER_VALUES_ENDPOINT,
   VIBE64_PROJECT_CHANGED_EVENT,
-  VIBE64_ENV_MATERIALIZE_API_SUFFIX,
   VIBE64_ENV_USER_VALUES_API_SUFFIX,
   envQueryKey
 } from "@/lib/studioGateApi.js";
@@ -293,28 +224,6 @@ const saveCommand = useCommand({
   writeMethod: "PUT"
 });
 
-const materializeCommand = useCommand({
-  access: "never",
-  apiSuffix: VIBE64_ENV_MATERIALIZE_API_SUFFIX,
-  buildCommandOptions: () => ({
-    method: "POST",
-    path: ENV_MATERIALIZE_ENDPOINT
-  }),
-  buildRawPayload: () => ({
-    environment: PROJECT_ENVIRONMENT,
-    ...(selectedSessionId.value ? { sessionId: selectedSessionId.value } : {})
-  }),
-  fallbackRunError: "Env files could not be regenerated.",
-  messages: {
-    error: "Env files could not be regenerated.",
-    success: "Env files regenerated."
-  },
-  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-  placementSource: "vibe64.env.materialize",
-  surfaceId: VIBE64_SURFACE_ID,
-  writeMethod: "POST"
-});
-
 const env = computed(() => envResource.data.value?.env || {});
 const envConfigSourceLabel = computed(() => String(env.value?.configSource?.label || ""));
 const envLoading = computed(() => envResource.isLoading.value === true);
@@ -322,35 +231,14 @@ const envLoadError = computed(() => String(envResource.loadError.value || ""));
 const envUnavailable = computed(() => Boolean(env.value?.unavailable));
 const envUnavailableMessage = computed(() => String(
   env.value?.unavailable?.message ||
-  "Committed Vibe64 project config is unavailable. Finish setup in a source session and commit vibe64.project.json."
+  "Project Env is unavailable. Fix the project configuration and try again."
 ));
-const materializeBusy = computed(() => materializeCommand.isRunning === true);
 const saveBusy = computed(() => saveCommand.isRunning === true);
 const projectEnvTabActive = computed(() => activeTab.value === PROJECT_ENV_TAB);
 const records = computed(() => Array.isArray(env.value?.records) ? env.value.records : []);
 const missingRecords = computed(() => records.value.filter(recordMissing));
 const expectedMissingRecords = computed(() => missingRecords.value.filter(recordEditable));
-const publicEnvPrefixes = computed(() => Array.isArray(env.value?.publicEnvPrefixes) ? env.value.publicEnvPrefixes : []);
-const syncState = computed(() => env.value?.generatedFiles || {
-  activeSessionSources: [],
-  lastGeneratedAt: "",
-  roots: [],
-  synced: false
-});
-const syncRoots = computed(() => syncState.value.roots || []);
-const syncRowsEmpty = computed(() => syncRoots.value.every((root) => !Array.isArray(root.targets) || root.targets.length === 0));
-const syncStatusColor = computed(() => syncState.value.synced ? "success" : "warning");
 const environmentLabel = PROJECT_ENVIRONMENT_LABEL;
-const newValueKeyPublic = computed(() => keyIsPublic(newValue.value.key));
-
-watch(newValueKeyPublic, (isPublic) => {
-  if (isPublic && newValue.value.secret) {
-    newValue.value = {
-      ...newValue.value,
-      secret: false
-    };
-  }
-});
 
 function emptyNewValue() {
   return {
@@ -358,37 +246,6 @@ function emptyNewValue() {
     secret: true,
     value: ""
   };
-}
-
-function targetStatusColor(status = "") {
-  if (status === "synced") {
-    return "success";
-  }
-  if (status === "missing" || status === "stale") {
-    return "warning";
-  }
-  return "error";
-}
-
-function generatedAtLabel(value = "") {
-  const text = String(value || "").trim();
-  if (!text) {
-    return "never";
-  }
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
-    return text;
-  }
-  return date.toLocaleString();
-}
-
-function rootStatusKey(root = {}) {
-  return `${root.rootKind || "root"}:${root.sessionId || ""}:${root.path || ""}`;
-}
-
-function keyIsPublic(key = "") {
-  const text = String(key || "").trim();
-  return Boolean(text) && publicEnvPrefixes.value.some((prefix) => text.startsWith(prefix));
 }
 
 function recordEditable(record = {}) {
@@ -407,7 +264,7 @@ function selectExpectedRecord(record = {}) {
   }
   newValue.value = {
     key,
-    secret: record.secret === true && !keyIsPublic(key),
+    secret: record.secret === true,
     value: ""
   };
 }
@@ -449,7 +306,7 @@ async function saveNewValue() {
   }
   await saveValues({
     [key]: {
-      secret: newValue.value.secret === true && !keyIsPublic(key),
+      secret: newValue.value.secret === true,
       value: newValue.value.value
     }
   });
@@ -460,11 +317,6 @@ async function saveValues(values = {}) {
   await saveCommand.run({
     values
   });
-  await envResource.reload();
-}
-
-async function materialize() {
-  await materializeCommand.run({});
   await envResource.reload();
 }
 
@@ -522,8 +374,7 @@ function reloadPage() {
   border-radius: 8px;
 }
 
-.env-panel__expected,
-.env-panel__sync {
+.env-panel__expected {
   border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
   border-radius: 8px;
 }
@@ -538,8 +389,7 @@ function reloadPage() {
   padding: 0.75rem;
 }
 
-.env-panel__expected,
-.env-panel__sync {
+.env-panel__expected {
   display: grid;
   gap: 0.5rem;
   min-width: 0;
@@ -563,30 +413,6 @@ function reloadPage() {
   font-weight: 700;
   letter-spacing: 0;
   margin: 0;
-}
-
-.env-panel__section-heading p {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.78rem;
-  margin: 0.1rem 0 0;
-}
-
-.env-panel__root {
-  display: grid;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.env-panel__root strong {
-  font-size: 0.86rem;
-}
-
-.env-panel__root span {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.76rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .env-panel__expected-keys {

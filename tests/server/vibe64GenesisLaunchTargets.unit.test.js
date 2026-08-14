@@ -1,0 +1,221 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  createGenesisLaunchTargetTerminalSpec,
+  genesisLaunchCommand,
+  genesisLaunchDescriptor,
+  genesisRuntimePacks,
+  listGenesisLaunchTargets
+} from "../../packages/vibe64-terminals/src/server/genesisLaunchTargets.js";
+
+function launchInspection(targets = []) {
+  return {
+    components: ["unit"],
+    diagnostics: [],
+    resources: [],
+    runtimeRequirements: [...new Set(targets.flatMap((target) => target.runtimeRequirements || []))],
+    stackHash: "sha256:unit",
+    status: targets.length ? "ready" : "unconfigured",
+    targets
+  };
+}
+
+function launchTarget(overrides = {}) {
+  return {
+    available: true,
+    default: true,
+    disabledReason: null,
+    id: "app",
+    label: "Run app",
+    preferredPort: 49000 + crypto.randomInt(500),
+    runtimeRequirements: ["nodejs"],
+    source: "project",
+    steps: [{
+      argv: ["npm", "run", "dev", "--", "--host={host}", "--port={port}"],
+      label: "Start app",
+      role: "server"
+    }],
+    urlPath: "/catalogue",
+    workdir: ".",
+    ...overrides
+  };
+}
+
+async function launchContext(t) {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-launch-"));
+  t.after(() => rm(projectRoot, {
+    force: true,
+    recursive: true
+  }));
+  const sourceRoot = path.join(projectRoot, "source");
+  await mkdir(sourceRoot, {
+    recursive: true
+  });
+  return {
+    runtime: {
+      adapter: null,
+      promptEnvironment: {
+        DB_PASSWORD: "do-not-return-this"
+      }
+    },
+    session: {
+      metadata: {
+        source_path: sourceRoot
+      },
+      sessionId: "session-unit",
+      sessionRoot: path.join(projectRoot, "state", "session-unit"),
+      targetRoot: sourceRoot
+    },
+    targetRoot: sourceRoot
+  };
+}
+
+test("Genesis abstract runtimes map only through Vibe64-owned pinned packs", () => {
+  assert.deepEqual(genesisRuntimePacks(["nodejs", "php", "composer"]), {
+    available: true,
+    disabledReason: "",
+    runtimes: ["node26", "php", "composer"],
+    unsupported: []
+  });
+  assert.deepEqual(genesisRuntimePacks(["future-runtime"]), {
+    available: false,
+    disabledReason: "Vibe64 does not provide a pinned runtime for: future-runtime.",
+    runtimes: [],
+    unsupported: ["future-runtime"]
+  });
+  assert.deepEqual(genesisRuntimePacks(["playwright"]).runtimes, ["playwright"]);
+});
+
+test("Genesis launch argv substitution remains shell-safe", () => {
+  assert.equal(
+    genesisLaunchCommand([
+      "tool",
+      "--host={host}",
+      "--port",
+      "{port}",
+      "$(touch /tmp/not-run)",
+      "it's-safe"
+    ], {
+      host: "127.0.0.1",
+      port: 4123
+    }),
+    "tool --host=127.0.0.1 --port 4123 '$(touch /tmp/not-run)' 'it'\\''s-safe'"
+  );
+});
+
+test("Genesis launch descriptors pass preview identity capabilities through unchanged", () => {
+  const previewIdentity = {
+    command: [".vibe64/preview-identity"],
+    identityTypes: ["user"]
+  };
+  const descriptor = genesisLaunchDescriptor(launchTarget({
+    previewIdentity
+  }), {
+    port: 4123,
+    worktreePath: "/tmp/vibe64-genesis-launch"
+  });
+
+  assert.equal(descriptor.previewIdentity, previewIdentity);
+});
+
+test("neutral sessions list explicit Genesis targets without exposing resource values", async (t) => {
+  const context = await launchContext(t);
+  let received = null;
+  const targets = await listGenesisLaunchTargets(context, {
+    inspect(input) {
+      received = input;
+      return launchInspection([
+        launchTarget(),
+        launchTarget({
+          available: false,
+          default: false,
+          disabledReason: "MySQL needs one of: DB_PASSWORD.",
+          id: "blocked",
+          label: "Blocked app"
+        })
+      ]);
+    }
+  });
+
+  assert.equal(received.projectRoot, context.session.targetRoot);
+  assert.equal(received.environment.DB_PASSWORD, "do-not-return-this");
+  assert.deepEqual(targets, [{
+    available: true,
+    defaultPreview: true,
+    disabledReason: "",
+    id: "app",
+    label: "Run app"
+  }, {
+    available: false,
+    disabledReason: "MySQL needs one of: DB_PASSWORD.",
+    id: "blocked",
+    label: "Blocked app"
+  }]);
+  assert.doesNotMatch(JSON.stringify(targets), /do-not-return-this/u);
+});
+
+test("neutral sessions translate Genesis targets through the existing Vibe64 preview terminal", async (t) => {
+  const context = await launchContext(t);
+  const sourceSubdirectory = path.join(context.session.targetRoot, "web");
+  await mkdir(sourceSubdirectory);
+  const target = launchTarget({
+    steps: [{
+      argv: ["npm", "run", "prepare"],
+      label: "Prepare app",
+      role: "prepare"
+    }, {
+      argv: ["npm", "run", "dev", "--", "--host={host}", "--port={port}"],
+      label: "Start app",
+      role: "server"
+    }],
+    workdir: "web"
+  });
+  const spec = await createGenesisLaunchTargetTerminalSpec({
+    context,
+    launchTargetId: target.id
+  }, {
+    inspect: () => launchInspection([target])
+  });
+  t.after(() => spec.releasePortReservation?.());
+
+  assert.equal(spec.ok, true);
+  assert.equal(spec.cwd, sourceSubdirectory);
+  assert.deepEqual(spec.runtimes, ["node26"]);
+  assert.equal(spec.metadata.genesisLaunchSource, "project");
+  assert.equal(spec.metadata.urlPath, "/catalogue");
+  assert.match(spec.commandPreview, /npm run prepare/u);
+  assert.match(spec.commandPreview, /--host=127\.0\.0\.1/u);
+  assert.match(spec.commandPreview, new RegExp(`--port=${spec.metadata.port}`, "u"));
+  assert.match(spec.args().join(" "), /VIBE64_LAUNCH_READY_V1/u);
+});
+
+test("unsupported Genesis runtimes disable a target before terminal creation", async (t) => {
+  const context = await launchContext(t);
+  const target = launchTarget({
+    runtimeRequirements: ["future-runtime"]
+  });
+
+  assert.deepEqual(await listGenesisLaunchTargets(context, {
+    inspect: () => launchInspection([target])
+  }), [{
+    available: false,
+    defaultPreview: true,
+    disabledReason: "Vibe64 does not provide a pinned runtime for: future-runtime.",
+    id: "app",
+    label: "Run app"
+  }]);
+  assert.deepEqual(await createGenesisLaunchTargetTerminalSpec({
+    context,
+    launchTargetId: target.id
+  }, {
+    inspect: () => launchInspection([target])
+  }), {
+    ok: false,
+    message: "Vibe64 does not provide a pinned runtime for: future-runtime."
+  });
+});

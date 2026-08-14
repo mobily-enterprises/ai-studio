@@ -1,8 +1,0 @@
-{{systemStandard}}
-
-Prepare the Vinext pull request for merge.
-
-Vinext-specific merge-preparation guidance:
-- Use the recorded PR URL and inspect only what is needed to decide whether the Vinext work is mergeable.
-- Resolve local merge blockers, failing focused checks, migration issues, routing/runtime boundary problems, or compatibility drift when they are clearly in scope.
-- Report whether the PR is ready and which Vinext checks or risks remain.

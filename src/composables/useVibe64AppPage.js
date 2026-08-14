@@ -7,7 +7,7 @@ import {
 } from "@mdi/js";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useStudioShellDrawer } from "@/composables/useStudioShellDrawer.js";
 import {
   useVibe64ProjectsResource
@@ -54,7 +54,7 @@ function useVibe64AppPage() {
   const pageError = ref("");
   const chatCollapsed = ref(false);
   const mobilePaneLayout = ref(false);
-  const savedProjectTypeReady = ref(false);
+  const savedProjectFoundationReady = ref(false);
   const projectPaneNavigationReadySlug = ref("");
   const lastDashboardRoutePath = ref("");
   let mobilePaneMediaQuery = null;
@@ -143,8 +143,8 @@ function useVibe64AppPage() {
         }
   ));
   const projectPaneNavigationVisible = computed(() => projectPaneNavigationReady({
+    foundationReady: savedProjectFoundationReady.value,
     projectSlug: projectSlug.value,
-    projectTypeReady: savedProjectTypeReady.value,
     readyProjectSlug: projectPaneNavigationReadySlug.value
   }));
   const mobileProjectActionVisible = computed(() => projectPaneNavigationVisible.value && mobilePaneLayout.value && chatCollapsed.value);
@@ -247,9 +247,9 @@ function useVibe64AppPage() {
     handleProjectSelectionError,
     handleProjectSelectionMissing,
     handleProjectSelectionReady,
-    handleProjectTypeError,
-    handleProjectTypeMissing,
-    handleProjectTypeReady,
+    handleProjectFoundationError,
+    handleProjectFoundationMissing,
+    handleProjectFoundationReady,
     mdiChevronDown,
     mdiChevronRight,
     mobileProjectAction,
@@ -423,7 +423,7 @@ function useVibe64AppPage() {
     mobilePaneLayout.value = Boolean(mobilePaneMediaQuery?.matches);
   }
 
-  function handleProjectTypeReady() {
+  function handleProjectFoundationReady() {
     pageError.value = "";
     setProjectPaneNavigationReady(true);
   }
@@ -449,20 +449,20 @@ function useVibe64AppPage() {
     emitPageTitle();
   }
 
-  function handleProjectTypeMissing(project = {}) {
+  function handleProjectFoundationMissing() {
     pageError.value = "";
-    setProjectPaneNavigationReady(project?.projectType?.ready === true);
-    emitPageTitle(project?.projectType?.ready === true ? "Project setup" : "Choose project type");
+    setProjectPaneNavigationReady(false);
+    emitPageTitle("Choose project foundation");
   }
 
-  function handleProjectTypeError(error) {
+  function handleProjectFoundationError(error) {
     pageError.value = String(error || "");
     setProjectPaneNavigationReady(false);
     emitPageTitle();
   }
 
   function setProjectPaneNavigationReady(ready = false) {
-    savedProjectTypeReady.value = Boolean(ready);
+    savedProjectFoundationReady.value = Boolean(ready);
     projectPaneNavigationReadySlug.value = ready ? projectSlug.value : "";
   }
 }
@@ -539,13 +539,13 @@ function dashboardReturnPath({
 }
 
 function projectPaneNavigationReady({
+  foundationReady = false,
   projectSlug = "",
-  projectTypeReady = false,
   readyProjectSlug = ""
 } = {}) {
   const currentSlug = String(projectSlug || "").trim();
   return Boolean(
-    projectTypeReady &&
+    foundationReady &&
     currentSlug &&
     String(readyProjectSlug || "").trim() === currentSlug
   );

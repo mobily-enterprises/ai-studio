@@ -9,13 +9,10 @@ import {
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
   codexTerminalNamespace,
-  commandTerminalNamespace,
-  fixCodexTerminalNamespace,
   globalCodexTerminalNamespace,
   launchTargetTerminalNamespace,
   sessionTerminalCwd,
-  terminalTargetRoot,
-  toolTerminalNamespace
+  terminalTargetRoot
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
 
 test("Vibe64 terminal namespaces include the active project scope", async () => {
@@ -26,11 +23,8 @@ test("Vibe64 terminal namespaces include the active project scope", async () => 
     targetRoot: "/tmp/vibe64/alpha_1"
   }, () => ({
     codex: codexTerminalNamespace("session-1"),
-    command: commandTerminalNamespace("session-1"),
-    fix: fixCodexTerminalNamespace("job-1"),
     globalCodex: globalCodexTerminalNamespace(),
-    launch: launchTargetTerminalNamespace("session-1"),
-    tool: toolTerminalNamespace("doctor")
+    launch: launchTargetTerminalNamespace("session-1")
   }));
 
   const beta = await runWithProjectRequestContext({
@@ -38,26 +32,17 @@ test("Vibe64 terminal namespaces include the active project scope", async () => 
     targetRoot: "/tmp/vibe64/beta-2"
   }, () => ({
     codex: codexTerminalNamespace("session-1"),
-    command: commandTerminalNamespace("session-1"),
-    fix: fixCodexTerminalNamespace("job-1"),
     globalCodex: globalCodexTerminalNamespace(),
-    launch: launchTargetTerminalNamespace("session-1"),
-    tool: toolTerminalNamespace("doctor")
+    launch: launchTargetTerminalNamespace("session-1")
   }));
 
   assert.equal(globalNamespace, "vibe64-codex:global:session-1");
   assert.equal(alpha.codex, "vibe64-codex:project:alpha_1:session-1");
-  assert.equal(alpha.command, "vibe64-command:project:alpha_1:session-1");
-  assert.equal(alpha.fix, "vibe64-fix-codex:project:alpha_1:job-1");
   assert.equal(alpha.globalCodex, "vibe64-global-codex:project:alpha_1");
   assert.equal(alpha.launch, "vibe64-launch-target:project:alpha_1:session-1");
-  assert.equal(alpha.tool, "vibe64-tool:project:alpha_1:doctor");
   assert.notEqual(alpha.codex, beta.codex);
-  assert.notEqual(alpha.command, beta.command);
-  assert.notEqual(alpha.fix, beta.fix);
   assert.notEqual(alpha.globalCodex, beta.globalCodex);
   assert.notEqual(alpha.launch, beta.launch);
-  assert.notEqual(alpha.tool, beta.tool);
 });
 
 test("Vibe64 terminal roots prefer the selected session source path", () => {

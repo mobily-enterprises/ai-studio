@@ -421,7 +421,7 @@ const props = defineProps({
     type: String
   },
   continueLabel: {
-    default: "Continue to Project Setup",
+    default: "Continue",
     type: String
   },
   lede: {

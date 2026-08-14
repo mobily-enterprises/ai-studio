@@ -290,7 +290,7 @@ test("execution gateway gives detached Codex app-server commands the shared brow
       runtimes: ["node26", "git", "playwright"],
       session: {
         metadata: {
-          workflow_driver_username: "merc"
+          session_git_command_actor_user_key: "merc"
         },
         sessionId: "session-1",
         targetRoot: tempDir
@@ -746,7 +746,7 @@ test("execution gateway project env policy does not inherit session database env
         DB_PASSWORD: "session-secret"
       }
     },
-    purpose: "setup"
+    purpose: "source"
   });
 
   assert.equal(result.ok, true, result.output);
@@ -766,7 +766,7 @@ test("execution gateway gives setup commands session secrets only with session e
     args,
     command: process.execPath,
     envPolicy: "project",
-    purpose: "setup",
+    purpose: "source",
     session: {
       databaseEnv: {
         DB_NAME: "session_only_db",
@@ -778,7 +778,7 @@ test("execution gateway gives setup commands session secrets only with session e
     args,
     command: process.execPath,
     envPolicy: "session",
-    purpose: "setup",
+    purpose: "source",
     session: {
       databaseEnv: {
         DB_NAME: "session_only_db",
@@ -799,13 +799,12 @@ test("execution gateway gives setup commands session secrets only with session e
   });
 });
 
-test("execution gateway resolves project and runtime config env records centrally", async () => {
+test("execution gateway resolves project Env records and database aliases centrally", async () => {
   const result = await runVibe64Command({
     args: [
       "-e",
       [
         "console.log(JSON.stringify({",
-        "manifest: process.env.VIBE64_PROJECT_MANIFEST,",
         "publicUrl: process.env.APP_PUBLIC_URL,",
         "db: process.env.DB_NAME,",
         "mysql: process.env.MYSQL_DATABASE,",
@@ -818,9 +817,6 @@ test("execution gateway resolves project and runtime config env records centrall
     command: process.execPath,
     envPolicy: "project",
     project: {
-      configEnv: {
-        VIBE64_PROJECT_MANIFEST: "/workspace/vibe64.project.json"
-      },
       runtimeConfigEnv: {
         APP_PUBLIC_URL: "http://localhost:3000",
         DB_CLIENT: "mysql2",
@@ -836,7 +832,6 @@ test("execution gateway resolves project and runtime config env records centrall
   assert.deepEqual(JSON.parse(result.stdout), {
     browsers: "/opt/vibe64/runtime-packs/playwright/browsers",
     db: "sas_compas_next",
-    manifest: "/workspace/vibe64.project.json",
     mysql: "sas_compas_next",
     mysqlHost: "127.0.0.1",
     mysqlPassword: "runtime-secret",

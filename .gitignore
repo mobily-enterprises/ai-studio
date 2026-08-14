@@ -5,10 +5,6 @@ test-results/
 *.sw?
 .vibe64-local/
 .ai[-]studio/sessions/
-.jskit/WORKBOARD.md
-.jskit/verification/
-.jskit/config/devel_*
-.jskit/config/devel_sibling_roots/
 .env
 .env.*
 !.env.example

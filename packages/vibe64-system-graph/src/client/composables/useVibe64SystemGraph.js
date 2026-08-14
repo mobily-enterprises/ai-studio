@@ -1,25 +1,12 @@
 import {
   computed,
-  nextTick,
-  onBeforeUnmount,
-  ref,
-  unref,
-  watch
+  unref
 } from "vue";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 
 const SYSTEM_GRAPH_API_SUFFIX = "/vibe64/system-graph";
 const SYSTEM_GRAPH_SURFACE = "app";
-const UPDATE_EVENT_TYPES = Object.freeze([
-  "system-update.started",
-  "system-update.analysis-started",
-  "system-update.source-raced",
-  "system-update.writing",
-  "system-update.completed",
-  "system-update.failed",
-  "system-update.stream-failed"
-]);
 
 function encodeSegment(value = "") {
   return encodeURIComponent(String(value || "").trim());
@@ -29,23 +16,19 @@ function systemSessionPath(apiPath = "", sessionId = "", suffix = "") {
   return `${apiPath}/sessions/${encodeSegment(sessionId)}${suffix}`;
 }
 
-function systemQueryKey(sessionId = "", resource = "", key = "") {
-  return ["vibe64", "system-graph", String(sessionId || ""), resource, String(key || "")];
+function systemQueryKey(sessionId = "", resource = "") {
+  return ["vibe64", "system-graph", String(sessionId || ""), resource];
+}
+
+function cityAvailable(status = {}, kind = "") {
+  return status?.cities?.[kind]?.available === true;
 }
 
 function useVibe64SystemGraph({
   active = true,
-  resolveRequestUrl = (value) => value,
   sessionId = ""
 } = {}) {
   const paths = usePaths();
-  const selectedEntityKey = ref("");
-  const selectedFileKey = ref("");
-  const updateEvents = ref([]);
-  const updateId = ref("");
-  const updateStreamError = ref("");
-  let updateEventSource = null;
-
   const normalizedSessionId = computed(() => String(unref(sessionId) || "").trim());
   const enabled = computed(() => Boolean(unref(active) && normalizedSessionId.value));
   const apiPath = computed(() => paths.api(SYSTEM_GRAPH_API_SUFFIX, {
@@ -55,275 +38,86 @@ function useVibe64SystemGraph({
 
   const statusResource = useEndpointResource({
     enabled,
-    fallbackLoadError: "System status could not be loaded.",
+    fallbackLoadError: "Genesis City status could not be loaded.",
     path: computed(() => enabled.value ? `${sessionPath.value}/status` : ""),
     queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "status")),
-    requestRecoveryLabel: "System status"
+    requestRecoveryLabel: "Genesis City status"
   });
   const systemStatus = computed(() => statusResource.data.value || {});
-  const modelAvailable = computed(() => Boolean(
-    enabled.value &&
-    systemStatus.value.documentExists === true &&
-    ["current", "stale", "updating"].includes(systemStatus.value.status)
-  ));
+  const machineEnabled = computed(() => enabled.value && cityAvailable(systemStatus.value, "machine"));
+  const programEnabled = computed(() => enabled.value && cityAvailable(systemStatus.value, "program"));
 
-  const overviewResource = useEndpointResource({
-    enabled: modelAvailable,
-    fallbackLoadError: "System world could not be loaded.",
-    path: computed(() => modelAvailable.value ? `${sessionPath.value}/overview` : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "overview")),
-    requestRecoveryLabel: "System world"
+  const machineResource = useEndpointResource({
+    enabled: machineEnabled,
+    fallbackLoadError: "Machine City could not be loaded.",
+    path: computed(() => machineEnabled.value ? `${sessionPath.value}/cities/machine` : ""),
+    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "machine-city")),
+    requestRecoveryLabel: "Machine City"
   });
-  const findingsResource = useEndpointResource({
-    enabled: modelAvailable,
-    fallbackLoadError: "System findings could not be loaded.",
-    path: computed(() => modelAvailable.value ? `${sessionPath.value}/findings` : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "findings")),
-    requestRecoveryLabel: "System findings"
+  const programResource = useEndpointResource({
+    enabled: programEnabled,
+    fallbackLoadError: "Program City could not be loaded.",
+    path: computed(() => programEnabled.value ? `${sessionPath.value}/cities/program` : ""),
+    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "program-city")),
+    requestRecoveryLabel: "Program City"
   });
-  const entityResource = useEndpointResource({
+  const refreshResource = useEndpointResource({
     enabled: false,
-    fallbackLoadError: "System entity details could not be loaded.",
-    path: computed(() => selectedEntityKey.value
-      ? `${sessionPath.value}/entities/${encodeSegment(selectedEntityKey.value)}`
-      : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "entity", selectedEntityKey.value)),
-    requestRecoveryLabel: "System entity"
-  });
-  const evidenceResource = useEndpointResource({
-    enabled: false,
-    fallbackLoadError: "System evidence could not be loaded.",
-    path: computed(() => selectedEntityKey.value
-      ? `${sessionPath.value}/entities/${encodeSegment(selectedEntityKey.value)}/evidence`
-      : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "evidence", selectedEntityKey.value)),
-    requestRecoveryLabel: "System evidence"
-  });
-  const constellationResource = useEndpointResource({
-    enabled: false,
-    fallbackLoadError: "File constellation could not be loaded.",
-    path: computed(() => selectedFileKey.value
-      ? `${sessionPath.value}/files/${encodeSegment(selectedFileKey.value)}/constellation`
-      : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "constellation", selectedFileKey.value)),
-    requestRecoveryLabel: "File constellation"
-  });
-  const updateResource = useEndpointResource({
-    enabled: false,
-    fallbackSaveError: "System update could not be started.",
-    path: computed(() => enabled.value ? `${sessionPath.value}/updates` : ""),
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "update")),
-    requestRecoveryLabel: "Update System",
-    writeMethod: "POST"
-  });
-  const acceptanceResource = useEndpointResource({
-    enabled: false,
-    fallbackSaveError: "Finding acceptance could not be saved.",
-    path: "",
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "finding-acceptance")),
-    requestRecoveryLabel: "Finding acceptance",
-    writeMethod: "POST"
-  });
-  const subsystemDepthResource = useEndpointResource({
-    enabled: false,
-    fallbackSaveError: "Subsystem stratum could not be saved.",
-    path: "",
-    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "subsystem-depth")),
-    requestRecoveryLabel: "Subsystem stratum",
+    fallbackSaveError: "Genesis Cities could not be refreshed.",
+    path: computed(() => enabled.value ? `${sessionPath.value}/refresh` : ""),
+    queryKey: computed(() => systemQueryKey(normalizedSessionId.value, "refresh")),
+    requestRecoveryLabel: "Refresh Genesis Cities",
     writeMethod: "POST"
   });
 
-  const overview = computed(() => overviewResource.data.value?.overview || null);
-  const findings = computed(() => findingsResource.data.value?.findings || []);
-  const selectedEntity = computed(() => entityResource.data.value?.details || null);
-  const selectedEvidence = computed(() => evidenceResource.data.value?.evidence || null);
-  const fileConstellation = computed(() => constellationResource.data.value?.constellation || null);
-  const updating = computed(() => Boolean(
-    updateResource.isSaving.value ||
-    systemStatus.value.status === "updating" ||
-    (updateId.value && !updateEvents.value.some((event) => (
-      event.type === "system-update.completed" || event.type.endsWith("failed")
-    )))
+  const machineCity = computed(() => machineResource.data.value?.city || null);
+  const programCity = computed(() => programResource.data.value?.city || null);
+  const loading = computed(() => Boolean(
+    statusResource.isLoading.value ||
+    machineResource.isLoading.value ||
+    programResource.isLoading.value
   ));
   const error = computed(() => (
-    updateStreamError.value ||
-    subsystemDepthResource.saveError.value ||
-    updateResource.saveError.value ||
+    refreshResource.saveError.value ||
     statusResource.loadError.value ||
-    overviewResource.loadError.value ||
-    findingsResource.loadError.value ||
-    entityResource.loadError.value ||
-    constellationResource.loadError.value ||
+    machineResource.loadError.value ||
+    programResource.loadError.value ||
     ""
   ));
 
-  function closeUpdateStream() {
-    updateEventSource?.close?.();
-    updateEventSource = null;
-  }
-
-  async function reloadCurrentModel() {
+  async function reload() {
     await statusResource.reload();
-    if (modelAvailable.value) {
-      await Promise.all([
-        overviewResource.reload(),
-        findingsResource.reload()
-      ]);
+    const cityLoads = [];
+    if (cityAvailable(systemStatus.value, "machine")) {
+      cityLoads.push(machineResource.reload());
     }
+    if (cityAvailable(systemStatus.value, "program")) {
+      cityLoads.push(programResource.reload());
+    }
+    await Promise.all(cityLoads);
   }
 
-  function recordUpdateEvent(event) {
-    let payload = {};
-    try {
-      payload = JSON.parse(String(event.data || "{}"));
-    } catch {
-      payload = {
-        type: event.type || "system-update.stream-failed",
-        error: {
-          message: "System update returned an invalid progress event."
-        }
-      };
-    }
-    updateEvents.value = [...updateEvents.value, payload].slice(-100);
-    if (payload.type === "system-update.completed") {
-      closeUpdateStream();
-      void reloadCurrentModel();
-    } else if (payload.type?.endsWith("failed")) {
-      updateStreamError.value = payload.error?.message || "System update failed.";
-      closeUpdateStream();
-      void statusResource.reload();
-    }
+  async function refresh() {
+    const result = await refreshResource.save({}, { method: "POST" });
+    await reload();
+    return result;
   }
-
-  function openUpdateStream(nextUpdateId) {
-    closeUpdateStream();
-    if (typeof EventSource !== "function") {
-      updateStreamError.value = "Live update progress is unavailable in this browser.";
-      return;
-    }
-    const streamPath = `${sessionPath.value}/updates/${encodeSegment(nextUpdateId)}/stream`;
-    updateEventSource = new EventSource(resolveRequestUrl(streamPath));
-    for (const eventType of UPDATE_EVENT_TYPES) {
-      updateEventSource.addEventListener(eventType, recordUpdateEvent);
-    }
-    updateEventSource.onerror = () => {
-      if (!updateEvents.value.some((event) => event.type === "system-update.completed")) {
-        updateStreamError.value = "The System update progress stream disconnected.";
-      }
-      closeUpdateStream();
-      void statusResource.reload();
-    };
-  }
-
-  async function startUpdate() {
-    updateEvents.value = [];
-    updateStreamError.value = "";
-    const response = await updateResource.save({}, {
-      method: "POST"
-    });
-    const nextUpdateId = String(response?.update?.updateId || "");
-    updateId.value = nextUpdateId;
-    if (nextUpdateId) {
-      openUpdateStream(nextUpdateId);
-    }
-    await statusResource.reload();
-    return response;
-  }
-
-  async function selectEntity(entityKey = "", { includeEvidence = false } = {}) {
-    selectedEntityKey.value = String(entityKey || "").trim();
-    if (!selectedEntityKey.value) {
-      return null;
-    }
-    await nextTick();
-    const detailResult = await entityResource.reload();
-    if (includeEvidence) {
-      await evidenceResource.reload();
-    }
-    return detailResult?.data || entityResource.data.value || null;
-  }
-
-  async function loadEntityEvidence() {
-    if (!selectedEntityKey.value) {
-      return null;
-    }
-    const result = await evidenceResource.reload();
-    return result?.data || evidenceResource.data.value || null;
-  }
-
-  async function selectFile(fileKey = "") {
-    selectedFileKey.value = String(fileKey || "").trim();
-    if (!selectedFileKey.value) {
-      return null;
-    }
-    await nextTick();
-    const result = await constellationResource.reload();
-    return result?.data || constellationResource.data.value || null;
-  }
-
-  async function acceptFinding(findingId = "", reason = "") {
-    const normalizedFindingId = String(findingId || "").trim();
-    if (!normalizedFindingId) {
-      return null;
-    }
-    const response = await acceptanceResource.save({ reason }, {
-      method: "POST",
-      path: `${sessionPath.value}/findings/${encodeSegment(normalizedFindingId)}/accept`
-    });
-    await findingsResource.reload();
-    return response;
-  }
-
-  async function setSubsystemDepth(subsystemKey = "", depth = 0) {
-    const normalizedSubsystemKey = String(subsystemKey || "").trim();
-    if (!normalizedSubsystemKey) {
-      return null;
-    }
-    const response = await subsystemDepthResource.save({ depth }, {
-      method: "POST",
-      path: `${sessionPath.value}/subsystems/${encodeSegment(normalizedSubsystemKey)}/depth`
-    });
-    await overviewResource.reload();
-    return response;
-  }
-
-  watch(normalizedSessionId, () => {
-    closeUpdateStream();
-    selectedEntityKey.value = "";
-    selectedFileKey.value = "";
-    updateEvents.value = [];
-    updateId.value = "";
-    updateStreamError.value = "";
-  });
-
-  onBeforeUnmount(closeUpdateStream);
 
   return {
-    acceptFinding,
     error,
-    fileConstellation,
-    findings,
-    loadEntityEvidence,
-    loading: computed(() => statusResource.isLoading.value || overviewResource.isLoading.value),
-    overview,
-    reload: reloadCurrentModel,
-    selectEntity,
-    selectedEntity,
-    selectedEntityKey,
-    selectedEvidence,
-    selectFile,
-    selectedFileKey,
-    setSubsystemDepth,
-    savingSubsystemDepth: subsystemDepthResource.isSaving,
-    startUpdate,
-    systemStatus,
-    updateEvents,
-    updating
+    loading,
+    machineCity,
+    programCity,
+    refresh,
+    refreshing: refreshResource.isSaving,
+    reload,
+    systemStatus
   };
 }
 
 export {
   SYSTEM_GRAPH_API_SUFFIX,
+  cityAvailable,
   systemSessionPath,
   useVibe64SystemGraph
 };

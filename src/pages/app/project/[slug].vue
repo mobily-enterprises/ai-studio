@@ -11,8 +11,8 @@
 <script setup>
 import StudioAppShellLayout from "@/components/StudioAppShellLayout.vue";
 import { RouterView } from "vue-router";
+import ProjectFoundationGate from "@/components/studio/ProjectFoundationGate.vue";
 import ProjectSelectionGate from "@/components/studio/ProjectSelectionGate.vue";
-import ProjectTypeGate from "@/components/studio/ProjectTypeGate.vue";
 import Vibe64AuthSettingsButton from "@/components/studio/Vibe64AuthSettingsButton.vue";
 import Vibe64SessionPanel from "@/components/studio/Vibe64SessionPanel.vue";
 import { useVibe64AppPage } from "@/composables/useVibe64AppPage.js";
@@ -26,9 +26,9 @@ const {
   handleProjectSelectionError,
   handleProjectSelectionMissing,
   handleProjectSelectionReady,
-  handleProjectTypeError,
-  handleProjectTypeMissing,
-  handleProjectTypeReady,
+  handleProjectFoundationError,
+  handleProjectFoundationMissing,
+  handleProjectFoundationReady,
   mdiChevronDown,
   mdiChevronRight,
   mobileProjectAction,
@@ -50,15 +50,11 @@ const {
   targetFolderName
 } = useVibe64AppPage();
 
-const githubActorHostId = "studio-home-shell-github-actor";
-const githubActorTeleportTarget = `#${githubActorHostId}`;
-
 function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionSlotProps = {}) {
   const targetProject = projectGateSlotProps?.targetProject || {};
-  const setup = projectSelectionSlotProps?.projectSelection?.setup || targetProject.setup || {};
   return {
-    ...targetProject,
-    setup
+    ...projectSelectionSlotProps?.projectSelection?.currentProject,
+    ...targetProject
   };
 }
 </script>
@@ -98,10 +94,6 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
               />
             </v-list>
           </v-menu>
-          <div
-            :id="githubActorHostId"
-            class="studio-home-shell-github-actor-host"
-          />
           <!--
           <h1
             v-if="pageTitle"
@@ -190,23 +182,19 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
           @ready="handleProjectSelectionReady"
         >
           <template #default="projectSelectionSlotProps">
-            <ProjectTypeGate
-              @error="handleProjectTypeError"
-              @missing="handleProjectTypeMissing"
-              @ready="handleProjectTypeReady"
+            <ProjectFoundationGate
+              @error="handleProjectFoundationError"
+              @missing="handleProjectFoundationMissing"
+              @ready="handleProjectFoundationReady"
             >
               <template #default="projectGateSlotProps">
                 <Vibe64SessionPanel
                   :chat-collapsed="chatCollapsed"
                   :project-context="projectContextForDashboard(projectGateSlotProps, projectSelectionSlotProps)"
                   :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
-                  :github-actor-teleport-target="githubActorTeleportTarget"
                   :project-pane="projectPane"
-                  :save-project-config="projectGateSlotProps?.saveProjectConfig"
-                  :saving-project-config="projectGateSlotProps?.savingConfig === true"
                   @title-change="emitPageTitle"
                   @project-attention="showProjectPane"
-                  @project-pane-change="selectProjectPane"
                 >
                   <template #dashboard="dashboardSlotProps">
                     <RouterView
@@ -216,7 +204,7 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
                   </template>
                 </Vibe64SessionPanel>
               </template>
-            </ProjectTypeGate>
+            </ProjectFoundationGate>
           </template>
         </ProjectSelectionGate>
       </div>
@@ -266,7 +254,7 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
   overflow: hidden;
 }
 
-.studio-screen__gate-scroll :deep(.project-type-gate),
+.studio-screen__gate-scroll :deep(.project-foundation-gate),
 .studio-screen__gate-scroll :deep(.project-selection-gate) {
   display: flex;
   flex: 1 1 auto;
@@ -274,16 +262,9 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
   min-height: 0;
 }
 
-.studio-screen__gate-scroll :deep(.project-type-gate .studio-ai-sessions) {
+.studio-screen__gate-scroll :deep(.project-foundation-gate .studio-ai-sessions) {
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.studio-screen__gate-scroll :deep(.project-type-setup),
-.studio-screen__gate-scroll :deep(.project-config-setup) {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .studio-home-shell-heading {
@@ -319,19 +300,6 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
   min-width: 0;
   padding-inline: 0.45rem;
   text-transform: none;
-}
-
-.studio-home-shell-github-actor-host {
-  align-items: center;
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 1.65rem;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.studio-home-shell-github-actor-host:empty {
-  display: none;
 }
 
 .studio-home-shell-project-selector :deep(.v-btn__content) {
@@ -503,7 +471,7 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
 }
 
 @media (min-width: 981px) {
-  .studio-screen__gate-scroll :deep(.project-type-gate .studio-ai-sessions--autopilot) {
+  .studio-screen__gate-scroll :deep(.project-foundation-gate .studio-ai-sessions--autopilot) {
     padding: 0;
   }
 }

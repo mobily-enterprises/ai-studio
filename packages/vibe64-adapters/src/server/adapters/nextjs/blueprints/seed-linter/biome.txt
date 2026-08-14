@@ -1,5 +1,0 @@
-Linter: Biome
-
-Use the generated Biome setup for formatting and linting.
-Prefer Biome-compatible code style and scripts.
-Do not add ESLint as a parallel linter unless the issue explicitly asks for it.

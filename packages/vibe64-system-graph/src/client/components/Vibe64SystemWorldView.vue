@@ -6,65 +6,53 @@
           <v-icon :icon="mdiCityVariantOutline" size="19" />
         </span>
         <div>
-          <strong>File City · {{ rendererRevision }}</strong>
+          <strong>Genesis City · {{ rendererRevision }}</strong>
           <span>{{ statusLabel }}</span>
         </div>
       </div>
 
-      <div class="system-world__mode-switch" aria-label="Choose File City view">
-        <span>View</span>
+      <div class="system-world__city-switch" aria-label="Choose Genesis City">
         <v-btn
-          :active="viewMode === 'folders'"
-          :prepend-icon="mdiFolderOutline"
-          size="x-small"
-          title="Explore the physical file and directory city"
+          :active="cityKind === 'machine'"
+          :prepend-icon="mdiFileCodeOutline"
+          size="small"
+          title="Explore files and functions from the Genesis Machine City"
           type="button"
           variant="text"
-          @click="setViewMode('folders')"
+          @click="selectCity('machine')"
         >
-          Folders
+          Machine
         </v-btn>
         <v-btn
-          :active="viewMode === 'subsystems'"
+          :active="cityKind === 'program'"
           :prepend-icon="mdiLayersTripleOutline"
-          size="x-small"
-          title="Visit the semantic subsystem layer above the files"
+          size="small"
+          title="Explore subsystems and public operations from the Genesis Program City"
           type="button"
           variant="text"
-          @click="setViewMode('subsystems')"
+          @click="selectCity('program')"
         >
-          Subsystems
-        </v-btn>
-        <v-btn
-          :active="viewMode === 'runtime'"
-          :prepend-icon="mdiCodeBraces"
-          size="x-small"
-          title="Color the physical city by client, server, and shared runtime"
-          type="button"
-          variant="text"
-          @click="setViewMode('runtime')"
-        >
-          Runtime
+          Program
         </v-btn>
       </div>
 
       <div class="system-world__view-actions">
         <v-btn
-          aria-label="Back to previous File City view"
+          aria-label="Back to previous Genesis City view"
           :disabled="!canNavigateWorldBack || worldHistoryBusy"
           :icon="mdiArrowLeft"
           size="x-small"
-          title="Back to previous File City view"
+          title="Back to previous Genesis City view"
           type="button"
           variant="text"
           @click="navigateWorldHistory('back')"
         />
         <v-btn
-          aria-label="Forward to next File City view"
+          aria-label="Forward to next Genesis City view"
           :disabled="!canNavigateWorldForward || worldHistoryBusy"
           :icon="mdiArrowRight"
           size="x-small"
-          title="Forward to next File City view"
+          title="Forward to next Genesis City view"
           type="button"
           variant="text"
           @click="navigateWorldHistory('forward')"
@@ -72,7 +60,7 @@
         <v-btn
           :icon="mdiCrosshairsGps"
           size="x-small"
-          title="Fit the current layer"
+          title="Fit the current City"
           type="button"
           variant="text"
           @click="fitWorld"
@@ -95,15 +83,14 @@
         />
         <v-btn
           color="primary"
-          :disabled="updating || systemStatus.status === 'unsupported'"
-          :loading="updating"
+          :loading="refreshing"
           :prepend-icon="mdiRefresh"
           size="small"
           type="button"
           variant="tonal"
-          @click="updateSystem"
+          @click="refreshCities"
         >
-          Refresh map
+          Refresh Cities
         </v-btn>
       </div>
     </header>
@@ -111,117 +98,59 @@
     <div class="system-world__stage">
       <canvas
         ref="canvasElement"
-        aria-label="Interactive 3D file city, route compounds, and subsystem sky. Left-drag or use arrow keys to move; a vertical two-finger gesture dollies toward the cursor, while W and S, plus and minus, or Control-Up and Control-Down fly toward and away from the cursor; begin a two-finger gesture horizontally to orbit freely until that gesture ends; click a building, directory, campus, route, or subsystem to inspect it; double-click or double-tap a file building to enter its source; double-click a subsystem cloud to arrange its physical city stratum."
+        aria-label="Interactive 3D Genesis City. Drag or use arrow keys to move, scroll or use W and S to zoom, click a building to inspect it, and double-click a building to open its source."
         class="system-world__canvas"
         tabindex="0"
       />
 
-      <div
-        v-if="hoveredSubsystemConnection"
-        class="system-world__connection-tooltip"
-        :style="{
-          left: `${hoveredSubsystemConnection.canvasX}px`,
-          top: `${hoveredSubsystemConnection.canvasY}px`
-        }"
-      >
-        <span>{{ hoveredSubsystemConnection.kind === 'injection' ? 'Injected token' : 'Export' }}</span>
-        <strong>{{ hoveredSubsystemConnection.reference }}</strong>
-        <code v-for="file in hoveredSubsystemConnectionProviderFiles" :key="file.id">{{ file.path }}</code>
-        <small>
-          {{ hoveredSubsystemConnection.consumerSubsystemTitle }} ·
-          {{ formatCount(hoveredSubsystemConnection.usageCount, 'consuming file') }}
-        </small>
-      </div>
-
-      <div
-        v-if="viewMode === 'subsystems'"
-        class="system-world__layer-controls"
-        aria-label="Optional subsystem context"
-      >
-        <span>Show</span>
-        <button
-          :aria-pressed="showSubsystemConnections"
-          :class="{ 'system-world__layer-control--active': showSubsystemConnections }"
-          title="Show bundled subsystem connections collected at owned directories or scattered files"
-          type="button"
-          @click="toggleSubsystemLayer('connections')"
-        >
-          Connections
-        </button>
-        <button
-          :aria-pressed="showSubsystemFileEvidence"
-          :class="{ 'system-world__layer-control--active': showSubsystemFileEvidence }"
-          :disabled="!showSubsystemConnections"
-          title="Opt in to the complete raw file-to-file web for the selected subsystem"
-          type="button"
-          @click="toggleSubsystemLayer('file-evidence')"
-        >
-          Raw file web
-        </button>
-        <button
-          :aria-pressed="showSubsystemLibraries"
-          :class="{ 'system-world__layer-control--active': showSubsystemLibraries }"
-          title="Show imported npm packages and their importing files"
-          type="button"
-          @click="toggleSubsystemLayer('libraries')"
-        >
-          Libraries
-        </button>
-      </div>
-
-      <div v-if="loading && !overview" class="system-world__state-card" role="status">
+      <div v-if="loading && !currentCity" class="system-world__state-card" role="status">
         <span class="system-world__state-orbit" aria-hidden="true" />
-        <strong>Building the current file city…</strong>
-        <span>Reading the checked-in map for this session.</span>
+        <strong>Loading {{ cityTitle }}…</strong>
+        <span>Reading the native Genesis City document.</span>
       </div>
 
-      <div v-else-if="systemStatus.status === 'unsupported'" class="system-world__state-card">
-        <v-icon :icon="mdiInformationOutline" size="32" />
-        <strong>This project type does not have a metadata adapter yet.</strong>
-        <span>Vibe64 currently enriches file cities for JSKIT projects only. No architectural meaning is being guessed.</span>
-      </div>
-
-      <div v-else-if="systemStatus.status === 'missing'" class="system-world__state-card">
-        <v-icon :icon="mdiCityVariantOutline" size="36" />
-        <strong>No current file map yet.</strong>
-        <span>Generate one compact <code>vibe64.system.json</code> for this active session.</span>
-        <v-btn
-          color="primary"
-          :loading="updating"
-          :prepend-icon="mdiRefresh"
-          size="small"
-          type="button"
-          @click="updateSystem"
-        >
-          Build file city
-        </v-btn>
-      </div>
-
-      <div v-else-if="worldError || error" class="system-world__state-card system-world__state-card--error">
+      <div v-else-if="worldError || error || cityAvailability.state === 'invalid'" class="system-world__state-card system-world__state-card--error">
         <v-icon :icon="mdiAlertOutline" size="32" />
-        <strong>File City could not render.</strong>
-        <span>{{ worldError || error }}</span>
+        <strong>{{ cityTitle }} could not render.</strong>
+        <span>{{ worldError || error || cityAvailability.error?.message }}</span>
         <v-btn size="small" type="button" variant="tonal" @click="reload">Retry</v-btn>
       </div>
 
-      <div v-if="systemStatus.status === 'stale'" class="system-world__stale" role="status">
-        <span />
-        Source changed — refresh to rebuild this current-session map.
+      <div v-else-if="!currentCity" class="system-world__state-card">
+        <v-icon :icon="mdiInformationOutline" size="34" />
+        <strong>{{ cityTitle }} has not been generated yet.</strong>
+        <span>Genesis can refresh both Cities from the current project.</span>
+        <v-btn
+          color="primary"
+          :loading="refreshing"
+          :prepend-icon="mdiRefresh"
+          size="small"
+          type="button"
+          @click="refreshCities"
+        >
+          Generate Cities
+        </v-btn>
       </div>
 
-      <div v-if="latestUpdateLabel" class="system-world__progress" role="status">
+      <div v-else-if="buildings.length === 0" class="system-world__state-card">
+        <v-icon :icon="mdiInformationOutline" size="34" />
+        <strong>{{ cityTitle }} is empty.</strong>
+        <span>{{ emptyCityMessage }}</span>
+      </div>
+
+      <div v-if="refreshing" class="system-world__progress" role="status">
         <span class="system-world__progress-pulse" />
-        {{ latestUpdateLabel }}
+        Refreshing both Genesis Cities…
       </div>
 
-      <div v-if="overview" class="system-world__view-gizmo" aria-label="Rotate file city view">
+      <div v-if="worldOverview" class="system-world__view-gizmo" aria-label="Rotate Genesis City view">
         <button aria-label="Rotate view left" title="Rotate left" type="button" @click="rotateWorld(-20)">
           <v-icon :icon="mdiRotateLeft" size="15" />
         </button>
         <button
           class="system-world__view-gizmo-puck"
           aria-label="Drag to rotate the view"
-          title="Drag to orbit the cities"
+          title="Drag to orbit the City"
           type="button"
           @lostpointercapture="endViewRotation"
           @pointercancel="endViewRotation"
@@ -237,473 +166,135 @@
         </button>
       </div>
 
-      <nav
-        v-if="viewMode === 'subsystems' && subsystems.length"
-        class="system-world__navigator"
-        aria-label="File City subsystems"
-      >
+      <nav v-if="buildings.length" class="system-world__navigator" :aria-label="`${cityTitle} buildings`">
         <header>
-          <span>Subsystems</span>
-          <strong>{{ subsystems.length }}</strong>
+          <span>{{ cityKind === 'machine' ? 'Files' : 'Operations' }}</span>
+          <strong>{{ buildings.length }}</strong>
         </header>
         <button
-          v-for="subsystem in subsystems"
-          :key="subsystem.id"
-          :class="{ 'system-world__navigator-button--active': selectedSubsystem?.id === subsystem.id }"
+          v-for="building in buildings"
+          :key="building.id"
+          :class="{ 'system-world__navigator-button--active': selectedBuilding?.id === building.id }"
           type="button"
-          @click="inspectSubsystem(subsystem, { focus: true })"
+          @click="inspectBuilding(building, { focus: true })"
         >
-          <v-icon :icon="mdiLayersTripleOutline" size="13" />
+          <v-icon :icon="cityKind === 'machine' ? mdiFileCodeOutline : mdiLayersTripleOutline" size="13" />
           <span>
-            <strong>{{ subsystem.title }}</strong>
-            <small>{{ subsystem.depth ? `Layer −${subsystem.depth}` : 'Baseline' }} · {{ formatCount(subsystem.fileCount, 'file') }} · {{ dependencySummary(subsystem.dependencies) }}</small>
+            <strong>{{ building.title }}</strong>
+            <small>{{ cityKind === 'machine' ? building.path : building.subsystem }}</small>
           </span>
         </button>
       </nav>
 
-      <nav v-else-if="campuses.length" class="system-world__navigator" aria-label="File city campuses">
-        <header>
-          <span>Campuses</span>
-          <strong>{{ campuses.length }}</strong>
-        </header>
-        <button
-          v-for="campus in campuses"
-          :key="campus.id"
-          :class="{ 'system-world__navigator-button--active': selectedDirectory?.id === campus.id }"
-          type="button"
-          @click="selectCampus(campus)"
-        >
-          <v-icon :icon="mdiFolderOutline" size="13" />
-          <span><strong>{{ campus.name }}</strong><small>{{ formatCount(campus.fileCount, 'file') }} · {{ formatLines(campus.lines) }} LOC</small></span>
-        </button>
-      </nav>
+      <aside v-if="selectedBuilding" class="system-world__inspector">
+        <span class="system-world__eyebrow">{{ cityKind === 'machine' ? 'Machine file' : 'Program operation' }}</span>
+        <h2>{{ selectedBuilding.title }}</h2>
+        <p class="system-world__path">{{ selectedBuilding.path }}</p>
 
-      <aside v-if="selectedSubsystem || selectedDirectory || selectedFile" class="system-world__inspector" aria-live="polite">
-        <template v-if="selectedSubsystem">
-          <div class="system-world__eyebrow">SUBSYSTEM · {{ selectedSubsystem.origin }}</div>
-          <h2>{{ selectedSubsystem.title }}</h2>
-          <p>{{ selectedSubsystem.description || 'This subsystem has structural ownership, but its purpose still needs a human-readable explanation.' }}</p>
+        <template v-if="cityKind === 'machine'">
           <div class="system-world__chips">
-            <span>{{ selectedSubsystem.executionSide }}</span>
-            <span>{{ selectedSubsystem.status }}</span>
-            <span>{{ selectedSubsystem.authoredBy }}</span>
+            <span>{{ selectedBuilding.language }}</span>
+            <span>{{ selectedBuilding.role }}</span>
           </div>
           <div class="system-world__metrics">
-            <span><strong>{{ selectedSubsystem.fileCount.toLocaleString() }}</strong> files</span>
-            <span><strong>{{ formatLines(selectedSubsystem.lines) }}</strong> lines</span>
-            <span><strong>{{ selectedSubsystem.anchors.length }}</strong> anchors</span>
-            <span><strong>{{ selectedSubsystem.capabilities.length }}</strong> capabilities</span>
-            <span><strong>{{ selectedSubsystemDependencies.outgoing.length }}</strong> outgoing</span>
-            <span><strong>{{ selectedSubsystemDependencies.incoming.length }}</strong> incoming</span>
-            <span><strong>{{ selectedSubsystemDependencies.external.length }}</strong> external</span>
+            <span><strong>{{ formatNumber(selectedBuilding.lines) }}</strong> lines</span>
+            <span><strong>{{ formatBytes(selectedBuilding.bytes) }}</strong> size</span>
+            <span><strong>{{ selectedFunctions.length }}</strong> functions</span>
           </div>
-          <section
-            v-if="editingSubsystemDepthId === selectedSubsystem.id"
-            class="system-world__stratum-editor"
-          >
-            <div>
-              <div class="system-world__eyebrow">PHYSICAL STRATUM</div>
-              <strong>{{ selectedSubsystem.depth ? `Layer -${selectedSubsystem.depth}` : 'Generated baseline' }}</strong>
-              <p>Choose one of five physical layers. Every owned slab and scattered building moves together.</p>
-            </div>
-            <div class="system-world__stratum-controls" aria-label="Subsystem physical stratum controls">
-              <div class="system-world__stratum-scale" aria-label="Choose physical layer">
+          <div v-if="selectedFunctions.length" class="system-world__section">
+            <strong>Indexed functions</strong>
+            <ul>
+              <li v-for="entry in selectedFunctions" :key="entry.id">
                 <button
-                  v-for="depth in subsystemDepthLevels"
-                  :key="depth"
-                  :aria-label="depth ? `Move to layer minus ${depth}` : 'Move to generated baseline layer zero'"
-                  :aria-pressed="selectedSubsystem.depth === depth"
-                  :class="{ 'system-world__stratum-level--active': selectedSubsystem.depth === depth }"
-                  :disabled="savingSubsystemDepth"
+                  class="system-world__function-link"
                   type="button"
-                  @click="chooseSelectedSubsystemDepth(depth)"
+                  @click="openSourceFile(entry.path, { line: entry.line, column: entry.column })"
                 >
-                  {{ depth ? `−${depth}` : '0' }}
+                  <strong>{{ entry.qualifiedName }}</strong>
+                  <span>{{ entry.visibility }} {{ entry.kind }} · line {{ entry.line }}</span>
                 </button>
-              </div>
-              <v-btn
-                :disabled="savingSubsystemDepth"
-                size="x-small"
-                type="button"
-                variant="text"
-                @click="editingSubsystemDepthId = ''"
-              >
-                Done
-              </v-btn>
-            </div>
-          </section>
-          <p v-else class="system-world__stratum-hint">
-            Double-click this subsystem's cloud to arrange the slabs and buildings it owns.
-          </p>
-          <section v-if="selectedSubsystemConnection" class="system-world__connection-focus">
-            <div class="system-world__eyebrow">{{ selectedSubsystemConnection.kind }} collection point</div>
-            <h3>
-              {{ selectedSubsystemConnection.consumerSubsystemTitle }} uses
-              <code>{{ selectedSubsystemConnection.reference }}</code>
-            </h3>
-            <p>
-              Provided by {{ selectedSubsystemConnection.providerSubsystemTitle }}. This bundled line replaces
-              {{ formatCount(selectedSubsystemConnection.usageCount, 'exact file connection') }} at this physical piece.
-            </p>
-            <p v-if="selectedSubsystemConnection.collectionKind === 'directory'" class="system-world__path">
-              Collected at folder: {{ selectedSubsystemConnection.collectionPath }}
-            </p>
-            <p v-else-if="selectedSubsystemConnection.collectionKind === 'file'" class="system-world__path">
-              Scattered piece: {{ selectedSubsystemConnection.collectionPath }}
-            </p>
-            <p v-else>
-              No exact owned directory or file could be proven for this connection.
-            </p>
-            <div v-if="selectedSubsystemConnectionProviderFiles.length" class="system-world__connection-providers">
-              <strong>Provided by</strong>
-              <code v-for="file in selectedSubsystemConnectionProviderFiles" :key="file.id">{{ file.path }}</code>
-            </div>
-            <details class="system-world__connection-last-mile" open>
-              <summary>Last mile · {{ formatCount(selectedSubsystemConnectionFiles.length, 'file') }}</summary>
-              <button
-                v-for="file in selectedSubsystemConnectionFiles"
-                :key="file.id"
-                :class="{ 'system-world__connection-file--active': activeFileId === file.id }"
-                type="button"
-                @click="inspectSubsystemConnectionFile(file)"
-              >
-                <strong>{{ pathFileName(file.path) }}</strong>
-                <span>{{ file.path }}</span>
-              </button>
-            </details>
-            <div v-if="selectedSubsystemConnectionFile" class="system-world__connection-file-detail">
-              <div class="system-world__eyebrow">LAST-MILE FILE</div>
-              <h4>{{ pathFileName(selectedSubsystemConnectionFile.path) }}</h4>
-              <code>{{ selectedSubsystemConnectionFile.path }}</code>
-              <p>{{ selectedFilePurpose }}</p>
-              <span>{{ formatLines(selectedSubsystemConnectionFile.lines) }} lines</span>
-              <v-btn
-                v-if="selectedFile"
-                :prepend-icon="mdiFileCodeOutline"
-                size="x-small"
-                type="button"
-                variant="tonal"
-                @click="openSelectedFile"
-              >
-                Open in Files
-              </v-btn>
-            </div>
-          </section>
-          <div
-            v-for="section in selectedSubsystemRelationshipSections"
-            :key="section.direction"
-            class="system-world__section"
-          >
-            <strong>{{ section.title }}</strong>
-            <div class="system-world__relationships">
-              <div
-                v-for="dependency in section.dependencies"
-                :key="dependency.subsystemId"
-                class="system-world__relationship"
-              >
-                <button
-                  title="Focus the exact file endpoints proven for this relationship"
-                  type="button"
-                  @click="focusSubsystemDependency(dependency, section.direction)"
-                >
-                  <span>{{ section.direction === 'outgoing' ? 'connects →' : '← connects' }}</span>
-                  <strong>{{ dependency.title }} · {{ dependencyEvidenceLabel(dependency) }}</strong>
-                </button>
-                <div
-                  v-if="dependency.symbols.length || dependency.injectionTokens.length"
-                  class="system-world__boundary-summary"
-                >
-                  <strong>What crosses this boundary</strong>
-                  <p v-if="dependency.symbols.length">
-                    <span>{{ section.direction === 'outgoing' ? 'Methods / exports used' : 'Methods / exports used here' }}</span>
-                    {{ dependency.symbols.join(', ') }}
-                  </p>
-                  <p v-if="dependency.injectionTokens.length">
-                    <span>Injected tokens</span>
-                    {{ dependency.injectionTokens.join(', ') }}
-                  </p>
-                </div>
-                <div v-if="dependency.fileConnections.length" class="system-world__connection-files">
-                  <details
-                    v-for="connection in dependency.fileConnections"
-                    :key="`${connection.fromFileId}:${connection.toFileId}`"
-                  >
-                    <summary>
-                      <strong>{{ pathFileName(connection.toPath) }}</strong>
-                      <span>from {{ pathFileName(connection.fromPath) }}</span>
-                    </summary>
-                    <div class="system-world__connection-detail">
-                      <code>{{ connection.fromPath }}</code>
-                      <span aria-hidden="true">→</span>
-                      <code>{{ connection.toPath }}</code>
-                      <p v-if="connection.symbols.length">
-                        Exports used:
-                        <strong>{{ connection.symbols.join(', ') }}</strong>
-                      </p>
-                      <p v-else-if="connection.kinds.includes('import')">No named export is statically selected by this import.</p>
-                      <p v-if="connection.kinds.includes('injection')">
-                        Injected token:
-                        <strong>{{ connection.injectionTokens.join(', ') }}</strong>
-                      </p>
-                    </div>
-                  </details>
-                </div>
-                <p v-else-if="dependency.declared" class="system-world__declared-only">
-                  Declared by framework metadata; no exact file pair is claimed.
-                </p>
-              </div>
-            </div>
-          </div>
-          <div v-if="selectedSubsystemDependencies.external.length" class="system-world__section">
-            <strong>External packages</strong>
-            <ul>
-              <li v-for="dependency in selectedSubsystemDependencies.external" :key="`${dependency.kind}:${dependency.packageId}`">
-                <strong>{{ dependency.title }}</strong>
-                <span>npm package · {{ dependencyEvidenceLabel(dependency) }}</span>
               </li>
             </ul>
-          </div>
-          <div v-if="selectedSubsystem.anchors.length" class="system-world__section">
-            <strong>Code below this cloud</strong>
-            <ul>
-              <li v-for="anchor in selectedSubsystem.anchors" :key="`${anchor.kind}:${anchor.path}:${anchor.relation}`">
-                <strong>{{ anchor.relation }} · {{ anchor.path }}</strong>
-                <span>{{ anchor.kind }} · {{ anchor.origin }}</span>
-              </li>
-            </ul>
-          </div>
-          <div v-if="selectedSubsystem.capabilities.length" class="system-world__section">
-            <strong>What it provides or needs</strong>
-            <ul>
-              <li v-for="capability in selectedSubsystem.capabilities" :key="capability.id">
-                <strong>{{ capability.title }}</strong>
-                <span>{{ capability.direction }} {{ capability.kind }}<template v-if="capability.value && capability.value !== capability.title"> · {{ capability.value }}</template></span>
-              </li>
-            </ul>
-          </div>
-          <p v-if="selectedSubsystem.unmatchedAnchorCount" class="system-world__large-file-warning">
-            {{ selectedSubsystem.unmatchedAnchorCount }} declared anchor{{ selectedSubsystem.unmatchedAnchorCount === 1 ? '' : 's' }} no longer match the current tree.
-          </p>
-          <div class="system-world__inspector-actions">
-            <v-btn
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="editingSubsystemDepthId = selectedSubsystem.id"
-            >
-              Arrange physical layer
-            </v-btn>
-            <v-btn
-              :disabled="!askChatAvailable"
-              :prepend-icon="mdiMessageOutline"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="askAboutSelection"
-            >
-              Ask about this subsystem
-            </v-btn>
-            <v-btn
-              :disabled="!askChatAvailable"
-              :prepend-icon="mdiLayersTripleOutline"
-              size="small"
-              type="button"
-              variant="text"
-              @click="discoverSubsystems"
-            >
-              Discover more
-            </v-btn>
-          </div>
-        </template>
-
-        <template v-else-if="selectedDirectory">
-          <div class="system-world__eyebrow">
-            {{ selectedDirectory.kind === 'campus'
-              ? (selectedDirectory.implicit ? 'MAIN CAMPUS' : 'ADAPTER CAMPUS')
-              : selectedDirectory.semanticGroupKind === 'route'
-                ? 'ROUTE COMPOUND'
-                : 'DIRECTORY PRECINCT' }}
-          </div>
-          <h2>{{ selectedDirectory.name }}</h2>
-          <p v-if="selectedDirectory.routePath" class="system-world__path">
-            Runtime path: {{ selectedDirectory.routePath }} · {{ selectedDirectory.routeSegmentKind }}
-          </p>
-          <p class="system-world__path">{{ selectedDirectory.path || (selectedDirectory.kind === 'campus' ? 'Unclaimed project tree' : 'Project root') }}</p>
-          <div class="system-world__metrics">
-            <span><strong>{{ selectedDirectory.fileCount.toLocaleString() }}</strong> files</span>
-            <span><strong>{{ formatLines(selectedDirectory.lines) }}</strong> lines</span>
-            <span><strong>{{ selectedDirectory.subsystems.length }}</strong> subsystems</span>
-            <span v-if="selectedDirectory.kind !== 'campus'"><strong>{{ selectedDirectory.hierarchyDepth }}</strong> directory level</span>
-          </div>
-          <p v-if="selectedDirectory.kind === 'campus'">
-            {{ selectedDirectory.implicit
-              ? 'This is everything not claimed by an adapter-defined campus. Its raised terraces still represent the real directories.'
-              : 'The active framework adapter gives this source tree its own land parcel. Its raised terraces are the real directories below that root.' }}
-          </p>
-          <p v-else-if="selectedDirectory.semanticGroupKind === 'route'">
-            The adapter identified this as a filesystem route. Its shell is kept compact so the ordinary File City can expose its nested child routes while building height still preserves physical LOC.
-          </p>
-          <p v-else>
-            This is directory level {{ selectedDirectory.hierarchyDepth }}. Its raised terrace and labelled perimeter show nesting and ownership, and every building inside it is a real file.
-          </p>
-          <div v-if="selectedDirectory.subsystems.length" class="system-world__section">
-            <strong>System ownership found here</strong>
-            <div class="system-world__chips">
-              <span v-for="subsystem in selectedDirectory.subsystems" :key="subsystem.id">{{ subsystem.title }}</span>
-            </div>
-          </div>
-          <button
-            v-if="selectedDirectory.largestFile"
-            class="system-world__largest-file"
-            type="button"
-            @click="inspectFile(selectedDirectory.largestFile, { focus: true })"
-          >
-            <span>Largest building</span>
-            <strong>{{ fileName(selectedDirectory.largestFile) }}</strong>
-            <small>{{ formatLines(selectedDirectory.largestFile.lines) }} lines</small>
-          </button>
-          <div class="system-world__inspector-actions">
-            <v-btn
-              :disabled="!askChatAvailable"
-              :prepend-icon="mdiMessageOutline"
-              size="small"
-              type="button"
-              variant="tonal"
-              @click="askAboutSelection"
-            >
-              Ask about this folder
-            </v-btn>
           </div>
         </template>
 
         <template v-else>
-          <div class="system-world__eyebrow">FILE BUILDING</div>
-          <h2>{{ selectedFileName }}</h2>
-          <p class="system-world__path">{{ selectedFile.path }}</p>
           <div class="system-world__chips">
-            <span>{{ selectedFile.executionSide || 'unknown' }}</span>
-            <span>{{ selectedFileSubsystem }}</span>
-            <span v-if="selectedFileRoute">{{ selectedFileRoute.placement.role }}</span>
-            <span v-if="selectedFileRoute">{{ selectedFileRoute.placement.frameworkRole }}</span>
+            <span>{{ selectedBuilding.subsystem }}</span>
+            <span>{{ formatCount(selectedBuilding.sources.length, 'source') }}</span>
+            <span>{{ formatCount(selectedImplementationLinks.length, 'implementation link') }}</span>
           </div>
-          <p v-if="selectedFileRoute" class="system-world__path">
-            Route: {{ selectedFileRoute.group.routePath }}
-          </p>
-          <div class="system-world__metrics">
-            <span><strong>{{ selectedFile.lines.toLocaleString() }}</strong> lines</span>
-            <span><strong>{{ selectedFile.imports.length }}</strong> imports</span>
-            <span><strong>{{ selectedFileImportedBy }}</strong> imported by</span>
+          <p v-if="selectedBuilding.description">{{ selectedBuilding.description }}</p>
+          <div class="system-world__section">
+            <strong>Public contract</strong>
+            <pre>{{ selectedBuilding.publicContract }}</pre>
+          </div>
+          <div v-if="selectedBuilding.implementationMap" class="system-world__section">
+            <strong>Implementation map</strong>
+            <pre>{{ selectedBuilding.implementationMap }}</pre>
           </div>
           <div class="system-world__section">
-            <strong>What this file does</strong>
-            <p>{{ selectedFilePurpose }}</p>
-            <ul v-if="selectedFileRoles.length">
-              <li v-for="role in selectedFileRoles" :key="role.id || role.key">
-                <strong>{{ role.title }}</strong>
-                <span>{{ role.description || role.kind }}</span>
-              </li>
-            </ul>
-          </div>
-          <p v-if="largeFileWarning" class="system-world__large-file-warning">
-            This file is structurally enormous. Its skyscraper is intentionally impossible to ignore.
-          </p>
-          <div v-if="fileRelations.length" class="system-world__section">
-            <strong>Nearby relationships</strong>
-            <div class="system-world__relationships">
-              <button
-                v-for="relation in fileRelations"
-                :key="relation.key"
-                type="button"
-                @click="inspectFile(relation.file, { focus: true })"
-              >
-                <span>{{ relation.direction === 'out' ? 'imports →' : '← imported by' }}</span>
-                <strong>{{ fileName(relation.file) }}</strong>
-              </button>
-            </div>
-          </div>
-          <div v-if="selectedFileExternalRelations.length" class="system-world__section">
-            <strong>External imports</strong>
-            <div class="system-world__external-relations">
-              <div v-for="relation in selectedFileExternalRelations" :key="relation.key">
-                <span>imports →</span>
-                <strong>{{ relation.packageId }}</strong>
-                <small>{{ formatCount(relation.importCount, 'import') }}</small>
-              </div>
-            </div>
-          </div>
-          <div class="system-world__inspector-actions">
-            <v-btn
-              :prepend-icon="mdiFileCodeOutline"
-              size="small"
+            <strong>Implementation sources</strong>
+            <button
+              v-for="source in selectedBuilding.sources"
+              :key="source"
+              class="system-world__source-link"
               type="button"
-              variant="tonal"
-              @click="openSelectedFile"
+              @click="openSourceFile(source)"
             >
-              Open in Files
-            </v-btn>
-            <v-btn
-              :disabled="!askChatAvailable"
-              :prepend-icon="mdiMessageOutline"
-              size="small"
-              type="button"
-              variant="text"
-              @click="askAboutSelection"
-            >
-              Ask in Chat
-            </v-btn>
+              {{ source }}
+            </button>
           </div>
         </template>
-      </aside>
 
-      <aside v-else-if="overview" class="system-world__orientation">
-        <template v-if="viewMode === 'subsystems'">
-          <div class="system-world__eyebrow">SEMANTIC SKY</div>
-          <strong>The clouds explain why the city exists.</strong>
-          <span>Selecting a cloud always illuminates the files and directory terraces it owns. Connections and Libraries are optional context layers.</span>
-          <span>JSKIT supplies facts it can prove mechanically. Codex can propose the purpose and boundaries that require interpretation, and those proposals remain visible as inferred metadata.</span>
+        <div class="system-world__inspector-actions">
           <v-btn
-            :disabled="!askChatAvailable"
-            :prepend-icon="mdiLayersTripleOutline"
+            :prepend-icon="mdiFileCodeOutline"
             size="small"
             type="button"
             variant="tonal"
-            @click="discoverSubsystems"
+            @click="openSourceFile(selectedBuilding.path)"
           >
-            Discover subsystems with Codex
+            Open {{ cityKind === 'machine' ? 'file' : 'Program module' }}
           </v-btn>
-        </template>
-        <template v-else>
-          <div class="system-world__eyebrow">YOUR CURRENT SESSION</div>
-          <strong>The repository is the city.</strong>
-          <span>Adapter-defined trees become separate campuses. Nested folders step upward as named terraced precincts, and every file remains a real LOC-sized building.</span>
-          <span>Filesystem-route shells automatically reserve a compact edge of their existing terrace so child routes remain visible. Route terraces and buildings use only their local segment names; their nesting carries the complete path.</span>
-        </template>
+          <v-btn
+            v-if="askChatAvailable"
+            :prepend-icon="mdiMessageOutline"
+            size="small"
+            type="button"
+            variant="text"
+            @click="askAboutSelection"
+          >
+            Explain in Chat
+          </v-btn>
+        </div>
       </aside>
 
-      <div v-if="overview" class="system-world__controls-hint" aria-label="File city controls">
-        <span><v-icon :icon="mdiMouse" size="13" /> Drag / arrows to move</span>
-        <span><v-icon :icon="mdiMouseScrollWheel" size="13" /> 2-finger ↕ / W S follow cursor</span>
-        <span><v-icon :icon="mdiMouseRightClickOutline" size="13" /> 2-finger ↔ starts free orbit</span>
-        <span><v-icon :icon="mdiCodeBraces" size="13" /> Double-click / double-tap to enter</span>
+      <aside v-else-if="selectedDistrict" class="system-world__inspector">
+        <span class="system-world__eyebrow">{{ cityKind === 'machine' ? 'Directory' : 'Subsystem' }}</span>
+        <h2>{{ selectedDistrict.title }}</h2>
+        <p class="system-world__path">{{ selectedDistrict.path || (cityKind === 'machine' ? 'Project root' : selectedDistrict.id) }}</p>
+        <div class="system-world__metrics">
+          <span><strong>{{ selectedDistrict.buildingCount }}</strong> buildings</span>
+          <span v-if="cityKind === 'machine'"><strong>{{ formatNumber(selectedDistrict.lines) }}</strong> lines</span>
+        </div>
+      </aside>
+
+      <aside v-else-if="currentCity" class="system-world__orientation">
+        <span class="system-world__eyebrow">{{ cityTitle }}</span>
+        <strong>{{ cityKind === 'machine' ? 'The implementation as Genesis can prove it.' : 'The public Program, grouped by subsystem.' }}</strong>
+        <span>{{ orientationText }}</span>
+      </aside>
+
+      <div v-if="currentCity" class="system-world__controls-hint" aria-label="Genesis City controls">
+        <span><v-icon :icon="mdiMouse" size="14" /> Drag / arrows to move</span>
+        <span><v-icon :icon="mdiMouseScrollWheel" size="14" /> Scroll / W S to zoom</span>
+        <span><v-icon :icon="mdiMouseRightClickOutline" size="14" /> Right-drag to orbit</span>
       </div>
 
-      <div v-if="overview" class="system-world__legend" aria-label="File city visual legend">
-        <template v-if="viewMode === 'subsystems'">
-          <span><i class="system-world__legend-cloud" /> Cloud = subsystem</span>
-          <span><i class="system-world__legend-owned" /> Cyan = owned code</span>
-          <span v-if="showSubsystemConnections"><i class="system-world__legend-bundle" /> Gray → charcoal = more bundled uses</span>
-          <span v-if="selectedSubsystemConnection"><i class="system-world__legend-last-mile" /> Amber = expanded last mile</span>
-          <span v-if="showSubsystemConnections"><i class="system-world__legend-declaration" /> Dashed amber = declaration</span>
-          <span v-if="showSubsystemLibraries"><i class="system-world__legend-external" /> Satellite = npm package</span>
-          <span v-if="showSubsystemFileEvidence"><i class="system-world__legend-evidence" /> Building arrows = exact evidence</span>
-          <span v-if="showSubsystemLibraries"><i class="system-world__legend-library-evidence" /> Purple drops = library imports</span>
-        </template>
-        <template v-else>
-          <span><i class="system-world__legend-campus" /> Land parcel = campus</span>
-          <span><i class="system-world__legend-depth" /> Higher terrace = deeper folder</span>
-          <span><i class="system-world__legend-building" /> Footprint + height = LOC</span>
-          <span>{{ viewLegend }}</span>
-        </template>
+      <div v-if="currentCity" class="system-world__legend">
+        <span>{{ cityKind === 'machine' ? 'Building height and footprint follow indexed line count' : 'Each building is one public Program operation' }}</span>
+        <span>{{ cityKind === 'machine' ? 'Directory' : 'Subsystem' }} terraces follow native Genesis districts</span>
       </div>
     </div>
   </section>
@@ -724,10 +315,8 @@ import {
   mdiArrowLeft,
   mdiArrowRight,
   mdiCityVariantOutline,
-  mdiCodeBraces,
   mdiCrosshairsGps,
   mdiFileCodeOutline,
-  mdiFolderOutline,
   mdiInformationOutline,
   mdiLayersTripleOutline,
   mdiMapOutline,
@@ -749,16 +338,16 @@ import {
   createSystemWorld
 } from "../world/createSystemWorld.js";
 import {
-  isVisuallyLargeFile,
-  layoutFileCity,
-  topLevelPrecincts
-} from "../world/worldLayout.js";
+  GENESIS_MACHINE_CITY_KIND,
+  GENESIS_PROGRAM_CITY_KIND,
+  genesisCityKind,
+  genesisCityWorld
+} from "../world/genesisCityWorld.js";
 import {
   createWorldViewHistory
 } from "../world/worldViewHistory.js";
-import { SUBSYSTEM_DEPTH_MAX } from "../../shared/subsystemPresentationContract.js";
 
-const rendererRevision = "055";
+const rendererRevision = "057";
 
 const props = defineProps({
   active: {
@@ -789,275 +378,106 @@ const emit = defineEmits([
   "open-source-file"
 ]);
 
-const activeFileId = ref("");
-const canNavigateWorldBack = ref(false);
-const canNavigateWorldForward = ref(false);
 const canvasElement = ref(null);
-const editingSubsystemDepthId = ref("");
-const hoveredSubsystemConnection = ref(null);
-const selectedDirectory = ref(null);
-const selectedSubsystemConnection = ref(null);
-const selectedSubsystemId = ref("");
-const showSubsystemConnections = ref(false);
-const showSubsystemFileEvidence = ref(false);
-const showSubsystemLibraries = ref(false);
-const viewMode = ref("folders");
+const cityKind = ref(GENESIS_MACHINE_CITY_KIND);
+const selectedBuildingId = ref("");
+const selectedDistrict = ref(null);
 const worldError = ref("");
 const worldHistoryBusy = ref(false);
 const worldView = ref("perspective");
+const canNavigateWorldBack = ref(false);
+const canNavigateWorldForward = ref(false);
 let animationFrame = 0;
-let overviewGeneration = 0;
 let resizeObserver = null;
 let viewRotationPointer = null;
 let world = null;
+let overviewGeneration = 0;
+let overviewPromise = Promise.resolve();
 let applyingRestoreRequest = false;
 const worldViewHistory = createWorldViewHistory({ limit: 64 });
 
 const {
   error,
-  fileConstellation,
   loading,
-  overview,
+  machineCity,
+  programCity,
+  refresh,
+  refreshing,
   reload,
-  savingSubsystemDepth,
-  selectFile,
-  setSubsystemDepth,
-  startUpdate,
-  systemStatus,
-  updateEvents,
-  updating
+  systemStatus
 } = useVibe64SystemGraph({
   active: toRef(props, "active"),
-  resolveRequestUrl: props.resolveRequestUrl,
   sessionId: toRef(props, "sessionId")
 });
 
-const campuses = computed(() => overview.value ? topLevelPrecincts(overview.value) : []);
-const subsystems = computed(() => overview.value?.subsystems || []);
-const selectedSubsystem = computed(() => (
-  subsystems.value.find((subsystem) => subsystem.id === selectedSubsystemId.value) || null
+const currentCity = computed(() => (
+  cityKind.value === GENESIS_PROGRAM_CITY_KIND ? programCity.value : machineCity.value
 ));
-const subsystemDepthLevels = Object.freeze(
-  Array.from({ length: SUBSYSTEM_DEPTH_MAX + 1 }, (_, depth) => depth)
-);
-const selectedSubsystemDependencies = computed(() => (
-  selectedSubsystem.value?.dependencies || { external: [], incoming: [], outgoing: [] }
+const worldOverview = computed(() => genesisCityWorld(currentCity.value, cityKind.value));
+const buildings = computed(() => currentCity.value?.buildings || []);
+const selectedBuilding = computed(() => (
+  buildings.value.find((building) => building.id === selectedBuildingId.value) || null
 ));
-const selectedSubsystemRelationshipSections = computed(() => ([
-  {
-    dependencies: subsystemRelationshipDependencies(selectedSubsystemDependencies.value.outgoing),
-    direction: "outgoing",
-    title: "Outgoing subsystem connections"
-  },
-  {
-    dependencies: subsystemRelationshipDependencies(selectedSubsystemDependencies.value.incoming),
-    direction: "incoming",
-    title: "Incoming subsystem connections"
-  }
-].filter((section) => section.dependencies.length > 0)));
-const cityFilesById = computed(() => new Map(
-  (overview.value?.files || []).map((file) => [file.id, file])
+const functionsById = computed(() => new Map(
+  (machineCity.value?.functions || []).map((entry) => [entry.id, entry])
 ));
-const cityFilesByPath = computed(() => new Map(
-  (overview.value?.files || []).map((file) => [file.path, file])
+const selectedFunctions = computed(() => (
+  cityKind.value === GENESIS_MACHINE_CITY_KIND && selectedBuilding.value
+    ? selectedBuilding.value.functionIds.map((id) => functionsById.value.get(id)).filter(Boolean)
+    : []
 ));
-const routeGroupsById = computed(() => new Map(
-  (overview.value?.adapter?.fileCity?.groups || [])
-    .filter((group) => group.kind === "route")
-    .map((group) => [group.id, group])
+const selectedImplementationLinks = computed(() => (
+  cityKind.value === GENESIS_PROGRAM_CITY_KIND && selectedBuilding.value
+    ? (currentCity.value?.links || []).filter((link) => link.fromId === selectedBuilding.value.id)
+    : []
 ));
-const routePlacementsByFileId = computed(() => new Map(
-  (overview.value?.adapter?.fileCity?.placements || []).map((placement) => [placement.fileId, placement])
+const cityAvailability = computed(() => (
+  systemStatus.value?.cities?.[cityKind.value] || { state: "missing" }
 ));
-const selectedSubsystemConnectionFiles = computed(() => (
-  (selectedSubsystemConnection.value?.consumerFileIds || [])
-    .map((fileId) => cityFilesById.value.get(fileId))
-    .filter(Boolean)
+const cityTitle = computed(() => (
+  cityKind.value === GENESIS_MACHINE_CITY_KIND ? "Machine City" : "Program City"
 ));
-const selectedSubsystemConnectionProviderFiles = computed(() => (
-  (selectedSubsystemConnection.value?.providerFileIds || [])
-    .map((fileId) => cityFilesById.value.get(fileId))
-    .filter(Boolean)
-));
-const hoveredSubsystemConnectionProviderFiles = computed(() => (
-  (hoveredSubsystemConnection.value?.providerFileIds || [])
-    .map((fileId) => cityFilesById.value.get(fileId))
-    .filter(Boolean)
-));
-const selectedSubsystemConnectionFile = computed(() => {
-  if (!selectedSubsystemConnection.value?.consumerFileIds.includes(activeFileId.value)) {
-    return null;
-  }
-  return cityFilesById.value.get(activeFileId.value) || null;
-});
-
-function subsystemRelationshipDependencies(dependencies = []) {
-  return dependencies.map((dependency) => ({
-    ...dependency,
-    fileConnections: (dependency.fileConnections || []).map((connection) => ({
-      ...connection,
-      injectionTokens: connection.injectionTokens || [],
-      kinds: connection.kinds || [],
-      symbols: connection.symbols || []
-    })),
-    injectionTokens: dependency.injectionTokens || [],
-    symbols: dependency.symbols || []
-  }));
-}
-const selectedFile = computed(() => (
-  activeFileId.value && fileConstellation.value?.selectedFile?.id === activeFileId.value
-    ? fileConstellation.value.selectedFile
-    : null
-));
-const selectedFileRoute = computed(() => {
-  const placement = routePlacementsByFileId.value.get(selectedFile.value?.id);
-  const group = routeGroupsById.value.get(placement?.groupId);
-  return placement && group ? { group, placement } : null;
-});
-const selectedCityFile = computed(() => (
-  (overview.value?.files || []).find((file) => file.id === activeFileId.value) || selectedFile.value || null
-));
-const selectedFileName = computed(() => fileName(selectedFile.value));
-const selectedFileSubsystem = computed(() => (
-  selectedCityFile.value?.subsystemTitle ||
-  fileConstellation.value?.entities?.find((entity) => entity.kind === "subsystem")?.title ||
-  "Unassigned"
-));
-const selectedFileRoles = computed(() => (
-  (fileConstellation.value?.entities || []).filter((entity) => entity.kind !== "subsystem")
-));
-const selectedFilePurpose = computed(() => (
-  selectedFileRoles.value.find((role) => role.description)?.description ||
-  selectedCityFile.value?.purpose ||
-  selectedCityFile.value?.subsystemDescription ||
-  "Its purpose has not been described yet. Ask in Chat to investigate it from evidence."
-));
-const selectedFileImportedBy = computed(() => (
-  selectedCityFile.value?.importedByCount ??
-  (fileConstellation.value?.edges || []).filter((edge) => edge.toFileId === selectedFile.value?.id).length
-));
-const largeFileWarning = computed(() => Boolean(
-  selectedFile.value && isVisuallyLargeFile(
-    selectedFile.value.lines,
-    overview.value?.lineStats?.largest || fileConstellation.value?.documentLineStats?.largest
-  )
-));
-const fileRelations = computed(() => {
-  const selectedId = selectedFile.value?.id;
-  const filesById = new Map((fileConstellation.value?.files || []).map((file) => [file.id, file]));
-  const relations = [];
-  const seen = new Set();
-  for (const edge of fileConstellation.value?.edges || []) {
-    const direction = edge.fromFileId === selectedId ? "out" : edge.toFileId === selectedId ? "in" : "";
-    const otherId = direction === "out" ? edge.toFileId : direction === "in" ? edge.fromFileId : "";
-    const file = filesById.get(otherId);
-    if (!direction || !file || seen.has(`${direction}:${otherId}`)) {
-      continue;
-    }
-    seen.add(`${direction}:${otherId}`);
-    relations.push({
-      direction,
-      file,
-      key: `${direction}:${otherId}`
-    });
-  }
-  return relations.slice(0, 10);
-});
-const selectedFileExternalRelations = computed(() => {
-  const selectedId = selectedFile.value?.id;
-  const relations = new Map();
-  for (const edge of fileConstellation.value?.edges || []) {
-    const packageId = String(edge.targetPackageId || "").trim();
-    if (edge.fromFileId !== selectedId || edge.toFileId || !packageId) {
-      continue;
-    }
-    const relation = relations.get(packageId) || {
-      importCount: 0,
-      key: `external:${packageId}`,
-      packageId
-    };
-    relation.importCount += 1;
-    relations.set(packageId, relation);
-  }
-  return [...relations.values()].sort((left, right) => (
-    left.packageId.localeCompare(right.packageId)
-  ));
-});
-const latestUpdateEvent = computed(() => updateEvents.value.at(-1) || null);
-const latestUpdateLabel = computed(() => {
-  const type = latestUpdateEvent.value?.type || "";
-  if (type === "system-update.analysis-started") {
-    return `Rebuilding from ${latestUpdateEvent.value.changedPaths || 0} changed paths…`;
-  }
-  if (type === "system-update.source-raced") {
-    return "Source changed during analysis; retrying safely…";
-  }
-  if (type === "system-update.writing") {
-    return "Writing the current file map…";
-  }
-  if (type === "system-update.completed") {
-    return "Current file city ready.";
-  }
-  if (type.endsWith("failed")) {
-    return latestUpdateEvent.value.error?.message || "File City update failed.";
-  }
-  return updating.value ? "Refreshing the current file city…" : "";
-});
 const statusLabel = computed(() => {
-  if (overview.value) {
-    const files = overview.value.lineStats?.files || overview.value.files?.length || 0;
-    const lines = overview.value.lineStats?.total || 0;
-    return `${files.toLocaleString()} files · ${formatLines(lines)} lines`;
+  if (!currentCity.value) {
+    return cityAvailability.value.state || systemStatus.value.status || "loading";
   }
-  return String(systemStatus.value.status || "loading").replaceAll("_", " ");
+  if (cityKind.value === GENESIS_MACHINE_CITY_KIND) {
+    return `${formatCount(currentCity.value.buildings.length, "file")} · ${formatCount(currentCity.value.functions.length, "function")}`;
+  }
+  return `${formatCount(currentCity.value.districts.length, "subsystem")} · ${formatCount(currentCity.value.buildings.length, "operation")}`;
 });
-const viewLegend = computed(() => ({
-  folders: "Color = containing directory terrace",
-  runtime: "Color = client / server / shared",
-  subsystems: "Cloud = subsystem · lines = code anchors"
-}[viewMode.value]));
-
-function fileName(file = {}) {
-  return String(file?.path || "File").split("/").pop();
-}
-
-function pathFileName(filePath = "") {
-  return String(filePath || "Unknown file").split("/").pop();
-}
-
-function formatLines(value = 0) {
-  return Math.max(0, Number(value) || 0).toLocaleString();
-}
+const emptyCityMessage = computed(() => (
+  cityKind.value === GENESIS_MACHINE_CITY_KIND
+    ? "Add Stack pieces with a code indexer, then refresh the Cities."
+    : "Add explanatory Program modules, then refresh the Cities."
+));
+const orientationText = computed(() => (
+  cityKind.value === GENESIS_MACHINE_CITY_KIND
+    ? "Files and functions come directly from .genesis/machine-city.json. No imports, routes, or architectural meaning are inferred here."
+    : "Subsystems, public contracts, implementation maps, and source links come directly from .genesis/program-city.json."
+));
+const machineBuildingsByPath = computed(() => new Map(
+  (machineCity.value?.buildings || []).map((building) => [building.path, building])
+));
+const programBuildingsByPath = computed(() => new Map(
+  (programCity.value?.buildings || []).map((building) => [building.path, building])
+));
 
 function formatCount(value = 0, singular = "item", plural = `${singular}s`) {
   const count = Math.max(0, Number(value) || 0);
   return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
 }
 
-function dependencySummary(dependencies = {}) {
-  const outgoing = dependencies?.outgoing?.length || 0;
-  const incoming = dependencies?.incoming?.length || 0;
-  const external = dependencies?.external?.length || 0;
-  return `out ${outgoing} · in ${incoming} · external ${external}`;
+function formatNumber(value = 0) {
+  return Math.max(0, Number(value) || 0).toLocaleString();
 }
 
-function dependencyEvidenceLabel(dependency = {}) {
-  const imports = Math.max(0, Number(dependency.importCount) || 0);
-  const injections = Math.max(0, Number(dependency.injectionCount) || 0);
-  const files = Math.max(0, Number(dependency.fileCount) || 0);
-  const evidence = [];
-  if (imports) {
-    evidence.push(formatCount(imports, "import"));
+function formatBytes(value = 0) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) {
+    return `${bytes} B`;
   }
-  if (injections) {
-    evidence.push(formatCount(injections, "injection"));
-  }
-  if (dependency.declared) {
-    evidence.push("declared");
-  }
-  return evidence.length > 0
-    ? `${evidence.join(" + ")}${files ? ` from ${formatCount(files, "file")}` : ""}`
-    : "connection";
+  return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
 }
 
 function renderFrame(time) {
@@ -1093,8 +513,18 @@ function syncWorldHistoryAvailability() {
   canNavigateWorldForward.value = worldViewHistory.canForward;
 }
 
+function sourceNavigationContext() {
+  return {
+    camera: world?.captureView() || null,
+    cityKind: cityKind.value,
+    selectedBuildingId: selectedBuildingId.value,
+    selectedDistrictId: selectedDistrict.value?.id || "",
+    view: worldView.value
+  };
+}
+
 function recordWorldNavigation() {
-  if (!world || !overview.value || applyingRestoreRequest || worldHistoryBusy.value) {
+  if (!world || !worldOverview.value || applyingRestoreRequest || worldHistoryBusy.value) {
     return false;
   }
   const recorded = worldViewHistory.record(sourceNavigationContext());
@@ -1102,122 +532,76 @@ function recordWorldNavigation() {
   return recorded;
 }
 
-async function handleFilePick(selection, { recordHistory = true } = {}) {
-  if (!selection.fileKey) {
+function clearSelection() {
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  world?.clearSelection();
+}
+
+function handleBuildingPick(selection = {}) {
+  if (!selection.buildingId) {
     return;
   }
-  if (recordHistory) {
+  recordWorldNavigation();
+  selectedBuildingId.value = selection.buildingId;
+  selectedDistrict.value = null;
+}
+
+function handleDistrictPick(district = null) {
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = district;
+}
+
+function handleClearSelection() {
+  if (selectedBuildingId.value || selectedDistrict.value) {
     recordWorldNavigation();
   }
-  const preserveSubsystemSelection = selection.preserveSubsystemSelection === true &&
-    selection.subsystemConnectionId === selectedSubsystemConnection.value?.id;
-  selectedDirectory.value = null;
-  if (!preserveSubsystemSelection) {
-    editingSubsystemDepthId.value = "";
-    selectedSubsystemConnection.value = null;
-    selectedSubsystemId.value = "";
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+}
+
+function openPayload(path = "", {
+  column = 0,
+  immersive = false,
+  line = 0
+} = {}) {
+  const normalizedPath = String(path || "").trim();
+  if (!normalizedPath) {
+    return null;
   }
-  activeFileId.value = selection.fileId;
-  const response = await selectFile(selection.fileKey);
-  const constellation = response?.constellation || fileConstellation.value;
-  if (constellation && activeFileId.value === selection.fileId) {
-    if (!preserveSubsystemSelection) {
-      world?.setFileContext(constellation);
-    }
+  const located = locateBuilding(normalizedPath);
+  const returnView = world?.captureView() || null;
+  return {
+    anchor: immersive && located?.kind === cityKind.value
+      ? world?.buildingScreenRect(located.building.id) || null
+      : null,
+    buildingId: located?.building.id || "",
+    column: Math.max(0, Number(column) || 0),
+    line: Math.max(0, Number(line) || 0),
+    origin: "system",
+    path: normalizedPath,
+    returnView,
+    systemContext: sourceNavigationContext()
+  };
+}
+
+function openSourceFile(path = "", location = {}) {
+  const payload = openPayload(path, location);
+  if (payload) {
+    emit("open-source-file", payload);
   }
 }
 
 function handleImmersiveFileOpen(selection = {}) {
-  if (!selection.fileId || !selection.path) {
-    return;
+  const payload = openPayload(selection.path, { immersive: true });
+  if (payload) {
+    emit("open-source-file-immersive", {
+      ...payload,
+      anchor: selection.anchor || payload.anchor,
+      returnView: selection.returnView || payload.returnView
+    });
   }
-  const returnView = selection.returnView || world?.captureView() || null;
-  const systemContext = sourceNavigationContext();
-  if (returnView) {
-    systemContext.camera = returnView;
-  }
-  emit("open-source-file-immersive", {
-    anchor: selection.anchor || null,
-    fileId: selection.fileId,
-    fileKey: selection.fileKey || "",
-    origin: "system",
-    path: selection.path,
-    returnView,
-    systemContext
-  });
-}
-
-function handleDirectoryPick(directory) {
-  recordWorldNavigation();
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedSubsystemConnection.value = null;
-  selectedSubsystemId.value = "";
-  selectedDirectory.value = directory;
-}
-
-function handlePrecinctPick(campus) {
-  recordWorldNavigation();
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedSubsystemConnection.value = null;
-  selectedSubsystemId.value = "";
-  selectedDirectory.value = campus;
-}
-
-function handleSubsystemPick(subsystem) {
-  recordWorldNavigation();
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedSubsystemConnection.value = null;
-  selectedDirectory.value = null;
-  selectedSubsystemId.value = subsystem.id;
-}
-
-function handleSubsystemDepthEdit(subsystem) {
-  if (!subsystem?.id) {
-    return;
-  }
-  selectedSubsystemId.value = subsystem.id;
-  editingSubsystemDepthId.value = subsystem.id;
-}
-
-async function chooseSelectedSubsystemDepth(depth) {
-  if (!selectedSubsystem.value?.key || savingSubsystemDepth.value) {
-    return;
-  }
-  const currentDepth = Number(selectedSubsystem.value.depth) || 0;
-  const nextDepth = Math.max(0, Math.min(SUBSYSTEM_DEPTH_MAX, Number(depth) || 0));
-  if (nextDepth === currentDepth) {
-    return;
-  }
-  worldError.value = "";
-  try {
-    await setSubsystemDepth(selectedSubsystem.value.key, nextDepth);
-  } catch (caught) {
-    worldError.value = String(caught?.message || caught || "Subsystem stratum could not be saved.");
-  }
-}
-
-function handleSubsystemConnectionPick(connection) {
-  recordWorldNavigation();
-  selectedSubsystemConnection.value = connection;
-  activeFileId.value = "";
-}
-
-function clearSelectionState() {
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedDirectory.value = null;
-  selectedSubsystemConnection.value = null;
-  selectedSubsystemId.value = "";
-}
-
-function handleClearSelection() {
-  if (activeFileId.value || selectedDirectory.value || selectedSubsystemId.value || selectedSubsystemConnection.value) {
-    recordWorldNavigation();
-  }
-  clearSelectionState();
 }
 
 async function createWorld() {
@@ -1229,30 +613,17 @@ async function createWorld() {
     world = createSystemWorld({
       canvas: canvasElement.value,
       onClearSelection: handleClearSelection,
-      onEditSubsystemDepth: handleSubsystemDepthEdit,
-      onHoverSubsystemConnection: (connection) => {
-        hoveredSubsystemConnection.value = connection;
-      },
-      onOpenFile: handleImmersiveFileOpen,
-      onSelectDirectory: handleDirectoryPick,
-      onSelectFile: (selection) => void handleFilePick(selection),
-      onSelectPrecinct: handlePrecinctPick,
-      onSelectSubsystem: handleSubsystemPick,
-      onSelectSubsystemConnection: handleSubsystemConnectionPick,
+      onOpenBuilding: handleImmersiveFileOpen,
+      onSelectBuilding: handleBuildingPick,
+      onSelectDistrict: handleDistrictPick,
       reducedMotion
     });
     resizeObserver = new ResizeObserver(resizeWorld);
     resizeObserver.observe(canvasElement.value);
     resizeWorld();
     startRenderLoop();
-    if (overview.value) {
-      await world.setOverview(overview.value);
-      world.setSubsystemLayers({
-        connections: showSubsystemConnections.value,
-        fileEvidence: showSubsystemFileEvidence.value,
-        libraries: showSubsystemLibraries.value
-      });
-      world.setViewMode(viewMode.value);
+    if (worldOverview.value) {
+      await world.setOverview(worldOverview.value);
     }
     if (props.restoreRequest) {
       await applyRestoreRequest(props.restoreRequest);
@@ -1273,26 +644,10 @@ async function applyOverview(nextOverview) {
     if (generation !== overviewGeneration) {
       return;
     }
-    if (selectedSubsystemConnection.value) {
-      selectedSubsystemConnection.value = null;
-      activeFileId.value = "";
-    }
-    world.setSubsystemLayers({
-      connections: showSubsystemConnections.value,
-      fileEvidence: showSubsystemFileEvidence.value,
-      libraries: showSubsystemLibraries.value
-    });
-    world.setViewMode(viewMode.value);
-    if (fileConstellation.value && activeFileId.value) {
-      world.setFileContext(fileConstellation.value);
-    } else if (selectedDirectory.value) {
-      if (selectedDirectory.value.kind === "campus") {
-        world.selectPrecinct(selectedDirectory.value.id);
-      } else {
-        world.selectDirectory(selectedDirectory.value.path);
-      }
-    } else if (selectedSubsystem.value) {
-      world.selectSubsystem(selectedSubsystem.value.id);
+    if (selectedBuilding.value) {
+      world.selectBuilding(selectedBuilding.value.id);
+    } else if (selectedDistrict.value) {
+      world.selectDistrict(selectedDistrict.value.id);
     }
     if (previousView.position) {
       world.restoreView(previousView);
@@ -1302,83 +657,30 @@ async function applyOverview(nextOverview) {
   }
 }
 
-function selectCampus(campus) {
-  recordWorldNavigation();
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedSubsystemConnection.value = null;
-  selectedSubsystemId.value = "";
-  selectedDirectory.value = campus;
-  world?.selectPrecinct(campus.id);
-  world?.focusPrecinct(campus.id);
+function selectCity(kind, { recordHistory = true } = {}) {
+  const nextKind = genesisCityKind(kind);
+  if (nextKind === cityKind.value) {
+    return;
+  }
+  if (recordHistory) {
+    recordWorldNavigation();
+  }
+  cityKind.value = nextKind;
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
 }
 
-function inspectSubsystem(subsystem, { focus = false } = {}) {
-  if (!subsystem?.id) {
+function inspectBuilding(building, { focus = false } = {}) {
+  if (!building?.id) {
     return;
   }
   recordWorldNavigation();
-  activeFileId.value = "";
-  editingSubsystemDepthId.value = "";
-  selectedSubsystemConnection.value = null;
-  selectedDirectory.value = null;
-  selectedSubsystemId.value = subsystem.id;
-  world?.selectSubsystem(subsystem.id);
+  selectedBuildingId.value = building.id;
+  selectedDistrict.value = null;
+  world?.selectBuilding(building.id);
   if (focus) {
-    world?.focusSubsystem(subsystem.id);
+    world?.focusBuilding(building.id);
   }
-}
-
-function inspectSubsystemConnectionFile(file) {
-  if (!file?.key || !selectedSubsystemConnection.value) {
-    return;
-  }
-  recordWorldNavigation();
-  if (!world?.selectSubsystemConnectionFile(file.id)) {
-    return;
-  }
-  world.focusFile(file.id);
-  void handleFilePick({
-    fileId: file.id,
-    fileKey: file.key,
-    path: file.path,
-    preserveSubsystemSelection: true,
-    subsystemConnectionId: selectedSubsystemConnection.value.id
-  }, { recordHistory: false });
-}
-
-function focusSubsystemDependency(dependency, direction) {
-  if (!selectedSubsystem.value || !dependency?.subsystemId) {
-    return;
-  }
-  recordWorldNavigation();
-  showSubsystemConnections.value = true;
-  world?.setSubsystemLayers({
-    connections: true,
-    fileEvidence: showSubsystemFileEvidence.value,
-    libraries: showSubsystemLibraries.value
-  });
-  const outgoing = direction === "outgoing";
-  world?.focusSubsystemDependency(
-    outgoing ? selectedSubsystem.value.id : dependency.subsystemId,
-    outgoing ? dependency.subsystemId : selectedSubsystem.value.id
-  );
-}
-
-function inspectFile(file, { focus = false } = {}) {
-  if (!file?.key) {
-    return;
-  }
-  recordWorldNavigation();
-  world?.selectFile(file.id);
-  if (focus) {
-    world?.focusFile(file.id);
-  }
-  void handleFilePick({
-    fileId: file.id,
-    fileKey: file.key,
-    path: file.path
-  }, { recordHistory: false });
 }
 
 function fitWorld() {
@@ -1433,62 +735,38 @@ function endViewRotation(event) {
   viewRotationPointer = null;
 }
 
-function setViewMode(mode, { recordHistory = true } = {}) {
-  const nextMode = ["folders", "subsystems", "runtime"].includes(mode) ? mode : "folders";
-  if (nextMode === viewMode.value) {
+async function refreshCities() {
+  worldError.value = "";
+  try {
+    await refresh();
+  } catch (caught) {
+    worldError.value = String(caught?.message || caught || "Genesis Cities could not be refreshed.");
+  }
+}
+
+function askAboutSelection() {
+  if (!selectedBuilding.value || !props.askChatAvailable) {
     return;
   }
-  if (recordHistory) {
-    recordWorldNavigation();
-  }
-  viewMode.value = nextMode;
-  world?.setViewMode(nextMode);
-}
-
-function toggleSubsystemLayer(layer) {
-  recordWorldNavigation();
-  if (layer === "connections") {
-    showSubsystemConnections.value = !showSubsystemConnections.value;
-    if (!showSubsystemConnections.value) {
-      showSubsystemFileEvidence.value = false;
-    }
-  } else if (layer === "file-evidence") {
-    showSubsystemFileEvidence.value = !showSubsystemFileEvidence.value;
-  } else if (layer === "libraries") {
-    showSubsystemLibraries.value = !showSubsystemLibraries.value;
-  }
-  world?.setSubsystemLayers({
-    connections: showSubsystemConnections.value,
-    fileEvidence: showSubsystemFileEvidence.value,
-    libraries: showSubsystemLibraries.value
-  });
-}
-
-function updateSystem() {
-  void startUpdate();
-}
-
-function sourceNavigationContext() {
-  return {
-    camera: world?.captureView() || null,
-    mode: "city",
-    selectedCampusId: selectedDirectory.value?.kind === "campus" ? selectedDirectory.value.id : "",
-    selectedDirectoryPath: selectedDirectory.value?.kind === "campus" ? null : selectedDirectory.value?.path ?? null,
-    selectedFileId: activeFileId.value,
-    selectedFileKey: selectedFile.value?.key || selectedCityFile.value?.key || "",
-    selectedSubsystemConnectionFileId: selectedSubsystemConnectionFile.value?.id || "",
-    selectedSubsystemConnectionId: selectedSubsystemConnection.value?.id || "",
-    selectedSubsystemId: selectedSubsystemId.value,
-    subsystemConnectionsVisible: showSubsystemConnections.value,
-    subsystemFileEvidenceVisible: showSubsystemFileEvidence.value,
-    subsystemLibrariesVisible: showSubsystemLibraries.value,
-    viewMode: viewMode.value,
-    view: worldView.value
-  };
+  const prompt = cityKind.value === GENESIS_MACHINE_CITY_KIND
+    ? [
+        "Please explain this file using the code and its Genesis explanatory layer. Do not change code unless I ask.",
+        `File: ${selectedBuilding.value.path}`,
+        `Language: ${selectedBuilding.value.language}`,
+        `Indexed functions: ${selectedFunctions.value.map((entry) => entry.qualifiedName).join(", ") || "none"}`
+      ].join("\n")
+    : [
+        "Please explain this public Program operation and how its listed sources implement it. Do not change code unless I ask.",
+        `Program module: ${selectedBuilding.value.path}`,
+        `Subsystem: ${selectedBuilding.value.subsystem}`,
+        `Operation: ${selectedBuilding.value.title}`,
+        `Sources: ${selectedBuilding.value.sources.join(", ")}`
+      ].join("\n");
+  emit("ask-in-chat", { prompt });
 }
 
 async function navigateWorldHistory(direction) {
-  if (!world || !overview.value || worldHistoryBusy.value) {
+  if (!world || !worldOverview.value || worldHistoryBusy.value) {
     return;
   }
   const currentView = sourceNavigationContext();
@@ -1500,279 +778,154 @@ async function navigateWorldHistory(direction) {
     return;
   }
   worldHistoryBusy.value = true;
-  worldError.value = "";
   try {
     await applyRestoreRequest(targetView);
-  } catch (caught) {
-    worldError.value = String(caught?.message || caught || "File City history could not be restored.");
   } finally {
     worldHistoryBusy.value = false;
     syncWorldHistoryAvailability();
   }
 }
 
-function immersiveFile(path = "") {
-  return cityFilesByPath.value.get(String(path || "")) || null;
+async function applyRestoreRequest(request = {}) {
+  if (!request || !world) {
+    return false;
+  }
+  applyingRestoreRequest = true;
+  try {
+    const requestedKind = genesisCityKind(request.cityKind || cityKind.value);
+    if (requestedKind !== cityKind.value) {
+      selectCity(requestedKind, { recordHistory: false });
+      await nextTick();
+      await overviewPromise;
+    }
+    worldView.value = request.view === "top" ? "top" : "perspective";
+    world.setView(worldView.value);
+    clearSelection();
+    if (request.selectedBuildingId && buildings.value.some((building) => building.id === request.selectedBuildingId)) {
+      selectedBuildingId.value = request.selectedBuildingId;
+      world.selectBuilding(request.selectedBuildingId);
+      world.focusBuilding(request.selectedBuildingId);
+    } else if (request.selectedDistrictId) {
+      const district = currentCity.value?.districts.find((entry) => entry.id === request.selectedDistrictId);
+      if (district) {
+        selectedDistrict.value = world.selectDistrict(district.id) || district;
+        world.focusDistrict(district.id);
+      }
+    }
+    if (request.camera) {
+      world.restoreView(request.camera);
+    }
+    return true;
+  } finally {
+    applyingRestoreRequest = false;
+  }
+}
+
+function locateBuilding(path = "") {
+  const normalizedPath = String(path || "");
+  const machine = machineBuildingsByPath.value.get(normalizedPath);
+  if (machine) {
+    return { building: machine, kind: GENESIS_MACHINE_CITY_KIND };
+  }
+  const program = programBuildingsByPath.value.get(normalizedPath);
+  return program ? { building: program, kind: GENESIS_PROGRAM_CITY_KIND } : null;
 }
 
 function hasImmersiveFile(path = "") {
-  return Boolean(immersiveFile(path));
+  return Boolean(locateBuilding(path));
 }
 
 function immersiveFileAnchor(path = "") {
-  const file = immersiveFile(path) || cityFilesById.value.get(activeFileId.value);
-  return file ? world?.fileScreenRect(file.id) || null : null;
+  const located = locateBuilding(path);
+  return located?.kind === cityKind.value
+    ? world?.buildingScreenRect(located.building.id) || null
+    : null;
 }
 
 function closeImmersiveFilePortal({ immediate = false } = {}) {
-  world?.endFilePortal({ immediate });
+  world?.endBuildingPortal({ immediate });
 }
 
 async function restoreImmersiveView(view = null, { immediate = false } = {}) {
   if (!world || !view) {
     return false;
   }
-  return immediate
-    ? world.restoreView(view)
-    : world.flyToView(view);
+  return immediate ? world.restoreView(view) : world.flyToView(view);
 }
 
 async function travelImmersiveFile(path = "") {
-  const file = immersiveFile(path);
-  if (!file || !world || worldHistoryBusy.value) {
+  const located = locateBuilding(path);
+  if (!located || !world || worldHistoryBusy.value) {
     return null;
   }
-  if (file.id === activeFileId.value) {
-    return {
-      anchor: world.beginFilePortal(file.id) || world.fileScreenRect(file.id),
-      fileId: file.id,
-      fileKey: file.key,
-      path: file.path
-    };
-  }
-
-  const fromFileId = activeFileId.value;
   recordWorldNavigation();
   worldHistoryBusy.value = true;
-  worldError.value = "";
   try {
-    world.endFilePortal();
-    world.selectFile(file.id);
-    const loadingFile = handleFilePick({
-      fileId: file.id,
-      fileKey: file.key,
-      path: file.path
-    }, { recordHistory: false });
-    const [anchor] = await Promise.all([
-      world.flyToFile(file.id, { fromFileId }),
-      loadingFile
-    ]);
-    world.beginFilePortal(file.id);
+    if (located.kind !== cityKind.value) {
+      selectCity(located.kind, { recordHistory: false });
+      await nextTick();
+      await overviewPromise;
+    }
+    selectedBuildingId.value = located.building.id;
+    selectedDistrict.value = null;
+    world.selectBuilding(located.building.id);
+    const anchor = await world.flyToBuilding(located.building.id);
+    world.beginBuildingPortal(located.building.id);
     return {
-      anchor: world.fileScreenRect(file.id) || anchor,
-      fileId: file.id,
-      fileKey: file.key,
-      path: file.path
+      anchor: world.buildingScreenRect(located.building.id) || anchor,
+      buildingId: located.building.id,
+      path: located.building.path
     };
-  } catch (caught) {
-    worldError.value = String(caught?.message || caught || "File City could not travel to that source file.");
-    return null;
   } finally {
     worldHistoryBusy.value = false;
     syncWorldHistoryAvailability();
   }
 }
 
-function openSelectedFile() {
-  if (!selectedFile.value) {
+watch(worldOverview, (nextOverview) => {
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  if (!nextOverview) {
+    world?.clearOverview();
+    overviewPromise = Promise.resolve();
     return;
   }
-  emit("open-source-file", {
-    origin: "system",
-    path: selectedFile.value.path,
-    systemContext: sourceNavigationContext()
-  });
-}
-
-function selectionPrompt() {
-  if (selectedSubsystem.value) {
-    return [
-      "I am looking at this subsystem in Vibe64 File City:",
-      `- Subsystem: ${selectedSubsystem.value.title} (${selectedSubsystem.value.id})`,
-      `- Meaning: ${selectedSubsystem.value.description || "not described yet"}`,
-      `- Provenance: ${selectedSubsystem.value.origin}; status: ${selectedSubsystem.value.status}; authored by: ${selectedSubsystem.value.authoredBy}`,
-      `- Execution side: ${selectedSubsystem.value.executionSide}`,
-      `- Current size: ${selectedSubsystem.value.fileCount} files, ${selectedSubsystem.value.lines} lines`,
-      `- Anchors: ${selectedSubsystem.value.anchors.map((anchor) => `${anchor.relation} ${anchor.kind} ${anchor.path}`).join("; ")}`,
-      `- Capabilities: ${selectedSubsystem.value.capabilities.map((capability) => `${capability.direction} ${capability.kind} ${capability.value || capability.title}`).join("; ") || "none recorded"}`,
-      `- Uses subsystems: ${selectedSubsystemDependencies.value.outgoing.map((dependency) => dependency.title).join(", ") || "none"}`,
-      `- Used by subsystems: ${selectedSubsystemDependencies.value.incoming.map((dependency) => dependency.title).join(", ") || "none"}`,
-      `- External npm packages: ${selectedSubsystemDependencies.value.external.map((dependency) => dependency.title).join(", ") || "none"}`,
-      "",
-      "Please explain this subsystem in plain language and assess whether its boundary, name, purpose, and capabilities match the source evidence. Do not change source code. If metadata should change, propose the exact checked-in vibe64.system.json declaration first."
-    ].join("\n");
-  }
-  if (selectedDirectory.value) {
-    const campusSelected = selectedDirectory.value.kind === "campus";
-    return [
-      `I am looking at this ${campusSelected ? "campus" : "directory precinct"} in Vibe64 File City:`,
-      `- ${campusSelected ? "Campus" : "Directory"}: ${selectedDirectory.value.name}`,
-      `- Source root: ${selectedDirectory.value.path || "everything not claimed by another campus"}`,
-      `- Files below it: ${selectedDirectory.value.fileCount}`,
-      `- Total physical size: ${selectedDirectory.value.lines} lines`,
-      `- Subsystems represented: ${selectedDirectory.value.subsystems.map((entry) => entry.title).join(", ") || "not yet assigned"}`,
-      "",
-      "Please explain, in plain language, what belongs here and whether the directory and subsystem boundaries make sense. Do not change code until I explicitly ask."
-    ].join("\n");
-  }
-  if (selectedFile.value) {
-    return [
-      "I am looking at this building in Vibe64 File City:",
-      `- File: ${selectedFile.value.path}`,
-      `- Physical size: ${selectedFile.value.lines} lines`,
-      `- Known purpose: ${selectedFilePurpose.value}`,
-      `- Owning subsystem: ${selectedFileSubsystem.value}`,
-      `- Imports: ${selectedFile.value.imports.length}; imported by: ${selectedFileImportedBy.value}`,
-      "",
-      "Please explain what this file does and whether it is in the right place. If its purpose or subsystem needs annotation, propose the checked-in metadata change. Do not change code until I explicitly ask."
-    ].join("\n");
-  }
-  return "Please help me understand the current repository shown in Vibe64 File City. Do not change code until I explicitly ask.";
-}
-
-function askAboutSelection() {
-  emit("ask-in-chat", {
-    prompt: selectionPrompt().slice(0, 5000)
-  });
-}
-
-function subsystemDiscoveryPrompt() {
-  return [
-    "Please discover meaningful subsystems in this current Vibe64 session.",
-    "",
-    "Work from source evidence and the existing adapter-derived subsystem facts. A subsystem is a coherent responsibility that may own, implement, support, or configure one or more real files or directories. Look especially for responsibilities that cross directory boundaries, and do not merely restate every folder.",
-    "",
-    "Do not change application source code. Update only the declarations array in the checked-in vibe64.system.json current-state document, preserving adapter-derived tables. For each Codex-authored declaration use kind: subsystem, authoredBy: codex, origin: inferred, and status: proposed. Include a stable id, plain-language title and description, executionSide, evidence-backed anchors, and flexible capabilities.",
-    "",
-    "Anchors must use kind file or directory; relation owns, implements, supports, or configures; a project-relative path; origin inferred; and evidenceIds when available. Capabilities must include a stable id, open-ended kind, direction provides or requires, title, and evidence such as value, description, or sourcePath. Do not assign the exact same owns anchor to two subsystems. Prefer the smallest coherent boundaries.",
-    "",
-    "When finished, summarize what you proposed and why. I will use Refresh map in File City to reconcile the visual world."
-  ].join("\n");
-}
-
-function discoverSubsystems() {
-  emit("ask-in-chat", {
-    prompt: subsystemDiscoveryPrompt().slice(0, 5000)
-  });
-}
-
-async function applyRestoreRequest(request) {
-  if (!request || !world || !overview.value) {
-    return;
-  }
-  const previousApplyingRestoreRequest = applyingRestoreRequest;
-  applyingRestoreRequest = true;
-  try {
-    if (request.viewMode || request.colorMode) {
-      setViewMode(request.viewMode || request.colorMode, { recordHistory: false });
-    }
-    showSubsystemConnections.value = request.subsystemConnectionsVisible === true;
-    showSubsystemFileEvidence.value = showSubsystemConnections.value && request.subsystemFileEvidenceVisible === true;
-    showSubsystemLibraries.value = request.subsystemLibrariesVisible === true;
-    world.setSubsystemLayers({
-      connections: showSubsystemConnections.value,
-      fileEvidence: showSubsystemFileEvidence.value,
-      libraries: showSubsystemLibraries.value
-    });
-
-    clearSelectionState();
-    world.clearSelection();
-
-    const subsystem = subsystems.value.find((entry) => entry.id === request.selectedSubsystemId) || null;
-    const connectionRequested = Boolean(request.selectedSubsystemConnectionId && subsystem);
-    if (connectionRequested) {
-      selectedSubsystemId.value = subsystem.id;
-      world.selectSubsystem(subsystem.id);
-      world.selectSubsystemConnection(request.selectedSubsystemConnectionId);
-    }
-
-    const requestedFileId = String(
-      request.selectedSubsystemConnectionFileId || request.selectedFileId || ""
-    );
-    const requestedCityFile = cityFilesById.value.get(requestedFileId) || null;
-    const requestedFileKey = String(request.selectedFileKey || requestedCityFile?.key || "");
-    if (requestedFileKey) {
-      const response = await selectFile(requestedFileKey);
-      const constellation = response?.constellation || fileConstellation.value;
-      if (constellation?.selectedFile) {
-        activeFileId.value = requestedFileId || constellation.selectedFile.id;
-        if (connectionRequested) {
-          world.selectSubsystemConnectionFile(activeFileId.value);
-        } else {
-          world.setFileContext(constellation);
-        }
-      }
-    } else if (request.selectedCampusId) {
-      const campus = campuses.value.find((entry) => entry.id === request.selectedCampusId);
-      if (campus) {
-        selectedDirectory.value = campus;
-        world.selectPrecinct(campus.id);
-      }
-    } else if (request.selectedDirectoryPath) {
-      const directory = layoutFileCity(overview.value).directories.find((entry) => (
-        entry.path === request.selectedDirectoryPath
-      ));
-      if (directory) {
-        selectedDirectory.value = directory;
-        world.selectDirectory(directory.path);
-      }
-    } else if (subsystem && !connectionRequested) {
-      selectedSubsystemId.value = subsystem.id;
-      world.selectSubsystem(subsystem.id);
-    }
-
-    worldView.value = request.view || "perspective";
-    if (!world.restoreView(request.camera || {})) {
-      if (activeFileId.value) {
-        world.focusFile(activeFileId.value);
-      } else if (selectedDirectory.value) {
-        if (selectedDirectory.value.kind === "campus") {
-          world.focusPrecinct(selectedDirectory.value.id);
-        } else {
-          world.focusDirectory(selectedDirectory.value.path);
-        }
-      } else if (selectedSubsystem.value) {
-        world.focusSubsystem(selectedSubsystem.value.id);
-      }
-    }
-  } finally {
-    applyingRestoreRequest = previousApplyingRestoreRequest;
-  }
-}
-
-watch(overview, (nextOverview) => {
-  void applyOverview(nextOverview);
+  overviewPromise = applyOverview(nextOverview);
 });
 
-watch(() => props.active, (isActive) => {
-  world?.setActive(isActive);
-  if (isActive) {
+watch(() => props.active, (active) => {
+  world?.setActive(active);
+  if (active) {
+    resizeWorld();
     startRenderLoop();
-    void nextTick(resizeWorld);
   } else {
     stopRenderLoop();
   }
-}, { immediate: true });
-
-watch(() => props.restoreRequest?.sequence || 0, () => {
-  if (props.restoreRequest) {
-    void applyRestoreRequest(props.restoreRequest);
-  }
 });
+
+watch(() => props.restoreRequest, (request) => {
+  if (request && props.active) {
+    void applyRestoreRequest(request);
+  }
+}, { deep: true });
 
 watch(() => props.sessionId, () => {
   worldViewHistory.clear();
   syncWorldHistoryAvailability();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  cityKind.value = GENESIS_MACHINE_CITY_KIND;
+});
+
+onMounted(() => {
+  void createWorld();
+});
+
+onBeforeUnmount(() => {
+  stopRenderLoop();
+  resizeObserver?.disconnect();
+  world?.dispose();
+  world = null;
 });
 
 defineExpose({
@@ -1782,135 +935,68 @@ defineExpose({
   restoreImmersiveView,
   travelImmersiveFile
 });
-
-onMounted(() => {
-  void createWorld();
-});
-
-onBeforeUnmount(() => {
-  stopRenderLoop();
-  resizeObserver?.disconnect?.();
-  world?.dispose();
-  world = null;
-});
 </script>
 
 <style scoped>
 .system-world {
   --city-blue: #56d8ff;
-  --city-orange: #ff6b31;
   background: #050914;
-  color: #f5f8ff;
+  color: #f4f8ff;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
   min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 
 .system-world__toolbar {
   align-items: center;
-  backdrop-filter: blur(18px);
-  background: rgba(5, 9, 20, 0.92);
-  border-bottom: 1px solid rgba(146, 177, 229, 0.15);
+  background: linear-gradient(90deg, rgba(11, 20, 40, 0.98), rgba(7, 13, 28, 0.98));
+  border-bottom: 1px solid rgba(121, 180, 225, 0.2);
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: minmax(10rem, 1fr) auto minmax(10rem, 1fr);
-  min-height: 3.2rem;
-  padding: 0.42rem 0.68rem;
-  position: relative;
-  z-index: 20;
+  grid-template-columns: minmax(12rem, 1fr) auto minmax(12rem, 1fr);
+  min-height: 3.5rem;
+  padding: 0.55rem 0.75rem;
 }
 
 .system-world__identity,
 .system-world__view-actions,
-.system-world__mode-switch {
+.system-world__city-switch,
+.system-world__controls-hint,
+.system-world__legend,
+.system-world__chips,
+.system-world__metrics,
+.system-world__inspector-actions {
   align-items: center;
   display: flex;
 }
 
-.system-world__identity { gap: 0.55rem; }
-.system-world__identity > div { display: grid; line-height: 1.05; }
-.system-world__identity strong { font-size: 0.86rem; letter-spacing: 0.07em; text-transform: uppercase; }
-.system-world__identity span:not(.system-world__mark) { color: rgba(220, 232, 255, 0.55); font-size: 0.65rem; margin-top: 0.22rem; }
-.system-world__mark {
-  align-items: center;
-  background: linear-gradient(135deg, rgba(53, 208, 255, 0.26), rgba(129, 88, 255, 0.2));
-  border: 1px solid rgba(118, 221, 255, 0.42);
-  border-radius: 0.65rem;
-  box-shadow: 0 0 1.5rem rgba(53, 208, 255, 0.14);
-  display: inline-flex;
-  height: 2rem;
-  justify-content: center;
-  width: 2rem;
-}
+.system-world__identity { gap: 0.58rem; min-width: 0; }
+.system-world__identity > div { display: grid; min-width: 0; }
+.system-world__identity strong { font-size: 0.82rem; }
+.system-world__identity span { color: rgba(217, 232, 255, 0.55); font-size: 0.62rem; }
+.system-world__mark { align-items: center; background: rgba(86, 216, 255, 0.13); border: 1px solid rgba(86, 216, 255, 0.28); border-radius: 0.55rem; color: var(--city-blue); display: inline-flex; height: 2rem; justify-content: center; width: 2rem; }
+.system-world__city-switch { background: rgba(2, 8, 18, 0.5); border: 1px solid rgba(121, 180, 225, 0.17); border-radius: 0.7rem; padding: 0.14rem; }
+.system-world__view-actions { gap: 0.16rem; justify-content: flex-end; }
 
-.system-world__mode-switch {
-  background: rgba(123, 148, 191, 0.09);
-  border: 1px solid rgba(140, 169, 221, 0.12);
-  border-radius: 0.7rem;
-  padding: 0.1rem;
-}
-
-.system-world__mode-switch > span {
-  color: rgba(214, 227, 250, 0.48);
-  font-size: 0.56rem;
-  padding: 0 0.35rem;
-  text-transform: uppercase;
-}
-
-.system-world__view-actions { gap: 0.1rem; justify-content: flex-end; }
-.system-world__stage { isolation: isolate; min-height: 0; overflow: hidden; position: relative; }
-.system-world__layer-controls { align-items: center; backdrop-filter: blur(14px); background: rgba(7, 13, 27, 0.9); border: 1px solid rgba(132, 164, 219, 0.2); border-radius: 0.55rem; display: flex; gap: 0.2rem; left: 50%; padding: 0.18rem; position: absolute; top: 0.65rem; transform: translateX(-50%); z-index: 10; }
-.system-world__layer-controls > span { color: rgba(218, 232, 255, 0.44); font-size: 0.48rem; padding: 0 0.28rem; text-transform: uppercase; }
-.system-world__layer-controls > button { background: rgba(123, 148, 191, 0.08); border: 1px solid transparent; border-radius: 0.38rem; color: rgba(218, 232, 255, 0.66); cursor: pointer; font: inherit; font-size: 0.52rem; padding: 0.3rem 0.48rem; }
-.system-world__layer-controls > button:hover,
-.system-world__layer-controls > button:focus-visible { background: rgba(93, 188, 238, 0.14); color: #fff; }
-.system-world__layer-controls > button.system-world__layer-control--active { background: rgba(83, 205, 241, 0.2); border-color: rgba(103, 223, 255, 0.42); color: #fff; }
-.system-world__layer-controls > button:disabled { cursor: default; opacity: 0.34; }
-
+.system-world__stage { min-height: 0; overflow: hidden; position: relative; }
 .system-world__canvas {
-  background:
-    radial-gradient(circle at 24% 38%, rgba(31, 109, 153, 0.2), transparent 34%),
-    radial-gradient(circle at 78% 52%, rgba(91, 41, 151, 0.17), transparent 32%),
-    linear-gradient(#080e1e, #040711);
+  background: radial-gradient(circle at 24% 38%, rgba(31, 109, 153, 0.2), transparent 34%), linear-gradient(#080e1e, #040711);
   cursor: move;
   display: block;
   height: 100%;
   outline: none;
   width: 100%;
 }
-
 .system-world__canvas:active { cursor: grabbing; }
 .system-world__canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--city-blue); }
-
-.system-world__connection-tooltip {
-  background: rgba(5, 9, 18, 0.96);
-  border: 1px solid rgba(241, 245, 249, 0.42);
-  border-radius: 0.55rem;
-  box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.42);
-  display: grid;
-  gap: 0.16rem;
-  max-width: 16rem;
-  padding: 0.48rem 0.58rem;
-  pointer-events: none;
-  position: absolute;
-  transform: translateY(-100%);
-  z-index: 14;
-}
-.system-world__connection-tooltip > span { color: rgba(120, 222, 255, 0.72); font-size: 0.48rem; letter-spacing: 0.08em; text-transform: uppercase; }
-.system-world__connection-tooltip > strong { color: #fff; font-size: 0.65rem; overflow-wrap: anywhere; }
-.system-world__connection-tooltip > code { color: rgba(218, 230, 248, 0.66); font-size: 0.5rem; overflow-wrap: anywhere; }
-.system-world__connection-tooltip > small { color: rgba(255, 224, 138, 0.68); font-size: 0.5rem; margin-top: 0.12rem; }
 
 .system-world__state-card {
   align-items: center;
   backdrop-filter: blur(24px);
-  background: rgba(8, 14, 31, 0.9);
+  background: rgba(8, 14, 31, 0.92);
   border: 1px solid rgba(114, 183, 228, 0.24);
   border-radius: 1.2rem;
-  box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, 0.42);
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
@@ -1923,24 +1009,18 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -50%);
   z-index: 12;
 }
-
 .system-world__state-card > span { color: rgba(223, 234, 255, 0.64); font-size: 0.79rem; }
 .system-world__state-card--error { border-color: rgba(255, 93, 120, 0.46); }
-.system-world__state-orbit {
-  animation: system-orbit 1.3s linear infinite;
-  border: 2px solid rgba(53, 208, 255, 0.16);
-  border-right-color: var(--city-blue);
-  border-radius: 50%;
-  height: 2.5rem;
-  width: 2.5rem;
-}
+.system-world__state-orbit { animation: system-orbit 1.3s linear infinite; border: 2px solid rgba(53, 208, 255, 0.16); border-right-color: var(--city-blue); border-radius: 50%; height: 2.5rem; width: 2.5rem; }
 @keyframes system-orbit { to { transform: rotate(1turn); } }
 
-.system-world__stale,
 .system-world__progress {
   align-items: center;
   backdrop-filter: blur(12px);
+  background: rgba(11, 28, 48, 0.9);
+  border: 1px solid rgba(53, 208, 255, 0.3);
   border-radius: 999px;
+  bottom: 4.5rem;
   display: flex;
   font-size: 0.68rem;
   gap: 0.42rem;
@@ -1950,108 +1030,35 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   z-index: 8;
 }
-
-.system-world__stale { background: rgba(108, 61, 8, 0.86); border: 1px solid rgba(255, 183, 70, 0.4); top: 0.75rem; }
-.system-world__stale span,
-.system-world__progress-pulse { background: #ffb84d; border-radius: 50%; height: 0.42rem; width: 0.42rem; }
-.system-world__progress { background: rgba(11, 28, 48, 0.88); border: 1px solid rgba(53, 208, 255, 0.3); bottom: 5.25rem; }
-.system-world__progress-pulse { animation: system-pulse 1s ease-in-out infinite; background: var(--city-blue); box-shadow: 0 0 0.65rem var(--city-blue); }
+.system-world__progress-pulse { animation: system-pulse 1s ease-in-out infinite; background: var(--city-blue); border-radius: 50%; height: 0.42rem; width: 0.42rem; }
 @keyframes system-pulse { 50% { opacity: 0.25; transform: scale(0.7); } }
-
-.system-world__view-gizmo {
-  align-items: center;
-  background: rgba(7, 13, 27, 0.9);
-  border: 1px solid rgba(125, 201, 239, 0.26);
-  border-radius: 999px;
-  bottom: 2.55rem;
-  display: flex;
-  gap: 0.2rem;
-  left: 50%;
-  padding: 0.22rem;
-  position: absolute;
-  transform: translateX(-50%);
-  z-index: 9;
-}
-
-.system-world__view-gizmo button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 50%;
-  color: rgba(224, 239, 255, 0.72);
-  cursor: pointer;
-  display: inline-flex;
-  height: 1.75rem;
-  justify-content: center;
-  padding: 0;
-  width: 1.75rem;
-}
-
-.system-world__view-gizmo button:hover,
-.system-world__view-gizmo button:focus-visible {
-  background: rgba(86, 216, 255, 0.15);
-  color: #fff;
-  outline: none;
-}
-
-.system-world__view-gizmo-puck {
-  border: 1px solid rgba(86, 216, 255, 0.34) !important;
-  cursor: grab !important;
-  position: relative;
-  touch-action: none;
-}
-
-.system-world__view-gizmo-puck:active { cursor: grabbing !important; }
-.system-world__view-gizmo-puck span {
-  color: var(--city-blue);
-  font-size: 0.42rem;
-  font-weight: 800;
-  left: 50%;
-  line-height: 1;
-  position: absolute;
-  top: 0.08rem;
-  transform: translateX(-50%);
-}
 
 .system-world__navigator {
   backdrop-filter: blur(16px);
-  background: rgba(7, 13, 27, 0.78);
+  background: rgba(7, 13, 27, 0.82);
   border: 1px solid rgba(132, 164, 219, 0.16);
   border-radius: 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.12rem;
   left: 0.7rem;
-  max-height: calc(100% - 7.5rem);
+  max-height: calc(100% - 7rem);
   overflow-y: auto;
   padding: 0.36rem;
   position: absolute;
   top: 0.7rem;
-  width: min(13rem, 24%);
+  width: min(17rem, 28%);
   z-index: 8;
 }
-
 .system-world__navigator header { align-items: center; color: rgba(218, 232, 255, 0.52); display: flex; font-size: 0.57rem; justify-content: space-between; letter-spacing: 0.12em; padding: 0.32rem 0.45rem; text-transform: uppercase; }
-.system-world__navigator button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 0.5rem;
-  color: rgba(231, 239, 255, 0.76);
-  cursor: pointer;
-  display: grid;
-  font: inherit;
-  gap: 0.42rem;
-  grid-template-columns: auto 1fr;
-  padding: 0.38rem 0.42rem;
-  text-align: left;
-}
+.system-world__navigator button { align-items: center; background: transparent; border: 0; border-radius: 0.5rem; color: rgba(231, 239, 255, 0.76); cursor: pointer; display: grid; font: inherit; gap: 0.42rem; grid-template-columns: auto minmax(0, 1fr); padding: 0.38rem 0.42rem; text-align: left; }
 .system-world__navigator button:hover,
 .system-world__navigator button:focus-visible,
 .system-world__navigator-button--active { background: rgba(93, 188, 238, 0.14) !important; color: #fff !important; }
 .system-world__navigator button > span { display: grid; min-width: 0; }
-.system-world__navigator button strong { font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.system-world__navigator button small { color: rgba(201, 218, 242, 0.46); font-size: 0.53rem; }
+.system-world__navigator button strong,
+.system-world__navigator button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.system-world__navigator button strong { font-size: 0.65rem; }
+.system-world__navigator button small { color: rgba(201, 218, 242, 0.48); font-size: 0.53rem; }
 
 .system-world__inspector,
 .system-world__orientation {
@@ -2063,214 +1070,54 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 0.75rem;
   top: 0.75rem;
-  width: min(23rem, 36%);
+  width: min(24rem, 38%);
   z-index: 10;
 }
-
-.system-world__inspector { max-height: calc(100% - 6.7rem); overflow-y: auto; padding: 1rem; }
-.system-world__orientation { display: grid; gap: 0.38rem; padding: 0.9rem 1rem; width: min(20rem, 32%); }
-.system-world__orientation > strong { font-size: 0.84rem; }
-.system-world__orientation > span { color: rgba(216, 230, 250, 0.62); font-size: 0.68rem; line-height: 1.45; }
+.system-world__inspector { max-height: calc(100% - 6rem); overflow-y: auto; padding: 1rem; }
+.system-world__orientation { display: grid; gap: 0.38rem; padding: 0.9rem 1rem; }
 .system-world__eyebrow { color: var(--city-blue); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; }
 .system-world__inspector h2 { font-size: 1.08rem; line-height: 1.22; margin: 0.3rem 0 0.42rem; }
-.system-world__inspector p { color: rgba(225, 235, 255, 0.7); font-size: 0.72rem; line-height: 1.48; }
+.system-world__inspector p,
+.system-world__orientation span { color: rgba(225, 235, 255, 0.7); font-size: 0.72rem; line-height: 1.48; }
 .system-world__path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-
 .system-world__chips,
 .system-world__metrics,
-.system-world__inspector-actions { display: flex; flex-wrap: wrap; gap: 0.42rem; }
+.system-world__inspector-actions { flex-wrap: wrap; gap: 0.42rem; }
 .system-world__chips span { background: rgba(114, 157, 223, 0.12); border: 1px solid rgba(127, 178, 236, 0.16); border-radius: 999px; color: rgba(226, 238, 255, 0.8); font-size: 0.58rem; padding: 0.22rem 0.48rem; text-transform: uppercase; }
 .system-world__metrics { border-bottom: 1px solid rgba(133, 166, 220, 0.12); border-top: 1px solid rgba(133, 166, 220, 0.12); margin: 0.75rem 0; padding: 0.58rem 0; }
-.system-world__metrics span { color: rgba(208, 222, 248, 0.58); display: grid; font-size: 0.56rem; min-width: 4.6rem; text-transform: uppercase; }
+.system-world__metrics span { color: rgba(208, 222, 248, 0.58); display: grid; font-size: 0.56rem; min-width: 5rem; text-transform: uppercase; }
 .system-world__metrics strong { color: #fff; font-size: 0.78rem; }
-.system-world__inspector-actions { margin-top: 0.8rem; }
-.system-world__stratum-hint {
-  border-left: 2px solid rgba(94, 218, 255, 0.42);
-  font-size: 0.62rem !important;
-  margin: 0.7rem 0;
-  padding-left: 0.55rem;
-}
-.system-world__stratum-editor {
-  align-items: start;
-  background: linear-gradient(145deg, rgba(62, 205, 255, 0.12), rgba(78, 99, 174, 0.08));
-  border: 1px solid rgba(103, 223, 255, 0.3);
-  border-radius: 0.72rem;
-  display: grid;
-  gap: 0.65rem;
-  grid-template-columns: minmax(0, 1fr) auto;
-  margin: 0.72rem 0;
-  padding: 0.65rem;
-}
-.system-world__stratum-editor strong { display: block; font-size: 0.75rem; margin-top: 0.2rem; }
-.system-world__stratum-editor p { font-size: 0.6rem; margin: 0.26rem 0 0; }
-.system-world__stratum-controls { align-items: stretch; display: grid; gap: 0.28rem; justify-items: stretch; }
-.system-world__stratum-scale {
-  align-items: center;
-  display: flex;
-  gap: 0.22rem;
-  justify-content: center;
-  padding: 0.05rem 0;
-}
-.system-world__stratum-scale button {
-  align-items: center;
-  background: rgba(178, 208, 243, 0.1);
-  border: 1px solid rgba(178, 208, 243, 0.16);
-  border-radius: 999px;
-  color: rgba(218, 232, 250, 0.55);
-  display: inline-flex;
-  font-size: 0.52rem;
-  height: 1.25rem;
-  justify-content: center;
-  padding: 0;
-  width: 1.25rem;
-}
-.system-world__stratum-scale button:not(:disabled) { cursor: pointer; }
-.system-world__stratum-scale button:focus-visible {
-  outline: 2px solid #b9f1ff;
-  outline-offset: 2px;
-}
-.system-world__stratum-scale .system-world__stratum-level--active {
-  background: #67dcff;
-  border-color: #b9f1ff;
-  color: #06101b;
-  font-weight: 800;
-}
-.system-world__stratum-scale button:disabled { cursor: wait; opacity: 0.72; }
-
-.system-world__section { border-top: 1px solid rgba(133, 166, 220, 0.12); margin-top: 0.7rem; padding-top: 0.65rem; }
-.system-world__section > strong { display: block; font-size: 0.64rem; letter-spacing: 0.05em; margin-bottom: 0.34rem; text-transform: uppercase; }
-.system-world__section ul { display: grid; gap: 0.28rem; list-style: none; margin: 0.45rem 0 0; padding: 0; }
+.system-world__section { border-top: 1px solid rgba(133, 166, 220, 0.12); display: grid; gap: 0.34rem; margin-top: 0.7rem; padding-top: 0.65rem; }
+.system-world__section > strong { font-size: 0.64rem; letter-spacing: 0.05em; text-transform: uppercase; }
+.system-world__section ul { display: grid; gap: 0.28rem; list-style: none; margin: 0; padding: 0; }
 .system-world__section li { background: rgba(92, 133, 191, 0.08); border-radius: 0.45rem; display: grid; gap: 0.08rem; padding: 0.42rem 0.5rem; }
 .system-world__section li strong { font-size: 0.64rem; }
 .system-world__section li span { color: rgba(208, 222, 244, 0.56); font-size: 0.58rem; }
-.system-world__large-file-warning { background: rgba(255, 91, 35, 0.13); border-left: 2px solid var(--city-orange); color: #ffc2ab !important; padding: 0.55rem 0.65rem; }
+.system-world__function-link { background: transparent; border: 0; color: inherit; cursor: pointer; display: grid; font: inherit; gap: 0.08rem; padding: 0; text-align: left; }
+.system-world__function-link:hover strong,
+.system-world__function-link:focus-visible strong { color: var(--city-blue); }
+.system-world__section pre { background: rgba(3, 8, 17, 0.48); border-radius: 0.45rem; color: rgba(226, 237, 253, 0.78); font: 0.62rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; overflow-wrap: anywhere; padding: 0.55rem; white-space: pre-wrap; }
+.system-world__source-link { background: rgba(86, 216, 255, 0.08); border: 1px solid rgba(86, 216, 255, 0.16); border-radius: 0.4rem; color: rgba(220, 241, 255, 0.82); cursor: pointer; font: 0.58rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; padding: 0.4rem 0.48rem; text-align: left; }
+.system-world__source-link:hover { background: rgba(86, 216, 255, 0.15); }
+.system-world__inspector-actions { margin-top: 0.8rem; }
 
-.system-world__connection-focus {
-  background: linear-gradient(145deg, rgba(83, 220, 255, 0.11), rgba(255, 224, 138, 0.06));
-  border: 1px solid rgba(103, 223, 255, 0.28);
-  border-radius: 0.72rem;
-  margin: 0.72rem 0;
-  padding: 0.65rem;
-}
-.system-world__connection-focus h3 { font-size: 0.73rem; line-height: 1.42; margin: 0.24rem 0; }
-.system-world__connection-focus h3 code { color: #ffe08a; overflow-wrap: anywhere; }
-.system-world__connection-focus > p { font-size: 0.61rem; margin: 0.34rem 0; }
-.system-world__connection-providers { display: grid; gap: 0.18rem; margin: 0.5rem 0; }
-.system-world__connection-providers strong,
-.system-world__connection-last-mile summary { color: rgba(225, 239, 255, 0.74); font-size: 0.54rem; letter-spacing: 0.05em; text-transform: uppercase; }
-.system-world__connection-providers code { color: rgba(211, 228, 250, 0.68); font-size: 0.52rem; overflow-wrap: anywhere; }
-.system-world__connection-last-mile { border-top: 1px solid rgba(123, 190, 225, 0.17); margin-top: 0.5rem; padding-top: 0.45rem; }
-.system-world__connection-last-mile summary { cursor: pointer; margin-bottom: 0.28rem; }
-.system-world__connection-last-mile > button {
-  background: rgba(8, 17, 31, 0.38);
-  border: 1px solid transparent;
-  border-radius: 0.38rem;
-  color: rgba(228, 238, 253, 0.8);
-  cursor: pointer;
-  display: grid;
-  font: inherit;
-  gap: 0.06rem;
-  margin-top: 0.18rem;
-  padding: 0.34rem 0.4rem;
-  text-align: left;
-  width: 100%;
-}
-.system-world__connection-last-mile > button:hover,
-.system-world__connection-last-mile > button.system-world__connection-file--active { background: rgba(83, 220, 255, 0.15); border-color: rgba(103, 223, 255, 0.3); }
-.system-world__connection-last-mile button strong { font-size: 0.59rem; }
-.system-world__connection-last-mile button span { color: rgba(206, 221, 244, 0.52); font-size: 0.48rem; overflow-wrap: anywhere; }
-.system-world__connection-file-detail { background: rgba(4, 10, 21, 0.58); border-left: 2px solid #ffe08a; display: grid; gap: 0.26rem; margin-top: 0.5rem; padding: 0.5rem; }
-.system-world__connection-file-detail h4 { font-size: 0.68rem; margin: 0; }
-.system-world__connection-file-detail > code { color: rgba(210, 226, 249, 0.68); font-size: 0.52rem; overflow-wrap: anywhere; }
-.system-world__connection-file-detail > p { font-size: 0.58rem; margin: 0; }
-.system-world__connection-file-detail > span { color: rgba(255, 224, 138, 0.72); font-size: 0.52rem; text-transform: uppercase; }
-.system-world__connection-file-detail .v-btn { justify-self: start; }
-
-.system-world__largest-file { background: linear-gradient(90deg, rgba(255, 105, 48, 0.12), rgba(117, 97, 255, 0.08)); border: 1px solid rgba(255, 129, 77, 0.18); border-radius: 0.65rem; color: #fff; cursor: pointer; display: grid; font: inherit; margin-top: 0.65rem; padding: 0.55rem 0.65rem; text-align: left; width: 100%; }
-.system-world__largest-file > span { color: #ffab88; font-size: 0.54rem; text-transform: uppercase; }
-.system-world__largest-file strong { font-size: 0.68rem; margin-top: 0.12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.system-world__largest-file small { color: rgba(222, 231, 247, 0.5); font-size: 0.56rem; }
-
-.system-world__relationships { display: grid; gap: 0.24rem; }
-.system-world__relationship { background: rgba(89, 127, 184, 0.06); border-radius: 0.42rem; overflow: hidden; }
-.system-world__relationships button { align-items: center; background: rgba(89, 127, 184, 0.08); border: 0; border-radius: 0.42rem; color: rgba(225, 236, 253, 0.82); cursor: pointer; display: grid; font: inherit; gap: 0.36rem; grid-template-columns: 4.4rem 1fr; padding: 0.36rem 0.44rem; text-align: left; }
-.system-world__relationship > button { width: 100%; }
-.system-world__relationships button:hover { background: rgba(91, 177, 228, 0.14); }
-.system-world__relationships span { color: rgba(105, 218, 255, 0.62); font-size: 0.52rem; text-transform: uppercase; }
-.system-world__relationships strong { font-size: 0.61rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.system-world__external-relations { display: grid; gap: 0.24rem; }
-.system-world__external-relations > div { align-items: center; background: rgba(151, 95, 212, 0.1); border: 1px solid rgba(198, 156, 255, 0.14); border-radius: 0.42rem; display: grid; gap: 0.36rem; grid-template-columns: 4.4rem minmax(0, 1fr) auto; padding: 0.36rem 0.44rem; }
-.system-world__external-relations span { color: rgba(210, 165, 255, 0.72); font-size: 0.52rem; text-transform: uppercase; }
-.system-world__external-relations strong { font-size: 0.61rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.system-world__external-relations small { color: rgba(225, 210, 246, 0.52); font-size: 0.52rem; white-space: nowrap; }
-.system-world__boundary-summary { border-top: 1px solid rgba(120, 171, 230, 0.1); display: grid; gap: 0.3rem; padding: 0.42rem 0.5rem; }
-.system-world__boundary-summary > strong { color: rgba(226, 239, 255, 0.74); font-size: 0.54rem; letter-spacing: 0.04em; text-transform: uppercase; }
-.system-world__boundary-summary p { color: rgba(224, 236, 253, 0.76); font-size: 0.56rem; margin: 0; overflow-wrap: anywhere; }
-.system-world__boundary-summary p span { color: rgba(105, 218, 255, 0.62); display: block; font-size: 0.49rem; margin-bottom: 0.08rem; text-transform: uppercase; }
-.system-world__connection-files { border-top: 1px solid rgba(120, 171, 230, 0.1); padding: 0.2rem 0.32rem 0.32rem; }
-.system-world__connection-files details { border-radius: 0.34rem; color: rgba(225, 236, 253, 0.78); }
-.system-world__connection-files details[open] { background: rgba(8, 17, 31, 0.42); }
-.system-world__connection-files summary { cursor: pointer; display: grid; gap: 0.06rem; padding: 0.3rem 0.38rem; }
-.system-world__connection-files summary::marker { color: rgba(105, 218, 255, 0.72); }
-.system-world__connection-files summary strong { font-size: 0.59rem; }
-.system-world__connection-files summary span { font-size: 0.48rem; text-transform: none; }
-.system-world__connection-detail { display: grid; gap: 0.24rem; padding: 0 0.4rem 0.42rem; }
-.system-world__connection-detail code { color: rgba(204, 221, 247, 0.68); font-size: 0.52rem; overflow-wrap: anywhere; }
-.system-world__connection-detail > span { font-size: 0.52rem; }
-.system-world__connection-detail p { font-size: 0.55rem; margin: 0.12rem 0 0; }
-.system-world__connection-detail p strong { color: rgba(236, 246, 255, 0.9); font-size: inherit; white-space: normal; }
-.system-world__declared-only { font-size: 0.53rem !important; margin: 0 !important; padding: 0.18rem 0.46rem 0.4rem; }
+.system-world__view-gizmo { align-items: center; background: rgba(7, 13, 27, 0.9); border: 1px solid rgba(125, 201, 239, 0.26); border-radius: 999px; bottom: 2.3rem; display: flex; gap: 0.2rem; left: 50%; padding: 0.22rem; position: absolute; transform: translateX(-50%); z-index: 9; }
+.system-world__view-gizmo button { align-items: center; background: transparent; border: 0; border-radius: 50%; color: rgba(224, 239, 255, 0.72); cursor: pointer; display: inline-flex; height: 1.75rem; justify-content: center; padding: 0; width: 1.75rem; }
+.system-world__view-gizmo button:hover { background: rgba(86, 216, 255, 0.15); color: #fff; }
+.system-world__view-gizmo-puck { border: 1px solid rgba(86, 216, 255, 0.34) !important; cursor: grab !important; position: relative; touch-action: none; }
+.system-world__view-gizmo-puck span { color: var(--city-blue); font-size: 0.42rem; font-weight: 800; left: 50%; position: absolute; top: 0.08rem; transform: translateX(-50%); }
 
 .system-world__controls-hint,
-.system-world__legend {
-  align-items: center;
-  backdrop-filter: blur(12px);
-  background: rgba(5, 9, 20, 0.78);
-  border: 1px solid rgba(126, 158, 211, 0.13);
-  border-radius: 999px;
-  bottom: 0.55rem;
-  display: flex;
-  font-size: 0.55rem;
-  gap: 0.68rem;
-  padding: 0.35rem 0.65rem;
-  position: absolute;
-  z-index: 7;
-}
-.system-world__controls-hint { left: 0.7rem; }
-.system-world__controls-hint span { align-items: center; color: rgba(216, 229, 248, 0.66); display: flex; gap: 0.25rem; white-space: nowrap; }
-.system-world__legend { right: 0.7rem; }
-.system-world__legend span { align-items: center; display: flex; gap: 0.25rem; white-space: nowrap; }
-.system-world__legend i { display: inline-block; height: 0.48rem; width: 0.48rem; }
-.system-world__legend-campus { background: #183856; border: 1px solid #75dfff; }
-.system-world__legend-depth { background: linear-gradient(135deg, #28455e 50%, #62bde8 50%); border-bottom: 2px solid #91e3ff; }
-.system-world__legend-building { background: #6b8be8; }
-.system-world__legend-cloud { background: #55cde5; border: 1px solid #d9fbff; border-radius: 50%; }
-.system-world__legend-owned { background: #75f3ff; height: 0.12rem !important; width: 0.7rem !important; }
-.system-world__legend-import { background: #59e3ff; height: 0.12rem !important; width: 0.7rem !important; }
-.system-world__legend-injection { background: #c69cff; height: 0.12rem !important; width: 0.7rem !important; }
-.system-world__legend-bundle { background: linear-gradient(90deg, #aeb6c0, #252a31); height: 0.1rem !important; width: 0.8rem !important; }
-.system-world__legend-last-mile { background: #ffe08a; height: 0.12rem !important; width: 0.7rem !important; }
-.system-world__legend-declaration { background: repeating-linear-gradient(90deg, #ffc86b 0 0.18rem, transparent 0.18rem 0.28rem); height: 0.12rem !important; width: 0.8rem !important; }
-.system-world__legend-external { background: #c69cff; transform: rotate(45deg) scale(0.72); }
-.system-world__legend-evidence { background: linear-gradient(90deg, #59e3ff 0 50%, #c69cff 50%); height: 0.08rem !important; width: 0.8rem !important; }
-.system-world__legend-library-evidence { background: #c69cff; height: 0.08rem !important; width: 0.8rem !important; }
+.system-world__legend { backdrop-filter: blur(12px); background: rgba(5, 10, 21, 0.72); border: 1px solid rgba(128, 170, 222, 0.13); border-radius: 0.55rem; bottom: 0.55rem; color: rgba(210, 226, 247, 0.55); font-size: 0.55rem; gap: 0.65rem; padding: 0.35rem 0.55rem; position: absolute; }
+.system-world__controls-hint { left: 0.65rem; }
+.system-world__legend { right: 0.65rem; }
 
-@media (max-width: 1120px) {
+@media (max-width: 920px) {
   .system-world__toolbar { grid-template-columns: 1fr auto; }
-  .system-world__mode-switch { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
-  .system-world__controls-hint span:nth-child(3) { display: none; }
+  .system-world__city-switch { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
+  .system-world__navigator { width: min(14rem, 38%); }
+  .system-world__inspector,
+  .system-world__orientation { width: min(20rem, 48%); }
   .system-world__legend { display: none; }
-}
-
-@media (max-width: 760px) {
-  .system-world__mode-switch > span { display: none; }
-  .system-world__inspector { width: min(20rem, 52%); }
-  .system-world__navigator { display: none; }
-  .system-world__controls-hint span:last-child { display: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .system-world__progress-pulse,
-  .system-world__state-orbit { animation: none; }
 }
 </style>

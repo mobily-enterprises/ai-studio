@@ -12,17 +12,17 @@ import {
   writeTerminalSession
 } from "@local/vibe64-execution/server/terminalSessions";
 import {
-  buildDoctorTerminalArgs,
-  buildDoctorHostCommandArgs
-} from "@local/setup-doctor-core/server/doctorHostCommand";
+  buildTerminalArgs,
+  buildHostCommandArgs
+} from "./hostCommandArgs.js";
 import {
   GITHUB_RECONNECT_REQUIRED_CODE,
   GITHUB_RECONNECT_REQUIRED_MESSAGE,
   githubCliAccountFailureMessage
-} from "@local/setup-doctor-core/server/githubCliAuth";
+} from "./githubCliAuth.js";
 import {
   validateGitIdentityInputs
-} from "@local/setup-doctor-core/server/setupDoctorGit";
+} from "./gitIdentityInput.js";
 import {
   vibe64Result
 } from "@local/vibe64-core/server/serverResponses";
@@ -379,16 +379,17 @@ function logoutCommandArgs(accountId) {
 
 function terminalArgsForAuth(accountId, mode, hostCommandOptions = {}, gitIdentity = {}) {
   if (accountId === "github") {
-    return buildDoctorTerminalArgs(ghLoginCommandArgs(gitIdentity), hostCommandOptions);
+    return buildTerminalArgs(ghLoginCommandArgs(gitIdentity), hostCommandOptions);
   }
 
-  return buildDoctorTerminalArgs(codexLoginCommandArgs(mode), {
+  return buildTerminalArgs(codexLoginCommandArgs(mode), {
     ...hostCommandOptions
   });
 }
 
 function statusArgs(commandArgs, hostCommandOptions = {}) {
-  return buildDoctorHostCommandArgs(commandArgs, hostCommandOptions);
+  void hostCommandOptions;
+  return buildHostCommandArgs(commandArgs);
 }
 
 function hostCommandOptionsForCredentialContext(context = {}) {

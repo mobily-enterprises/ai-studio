@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Next.js selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Next.js-specific review/deslop guidance:
-- Review routing conventions, server/client component boundaries, route handlers, Server Actions, environment variables, package scripts, and selected database/data-layer choices.
-- Remove unclear or duplicated code when the fix is obvious and scoped.
-- Keep generated or seeded project structure consistent with the selected blueprint.

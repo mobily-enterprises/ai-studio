@@ -42,26 +42,7 @@
           </div>
         </dl>
       </section>
-
-      <section class="studio-archived-session-detail__section">
-        <h3>Completed Steps</h3>
-        <ol v-if="completedStepRows(session).length" class="studio-archived-session-detail__step-list">
-          <li
-            v-for="step in completedStepRows(session)"
-            :key="step.id"
-          >
-            <span>{{ step.label }}</span>
-            <small v-if="step.message">{{ step.message }}</small>
-          </li>
-        </ol>
-        <p v-else class="studio-archived-session-detail__muted">No completed steps were recorded.</p>
-      </section>
     </div>
-
-    <section v-if="session.finalReportText" class="studio-archived-session-detail__section">
-      <h3>Final Report</h3>
-      <pre class="studio-archived-session-detail__report">{{ session.finalReportText }}</pre>
-    </section>
 
     <section class="studio-archived-session-detail__section studio-archived-session-detail__conversation">
       <h3>Conversation</h3>
@@ -93,21 +74,15 @@
 import { computed } from "vue";
 import {
   mdiArchiveCancelOutline,
-  mdiArrowLeft,
-  mdiCheckCircle
+  mdiArrowLeft
 } from "@mdi/js";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import {
   archiveFactRows,
-  completedStepRows,
   shortSessionId
 } from "@/composables/useArchivedVibe64Sessions.js";
 
 const props = defineProps({
-  archive: {
-    default: "completed",
-    type: String
-  },
   backTo: {
     default: null,
     type: [Object, String]
@@ -122,9 +97,7 @@ const props = defineProps({
   }
 });
 
-const archiveIcon = computed(() => {
-  return props.archive === "abandoned" ? mdiArchiveCancelOutline : mdiCheckCircle;
-});
+const archiveIcon = mdiArchiveCancelOutline;
 const conversationTurns = computed(() => (
   Array.isArray(props.conversationLog?.turns) ? props.conversationLog.turns : []
 ));

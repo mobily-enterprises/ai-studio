@@ -1,24 +1,9 @@
+import process from "node:process";
+
 import {
-  VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION,
-  VIBE64_SESSION_STATUS,
-  assertSafeActionId,
-  createVibe64SessionStore
-} from "./sessionStore.js";
-import {
-  TargetAdapter,
-  adapterView
-} from "@local/vibe64-adapters/server/adapter";
-import {
-  normalizeVibe64ComposerMenuGroupPath
-} from "@local/vibe64-core/shared";
-import {
-  isPlainObject,
-  vibe64Error,
-  normalizeText
+  normalizeText,
+  vibe64Error
 } from "@local/vibe64-core/server/core";
-import {
-  normalizeWorkflowRepositoryProfile
-} from "@local/vibe64-core/server/projectRepository";
 import {
   resolveVibe64ProjectLocalRoot
 } from "@local/vibe64-core/server/studioRoots";
@@ -27,1668 +12,259 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  inspectSessionSourceMergeState
-} from "./sessionSourceGit.js";
+  assertGenesisPromptTask,
+  renderGenesisPrompt
+} from "@local/vibe64-genesis/server";
+
+import {
+  VIBE64_SESSION_STATUS,
+  createVibe64SessionStore
+} from "./sessionStore.js";
 import {
   assertSourceInspectionHealthy,
-  sourceInspectionDisabledReason,
   sourceInspectionFailure
 } from "./sessionSourceInspection.js";
 import {
-  readSessionUiSyncStateForSession
-} from "@local/vibe64-core/server/sessionUiSyncState";
-import {
-  managedPreviewPolicyInstruction,
-  promptSessionBriefing
-} from "@local/vibe64-adapters/server/promptRenderer";
-import {
-  missingInformationPolicyInstruction
-} from "@local/vibe64-adapters/server/promptQuestionPolicy";
-import {
-  createCoreWorkflowRegistry
-} from "./registerCoreWorkflowModules.js";
-import {
-  DEFAULT_VIBE64_WORKFLOW_DEFINITION_ID,
-  DEFAULT_WORKFLOW_REPOSITORY_PROFILE,
-  initializationWorkflowDefinitionIdForRepositoryProfile,
-  normalizeWorkflowDefinitionId,
-  normalizeWorkflowDefinitionIdForRepositoryProfile,
-  workflowDefinition,
-  workflowDefinitionCreationOptions,
-  workflowDefinitionRepositoryProfiles,
-  workflowDefinitionSupportsRepositoryProfile,
-  workflowForDefinition
-} from "./workflow.js";
-import { WorkflowMachine } from "./workflowMachine.js";
-import {
-  applyStepMachineView,
-  currentStepAgentResultContract,
-  currentStepInputConversationText,
-  currentStepPromptInputInstruction,
-  recordStepMachineActionFinished,
-  recordStepMachineActionStarted,
-  recoverFailedPromptActionStart,
-  recoverStuckStepMachineExecution,
-  returnControlFromAgentWait,
-  saveStepMachineInput
-} from "./workflowStepMachines.js";
-import {
-  applyWorkflowPresentation,
-  runWorkflowIntent
-} from "./workflowPresentation.js";
-import {
-  preparePrivateInputSubmission
-} from "./privateInputSubmissions.js";
+  inspectSessionSourceMergeState
+} from "./sessionSourceGit.js";
 import {
   VIBE64_SESSION_CLOSING_AT_METADATA,
   VIBE64_SESSION_CLOSING_REASON_METADATA,
   sessionClosingMetadata
 } from "./sessionLifecycle.js";
 import {
-  archiveSessionSource
+  archiveSessionSource as archiveStoredSessionSource
 } from "./sessionWorktreeArchive.js";
 import {
-  PLAN_SUMMARY_ARTIFACT,
-  PLAN_TECHNICAL_ARTIFACT
-} from "./workflowArtifacts.js";
-import {
-  coreComposerTemplates
-} from "./composerMenuTemplates.js";
-import {
-  createCoreSessionRecoveryCoordinator
-} from "./coreSessionRecovery.js";
-import {
-  SESSION_RECOVERY_CAPABILITY_WORKFLOW_PROGRESS
-} from "./sessionRecovery.js";
-import {
-  vibe64SessionDebugDurationMs,
-  vibe64SessionDebugError,
-  vibe64SessionDebugLog,
-  vibe64SessionDebugSummary
-} from "./sessionDebugLog.js";
+  publicSessionMetadata,
+  workspaceSetupStateFromMetadata
+} from "./workspaceSetupState.js";
 
-const RECOVERABLE_COMMAND_LIFECYCLE_PHASES = new Set([
-  "starting",
-  "started",
-  "terminal_exited",
-  "result_writing",
-  "result_written",
-  "advanced",
-  "post_commit_running"
-]);
-function actionRequiresSourceInspection(action = {}) {
-  return action.recordsConversationTurn !== true &&
-    normalizeText(action.type) !== "link";
-}
+const GENESIS_SESSION_KIND = "genesis";
 
-function metadataFlagIsOn(value) {
-  return ["1", "true", "yes", "on"].includes(normalizeText(value).toLowerCase());
-}
-
-function normalizedStepRevision(value) {
-  const revision = Number(value);
-  return Number.isSafeInteger(revision) && revision >= 1 ? revision : null;
-}
-
-function commandLifecycleMatchesRecoveredStep(lifecycle = {}, session = {}) {
-  return normalizeText(lifecycle.stepId) === normalizeText(session.currentStep) &&
-    normalizedStepRevision(lifecycle.stepRevision) === normalizedStepRevision(session.stepRevision);
-}
-
-function commandLifecycleIsRecoverable(lifecycle = {}, session = {}) {
-  const phase = normalizeText(lifecycle.phase || lifecycle.status);
-  return RECOVERABLE_COMMAND_LIFECYCLE_PHASES.has(phase) &&
-    !normalizeText(lifecycle.finishedAt) &&
-    !normalizeText(lifecycle.outcome) &&
-    commandLifecycleMatchesRecoveredStep(lifecycle, session);
-}
-
-async function recoverCommandLifecyclesForStep(runtime, session = {}, {
-  message = ""
-} = {}) {
-  if (
-    typeof runtime?.store?.readCommandLifecycles !== "function" ||
-    typeof runtime.store.writeCommandLifecycleEvent !== "function"
-  ) {
-    return 0;
-  }
-  const lifecycles = await runtime.store.readCommandLifecycles(session.sessionId);
-  const recoverableLifecycles = lifecycles.filter((lifecycle) => {
-    return commandLifecycleIsRecoverable(lifecycle, session);
-  });
-  for (const lifecycle of recoverableLifecycles) {
-    const recoveredAt = new Date().toISOString();
-    await runtime.store.writeCommandLifecycleEvent(session.sessionId, lifecycle.id, {
-      patch: {
-        finishedAt: recoveredAt,
-        outcome: "recovered",
-        phase: "done",
-        recoveryMessage: message
-      },
-      event: {
-        at: recoveredAt,
-        kind: "recovered",
-        message,
-        outcome: "recovered"
-      }
-    });
-  }
-  return recoverableLifecycles.length;
-}
-
-function sessionStatusIsClosed(status = "") {
-  return [
-    VIBE64_SESSION_STATUS.ABANDONED,
-    VIBE64_SESSION_STATUS.FINISHED
-  ].includes(normalizeText(status));
-}
-
-function promptActionIsBlocked(action = {}, session = {}) {
-  return action.type === "prompt" && metadataFlagIsOn(session.metadata?.terminal_active);
-}
-
-function promptActionMissingSource(action = {}, session = {}) {
-  return action.type === "prompt" && !sessionHasSource(session);
-}
-
-function promptActionHasUnfinishedRun(action = {}, session = {}) {
-  void action;
-  void session;
-  return false;
-}
-
-function actionCapabilityIsMissing(action = {}, session = {}) {
-  const capability = normalizeText(action.adapterCapability);
-  return Boolean(capability) && session.adapter?.facts?.capabilities?.[capability] !== true;
-}
-
-function adapterCapabilityDisabledReason(action = {}, session = {}) {
-  return `${session.adapter?.label || "Target adapter"} does not support capability: ${action.adapterCapability}.`;
-}
-
-function enabledAction() {
-  return {
-    disabledReason: "",
-    enabled: true
-  };
-}
-
-function disabledAction(disabledReason) {
-  return {
-    disabledReason,
-    enabled: false
-  };
-}
-
-function defaultActionReadiness({ action = {}, session = {} } = {}) {
-  if (
-    session.sourceInspection?.status === "error" &&
-    actionRequiresSourceInspection(action)
-  ) {
-    return disabledAction(sourceInspectionDisabledReason(session.sourceInspection));
-  }
-  if (promptActionIsBlocked(action, session)) {
-    return disabledAction("Codex terminal is active.");
-  }
-  if (promptActionHasUnfinishedRun(action, session)) {
-    return disabledAction("Codex prompt is waiting to continue.");
-  }
-  if (promptActionMissingSource(action, session)) {
-    return disabledAction("Prepare the workspace before asking Codex.");
-  }
-  if (actionCapabilityIsMissing(action, session)) {
-    return disabledAction(adapterCapabilityDisabledReason(action, session));
-  }
-  return enabledAction();
-}
-
-async function defaultActionHandler(context = {}) {
-  if (context.action?.type === "prompt") {
-    return context.runtime.renderPromptAction(context);
-  }
-  if (context.action?.type === "command") {
-    throw commandActionRequiresTerminalError(context.action);
-  }
-  if (context.action?.type === "finish") {
-    return context.runtime.finishSessionAction(context);
-  }
-  if (context.action?.type === "adapter") {
-    return context.runtime.runAdapterSessionAction(context);
-  }
-  return {
-    message: `Recorded ${context.action?.label || "action"}.`,
-    status: "completed"
-  };
-}
-
-function actionNotAvailableError(session, actionId) {
-  return refreshRecommendedStateError(vibe64Error(
-    `Action ${actionId} is not available on step ${session.currentStep || "(none)"}.`,
-    "vibe64_action_not_available"
-  ), session, "stale_operation");
-}
-
-function actionDisabledError(action, session = {}) {
-  return refreshRecommendedStateError(vibe64Error(
-    action.disabledReason || `Action ${action.id} is disabled.`,
-    "vibe64_action_disabled"
-  ), session, "state_rejected");
-}
-
-function commandActionRequiresTerminalError(action) {
+function unsupportedSessionError(session = {}) {
+  const sessionId = normalizeText(session.sessionId || session.id) || "(unknown)";
   return vibe64Error(
-    `Command action ${action.label || action.id} must run in the command terminal.`,
-    "vibe64_command_requires_terminal"
+    `Session ${sessionId} uses an unsupported runtime format and cannot be opened.`,
+    "vibe64_legacy_session_unsupported"
   );
 }
 
-function refreshRecommendedStateError(error, session = {}, operationOutcome = "state_rejected") {
-  error.operationOutcome = operationOutcome;
-  error.refreshRecommended = true;
-  error.sessionId = session.sessionId || "";
-  error.revision = session.revision ?? null;
-  error.currentStep = session.currentStep || "";
-  error.stepRevision = session.stepRevision ?? null;
-  error.stepStatus = session.stepMachine?.status || "";
-  return error;
+function sessionIsSupported(session = {}) {
+  return normalizeText(session.manifest?.runtimeKind) === GENESIS_SESSION_KIND;
 }
 
-function assertAdvanceMatchesCurrentState(session = {}, expected = {}) {
-  const expectedStepId = normalizeText(expected.stepId);
-  const expectedStepStatus = normalizeText(expected.stepStatus);
-  if (!expectedStepId && !expectedStepStatus) {
-    return;
+function assertSupportedSession(session = {}) {
+  if (!sessionIsSupported(session)) {
+    throw unsupportedSessionError(session);
   }
-  if (
-    expectedStepId !== normalizeText(session.currentStep) ||
-    expectedStepStatus !== normalizeText(session.stepMachine?.status)
-  ) {
-    throw refreshRecommendedStateError(vibe64Error(
-      `Reload state. This advance was prepared for ${expectedStepId || "(missing step)"}:${expectedStepStatus || "(missing status)"}, but the current workflow state is ${session.currentStep || "(no current step)"}:${session.stepMachine?.status || "(no machine status)"}.`,
-      "vibe64_advance_state_changed"
-    ), session, "stale_operation");
-  }
+  return session;
 }
 
-function currentAction(session, actionId) {
-  return session.actions.find((action) => action.id === actionId) || null;
-}
-
-function composeActionReadiness(defaultReadiness, extraReadiness) {
-  return (context) => {
-    const defaultState = defaultReadiness(context);
-    if (!defaultState.enabled || typeof extraReadiness !== "function") {
-      return defaultState;
-    }
-    return extraReadiness(context) || defaultState;
-  };
-}
-
-function actionLogEntry(action, session, actionResult) {
+function plainManifest(manifest = {}) {
   return {
-    actionId: action.id,
-    actionLabel: action.label,
-    actionType: action.type,
-    kind: "action",
-    status: actionResult.status,
-    stepId: session.currentStep
+    createdAt: normalizeText(manifest.createdAt),
+    product: normalizeText(manifest.product) || "vibe64",
+    revision: Number(manifest.revision) || 1,
+    schemaVersion: Number(manifest.schemaVersion) || 1,
+    sessionId: normalizeText(manifest.sessionId),
+    updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
   };
 }
 
-function actionResultCompleted(actionResult = {}) {
-  return normalizeText(actionResult.status || "completed") === "completed";
-}
-
-function actionCanAdvanceOnSuccess(action = {}, actionResult = {}, session = {}) {
-  return action.advanceOnSuccess === true &&
-    actionResultCompleted(actionResult) &&
-    session.next?.visible !== false &&
-    session.next?.enabled === true &&
-    Boolean(session.next?.stepId);
-}
-
-function actionResultRecord(action, session, input, handlerResult = {}) {
-  const result = { ...(handlerResult || {}) };
-  delete result.recordsConversationTurn;
-  const recordsConversationTurn = action.recordsConversationTurn === true;
-  const auditMessage = normalizeText(action.auditMessage);
-  return {
-    ...result,
-    actionLabel: action.label,
-    actionType: action.type,
-    ...(auditMessage ? { auditMessage } : {}),
-    input,
-    message: normalizeText(result.message),
-    ...(recordsConversationTurn ? { recordsConversationTurn: true } : {}),
-    status: normalizeText(result.status || "completed"),
-    stepId: session.currentStep
-  };
-}
-
-async function writeActionResultEffects(store, sessionId, result = {}) {
-  for (const [name, value] of Object.entries(result.metadata || {})) {
-    if ((name === "issue_word" || name === "work_word") && typeof store.writeIssueWordMetadata === "function") {
-      await store.writeIssueWordMetadata(sessionId, value);
-      if (name === "work_word") {
-        await store.writeMetadataValue(sessionId, name, value);
-      }
-      continue;
-    }
-    await store.writeMetadataValue(sessionId, name, value);
-  }
-  for (const [relativePath, text] of Object.entries(result.artifacts || {})) {
-    await store.writeArtifact(sessionId, relativePath, text);
-  }
-  if (result.sessionStatus) {
-    await store.writeStatus(sessionId, result.sessionStatus);
-  }
-}
-
-function buildAgentPromptHandoff(renderedPrompt) {
-  const resultContract = isPlainObject(renderedPrompt.resultContract)
-    ? {
-        fields: isPlainObject(renderedPrompt.resultContract.fields)
-          ? renderedPrompt.resultContract.fields
-          : {},
-        mode: normalizeText(renderedPrompt.resultContract.mode),
-        optionalFields: Array.isArray(renderedPrompt.resultContract.optionalFields)
-          ? renderedPrompt.resultContract.optionalFields.map((name) => normalizeText(name)).filter(Boolean)
-          : [],
-        stepId: normalizeText(renderedPrompt.resultContract.stepId),
-        stepStatus: normalizeText(renderedPrompt.resultContract.stepStatus)
-      }
-    : null;
-  return {
-    kind: "agent_prompt_handoff",
-    prompt: renderedPrompt.prompt,
-    promptId: renderedPrompt.promptId,
-    ...(resultContract?.mode ? { resultContract } : {}),
-    terminalInput: renderedPrompt.prompt
-  };
-}
-
-function toDate(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw vibe64Error("Invalid vibe64 clock value.", "vibe64_invalid_clock");
-  }
-  return date;
-}
-
-function createClockNow(clock) {
-  if (typeof clock === "function") {
-    return () => toDate(clock());
-  }
-  return () => new Date();
-}
-
-function promptContextSnapshotHasAdapter(snapshot = {}) {
-  return Boolean(snapshot && typeof snapshot === "object" && snapshot.adapter && typeof snapshot.adapter === "object");
-}
-
-function createPromptContextSnapshot({
-  adapter,
-  now
+function plainSessionView(session = {}, {
+  sourceInspection = null
 } = {}) {
+  const sourcePath = sessionSourcePath(session);
+  const workspaceSetup = workspaceSetupStateFromMetadata(session.metadata);
   return {
-    adapter,
-    createdAt: now().toISOString(),
-    schemaVersion: VIBE64_PROMPT_CONTEXT_SNAPSHOT_SCHEMA_VERSION
-  };
-}
-
-function sessionBriefingIsDelivered(session = {}) {
-  return normalizeText(session.metadata?.agent_briefing_delivered) === "yes";
-}
-
-function promptSessionWithStaticContextReferences(session = {}) {
-  return {
-    ...session,
-    promptStaticContextMode: "reference"
-  };
-}
-
-function composerTemplateInput(value = {}) {
-  return isPlainObject(value) ? value : {};
-}
-
-function normalizeComposerTemplate(template = {}, {
-  source = "adapter"
-} = {}) {
-  const item = isPlainObject(template) ? template : {};
-  const prompt = isPlainObject(item.prompt) ? item.prompt : {};
-  const id = normalizeText(item.id);
-  const label = normalizeText(item.label || id);
-  const promptId = normalizeText(item.promptId || prompt.promptId);
-  const groupPath = normalizeVibe64ComposerMenuGroupPath(item.groupPath);
-  if (item.visible === false || !id || !label || (!promptId && !normalizeText(item.text))) {
-    return null;
-  }
-  return {
-    disabledReason: normalizeText(item.disabledReason),
-    enabled: item.enabled !== false,
-    group: normalizeText(item.group) || groupPath[0] || "Ask Codex",
-    ...(groupPath.length ? { groupPath } : {}),
-    icon: normalizeText(item.icon),
-    id,
-    input: composerTemplateInput(item.input || prompt.input),
-    kind: normalizeText(item.kind) === "task" ? "task" : "template",
-    label,
-    mode: normalizeText(item.mode || "prefill"),
-    order: Number.isFinite(item.order) ? item.order : 0,
-    promptId,
-    source: normalizeText(item.source || source),
-    systemPromptId: normalizeText(item.systemPromptId || prompt.systemPromptId),
-    text: normalizeText(item.text),
-    visible: true,
-    ...(isPlainObject(item.when) ? { when: item.when } : {})
-  };
-}
-
-function composerTemplateAction(template = {}) {
-  return {
-    id: normalizeText(template.id),
-    label: normalizeText(template.label),
-    promptId: normalizeText(template.promptId),
-    systemPromptId: normalizeText(template.systemPromptId),
-    type: "prompt"
-  };
-}
-
-function sortedObjectEntries(value = {}) {
-  return Object.entries(isPlainObject(value) ? value : {})
-    .sort(([left], [right]) => left.localeCompare(right));
-}
-
-function promptContextScalarText(value) {
-  if (value === null) {
-    return "null";
-  }
-  if (value === undefined) {
-    return "";
-  }
-  if (typeof value === "string") {
-    return normalizeText(value);
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
-
-function promptContextScalarLines({
-  indent = "",
-  label = "",
-  value = undefined
-} = {}) {
-  const text = promptContextScalarText(value);
-  const normalizedLabel = normalizeText(label);
-  if (!text.includes("\n")) {
-    return [`${indent}- ${normalizedLabel ? `${normalizedLabel}: ` : ""}${text || "(empty)"}`];
-  }
-  return [
-    `${indent}- ${normalizedLabel ? `${normalizedLabel}:` : ""}`.trimEnd(),
-    ...text.split(/\r?\n/u).map((line) => `${indent}  ${line}`)
-  ];
-}
-
-function promptContextEntryLines({
-  indent = "",
-  label = "",
-  value = undefined
-} = {}) {
-  const normalizedLabel = normalizeText(label);
-  if (Array.isArray(value)) {
-    if (!value.length) {
-      return [`${indent}- ${normalizedLabel ? `${normalizedLabel}: ` : ""}(none)`];
-    }
-    return [
-      `${indent}- ${normalizedLabel}:`,
-      ...value.flatMap((entry) => {
-        if (isPlainObject(entry) || Array.isArray(entry)) {
-          return promptContextValueLines(entry, `${indent}  `);
+    ...(session.archived === true
+      ? {
+          archiveMetadataPath: normalizeText(session.archiveMetadataPath),
+          archivePath: normalizeText(session.archivePath),
+          archived: true,
+          archivedAt: normalizeText(session.archivedAt)
         }
-        return promptContextScalarLines({
-          indent: `${indent}  `,
-          value: entry
-        });
-      })
-    ];
-  }
-  if (isPlainObject(value)) {
-    return [
-      `${indent}- ${normalizedLabel}:`,
-      ...promptContextValueLines(value, `${indent}  `)
-    ];
-  }
-  return promptContextScalarLines({
-    indent,
-    label: normalizedLabel,
-    value
-  });
-}
-
-function promptContextValueLines(value = {}, indent = "") {
-  const entries = sortedObjectEntries(value);
-  if (!entries.length) {
-    return [`${indent}- (none)`];
-  }
-  return entries.flatMap(([label, entryValue]) => promptContextEntryLines({
-    indent,
-    label,
-    value: entryValue
-  }));
-}
-
-function promptContextSection(title = "", value = {}) {
-  return [
-    `${title}:`,
-    ...promptContextValueLines(value)
-  ].join("\n");
-}
-
-function promptConversationInput(input = {}) {
-  const conversationRequest = normalizeText(input?.conversationRequest);
-  if (!conversationRequest) {
-    return promptContextSection("User/request input", input);
-  }
-  const additionalInput = Object.fromEntries(
-    sortedObjectEntries(input)
-      .filter(([name]) => name !== "conversationRequest")
-  );
-  return [
-    [
-      "User/request input:",
-      conversationRequest
-    ].join("\n"),
-    Object.keys(additionalInput).length > 0
-      ? promptContextSection("Additional user/request fields", additionalInput)
-      : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-const HIDDEN_WORKFLOW_METADATA_PREFIXES = Object.freeze([
-  "codex_",
-  "terminal_"
-]);
-const HIDDEN_WORKFLOW_METADATA_NAMES = new Set([
-  "launch_target_restart_baseline",
-  "launch_target_terminal_id"
-]);
-
-const WORKFLOW_METADATA_CONTEXT_REPLACEMENTS = new Set([
-  "dependencies_path",
-  "source_path"
-]);
-const AGENT_CONVERSATION_ACTION_ID = "agent_conversation";
-const CONVERSATION_WORKFLOW_FACT_NAMES = new Set([
-  "code_index_path",
-  "dependencies_installed",
-  "dependencies_package_manager",
-  "github_issue_mode",
-  "issue_source",
-  "project_type",
-  "workflow_definition"
-]);
-const CONVERSATION_WORKFLOW_FACT_PREFIXES = Object.freeze([
-  "launch_target_",
-  "work_"
-]);
-const LAUNCH_TARGET_AGENT_HREF_METADATA = "launch_target_agent_href";
-const LAUNCH_TARGET_OPEN_HREF_METADATA = "launch_target_open_href";
-const LAUNCH_TARGET_LABEL_METADATA = "launch_target_label";
-
-function workflowMetadataIsPromptRelevant(name = "", value = undefined) {
-  const normalizedName = normalizeText(name);
-  if (!normalizedName) {
-    return false;
-  }
-  if (HIDDEN_WORKFLOW_METADATA_NAMES.has(normalizedName)) {
-    return false;
-  }
-  if (HIDDEN_WORKFLOW_METADATA_PREFIXES.some((prefix) => normalizedName.startsWith(prefix))) {
-    return false;
-  }
-  if (WORKFLOW_METADATA_CONTEXT_REPLACEMENTS.has(normalizedName)) {
-    return false;
-  }
-  if (typeof value === "string" && !normalizeText(value)) {
-    return false;
-  }
-  if (Array.isArray(value) && !value.length) {
-    return false;
-  }
-  if (isPlainObject(value) && !Object.keys(value).length) {
-    return false;
-  }
-  return value !== null && value !== undefined;
-}
-
-function promptWorkflowFacts(metadata = {}) {
-  const workTitle = normalizeText(metadata.work_title);
-  const workWord = normalizeText(metadata.work_word);
-  return Object.fromEntries(
-    sortedObjectEntries(metadata)
-      .filter(([name, value]) => workflowMetadataIsPromptRelevant(name, value))
-      .filter(([name, value]) => {
-        if (name === "issue_title" && workTitle && normalizeText(value) === workTitle) {
-          return false;
-        }
-        if (name === "issue_word" && workWord && normalizeText(value) === workWord) {
-          return false;
-        }
-        return true;
-      })
-  );
-}
-
-function promptLaunchTargetContext(session = {}) {
-  const source = isPlainObject(session?.metadata) ? session.metadata : {};
-  const agentHref = normalizeText(source[LAUNCH_TARGET_AGENT_HREF_METADATA]);
-  const browserHref = normalizeText(source[LAUNCH_TARGET_OPEN_HREF_METADATA]);
-  const sessionId = normalizeText(session?.sessionId || session?.id);
-  const previewState = readSessionUiSyncStateForSession(sessionId)?.preview || null;
-  const currentRoute = normalizeText(previewState?.route);
-  let currentPageAgentHref = "";
-  if (agentHref && currentRoute.startsWith("/")) {
-    try {
-      currentPageAgentHref = new URL(currentRoute, agentHref).toString();
-    } catch {
-      currentPageAgentHref = "";
-    }
-  }
-  if (!agentHref && !browserHref && !currentRoute) {
-    return "";
-  }
-  const label = normalizeText(source[LAUNCH_TARGET_LABEL_METADATA]);
-  return [
-    "Vibe64-managed app preview:",
-    label ? `- launch target: ${label}` : "",
-    agentHref ? `- Codex/app-server URL: ${agentHref}` : "",
-    browserHref && browserHref !== agentHref ? `- browser URL: ${browserHref}` : "",
-    currentRoute ? `- current user-visible page: ${currentRoute}` : "- current user-visible page: not observed",
-    normalizeText(previewState?.title) ? `- current page title: ${normalizeText(previewState.title)}` : "",
-    currentPageAgentHref ? `- current page Codex URL: ${currentPageAgentHref}` : "",
-    normalizeText(previewState?.updatedAt) ? `- current page observed at: ${normalizeText(previewState.updatedAt)}` : "",
-    "",
-    "Mandatory managed preview policy:",
-    managedPreviewPolicyInstruction()
-  ].filter(Boolean).join("\n");
-}
-
-function agentConversationAction(action = {}) {
-  return normalizeText(action.id || action.promptId) === AGENT_CONVERSATION_ACTION_ID;
-}
-
-function executePlanAction(action = {}) {
-  return ["execute_plan", "execute_seed_plan"].includes(normalizeText(action.promptId || action.id));
-}
-
-function conversationWorkflowMetadataIsPromptRelevant(name = "", value = undefined) {
-  const normalizedName = normalizeText(name);
-  return workflowMetadataIsPromptRelevant(normalizedName, value) &&
-    (
-      CONVERSATION_WORKFLOW_FACT_NAMES.has(normalizedName) ||
-      CONVERSATION_WORKFLOW_FACT_PREFIXES.some((prefix) => normalizedName.startsWith(prefix))
-    );
-}
-
-function promptConversationWorkflowFacts(metadata = {}) {
-  return Object.fromEntries(
-    sortedObjectEntries(metadata)
-      .filter(([name, value]) => conversationWorkflowMetadataIsPromptRelevant(name, value))
-  );
-}
-
-function workflowContextLine(label = "", value = "") {
-  const text = normalizeText(value);
-  return text ? `- ${label}: ${text}` : "";
-}
-
-function promptWorkflowContext({
-  action = {},
-  includeSessionPaths = true,
-  session = {}
-} = {}) {
-  const promptId = normalizeText(action.promptId || action.id);
-  return [
-    "Vibe64 workflow context:",
-    workflowContextLine("action", action.label || action.id),
-    workflowContextLine("action id", action.id),
-    workflowContextLine("prompt", promptId),
-    workflowContextLine("session id", session.sessionId || session.id),
-    workflowContextLine("current step", session.currentStep),
-    workflowContextLine("step status", session.stepMachine?.status),
-    workflowContextLine("session status", session.status),
-    ...(includeSessionPaths
-      ? [
-        workflowContextLine("target root", session.targetRoot),
-        workflowContextLine(
-          "source path",
-          sessionSourcePath(session)
-        ),
-        workflowContextLine("artifacts root", session.artifactsRoot)
-      ]
-      : [])
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function promptWithWorkflowContext({
-  action = {},
-  includeSessionPaths = true,
-  input = {},
-  prompt = "",
-  session = {},
-  sessionBriefingIncluded = false
-} = {}) {
-  const userRequestLeadsPrompt = Boolean(normalizeText(input?.conversationRequest));
-  return [
-    userRequestLeadsPrompt ? promptConversationInput(input) : "",
-    promptWorkflowContext({
-      action,
-      includeSessionPaths,
-      session
-    }),
-    sessionBriefingIncluded && userRequestLeadsPrompt
-      ? promptSessionBriefing({
-          config: session.config,
-          session
-        })
-      : "",
-    userRequestLeadsPrompt ? "" : promptContextSection("User/request input", input),
-    promptContextSection("Relevant workflow facts", promptWorkflowFacts(session.metadata)),
-    promptLaunchTargetContext(session),
-    "Missing information policy:\n" + missingInformationPolicyInstruction(),
-    String(prompt || "").trim()
-  ]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-async function inputWithAcceptedPlanForAction(store, session = {}, action = {}, input = {}) {
-  if (!executePlanAction(action)) {
-    return input;
-  }
-  const [planSummary, technicalPlan] = await Promise.all([
-    store.readArtifact(session.sessionId, PLAN_SUMMARY_ARTIFACT),
-    store.readArtifact(session.sessionId, PLAN_TECHNICAL_ARTIFACT)
-  ]);
-  const acceptedPlan = Object.fromEntries([
-    ["acceptedPlanSummary", normalizeText(planSummary)],
-    ["acceptedTechnicalPlan", normalizeText(technicalPlan)]
-  ].filter(([, value]) => Boolean(value)));
-  if (Object.keys(acceptedPlan).length === 0) {
-    return input;
-  }
-  return {
-    ...input,
-    ...acceptedPlan
-  };
-}
-
-function promptWithConversationTurnContext({
-  action = {},
-  input = {},
-  prompt = "",
-  session = {},
-  sessionBriefingIncluded = false
-} = {}) {
-  const promptId = normalizeText(action.promptId || action.id);
-  const workflowFacts = promptConversationWorkflowFacts(session.metadata);
-  return [
-    promptConversationInput(input),
-    [
-      "Vibe64 interactive conversation turn:",
-      "VIBE64_ROUTED_TURN: yes",
-      workflowContextLine("action", action.label || action.id),
-      workflowContextLine("action id", action.id),
-      workflowContextLine("prompt", promptId),
-      workflowContextLine("session id", session.sessionId || session.id),
-      workflowContextLine("current step", session.currentStep),
-      workflowContextLine("step status", session.stepMachine?.status),
-      workflowContextLine("session status", session.status)
-    ].filter(Boolean).join("\n"),
-    sessionBriefingIncluded
-      ? promptSessionBriefing({
-          config: session.config,
-          session
-        })
-      : "Session briefing: Use the Vibe64 session briefing already provided for static setup facts, fixed paths, adapter contracts, managed services, Git command policy, project config, and missing-information policy.",
-    Object.keys(workflowFacts).length > 0
-      ? promptContextSection("Current dynamic workflow facts", workflowFacts)
-      : "",
-    promptLaunchTargetContext(session),
-    [
-      "Response routing:",
-      "- Answer this interactive conversation normally. Do not add Vibe64 transport markers or duplicate the response as JSON.",
-      "- Vibe64 treats successful app-server turn completion as completion of this conversation turn.",
-      "- If the current state no longer matches this prompt, say that Vibe64 state changed and stop.",
-      "- Direct terminal input routing: if a later user prompt does not include `VIBE64_ROUTED_TURN`, answer normally. Direct terminal input does not advance Vibe64 workflow state unless Vibe64 explicitly routes the turn."
-    ].join("\n"),
-    String(prompt || "").trim()
-  ]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function promptWithSessionBriefing({
-  prompt = "",
-  session = {},
-  sessionBriefingIncluded = false
-} = {}) {
-  if (!sessionBriefingIncluded) {
-    return String(prompt || "").trim();
-  }
-  return [
-    promptSessionBriefing({
-      config: session.config,
-      session
-    }),
-    String(prompt || "").trim()
-  ]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function promptWithCurrentStepInputContract({
-  action = {},
-  resultContract = null,
-  prompt = "",
-  runtime = null,
-  session = {}
-} = {}) {
-  const stepInputInstruction = normalizeText(
-    resultContract?.instruction || currentStepPromptInputInstruction(session, action, {
-      runtime
-    })
-  );
-  return [
-    String(prompt || "").trim(),
-    stepInputInstruction
-  ]
-    .map((part) => String(part || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function actionInputFieldLabel(action = {}, fieldName = "") {
-  return (Array.isArray(action.inputFields) ? action.inputFields : [])
-    .find((field) => normalizeText(field.name) === fieldName)?.label ||
-    fieldName;
-}
-
-function inputFieldEntries(action = {}, input = {}) {
-  const fields = Array.isArray(action.inputFields) ? action.inputFields : [];
-  return fields
-    .map((field) => {
-      const name = normalizeText(field.name);
-      return {
-        label: actionInputFieldLabel(action, name),
-        name,
-        value: normalizeText(input?.[name])
-      };
-    })
-    .filter((entry) => entry.name && entry.value);
-}
-
-function inputObject(input = {}) {
-  return input && typeof input === "object" && !Array.isArray(input) ? input : {};
-}
-
-function currentStepSubmissionInputFields(session = {}) {
-  const screenFields = session.presentation?.screen?.input?.fields;
-  if (Array.isArray(screenFields) && screenFields.length > 0) {
-    return screenFields;
-  }
-  const interactionFields = session.currentStepDefinition?.interaction?.fields;
-  return Array.isArray(interactionFields) ? interactionFields : [];
-}
-
-async function privateSafeActionInput(runtime, session = {}, action = {}, input = {}) {
-  const prepared = await preparePrivateInputSubmission({
-    fields: input,
-    inputFields: action.inputFields,
-    owner: {
-      actionId: action.id,
-      id: action.id,
-      kind: "action",
-      stepId: session.currentStep,
-      stepStatus: session.stepMachine?.status
+      : {}),
+    agentRuns: Array.isArray(session.agentRuns) ? session.agentRuns : [],
+    backgroundTasks: Array.isArray(session.backgroundTasks) ? session.backgroundTasks : [],
+    companion: {
+      id: GENESIS_SESSION_KIND,
+      label: "Genesis"
     },
-    session,
-    store: runtime.store
-  });
-  return prepared.fields;
-}
-
-async function privateSafeCurrentStepInput(runtime, session = {}, input = {}) {
-  const source = inputObject(input);
-  const inputSource = normalizeText(source.source);
-  if (inputSource === "agent" || inputSource === "codex") {
-    return source;
-  }
-  const prepared = await preparePrivateInputSubmission({
-    fields: source.fields,
-    inputFields: currentStepSubmissionInputFields(session),
-    owner: {
-      id: session.currentStep || "current_step",
-      kind: "current_step",
-      stepId: session.currentStep,
-      stepStatus: session.stepMachine?.status
-    },
-    session,
-    store: runtime.store
-  });
-  return {
-    ...source,
-    fields: prepared.fields
+    conversationLogRoot: normalizeText(session.conversationLogRoot),
+    manifest: plainManifest(session.manifest),
+    metadata: publicSessionMetadata(session.metadata),
+    revision: Number(session.revision) || 1,
+    sessionId: normalizeText(session.sessionId),
+    sessionName: normalizeText(session.sessionName),
+    sessionRoot: normalizeText(session.sessionRoot),
+    sourceInspection,
+    sourcePath,
+    sourceReady: Boolean(sourcePath),
+    stateRoot: normalizeText(session.stateRoot),
+    status: normalizeText(session.status) || VIBE64_SESSION_STATUS.ACTIVE,
+    targetRoot: normalizeText(session.targetRoot),
+    updatedAt: normalizeText(session.updatedAt),
+    workspaceSetup
   };
 }
 
-async function recordCurrentStepConversationMessage(runtime, session = {}, input = {}) {
-  const source = inputObject(input);
-  const inputSource = normalizeText(source.source);
-  const text = currentStepInputConversationText(runtime, session, source);
-  if (!text) {
-    return null;
-  }
-  if (inputSource === "codex") {
-    return runtime.store.writeConversationAssistantMessage(session.sessionId, {
-      text
-    });
-  }
-  if (inputSource === "ui") {
-    return runtime.store.writeConversationUserMessage(session.sessionId, {
-      text
-    });
-  }
-  return null;
-}
-
-function visiblePromptFromActionInput(action = {}, input = {}) {
-  const entries = inputFieldEntries(action, input);
-  if (!entries.length) {
-    return "";
-  }
-  if (entries.length === 1) {
-    return entries[0].value;
-  }
-  return entries
-    .map((entry) => `${entry.label}:\n${entry.value}`)
-    .join("\n\n");
-}
-
-function visiblePromptForPromptAction(action = {}, input = {}) {
-  return visiblePromptFromActionInput(action, input) ||
-    normalizeText(action.label || action.promptId || action.id);
-}
-
-function actionWithComposerTemplate(action = {}, session = {}, templateId = "") {
-  const normalizedTemplateId = normalizeText(templateId);
-  if (!normalizedTemplateId) {
-    return action;
-  }
-  const template = (Array.isArray(session.adapter?.composerMenuItems)
-    ? session.adapter.composerMenuItems
-    : []).find((item) => (
-    normalizeText(item?.id) === normalizedTemplateId &&
-    ["task", "template"].includes(normalizeText(item?.kind || "template")) &&
-    item?.enabled !== false &&
-    item?.visible !== false
-  ));
-  if (!template) {
-    throw vibe64Error(
-      "That composer prompt is no longer available for this session.",
-      "vibe64_composer_prompt_template_not_available"
-    );
-  }
-  return {
-    ...action,
-    label: normalizeText(template.label || action.label),
-    promptId: normalizeText(template.promptId || action.promptId),
-    systemPromptId: normalizeText(template.systemPromptId || action.systemPromptId)
-  };
+function closedSessionStatus(status = "") {
+  return normalizeText(status) === VIBE64_SESSION_STATUS.ABANDONED;
 }
 
 class Vibe64SessionRuntime {
   constructor({
-    actionReadiness = undefined,
-    actionHandlers = {},
-    adapter = new TargetAdapter(),
     clock = undefined,
-    defaultHandler = defaultActionHandler,
+    createSessionSource = null,
     inspectSourceByDefault = true,
-    projectRecordPath = "",
-    projectConfig = {},
     projectLocalRoot = "",
     projectSessionSourceRoot = "",
-    sourceContractRoot = "",
+    promptEnvironment = process.env,
+    promptRenderer = renderGenesisPrompt,
     sourceInspectionAvailable = true,
     sourceInspectionError = null,
     stateRoot = "",
     store = undefined,
-    targetRoot = process.cwd(),
-    workflow = null,
-    workflowCreationBaseline = null,
-    workflowRegistry = createCoreWorkflowRegistry(),
-    sessionRecovery = createCoreSessionRecoveryCoordinator()
+    targetRoot = process.cwd()
   } = {}) {
-    this.actionHandlers = {
-      ...actionHandlers
-    };
-    this.defaultHandler = typeof defaultHandler === "function"
-      ? defaultHandler
-      : defaultActionHandler;
     this.inspectSourceByDefault = inspectSourceByDefault !== false;
+    this.createSessionSource = typeof createSessionSource === "function"
+      ? createSessionSource
+      : null;
+    this.projectSessionSourceRoot = normalizeText(projectSessionSourceRoot);
+    this.promptEnvironment = promptEnvironment && typeof promptEnvironment === "object"
+      ? promptEnvironment
+      : process.env;
+    this.promptRenderer = typeof promptRenderer === "function"
+      ? promptRenderer
+      : renderGenesisPrompt;
     this.sourceInspectionAvailable = sourceInspectionAvailable !== false;
     this.sourceInspectionError = sourceInspectionError || null;
-    this.adapter = adapter;
-    this.projectConfig = projectConfig && typeof projectConfig === "object"
-      ? projectConfig
-      : {};
-    this.actionReadiness = composeActionReadiness(defaultActionReadiness, actionReadiness);
-    this.workflowRegistry = workflowRegistry;
-    this.workflowMachine = workflow
-      ? new WorkflowMachine({
-          actionReadiness: this.actionReadiness,
-          workflow
-        })
-      : null;
-    this.workflowMachines = new Map();
     this.stateRoot = projectLocalRoot || stateRoot || resolveVibe64ProjectLocalRoot(targetRoot);
-    this.projectRecordPath = normalizeText(projectRecordPath);
-    this.projectSessionSourceRoot = normalizeText(projectSessionSourceRoot);
-    this.sourceContractRoot = normalizeText(sourceContractRoot);
     this.targetRoot = targetRoot;
-    this.workflowCreationBaseline = isPlainObject(workflowCreationBaseline)
-      ? workflowCreationBaseline
-      : null;
-    this.sessionRecovery = sessionRecovery && typeof sessionRecovery.inspect === "function"
-      ? sessionRecovery
-      : createCoreSessionRecoveryCoordinator();
     this.store = store || createVibe64SessionStore({
       clock,
       projectLocalRoot: this.stateRoot,
       projectSessionSourceRoot: this.projectSessionSourceRoot,
       targetRoot
     });
-    this.now = createClockNow(clock);
   }
 
-  async createSession(input = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.createSession.start", {
-      requestedInitialStep: String(input?.initialStep || ""),
-      requestedSessionId: String(input?.sessionId || ""),
-      requestedWorkflowDefinition: String(input?.workflowDefinition || input?.metadata?.workflow_definition || "")
+  async createSession({
+    metadata = {},
+    sessionId = "",
+    status = VIBE64_SESSION_STATUS.ACTIVE
+  } = {}) {
+    let session = await this.store.createSession({
+      runtimeKind: GENESIS_SESSION_KIND,
+      metadata,
+      sessionId,
+      status
     });
     try {
-      const workflowDefinitionId = await this.workflowDefinitionIdForNewSession(input);
-      const workflowMachine = this.workflowMachineForDefinition(workflowDefinitionId);
-      const initialStep = input.initialStep
-        ? workflowMachine.assertStepId(input.initialStep)
-        : workflowMachine.firstStepId();
-      vibe64SessionDebugLog("server.runtime.createSession.storeCreate.start", {
-        initialStep,
-        requestedSessionId: String(input?.sessionId || ""),
-        workflowDefinition: workflowDefinitionId
-      });
-      const session = await this.store.createSession({
-        ...input,
-        adapterId: normalizeText(this.adapter?.id),
-        metadata: this.sessionMetadataWithWorkflowDefinition(input.metadata, workflowDefinitionId),
-        initialStep
-      });
-      vibe64SessionDebugLog("server.runtime.createSession.storeCreate.done", {
-        ...vibe64SessionDebugSummary(session),
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        initialStep,
-        workflowDefinition: workflowDefinitionId
-      });
-      await this.store.mutateSession(session.sessionId, async () => {
-        await this.writeInitialSessionArtifacts(session.sessionId, workflowDefinitionId);
-      });
-      const viewedSession = await this.getSession(session.sessionId);
-      vibe64SessionDebugLog("server.runtime.createSession.done", {
-        ...vibe64SessionDebugSummary(viewedSession),
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        workflowDefinition: workflowDefinitionId
-      });
-      return viewedSession;
+      if (this.createSessionSource) {
+        await this.createSessionSource({
+          runtime: this,
+          session,
+          store: this.store
+        });
+        session = await this.store.readSession(session.sessionId);
+      }
+      if (!sessionHasSource(session)) {
+        throw vibe64Error(
+          this.createSessionSource
+            ? "Session source creation completed without attaching a source directory."
+            : "Session creation requires an existing source or a createSessionSource callback.",
+          this.createSessionSource
+            ? "vibe64_session_source_not_attached"
+            : "vibe64_session_source_creator_required"
+        );
+      }
     } catch (error) {
-      vibe64SessionDebugLog("server.runtime.createSession.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        requestedInitialStep: String(input?.initialStep || ""),
-        requestedSessionId: String(input?.sessionId || "")
+      await this.store.mutateSession(session.sessionId, async () => {
+        await Promise.all([
+          this.store.writeMetadataValue(session.sessionId, "source_creation_error", normalizeText(error?.message)),
+          this.store.writeMetadataValue(session.sessionId, "source_creation_failed", "yes"),
+          this.store.writeStatus(session.sessionId, VIBE64_SESSION_STATUS.BLOCKED)
+        ]);
       });
       throw error;
     }
+    return this.sessionView(session);
   }
 
-  async getSession(sessionId, options = {}) {
+  async getSession(sessionId, {
+    inspectSource = this.inspectSourceByDefault
+  } = {}) {
     return this.sessionView(await this.store.readSession(sessionId), {
-      ...options,
-      inspectSource: options.inspectSource ?? this.inspectSourceByDefault
+      inspectSource
     });
   }
 
   async listSessions(options = {}) {
     const sessions = await this.store.listSessions(options);
-    return Promise.all(sessions.map((session) => this.sessionView(session, {
-      inspectSource: this.inspectSourceByDefault
-    })));
+    return Promise.all(sessions
+      .filter(sessionIsSupported)
+      .map((session) => this.sessionView(session)));
   }
 
   async listSessionSummaries(options = {}) {
-    const summaries = typeof this.store.listSessionSummaries === "function"
-      ? await this.store.listSessionSummaries(options)
-      : await this.store.listSessions(options);
-    return summaries.map((summary) => this.sessionSummaryView(summary));
+    const sessions = await this.store.listSessions(options);
+    return sessions
+      .filter(sessionIsSupported)
+      .map((session) => plainSessionView(session, {
+        sourceInspection: null
+      }));
   }
 
   async updateCurrentSession(sessionId = "") {
+    if (sessionId) {
+      assertSupportedSession(await this.store.readSession(sessionId));
+    }
     return this.store.updateCurrentSession(sessionId);
   }
 
-  async compactClosedSessionIfNeeded(session = {}) {
-    if (!sessionStatusIsClosed(session.status) || typeof this.store.compactClosedSession !== "function") {
-      return null;
-    }
-    await this.store.compactClosedSession(session.sessionId);
-    return this.getSession(session.sessionId);
-  }
-
-  actionHandler(actionId) {
-    return this.actionHandlers[actionId] || this.defaultHandler;
-  }
-
-  async sessionView(session, {
-    includeRecovery = true,
-    inspectSource = true,
-    sessionAdapter = undefined
+  async sessionView(session = {}, {
+    inspectSource = this.inspectSourceByDefault
   } = {}) {
-    const workflowDefinitionId = this.workflowDefinitionIdForSession(session);
-    const sessionWithWorkflowMetadata = this.sessionWithWorkflowInitialMetadata(session, workflowDefinitionId);
-    let resolvedSessionAdapter = sessionAdapter;
-    let sourceInspection = null;
-    if (resolvedSessionAdapter === undefined && inspectSource === false) {
-      resolvedSessionAdapter = this.cachedAdapterViewForSession(sessionWithWorkflowMetadata);
-    }
-    if (resolvedSessionAdapter === undefined) {
-      const inspectedSource = await this.inspectSourceForSession(sessionWithWorkflowMetadata);
-      resolvedSessionAdapter = inspectedSource.adapter;
-      sourceInspection = inspectedSource.sourceInspection;
-    }
-    const sessionWithConfig = {
-      ...sessionWithWorkflowMetadata,
-      config: this.projectConfig,
-      adapter: resolvedSessionAdapter,
-      ...(sourceInspection ? { sourceInspection } : {})
-    };
-    const workflowMachine = this.workflowMachineForDefinition(workflowDefinitionId);
-    const sessionView = {
-      ...workflowMachine.buildSessionView(sessionWithConfig),
-      workflowDefinition: workflowDefinition(workflowDefinitionId, {
-        workflowRegistry: this.workflowRegistry
-      })
-    };
-    const presentedSession = applyWorkflowPresentation(await applyStepMachineView(this, sessionView));
-    if (!includeRecovery) {
-      return presentedSession;
-    }
-    const recovery = await this.sessionRecovery.inspect({
-      runtime: this,
-      session: presentedSession
-    });
-    if (!recovery) {
-      return presentedSession;
-    }
-    const workflowProgressBlocked = recovery.issues.some((issue) => (
-      Array.isArray(issue.blockedCapabilities) &&
-      issue.blockedCapabilities.includes(SESSION_RECOVERY_CAPABILITY_WORKFLOW_PROGRESS)
-    ));
-    if (!workflowProgressBlocked) {
-      return {
-        ...presentedSession,
-        recovery
-      };
-    }
-    const recoveryDecisionRequired = recovery.issues.some((issue) => issue.options.length > 0);
-    const recoveryDisabledReason = recoveryDecisionRequired
-      ? "Choose how to recover this session before continuing its workflow."
-      : "Repair this session before continuing its workflow.";
-    const next = presentedSession.next
-      ? {
-          ...presentedSession.next,
-          disabledReason: recoveryDisabledReason,
-          enabled: false
-        }
-      : presentedSession.next;
-    return {
-      ...presentedSession,
-      next,
-      presentation: {
-        ...presentedSession.presentation,
-        auto: {
-          ...presentedSession.presentation?.auto,
-          nextOperation: null
-        },
-        next
-      },
-      recovery
-    };
-  }
-
-  sessionSummaryView(session = {}) {
-    const workflowDefinitionId = this.workflowDefinitionIdForSession(session);
-    return {
-      ...this.sessionWithWorkflowInitialMetadata(session, workflowDefinitionId),
-      workflowDefinition: workflowDefinition(workflowDefinitionId, {
-        workflowRegistry: this.workflowRegistry
-      })
-    };
-  }
-
-  workflowDefinitionIdForSession(session = {}) {
-    if (this.workflowMachine) {
-      return DEFAULT_VIBE64_WORKFLOW_DEFINITION_ID;
-    }
-    return normalizeWorkflowDefinitionId(
-      session.metadata?.workflow_definition,
-      {
-        workflowRegistry: this.workflowRegistry
-      }
-    );
-  }
-
-  workflowMachineForDefinition(definitionId = DEFAULT_VIBE64_WORKFLOW_DEFINITION_ID) {
-    if (this.workflowMachine) {
-      return this.workflowMachine;
-    }
-    const normalizedDefinitionId = normalizeWorkflowDefinitionId(definitionId, {
-      workflowRegistry: this.workflowRegistry
-    });
-    if (!this.workflowMachines.has(normalizedDefinitionId)) {
-      this.workflowMachines.set(normalizedDefinitionId, new WorkflowMachine({
-        actionReadiness: this.actionReadiness,
-        workflow: workflowForDefinition(normalizedDefinitionId, {
-          workflowRegistry: this.workflowRegistry
-        })
-      }));
-    }
-    return this.workflowMachines.get(normalizedDefinitionId);
-  }
-
-  workflowMachineForSession(session = {}) {
-    return this.workflowMachineForDefinition(this.workflowDefinitionIdForSession(session));
-  }
-
-  workflowStepMachineForStep(stepId = "") {
-    return this.workflowRegistry?.machineForStep(stepId) || null;
-  }
-
-  workflowRepositoryProfileForSessionInput(input = {}) {
-    return normalizeWorkflowRepositoryProfile(input?.metadata?.workflow_repository_profile) ||
-      normalizeWorkflowRepositoryProfile(this.workflowCreationBaseline?.workflowRepositoryProfile) ||
-      normalizeWorkflowRepositoryProfile(this.workflowCreationBaseline?.workflow_repository_profile) ||
-      DEFAULT_WORKFLOW_REPOSITORY_PROFILE;
-  }
-
-  workflowRepositoryProfileForDefinition(workflowDefinitionId = DEFAULT_VIBE64_WORKFLOW_DEFINITION_ID, metadata = {}) {
-    const definition = workflowDefinition(workflowDefinitionId, {
-      workflowRegistry: this.workflowRegistry
-    });
-    const metadataProfile = normalizeWorkflowRepositoryProfile(metadata?.workflow_repository_profile);
-    if (metadataProfile && workflowDefinitionSupportsRepositoryProfile(definition, metadataProfile)) {
-      return metadataProfile;
-    }
-    const baselineProfile = this.workflowRepositoryProfileForSessionInput();
-    if (baselineProfile && workflowDefinitionSupportsRepositoryProfile(definition, baselineProfile)) {
-      return baselineProfile;
-    }
-    return workflowDefinitionRepositoryProfiles(definition)[0] || DEFAULT_WORKFLOW_REPOSITORY_PROFILE;
-  }
-
-  sessionMetadataWithWorkflowDefinition(metadata = {}, workflowDefinitionId = "") {
-    if (this.workflowMachine) {
-      return metadata;
-    }
-    const definition = workflowDefinition(workflowDefinitionId, {
-      workflowRegistry: this.workflowRegistry
-    });
-    return {
-      ...(definition.initialMetadata || {}),
-      ...metadata,
-      workflow_repository_profile: this.workflowRepositoryProfileForDefinition(workflowDefinitionId, metadata),
-      workflow_definition: normalizeWorkflowDefinitionId(workflowDefinitionId, {
-        workflowRegistry: this.workflowRegistry
-      })
-    };
-  }
-
-  sessionWithWorkflowInitialMetadata(session = {}, workflowDefinitionId = "") {
-    if (this.workflowMachine) {
-      return session;
-    }
-    return {
-      ...session,
-      metadata: this.sessionMetadataWithWorkflowDefinition(session.metadata, workflowDefinitionId)
-    };
-  }
-
-  async workflowDefinitionIdForNewSession(input = {}) {
-    if (this.workflowMachine) {
-      return DEFAULT_VIBE64_WORKFLOW_DEFINITION_ID;
-    }
-    const requestedDefinitionId = normalizeText(
-      input.workflowDefinition ||
-      input.metadata?.workflow_definition
-    );
-    const creation = await this.workflowDefinitionCreationOptionsForInput(input);
-    if (creation.requiredWorkflowDefinition) {
-      if (requestedDefinitionId && requestedDefinitionId !== creation.defaultWorkflowDefinition) {
-        const initializationRequired = creation.initializationRequired === true;
-        throw vibe64Error(
-          initializationRequired
-            ? "The first Vibe64 session must initialize the existing application before other workflows can be selected."
-            : "The first Vibe64 session must seed the application before other workflows can be selected.",
-          initializationRequired
-            ? "vibe64_initialization_workflow_required"
-            : "vibe64_seed_workflow_required"
-        );
-      }
-      return creation.defaultWorkflowDefinition;
-    }
-    if (requestedDefinitionId) {
-      const normalizedDefinitionId = normalizeWorkflowDefinitionIdForRepositoryProfile(requestedDefinitionId, {
-        workflowRegistry: this.workflowRegistry,
-        workflowRepositoryProfile: creation.workflowRepositoryProfile
-      });
-      const definition = workflowDefinition(normalizedDefinitionId, {
-        workflowRegistry: this.workflowRegistry
-      });
-      if (definition.userSelectable !== true) {
-        const initializationWorkflow = normalizedDefinitionId ===
-          initializationWorkflowDefinitionIdForRepositoryProfile(creation.workflowRepositoryProfile);
-        throw vibe64Error(
-          initializationWorkflow
-            ? "The initialization workflow is only available before the existing application has been initialized."
-            : "The seed workflow is only available before the application has been seeded.",
-          initializationWorkflow
-            ? "vibe64_initialization_workflow_not_available"
-            : "vibe64_seed_workflow_not_available"
-        );
-      }
-      return normalizedDefinitionId;
-    }
-    return creation.defaultWorkflowDefinition;
-  }
-
-  async workflowSeedRequired() {
-    if (this.workflowCreationBaseline && typeof this.workflowCreationBaseline.seedRequired === "boolean") {
-      return this.workflowCreationBaseline.seedRequired;
-    }
-    const context = {
-      config: this.projectConfig,
-      runtime: this,
-      session: null,
-      store: this.store,
-      targetRoot: this.targetRoot
-    };
-    const detection = await this.adapter.detect(context);
-    if (detection.detected === false) {
-      return false;
-    }
-    const facts = await this.adapter.inspect({
-      ...context,
-      detection
-    });
-    return facts?.workflow?.seedRequired === true;
-  }
-
-  workflowInitializationRequired() {
-    return this.workflowCreationBaseline?.initializationRequired === true;
-  }
-
-  async workflowDefinitionCreationOptionsForInput(input = {}) {
-    return workflowDefinitionCreationOptions({
-      creationAudience: input.creationAudience,
-      initializationRequired: this.workflowInitializationRequired(),
-      seedRequired: await this.workflowSeedRequired(),
-      workflowRegistry: this.workflowRegistry,
-      workflowRepositoryProfile: this.workflowRepositoryProfileForSessionInput(input)
-    });
-  }
-
-  async recommendedWorkflowDefinitionId(input = {}) {
-    return (await this.workflowDefinitionCreationOptionsForInput(input)).defaultWorkflowDefinition;
-  }
-
-  async workflowDefinitionCreationOptions(input = {}) {
-    return this.workflowDefinitionCreationOptionsForInput(input);
-  }
-
-  async writeInitialSessionArtifacts(sessionId = "", workflowDefinitionId = "") {
-    const sessionWord = normalizeText(workflowDefinition(workflowDefinitionId, {
-      workflowRegistry: this.workflowRegistry
-    }).sessionWord);
-    if (!sessionWord) {
-      return;
-    }
-    await Promise.all([
-      this.store.writeArtifact(sessionId, "issue_word", `${sessionWord}\n`),
-      this.store.writeArtifact(sessionId, "work_word", `${sessionWord}\n`)
-    ]);
-  }
-
-  async promptContextSnapshotForSession(session) {
-    const currentSnapshot = promptContextSnapshotHasAdapter(session.promptContextSnapshot)
-      ? session.promptContextSnapshot
-      : await this.store.readPromptContextSnapshot(session.sessionId);
-    if (promptContextSnapshotHasAdapter(currentSnapshot)) {
-      return currentSnapshot;
-    }
-    return this.store.writePromptContextSnapshot(session.sessionId, createPromptContextSnapshot({
-      adapter: session.adapter || await this.adapterViewForSession(session),
-      now: this.now
-    }));
-  }
-
-  async recreatePromptContextSnapshotForSession(session) {
-    const adapter = await this.adapterViewForSession({
-      ...session,
-      adapter: null,
-      promptContextSnapshot: null
-    });
-    const promptContextSnapshot = await this.store.writePromptContextSnapshot(
-      session.sessionId,
-      createPromptContextSnapshot({
-        adapter,
-        now: this.now
-      })
-    );
-    return {
-      ...session,
-      adapter: promptContextSnapshot.adapter,
-      promptContextSnapshot
-    };
-  }
-
-  async promptSessionForAction(session) {
-    const promptContextSnapshot = await this.promptContextSnapshotForSession(session);
-    return {
-      ...session,
-      adapter: promptContextSnapshot.adapter,
-      promptContextSnapshot
-    };
-  }
-
-  async runActionSessionView(sessionId) {
-    const session = await this.store.readSession(sessionId);
-    return promptContextSnapshotHasAdapter(session.promptContextSnapshot)
-      ? this.sessionView(session, {
-          sessionAdapter: session.promptContextSnapshot.adapter
-        })
-      : this.sessionView(session);
-  }
-
-  async renderComposerTemplate(template = {}, {
-    config = {},
-    session = {}
-  } = {}) {
-    const normalizedTemplate = normalizeComposerTemplate(template);
-    if (!normalizedTemplate) {
-      return null;
-    }
-    if (normalizedTemplate.text) {
-      return normalizedTemplate;
-    }
-    const renderedPrompt = await this.adapter.renderPrompt({
-      action: composerTemplateAction(normalizedTemplate),
-      config,
-      input: normalizedTemplate.input,
-      runtime: this,
-      session: promptSessionWithStaticContextReferences(session),
-      store: this.store
-    });
-    return {
-      ...normalizedTemplate,
-      text: renderedPrompt.prompt
-    };
-  }
-
-  async composerMenuItemsForSession({
-    context = {},
-    session = {}
-  } = {}) {
-    const coreTemplates = coreComposerTemplates(session);
-    const adapterTemplates = await this.adapter.listComposerTemplates(context);
-    const renderedTemplates = await Promise.all([
-      ...coreTemplates.map((template) => this.renderComposerTemplate({
-        ...template,
-        source: "core"
-      }, {
-        config: this.projectConfig,
-        session
-      })),
-      ...(Array.isArray(adapterTemplates) ? adapterTemplates : []).map((template) => this.renderComposerTemplate({
-        ...template,
-        source: "adapter"
-      }, {
-        config: this.projectConfig,
-        session
-      }))
-    ]);
-    const explicitItems = await this.adapter.listComposerMenuItems(context);
-    return [
-      ...renderedTemplates.filter(Boolean),
-      ...(Array.isArray(explicitItems) ? explicitItems : [])
-    ];
-  }
-
-  cachedAdapterViewForSession(session = {}, {
-    stale = false
-  } = {}) {
-    const snapshot = promptContextSnapshotHasAdapter(session.promptContextSnapshot)
-      ? session.promptContextSnapshot
+    assertSupportedSession(session);
+    const sourceInspection = inspectSource
+      ? await this.inspectSourceForSession(session)
       : null;
-    const cachedAdapter = snapshot?.adapter || adapterView({
-      adapter: this.adapter,
-      detection: {
-        detected: false
-      }
+    return plainSessionView(session, {
+      sourceInspection
     });
-    if (!stale) {
-      return cachedAdapter;
-    }
-    return {
-      ...cachedAdapter,
-      commands: [],
-      composerMenuItems: [],
-      managedServices: [],
-      promptContext: {},
-      stale: true
-    };
-  }
-
-  sourceInspectionFailureView(session = {}, error = null, {
-    merge = null,
-    phase = ""
-  } = {}) {
-    if (error) {
-      vibe64SessionDebugLog("server.runtime.sourceInspection.error", {
-        error: vibe64SessionDebugError(error),
-        phase,
-        sessionId: normalizeText(session.sessionId)
-      });
-    }
-    const failure = sourceInspectionFailure(error, {
-      merge
-    });
-    const snapshot = promptContextSnapshotHasAdapter(session.promptContextSnapshot)
-      ? session.promptContextSnapshot
-      : null;
-    return {
-      adapter: this.cachedAdapterViewForSession(session, {
-        stale: true
-      }),
-      sourceInspection: {
-        ...failure,
-        ...(snapshot
-          ? {
-              lastKnownGood: {
-                adapterId: normalizeText(snapshot.adapter?.id),
-                capturedAt: normalizeText(snapshot.createdAt)
-              }
-            }
-          : {}),
-        status: "error"
-      }
-    };
   }
 
   async inspectSourceForSession(session = {}) {
-    if (!this.sourceInspectionAvailable) {
-      return this.sourceInspectionFailureView(session);
+    assertSupportedSession(session);
+    if (!sessionHasSource(session)) {
+      return null;
     }
-    const sourceRoot = sessionSourcePath(session);
-    let merge = null;
-    if (sourceRoot) {
-      try {
-        merge = await inspectSessionSourceMergeState(sourceRoot);
-      } catch (error) {
-        return this.sourceInspectionFailureView(session, error, {
-          phase: "merge_state"
-        });
-      }
-    }
-    if (merge?.hasConflicts === true) {
-      return this.sourceInspectionFailureView(session, null, {
-        merge
-      });
-    }
-    if (this.sourceInspectionError) {
-      return this.sourceInspectionFailureView(session, this.sourceInspectionError, {
-        phase: "runtime_setup"
-      });
+    if (!this.sourceInspectionAvailable || this.sourceInspectionError) {
+      return {
+        ...sourceInspectionFailure(),
+        status: "error"
+      };
     }
     try {
+      const merge = await inspectSessionSourceMergeState(sessionSourcePath(session));
+      if (merge.hasConflicts) {
+        return {
+          ...sourceInspectionFailure({
+            merge
+          }),
+          status: "error"
+        };
+      }
+      return null;
+    } catch {
       return {
-        adapter: await this.adapterViewForSession(session),
-        sourceInspection: null
+        ...sourceInspectionFailure(),
+        status: "error"
       };
-    } catch (error) {
-      return this.sourceInspectionFailureView(session, error, {
-        phase: "adapter_view"
-      });
     }
   }
 
@@ -1696,280 +272,48 @@ class Vibe64SessionRuntime {
     const session = typeof sessionOrId === "string"
       ? await this.store.readSession(sessionOrId)
       : sessionOrId;
-    if (!sessionHasSource(session)) {
-      return null;
-    }
-    const inspectedSource = await this.inspectSourceForSession(session);
-    assertSourceInspectionHealthy(inspectedSource.sourceInspection);
-    return inspectedSource.adapter;
+    assertSupportedSession(session);
+    const inspection = await this.inspectSourceForSession(session);
+    assertSourceInspectionHealthy(inspection);
+    return sessionSourcePath(session);
   }
 
-  async adapterViewForSession(session) {
-    const context = {
-      config: this.projectConfig,
-      runtime: this,
-      session,
-      store: this.store,
-      targetRoot: session.targetRoot
-    };
-    const detection = await this.adapter.detect(context);
-    if (detection.detected === false) {
-      return adapterView({
-        adapter: this.adapter,
-        detection
-      });
-    }
-
-    const facts = await this.adapter.inspect({
-      ...context,
-      detection
+  async renderPrompt(sessionId, {
+    input = {},
+    request = "",
+    task = "work"
+  } = {}) {
+    const session = assertSupportedSession(await this.store.readSession(sessionId));
+    const genesisTask = assertGenesisPromptTask(task, {
+      required: true
     });
-    const commands = await this.adapter.listCommands({
-      ...context,
-      detection,
-      facts
-    });
-    const promptContext = await this.adapter.getPromptContext({
-      ...context,
-      commands,
-      detection,
-      facts
-    });
-    const managedServices = typeof this.adapter.listManagedServices === "function"
-      ? await this.adapter.listManagedServices({
-          ...context,
-          commands,
-          detection,
-          facts,
-          promptContext
-        })
-      : [];
-    const promptAdapterView = adapterView({
-      adapter: this.adapter,
-      commands,
-      detection,
-      facts,
-      managedServices,
-      promptContext,
-    });
-    const adapterSession = {
-      ...session,
-      adapter: promptAdapterView
-    };
-    const composerMenuItems = await this.composerMenuItemsForSession({
-      context: {
-        ...context,
-        session: adapterSession,
-        commands,
-        detection,
-        facts,
-        promptContext,
+    return this.promptRenderer({
+      action: {
+        genesisTask,
+        id: genesisTask,
+        label: normalizeText(request) || genesisTask
       },
-      session: adapterSession
-    });
-    return adapterView({
-      adapter: this.adapter,
-      ...context,
-      commands,
-      detection,
-      facts,
-      composerMenuItems,
-      managedServices,
-      promptContext
+      environment: this.promptEnvironment,
+      input: {
+        ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
+        ...(normalizeText(request) ? { request: normalizeText(request) } : {})
+      },
+      projectRoot: sessionSourcePath(session) || session.targetRoot || this.targetRoot
     });
   }
 
-  async renderPromptAction({
-    action,
-    input = {},
-    session
-  } = {}) {
-    let promptSession = await this.promptSessionForAction(session);
-    const promptInput = await inputWithAcceptedPlanForAction(this.store, promptSession, action, input);
-    let promptContextRecreated = false;
-    const renderAdapterPrompt = () => this.adapter.renderPrompt({
-      action,
-      config: this.projectConfig,
-      input: promptInput,
-      runtime: this,
-      session: promptSessionWithStaticContextReferences(promptSession),
-      store: this.store
-    });
-    let renderedPrompt;
-    try {
-      renderedPrompt = await renderAdapterPrompt();
-    } catch (error) {
-      if (normalizeText(error?.code) !== "vibe64_unknown_prompt_token") {
-        throw error;
-      }
-      promptSession = await this.recreatePromptContextSnapshotForSession(promptSession);
-      promptContextRecreated = true;
-      renderedPrompt = await renderAdapterPrompt();
-    }
-    const sessionBriefingIncluded = promptContextRecreated || !sessionBriefingIsDelivered(promptSession);
-    const isAgentConversation = agentConversationAction(action);
-    const userRequestLeadsPrompt = Boolean(normalizeText(promptInput?.conversationRequest));
-    const promptWithActionContext = isAgentConversation
-      ? promptWithConversationTurnContext({
-          action,
-          input: promptInput,
-          prompt: renderedPrompt.prompt,
-          session: promptSession,
-          sessionBriefingIncluded
-        })
-      : promptWithWorkflowContext({
-          action,
-          includeSessionPaths: !sessionBriefingIncluded,
-          input: promptInput,
-          prompt: renderedPrompt.prompt,
-          session: promptSession,
-          sessionBriefingIncluded
-        });
-    const promptWithBriefing = isAgentConversation || userRequestLeadsPrompt
-      ? promptWithActionContext
-      : promptWithSessionBriefing({
-          prompt: promptWithActionContext,
-          session: promptSession,
-          sessionBriefingIncluded
-        });
-    const resultContract = currentStepAgentResultContract(promptSession, action, {
-      runtime: this
-    });
-    const prompt = promptWithCurrentStepInputContract({
-      action,
-      resultContract,
-      prompt: promptWithBriefing,
-      runtime: this,
-      session: promptSession
-    });
-    return {
-      agentPromptHandoff: buildAgentPromptHandoff({
-        ...renderedPrompt,
-        prompt,
-        resultContract,
-        visiblePrompt: visiblePromptForPromptAction(action, input)
-      }),
-      prompt,
-      promptContext: renderedPrompt.context,
-      promptId: renderedPrompt.promptId,
-      status: "prompt_ready"
-    };
-  }
-
-  async runAdapterFinishSession({
-    action,
-    input = {},
-    session
-  } = {}) {
-    if (action?.type !== "finish") {
-      throw vibe64Error(
-        `Action ${action?.label || action?.id || "(unknown)"} is not a finish action.`,
-        "vibe64_action_not_finish"
-      );
-    }
-    return this.adapter.finishSession({
-      action,
-      input,
-      runtime: this,
-      session,
-      store: this.store
-    });
-  }
-
-  async runAdapterSessionAction({
-    action,
-    input = {},
-    session
-  } = {}) {
-    return this.adapter.runSessionAction({
-      action,
-      config: this.projectConfig,
-      input,
-      runtime: this,
-      session,
-      store: this.store
-    });
-  }
-
-  async finishSessionAction({
-    action,
-    input = {},
-    session
-  } = {}) {
-    try {
-      const result = await this.runAdapterFinishSession({
-        action,
-        input,
-        session
-      });
-      if (result.status !== "completed") {
-        return result;
-      }
-      await this.markSessionClosing(session.sessionId, {
-        reason: "finished"
-      });
-      await this.archiveSessionSource(session, {
-        reason: "finished"
-      });
-      return {
-        ...result,
-        metadata: {
-          ...result.metadata,
-          session_finished: "yes"
-        },
-        sessionStatus: VIBE64_SESSION_STATUS.FINISHED
-      };
-    } catch (error) {
-      await this.recoverFailedFinishSessionAction(session, error);
-      throw error;
-    }
-  }
-
-  async recoverFailedFinishSessionAction(session = {}, error = null) {
-    const sessionId = normalizeText(session.sessionId || session.id);
-    if (!sessionId) {
-      return;
-    }
-    try {
-      await this.clearSessionClosing(sessionId);
-      const currentSession = await this.getSession(sessionId);
-      if (currentSession.status !== VIBE64_SESSION_STATUS.ACTIVE) {
-        return;
-      }
-      const message = "Archive failed. Resolve the failure, then retry archive.";
-      await recoverStuckStepMachineExecution(this, currentSession, {
-        message
-      });
-      await this.store.appendCommandLogEntry(sessionId, {
-        error: error ? String(error.message || error) : "",
-        fromStatus: currentSession.stepMachine?.status || "",
-        kind: "recover-failed-finish-session",
-        message,
-        stepId: currentSession.currentStep,
-        toStatus: "ready"
-      });
-    } catch (recoveryError) {
-      vibe64SessionDebugLog("server.runtime.finishSessionAction.recovery.error", {
-        error: vibe64SessionDebugError(recoveryError),
-        originalError: vibe64SessionDebugError(error),
-        sessionId
-      });
-    }
-  }
-
-  async archiveSessionSource(session = {}, {
+  async archiveSessionSource(sessionOrId = {}, {
     reason = "archive"
   } = {}) {
-    return this.store.mutateSession(session.sessionId, async () => {
-      const storedSession = await this.store.readSession(session.sessionId);
-      await this.assertSourceHealthy(storedSession);
-      const latestSession = await this.sessionView(storedSession, {
-        inspectSource: false
-      });
-      return archiveSessionSource({
-        adapter: this.adapter,
+    const sessionId = normalizeText(typeof sessionOrId === "string"
+      ? sessionOrId
+      : sessionOrId.sessionId || sessionOrId.id);
+    return this.store.mutateSession(sessionId, async () => {
+      const session = assertSupportedSession(await this.store.readSession(sessionId));
+      await this.assertSourceHealthy(session);
+      return archiveStoredSessionSource({
         reason,
-        session: latestSession,
+        session,
         store: this.store
       });
     });
@@ -1979,6 +323,7 @@ class Vibe64SessionRuntime {
     reason = "closing"
   } = {}) {
     return this.store.mutateSession(sessionId, async () => {
+      assertSupportedSession(await this.store.readSession(sessionId));
       const metadata = sessionClosingMetadata(reason);
       await Promise.all(Object.entries(metadata).map(([name, value]) => (
         this.store.writeMetadataValue(sessionId, name, value)
@@ -1989,6 +334,7 @@ class Vibe64SessionRuntime {
 
   async clearSessionClosing(sessionId = "") {
     return this.store.mutateSession(sessionId, async () => {
+      assertSupportedSession(await this.store.readSession(sessionId));
       await this.store.deleteMetadataValues(sessionId, [
         VIBE64_SESSION_CLOSING_AT_METADATA,
         VIBE64_SESSION_CLOSING_REASON_METADATA
@@ -1997,592 +343,76 @@ class Vibe64SessionRuntime {
     });
   }
 
-  async runAction(sessionId, actionId, input = {}, {
-    promptTemplateId = ""
+  async abandonSession(sessionId = "", {
+    reason = "abandoned"
   } = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.runAction.start", {
-      actionId,
-      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
-      sessionId
+    const session = assertSupportedSession(await this.store.readSession(sessionId));
+    if (closedSessionStatus(session.status)) {
+      return this.getSession(sessionId);
+    }
+    await this.markSessionClosing(sessionId, {
+      reason
     });
     try {
-      const viewedSession = await this.store.mutateSession(sessionId, async () => {
-        const normalizedActionId = assertSafeActionId(actionId);
-        const session = await this.runActionSessionView(sessionId);
-        vibe64SessionDebugLog("server.runtime.runAction.sessionLoaded", {
-          ...vibe64SessionDebugSummary(session),
-          actionId: normalizedActionId
-        });
-        const action = currentAction(session, normalizedActionId);
-        if (!action) {
-          vibe64SessionDebugLog("server.runtime.runAction.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            actionId: normalizedActionId,
-            reason: "action_not_available"
-          });
-          throw actionNotAvailableError(session, normalizedActionId);
-        }
-        if (actionRequiresSourceInspection(action)) {
-          await this.assertSourceHealthy(session);
-        }
-        if (!action.enabled) {
-          vibe64SessionDebugLog("server.runtime.runAction.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            actionId: normalizedActionId,
-            reason: "action_disabled"
-          });
-          throw actionDisabledError(action, session);
-        }
-        if (action.type === "command") {
-          vibe64SessionDebugLog("server.runtime.runAction.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            actionId: normalizedActionId,
-            reason: "command_requires_terminal"
-          });
-          throw commandActionRequiresTerminalError(action);
-        }
-
-        await recordStepMachineActionStarted(this, session, action.id);
-        const actionSession = await this.runActionSessionView(session.sessionId);
-        const actionAfterStart = actionWithComposerTemplate(
-          currentAction(actionSession, normalizedActionId) || action,
-          actionSession,
-          promptTemplateId
-        );
-
-        vibe64SessionDebugLog("server.runtime.runAction.handler.start", {
-          ...vibe64SessionDebugSummary(actionSession),
-          actionId: actionAfterStart.id,
-          actionType: String(actionAfterStart.type || "")
-        });
-        const actionInput = await privateSafeActionInput(this, actionSession, actionAfterStart, input);
-        let handlerResult;
-        try {
-          handlerResult = await this.actionHandler(actionAfterStart.id)({
-            action: actionAfterStart,
-            input: actionInput,
-            runtime: this,
-            session: actionSession,
-            store: this.store
-          });
-        } catch (error) {
-          if (actionAfterStart.type === "prompt") {
-            try {
-              await recoverFailedPromptActionStart(this, actionSession, {
-                message: String(error?.message || error || "The Codex prompt could not be prepared.")
-              });
-            } catch (recoveryError) {
-              vibe64SessionDebugLog("server.runtime.runAction.promptRecovery.error", {
-                actionId: actionAfterStart.id,
-                error: vibe64SessionDebugError(recoveryError),
-                originalError: vibe64SessionDebugError(error),
-                sessionId: actionSession.sessionId
-              });
-            }
-          }
-          throw error;
-        }
-        const actionResult = await this.store.writeActionResult(
-          actionSession.sessionId,
-          actionAfterStart.id,
-          actionResultRecord(actionAfterStart, actionSession, actionInput, handlerResult)
-        );
-        await writeActionResultEffects(this.store, actionSession.sessionId, handlerResult);
-        await this.store.appendCommandLogEntry(
-          actionSession.sessionId,
-          actionLogEntry(actionAfterStart, actionSession, actionResult)
-        );
-        await recordStepMachineActionFinished(this, actionSession, actionAfterStart.id, actionResult);
-
-        const actionCompletedSession = await this.runActionSessionView(actionSession.sessionId);
-        const finalSession = actionCanAdvanceOnSuccess(actionAfterStart, actionResult, actionCompletedSession)
-          ? await this.advance(actionSession.sessionId)
-          : actionCompletedSession;
-        const viewedSession = {
-          ...finalSession,
-          actionResult
-        };
-        vibe64SessionDebugLog("server.runtime.runAction.done", {
-          ...vibe64SessionDebugSummary(viewedSession),
-          actionId: actionAfterStart.id,
-          actionResultStatus: String(actionResult.status || ""),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs)
-        });
-        return viewedSession;
+      await this.archiveSessionSource(sessionId, {
+        reason
       });
-      const compactedSession = await this.compactClosedSessionIfNeeded(viewedSession);
-      return compactedSession
-        ? {
-            ...compactedSession,
-            actionResult: viewedSession.actionResult
-          }
-        : viewedSession;
+      await this.store.writeStatus(sessionId, VIBE64_SESSION_STATUS.ABANDONED);
+      if (typeof this.store.compactClosedSession === "function") {
+        await this.store.compactClosedSession(sessionId);
+      }
+      return this.getSession(sessionId);
     } catch (error) {
-      vibe64SessionDebugLog("server.runtime.runAction.error", {
-        actionId,
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
+      await this.clearSessionClosing(sessionId).catch(() => null);
       throw error;
     }
   }
 
-  async advance(sessionId, expected = {}, {
-    inspectSource = this.inspectSourceByDefault
-  } = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.advance.start", {
-      expectedStepId: String(expected?.stepId || ""),
-      expectedStepStatus: String(expected?.stepStatus || ""),
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId, {
-          inspectSource
-        });
-        vibe64SessionDebugLog("server.runtime.advance.loaded", {
-          ...vibe64SessionDebugSummary(session),
-          nextVisible: session.next?.visible !== false,
-          nextDisabledReason: String(session.next?.disabledReason || "")
-        });
-        assertAdvanceMatchesCurrentState(session, expected);
-        if (!session.next?.visible || !session.next.enabled || !session.next.stepId) {
-          vibe64SessionDebugLog("server.runtime.advance.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            nextDisabledReason: String(session.next?.disabledReason || ""),
-            nextVisible: session.next?.visible !== false,
-            reason: "step_not_ready"
-          });
-          throw refreshRecommendedStateError(vibe64Error(
-            session.next?.disabledReason || "Current Vibe64 step cannot advance.",
-            "vibe64_step_not_ready"
-          ), session, "state_rejected");
-        }
-        vibe64SessionDebugLog("server.runtime.advance.transition", {
-          fromStepId: session.currentStep,
-          sessionId: session.sessionId,
-          toStepId: session.next.stepId
-        });
-        await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
-          message: `Advanced from ${session.currentStep} to ${session.next.stepId}.`
-        });
-        await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
-        const advancedSession = await this.getSession(session.sessionId, {
-          inspectSource
-        });
-        vibe64SessionDebugLog("server.runtime.advance.done", {
-          ...vibe64SessionDebugSummary(advancedSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          fromStepId: session.currentStep
-        });
-        return advancedSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.advance.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  readConversationLog(sessionId) {
+    return this.store.readConversationLog(sessionId);
   }
 
-  async forceAdvance(sessionId, {
-    message = "Advanced by server intent."
-  } = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.forceAdvance.start", {
-      message,
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId);
-        if (session.next?.visible === false || !session.next?.stepId) {
-          vibe64SessionDebugLog("server.runtime.forceAdvance.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            nextDisabledReason: String(session.next?.disabledReason || ""),
-            reason: "step_not_ready"
-          });
-          throw vibe64Error(
-            session.next?.disabledReason || "Current Vibe64 step cannot advance.",
-            "vibe64_step_not_ready"
-          );
-        }
-        vibe64SessionDebugLog("server.runtime.forceAdvance.transition", {
-          fromStepId: session.currentStep,
-          sessionId: session.sessionId,
-          toStepId: session.next.stepId
-        });
-        await this.store.writeCompletedStep(session.sessionId, session.currentStep, {
-          message
-        });
-        await this.store.writeCurrentStep(session.sessionId, session.next.stepId);
-        const advancedSession = await this.getSession(session.sessionId);
-        vibe64SessionDebugLog("server.runtime.forceAdvance.done", {
-          ...vibe64SessionDebugSummary(advancedSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          fromStepId: session.currentStep
-        });
-        return advancedSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.forceAdvance.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  readConversationLogPage(sessionId, options = {}) {
+    return this.store.readConversationLogPage(sessionId, options);
   }
 
-  async rewind(sessionId, stepId) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.rewind.start", {
-      requestedStepId: stepId,
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId);
-        if (session.status !== VIBE64_SESSION_STATUS.ACTIVE) {
-          vibe64SessionDebugLog("server.runtime.rewind.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            reason: "closed_session"
-          });
-          throw vibe64Error("Closed Vibe64 sessions cannot be rewound.", "vibe64_closed_session_rewind");
-        }
-
-        const plan = this.workflowMachineForSession(session).rewindPlanForSession(session, stepId);
-        vibe64SessionDebugLog("server.runtime.rewind.plan", {
-          ...vibe64SessionDebugSummary(session),
-          actionResultCount: plan.actionResultIds.length,
-          artifactCount: plan.artifactNames.length,
-          completedStepCount: plan.completedStepIds.length,
-          metadataCount: plan.metadataNames.length,
-          requestedStepId: stepId,
-          targetStepId: plan.targetStepId
-        });
-        await Promise.all([
-          this.store.deleteActionResults(session.sessionId, plan.actionResultIds),
-          this.store.deleteArtifacts(session.sessionId, plan.artifactNames),
-          this.store.deleteCompletedSteps(session.sessionId, plan.completedStepIds),
-          this.store.deleteMetadataValues(session.sessionId, plan.metadataNames),
-          this.store.deleteStepStates(session.sessionId, [
-            plan.targetStepId,
-            session.currentStep,
-            ...plan.completedStepIds
-          ])
-        ]);
-        await this.store.writeCurrentStep(session.sessionId, plan.targetStepId);
-        await this.store.appendCommandLogEntry(session.sessionId, {
-          fromStepId: session.currentStep,
-          kind: "rewind",
-          toStepId: plan.targetStepId
-        });
-        await this.store.writeConversationSystemMessage(session.sessionId, {
-          text: `Rewind to ${plan.targetStepLabel || plan.targetStepId}.`
-        });
-        const rewoundSession = await this.getSession(session.sessionId);
-        vibe64SessionDebugLog("server.runtime.rewind.done", {
-          ...vibe64SessionDebugSummary(rewoundSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          fromStepId: session.currentStep,
-          requestedStepId: stepId
-        });
-        return rewoundSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.rewind.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        requestedStepId: stepId,
-        sessionId
-      });
-      throw error;
-    }
+  writeConversationUserMessage(sessionId, message = {}) {
+    return this.store.writeConversationUserMessage(sessionId, message);
   }
 
-  async resolveSessionRecovery(sessionId, input = {}) {
-    const startedAtMs = Date.now();
-    const resolutionFields = {
-      issueId: normalizeText(input?.issueId),
-      optionId: normalizeText(input?.optionId),
-      sessionId
-    };
-    vibe64SessionDebugLog("server.runtime.resolveSessionRecovery.start", {
-      ...resolutionFields
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.sessionView(await this.store.readSession(sessionId), {
-          includeRecovery: false,
-          inspectSource: false
-        });
-        if (session.status !== VIBE64_SESSION_STATUS.ACTIVE) {
-          throw vibe64Error(
-            "Closed Vibe64 sessions cannot be recovered.",
-            "vibe64_closed_session_recovery"
-          );
-        }
-        await this.sessionRecovery.resolve({
-          runtime: this,
-          session
-        }, input);
-        const recoveredSession = await this.getSession(sessionId, {
-          inspectSource: false
-        });
-        vibe64SessionDebugLog("server.runtime.resolveSessionRecovery.done", {
-          ...vibe64SessionDebugSummary(recoveredSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          ...resolutionFields
-        });
-        return recoveredSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.resolveSessionRecovery.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        ...resolutionFields
-      });
-      throw error;
-    }
+  writeConversationAssistantMessage(sessionId, message = {}) {
+    return this.store.writeConversationAssistantMessage(sessionId, message);
   }
 
-  async recoverStuckStep(sessionId, {
-    message = "Recovered stuck command execution. Re-run the current step."
-  } = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.recoverStuckStep.start", {
-      message,
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId, {
-          inspectSource: false
-        });
-        if (session.status !== VIBE64_SESSION_STATUS.ACTIVE) {
-          vibe64SessionDebugLog("server.runtime.recoverStuckStep.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            reason: "closed_session"
-          });
-          throw vibe64Error("Closed Vibe64 sessions cannot be recovered.", "vibe64_closed_session_recovery");
-        }
-        await recoverStuckStepMachineExecution(this, session, {
-          message
-        });
-        await recoverCommandLifecyclesForStep(this, session, {
-          message
-        });
-        await this.store.appendCommandLogEntry(session.sessionId, {
-          fromStatus: session.stepMachine?.status || "",
-          kind: "recover-stuck-step",
-          message,
-          stepId: session.currentStep,
-          toStatus: "ready"
-        });
-        const recoveredSession = await this.getSession(session.sessionId, {
-          inspectSource: false
-        });
-        vibe64SessionDebugLog("server.runtime.recoverStuckStep.done", {
-          ...vibe64SessionDebugSummary(recoveredSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          fromStepStatus: String(session.stepMachine?.status || "")
-        });
-        return recoveredSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.recoverStuckStep.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  upsertConversationAssistantMessage(sessionId, message = {}) {
+    return this.store.upsertConversationAssistantMessage(sessionId, message);
   }
 
-  async returnControlFromAgentWait(sessionId, {
-    expectedRevision = null,
-    inputPrompt = "What would you like to do?",
-    message = "Control back to the user."
-  } = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.start", {
-      message,
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId, {
-          inspectSource: false
-        });
-        if (expectedRevision !== null && session.revision !== expectedRevision) {
-          vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            expectedRevision,
-            reason: "stale_session_revision"
-          });
-          return session;
-        }
-        if (session.status !== VIBE64_SESSION_STATUS.ACTIVE) {
-          vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.blocked", {
-            ...vibe64SessionDebugSummary(session),
-            reason: "closed_session"
-          });
-          throw vibe64Error("Closed Vibe64 sessions cannot return Codex control.", "vibe64_closed_session_agent_control");
-        }
-        const changed = await returnControlFromAgentWait(this, session, {
-          inputPrompt
-        });
-        if (changed && typeof this.store.writeConversationSystemMessage === "function") {
-          await this.store.writeConversationSystemMessage(session.sessionId, {
-            text: message
-          });
-        }
-        const updatedSession = await this.getSession(session.sessionId, {
-          inspectSource: false
-        });
-        vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.done", {
-          ...vibe64SessionDebugSummary(updatedSession),
-          changed,
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          fromStepStatus: String(session.stepMachine?.status || "")
-        });
-        return updatedSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.returnControlFromAgentWait.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  writeConversationCommentaryMessage(sessionId, message = {}) {
+    return this.store.writeConversationCommentaryMessage(sessionId, message);
   }
 
-  async appendTerminalChatExchange(sessionId, input = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.appendTerminalChatExchange.start", {
-      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await this.getSession(sessionId, {
-          inspectSource: false
-        });
-        const requestText = normalizeText(input.request || input.prompt || input.user || input.text);
-        const responseText = normalizeText(input.response || input.answer || input.assistant);
-        if (requestText) {
-          await this.store.writeConversationUserMessage(session.sessionId, {
-            text: requestText
-          });
-        }
-        if (responseText) {
-          await this.store.writeConversationAssistantMessage(session.sessionId, {
-            text: responseText
-          });
-        }
-        const updatedSession = await this.getSession(session.sessionId, {
-          inspectSource: false
-        });
-        vibe64SessionDebugLog("server.runtime.appendTerminalChatExchange.done", {
-          ...vibe64SessionDebugSummary(updatedSession),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          mirroredRequest: Boolean(requestText),
-          mirroredResponse: Boolean(responseText)
-        });
-        return updatedSession;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.appendTerminalChatExchange.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  writeConversationThinkingMessage(sessionId, message = {}) {
+    return this.store.writeConversationThinkingMessage(sessionId, message);
   }
 
-  async submitCurrentStepInput(sessionId, input = {}, options = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.submitCurrentStepInput.start", {
-      inputKeys: Object.keys(input && typeof input === "object" && !Array.isArray(input) ? input : {}).sort(),
-      sessionId
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const currentSession = await this.getSession(sessionId);
-        const safeInput = await privateSafeCurrentStepInput(this, currentSession, input);
-        await saveStepMachineInput(this, sessionId, safeInput);
-        const savedSession = await this.getSession(sessionId);
-        if (options?.recordConversationMessage !== false) {
-          await recordCurrentStepConversationMessage(this, savedSession, safeInput);
-        }
-        const session = await this.getSession(sessionId);
-        vibe64SessionDebugLog("server.runtime.submitCurrentStepInput.done", {
-          ...vibe64SessionDebugSummary(session),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs)
-        });
-        return session;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.submitCurrentStepInput.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        sessionId
-      });
-      throw error;
-    }
+  writeConversationSystemMessage(sessionId, message = {}) {
+    return this.store.writeConversationSystemMessage(sessionId, message);
   }
 
-  async runIntent(sessionId, intentId, input = {}) {
-    const startedAtMs = Date.now();
-    vibe64SessionDebugLog("server.runtime.runIntent.start", {
-      intentId,
-      sessionId,
-      stepId: String(input?.stepId || ""),
-      stepStatus: String(input?.stepStatus || "")
-    });
-    try {
-      return await this.store.mutateSession(sessionId, async () => {
-        const session = await runWorkflowIntent(this, sessionId, intentId, input);
-        vibe64SessionDebugLog("server.runtime.runIntent.done", {
-          ...vibe64SessionDebugSummary(session),
-          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-          intentId
-        });
-        return session;
-      });
-    } catch (error) {
-      vibe64SessionDebugLog("server.runtime.runIntent.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        intentId,
-        sessionId
-      });
-      throw error;
-    }
+  readAgentRun(sessionId, runId) {
+    return this.store.readAgentRun(sessionId, runId);
   }
 
-  async recordCommandActionStarted(sessionId, actionId) {
-    return this.store.mutateSession(sessionId, async () => {
-      const session = await this.getSession(sessionId);
-      await recordStepMachineActionStarted(this, session, actionId);
-    });
-  }
-
-  async recordCommandActionFinished(session, actionId, actionResult = {}) {
-    return this.store.mutateSession(session.sessionId, async () => {
-      await recordStepMachineActionFinished(this, session, actionId, actionResult);
-    });
+  writeAgentRunEvent(sessionId, runId, event = {}) {
+    return this.store.writeAgentRunEvent(sessionId, runId, event);
   }
 }
 
 export {
-  Vibe64SessionRuntime
+  GENESIS_SESSION_KIND,
+  Vibe64SessionRuntime,
+  assertSupportedSession,
+  plainSessionView,
+  sessionIsSupported
 };

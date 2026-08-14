@@ -72,9 +72,22 @@ function projectRuntimeRoot(targetRoot) {
   return resolveVibe64ProjectLocalRoot(targetRoot);
 }
 
+function renderTestGenesisPrompt({ action = {} } = {}) {
+  const promptId = String(action.promptId || action.id || "test");
+  return {
+    context: {
+      genesis: true,
+      task: String(action.genesisTask || "work")
+    },
+    prompt: `Test Genesis prompt for ${promptId}.`,
+    promptId
+  };
+}
+
 export {
   managedSessionSourceRoot,
   projectRuntimeRoot,
+  renderTestGenesisPrompt,
   sourcePath,
   sourceMetadata,
   withTemporaryRoot

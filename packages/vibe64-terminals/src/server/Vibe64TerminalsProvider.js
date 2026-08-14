@@ -35,21 +35,17 @@ const LIVE_PREVIEW_ROUTING_ENV_KEYS = Object.freeze([
 ]);
 const TERMINAL_SESSION_MUTATION_EVENT_METHODS = Object.freeze([
   "closeAgentTerminal",
-  "closeCommandTerminal",
   "closeLaunchTargetTerminal",
-  "deliverAgentPrompt",
+  "sendAgentMessage",
   "startAgentTerminal",
-  "startCommandTerminal",
   "startLaunchTargetTerminal",
   "stopLaunchTargetTerminal"
 ]);
 const TERMINAL_SESSION_MUTATION_EVENT_REASONS = Object.freeze({
   closeAgentTerminal: "agent-terminal-closed",
-  closeCommandTerminal: "command-terminal-closed",
   closeLaunchTargetTerminal: "launch-target-closed",
-  deliverAgentPrompt: "agent-prompt-delivered",
+  sendAgentMessage: "agent-message-sent",
   startAgentTerminal: "agent-terminal-started",
-  startCommandTerminal: "command-terminal-started",
   startLaunchTargetTerminal: "launch-target-started",
   stopLaunchTargetTerminal: "launch-target-stopped"
 });
@@ -70,7 +66,7 @@ function terminalsProviderEnv(runtimeEnv = {}, liveEnv = process.env) {
 class Vibe64TerminalsProvider {
   static id = "feature.vibe64-terminals";
 
-  static dependsOn = [
+  static startsAfter = [
     "runtime.actions",
     "feature.vibe64-project"
   ];
@@ -101,11 +97,6 @@ class Vibe64TerminalsProvider {
         const domainEvents = typeof scope.has === "function" && scope.has("domainEvents")
           ? scope.make("domainEvents")
           : null;
-        const publishCommandTerminalChanged = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "startCommandTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
         const publishAgentTerminalChanged = createVibe64SessionChangedPublisher({
           domainEvents,
           methodName: "startAgentTerminal",
@@ -131,11 +122,6 @@ class Vibe64TerminalsProvider {
           methodName: "closeAgentTerminal",
           serviceToken: VIBE64_TERMINALS_SERVICE
         });
-        const publishCommandTerminalClosed = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "closeCommandTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
         const publishProjectRuntimeChanged = domainEvents
           ? createRealtimeEntityChangePublisher({
               domainEvents,
@@ -157,8 +143,6 @@ class Vibe64TerminalsProvider {
           publishSessionChanged: {
             agentTerminal: publishAgentTerminalChanged,
             agentTerminalClosed: publishAgentTerminalClosed,
-            commandTerminal: publishCommandTerminalChanged,
-            commandTerminalClosed: publishCommandTerminalClosed,
             launchTarget: publishLaunchTargetChanged,
             launchTargetClosed: publishLaunchTargetClosed,
             launchTargetStopped: publishLaunchTargetStopped

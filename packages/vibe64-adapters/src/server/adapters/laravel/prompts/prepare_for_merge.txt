@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific merge-preparation guidance:
-- Use the recorded PR URL and inspect only what is needed to decide whether the Laravel work is mergeable.
-- Resolve local merge blockers, failing focused checks, routing/runtime issues, migration problems, environment mismatches, or selected-blueprint inconsistencies when they are clearly in scope.
-- Report whether the PR is ready and which Laravel checks or risks remain.

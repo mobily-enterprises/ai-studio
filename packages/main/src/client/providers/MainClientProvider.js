@@ -5,7 +5,7 @@ import TopActionLinkItem from "/src/components/menus/TopActionLinkItem.vue";
 import Vibe64ActiveSessionNavItem from "/src/components/studio/Vibe64ActiveSessionNavItem.vue";
 import {
   registerVibe64RealtimeListeners
-} from "../vibe64CapabilitiesRealtime.js";
+} from "../vibe64RealtimeQueries.js";
 
 const mainClientComponents = [];
 

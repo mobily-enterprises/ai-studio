@@ -17,7 +17,6 @@ const PREVIEW_IDENTITY_SELECTOR_EMAIL = "email";
 const PREVIEW_IDENTITY_SELECTOR_LOGIN = "login";
 const PREVIEW_IDENTITY_SELECTOR_USER_ID = "user-id";
 const PREVIEW_IDENTITY_SUBJECT_SELECTOR = "selector";
-const PREVIEW_APPLICATION_IDENTITIES_CONFIG = "preview_application_identities";
 const PREVIEW_APPLICATION_IDENTITY_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 const PREVIEW_APPLICATION_IDENTITY_RESERVED_NAMES = new Set([
   "default",
@@ -216,17 +215,6 @@ function normalizePreviewApplicationIdentities(value = []) {
       value: selector.value
     };
   });
-}
-
-function previewApplicationIdentitiesFromConfig(projectConfig = {}) {
-  const values = projectConfig?.values &&
-    typeof projectConfig.values === "object" &&
-    !Array.isArray(projectConfig.values)
-    ? projectConfig.values
-    : projectConfig;
-  return normalizePreviewApplicationIdentities(
-    values?.[PREVIEW_APPLICATION_IDENTITIES_CONFIG] || []
-  );
 }
 
 function previewIdentityCommandError(message = "") {
@@ -792,7 +780,6 @@ export {
   PREVIEW_IDENTITY_SELECTOR_TYPES,
   PREVIEW_IDENTITY_SELECTOR_USER_ID,
   PREVIEW_IDENTITY_SUBJECT_SELECTOR,
-  PREVIEW_APPLICATION_IDENTITIES_CONFIG,
   VIBE64_SELF_PREVIEW_AUTH_KIND,
   createPreviewAuthSecret,
   createPreviewIdentityGrant,
@@ -811,7 +798,6 @@ export {
   previewAuthSecretPath,
   previewAuthUsesProfile,
   previewIdentityCommandEnvironment,
-  previewApplicationIdentitiesFromConfig,
   readPreviewAuthSecret,
   verifyPreviewIdentityGrant
 };

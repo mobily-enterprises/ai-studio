@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Next.js selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Next.js-specific implementation guidance:
-- Preserve the project's routing convention, file organization, package manager, lint/build scripts, and selected blueprint.
-- Keep client-only code, server-only code, route handlers, Server Actions, and environment access in the correct runtime boundary.
-- If database support is selected, use `DATABASE_URL` through server-only code and avoid leaking secrets to client components.

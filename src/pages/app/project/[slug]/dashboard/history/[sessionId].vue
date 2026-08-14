@@ -23,7 +23,6 @@
 
     <ArchivedVibe64SessionDetail
       v-if="session"
-      :archive="archive"
       :back-to="backTo"
       :conversation-log="conversationLog"
       :session="session"
@@ -68,7 +67,6 @@ import {
 } from "@/composables/useArchivedVibe64Sessions.js";
 
 const {
-  archive,
   backTo,
   conversationLog,
   error,

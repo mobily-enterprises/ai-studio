@@ -218,7 +218,7 @@ describe("Vibe64 launch controls", () => {
       displayed: true,
       session: {
         ...session,
-        status: "finished"
+        status: "abandoned"
       }
     })).toBe(false);
     expect(launchControlsCanLoadTargets({
@@ -696,7 +696,7 @@ describe("Vibe64 launch controls", () => {
         clientRefresh: {
           includeLaunchTargets: true
         },
-        reason: "command-terminal-closed",
+        reason: "launch-target-closed",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);

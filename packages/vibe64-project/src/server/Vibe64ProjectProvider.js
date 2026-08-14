@@ -10,9 +10,6 @@ import {
   jskitRuntimeEnv
 } from "@local/vibe64-core/server/jskitRuntimeEnv";
 import {
-  VIBE64_COMMITTED_PROJECT_CONFIG_READER_SERVICE
-} from "@local/vibe64-core/server/committedProjectConfig";
-import {
   vibe64ProjectChangedServiceEvent
 } from "@local/vibe64-core/server/projectRealtimeEvents";
 import { featureActions } from "./actions.js";
@@ -23,7 +20,7 @@ const VIBE64_PROJECT_SERVICE = "feature.vibe64-project.service";
 class Vibe64ProjectProvider {
   static id = "feature.vibe64-project";
 
-  static dependsOn = ["runtime.actions"];
+  static startsAfter = ["runtime.actions"];
 
   register(app) {
     if (
@@ -39,17 +36,10 @@ class Vibe64ProjectProvider {
 
     app.service(
       VIBE64_PROJECT_SERVICE,
-      (scope) => {
-        const committedProjectConfigReader = typeof scope?.has === "function" &&
-          scope.has(VIBE64_COMMITTED_PROJECT_CONFIG_READER_SERVICE)
-          ? scope.make(VIBE64_COMMITTED_PROJECT_CONFIG_READER_SERVICE)
-          : null;
-        return createService({
-          committedProjectConfigReader,
-          env,
-          projectContext
-        });
-      },
+      () => createService({
+        env,
+        projectContext
+      }),
       {
         events: {
           applyProjectTemplate: [vibe64ProjectChangedServiceEvent({
@@ -58,8 +48,9 @@ class Vibe64ProjectProvider {
           createProject: [vibe64ProjectChangedServiceEvent({
             operation: "created"
           })],
-          saveProjectConfig: [vibe64ProjectChangedServiceEvent()],
-          saveProjectType: [vibe64ProjectChangedServiceEvent()],
+          savePreviewApplicationIdentities: [vibe64ProjectChangedServiceEvent({
+            operation: "updated"
+          })],
           selectProject: [vibe64ProjectChangedServiceEvent({
             operation: "updated"
           })]

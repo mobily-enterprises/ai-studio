@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific review/deslop guidance:
-- Review routing conventions, controllers, requests, policies, models, migrations, factories, seeders, tests, frontend assets, package scripts, and selected database/runtime choices.
-- Remove unclear or duplicated code when the fix is obvious and scoped.
-- Keep generated or seeded project structure consistent with the selected blueprint.

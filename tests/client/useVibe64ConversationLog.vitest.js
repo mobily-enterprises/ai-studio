@@ -11,9 +11,6 @@ import {
   normalizeConversationLogPage,
   sessionIsAwaitingCodex
 } from "../../src/composables/useVibe64ConversationLog.js";
-import {
-  vibe64BrowserTabOriginId
-} from "../../src/lib/vibe64BrowserTabOrigin.js";
 
 describe("useVibe64ConversationLog", () => {
   it("builds conversation-log page queries from the shared page limit", () => {
@@ -352,48 +349,35 @@ describe("useVibe64ConversationLog", () => {
     ]);
   });
 
-  it("derives pending state from the step machine status", () => {
+  it("derives pending state from the active direct Codex turn", () => {
     expect(sessionIsAwaitingCodex({
-      stepMachine: {
-        status: "awaiting_agent_result"
+      agentSession: {
+        turn: { active: true }
       }
     })).toBe(true);
     expect(sessionIsAwaitingCodex({
-      stepMachine: {
-        status: "confirm_files"
+      agentSession: {
+        turn: { active: false }
       }
     })).toBe(false);
   });
 
   it("builds a stable recovery key from canonical session state", () => {
     expect(conversationLogRecoveryStateKey({
-      currentStep: "maintenance_conversation",
-      nextStepId: "local_session_finished",
-      presentation: {
-        auto: {
-          nextOperation: {
-            actionId: "send_message",
-            id: "operation-1"
-          }
-        },
-        step: {
-          nextStepId: "local_session_finished",
-          status: "ready"
+      agentSession: {
+        turn: {
+          active: true,
+          id: "turn-1"
         }
       },
+      revision: 7,
       sessionId: "session-1",
       status: "active",
-      stepMachine: {
-        nextStepId: "local_session_finished",
-        status: "awaiting_agent_result"
-      },
-      stepStatus: "ready"
-    })).toBe("session-1|active|maintenance_conversation|local_session_finished|ready|awaiting_agent_result|local_session_finished|ready|local_session_finished|operation-1|send_message");
+      updatedAt: "2026-08-14T10:00:00.000Z"
+    })).toBe("session-1|active|7|2026-08-14T10:00:00.000Z|active|turn-1");
   });
 
   it("refreshes only for selected-session events that can change durable chat text", () => {
-    const ownOriginId = vibe64BrowserTabOriginId();
-
     expect(conversationLogRealtimeShouldRefresh({
       payload: {
         sessionId: "session-1"
@@ -479,59 +463,7 @@ describe("useVibe64ConversationLog", () => {
 
     expect(conversationLogRealtimeShouldRefresh({
       payload: {
-        reason: "session-action-run",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        originId: ownOriginId,
-        reason: "session-action-run",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        originId: "other-tab",
-        reason: "session-action-run",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        reason: "session-intent-run",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        reason: "session-rewound",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        originId: ownOriginId,
-        reason: "session-intent-run",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(true);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
         reason: "codex-app-server-turn-active",
-        sessionId: "session-1"
-      }
-    }, "session-1")).toBe(false);
-
-    expect(conversationLogRealtimeShouldRefresh({
-      payload: {
-        reason: "session-advanced",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(false);

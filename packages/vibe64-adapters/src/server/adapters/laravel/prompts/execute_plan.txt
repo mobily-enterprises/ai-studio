@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific implementation guidance:
-- Preserve the project's routing, controller, model, migration, test, frontend asset, package manager, and selected blueprint conventions.
-- Keep validation, authorization, persistence, queues, events, mail, and service boundaries in Laravel/PHP unless the selected starter kit clearly owns the UI layer.
-- Use migrations for schema changes, factories/seeders where useful, and focused Laravel tests for meaningful behavior.

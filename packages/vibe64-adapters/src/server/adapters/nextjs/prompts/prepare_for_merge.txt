@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Next.js selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Next.js-specific merge-preparation guidance:
-- Use the recorded PR URL and inspect only what is needed to decide whether the Next.js work is mergeable.
-- Resolve local merge blockers, failing focused checks, routing/runtime boundary issues, environment problems, or selected-blueprint inconsistencies when they are clearly in scope.
-- Report whether the PR is ready and which Next.js checks or risks remain.

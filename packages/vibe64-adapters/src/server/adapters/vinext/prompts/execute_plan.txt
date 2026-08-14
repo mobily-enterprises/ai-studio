@@ -1,6 +1,0 @@
-{{systemStandard}}
-
-Vinext-specific implementation guidance:
-- Preserve Next-compatible routing, package scripts, package-manager choice, Vinext migration state, Vite behavior, and Cloudflare runtime boundaries.
-- Keep changes compatible with Vinext rather than relying on unsupported Next.js runtime behavior.
-- Run focused Vinext checks or builds when they are relevant and available.

@@ -128,13 +128,8 @@ function selectTool() {
   width: 0.45rem;
 }
 
-.vibe64-active-session-nav-item__status--completed,
-.vibe64-active-session-nav-item__status--merged {
-  background: rgb(var(--v-theme-success));
-  box-shadow: 0 0 0 0.22rem rgba(var(--v-theme-success), 0.12);
-}
-
 .vibe64-active-session-nav-item__status--failed,
+.vibe64-active-session-nav-item__status--blocked,
 .vibe64-active-session-nav-item__status--abandoned {
   background: rgb(var(--v-theme-error));
   box-shadow: 0 0 0 0.22rem rgba(var(--v-theme-error), 0.12);

@@ -1,7 +1,4 @@
 import {
-  sessionRecordHasComposerMenuProjection
-} from "@/lib/vibe64SessionComposerMenuProjection.js";
-import {
   vibe64SessionRevision
 } from "@/lib/vibe64SessionViewModel.js";
 
@@ -31,22 +28,16 @@ const MOUNTED_SESSION_IGNORED_REALTIME_REASONS = new Set([
   "launch-target-stopped"
 ]);
 
-function sessionRecordHasRuntimeProjection(session = null) {
+function sessionRecordHasDetailProjection(session = null) {
   return Boolean(
-    session?.presentation &&
-    typeof session.presentation === "object" &&
-    !Array.isArray(session.presentation)
+    session &&
+    typeof session === "object" &&
+    Object.hasOwn(session, "agentSession")
   );
 }
 
 function sessionRecordHasActiveAgentWork(session = null) {
-  return Boolean(
-    session?.agentSession?.turn?.active ||
-    session?.composerHandoff?.pending ||
-    (Array.isArray(session?.composerMessages) && session.composerMessages.some((message) => (
-      String(message?.state || "").trim() === "accepted"
-    )))
-  );
+  return session?.agentSession?.turn?.active === true;
 }
 
 function sessionRecordMatchesId(session = null, sessionId = "") {
@@ -60,8 +51,7 @@ function sessionRecordMatchesId(session = null, sessionId = "") {
 
 function latestSessionDetailRecord(current = null, candidate = null, sessionId = "") {
   if (
-    !sessionRecordMatchesId(candidate, sessionId) ||
-    !sessionRecordHasRuntimeProjection(candidate)
+    !sessionRecordMatchesId(candidate, sessionId)
   ) {
     return current;
   }
@@ -90,14 +80,8 @@ function mountedSessionRecord(detailSession = null, listSession = null, sessionI
   const listRevision = vibe64SessionRevision(listSession);
   if (listSessionMatches && listRevision !== null && detailRevision !== null && listRevision > detailRevision) {
     if (
-      sessionRecordHasRuntimeProjection(detailSession) &&
-      !sessionRecordHasRuntimeProjection(listSession)
-    ) {
-      return detailSession;
-    }
-    if (
-      sessionRecordHasComposerMenuProjection(detailSession) &&
-      !sessionRecordHasComposerMenuProjection(listSession)
+      sessionRecordHasDetailProjection(detailSession) &&
+      !sessionRecordHasDetailProjection(listSession)
     ) {
       return detailSession;
     }
@@ -120,10 +104,10 @@ function mountedSessionDetailRefreshReason(detailSession = null, listSession = n
     listRevision !== null &&
     detailRevision !== null &&
     listRevision > detailRevision &&
-    sessionRecordHasRuntimeProjection(detailSession) &&
-    !sessionRecordHasRuntimeProjection(listSession)
+    sessionRecordHasDetailProjection(detailSession) &&
+    !sessionRecordHasDetailProjection(listSession)
   ) {
-    return "newer_summary_without_runtime_projection";
+    return "newer_summary_without_detail";
   }
   return "";
 }
@@ -148,20 +132,18 @@ function mountedSessionDetailLoadState({
       ready: false,
       restoring: false,
       sessionId: "",
-      state: "summaryOnly",
-      suppressPassiveComposer: false
+      state: "summaryOnly"
     };
   }
   if (error && !hasDetail) {
     return {
       error,
-      label: "Session controls could not load.",
+      label: "Session could not load.",
       loading: false,
       ready: false,
       restoring: false,
       sessionId: normalizedSessionId,
-      state: "detailError",
-      suppressPassiveComposer: false
+      state: "detailError"
     };
   }
   if (hasDetail) {
@@ -173,31 +155,28 @@ function mountedSessionDetailLoadState({
       refreshing: Boolean(fetching || loading),
       restoring: false,
       sessionId: normalizedSessionId,
-      state: "detailReady",
-      suppressPassiveComposer: false
+      state: "detailReady"
     };
   }
   if (loading || fetching) {
     return {
       error: "",
-      label: "Loading session controls...",
+      label: "Loading session...",
       loading: true,
       ready: false,
       restoring: false,
       sessionId: normalizedSessionId,
-      state: "detailLoading",
-      suppressPassiveComposer: true
+      state: "detailLoading"
     };
   }
   return {
     error: "",
-    label: hasSummary ? "Session controls could not load." : "Loading session...",
+    label: hasSummary ? "Session could not load." : "Loading session...",
     loading: false,
     ready: false,
     restoring: false,
     sessionId: normalizedSessionId,
-    state: "summaryOnly",
-    suppressPassiveComposer: !hasSummary
+    state: "summaryOnly"
   };
 }
 

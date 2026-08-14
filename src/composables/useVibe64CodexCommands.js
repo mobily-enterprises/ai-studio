@@ -1,7 +1,7 @@
 import { computed } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import { useVibe64TerminalCommands } from "@/composables/useVibe64TerminalCommands.js";
 import {
   VIBE64_API_SUFFIX,

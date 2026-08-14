@@ -29,7 +29,7 @@ async function runGit(sourceRoot = "", args = [], {
     envPolicy: "session",
     gitSafeDirectories: [sourceRoot],
     mode: "capture",
-    purpose: "setup",
+    purpose: "source",
     runtimes: ["git"],
     timeout
   });

@@ -182,3 +182,88 @@ test("project template routes preserve Vibe64 user context", async () => {
     });
   });
 });
+
+test("managed app identity routes expose direct project-local GET and PUT operations", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const calls = [];
+      const identities = [{
+        name: "admin",
+        type: "email",
+        value: "admin@example.test"
+      }];
+      const service = {
+        async readPreviewApplicationIdentities() {
+          calls.push({ method: "read" });
+          return {
+            identities,
+            ok: true
+          };
+        },
+        async savePreviewApplicationIdentities(input) {
+          calls.push({
+            input,
+            method: "save"
+          });
+          return {
+            identities: input.identities,
+            ok: true
+          };
+        }
+      };
+      const app = testRouteApp();
+      const make = app.make.bind(app);
+      app.make = (token) => token === "feature.vibe64-project.service" ? service : make(token);
+      registerRoutes(app, {
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+
+      const readRoute = findRegisteredRoute(app, {
+        method: "GET",
+        path: `${apiRouteBase}/vibe64/preview-identities`
+      });
+      const saveRoute = findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/preview-identities`
+      });
+      assert.ok(readRoute);
+      assert.ok(saveRoute);
+      assert.deepEqual(saveRoute.options.body.schema.patch({ identities }), {
+        errors: {},
+        validatedObject: {
+          identities
+        }
+      });
+
+      const readReply = testReply();
+      const saveReply = testReply();
+      await readRoute.handler({
+        params: routeProjectParams()
+      }, readReply);
+      await saveRoute.handler({
+        input: {
+          body: {
+            identities
+          }
+        },
+        params: routeProjectParams()
+      }, saveReply);
+
+      assert.equal(readReply.statusCode, 200);
+      assert.equal(saveReply.statusCode, 200);
+      assert.deepEqual(calls, [
+        {
+          method: "read"
+        },
+        {
+          input: {
+            identities
+          },
+          method: "save"
+        }
+      ]);
+    });
+  });
+});

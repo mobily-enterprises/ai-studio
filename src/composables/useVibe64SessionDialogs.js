@@ -1,56 +1,28 @@
 import { computed, ref, unref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import {
-  useVibe64DiffDialog
-} from "@/composables/useVibe64DiffDialog.js";
-import {
-  emptyActionInputValues,
-  normalizeActionInputFields,
-  publicActionInputValuesForFields,
-  requiredActionInputMissing
-} from "@/lib/vibe64ActionInputModel.js";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useVibe64DiffDialog } from "@/composables/useVibe64DiffDialog.js";
 import {
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
   vibe64SessionPath
 } from "@/lib/vibe64SessionRequestConfig.js";
-import {
-  readRefOrGetterBoolean,
-  readRefOrGetterValue
-} from "@/lib/vueRefOrGetterValue.js";
-import {
-  vibe64RealtimeOriginPayload
-} from "@/lib/vibe64BrowserTabOrigin.js";
+import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
+import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
 function useVibe64SessionDialogs({
-  activeActionId,
-  canOpenDiff = () => false,
   clearSelectedSession = () => null,
-  commandBusy = () => false,
   isSelectedSessionClosed,
-  onAbandoned = () => null,
-  refreshSessionData,
-  runActionCommand,
+  refreshSessionData = async () => null,
   selectedSessionId,
   selectedSessionTitle,
-  sourceSafety = null,
   sessionsApiPath
 } = {}) {
   const abandonDialogOpen = ref(false);
   const abandonDialogSessionId = ref("");
   const abandonDialogSessionTitle = ref("");
   const abandonClosingSessionId = ref("");
-  const abandonClosingSessionTitle = ref("");
-  const finishDialogOpen = ref(false);
-  const inputDialogAction = ref(null);
-  const inputDialogError = ref("");
-  const inputDialogOpen = ref(false);
-  const inputDialogSubmitting = ref(false);
-  const inputDialogValues = ref({});
   const resolvedSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || ""));
-  const sessionSourceSafety = computed(() => readRefOrGetterValue(sourceSafety) || {});
-  let finishConfirmationResolve = null;
 
   const {
     clearDiffDialog,
@@ -63,7 +35,7 @@ function useVibe64SessionDialogs({
     loadFullDiff,
     openDiffDialog
   } = useVibe64DiffDialog({
-    canOpen: canOpenDiff,
+    canOpen: () => Boolean(unref(selectedSessionId) && !unref(isSelectedSessionClosed)),
     selectedSessionId
   });
 
@@ -75,19 +47,18 @@ function useVibe64SessionDialogs({
       method: "POST",
       path: vibe64SessionPath(resolvedSessionsApiPath.value, context?.sessionId, "/abandon")
     }),
-    fallbackRunError: "Vibe64 session could not be abandoned.",
+    fallbackRunError: "Vibe64 session could not be closed.",
     messages: {
-      error: "Vibe64 session could not be abandoned.",
-      success: "Vibe64 session abandoned."
+      error: "Vibe64 session could not be closed.",
+      success: "Vibe64 session closed."
     },
     onRunSuccess: async (_response, { context } = {}) => {
       if (!context?.sessionId || context.sessionId === unref(selectedSessionId)) {
         clearSelectedSession();
       }
-      onAbandoned();
       await refreshSessionData({
         includeList: true,
-        reason: "abandon-session"
+        reason: "close-session"
       });
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
@@ -96,31 +67,10 @@ function useVibe64SessionDialogs({
     writeMethod: "POST"
   });
 
-  const inputDialogFields = computed(() => normalizeActionInputFields(inputDialogAction.value?.inputFields));
-  const inputDialogTitle = computed(() => String(inputDialogAction.value?.label || "Provide details"));
-  const inputDialogSaveDisabled = computed(() => {
-    if (inputDialogSubmitting.value || readRefOrGetterBoolean(commandBusy) || inputDialogFields.value.length < 1) {
-      return true;
-    }
-    return requiredActionInputMissing(inputDialogFields.value, inputDialogValues.value);
-  });
-  const busy = computed(() => Boolean(
-    abandonClosingSessionId.value ||
-    inputDialogSubmitting.value
-  ));
-
   function clearAbandonDialog() {
     abandonDialogOpen.value = false;
     abandonDialogSessionId.value = "";
     abandonDialogSessionTitle.value = "";
-  }
-
-  function clearAbandonClosingSession(sessionId = "") {
-    if (sessionId && abandonClosingSessionId.value !== sessionId) {
-      return;
-    }
-    abandonClosingSessionId.value = "";
-    abandonClosingSessionTitle.value = "";
   }
 
   function requestAbandonSelectedSession() {
@@ -135,123 +85,37 @@ function useVibe64SessionDialogs({
     abandonDialogSessionId.value = unref(selectedSessionId);
     abandonDialogSessionTitle.value = unref(selectedSessionTitle);
     abandonDialogOpen.value = true;
-    void sessionSourceSafety.value?.refresh?.();
   }
 
   function cancelAbandonSession() {
-    if (abandonCommand.isRunning) {
-      return;
+    if (!abandonCommand.isRunning) {
+      clearAbandonDialog();
     }
-    clearAbandonDialog();
   }
 
   async function confirmAbandonSession() {
     if (
       !abandonDialogSessionId.value ||
       abandonClosingSessionId.value ||
-      abandonCommand.isRunning ||
-      sessionSourceSafety.value?.loading
+      abandonCommand.isRunning
     ) {
-      return;
+      return false;
     }
     const sessionId = abandonDialogSessionId.value;
     abandonClosingSessionId.value = sessionId;
-    abandonClosingSessionTitle.value = abandonDialogSessionTitle.value;
     clearAbandonDialog();
     try {
-      return await abandonCommand.run({
-        sessionId
-      });
+      return await abandonCommand.run({ sessionId });
     } finally {
-      clearAbandonClosingSession(sessionId);
+      if (abandonClosingSessionId.value === sessionId) {
+        abandonClosingSessionId.value = "";
+      }
     }
-  }
-
-  function openInputDialog(action = {}) {
-    const fields = normalizeActionInputFields(action.inputFields);
-    inputDialogAction.value = action;
-    inputDialogError.value = "";
-    inputDialogValues.value = emptyActionInputValues(fields);
-    inputDialogOpen.value = true;
-  }
-
-  function closeInputDialog() {
-    if (inputDialogSubmitting.value) {
-      return;
-    }
-    inputDialogAction.value = null;
-    inputDialogError.value = "";
-    inputDialogOpen.value = false;
-    inputDialogValues.value = {};
-  }
-
-  async function submitInputDialog() {
-    const action = inputDialogAction.value;
-    if (!unref(selectedSessionId) || !action?.id || inputDialogSaveDisabled.value) {
-      return;
-    }
-    inputDialogError.value = "";
-    inputDialogSubmitting.value = true;
-    activeActionId.value = action.id;
-    try {
-      await runActionCommand.run({
-        actionId: action.id,
-        advanceOnSuccess: action.advanceOnSuccess === true,
-        displayInput: publicActionInputValuesForFields(inputDialogFields.value, inputDialogValues.value),
-        input: {
-          ...inputDialogValues.value
-        },
-        sessionId: unref(selectedSessionId)
-      });
-      inputDialogOpen.value = false;
-      inputDialogAction.value = null;
-      inputDialogValues.value = {};
-    } catch (error) {
-      inputDialogError.value = String(error?.message || error || "Action failed.");
-    } finally {
-      inputDialogSubmitting.value = false;
-      activeActionId.value = "";
-    }
-  }
-
-  function clearInputDialog() {
-    inputDialogAction.value = null;
-    inputDialogError.value = "";
-    inputDialogOpen.value = false;
-    inputDialogSubmitting.value = false;
-    inputDialogValues.value = {};
-  }
-
-  function resolveFinishConfirmation(confirmed = false) {
-    const resolve = finishConfirmationResolve;
-    finishConfirmationResolve = null;
-    finishDialogOpen.value = false;
-    resolve?.(confirmed === true);
-  }
-
-  function requestFinishConfirmation() {
-    if (finishConfirmationResolve) {
-      return Promise.resolve(false);
-    }
-    return new Promise((resolve) => {
-      finishConfirmationResolve = resolve;
-      finishDialogOpen.value = true;
-    });
-  }
-
-  function cancelFinishConfirmation() {
-    resolveFinishConfirmation(false);
-  }
-
-  function acceptFinishConfirmation() {
-    resolveFinishConfirmation(true);
   }
 
   function clear() {
     clearAbandonDialog();
     clearDiffDialog();
-    cancelFinishConfirmation();
-    clearInputDialog();
   }
 
   return {
@@ -259,16 +123,14 @@ function useVibe64SessionDialogs({
       cancel: cancelAbandonSession,
       closing: computed(() => Boolean(abandonClosingSessionId.value)),
       closingSessionId: abandonClosingSessionId,
-      closingSessionTitle: abandonClosingSessionTitle,
       command: abandonCommand,
       confirm: confirmAbandonSession,
       open: abandonDialogOpen,
       request: requestAbandonSelectedSession,
       sessionId: abandonDialogSessionId,
-      sessionTitle: abandonDialogSessionTitle,
-      sourceSafety: sessionSourceSafety
+      sessionTitle: abandonDialogSessionTitle
     },
-    busy,
+    busy: computed(() => Boolean(abandonClosingSessionId.value)),
     clear,
     diff: {
       close: closeDiffDialog,
@@ -279,29 +141,8 @@ function useVibe64SessionDialogs({
       open: diffDialogOpen,
       openDialog: openDiffDialog,
       payload: diffPayload
-    },
-    finish: {
-      cancel: cancelFinishConfirmation,
-      confirm: acceptFinishConfirmation,
-      open: finishDialogOpen,
-      request: requestFinishConfirmation,
-      sourceSafety: sessionSourceSafety
-    },
-    input: {
-      close: closeInputDialog,
-      error: inputDialogError,
-      fields: inputDialogFields,
-      open: inputDialogOpen,
-      openDialog: openInputDialog,
-      saveDisabled: inputDialogSaveDisabled,
-      submit: submitInputDialog,
-      submitting: inputDialogSubmitting,
-      title: inputDialogTitle,
-      values: inputDialogValues
     }
   };
 }
 
-export {
-  useVibe64SessionDialogs
-};
+export { useVibe64SessionDialogs };

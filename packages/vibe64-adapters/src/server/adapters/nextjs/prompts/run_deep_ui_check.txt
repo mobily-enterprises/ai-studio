@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Next.js selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Next.js-specific deep UI guidance:
-- Inspect the user-facing Next.js behavior affected by the change.
-- Check routing, loading/error states, responsive layout, form behavior, data fetching boundaries, and Server Component vs Client Component usage.
-- Fix clear UI defects directly when they are in scope and report anything blocked by runtime or environment setup.

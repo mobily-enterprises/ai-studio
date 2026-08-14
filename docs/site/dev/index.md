@@ -1,6 +1,6 @@
 ---
 title: Why Vibe64
-description: Vibe64 turns AI coding into isolated worktrees, best-practice prompts, review gates, validation, and safer delivery.
+description: Vibe64 combines isolated Git sessions and controlled execution with Genesis-owned project context.
 layout: doc
 aside: false
 ---
@@ -8,15 +8,16 @@ aside: false
 <main class="vibe-marketing vibe-home">
 <section class="vibe-hero">
 <div class="vibe-hero__inner">
-<div class="vibe-mode-pill" aria-label="Vibe64 modes">
-<span>Sessions</span>
-<span>Autopilot</span>
-<em>New</em>
+<div class="vibe-mode-pill" aria-label="Vibe64 architecture">
+<span>Git sessions</span>
+<span>Genesis context</span>
+<em>Evidence</em>
 </div>
-<h1>AI coding that follows the workflow</h1>
+<h1>AI coding with explicit ownership</h1>
 <p>
-Vibe64 turns Codex into a disciplined development process: isolated work,
-stack-aware prompts, review gates, validation, PR summaries, and safer delivery.
+Vibe64 owns the development workspace and host execution. Genesis owns portable
+product intent, codebase explanation, Stack guidance, skills, prompts,
+verification declarations, and the Machine and Program Cities.
 </p>
 <div class="vibe-prompt-box">
 <div class="vibe-prompt-box__text">Build this feature in a clean work session</div>
@@ -32,22 +33,23 @@ stack-aware prompts, review gates, validation, PR summaries, and safer delivery.
 <section class="vibe-showcase-list" aria-label="Why Vibe64">
 <article class="vibe-showcase-card">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>01</strong> / 04 <span>Work stays atomic</span></p>
-<h2>Every session gets its own isolated clone, so AI never has to touch a shared checkout.</h2>
+<p class="vibe-step"><strong>01</strong> / 04 <span>Atomic work</span></p>
+<h2>Every coding session gets an isolated Git source.</h2>
 <p>
-No constant stashing. No accidental edits on main. No mixing unrelated local
-changes into a feature. Each task has a clean boundary from issue to PR.
+Vibe64 owns clone and worktree creation, branch identity, credentials, commits,
+pushes, and pull-request operations. Agent work never needs to infer those
+security-sensitive details from project documentation.
 </p>
 <a class="vibe-button vibe-button--primary" href="/dev/start-building">Start building</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--worktree" aria-hidden="true">
 <div class="vibe-browser-mock">
-<div class="vibe-browser-bar"><span></span><span></span><span></span><em>vibe64/session/worktree</em></div>
+<div class="vibe-browser-bar"><span></span><span></span><span></span><em>vibe64/session/source</em></div>
 <div class="vibe-workflow-board">
-<div><b>branch</b><span>vibe64/feature-session</span></div>
-<div><b>worktree</b><span>isolated checkout</span></div>
-<div><b>source</b><span>GitHub issue</span></div>
-<div><b>status</b><span>ready to plan</span></div>
+<div><b>branch</b><span>one task</span></div>
+<div><b>source</b><span>isolated checkout</span></div>
+<div><b>credentials</b><span>Vibe64-owned</span></div>
+<div><b>diff</b><span>ready to inspect</span></div>
 </div>
 </div>
 </div>
@@ -55,44 +57,45 @@ changes into a feature. Each task has a clean boundary from issue to PR.
 
 <article class="vibe-showcase-card vibe-showcase-card--reverse">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>02</strong> / 04 <span>Best-practice prompts</span></p>
-<h2>Codex gets the project rules before it writes code.</h2>
+<p class="vibe-step"><strong>02</strong> / 04 <span>Portable project context</span></p>
+<h2>Genesis enriches tasks from files committed with the project.</h2>
 <p>
-Vibe64 detects the stack and sends prompts that match the real framework:
-JSKIT generators, Laravel Artisan, Next.js routers, C++ build systems, Node
-scripts, managed databases, and project-specific checks.
+The Blueprint captures human product intent. Program explains public operations
+by subsystem. Stack selects technology guidance and Agent Skills. The agent can
+load focused context after locating the source involved instead of receiving a
+huge framework-specific system prompt.
 </p>
-<a class="vibe-button vibe-button--primary" href="/dev/supported-tech">Supported tech</a>
+<a class="vibe-button vibe-button--primary" href="/dev/supported-tech">Technology contracts</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--prompt" aria-hidden="true">
 <div class="vibe-terminal-mock">
-<p>Prompt context</p>
-<code>Use existing helpers before creating new ones.</code>
-<code>Run the adapter check command before finalizing.</code>
-<code>Do not hand-write framework-owned files.</code>
+<p>Genesis context</p>
+<code>Read intent from genesis/blueprint.md.</code>
+<code>Load focused context for affected source.</code>
+<code>Use selected skills and existing functions.</code>
 </div>
 </div>
 </article>
 
 <article class="vibe-showcase-card">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>03</strong> / 04 <span>Review before merge</span></p>
-<h2>Deslop, human review, and validation happen before the PR is treated as done.</h2>
+<p class="vibe-step"><strong>03</strong> / 04 <span>Concrete evidence</span></p>
+<h2>Structure, explanation, and executable checks remain different things.</h2>
 <p>
-Vibe64 pushes AI output through the parts that usually get skipped: focused
-review, duplicate-helper checks, automated validation, UI checks when relevant,
-and a PR summary reviewers can actually use.
+Genesis can validate file structure and record the exact code and Stack hashes
+for successful declared checks. It does not claim universal semantic
+convergence, exhaustive Program ownership, or whole-application correctness.
 </p>
-<a class="vibe-button vibe-button--primary" href="/dev/start-building">Start building</a>
+<a class="vibe-button vibe-button--primary" href="/dev/technical-reference">Technical reference</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--review" aria-hidden="true">
 <div class="vibe-pr-mock">
-<div class="vibe-pr-mock__top">Pull request report</div>
+<div class="vibe-pr-mock__top">Evidence</div>
 <ul>
-<li><span></span> Deslop pass complete</li>
-<li><span></span> Automated checks passed</li>
-<li><span></span> Review summary attached</li>
-<li><span></span> Risks listed for reviewer</li>
+<li><span></span> Structure parsed</li>
+<li><span></span> Declared commands passed</li>
+<li><span></span> Exact Git diff visible</li>
+<li><span></span> Human review remains required</li>
 </ul>
 </div>
 </div>
@@ -100,21 +103,22 @@ and a PR summary reviewers can actually use.
 
 <article class="vibe-showcase-card vibe-showcase-card--reverse">
 <div class="vibe-showcase-copy">
-<p class="vibe-step"><strong>04</strong> / 04 <span>Ready to run anywhere</span></p>
-<h2>Host tools and project actions make development repeatable across machines.</h2>
+<p class="vibe-step"><strong>04</strong> / 04 <span>Host policy stays local</span></p>
+<h2>Declarations do not become process authority.</h2>
 <p>
-Vibe64 checks the tools it will actually run, then project tools turn staging
-deploys, production deploys, main syncs, and database access into visible
-repeatable actions instead of tribal knowledge.
+Genesis may declare abstract launch requirements. Vibe64 maps only supported
+requirements to pinned runtime packs and retains ports, readiness, proxies,
+process lifetime, environment policy, and the exact Playwright and Chromium
+release. Generated projects never provision their own browser.
 </p>
-<a class="vibe-button vibe-button--primary" href="/dev/start-building">Start building</a>
+<a class="vibe-button vibe-button--primary" href="/dev/technical-reference">Read the contracts</a>
 </div>
 <div class="vibe-showcase-visual vibe-showcase-visual--runtime" aria-hidden="true">
 <div class="vibe-runtime-mock">
-<div>mariadb <span>running</span></div>
-<div>host tools <span>ready</span></div>
-<div>staging deploy <span>confirm</span></div>
-<div>sync main <span>available</span></div>
+<div>runtime packs <span>pinned</span></div>
+<div>ports <span>allocated</span></div>
+<div>preview <span>proxied</span></div>
+<div>browser <span>managed</span></div>
 </div>
 </div>
 </article>
@@ -129,32 +133,27 @@ repeatable actions instead of tribal knowledge.
 <div class="vibe-faq-list">
 <details class="vibe-faq-item" open>
 <summary>How does Vibe64 keep AI work isolated?</summary>
-<p>Each work session gets its own Git branch inside an isolated clone. The agent works in that clone, so unrelated local edits and shared project state stay out of the blast radius.</p>
+<p>Each work session receives its own Git source and Vibe64-owned runtime state. The existing canonical source and unrelated local edits stay outside that session.</p>
 </details>
 
 <details class="vibe-faq-item">
-<summary>Does Vibe64 replace GitHub, Codex, or my project tooling?</summary>
-<p>No. Vibe64 coordinates the tools developers already use. It leans on Git and GitHub for change control, Codex for agent work, and the project adapter for stack-specific commands.</p>
+<summary>What does Genesis replace?</summary>
+<p>Genesis replaces Vibe64-owned technology prompts, project knowledge, code-index commands, semantic receipts, and framework-specific City construction. It does not replace Vibe64 execution or Git ownership.</p>
 </details>
 
 <details class="vibe-faq-item">
-<summary>What is an adapter?</summary>
-<p>An adapter is the project-specific layer that tells Vibe64 how to inspect, prompt, run, launch, validate, and review a stack. That is where JSKIT, Laravel, Next.js, Node, C++, Vinext, and future stacks get their actual workflow knowledge.</p>
+<summary>Does Program mirror source files?</summary>
+<p>No. A Program directory is a conceptual subsystem. Its Markdown files explain public operations and cite relevant source; private implementation helpers are included only when they help future changes.</p>
 </details>
 
 <details class="vibe-faq-item">
-<summary>What happens when Codex produces sloppy code?</summary>
-<p>That is the point of the workflow. Vibe64 keeps the change isolated, runs the relevant checks, supports review/deslop passes, and gives reviewers a PR summary with the useful context instead of pretending the first diff is done.</p>
+<summary>How is technology support added?</summary>
+<p>Through Genesis Stack components and authoritative Agent Skills, not a Vibe64 project-type adapter. Components may contribute guidance, resources, indexers, cleanup rules, verification commands, and optional launch declarations.</p>
 </details>
 
 <details class="vibe-faq-item">
-<summary>Can I add project-specific tools?</summary>
-<p>Yes. Project tools are intended to expose repeatable project actions such as deploys, syncs, database access, and adapter-provided workflows. They should reuse the existing terminal and runtime infrastructure, not invent a parallel command runner.</p>
-</details>
-
-<details class="vibe-faq-item">
-<summary>What if my stack is not supported?</summary>
-<p>Add an adapter or improve an existing one. Vibe64 works best when the project contract is explicit: detection, prompt context, commands, validation, launch targets, and review expectations should live in code instead of tribal notes.</p>
+<summary>Who decides how an app runs?</summary>
+<p>The project Stack may describe an exact launch target. Genesis validates the declaration. Vibe64 decides whether it can satisfy the runtime requirements and owns the resulting process and preview.</p>
 </details>
 </div>
 </div>

@@ -12,20 +12,14 @@
         class="studio-ai-session-abandon-dialog__title"
       >
         <v-icon
-          :icon="unsafeWork ? mdiAlertOctagonOutline : mdiAlertCircleOutline"
-          :color="unsafeWork ? 'error' : 'warning'"
+          :icon="mdiAlertCircleOutline"
+          color="warning"
         />
-        Abandon session?
+        Close session?
       </v-card-title>
       <v-card-text>
-        <Vibe64SessionSourceSafetyNotice
-          protectable
-          :source-safety="sourceSafety"
-          @protected="abandon.cancel"
-        />
-
         <p class="text-body-2 mb-2">
-          This will mark the session as abandoned and close its terminals.
+          This closes the assistant and terminals, then archives the session workspace.
         </p>
         <p class="text-body-2 text-medium-emphasis mb-0">
           Session:
@@ -35,19 +29,18 @@
       <v-card-actions class="studio-ai-session-abandon-dialog__actions">
         <v-btn
           variant="text"
-          :disabled="abandon.command.isRunning || sourceSafety.prompting"
+          :disabled="abandon.command.isRunning"
           @click="abandon.cancel"
         >
           Cancel
         </v-btn>
         <v-btn
-          :color="unsafeWork ? 'error' : 'warning'"
-          :disabled="sourceSafety.loading || !sourceSafety.initialized || sourceSafety.prompting"
+          color="warning"
           variant="flat"
           :loading="abandon.command.isRunning"
           @click="abandon.confirm"
         >
-          {{ unsafeWork ? "Abandon anyway" : "Abandon session" }}
+          Close session
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -55,15 +48,8 @@
 </template>
 
 <script setup>
-import { computed, unref, useId } from "vue";
-import {
-  mdiAlertCircleOutline,
-  mdiAlertOctagonOutline
-} from "@mdi/js";
-import Vibe64SessionSourceSafetyNotice from "@/components/studio/vibe64-session/Vibe64SessionSourceSafetyNotice.vue";
-import {
-  sourceSafetyIsUnsafe
-} from "@/lib/vibe64SessionSourceSafety.js";
+import { useId } from "vue";
+import { mdiAlertCircleOutline } from "@mdi/js";
 
 const props = defineProps({
   abandon: {
@@ -82,8 +68,6 @@ function updateOpen(open) {
   }
 }
 
-const sourceSafety = computed(() => unref(props.abandon.sourceSafety) || {});
-const unsafeWork = computed(() => sourceSafetyIsUnsafe(sourceSafety.value));
 const titleId = `vibe64-session-abandon-dialog-${useId()}`;
 </script>
 

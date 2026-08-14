@@ -1,331 +1,106 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  pathExists
-} from "@local/vibe64-core/server/core";
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  Vibe64SessionRuntime
-} from "@local/vibe64-runtime/server";
+  createSessionSource
+} from "../../packages/vibe64-terminals/src/server/sessionSource.js";
 import {
-  ensureSessionSourceGitAlternatesDissociated,
-  inspectSessionSourceMergeState,
-  sessionSourceGitAlternatesPath
-} from "@local/vibe64-runtime/server/sessionSourceGit";
-import {
-  createService
-} from "../../packages/vibe64-terminals/src/server/service.js";
-import {
-  startCommandTerminalProcess
-} from "../../packages/vibe64-terminals/src/server/commandTerminal.js";
-import {
-  projectRuntimeRoot,
-  sourceMetadata,
-  sourcePath as testManagedSourcePath,
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
 
 const execFileAsync = promisify(execFile);
 
 async function git(cwd, args = []) {
-  try {
-    const result = await execFileAsync("git", args, {
-      cwd,
-      maxBuffer: 1024 * 1024,
-      timeout: 30_000
-    });
-    return String(result.stdout || "").trim();
-  } catch (error) {
-    throw new Error(String(error.stderr || error.stdout || error.message || error));
-  }
+  const result = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8"
+  });
+  return result.stdout.trim();
 }
 
-async function writeProjectFile(root, relativePath, text = "") {
-  const filePath = path.join(root, relativePath);
-  await mkdir(path.dirname(filePath), {
-    recursive: true
-  });
-  await writeFile(filePath, text, "utf8");
+async function createProject(targetRoot) {
+  await mkdir(targetRoot, { recursive: true });
+  await git(targetRoot, ["init", "--initial-branch=main"]);
+  await git(targetRoot, ["config", "user.name", "Vibe64 Test"]);
+  await git(targetRoot, ["config", "user.email", "vibe64@example.test"]);
+  await writeFile(path.join(targetRoot, "app.txt"), "initial\n", "utf8");
+  await git(targetRoot, ["add", "app.txt"]);
+  await git(targetRoot, ["commit", "-m", "initial"]);
 }
 
-async function createGitProject(root) {
-  await mkdir(root, {
-    recursive: true
-  });
-  await git(root, ["init"]);
-  await git(root, ["config", "user.email", "vibe64@example.test"]);
-  await git(root, ["config", "user.name", "Vibe64 Test"]);
-  await writeProjectFile(root, "app.txt", "initial\n");
-  await git(root, ["add", "app.txt"]);
-  await git(root, ["commit", "-m", "initial"]);
-  await git(root, ["branch", "-M", "main"]);
-}
-
-async function createReferencedSessionSource(targetRoot, {
-  cloneSource = true
-} = {}) {
-  const parentRoot = path.dirname(targetRoot);
-  const originPath = path.join(parentRoot, "origin");
-  const referenceRepositoryPath = path.join(parentRoot, "reference-repository", "repository.git");
-  const sourcePath = testManagedSourcePath(targetRoot, "unit-session");
-  const cloneSessionSource = async () => {
-    await mkdir(path.dirname(sourcePath), {
-      recursive: true
-    });
-    await git(parentRoot, [
-      "clone",
-      "--reference-if-able",
-      referenceRepositoryPath,
-      originPath,
-      sourcePath
-    ]);
-  };
-  await createGitProject(originPath);
-  await mkdir(path.dirname(referenceRepositoryPath), {
-    recursive: true
-  });
-  await git(parentRoot, ["clone", "--bare", originPath, referenceRepositoryPath]);
-  if (cloneSource) {
-    await cloneSessionSource();
-  }
+function sourceContext(root, sessionId = "session-1") {
+  const metadata = {};
   return {
-    referenceRepositoryPath,
-    cloneSessionSource,
-    sourcePath
+    metadata,
+    runtime: {
+      projectSessionSourceRoot: path.join(root, "managed-source"),
+      targetRoot: path.join(root, "project")
+    },
+    session: {
+      sessionId
+    },
+    store: {
+      async writeMetadataValue(id, name, value) {
+        assert.equal(id, sessionId);
+        metadata[name] = value;
+      }
+    }
   };
 }
 
-test("session source Git helper removes reference-repository alternates", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const { referenceRepositoryPath, sourcePath } = await createReferencedSessionSource(targetRoot);
-    const alternatesPath = await sessionSourceGitAlternatesPath(sourcePath);
-    assert.equal(await pathExists(alternatesPath), true);
+test("Vibe64 creates an isolated Git source for a session", async () => {
+  await withTemporaryRoot(async (root) => {
+    const context = sourceContext(root);
+    await createProject(context.runtime.targetRoot);
+    const baseline = await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]);
 
-    const result = await ensureSessionSourceGitAlternatesDissociated(sourcePath);
-    assert.equal(result.ok, true);
-    assert.equal(result.repaired, true);
-    assert.equal(await pathExists(alternatesPath), false);
-
-    await rename(referenceRepositoryPath, `${referenceRepositoryPath}.removed`);
-    assert.match(await git(sourcePath, ["rev-parse", "--verify", "HEAD"]), /^[0-9a-f]{40}$/u);
-    assert.equal(await git(sourcePath, ["status", "--short"]), "");
-  });
-});
-
-test("session source Git helper reports an unresolved merge without changing it", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const sourcePath = path.join(targetRoot, "merge-conflict-source");
-    await createGitProject(sourcePath);
-    await git(sourcePath, ["checkout", "-b", "incoming"]);
-    await writeProjectFile(sourcePath, "app.txt", "incoming\n");
-    await git(sourcePath, ["add", "app.txt"]);
-    await git(sourcePath, ["commit", "-m", "incoming"]);
-    await git(sourcePath, ["checkout", "main"]);
-    await writeProjectFile(sourcePath, "app.txt", "local\n");
-    await git(sourcePath, ["add", "app.txt"]);
-    await git(sourcePath, ["commit", "-m", "local"]);
-    await assert.rejects(() => git(sourcePath, ["merge", "incoming"]));
-
-    assert.deepEqual(await inspectSessionSourceMergeState(sourcePath), {
-      conflictedFiles: ["app.txt"],
-      hasConflicts: true
-    });
-
-    await git(sourcePath, ["merge", "--abort"]);
-    assert.deepEqual(await inspectSessionSourceMergeState(sourcePath), {
-      conflictedFiles: [],
-      hasConflicts: false
-    });
-  });
-});
-
-test("runtime reports source-file merge conflicts before adapter inspection", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const sourcePath = testManagedSourcePath(targetRoot, "merge-session");
-    await createGitProject(sourcePath);
-    const runtime = new Vibe64SessionRuntime({
-      targetRoot
-    });
-    await runtime.createSession({
-      initialStep: "plan_and_execute",
-      metadata: sourceMetadata(targetRoot, "merge-session"),
-      sessionId: "merge-session"
-    });
-    await git(sourcePath, ["checkout", "-b", "incoming"]);
-    await writeProjectFile(sourcePath, "app.txt", "incoming\n");
-    await git(sourcePath, ["add", "app.txt"]);
-    await git(sourcePath, ["commit", "-m", "incoming"]);
-    await git(sourcePath, ["checkout", "main"]);
-    await writeProjectFile(sourcePath, "app.txt", "local\n");
-    await git(sourcePath, ["add", "app.txt"]);
-    await git(sourcePath, ["commit", "-m", "local"]);
-    await assert.rejects(() => git(sourcePath, ["merge", "incoming"]));
-
-    const degraded = await runtime.getSession("merge-session");
-
-    assert.equal(degraded.sourceInspection.kind, "merge_conflict");
-    assert.deepEqual(degraded.sourceInspection.merge.conflictedFiles, ["app.txt"]);
-    assert.equal(degraded.recovery.issues[0].title, "Source conflicts need resolution");
-
-    await git(sourcePath, ["merge", "--abort"]);
-    assert.equal((await runtime.getSession("merge-session")).sourceInspection, undefined);
-  });
-});
-
-test("command terminal launch repairs session source alternates before host command start", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const { sourcePath } = await createReferencedSessionSource(targetRoot);
-    const alternatesPath = await sessionSourceGitAlternatesPath(sourcePath);
-    assert.equal(await pathExists(alternatesPath), true);
-
-    const startedCommands = [];
-    const result = await startCommandTerminalProcess({
-      namespace: "unit-command-terminal",
-      namespaceLimitPrefix: "unit-command-terminal",
-      projectService: {
-        async projectConfigEnvironment() {
-          return {};
-        },
-        async projectRuntimeConfigEnvironment() {
-          return {};
-        }
-      },
-      runtime: {
-        adapter: {
-          id: "unit"
-        }
-      },
-      session: {
-        metadata: {
-          ...sourceMetadata(targetRoot, "unit-session")
-        },
-        sessionId: "unit-session",
-        sessionRoot: path.join(projectRuntimeRoot(targetRoot), "sessions", "active", "unit-session"),
-        targetRoot
-      },
-      spec: {
-        args: ["-lc", "true"],
-        command: "bash",
-        cwd: sourcePath
-      },
-      runCommand: async (request = {}) => {
-        startedCommands.push(request);
-        assert.equal(await pathExists(alternatesPath), false);
-        return {
-          id: "terminal-1",
-          ok: true,
-          status: "running"
-        };
-      },
-      target: "command",
-      targetRoot: sourcePath
-    });
+    const result = await createSessionSource(context);
 
     assert.equal(result.ok, true);
-    assert.equal(startedCommands.length, 1);
-    assert.equal(await pathExists(alternatesPath), false);
+    assert.equal(result.commit, baseline);
+    assert.equal(await git(result.sourcePath, ["branch", "--show-current"]), "vibe64/session-1");
+    assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD"]), baseline);
+    assert.equal(context.metadata.base_branch, "main");
+    assert.equal(context.metadata.base_commit, baseline);
+    assert.equal(context.metadata.branch, "vibe64/session-1");
+    assert.equal(context.metadata.main_checkout_root, context.runtime.targetRoot);
+    assert.equal(context.metadata.source_kind, "session_clone");
+    assert.equal(context.metadata.source_path, result.sourcePath);
+    assert.equal(context.metadata.source_path_authority, SESSION_SOURCE_PATH_AUTHORITY_MANAGED);
   });
 });
 
-test("agent session reconciliation repairs session source alternates from summaries", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const {
-      cloneSessionSource,
-      sourcePath
-    } = await createReferencedSessionSource(targetRoot, {
-      cloneSource: false
-    });
-    const threadId = "00000000-0000-4000-8000-000000000701";
-    const runtime = new Vibe64SessionRuntime({
-      targetRoot
-    });
-    await runtime.createSession({
-      initialStep: "source_created",
-      metadata: {
-        agent_identity_conversation_id: threadId,
-        agent_identity_provider: "codex",
-        agent_identity_resume_strategy: "provider-native",
-        agent_identity_status: "ready",
-        agent_identity_workdir: sourcePath,
-        agent_transport_id: "codex_app_server",
-        ...sourceMetadata(targetRoot, "unit-session")
-      },
-      sessionId: "unit-session"
-    });
-    await cloneSessionSource();
-    const alternatesPath = await sessionSourceGitAlternatesPath(sourcePath);
-    assert.equal(await pathExists(alternatesPath), true);
+test("Vibe64 creates a Git baseline for a new unversioned project", async () => {
+  await withTemporaryRoot(async (root) => {
+    const context = sourceContext(root, "new-project-session");
+    await mkdir(context.runtime.targetRoot, { recursive: true });
+    await writeFile(path.join(context.runtime.targetRoot, "README.md"), "New project\n", "utf8");
 
-    const providerCalls = {
-      listLoadedThreads: 0,
-      subscribe: 0
-    };
-    const terminalService = createService({
-      codexTerminalController: {
-        codexToolHomeRequired: false,
-        codexAppServerProviderFactory() {
-          return {
-            async ensureAvailable() {
-              return {
-                ok: true
-              };
-            },
-            async ensureRuntime() {
-              return {
-                endpoint: `unix://${path.join(targetRoot, "codex-app-server.sock")}`,
-                runtimeDir: path.join(targetRoot, "codex-app-server-runtime"),
-                socketPath: path.join(targetRoot, "codex-app-server.sock"),
-                transport: "unix"
-              };
-            },
-            async listLoadedThreads() {
-              providerCalls.listLoadedThreads += 1;
-              return {
-                data: [threadId],
-                nextCursor: null
-              };
-            },
-            async resumeThread() {
-              return {
-                id: threadId
-              };
-            },
-            subscribe() {
-              providerCalls.subscribe += 1;
-              return () => null;
-            }
-          };
-        },
-        codexAppServerProviderOptions: {}
-      },
-      projectService: {
-        targetRoot,
-        async createRuntime() {
-          return runtime;
-        },
-        async createSessionStore() {
-          return runtime.store;
-        },
-        async projectConfigEnvironment() {
-          return {};
-        }
-      }
-    });
+    const result = await createSessionSource(context);
 
-    const result = await terminalService.reconcileAgentSessions([
-      {
-        sessionId: "unit-session"
-      }
-    ]);
+    assert.equal(result.ok, true);
+    assert.match(result.commit, /^[0-9a-f]{40}$/u);
+    assert.equal(await git(context.runtime.targetRoot, ["status", "--porcelain"]), "");
+    assert.equal(await git(result.sourcePath, ["show", "HEAD:README.md"]), "New project");
+  });
+});
 
-    assert.equal(result.ok, true, JSON.stringify(result));
-    assert.equal(result.results[0].status, "loaded");
-    assert.equal(providerCalls.listLoadedThreads, 1);
-    assert.equal(providerCalls.subscribe, 1);
-    assert.equal(await pathExists(alternatesPath), false);
+test("Vibe64 refuses to hide uncommitted project changes in a new session", async () => {
+  await withTemporaryRoot(async (root) => {
+    const context = sourceContext(root, "dirty-project-session");
+    await createProject(context.runtime.targetRoot);
+    await writeFile(path.join(context.runtime.targetRoot, "app.txt"), "changed\n", "utf8");
+
+    await assert.rejects(
+      createSessionSource(context),
+      (error) => error?.code === "vibe64_session_source_project_dirty"
+    );
   });
 });

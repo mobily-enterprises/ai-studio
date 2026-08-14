@@ -1,40 +1,113 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
 import {
-  sourceContractRootEntryIsAllowed
-} from "../../packages/vibe64-core/src/server/projectManifest.js";
-
+  GENESIS_MACHINE_CITY_PATH,
+  GENESIS_PROGRAM_CITY_PATH
+} from "../../packages/vibe64-genesis/src/server/index.js";
 import {
-  applySystemFindings
-} from "../../packages/vibe64-system-graph/src/server/findings.js";
-import {
-  JSKIT_SYSTEM_ADAPTER_VERSION
-} from "../../packages/vibe64-system-graph/src/server/adapters/jskit/JskitSystemAdapter.js";
+  readGenesisCity
+} from "../../packages/vibe64-system-graph/src/server/genesisCities.js";
 import {
   createService
 } from "../../packages/vibe64-system-graph/src/server/service.js";
-import {
-  readSystemDocument,
-  systemDeclarationsDigest,
-  writeSystemDocument
-} from "../../packages/vibe64-system-graph/src/server/systemDocument.js";
 
-function projectServiceFor(root, adapterId = "jskit") {
+function machineCityFixture() {
+  return {
+    schema: "genesis.machine-city.v1",
+    schemaVersion: 1,
+    status: "current",
+    codeHash: "machine-code-hash",
+    stackComponents: ["nodejs"],
+    indexers: ["javascript"],
+    diagnostics: [],
+    districts: [{
+      id: "directory:.",
+      path: "",
+      title: "Project",
+      parentId: null
+    }],
+    buildings: [{
+      id: "file:src/catalog.js",
+      path: "src/catalog.js",
+      title: "catalog.js",
+      districtId: "directory:.",
+      language: "javascript",
+      role: "source",
+      mode: 0o100644,
+      bytes: 42,
+      lines: 2,
+      hash: "catalog-hash",
+      extractors: ["javascript"],
+      functionIds: ["function:src/catalog.js:listBooks:function:1:1"],
+      publicFunctionCount: 1,
+      internalFunctionCount: 0
+    }],
+    functions: [{
+      id: "function:src/catalog.js:listBooks:function:1:1",
+      name: "listBooks",
+      qualifiedName: "listBooks",
+      kind: "function",
+      visibility: "public",
+      container: null,
+      path: "src/catalog.js",
+      fileId: "file:src/catalog.js",
+      line: 1,
+      column: 1,
+      parameters: [],
+      async: false,
+      generator: false,
+      static: false,
+      role: "source",
+      language: "javascript",
+      extractor: "javascript"
+    }]
+  };
+}
+
+function programCityFixture() {
+  return {
+    schema: "genesis.program-city.v1",
+    schemaVersion: 1,
+    status: "current",
+    programHash: "program-hash",
+    diagnostics: [],
+    districts: [{
+      id: "subsystem:catalog",
+      path: "catalog",
+      title: "catalog",
+      parentId: null
+    }],
+    buildings: [{
+      id: "operation:catalog/list-books",
+      name: "list-books",
+      title: "List books",
+      description: "Lists the catalogue.",
+      publicContract: "Returns the current books.",
+      implementationMap: "- `listBooks()` returns the records.",
+      path: "genesis/program/catalog/list-books.md",
+      subsystem: "catalog",
+      districtId: "subsystem:catalog",
+      sources: ["src/catalog.js"],
+      sourceFileIds: ["file:src/catalog.js"]
+    }],
+    links: [{
+      kind: "implemented-by",
+      fromId: "operation:catalog/list-books",
+      toId: "file:src/catalog.js"
+    }]
+  };
+}
+
+function projectServiceFor(root) {
   return {
     async createRuntime() {
       return {
-        adapter: {
-          id: adapterId
-        },
         async getSession(sessionId) {
           return {
-            metadata: {
-              adapter_id: adapterId
-            },
             sessionId,
             sourcePath: root,
             targetRoot: root
@@ -45,143 +118,23 @@ function projectServiceFor(root, adapterId = "jskit") {
   };
 }
 
-function modelFixture({
-  declarations = [],
-  sourceDigest = "source-digest",
-  sourceHead = "source-head"
-} = {}) {
-  const model = {
-    adapter: {
-      id: "jskit",
-      version: JSKIT_SYSTEM_ADAPTER_VERSION
-    },
-    input: {
-      declarationsDigest: systemDeclarationsDigest(declarations),
-      extractionDigest: "extract-digest",
-      sourceDigest,
-      sourceHead
-    },
-    declarations,
-    files: [{
-      bytes: 6400,
-      executionSide: "client",
-      hash: "client-hash",
-      id: "file:packages/client/src/client.js",
-      implementedEntityIds: ["component:client"],
-      imports: [],
-      lines: 160,
-      packageId: "@local/client",
-      path: "packages/client/src/client.js"
-    }],
-    entities: [{
-      description: "Fixture system.",
-      executionSide: "shared",
-      id: "system:fixture",
-      kind: "system",
-      metadata: {
-        descriptorPath: "",
-        executionSides: ["client", "server"],
-        inputKnown: false,
-        method: "",
-        outputKnown: false,
-        packageId: "",
-        path: "",
-        sourceLine: 0,
-        sourcePath: "",
-        summary: ""
-      },
-      origin: "derived",
-      parentId: "",
-      title: "Fixture"
-    }, {
-      description: "Client shell.",
-      executionSide: "client",
-      id: "subsystem:client",
-      kind: "subsystem",
-      metadata: {
-        descriptorPath: "packages/client/package.descriptor.mjs",
-        executionSides: ["client"],
-        inputKnown: false,
-        method: "",
-        outputKnown: false,
-        packageId: "@local/client",
-        path: "",
-        sourceLine: 0,
-        sourcePath: "",
-        summary: ""
-      },
-      origin: "derived",
-      parentId: "system:fixture",
-      title: "Client"
-    }, {
-      description: "Uses a missing operation.",
-      executionSide: "client",
-      id: "component:client",
-      kind: "component",
-      metadata: {
-        descriptorPath: "",
-        executionSides: [],
-        inputKnown: false,
-        method: "",
-        outputKnown: false,
-        packageId: "@local/client",
-        path: "",
-        sourceLine: 12,
-        sourcePath: "packages/client/src/client.js",
-        summary: ""
-      },
-      origin: "derived",
-      parentId: "subsystem:client",
-      title: "Client request"
-    }],
-    relationships: [{
-      evidenceIds: [],
-      from: "system:fixture",
-      id: "relationship:contains:client",
-      kind: "contains",
-      origin: "derived",
-      packageId: "@local/client",
-      to: "subsystem:client",
-      value: ""
-    }, {
-      evidenceIds: ["evidence:client-request"],
-      from: "component:client",
-      id: "relationship:consumes:missing",
-      kind: "consumes",
-      origin: "derived",
-      packageId: "@local/client",
-      to: "",
-      value: "POST /sessions/:sessionId/missing"
-    }],
-    evidence: [{
-      column: 1,
-      id: "evidence:client-request",
-      kind: "client-request",
-      line: 12,
-      path: "packages/client/src/client.js"
-    }],
-    findings: [],
-    diagnostics: [],
-    coverage: {},
-    provenance: {
-      authoritativeScopeIds: ["@local/client"],
-      updateMode: "full"
-    }
-  };
-  return applySystemFindings(model);
+async function writeJson(filePath, value) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function constantSnapshot() {
-  return {
-    changed: [],
-    changedPaths: [],
-    digest: "source-digest",
-    head: "source-head"
-  };
+async function writeCities(root, {
+  machine = machineCityFixture(),
+  program = programCityFixture()
+} = {}) {
+  await Promise.all([
+    writeJson(path.join(root, GENESIS_MACHINE_CITY_PATH), machine),
+    writeJson(path.join(root, GENESIS_PROGRAM_CITY_PATH), program)
+  ]);
 }
 
 async function withTempRoot(operation) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-system-service-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-city-"));
   try {
     await operation(root);
   } finally {
@@ -189,155 +142,132 @@ async function withTempRoot(operation) {
   }
 }
 
-test("vibe64.system.json is a portable root source-contract file", () => {
-  assert.equal(sourceContractRootEntryIsAllowed("vibe64.system.json"), true);
+test("Genesis City status reports both missing documents without scanning source", async () => {
+  await withTempRoot(async (root) => {
+    await writeFile(path.join(root, "broken-source.js"), "this is deliberately not valid JavaScript {\n", "utf8");
+    const service = createService({
+      projectService: projectServiceFor(root),
+      refresher: async () => {
+        throw new Error("refresh should not run while reading status");
+      }
+    });
+
+    const status = await service.readStatus({ sessionId: "session-1" });
+
+    assert.equal(status.ok, true);
+    assert.equal(status.status, "missing");
+    assert.deepEqual(status.cities, {
+      machine: {
+        available: false,
+        error: null,
+        path: GENESIS_MACHINE_CITY_PATH,
+        state: "missing"
+      },
+      program: {
+        available: false,
+        error: null,
+        path: GENESIS_PROGRAM_CITY_PATH,
+        state: "missing"
+      }
+    });
+    const missing = await service.readMachineCity({ sessionId: "session-1" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.code, "vibe64_genesis_city_missing");
+  });
 });
 
-test("System status is explicitly unsupported when Vibe64 has no System adapter", async () => {
+test("Genesis Machine and Program Cities are returned without projection or invented fields", async () => {
   await withTempRoot(async (root) => {
+    const machine = machineCityFixture();
+    const program = programCityFixture();
+    await writeCities(root, { machine, program });
     const service = createService({
-      projectService: projectServiceFor(root, "python"),
-      snapshotReader: async () => constantSnapshot()
+      projectService: projectServiceFor(root)
     });
+
+    const status = await service.readStatus({ sessionId: "session-1" });
+    assert.equal(status.status, "ready");
+    assert.equal(status.cities.machine.status, "current");
+    assert.equal(status.cities.program.status, "current");
+
+    const machineResult = await service.readMachineCity({ sessionId: "session-1" });
+    const programResult = await service.readProgramCity({ sessionId: "session-1" });
+    assert.deepEqual(machineResult, {
+      city: machine,
+      kind: "machine",
+      ok: true,
+      path: GENESIS_MACHINE_CITY_PATH
+    });
+    assert.deepEqual(programResult, {
+      city: program,
+      kind: "program",
+      ok: true,
+      path: GENESIS_PROGRAM_CITY_PATH
+    });
+  });
+});
+
+test("Genesis City schema validation rejects corrupt documents and broken references", async () => {
+  await withTempRoot(async (root) => {
+    const invalidMachine = machineCityFixture();
+    invalidMachine.schema = "genesis.machine-city.v0";
+    await writeCities(root, { machine: invalidMachine });
+    const service = createService({
+      projectService: projectServiceFor(root)
+    });
+
     const status = await service.readStatus({ sessionId: "session-1" });
     assert.equal(status.ok, true);
-    assert.equal(status.status, "unsupported");
-    assert.equal(status.adapterId, "python");
-  });
-});
+    assert.equal(status.status, "invalid");
+    assert.equal(status.cities.machine.state, "invalid");
+    assert.equal(status.cities.machine.error.code, "vibe64_invalid_genesis_city");
 
-test("manual update streams progress, writes one document, and exposes focused projections", async () => {
-  await withTempRoot(async (root) => {
-    const model = modelFixture();
-    const service = createService({
-      modelBuilder: async ({ adapterId, snapshot }) => {
-        assert.equal(adapterId, "jskit");
-        model.input.sourceDigest = snapshot.digest;
-        model.input.sourceHead = snapshot.head;
-        return {
-          delta: {
-            addedEntityIds: model.entities.map((entity) => entity.id),
-            changedFiles: [],
-            removedEntityIds: []
-          },
-          fallbackReason: "",
-          model,
-          scopes: [],
-          updateMode: "full",
-          updateReason: "missing-document"
-        };
-      },
-      projectService: projectServiceFor(root),
-      snapshotReader: async () => constantSnapshot()
-    });
+    const response = await service.readMachineCity({ sessionId: "session-1" });
+    assert.equal(response.ok, false);
+    assert.equal(response.code, "vibe64_invalid_genesis_city");
 
-    const missing = await service.readStatus({ sessionId: "session-1" });
-    assert.equal(missing.status, "missing");
-    const started = await service.startUpdate({ sessionId: "session-1" });
-    assert.equal(started.ok, true);
-    const events = [];
-    await service.streamUpdate({
-      sessionId: "session-1",
-      updateId: started.update.updateId
-    }, {
-      emit: (event) => events.push(event),
-      isClosed: () => false
-    });
-    assert.ok(events.some((event) => event.type === "system-update.analysis-started"));
-    assert.equal(events.at(-1).type, "system-update.completed");
-
-    const written = await readSystemDocument(root);
-    assert.equal(written.exists, true);
-    assert.equal(written.model.entities.length, 3);
-    const status = await service.readStatus({ sessionId: "session-1" });
-    assert.equal(status.status, "current");
-
-    const overview = await service.readOverview({ sessionId: "session-1" });
-    assert.equal(overview.ok, true);
-    assert.equal(overview.overview.entities.length, 3);
-    assert.equal(overview.overview.fileMass[0].lines, 160);
-    assert.equal(overview.overview.files.length, 1);
-    assert.equal(overview.overview.files[0].subsystemTitle, "Client");
-    assert.equal(overview.overview.files[0].purpose, "Uses a missing operation.");
-    assert.deepEqual(overview.overview.lineStats, {
-      files: 1,
-      largest: 160,
-      smallest: 160,
-      total: 160
-    });
-    const fileKey = overview.overview.entities.find((entity) => entity.id === "component:client").key;
-    const invalidEntity = await service.readEntity({
-      entityKey: `${fileKey}!`,
-      sessionId: "session-1"
-    });
-    assert.equal(invalidEntity.ok, false);
-    assert.equal(invalidEntity.code, "vibe64_system_graph_failed");
-  });
-});
-
-test("accepting a finding writes an evidence-bound declaration without changing source code", async () => {
-  await withTempRoot(async (root) => {
-    const model = modelFixture();
-    model.input.declarationsDigest = "initial";
-    await writeSystemDocument(root, model);
-    const service = createService({
-      projectService: projectServiceFor(root),
-      snapshotReader: async () => constantSnapshot()
-    });
-    const finding = model.findings.find((candidate) => candidate.rule === "client_operation_without_server_operation");
-    const accepted = await service.acceptFinding({
-      findingId: finding.id,
-      reason: "External service is intentionally absent in this fixture.",
-      sessionId: "session-1"
-    });
-    assert.equal(accepted.ok, true);
-    assert.equal(accepted.finding.status, "accepted");
-
-    const written = await readSystemDocument(root);
-    assert.equal(written.model.declarations.length, 1);
-    assert.equal(written.model.declarations[0].kind, "finding-acceptance");
-    assert.equal(written.model.findings[0].status, "accepted");
-  });
-});
-
-test("subsystem strata persist in the current-state document and can return to baseline", async () => {
-  await withTempRoot(async (root) => {
-    const model = modelFixture();
-    await writeSystemDocument(root, model);
-    const service = createService({
-      projectService: projectServiceFor(root),
-      snapshotReader: async () => constantSnapshot()
-    });
-    const initialOverview = await service.readOverview({ sessionId: "session-1" });
-    const subsystem = initialOverview.overview.subsystems.find((candidate) => candidate.id === "subsystem:client");
-
-    const lowered = await service.setSubsystemDepth({
-      depth: 4,
-      sessionId: "session-1",
-      subsystemKey: subsystem.key
-    });
-    assert.equal(lowered.ok, true);
-    assert.equal(lowered.depth, 4);
-    const loweredOverview = await service.readOverview({ sessionId: "session-1" });
-    assert.equal(loweredOverview.overview.subsystems[0].depth, 4);
-    let written = await readSystemDocument(root);
-    assert.deepEqual(written.model.declarations, [{
-      depth: 4,
-      kind: "subsystem-depth",
-      subsystemId: "subsystem:client"
-    }]);
-    assert.equal(
-      written.model.input.declarationsDigest,
-      systemDeclarationsDigest(written.model.declarations)
+    const brokenReference = machineCityFixture();
+    brokenReference.buildings[0].functionIds = ["function:missing"];
+    await writeJson(path.join(root, GENESIS_MACHINE_CITY_PATH), brokenReference);
+    await assert.rejects(
+      readGenesisCity(root, "machine"),
+      (error) => error.code === "vibe64_invalid_genesis_city" && /unknown function id/u.test(error.message)
     );
+  });
+});
 
-    const restored = await service.setSubsystemDepth({
-      depth: 0,
-      sessionId: "session-1",
-      subsystemKey: subsystem.key
+test("refresh delegates to Genesis exactly once and validates its native result", async () => {
+  await withTempRoot(async (root) => {
+    const machine = machineCityFixture();
+    const program = programCityFixture();
+    const calls = [];
+    const service = createService({
+      projectService: projectServiceFor(root),
+      refresher: async (input) => {
+        calls.push(input);
+        return {
+          changedFiles: [GENESIS_MACHINE_CITY_PATH, GENESIS_PROGRAM_CITY_PATH],
+          diagnostics: [],
+          machine,
+          program,
+          status: "ready",
+          summary: "Indexed one function and one Program operation."
+        };
+      }
     });
-    assert.equal(restored.ok, true);
-    written = await readSystemDocument(root);
-    assert.deepEqual(written.model.declarations, []);
+
+    const refreshed = await service.refresh({ sessionId: "session-1" });
+
+    assert.deepEqual(calls, [{
+      projectRoot: root,
+      write: true
+    }]);
+    assert.equal(refreshed.ok, true);
+    assert.equal(refreshed.status, "ready");
+    assert.deepEqual(refreshed.cities, { machine, program });
+    assert.deepEqual(refreshed.changedFiles, [
+      GENESIS_MACHINE_CITY_PATH,
+      GENESIS_PROGRAM_CITY_PATH
+    ]);
   });
 });

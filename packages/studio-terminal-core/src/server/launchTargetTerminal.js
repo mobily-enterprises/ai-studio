@@ -17,11 +17,9 @@ import {
   currentProjectScopeKey
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
-  readProjectManifest
-} from "@local/vibe64-core/server/projectManifest";
-import {
   APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
   createPreviewAuthSecret,
+  normalizePreviewIdentityCommandCapability,
   normalizePreviewAuthKind,
   previewAuthEnvironment,
   previewAuthRequiresIdentitySecret,
@@ -150,13 +148,11 @@ function normalizeLaunchCommands({
 }
 
 function launchReadinessMarker({
-  adapterId = "generic",
   launchTargetId = "",
   port = "",
   sessionId = ""
 } = {}) {
   const markerId = stableHash([
-    adapterId,
     launchTargetId,
     port,
     sessionId
@@ -417,7 +413,6 @@ function normalizeOpenTarget({
 }
 
 async function createVibe64WebLaunchTargetTerminalSpec({
-  adapterId = "generic",
   launchTarget = {},
   preferredPort = DEFAULT_WEB_LAUNCH_TARGET_PORT,
   resolveLaunch = async () => ({}),
@@ -439,7 +434,6 @@ async function createVibe64WebLaunchTargetTerminalSpec({
   try {
     const port = portReservation.port;
     const generatedReadinessMarker = launchReadinessMarker({
-      adapterId,
       launchTargetId: launchTarget.id,
       port,
       sessionId: session.sessionId || ""
@@ -481,22 +475,12 @@ async function createVibe64WebLaunchTargetTerminalSpec({
         message: "Launch command workdir is outside the session source."
       };
     }
-    if (launch.previewIdentity) {
-      releasePortReservation();
-      return {
-        ok: false,
-        message: "Declare preview identity in vibe64.project.json, not in a launch descriptor."
-      };
-    }
-    const projectManifest = await readProjectManifest({
-      sourceRoot: resolvedWorktreeRoot
-    });
-    const previewIdentity = projectManifest?.capabilities?.previewIdentity || null;
+    const previewIdentity = normalizePreviewIdentityCommandCapability(launch.previewIdentity);
     if (previewIdentity && normalizePreviewAuthKind(launch.previewAuth)) {
       releasePortReservation();
       return {
         ok: false,
-        message: "Vibe64 project contract cannot combine preview identity with legacy preview auth."
+        message: "A launch target cannot combine a preview identity command with another preview authentication mode."
       };
     }
     if (previewIdentity) {
@@ -508,10 +492,7 @@ async function createVibe64WebLaunchTargetTerminalSpec({
           return null;
         }
       })();
-      if (
-        !executable?.isFile() ||
-        (executable.mode & 0o111) === 0
-      ) {
+      if (!executable?.isFile() || (executable.mode & 0o111) === 0) {
         releasePortReservation();
         return {
           ok: false,
@@ -533,7 +514,6 @@ async function createVibe64WebLaunchTargetTerminalSpec({
     };
     const metadata = {
       ...(launch.metadata || {}),
-      adapterId,
       defaultDisplay: normalizeText(launch.defaultDisplay || launchTarget.defaultDisplay),
       launchTargetId: normalizeText(launchTarget.id),
       launchTargetLabel: normalizeText(launchTarget.label),

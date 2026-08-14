@@ -1,7 +1,7 @@
 import { computed, proxyRefs, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import {
   VIBE64_SURFACE_ID
 } from "@/lib/vibe64RequestConfig.js";

@@ -19,14 +19,7 @@ function vibe64ErrorResponse(error, {
     operationOutcome: String(error?.operationOutcome || ""),
     refreshRecommended: error?.refreshRecommended === true,
     sessionId: error?.sessionId || "",
-    revision: error?.revision ?? null,
-    currentStep: error?.currentStep || "",
-    stepRevision: error?.stepRevision ?? null,
-    expectedInput: error?.expectedInput || null,
-    stepStatus: error?.stepStatus || "",
-    projectConfig: error?.projectConfig || null,
-    projectType: error?.projectType || null,
-    setup: error?.setup || null
+    revision: error?.revision ?? null
   };
 }
 
@@ -41,10 +34,7 @@ function vibe64ErrorDetails(error = {}, code = "") {
     operationOutcome: String(error?.operationOutcome || ""),
     refreshRecommended: error?.refreshRecommended === true,
     sessionId: error?.sessionId || "",
-    revision: error?.revision ?? null,
-    currentStep: error?.currentStep || "",
-    stepRevision: error?.stepRevision ?? null,
-    stepStatus: error?.stepStatus || ""
+    revision: error?.revision ?? null
   })) {
     if (value !== "" && value !== null && value !== false) {
       details[key] = value;
@@ -66,22 +56,18 @@ function vibe64StatusCode(response, { missingStatus = 404 } = {}) {
   if (code === "vibe64_session_not_found") {
     return missingStatus;
   }
-  if (code.startsWith("vibe64_invalid") || code === "vibe64_project_type_missing") {
+  if (code.startsWith("vibe64_invalid")) {
     return 400;
   }
   if (
-    code === "vibe64_action_disabled" ||
-    code === "vibe64_action_not_available" ||
     code === "vibe64_command_requires_terminal" ||
-    code === "vibe64_project_config_missing" ||
     code === "vibe64_project_not_selected" ||
-    code === "vibe64_setup_not_ready" ||
     code === "vibe64_project_not_ready" ||
-    code === "vibe64_step_input_state_changed" ||
-    code === "vibe64_step_not_ready" ||
     code === "vibe64_project_template_active_sessions" ||
     code === "vibe64_project_template_destination_not_empty" ||
-    code === "vibe64_project_template_unavailable"
+    code === "vibe64_project_template_unavailable" ||
+    code === "vibe64_workspace_setup_retry_not_available" ||
+    code === "vibe64_workspace_setup_running"
   ) {
     return 409;
   }

@@ -32,7 +32,7 @@ describe("useVibe64SessionPanel", () => {
 
   it("passes project setup metadata into empty dashboard context", () => {
     const projectContext = {
-      projectConfig: {
+      foundation: {
         ready: true
       },
       setup: {

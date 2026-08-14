@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific deep UI guidance:
-- Inspect the user-facing Laravel behavior affected by the change.
-- Check Blade, Livewire, Inertia, React, Vue, Svelte, routing, loading/error states, responsive layout, validation feedback, state, and asset behavior according to the selected starter kit.
-- Fix clear UI defects directly when they are in scope and report anything blocked by runtime or environment setup.

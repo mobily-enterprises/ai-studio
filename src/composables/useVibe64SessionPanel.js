@@ -10,13 +10,10 @@ import {
   useVibe64SessionData
 } from "@/composables/useVibe64SessionData.js";
 import {
-  useVibe64SessionSourceSafety
-} from "@/composables/useVibe64SessionSourceSafety.js";
-import {
   sessionRecordHasActiveAgentWork
 } from "@/lib/vibe64MountedSessionState.js";
 
-const vibe64SessionPanelEmits = ["title-change", "project-attention", "project-pane-change"];
+const vibe64SessionPanelEmits = ["title-change", "project-attention"];
 const vibe64SessionPanelProps = {
   chatCollapsed: {
     default: false,
@@ -26,10 +23,6 @@ const vibe64SessionPanelProps = {
     default: () => ({}),
     type: Object
   },
-  githubActorTeleportTarget: {
-    default: "",
-    type: String
-  },
   projectPane: {
     default: "",
     type: String
@@ -37,14 +30,6 @@ const vibe64SessionPanelProps = {
   previewToolbarTeleportTarget: {
     default: "",
     type: String
-  },
-  saveProjectConfig: {
-    default: null,
-    type: Function
-  },
-  savingProjectConfig: {
-    default: false,
-    type: Boolean
   }
 };
 
@@ -65,11 +50,6 @@ function useVibe64SessionPanel(props, emit) {
       emit("title-change", title);
     }
   });
-  const sourceSafety = useVibe64SessionSourceSafety({
-    sessions: sessionData.sessions,
-    sessionsApiPath: sessionData.sessionsApiPath
-  });
-
   const selection = proxyRefs({
     isClosed: sessionData.isSelectedSessionClosed,
     selectedSession: sessionData.selectedSession,
@@ -79,19 +59,16 @@ function useVibe64SessionPanel(props, emit) {
     runtimeStateBySessionId,
     selectedSession: selection.selectedSession,
     selectedSessionId: selection.selectedSessionId,
-    sourceSafetyForSession: sourceSafety.statusForSession,
     sessions: sessionData.sessions.value || []
   }));
   const toolbar = proxyRefs({
     canCreateSession: sessionData.canCreateSession,
     createSession: sessionData.createSession,
     createSessionCommand: sessionData.createSessionCommand,
-    createSessionMode: sessionData.createSessionMode,
     createSessionTitle: sessionData.createSessionTitle,
     selectSession: sessionData.selectSessionId,
     sessions: toolbarSessions,
-    shortSessionId: sessionData.shortSessionId,
-    workflowDefinitions: sessionData.workflowDefinitions
+    shortSessionId: sessionData.shortSessionId
   });
   const projectPane = computed(() => normalizeProjectPane(props.projectPane || route.query.pane));
   const chatCollapsed = computed(() => Boolean(props.chatCollapsed));
@@ -225,7 +202,6 @@ function useVibe64SessionPanel(props, emit) {
     dashboardProjectActive,
     dismissPageError,
     emitProjectAttention,
-    emitProjectPaneChange,
     emptyChatHintText,
     emptyCreateAttention,
     emptyDashboardContext,
@@ -247,10 +223,6 @@ function useVibe64SessionPanel(props, emit) {
     toolbar,
     visiblePageError
   };
-
-  function emitProjectPaneChange(pane = "") {
-    emit("project-pane-change", pane);
-  }
 
   function emitProjectAttention() {
     emit("project-attention");
@@ -357,7 +329,6 @@ function sessionPanelToolbarSessions({
   runtimeStateBySessionId = {},
   selectedSession = null,
   selectedSessionId = "",
-  sourceSafetyForSession = null,
   sessions = []
 } = {}) {
   const normalizedSelectedSessionId = String(selectedSessionId || "").trim();
@@ -376,13 +347,9 @@ function sessionPanelToolbarSessions({
       runtimeState?.agentThinking ||
       sessionRecordHasActiveAgentWork(sourceSession)
     );
-    const sourceSafety = typeof sourceSafetyForSession === "function"
-      ? sourceSafetyForSession(sessionId)
-      : null;
     return {
       ...session,
-      agentThinking,
-      ...(sourceSafety ? { sourceSafety } : {})
+      agentThinking
     };
   });
 }

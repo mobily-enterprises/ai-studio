@@ -1,10 +1,5 @@
 const STALE_OPERATION_CODES = new Set([
-  "vibe64_action_disabled",
-  "vibe64_action_not_available",
-  "vibe64_advance_state_changed",
-  "vibe64_intent_state_changed",
-  "vibe64_stale_command_start",
-  "vibe64_step_input_state_changed"
+  "vibe64_stale_command_start"
 ]);
 
 function plainObject(value = null) {

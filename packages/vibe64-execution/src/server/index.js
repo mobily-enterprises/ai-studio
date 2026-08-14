@@ -112,6 +112,9 @@ export {
   githubMirrorRefreshInvocation
 } from "./repositoryStorage.js";
 export {
+  envRecord,
+  normalizeText,
+  recordValue,
   uniqueStrings
 } from "./normalize.js";
 export {

@@ -5,9 +5,6 @@ import {
   normalizeTargetRoot,
   normalizeText
 } from "./core.js";
-import {
-  projectContractRoot
-} from "./projectManifest.js";
 
 const PROJECT_STATE_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
 const PROJECT_RECORD_FILE = "project.json";
@@ -71,9 +68,7 @@ function resolveProjectHomeLocalRoot({
 function resolveSourceConfigRoot({
   sourceRoot = process.cwd()
 } = {}) {
-  return projectContractRoot({
-    sourceRoot: normalizeTargetRoot(sourceRoot)
-  });
+  return normalizeTargetRoot(sourceRoot);
 }
 
 function resolveProjectRuntimeRoot({

@@ -13,32 +13,19 @@ import {
   withRouteProject
 } from "./vibe64RouteTestHelpers.js";
 
-test("System graph registers the active-session-only API and forwards opaque keys", async () => {
+test("System graph exposes only native Genesis City status, reads, and synchronous refresh", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const calls = [];
-      const service = {
-        async readStatus(input) {
-          calls.push({ input, method: "readStatus" });
-          return {
-            ok: true,
-            status: "current"
-          };
-        },
-        async readEntity(input) {
-          calls.push({ input, method: "readEntity" });
-          return {
-            ok: true
-          };
-        },
-        async setSubsystemDepth(input) {
-          calls.push({ input, method: "setSubsystemDepth" });
-          return {
-            depth: input.depth,
-            ok: true
-          };
-        }
-      };
+      const service = Object.fromEntries([
+        "readStatus",
+        "readMachineCity",
+        "readProgramCity",
+        "refresh"
+      ].map((method) => [method, async (input) => {
+        calls.push({ input, method });
+        return { ok: true };
+      }]));
       const app = testRouteApp();
       const make = app.make.bind(app);
       app.make = (token) => token === "feature.vibe64-system-graph.service" ? service : make(token);
@@ -48,77 +35,30 @@ test("System graph registers the active-session-only API and forwards opaque key
         routeSurface: "app"
       });
 
-      const expectedRoutes = [
-        ["GET", "/status"],
-        ["GET", "/overview"],
-        ["POST", "/subsystems/:subsystemKey/depth"],
-        ["GET", "/entities/:entityKey"],
-        ["GET", "/entities/:entityKey/evidence"],
-        ["GET", "/files/:fileKey/constellation"],
-        ["GET", "/findings"],
-        ["POST", "/updates"],
-        ["GET", "/updates/:updateId/stream"],
-        ["POST", "/findings/:findingId/accept"]
+      const routes = [
+        ["GET", "/status", "readStatus"],
+        ["GET", "/cities/machine", "readMachineCity"],
+        ["GET", "/cities/program", "readProgramCity"],
+        ["POST", "/refresh", "refresh"]
       ];
-      for (const [method, suffix] of expectedRoutes) {
-        assert.ok(findRegisteredRoute(app, {
+      for (const [method, suffix] of routes) {
+        const route = findRegisteredRoute(app, {
           method,
           path: `${apiRouteBase}/vibe64/system-graph/sessions/:sessionId${suffix}`
-        }), `${method} ${suffix} was not registered`);
+        });
+        assert.ok(route, `${method} ${suffix} was not registered`);
+        const reply = testReply();
+        await route.handler({
+          params: routeProjectParams({ sessionId: "session-1" })
+        }, reply);
+        assert.equal(reply.statusCode, 200);
       }
 
-      const statusRoute = findRegisteredRoute(app, {
-        method: "GET",
-        path: `${apiRouteBase}/vibe64/system-graph/sessions/:sessionId/status`
-      });
-      const statusReply = testReply();
-      await statusRoute.handler({
-        params: routeProjectParams({
-          sessionId: "session-1"
-        })
-      }, statusReply);
-      assert.equal(statusReply.statusCode, 200);
-
-      const entityRoute = findRegisteredRoute(app, {
-        method: "GET",
-        path: `${apiRouteBase}/vibe64/system-graph/sessions/:sessionId/entities/:entityKey`
-      });
-      await entityRoute.handler({
-        params: routeProjectParams({
-          entityKey: "opaque-key",
-          sessionId: "session-1"
-        })
-      }, testReply());
-      const subsystemDepthRoute = findRegisteredRoute(app, {
-        method: "POST",
-        path: `${apiRouteBase}/vibe64/system-graph/sessions/:sessionId/subsystems/:subsystemKey/depth`
-      });
-      await subsystemDepthRoute.handler({
-        body: { depth: 4 },
-        params: routeProjectParams({
-          sessionId: "session-1",
-          subsystemKey: "opaque-subsystem-key"
-        })
-      }, testReply());
-      assert.deepEqual(calls, [{
-        input: {
-          sessionId: "session-1"
-        },
-        method: "readStatus"
-      }, {
-        input: {
-          entityKey: "opaque-key",
-          sessionId: "session-1"
-        },
-        method: "readEntity"
-      }, {
-        input: {
-          depth: 4,
-          sessionId: "session-1",
-          subsystemKey: "opaque-subsystem-key"
-        },
-        method: "setSubsystemDepth"
-      }]);
+      assert.deepEqual(calls, routes.map(([, , method]) => ({
+        input: { sessionId: "session-1" },
+        method
+      })));
+      assert.equal(app.registeredRoutes.length, 4);
     });
   });
 });

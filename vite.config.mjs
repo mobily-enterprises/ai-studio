@@ -4,27 +4,23 @@ import vue from "@vitejs/plugin-vue";
 import vuetify from "vite-plugin-vuetify";
 import VueRouter from "vue-router/vite";
 import { createJskitClientBootstrapPlugin } from "@jskit-ai/kernel/client/vite";
-import { loadViteDevProxyEntries, toPositiveInt } from "./vite.shared.mjs";
 import {
   isLocalhostCheckBypassEnabled
 } from "@local/vibe64-core/server/localhostCheckBypass";
-import {
-  resolveJskitLockPath
-} from "./server/lib/jskitLockPath.js";
+
+function toPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || "").trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 const devPort = toPositiveInt(process.env.VITE_DEV_PORT, 5173);
 const apiProxyTarget = String(process.env.VITE_API_PROXY_TARGET || "").trim() || "http://localhost:3000";
-const jskitLockPath = resolveJskitLockPath();
 const bypassLocalhostCheck = isLocalhostCheckBypassEnabled();
 const apiProxyHeaders = bypassLocalhostCheck
   ? {
       origin: apiProxyTarget
     }
   : undefined;
-const viteModuleProxyEntries = loadViteDevProxyEntries({
-  appRootUrl: import.meta.url,
-  fallbackTarget: apiProxyTarget
-});
 const clientEntry = (() => {
   const normalized = String(process.env.VITE_CLIENT_ENTRY || "").trim();
   if (!normalized) {
@@ -48,7 +44,7 @@ export default defineConfig({
   },
   plugins: [
     createJskitClientBootstrapPlugin({
-      lockPath: jskitLockPath
+      proxyTarget: apiProxyTarget
     }),
     VueRouter({
       routesFolder: "src/pages",
@@ -103,8 +99,7 @@ export default defineConfig({
         headers: apiProxyHeaders,
         rewriteWsOrigin: bypassLocalhostCheck,
         ws: true
-      },
-      ...viteModuleProxyEntries
+      }
     }
   }
 });

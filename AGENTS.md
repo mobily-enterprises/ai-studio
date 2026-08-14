@@ -7,8 +7,11 @@ Important boundaries:
 - `/home/merc/Development/current/vibe64` is the writable public Vibe64 source of truth.
 - `/home/merc/Development/current/vibe64-online/submodules/public-vibe64-local-editor` is a deployment-managed read-only submodule mirror. Do not edit, commit, or deploy from inside that submodule.
 - To deploy editor changes: change, commit, and push `/home/merc/Development/current/vibe64`; then update, commit, and push `/home/merc/Development/current/vibe64-online`; then run `npm run deploy` from `/home/merc/Development/current/vibe64-online`.
-- Committed Vibe64 source contract lives in root `vibe64.project.json`, `vibe64.runtime-lock.json`, and optional `.vibe64/bin`, `.vibe64/launcher`, `.vibe64/scripts`, `.vibe64/prompts`, and `.vibe64/project-knowledge`.
+- Genesis owns project intent, technology guidance, explanatory Program, agent skills, hooks, verification guidance, and Machine/Program Cities. Its portable files live below `genesis/`, `.genesis/`, `.agents/skills/`, and `.codex/hooks.json`.
+- `vibe64.project.json` and `vibe64.runtime-lock.json` are unsupported obsolete contracts. Do not recreate or read them.
+- `.vibe64/` is not product, prompt, Stack, Program, indexing, or City authority. Keep only narrowly declared application helpers such as a Genesis Launch preview-identity executable when required.
 - Runtime/session state is Vibe64-owned runtime-local state, not source-owned repository content.
-- Use `npx jskit ...` freely for app/framework tasks such as verification, scaffold checks, generator work, JSKIT metadata, and JSKIT-adapter project inspection.
+- Use `npx jskit ...` freely for this repository's framework maintenance, verification, scaffold checks, generators, and JSKIT metadata.
 - Do not create loose workboard files.
 - Do not run bare `jskit ...`. Use `npx jskit ...`.
+- Never deploy unless the user explicitly requests deployment.

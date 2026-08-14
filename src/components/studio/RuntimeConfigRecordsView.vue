@@ -11,7 +11,6 @@
       <RuntimeConfigRecordsTable
         v-if="editableRecords.length"
         :environment-label="environmentLabel"
-        :public-env-prefixes="publicEnvPrefixes"
         :records="editableRecords"
         :revealed-secrets="revealedSecrets"
         :save-busy="saveBusy"
@@ -45,7 +44,6 @@
         <v-expansion-panel-text>
           <RuntimeConfigRecordsTable
             :environment-label="environmentLabel"
-            :public-env-prefixes="publicEnvPrefixes"
             :records="systemRecords"
             :revealed-secrets="revealedSecrets"
             :secret-reveal-busy-key="secretRevealBusyKey"
@@ -82,10 +80,6 @@ const props = defineProps({
   environmentLabel: {
     default: "environment",
     type: String
-  },
-  publicEnvPrefixes: {
-    default: () => [],
-    type: Array
   },
   records: {
     default: () => [],

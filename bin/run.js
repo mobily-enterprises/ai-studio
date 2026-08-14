@@ -1,42 +1,13 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { release as osRelease } from "node:os";
 import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildRuntimeLock,
-  listRuntimePackages,
-  readRuntimeLock,
-  runtimeToolCommandArgs,
-  validateRuntimeLock,
-  writeRuntimeLock
-} from "@local/vibe64-core/server/runtimeToolchain";
-import {
-  createVibe64AdapterRegistry
-} from "@local/vibe64-adapters/server";
-import {
-  resolveVibe64Roots
-} from "@local/vibe64-core/server/studioRoots";
-import {
-  readProjectManifest,
-  updateProjectManifest
-} from "@local/vibe64-core/server/projectManifest";
-import {
-  jskitMariaDbDatabaseName,
-  jskitManagedMariaDbDevelopmentDatabaseCommandArgs,
-  stopJskitManagedMariaDbRuntime
-} from "@local/vibe64-adapters/server/adapters/jskit/setupMariaDbRuntime";
-
 const RUNNER_ENTRYPOINT = fileURLToPath(import.meta.url);
 const MODULE_DIR = path.dirname(RUNNER_ENTRYPOINT);
 const SERVER_ENTRYPOINT = path.join(MODULE_DIR, "server.js");
-const VIBE64_RUNTIME_CLI_COMMANDS = new Set(["doctor", "runtime"]);
-const CLI_LOCAL_RUNTIME_PROFILE = Object.freeze({
-  local: true,
-  mode: "local"
-});
 
 function quoteShellArg(value = "") {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -82,283 +53,6 @@ function isDirectCliExecution({
 function targetNameFromCwd(cwd = process.cwd(), platform = process.platform) {
   const targetName = platform === "win32" ? path.win32.basename(cwd) : path.basename(cwd);
   return targetName || "target";
-}
-
-function isRuntimeCliCommand(args = []) {
-  return VIBE64_RUNTIME_CLI_COMMANDS.has(String(args[0] || "").trim());
-}
-
-function cliSourceContractRoot(cwd = process.cwd()) {
-  return path.resolve(cwd);
-}
-
-function cliServiceDataRoot(cwd = process.cwd()) {
-  return resolveVibe64Roots({
-    runtimeProfile: CLI_LOCAL_RUNTIME_PROFILE,
-    targetRoot: cwd
-  }).serviceDataRoot;
-}
-
-async function cliRuntimeContext(cwd = process.cwd()) {
-  const manifest = await readProjectManifest({
-    sourceContractRoot: cliSourceContractRoot(cwd)
-  });
-  const projectType = String(manifest?.projectType || "").trim();
-  if (!projectType) {
-    throw new Error("No vibe64.project.json projectType found. Choose a Vibe64 project type first.");
-  }
-  const adapterRegistry = createVibe64AdapterRegistry();
-  const adapter = await adapterRegistry.createAdapter(projectType);
-  const values = manifest.config || {};
-  const projectConfig = {
-    projectType,
-    values
-  };
-  const runtimeRequirements = typeof adapter.getRuntimeRequirements === "function"
-    ? await adapter.getRuntimeRequirements({
-        config: projectConfig,
-        projectType: {
-          projectType
-        },
-        targetRoot: cwd
-      })
-    : [];
-  return {
-    adapter,
-    projectConfig,
-    sourceContractRoot: cliSourceContractRoot(cwd),
-    projectType,
-    runtimeRequirements,
-    targetRoot: path.resolve(cwd)
-  };
-}
-
-async function writeCliProjectConfigValue(cwd = process.cwd(), key = "", value = "") {
-  await updateProjectManifest({
-    sourceContractRoot: cliSourceContractRoot(cwd),
-    update: (manifest) => ({
-      ...manifest,
-      config: {
-        ...manifest.config,
-        [String(key || "").trim()]: String(value || "").trim()
-      }
-    })
-  });
-}
-
-function printRuntimeOptions(stdout = process.stdout) {
-  const byRole = new Map();
-  for (const entry of listRuntimePackages()) {
-    if (!byRole.has(entry.role)) {
-      byRole.set(entry.role, []);
-    }
-    byRole.get(entry.role).push(entry);
-  }
-  for (const [role, entries] of [...byRole.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    stdout.write(`${role}\n`);
-    for (const entry of entries.sort((left, right) => left.id.localeCompare(right.id))) {
-      stdout.write(`  ${entry.id} ${entry.version || "system"} (${entry.provider})\n`);
-    }
-  }
-}
-
-async function realizeCliRuntime(cwd = process.cwd(), stdout = process.stdout) {
-  const context = await cliRuntimeContext(cwd);
-  const lock = buildRuntimeLock({
-    adapterId: context.adapter.id,
-    projectType: context.projectType,
-    runtimeRequirements: context.runtimeRequirements
-  });
-  await writeRuntimeLock({
-    lock,
-    sourceContractRoot: context.sourceContractRoot
-  });
-  stdout.write(`Wrote vibe64.runtime-lock.json for ${context.runtimeRequirements.map((entry) => entry.id).join(", ") || "no runtime packages"}.\n`);
-  return lock;
-}
-
-async function runtimeStatus(cwd = process.cwd(), stdout = process.stdout) {
-  const context = await cliRuntimeContext(cwd);
-  const lock = await readRuntimeLock({
-    sourceContractRoot: context.sourceContractRoot
-  });
-  if (!lock) {
-    stdout.write("runtime lock: missing\n");
-    return 1;
-  }
-  const validation = validateRuntimeLock(lock, {
-    adapterId: context.adapter.id,
-    projectType: context.projectType,
-    runtimeRequirements: context.runtimeRequirements
-  });
-  stdout.write(`runtime lock: ${validation.ok ? "ready" : "stale"}\n`);
-  stdout.write(`packages: ${(validation.expectedPackageIds || validation.observedPackageIds || []).join(", ") || "none"}\n`);
-  if (!validation.ok) {
-    stdout.write(`${validation.error}\n`);
-    return 1;
-  }
-  return 0;
-}
-
-function runCliCommand(commandArgs = [], {
-  commandLabel = "",
-  cwd = process.cwd(),
-  spawnSyncImpl = spawnSync,
-  stdout = process.stdout
-} = {}) {
-  function writeCommandOutput(value = "") {
-    const text = String(value || "");
-    if (!text) {
-      return;
-    }
-    stdout.write(text);
-    if (!text.endsWith("\n")) {
-      stdout.write("\n");
-    }
-  }
-
-  const [command, ...args] = commandArgs;
-  const result = spawnSyncImpl(command, args, {
-    cwd,
-    encoding: "utf8"
-  });
-  stdout.write(`${commandLabel || commandArgs.join(" ")}: ${result.status === 0 ? "ok" : "failed"}\n`);
-  writeCommandOutput(result.stdout);
-  writeCommandOutput(result.stderr);
-  return result.status === 0 ? 0 : 1;
-}
-
-async function runCliDoctor({
-  cwd = process.cwd(),
-  spawnSyncImpl = spawnSync,
-  stdout = process.stdout
-} = {}) {
-  let failed = 0;
-  failed += runCliCommand(["nix", "--version"], {
-    cwd,
-    spawnSyncImpl,
-    stdout
-  });
-  failed += runCliCommand(["nix", "--extra-experimental-features", "nix-command flakes", "eval", "--impure", "--raw", "--expr", "builtins.currentSystem"], {
-    cwd,
-    spawnSyncImpl,
-    stdout
-  });
-  try {
-    const context = await cliRuntimeContext(cwd);
-    for (const requirement of context.runtimeRequirements) {
-      const toolId = requirement.tool?.command || "";
-      failed += runCliCommand(runtimeToolCommandArgs(requirement.id, toolId), {
-        cwd,
-        spawnSyncImpl,
-        stdout
-      });
-    }
-    failed += await runtimeStatus(cwd, stdout);
-  } catch (error) {
-    stdout.write(`project runtime: ${error.message || error}\n`);
-    failed += 1;
-  }
-  return failed === 0 ? 0 : 1;
-}
-
-async function runRuntimeUp(cwd = process.cwd(), {
-  spawnSyncImpl = spawnSync,
-  stdout = process.stdout
-} = {}) {
-  const context = await cliRuntimeContext(cwd);
-  const needsMariaDb = context.runtimeRequirements.some((entry) => entry.id === "mariadb");
-  if (!needsMariaDb) {
-    stdout.write("No managed runtime services selected.\n");
-    return 0;
-  }
-  return runCliCommand(jskitManagedMariaDbDevelopmentDatabaseCommandArgs({
-    databaseName: jskitMariaDbDatabaseName(cwd),
-    serviceDataRoot: cliServiceDataRoot(cwd),
-    targetRoot: cwd
-  }), {
-    commandLabel: "managed MariaDB runtime start",
-    cwd,
-    spawnSyncImpl,
-    stdout
-  });
-}
-
-async function runRuntimeDown(cwd = process.cwd(), stdout = process.stdout) {
-  const result = await stopJskitManagedMariaDbRuntime({
-    serviceDataRoot: cliServiceDataRoot(cwd),
-    stdout
-  });
-  return result.ok ? 0 : 1;
-}
-
-async function runRuntimeSet(args = [], cwd = process.cwd(), stdout = process.stdout) {
-  const [family = "", value = ""] = args;
-  if (family === "node" && value === "26") {
-    stdout.write("Node runtime is fixed to Vibe64-supported Node 26.\n");
-    await realizeCliRuntime(cwd, stdout);
-    return 0;
-  }
-  if (family === "database") {
-    if (value === "mariadb") {
-      await writeCliProjectConfigValue(cwd, "jskit_database_runtime", "mariadb");
-      stdout.write("Selected database runtime mariadb.\n");
-      await realizeCliRuntime(cwd, stdout);
-      return 0;
-    }
-    if (value === "none") {
-      await writeCliProjectConfigValue(cwd, "jskit_database_runtime", "none");
-      stdout.write("Selected database runtime none.\n");
-      await realizeCliRuntime(cwd, stdout);
-      return 0;
-    }
-  }
-  stdout.write("Usage: vibe64 runtime set node 26 | vibe64 runtime set database mariadb | vibe64 runtime set database none\n");
-  return 1;
-}
-
-async function runRuntimeCli({
-  args = process.argv.slice(2),
-  cwd = process.cwd(),
-  spawnSyncImpl = spawnSync,
-  stdout = process.stdout
-} = {}) {
-  const [command = "", subcommand = "", ...rest] = args;
-  if (command === "doctor") {
-    return runCliDoctor({
-      cwd,
-      spawnSyncImpl,
-      stdout
-    });
-  }
-  if (command !== "runtime") {
-    return null;
-  }
-  if (subcommand === "options") {
-    printRuntimeOptions(stdout);
-    return 0;
-  }
-  if (subcommand === "status") {
-    return runtimeStatus(cwd, stdout);
-  }
-  if (subcommand === "realize") {
-    await realizeCliRuntime(cwd, stdout);
-    return 0;
-  }
-  if (subcommand === "up") {
-    return runRuntimeUp(cwd, {
-      spawnSyncImpl,
-      stdout
-    });
-  }
-  if (subcommand === "down") {
-    return runRuntimeDown(cwd, stdout);
-  }
-  if (subcommand === "set") {
-    return runRuntimeSet(rest, cwd, stdout);
-  }
-  stdout.write("Usage: vibe64 doctor | vibe64 runtime options|status|realize|up|down|set\n");
-  return 1;
 }
 
 function isWslEnvironment({
@@ -690,13 +384,7 @@ async function runLauncher({
 }
 
 if (isDirectCliExecution()) {
-  const cliArgs = process.argv.slice(2);
-  const runner = isRuntimeCliCommand(cliArgs)
-    ? runRuntimeCli({
-        args: cliArgs
-      })
-    : runLauncher();
-  runner.then((exitCode) => {
+  runLauncher().then((exitCode) => {
     process.exitCode = exitCode;
   }).catch((error) => {
     console.error("Failed to run Vibe64:", error);
@@ -708,11 +396,9 @@ export {
   SERVER_ENTRYPOINT,
   isDirectCliExecution,
   isWslEnvironment,
-  isRuntimeCliCommand,
   launchInNewTerminal,
   quoteShellArg,
   runLauncher,
-  runRuntimeCli,
   serverShellCommand,
   serverWindowsCommand,
   targetNameFromCwd,

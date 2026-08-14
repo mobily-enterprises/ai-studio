@@ -19,12 +19,12 @@ const realtimeMocks = vi.hoisted(() => ({
   }
 }));
 
-vi.mock("@jskit-ai/users-web/client/composables/useEndpointResource", () => ({
+vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
   useEndpointResource: endpointMocks.useEndpointResource
 }));
 
-vi.mock("@jskit-ai/users-web/client/lib/httpClient", () => ({
-  getUsersWebHttpClient() {
+vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
+  getHttpWebClient() {
     return httpMocks;
   }
 }));
@@ -118,11 +118,6 @@ describe("useVibe64MountedSessionData", () => {
           state: "active"
         }
       },
-      presentation: {
-        screen: {
-          kind: "conversation"
-        }
-      },
       revision: 10,
       sessionId: "session-a"
     };
@@ -214,11 +209,6 @@ describe("useVibe64MountedSessionData", () => {
           state: "active"
         }
       },
-      presentation: {
-        screen: {
-          kind: "conversation"
-        }
-      },
       revision: 10,
       sessionId: "session-a"
     };
@@ -269,11 +259,6 @@ describe("useVibe64MountedSessionData", () => {
           state: "active"
         }
       },
-      presentation: {
-        screen: {
-          kind: "conversation"
-        }
-      },
       revision: 10,
       sessionId: "session-a"
     };
@@ -302,11 +287,6 @@ describe("useVibe64MountedSessionData", () => {
         turn: {
           active: state === "active",
           state
-        }
-      },
-      presentation: {
-        screen: {
-          kind: "conversation"
         }
       },
       revision,

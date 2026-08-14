@@ -18,10 +18,10 @@ function sessionAgentProviderId(options = {}, fallbackProviderId = "") {
 }
 
 function providerNotImplementedError(providerId = "") {
-  const normalizedProviderId = normalizeText(providerId);
-  const error = new Error(`Assistant provider is not implemented: ${normalizedProviderId || "(missing)"}.`);
+  const id = normalizeText(providerId);
+  const error = new Error(`Assistant provider is not implemented: ${id || "(missing)"}.`);
   error.code = VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE;
-  error.providerId = normalizedProviderId;
+  error.providerId = id;
   return error;
 }
 
@@ -36,81 +36,76 @@ function providerBindingConflictError(sessionId = "", currentProviderId = "", re
   return error;
 }
 
-function normalizeAdapter(adapter = {}) {
-  const id = normalizeText(adapter?.id);
-  const transportId = normalizeText(adapter?.transportId);
+function normalizeProvider(provider = {}) {
+  const id = normalizeText(provider?.id);
+  const transportId = normalizeText(provider?.transportId);
   if (!id || !transportId) {
-    throw new TypeError("Session agent adapters require product provider and transport ids.");
+    throw new TypeError("Session agent providers require product provider and transport ids.");
   }
   return Object.freeze({
-    ...adapter,
+    ...provider,
     id,
     transportId
   });
 }
 
-function agentOperationResult(adapter = {}, sessionId = "", result = {}) {
+function agentOperationResult(provider = {}, sessionId = "", result = {}) {
   const source = result && typeof result === "object" && !Array.isArray(result)
     ? result
     : { value: result };
   return {
     ...source,
-    providerId: adapter.id,
+    providerId: provider.id,
     sessionId: normalizeText(sessionId),
-    transportId: adapter.transportId
+    transportId: provider.transportId
   };
 }
 
 function createSessionAgentManager({
-  adapters = [],
-  defaultProviderId = "codex"
+  defaultProviderId = "codex",
+  providers = []
 } = {}) {
-  const adapterById = new Map();
+  const providerById = new Map();
   const bindings = new Map();
   const operations = new Map();
 
-  for (const candidate of adapters) {
-    const adapter = normalizeAdapter(candidate);
-    if (adapterById.has(adapter.id)) {
-      throw new TypeError(`Duplicate session agent adapter: ${adapter.id}.`);
+  for (const candidate of providers) {
+    const provider = normalizeProvider(candidate);
+    if (providerById.has(provider.id)) {
+      throw new TypeError(`Duplicate session agent provider: ${provider.id}.`);
     }
-    adapterById.set(adapter.id, adapter);
+    providerById.set(provider.id, provider);
   }
 
-  function adapterFor(options = {}) {
+  function providerFor(options = {}) {
     const providerId = sessionAgentProviderId(options, defaultProviderId);
-    const adapter = adapterById.get(providerId);
-    if (!adapter) {
+    const provider = providerById.get(providerId);
+    if (!provider) {
       throw providerNotImplementedError(providerId);
     }
-    return adapter;
+    return provider;
   }
 
   function bindSession(sessionId = "", options = {}) {
-    const normalizedSessionId = normalizeText(sessionId);
-    if (!normalizedSessionId) {
+    const id = normalizeText(sessionId);
+    if (!id) {
       throw new TypeError("Session agent operations require a session id.");
     }
-    const currentProviderId = bindings.get(normalizedSessionId);
+    const currentProviderId = bindings.get(id);
     const requestedProviderId = sessionAgentProviderId(options);
     if (currentProviderId && requestedProviderId && currentProviderId !== requestedProviderId) {
-      throw providerBindingConflictError(normalizedSessionId, currentProviderId, requestedProviderId);
+      throw providerBindingConflictError(id, currentProviderId, requestedProviderId);
     }
-    const adapter = adapterFor({
+    const provider = providerFor({
       ...options,
       providerId: requestedProviderId || currentProviderId || defaultProviderId
     });
-    bindings.set(normalizedSessionId, adapter.id);
-    return adapter;
+    bindings.set(id, provider.id);
+    return provider;
   }
 
   function operationKey(sessionId = "", providerId = "", operation = "", identity = "") {
-    return [
-      normalizeText(sessionId),
-      normalizeText(providerId),
-      normalizeText(operation),
-      normalizeText(identity)
-    ].join(":");
+    return [sessionId, providerId, operation, identity].map(normalizeText).join(":");
   }
 
   async function coalescedOperation(key = "", operation) {
@@ -129,89 +124,68 @@ function createSessionAgentManager({
     }
   }
 
-  async function callSessionAdapter(method = "", sessionId = "", input = {}, options = {}, {
+  async function callSessionProvider(method = "", sessionId = "", input = {}, options = {}, {
     coalesceIdentity = ""
   } = {}) {
     const operationOptions = {
       ...options,
       agentSettings: options?.agentSettings || input?.agentSettings || null
     };
-    const adapter = bindSession(sessionId, operationOptions);
-    if (typeof adapter[method] !== "function") {
-      throw new TypeError(`Assistant provider ${adapter.id} does not implement ${method}().`);
+    const provider = bindSession(sessionId, operationOptions);
+    if (typeof provider[method] !== "function") {
+      throw new TypeError(`Assistant provider ${provider.id} does not implement ${method}().`);
     }
     const context = {
       agentSettings: operationOptions.agentSettings,
-      lifecycle: typeof operationOptions.lifecycle === "function" ? operationOptions.lifecycle : null,
       onEvent: typeof operationOptions.onEvent === "function" ? operationOptions.onEvent : null,
-      prepareHandoff: typeof operationOptions.prepareHandoff === "function"
-        ? operationOptions.prepareHandoff
-        : null,
-      providerId: adapter.id,
+      providerId: provider.id,
       runtime: operationOptions.runtime || null,
       session: operationOptions.session || null,
       sessionId: normalizeText(sessionId),
-      transportId: adapter.transportId,
+      transportId: provider.transportId,
       turnOwnership: operationOptions.turnOwnership || null,
       vibe64User: operationOptions.vibe64User || null
     };
     const run = async () => agentOperationResult(
-      adapter,
+      provider,
       sessionId,
-      await adapter[method](context, input)
+      await provider[method](context, input)
     );
     const identity = normalizeText(coalesceIdentity);
     return identity
-      ? coalescedOperation(operationKey(sessionId, adapter.id, method, identity), run)
+      ? coalescedOperation(operationKey(sessionId, provider.id, method, identity), run)
       : run();
   }
 
-  async function callProviderAdapter(method = "", input = {}, options = {}) {
-    const adapter = adapterFor(options);
-    if (typeof adapter[method] !== "function") {
-      throw new TypeError(`Assistant provider ${adapter.id} does not implement ${method}().`);
+  async function callProvider(method = "", input = {}, options = {}) {
+    const provider = providerFor(options);
+    if (typeof provider[method] !== "function") {
+      throw new TypeError(`Assistant provider ${provider.id} does not implement ${method}().`);
     }
-    return agentOperationResult(adapter, "", await adapter[method]({
-      providerId: adapter.id,
-      transportId: adapter.transportId
+    return agentOperationResult(provider, "", await provider[method]({
+      providerId: provider.id,
+      transportId: provider.transportId
     }, input, options));
   }
 
-  function ensureSession(sessionId = "", options = {}) {
-    return callSessionAdapter("ensureSession", sessionId, {}, options, {
-      coalesceIdentity: "session"
-    });
-  }
-
-  function deliverPrompt(sessionId = "", handoff = {}, options = {}) {
-    const handoffId = normalizeText(handoff?.handoffId);
-    if (!handoffId) {
-      throw new TypeError("Assistant prompt delivery requires a handoff id.");
-    }
-    return callSessionAdapter("deliverPrompt", sessionId, handoff, options, {
-      coalesceIdentity: handoffId
-    });
+  function sessionMethod(method) {
+    return (sessionId = "", input = {}, options = {}) => (
+      callSessionProvider(method, sessionId, input, options)
+    );
   }
 
   async function closeSession(sessionId = "", options = {}) {
-    const normalizedSessionId = normalizeText(sessionId);
-    const adapter = bindSession(normalizedSessionId, options);
-    const result = typeof adapter.closeSession !== "function"
-      ? agentOperationResult(adapter, normalizedSessionId, {
-          closed: false,
-          ok: true
-        })
-      : agentOperationResult(
-          adapter,
-          normalizedSessionId,
-          await adapter.closeSession({
-            providerId: adapter.id,
-            sessionId: normalizedSessionId,
-            transportId: adapter.transportId
-          })
-        );
+    const id = normalizeText(sessionId);
+    const provider = bindSession(id, options);
+    const result = typeof provider.closeSession !== "function"
+      ? agentOperationResult(provider, id, { closed: false, ok: true })
+      : agentOperationResult(provider, id, await provider.closeSession({
+          providerId: provider.id,
+          sessionId: id,
+          transportId: provider.transportId
+        }));
     if (result.ok !== false) {
-      bindings.delete(normalizedSessionId);
+      bindings.delete(id);
     }
     return result;
   }
@@ -221,105 +195,66 @@ function createSessionAgentManager({
       return bindings.get(normalizeText(sessionId)) || "";
     },
     closeProject(input = {}, options = {}) {
-      return callProviderAdapter("closeProject", input, options);
-    },
-    createConversation(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("createConversation", sessionId, input, options);
+      return callProvider("closeProject", input, options);
     },
     closeSession,
-    closeTerminal(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("closeTerminal", sessionId, input, options);
-    },
-    deleteDetachedChatThread(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("deleteDetachedChatThread", sessionId, input, options);
-    },
-    deleteConversation(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("deleteConversation", sessionId, input, options);
-    },
+    closeTerminal: sessionMethod("closeTerminal"),
+    createConversation: sessionMethod("createConversation"),
+    deleteConversation: sessionMethod("deleteConversation"),
+    deleteDetachedChatThread: sessionMethod("deleteDetachedChatThread"),
     describeProvider(options = {}) {
-      const adapter = adapterFor(options);
+      const provider = providerFor(options);
       return Object.freeze({
-        providerId: adapter.id,
-        transportId: adapter.transportId
+        providerId: provider.id,
+        transportId: provider.transportId
       });
     },
-    deliverPrompt,
-    ensureSession,
+    ensureSession(sessionId = "", options = {}) {
+      return callSessionProvider("ensureSession", sessionId, {}, options, {
+        coalesceIdentity: "session"
+      });
+    },
+    interruptDetachedChatTurn: sessionMethod("interruptDetachedChatTurn"),
+    interruptTurn: sessionMethod("interruptTurn"),
     invalidateRuntimes(input = {}, options = {}) {
-      return callProviderAdapter("invalidateRuntimes", input, options);
-    },
-    interruptDetachedChatTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("interruptDetachedChatTurn", sessionId, input, options);
-    },
-    interruptTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("interruptTurn", sessionId, input, options);
+      return callProvider("invalidateRuntimes", input, options);
     },
     async reconcileSessions(sessions = [], options = {}) {
-      const adapter = adapterFor(options);
-      if (typeof adapter.reconcileSessions !== "function") {
-        throw new TypeError(`Assistant provider ${adapter.id} does not implement reconcileSessions().`);
+      const provider = providerFor(options);
+      if (typeof provider.reconcileSessions !== "function") {
+        throw new TypeError(`Assistant provider ${provider.id} does not implement reconcileSessions().`);
       }
-      return agentOperationResult(adapter, "", await adapter.reconcileSessions({
-        providerId: adapter.id,
-        transportId: adapter.transportId
+      return agentOperationResult(provider, "", await provider.reconcileSessions({
+        providerId: provider.id,
+        transportId: provider.transportId
       }, sessions, options));
     },
+    readConversation: sessionMethod("readConversation"),
     readTerminal(sessionId = "", terminalSessionId = "", options = {}) {
-      return callSessionAdapter("readTerminal", sessionId, {
-        terminalSessionId
-      }, options);
-    },
-    readConversation(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("readConversation", sessionId, input, options);
+      return callSessionProvider("readTerminal", sessionId, { terminalSessionId }, options);
     },
     resizeTerminal(sessionId = "", terminalSessionId = "", size = {}, options = {}) {
-      return callSessionAdapter("resizeTerminal", sessionId, {
-        size,
-        terminalSessionId
-      }, options);
+      return callSessionProvider("resizeTerminal", sessionId, { size, terminalSessionId }, options);
     },
-    runDetachedChatTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("runDetachedChatTurn", sessionId, input, options);
-    },
+    runDetachedChatTurn: sessionMethod("runDetachedChatTurn"),
+    sendMessage: sessionMethod("sendMessage"),
     sessionState(sessionId = "", options = {}) {
-      return callSessionAdapter("sessionState", sessionId, {}, options);
+      return callSessionProvider("sessionState", sessionId, {}, options);
     },
-    startTerminal(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("startTerminal", sessionId, input, options);
-    },
-    sendMessage(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("sendMessage", sessionId, input, options);
-    },
-    startConversationTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("startConversationTurn", sessionId, input, options);
-    },
-    stopConversation(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("stopConversation", sessionId, input, options);
-    },
-    streamDetachedChatTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("streamDetachedChatTurn", sessionId, input, options);
-    },
-    waitForConversationTurn(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("waitForConversationTurn", sessionId, input, options);
-    },
+    startConversationTurn: sessionMethod("startConversationTurn"),
+    startTerminal: sessionMethod("startTerminal"),
+    stopConversation: sessionMethod("stopConversation"),
+    streamDetachedChatTurn: sessionMethod("streamDetachedChatTurn"),
     subscribeTerminal(sessionId = "", terminalSessionId = "", subscriber = null, options = {}) {
-      return callSessionAdapter("subscribeTerminal", sessionId, {
-        subscriber,
-        terminalSessionId
-      }, options);
-    },
-    uploadAttachment(sessionId = "", input = {}, options = {}) {
-      return callSessionAdapter("uploadAttachment", sessionId, input, options);
+      return callSessionProvider("subscribeTerminal", sessionId, { subscriber, terminalSessionId }, options);
     },
     unsubscribeSessions(sessions = [], options = {}) {
-      return callProviderAdapter("unsubscribeSessions", sessions, options);
+      return callProvider("unsubscribeSessions", sessions, options);
     },
+    uploadAttachment: sessionMethod("uploadAttachment"),
+    waitForConversationTurn: sessionMethod("waitForConversationTurn"),
     writeTerminal(sessionId = "", terminalSessionId = "", data = "", input = {}, options = {}) {
-      return callSessionAdapter("writeTerminal", sessionId, {
-        data,
-        input,
-        terminalSessionId
-      }, options);
+      return callSessionProvider("writeTerminal", sessionId, { data, input, terminalSessionId }, options);
     }
   });
 }

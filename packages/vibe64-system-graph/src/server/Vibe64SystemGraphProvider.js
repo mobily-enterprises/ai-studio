@@ -9,7 +9,7 @@ import {
 class Vibe64SystemGraphProvider {
   static id = "feature.vibe64-system-graph";
 
-  static dependsOn = [
+  static startsAfter = [
     "feature.vibe64-project"
   ];
 

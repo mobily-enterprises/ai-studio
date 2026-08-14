@@ -1,41 +1,27 @@
 import {
-  projectConfigInputValidator,
-  projectConfigReadInputValidator,
   projectCreateInputValidator,
-  projectEnvMaterializeInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
   projectTemplateApplyInputValidator,
   projectTemplateParamsValidator,
   projectTemplatesReadInputValidator,
-  projectTypeInputValidator,
-  projectTypeReadInputValidator
+  previewApplicationIdentitiesInputValidator
 } from "./inputSchemas.js";
 import {
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
-  ACTION_LIST_PROJECT_TOOLS,
-  ACTION_MATERIALIZE_ENV,
-  ACTION_READ_PROJECT_CONFIG,
-  ACTION_READ_PROJECT_CONFIG_DEFAULTS,
-  ACTION_READ_PROJECT_TYPE,
   ACTION_READ_ENV,
-  ACTION_SELECT_PROJECT,
-  ACTION_SAVE_PROJECT_CONFIG,
   ACTION_SAVE_ENV_USER_VALUES,
-  ACTION_SAVE_PROJECT_TYPE
+  ACTION_SELECT_PROJECT
 } from "./actions.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-function registerRoutes(
-  app,
-  {
-    projectContext = null,
-    routeSurface = "",
-    routeRelativePath = ""
-  } = {}
-) {
+function registerRoutes(app, {
+  projectContext = null,
+  routeSurface = "",
+  routeRelativePath = ""
+} = {}) {
   const routes = createVibe64FeatureRoutes(app, {
     localRequestMessage: "Vibe64 project routes only accept loopback Studio requests.",
     projectContext,
@@ -43,120 +29,69 @@ function registerRoutes(
     routeSurface,
     tags: ["studio", "vibe64-project"]
   });
+  const service = () => app.make("feature.vibe64-project.service");
 
   routes.actionRoute("GET", "/projects", {
     actionId: ACTION_LIST_PROJECTS,
     summary: "List selectable Vibe64 projects."
   });
-
   routes.actionRoute("POST", "/projects", {
     actionId: ACTION_CREATE_PROJECT,
     body: projectCreateInputValidator,
     buildInput: routes.requestBody,
     summary: "Create and select a Vibe64 project."
   });
-
   routes.actionRoute("POST", "/projects/select", {
     actionId: ACTION_SELECT_PROJECT,
     body: projectSelectInputValidator,
     buildInput: routes.requestBody,
     summary: "Select an existing Vibe64 project."
   });
-
   routes.serviceRoute("GET", "/project-templates", {
     query: projectTemplatesReadInputValidator,
-    summary: "List ready-made project templates for an empty Vibe64 project."
-  }, (request) => service(app).readProjectTemplates(
-    withVibe64User(request, routes.requestQuery(request))
-  ));
-
+    summary: "List project foundations."
+  }, (request) => service().readProjectTemplates(withUser(request, routes.requestQuery(request))));
+  routes.serviceRoute("GET", "/project-foundation", {
+    summary: "Read the installed Genesis foundation."
+  }, () => service().readProjectFoundation());
   routes.serviceRoute("POST", "/project-templates/:templateId/apply", {
     body: projectTemplateApplyInputValidator,
     params: projectTemplateParamsValidator,
-    summary: "Apply a ready-made project template to an empty Vibe64 project."
-  }, (request) => service(app).applyProjectTemplate(
+    summary: "Apply a project foundation."
+  }, (request) => service().applyProjectTemplate(
     request.params?.templateId,
-    withVibe64User(request, routes.requestBody(request))
+    withUser(request, routes.requestBody(request))
   ));
-
-  routes.actionRoute("GET", "/tools", {
-    actionId: ACTION_LIST_PROJECT_TOOLS,
-    buildInput: routes.requestQuery,
-    query: projectConfigReadInputValidator,
-    summary: "List Vibe64 project tools."
-  });
-
-  routes.actionRoute("GET", "/project-type", {
-    actionId: ACTION_READ_PROJECT_TYPE,
-    buildInput: routes.requestQuery,
-    query: projectTypeReadInputValidator,
-    summary: "Read the Vibe64 project type."
-  });
-
-  routes.actionRoute("PUT", "/project-type", {
-    actionId: ACTION_SAVE_PROJECT_TYPE,
-    body: projectTypeInputValidator,
-    buildInput: routes.requestBody,
-    summary: "Set the Vibe64 project type."
-  });
-
-  routes.actionRoute("GET", "/project-config", {
-    actionId: ACTION_READ_PROJECT_CONFIG,
-    buildInput: routes.requestQuery,
-    query: projectConfigReadInputValidator,
-    summary: "Read the Vibe64 project configuration."
-  });
-
-  routes.actionRoute("GET", "/project-config/defaults", {
-    actionId: ACTION_READ_PROJECT_CONFIG_DEFAULTS,
-    buildInput: routes.requestQuery,
-    query: projectConfigReadInputValidator,
-    summary: "Read default Vibe64 project configuration values."
-  });
-
-  routes.actionRoute("PUT", "/project-config", {
-    actionId: ACTION_SAVE_PROJECT_CONFIG,
-    body: projectConfigInputValidator,
-    buildInput: routes.requestBody,
-    summary: "Save the Vibe64 project configuration."
-  });
-
   routes.actionRoute("GET", "/env", {
     actionId: ACTION_READ_ENV,
     buildInput: routes.requestQuery,
     query: projectEnvReadInputValidator,
-    summary: "Read the Vibe64 Env view model."
+    summary: "Read project Env values."
   });
-
   routes.actionRoute("PUT", "/env/user-values", {
     actionId: ACTION_SAVE_ENV_USER_VALUES,
     body: projectEnvUserValuesInputValidator,
     buildInput: routes.requestBody,
-    summary: "Save user-owned Vibe64 Env values."
+    summary: "Save user-owned project Env values."
   });
-
-  routes.actionRoute("POST", "/env/materialize", {
-    actionId: ACTION_MATERIALIZE_ENV,
-    body: projectEnvMaterializeInputValidator,
-    buildInput: routes.requestBody,
-    summary: "Regenerate local Env files."
-  });
+  routes.serviceRoute("GET", "/preview-identities", {
+    summary: "Read project-local managed app identities."
+  }, () => service().readPreviewApplicationIdentities());
+  routes.serviceRoute("PUT", "/preview-identities", {
+    body: previewApplicationIdentitiesInputValidator,
+    summary: "Save project-local managed app identities."
+  }, (request) => service().savePreviewApplicationIdentities(routes.requestBody(request)));
 }
 
-function service(app) {
-  return app.make("feature.vibe64-project.service");
-}
-
-function withVibe64User(request, input = {}) {
-  if (!request.vibe64User) {
-    return {
-      ...input
-    };
-  }
-  return {
-    ...input,
-    vibe64User: request.vibe64User
-  };
+function withUser(request, input = {}) {
+  return request.vibe64User
+    ? {
+        ...input,
+        vibe64User: request.vibe64User
+      }
+    : {
+        ...input
+      };
 }
 
 export { registerRoutes };

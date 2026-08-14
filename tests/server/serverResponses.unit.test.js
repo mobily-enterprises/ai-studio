@@ -5,9 +5,17 @@ import {
   vibe64StatusCode
 } from "../../packages/vibe64-core/src/server/serverResponses.js";
 
-test("project readiness failures are workflow conflicts", () => {
+test("requests that conflict with current operational state return conflict", () => {
   assert.equal(vibe64StatusCode({
     code: "vibe64_project_not_ready",
+    ok: false
+  }), 409);
+  assert.equal(vibe64StatusCode({
+    code: "vibe64_workspace_setup_running",
+    ok: false
+  }), 409);
+  assert.equal(vibe64StatusCode({
+    code: "vibe64_workspace_setup_retry_not_available",
     ok: false
   }), 409);
 });

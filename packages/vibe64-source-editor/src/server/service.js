@@ -26,7 +26,7 @@ import {
 import {
   sourceEditorFilePolicy,
   sourceEditorSourceContractPathExcluded
-} from "@local/vibe64-adapters/server/sourceEditorFilePolicy";
+} from "./filePolicy.js";
 import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
@@ -141,11 +141,7 @@ function createService({
     }
 
     return {
-      policy: await adapterSourceEditorFilePolicy(runtime.adapter, {
-        session,
-        sourceRoot
-      }),
-      runtime,
+      policy: sourceEditorFilePolicy(),
       session,
       sessionId: normalizedSessionId,
       sourceEditorTempRoot: sourceEditorTempRoot(session),
@@ -448,15 +444,6 @@ async function streamSourceEditorOperation(operation, {
   }
 }
 
-async function adapterSourceEditorFilePolicy(adapter, context = {}) {
-  if (adapter && typeof adapter.sourceEditorFilePolicy === "function") {
-    return sourceEditorFilePolicy(await adapter.sourceEditorFilePolicy(context));
-  }
-  return sourceEditorFilePolicy({
-    adapterId: adapter?.id || ""
-  });
-}
-
 function sourceEditorError(message, code, details = {}, statusCode = 400) {
   const error = vibe64Error(message, code);
   error.details = details;
@@ -476,7 +463,6 @@ function sourceEditorErrorResponse(error) {
 
 function publicSourceEditorPolicy(policy = {}) {
   return {
-    adapterId: normalizeText(policy.adapterId),
     defaultOpenFiles: Array.isArray(policy.defaultOpenFiles) ? policy.defaultOpenFiles : [],
     exclude: Array.isArray(policy.exclude) ? policy.exclude : [],
     maxFileBytes: policy.maxFileBytes,
@@ -1074,7 +1060,7 @@ async function sourceEditorDirectoryPage(context = {}, {
   } = context;
   const relativePath = normalizeSourceEditorRelativePath(relativePathValue);
   if (relativePath && sourceEditorPathExcluded(policy, relativePath)) {
-    throw sourceEditorError("The selected directory is excluded by the project adapter.", "vibe64_source_editor_directory_excluded", {
+    throw sourceEditorError("The selected directory is excluded from source editing.", "vibe64_source_editor_directory_excluded", {
       path: relativePath
     }, 403);
   }
@@ -1398,7 +1384,7 @@ function normalizeNewSourceEditorFilePath(value = "") {
 async function ensureSourceEditorParentDirectory(context = {}, parentRelativePath = "") {
   const parentPath = normalizeSourceEditorPolicyPath(parentRelativePath);
   if (parentPath && sourceEditorPathExcluded(context.policy, parentPath)) {
-    throw sourceEditorError("The selected directory is excluded by the project adapter.", "vibe64_source_editor_directory_excluded", {
+    throw sourceEditorError("The selected directory is excluded from source editing.", "vibe64_source_editor_directory_excluded", {
       path: parentPath
     }, 403);
   }
@@ -1436,7 +1422,7 @@ async function ensureSourceEditorParentDirectory(context = {}, parentRelativePat
 async function createSourceEditorFile(context = {}, input = {}) {
   const relativePath = normalizeNewSourceEditorFilePath(input.path);
   if (sourceEditorPathExcluded(context.policy, relativePath)) {
-    throw sourceEditorError("The selected file is excluded by the project adapter.", "vibe64_source_editor_file_excluded", {
+    throw sourceEditorError("The selected file is excluded from source editing.", "vibe64_source_editor_file_excluded", {
       path: relativePath
     }, 403);
   }
@@ -1474,7 +1460,7 @@ async function sourceEditorExistingFile(context = {}, relativePathValue = "") {
     throw sourceEditorError("Choose a file before editing.", "vibe64_invalid_source_editor_path");
   }
   if (sourceEditorPathExcluded(context.policy, relativePath)) {
-    throw sourceEditorError("The selected file is excluded by the project adapter.", "vibe64_source_editor_file_excluded", {
+    throw sourceEditorError("The selected file is excluded from source editing.", "vibe64_source_editor_file_excluded", {
       path: relativePath
     }, 403);
   }
@@ -2595,7 +2581,7 @@ function sourceEditorExplanationPrompt({
     "Use the selected code, nearby context, file path, naming, imports, exports, and repository inspection when useful. Be explicit when you infer something from context.",
     "Prefer this shape: brief summary; role in the system; how it works; important data/control flow; key dependencies or callers/callees; risks, edge cases, or things to know.",
     "Be concrete and project-aware. Avoid generic rewrite advice unless there is a direct behavioral risk. Do not edit files.",
-    "Return user-facing Markdown without structured Vibe64 workflow output.",
+    "Return concise user-facing Markdown.",
     "",
     `File: ${file.path}`,
     `Target: ${wholeFile ? "whole file" : `lines ${range.startLine}-${range.endLine}, columns ${range.startColumn}-${range.endColumn}`}`,
@@ -3024,7 +3010,7 @@ function sourceEditorExplanationFollowupPrompt(explanation = {}, message = "") {
       : "Answer the user's follow-up about the same selected source range and its role in the project.",
     "Assume the user knows the programming language; focus on project behavior, relationships, data/control flow, risks, and intent. You may inspect the repository read-only if needed.",
     "Do not edit files. If the current explanation is stale, say so plainly before answering.",
-    "Return user-facing Markdown without structured Vibe64 workflow output.",
+    "Return concise user-facing Markdown.",
     "",
     `File: ${range.path}`,
     `Target: ${wholeFile ? "whole file" : `lines ${range.startLine}-${range.endLine}, columns ${range.startColumn}-${range.endColumn}`}`,

@@ -42,13 +42,9 @@ function sourceMetadata(sourceRoot) {
 }
 
 async function createSourceEditorFixture({
-  defaultOpenFiles = [],
-  exclude = ["node_modules", "dist"],
   explanationFollowupGenerator = null,
   explanationGenerator = null,
   extraFiles = [],
-  preexpandedDirectories = [],
-  preloadDirectories = [],
   sourceFileObserver = null,
   terminalService = null
 } = {}) {
@@ -104,18 +100,8 @@ async function createSourceEditorFixture({
     projectService: {
       async createRuntime() {
         return {
-          adapter: {
-            id: "unit",
-            async sourceEditorFilePolicy() {
-              return {
-                adapterId: "unit",
-                defaultOpenFiles,
-                exclude,
-                maxFileBytes: 1024,
-                preexpandedDirectories,
-                preloadDirectories
-              };
-            }
+          get adapter() {
+            throw new Error("The neutral source editor must not inspect a legacy adapter.");
           },
           async getSession(sessionId = "") {
             return {
@@ -141,7 +127,7 @@ async function createSourceEditorFixture({
   };
 }
 
-test("source editor pattern matching handles adapter-owned directory excludes", () => {
+test("source editor pattern matching handles directory excludes", () => {
   assert.equal(pathMatchesPolicyPattern("node_modules/pkg/index.js", "node_modules"), true);
   assert.equal(pathMatchesPolicyPattern("packages/app/dist/index.js", "dist"), true);
   assert.equal(pathMatchesPolicyPattern("cmake-build-debug/main.o", "cmake-build-*"), true);
@@ -157,17 +143,23 @@ test("source editor reports language groups for supported file types", () => {
   assert.equal(sourceEditorLanguageForPath("README.txt"), "text");
 });
 
-test("source editor tree excludes paths from the adapter policy", async () => {
-  const fixture = await createSourceEditorFixture();
+test("source editor tree uses a neutral policy and excludes VCS internals", async () => {
+  const fixture = await createSourceEditorFixture({
+    extraFiles: [{
+      path: ".git/config",
+      text: "[core]\n"
+    }]
+  });
   try {
     const response = await fixture.service.readTree({
       sessionId: "session-1"
     });
     assert.equal(response.ok, true);
     const childNames = response.tree.children.map((child) => child.name);
-    assert.deepEqual(childNames, ["src"]);
-    assert.equal(response.tree.children[0].loaded, false);
-    assert.deepEqual(response.tree.children[0].children, []);
+    assert.deepEqual(childNames, ["dist", "node_modules", "src"]);
+    assert.equal(childNames.includes(".git"), false);
+    assert.deepEqual(response.policy.preexpandedDirectories, []);
+    assert.deepEqual(response.policy.preloadDirectories, []);
   } finally {
     await rm(fixture.root, {
       force: true,
@@ -248,11 +240,7 @@ test("source editor observes only an explicitly opened, policy-approved file", a
     await streaming;
     assert.equal(unsubscribed, true);
 
-    for (const excludedPath of [
-      ".git/config",
-      "dist/bundle.js",
-      "node_modules/pkg/index.js"
-    ]) {
+    for (const excludedPath of [".git/config"]) {
       await assert.rejects(() => fixture.service.streamFileChanges({
         path: excludedPath,
         sessionId: "session-1"
@@ -260,7 +248,7 @@ test("source editor observes only an explicitly opened, policy-approved file", a
         emit() {},
         isClosed: () => false,
         onClose() {}
-      }), /excluded by the project adapter/u);
+      }), /excluded from source editing/u);
     }
   } finally {
     fixture.service.close();
@@ -271,177 +259,18 @@ test("source editor observes only an explicitly opened, policy-approved file", a
   }
 });
 
-test("source editor exposes source-owned Vibe64 manifests and optional control directories", async () => {
-  const fixture = await createSourceEditorFixture({
-    extraFiles: [
-      {
-        path: "vibe64.project.json",
-        text: "{\"schema\":\"vibe64.project\",\"schemaVersion\":1,\"projectType\":\"jskit\",\"config\":{\"jskit_users\":\"users\"}}\n"
-      },
-      {
-        path: "vibe64.runtime-lock.json",
-        text: "{\"schema\":\"vibe64.runtime-lock\"}\n"
-      },
-      {
-        path: ".vibe64/prompts/review.md",
-        text: "Review this project.\n"
-      }
-    ]
-  });
-  try {
-    const rootResponse = await fixture.service.readTree({
-      sessionId: "session-1"
-    });
-    assert.equal(rootResponse.ok, true);
-    assert.ok(rootResponse.tree.children.some((child) => child.path === "vibe64.project.json"));
-    assert.ok(rootResponse.tree.children.some((child) => child.path === "vibe64.runtime-lock.json"));
-    assert.ok(rootResponse.tree.children.some((child) => child.path === ".vibe64"));
-
-    const controlRootResponse = await fixture.service.readTree({
-      path: ".vibe64",
-      sessionId: "session-1"
-    });
-    assert.equal(controlRootResponse.ok, true);
-    assert.ok(controlRootResponse.tree.children.some((child) => child.path === ".vibe64/prompts"));
-
-    const readConfigResponse = await fixture.service.readFile({
-      path: "vibe64.project.json",
-      sessionId: "session-1"
-    });
-    assert.equal(readConfigResponse.ok, true);
-    assert.match(readConfigResponse.file.text, /"projectType":"jskit"/u);
-  } finally {
-    await rm(fixture.root, {
-      force: true,
-      recursive: true
-    });
-  }
-});
-
-test("source editor enforces the Vibe64 source contract for source-tree .vibe64", async () => {
-  const fixture = await createSourceEditorFixture({
-    defaultOpenFiles: [".vibe64/tmp/cache.txt", ".vibe64/prompts/review.md"],
-    preloadDirectories: [".vibe64/sessions", ".vibe64/project-knowledge"],
-    extraFiles: [
-      {
-        path: ".vibe64/launcher/cover.webp",
-        text: "launcher cover"
-      },
-      {
-        path: ".vibe64/project-knowledge/notes.md",
-        text: "Project context.\n"
-      },
-      {
-        path: ".vibe64/prompts/review.md",
-        text: "Review this project.\n"
-      },
-      {
-        path: ".vibe64/scripts/check.sh",
-        text: "echo ok\n"
-      },
-      {
-        path: ".vibe64/code-index.md",
-        text: "Generated code index.\n"
-      },
-      {
-        path: ".vibe64/runtime/provider-state.json",
-        text: "{}\n"
-      },
-      {
-        path: ".vibe64/session/artifacts/log.txt",
-        text: "stale runtime path\n"
-      },
-      {
-        path: ".vibe64/sessions/active/session-1/source/leak.js",
-        text: "export const leaked = true;\n"
-      },
-      {
-        path: ".vibe64/tmp/cache.txt",
-        text: "temporary\n"
-      },
-      {
-        path: ".vibe64/uploads/input.txt",
-        text: "uploaded\n"
-      }
-    ]
-  });
-  try {
-    const rootResponse = await fixture.service.readTree({
-      sessionId: "session-1"
-    });
-    assert.equal(rootResponse.ok, true);
-    assert.ok(rootResponse.tree.children.some((child) => child.path === ".vibe64"));
-    assert.deepEqual(rootResponse.policy.defaultOpenFiles, [".vibe64/prompts/review.md"]);
-    assert.deepEqual(rootResponse.policy.preloadDirectories, [".vibe64/project-knowledge"]);
-
-    const controlRootResponse = await fixture.service.readTree({
-      path: ".vibe64",
-      sessionId: "session-1"
-    });
-    assert.equal(controlRootResponse.ok, true);
-    assert.deepEqual(controlRootResponse.tree.children.map((child) => child.path), [
-      ".vibe64/launcher",
-      ".vibe64/project-knowledge",
-      ".vibe64/prompts",
-      ".vibe64/scripts"
-    ]);
-
-    const allowedReadResponse = await fixture.service.readFile({
-      path: ".vibe64/prompts/review.md",
-      sessionId: "session-1"
-    });
-    assert.equal(allowedReadResponse.ok, true);
-
-    const invalidReadResponse = await fixture.service.readFile({
-      path: ".vibe64/tmp/cache.txt",
-      sessionId: "session-1"
-    });
-    assert.equal(invalidReadResponse.ok, false);
-    assert.equal(invalidReadResponse.statusCode, 403);
-    assert.equal(invalidReadResponse.errors[0].code, "vibe64_source_editor_file_excluded");
-
-    const invalidCreateResponse = await fixture.service.createFile({
-      path: ".vibe64/uploads/new.txt",
-      sessionId: "session-1"
-    });
-    assert.equal(invalidCreateResponse.ok, false);
-    assert.equal(invalidCreateResponse.statusCode, 403);
-    assert.equal(invalidCreateResponse.errors[0].code, "vibe64_source_editor_file_excluded");
-
-    if (RIPGREP_AVAILABLE) {
-      const filesResponse = await fixture.service.listFiles({
-        query: "leak",
-        sessionId: "session-1"
-      });
-      assert.equal(filesResponse.ok, true);
-      assert.deepEqual(filesResponse.files, []);
-    }
-  } finally {
-    await rm(fixture.root, {
-      force: true,
-      recursive: true
-    });
-  }
-});
-
-test("source editor exposes adapter-owned preload and preexpanded directories", async () => {
-  const fixture = await createSourceEditorFixture({
-    preexpandedDirectories: ["src"],
-    preloadDirectories: ["src", "packages"]
-  });
+test("source editor does not invent technology-specific preload directories", async () => {
+  const fixture = await createSourceEditorFixture();
   try {
     const response = await fixture.service.readTree({
       sessionId: "session-1"
     });
     assert.equal(response.ok, true);
-    assert.deepEqual(response.policy.preexpandedDirectories, ["src"]);
-    assert.deepEqual(response.policy.preloadDirectories, ["src", "packages"]);
+    assert.deepEqual(response.policy.preexpandedDirectories, []);
+    assert.deepEqual(response.policy.preloadDirectories, []);
     const srcNode = response.tree.children.find((child) => child.path === "src");
-    assert.equal(srcNode?.loaded, true);
-    assert.ok(srcNode.children.some((child) => child.path === "src/app.js"));
-    const pagesNode = srcNode.children.find((child) => child.path === "src/pages");
-    assert.equal(pagesNode?.loaded, true);
-    assert.equal(pagesNode.children.find((child) => child.path === "src/pages/admin")?.loaded, true);
+    assert.equal(srcNode?.loaded, false);
+    assert.deepEqual(srcNode?.children, []);
   } finally {
     await rm(fixture.root, {
       force: true,
@@ -610,7 +439,7 @@ test("source editor creates new files without overwriting existing or excluded p
     assert.equal(existingResponse.errors[0].code, "vibe64_source_editor_file_exists");
 
     const excludedResponse = await fixture.service.createFile({
-      path: "dist/generated.js",
+      path: ".git/generated.js",
       sessionId: "session-1"
     });
     assert.equal(excludedResponse.ok, false);
@@ -674,13 +503,18 @@ test("source editor resolves relative import targets inside the session source",
   }
 });
 
-test("source editor does not resolve import targets into excluded folders", async () => {
-  const fixture = await createSourceEditorFixture();
+test("source editor does not resolve import targets into VCS internals", async () => {
+  const fixture = await createSourceEditorFixture({
+    extraFiles: [{
+      path: ".git/config",
+      text: "[core]\n"
+    }]
+  });
   try {
     const response = await fixture.service.resolvePath({
       fromPath: "src/app.js",
       sessionId: "session-1",
-      target: "../node_modules/pkg/index.js"
+      target: "../.git/config"
     });
 
     assert.equal(response.ok, true);
@@ -1357,7 +1191,7 @@ test("source editor keeps temporary explanation chat retryable when agent cleanu
   }
 });
 
-test("source editor file matcher uses ripgrep and adapter policy excludes", async (t) => {
+test("source editor file matcher uses ripgrep with the neutral policy", async (t) => {
   if (!RIPGREP_AVAILABLE) {
     t.skip("ripgrep is not installed in this test environment");
     return;
@@ -1444,13 +1278,18 @@ test("source editor file matcher finds basename plus unordered path tokens", asy
   }
 });
 
-test("source editor search uses ripgrep and does not enter excluded folders", async (t) => {
+test("source editor search uses ripgrep and excludes VCS internals", async (t) => {
   if (!RIPGREP_AVAILABLE) {
     t.skip("ripgrep is not installed in this test environment");
     return;
   }
 
-  const fixture = await createSourceEditorFixture();
+  const fixture = await createSourceEditorFixture({
+    extraFiles: [{
+      path: ".git/hidden.txt",
+      text: "source editor VCS needle\n"
+    }]
+  });
   try {
     const response = await fixture.service.search({
       query: "source editor",
@@ -1459,10 +1298,15 @@ test("source editor search uses ripgrep and does not enter excluded folders", as
     assert.equal(response.ok, true);
     assert.equal(response.truncated, false);
     assert.deepEqual(response.results.map((result) => result.path), [
+      "dist/bundle.js",
+      "node_modules/pkg/index.js",
       "src/search-target-with-a-long-file-name.js"
     ]);
-    assert.equal(response.results[0].line, 1);
-    assert.match(response.results[0].preview, /visible needle/u);
+    const sourceResult = response.results.find((result) => (
+      result.path === "src/search-target-with-a-long-file-name.js"
+    ));
+    assert.equal(sourceResult?.line, 1);
+    assert.match(sourceResult?.preview || "", /visible needle/u);
   } finally {
     await rm(fixture.root, {
       force: true,

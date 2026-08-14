@@ -27,10 +27,7 @@ import {
 
 const CODEX_TERMINAL_NAMESPACE = "vibe64-codex";
 const GLOBAL_CODEX_TERMINAL_NAMESPACE = "vibe64-global-codex";
-const COMMAND_TERMINAL_NAMESPACE = "vibe64-command";
 const LAUNCH_TARGET_TERMINAL_NAMESPACE = "vibe64-launch-target";
-const TOOL_TERMINAL_NAMESPACE = "vibe64-tool";
-const FIX_CODEX_TERMINAL_NAMESPACE = "vibe64-fix-codex";
 
 function vibe64Result(operation) {
   return sharedVibe64Result(operation, {
@@ -57,18 +54,6 @@ function codexTerminalNamespace(sessionId) {
 
 function globalCodexTerminalNamespace() {
   return terminalNamespace(GLOBAL_CODEX_TERMINAL_NAMESPACE);
-}
-
-function fixCodexTerminalNamespace(jobId) {
-  return terminalNamespace(FIX_CODEX_TERMINAL_NAMESPACE, jobId);
-}
-
-function commandTerminalNamespace(sessionId) {
-  return terminalNamespace(COMMAND_TERMINAL_NAMESPACE, sessionId);
-}
-
-function toolTerminalNamespace(toolId) {
-  return terminalNamespace(TOOL_TERMINAL_NAMESPACE, toolId);
 }
 
 function launchTargetTerminalNamespace(sessionId) {
@@ -149,9 +134,7 @@ export {
   vibe64Result,
   codexTerminalNamespace,
   commandInvocation,
-  commandTerminalNamespace,
   directoryExists,
-  fixCodexTerminalNamespace,
   globalCodexTerminalNamespace,
   launchTargetTerminalNamespace,
   pathInsideOrEqual,
@@ -161,7 +144,6 @@ export {
   terminalTargetRoot,
   terminalWorktreePath,
   terminalProjectScopeKey,
-  toolTerminalNamespace,
   normalizePlainObject,
   shellQuote,
   stableHash

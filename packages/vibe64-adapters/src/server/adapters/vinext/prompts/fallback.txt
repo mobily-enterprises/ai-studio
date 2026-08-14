@@ -1,6 +1,0 @@
-{{systemStandard}}
-
-Vinext-specific guidance:
-- Treat this as a Vinext project or a Next.js project being migrated to Vinext.
-- Respect Next-compatible App Router or Pages Router structure, Vinext compatibility limits, Vite behavior, Cloudflare runtime expectations, package scripts, and migration state.
-- Keep changes compatible with the selected package manager and report migration or platform risks clearly.

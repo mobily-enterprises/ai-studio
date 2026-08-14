@@ -3,13 +3,9 @@ import {
   createSessionAgentManager
 } from "./agent/sessionAgentManager.js";
 import {
-  createCodexSessionAgentAdapter
-} from "./agent/providers/codexSessionAgentAdapter.js";
+  createCodexSessionAgentProvider
+} from "./agent/providers/codexSessionAgentProvider.js";
 import process from "node:process";
-import {
-  createCommandTerminalController,
-  createProjectToolTerminalController
-} from "./commandTerminal.js";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
@@ -17,9 +13,8 @@ import {
   recordSessionGitCommandActor as writeSessionGitCommandActor
 } from "./sessionGitCommandActor.js";
 import {
-  projectToolFailureFixPrompt,
-  sessionTerminalFailureFixPrompt
-} from "@local/vibe64-runtime/server/terminalFailureFixRequest";
+  createSessionSource as createManagedSessionSource
+} from "./sessionSource.js";
 import {
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
@@ -35,9 +30,6 @@ import {
 import {
   projectServiceTargetRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
-import {
-  sessionSourcePath
-} from "@local/vibe64-core/server/sessionSourcePath";
 import {
   currentProjectRequestContext
 } from "@local/vibe64-core/server/projectRequestContext";
@@ -58,14 +50,9 @@ import {
   vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server/sessionStore";
 import {
-  vibe64AgentTaskIsActive
-} from "@local/vibe64-runtime/shared";
-import {
-  VIBE64_AGENT_TASK_ACTIVE_RESULT,
   runVibe64AgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
 
-const CODEX_AFTER_COMMAND_THREAD_PREP_ENABLED = false;
 const PROJECT_RUNTIME_DORMANT_CLOSE_AFTER_MS = 30 * 60 * 1000;
 const PROJECT_RUNTIME_DORMANCY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const PROJECT_RUNTIME_IDLE_TIMEOUT_REASON = "idle-timeout";
@@ -137,8 +124,7 @@ function sessionActivityTimestamps(session = {}) {
     timestampMs(session.updatedAt),
     timestampMs(manifest.updatedAt),
     ...(Array.isArray(session?.agentRuns) ? session.agentRuns.map((run) => timestampMs(run?.updatedAt)) : []),
-    ...(Array.isArray(session?.backgroundTasks) ? session.backgroundTasks.map((task) => timestampMs(task?.updatedAt)) : []),
-    ...(Array.isArray(session?.commandLifecycles) ? session.commandLifecycles.map((entry) => timestampMs(entry?.updatedAt)) : [])
+    ...(Array.isArray(session?.backgroundTasks) ? session.backgroundTasks.map((task) => timestampMs(task?.updatedAt)) : [])
   ].filter((value) => value > 0);
 }
 
@@ -297,17 +283,14 @@ function createService({
     publishSessionChanged: publishSessionChanged.agentTerminal
   });
   const sessionAgent = createSessionAgentManager({
-    adapters: [createCodexSessionAgentAdapter({
+    providers: [createCodexSessionAgentProvider({
       controller: codex
     })]
   });
 
   async function runMainAgentWrite(sessionId = "", options = {}, operation) {
     const runtime = options.runtime || await projectService.createRuntime({
-      inspectSource: false,
-      input: {
-        sessionId
-      }
+      inspectSource: false
     });
     const exclusive = await runVibe64AgentWriteExclusive(
       runtime,
@@ -318,9 +301,6 @@ function createService({
               inspectSource: false
             })
           : options.session;
-        if (vibe64AgentTaskIsActive(session.agentTask)) {
-          return VIBE64_AGENT_TASK_ACTIVE_RESULT;
-        }
         return operation({
           ...options,
           runtime,
@@ -331,47 +311,6 @@ function createService({
     return exclusive.value;
   }
 
-  const command = createCommandTerminalController({
-    afterSuccessfulCommand: async ({ metadata = {}, session = {} } = {}) => {
-      const commandSourcePath = sessionSourcePath({
-        ...session,
-        metadata: {
-          ...(session.metadata || {}),
-          ...(metadata || {})
-        }
-      });
-      if (
-        commandSourcePath &&
-        typeof projectService.materializeRuntimeConfig === "function"
-      ) {
-        await projectService.materializeRuntimeConfig({
-          targetRoot: terminalTargetRoot(session, projectService),
-          sourcePath: commandSourcePath
-        });
-      }
-      if (!CODEX_AFTER_COMMAND_THREAD_PREP_ENABLED) {
-        return;
-      }
-      if (!commandSourcePath) {
-        return;
-      }
-      const result = await sessionAgent.ensureSession(session.sessionId, {
-        session
-      });
-      if (result?.ok === false) {
-        throw new Error(result.error || "Vibe64 Codex terminal could not be prepared.");
-      }
-    },
-    env,
-    logger,
-    projectService,
-    publishSessionChanged: publishSessionChanged.commandTerminal
-  });
-  const projectTool = createProjectToolTerminalController({
-    env,
-    logger,
-    projectService
-  });
   async function publishTerminalSessionChanged(kind = "", sessionId = "", reason = "") {
     const publisher = publishSessionChanged?.[kind];
     if (typeof publisher !== "function" || !String(sessionId || "").trim()) {
@@ -446,9 +385,7 @@ function createService({
     if (!knownAgentSessionReset) {
       knownAgentSessionReset = (async () => {
         const runtime = await projectService.createRuntime({
-          inspectSource: false,
-          skipProjectConfig: true,
-          sourceSetupRequired: false
+          inspectSource: false
         });
         const listOptions = {
           statusGroup: "all"
@@ -498,10 +435,7 @@ function createService({
       return session;
     }
     const runtime = await projectService.createRuntime({
-      inspectSource: false,
-      input: {
-        sessionId
-      }
+      inspectSource: false
     });
     if (typeof runtime?.getSession !== "function") {
       return session;
@@ -601,8 +535,7 @@ function createService({
           closeAllForSession: (id) => sessionAgent.closeSession(id)
         },
         label: "assistant"
-      },
-      { controller: command, label: "command" }
+      }
     ]);
   }
 
@@ -673,9 +606,7 @@ function createService({
 
   async function listOpenProjectRuntimeSessions() {
     const runtime = await projectService.createRuntime({
-      inspectSource: false,
-      skipProjectConfig: true,
-      sourceSetupRequired: false
+      inspectSource: false
     });
     const listOptions = {
       statusGroup: "open"
@@ -770,6 +701,10 @@ function createService({
   }
 
   const service = {
+    createSessionSource(input = {}) {
+      return createManagedSessionSource(input);
+    },
+
     async close() {
       await launchTarget.close();
       return {
@@ -856,8 +791,7 @@ function createService({
 
     async closeSessionNonAgentTerminals(sessionId) {
       return closeTerminalControllersForSession(sessionId, [
-        { controller: launchTarget, label: "launchTarget" },
-        { controller: command, label: "command" }
+        { controller: launchTarget, label: "launchTarget" }
       ], {
         eventPrefix: "server.terminals.closeSessionNonAgentTerminals"
       });
@@ -872,10 +806,7 @@ function createService({
         };
       }
       const runtime = input.runtime || await projectService.createRuntime({
-        inspectSource: false,
-        input: {
-          sessionId: normalizedSessionId
-        }
+        inspectSource: false
       });
       const session = input.session?.sessionId === normalizedSessionId
         ? input.session
@@ -1032,30 +963,10 @@ function createService({
       return codex.closeGlobalTerminal(terminalSessionId);
     },
 
-    closeFixCodexTerminal(jobId, terminalSessionId) {
-      return codex.closeFixTerminal(jobId, terminalSessionId);
-    },
-
-    async closeCommandTerminal(sessionId, terminalSessionId, input = {}) {
-      const result = await command.closeTerminal(sessionId, terminalSessionId, input);
-      await publishTerminalSessionChanged("commandTerminalClosed", sessionId, "command-terminal-closed");
-      return result;
-    },
-
-    closeProjectToolTerminal(toolId, terminalSessionId, input = {}) {
-      return projectTool.closeTerminal(toolId, terminalSessionId, input);
-    },
-
     async closeLaunchTargetTerminal(sessionId, terminalSessionId) {
       const result = await launchTarget.closeTerminal(sessionId, terminalSessionId);
       await publishTerminalSessionChanged("launchTargetClosed", sessionId, "launch-target-closed");
       return result;
-    },
-
-    deliverAgentPrompt(sessionId, handoff = {}, options = {}) {
-      return runMainAgentWrite(sessionId, options, (context) => (
-        sessionAgent.deliverPrompt(sessionId, handoff, context)
-      ));
     },
 
     createAgentConversation(sessionId, input = {}, options = {}) {
@@ -1094,10 +1005,6 @@ function createService({
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.sendMessage(sessionId, input, context)
       ));
-    },
-
-    injectGlobalCodexPrompt(handoff = {}) {
-      return codex.injectGlobalCodexPrompt(handoff);
     },
 
     ensureAgentSession(sessionId, options = {}) {
@@ -1144,24 +1051,12 @@ function createService({
       return codex.readGlobalTerminal(terminalSessionId);
     },
 
-    readFixCodexTerminal(jobId, terminalSessionId) {
-      return codex.readFixTerminal(jobId, terminalSessionId);
-    },
-
     readAgentTerminal(sessionId, terminalSessionId, options = {}) {
       return sessionAgent.readTerminal(sessionId, terminalSessionId, options);
     },
 
     readAgentConversation(sessionId, input = {}, options = {}) {
       return sessionAgent.readConversation(sessionId, input, options);
-    },
-
-    readCommandTerminal(sessionId, terminalSessionId, input = {}) {
-      return command.readTerminal(sessionId, terminalSessionId, input);
-    },
-
-    readProjectToolTerminal(toolId, terminalSessionId, input = {}) {
-      return projectTool.readTerminal(toolId, terminalSessionId, input);
     },
 
     readLaunchTargetTerminal(sessionId, terminalSessionId) {
@@ -1204,71 +1099,6 @@ function createService({
       return codex.startGlobalTerminal();
     },
 
-    async startProjectToolFixJob(toolId, input = {}) {
-      const targetRoot = terminalTargetRoot({}, projectService);
-      return codex.startFixJob({
-        prompt: projectToolFailureFixPrompt({
-          ...input,
-          targetRoot,
-          toolId: input.toolId || toolId,
-          toolLabel: input.toolLabel || input.actionLabel
-        }),
-        scope: "project",
-        subject: input.toolLabel || input.actionLabel || toolId,
-        targetRoot
-      });
-    },
-
-    async startSessionTerminalFixJob(sessionId, input = {}) {
-      const runtime = await projectService.createRuntime({
-        inspectSource: false,
-        input: {
-          sessionId
-        }
-      });
-      const session = await runtime.getSession(sessionId, {
-        inspectSource: false
-      });
-      const targetRoot = terminalTargetRoot(session, projectService);
-      const worktreePath = terminalWorktreePath(session);
-      return codex.startFixJob({
-        prompt: sessionTerminalFailureFixPrompt({
-          ...input,
-          currentStep: input.currentStep || session.currentStep || "",
-          sessionId: input.sessionId || sessionId,
-          stepStatus: input.stepStatus || session.stepMachine?.status || "",
-          targetRoot,
-          worktreePath
-        }),
-        scope: "session",
-        sessionRoot: session.sessionRoot || "",
-        subject: input.actionLabel || input.launchTargetLabel || input.actionId || input.launchTargetId || sessionId,
-        targetRoot,
-        workdir: worktreePath || targetRoot
-      });
-    },
-
-    reportFixCodexJob(jobId, input = {}) {
-      return codex.reportFixJob(jobId, input);
-    },
-
-    startCommandTerminal(sessionId, input = {}) {
-      return command.startTerminal(sessionId, input);
-    },
-
-    async runProjectTool(toolId, input = {}) {
-      const run = await projectService.prepareProjectToolRun(toolId, input);
-      if (run?.ok === false) {
-        return run;
-      }
-      if (run.type === "prompt") {
-        return codex.injectGlobalCodexPrompt({
-          prompt: run.prompt
-        });
-      }
-      return projectTool.startPreparedRun(toolId, run, input);
-    },
-
     startLaunchTargetTerminal(sessionId, input = {}) {
       return launchTarget.startTerminal(sessionId, input);
     },
@@ -1287,18 +1117,6 @@ function createService({
       return codex.subscribeGlobalTerminal(terminalSessionId, subscriber);
     },
 
-    subscribeFixCodexTerminal(jobId, terminalSessionId, subscriber) {
-      return codex.subscribeFixTerminal(jobId, terminalSessionId, subscriber);
-    },
-
-    subscribeCommandTerminal(sessionId, terminalSessionId, subscriber, input = {}) {
-      return command.subscribeTerminal(sessionId, terminalSessionId, subscriber, input);
-    },
-
-    subscribeProjectToolTerminal(toolId, terminalSessionId, subscriber, input = {}) {
-      return projectTool.subscribeTerminal(toolId, terminalSessionId, subscriber, input);
-    },
-
     subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber) {
       return launchTarget.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
@@ -1314,7 +1132,7 @@ function createService({
     writeAgentTerminal(sessionId, terminalSessionId, data, input = {}, options = {}) {
       // A terminal write targets an already-open, namespace-owned PTY. It is
       // transport, not a new assistant operation: putting raw input through
-      // runMainAgentWrite() hydrated the complete workflow session and acquired
+      // runMainAgentWrite() hydrates the complete session and acquires
       // the assistant-operation lock for every WebSocket input chunk—often
       // every keystroke. Long-lived sessions therefore became progressively
       // slower and terminal restarts contended with ordinary typing.
@@ -1325,36 +1143,12 @@ function createService({
       return codex.writeGlobalTerminal(terminalSessionId, data);
     },
 
-    writeFixCodexTerminal(jobId, terminalSessionId, data) {
-      return codex.writeFixTerminal(jobId, terminalSessionId, data);
-    },
-
     resizeAgentTerminal(sessionId, terminalSessionId, size, options = {}) {
       return sessionAgent.resizeTerminal(sessionId, terminalSessionId, size, options);
     },
 
     resizeGlobalCodexTerminal(terminalSessionId, size) {
       return codex.resizeGlobalTerminal(terminalSessionId, size);
-    },
-
-    resizeFixCodexTerminal(jobId, terminalSessionId, size) {
-      return codex.resizeFixTerminal(jobId, terminalSessionId, size);
-    },
-
-    writeCommandTerminal(sessionId, terminalSessionId, data, input = {}) {
-      return command.writeTerminal(sessionId, terminalSessionId, data, input);
-    },
-
-    writeProjectToolTerminal(toolId, terminalSessionId, data, input = {}) {
-      return projectTool.writeTerminal(toolId, terminalSessionId, data, input);
-    },
-
-    resizeCommandTerminal(sessionId, terminalSessionId, size, input = {}) {
-      return command.resizeTerminal(sessionId, terminalSessionId, size, input);
-    },
-
-    resizeProjectToolTerminal(toolId, terminalSessionId, size, input = {}) {
-      return projectTool.resizeTerminal(toolId, terminalSessionId, size, input);
     },
 
     writeLaunchTargetTerminal(sessionId, terminalSessionId, data) {

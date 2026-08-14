@@ -24,8 +24,6 @@ const CODEX_SESSION_REASONING_SUMMARY = "concise";
 const CODEX_SESSION_APPROVAL_POLICY = "never";
 const CODEX_SESSION_SANDBOX = "danger-full-access";
 const CODEX_APP_SERVER_CONTEXT_TURN_TIMEOUT_MS = 60000;
-const CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME = "vibe64_submit_workflow_result";
-const CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT = "dynamic_tool_v1";
 const CODEX_CONTEXT_RECOVERY_PROMPT_URL = new URL("./prompts/codex_context_recovery.txt", import.meta.url);
 let codexContextRecoveryTemplatePromise = null;
 
@@ -61,75 +59,8 @@ function codexAppServerThreadSettings({
   };
 }
 
-function codexAppServerWorkflowResultTool() {
-  return {
-    description: "Submit the outcome of the current routed Vibe64 workflow step. Use this only when the Vibe64 prompt requests a workflow result. Call it before replying normally to the user; never print the arguments as JSON in the final response.",
-    inputSchema: {
-      additionalProperties: false,
-      properties: {
-        fields: {
-          additionalProperties: {
-            type: "string"
-          },
-          description: "Workflow values requested by the current Vibe64 prompt. Use an empty object while waiting for user input.",
-          type: "object"
-        },
-        inputFields: {
-          description: "Structured user inputs required before work can continue. Use an empty array when none are needed.",
-          items: {
-            additionalProperties: false,
-            properties: {
-              kind: {
-                enum: ["text", "textarea", "password"],
-                type: "string"
-              },
-              label: {
-                type: "string"
-              },
-              name: {
-                type: "string"
-              },
-              privacy: {
-                enum: ["public", "private"],
-                type: "string"
-              },
-              required: {
-                type: "boolean"
-              }
-            },
-            required: ["name", "label", "kind", "privacy", "required"],
-            type: "object"
-          },
-          type: "array"
-        },
-        kind: {
-          enum: ["ready", "waiting_for_input"],
-          type: "string"
-        },
-        message: {
-          description: "The exact user-facing question when waiting for input; otherwise an empty string.",
-          type: "string"
-        },
-        stepId: {
-          type: "string"
-        },
-        stepStatus: {
-          type: "string"
-        }
-      },
-      required: ["kind", "stepId", "stepStatus", "fields", "inputFields", "message"],
-      type: "object"
-    },
-    name: CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME,
-    type: "function"
-  };
-}
-
 function codexAppServerThreadStartSettings(options = {}) {
-  return {
-    ...codexAppServerThreadSettings(options),
-    dynamicTools: [codexAppServerWorkflowResultTool()]
-  };
+  return codexAppServerThreadSettings(options);
 }
 
 function codexAppServerTurnSettings({
@@ -331,7 +262,6 @@ function codexAppServerIdentityMetadata({
       }).command
     : "";
   return {
-    agent_workflow_result_transport: CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
     agent_identity_captured_at: capturedAt,
     agent_identity_conversation_id: normalizedThreadId,
     agent_identity_error: "",
@@ -613,10 +543,7 @@ async function ensureCodexAppServerThreadForSession({
   });
   let replacedThreadError = null;
   let thread = null;
-  const existingThreadSupportsWorkflowResults = normalizeAgentText(
-    session.metadata?.agent_workflow_result_transport
-  ) === CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT;
-  if (existingThreadId && existingThreadSupportsWorkflowResults) {
+  if (existingThreadId) {
     try {
       thread = await provider.resumeThread(existingThreadId, threadSettings);
     } catch (error) {
@@ -629,9 +556,6 @@ async function ensureCodexAppServerThreadForSession({
       replacedThreadError = error;
       thread = await provider.startThread(threadStartSettings);
     }
-  } else if (existingThreadId) {
-    replacedThreadError = new Error("The existing Codex thread does not provide the current Vibe64 workflow-result control.");
-    thread = await provider.startThread(threadStartSettings);
   } else {
     thread = await provider.startThread(threadStartSettings);
   }
@@ -721,8 +645,6 @@ export {
   CODEX_SESSION_REASONING_EFFORT,
   CODEX_SESSION_REASONING_SUMMARY,
   CODEX_SESSION_SANDBOX,
-  CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME,
-  CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
   codexAppServerIdentityMetadata,
   codexAppServerPromptWithContextRefresh,
   codexAppServerThreadHasReadableHistory,
@@ -731,7 +653,6 @@ export {
   codexAppServerThreadSettings,
   codexAppServerTurnPrompt,
   codexAppServerTurnSettings,
-  codexAppServerWorkflowResultTool,
   ensureCodexAppServerThreadForSession,
   sendCodexAppServerPromptForSession,
   writeCodexAppServerIdentityMetadata

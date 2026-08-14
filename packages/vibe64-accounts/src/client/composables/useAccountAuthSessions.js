@@ -176,14 +176,6 @@ function useAccountAuthSessions(
     try {
       await accounts.logout(accountId);
       await refreshStatus();
-      await invalidateCapabilitiesForAccountChange({
-        event: "client.auth.logout.completed",
-        payload: {
-          accountId: String(accountId || ""),
-          connected: false,
-          status: "not_connected"
-        }
-      });
     } catch (error) {
       localError.value = String(error?.message || error || "Logout failed.");
     } finally {
@@ -342,14 +334,10 @@ function useAccountAuthSessions(
       const accountId = authSessionAccountId(nextSession) || authSessionAccountId(previousSession);
       forgetSession(nextSession);
       await refreshStatus();
-      await invalidateCapabilitiesForAccountChange({
-        event,
-        payload: {
-          accountId,
-          authSessionId: String(nextSession.id || previousSession?.id || ""),
-          connected: true,
-          status: "connected"
-        }
+      authDebug("client.auth.session.connected", {
+        accountId,
+        authSessionId: String(nextSession.id || previousSession?.id || ""),
+        event
       });
     } else if (nextSession.status === "failed") {
       await refreshStatus();
@@ -403,33 +391,6 @@ function useAccountAuthSessions(
       sessionId: session.id || ""
     });
     delete activeSessions[accountId];
-  }
-
-  async function invalidateCapabilitiesForAccountChange(context = {}) {
-    const invalidateCapabilities = accounts?.invalidateCapabilities;
-    if (typeof invalidateCapabilities !== "function") {
-      authDebug("client.auth.capabilities.invalidate.skip", {
-        event: String(context.event || ""),
-        reason: "missing_accounts_invalidator"
-      });
-      return;
-    }
-
-    authDebug("client.auth.capabilities.invalidate.request", {
-      accountId: String(context.payload?.accountId || ""),
-      event: String(context.event || ""),
-      status: String(context.payload?.status || "")
-    });
-    try {
-      await invalidateCapabilities(context);
-    } catch (error) {
-      authDebug("client.auth.capabilities.invalidate.error", {
-        accountId: String(context.payload?.accountId || ""),
-        event: String(context.event || ""),
-        message: String(error?.message || error || "Capabilities invalidation failed."),
-        status: String(context.payload?.status || "")
-      });
-    }
   }
 
   return {
@@ -572,8 +533,8 @@ function plainAuthSession(session = {}) {
   return session && typeof session === "object" && !Array.isArray(session) ? session : {};
 }
 
-function isPlainAuthSession(session = {}) {
-  return session && typeof session === "object" && !Array.isArray(session);
+function isPlainAuthSession(session) {
+  return Boolean(session && typeof session === "object" && !Array.isArray(session));
 }
 
 function defaultBrowserWindow() {

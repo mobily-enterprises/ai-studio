@@ -7,12 +7,6 @@ const VIBE64_AGENT_WRITE_BUSY_RESULT = Object.freeze({
   retryable: true
 });
 
-const VIBE64_AGENT_TASK_ACTIVE_RESULT = Object.freeze({
-  code: "vibe64_agent_task_active",
-  error: "Finish or stop the focused task before using the main conversation.",
-  ok: false
-});
-
 async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation) {
   if (typeof operation !== "function") {
     throw new TypeError("Exclusive Vibe64 agent work requires an operation.");
@@ -37,6 +31,5 @@ async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation) 
 }
 
 export {
-  VIBE64_AGENT_TASK_ACTIVE_RESULT,
   runVibe64AgentWriteExclusive
 };

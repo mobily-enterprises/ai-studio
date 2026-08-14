@@ -8,7 +8,7 @@ import {
 class Vibe64SourceEditorProvider {
   static id = "feature.vibe64-source-editor";
 
-  static dependsOn = [
+  static startsAfter = [
     "feature.vibe64-project",
     "feature.vibe64-terminals"
   ];

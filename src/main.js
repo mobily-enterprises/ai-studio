@@ -18,14 +18,14 @@ import {
   bootstrapClientShellApp,
   createShellRouter
 } from "@jskit-ai/kernel/client";
-import { configureUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
+import { configureHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import { config } from "../config/public.js";
 import {
   bootBrowserLifecycle
 } from "./lib/browserLifecycleBootstrap.js";
 import { resolveStudioRequestUrl } from "./lib/studioUrls.js";
 
-configureUsersWebHttpClient({
+configureHttpWebClient({
   csrf: {
     enabled: false
   },

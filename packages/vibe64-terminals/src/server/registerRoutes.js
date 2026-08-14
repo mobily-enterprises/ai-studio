@@ -1,22 +1,13 @@
 import {
   agentAttachmentInputValidator,
-  commandTerminalInputValidator,
-  fixCodexReportInputValidator,
   launchTargetInputValidator,
   previewIdentityInputValidator,
-  projectToolFixInputValidator,
-  projectToolRunInputValidator,
-  sessionTerminalFixInputValidator,
   terminalControlKeyInputValidator,
   terminalControlTextInputValidator
 } from "./inputSchemas.js";
 import {
-  ACTION_RUN_PROJECT_TOOL,
-  ACTION_START_PROJECT_TOOL_FIX,
-  ACTION_START_SESSION_TERMINAL_FIX,
   ACTION_OPEN_LAUNCH_TARGET,
   ACTION_SELECT_PREVIEW_IDENTITY,
-  ACTION_START_COMMAND_TERMINAL,
   ACTION_START_LAUNCH_TARGET_TERMINAL,
   ACTION_UPLOAD_AGENT_ATTACHMENT
 } from "./actions.js";
@@ -85,49 +76,6 @@ function registerRoutes(
     return terminalService().closeProjectRuntime(routes.requestBody(request));
   });
 
-  routes.actionRoute("POST", "/tools/:toolId/run", {
-    actionId: ACTION_RUN_PROJECT_TOOL,
-    body: projectToolRunInputValidator,
-    buildInput(request) {
-      return withVibe64User(request, {
-        ...routes.requestBody(request),
-        toolId: request.params.toolId
-      });
-    },
-    summary: "Run a Vibe64 project tool."
-  });
-
-  routes.actionRoute("POST", "/tools/:toolId/fix", {
-    actionId: ACTION_START_PROJECT_TOOL_FIX,
-    body: projectToolFixInputValidator,
-    buildInput(request) {
-      return {
-        ...routes.requestBody(request),
-        toolId: request.params.toolId
-      };
-    },
-    summary: "Start an ephemeral Fix Codex job for a Vibe64 project tool failure."
-  });
-
-  routes.serviceRoute("POST", "/fix-codex-jobs/:jobId/report", {
-    body: fixCodexReportInputValidator,
-    summary: "Report an ephemeral Fix Codex job result."
-  }, (request) => {
-    return terminalService().reportFixCodexJob(request.params.jobId, routes.requestBody(request));
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/terminal-failure-fix", {
-    actionId: ACTION_START_SESSION_TERMINAL_FIX,
-    body: sessionTerminalFixInputValidator,
-    buildInput(request) {
-      return {
-        ...routes.requestBody(request),
-        sessionId: request.params.sessionId
-      };
-    },
-    summary: "Start an ephemeral Fix Codex job for a Vibe64 session terminal failure."
-  });
-
   routes.serviceRoute("GET", "/sessions/:sessionId/launch-targets", {
     summary: "Read Vibe64 launch target status."
   }, (request) => {
@@ -162,13 +110,6 @@ function registerRoutes(
       };
     },
     summary: "Select the application identity for this preview browser."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/command-terminal", {
-    actionId: ACTION_START_COMMAND_TERMINAL,
-    body: commandTerminalInputValidator,
-    buildInput: (request) => withVibe64User(request, bodyWithSessionId(routes)(request)),
-    summary: "Start an Vibe64 command terminal."
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/agent-terminal", {
@@ -232,34 +173,6 @@ function registerRoutes(
     readSummary: "Read a global Vibe64 Codex terminal snapshot.",
     closeSummary: "Close a global Vibe64 Codex terminal.",
     write: (terminalSessionId, data) => terminalService().writeGlobalCodexTerminal(terminalSessionId, data)
-  });
-
-  registerToolTerminalSnapshotRoutes(routes, {
-    close: (toolId, terminalSessionId, input) => terminalService().closeProjectToolTerminal(toolId, terminalSessionId, input),
-    path: "/tools/:toolId/terminal/:terminalSessionId",
-    read: (toolId, terminalSessionId, input) => terminalService().readProjectToolTerminal(toolId, terminalSessionId, input),
-    readSummary: "Read a Vibe64 project tool terminal snapshot.",
-    closeSummary: "Close a Vibe64 project tool terminal.",
-    write: (toolId, terminalSessionId, data, input) => terminalService().writeProjectToolTerminal(toolId, terminalSessionId, data, input)
-  });
-
-  registerFixTerminalSnapshotRoutes(routes, {
-    close: (jobId, terminalSessionId) => terminalService().closeFixCodexTerminal(jobId, terminalSessionId),
-    control: true,
-    path: "/fix-codex-jobs/:jobId/terminal/:terminalSessionId",
-    read: (jobId, terminalSessionId) => terminalService().readFixCodexTerminal(jobId, terminalSessionId),
-    readSummary: "Read a Fix Codex terminal snapshot.",
-    closeSummary: "Close a Fix Codex terminal.",
-    write: (jobId, terminalSessionId, data) => terminalService().writeFixCodexTerminal(jobId, terminalSessionId, data)
-  });
-
-  registerTerminalSnapshotRoutes(routes, {
-    close: (sessionId, terminalSessionId, input) => terminalService().closeCommandTerminal(sessionId, terminalSessionId, input),
-    path: "/sessions/:sessionId/command-terminal/:terminalSessionId",
-    read: (sessionId, terminalSessionId, input) => terminalService().readCommandTerminal(sessionId, terminalSessionId, input),
-    readSummary: "Read an Vibe64 command terminal snapshot.",
-    closeSummary: "Close an Vibe64 command terminal.",
-    write: (sessionId, terminalSessionId, data, input) => terminalService().writeCommandTerminal(sessionId, terminalSessionId, data, input)
   });
 
   registerVibe64TerminalWebSocketRoutes(app, routes, {
@@ -342,22 +255,6 @@ function globalTerminalRouteInput(request, input = {}) {
   };
 }
 
-function toolTerminalRouteInput(request, input = {}) {
-  return withVibe64User(request, {
-    ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
-    terminalSessionId: request.params.terminalSessionId,
-    toolId: request.params.toolId
-  });
-}
-
-function fixTerminalRouteInput(request, input = {}) {
-  return {
-    ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
-    jobId: request.params.jobId,
-    terminalSessionId: request.params.terminalSessionId
-  };
-}
-
 function registerTerminalSnapshotRoutes(routes, {
   close,
   closeSummary,
@@ -429,82 +326,6 @@ function registerGlobalTerminalSnapshotRoutes(routes, {
       read: (input) => read(input.terminalSessionId),
       write: write
         ? (input, data) => write(input.terminalSessionId, data)
-        : null
-    });
-  }
-}
-
-function registerToolTerminalSnapshotRoutes(routes, {
-  close,
-  closeSummary,
-  control = false,
-  path,
-  read,
-  readSummary,
-  write = null
-}) {
-  routes.serviceRoute("GET", path, {
-    failureStatus: 404,
-    successStatus: 200,
-    summary: readSummary
-  }, (request) => {
-    const input = toolTerminalRouteInput(request);
-    return read(input.toolId, input.terminalSessionId, input);
-  });
-
-  routes.serviceRoute("DELETE", path, {
-    statusCode: 200,
-    summary: closeSummary
-  }, (request) => {
-    const input = toolTerminalRouteInput(request);
-    return close(input.toolId, input.terminalSessionId, input);
-  });
-
-  if (control) {
-    registerTerminalControlRoutes(routes, {
-      inputForRequest: toolTerminalRouteInput,
-      path,
-      read: (input) => read(input.toolId, input.terminalSessionId, input),
-      write: write
-        ? (input, data) => write(input.toolId, input.terminalSessionId, data, input)
-        : null
-    });
-  }
-}
-
-function registerFixTerminalSnapshotRoutes(routes, {
-  close,
-  closeSummary,
-  control = false,
-  path,
-  read,
-  readSummary,
-  write = null
-}) {
-  routes.serviceRoute("GET", path, {
-    failureStatus: 404,
-    successStatus: 200,
-    summary: readSummary
-  }, (request) => {
-    const input = fixTerminalRouteInput(request);
-    return read(input.jobId, input.terminalSessionId);
-  });
-
-  routes.serviceRoute("DELETE", path, {
-    statusCode: 200,
-    summary: closeSummary
-  }, (request) => {
-    const input = fixTerminalRouteInput(request);
-    return close(input.jobId, input.terminalSessionId);
-  });
-
-  if (control) {
-    registerTerminalControlRoutes(routes, {
-      inputForRequest: fixTerminalRouteInput,
-      path,
-      read: (input) => read(input.jobId, input.terminalSessionId),
-      write: write
-        ? (input, data) => write(input.jobId, input.terminalSessionId, data)
         : null
     });
   }
@@ -600,44 +421,6 @@ function registerVibe64TerminalWebSocketRoutes(app, routes, {
 
   registerTerminalWebSocketRoute(app, {
     projectContext,
-    routePath: `${routes.routeBase}/fix-codex-jobs/:jobId/terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
-    serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
-    subscribe(service, { jobId, subscriber, terminalSessionId }) {
-      return service.subscribeFixCodexTerminal(jobId, terminalSessionId, subscriber);
-    },
-    resize(service, { cols, jobId, rows, terminalSessionId }) {
-      return service.resizeFixCodexTerminal(jobId, terminalSessionId, { cols, rows });
-    },
-    write(service, { data, jobId, terminalSessionId }) {
-      return service.writeFixCodexTerminal(jobId, terminalSessionId, data);
-    }
-  });
-
-  registerTerminalWebSocketRoute(app, {
-    projectContext,
-    routePath: `${routes.routeBase}/tools/:toolId/terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
-    serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
-    subscribe(service, { request, subscriber, terminalSessionId, toolId }) {
-      return service.subscribeProjectToolTerminal(toolId, terminalSessionId, subscriber, {
-        request
-      });
-    },
-    resize(service, { cols, request, rows, terminalSessionId, toolId }) {
-      return service.resizeProjectToolTerminal(toolId, terminalSessionId, { cols, rows }, {
-        request
-      });
-    },
-    write(service, { data, request, terminalSessionId, toolId }) {
-      return service.writeProjectToolTerminal(toolId, terminalSessionId, data, {
-        request
-      });
-    }
-  });
-
-  registerTerminalWebSocketRoute(app, {
-    projectContext,
     routePath: `${routes.routeBase}/sessions/:sessionId/agent-terminal/:terminalSessionId/ws`,
     serviceId: VIBE64_TERMINALS_SERVICE,
     serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
@@ -650,28 +433,6 @@ function registerVibe64TerminalWebSocketRoutes(app, routes, {
     write(service, { data, request, sessionId, terminalSessionId }) {
       return service.writeAgentTerminal(sessionId, terminalSessionId, data, {
         originId: requestQueryValue(request, "originId"),
-        request
-      });
-    }
-  });
-
-  registerTerminalWebSocketRoute(app, {
-    projectContext,
-    routePath: `${routes.routeBase}/sessions/:sessionId/command-terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
-    serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
-    subscribe(service, { request, sessionId, subscriber, terminalSessionId }) {
-      return service.subscribeCommandTerminal(sessionId, terminalSessionId, subscriber, {
-        request
-      });
-    },
-    resize(service, { cols, request, rows, sessionId, terminalSessionId }) {
-      return service.resizeCommandTerminal(sessionId, terminalSessionId, { cols, rows }, {
-        request
-      });
-    },
-    write(service, { data, request, sessionId, terminalSessionId }) {
-      return service.writeCommandTerminal(sessionId, terminalSessionId, data, {
         request
       });
     }

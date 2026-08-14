@@ -15,9 +15,6 @@ import {
 import {
   VIBE64_RUNTIME_MODE_LOCAL
 } from "../server/lib/runtimeProfile.js";
-import {
-  resolveJskitLockPath
-} from "../server/lib/jskitLockPath.js";
 
 const SERVER_ENTRYPOINT = fileURLToPath(import.meta.url);
 const DEFAULT_LOCAL_EDITOR_BROWSER_PORT = 3001;
@@ -78,7 +75,6 @@ function readRequiredArg(args, index, optionName) {
 }
 
 function parseStartupArgs(args = process.argv.slice(2)) {
-  let jskitLockPath = "";
   let startupSlug = "";
   let targetRoot = "";
   for (let index = 0; index < args.length; index += 1) {
@@ -95,18 +91,6 @@ function parseStartupArgs(args = process.argv.slice(2)) {
       normalized === "--open=false" ||
       normalized === "--open=0"
     ) {
-      continue;
-    }
-    if (normalized === "--jskit-lock") {
-      jskitLockPath = readRequiredArg(args, index, arg);
-      index += 1;
-      continue;
-    }
-    if (normalized.startsWith("--jskit-lock=")) {
-      jskitLockPath = arg.slice("--jskit-lock=".length).trim();
-      if (!jskitLockPath) {
-        throw unsupportedStartupArg(arg);
-      }
       continue;
     }
     if (normalized === "--project") {
@@ -142,9 +126,6 @@ function parseStartupArgs(args = process.argv.slice(2)) {
     startupSlug = localStartupSlugForTargetRoot(targetRoot);
   }
   return {
-    jskitLockPath: resolveJskitLockPath({
-      explicitPath: jskitLockPath
-    }),
     openOnStart: shouldOpenStartupBrowser(args, {
       targetRoot
     }),
@@ -191,7 +172,6 @@ async function openBrowser(url) {
 function serverStartOptions({
   env = process.env,
   openOnStart = false,
-  jskitLockPath = "",
   runtimeMode = VIBE64_RUNTIME_MODE_LOCAL,
   startupSlug = "",
   targetRoot = ""
@@ -200,10 +180,6 @@ function serverStartOptions({
   const envPortConfigured = Boolean(String(env.PORT || "").trim());
   return {
     browserLifecycleShutdown: runtimeMode === VIBE64_RUNTIME_MODE_LOCAL,
-    jskitLockPath: resolveJskitLockPath({
-      env,
-      explicitPath: jskitLockPath
-    }),
     port: localBrowserOpen && !envPortConfigured ? DEFAULT_LOCAL_EDITOR_BROWSER_PORT : undefined,
     runtimeMode,
     strictPort: envPortConfigured,
@@ -230,7 +206,6 @@ function applyLocalCliRuntimeNamespace({
 async function main() {
   const {
     openOnStart,
-    jskitLockPath,
     runtimeMode,
     startupSlug,
     targetRoot
@@ -240,7 +215,6 @@ async function main() {
   });
   const app = await startServer(serverStartOptions({
     openOnStart,
-    jskitLockPath,
     runtimeMode,
     startupSlug,
     targetRoot

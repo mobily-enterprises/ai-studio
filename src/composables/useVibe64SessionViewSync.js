@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
-import { getUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
+import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
   VIBE64_SESSION_VIEW_CHANGED_EVENT,
   vibe64SessionViewStatePath
@@ -272,7 +272,7 @@ function useVibe64SessionViewSync({
       return;
     }
     const routeFullPath = activeRouteFullPath.value;
-    void getUsersWebHttpClient().request(
+    void getHttpWebClient().request(
       vibe64SessionViewStatePath(activeSessionsApiPath.value, activeSessionId.value),
       {
         body: {

@@ -26,6 +26,7 @@ import {
   stableHash,
   VIBE64_INTERACTIVE_RUNTIME_PACKS
 } from "@local/vibe64-execution/server";
+import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
 import {
   STUDIO_MANAGED_CODEX_COMMAND,
   STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
@@ -601,9 +602,9 @@ function codexAppServerCredentialHome(toolHomeSource = "", baseEnv = {}) {
 
 function codexAppServerShimDirs(terminalEnv = {}) {
   const normalizedTerminalEnv = normalizeCodexAppServerTerminalEnv(terminalEnv);
-  return [
+  return withGenesisCommandShim([
     normalizedTerminalEnv[VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV]
-  ].map(normalizeAgentText).filter(Boolean);
+  ].map(normalizeAgentText).filter(Boolean));
 }
 
 function codexAppServerRuntimes(runtimes = []) {

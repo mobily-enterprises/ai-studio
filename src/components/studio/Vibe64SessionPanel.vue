@@ -168,18 +168,14 @@
         :session-data="sessionData"
         :session-id="runtimeSessionId"
         :chat-collapsed="chatCollapsed"
-        :github-actor-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.githubActorTeleportTarget : ''"
         :project-context="props.projectContext"
         :preview-toolbar-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.previewToolbarTeleportTarget : ''"
         :project-pane="projectPane"
-        :save-project-config="props.saveProjectConfig"
-        :saving-project-config="props.savingProjectConfig"
         :toolbar-sessions="toolbar.sessions"
         @busy-change="setRuntimeBusy"
         @page-error-change="setRuntimePageError"
         @toolbar-controls-ready="setRuntimeToolbarControls"
         @project-attention="emitProjectAttention"
-        @project-pane-change="emitProjectPaneChange"
       >
         <template #dashboard="dashboardSlotProps">
           <slot
@@ -214,7 +210,6 @@ const {
   dashboardProjectActive,
   dismissPageError,
   emitProjectAttention,
-  emitProjectPaneChange,
   emptyChatHintText,
   emptyCreateAttention,
   emptyDashboardContext,
@@ -514,6 +509,7 @@ const {
   display: grid;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 

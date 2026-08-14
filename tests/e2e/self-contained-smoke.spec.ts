@@ -3,14 +3,10 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import {
   DASHBOARD_PATH,
   DEVELOPMENT_PATH,
-  projectRuntimeRoot,
   SCOPED_API_PREFIX
 } from "./support/base-shell-data";
 
 const targetRoot = "/workspace/example-target-app";
-const savedProjectConfigValues = {
-  jskit_database_runtime: "none"
-};
 
 test("home loads through a self-contained mocked Studio shell", async ({ page }) => {
   await mockReadyStudioShell(page);
@@ -40,12 +36,7 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await expect(accountConnectionsDialog.getByRole("heading", { level: 1, name: "GitHub Connection" })).toBeVisible();
   await accountConnectionsDialog.getByRole("button", { name: "Close account connections" }).click();
   await expect(accountConnectionsDialog).toBeHidden();
-  await page.getByRole("button", { name: "New Session" }).click({ force: true });
-  await expect(page.getByText("Session type")).toBeVisible();
-  await expect(page.getByText("Free-form work", { exact: true })).toBeVisible();
-  await expect(page.getByText("Work on issue or PR", { exact: true })).toBeVisible();
-  await expect(page.getByText("General coding", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Documentation/non code maintenance", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Session type", { exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(developmentUrlPattern());
 });
 
@@ -95,126 +86,17 @@ type MockReadyStudioShellOptions = {
 
 async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOptions = {}) {
   const failInitialGetCounts = new Map(Object.entries(options.failInitialGetCounts || {}));
-  let projectConfigResolved = false;
-  let markProjectConfigResolved = () => undefined;
-  const projectConfigReady = new Promise<void>((resolve) => {
-    markProjectConfigResolved = () => {
-      if (projectConfigResolved) {
+  let projectFoundationResolved = false;
+  let markProjectFoundationResolved = () => undefined;
+  const projectFoundationReady = new Promise<void>((resolve) => {
+    markProjectFoundationResolved = () => {
+      if (projectFoundationResolved) {
         return;
       }
-      projectConfigResolved = true;
+      projectFoundationResolved = true;
       resolve();
     };
   });
-  const connectionsReadyPayload = {
-    connections: [
-      {
-        connected: true,
-        id: "codex",
-        label: "Codex",
-        status: "connected"
-      },
-      {
-        connected: true,
-        id: "github",
-        label: "GitHub",
-        status: "connected"
-      }
-    ],
-    ok: true,
-    ready: true
-  };
-  const setupReadinessReadyPayload = {
-    currentStage: null,
-    message: "",
-    ready: true,
-    stages: [
-      {
-        checks: [],
-        ok: true,
-        ready: true
-      },
-      {
-        checks: [],
-        ok: true,
-        ready: true
-      },
-      {
-        ok: true,
-        ready: true,
-        stages: []
-      }
-    ]
-  };
-  const capabilitiesPayload = {
-    capabilities: {
-      chat: { enabled: true, fix: null, reason: "" },
-      createSession: { enabled: true, fix: null, reason: "" },
-      githubWorkflow: { enabled: true, fix: null, reason: "" },
-      home: { enabled: true, fix: null, reason: "" },
-      preview: { enabled: true, fix: null, reason: "" },
-      runScripts: { enabled: true, fix: null, reason: "" }
-    },
-    connections: {
-      ai: {
-        message: "Codex is selected and authenticated.",
-        providers: [
-          {
-            ...connectionsReadyPayload.connections[0],
-            ready: true,
-            selected: true
-          }
-        ],
-        ready: true,
-        selectedProviderId: "codex"
-      },
-      github: {
-        ...connectionsReadyPayload.connections[1],
-        ready: true
-      },
-      ready: true,
-      rows: connectionsReadyPayload.connections
-    },
-    ok: true,
-    setup: setupReadinessReadyPayload,
-    targetRoot,
-    updatedAt: "2026-06-02T00:00:00.000Z"
-  };
-  const projectToolsPayload = {
-    ok: true,
-    tools: [
-      {
-        confirmationMessage: "",
-        description: "Exercise parameter collection without starting a terminal.",
-        disabledReason: "",
-        enabled: true,
-        id: "parameterized_smoke_tool",
-        label: "Parameterized smoke tool",
-        parameters: [
-          {
-            defaultValue: "cache",
-            description: "Select the target scope.",
-            id: "scope",
-            label: "Scope",
-            options: [
-              {
-                label: "Cache",
-                value: "cache"
-              },
-              {
-                label: "Database",
-                value: "database"
-              }
-            ],
-            required: true,
-            type: "enum"
-          }
-        ],
-        requiresConfirmation: false,
-        type: "command"
-      }
-    ]
-  };
   const apiPayloads = new Map<string, unknown>([
     [
       "/api/vibe64/accounts",
@@ -281,127 +163,32 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
       }
     ],
     [
-      "/api/vibe64/project-type",
+      "/api/vibe64/project-foundation",
       {
-        ok: true,
-        projectType: {
-          adapter: {
-            id: "jskit",
-            label: "JSKIT target adapter"
-          },
-          availableProjectTypes: [
-            {
-              enabled: true,
-              id: "jskit",
-              label: "JSKIT AI"
-            }
-          ],
-          errorCode: "",
-          message: "",
-          path: `${targetRoot}/vibe64.project.json`,
-          projectType: "jskit",
-          ready: true,
-          status: "ready",
-          targetRoot
-        }
-      }
-    ],
-    [
-      "/api/vibe64/project-config",
-      {
-        config: {
-          adapter: {
-            id: "jskit",
-            label: "JSKIT target adapter"
-          },
-          configRoot: `${targetRoot}/vibe64.project.json`,
-          defaults: savedProjectConfigValues,
-          fields: [],
-          fieldValues: Object.fromEntries(
-            Object.entries(savedProjectConfigValues).map(([fieldId, value]) => [
-              fieldId,
-              {
-                defaultValue: value,
-                filePath: `${targetRoot}/vibe64.project.json`,
-                invalid: null,
-                saved: true,
-                value
-              }
-            ])
-          ),
-          helperPath: `${projectRuntimeRoot}/runtime/vibe64-config.sh`,
-          invalid: [],
-          message: "",
-          missing: [],
-          projectType: "jskit",
-          ready: true,
-          runtimeRoot: `${projectRuntimeRoot}/runtime`,
-          sections: [],
-          values: savedProjectConfigValues
-        },
-        ok: true
-      }
-    ],
-    [
-      "/api/studio/studio-setup",
-      {
-        checks: [],
-        ok: true,
-        ready: true
-      }
-    ],
-    [
-      "/api/studio/adapter-setup",
-      {
-        checks: [],
-        ok: true,
-        ready: true
-      }
-    ],
-    [
-      "/api/studio/project-setup",
-      {
+        applicationMode: "existing",
+        foundationCommit: "0123456789abcdef0123456789abcdef01234567",
         ok: true,
         ready: true,
-        stages: []
+        status: "complete"
       }
-    ],
-    [
-      "/api/studio/current-app/setup-readiness",
-      setupReadinessReadyPayload
-    ],
-    [
-      "/api/studio/current-app/setup-readiness/stream",
-      setupReadinessReadyPayload
-    ],
-    [
-      "/api/studio/current-app/capabilities",
-      capabilitiesPayload
-    ],
-    [
-      "/api/vibe64/tools",
-      projectToolsPayload
-    ],
-    [
-      "/api/studio/vibe64/tools",
-      projectToolsPayload
     ],
     [
       "/api/studio/current-app",
       {
-        adapter: {
-          id: "jskit",
-          label: "JSKIT"
-        },
-        git: {
-          branch: "main",
-          checked: true,
-          dirty: false,
-          isRepo: true
-        },
+        components: ["nodejs"],
+        diagnostics: [],
+        message: "",
         ok: true,
         ready: true,
-        rootPath: targetRoot
+        resources: [],
+        root: targetRoot,
+        runtimeRequirements: ["nodejs"],
+        stackHash: "sha256:self-contained-smoke",
+        status: "ready",
+        targets: [{
+          id: "web",
+          label: "Web"
+        }]
       }
     ],
     [
@@ -409,31 +196,13 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
       {
         creation: {
           canCreate: true,
-          defaultWorkflowDefinition: "big_feature",
-          disabledReason: "",
-          mode: "select",
-          requiredWorkflowDefinition: null,
-          seedRequired: false,
-          workflowDefinitions: [
-            {
-              description: "Run ad hoc local work without commit, pull request, or merge steps.",
-              id: "non_commit_maintenance",
-              label: "Free-form work"
-            },
-            {
-              description: "Plan, build, review, and share changes from a new issue or existing PR.",
-              id: "big_feature",
-              label: "Work on issue or PR"
-            }
-          ]
+          mode: "direct"
         },
         limits: {
-          maxOpenSessions: 5,
           openSessionCount: 0
         },
         ok: true,
-        sessions: [],
-        stepDefinitions: []
+        sessions: []
       }
     ]
   ]);
@@ -509,17 +278,13 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
     }
 
     if (apiPathname === "/api/studio/current-app") {
-      await projectConfigReady;
+      await projectFoundationReady;
     }
 
-    if (apiPathname.endsWith("/stream")) {
-      await fulfillSse(route, apiPayloads.get(apiPathname));
-    } else {
-      await fulfillJson(route, apiPayloads.get(apiPathname));
-    }
+    await fulfillJson(route, apiPayloads.get(apiPathname));
 
-    if (apiPathname === "/api/vibe64/project-config") {
-      markProjectConfigResolved();
+    if (apiPathname === "/api/vibe64/project-foundation") {
+      markProjectFoundationResolved();
     }
   });
 }
@@ -578,14 +343,5 @@ async function fulfillJson(route: Route, payload: unknown) {
   await route.fulfill({
     body: JSON.stringify(payload),
     contentType: "application/json"
-  });
-}
-
-async function fulfillSse(route: Route, payload: unknown) {
-  await route.fulfill({
-    body: `event: run.finished\ndata: ${JSON.stringify({
-      status: payload
-    })}\n\n`,
-    contentType: "text/event-stream"
   });
 }

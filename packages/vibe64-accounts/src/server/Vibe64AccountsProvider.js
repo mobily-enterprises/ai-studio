@@ -74,7 +74,7 @@ async function connectionAccountStatusInput(input = {}, projectService) {
 class Vibe64AccountsProvider {
   static id = "feature.vibe64-accounts";
 
-  static dependsOn = ["runtime.actions", "feature.vibe64-project"];
+  static startsAfter = ["runtime.actions", "feature.vibe64-project"];
 
   register(app) {
     if (

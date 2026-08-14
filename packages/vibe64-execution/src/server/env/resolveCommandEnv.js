@@ -72,7 +72,6 @@ function projectEnvRecordsForPolicy(request = {}) {
     ];
   }
   return [
-    request.project?.configEnv,
     request.project?.runtimeConfigEnv,
     request.project?.databaseEnv
   ];

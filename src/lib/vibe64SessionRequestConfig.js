@@ -10,7 +10,6 @@ const VIBE64_SESSIONS_API_SUFFIX = "/vibe64/sessions";
 const VIBE64_CURRENT_SESSION_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/current`;
 const VIBE64_API_SUFFIX = "/vibe64";
 const VIBE64_SESSION_CHANGED_EVENT = "vibe64.session.changed";
-const VIBE64_COMPOSER_CHANGED_EVENT = "vibe64.composer.changed";
 const VIBE64_SESSION_VIEW_CHANGED_EVENT = "vibe64.session.view.changed";
 const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.changed";
 const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
@@ -39,38 +38,6 @@ function vibe64SessionPath(sessionsApiPath = "", sessionId = "", suffix = "") {
   return `${sessionsApiPath}/${encodePathSegment(sessionId)}${suffix}`;
 }
 
-function vibe64ProjectToolPath(vibe64ApiPath = "", toolId = "", suffix = "") {
-  return `${vibe64ApiPath}/tools/${encodePathSegment(toolId)}${suffix}`;
-}
-
-function vibe64ProjectToolRunPath(vibe64ApiPath = "", toolId = "") {
-  return vibe64ProjectToolPath(vibe64ApiPath, toolId, "/run");
-}
-
-function vibe64ProjectToolFixPath(vibe64ApiPath = "", toolId = "") {
-  return vibe64ProjectToolPath(vibe64ApiPath, toolId, "/fix");
-}
-
-function vibe64ProjectToolTerminalPath(vibe64ApiPath = "", toolId = "", terminalSessionId = "") {
-  return vibe64ProjectToolPath(
-    vibe64ApiPath,
-    toolId,
-    terminalSessionId ? `/terminal/${encodePathSegment(terminalSessionId)}` : "/terminal"
-  );
-}
-
-function vibe64ActionPath(sessionsApiPath = "", sessionId = "", actionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, `/actions/${encodePathSegment(actionId)}`);
-}
-
-function vibe64IntentPath(sessionsApiPath = "", sessionId = "", intentId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, `/intents/${encodePathSegment(intentId)}`);
-}
-
-function vibe64ArtifactPreviewPath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/artifact-preview");
-}
-
 function vibe64AgentAttachmentPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/agent-attachments");
 }
@@ -97,33 +64,12 @@ function vibe64ConversationLogPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/conversation-log");
 }
 
-function vibe64ComposerDraftPath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/composer-draft");
-}
-
 function vibe64SessionViewStatePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/view-state");
 }
 
 function vibe64SessionPreviewStatePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/preview-state");
-}
-
-function vibe64FixCodexTerminalPath(vibe64ApiPath = "", jobId = "", terminalSessionId = "") {
-  const base = `${vibe64ApiPath}/fix-codex-jobs/${encodePathSegment(jobId)}/terminal`;
-  return terminalSessionId ? `${base}/${encodePathSegment(terminalSessionId)}` : base;
-}
-
-function vibe64TerminalFailureFixPath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/terminal-failure-fix");
-}
-
-function vibe64CommandTerminalPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
-  return vibe64SessionPath(
-    sessionsApiPath,
-    sessionId,
-    terminalSessionId ? `/command-terminal/${encodePathSegment(terminalSessionId)}` : "/command-terminal"
-  );
 }
 
 function vibe64LaunchTargetOpenPath(sessionsApiPath = "", sessionId = "") {
@@ -235,22 +181,6 @@ function vibe64SourceEditorExplanationStopPath(sessionsApiPath = "", sessionId =
   return `${vibe64SourceEditorExplanationPath(sessionsApiPath, sessionId, explanationId)}/stop`;
 }
 
-function vibe64ArtifactPreviewQueryKey(surfaceId, ownershipFilter, sessionId = "", previewId = "", projectSlug) {
-  const key = [
-    "vibe64",
-    ...vibe64ProjectQueryScope(projectSlug),
-    surfaceId,
-    ownershipFilter,
-    "artifact-preview",
-    encodePathSegment(sessionId)
-  ];
-  const encodedPreviewId = encodePathSegment(previewId);
-  if (encodedPreviewId) {
-    key.push(encodedPreviewId);
-  }
-  return key;
-}
-
 function vibe64ConversationLogQueryKey(surfaceId, ownershipFilter, sessionId = "", projectSlug) {
   return [
     "vibe64",
@@ -281,53 +211,8 @@ function agentSettingsInputFromContext(context = {}) {
     : {};
 }
 
-function composerSubmissionInputFromContext(context = {}) {
-  const submissionId = String(context?.composerSubmissionId || "").trim();
-  return submissionId ? { composerSubmissionId: submissionId } : {};
-}
-
-function displayInputFromContext(context = {}) {
-  return context?.displayInput && typeof context.displayInput === "object" && !Array.isArray(context.displayInput) &&
-    Object.keys(context.displayInput).length > 0
-    ? {
-        displayInput: context.displayInput
-      }
-    : {};
-}
-
-function commandInputFromContext(context = {}) {
-  const input = context?.input && typeof context.input === "object" && !Array.isArray(context.input)
-    ? context.input
-    : {};
-  return {
-    ...input,
-    ...agentSettingsInputFromContext(context),
-    ...composerSubmissionInputFromContext(context),
-    ...displayInputFromContext(context)
-  };
-}
-
-function normalizeVibe64ProjectToolFixInput(input = {}) {
-  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-  return {
-    actionId: String(source.actionId || ""),
-    actionLabel: String(source.actionLabel || ""),
-    attemptedCommand: String(source.attemptedCommand || ""),
-    closeError: String(source.closeError || ""),
-    commandPreview: String(source.commandPreview || ""),
-    exitCode: source.exitCode == null ? "" : String(source.exitCode),
-    output: String(source.output || ""),
-    terminalSessionId: String(source.terminalSessionId || ""),
-    terminalStatus: String(source.terminalStatus || ""),
-    toolId: String(source.toolId || ""),
-    toolLabel: String(source.toolLabel || ""),
-    userMessage: String(source.userMessage || "")
-  };
-}
-
 export {
   VIBE64_SESSION_CHANGED_EVENT,
-  VIBE64_COMPOSER_CHANGED_EVENT,
   VIBE64_SESSION_VIEW_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
@@ -339,30 +224,20 @@ export {
   VIBE64_SURFACE_ID,
   DEFAULT_MAX_OPEN_SESSIONS,
   SELECTED_SESSION_STORAGE_KEY,
-  vibe64ActionPath,
-  vibe64ArtifactPreviewPath,
-  vibe64ArtifactPreviewQueryKey,
   vibe64AgentAttachmentPath,
   vibe64AgentSessionsReconcilePath,
   vibe64AgentTerminalPath,
-  vibe64CommandTerminalPath,
   vibe64ConversationLogPath,
   vibe64ConversationLogQueryKey,
-  vibe64ComposerDraftPath,
   vibe64SessionPreviewStatePath,
   vibe64SessionViewStatePath,
-  vibe64FixCodexTerminalPath,
   vibe64GlobalCodexTerminalPath,
-  vibe64IntentPath,
   vibe64LaunchTargetOpenPath,
   vibe64LaunchTargetsPath,
   vibe64LaunchTargetsQueryKey,
   vibe64PreviewIdentityPath,
   vibe64LaunchTerminalPath,
   vibe64LaunchTerminalStopPath,
-  vibe64ProjectToolFixPath,
-  vibe64ProjectToolRunPath,
-  vibe64ProjectToolTerminalPath,
   vibe64SessionPath,
   vibe64SessionQueryKey,
   selectedSessionStorageKey,
@@ -382,9 +257,5 @@ export {
   vibe64SourceEditorSearchPath,
   vibe64SourceEditorTreePath,
   vibe64SessionsQueryKey,
-  vibe64TerminalFailureFixPath,
-  normalizeVibe64ProjectToolFixInput,
-  agentSettingsInputFromContext,
-  composerSubmissionInputFromContext,
-  commandInputFromContext
+  agentSettingsInputFromContext
 };

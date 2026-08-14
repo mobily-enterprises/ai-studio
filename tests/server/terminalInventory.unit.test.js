@@ -35,10 +35,6 @@ const SCANNED_PATTERNS = [
     regex: /\bstartTerminalSessionFn\s*\(/g
   },
   {
-    pattern: "startCommandTerminalProcess(",
-    regex: /\bstartCommandTerminalProcess\s*\(/g
-  },
-  {
     pattern: "registerTerminalWebSocketRoute(",
     regex: /\bregisterTerminalWebSocketRoute\s*\(/g
   }
@@ -47,21 +43,9 @@ const SCANNED_PATTERNS = [
 const EXPECTED_TERMINAL_INVENTORY = [
   {
     count: 1,
-    file: "packages/current-app/src/server/registerRoutes.js",
-    pattern: "registerTerminalWebSocketRoute(",
-    reason: "current-app target script websocket"
-  },
-  {
-    count: 1,
     file: "packages/vibe64-accounts/src/server/registerRoutes.js",
     pattern: "registerTerminalWebSocketRoute(",
     reason: "account auth websocket"
-  },
-  {
-    count: 1,
-    file: "packages/vibe64-core/src/server/serviceOwnedTerminalRoutes.js",
-    pattern: "registerTerminalWebSocketRoute(",
-    reason: "service-owned terminal route helper delegates websocket registration"
   },
   {
     count: 1,
@@ -71,15 +55,9 @@ const EXPECTED_TERMINAL_INVENTORY = [
   },
   {
     count: 3,
-    file: "packages/vibe64-terminals/src/server/commandTerminal.js",
-    pattern: "startCommandTerminalProcess(",
-    reason: "gateway-backed command terminal launcher definition plus command/project-tool call sites"
-  },
-  {
-    count: 6,
     file: "packages/vibe64-terminals/src/server/registerRoutes.js",
     pattern: "registerTerminalWebSocketRoute(",
-    reason: "global Codex, Fix Codex, project tool, session Codex, workflow command, and launch websockets"
+    reason: "global Codex, session Codex, and launch websockets"
   },
   {
     count: 1,
@@ -247,9 +225,8 @@ function inventoryFailureMessage({ added, missing }) {
     "Missing entries:",
     formatEntries(missing),
     "",
-    "If this is a new service-owned command/job terminal, use",
-    "`registerServiceOwnedTerminalRoutes` and `createOwnedTerminalAccessors`.",
-    "Otherwise update this inventory with the reason this terminal is special.",
+    "If this is an intentional terminal, follow the owning package's existing",
+    "route, authorization, and lifecycle patterns, then update this inventory.",
     "",
     "Deployment publish lives in vibe64-online and is covered by the deployment migration slice."
   ].join("\n");

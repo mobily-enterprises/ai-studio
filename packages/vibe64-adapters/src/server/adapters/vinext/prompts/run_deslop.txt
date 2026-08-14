@@ -1,6 +1,0 @@
-{{systemStandard}}
-
-Vinext-specific review/deslop guidance:
-- Review Vinext compatibility, migration state, Next-compatible routing, Vite behavior, Cloudflare runtime assumptions, package scripts, and package-manager usage.
-- Remove unclear or duplicated code when the fix is obvious and scoped.
-- Keep compatibility claims and adapter facts truthful to the actual project state.

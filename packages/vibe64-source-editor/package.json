@@ -1,14 +1,76 @@
 {
   "name": "@local/vibe64-source-editor",
   "version": "0.1.0",
+  "description": "Owns Vibe64 session source-editor file policy, navigation, selected-file sync, search, autosave, and source explanations.",
   "private": true,
   "type": "module",
   "exports": {
     "./server/registerRoutes": "./src/server/registerRoutes.js",
     "./server/service": "./src/server/service.js"
   },
+  "jskit": {
+    "kind": "runtime",
+    "capabilities": {
+      "provides": [
+        "feature.vibe64-source-editor"
+      ],
+      "requires": [
+        "feature.vibe64-project",
+        "feature.vibe64-terminals"
+      ]
+    },
+    "runtime": {
+      "server": {
+        "providers": [
+          {
+            "entrypoint": "src/server/Vibe64SourceEditorProvider.js",
+            "export": "Vibe64SourceEditorProvider"
+          }
+        ]
+      },
+      "client": {
+        "providers": []
+      }
+    },
+    "metadata": {
+      "apiSummary": {
+        "surfaces": [
+          {
+            "subpath": "./server/registerRoutes",
+            "summary": "Registers session source editor tree, selected-file sync, file matching, source search, read, save, and explanation routes."
+          },
+          {
+            "subpath": "./server/service",
+            "summary": "Owns the neutral source-tree policy, selected-file observation, ripgrep-backed file matching/search, file read/autosave operations, and session-scoped source explanation records."
+          }
+        ],
+        "containerTokens": {
+          "server": [
+            "feature.vibe64-source-editor.service"
+          ],
+          "client": []
+        }
+      },
+      "jskit": {
+        "scaffoldShape": "feature-server-v1",
+        "scaffoldMode": "orchestrator",
+        "lane": "default"
+      }
+    },
+    "mutations": {
+      "dependencies": {
+        "runtime": {},
+        "dev": {}
+      },
+      "packageJson": {
+        "scripts": {}
+      },
+      "procfile": {},
+      "files": [],
+      "text": []
+    }
+  },
   "dependencies": {
-    "@local/vibe64-adapters": "0.1.0",
     "@local/vibe64-core": "0.1.0",
     "@local/vibe64-execution": "0.1.0",
     "@local/vibe64-project": "0.1.0",

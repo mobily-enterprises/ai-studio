@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -8,12 +7,14 @@ import {
   RUNTIME_CONFIG_PHASES,
   RUNTIME_CONFIG_SCOPES,
   RUNTIME_CONFIG_TARGETS,
-  VIBE64_GENERATED_ENV_HEADER,
-  dotenvText,
-  generatedRuntimeConfigDotenvUserValues,
-  materializeRuntimeConfig,
+  mergeRuntimeConfigRecords,
+  normalizeRuntimeConfigKey,
+  normalizeRuntimeConfigOwner,
+  normalizeRuntimeConfigRecord,
   resolveRuntimeConfig,
+  runtimeConfigEnv,
   runtimeConfigEnvViewModel,
+  runtimeConfigKeyIsVibe64Reserved,
   runtimeConfigKeyLooksSecret
 } from "@local/vibe64-core/server/runtimeConfig";
 import {
@@ -22,201 +23,45 @@ import {
 } from "@local/vibe64-core/server/envUserValues";
 import { withTemporaryRoot } from "./vibe64TestHelpers.js";
 
-test("runtime config dotenv materializer backs up unmanaged files and writes deterministic generated output", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    await writeFile(path.join(targetRoot, ".env"), "STALE=value\n", "utf8");
-    const config = await resolveRuntimeConfig({
-      id: "test",
-      materializers: [
-        {
-          format: "dotenv",
-          path: ".env"
-        }
-      ],
-      definitions: [
-        {
-          key: "Z_PUBLIC",
-          owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-          scope: RUNTIME_CONFIG_SCOPES.DEV,
-          source: "test",
-          value: "public"
-        },
-        {
-          key: "A_PASSWORD",
-          owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-          requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
-          scope: RUNTIME_CONFIG_SCOPES.DEV,
-          source: "test",
-          value: "secret value"
-        }
-      ]
-    });
-
-    const results = await materializeRuntimeConfig(config, {
-      now: new Date("2026-06-21T00:00:00.000Z"),
-      roots: [targetRoot]
-    });
-
-    assert.equal(results.length, 1);
-    assert.equal(results[0].backupPath, path.join(targetRoot, ".env.vibe64-backup-2026-06-21T00-00-00-000Z"));
-    assert.equal(results[0].changed, true);
-    assert.equal(await readFile(results[0].backupPath, "utf8"), "STALE=value\n");
-    assert.equal(await readFile(path.join(targetRoot, ".env"), "utf8"), [
-      VIBE64_GENERATED_ENV_HEADER.trimEnd(),
-      "",
-      "A_PASSWORD=\"secret value\"",
-      "Z_PUBLIC=public",
-      ""
-    ].join("\n"));
-    assert.equal((await stat(path.join(targetRoot, ".env"))).mode & 0o777, 0o600);
+test("runtime config records normalize technology-neutral metadata", () => {
+  const record = normalizeRuntimeConfigRecord({
+    key: "SERVICE_API_TOKEN",
+    owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
+    requiredFor: [RUNTIME_CONFIG_PHASES.SERVER, RUNTIME_CONFIG_PHASES.PREVIEW, RUNTIME_CONFIG_PHASES.SERVER],
+    scope: RUNTIME_CONFIG_SCOPES.PROD,
+    source: "genesis-stack",
+    targets: [RUNTIME_CONFIG_TARGETS.SERVER, RUNTIME_CONFIG_TARGETS.COMMAND],
+    value: 42
   });
+
+  assert.deepEqual(record, {
+    editable: false,
+    key: "SERVICE_API_TOKEN",
+    owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
+    requiredFor: [RUNTIME_CONFIG_PHASES.PREVIEW, RUNTIME_CONFIG_PHASES.SERVER],
+    scope: RUNTIME_CONFIG_SCOPES.PROD,
+    secret: true,
+    source: "genesis-stack",
+    targets: [RUNTIME_CONFIG_TARGETS.COMMAND, RUNTIME_CONFIG_TARGETS.SERVER],
+    value: "42",
+    valuePresent: true
+  });
+  assert.equal(Object.hasOwn(record, "materialize"), false);
 });
 
-test("runtime config overwrites generated dotenv files without creating another backup", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    await mkdir(targetRoot, {
-      recursive: true
-    });
-    await writeFile(path.join(targetRoot, ".env"), `${VIBE64_GENERATED_ENV_HEADER}\nOLD=value\n`, "utf8");
-    const config = await resolveRuntimeConfig({
-      id: "test",
-      materializers: [
-        {
-          format: "dotenv",
-          path: ".env"
-        }
-      ],
-      definitions: [
-        {
-          key: "NEW_VALUE",
-          owner: RUNTIME_CONFIG_OWNERS.ADAPTER,
-          scope: RUNTIME_CONFIG_SCOPES.DEV,
-          source: "test",
-          value: "fresh"
-        }
-      ]
-    });
-
-    const results = await materializeRuntimeConfig(config, {
-      roots: [targetRoot]
-    });
-
-    assert.equal(results[0].backupPath, "");
-    assert.equal(results[0].changed, true);
-    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /NEW_VALUE=fresh/u);
-    await assert.rejects(readFile(path.join(targetRoot, ".env.vibe64-backup-2026-06-21T00-00-00-000Z"), "utf8"));
-  });
-});
-
-test("runtime config does not rewrite unchanged generated dotenv files", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const config = await resolveRuntimeConfig({
-      id: "test",
-      materializers: [
-        {
-          format: "dotenv",
-          path: ".env"
-        }
-      ],
-      definitions: [
-        {
-          key: "APP_PUBLIC_URL",
-          owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-          scope: RUNTIME_CONFIG_SCOPES.DEV,
-          source: "test",
-          value: "http://localhost:3000"
-        }
-      ]
-    });
-    const filePath = path.join(targetRoot, ".env");
-    await writeFile(filePath, dotenvText(config.records, {
-      scope: config.scope
-    }), "utf8");
-    await chmod(filePath, 0o644);
-    const before = await stat(filePath);
-
-    const results = await materializeRuntimeConfig(config, {
-      roots: [targetRoot]
-    });
-    const after = await stat(filePath);
-
-    assert.equal(results[0].backupPath, "");
-    assert.equal(results[0].changed, false);
-    assert.equal(after.mtimeMs, before.mtimeMs);
-  });
-});
-
-test("runtime config dotenv rendering uses the requested scope explicitly", () => {
-  const text = dotenvText([
-    {
-      key: "PROD_ONLY",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-      scope: RUNTIME_CONFIG_SCOPES.PROD,
-      source: "test",
-      value: "prod"
-    },
-    {
-      key: "DEV_ONLY",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-      scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "test",
-      value: "dev"
-    }
-  ], {
-    scope: RUNTIME_CONFIG_SCOPES.DEV
-  });
-
-  assert.match(text, /DEV_ONLY=dev/u);
-  assert.doesNotMatch(text, /PROD_ONLY=prod/u);
-});
-
-test("runtime config imports user values from generated dotenv without shadowing managed records", () => {
-  const values = generatedRuntimeConfigDotenvUserValues([
-    VIBE64_GENERATED_ENV_HEADER.trimEnd(),
-    "",
-    "APP_PUBLIC_URL=http://localhost:3000",
-    "DB_HOST=evil.example",
-    "HOME_ASSISTANT_AI_API_KEY=secret",
-    "PACKAGE_RESERVED_URL=https://package.example",
-    "PUBLIC_TEXT=\"hello world\"",
-    "VIBE64_INTERNAL=skip",
-    "VITE_PUBLIC_FLAG=yes",
-    ""
-  ].join("\n"), [
-    {
-      key: "APP_PUBLIC_URL",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-      scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "adapter",
-      value: "http://localhost:3000"
-    },
-    {
-      key: "DB_HOST",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-      scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "managed-database",
-      value: "127.0.0.1"
-    }
-  ], {
-    publicEnvPrefixes: ["VITE_"],
-    scope: RUNTIME_CONFIG_SCOPES.DEV,
-    userValueReservedKeys: ["PACKAGE_RESERVED_URL"]
-  });
-
-  assert.deepEqual(values, {
-    HOME_ASSISTANT_AI_API_KEY: {
-      secret: true,
-      value: "secret"
-    },
-    PUBLIC_TEXT: {
-      secret: false,
-      value: "hello world"
-    },
-    VITE_PUBLIC_FLAG: {
-      secret: false,
-      value: "yes"
-    }
-  });
+test("runtime config validates keys, owners, and reserved keys", () => {
+  assert.equal(normalizeRuntimeConfigKey("VALID_NAME_2"), "VALID_NAME_2");
+  assert.equal(normalizeRuntimeConfigOwner(), RUNTIME_CONFIG_OWNERS.USER);
+  assert.equal(runtimeConfigKeyIsVibe64Reserved("VIBE64_INTERNAL"), true);
+  assert.equal(runtimeConfigKeyIsVibe64Reserved("APP_VIBE64_VALUE"), false);
+  assert.throws(
+    () => normalizeRuntimeConfigKey("INVALID-NAME"),
+    { code: "vibe64_runtime_config_key_invalid" }
+  );
+  assert.throws(
+    () => normalizeRuntimeConfigOwner("adapter"),
+    { code: "vibe64_runtime_config_owner_invalid" }
+  );
 });
 
 test("runtime config secret detection treats key names as segments", () => {
@@ -228,29 +73,24 @@ test("runtime config secret detection treats key names as segments", () => {
   assert.equal(runtimeConfigKeyLooksSecret("OPENAI_API_KEY"), true);
 });
 
-test("runtime config resolver merges explicit user records", async () => {
-  const config = await resolveRuntimeConfig({
-    id: "test",
-    definitions: [
-      {
-        key: "MANAGED_VALUE",
-        owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "test",
-        value: "managed"
-      }
-    ]
-  }, {
-    records: [
-      {
-        key: "OPENAI_API_KEY",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        requiredFor: [RUNTIME_CONFIG_PHASES.PREVIEW],
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "user",
-        value: ""
-      }
-    ],
+test("runtime config resolver accepts records directly and rejects removed profiles", () => {
+  const config = resolveRuntimeConfig([
+    {
+      key: "MANAGED_VALUE",
+      owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "system",
+      value: "managed"
+    },
+    {
+      key: "OPENAI_API_KEY",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      requiredFor: [RUNTIME_CONFIG_PHASES.PREVIEW],
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "user",
+      value: ""
+    }
+  ], {
     phase: RUNTIME_CONFIG_PHASES.PREVIEW
   });
 
@@ -260,34 +100,32 @@ test("runtime config resolver merges explicit user records", async () => {
   assert.equal(userRecord.missing, true);
   assert.equal(userRecord.value, "********");
   assert.deepEqual(config.missing.map((record) => record.key), ["OPENAI_API_KEY"]);
+  assert.throws(
+    () => resolveRuntimeConfig({
+      definitions: []
+    }),
+    { code: "vibe64_runtime_config_records_invalid" }
+  );
 });
 
-test("runtime config targets control env values, missing values, and dotenv output", async () => {
-  const definitions = [
+test("runtime config scopes and targets filter values and missing records", () => {
+  const records = [
     {
       key: "ALL_TARGETS",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
+      owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
       requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
       scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "test",
+      source: "system",
       value: "all"
     },
     {
       key: "SERVER_ONLY",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
+      owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
       requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
       scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "test",
+      source: "system",
       targets: [RUNTIME_CONFIG_TARGETS.SERVER],
       value: "server"
-    },
-    {
-      key: "ENV_FILE_ONLY",
-      owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-      scope: RUNTIME_CONFIG_SCOPES.DEV,
-      source: "test",
-      targets: [RUNTIME_CONFIG_TARGETS.ENV_FILE],
-      value: "env"
     },
     {
       key: "CHECK_SECRET",
@@ -297,19 +135,20 @@ test("runtime config targets control env values, missing values, and dotenv outp
       source: "user",
       targets: [RUNTIME_CONFIG_TARGETS.CHECKS],
       value: ""
+    },
+    {
+      key: "PROD_ONLY",
+      owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
+      scope: RUNTIME_CONFIG_SCOPES.PROD,
+      source: "system",
+      value: "prod"
     }
   ];
-  const serverConfig = await resolveRuntimeConfig({
-    id: "test",
-    definitions
-  }, {
+  const serverConfig = resolveRuntimeConfig(records, {
     phase: RUNTIME_CONFIG_PHASES.SERVER,
     target: RUNTIME_CONFIG_TARGETS.SERVER
   });
-  const checksConfig = await resolveRuntimeConfig({
-    id: "test",
-    definitions
-  }, {
+  const checksConfig = resolveRuntimeConfig(records, {
     phase: RUNTIME_CONFIG_PHASES.SERVER,
     target: RUNTIME_CONFIG_TARGETS.CHECKS
   });
@@ -318,52 +157,43 @@ test("runtime config targets control env values, missing values, and dotenv outp
   assert.deepEqual(serverConfig.missing, []);
   assert.deepEqual(Object.keys(checksConfig.values).sort(), ["ALL_TARGETS", "CHECK_SECRET"]);
   assert.deepEqual(checksConfig.missing.map((record) => record.key), ["CHECK_SECRET"]);
-
-  const envFileText = dotenvText(serverConfig.records, {
-    scope: RUNTIME_CONFIG_SCOPES.DEV
+  assert.deepEqual(runtimeConfigEnv(records, {
+    scope: RUNTIME_CONFIG_SCOPES.PROD
+  }), {
+    PROD_ONLY: "prod"
   });
-  assert.match(envFileText, /ALL_TARGETS=all/u);
-  assert.match(envFileText, /ENV_FILE_ONLY=env/u);
-  assert.doesNotMatch(envFileText, /SERVER_ONLY/u);
-  assert.doesNotMatch(envFileText, /CHECK_SECRET/u);
 });
 
-test("runtime config resolver does not block missing required values when no phase is requested", async () => {
-  const config = await resolveRuntimeConfig({
-    id: "test",
-    definitions: [
-      {
-        key: "OPENAI_API_KEY",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        requiredFor: [RUNTIME_CONFIG_PHASES.PREVIEW],
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "user",
-        value: ""
-      }
-    ]
-  });
+test("runtime config does not require values when no phase is requested", () => {
+  const config = resolveRuntimeConfig([
+    {
+      key: "OPENAI_API_KEY",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      requiredFor: [RUNTIME_CONFIG_PHASES.PREVIEW],
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "user",
+      value: ""
+    }
+  ]);
 
   assert.equal(config.ok, true);
   assert.deepEqual(config.missing, []);
   assert.equal(config.view.records[0].missing, false);
 });
 
-test("runtime config treats withheld known secrets as present", async () => {
-  const config = await resolveRuntimeConfig({
-    id: "test",
-    definitions: [
-      {
-        key: "PAYMENT_API_TOKEN",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
-        scope: RUNTIME_CONFIG_SCOPES.PROD,
-        secret: true,
-        source: "user",
-        value: "",
-        valuePresent: true
-      }
-    ]
-  }, {
+test("runtime config treats withheld known secrets as present", () => {
+  const config = resolveRuntimeConfig([
+    {
+      key: "PAYMENT_API_TOKEN",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
+      scope: RUNTIME_CONFIG_SCOPES.PROD,
+      secret: true,
+      source: "user",
+      value: "",
+      valuePresent: true
+    }
+  ], {
     phase: RUNTIME_CONFIG_PHASES.SERVER,
     scope: RUNTIME_CONFIG_SCOPES.PROD
   });
@@ -376,93 +206,55 @@ test("runtime config treats withheld known secrets as present", async () => {
   assert.equal(config.values.PAYMENT_API_TOKEN, "");
 });
 
-test("runtime config user records cannot shadow managed records", async () => {
-  const config = await resolveRuntimeConfig({
-    id: "test",
-    definitions: [
-      {
-        key: "DB_PASSWORD",
-        owner: RUNTIME_CONFIG_OWNERS.VIBE64,
-        requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        secret: true,
-        source: "managed_database",
-        value: "managed-password"
-      },
-      {
-        key: "OPENAI_API_KEY",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        secret: true,
-        source: "adapter",
-        value: ""
-      }
-    ]
-  }, {
-    records: [
-      {
-        key: "DB_PASSWORD",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "user",
-        value: "user-password"
-      },
-      {
-        key: "OPENAI_API_KEY",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "user",
-        value: "user-api-key"
-      }
-    ],
-    phase: RUNTIME_CONFIG_PHASES.SERVER
-  });
+test("runtime config user records cannot shadow system records", () => {
+  const records = mergeRuntimeConfigRecords([
+    {
+      key: "DB_PASSWORD",
+      owner: RUNTIME_CONFIG_OWNERS.SYSTEM,
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "managed-database",
+      value: "managed-password"
+    },
+    {
+      key: "DB_PASSWORD",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "user",
+      value: "user-password"
+    }
+  ]);
 
-  const dbRecord = config.records.find((record) => record.key === "DB_PASSWORD");
-  const apiRecord = config.records.find((record) => record.key === "OPENAI_API_KEY");
-  assert.equal(config.values.DB_PASSWORD, "managed-password");
-  assert.equal(dbRecord.owner, RUNTIME_CONFIG_OWNERS.VIBE64);
-  assert.equal(dbRecord.source, "managed_database");
-  assert.equal(config.values.OPENAI_API_KEY, "user-api-key");
-  assert.equal(apiRecord.owner, RUNTIME_CONFIG_OWNERS.USER);
-  assert.equal(apiRecord.source, "user");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].owner, RUNTIME_CONFIG_OWNERS.SYSTEM);
+  assert.equal(records[0].source, "managed-database");
+  assert.equal(records[0].value, "managed-password");
 });
 
-test("runtime config user records cannot shadow read-only provider user records", async () => {
-  const config = await resolveRuntimeConfig({
-    id: "test",
-    definitions: [
-      {
-        editable: false,
-        key: "AUTH_SUPABASE_URL",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "project-config",
-        value: "https://configured.supabase.co"
-      }
-    ]
-  }, {
-    records: [
-      {
-        key: "AUTH_SUPABASE_URL",
-        owner: RUNTIME_CONFIG_OWNERS.USER,
-        scope: RUNTIME_CONFIG_SCOPES.DEV,
-        source: "user",
-        value: "https://stale-user-value.supabase.co"
-      }
-    ],
-    phase: RUNTIME_CONFIG_PHASES.SERVER
-  });
+test("runtime config user records cannot shadow read-only user records", () => {
+  const config = resolveRuntimeConfig([
+    {
+      editable: false,
+      key: "AUTH_SUPABASE_URL",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "project-config",
+      value: "https://configured.supabase.co"
+    },
+    {
+      key: "AUTH_SUPABASE_URL",
+      owner: RUNTIME_CONFIG_OWNERS.USER,
+      scope: RUNTIME_CONFIG_SCOPES.DEV,
+      source: "user",
+      value: "https://stale-user-value.supabase.co"
+    }
+  ]);
 
-  const authRecord = config.records.find((record) => record.key === "AUTH_SUPABASE_URL");
   assert.equal(config.values.AUTH_SUPABASE_URL, "https://configured.supabase.co");
-  assert.equal(authRecord.editable, false);
-  assert.equal(authRecord.source, "project-config");
+  assert.equal(config.records[0].editable, false);
+  assert.equal(config.records[0].source, "project-config");
 });
 
-test("runtime config Env view model exposes provider editability", () => {
+test("runtime config Env view exposes only current record concepts", () => {
   const view = runtimeConfigEnvViewModel({
     records: [
       {
@@ -488,6 +280,11 @@ test("runtime config Env view model exposes provider editability", () => {
   const apiKeyRecord = view.records.find((record) => record.key === "OPENAI_API_KEY");
   assert.equal(supabaseRecord.editable, false);
   assert.equal(apiKeyRecord.editable, true);
+  assert.equal(apiKeyRecord.value, "********");
+  assert.equal(Object.hasOwn(view, "publicEnvPrefixes"), false);
+  assert.equal(Object.hasOwn(view, "adapterId"), false);
+  assert.equal(Object.hasOwn(view, "generatedTargets"), false);
+  assert.equal(Object.hasOwn(apiKeyRecord, "materialize"), false);
 });
 
 test("Env user value store writes 0600 state and preserves empty records", async () => {
@@ -513,6 +310,7 @@ test("Env user value store writes 0600 state and preserves empty records", async
     assert.equal(apiKeyRecord.owner, RUNTIME_CONFIG_OWNERS.USER);
     assert.equal(apiKeyRecord.source, "user");
     assert.deepEqual(apiKeyRecord.requiredFor, []);
+    assert.equal(Object.hasOwn(apiKeyRecord, "materialize"), false);
     assert.equal(publicRecord.secret, false);
     assert.equal((await stat(saved.filePath)).mode & 0o777, 0o600);
     assert.deepEqual(JSON.parse(await readFile(saved.filePath, "utf8")), {

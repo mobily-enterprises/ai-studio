@@ -1,65 +1,70 @@
 ---
-title: Supported tech
-description: The project types Vibe64 can help with today.
+title: Technology support
+description: Genesis Stack components provide technology guidance without restricting Vibe64 to a fixed set of project types.
 layout: doc
 aside: false
 ---
 
 <main class="vibe-marketing vibe-supported">
 <section class="vibe-integrations-hero">
-<h1>Supported tech</h1>
+<h1>Bring the stack your project needs</h1>
 <p>
-Pick the kind of project you have. Vibe64 uses the right setup for that kind of
-work, so the AI is not starting from a blank page.
+Vibe64 starts from a Genesis foundation, not a required framework choice. A
+project may select no technology, one Stack component, or several components
+that genuinely belong together.
 </p>
 </section>
 
 <section class="vibe-adapter-section">
-<h2>Project types</h2>
+<h2>How technology knowledge works</h2>
 <p>
-These are the project types Vibe64 understands today.
+Genesis Stack components can contribute concise guidance, an authoritative
+Agent Skill, resource requirements, source indexers, cleanup advice, concrete
+verification commands, and optional launch descriptions. Vibe64 consumes those
+contracts while retaining control of Git, credentials, runtimes, processes,
+ports, previews, and browser binaries.
 </p>
 <div class="vibe-adapter-grid">
 <article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">JS</div><span>SUPPORTED</span></div>
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">∅</div><span>ANY STACK</span></div>
+<h3>Blank Genesis project</h3>
+<p>Start with Git, a Blueprint, Program space, skills, and hooks. No language, framework, package manager, or database is assumed.</p>
+<a href="/start-building">Start blank</a>
+</article>
+
+<article class="vibe-adapter-card">
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">↳</div><span>EXISTING CODE</span></div>
+<h3>Adopt a codebase</h3>
+<p>Keep the implementation and ask Genesis to prepare a description prompt for its non-technical Blueprint and explanatory Program.</p>
+<a href="/start-building">Open a project</a>
+</article>
+
+<article class="vibe-adapter-card">
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">{ }</div><span>INDEXED</span></div>
+<h3>Common languages</h3>
+<p>Built-in structural indexers cover JavaScript and TypeScript, Python, Java, C#, C and C++, PHP, Go, Rust, Ruby, Kotlin, and Shell.</p>
+<a href="/start-building">Choose in Stack</a>
+</article>
+
+<article class="vibe-adapter-card">
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">JS</div><span>STACK</span></div>
 <h3>JSKIT</h3>
-<p>Usually used for business apps: dashboards, admin screens, forms, tables, reports, and tools people use every day at work.</p>
-<a href="/start-building">Start with this</a>
+<p>The JSKIT component selects its authoritative Agent Skill and supplies JSKIT-specific guidance, cleanup rules, resources, and verification commands.</p>
+<a href="/start-building">Choose in Stack</a>
 </article>
 
 <article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">La</div><span>SUPPORTED</span></div>
-<h3>Laravel</h3>
-<p>Usually used for websites and web apps with accounts, pages, admin areas, payments, emails, and databases.</p>
-<a href="/start-building">Start with this</a>
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">DB</div><span>STACK</span></div>
+<h3>MySQL</h3>
+<p>Database requirements belong to a Stack component. Genesis reports missing declared inputs without embedding one database policy in Vibe64 core.</p>
+<a href="/start-building">Choose in Stack</a>
 </article>
 
 <article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">Nx</div><span>SUPPORTED</span></div>
-<h3>Next.js</h3>
-<p>Usually used for modern websites and web apps: product sites, customer portals, dashboards, and React-based browser products.</p>
-<a href="/start-building">Start with this</a>
-</article>
-
-<article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">Nd</div><span>SUPPORTED</span></div>
-<h3>Generic Node web</h3>
-<p>Usually used for JavaScript web servers, APIs, small web services, tools, and apps that are run with npm or similar commands.</p>
-<a href="/start-building">Start with this</a>
-</article>
-
-<article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">C+</div><span>SUPPORTED</span></div>
-<h3>C++</h3>
-<p>Usually used for fast software: desktop programs, command-line tools, games, engines, devices, and lower-level systems.</p>
-<a href="/start-building">Start with this</a>
-</article>
-
-<article class="vibe-adapter-card">
-<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">Vx</div><span>SUPPORTED</span></div>
-<h3>Vinext</h3>
-<p>Usually used for modern web apps designed to run close to users on Cloudflare-style hosting and edge platforms.</p>
-<a href="/start-building">Start with this</a>
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">+</div><span>COMPOSABLE</span></div>
+<h3>Several technologies</h3>
+<p>A real application may combine language, framework, database, and platform components. Genesis composes compatible declarations and reports conflicts instead of guessing.</p>
+<a href="/start-building">Build your Stack</a>
 </article>
 </div>
 </section>

@@ -1,9 +1,4 @@
 <template>
-  <Vibe64SessionInputDialog
-    :input="dialogs.input"
-    @update-values="emit('update-input-values', $event)"
-  />
-
   <Vibe64SessionDiffDialog
     v-if="dialogs.diff?.open"
     :diff="dialogs.diff"
@@ -13,16 +8,10 @@
     :abandon="dialogs.abandon"
     :short-session-id="shortSessionId"
   />
-
-  <Vibe64SessionFinishDialog
-    :finish="dialogs.finish"
-  />
 </template>
 
 <script setup>
 import Vibe64SessionAbandonDialog from "@/components/studio/vibe64-session/Vibe64SessionAbandonDialog.vue";
-import Vibe64SessionFinishDialog from "@/components/studio/vibe64-session/Vibe64SessionFinishDialog.vue";
-import Vibe64SessionInputDialog from "@/components/studio/vibe64-session/Vibe64SessionInputDialog.vue";
 import {
   defineVibe64AsyncComponent
 } from "@/lib/vibe64AsyncComponent.js";
@@ -44,7 +33,4 @@ defineProps({
   }
 });
 
-const emit = defineEmits([
-  "update-input-values"
-]);
 </script>

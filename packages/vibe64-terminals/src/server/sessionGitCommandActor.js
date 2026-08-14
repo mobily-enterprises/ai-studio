@@ -12,12 +12,6 @@ import {
   terminalOwnerFromGithubToolHome
 } from "@local/studio-terminal-core/server/terminalOwnership";
 import {
-  WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
-  WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE,
-  normalizeWorkflowRepositoryProfile,
-  workflowRepositoryProfileForMode
-} from "@local/vibe64-core/server/projectRepository";
-import {
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 
@@ -330,44 +324,10 @@ async function resolveSessionGitCommandActorTerminalHome({
 }
 
 function sessionRequiresGithubActor(session = {}) {
-  const profile = sessionWorkflowRepositoryProfile(session);
-  return !profile || profile === WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR;
-}
-
-function sessionWorkflowRepositoryProfile(session = {}) {
   const metadata = session.metadata || {};
-  const explicitProfile = normalizeWorkflowRepositoryProfile(
-    metadata.workflow_repository_profile ||
-    metadata.workflowRepositoryProfile ||
-    session.workflowRepositoryProfile ||
-    session.workflow_repository_profile
-  );
-  if (explicitProfile) {
-    return explicitProfile;
-  }
-  const modeProfile = workflowRepositoryProfileForMode(
-    metadata.repository_mode ||
-    metadata.repositoryMode ||
-    metadata.repository?.mode ||
-    session.repository_mode ||
-    session.repositoryMode ||
-    session.repository?.mode
-  );
-  if (modeProfile) {
-    return modeProfile;
-  }
-  if (
-    normalizeText(metadata.github_repository) ||
-    normalizeText(session.github_repository) ||
-    normalizeText(metadata.session_git_command_actor_user_key) ||
-    normalizeText(metadata.session_git_command_actor_scope)
-  ) {
-    return WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR;
-  }
-  if (normalizeText(session.sessionId || session.id)) {
-    return WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE;
-  }
-  return "";
+  const repository = normalizeText(metadata.github_repository || session.github_repository);
+  const remoteUrl = normalizeText(metadata.source_remote_url);
+  return Boolean(repository || /(?:^|[.@/:])github\.com(?:[/:]|$)/iu.test(remoteUrl));
 }
 
 function resolveNoGithubSessionTerminalHome({
@@ -409,7 +369,6 @@ export {
   sessionRequiresGithubActor,
   sessionGitCommandActorFromMetadata,
   sessionGitCommandActorMetadata,
-  sessionWorkflowRepositoryProfile,
   sessionWithGitCommandActorMetadata,
   writeSessionGitCommandActorMetadata
 };

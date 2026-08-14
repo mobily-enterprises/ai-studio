@@ -1,8 +1,8 @@
 import { computed, onScopeDispose, proxyRefs, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
@@ -20,14 +20,6 @@ import {
   createVibe64CurrentSessionPublisher
 } from "@/lib/vibe64CurrentSessionPublisher.js";
 import {
-  CAPABILITIES_ENDPOINT,
-  VIBE64_CONNECTIONS_CHANGED_EVENT,
-  VIBE64_PROJECT_CHANGED_EVENT,
-  capabilitiesQueryKey
-} from "@/lib/studioGateApi.js";
-import {
-  activeVibe64ProjectSetupSession,
-  activeVibe64ProjectSetupSessionMessage,
   vibe64SessionLimits,
   enrichVibe64SessionForDisplay,
   shortVibe64SessionId as shortSessionId,
@@ -80,15 +72,6 @@ const SESSION_LIST_IGNORED_REALTIME_REASONS = new Set([
   "codex-context-replaced",
   "agent-terminal-started",
   "agent-terminal-closed",
-  "command-terminal-started",
-  "command-terminal-closed",
-  "session-action-run",
-  "session-advanced",
-  "session-agent-control-returned",
-  "session-intent-run",
-  "session-rewound",
-  "session-step-recovered",
-  "session-source-recovered",
   "launch-target-started",
   "launch-target-ready",
   "launch-target-closed",
@@ -181,8 +164,6 @@ function useVibe64SessionData({
   const currentSessionApiPath = computed(() => paths.api(VIBE64_CURRENT_SESSION_API_SUFFIX, {
     surface: VIBE64_SURFACE_ID
   }));
-  const capabilitiesApiPath = computed(() => CAPABILITIES_ENDPOINT);
-
   const sessionListResource = useEndpointResource({
     fallbackLoadError: "Vibe64 sessions could not be loaded.",
     path: sessionsApiPath,
@@ -222,10 +203,7 @@ function useVibe64SessionData({
   const createSessionCommand = useCommand({
     access: "never",
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
-    buildRawPayload: (_model, { context }) => {
-      const workflowDefinition = String(context?.workflowDefinition || "").trim();
-      return vibe64RealtimeOriginPayload(workflowDefinition ? { workflowDefinition } : {});
-    },
+    buildRawPayload: () => vibe64RealtimeOriginPayload(),
     fallbackRunError: "Vibe64 session could not be created.",
     messages: {
       error: "Vibe64 session could not be created.",
@@ -287,48 +265,8 @@ function useVibe64SessionData({
   onScopeDispose(() => {
     currentSessionPublisher.stop();
   });
-  const capabilitiesResource = useEndpointResource({
-    fallbackLoadError: "Studio capabilities could not be loaded.",
-    path: capabilitiesApiPath,
-    queryKey: computed(() => capabilitiesQueryKey(VIBE64_SURFACE_ID, ROUTE_VISIBILITY_PUBLIC, projectSlug.value)),
-    queryOptions: {
-      refetchOnMount: false,
-      refetchOnWindowFocus: false
-    },
-    readMethod: "GET",
-    requestRecoveryLabel: "Studio capabilities",
-    realtime: {
-      events: [
-        VIBE64_CONNECTIONS_CHANGED_EVENT,
-        VIBE64_PROJECT_CHANGED_EVENT
-      ]
-    },
-    refreshOnPull: true
-  });
-
   const sessions = computed(() => visibleVibe64Sessions(sessionList.items || []));
-  const studioCapabilities = computed(() => {
-    const capabilities = capabilitiesResource.data.value?.capabilities;
-    return capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)
-      ? capabilities
-      : {};
-  });
-  const createSessionCapability = computed(() => {
-    const createSession = studioCapabilities.value.createSession;
-    return createSession && typeof createSession === "object" && !Array.isArray(createSession)
-      ? createSession
-      : null;
-  });
   const creationOptions = computed(() => sessionList.pages?.[0]?.creation || {});
-  const workflowDefinitions = computed(() => {
-    const definitions = creationOptions.value.workflowDefinitions;
-    return Array.isArray(definitions) ? definitions : [];
-  });
-  const createSessionMode = computed(() => {
-    return creationOptions.value.mode === "select" && workflowDefinitions.value.length > 0
-      ? "select"
-      : "direct";
-  });
   const selectedListSession = computed(() => {
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
@@ -339,26 +277,13 @@ function useVibe64SessionData({
     payloadLimits: sessionList.pages?.[0]?.limits || {},
     sessions: sessions.value
   }));
-  const setupSessionLock = computed(() => activeVibe64ProjectSetupSession(sessions.value));
   const canCreateSession = computed(() => {
-    if (createSessionCapability.value?.enabled === false) {
-      return false;
-    }
-    if (setupSessionLock.value) {
-      return false;
-    }
     if (typeof creationOptions.value.canCreate === "boolean") {
       return creationOptions.value.canCreate;
     }
     return limits.value.openSessionCount < limits.value.maxOpenSessions;
   });
   const createSessionTitle = computed(() => {
-    if (createSessionCapability.value?.enabled === false && createSessionCapability.value.reason) {
-      return String(createSessionCapability.value.reason);
-    }
-    if (setupSessionLock.value) {
-      return activeVibe64ProjectSetupSessionMessage(setupSessionLock.value);
-    }
     if (creationOptions.value.disabledReason) {
       return String(creationOptions.value.disabledReason);
     }
@@ -366,38 +291,6 @@ function useVibe64SessionData({
       return `Studio allows up to ${limits.value.maxOpenSessions} active sessions.`;
     }
     return "Create a new Vibe64 session";
-  });
-  const capabilitiesDebugState = computed(() => {
-    const payload = capabilitiesResource.data.value || {};
-    const connections = payload.connections && typeof payload.connections === "object" && !Array.isArray(payload.connections)
-      ? payload.connections
-      : {};
-    const aiConnection = connections.ai && typeof connections.ai === "object" && !Array.isArray(connections.ai)
-      ? connections.ai
-      : {};
-    const githubConnection = connections.github && typeof connections.github === "object" && !Array.isArray(connections.github)
-      ? connections.github
-      : {};
-    return {
-      aiReady: aiConnection.ready === true,
-      canCreateSession: canCreateSession.value,
-      capabilitiesLoaded: Boolean(payload.capabilities),
-      createSessionCapabilityEnabled: createSessionCapability.value?.enabled === true,
-      createSessionCapabilityReason: String(createSessionCapability.value?.reason || ""),
-      createSessionMode: createSessionMode.value,
-      createSessionTitle: createSessionTitle.value,
-      creationCanCreate: typeof creationOptions.value.canCreate === "boolean" ? creationOptions.value.canCreate : null,
-      creationDisabledReason: String(creationOptions.value.disabledReason || ""),
-      githubReady: githubConnection.ready === true,
-      isFetching: Boolean(capabilitiesResource.isFetching.value),
-      isLoading: Boolean(capabilitiesResource.isLoading.value),
-      loadError: String(capabilitiesResource.loadError.value || ""),
-      maxOpenSessions: limits.value.maxOpenSessions,
-      openSessionCount: limits.value.openSessionCount,
-      projectSlug: String(projectSlug.value || ""),
-      setupSessionLockId: String(setupSessionLock.value?.sessionId || ""),
-      selectedProviderId: String(aiConnection.selectedProviderId || "")
-    };
   });
   const selectedSessionTitle = computed(() => {
     return vibe64SessionDisplayTitle(selectedSession.value || {}) ||
@@ -465,28 +358,22 @@ function useVibe64SessionData({
     sessionSelection.clear();
   }
 
-  async function createSession(workflowDefinition = "") {
+  async function createSession() {
     const startedAtMs = Date.now();
-    vibe64SessionDebugLog("client.sessionData.createSession.start", {
-      workflowDefinition: String(workflowDefinition || "")
-    });
+    vibe64SessionDebugLog("client.sessionData.createSession.start");
     try {
-      const response = await createSessionCommand.run({
-        workflowDefinition
-      });
+      const response = await createSessionCommand.run();
       vibe64SessionDebugLog("client.sessionData.createSession.done", {
         ...vibe64SessionDebugSummary(response || {}),
         code: String(response?.code || response?.errors?.[0]?.code || ""),
         durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        ok: response?.ok !== false,
-        workflowDefinition: String(workflowDefinition || "")
+        ok: response?.ok !== false
       });
       return response;
     } catch (error) {
       vibe64SessionDebugLog("client.sessionData.createSession.error", {
         durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error),
-        workflowDefinition: String(workflowDefinition || "")
+        error: vibe64SessionDebugError(error)
       });
       throw error;
     }
@@ -554,36 +441,6 @@ function useVibe64SessionData({
     immediate: true
   });
 
-  watch(capabilitiesDebugState, (state) => {
-    vibe64SessionDebugLog("client.sessionData.capabilities.changed", state);
-  }, {
-    immediate: true
-  });
-
-  watch(() => {
-    const session = selectedSession.value || {};
-    return [
-      session.sessionId || "",
-      session.currentStep || "",
-      session.stepMachine?.status || "",
-      session.next?.stepId || "",
-      session.next?.enabled === true ? "next-enabled" : "next-disabled",
-      session.presentation?.auto?.nextOperation?.id || "",
-      session.presentation?.auto?.nextOperation?.executable === true ? "op-executable" : "op-idle"
-    ].join("|");
-  }, () => {
-    const session = selectedSession.value || {};
-    if (!session.sessionId) {
-      return;
-    }
-    vibe64SessionDebugLog("client.sessionData.selectedSession.state", {
-      ...vibe64SessionDebugSummary(session)
-    });
-  }, {
-    flush: "post",
-    immediate: true
-  });
-
   watch(selectedSessionTitle, (title) => {
     notifyTitleChange(title || "");
   }, {
@@ -592,12 +449,9 @@ function useVibe64SessionData({
 
   return {
     canCreateSession,
-    capabilities: capabilitiesResource.data,
-    capabilitiesResource,
     clearSelectedSession,
     createSession,
     createSessionCommand,
-    createSessionMode,
     createSessionTitle,
     isSelectedSessionClosed,
     pageLoading,
@@ -612,8 +466,7 @@ function useVibe64SessionData({
     shortSessionId,
     statusColor: vibe64SessionStatusColor,
     statusLabel: vibe64SessionStatusLabel,
-    updateCurrentSessionCommand,
-    workflowDefinitions
+    updateCurrentSessionCommand
   };
 }
 

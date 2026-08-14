@@ -79,7 +79,6 @@ function normalizeEnvUserValue(key = "", value = {}, environment = "dev") {
   return normalizeRuntimeConfigRecord({
     editable: true,
     key: normalizeRuntimeConfigKey(key),
-    materialize: true,
     owner: RUNTIME_CONFIG_OWNERS.USER,
     requiredFor: [],
     scope: normalizeRuntimeConfigScope(environment),

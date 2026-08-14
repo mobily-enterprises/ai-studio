@@ -42,8 +42,8 @@ vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
   }
 }));
 
-vi.mock("@jskit-ai/users-web/client/lib/httpClient", () => ({
-  getUsersWebHttpClient() {
+vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
+  getHttpWebClient() {
     return {
       async request(...args) {
         mocks.requestCalls.push(args);

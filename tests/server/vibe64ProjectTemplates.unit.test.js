@@ -10,6 +10,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  PROJECT_TEMPLATES,
   applyProjectTemplate,
   projectTemplate,
   projectTemplateEligibility,
@@ -23,12 +24,6 @@ import {
 import { withTemporaryRoot } from "./vibe64TestHelpers.js";
 
 const execFileAsync = promisify(execFile);
-const TEST_PROJECT_CONFIG = Object.freeze({
-  github_pr_merge_method: "squash",
-  jskit_database_runtime: "none",
-  jskit_users: "none"
-});
-
 async function git(cwd, args = []) {
   const result = await execFileAsync("git", args, {
     cwd
@@ -38,7 +33,6 @@ async function git(cwd, args = []) {
 
 async function createSeedRepository(root, {
   id = "jskit-test",
-  projectConfig = TEST_PROJECT_CONFIG,
   repository = "local/jskit-test"
 } = {}) {
   await mkdir(root, {
@@ -59,7 +53,9 @@ async function createSeedRepository(root, {
     schema: "vibe64.project",
     schemaVersion: 1,
     projectType: "jskit",
-    config: projectConfig
+    config: {
+      legacy: true
+    }
   }, null, 2)}\n`, "utf8");
   await git(root, ["add", "-A"]);
   await git(root, [
@@ -84,9 +80,9 @@ function testTemplate(seedRoot, overrides = {}) {
     id: "jskit-test",
     name: "Test",
     order: 1,
-    projectConfig: TEST_PROJECT_CONFIG,
     repository: "local/jskit-test",
     repositoryUrl: "https://example.invalid/local/jskit-test",
+    stackPieces: ["nodejs"],
     tagline: "A useful test project",
     ...overrides
   });
@@ -120,13 +116,49 @@ test("project templates expose friendly trusted registry records", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.eligibility.eligible, false);
   assert.deepEqual(result.templates.map((template) => template.id), [
+    "genesis-blank",
     "jskit-public",
     "jskit-accounts",
     "jskit-database",
     "jskit-workspaces"
   ]);
   assert.equal(result.templates[0].cloneUrl, undefined);
-  assert.match(result.templates[0].description, /without creating an account/u);
+  assert.match(result.templates[0].description, /only Git and Genesis/u);
+});
+
+test("the blank foundation creates one Genesis root commit without selecting technology", async () => {
+  await withTemporaryRoot(async (root) => {
+    const sourceRoot = path.join(root, "project");
+    const runtimeRoot = path.join(root, "runtime");
+    await mkdir(sourceRoot, {
+      recursive: true
+    });
+
+    const result = await applyProjectTemplate({
+      project: {
+        repository: {
+          defaultBranch: "main",
+          mode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+        },
+        repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+      },
+      projectRuntimeRoot: runtimeRoot,
+      sourceRoot,
+      targetRoot: sourceRoot,
+      templateId: "genesis-blank",
+      templates: [PROJECT_TEMPLATES[0]]
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.materialization.sourceRevision, "");
+    await assertSingleRootCommit(sourceRoot);
+    assert.match(await readFile(path.join(sourceRoot, "genesis", "blueprint.md"), "utf8"), /Blueprint/u);
+    assert.match(await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8"), /Stack/u);
+    assert.ok(JSON.parse(await readFile(path.join(sourceRoot, ".codex", "hooks.json"), "utf8")));
+    await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.project.json"), "utf8"), {
+      code: "ENOENT"
+    });
+  });
 });
 
 test("project templates materialize an empty local source as one new root commit", async () => {
@@ -157,9 +189,16 @@ test("project templates materialize an empty local source as one new root commit
     assert.equal(result.ok, true);
     assert.equal(result.materialization.sourceRevision, sourceRevision);
     assert.notEqual(result.materialization.commit, sourceRevision);
-    assert.equal(JSON.parse(await readFile(path.join(sourceRoot, "vibe64.seed.json"), "utf8")).id, "jskit-test");
+    assert.equal(await readFile(path.join(sourceRoot, "README.md"), "utf8"), "# Test project template\n");
+    assert.match(await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8"), /nodejs/u);
+    await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.seed.json"), "utf8"), {
+      code: "ENOENT"
+    });
+    await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.project.json"), "utf8"), {
+      code: "ENOENT"
+    });
     await assertSingleRootCommit(sourceRoot);
-    assert.match(await git(sourceRoot, ["log", "-1", "--format=%B"]), /Vibe64-Seed: jskit-test/u);
+    assert.match(await git(sourceRoot, ["log", "-1", "--format=%B"]), /Vibe64-Foundation: jskit-test/u);
 
     const after = await projectTemplateEligibility({
       project: {
@@ -174,16 +213,13 @@ test("project templates materialize an empty local source as one new root commit
   });
 });
 
-test("project templates reject seed manifests outside the trusted setup contract", async () => {
+test("project templates reject source metadata outside the trusted registry", async () => {
   await withTemporaryRoot(async (root) => {
     const seedRoot = path.join(root, "seed");
     const sourceRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
     await createSeedRepository(seedRoot, {
-      projectConfig: {
-        github_pr_merge_method: "squash",
-        jskit_database_runtime: "none"
-      }
+      id: "another-template"
     });
     await mkdir(sourceRoot, {
       recursive: true
@@ -205,7 +241,7 @@ test("project templates reject seed manifests outside the trusted setup contract
         templates: [testTemplate(seedRoot)]
       }),
       {
-        code: "vibe64_project_template_project_config_invalid"
+        code: "vibe64_project_template_metadata_mismatch"
       }
     );
   });
@@ -238,8 +274,14 @@ test("project templates materialize managed canonical Git as one root commit", a
     });
 
     assert.equal(result.materialization.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(await git(targetRoot, ["--git-dir", repositoryPath, "show", "main:vibe64.seed.json"])
-      .then((text) => JSON.parse(text).id), "jskit-test");
+    assert.equal(
+      await git(targetRoot, ["--git-dir", repositoryPath, "show", "main:README.md"]),
+      "# Test project template"
+    );
+    await assert.rejects(
+      () => git(targetRoot, ["--git-dir", repositoryPath, "show", "main:vibe64.seed.json"]),
+      /does not exist in/u
+    );
     await assertSingleRootCommit(targetRoot, {
       gitDir: repositoryPath
     });

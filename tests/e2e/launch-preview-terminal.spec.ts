@@ -16,7 +16,7 @@ import {
   sessionRuntimeRoot
 } from "./support/base-shell-data";
 import {
-  mockStudioReady
+  mockProjectGateReady
 } from "./support/base-shell-mocks";
 
 const SESSION_ID = "session-renderer";
@@ -282,8 +282,8 @@ test("@preview-lifecycle attaches multiple visible preview frames and stops each
   });
 
   const previewFrame = page.locator(".vibe64-launch-controls__preview-frame");
-  const composerTools = page.locator(".vibe64-workflow-control-form__composer-tools");
-  const captureButton = composerTools.getByRole("button", {
+  const composerActions = page.locator(".studio-autopilot__composer-actions");
+  const captureButton = composerActions.getByRole("button", {
     name: "Attach visible preview"
   });
   await expect(
@@ -296,9 +296,6 @@ test("@preview-lifecycle attaches multiple visible preview frames and stops each
   await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app"))
     .toBeVisible();
   await expect(captureButton).toBeVisible();
-  await expect(composerTools.getByRole("button", {
-    name: "Composer menu"
-  })).toBeVisible();
 
   await captureButton.click();
   await expect(page.locator(".studio-autopilot-prompt-textarea__attachment")).toHaveCount(1);
@@ -411,12 +408,10 @@ test("@preview-lifecycle attaches isolated proxied-app console and network diagn
     });
   });
 
-  await page.getByRole("button", {
-    name: "Composer menu"
-  }).click();
-  const attachDiagnostics = page.getByRole("button", {
-    name: "Attach console & network"
-  });
+  const attachDiagnostics = page.locator(".studio-autopilot__composer-actions")
+    .getByRole("button", {
+      name: "Attach console & network"
+    });
   await expect(attachDiagnostics).toBeVisible();
   await attachDiagnostics.click();
   await expect(page.locator(".studio-autopilot-prompt-textarea__attachment")).toHaveCount(1);
@@ -639,9 +634,8 @@ test("@preview-lifecycle refreshes disabled targets after the selected session a
   await expect(page.getByText("Install dependencies before running the app.")).toBeVisible();
   expect(launchSession.getLaunchStatusRequestCount()).toBe(1);
 
-  session.metadata = {
-    ...session.metadata,
-    dependencies_installed: "yes"
+  session.workspaceSetup = {
+    status: "succeeded"
   };
   session.revision = 2;
   await page.getByRole("button", {
@@ -793,11 +787,11 @@ test("embedded preview stays mounted when switching selected sessions", async ({
   await mockLaunchTerminalSocket(page);
   const alphaSession = sessionPayload({
     sessionId: "session-alpha",
-    title: "Alpha"
+    sessionName: "Alpha"
   });
   const betaSession = sessionPayload({
     sessionId: "session-beta",
-    title: "Beta"
+    sessionName: "Beta"
   });
   await mockLaunchSession(page, {
     session: alphaSession,
@@ -1461,7 +1455,7 @@ async function mockLaunchSession(page: Page, {
     }
     return listedSessions.find((item) => item.sessionId === requestedSessionId) || session;
   }
-  await mockStudioReady(page);
+  await mockProjectGateReady(page);
   await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/sessions(?:\/.*)?(?:\?.*)?$/u, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -1616,8 +1610,11 @@ async function mockLaunchSession(page: Page, {
       });
     }
     await fulfillJson(route, {
+      creation: {
+        canCreate: true,
+        mode: "direct"
+      },
       limits: {
-        maxOpenSessions: 5,
         openSessionCount: 1
       },
       ok: true,
@@ -1832,7 +1829,6 @@ function createSourceEditorMock(initialFiles: Record<string, string>) {
     return {
       ok: true,
       policy: {
-        adapterId: "jskit",
         defaultOpenFiles: ["src/App.js"],
         exclude: [],
         preexpandedDirectories: ["src"],
@@ -2589,84 +2585,66 @@ function previewAvailabilitySequence() {
 function sessionPayload({
   includeWorktreePaths = true,
   sessionId = SESSION_ID,
-  title = "Renderer session"
+  sessionName = "Renderer session"
 }: {
   includeWorktreePaths?: boolean;
   sessionId?: string;
-  title?: string;
+  sessionName?: string;
 } = {}) {
   const sourcePath = `/var/lib/vibe64/test/projects/example/sessions/active/${sessionId}/source`;
+  const createdAt = "2026-05-24T00:00:00.000Z";
+  const sessionRoot = sessionRuntimeRoot(sessionId);
   const session = {
-    actionResults: [],
-    actions: [],
-    completedSteps: ["source_created"],
-    createdAt: "2026-05-24T00:00:00.000Z",
-    currentStep: "maintenance_conversation",
-    currentStepDefinition: {
-      id: "maintenance_conversation",
-      label: "Maintenance"
+    agentRuns: [],
+    agentSession: {
+      identity: null,
+      providerId: "codex",
+      terminal: null,
+      thread: {
+        id: `thread-${sessionId}`
+      },
+      transportId: "codex_app_server",
+      turn: {
+        active: false
+      },
+      workdir: sourcePath
     },
-    intents: [],
-    metadata: {},
-    next: {
-      disabledReason: "",
-      enabled: false,
-      label: "Next step",
-      stepId: "next_step",
-      visible: true
+    backgroundTasks: [],
+    companion: {
+      id: "genesis",
+      label: "Genesis"
     },
-    presentation: {
-      auto: {
-        nextOperation: {
-          executable: false,
-          kind: "wait",
-          reason: "user"
+    conversationLogRoot: `${sessionRoot}/conversation-log`,
+    manifest: {
+      createdAt,
+      product: "vibe64",
+      revision: 1,
+      schemaVersion: 1,
+      sessionId,
+      updatedAt: createdAt
+    },
+    metadata: includeWorktreePaths
+      ? {
+          source_kind: "session_clone",
+          source_path: sourcePath,
+          source_path_authority: "managed_session_source"
         }
-      },
-      intents: [],
-      screen: {
-        kind: "ready",
-        sections: [],
-        title: "Ready"
-      },
-      step: {
-        id: "maintenance_conversation",
-        label: "Maintenance",
-        status: "ready"
-      }
-    },
+      : {},
+    revision: 1,
     sessionId,
-    sessionRoot: sessionRuntimeRoot(sessionId),
+    sessionName,
+    sessionRoot,
+    stateRoot: `${sessionRoot}/state`,
     status: "active",
-    stepDefinitions: [
-      {
-        id: "maintenance_conversation",
-        label: "Maintenance",
-        status: "current"
-      }
-    ],
-    stepMachine: {
-      status: "ready",
-      stepId: "maintenance_conversation"
-    },
     targetRoot: "/workspace/example-target-app",
-    title,
-    updatedAt: "2026-05-24T00:00:00.000Z",
-    workflowId: "test-workflow",
+    updatedAt: createdAt
   };
   if (!includeWorktreePaths) {
     return session;
   }
   return {
     ...session,
-    artifactsRoot: `${sessionRuntimeRoot(sessionId)}/artifacts`,
-    metadata: {
-      source_kind: "session_clone",
-      source_path: sourcePath,
-      source_path_authority: "managed_session_source"
-    },
-    targetRoot: "/workspace/example-target-app",
-    source: sourcePath,
+    sourcePath,
     sourceReady: true
   };
 }

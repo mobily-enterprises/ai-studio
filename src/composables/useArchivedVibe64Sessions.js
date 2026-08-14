@@ -1,14 +1,12 @@
 import { computed, proxyRefs, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import { useRoute } from "vue-router";
 import {
   mdiArchiveCancelOutline,
-  mdiCheckCircle,
   mdiEyeOutline,
   mdiFileDocumentOutline,
-  mdiGithub,
   mdiRefresh,
   mdiSourceBranch,
   mdiSourceCommit
@@ -30,10 +28,7 @@ import {
   enrichVibe64SessionForDisplay
 } from "@/lib/vibe64SessionPanelModel.js";
 import {
-  normalizeVibe64SessionArchiveTab,
-  parseGithubSessionLink,
   shortVibe64SessionId,
-  vibe64SessionArchive,
   vibe64SessionStatusColor,
   vibe64SessionStatusLabel
 } from "@/lib/vibe64SessionViewModel.js";
@@ -43,10 +38,6 @@ import {
 
 const archivedVibe64SessionsEmits = ["loading-changed"];
 const archivedVibe64SessionsProps = {
-  archive: {
-    required: true,
-    type: String
-  },
   description: {
     default: "",
     type: String
@@ -69,7 +60,7 @@ const archivedVibe64SessionsProps = {
   }
 };
 
-function useArchivedVibe64Sessions(props, emit) {
+function useArchivedVibe64Sessions(emit) {
   const paths = usePaths();
   const projectSlug = useVibe64ProjectSlug();
   const sessionsApiPath = computed(() => paths.api(VIBE64_SESSIONS_API_SUFFIX, {
@@ -86,10 +77,10 @@ function useArchivedVibe64Sessions(props, emit) {
         projectSlug.value
       ),
       "archive",
-      props.archive
+      "abandoned"
     ]),
     readQuery: computed(() => ({
-      archive: props.archive
+      archive: "abandoned"
     })),
     requestRecoveryLabel: "Archived sessions"
   });
@@ -104,10 +95,6 @@ function useArchivedVibe64Sessions(props, emit) {
       .filter(sessionIsInArchive);
   });
 
-  const archiveIcon = computed(() => {
-    return props.archive === "completed" ? mdiCheckCircle : mdiArchiveCancelOutline;
-  });
-
   watch(loading, (isLoading) => {
     emit("loading-changed", isLoading);
   }, {
@@ -115,14 +102,11 @@ function useArchivedVibe64Sessions(props, emit) {
   });
 
   return {
-    archiveIcon,
-    completedStepCount,
+    archiveIcon: mdiArchiveCancelOutline,
     error,
-    githubLabel,
     loadSessions,
     loading,
     mdiEyeOutline,
-    mdiGithub,
     mdiRefresh,
     mdiSourceBranch,
     sessionRoute,
@@ -133,11 +117,7 @@ function useArchivedVibe64Sessions(props, emit) {
   };
 
   function sessionIsInArchive(session = {}) {
-    const status = String(session.status || "");
-    if (props.archive === "abandoned") {
-      return status === "abandoned";
-    }
-    return status === "finished" || status === "completed";
+    return String(session.status || "") === "abandoned";
   }
 
   async function loadSessions() {
@@ -146,7 +126,6 @@ function useArchivedVibe64Sessions(props, emit) {
 
   function sessionRoute(session = {}) {
     return archivedSessionDetailRoute({
-      archive: props.archive,
       projectSlug: projectSlug.value,
       sessionId: session.sessionId
     });
@@ -193,14 +172,10 @@ function useArchivedVibe64SessionDetail() {
       return null;
     }
     const enrichedSession = enrichVibe64SessionForDisplay(payload);
-    return vibe64SessionArchive(enrichedSession) ? enrichedSession : null;
+    return String(enrichedSession.status || "") === "abandoned" ? enrichedSession : null;
   });
-  const archive = computed(() => vibe64SessionArchive(session.value) || normalizeVibe64SessionArchiveTab(route.query.tab));
   const backTo = computed(() => ({
-    path: `${projectAppPath(projectSlug.value)}/dashboard/history`,
-    query: {
-      tab: archive.value
-    }
+    path: `${projectAppPath(projectSlug.value)}/dashboard/history`
   }));
   const conversationLog = proxyRefs(useVibe64ConversationLog({
     active: computed(() => Boolean(session.value)),
@@ -208,7 +183,6 @@ function useArchivedVibe64SessionDetail() {
   }));
 
   return {
-    archive,
     backTo,
     conversationLog,
     error: computed(() => String(sessionResource.loadError.value || "")),
@@ -218,33 +192,6 @@ function useArchivedVibe64SessionDetail() {
     session,
     sessionId
   };
-}
-
-function completedStepCount(session = {}) {
-  const count = Number(session.completedStepCount);
-  if (Number.isSafeInteger(count) && count >= 0) {
-    return count;
-  }
-  return Array.isArray(session.completedSteps) ? session.completedSteps.length : 0;
-}
-
-function completedStepRows(session = {}) {
-  return (Array.isArray(session.completedSteps) ? session.completedSteps : [])
-    .map((step, index) => {
-      if (step && typeof step === "object" && !Array.isArray(step)) {
-        return {
-          id: String(step.id || step.stepId || index + 1),
-          label: String(step.label || step.title || step.id || step.stepId || `Step ${index + 1}`),
-          message: String(step.message || step.description || "")
-        };
-      }
-      const label = String(step || "").trim();
-      return {
-        id: label || String(index + 1),
-        label: label || `Step ${index + 1}`,
-        message: ""
-      };
-    });
 }
 
 function shortSessionId(sessionId) {
@@ -259,20 +206,12 @@ function statusColor(status) {
   return vibe64SessionStatusColor(status);
 }
 
-function githubLabel(url, fallback) {
-  return parseGithubSessionLink(url, fallback === "PR" ? "pr" : "issue").label;
-}
-
 function archivedSessionDetailRoute({
-  archive = "completed",
   projectSlug = "",
   sessionId = ""
 } = {}) {
   return {
-    path: `${projectAppPath(projectSlug)}/dashboard/history/${encodeURIComponent(String(sessionId || "").trim())}`,
-    query: {
-      tab: normalizeVibe64SessionArchiveTab(archive)
-    }
+    path: `${projectAppPath(projectSlug)}/dashboard/history/${encodeURIComponent(String(sessionId || "").trim())}`
   };
 }
 
@@ -314,7 +253,6 @@ export {
   archivedSessionDetailRoute,
   archivedVibe64SessionsEmits,
   archivedVibe64SessionsProps,
-  completedStepRows,
   shortSessionId,
   useArchivedVibe64Sessions,
   useArchivedVibe64SessionDetail

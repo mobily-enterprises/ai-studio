@@ -6,65 +6,33 @@ import {
 import { featureActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
 import {
-  resolveConnectionSetupService
-} from "@local/vibe64-runtime/server/connectionReadiness";
-import {
-  VIBE64_SYSTEM_ROOT_ENV,
-  VIBE64_TARGET_ROOT_ENV
-} from "@local/vibe64-core/server/studioRoots";
-import {
   jskitRuntimeEnv
 } from "@local/vibe64-core/server/jskitRuntimeEnv";
-import {
-  getStudioProjectContext
-} from "@local/vibe64-core/server/studioProjectContext";
-import {
-  setupOptionsForRuntimeProfile
-} from "@local/vibe64-runtime/server/setupReadiness";
 
 class CurrentAppProvider {
   static id = "feature.current-app";
 
-  static dependsOn = [
+  static startsAfter = [
     "runtime.actions",
-    "feature.vibe64-project",
-    "feature.studio-setup-doctor",
-    "feature.project-setup-doctor"
+    "feature.vibe64-project"
   ];
 
   register(app) {
     if (
       !app ||
-      typeof app.singleton !== "function" ||
       typeof app.service !== "function" ||
       typeof app.actions !== "function"
     ) {
-      throw new Error("CurrentAppProvider requires application singleton()/service()/actions().");
+      throw new Error("CurrentAppProvider requires application service()/actions().");
     }
 
     const providerEnv = jskitRuntimeEnv(app);
-    const systemRoot = String(providerEnv[VIBE64_SYSTEM_ROOT_ENV] || "");
-    const targetRoot = String(providerEnv[VIBE64_TARGET_ROOT_ENV] || "");
-    const connectionSetupOptions = {
-      systemRoot,
-      targetRoot
-    };
-    const studioProjectContext = getStudioProjectContext();
-    const setupOptions = setupOptionsForRuntimeProfile(studioProjectContext.runtimeProfile);
-
     app.service(
       "feature.current-app.service",
-      (scope) => {
-        return createService({
-          projectService: scope.make("feature.vibe64-project.service"),
-          setupServices: {
-            connectionSetupService: resolveConnectionSetupService(scope, connectionSetupOptions),
-            projectSetupService: scope.make("feature.project-setup-doctor.service"),
-            studioSetupService: scope.make("feature.studio-setup-doctor.service")
-          },
-          setupOptions
-        });
-      }
+      (scope) => createService({
+        env: providerEnv,
+        projectService: scope.make("feature.vibe64-project.service")
+      })
     );
 
     app.actions(

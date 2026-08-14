@@ -19,11 +19,7 @@
         <span class="studio-ai-sessions__tab-main">
           <span
             class="studio-ai-sessions__status-dot"
-            :class="[
-              `studio-ai-sessions__status-dot--${sessionItem.status}`,
-              { 'studio-ai-sessions__status-dot--unsafe': sessionSourceSafetyUnsafe(sessionItem) }
-            ]"
-            :style="sessionSourceSafetyStyle(sessionItem)"
+            :class="`studio-ai-sessions__status-dot--${sessionItem.status}`"
           />
           <span class="studio-ai-sessions__tab-label">{{ sessionTabLabel(sessionItem) }}</span>
         </span>
@@ -65,10 +61,6 @@ import {
   mdiClose
 } from "@mdi/js";
 import Vibe64CreateSessionButton from "@/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
-import {
-  sourceSafetyIsUnsafe,
-  sourceSafetyMarkStyle
-} from "@/lib/vibe64SessionSourceSafety.js";
 
 const props = defineProps({
   abandon: {
@@ -111,16 +103,6 @@ function sessionTabLabel(sessionItem = {}) {
     return sessionName;
   }
   return props.toolbar.shortSessionId?.(sessionItem.sessionId) || String(sessionItem.sessionId || "");
-}
-
-function sessionSourceSafetyUnsafe(sessionItem = {}) {
-  return sourceSafetyIsUnsafe(sessionItem?.sourceSafety);
-}
-
-function sessionSourceSafetyStyle(sessionItem = {}) {
-  return sessionSourceSafetyUnsafe(sessionItem)
-    ? sourceSafetyMarkStyle(sessionItem.sourceSafety)
-    : undefined;
 }
 
 const allSessions = computed(() => Array.isArray(props.toolbar.sessions) ? props.toolbar.sessions : []);
@@ -276,8 +258,8 @@ const visibleSessions = computed(() => {
   font-size: 0.98rem;
 }
 
-.studio-ai-sessions__tab-main:hover .studio-ai-sessions__status-dot:not(.studio-ai-sessions__status-dot--unsafe),
-.studio-ai-sessions__tab:focus-visible .studio-ai-sessions__status-dot:not(.studio-ai-sessions__status-dot--unsafe) {
+.studio-ai-sessions__tab-main:hover .studio-ai-sessions__status-dot,
+.studio-ai-sessions__tab:focus-visible .studio-ai-sessions__status-dot {
   background: currentColor;
 }
 
@@ -298,20 +280,9 @@ const visibleSessions = computed(() => {
 }
 
 .studio-ai-sessions__status-dot--abandoned,
+.studio-ai-sessions__status-dot--blocked,
 .studio-ai-sessions__status-dot--failed {
   background: rgb(var(--v-theme-error));
-}
-
-.studio-ai-sessions__status-dot--finished {
-  background: rgb(var(--v-theme-success));
-}
-
-.studio-ai-sessions__status-dot--unsafe {
-  background: var(--vibe64-source-safety-color);
-  box-shadow:
-    0 0 0 0.18rem rgba(var(--v-theme-surface), 0.92),
-    0 0 0 0.31rem var(--vibe64-source-safety-color);
-  contain: none;
 }
 
 @keyframes studio-ai-sessions-thinking-pulse {

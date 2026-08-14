@@ -2,7 +2,7 @@ import { builtinModules } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const TOOLING_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(TOOLING_DIR, "..");
@@ -53,28 +53,8 @@ function packageNameFromSpecifier(specifier) {
   return normalizedSpecifier.split("/")[0];
 }
 
-function looksLikePackageDependency(value) {
-  const dependency = String(value || "").trim();
-  if (!dependency) {
-    return false;
-  }
-  if (dependency.startsWith("@")) {
-    const segments = dependency.split("/");
-    return segments.length === 2 && segments.every(Boolean);
-  }
-  return /^[a-z0-9][a-z0-9._-]*$/iu.test(dependency);
-}
-
 function isWorkspaceDependency(packageName) {
   return String(packageName || "").startsWith("@local/");
-}
-
-function isDescriptorDependency(packageName) {
-  return isWorkspaceDependency(packageName) || packageName === "@jskit-ai/kernel";
-}
-
-function isExternalRuntimeDependency(packageName) {
-  return !isDescriptorDependency(packageName);
 }
 
 function stripJavaScriptComments(source) {
@@ -212,24 +192,6 @@ function workspacePackageDirectories(rootManifest) {
     .sort((left, right) => left.localeCompare(right));
 }
 
-async function readDescriptor(packageDirectory) {
-  const descriptorPath = path.join(packageDirectory, "package.descriptor.mjs");
-  if (!fs.existsSync(descriptorPath)) {
-    return {
-      descriptor: null,
-      descriptorPath
-    };
-  }
-
-  const moduleUrl = pathToFileURL(descriptorPath);
-  moduleUrl.searchParams.set("mtime", String(fs.statSync(descriptorPath).mtimeMs));
-  const descriptorModule = await import(moduleUrl.href);
-  return {
-    descriptor: descriptorModule.default,
-    descriptorPath
-  };
-}
-
 function pushSetItems(target, values) {
   for (const value of values) {
     target.add(value);
@@ -299,26 +261,32 @@ function verifyRootPackage({
   }
 }
 
-function verifyDescriptorMetadata({
-  descriptor,
-  descriptorPath,
+function verifyJskitMetadata({
   errors,
-  manifest
+  manifest,
+  packageDirectory,
+  packageJsonPath
 }) {
-  if (!descriptor) {
-    errors.push(`${relativePath(path.join(path.dirname(descriptorPath || ""), "package.descriptor.mjs"))} is missing.`);
+  const legacyDescriptorPath = path.join(packageDirectory, "package.descriptor.mjs");
+  if (fs.existsSync(legacyDescriptorPath)) {
+    errors.push(`${relativePath(legacyDescriptorPath)} uses the removed Beta 1 descriptor contract.`);
+  }
+
+  const metadataPath = `${relativePath(packageJsonPath)}#jskit`;
+  const jskit = manifest.jskit;
+  if (!jskit || typeof jskit !== "object" || Array.isArray(jskit)) {
+    errors.push(`${metadataPath} must contain the package's JSKIT metadata.`);
     return;
   }
 
-  if (descriptor.packageId !== manifest.name) {
-    errors.push(
-      `${relativePath(descriptorPath)} packageId must match package.json name ${manifest.name}; found ${descriptor.packageId || "<missing>"}.`
-    );
+  if (!String(manifest.description || "").trim()) {
+    errors.push(`${relativePath(packageJsonPath)} must declare its package description at the top level.`);
   }
-  if (descriptor.version !== manifest.version) {
-    errors.push(
-      `${relativePath(descriptorPath)} version must match package.json version ${manifest.version}; found ${descriptor.version || "<missing>"}.`
-    );
+
+  for (const legacyField of ["dependsOn", "description", "packageId", "packageVersion", "version"]) {
+    if (Object.hasOwn(jskit, legacyField)) {
+      errors.push(`${metadataPath} must not declare removed Beta 1 field ${legacyField}.`);
+    }
   }
 }
 
@@ -328,26 +296,21 @@ function verifyPackageContract({
   packagesByName
 }) {
   const {
-    descriptor,
-    descriptorPath,
     directImports,
     manifest,
+    packageDirectory,
     packageJsonPath
   } = packageInfo;
   const dependencyNames = packageDependencyNames(manifest);
   const runtimeDependencies = manifest.dependencies || {};
-  const descriptorDependsOn = new Set(
-    (descriptor?.dependsOn || []).filter((dependencyName) => looksLikePackageDependency(dependencyName))
-  );
-  const mutationRuntimeDependencies = descriptor?.mutations?.dependencies?.runtime || {};
-  const mutationDevDependencies = descriptor?.mutations?.dependencies?.dev || {};
-  const requiredDependencies = new Set();
+  const mutationRuntimeDependencies = manifest.jskit?.mutations?.dependencies?.runtime || {};
+  const mutationDevDependencies = manifest.jskit?.mutations?.dependencies?.dev || {};
 
-  verifyDescriptorMetadata({
-    descriptor,
-    descriptorPath,
+  verifyJskitMetadata({
     errors,
-    manifest
+    manifest,
+    packageDirectory,
+    packageJsonPath
   });
 
   if (manifest.private !== true) {
@@ -358,19 +321,9 @@ function verifyPackageContract({
     if (packageName === manifest.name) {
       continue;
     }
-    requiredDependencies.add(packageName);
     if (!dependencyNames.has(packageName)) {
       errors.push(
         `${manifest.name} imports ${packageName} from ${sortedValues(files).join(", ")} but does not declare it in package.json dependencies.`
-      );
-    }
-  }
-
-  for (const dependencyName of descriptorDependsOn) {
-    requiredDependencies.add(dependencyName);
-    if (!dependencyNames.has(dependencyName)) {
-      errors.push(
-        `${relativePath(descriptorPath)} dependsOn includes ${dependencyName}, but ${relativePath(packageJsonPath)} does not declare it.`
       );
     }
   }
@@ -387,31 +340,17 @@ function verifyPackageContract({
       }
     }
 
-    if (isDescriptorDependency(dependencyName) && !descriptorDependsOn.has(dependencyName)) {
+    if (dependencyName.startsWith("@jskit-ai/") && !/^\d+\.\d+\.\d+$/u.test(String(versionSpec))) {
       errors.push(
-        `${manifest.name} declares ${dependencyName}, but ${relativePath(descriptorPath)} does not list it in dependsOn.`
-      );
-    }
-
-    if (
-      !requiredDependencies.has(dependencyName) &&
-      !Object.hasOwn(mutationRuntimeDependencies, dependencyName)
-    ) {
-      errors.push(
-        `${manifest.name} declares unused runtime dependency ${dependencyName}; it is not imported, in descriptor dependsOn, or in descriptor runtime mutations.`
+        `${manifest.name} must pin ${dependencyName} to an exact version; found ${versionSpec}.`
       );
     }
   }
 
   for (const [dependencyName, versionSpec] of Object.entries(mutationRuntimeDependencies)) {
-    if (!isExternalRuntimeDependency(dependencyName)) {
-      errors.push(
-        `${relativePath(descriptorPath)} mutations.dependencies.runtime must only list external runtime packages; move ${dependencyName} to dependsOn.`
-      );
-    }
     if (runtimeDependencies[dependencyName] !== versionSpec) {
       errors.push(
-        `${relativePath(descriptorPath)} runtime mutation ${dependencyName}@${versionSpec} disagrees with package.json (${runtimeDependencies[dependencyName] || "<missing>"}).`
+        `${relativePath(packageJsonPath)}#jskit runtime mutation ${dependencyName}@${versionSpec} disagrees with package.json (${runtimeDependencies[dependencyName] || "<missing>"}).`
       );
     }
   }
@@ -419,13 +358,13 @@ function verifyPackageContract({
   for (const [dependencyName, versionSpec] of Object.entries(mutationDevDependencies)) {
     if ((manifest.devDependencies || {})[dependencyName] !== versionSpec) {
       errors.push(
-        `${relativePath(descriptorPath)} dev mutation ${dependencyName}@${versionSpec} disagrees with package.json devDependencies (${(manifest.devDependencies || {})[dependencyName] || "<missing>"}).`
+        `${relativePath(packageJsonPath)}#jskit dev mutation ${dependencyName}@${versionSpec} disagrees with package.json devDependencies (${(manifest.devDependencies || {})[dependencyName] || "<missing>"}).`
       );
     }
   }
 }
 
-async function main() {
+function main() {
   const errors = [];
   const rootManifest = readJson(path.join(ROOT_DIR, "package.json"));
   const packageDirectories = workspacePackageDirectories(rootManifest);
@@ -435,10 +374,7 @@ async function main() {
   for (const packageDirectory of packageDirectories) {
     const packageJsonPath = path.join(packageDirectory, "package.json");
     const manifest = readJson(packageJsonPath);
-    const { descriptor, descriptorPath } = await readDescriptor(packageDirectory);
     const packageInfo = {
-      descriptor,
-      descriptorPath,
       directImports: collectPackageImports(packageDirectory),
       manifest,
       packageDirectory,
@@ -477,4 +413,4 @@ async function main() {
   console.log(`Verified ${packages.length} workspace package contracts.`);
 }
 
-await main();
+main();

@@ -1,210 +1,92 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 
-const projectTypeReadInputValidator = deepFreeze({
-  schema: createSchema({
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
+function patchSchema(fields) {
+  return deepFreeze({
+    schema: createSchema(fields),
+    mode: "patch"
+  });
+}
+
+const projectsReadInputValidator = patchSchema({});
+const projectTemplatesReadInputValidator = patchSchema({});
+const projectTemplateApplyInputValidator = patchSchema({});
+
+const projectTemplateParamsValidator = patchSchema({
+  slug: {
+    type: "string",
+    required: false
+  },
+  templateId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
 });
 
-const projectTemplatesReadInputValidator = deepFreeze({
-  schema: createSchema({}),
-  mode: "patch"
+const projectCreateInputValidator = patchSchema({
+  name: {
+    type: "string",
+    noTrim: false
+  },
+  repository: {
+    type: "object",
+    additionalProperties: true
+  },
+  slug: {
+    type: "string",
+    noTrim: false
+  }
 });
 
-const projectTemplateApplyInputValidator = deepFreeze({
-  schema: createSchema({}),
-  mode: "patch"
+const projectSelectInputValidator = patchSchema({
+  slug: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
 });
 
-const projectTemplateParamsValidator = deepFreeze({
-  schema: createSchema({
-    slug: {
-      type: "string",
-      required: false
-    },
-    templateId: {
-      type: "string",
-      noTrim: false,
-      required: true
-    }
-  }),
-  mode: "patch"
+const projectEnvReadInputValidator = patchSchema({
+  environment: {
+    type: "string",
+    noTrim: false
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
 });
 
-const projectConfigReadInputValidator = deepFreeze({
-  schema: createSchema({
-    projectType: {
-      type: "string",
-      noTrim: false
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
+const projectEnvUserValuesInputValidator = patchSchema({
+  environment: {
+    type: "string",
+    noTrim: false
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
+  },
+  values: {
+    type: "object",
+    additionalProperties: true,
+    required: true
+  }
 });
 
-const projectEnvReadInputValidator = deepFreeze({
-  schema: createSchema({
-    projectType: {
-      type: "string",
-      noTrim: false
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    environment: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
-});
-
-const projectEnvMaterializeInputValidator = deepFreeze({
-  schema: createSchema({
-    environment: {
-      type: "string",
-      noTrim: false
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    syncActiveSessionSources: {
-      type: "boolean"
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
-});
-
-const projectEnvUserValuesInputValidator = deepFreeze({
-  schema: createSchema({
-    environment: {
-      type: "string",
-      noTrim: false
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    },
-    values: {
-      type: "object",
-      additionalProperties: true,
-      required: true
-    }
-  }),
-  mode: "patch"
-});
-
-const projectsReadInputValidator = deepFreeze({
-  schema: createSchema({}),
-  mode: "patch"
-});
-
-const projectCreateInputValidator = deepFreeze({
-  schema: createSchema({
-    name: {
-      type: "string",
-      noTrim: false
-    },
-    repository: {
+const previewApplicationIdentitiesInputValidator = patchSchema({
+  identities: {
+    type: "array",
+    items: {
       type: "object",
       additionalProperties: true
     },
-    slug: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
-});
-
-const projectSelectInputValidator = deepFreeze({
-  schema: createSchema({
-    slug: {
-      type: "string",
-      noTrim: false,
-      required: true
-    }
-  }),
-  mode: "patch"
-});
-
-const projectConfigInputValidator = deepFreeze({
-  schema: createSchema({
-    projectType: {
-      type: "string",
-      noTrim: false
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    },
-    values: {
-      type: "object",
-      additionalProperties: true,
-      required: true
-    }
-  }),
-  mode: "patch"
-});
-
-const projectTypeInputValidator = deepFreeze({
-  schema: createSchema({
-    projectType: {
-      type: "string",
-      noTrim: false,
-      required: true
-    },
-    sessionId: {
-      type: "string",
-      noTrim: false
-    },
-    sourcePath: {
-      type: "string",
-      noTrim: false
-    }
-  }),
-  mode: "patch"
+    required: true
+  }
 });
 
 export {
-  projectConfigInputValidator,
-  projectConfigReadInputValidator,
   projectCreateInputValidator,
-  projectEnvMaterializeInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
@@ -212,6 +94,5 @@ export {
   projectTemplateApplyInputValidator,
   projectTemplateParamsValidator,
   projectTemplatesReadInputValidator,
-  projectTypeInputValidator,
-  projectTypeReadInputValidator
+  previewApplicationIdentitiesInputValidator
 };

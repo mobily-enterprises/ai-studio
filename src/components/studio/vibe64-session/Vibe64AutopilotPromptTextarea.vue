@@ -365,19 +365,23 @@ defineExpose({
   box-sizing: border-box;
   display: grid;
   gap: 0;
+  max-width: 100%;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
   padding: 0.56rem 2px 2px;
   position: relative;
   text-align: left;
+  width: 100%;
 }
 
 .studio-autopilot-prompt-textarea__field {
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-on-surface), 0.34);
   border-radius: 18px;
+  box-sizing: border-box;
   box-shadow: inset 0 0 0 1px rgba(var(--v-theme-on-surface), 0.08);
   display: grid;
+  max-width: 100%;
   min-width: 0;
   padding-top: 0.01rem;
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -413,6 +417,7 @@ defineExpose({
 .studio-autopilot-prompt-textarea__input {
   background: transparent;
   border: 0;
+  box-sizing: border-box;
   color: rgb(var(--v-theme-on-surface));
   display: block;
   font: inherit;
@@ -493,6 +498,8 @@ defineExpose({
   display: flex;
   flex-wrap: wrap;
   gap: 0.38rem;
+  max-width: 100%;
+  min-width: 0;
   padding: 0.58rem 0.62rem 0.34rem;
   position: relative;
   z-index: 1;

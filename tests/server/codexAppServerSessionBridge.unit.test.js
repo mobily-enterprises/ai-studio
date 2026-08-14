@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME,
-  CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
   codexAppServerIdentityMetadata,
   codexAppServerPromptWithContextRefresh,
   codexAppServerThreadStartSettings,
@@ -205,7 +203,7 @@ test("codex app-server bridge records the host CLI resume command for the same t
   });
 
   assert.equal(metadata.agent_identity_conversation_id, "019e865d-8108-7740-912b-42ece83a5c73");
-  assert.equal(metadata.agent_workflow_result_transport, CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT);
+  assert.equal(Object.hasOwn(metadata, "agent_workflow_result_transport"), false);
   assert.equal(
     metadata.agent_resume_command,
     `${STUDIO_MANAGED_CODEX_COMMAND} -c ${STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG} --remote unix:///tmp/vibe64/agent-providers/codex-app-server/app-server.sock resume 019e865d-8108-7740-912b-42ece83a5c73`
@@ -248,12 +246,12 @@ test("codex app-server bridge starts a missing session thread and stores identit
   assert.equal(providerCalls.length, 1);
   assert.equal(providerCalls[0].method, "startThread");
   assert.equal(providerCalls[0].params.cwd, "/repo/worktree");
-  assert.equal(providerCalls[0].params.dynamicTools[0].name, CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME);
+  assert.equal(Object.hasOwn(providerCalls[0].params, "dynamicTools"), false);
   assert.equal(metadataValue(runtime, "agent_identity_provider"), "codex");
   assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "thread-started");
   assert.equal(metadataValue(runtime, "agent_transport_kind"), "unix");
   assert.equal(metadataValue(runtime, "agent_transport_socket_path"), "/tmp/vibe64/agent-providers/codex-app-server/app-server.sock");
-  assert.equal(metadataValue(runtime, "agent_workflow_result_transport"), CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT);
+  assert.equal(metadataValue(runtime, "agent_workflow_result_transport"), undefined);
 });
 
 test("codex app-server bridge resumes an existing session thread", async () => {
@@ -285,7 +283,6 @@ test("codex app-server bridge resumes an existing session thread", async () => {
         agent_identity_provider: "codex",
         agent_identity_status: "ready",
         agent_identity_workdir: "/repo/worktree",
-        agent_workflow_result_transport: CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
         agent_transport_id: "codex_app_server"
       },
       sessionId: "session-1"
@@ -388,7 +385,6 @@ test("codex app-server bridge replaces unreadable session threads after an inval
         agent_identity_provider: "codex",
         agent_identity_status: "ready",
         agent_identity_workdir: "/repo/worktree",
-        agent_workflow_result_transport: CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
         agent_transport_id: "codex_app_server"
       },
       sessionId: "session-1"
@@ -473,7 +469,6 @@ test("codex app-server bridge preserves a readable thread after an invalid resum
           agent_identity_provider: "codex",
           agent_identity_status: "ready",
           agent_identity_workdir: "/repo/worktree",
-          agent_workflow_result_transport: CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
           agent_transport_id: "codex_app_server"
         },
         sessionId: "session-1"
@@ -529,7 +524,6 @@ test("codex app-server bridge does not replace transport resume failures", async
           agent_identity_provider: "codex",
           agent_identity_status: "ready",
           agent_identity_workdir: "/repo/worktree",
-          agent_workflow_result_transport: CODEX_APP_SERVER_WORKFLOW_RESULT_TRANSPORT,
           agent_transport_id: "codex_app_server"
         },
         sessionId: "session-1"
@@ -546,7 +540,7 @@ test("codex app-server bridge does not replace transport resume failures", async
   ]);
 });
 
-test("codex app-server bridge starts a new thread instead of resuming old terminal identity", async () => {
+test("codex app-server bridge resumes an existing provider thread without workflow metadata", async () => {
   const runtime = fakeRuntime();
   const providerCalls = [];
   const provider = {
@@ -582,16 +576,17 @@ test("codex app-server bridge starts a new thread instead of resuming old termin
         agent_identity_conversation_id: "old-terminal-thread",
         agent_identity_provider: "codex",
         agent_identity_status: "ready",
-        agent_identity_workdir: "/repo/worktree"
+        agent_identity_workdir: "/repo/worktree",
+        agent_transport_id: "codex_app_server"
       },
       sessionId: "session-1"
     },
     workdir: "/repo/worktree"
   });
 
-  assert.equal(result.threadId, "app-server-thread");
-  assert.deepEqual(providerCalls.map((call) => call.method), ["startThread"]);
-  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "app-server-thread");
+  assert.equal(result.threadId, "old-terminal-thread");
+  assert.deepEqual(providerCalls.map((call) => call.method), ["resumeThread"]);
+  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "old-terminal-thread");
   assert.equal(metadataValue(runtime, "agent_transport_id"), "codex_app_server");
 });
 
@@ -658,17 +653,12 @@ test("codex app-server bridge applies an output schema only for focused task tur
   assert.equal(params.outputSchema, outputSchema);
 });
 
-test("codex app-server bridge advertises workflow results as a thread tool, not a turn output schema", () => {
+test("codex app-server bridge starts plain threads without workflow tools", () => {
   const settings = codexAppServerThreadStartSettings({
     cwd: "/repo/worktree"
   });
-  const tool = settings.dynamicTools[0];
 
-  assert.equal(tool.name, CODEX_APP_SERVER_WORKFLOW_RESULT_TOOL_NAME);
-  assert.equal(tool.type, "function");
-  assert.deepEqual(tool.inputSchema.properties.kind.enum, ["ready", "waiting_for_input"]);
-  assert.deepEqual(tool.inputSchema.required, ["kind", "stepId", "stepStatus", "fields", "inputFields", "message"]);
-  assert.match(tool.description, /never print the arguments as JSON/u);
+  assert.equal(Object.hasOwn(settings, "dynamicTools"), false);
 });
 
 test("codex app-server bridge sends context refresh inside the next turn input", async () => {

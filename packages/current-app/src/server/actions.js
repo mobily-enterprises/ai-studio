@@ -1,134 +1,29 @@
 import {
-  currentAppQueryInputValidator,
-  emptyInputValidator,
-  starredTargetScriptsInputValidator
+  currentAppQueryInputValidator
 } from "./inputSchemas.js";
 
 const ACTION_READ_CURRENT_APP = "feature.current-app.read";
-const ACTION_READ_CAPABILITIES = "feature.current-app.capabilities.read";
-const ACTION_READ_SETUP_READINESS = "feature.current-app.setup-readiness.read";
-const ACTION_LIST_TARGET_SCRIPTS = "feature.current-app.target-scripts.list";
-const ACTION_RESET_STARRED_TARGET_SCRIPTS = "feature.current-app.target-scripts.starred.reset";
-const ACTION_SAVE_STARRED_TARGET_SCRIPTS = "feature.current-app.target-scripts.starred.save";
 
-const featureActions = Object.freeze([
-  {
-    id: ACTION_READ_CURRENT_APP,
-    version: 1,
-    kind: "query",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: currentAppQueryInputValidator,
-    output: null,
-    idempotency: "none",
-    audit: {
-      actionName: ACTION_READ_CURRENT_APP
-    },
-    observability: {},
-    async execute(input, context, deps) {
-      return deps.featureService.inspectCurrentApp(input, {
-        context
-      });
-    }
+const featureActions = Object.freeze([{
+  id: ACTION_READ_CURRENT_APP,
+  version: 1,
+  kind: "query",
+  channels: ["api", "automation", "internal"],
+  surfaces: ["app"],
+  input: currentAppQueryInputValidator,
+  output: null,
+  idempotency: "none",
+  audit: {
+    actionName: ACTION_READ_CURRENT_APP
   },
-  {
-    id: ACTION_READ_CAPABILITIES,
-    version: 1,
-    kind: "query",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: emptyInputValidator,
-    output: null,
-    idempotency: "none",
-    audit: {
-      actionName: ACTION_READ_CAPABILITIES
-    },
-    observability: {},
-    async execute(_input, context, deps) {
-      void context;
-      return deps.featureService.inspectCapabilities(_input);
-    }
-  },
-  {
-    id: ACTION_READ_SETUP_READINESS,
-    version: 1,
-    kind: "query",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: emptyInputValidator,
-    output: null,
-    idempotency: "none",
-    audit: {
-      actionName: ACTION_READ_SETUP_READINESS
-    },
-    observability: {},
-    async execute(_input, context, deps) {
-      void context;
-      return deps.featureService.inspectSetupReadiness(_input);
-    }
-  },
-  {
-    id: ACTION_LIST_TARGET_SCRIPTS,
-    version: 1,
-    kind: "query",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: emptyInputValidator,
-    output: null,
-    idempotency: "none",
-    audit: {
-      actionName: ACTION_LIST_TARGET_SCRIPTS
-    },
-    observability: {},
-    async execute(_input, context, deps) {
-      void context;
-      return deps.featureService.listTargetScripts(_input);
-    }
-  },
-  {
-    id: ACTION_SAVE_STARRED_TARGET_SCRIPTS,
-    version: 1,
-    kind: "command",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: starredTargetScriptsInputValidator,
-    output: null,
-    idempotency: "optional",
-    audit: {
-      actionName: ACTION_SAVE_STARRED_TARGET_SCRIPTS
-    },
-    observability: {},
-    async execute(input, context, deps) {
-      void context;
-      return deps.featureService.saveStarredTargetScripts(input);
-    }
-  },
-  {
-    id: ACTION_RESET_STARRED_TARGET_SCRIPTS,
-    version: 1,
-    kind: "command",
-    channels: ["api", "automation", "internal"],
-    surfaces: ["app"],
-    input: emptyInputValidator,
-    output: null,
-    idempotency: "optional",
-    audit: {
-      actionName: ACTION_RESET_STARRED_TARGET_SCRIPTS
-    },
-    observability: {},
-    async execute(_input, context, deps) {
-      void context;
-      return deps.featureService.resetStarredTargetScripts(_input);
-    }
+  observability: {},
+  execute(input, context, dependencies) {
+    void context;
+    return dependencies.featureService.inspectCurrentApp(input);
   }
-]);
+}]);
 
 export {
-  ACTION_LIST_TARGET_SCRIPTS,
-  ACTION_READ_CAPABILITIES,
   ACTION_READ_CURRENT_APP,
-  ACTION_READ_SETUP_READINESS,
-  ACTION_RESET_STARRED_TARGET_SCRIPTS,
-  ACTION_SAVE_STARRED_TARGET_SCRIPTS,
   featureActions
 };

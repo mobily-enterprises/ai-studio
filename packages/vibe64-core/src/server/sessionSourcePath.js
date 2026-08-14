@@ -95,6 +95,7 @@ export {
   explicitPathIsLocalSourceRoot,
   explicitPathIsManagedSessionSource,
   explicitSessionSourcePath,
+  pathInsideOrEqual,
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
   sessionHasSource,
   sessionSourcePath,

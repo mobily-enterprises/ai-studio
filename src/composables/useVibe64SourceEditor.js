@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
-import { getUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
+import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
   defaultVibe64SourceExplanationAgentSettings,
   normalizeVibe64AgentSettings
@@ -26,8 +26,8 @@ import {
   vibe64SourceEditorTreePath
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
-  resolveResponseErrorMessage
-} from "@/lib/vibe64ResponseErrors.js";
+  vibe64ApiResponseError
+} from "@/lib/vibe64ApiResponses.js";
 import {
   readRefOrGetterValue
 } from "@/lib/vueRefOrGetterValue.js";
@@ -485,9 +485,9 @@ function loadedTreeDirectoryPaths(root = null) {
 }
 
 async function sourceEditorRequest(url = "", options = {}) {
-  const payload = await getUsersWebHttpClient().request(url, options);
+  const payload = await getHttpWebClient().request(url, options);
   if (payload?.ok === false) {
-    const message = resolveResponseErrorMessage(payload, "Source editor request failed.");
+    const message = vibe64ApiResponseError(payload, "Source editor request failed.");
     const error = new Error(message);
     error.payload = payload;
     throw error;
@@ -1464,14 +1464,14 @@ function useVibe64SourceEditor({
       return;
     }
     if (event.type === "source-explanation.error" || event.ok === false) {
-      const message = resolveResponseErrorMessage(event, "Source explanation failed.");
+      const message = vibe64ApiResponseError(event, "Source explanation failed.");
       explanationError.value = message;
       markActiveExplanationMessage("failed", message);
       throw new Error(message);
     }
     const eventExplanation = normalizeExplanation(event.explanation);
     if (event.type === "source-explanation.failed") {
-      const message = resolveResponseErrorMessage(event, "Source explanation failed.");
+      const message = vibe64ApiResponseError(event, "Source explanation failed.");
       explanationError.value = message;
       if (eventExplanation) {
         activeExplanation.value = eventExplanation;
@@ -1515,7 +1515,7 @@ function useVibe64SourceEditor({
   async function streamSourceEditorRequest(url = "", body = {}, requestId = explanationRequestId) {
     const controller = new AbortController();
     explanationAbortController = controller;
-    await getUsersWebHttpClient().requestStream(url, {
+    await getHttpWebClient().requestStream(url, {
       body,
       method: "POST",
       signal: controller.signal

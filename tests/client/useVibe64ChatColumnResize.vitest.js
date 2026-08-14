@@ -74,4 +74,15 @@ describe("useVibe64ChatColumnResize", () => {
       /body\.studio-home-chat-column-resizing\s*\{[^}]*width:/u
     );
   });
+
+  it("keeps the active chat pane on the same resizable column as its separator", () => {
+    const source = readFileSync(
+      "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
+      "utf8"
+    );
+
+    expect(source).toMatch(
+      /@media \(min-width: 981px\)[\s\S]*\.studio-autopilot\s*\{[\s\S]*var\(--studio-home-chat-column-width/u
+    );
+  });
 });

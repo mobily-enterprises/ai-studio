@@ -1,138 +1,33 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  vibe64SessionDisplayTitle,
-  vibe64SessionStatusColor,
-  vibe64SessionStatusLabel,
-  buildVibe64SessionFacts,
   isClosedVibe64Session,
   isOpenVibe64Session,
-  parseGithubSessionLink,
-  shortVibe64SessionId
+  shortVibe64SessionId,
+  vibe64SessionDisplayTitle,
+  vibe64SessionStatusColor,
+  vibe64SessionStatusLabel
 } from "../../src/lib/vibe64SessionViewModel.js";
 
-describe("Vibe64 session view model", () => {
-  it("centralizes session status labels and colors", () => {
-    expect(isClosedVibe64Session({ status: "abandoned" })).toBe(true);
-    expect(isClosedVibe64Session({ status: "finished" })).toBe(true);
+describe("plain Vibe64 session view", () => {
+  it("uses the explicit session label and a short-id fallback", () => {
+    expect(vibe64SessionDisplayTitle({
+      metadata: { label: "Improve search" },
+      sessionId: "2026-session-1"
+    })).toBe("Improve search");
+    expect(vibe64SessionDisplayTitle({ sessionId: "2026-session-1" })).toBe("Session session-1");
+    expect(shortVibe64SessionId("2026-session-1")).toBe("session-1");
+  });
+
+  it("distinguishes open and archived sessions", () => {
     expect(isOpenVibe64Session({ status: "active" })).toBe(true);
-    expect(vibe64SessionStatusLabel("waiting_for_user")).toBe("waiting for user");
-    expect(vibe64SessionStatusColor("waiting_for_user")).toBe("warning");
+    expect(isClosedVibe64Session({ status: "abandoned" })).toBe(true);
+  });
+
+  it("presents the small plain-session status set", () => {
+    expect(vibe64SessionStatusLabel("active")).toBe("active");
     expect(vibe64SessionStatusColor("abandoned")).toBe("error");
-    expect(vibe64SessionStatusColor("finished")).toBe("success");
+    expect(vibe64SessionStatusColor("blocked")).toBe("error");
+    expect(vibe64SessionStatusColor("active")).toBe("primary");
   });
-
-  it("derives stable display titles and GitHub link labels", () => {
-    expect(shortVibe64SessionId("2026-05-12_13-07-36")).toBe("05-12_13-07-36");
-    expect(vibe64SessionDisplayTitle({
-      issueTitle: "Add reports dashboard",
-      sessionId: "2026-05-12_13-07-36",
-      sessionName: "Reports"
-    })).toBe("Reports");
-    expect(vibe64SessionDisplayTitle({
-      metadata: {
-        issue_word: "Billing"
-      },
-      sessionId: "2026-05-12_13-07-36"
-    })).toBe("Billing");
-    expect(vibe64SessionDisplayTitle({
-      issueTitle: "  Add reports dashboard  ",
-      sessionId: "2026-05-12_13-07-36"
-    })).toBe("Add reports dashboard");
-    expect(vibe64SessionDisplayTitle({
-      sessionId: "2026-05-12_13-07-36"
-    })).toBe("Session 05-12_13-07-36");
-    expect(parseGithubSessionLink("https://github.com/example/app/issues/12", "issue")).toEqual({
-      label: "Issue #12",
-      repo: "example/app"
-    });
-    expect(parseGithubSessionLink("https://github.com/example/app/pull/34", "pr")).toEqual({
-      label: "PR #34",
-      repo: "example/app"
-    });
-  });
-
-  it("builds compact session facts from current runtime fields only", () => {
-    const facts = buildVibe64SessionFacts({
-      blueprintExists: true,
-      blueprintPath: "/workspace/.jskit/APP_BLUEPRINT.md",
-      branch: "vibe64/example",
-      agentSession: {
-        thread: {
-          id: "019e1575-2458-7b93-bf9d-e7d7ffd49ad2"
-        }
-      },
-      completedSteps: ["session_created", "source_created"],
-      currentStep: "plan_and_execute",
-      issueTitle: "Add reports",
-      issueUrl: "https://github.com/example/app/issues/12",
-      prOutcome: {
-        mergedAt: "2026-05-16T01:02:03.000Z",
-        outcome: "merged"
-      },
-      prUrl: "https://github.com/example/app/pull/34",
-      reportPath: "/workspace/vibe64-local-editor/state/projects/project-test/sessions/active/session/artifacts/report.md",
-      sessionId: "2026-05-12_13-07-36",
-      sessionRoot: "/workspace/vibe64-local-editor/state/projects/project-test/sessions/active/2026-05-12_13-07-36",
-      metadata: {
-        codex_github_broker_last_operation: "git status",
-        codex_github_broker_last_summary: "## vibe64/example"
-      },
-      source: "/workspace/vibe64-local-editor/state/projects/project-test/sessions/active/2026-05-12_13-07-36/source",
-      sourceReady: true
-    }, [
-      { id: "session_created", index: 0, label: "Create session" },
-      { id: "source_created", index: 1, label: "Create session clone" },
-      { id: "plan_and_execute", index: 2, label: "Plan and execute" }
-    ]);
-
-    expect(facts.map((fact) => fact.key)).toEqual([
-      "step",
-      "session",
-      "source",
-      "agent",
-      "branch",
-      "issue",
-      "pr",
-      "blueprint",
-      "session-report",
-      "pr-outcome"
-    ]);
-    expect(facts.some((fact) => fact.key === "github-broker")).toBe(false);
-    expect(facts.find((fact) => fact.key === "step")?.value).toBe("Plan and execute");
-    expect(facts.find((fact) => fact.key === "issue")?.value).toBe("Issue #12");
-    expect(facts.find((fact) => fact.key === "pr")?.value).toBe("PR #34");
-    expect(facts.find((fact) => fact.key === "blueprint")?.href)
-      .toBe("file:///workspace/.jskit/APP_BLUEPRINT.md");
-    expect(facts.find((fact) => fact.key === "session-report")?.href)
-      .toBe("file:///workspace/vibe64-local-editor/state/projects/project-test/sessions/active/session/artifacts/report.md");
-    expect(facts.find((fact) => fact.key === "pr-outcome")?.value).toBe("merged");
-  });
-
-  it("labels existing work anchors without treating source PRs as created PRs", () => {
-    const prFacts = buildVibe64SessionFacts({
-      sourcePrTitle: "Upstream feature",
-      sourcePrUrl: "https://github.com/example/app/pull/77",
-      sourcePrUpdateMode: "stacked",
-      workSource: "existing_pr"
-    });
-    const issueFacts = buildVibe64SessionFacts({
-      issueTitle: "Add reports",
-      issueUrl: "https://github.com/example/app/issues/12",
-      workSource: "existing_issue"
-    });
-
-    expect(prFacts.find((fact) => fact.key === "work-source")).toMatchObject({
-      detail: "Upstream feature",
-      href: "https://github.com/example/app/pull/77",
-      value: "Stack on PR #77"
-    });
-    expect(prFacts.some((fact) => fact.key === "pr")).toBe(false);
-    expect(issueFacts.find((fact) => fact.key === "work-source")).toMatchObject({
-      detail: "Add reports",
-      href: "https://github.com/example/app/issues/12",
-      value: "Issue #12"
-    });
-  });
-
 });

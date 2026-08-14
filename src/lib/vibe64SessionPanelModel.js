@@ -1,74 +1,30 @@
 import {
-  mdiCheck,
-  mdiCodeBraces,
-  mdiFileDocumentOutline,
-  mdiFolderOutline,
-  mdiGithub,
-  mdiIdentifier,
-  mdiMessagePlusOutline,
-  mdiPackageVariantClosed,
-  mdiPlay,
-  mdiProgressCheck,
-  mdiRobotOutline,
-  mdiSourceBranch,
-  mdiSourceCommit,
-  mdiSync,
-  mdiUndoVariant
-} from "@mdi/js";
-import {
-  buildVibe64SessionFacts,
   isOpenVibe64Session,
-  shortVibe64SessionId as formatShortVibe64SessionId
+  shortVibe64SessionId
 } from "@/lib/vibe64SessionViewModel.js";
 import {
   DEFAULT_MAX_OPEN_SESSIONS
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
-  PROJECT_SETUP_KIND_SEED,
-  projectSetupSessionActiveMessage,
-  projectSetupSessionKind
-} from "@local/vibe64-core/shared";
-import {
   vibe64SessionSourcePath
 } from "@/lib/vibe64SessionPaths.js";
-
-function sessionOrderKey(session = {}) {
-  return String(session.createdAt || session.manifest?.createdAt || session.sessionId || "");
-}
 
 function visibleVibe64Sessions(sessions = []) {
   return sessions
     .filter(isOpenVibe64Session)
-    .sort((left, right) => sessionOrderKey(left).localeCompare(sessionOrderKey(right)));
+    .sort((left, right) => String(
+      left.createdAt || left.manifest?.createdAt || left.sessionId || ""
+    ).localeCompare(String(
+      right.createdAt || right.manifest?.createdAt || right.sessionId || ""
+    )));
 }
 
-function vibe64SessionUsesSeedWorkflow(session = {}) {
-  return projectSetupSessionKind(session) === PROJECT_SETUP_KIND_SEED;
-}
-
-function vibe64SessionUsesProjectSetupWorkflow(session = {}) {
-  return Boolean(projectSetupSessionKind(session));
-}
-
-function activeVibe64ProjectSetupSession(sessions = []) {
-  return (Array.isArray(sessions) ? sessions : []).find((session) => (
-    isOpenVibe64Session(session) &&
-    vibe64SessionUsesProjectSetupWorkflow(session)
-  )) || null;
-}
-
-function activeVibe64ProjectSetupSessionMessage(session = {}) {
-  const sessionId = String(session?.sessionId || session?.id || "").trim();
-  return projectSetupSessionActiveMessage(sessionId);
-}
-
-function vibe64SessionLimits({
-  payloadLimits = {},
-  sessions = []
-} = {}) {
+function vibe64SessionLimits({ payloadLimits = {}, sessions = [] } = {}) {
   return {
     maxOpenSessions: Number(payloadLimits.maxOpenSessions || DEFAULT_MAX_OPEN_SESSIONS),
-    openSessionCount: Number(payloadLimits.openSessionCount || sessions.filter(isOpenVibe64Session).length)
+    openSessionCount: Number(
+      payloadLimits.openSessionCount || sessions.filter(isOpenVibe64Session).length
+    )
   };
 }
 
@@ -84,19 +40,13 @@ function blockingVibe64SessionPageError({
   if (runtimeError) {
     return runtimeError;
   }
-
   const hasSelectedSession = Boolean(selectedSession?.sessionId || selectedSession);
   const listError = String(sessionListLoadError || "").trim();
   if (listError && !hasMountedRuntime && !hasSelectedSession && sessions.length < 1) {
     return listError;
   }
-
   const selectedError = String(selectedSessionLoadError || "").trim();
-  if (selectedError && !hasMountedRuntime && !hasSelectedSession) {
-    return selectedError;
-  }
-
-  return "";
+  return selectedError && !hasMountedRuntime && !hasSelectedSession ? selectedError : "";
 }
 
 function enrichVibe64SessionForDisplay(session = null) {
@@ -108,169 +58,17 @@ function enrichVibe64SessionForDisplay(session = null) {
   const sourceRemoved = String(metadata.source_removed || "").trim().toLowerCase() === "yes";
   return {
     ...session,
-    branch: session.branch || metadata.branch || metadata.session_branch || "",
-    issueTitle: session.issueTitle || metadata.issue_title || "",
-    issueUrl: session.issueUrl || metadata.issue_url || "",
-    prUrl: session.prUrl || metadata.pr_url || "",
-    pullRequestPath: session.pullRequestPath || metadata.pull_request_path || "",
-    sessionName: session.sessionName || metadata.issue_word || "",
-    sourcePrTitle: metadata.source_pr_title || "",
-    sourcePrUpdateMode: metadata.source_pr_update_mode || "",
-    sourcePrUrl: metadata.source_pr_url || "",
-    workSource: metadata.work_source || "",
+    sessionName: session.sessionName || metadata.label || "",
     source,
     sourceReady: !sourceRemoved && (session.sourceReady === true || Boolean(source)),
-    sourceRecoveryName: metadata.source_recovery_session_name || session.sessionName || metadata.issue_word || "",
     sourceRemoved
   };
 }
 
-function buildVibe64TimelineSteps(session = {}) {
-  const currentStepId = String(session?.currentStep || "");
-  const sessionIsOpen = isOpenVibe64Session(session || {});
-  return (session?.stepDefinitions || []).map((step, fallbackIndex) => {
-    const status = String(step.status || "");
-    const current = status === "current" || step.id === currentStepId;
-    const done = status === "done" || step.done === true;
-    const description = String(step.description || "");
-    const canRewind = sessionIsOpen && done && !current && step.rewindable !== false;
-    return {
-      badges: [],
-      canExpand: done && !current && (Boolean(description) || canRewind),
-      canRewind,
-      current,
-      description,
-      done,
-      id: step.id,
-      icon: vibe64TimelineStepIcon(step),
-      index: Number.isFinite(Number(step.index)) ? Number(step.index) : fallbackIndex,
-      label: step.label || step.id,
-      rewindLabel: step.label || step.id,
-      rewindStepId: step.id,
-      state: current ? "current" : done ? "done" : "pending",
-      title: description || undefined
-    };
-  });
-}
-
-function buildVibe64AutopilotNavigationSteps(session = {}) {
-  return buildVibe64TimelineSteps(session);
-}
-
-function vibe64TimelineStepIcon(step = {}) {
-  const id = String(step.id || "");
-  if (id.includes("session")) {
-    return mdiIdentifier;
-  }
-  if (id.includes("worktree")) {
-    return mdiFolderOutline;
-  }
-  if (id.includes("seed") || id.includes("issue")) {
-    return mdiMessagePlusOutline;
-  }
-  if (id.includes("plan") || id.includes("validate")) {
-    return mdiProgressCheck;
-  }
-  if (id.includes("execute")) {
-    return mdiPlay;
-  }
-  if (id.includes("dependencies")) {
-    return mdiPackageVariantClosed;
-  }
-  if (id.includes("review") || id.includes("accepted")) {
-    return mdiCheck;
-  }
-  if (id.includes("report") || id.includes("knowledge")) {
-    return mdiFileDocumentOutline;
-  }
-  if (id.includes("commit")) {
-    return mdiSourceCommit;
-  }
-  if (id.includes("pull_request") || id.includes("merge")) {
-    return mdiGithub;
-  }
-  return mdiRobotOutline;
-}
-
-function vibe64ComposerHandoffFromSession(session = {}) {
-  const handoff = session?.composerHandoff;
-  return handoff && typeof handoff === "object" && !Array.isArray(handoff) ? handoff : null;
-}
-
-function vibe64SessionFactIcon(icon) {
-  return {
-    blueprint: mdiFileDocumentOutline,
-    branch: mdiSourceBranch,
-    agent: mdiRobotOutline,
-    github: mdiGithub,
-    report: mdiFileDocumentOutline,
-    session: mdiIdentifier,
-    step: mdiProgressCheck,
-    worktree: mdiFolderOutline
-  }[icon] || mdiIdentifier;
-}
-
-function vibe64SessionFacts(session = {}) {
-  return buildVibe64SessionFacts(session, session?.stepDefinitions || [])
-    .map((fact) => ({
-      ...fact,
-      icon: vibe64SessionFactIcon(fact.icon)
-    }));
-}
-
-function vibe64ActionIcon(action = {}) {
-  const icon = String(action.icon || "");
-  if (icon) {
-    return {
-      branch: mdiSourceBranch,
-      code: mdiCodeBraces,
-      codex: mdiRobotOutline,
-      commit: mdiSourceCommit,
-      github: mdiGithub,
-      "message-square-plus": mdiMessagePlusOutline,
-      "rotate-ccw": mdiUndoVariant,
-      run: mdiPlay,
-      success: mdiCheck,
-      sync: mdiSync
-    }[icon] || mdiCodeBraces;
-  }
-  return mdiCodeBraces;
-}
-
-function currentStepDisabledReason(actions = [], next = null) {
-  const disabledAction = actions.find((action) => action.enabled !== true && action.disabledReason);
-  if (disabledAction) {
-    return disabledAction.disabledReason;
-  }
-  if (next?.visible && next.enabled !== true) {
-    return next.disabledReason || "";
-  }
-  return "";
-}
-
-function commandMessage(command, type) {
-  return command.messageType === type ? command.message : "";
-}
-
-function shortVibe64SessionId(sessionId = "") {
-  return formatShortVibe64SessionId(sessionId);
-}
-
 export {
-  activeVibe64ProjectSetupSession,
-  activeVibe64ProjectSetupSessionMessage,
-  vibe64ActionIcon,
   blockingVibe64SessionPageError,
-  vibe64ComposerHandoffFromSession,
-  vibe64SessionFacts,
-  vibe64SessionLimits,
-  vibe64SessionUsesSeedWorkflow,
-  vibe64SessionUsesProjectSetupWorkflow,
-  buildVibe64AutopilotNavigationSteps,
-  buildVibe64TimelineSteps,
-  commandMessage,
-  currentStepDisabledReason,
   enrichVibe64SessionForDisplay,
   shortVibe64SessionId,
+  vibe64SessionLimits,
   visibleVibe64Sessions
 };

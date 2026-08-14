@@ -53,13 +53,12 @@
               <v-icon :icon="archiveIcon" size="22" />
             </div>
             <div class="studio-archived-sessions__identity">
-              <div class="studio-archived-sessions__session-id">{{ shortSessionId(session.sessionId) }}</div>
+              <div class="studio-archived-sessions__session-id">
+                {{ session.sessionName || shortSessionId(session.sessionId) }}
+              </div>
               <div class="studio-archived-sessions__meta">
                 <v-chip :color="statusColor(session.status)" size="x-small" variant="tonal">
-                  {{ statusLabel(session.status || archive) }}
-                </v-chip>
-                <v-chip size="x-small" variant="tonal">
-                  {{ completedStepCount(session) }} steps
+                  {{ statusLabel(session.status || "abandoned") }}
                 </v-chip>
                 <v-chip v-if="session.sourceRemoved" color="warning" size="x-small" variant="tonal">
                   source removed
@@ -79,33 +78,6 @@
               View
             </v-btn>
           </div>
-
-          <div class="studio-archived-sessions__quick-facts">
-            <div v-if="session.branch" class="studio-archived-sessions__quick-fact">
-              <v-icon :icon="mdiSourceBranch" size="16" />
-              <span>{{ session.branch }}</span>
-            </div>
-            <a
-              v-if="session.issueUrl"
-              class="studio-archived-sessions__quick-fact studio-archived-sessions__quick-link"
-              :href="session.issueUrl"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <v-icon :icon="mdiGithub" size="16" />
-              <span>{{ githubLabel(session.issueUrl, "Issue") }}</span>
-            </a>
-            <a
-              v-if="session.prUrl"
-              class="studio-archived-sessions__quick-fact studio-archived-sessions__quick-link"
-              :href="session.prUrl"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <v-icon :icon="mdiGithub" size="16" />
-              <span>{{ githubLabel(session.prUrl, "PR") }}</span>
-            </a>
-          </div>
         </v-card-text>
       </v-card>
     </div>
@@ -119,26 +91,22 @@ import {
   useArchivedVibe64Sessions
 } from "@/composables/useArchivedVibe64Sessions.js";
 
-const props = defineProps(archivedVibe64SessionsProps);
+defineProps(archivedVibe64SessionsProps);
 const emit = defineEmits(archivedVibe64SessionsEmits);
 
 const {
   archiveIcon,
-  completedStepCount,
   error,
-  githubLabel,
   loadSessions,
   loading,
   mdiEyeOutline,
-  mdiGithub,
   mdiRefresh,
-  mdiSourceBranch,
   sessionRoute,
   sessions,
   shortSessionId,
   statusColor,
   statusLabel
-} = useArchivedVibe64Sessions(props, emit);
+} = useArchivedVibe64Sessions(emit);
 
 defineExpose({
   refresh: loadSessions

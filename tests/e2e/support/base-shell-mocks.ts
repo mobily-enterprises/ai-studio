@@ -1,17 +1,9 @@
 export { trackStudioApiRequests } from "./base-shell/http";
 export {
-  mockConnectionsBlocked,
-  mockAppSetupBlocked,
-  mockBootstrapBlocked,
   mockCurrentAppInspection,
-  mockSessionHistoryArchives,
-  mockStudioReady,
-  mockTargetScripts
+  mockProjectGateReady,
+  mockSessionHistoryArchives
 } from "./base-shell/setup-mocks";
 export {
-  isOpenMockSession,
-  mockCodexPromptSession,
-  mockCodexPromptSessions,
-  mockCodexTerminalWebSocket,
-  mockTwoCodexPromptSessions
+  mockDirectChatSession
 } from "./base-shell/codex-mocks";

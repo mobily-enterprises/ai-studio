@@ -28,10 +28,9 @@ import {
   readProjectRuntimeOpenState
 } from "./projectRuntimeOpenState.js";
 import {
-  normalizeProjectBootstrapConfig,
   readProjectRecordMetadata,
   updateProjectRecordMetadata
-} from "./projectBootstrapConfig.js";
+} from "./projectRecordMetadata.js";
 import {
   pathExists
 } from "./core.js";
@@ -321,9 +320,6 @@ function workspaceProjectRecord({
     ...(applicationMode
       ? { applicationMode }
       : {}),
-    ...(normalizeProjectBootstrapConfig(metadata?.bootstrapConfig)
-      ? { bootstrapConfig: normalizeProjectBootstrapConfig(metadata.bootstrapConfig) }
-      : {}),
     ...repositoryFields,
     canonicalRepositoryPath: repositoryStorage?.pathField === "canonicalRepositoryPath"
       ? repositoryStorage.path
@@ -377,11 +373,9 @@ function projectMetadataFromInput(input = {}, {
     defaultBranch: defaultRepositoryBranch,
     defaultMode: defaultRepositoryMode
   });
-  const bootstrapConfig = normalizeProjectBootstrapConfig(input?.bootstrapConfig);
   return {
     ...repositoryMetadata,
     ...(input?.bootstrap ? { bootstrap: normalizeProjectBootstrap(input.bootstrap) } : {}),
-    ...(bootstrapConfig ? { bootstrapConfig } : {}),
     ...(input?.deletion ? { deletion: normalizeProjectDeletion(input.deletion) } : {})
   };
 }
@@ -398,7 +392,6 @@ function normalizeProjectMetadata(metadata = {}) {
   const unsupportedFields = Object.keys(metadata)
     .filter((field) => ![
       "bootstrap",
-      "bootstrapConfig",
       "deletion",
       "repository"
     ].includes(field));

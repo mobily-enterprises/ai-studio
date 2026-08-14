@@ -10,13 +10,14 @@ import {
   mdiCheckCircle,
   mdiCreationOutline,
   mdiDatabaseOutline,
+  mdiFileOutline,
   mdiRocketLaunchOutline,
-  mdiTuneVariant,
   mdiWeb
 } from "@mdi/js";
 
 const TEMPLATE_ICONS = Object.freeze({
   account: mdiAccountCircleOutline,
+  blank: mdiFileOutline,
   database: mdiDatabaseOutline,
   web: mdiWeb,
   workspaces: mdiAccountGroupOutline
@@ -30,6 +31,27 @@ function useProjectTemplateSetup(props, emit) {
   const selectedTemplate = computed(() => templates.value
     .find((template) => template.id === selectedTemplateId.value) || null);
   const applying = computed(() => Boolean(props.applyingTemplateId));
+  const selectionDescription = computed(() => {
+    if (!selectedTemplate.value) {
+      return "Select a blank or precooked starting point above to continue.";
+    }
+    if (applying.value) {
+      return "Preparing the project and recording its foundation.";
+    }
+    if (selectedTemplate.value.kind === "blank") {
+      return "Vibe64 will create an empty Git project prepared by Genesis.";
+    }
+    return "Vibe64 will install this precooked project and its Genesis foundation.";
+  });
+  const selectionHeading = computed(() => {
+    if (!selectedTemplate.value) {
+      return "Choose a starting point";
+    }
+    if (applying.value) {
+      return `Preparing ${selectedTemplate.value.name}…`;
+    }
+    return `${selectedTemplate.value.name} is ready to go`;
+  });
 
   watch(templates, (availableTemplates) => {
     if (
@@ -56,12 +78,6 @@ function useProjectTemplateSetup(props, emit) {
     }
   }
 
-  function openAdvancedSetup() {
-    if (!applying.value) {
-      emit("advanced");
-    }
-  }
-
   return {
     applySelectedTemplate,
     applying,
@@ -69,8 +85,8 @@ function useProjectTemplateSetup(props, emit) {
     mdiCheckCircle,
     mdiCreationOutline,
     mdiRocketLaunchOutline,
-    mdiTuneVariant,
-    openAdvancedSetup,
+    selectionDescription,
+    selectionHeading,
     selectedTemplate,
     selectedTemplateId,
     selectTemplate,

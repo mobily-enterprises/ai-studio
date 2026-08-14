@@ -8,6 +8,10 @@ import {
 import path from "node:path";
 
 import {
+  addGenesisStack,
+  initializeGenesisProject
+} from "@local/vibe64-genesis/server";
+import {
   GITHUB_ACCOUNT_MODE_LOCAL,
   VIBE64_GITHUB_ACCOUNT_MODE_ENV,
   canonicalRepositoryInitializeScript,
@@ -23,7 +27,6 @@ import {
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   normalizeRepositoryMode
 } from "@local/vibe64-core/server/projectRepository";
-import { isPlainObject } from "@local/vibe64-core/server/core";
 import {
   resolveProjectCanonicalRepositoryPath,
   resolveProjectGithubMirrorPath
@@ -35,7 +38,6 @@ const PROJECT_TEMPLATE_DESTINATION_REF = "refs/vibe64/template-destination";
 const PROJECT_TEMPLATE_SCHEMA = "vibe64.seed";
 const PROJECT_TEMPLATE_SCHEMA_VERSION = 1;
 const PROJECT_TEMPLATE_SOURCE_FILE = "vibe64.seed.json";
-const PROJECT_TEMPLATE_PROJECT_FILE = "vibe64.project.json";
 const PROJECT_TEMPLATE_GIT_TIMEOUT_MS = 120_000;
 const PROJECT_TEMPLATE_IGNORED_LOCAL_ENTRIES = new Set([
   ".DS_Store",
@@ -45,28 +47,18 @@ const PROJECT_TEMPLATE_IGNORED_LOCAL_ENTRIES = new Set([
 
 const projectTemplateLocks = new Map();
 
-const JSKIT_PUBLIC_PROJECT_CONFIG = Object.freeze({
-  github_pr_merge_method: "merge",
-  jskit_database_runtime: "none",
-  jskit_users: "none"
-});
-const JSKIT_ACCOUNTS_PROJECT_CONFIG = Object.freeze({
-  github_pr_merge_method: "squash",
-  jskit_database_runtime: "none",
-  jskit_users: "users"
-});
-const JSKIT_DATABASE_PROJECT_CONFIG = Object.freeze({
-  github_pr_merge_method: "squash",
-  jskit_database_runtime: "mariadb",
-  jskit_users: "users"
-});
-const JSKIT_WORKSPACES_PROJECT_CONFIG = Object.freeze({
-  github_pr_merge_method: "merge",
-  jskit_database_runtime: "mariadb",
-  jskit_users: "users"
-});
-
 const PROJECT_TEMPLATES = Object.freeze([
+  projectTemplate({
+    accent: "slate",
+    capabilities: ["Empty Git project", "Genesis ready", "No technology selected"],
+    description: "Start with only Git and Genesis. Choose any language, framework, database, or platform later with Codex.",
+    icon: "blank",
+    id: "genesis-blank",
+    kind: "blank",
+    name: "Blank project",
+    order: 0,
+    tagline: "Start with intent, not a framework"
+  }),
   projectTemplate({
     accent: "sky",
     capabilities: ["No sign-in", "No database"],
@@ -75,7 +67,7 @@ const PROJECT_TEMPLATES = Object.freeze([
     id: "jskit-public",
     name: "Public",
     order: 10,
-    projectConfig: JSKIT_PUBLIC_PROJECT_CONFIG,
+    stackPieces: ["jskit"],
     repository: "vibe64-dev/jskit-seed-public",
     tagline: "A public experience for everyone"
   }),
@@ -87,7 +79,7 @@ const PROJECT_TEMPLATES = Object.freeze([
     id: "jskit-accounts",
     name: "Accounts",
     order: 20,
-    projectConfig: JSKIT_ACCOUNTS_PROJECT_CONFIG,
+    stackPieces: ["jskit"],
     repository: "vibe64-dev/jskit-seed-accounts",
     tagline: "A private space for every person"
   }),
@@ -99,7 +91,7 @@ const PROJECT_TEMPLATES = Object.freeze([
     id: "jskit-database",
     name: "Database",
     order: 30,
-    projectConfig: JSKIT_DATABASE_PROJECT_CONFIG,
+    stackPieces: ["jskit-mysql"],
     repository: "vibe64-dev/jskit-seed-database",
     tagline: "Personal accounts with lasting data"
   }),
@@ -111,7 +103,7 @@ const PROJECT_TEMPLATES = Object.freeze([
     id: "jskit-workspaces",
     name: "Workspaces",
     order: 40,
-    projectConfig: JSKIT_WORKSPACES_PROJECT_CONFIG,
+    stackPieces: ["jskit-mysql"],
     repository: "vibe64-dev/jskit-seed-workspaces",
     tagline: "A shared place for teams to work"
   })
@@ -119,23 +111,26 @@ const PROJECT_TEMPLATES = Object.freeze([
 
 function projectTemplate(value = {}) {
   const repository = normalizeText(value.repository);
+  const kind = normalizeText(value.kind) || "foundation";
   return Object.freeze({
     accent: normalizeText(value.accent),
     basedOn: value.basedOn || null,
     capabilities: Object.freeze((Array.isArray(value.capabilities) ? value.capabilities : [])
       .map(normalizeText)
       .filter(Boolean)),
-    cloneUrl: normalizeText(value.cloneUrl) || `https://github.com/${repository}.git`,
+    cloneUrl: normalizeText(value.cloneUrl) || (repository ? `https://github.com/${repository}.git` : ""),
     description: normalizeText(value.description),
     icon: normalizeText(value.icon),
     id: normalizeText(value.id),
-    kind: normalizeText(value.kind) || "foundation",
+    kind,
     name: normalizeText(value.name),
     order: Number.isFinite(Number(value.order)) ? Number(value.order) : 0,
-    projectConfig: Object.freeze({ ...value.projectConfig }),
+    stackPieces: Object.freeze((Array.isArray(value.stackPieces) ? value.stackPieces : [])
+      .map(normalizeText)
+      .filter(Boolean)),
     ref: normalizeText(value.ref) || "refs/heads/main",
     repository,
-    repositoryUrl: normalizeText(value.repositoryUrl) || `https://github.com/${repository}`,
+    repositoryUrl: normalizeText(value.repositoryUrl) || (repository ? `https://github.com/${repository}` : ""),
     tagline: normalizeText(value.tagline)
   });
 }
@@ -324,7 +319,7 @@ async function runTemplateCommand(command = "git", args = [], {
     gitSafeDirectories: allowedRoots,
     gitTransport,
     mode: "capture",
-    purpose: gitTransport === "github-https" ? "github" : "setup",
+    purpose: gitTransport === "github-https" ? "github" : "source",
     runtimes: gitTransport === "github-https" ? ["git", "gh"] : ["git"],
     timeout,
     ...(userKey ? { userKey } : {})
@@ -530,6 +525,9 @@ async function createTemplateSourceRepository(template, {
     cwd: temporaryRoot,
     runCommand
   });
+  if (template.kind === "blank") {
+    return repositoryPath;
+  }
   await runGit([
     "--git-dir",
     repositoryPath,
@@ -573,19 +571,9 @@ function parseTemplateJson(text = "", fileName = "") {
   }
 }
 
-function projectConfigMatchesTemplate(projectConfig = {}, expectedConfig = {}) {
-  if (!isPlainObject(projectConfig)) {
-    return false;
-  }
-  const expectedEntries = Object.entries(expectedConfig);
-  return Object.keys(projectConfig).length === expectedEntries.length &&
-    expectedEntries.every(([key, value]) => projectConfig[key] === value);
-}
-
 async function validateTemplateSource(template, repositoryPath, options = {}) {
-  const [seedText, projectText, sourceRevision] = await Promise.all([
+  const [seedText, sourceRevision] = await Promise.all([
     readTemplateGitFile(repositoryPath, PROJECT_TEMPLATE_SOURCE_FILE, options),
-    readTemplateGitFile(repositoryPath, PROJECT_TEMPLATE_PROJECT_FILE, options),
     runGit(["--git-dir", repositoryPath, "rev-parse", `${PROJECT_TEMPLATE_SOURCE_REF}^{commit}`], {
       allowedRoots: [options.temporaryRoot, repositoryPath],
       cwd: options.temporaryRoot,
@@ -593,7 +581,6 @@ async function validateTemplateSource(template, repositoryPath, options = {}) {
     })
   ]);
   const seed = parseTemplateJson(seedText, PROJECT_TEMPLATE_SOURCE_FILE);
-  const project = parseTemplateJson(projectText, PROJECT_TEMPLATE_PROJECT_FILE);
   if (
     seed.schema !== PROJECT_TEMPLATE_SCHEMA ||
     seed.schemaVersion !== PROJECT_TEMPLATE_SCHEMA_VERSION ||
@@ -605,17 +592,6 @@ async function validateTemplateSource(template, repositoryPath, options = {}) {
       `${template.name} has seed metadata that does not match the trusted template registry.`
     );
   }
-  if (
-    project.schema !== "vibe64.project" ||
-    project.schemaVersion !== 1 ||
-    normalizeText(project.projectType) !== "jskit" ||
-    !projectConfigMatchesTemplate(project.config, template.projectConfig)
-  ) {
-    throw templateError(
-      "vibe64_project_template_project_config_invalid",
-      `${template.name} does not contain its trusted committed JSKIT project configuration.`
-    );
-  }
   return {
     seed,
     sourceRevision
@@ -623,44 +599,91 @@ async function validateTemplateSource(template, repositoryPath, options = {}) {
 }
 
 async function createMaterializedCommit(template, repositoryPath, sourceRevision, options = {}) {
-  const tree = await runGit([
-    "--git-dir",
-    repositoryPath,
-    "rev-parse",
-    `${PROJECT_TEMPLATE_SOURCE_REF}^{tree}`
-  ], {
-    allowedRoots: [options.temporaryRoot, repositoryPath],
-    cwd: options.temporaryRoot,
+  const worktree = path.join(options.temporaryRoot, "materialized");
+  await mkdir(worktree);
+  await runGit(["init", "--initial-branch=main"], {
+    allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+    cwd: worktree,
     runCommand: options.runCommand
   });
+  if (sourceRevision) {
+    await runGit([
+      "fetch",
+      "--no-tags",
+      repositoryPath,
+      sourceRevision
+    ], {
+      allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+      cwd: worktree,
+      runCommand: options.runCommand
+    });
+    await runGit(["read-tree", "--reset", "-u", sourceRevision], {
+      allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+      cwd: worktree,
+      runCommand: options.runCommand
+    });
+  }
+
+  await Promise.all([
+    rm(path.join(worktree, PROJECT_TEMPLATE_SOURCE_FILE), {
+      force: true
+    }),
+    rm(path.join(worktree, "vibe64.project.json"), {
+      force: true
+    })
+  ]);
+
+  await initializeGenesisProject({
+    projectRoot: worktree
+  });
+  if (template.stackPieces.length > 0) {
+    await addGenesisStack({
+      pieces: template.stackPieces,
+      projectRoot: worktree
+    });
+  }
+
   const trailers = [
-    `Vibe64-Seed: ${template.id}`,
-    `Vibe64-Seed-Repository: ${template.repository}`,
-    `Vibe64-Seed-Revision: ${sourceRevision}`
+    `Vibe64-Foundation: ${template.id}`,
+    ...(template.repository ? [`Vibe64-Template-Repository: ${template.repository}`] : []),
+    ...(sourceRevision ? [`Vibe64-Template-Revision: ${sourceRevision}`] : [])
   ].join("\n");
-  const commit = await runGit([
-    "--git-dir",
-    repositoryPath,
-    "commit-tree",
-    tree,
+  await runGit(["add", "-A"], {
+    allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+    cwd: worktree,
+    runCommand: options.runCommand
+  });
+  await runGit([
+    "-c",
+    "user.name=Vibe64",
+    "-c",
+    "user.email=vibe64@localhost",
+    "commit",
+    "--allow-empty",
     "-m",
-    `Start from Vibe64 seed: ${template.name}`,
+    `Start from Vibe64 foundation: ${template.name}`,
     "-m",
     trailers
   ], {
-    allowedRoots: [options.temporaryRoot, repositoryPath],
-    cwd: options.temporaryRoot,
+    allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+    cwd: worktree,
+    runCommand: options.runCommand
+  });
+  const commit = await runGit(["rev-parse", "HEAD^{commit}"], {
+    allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+    cwd: worktree,
     runCommand: options.runCommand
   });
   await runGit([
     "--git-dir",
     repositoryPath,
-    "update-ref",
-    PROJECT_TEMPLATE_MATERIALIZED_REF,
-    commit
+    "fetch",
+    "--no-tags",
+    worktree,
+    `HEAD:${PROJECT_TEMPLATE_MATERIALIZED_REF}`
   ], {
-    allowedRoots: [options.temporaryRoot, repositoryPath],
-    cwd: options.temporaryRoot,
+    allowedRoots: [options.temporaryRoot, repositoryPath, worktree],
+    cwd: worktree,
     runCommand: options.runCommand
   });
   return commit;
@@ -962,10 +985,12 @@ async function applyProjectTemplate({
         runCommand,
         temporaryRoot
       });
-      const { sourceRevision } = await validateTemplateSource(template, sourceRepositoryPath, {
-        runCommand,
-        temporaryRoot
-      });
+      const sourceRevision = template.kind === "blank"
+        ? ""
+        : (await validateTemplateSource(template, sourceRepositoryPath, {
+            runCommand,
+            temporaryRoot
+          })).sourceRevision;
       const commit = await createMaterializedCommit(template, sourceRepositoryPath, sourceRevision, {
         runCommand,
         temporaryRoot
@@ -1042,7 +1067,6 @@ async function applyProjectTemplate({
 
 export {
   PROJECT_TEMPLATES,
-  PROJECT_TEMPLATE_PROJECT_FILE,
   PROJECT_TEMPLATE_SCHEMA,
   PROJECT_TEMPLATE_SCHEMA_VERSION,
   PROJECT_TEMPLATE_SOURCE_FILE,

@@ -35,52 +35,6 @@ test("Vibe64 session service event describes a realtime session change", () => {
   });
 });
 
-test("Vibe64 session service event includes session revision context when available", () => {
-  const event = vibe64SessionChangedServiceEvent();
-  const payload = event.realtime.payload({
-    result: {
-      currentStep: "review_and_validate",
-      revision: 7,
-      sessionId: "session-with-state",
-      stepMachine: {
-        status: "attempting_execution"
-      },
-      stepRevision: 3
-    }
-  });
-
-  assert.deepEqual(payload, {
-    currentStep: "review_and_validate",
-    revision: 7,
-    sessionId: "session-with-state",
-    stepRevision: 3,
-    stepStatus: "attempting_execution"
-  });
-});
-
-test("Vibe64 session service event includes composer menu projection context when available", () => {
-  const event = vibe64SessionChangedServiceEvent();
-  const payload = event.realtime.payload({
-    result: {
-      presentation: {
-        composerMenu: {
-          itemCount: 7,
-          signature: "composer-menu-signature"
-        }
-      },
-      sessionId: "session-with-menu"
-    }
-  });
-
-  assert.deepEqual(payload, {
-    composerMenu: {
-      itemCount: 7,
-      signature: "composer-menu-signature"
-    },
-    sessionId: "session-with-menu"
-  });
-});
-
 test("Vibe64 session service event can include a stable reason", () => {
   const event = vibe64SessionChangedServiceEvent({
     reason: "launch-target-started"
@@ -151,12 +105,12 @@ test("Vibe64 session change publisher emits service-scoped domain events", async
         events.push(event);
       }
     },
-    methodName: "startCommandTerminal",
+    methodName: "startAgentTerminal",
     serviceToken: "feature.vibe64-terminals.service"
   });
 
   await publish("session-1", {
-    reason: "command-terminal-closed"
+    reason: "agent-terminal-closed"
   });
 
   assert.equal(events.length, 1);
@@ -164,13 +118,13 @@ test("Vibe64 session change publisher emits service-scoped domain events", async
   assert.equal(events[0].entity, "session");
   assert.equal(events[0].entityId, "session-1");
   assert.deepEqual(events[0].meta.service, {
-    method: "startCommandTerminal",
+    method: "startAgentTerminal",
     token: "feature.vibe64-terminals.service"
   });
   assert.deepEqual(events[0].meta.realtime, {
     event: VIBE64_SESSION_CHANGED_EVENT,
     payload: {
-      reason: "command-terminal-closed",
+      reason: "agent-terminal-closed",
       sessionId: "session-1"
     }
   });
@@ -295,13 +249,13 @@ test("Vibe64 session change publisher merges client refresh responsibilities", a
         events.push(event);
       }
     },
-    methodName: "startCommandTerminal",
+    methodName: "startLaunchTargetTerminal",
     serviceToken: "feature.vibe64-terminals.service"
   });
 
   await publish("session-1", {
     payload: VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD,
-    reason: "command-terminal-closed",
+    reason: "launch-target-closed",
     session: {
       clientRefresh: {
         includeList: true
@@ -315,7 +269,7 @@ test("Vibe64 session change publisher merges client refresh responsibilities", a
       includeLaunchTargets: true,
       includeList: true
     },
-    reason: "command-terminal-closed",
+    reason: "launch-target-closed",
     sessionId: "session-1"
   });
 });

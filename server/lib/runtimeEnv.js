@@ -11,9 +11,6 @@ import {
   VIBE64_SYSTEM_ROOT_ENV
 } from "@local/vibe64-core/server/studioRoots";
 import { surfaceRuntime } from "./surfaceRuntime.js";
-import {
-  VIBE64_JSKIT_LOCK_PATH_ENV
-} from "./jskitLockPath.js";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const APP_ENV_FILE = path.join(APP_ROOT, ".env");
@@ -71,7 +68,6 @@ function resolveRuntimeEnv() {
     ? String(process.env[VIBE64_SYSTEM_ROOT_ENV] || "").trim()
     : "";
   return {
-    [VIBE64_JSKIT_LOCK_PATH_ENV]: String(process.env[VIBE64_JSKIT_LOCK_PATH_ENV] || "").trim(),
     [VIBE64_RUNTIME_NAMESPACE_ENV]: runtimeNamespace({
       env: process.env
     }),

@@ -15,9 +15,6 @@ import {
 } from "@/lib/vibe64ProjectScope.js";
 
 const AGENT_SETTINGS_STORAGE_KEY = "vibe64:agent-settings";
-const MISSING_STORAGE_VALUE = Object.freeze({
-  missing: true
-});
 
 function normalizeAgentSettingsEmail(value = "") {
   return String(value || "").trim().toLowerCase();
@@ -33,10 +30,6 @@ function agentSettingsStorageKey(baseKey = "", projectSlug = "", email = "") {
 
 function useVibe64AgentSettings() {
   const projectSlug = useVibe64ProjectSlug();
-  const legacyStorageKey = computed(() => vibe64ProjectScopedStorageKey(
-    AGENT_SETTINGS_STORAGE_KEY,
-    projectSlug.value
-  ));
   const storageKey = computed(() => agentSettingsStorageKey(
     AGENT_SETTINGS_STORAGE_KEY,
     projectSlug.value,
@@ -45,13 +38,8 @@ function useVibe64AgentSettings() {
   const settings = ref(defaultVibe64AgentSettings());
 
   function load() {
-    const stored = readLocalStorageJson(storageKey.value, MISSING_STORAGE_VALUE);
-    if (stored !== MISSING_STORAGE_VALUE) {
-      settings.value = normalizeVibe64AgentSettings(stored);
-      return;
-    }
     settings.value = normalizeVibe64AgentSettings(
-      readLocalStorageJson(legacyStorageKey.value, defaultVibe64AgentSettings())
+      readLocalStorageJson(storageKey.value, defaultVibe64AgentSettings())
     );
   }
 
@@ -62,7 +50,7 @@ function useVibe64AgentSettings() {
     });
   }
 
-  watch([storageKey, legacyStorageKey], load, {
+  watch(storageKey, load, {
     immediate: true
   });
 

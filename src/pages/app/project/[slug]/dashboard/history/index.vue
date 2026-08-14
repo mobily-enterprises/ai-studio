@@ -4,20 +4,15 @@
       <h1>Session History</h1>
     </header>
 
-    <Vibe64SessionHistoryPanel
-      :model-value="selectedArchive"
-      @update:model-value="selectedArchive = $event"
+    <ArchivedVibe64Sessions
+      empty-text="Abandoned chats will appear here after their sources are removed."
+      empty-title="No abandoned chats"
     />
   </section>
 </template>
 
 <script setup>
-import Vibe64SessionHistoryPanel from "@/components/studio/Vibe64SessionHistoryPanel.vue";
-import {
-  useVibe64DashboardHistoryPage
-} from "@/composables/useVibe64DashboardHistoryPage.js";
-
-const { selectedArchive } = useVibe64DashboardHistoryPage();
+import ArchivedVibe64Sessions from "@/components/studio/ArchivedVibe64Sessions.vue";
 </script>
 
 <style scoped>

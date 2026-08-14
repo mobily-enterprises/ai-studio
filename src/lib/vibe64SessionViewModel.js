@@ -1,81 +1,34 @@
-const CLOSED_SESSION_STATUSES = new Set(["abandoned", "finished"]);
-const REPORT_LABEL = "Report";
+function text(value = "") {
+  return String(value || "").trim();
+}
 
-function shortVibe64SessionId(sessionId) {
-  return String(sessionId || "").replace(/^\d{4}-/u, "");
+function shortVibe64SessionId(sessionId = "") {
+  return text(sessionId).replace(/^\d{4}-/u, "");
 }
 
 function vibe64SessionDisplayTitle(session = {}) {
-  const sessionName = firstText(session?.sessionName) || firstText(session?.metadata?.issue_word);
-  if (sessionName) {
-    return sessionName;
+  const label = text(session.sessionName || session.metadata?.label);
+  if (label) {
+    return label;
   }
-  const issueTitle = firstText(session?.issueTitle);
-  if (issueTitle) {
-    return issueTitle;
-  }
-  const shortSessionId = shortVibe64SessionId(session?.sessionId);
-  return shortSessionId ? `Session ${shortSessionId}` : "";
+  const shortId = shortVibe64SessionId(session.sessionId);
+  return shortId ? `Session ${shortId}` : "";
 }
 
-function githubSessionLinkParts(value, kind) {
-  try {
-    const url = new URL(String(value || ""));
-    const [, owner, repo, type, number] = url.pathname.split("/");
-    const expectedType = kind === "pr" ? "pull" : "issues";
-    if (url.hostname === "github.com" && owner && repo && type === expectedType && number) {
-      return {
-        number,
-        owner,
-        repo
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
+function vibe64SessionStatusLabel(status = "") {
+  return text(status || "active").replaceAll("_", " ");
 }
 
-function parseGithubSessionLink(value, kind) {
-  const fallbackLabel = kind === "pr" ? "Pull request" : "Issue";
-  const parts = githubSessionLinkParts(value, kind);
-  if (parts) {
-    const prefix = kind === "pr" ? "PR" : "Issue";
-    return {
-      label: `${prefix} #${parts.number}`,
-      repo: `${parts.owner}/${parts.repo}`
-    };
-  }
-  return {
-    label: fallbackLabel,
-    repo: ""
-  };
-}
-
-function vibe64SessionStatusLabel(status) {
-  return String(status || "pending").replaceAll("_", " ");
-}
-
-function vibe64SessionStatusColor(status) {
-  const normalizedStatus = String(status || "");
-  if (normalizedStatus === "finished") {
-    return "success";
-  }
-  if (["abandoned", "failed", "blocked"].includes(normalizedStatus)) {
+function vibe64SessionStatusColor(status = "") {
+  const value = text(status);
+  if (value === "abandoned" || value === "blocked") {
     return "error";
-  }
-  if (normalizedStatus === "waiting_for_user") {
-    return "warning";
   }
   return "primary";
 }
 
-function isAbandonedVibe64Session(session = {}) {
-  return String(session?.status || "") === "abandoned";
-}
-
 function isClosedVibe64Session(session = {}) {
-  return CLOSED_SESSION_STATUSES.has(String(session?.status || ""));
+  return text(session.status) === "abandoned";
 }
 
 function isOpenVibe64Session(session = {}) {
@@ -87,186 +40,12 @@ function vibe64SessionRevision(session = null) {
   return Number.isFinite(revision) ? revision : null;
 }
 
-function vibe64SessionArchive(session = {}) {
-  const status = String(session?.status || "").trim();
-  if (status === "abandoned") {
-    return "abandoned";
-  }
-  if (status === "finished" || status === "completed") {
-    return "completed";
-  }
-  return "";
-}
-
-function normalizeVibe64SessionArchiveTab(value) {
-  const firstValue = Array.isArray(value) ? value[0] : value;
-  return firstValue === "abandoned" ? "abandoned" : "completed";
-}
-
-function normalizedText(value) {
-  return String(value || "").trim();
-}
-
-function firstText(...values) {
-  return values.map(normalizedText).find(Boolean) || "";
-}
-
-function vibe64SessionCurrentStepLabel(session = {}, stepDefinitions = []) {
-  const stepId = normalizedText(session?.currentStep);
-  const step = stepDefinitions.find((definition) => {
-    return definition.id === stepId;
-  });
-  return firstText(step?.label, stepId, "No active step");
-}
-
-function fileHref(filePath) {
-  const path = normalizedText(filePath);
-  if (!path || !path.startsWith("/")) {
-    return "";
-  }
-  return `file://${path.split("/").map((segment) => encodeURIComponent(segment)).join("/")}`;
-}
-
-function buildVibe64SessionFacts(session = {}, stepDefinitions = []) {
-  const issueTitle = firstText(session.issueTitle);
-  const issueLink = parseGithubSessionLink(session.issueUrl, "issue");
-  const prLink = parseGithubSessionLink(session.prUrl, "pr");
-  const completedStepCount = Array.isArray(session.completedSteps) ? session.completedSteps.length : 0;
-  const currentStepLabel = vibe64SessionCurrentStepLabel(session, stepDefinitions);
-  const blueprintPath = firstText(session.blueprintPath);
-  const prOutcome = session.prOutcome && typeof session.prOutcome === "object" ? session.prOutcome : null;
-  const reportPath = firstText(session.reportPath);
-  const workSource = firstText(session.workSource);
-  const sourcePrLink = parseGithubSessionLink(session.sourcePrUrl, "pr");
-  const workSourceDetail = workSource === "existing_pr"
-    ? firstText(session.sourcePrTitle, session.sourcePrUpdateMode === "stacked" ? "Stacked PR base" : session.sourcePrUpdateMode)
-    : workSource === "existing_issue"
-      ? issueTitle
-      : "New branch";
-  const workSourceHref = workSource === "existing_pr"
-    ? session.sourcePrUrl || ""
-    : workSource === "existing_issue"
-      ? session.issueUrl || ""
-      : "";
-  const workSourceValue = workSource === "existing_pr"
-    ? `Stack on ${sourcePrLink.label}`
-    : workSource === "existing_issue"
-      ? issueLink.label
-      : "New branch";
-  return [
-    {
-      detail: stepDefinitions.length ? `${completedStepCount} of ${stepDefinitions.length} steps complete` : "",
-      icon: "step",
-      key: "step",
-      label: "Current Step",
-      value: currentStepLabel,
-      visible: Boolean(currentStepLabel)
-    },
-    {
-      copyValue: session.sessionRoot || session.sessionId || "",
-      detail: session.sessionRoot || "",
-      icon: "session",
-      key: "session",
-      label: "Session",
-      value: shortVibe64SessionId(session.sessionId),
-      visible: Boolean(session.sessionId)
-    },
-    {
-      copyValue: session.source || "",
-      detail: "Session source ready",
-      icon: "source",
-      key: "source",
-      label: "Source",
-      value: session.source || "",
-      visible: Boolean(session.sourceReady && session.source)
-    },
-    {
-      copyValue: session.agentSession?.thread?.id || "",
-      detail: "Used to resume the assistant session",
-      icon: "agent",
-      key: "agent",
-      label: "AI Session",
-      value: session.agentSession?.thread?.id || "",
-      visible: Boolean(session.agentSession?.thread?.id)
-    },
-    {
-      copyValue: session.branch || "",
-      detail: "Session branch remains recoverable in Git",
-      icon: "branch",
-      key: "branch",
-      label: "Branch",
-      value: session.branch || "",
-      visible: Boolean(session.branch)
-    },
-    {
-      detail: workSourceDetail,
-      href: workSourceHref,
-      icon: "github",
-      key: "work-source",
-      label: "Work Source",
-      value: workSourceValue,
-      visible: Boolean(workSource)
-    },
-    {
-      detail: issueTitle,
-      href: session.issueUrl || "",
-      icon: "github",
-      key: "issue",
-      label: "GitHub Issue",
-      value: session.issueUrl ? issueLink.label : "",
-      visible: Boolean(session.issueUrl)
-    },
-    {
-      detail: issueTitle,
-      href: session.prUrl || "",
-      icon: "github",
-      key: "pr",
-      label: "Pull Request",
-      value: session.prUrl ? prLink.label : "",
-      visible: Boolean(session.prUrl)
-    },
-    {
-      copyValue: blueprintPath,
-      detail: blueprintPath,
-      href: fileHref(blueprintPath),
-      icon: "blueprint",
-      key: "blueprint",
-      label: "Blueprint",
-      value: "APP_BLUEPRINT.md",
-      visible: Boolean(session.blueprintExists && blueprintPath)
-    },
-    {
-      copyValue: reportPath,
-      detail: reportPath,
-      href: fileHref(reportPath),
-      icon: "report",
-      key: "session-report",
-      label: "Report",
-      value: REPORT_LABEL,
-      visible: Boolean(reportPath)
-    },
-    {
-      detail: firstText(prOutcome?.reason, prOutcome?.mergedAt),
-      icon: "github",
-      key: "pr-outcome",
-      label: "PR Outcome",
-      value: vibe64SessionStatusLabel(prOutcome?.outcome || ""),
-      visible: Boolean(prOutcome?.outcome)
-    }
-  ].filter((fact) => fact?.visible);
-}
-
 export {
-  isAbandonedVibe64Session,
   isClosedVibe64Session,
   isOpenVibe64Session,
-  normalizeVibe64SessionArchiveTab,
-  vibe64SessionArchive,
+  shortVibe64SessionId,
   vibe64SessionDisplayTitle,
   vibe64SessionRevision,
-  buildVibe64SessionFacts,
   vibe64SessionStatusColor,
-  vibe64SessionStatusLabel,
-  parseGithubSessionLink,
-  shortVibe64SessionId
+  vibe64SessionStatusLabel
 };

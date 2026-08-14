@@ -44,9 +44,9 @@ import {
 import {
   createPreviewIdentityGrant,
   normalizePreviewAuthKind,
+  normalizePreviewApplicationIdentities,
   PREVIEW_IDENTITY_LOGIN_OPERATION,
   PREVIEW_IDENTITY_LOGOUT_OPERATION,
-  previewApplicationIdentitiesFromConfig,
   previewAuthEnvironment,
   previewAuthIdentityAvailable,
   previewAuthIdentityTypes,
@@ -55,10 +55,6 @@ import {
   previewAuthSecretPath,
   readPreviewAuthSecret
 } from "@local/vibe64-core/server/previewAuth";
-import {
-  claimSessionWorkflowDriver,
-  workflowDriverFromSession
-} from "@local/vibe64-core/server/sessionWorkflowDriver";
 import {
   vibe64SessionDebugDurationMs,
   vibe64SessionDebugError,
@@ -90,6 +86,10 @@ import {
 import {
   createPreviewIdentityCommandRunner
 } from "./previewIdentityCommand.js";
+import {
+  createGenesisLaunchTargetTerminalSpec,
+  listGenesisLaunchTargets
+} from "./genesisLaunchTargets.js";
 
 const LAUNCH_METADATA = Object.freeze({
   agentHref: "launch_target_agent_href",
@@ -598,11 +598,7 @@ async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
 }
 
 async function createLaunchContext(projectService, sessionId) {
-  const runtime = await projectService.createRuntime({
-    input: {
-      sessionId
-    }
-  });
+  const runtime = await projectService.createRuntime();
   const session = await runtime.getSession(sessionId);
   assertSourceInspectionHealthy(session.sourceInspection);
   const targetRoot = sessionTerminalCwd(session, projectService);
@@ -614,8 +610,25 @@ async function createLaunchContext(projectService, sessionId) {
     projectService?.targetRoot ||
     targetRoot
   ).trim();
+  const previewIdentitySettings = typeof projectService?.readPreviewApplicationIdentities === "function"
+    ? await projectService.readPreviewApplicationIdentities()
+    : {
+        identities: [],
+        ok: true
+      };
+  if (previewIdentitySettings?.ok === false) {
+    const error = new Error(
+      previewIdentitySettings.errors?.[0]?.message ||
+      previewIdentitySettings.error ||
+      "Managed app identities could not be read."
+    );
+    error.code = previewIdentitySettings.errors?.[0]?.code || previewIdentitySettings.code ||
+      "vibe64_preview_application_identities_unavailable";
+    throw error;
+  }
   return {
-    config: runtime.projectConfig,
+    config: {},
+    previewApplicationIdentities: previewIdentitySettings.identities || [],
     projectsRoot: projectService?.selectedProject?.projectsRoot || "",
     runtimeTargetRoot,
     runtime,
@@ -629,8 +642,11 @@ async function createLaunchContext(projectService, sessionId) {
 }
 
 async function listLaunchTargets(context) {
-  const targets = await context.runtime.adapter.listLaunchTargets(context);
-  return Array.isArray(targets) ? targets : [];
+  return listGenesisLaunchTargets(context);
+}
+
+async function createLaunchTargetSpec(input = {}) {
+  return createGenesisLaunchTargetTerminalSpec(input);
 }
 
 function findLaunchTarget(targets = [], launchTargetId = "") {
@@ -863,7 +879,7 @@ function openTargetFromLaunchPreview(preview = {}, openTarget = null) {
 function launchStatusResponseFromPreviewStatus({
   launchTargets = [],
   previewStatus = {},
-  projectConfig = {}
+  previewApplicationIdentities = []
 } = {}) {
   const preview = normalizeLaunchPreview(previewStatus.preview || {});
   const previewTarget = previewTargetFromLaunchPreview(preview);
@@ -876,7 +892,7 @@ function launchStatusResponseFromPreviewStatus({
     launchTargets,
     preview,
     previewIdentity: previewIdentityCapability({
-      projectConfig,
+      previewApplicationIdentities,
       preview,
       terminal: previewStatus.activeTerminal
     }),
@@ -967,7 +983,7 @@ function previewAuthForLaunchTerminal(terminal = {}, {
 }
 
 function previewIdentityCapability({
-  projectConfig = {},
+  previewApplicationIdentities = [],
   preview = {},
   terminal = null
 } = {}) {
@@ -983,7 +999,7 @@ function previewIdentityCapability({
   const identityTypes = previewAuthIdentityTypes(previewAuth || {
     kind: previewAuthKind
   });
-  const configuredIdentities = previewApplicationIdentitiesFromConfig(projectConfig);
+  const configuredIdentities = normalizePreviewApplicationIdentities(previewApplicationIdentities);
   const identities = configuredIdentities.filter((identity) => (
     identityTypes.includes(identity.type)
   ));
@@ -1594,7 +1610,6 @@ async function readyLaunchPreview({
 function launchExecutionProject(context = {}, terminalEnvRecords = {}) {
   return {
     config: context.config || {},
-    configEnv: terminalEnvRecords.projectConfigEnv,
     projectsRoot: context.projectsRoot || "",
     runtimeConfigEnv: terminalEnvRecords.runtimeConfigEnv,
     runtimeTargetRoot: context.runtimeTargetRoot || "",
@@ -1928,7 +1943,7 @@ function createLaunchTargetTerminalController({
         return launchStatusResponseFromPreviewStatus({
           launchTargets,
           previewStatus,
-          projectConfig: context.config
+          previewApplicationIdentities: context.previewApplicationIdentities
         });
       });
     },
@@ -1998,7 +2013,7 @@ function createLaunchTargetTerminalController({
         const status = launchStatusResponseFromPreviewStatus({
           launchTargets,
           previewStatus,
-          projectConfig: context.config
+          previewApplicationIdentities: context.previewApplicationIdentities
         });
         if (!status.openTarget.available) {
           return {
@@ -2027,12 +2042,10 @@ function createLaunchTargetTerminalController({
         let launchInput = normalizeLaunchInput(input.launchInput);
         let launchTargetId = normalizeLaunchTargetId(input.launchTargetId);
         let launchTargets = null;
-        let workflowDriverOriginId = String(input.originId || "").trim();
         const managedPreviewOperation = input.ensurePreview === true || input.restartPreview === true;
         if (managedPreviewOperation) {
           const restartPreview = input.restartPreview === true;
           const savedLaunchTarget = launchTargetFromMetadata(context.session?.metadata || {});
-          workflowDriverOriginId ||= workflowDriverFromSession(context.session).originId;
           launchTargets = await listLaunchTargets(context);
           const previewStatus = await resolveLaunchPreviewStatus({
             context,
@@ -2072,21 +2085,6 @@ function createLaunchTargetTerminalController({
           launchTargetId,
           sessionId
         };
-        try {
-          await claimSessionWorkflowDriver(context.runtime, sessionId, {
-            originId: workflowDriverOriginId,
-            reason: "launch-target",
-            vibe64User: input?.vibe64User || null
-          });
-        } catch (error) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            error,
-            reason: "workflow_driver_claim_failed",
-            status: "failed"
-          });
-          throw error;
-        }
         const launchInputHash = launchInputFingerprint(launchInput);
         const closingReason = sessionClosingReason(context.session);
         if (closingReason) {
@@ -2149,7 +2147,7 @@ function createLaunchTargetTerminalController({
           };
         }
 
-        const spec = await context.runtime.adapter.createLaunchTargetTerminalSpec({
+        const spec = await createLaunchTargetSpec({
           context: {
             ...context,
             launchInput,
@@ -2588,9 +2586,11 @@ export {
   LAUNCH_METADATA,
   cleanupSupersededLaunchTerminals,
   createLaunchRestartBaseline,
+  createLaunchTargetSpec,
   launchActionsFromOutput,
   launchReadinessMarkerLineSeen,
   launchRestartState,
+  listLaunchTargets,
   previewPublicOriginForLaunch,
   createLaunchTargetTerminalController
 };

@@ -2,8 +2,6 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-const VIBE64_STATE_DIR = ".vibe64";
-
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -43,7 +41,6 @@ async function pathExists(filePath) {
 }
 
 export {
-  VIBE64_STATE_DIR,
   vibe64Error,
   isPlainObject,
   isMissingPathError,

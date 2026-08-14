@@ -1,9 +1,0 @@
-{{systemStandard}}
-
-Laravel selected blueprint:
-{{adapter.promptContext.environment_blueprint}}
-
-Laravel-specific guidance:
-- Treat this as a Laravel project using the selected blueprint above.
-- Respect Laravel routes, controllers, models, migrations, seeders, factories, policies, requests, jobs, events, views, Vite assets, Composer scripts, and package-manager conventions.
-- Keep database access server-side through Eloquent, query builder, jobs, commands, or services, and keep `.env` aligned with the selected database runtime.

@@ -92,12 +92,10 @@ function vibe64SessionDebugLog(event = "", details = {}, options = {}) {
 
 function vibe64SessionDebugSummary(session = {}) {
   return {
-    currentStep: String(session?.currentStep || ""),
-    nextEnabled: session?.next?.enabled === true,
-    nextStepId: String(session?.next?.stepId || ""),
+    revision: Number(session?.revision) || 0,
     sessionId: String(session?.sessionId || ""),
-    status: String(session?.status || ""),
-    stepStatus: String(session?.stepMachine?.status || "")
+    sourceReady: session?.sourceReady === true,
+    status: String(session?.status || "")
   };
 }
 

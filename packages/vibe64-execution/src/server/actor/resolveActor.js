@@ -13,7 +13,6 @@ function actorUsernameFromRequest(request = {}) {
     request.project?.ownerUserKey,
     request.project?.ownerUsername,
     request.project?.ownerUser?.username,
-    request.session?.metadata?.workflow_driver_username,
     request.session?.metadata?.session_git_command_actor_user_key
   );
 }

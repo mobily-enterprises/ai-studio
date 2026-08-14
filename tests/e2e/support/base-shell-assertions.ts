@@ -53,19 +53,8 @@ async function expectVisibleTapTargets(page, {
   }
 }
 
-async function expectSessionHistoryRoute(page, archive) {
-  const tabName = archive === "abandoned" ? "Abandoned" : "Completed";
-
+async function expectSessionHistoryRoute(page) {
   await expect(page.getByRole("heading", { level: 1, name: "Session History", exact: true })).toBeVisible();
-  await expect(page.getByText("Review completed and abandoned Vibe64 sessions.", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "Completed", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Abandoned", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: tabName, exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("heading", { name: "Completed Sessions", exact: true })).toHaveCount(0);
-  await expect(page.getByText("Finished sessions keep their reports, decisions, issue links, and PR outcome."))
-    .toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Abandoned Sessions", exact: true })).toHaveCount(0);
-  await expect(page.getByText("Worktrees are removed; session branches remain recoverable in Git.")).toHaveCount(0);
 }
 
 export {

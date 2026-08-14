@@ -27,12 +27,10 @@ The public Vibe64 repo owns the execution gateway:
 - `packages/vibe64-execution/src/server/index.js`
   - Public server API exports.
 
-Vibe64 Online consumes the public package from the composed app:
-
-- `packages/private-online-core/src/server/githubToolchain.js`
-- `packages/private-online-core/src/server/projectRepositoryService.js`
-- `packages/private-online-deployments/src/server/deploymentRunner.js`
-- `packages/private-online-deployments/src/server/service.js`
+Vibe64 Online consumes the same public execution package through the composed
+application. Hosted callers remain responsible for describing their actor and
+command intent; they do not replace the gateway's environment or credential
+policy.
 
 ## Core Flow
 
@@ -149,9 +147,9 @@ already running as that user, the gateway routes through the host exec helper.
 "github"
 "source-editor"
 "preview"
-"adapter"
 "deployment"
-"setup"
+"health"
+"source"
 ```
 
 Interactive purposes default to the broad runtime pack set:
@@ -505,49 +503,17 @@ Failure:
 
 ## Important Usage Sites
 
-### Command Terminals
+### Managed agent and application processes
 
-`packages/vibe64-terminals/src/server/commandTerminal.js`
+`packages/vibe64-terminals/src/server/codexTerminal.js` and
+`packages/vibe64-terminals/src/server/launchTargetTerminal.js`
 
-The command terminal starts PTYs through the gateway:
-
-```js
-await runVibe64Command({
-  actor: actor.actor,
-  userKey: actor.userKey,
-  mode: "pty",
-  purpose,
-  command: "bash",
-  args: () => commandTerminalHostArgs({
-    command: spec.command,
-    args: spec.args || []
-  }),
-  cwd: workdir,
-  allowedRoots: [
-    targetRoot,
-    workdir,
-    terminalWorktreePath(session),
-    resultFile.directory
-  ],
-  envPolicy: "project",
-  project: {
-    config: runtime.projectConfig || {},
-    configEnv: terminalEnvRecords.projectConfigEnv,
-    runtimeConfigEnv: terminalEnvRecords.runtimeConfigEnv,
-    targetRoot
-  },
-  session,
-  terminal: {
-    commandPreview: spec.commandPreview,
-    helperPayloadRoot: resultFile.directory,
-    namespace,
-    maxRunning
-  }
-});
-```
-
-This is the path that should make `node`, `npm`, `mysql`, `gh`, Playwright, and
-project env available in user-facing terminals.
+Vibe64 owns the execution environment for direct agent turns and declared
+Genesis Launch targets. Launch declarations provide literal commands and
+abstract runtime requirements; Vibe64 resolves those requirements to managed
+runtime packs, supplies project Env, allocates ports, and supervises the
+process. Project code does not assemble host `PATH`, browser paths, or account
+homes.
 
 ### Codex Git/GitHub Wrapper
 
@@ -582,88 +548,6 @@ await runVibe64Command({
 This is the path that should prevent Codex from losing GitHub credentials or
 using the wrong HOME.
 
-### GitHub Toolchain In Online
-
-`packages/private-online-core/src/server/githubToolchain.js`
-
-Online runs GitHub commands as the real user:
-
-```js
-await runVibe64Command({
-  actor: "named-user",
-  userKey: "merc",
-  purpose: "github",
-  command: "gh",
-  args: ["auth", "status", "--hostname", "github.com"],
-  cwd: "/var/lib/vibe64/sas/projects/compas-next",
-  credentialHome: {
-    home: "/home/merc",
-    username: "merc",
-    uid: 1000,
-    gid: 1000
-  },
-  gitTransport: "github-https",
-  runtimes: ["gh", "git"],
-  timeout: 20000
-});
-```
-
-### Managed Git Repository Setup
-
-`packages/private-online-core/src/server/projectRepositoryService.js`
-
-Managed Vibe64 Git repos are initialized by the daemon:
-
-```js
-await runVibe64Command({
-  actor: "daemon",
-  purpose: "setup",
-  mode: "capture",
-  command: "bash",
-  args: ["-lc", canonicalRepositoryInitializeScript({
-    defaultBranch,
-    repositoryPath
-  })],
-  cwd: canonicalRepositoryRoot,
-  allowedRoots: [canonicalRepositoryRoot],
-  gitSafeDirectories: [canonicalRepositoryRoot],
-  envPolicy: "project",
-  runtimes: ["git"],
-  timeout: 30000
-});
-```
-
-### Deployment Publish
-
-`packages/private-online-deployments/src/server/service.js`
-
-Publish terminals are gateway PTYs:
-
-```js
-await runVibe64Command({
-  actor: "app",
-  purpose: "deployment",
-  mode: "pty",
-  command: process.execPath,
-  args: [DEPLOYMENT_PUBLISH_TERMINAL_RUNNER, terminalInputPath],
-  cwd: context.sourceRoot || context.targetRoot || process.cwd(),
-  envPolicy: "deployment",
-  credentialHome: {
-    home: publishToolHome.runtimeToolHomeSource || publishToolHome.toolHomeSource,
-    username: publishToolHome.owner?.ownerUserKey || "deployment-publish"
-  },
-  env: ({ id }) => ({
-    [DEPLOYMENT_PUBLISH_ID_ENV]: String(id || "").trim()
-  }),
-  terminal: {
-    commandPreview: "vibe64 publish",
-    maxRunning: 1,
-    namespace: deploymentPublishTerminalNamespace(context),
-    namespaceLimitPrefix: deploymentPublishTerminalNamespace(context)
-  }
-});
-```
-
 ## What New Code Should Do
 
 If new code needs to run any of these:
@@ -678,9 +562,8 @@ If new code needs to run any of these:
 - `opencode`
 - Playwright
 - preview commands
-- adapter commands
-- setup/doctor commands
-- deployment commands
+- Genesis Launch preparation and server commands
+- source inspection and archive commands
 
 then it should almost certainly call `runVibe64Command()`.
 
@@ -701,7 +584,7 @@ Those are gateway concerns.
 
 ## Good Default Patterns
 
-For project command terminals:
+For a managed project process:
 
 ```js
 {
@@ -730,12 +613,12 @@ For GitHub operations:
 }
 ```
 
-For internal setup:
+For managed source operations:
 
 ```js
 {
   actor: "daemon",
-  purpose: "setup",
+  purpose: "source",
   envPolicy: "project",
   mode: "capture",
   runtimes: ["git"]

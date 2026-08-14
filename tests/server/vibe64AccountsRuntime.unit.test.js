@@ -33,7 +33,7 @@ import {
 import {
   GITHUB_RECONNECT_REQUIRED_CODE,
   githubCliFailureDetails
-} from "../../packages/setup-doctor-core/src/server/githubCliAuth.js";
+} from "../../packages/vibe64-accounts/src/server/githubCliAuth.js";
 import {
   createAccountsRuntime,
   createService,

@@ -9,11 +9,11 @@
         <div class="project-template-setup__hero-copy">
           <p class="project-template-setup__eyebrow">
             <v-icon :icon="mdiCreationOutline" size="18" />
-            <span>Ready-made JSKIT</span>
+            <span>Project foundation</span>
           </p>
-          <h1 id="project-template-heading">Choose how your app should work</h1>
+          <h1 id="project-template-heading">Choose your starting point</h1>
           <p class="project-template-setup__intro">
-            Pick the starting point that feels closest. Vibe64 will copy the matching starter repository into this project as one clean first commit, ready for you to make it yours.
+            Start with an empty Git project prepared by Genesis, or choose a precooked app. Technology choices live in the project's Genesis Stack and can change later.
           </p>
         </div>
         <div class="project-template-setup__hero-mark" aria-hidden="true">
@@ -24,10 +24,10 @@
       <section class="project-template-setup__choices" aria-labelledby="project-template-choices-heading">
         <div class="project-template-setup__section-heading">
           <div>
-            <p class="project-template-setup__section-kicker">Starting points</p>
-            <h2 id="project-template-choices-heading">What will people do in your app?</h2>
+            <p class="project-template-setup__section-kicker">Blank or precooked</p>
+            <h2 id="project-template-choices-heading">How would you like to begin?</h2>
           </div>
-          <p>Choose the closest match. You can change the design and features afterwards.</p>
+          <p>Blank selects no language or framework. Precooked projects bring their own starting Stack.</p>
         </div>
 
         <div
@@ -37,7 +37,7 @@
           aria-label="Loading project templates"
         >
           <article
-            v-for="index in 4"
+            v-for="index in 5"
             :key="index"
             class="project-template-card project-template-card--loading"
           >
@@ -112,14 +112,8 @@
             />
           </span>
           <span class="project-template-setup__selection-copy">
-            <strong v-if="selectedTemplate">
-              {{ applying ? `Creating your ${selectedTemplate.name} starting point…` : `${selectedTemplate.name} is ready to go` }}
-            </strong>
-            <strong v-else>Choose a starting point</strong>
-            <span v-if="selectedTemplate">
-              {{ applying ? "Getting the repository and creating your first commit." : "Vibe64 will copy the repository into this empty project." }}
-            </span>
-            <span v-else>Select one of the four options above to continue.</span>
+            <strong>{{ selectionHeading }}</strong>
+            <span>{{ selectionDescription }}</span>
           </span>
         </div>
 
@@ -136,27 +130,6 @@
           <v-icon v-if="!applying" :icon="mdiArrowRight" end size="21" />
         </v-btn>
       </section>
-
-      <aside class="project-template-setup__advanced">
-        <span class="project-template-setup__advanced-icon" aria-hidden="true">
-          <v-icon :icon="mdiTuneVariant" size="32" />
-        </span>
-        <span class="project-template-setup__advanced-copy">
-          <strong>Need a different setup?</strong>
-          <span>Choose the technology and configuration yourself, then build an empty app with the existing guided seeding flow.</span>
-        </span>
-        <v-btn
-          class="project-template-setup__advanced-action"
-          :disabled="applying"
-          :append-icon="mdiArrowRight"
-          color="primary"
-          size="large"
-          variant="outlined"
-          @click="openAdvancedSetup"
-        >
-          Advanced setup
-        </v-btn>
-      </aside>
     </div>
   </section>
 </template>
@@ -180,7 +153,7 @@ const props = defineProps({
     type: Array
   }
 });
-const emit = defineEmits(["advanced", "apply"]);
+const emit = defineEmits(["apply"]);
 
 const {
   applySelectedTemplate,
@@ -189,8 +162,8 @@ const {
   mdiCheckCircle,
   mdiCreationOutline,
   mdiRocketLaunchOutline,
-  mdiTuneVariant,
-  openAdvancedSetup,
+  selectionDescription,
+  selectionHeading,
   selectedTemplate,
   selectedTemplateId,
   selectTemplate,
@@ -364,6 +337,10 @@ const {
   --template-accent: 124, 58, 237;
 }
 
+.project-template-card--slate {
+  --template-accent: 71, 85, 105;
+}
+
 .project-template-card--amber {
   --template-accent: 217, 119, 6;
 }
@@ -518,8 +495,7 @@ const {
   min-width: 0;
 }
 
-.project-template-setup__selection-icon,
-.project-template-setup__advanced-icon {
+.project-template-setup__selection-icon {
   align-items: center;
   background: rgba(var(--v-theme-primary), 0.1);
   border-radius: 0.9rem;
@@ -534,6 +510,11 @@ const {
 .project-template-setup__selection-icon--sky {
   background: rgba(2, 132, 199, 0.12);
   color: rgb(2, 132, 199);
+}
+
+.project-template-setup__selection-icon--slate {
+  background: rgba(71, 85, 105, 0.12);
+  color: rgb(71, 85, 105);
 }
 
 .project-template-setup__selection-icon--violet {
@@ -551,22 +532,19 @@ const {
   color: rgb(5, 150, 105);
 }
 
-.project-template-setup__selection-copy,
-.project-template-setup__advanced-copy {
+.project-template-setup__selection-copy {
   display: grid;
   gap: 0.18rem;
   min-width: 0;
 }
 
-.project-template-setup__selection-copy strong,
-.project-template-setup__advanced-copy strong {
+.project-template-setup__selection-copy strong {
   font-size: 0.98rem;
   font-weight: 760;
   line-height: 1.3;
 }
 
-.project-template-setup__selection-copy span,
-.project-template-setup__advanced-copy span {
+.project-template-setup__selection-copy span {
   color: rgba(var(--v-theme-on-surface), 0.63);
   font-size: 0.84rem;
   line-height: 1.4;
@@ -574,26 +552,6 @@ const {
 
 .project-template-setup__primary-action {
   min-width: 13.5rem;
-  text-transform: none;
-}
-
-.project-template-setup__advanced {
-  align-items: center;
-  background: rgba(var(--v-theme-on-surface), 0.025);
-  border: 1px dashed rgba(var(--v-theme-on-surface), 0.2);
-  border-radius: 1.15rem;
-  display: grid;
-  gap: 0.85rem;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  padding: 1rem 1.1rem;
-}
-
-.project-template-setup__advanced-icon {
-  background: rgba(var(--v-theme-on-surface), 0.075);
-  color: rgba(var(--v-theme-on-surface), 0.68);
-}
-
-.project-template-setup__advanced-action {
   text-transform: none;
 }
 
@@ -657,14 +615,12 @@ const {
     width: 4.25rem;
   }
 
-  .project-template-setup__action,
-  .project-template-setup__advanced {
+  .project-template-setup__action {
     align-items: stretch;
     grid-template-columns: 1fr;
   }
 
-  .project-template-setup__primary-action,
-  .project-template-setup__advanced-action {
+  .project-template-setup__primary-action {
     inline-size: 100%;
   }
 }

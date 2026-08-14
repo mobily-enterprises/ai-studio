@@ -63,27 +63,22 @@ async function createLaunchSpecFixture() {
   };
 }
 
-async function installPreviewIdentityContract(targetRoot, {
+function previewIdentityCapability() {
+  return {
+    command: [".vibe64/bin/preview-identity"],
+    environment: {
+      enabled: "APP_PREVIEW_IDENTITY_ENABLED",
+      secret: "APP_PREVIEW_IDENTITY_SECRET"
+    },
+    identityTypes: ["email", "user-id"],
+    protocol: "vibe64.preview-identity.command.v1",
+    runtimes: ["node26"]
+  };
+}
+
+async function installPreviewIdentityExecutable(targetRoot, {
   includeExecutable = true
 } = {}) {
-  await writeFile(path.join(targetRoot, "vibe64.project.json"), `${JSON.stringify({
-    capabilities: {
-      previewIdentity: {
-        command: [".vibe64/bin/preview-identity"],
-        environment: {
-          enabled: "APP_PREVIEW_IDENTITY_ENABLED",
-          secret: "APP_PREVIEW_IDENTITY_SECRET"
-        },
-        identityTypes: ["email", "user-id"],
-        protocol: "vibe64.preview-identity.command.v1",
-        runtimes: ["node26"]
-      }
-    },
-    config: {},
-    projectType: "unit",
-    schema: "vibe64.project",
-    schemaVersion: 1
-  }, null, 2)}\n`, "utf8");
   if (!includeExecutable) {
     return;
   }
@@ -125,7 +120,6 @@ function createSpec({
   targetRoot
 }) {
   return createVibe64WebLaunchTargetTerminalSpec({
-    adapterId: "unit",
     launchTarget: {
       id: "dev",
       label: "Run app"
@@ -147,12 +141,15 @@ function createSpec({
   });
 }
 
-test("web launch resolves preview identity only from the committed Vibe64 project contract", async () => {
+test("web launch resolves preview identity from the explicit launch declaration", async () => {
   const fixture = await createLaunchSpecFixture();
   let spec;
   try {
-    await installPreviewIdentityContract(fixture.targetRoot);
+    await installPreviewIdentityExecutable(fixture.targetRoot);
     spec = await createSpec({
+      launch: {
+        previewIdentity: previewIdentityCapability()
+      },
       preferredPort: 47000 + crypto.randomInt(500),
       session: fixture.session,
       targetRoot: fixture.targetRoot
@@ -174,13 +171,16 @@ test("web launch resolves preview identity only from the committed Vibe64 projec
   }
 });
 
-test("web launch rejects incomplete preview identity source contracts", async () => {
+test("web launch rejects a declared preview identity without its executable", async () => {
   const fixture = await createLaunchSpecFixture();
   try {
-    await installPreviewIdentityContract(fixture.targetRoot, {
+    await installPreviewIdentityExecutable(fixture.targetRoot, {
       includeExecutable: false
     });
     const spec = await createSpec({
+      launch: {
+        previewIdentity: previewIdentityCapability()
+      },
       preferredPort: 47500 + crypto.randomInt(500),
       session: fixture.session,
       targetRoot: fixture.targetRoot
@@ -196,7 +196,7 @@ test("web launch rejects incomplete preview identity source contracts", async ()
 test("web launch rejects preview identity executable symlinks", async () => {
   const fixture = await createLaunchSpecFixture();
   try {
-    await installPreviewIdentityContract(fixture.targetRoot, {
+    await installPreviewIdentityExecutable(fixture.targetRoot, {
       includeExecutable: false
     });
     const executablePath = path.join(fixture.targetRoot, ".vibe64", "bin", "preview-identity");
@@ -209,6 +209,9 @@ test("web launch rejects preview identity executable symlinks", async () => {
     await symlink(externalExecutable, executablePath);
 
     const spec = await createSpec({
+      launch: {
+        previewIdentity: previewIdentityCapability()
+      },
       preferredPort: 47500 + crypto.randomInt(500),
       session: fixture.session,
       targetRoot: fixture.targetRoot
@@ -221,16 +224,13 @@ test("web launch rejects preview identity executable symlinks", async () => {
   }
 });
 
-test("web launch rejects adapter-owned preview identity declarations", async () => {
+test("web launch rejects conflicting preview identity and preview authentication declarations", async () => {
   const fixture = await createLaunchSpecFixture();
   try {
     const spec = await createSpec({
       launch: {
-        previewIdentity: {
-          command: [".vibe64/bin/preview-identity"],
-          identityTypes: ["email"],
-          protocol: "vibe64.preview-identity.command.v1"
-        }
+        previewAuth: "cookie-profile",
+        previewIdentity: previewIdentityCapability()
       },
       preferredPort: 46500 + crypto.randomInt(500),
       session: fixture.session,
@@ -238,7 +238,7 @@ test("web launch rejects adapter-owned preview identity declarations", async () 
     });
 
     assert.equal(spec.ok, false);
-    assert.match(spec.message, /vibe64\.project\.json/u);
+    assert.match(spec.message, /cannot combine/u);
   } finally {
     await fixture.cleanup();
   }

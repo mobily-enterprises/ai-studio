@@ -1,8 +1,9 @@
 import { createPlacementRegistry } from "@jskit-ai/shell-web/client/placement";
 import {
+  mdiAccountKeyOutline,
   mdiFileCogOutline,
-  mdiHistory,
-  mdiTune
+  mdiHeartPulse,
+  mdiHistory
 } from "@mdi/js";
 import {
   VIBE64_ACTIVE_SESSION_NAV_OWNER,
@@ -139,6 +140,22 @@ function activeSessionNavPlacementVisible({ activeSessionNav } = {}) {
     },
   });
 }
+addPlacement({
+  id: "vibe64.preview-identities.link",
+  target: "page.section-nav",
+  owner: "app-dashboard",
+  kind: "link",
+  surfaces: ["app"],
+  order: 400,
+  props: {
+    label: "App access",
+    icon: mdiAccountKeyOutline,
+    surface: "app",
+    scopedSuffix: "/project/[slug]/dashboard/access",
+    unscopedSuffix: "/project/[slug]/dashboard/access",
+    to: ""
+  }
+});
 // jskit:ui-generator.page.link:app:/dashboard/history
 {
   addPlacement({
@@ -158,22 +175,19 @@ function activeSessionNavPlacementVisible({ activeSessionNav } = {}) {
     },
   });
 }
-// jskit:ui-generator.page.link:app:/dashboard/setup
-{
-  addPlacement({
-    id: "ui-generator.page.app.dashboard.setup.link",
-    target: "page.section-nav",
-    owner: "app-dashboard",
-    kind: "link",
-    surfaces: ["app"],
-    order: 700,
-    props: {
-      label: "Setup",
-      icon: mdiTune,
-      surface: "app",
-      scopedSuffix: "/project/[slug]/dashboard/setup",
-      unscopedSuffix: "/project/[slug]/dashboard/setup",
-      to: "",
-    },
-  });
-}
+addPlacement({
+  id: "vibe64.studio-health.link",
+  target: "page.section-nav",
+  owner: "app-dashboard",
+  kind: "link",
+  surfaces: ["app"],
+  order: 700,
+  props: {
+    label: "Health",
+    icon: mdiHeartPulse,
+    surface: "app",
+    scopedSuffix: "/project/[slug]/dashboard/health",
+    unscopedSuffix: "/project/[slug]/dashboard/health",
+    to: ""
+  }
+});

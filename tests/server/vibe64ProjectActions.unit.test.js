@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ACTION_LIST_PROJECT_TOOLS,
-  ACTION_READ_PROJECT_TYPE,
+  ACTION_READ_ENV,
+  ACTION_SAVE_ENV_USER_VALUES,
   featureActions
 } from "../../packages/vibe64-project/src/server/actions.js";
 
@@ -13,16 +13,16 @@ function featureAction(actionId = "") {
   return action;
 }
 
-test("project type read action forwards source selection input", async () => {
-  const action = featureAction(ACTION_READ_PROJECT_TYPE);
+test("Env read action forwards its input", async () => {
+  const action = featureAction(ACTION_READ_ENV);
   const calls = [];
   const input = {
-    sessionId: "2026-06-23_10-58-14"
+    scope: "development"
   };
 
   await action.execute(input, {}, {
     featureService: {
-      async readProjectType(...args) {
+      async readEnv(...args) {
         calls.push(args);
         return {
           ok: true
@@ -34,20 +34,23 @@ test("project type read action forwards source selection input", async () => {
   assert.deepEqual(calls, [[input]]);
 });
 
-test("project tools list action forwards source selection input", async () => {
-  const action = featureAction(ACTION_LIST_PROJECT_TOOLS);
+test("Env save action forwards user-owned values", async () => {
+  const action = featureAction(ACTION_SAVE_ENV_USER_VALUES);
   const calls = [];
   const input = {
-    sessionId: "2026-06-23_10-58-14"
+    records: [{
+      key: "API_URL",
+      value: "https://example.test"
+    }],
+    scope: "development"
   };
 
   await action.execute(input, {}, {
     featureService: {
-      async listProjectTools(...args) {
+      async saveEnvUserValues(...args) {
         calls.push(args);
         return {
-          ok: true,
-          tools: []
+          ok: true
         };
       }
     }

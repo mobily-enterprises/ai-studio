@@ -35,10 +35,8 @@ function arrayValue(value = []) {
 }
 
 function sessionBackgroundTasks(session = {}) {
-  return [
-    ...arrayValue(session?.backgroundTasks),
-    ...arrayValue(session?.presentation?.backgroundTasks)
-  ].filter((task) => task && typeof task === "object" && !Array.isArray(task));
+  return arrayValue(session?.backgroundTasks)
+    .filter((task) => task && typeof task === "object" && !Array.isArray(task));
 }
 
 function codexReconnectRequiredText(value = "") {
@@ -99,11 +97,8 @@ function codexReconnectRequiredSignature(session = {}) {
     ].join("|");
   }
 
-  const terminal = [
-    objectValue(session?.agentSession?.terminal),
-    objectValue(session?.presentation?.terminal?.agent)
-  ].find(codexReconnectRequiredResult);
-  if (terminal) {
+  const terminal = objectValue(session?.agentSession?.terminal);
+  if (codexReconnectRequiredResult(terminal)) {
     return [
       sessionId,
       "terminal",
@@ -131,33 +126,25 @@ function codexReconnectRequiredSignature(session = {}) {
 }
 
 function codexTerminalAttentionSignature(session = {}) {
-  const terminals = [
-    objectValue(session?.agentSession?.terminal),
-    objectValue(session?.presentation?.terminal?.agent)
-  ];
-  for (const terminal of terminals) {
-    const terminalId = normalizedText(terminal.id || terminal.terminalSessionId);
-    const terminalStatus = normalizedText(terminal.status);
-    const terminalError = normalizedText(terminal.closeError || terminal.error || terminal.terminalError);
-    if (!terminalId && !terminalStatus && !terminalError) {
-      continue;
-    }
-    if (terminalSessionMissingError(terminalError)) {
-      continue;
-    }
-    if (!terminalError && !CODEX_TERMINAL_ATTENTION_STATUSES.has(terminalStatus)) {
-      continue;
-    }
-    return [
-      normalizedText(session?.sessionId),
-      "terminal",
-      terminalId,
-      terminalStatus,
-      normalizedText(terminal.outputVersion),
-      terminalError
-    ].join("|");
+  const terminal = objectValue(session?.agentSession?.terminal);
+  const terminalId = normalizedText(terminal.id || terminal.terminalSessionId);
+  const terminalStatus = normalizedText(terminal.status);
+  const terminalError = normalizedText(terminal.closeError || terminal.error || terminal.terminalError);
+  if (
+    (!terminalId && !terminalStatus && !terminalError) ||
+    terminalSessionMissingError(terminalError) ||
+    (!terminalError && !CODEX_TERMINAL_ATTENTION_STATUSES.has(terminalStatus))
+  ) {
+    return "";
   }
-  return "";
+  return [
+    normalizedText(session?.sessionId),
+    "terminal",
+    terminalId,
+    terminalStatus,
+    normalizedText(terminal.outputVersion),
+    terminalError
+  ].join("|");
 }
 
 function codexAgentTurnAttentionSignature(session = {}) {

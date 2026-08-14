@@ -1,75 +1,46 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const AUTOPILOT_RUNTIME_FILES = Object.freeze([
+const DIRECT_SESSION_FILES = Object.freeze([
   "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
-  "src/composables/useVibe64AutopilotView.js",
-  "src/composables/useVibe64AutopilotController.js",
-  "src/composables/useVibe64SessionData.js",
-  "src/composables/useVibe64SessionActions.js",
-  "src/lib/vibe64SessionPanelModel.js"
+  "src/composables/useVibe64AutopilotView.js"
 ]);
 
-const SERVER_OWNED_WORKFLOW_WORDS = Object.freeze([
-  "agent_conversation",
-  "changes_accepted",
+const RETIRED_WORKFLOW_WORDS = Object.freeze([
   "create_and_merge_pull_request",
-  "deep_ui_check_run",
-  "final_review_conversation",
   "finish_session",
-  "human_review_conversation",
-  "implementation_reviewed",
-  "issue_file_created",
-  "local_session_finished",
-  "github_mirror_refresh_attempted",
-  "make_plan",
   "make_seed_plan",
   "merge_pr",
   "plan_and_execute",
   "prepare_for_merge",
   "review_and_validate",
   "run_deep_ui_check",
-  "seed_plan_made",
-  "session_created",
-  "session_finished",
   "skip_merge",
   "work_source_selected"
 ]);
 
-describe("dumb Autopilot client ownership", () => {
-  it("keeps workflow step and action vocabulary out of the Autopilot runtime client", () => {
-    for (const filePath of AUTOPILOT_RUNTIME_FILES) {
+describe("direct session client ownership", () => {
+  it("does not interpret workflow stages or actions", () => {
+    for (const filePath of DIRECT_SESSION_FILES) {
       const source = readFileSync(filePath, "utf8");
-      for (const word of SERVER_OWNED_WORKFLOW_WORDS) {
+      for (const word of RETIRED_WORKFLOW_WORDS) {
         expect(source, `${filePath} should not branch on ${word}`).not.toContain(word);
       }
-      expect(source, `${filePath} should not inspect workflow autopilot definitions`).not.toContain("currentStepDefinition.autopilot");
+      expect(source).not.toContain("currentStepDefinition");
+      expect(source).not.toContain("runNextOperation");
+      expect(source).not.toContain("props.actions.goNext");
     }
   });
 
-  it("keeps direct step-input advancement owned by the server autopilot operation", () => {
-    const source = readFileSync("src/composables/useVibe64AutopilotView.js", "utf8");
-    expect(source).not.toContain("props.actions.goNext");
-  });
+  it("keeps conversation history and input in one direct chat surface", () => {
+    const component = readFileSync(DIRECT_SESSION_FILES[0], "utf8");
+    const composable = readFileSync(DIRECT_SESSION_FILES[1], "utf8");
 
-  it("keeps Autopilot conversation history outside normal input and runtime state", () => {
-    const templateSource = readFileSync("src/components/studio/vibe64-session/Vibe64AutopilotView.vue", "utf8");
-    const viewModelSource = readFileSync("src/composables/useVibe64AutopilotView.js", "utf8");
-    expect(templateSource).not.toContain(":activity-messages=");
-    expect(viewModelSource).not.toContain("chatActivityMessages");
-    expect(viewModelSource).not.toContain("activityMessage({");
-    expect(viewModelSource).toContain("const chatTakeoverVisible = computed(() => Boolean(reportPreviewVisible.value));");
-    expect(viewModelSource).not.toContain("const chatTakeoverVisible = computed(() => Boolean(stepInputFormVisible.value");
-    expect(templateSource).not.toContain("v-else-if=\"responsePreviewVisible\"");
-  });
-
-  it("keeps the transient command spy tied to live or failed commands", () => {
-    const source = readFileSync("src/composables/useVibe64AutopilotView.js", "utf8");
-    const commandSpyVisible = source.match(/const commandSpyVisible = computed\(\(\) => Boolean\(([\s\S]*?)\n\s*\)\);/u)?.[1] || "";
-    expect(commandSpyVisible).toContain("commandTerminalVisible.value");
-    expect(commandSpyVisible).toContain("commandRunning.value");
-    expect(commandSpyVisible).toContain("commandTerminalFailed.value");
-    expect(commandSpyVisible).not.toContain("commandPreview.value");
-    expect(commandSpyVisible).not.toContain("commandOutput.value");
+    expect(component).toContain("<Vibe64ConversationLog");
+    expect(component).toContain("<Vibe64AutopilotPromptTextarea");
+    expect(component).not.toContain("ReportPreview");
+    expect(component).not.toContain("command-spy");
+    expect(composable).not.toContain("chatActivityMessages");
+    expect(composable).not.toContain("commandFailureResponseVisible");
   });
 });

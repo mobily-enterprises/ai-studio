@@ -9,68 +9,14 @@ import {
   VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE
 } from "@local/vibe64-runtime/shared";
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => {
-    resolve = done;
-  });
-  return {
-    promise,
-    resolve
-  };
-}
-
-test("session agent manager routes the canonical API through the selected product provider", async () => {
-  const calls = [];
-  const prepareHandoff = async (handoff) => handoff;
+test("session agent manager sends a message through the selected provider", async () => {
+  let received = null;
   const manager = createSessionAgentManager({
-    adapters: [{
+    providers: [{
       id: "codex",
       transportId: "codex_app_server",
-      async deliverPrompt(context, handoff) {
-        calls.push({ context, handoff });
-        return {
-          ok: true,
-          thread: { id: "thread-1" },
-          turn: { id: "turn-1" }
-        };
-      }
-    }]
-  });
-
-  const result = await manager.deliverPrompt("session-1", {
-    handoffId: "handoff-1",
-    terminalInput: "Test"
-  }, {
-    agentSettings: {
-      providerId: "codex"
-    },
-    prepareHandoff
-  });
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].context.providerId, "codex");
-  assert.equal(calls[0].context.prepareHandoff, prepareHandoff);
-  assert.equal(calls[0].context.transportId, "codex_app_server");
-  assert.equal(result.providerId, "codex");
-  assert.equal(result.transportId, "codex_app_server");
-  assert.equal(result.thread.id, "thread-1");
-});
-
-test("session agent manager gives every provider the active turn ownership contract", async () => {
-  let receivedContext = null;
-  const turnOwnership = {
-    reusable: true,
-    threadId: "thread-1",
-    turnId: "turn-1",
-    username: "alice"
-  };
-  const manager = createSessionAgentManager({
-    adapters: [{
-      id: "future-provider",
-      transportId: "future-transport",
-      async sendMessage(context) {
-        receivedContext = context;
+      async sendMessage(context, input) {
+        received = { context, input };
         return {
           delivered: true,
           ok: true
@@ -78,30 +24,38 @@ test("session agent manager gives every provider the active turn ownership contr
       }
     }]
   });
+  const turnOwnership = {
+    threadId: "thread-1",
+    turnId: "turn-1"
+  };
 
-  await manager.sendMessage("session-1", {
+  const result = await manager.sendMessage("session-1", {
     message: "Continue"
   }, {
     agentSettings: {
-      providerId: "future-provider"
+      providerId: "codex"
     },
     turnOwnership
   });
 
-  assert.deepEqual(receivedContext.turnOwnership, turnOwnership);
+  assert.equal(received.input.message, "Continue");
+  assert.deepEqual(received.context.turnOwnership, turnOwnership);
+  assert.equal(result.delivered, true);
+  assert.equal(result.providerId, "codex");
+  assert.equal(result.transportId, "codex_app_server");
 });
 
-test("session agent manager exposes focused conversations without provider-specific ids", async () => {
+test("session agent manager exposes focused provider conversations", async () => {
   const calls = [];
   const onEvent = () => null;
   const manager = createSessionAgentManager({
-    adapters: [{
-      id: "future-provider",
-      transportId: "future-transport",
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
       async createConversation(context, input) {
         calls.push(["create", context, input]);
         return {
-          conversationId: "opaque-conversation",
+          conversationId: "conversation-1",
           ok: true
         };
       },
@@ -109,7 +63,7 @@ test("session agent manager exposes focused conversations without provider-speci
         calls.push(["start", context, input]);
         return {
           ok: true,
-          runId: "opaque-run"
+          runId: "run-1"
         };
       },
       async waitForConversationTurn(context, input) {
@@ -122,15 +76,10 @@ test("session agent manager exposes focused conversations without provider-speci
     }]
   });
   const options = {
-    agentSettings: {
-      providerId: "future-provider"
-    },
     onEvent
   };
 
-  const created = await manager.createConversation("session-1", {
-    policy: "workspace_write"
-  }, options);
+  const created = await manager.createConversation("session-1", {}, options);
   const started = await manager.startConversationTurn("session-1", {
     conversationId: created.conversationId,
     message: "Do the task."
@@ -141,90 +90,32 @@ test("session agent manager exposes focused conversations without provider-speci
   }, options);
 
   assert.equal(result.message, "Done");
-  assert.equal(result.providerId, "future-provider");
   assert.deepEqual(calls.map(([name]) => name), ["create", "start", "wait"]);
   assert.equal(calls[2][1].onEvent, onEvent);
-  assert.equal(calls[2][2].runId, "opaque-run");
 });
 
-test("session agent manager coalesces duplicate handoff deliveries", async () => {
-  const gate = deferred();
-  let deliveryCount = 0;
+test("session agent manager rejects unavailable providers", async () => {
   const manager = createSessionAgentManager({
-    adapters: [{
+    providers: [{
       id: "codex",
       transportId: "codex_app_server",
-      async deliverPrompt() {
-        deliveryCount += 1;
-        await gate.promise;
-        return { ok: true };
-      }
-    }]
-  });
-  const handoff = {
-    handoffId: "same-handoff"
-  };
-
-  const first = manager.deliverPrompt("session-1", handoff);
-  const second = manager.deliverPrompt("session-1", handoff);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(deliveryCount, 1);
-  gate.resolve();
-  assert.deepEqual(await first, await second);
-});
-
-test("session agent manager rejects unimplemented providers before Codex is called", async () => {
-  let codexCalls = 0;
-  const manager = createSessionAgentManager({
-    adapters: [{
-      id: "codex",
-      transportId: "codex_app_server",
-      async deliverPrompt() {
-        codexCalls += 1;
-        return { ok: true };
+      async sendMessage() {
+        throw new Error("Codex must not be called.");
       }
     }]
   });
 
   await assert.rejects(
-    manager.deliverPrompt("session-1", {
-      handoffId: "handoff-opencode"
+    manager.sendMessage("session-1", {
+      message: "Hello"
     }, {
-      agentSettings: {
-        providerId: "opencode"
-      }
+      providerId: "opencode"
     }),
     (error) => error?.code === VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE
   );
-  assert.equal(codexCalls, 0);
 });
 
-test("session agent manager selects detached-chat providers from canonical input settings", async () => {
-  let codexCalls = 0;
-  const manager = createSessionAgentManager({
-    adapters: [{
-      id: "codex",
-      transportId: "codex_app_server",
-      async runDetachedChatTurn() {
-        codexCalls += 1;
-        return { ok: true };
-      }
-    }]
-  });
-
-  await assert.rejects(
-    manager.runDetachedChatTurn("session-1", {
-      agentSettings: {
-        providerId: "claude"
-      },
-      prompt: "Explain this."
-    }),
-    (error) => error?.code === VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE
-  );
-  assert.equal(codexCalls, 0);
-});
-
-test("session agent manager prevents one session from changing providers implicitly", async () => {
+test("session agent manager keeps one provider bound to a session", async () => {
   const adapter = (id) => ({
     id,
     transportId: `${id}_transport`,
@@ -233,7 +124,7 @@ test("session agent manager prevents one session from changing providers implici
     }
   });
   const manager = createSessionAgentManager({
-    adapters: [adapter("codex"), adapter("opencode")]
+    providers: [adapter("codex"), adapter("opencode")]
   });
 
   await manager.ensureSession("session-1", {
@@ -247,44 +138,15 @@ test("session agent manager prevents one session from changing providers implici
   );
 });
 
-test("session agent manager reuses the bound provider when later operations omit settings", async () => {
-  const calls = [];
-  const adapter = (id) => ({
-    id,
-    transportId: `${id}_transport`,
-    async ensureSession() {
-      calls.push(`${id}:ensure`);
-      return { ok: true };
-    },
-    async sessionState() {
-      calls.push(`${id}:state`);
-      return { ok: true };
-    }
-  });
-  const manager = createSessionAgentManager({
-    adapters: [adapter("codex"), adapter("opencode")]
-  });
-
-  await manager.ensureSession("session-1", {
-    providerId: "opencode"
-  });
-  const state = await manager.sessionState("session-1");
-
-  assert.equal(state.providerId, "opencode");
-  assert.deepEqual(calls, ["opencode:ensure", "opencode:state"]);
-});
-
 test("session agent manager describes providers without binding a session", () => {
   const manager = createSessionAgentManager({
-    adapters: [{
+    providers: [{
       id: "codex",
       transportId: "codex_app_server"
     }]
   });
 
-  assert.deepEqual(manager.describeProvider({
-    providerId: "codex"
-  }), {
+  assert.deepEqual(manager.describeProvider(), {
     providerId: "codex",
     transportId: "codex_app_server"
   });

@@ -1,10 +1,10 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/users-web/client/composables/useCommand";
-import { useEndpointResource } from "@jskit-ai/users-web/client/composables/useEndpointResource";
-import { usePaths } from "@jskit-ai/users-web/client/composables/usePaths";
-import { getUsersWebHttpClient } from "@jskit-ai/users-web/client/lib/httpClient";
+import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
+import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SESSIONS_API_SUFFIX,
@@ -1193,7 +1193,7 @@ function useVibe64LaunchControls({
       return false;
     }
     try {
-      const result = await getUsersWebHttpClient().request(
+      const result = await getHttpWebClient().request(
         vibe64SessionPreviewStatePath(sessionsApiPath.value, currentSessionId),
         {
           body: vibe64RealtimeOriginPayload({

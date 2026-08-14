@@ -1,23 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  VIBE64_COMPOSER_CHANGED_EVENT,
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SESSION_VIEW_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   SELECTED_SESSION_STORAGE_KEY,
   selectedSessionStorageKey,
-  vibe64ActionPath,
-  vibe64ArtifactPreviewPath,
-  vibe64ArtifactPreviewQueryKey,
   vibe64AgentAttachmentPath,
-  vibe64ComposerDraftPath,
   vibe64ConversationLogPath,
   vibe64ConversationLogQueryKey,
-  vibe64ProjectToolFixPath,
-  vibe64ProjectToolRunPath,
-  vibe64ProjectToolTerminalPath,
   vibe64SessionQueryKey,
   vibe64SessionPath,
   vibe64SessionPreviewStatePath,
@@ -30,16 +22,13 @@ import {
   vibe64SourceEditorExplanationStopPath,
   vibe64SourceEditorExplanationsPath,
   vibe64SourceEditorExplanationsStreamPath,
-  vibe64SourceEditorOpenFilePath,
-  vibe64TerminalFailureFixPath,
-  commandInputFromContext
+  vibe64SourceEditorOpenFilePath
 } from "../../src/lib/vibe64SessionRequestConfig.js";
 
 describe("Vibe64 session request config", () => {
   it("uses current Vibe64 storage and route names", () => {
     expect(SELECTED_SESSION_STORAGE_KEY).toBe("vibe64:selected-session-id");
     expect(VIBE64_SESSION_CHANGED_EVENT).toBe("vibe64.session.changed");
-    expect(VIBE64_COMPOSER_CHANGED_EVENT).toBe("vibe64.composer.changed");
     expect(VIBE64_SESSION_VIEW_CHANGED_EVENT).toBe("vibe64.session.view.changed");
     expect(VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT).toBe("vibe64.source-editor.file.changed");
     expect(VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT).toBe("vibe64.source-editor.file.opened");
@@ -58,25 +47,6 @@ describe("Vibe64 session request config", () => {
       "home",
       "public",
       "session"
-    ]);
-    expect(vibe64ArtifactPreviewQueryKey("home", "public", "2026-05-16_01:two")).toEqual([
-      "vibe64",
-      "project",
-      "unscoped",
-      "home",
-      "public",
-      "artifact-preview",
-      "2026-05-16_01%3Atwo"
-    ]);
-    expect(vibe64ArtifactPreviewQueryKey("home", "public", "2026-05-16_01:two", "issue report")).toEqual([
-      "vibe64",
-      "project",
-      "unscoped",
-      "home",
-      "public",
-      "artifact-preview",
-      "2026-05-16_01%3Atwo",
-      "issue%20report"
     ]);
     expect(vibe64ConversationLogQueryKey("home", "public", "2026-05-16_01:two")).toEqual([
       "vibe64",
@@ -104,10 +74,7 @@ describe("Vibe64 session request config", () => {
     const sessionId = "2026-05-16_01:two";
 
     expect(vibe64SessionPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo`);
-    expect(vibe64ActionPath(apiPath, sessionId, "make plan")).toBe(`${apiPath}/2026-05-16_01%3Atwo/actions/make%20plan`);
-    expect(vibe64ArtifactPreviewPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/artifact-preview`);
     expect(vibe64AgentAttachmentPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/agent-attachments`);
-    expect(vibe64ComposerDraftPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/composer-draft`);
     expect(vibe64ConversationLogPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/conversation-log`);
     expect(vibe64SessionPreviewStatePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/preview-state`);
     expect(vibe64SessionViewStatePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/view-state`);
@@ -119,43 +86,6 @@ describe("Vibe64 session request config", () => {
     expect(vibe64SourceEditorExplanationStopPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/stop`);
     expect(vibe64SourceEditorExplanationFollowupsPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/followups`);
     expect(vibe64SourceEditorExplanationFollowupsStreamPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/followups/stream`);
-    expect(vibe64TerminalFailureFixPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/terminal-failure-fix`);
   });
 
-  it("builds encoded project tool terminal paths", () => {
-    const apiPath = "/api/studio/vibe64";
-    const toolId = "deploy:prod";
-    const terminalId = "terminal one";
-
-    expect(vibe64ProjectToolRunPath(apiPath, toolId)).toBe(`${apiPath}/tools/deploy%3Aprod/run`);
-    expect(vibe64ProjectToolFixPath(apiPath, toolId)).toBe(`${apiPath}/tools/deploy%3Aprod/fix`);
-    expect(vibe64ProjectToolTerminalPath(apiPath, toolId, terminalId)).toBe(`${apiPath}/tools/deploy%3Aprod/terminal/terminal%20one`);
-  });
-
-  it("normalizes command input payloads from command context", () => {
-    expect(commandInputFromContext({
-      agentSettings: {
-        providerId: "codex",
-        thinking: "high"
-      },
-      displayInput: {
-        issueRequest: "Add reports\n\nreport.pdf"
-      },
-      input: {
-        issueRequest: "Add reports"
-      }
-    })).toEqual({
-      agentSettings: {
-        providerId: "codex",
-        thinking: "high"
-      },
-      displayInput: {
-        issueRequest: "Add reports\n\nreport.pdf"
-      },
-      issueRequest: "Add reports"
-    });
-    expect(commandInputFromContext({
-      input: ["not", "plain"]
-    })).toEqual({});
-  });
 });

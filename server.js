@@ -51,9 +51,6 @@ import {
   registerBrowserLifecycleWebSocketRoute
 } from "./server/lib/browserLifecycle.js";
 import {
-  resolveJskitLockPath
-} from "./server/lib/jskitLockPath.js";
-import {
   VIBE64_APP_ROOT_ENV,
   VIBE64_TARGET_ROOT_ENV
 } from "@local/studio-terminal-core/server/studioRuntimeIdentity";
@@ -430,10 +427,6 @@ async function createServer(options = {}) {
   });
   const runtimeProfile = resolveServerRuntimeProfile(options);
   const requestedTargetRoot = targetRootForRuntimeProfile(options, runtimeProfile);
-  const jskitLockPath = resolveJskitLockPath({
-    env: runtimeEnv,
-    explicitPath: options.jskitLockPath
-  });
   if (runtimeProfile.local) {
     if (!runtimeProfile.singleTargetRoot) {
       const error = new Error("Local editor mode requires a target directory.");
@@ -553,7 +546,6 @@ async function createServer(options = {}) {
   try {
     runtime = await createProviderRuntime({
       appRoot,
-      lockPath: jskitLockPath,
       profile: resolveRuntimeProfileFromSurface({
         surfaceRuntime,
         serverSurface: runtimeEnv.SERVER_SURFACE
@@ -673,7 +665,6 @@ async function createServer(options = {}) {
         projectsRoot: projectContext.projectsRoot,
         systemRoot,
         targetRoot: projectContext.targetRoot || "",
-        jskitLockPath,
         providerPackages: runtime.providerPackageOrder,
         packageOrder: runtime.packageOrder
       },
@@ -704,7 +695,6 @@ async function startServer(options = {}) {
     browserLifecycleShutdownDelayMs: options?.browserLifecycleShutdownDelayMs,
     createProviderRuntime: options?.createProviderRuntime,
     githubAccountMode: options?.githubAccountMode,
-    jskitLockPath: options?.jskitLockPath,
     logLevel: options?.logLevel,
     managedSourceRoot: options?.managedSourceRoot,
     projectsRoot: options?.projectsRoot,

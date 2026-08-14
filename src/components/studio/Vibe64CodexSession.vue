@@ -207,13 +207,7 @@ const rawServerCodexTerminal = computed(() => {
     return props.terminal;
   }
   const terminal = props.session?.agentSession?.terminal;
-  if (terminal && typeof terminal === "object" && !Array.isArray(terminal)) {
-    return terminal;
-  }
-  const presentationTerminal = props.session?.presentation?.terminal?.agent;
-  return presentationTerminal && typeof presentationTerminal === "object" && !Array.isArray(presentationTerminal)
-    ? presentationTerminal
-    : {};
+  return terminal && typeof terminal === "object" && !Array.isArray(terminal) ? terminal : {};
 });
 const serverCodexTerminal = computed(() => {
   const terminal = rawServerCodexTerminal.value;

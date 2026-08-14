@@ -1,16 +1,15 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  configureUsersWebHttpClient,
-  getUsersWebHttpClient,
-  resetUsersWebHttpClientForTests
-} from "@jskit-ai/users-web/client/lib/httpClient";
+  configureHttpWebClient,
+  getHttpWebClient,
+  resetHttpWebClientForTests
+} from "@jskit-ai/http-web/client/lib/httpClient";
 
 import {
   PROJECT_SELECTION_ENDPOINT,
   VIBE64_CONNECTIONS_CHANGED_EVENT,
-  projectSelectionQueryKey,
-  projectTypeQueryKey
+  projectSelectionQueryKey
 } from "../../src/lib/studioGateApi.js";
 import {
   projectSelectionGateEndpoint,
@@ -26,9 +25,6 @@ import {
   vibe64AgentTerminalWebSocketUrl
 } from "../../src/lib/vibe64SessionApi.js";
 import {
-  targetScriptsQueryKey
-} from "../../src/lib/targetScriptsRequestConfig.js";
-import {
   vibe64ProjectScopedStorageKey,
   vibe64ProjectQueryScope,
   normalizeProjectRoutePath,
@@ -38,7 +34,7 @@ import {
 
 describe("Vibe64 project client scope", () => {
   afterEach(() => {
-    resetUsersWebHttpClientForTests();
+    resetHttpWebClientForTests();
     vi.unstubAllGlobals();
   });
 
@@ -61,39 +57,11 @@ describe("Vibe64 project client scope", () => {
     expect(vibe64ProjectScopedStorageKey("vibe64:selected-session-id", "alpha_1"))
       .toBe("vibe64:selected-session-id:project:alpha_1");
 
-    expect(projectTypeQueryKey("app", "public", "alpha_1")).toEqual([
-      "vibe64",
-      "project",
-      "alpha_1",
-      "app",
-      "public",
-      "project-type"
-    ]);
-    expect(targetScriptsQueryKey("app", "public", "beta_2")).toEqual([
-      "vibe64",
-      "project",
-      "beta_2",
-      "app",
-      "public",
-      "target-scripts",
-      ""
-    ]);
-    expect(targetScriptsQueryKey("app", "public", "beta_2", "session-1")).toEqual([
-      "vibe64",
-      "project",
-      "beta_2",
-      "app",
-      "public",
-      "target-scripts",
-      "session-1"
-    ]);
   });
 
   it("does not rewrite global Studio and owner API paths into project API paths", () => {
-    expect(scopedDevelopmentApiPathname("/api/studio/studio-setup", "alpha_1"))
-      .toBe("/api/studio/studio-setup");
-    expect(scopedDevelopmentApiPathname("/api/studio/studio-setup/stream", "alpha_1"))
-      .toBe("/api/studio/studio-setup/stream");
+    expect(scopedDevelopmentApiPathname("/api/studio/health", "alpha_1"))
+      .toBe("/api/studio/health");
     expect(scopedDevelopmentApiPathname("/api/studio/browser-lifecycle/ws", "alpha_1"))
       .toBe("/api/studio/browser-lifecycle/ws");
     expect(scopedDevelopmentApiPathname("/api/vibe64/projects", "alpha_1"))
@@ -102,10 +70,6 @@ describe("Vibe64 project client scope", () => {
       .toBe("/api/vibe64/projects/alpha_1/repository/github");
     expect(scopedDevelopmentApiPathname("/api/vibe64/github/repositories/search", "alpha_1"))
       .toBe("/api/vibe64/github/repositories/search");
-    expect(scopedDevelopmentApiPathname("/api/studio/project-setup", "alpha_1"))
-      .toBe("/api/app/alpha_1/studio/project-setup");
-    expect(scopedDevelopmentApiPathname("/api/vibe64/project-type", "alpha_1"))
-      .toBe("/api/app/alpha_1/vibe64/project-type");
   });
 
   it("resolves direct browser transport URLs through the current project scope", () => {
@@ -113,14 +77,12 @@ describe("Vibe64 project client scope", () => {
       location: {
         host: "127.0.0.1:5173",
         origin: "http://127.0.0.1:5173",
-        pathname: "/app/project/alpha_1/dashboard/setup"
+        pathname: "/app/project/alpha_1/dashboard/health"
       }
     });
 
-    expect(resolveStudioRequestUrl("/api/studio/project-setup/stream"))
-      .toBe("/api/app/alpha_1/studio/project-setup/stream");
-    expect(resolveStudioRequestUrl("/api/studio/studio-setup/stream"))
-      .toBe("/api/studio/studio-setup/stream");
+    expect(resolveStudioRequestUrl("/api/studio/health"))
+      .toBe("/api/studio/health");
     expect(resolveWebSocketUrl("/api/studio/browser-lifecycle/ws"))
       .toBe("ws://127.0.0.1:5173/api/studio/browser-lifecycle/ws");
   });
@@ -154,7 +116,7 @@ describe("Vibe64 project client scope", () => {
 
   it("keeps JSKIT HTTP client project catalog requests global on project pages", async () => {
     const requestedUrls = [];
-    configureUsersWebHttpClient({
+    configureHttpWebClient({
       csrf: {
         enabled: false
       },
@@ -183,7 +145,7 @@ describe("Vibe64 project client scope", () => {
       };
     }));
 
-    await getUsersWebHttpClient().get(PROJECT_SELECTION_ENDPOINT);
+    await getHttpWebClient().get(PROJECT_SELECTION_ENDPOINT);
 
     expect(requestedUrls).toEqual([
       "/api/vibe64/projects"

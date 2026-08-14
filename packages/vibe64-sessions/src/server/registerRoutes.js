@@ -1,38 +1,24 @@
 import {
   ACTION_ABANDON_SESSION,
-  ACTION_ADVANCE_SESSION,
-  ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
   ACTION_CREATE_SESSION,
-  ACTION_UPDATE_CURRENT_SESSION,
-  ACTION_INSPECT_SESSION_DIFF,
   ACTION_INSPECT_SESSION,
+  ACTION_INSPECT_SESSION_DIFF,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
-  ACTION_RECOVER_STUCK_SESSION_STEP,
-  ACTION_RESOLVE_SESSION_RECOVERY,
-  ACTION_RETURN_AGENT_CONTROL,
-  ACTION_REWIND_SESSION,
-  ACTION_RUN_SESSION_ACTION,
-  ACTION_RUN_SESSION_INTENT
+  ACTION_RETRY_WORKSPACE_SETUP,
+  ACTION_UPDATE_CURRENT_SESSION
 } from "./actions.js";
 import {
-  agentMessageCancelInputValidator,
   agentMessageInputValidator,
-  agentTaskControlInputValidator,
-  agentTaskMessageInputValidator,
-  agentTaskStartInputValidator,
   agentTurnInterruptInputValidator
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-function registerRoutes(
-  app,
-  {
-    projectContext = null,
-    routeSurface = "",
-    routeRelativePath = ""
-  } = {}
-) {
+function registerRoutes(app, {
+  projectContext = null,
+  routeSurface = "",
+  routeRelativePath = ""
+} = {}) {
   const routes = createVibe64FeatureRoutes(app, {
     localRequestMessage: "Vibe64 session routes only accept loopback Studio requests.",
     projectContext,
@@ -40,17 +26,20 @@ function registerRoutes(
     routeSurface,
     tags: ["studio", "vibe64-sessions"]
   });
+  const service = () => app.make("feature.vibe64-sessions.service");
 
   routes.actionRoute("GET", "/sessions", {
     actionId: ACTION_LIST_SESSIONS,
-    buildInput: (request) => withVibe64User(request, sessionsQueryInput(request)),
+    buildInput: (request) => withVibe64User(request, {
+      archive: request.query?.archive || request.input?.query?.archive || ""
+    }),
     summary: "List Vibe64 sessions."
   });
 
   routes.actionRoute("POST", "/sessions", {
     actionId: ACTION_CREATE_SESSION,
     buildInput: (request) => withVibe64User(request, routes.requestBody(request)),
-    summary: "Create an Vibe64 session."
+    summary: "Create a Vibe64 chat session."
   });
 
   routes.actionRoute("PUT", "/sessions/current", {
@@ -61,312 +50,101 @@ function registerRoutes(
 
   routes.actionRoute("GET", "/sessions/:sessionId", {
     actionId: ACTION_INSPECT_SESSION,
-    buildInput: inspectSessionInput,
-    summary: "Inspect an Vibe64 session."
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        projectSlug: firstValue(query.projectSlug),
+        sessionId: request.params.sessionId
+      });
+    },
+    summary: "Inspect a Vibe64 chat session."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/diff", {
     actionId: ACTION_INSPECT_SESSION_DIFF,
-    buildInput: sessionDiffInput(routes),
-    summary: "Inspect an Vibe64 session clone diff."
-  });
-
-  routes.serviceRoute("GET", "/sessions/:sessionId/source-safety", {
-    summary: "Inspect whether Vibe64 session work is committed and, when required, pushed."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").inspectSessionSourceSafety(
-      request.params.sessionId
-    );
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        full: firstValue(query.full),
+        lineLimit: firstValue(query.lineLimit),
+        sessionId: request.params.sessionId
+      });
+    },
+    summary: "Inspect changes in a Vibe64 session source tree."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/conversation-log", {
     actionId: ACTION_READ_SESSION_CONVERSATION_LOG,
-    buildInput: conversationLogInput(routes),
-    summary: "Read an Vibe64 session conversation log."
-  });
-
-  routes.serviceRoute("GET", "/sessions/:sessionId/composer-draft", {
-    summary: "Read a Vibe64 session composer draft."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").readComposerDraft(
-      request.params.sessionId,
-      routes.requestQuery(request)
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/composer-draft", {
-    summary: "Publish a Vibe64 session composer draft."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").broadcastComposerDraft(
-      request.params.sessionId,
-      routes.requestBody(request)
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/view-state", {
-    summary: "Publish a Vibe64 session view state."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").broadcastSessionViewState(
-      request.params.sessionId,
-      routes.requestBody(request)
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/preview-state", {
-    summary: "Publish the page displayed in a Vibe64 managed preview."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").broadcastSessionPreviewState(
-      request.params.sessionId,
-      routes.requestBody(request)
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-turn/interrupt", {
-    body: agentTurnInterruptInputValidator,
-    summary: "Interrupt the active Vibe64 assistant turn."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").interruptAgentTurn(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        beforeTurnId: firstValue(query.beforeTurnId || query.before),
+        limit: firstValue(query.limit),
+        sessionId: request.params.sessionId
+      });
+    },
+    summary: "Read a Vibe64 session conversation."
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/agent-message", {
     body: agentMessageInputValidator,
     summary: "Send a message to the Vibe64 assistant."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").sendAgentMessage(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
+  }, (request) => service().sendAgentMessage(
+    request.params.sessionId,
+    withVibe64User(request, routes.requestBody(request))
+  ));
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-message/:messageId/cancel", {
-    body: agentMessageCancelInputValidator,
-    summary: "Cancel a failed Vibe64 assistant message."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").cancelAgentMessage(
-      request.params.sessionId,
-      request.params.messageId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
+  routes.serviceRoute("POST", "/sessions/:sessionId/agent-turn/interrupt", {
+    body: agentTurnInterruptInputValidator,
+    summary: "Interrupt the active Vibe64 assistant turn."
+  }, (request) => service().interruptAgentTurn(
+    request.params.sessionId,
+    withVibe64User(request, routes.requestBody(request))
+  ));
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-task", {
-    body: agentTaskStartInputValidator,
-    summary: "Start a focused Vibe64 assistant task."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").startAgentTask(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
+  routes.serviceRoute("POST", "/sessions/:sessionId/view-state", {
+    summary: "Publish a Vibe64 session view state."
+  }, (request) => service().broadcastSessionViewState(request.params.sessionId, routes.requestBody(request)));
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-task/message", {
-    body: agentTaskMessageInputValidator,
-    summary: "Send a message to the active focused assistant task."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").sendAgentTaskMessage(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-task/finish", {
-    body: agentTaskControlInputValidator,
-    summary: "Finish the active focused assistant task."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").finishAgentTask(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-task/stop", {
-    body: agentTaskControlInputValidator,
-    summary: "Stop the active focused assistant task."
-  }, (request) => {
-    return app.make("feature.vibe64-sessions.service").stopAgentTask(
-      request.params.sessionId,
-      withVibe64User(request, routes.requestBody(request))
-    );
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/terminal-failure-fix-request", {
-    actionId: ACTION_BUILD_TERMINAL_FAILURE_FIX_REQUEST,
-    buildInput(request) {
-      return withVibe64User(request, {
-        ...routes.requestBody(request),
-        sessionId: request.params.sessionId
-      });
-    },
-    summary: "Build an Vibe64 terminal failure repair prompt."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/actions/:actionId", {
-    actionId: ACTION_RUN_SESSION_ACTION,
-    buildInput(request) {
-      return withVibe64User(request, {
-        actionId: request.params.actionId,
-        input: routes.requestBody(request),
-        sessionId: request.params.sessionId
-      });
-    },
-    summary: "Run an Vibe64 session action."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/intents/:intentId", {
-    actionId: ACTION_RUN_SESSION_INTENT,
-    buildInput(request) {
-      const body = routes.requestBody(request);
-      const input = {
-        composerSubmissionId: body.composerSubmissionId || "",
-        displayFields: body.displayFields || {},
-        fields: body.fields || body.input || {},
-        intentId: request.params.intentId,
-        originId: body.originId || "",
-        sessionId: request.params.sessionId,
-        stepId: body.stepId,
-        stepStatus: body.stepStatus
-      };
-      if (body.agentSettings && typeof body.agentSettings === "object" && !Array.isArray(body.agentSettings)) {
-        input.agentSettings = body.agentSettings;
-      }
-      return withVibe64User(request, input);
-    },
-    summary: "Run an Vibe64 session intent."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/advance", {
-    actionId: ACTION_ADVANCE_SESSION,
-    buildInput(request) {
-      const body = routes.requestBody(request);
-      return withVibe64User(request, {
-        originId: body.originId || "",
-        sessionId: request.params.sessionId,
-        stepId: body.stepId,
-        stepStatus: body.stepStatus
-      });
-    },
-    summary: "Advance an Vibe64 session."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/rewind", {
-    actionId: ACTION_REWIND_SESSION,
-    buildInput(request) {
-      const body = routes.requestBody(request);
-      return withVibe64User(request, {
-        originId: body.originId || "",
-        sessionId: request.params.sessionId,
-        stepId: body.stepId
-      });
-    },
-    summary: "Rewind an Vibe64 session."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/recover-stuck-step", {
-    actionId: ACTION_RECOVER_STUCK_SESSION_STEP,
-    buildInput: sessionInput,
-    summary: "Recover an Vibe64 session step stuck in command execution."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/recovery", {
-    actionId: ACTION_RESOLVE_SESSION_RECOVERY,
-    buildInput(request) {
-      return withVibe64User(request, {
-        ...routes.requestBody(request),
-        sessionId: request.params.sessionId
-      });
-    },
-    summary: "Apply a user-confirmed Vibe64 session recovery."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/agent-control/return", {
-    actionId: ACTION_RETURN_AGENT_CONTROL,
-    buildInput: sessionInput,
-    summary: "Return a quiet Vibe64 agent turn back to user control."
-  });
+  routes.serviceRoute("POST", "/sessions/:sessionId/preview-state", {
+    summary: "Publish the page displayed in a Vibe64 managed preview."
+  }, (request) => service().broadcastSessionPreviewState(request.params.sessionId, routes.requestBody(request)));
 
   routes.actionRoute("POST", "/sessions/:sessionId/abandon", {
     actionId: ACTION_ABANDON_SESSION,
-    buildInput: sessionInput,
-    summary: "Abandon an Vibe64 session."
-  });
-}
-
-function sessionInput(request) {
-  const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-    ? request.body
-    : {};
-  return withVibe64User(request, {
-    originId: body.originId || "",
-    sessionId: request.params.sessionId
-  });
-}
-
-function inspectSessionInput(request) {
-  const query = request.query && typeof request.query === "object" && !Array.isArray(request.query)
-    ? request.query
-    : request.input?.query || {};
-  const input = {
-    ...sessionInput(request),
-    includeComposerMenu: firstRequestValue(query.includeComposerMenu),
-    projectSlug: firstRequestValue(query.projectSlug)
-  };
-  const includeRuntimeEnrichment = firstRequestValue(query.includeRuntimeEnrichment);
-  if (includeRuntimeEnrichment !== "") {
-    input.includeRuntimeEnrichment = includeRuntimeEnrichment;
-  }
-  return input;
-}
-
-function sessionDiffInput(routes) {
-  return function buildSessionDiffInput(request) {
-    const query = routes.requestQuery(request);
-    return {
-      ...sessionInput(request),
-      full: firstRequestValue(query.full),
-      lineLimit: firstRequestValue(query.lineLimit)
-    };
-  };
-}
-
-function conversationLogInput(routes) {
-  return function buildConversationLogInput(request) {
-    const query = routes.requestQuery(request);
-    return withVibe64User(request, {
-      beforeTurnId: firstRequestValue(query.beforeTurnId || query.before),
-      limit: firstRequestValue(query.limit),
-      originId: "",
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
       sessionId: request.params.sessionId
-    });
-  };
+    }),
+    summary: "Close and archive a Vibe64 session."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/workspace-setup/retry", {
+    actionId: ACTION_RETRY_WORKSPACE_SETUP,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Retry the declared Genesis workspace preparation recipe."
+  });
 }
 
-function firstRequestValue(value) {
+function firstValue(value) {
   return Array.isArray(value) ? value[0] || "" : value || "";
 }
 
-function sessionsQueryInput(request) {
-  return {
-    archive: request.query?.archive || request.input?.query?.archive || ""
-  };
-}
-
 function withVibe64User(request, input = {}) {
-  const vibe64User = request.vibe64User || null;
   const {
-    vibe64User: _ignoredVibe64User,
+    vibe64User: _ignored,
     ...safeInput
   } = input || {};
-  void _ignoredVibe64User;
-  if (!vibe64User) {
-    return safeInput;
-  }
-  return {
-    ...safeInput,
-    vibe64User
-  };
+  void _ignored;
+  return request.vibe64User
+    ? {
+        ...safeInput,
+        vibe64User: request.vibe64User
+      }
+    : safeInput;
 }
 
 export { registerRoutes };

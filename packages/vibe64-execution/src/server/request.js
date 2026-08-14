@@ -27,9 +27,9 @@ const VIBE64_COMMAND_PURPOSES = Object.freeze([
   "github-api",
   "source-editor",
   "preview",
-  "adapter",
   "deployment",
-  "setup"
+  "health",
+  "source"
 ]);
 const VIBE64_COMMAND_MODES = Object.freeze([
   "capture",
@@ -69,11 +69,10 @@ const VIBE64_COMMAND_RUNTIMES = Object.freeze([
 ]);
 const DEFAULT_COMMAND_MAX_BUFFER_BYTES = 1000 * 1000 * 100;
 const DEFAULT_INTERACTIVE_RUNTIME_PURPOSES = new Set([
-  "adapter",
   "codex",
   "deployment",
   "preview",
-  "setup",
+  "source",
   "terminal"
 ]);
 

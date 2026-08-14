@@ -7,8 +7,6 @@ import {
   normalizeProjectApplicationMode
 } from "../shared/projectApplication.js";
 
-const PROJECT_APPLICATION_MODE_ONE_OFF_FLAG = "application-mode";
-
 function requireProjectApplicationMode(value = "") {
   const mode = normalizeProjectApplicationMode(value);
   if (!mode) {
@@ -23,7 +21,6 @@ function requireProjectApplicationMode(value = "") {
 export {
   PROJECT_APPLICATION_MODE_EXISTING,
   PROJECT_APPLICATION_MODE_NEW,
-  PROJECT_APPLICATION_MODE_ONE_OFF_FLAG,
   normalizeProjectApplicationMode,
   requireProjectApplicationMode
 };

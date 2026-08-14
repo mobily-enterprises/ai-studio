@@ -16,11 +16,11 @@ const accountsSetupProps = {
     type: Boolean
   },
   continueLabel: {
-    default: "Continue to Project Setup",
+    default: "Continue",
     type: String
   },
   lede: {
-    default: "Choose and authenticate the providers Studio uses for this project mode.",
+    default: "Choose and authenticate the providers used by Studio.",
     type: String
   },
   neededLabel: {

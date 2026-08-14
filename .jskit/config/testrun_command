@@ -1,1 +1,0 @@
-if [ -f .jskit/config/devel_jskit_ai_root ]; then export JSKIT_DEVLINKS="$(sed -n '1p' .jskit/config/devel_jskit_ai_root)"; fi; npm run build; npm run server -- --bypass-localhost-check

@@ -14,20 +14,10 @@ const PROJECT_REPOSITORY_MODE_MANAGED_GIT = "managed_git";
 const PROJECT_REPOSITORY_MODE_LOCAL_SOURCE = "local_source";
 const PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH = "main";
 
-const WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR = "github_pr";
-const WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT = "canonical_git";
-const WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE = "local_source";
-
 const PROJECT_REPOSITORY_MODES = Object.freeze({
   GITHUB: PROJECT_REPOSITORY_MODE_GITHUB,
   MANAGED_GIT: PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   LOCAL_SOURCE: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
-});
-
-const WORKFLOW_REPOSITORY_PROFILES = Object.freeze({
-  GITHUB_PR: WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
-  CANONICAL_GIT: WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT,
-  LOCAL_SOURCE: WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
 });
 
 function normalizeRepositoryMode(value = "") {
@@ -80,37 +70,7 @@ function projectRepositoryStorageRole({
   return null;
 }
 
-function normalizeWorkflowRepositoryProfile(value = "") {
-  const profile = normalizeText(value).toLowerCase().replace(/[-\s]+/gu, "_");
-  if (
-    profile === WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR ||
-    profile === WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT ||
-    profile === WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE
-  ) {
-    return profile;
-  }
-  return "";
-}
-
-function workflowRepositoryProfileForMode(value = "") {
-  const mode = normalizeRepositoryMode(value);
-  if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
-    return WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR;
-  }
-  if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
-    return WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT;
-  }
-  if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
-    return WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE;
-  }
-  return "";
-}
-
 function projectRequiresGithubConnection(project = {}) {
-  const workflowRepositoryProfile = normalizeWorkflowRepositoryProfile(project.workflowRepositoryProfile);
-  if (workflowRepositoryProfile) {
-    return workflowRepositoryProfile === WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR;
-  }
   const repositoryMode = normalizeRepositoryMode(project.repositoryMode || project.repository?.mode);
   if (repositoryMode) {
     return repositoryMode === PROJECT_REPOSITORY_MODE_GITHUB;
@@ -183,7 +143,6 @@ function projectRepositoryView(metadata = {}, {
     fallbackMode
   });
   const repositoryMode = repository?.mode || "";
-  const workflowRepositoryProfile = workflowRepositoryProfileForMode(repositoryMode);
   const githubRepository = repositoryMode === PROJECT_REPOSITORY_MODE_GITHUB
     ? {
         ...normalizeProjectGithubRepository(repository.github),
@@ -193,7 +152,6 @@ function projectRepositoryView(metadata = {}, {
   return {
     ...(repository ? { repository } : {}),
     ...(repositoryMode ? { repositoryMode } : {}),
-    ...(workflowRepositoryProfile ? { workflowRepositoryProfile } : {}),
     ...(githubRepository ? { githubRepository } : {})
   };
 }
@@ -251,17 +209,11 @@ export {
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
   PROJECT_REPOSITORY_MODES,
-  WORKFLOW_REPOSITORY_PROFILE_GITHUB_PR,
-  WORKFLOW_REPOSITORY_PROFILE_CANONICAL_GIT,
-  WORKFLOW_REPOSITORY_PROFILE_LOCAL_SOURCE,
-  WORKFLOW_REPOSITORY_PROFILES,
   normalizeProjectGithubRepository,
   normalizeProjectRepository,
   normalizeRepositoryMode,
-  normalizeWorkflowRepositoryProfile,
   projectRepositoryStorageRole,
   projectRequiresGithubConnection,
   projectRepositoryMetadataFromInput,
-  projectRepositoryView,
-  workflowRepositoryProfileForMode
+  projectRepositoryView
 };

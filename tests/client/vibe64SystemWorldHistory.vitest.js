@@ -10,12 +10,14 @@ function view(id) {
       position: [id, id + 1, id + 2],
       target: [0, 0, id]
     },
-    selectedSubsystemId: `subsystem:${id}`,
-    viewMode: "subsystems"
+    cityKind: id % 2 === 0 ? "program" : "machine",
+    selectedBuildingId: `building:${id}`,
+    selectedDistrictId: `district:${id}`,
+    view: "perspective"
   };
 }
 
-describe("File City view history", () => {
+describe("Genesis City view history", () => {
   it("moves backward and forward through discrete world views", () => {
     const history = createWorldViewHistory();
     const first = view(1);

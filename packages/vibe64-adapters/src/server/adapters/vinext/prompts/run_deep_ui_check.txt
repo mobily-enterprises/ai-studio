@@ -1,6 +1,0 @@
-{{systemStandard}}
-
-Vinext-specific deep UI guidance:
-- Inspect the user-facing Vinext behavior affected by the change.
-- Check Next-compatible routing, responsive layout, loading/error states, client/server boundaries, Vite behavior, and Cloudflare runtime assumptions.
-- Fix clear UI defects directly when they are in scope and report compatibility or migration blockers.

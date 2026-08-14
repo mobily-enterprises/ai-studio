@@ -1,10 +1,7 @@
 import {
-  mdiCogOutline,
   mdiFileCompare,
   mdiFileCodeOutline,
   mdiGraphOutline,
-  mdiInformationOutline,
-  mdiPlayBoxMultipleOutline,
   mdiRobotOutline
 } from "@mdi/js";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
@@ -13,14 +10,6 @@ const VIBE64_ACTIVE_SESSION_NAV_TARGET = "page.active-session-nav";
 const VIBE64_ACTIVE_SESSION_NAV_OWNER = "vibe64-session";
 
 const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
-  {
-    icon: mdiPlayBoxMultipleOutline,
-    id: "run",
-    label: "Run",
-    order: 100,
-    routeSegment: "run",
-    title: "Run project scripts"
-  },
   {
     icon: mdiFileCodeOutline,
     id: "editor",
@@ -32,26 +21,10 @@ const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
   {
     icon: mdiGraphOutline,
     id: "system",
-    label: "System",
+    label: "Cities",
     order: 250,
     routeSegment: "system",
-    title: "Explore the active session as a live visual system"
-  },
-  {
-    icon: mdiCogOutline,
-    id: "config",
-    label: "Config",
-    order: 300,
-    routeSegment: "config",
-    title: "Edit this session source project config"
-  },
-  {
-    icon: mdiInformationOutline,
-    id: "session-details",
-    label: "Technical details",
-    order: 400,
-    routeSegment: "session",
-    title: "Show technical session details"
+    title: "Explore the Machine and Program Cities"
   },
   {
     icon: mdiFileCompare,

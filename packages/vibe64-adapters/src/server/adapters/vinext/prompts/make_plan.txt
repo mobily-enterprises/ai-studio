@@ -1,8 +1,0 @@
-{{systemStandard}}
-
-Create the implementation plan for this Vinext project.
-
-Vinext-specific planning guidance:
-- Account for App Router vs Pages Router, Vinext compatibility limits, package scripts, Vite behavior, Cloudflare runtime expectations, and the project's existing migration state.
-- Include any `vinext check`, build, or package-manager verification that is relevant to the planned change.
-- Do not assume a fully migrated app when the adapter facts show a migration candidate.

@@ -109,7 +109,6 @@ function resolveGitIdentity({
       userKey: firstText(
         userKey,
         actor.user?.username,
-        metadata.workflow_driver_username,
         env.VIBE64_GIT_USER_KEY,
         env.VIBE64_USER_KEY,
         env.VIBE64_USER,

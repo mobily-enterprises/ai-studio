@@ -1,20 +1,66 @@
 ---
 title: Technical reference
-description: Vibe64 local-editor runtime directories, project state, and host runtime naming.
+description: Vibe64 project, runtime, Git, launch, preview, and cleanup ownership.
 layout: doc
 ---
 
 # Technical reference
 
-This page defines the operational contracts that should stay stable for Vibe64:
-where private daemon state lives, what is shared with a project, what stays
-local, and how host runtime paths are formed.
+This page records the operational boundary between the project, Genesis, and
+Vibe64. Project knowledge should remain portable. Machine policy, credentials,
+and live session state should not leak into the repository.
 
-## Local Editor Mode
+## Source-owned project files
 
-Vibe64 opens one arbitrary folder directly. The opened folder is the canonical
-source root. Source-owned config lives in that folder, while Vibe64-private
-system and runtime state goes to the real OS user's state directory:
+A Genesis-enabled project has this portable shape:
+
+```text
+<project>/
+  .git/
+  genesis/
+    blueprint.md
+    stack.md
+    stack/
+    program/
+      <subsystem>/
+        <public-operation>.md
+  .agents/
+    skills/
+  .codex/
+    hooks.json
+  .genesis/
+    machine-city.json
+    program-city.json
+    verification.json
+  application source...
+```
+
+The files have deliberately different jobs:
+
+- `genesis/blueprint.md` contains non-technical, human product intent.
+- `genesis/stack.md` selects technology components and may replace their
+  verification or launch declarations.
+- `genesis/stack/` contains project additions or overrides to a selected
+  component's Description and Deslop guidance.
+- `genesis/program/` explains public operations in conceptual subsystem
+  directories. It does not mirror source files.
+- `.agents/skills/` contains Genesis workflow skills and any authoritative
+  technology skill selected by Stack.
+- `.codex/hooks.json` contains the optional project-local Codex lifecycle
+  integration installed by Genesis.
+- `.genesis/machine-city.json` and `.genesis/program-city.json` are derived
+  navigation documents.
+- `.genesis/verification.json` is present only after declared checks pass. It
+  records exact code and Stack hashes; it is evidence, not a correctness claim.
+
+`genesis init` creates a technology-neutral foundation. `genesis adopt`
+preserves an existing implementation and produces the prompt used to describe
+it. Neither operation needs a Vibe64 project type.
+
+## Vibe64-owned runtime state
+
+Local Editor opens one arbitrary folder as canonical source. Private state is
+stored outside that source under the real OS user's state directory:
 
 ```text
 ~/.local/state/vibe64/
@@ -28,245 +74,158 @@ system and runtime state goes to the real OS user's state directory:
   users/
   logs/
   setup.json
-
-<opened-folder>/
-  .git/
-  vibe64.project.json
-  vibe64.runtime-lock.json
-  .vibe64/
-    launcher/
-      cover.webp
-    scripts/
-    prompts/
-    project-knowledge/
-  app source...
 ```
 
-GitHub and Codex credentials are not stored under Vibe64 private state. They
-live in the real OS home directory of the acting user or daemon owner.
-
-## Project State
-
-Every Vibe64 target separates source-owned config from Vibe64-owned runtime
-state.
-
-### Source Project Config
-
-Source config lives in the active source tree:
-
-```text
-<project>/
-  vibe64.project.json
-  vibe64.runtime-lock.json
-  .vibe64/
-    launcher/
-      cover.webp
-    scripts/
-    prompts/
-    project-knowledge/
-```
-
-This state describes how Vibe64 should inspect and operate on the source. It is
-ordinary repository content: config UI saves are file edits, they show in Git
-diff, and they become durable only through commit, push, pull request, and
-merge.
-
-`vibe64.project.json` contains the project type and adapter config values.
-`vibe64.runtime-lock.json` pins the selected runtime packages. The `.vibe64`
-directory is limited to project-authored Vibe64 customizations: Launcher
-artwork, scripts, prompts, and project knowledge. When present,
-`.vibe64/launcher/cover.webp` is the app image shown by the hosted Launcher.
-
-### Vibe64 Runtime State
-
-Local runtime state lives outside the source tree:
-
-```text
-~/.local/state/vibe64/projects/<slug>-<hash>/
-  sessions/
-  runtime/
-  runtime-config/
-```
-
-Online supplies explicit roots from its launcher. Managed source repositories
-and service data are host-visible paths, not hidden runtime volumes. A typical
-single-owner online layout is:
+Online supplies explicit roots from its launcher. A typical single-owner layout
+is:
 
 ```text
 /var/lib/vibe64/<owner>/
   projects/
     <project>/
       .git/
-      app source...
+      application source...
   services/
     _daemon/
-      jskit/
-        mariadb/
+      <service-owner>/
+        <service>/
           data/
     <project>/
-      <adapter>/
+      <service-owner>/
         <service>/
           data/
 ```
 
-Sessions, runtime files, runtime config, secrets, domains, publish state,
-billing state, auth status markers, starred scripts, and UI preferences are
-Vibe64-owned state. They must not be stored in source `.vibe64`.
+Sessions, runtime files, resolved Env values, secrets, domains, publish state,
+billing state, auth markers, terminal state, and UI preferences are Vibe64-owned
+state. They must not be stored in the source-owned Genesis files.
 
-## Config Lookup
+GitHub and Codex credentials live in the real OS home of the acting user or
+daemon owner. Vibe64 owns how those credentials are exposed to its Git and agent
+processes. Genesis never reads or stores credential values.
 
-Vibe64 reads source config from root source manifests:
+## Root resolution
 
-```text
-<project>/vibe64.project.json
-<project>/vibe64.runtime-lock.json
-```
-
-Runtime config values are separate Vibe64-owned state:
-
-```text
-<project-runtime-root>/runtime-config/
-```
-
-## Root Resolution
-
-Directory policy is centralized in the Vibe64 root resolver. Stores should not
-invent their own state paths.
+Directory policy is centralized in the Vibe64 root resolver. Feature packages
+must not invent state paths.
 
 ```text
 local editor systemRoot   = ~/.local/state/vibe64
 serviceDataRoot           = <systemRoot>/services unless explicitly configured
 sourceRoot                = active source checkout
-sourceContractRoot        = <sourceRoot>
 projectRuntimeRoot        = Vibe64-owned runtime root
 managedSourceRoot         = /var/lib/vibe64/<owner>/projects by default
-projectSessionSourceRoot  = managed source project bucket for Vibe64-created session copies
+projectSessionSourceRoot  = source bucket for Vibe64-created session copies
 ```
 
-The supported environment overrides are:
+Supported host overrides are:
 
 ```text
-VIBE64_SYSTEM_ROOT    explicit editor system state root
+VIBE64_SYSTEM_ROOT        explicit editor system-state root
 VIBE64_SERVICE_DATA_ROOT explicit host service-data root
-VIBE64_TARGET_ROOT    explicit target project root
-VIBE64_APP_ROOT       Vibe64 application checkout root
+VIBE64_TARGET_ROOT        explicit target project root
+VIBE64_APP_ROOT           Vibe64 application checkout root
 ```
 
-Normal local editor runs use `~/.local/state/vibe64`. Composed launchers can
-pass an explicit system root through their runtime profile; direct CLI runs do
-not treat `VIBE64_SYSTEM_ROOT` as a casual state-placement override.
+Normal Local Editor runs use `~/.local/state/vibe64`. A composed launcher can
+provide an explicit system root through its runtime profile; a direct CLI run
+does not treat `VIBE64_SYSTEM_ROOT` as a casual state-placement preference.
 
-## Application Preview Identity
+## Execution ownership
 
-Applications opt into preview identity switching in their committed
-`vibe64.project.json`. The capability names an app-owned executable and the
-selector types that app accepts:
+Genesis supplies project declarations. Vibe64 supplies execution policy.
 
-```json
-{
-  "capabilities": {
-    "previewIdentity": {
-      "protocol": "vibe64.preview-identity.command.v1",
-      "command": [".vibe64/bin/preview-identity"],
-      "identityTypes": ["email", "user-id"],
-      "runtimes": ["node26"]
-    }
-  }
-}
-```
+Genesis owns:
 
-The executable must be a real executable file directly under `.vibe64/bin`.
-Vibe64 runs it from the application source root with the managed project
-environment. Launch adapters do not implement or infer application identity.
+- prompt and focused context generation;
+- selected Stack guidance and Agent Skills;
+- generic resource declarations;
+- argument-safe verification commands;
+- optional launch targets with abstract runtime requirements;
+- Machine and Program City generation.
 
-Vibe64 stores one or more named application identities in project-local
-configuration. Each entry contains a Vibe64-facing name and one selector
-accepted by the application, for example:
+Vibe64 owns:
 
-```json
-[
-  {
-    "name": "admin",
-    "type": "email",
-    "value": "admin@example.com"
-  },
-  {
-    "name": "worker",
-    "type": "login",
-    "value": "luca"
-  },
-  {
-    "name": "auditor",
-    "type": "user-id",
-    "value": "42"
-  }
-]
-```
+- Git repositories, branches, worktrees, credentials, commits, and pushes;
+- user Env storage and secret handling;
+- mapping supported runtime requirements to pinned runtime packs;
+- process creation, interruption, logs, recovery, and cleanup;
+- port allocation, readiness, proxying, and preview URLs;
+- the exact Playwright and Chromium release available to generated projects.
 
-The first entry is the default. Managed Preview and Playwright select entries
-by name; callers cannot submit arbitrary application identifiers. Vibe64
-passes only the selected entry's `type` and `value` to the app-owned
-executable. These values are never inferred from, matched to, or otherwise
-tied to the signed-in Vibe64 account.
+Vibe64 does not infer a framework launch command for a Genesis project. If the
+selected Stack has no launch declaration, preview is unavailable with a clear
+diagnostic. An unknown runtime requirement is rejected rather than mapped to a
+similar host tool.
 
-Vibe64 supplies the launched process with:
+The browser toolchain is a Vibe64 release contract. Vibe64 exposes its exact
+managed Playwright version and browser path; project commands run with browser
+downloads disabled. A project must never repair a mismatch by downloading
+Chrome or Chromium itself.
+
+## Application preview identity
+
+An optional `previewIdentity` declaration on a Genesis Launch target advertises
+application identity switching. It names a committed, application-owned
+executable directly below `.vibe64/bin`, declares the
+`vibe64.preview-identity.command.v1` protocol, and lists the application
+identifier types it accepts: email, login, or user ID. It may also declare
+app-specific enable and secret environment variable names, command runtime
+requirements, and a timeout.
+
+Genesis validates and reports this declaration. It does not execute the
+command, store identity selections, read environment values, provide secrets,
+or control a browser. Vibe64 maps the declared runtime requirements to its
+pinned runtime packs, verifies the executable, and owns command execution and
+the preview browser lifecycle.
+
+Vibe64 stores managed app identities in project-local runtime state, outside
+Git and the Genesis files. Each entry contains a Vibe64-facing name plus one
+application selector such as email, login, or user ID; the first entry is the
+default. Managed Preview and Playwright select a configured entry by name or
+request guest mode. Callers cannot submit arbitrary application identities.
+
+For an enabled preview launch, Vibe64 supplies:
 
 ```text
 VIBE64_PREVIEW_IDENTITY_ENABLED=true
 VIBE64_PREVIEW_IDENTITY_SECRET=<random per-launch secret>
 ```
 
-The command reads one protocol request as JSON from stdin and writes one JSON
-response to stdout. A login request carries the configured typed selector:
+Vibe64 also supplies any app-specific enable and secret variable names declared
+by Genesis Launch. The executable reads one protocol request from standard
+input and writes one response to standard output. It remains responsible for
+locating an existing user, rejecting missing or disabled users, and creating or
+clearing the application's normal browser session. Vibe64 never creates
+application users or changes their roles or data.
 
-```json
-{
-  "operation": "login-as",
-  "selector": {
-    "type": "login",
-    "value": "merc"
-  }
-}
-```
-
-Logout requests use `{ "operation": "logout" }`. The response repeats the
-protocol and request ID, reports `ok`, and returns the application's native
-`Set-Cookie` headers plus canonical, non-secret identity fields. The command
-may call an internal development endpoint, use framework code directly, or use
-another app-specific mechanism. The application remains responsible for
-finding an existing user, rejecting missing or disabled users, and creating or
-clearing its normal browser session. Vibe64 never creates users or changes
-their roles or application data.
-
-Any internal endpoint used by the command must remain disabled unless the
-enable flag and per-launch secret are present. This is a development-preview
+Any internal endpoint used by that executable must remain disabled unless both
+the enable flag and per-launch secret are present. This is a development-preview
 control, not a production sign-in API.
 
-## Host Runtime Naming
+## Host runtime naming
 
-Runtime names and directories are deterministic, daemon-scoped, and
-project-scoped.
-
-Daemons set `VIBE64_RUNTIME_NAMESPACE` to an instance namespace when multiple
-instances share a machine. For namespace `tonymobily` and project `beepollen`,
-Vibe64 uses names such as:
+Runtime names and paths are deterministic, daemon-scoped, and project-scoped.
+For namespace `tonymobily` and project `beepollen`, the layout is:
 
 ```text
 daemon runtime bucket    <systemRoot>/runtime/<namespace>
 project runtime bucket   <projectRuntimeRoot>/runtime/
-service data             <serviceDataRoot>/<project>/<adapter>/<service>/data
-daemon service data      <serviceDataRoot>/_daemon/<adapter>/<service>/data
+service data             <serviceDataRoot>/<project>/<service-owner>/<service>/data
+daemon service data      <serviceDataRoot>/_daemon/<service-owner>/<service>/data
 terminal lock/log data   <projectRuntimeRoot>/runtime/terminals/
 ```
 
 The namespace is sanitized to lowercase host-safe name parts before it appears
-in paths, socket names, lock names, or process metadata.
+in paths, socket names, lock names, or process metadata. `service-owner` is a
+stable host-selected storage namespace; it grants no prompt or Stack authority.
 
-## Cleanup Ownership
+## Cleanup ownership
 
 Vibe64 cleanup targets Vibe64-owned state roots, lock files, logs, terminal
 metadata, and child processes started by the Studio daemon. It does not scan
-arbitrary host services or delete unrelated files.
+arbitrary host services or delete unrelated project files.
 
-Cleanup should rely on deterministic roots and daemon process identity, not on
-ad hoc searches for arbitrary host resources.
+Cleanup relies on deterministic roots and daemon process identity, not ad hoc
+searches for arbitrary host resources. Source-owned Genesis files change only
+through ordinary project work and Git review.

@@ -7,6 +7,7 @@ import {
   USER_CREDENTIAL_SCOPE,
   composeGithubTerminalHome,
   logGithubCredentialHomeResolution,
+  normalizeText,
   normalizeGithubAccountMode,
   resolveGithubHomeForActor
 } from "@local/vibe64-execution/server";
@@ -17,10 +18,6 @@ const TERMINAL_OWNER_SCOPE_USER = "user";
 const TERMINAL_OWNER_MISMATCH_CODE = "vibe64_terminal_owner_mismatch";
 const TERMINAL_OWNER_REQUIRED_CODE = "vibe64_terminal_owner_required";
 const TERMINAL_GITHUB_ACTOR_SCOPE_NONE = "none";
-
-function normalizeText(value = "") {
-  return String(value || "").trim();
-}
 
 function normalizeTerminalOwnerScope(value = "") {
   const normalized = normalizeText(value).toLowerCase();
@@ -69,7 +66,7 @@ async function resolveRequestGithubTerminalToolHome({
   env = process.env,
   input = {},
   logger = null,
-  notReadyMessage = "GitHub is not ready for command terminals. Connect GitHub before running workflow commands.",
+  notReadyMessage = "GitHub is not ready. Connect GitHub before running repository commands.",
   operation = "",
   terminalKind = "project-tool",
   terminalUnavailableMessage = "Terminal account storage is not available for command terminals.",
