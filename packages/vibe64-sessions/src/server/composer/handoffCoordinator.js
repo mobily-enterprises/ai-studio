@@ -16,6 +16,10 @@ const COMPOSER_DRAIN_OPERATION_NAMES = Object.freeze({
   controls: "composer-controls-drain",
   messages: "composer-messages-drain"
 });
+const COMPOSER_SESSION_UNAVAILABLE_ERROR_CODES = new Set([
+  "vibe64_session_closed",
+  "vibe64_session_not_found"
+]);
 
 function positiveDelayMs(value = 0, fallback = 0) {
   const delay = Number(value);
@@ -48,7 +52,10 @@ async function runComposerSessionExclusive({
       operation
     );
   } catch (error) {
-    if (ignoreMissingSession && normalizeText(error?.code) === "vibe64_session_not_found") {
+    if (
+      ignoreMissingSession &&
+      COMPOSER_SESSION_UNAVAILABLE_ERROR_CODES.has(normalizeText(error?.code))
+    ) {
       return {
         acquired: true,
         sessionClosed: true,

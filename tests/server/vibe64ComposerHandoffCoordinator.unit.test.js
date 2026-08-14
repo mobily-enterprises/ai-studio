@@ -285,41 +285,43 @@ test("exclusive message actions cannot race the cross-process delivery drain", a
   });
 });
 
-test("queued composer work becomes a no-op after its session is closed", async () => {
-  let deliveries = 0;
-  let drains = 0;
-  const sessionNotFound = Object.assign(new Error("Unknown vibe64 session: closed-session"), {
-    code: "vibe64_session_not_found"
-  });
-  const runtime = {
-    store: {
-      async runSessionExclusive() {
-        throw sessionNotFound;
+for (const errorCode of ["vibe64_session_not_found", "vibe64_session_closed"]) {
+  test(`queued composer work becomes a no-op when its session is unavailable (${errorCode})`, async () => {
+    let deliveries = 0;
+    let drains = 0;
+    const sessionUnavailable = Object.assign(new Error("Unavailable vibe64 session: closed-session"), {
+      code: errorCode
+    });
+    const runtime = {
+      store: {
+        async runSessionExclusive() {
+          throw sessionUnavailable;
+        }
       }
-    }
-  };
-  const session = {
-    sessionId: "closed-session"
-  };
-  const coordinator = createComposerHandoffCoordinator({
-    async activate() {},
-    async deliver() {
-      deliveries += 1;
-    },
-    async drainControls() {
-      drains += 1;
-    }
-  });
+    };
+    const session = {
+      sessionId: "closed-session"
+    };
+    const coordinator = createComposerHandoffCoordinator({
+      async activate() {},
+      async deliver() {
+        deliveries += 1;
+      },
+      async drainControls() {
+        drains += 1;
+      }
+    });
 
-  assert.equal(await coordinator.drain({
-    runtime,
-    session
-  }), null);
-  assert.equal(await coordinator.schedule({
-    handoff: handoff(),
-    runtime,
-    session
-  }), null);
-  assert.equal(drains, 0);
-  assert.equal(deliveries, 0);
-});
+    assert.equal(await coordinator.drain({
+      runtime,
+      session
+    }), null);
+    assert.equal(await coordinator.schedule({
+      handoff: handoff(),
+      runtime,
+      session
+    }), null);
+    assert.equal(drains, 0);
+    assert.equal(deliveries, 0);
+  });
+}
