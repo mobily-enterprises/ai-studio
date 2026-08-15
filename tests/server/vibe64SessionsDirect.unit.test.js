@@ -286,7 +286,7 @@ test("new sessions publish running workspace preparation and its eventual result
   assert.equal(publications[1][1].session.workspaceSetup.status, "succeeded");
 });
 
-test("workspace preparation retries only failed or ambiguous attempts", async () => {
+test("workspace preparation starts newly configured recipes and retries failed attempts", async () => {
   let status = "succeeded";
   let startCount = 0;
   const session = () => ({
@@ -324,9 +324,15 @@ test("workspace preparation retries only failed or ambiguous attempts", async ()
   assert.equal(rejected.code, "vibe64_workspace_setup_retry_not_available");
   assert.equal(startCount, 0);
 
+  status = "unconfigured";
+  const newlyConfigured = await service.retryWorkspaceSetup("session-1");
+  assert.equal(newlyConfigured.ok, true);
+  assert.equal(newlyConfigured.workspaceSetup.status, "running");
+  assert.equal(startCount, 1);
+
   status = "failed";
   const retried = await service.retryWorkspaceSetup("session-1");
   assert.equal(retried.ok, true);
   assert.equal(retried.workspaceSetup.status, "running");
-  assert.equal(startCount, 1);
+  assert.equal(startCount, 2);
 });

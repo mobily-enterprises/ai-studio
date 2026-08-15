@@ -14,6 +14,7 @@ import {
   vibe64PreviewIdentityPath,
   vibe64LaunchTerminalPath,
   vibe64LaunchTerminalStopPath,
+  vibe64SessionPath,
   vibe64SessionPreviewStatePath
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
@@ -1186,6 +1187,31 @@ function useVibe64LaunchControls({
       : launchTargetsResource.reload();
   }
 
+  async function startNewlyConfiguredWorkspaceSetup() {
+    if (
+      String(selectedSession.value?.workspaceSetup?.status || "").trim() !== "unconfigured" ||
+      !sessionId.value
+    ) {
+      return false;
+    }
+    try {
+      const result = await getHttpWebClient().request(
+        vibe64SessionPath(sessionsApiPath.value, sessionId.value, "/workspace-setup/retry"),
+        {
+          body: vibe64RealtimeOriginPayload(),
+          method: "POST"
+        }
+      );
+      return result?.ok !== false;
+    } catch (error) {
+      vibe64SessionDebugLog("client.launchPreview.workspaceSetup.start.error", {
+        error: vibe64SessionDebugError(error),
+        sessionId: sessionId.value
+      });
+      return false;
+    }
+  }
+
   async function publishPreviewState(previewState = {}) {
     const currentSessionId = sessionId.value;
     const currentProjectSlug = projectSlug.value;
@@ -1733,6 +1759,7 @@ function useVibe64LaunchControls({
     savePreviewInput,
     sendCtrlC,
     stopTerminal,
+    startNewlyConfiguredWorkspaceSetup,
     terminal,
     terminalCanClose,
     terminalCanCopyLog,

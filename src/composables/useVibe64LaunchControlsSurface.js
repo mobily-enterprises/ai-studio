@@ -607,6 +607,7 @@ function useVibe64LaunchControlsSurface(props) {
     retryTerminal,
     run,
     savePreviewInput,
+    startNewlyConfiguredWorkspaceSetup,
     terminal,
     terminalCanRestart,
     terminalCanRetry,
@@ -1071,6 +1072,7 @@ function useVibe64LaunchControlsSurface(props) {
   }
 
   async function retryLaunchStatus() {
+    await startNewlyConfiguredWorkspaceSetup?.();
     await refreshLaunchTargets();
   }
   
