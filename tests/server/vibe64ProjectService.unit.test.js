@@ -66,6 +66,36 @@ test("a catalog project can be created and selected without project-type setup",
   });
 });
 
+test("the project service exposes the selected session source without leaking its storage layout", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const service = projectService(targetRoot);
+    const store = await service.createSessionStore();
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "selected-session"
+    });
+
+    assert.equal(await service.readSelectedSessionSource(), null);
+    await store.updateCurrentSession("selected-session");
+    await assert.rejects(
+      service.readSelectedSessionSource(),
+      { code: "vibe64_selected_session_source_unavailable" }
+    );
+    await store.writeMetadataValue("selected-session", "source_kind", "session_clone");
+    await store.writeMetadataValue("selected-session", "source_path_authority", "managed_session_source");
+    await store.writeMetadataValue(
+      "selected-session",
+      "source_path",
+      path.join(targetRoot, "sessions", "active", "selected-session", "source")
+    );
+
+    assert.deepEqual(await service.readSelectedSessionSource(), {
+      sessionId: "selected-session",
+      sourceRoot: path.join(targetRoot, "sessions", "active", "selected-session", "source")
+    });
+  });
+});
+
 test("Env is user-owned and reaches Genesis sessions without an adapter", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot, {

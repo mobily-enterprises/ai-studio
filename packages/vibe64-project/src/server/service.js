@@ -26,6 +26,9 @@ import {
   resolveStudioTargetRoot
 } from "@local/vibe64-core/server/studioRoots";
 import {
+  vibe64Error
+} from "@local/vibe64-core/server/core";
+import {
   createStudioProjectContext,
   getStudioProjectContext
 } from "@local/vibe64-core/server/studioProjectContext";
@@ -604,6 +607,32 @@ function createService({
     async createSessionStore() {
       requireSelectedTargetRoot();
       return sessionStore();
+    },
+
+    async readSelectedSessionSource(input = {}) {
+      const explicitTargetRoot = String(input.targetRoot || "").trim();
+      const store = explicitTargetRoot
+        ? createVibe64SessionStore({
+            projectLocalRoot: String(input.projectRuntimeRoot || input.projectLocalRoot || "").trim(),
+            projectSessionSourceRoot: String(input.projectSessionSourceRoot || explicitTargetRoot).trim(),
+            targetRoot: explicitTargetRoot
+          })
+        : sessionStore();
+      const session = await store.readCurrentSession();
+      if (!session) {
+        return null;
+      }
+      const sourceRoot = sessionSourcePath(session);
+      if (!sourceRoot) {
+        throw vibe64Error(
+          `The selected session ${session.sessionId} has no usable source.`,
+          "vibe64_selected_session_source_unavailable"
+        );
+      }
+      return {
+        sessionId: session.sessionId,
+        sourceRoot
+      };
     },
 
     currentProjectLocalRoot: selectedProjectRuntimeRoot,

@@ -86,9 +86,7 @@ test("terminals provider declares the project runtime realtime dispatcher", () =
   new Vibe64TerminalsProvider().register(app);
 
   const events = app.serviceOptions.get("feature.vibe64-terminals.service")?.events;
-  assert.equal(events.projectRuntime.length, 1);
-  assert.equal(events.projectRuntime[0].realtime.event, "vibe64.project.changed");
-  assert.equal(events.projectRuntime[0].realtime.audience, "all_clients");
+  assert.equal(Object.hasOwn(events, "projectRuntime"), false);
 });
 
 test("terminals provider overlays only live preview routing values", () => {

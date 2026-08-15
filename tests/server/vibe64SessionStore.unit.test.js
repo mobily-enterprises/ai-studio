@@ -97,6 +97,26 @@ test("plain session store persists session identity and metadata without workflo
   });
 });
 
+test("plain session store resolves the selected active session through its managed alias", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createVibe64SessionStore({
+      projectLocalRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: targetRoot,
+      targetRoot
+    });
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "selected-session"
+    });
+
+    assert.equal(await store.readCurrentSession(), null);
+    await store.updateCurrentSession("selected-session");
+    assert.equal((await store.readCurrentSession()).sessionId, "selected-session");
+    await store.updateCurrentSession("");
+    assert.equal(await store.readCurrentSession(), null);
+  });
+});
+
 test("plain session store keeps generic artifacts without workflow readiness state", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);

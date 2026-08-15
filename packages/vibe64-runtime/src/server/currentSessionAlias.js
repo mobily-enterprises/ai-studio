@@ -110,8 +110,38 @@ async function clearVibe64CurrentSessionAliasIfMatches({
   });
 }
 
+async function readVibe64CurrentSessionAlias({
+  aliasPath = ""
+} = {}) {
+  const resolvedAliasPath = requireCurrentSessionAliasPath(aliasPath);
+  const aliasStat = await lstatIfExists(resolvedAliasPath);
+  if (!aliasStat) {
+    return "";
+  }
+  if (!aliasStat.isSymbolicLink()) {
+    throw vibe64Error(
+      `Cannot read current Vibe64 session because ${resolvedAliasPath} is not a symbolic link.`,
+      "vibe64_current_session_alias_conflict"
+    );
+  }
+  const target = await readlink(resolvedAliasPath);
+  const normalizedTarget = path.normalize(target);
+  if (
+    path.isAbsolute(target) ||
+    path.dirname(normalizedTarget) !== "active" ||
+    path.basename(normalizedTarget) !== normalizeText(path.basename(normalizedTarget))
+  ) {
+    throw vibe64Error(
+      `Cannot read invalid current Vibe64 session alias target: ${target || "(empty)"}.`,
+      "vibe64_current_session_alias_invalid"
+    );
+  }
+  return path.basename(normalizedTarget);
+}
+
 export {
   clearVibe64CurrentSessionAliasIfMatches,
+  readVibe64CurrentSessionAlias,
   resolveVibe64CurrentSessionAliasPath,
   updateVibe64CurrentSessionAlias
 };

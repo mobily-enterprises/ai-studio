@@ -17,6 +17,7 @@ import {
 } from "@local/vibe64-execution/server";
 import {
   clearVibe64CurrentSessionAliasIfMatches,
+  readVibe64CurrentSessionAlias,
   resolveVibe64CurrentSessionAliasPath,
   updateVibe64CurrentSessionAlias
 } from "./currentSessionAlias.js";
@@ -2286,6 +2287,17 @@ function createVibe64SessionStore({
     });
   }
 
+  async function readCurrentSession() {
+    const rootPaths = paths();
+    if (!rootPaths.currentSessionAliasPath) {
+      return null;
+    }
+    const sessionId = await readVibe64CurrentSessionAlias({
+      aliasPath: rootPaths.currentSessionAliasPath
+    });
+    return sessionId ? readSession(assertValidVibe64SessionId(sessionId)) : null;
+  }
+
   async function createSession({
     metadata = {},
     runtimeKind = "",
@@ -2439,6 +2451,7 @@ function createVibe64SessionStore({
     readBackgroundTasks,
     readConversationLog,
     readConversationLogPage,
+    readCurrentSession,
     readManifest,
     readMetadata,
     readMetadataValue,
