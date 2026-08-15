@@ -81,12 +81,16 @@ function createProviderApp({
   };
 }
 
-test("terminals provider declares the project runtime realtime dispatcher", () => {
+test("terminals provider declares project runtime events on real service methods", () => {
   const app = createProviderApp();
   new Vibe64TerminalsProvider().register(app);
 
   const events = app.serviceOptions.get("feature.vibe64-terminals.service")?.events;
   assert.equal(Object.hasOwn(events, "projectRuntime"), false);
+  assert.equal(events.openProjectRuntime[0].action, "runtime-opened");
+  assert.equal(events.closeProjectRuntime[0].action, "runtime-closed");
+  assert.equal(events.openProjectRuntime[0].realtime.event, "vibe64.project.changed");
+  assert.equal(events.closeProjectRuntime[0].realtime.event, "vibe64.project.changed");
 });
 
 test("terminals provider overlays only live preview routing values", () => {

@@ -247,7 +247,6 @@ function createService({
   env = process.env,
   logger = null,
   projectService,
-  publishProjectChanged = null,
   publishSessionChanged = {}
 } = {}) {
   if (!projectService) {
@@ -343,29 +342,6 @@ function createService({
       return null;
     }
     return publisher(sessionId, {
-      reason
-    });
-  }
-
-  async function publishProjectRuntimeChanged({
-    action = "updated",
-    payload = null,
-    reason = ""
-  } = {}) {
-    if (typeof publishProjectChanged !== "function") {
-      return null;
-    }
-    const context = projectRuntimeContext();
-    return publishProjectChanged("updated", context.projectSlug, {
-      action,
-      payload: {
-        projectSlug: context.projectSlug,
-        ...(context.targetRoot ? {
-          projectRoot: context.targetRoot,
-          targetRoot: context.targetRoot
-        } : {}),
-        ...(payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {})
-      },
       reason
     });
   }
@@ -804,15 +780,10 @@ function createService({
         reason,
         targetRoot: context.targetRoot
       });
-      await publishProjectRuntimeChanged({
-        action: "runtime-opened",
-        payload: {
-          runtime
-        },
-        reason
-      });
       return {
         ok: true,
+        projectSlug: context.projectSlug,
+        reason,
         runtime,
         targetRoot: context.targetRoot
       };
@@ -996,6 +967,7 @@ function createService({
           projectCwdNamespaceCount,
           projectCwdTerminalClosed,
           projectNamespaceCount,
+          projectSlug: context.projectSlug,
           projectScope,
           projectTerminalClosed,
           reason,
@@ -1008,14 +980,6 @@ function createService({
             projectLocalRoot: context.projectLocalRoot
           });
           result.runtime = runtime;
-          await publishProjectRuntimeChanged({
-            action: "runtime-closed",
-            payload: {
-              message: "Project is closed.",
-              runtime
-            },
-            reason
-          });
         }
         vibe64SessionDebugLog("server.terminals.closeProjectRuntime.done", {
           ...result,

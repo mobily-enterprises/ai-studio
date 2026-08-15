@@ -1,9 +1,5 @@
 import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
 import {
-  createRealtimeEntityChangePublisher
-} from "@jskit-ai/kernel/server/runtime/entityChangeEvents";
-
-import {
   createService,
   startProjectRuntimeDormancyCleanupSchedule
 } from "./service.js";
@@ -14,7 +10,7 @@ import {
   createVibe64SessionChangedPublisher
 } from "@local/vibe64-core/server/sessionRealtimeEvents";
 import {
-  VIBE64_PROJECT_CHANGED_EVENT
+  vibe64ProjectRuntimeChangedServiceEvent
 } from "@local/vibe64-core/server/projectRealtimeEvents";
 import {
   jskitRuntimeEnv
@@ -122,24 +118,11 @@ class Vibe64TerminalsProvider {
           methodName: "closeAgentTerminal",
           serviceToken: VIBE64_TERMINALS_SERVICE
         });
-        const publishProjectRuntimeChanged = domainEvents
-          ? createRealtimeEntityChangePublisher({
-              domainEvents,
-              entity: "project",
-              event: VIBE64_PROJECT_CHANGED_EVENT,
-              methodName: "projectRuntime",
-              serviceToken: VIBE64_TERMINALS_SERVICE,
-              source: "vibe64"
-            })
-          : async function publishNoop() {
-              return null;
-            };
         return createService({
           codexTerminalController: this.codexTerminalController,
           env: providerEnv,
           logger: app.logger || console,
           projectService: scope.make("feature.vibe64-project.service"),
-          publishProjectChanged: publishProjectRuntimeChanged,
           publishSessionChanged: {
             agentTerminal: publishAgentTerminalChanged,
             agentTerminalClosed: publishAgentTerminalClosed,
@@ -156,7 +139,13 @@ class Vibe64TerminalsProvider {
             [vibe64SessionChangedServiceEvent({
               reason: TERMINAL_SESSION_MUTATION_EVENT_REASONS[methodName] || ""
             })]
-          ]))
+          ])),
+          closeProjectRuntime: [vibe64ProjectRuntimeChangedServiceEvent({
+            action: "runtime-closed"
+          })],
+          openProjectRuntime: [vibe64ProjectRuntimeChangedServiceEvent({
+            action: "runtime-opened"
+          })]
         }
       }
     );

@@ -73,7 +73,55 @@ function vibe64ProjectChangedServiceEvent({
   });
 }
 
+function projectRuntimeEventEntityId({ result = {} } = {}) {
+  if (result?.ok === false || !result?.runtime) {
+    return null;
+  }
+  return projectSlugFromResult(result);
+}
+
+function projectRuntimeEventReason({ result = {}, args = [] } = {}) {
+  return normalizeProjectValue(result?.reason || args?.[0]?.reason || "");
+}
+
+function projectRuntimeRealtimePayload({ result = {} } = {}) {
+  const source = result && typeof result === "object" && !Array.isArray(result)
+    ? result
+    : {};
+  return {
+    ...(source.projectSlug ? { projectSlug: normalizeProjectValue(source.projectSlug) } : {}),
+    ...(source.targetRoot ? {
+      projectRoot: normalizeProjectValue(source.targetRoot),
+      targetRoot: normalizeProjectValue(source.targetRoot)
+    } : {}),
+    ...(source.runtime && typeof source.runtime === "object" && !Array.isArray(source.runtime)
+      ? { runtime: source.runtime }
+      : {}),
+    ...(source.runtime?.open === false ? { message: "Project is closed." } : {})
+  };
+}
+
+function vibe64ProjectRuntimeChangedServiceEvent({
+  action = ""
+} = {}) {
+  return Object.freeze({
+    type: "entity.changed",
+    source: VIBE64_PROJECT_EVENT_SOURCE,
+    entity: VIBE64_PROJECT_EVENT_ENTITY,
+    operation: "updated",
+    entityId: projectRuntimeEventEntityId,
+    action: normalizeProjectValue(action),
+    reason: projectRuntimeEventReason,
+    realtime: Object.freeze({
+      event: VIBE64_PROJECT_CHANGED_EVENT,
+      audience: VIBE64_PROJECT_REALTIME_AUDIENCE,
+      payload: projectRuntimeRealtimePayload
+    })
+  });
+}
+
 export {
   VIBE64_PROJECT_CHANGED_EVENT,
-  vibe64ProjectChangedServiceEvent
+  vibe64ProjectChangedServiceEvent,
+  vibe64ProjectRuntimeChangedServiceEvent
 };
