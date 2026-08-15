@@ -8,6 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  commandWithHttpReadiness,
   createVibe64WebLaunchTargetTerminalSpec,
   httpReadinessProbeCommand
 } from "@local/studio-terminal-core/server/launchTargetTerminal";
@@ -52,6 +53,27 @@ test("HTTP launch readiness requires the declared exact success status", async (
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test("HTTP launch readiness stops immediately when the server exits", async () => {
+  const startedAt = Date.now();
+  const command = commandWithHttpReadiness({
+    command: "exit 23",
+    expectedStatus: 200,
+    href: "http://127.0.0.1:9/api/health",
+    marker: "[[NEVER-READY]]",
+    method: "GET",
+    timeoutSeconds: 30
+  });
+
+  await assert.rejects(
+    execFileAsync("bash", ["-lc", command]),
+    (error) => {
+      assert.equal(error.code, 23);
+      return true;
+    }
+  );
+  assert.ok(Date.now() - startedAt < 2_000);
 });
 
 async function runGit(cwd, args) {
