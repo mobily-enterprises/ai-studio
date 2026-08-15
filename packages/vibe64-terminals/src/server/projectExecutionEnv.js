@@ -23,13 +23,13 @@ async function loadProjectExecutionEnvRecords({
   targetRoot = "",
   worktreePath = ""
 } = {}) {
-  if (typeof projectService.projectUserEnvironment !== "function") {
+  if (typeof projectService.projectExecutionEnvironment !== "function") {
     return {
       runtimeConfigEnv: {}
     };
   }
   const sessionId = String(session?.sessionId || session?.id || "").trim();
-  const env = await projectService.projectUserEnvironment({
+  const env = await projectService.projectExecutionEnvironment({
     ...(sessionId ? { sessionId } : {}),
     sourcePath: String(sourcePath || worktreePath || "").trim(),
     target: String(target || "").trim(),

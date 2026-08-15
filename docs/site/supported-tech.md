@@ -9,7 +9,7 @@ aside: false
 <section class="vibe-integrations-hero">
 <h1>Bring the stack your project needs</h1>
 <p>
-Vibe64 starts from a Genesis foundation, not a required framework choice. A
+Vibe64 starts as a Genesis project, not with a required framework choice. A
 project may select no technology, one Stack component, or several components
 that genuinely belong together.
 </p>
@@ -55,8 +55,8 @@ ports, previews, and browser binaries.
 
 <article class="vibe-adapter-card">
 <div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">DB</div><span>STACK</span></div>
-<h3>MySQL</h3>
-<p>Database requirements belong to a Stack component. Genesis reports missing declared inputs without embedding one database policy in Vibe64 core.</p>
+<h3>MySQL and PostgreSQL</h3>
+<p>Database requirements belong to Stack components. Genesis declares the required resource kind and environment names; Vibe64 or another host supplies the values without embedding one database policy in Genesis.</p>
 <a href="/start-building">Choose in Stack</a>
 </article>
 

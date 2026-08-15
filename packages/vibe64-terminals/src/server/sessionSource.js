@@ -11,7 +11,6 @@ import {
   targetSessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  repairManagedSourcePermissions,
   runVibe64Command
 } from "@local/vibe64-execution/server";
 
@@ -151,13 +150,6 @@ async function createSessionSource({
   await runGit(sourcePath, ["checkout", "-B", branch, baseline.commit], sourceRoots);
   if (baseline.remoteUrl) {
     await runGit(sourcePath, ["remote", "set-url", "origin", baseline.remoteUrl], sourceRoots);
-  }
-  const permissionRepair = await repairManagedSourcePermissions([sourcePath]);
-  if (permissionRepair?.ok === false) {
-    throw sourceError(
-      permissionRepair.error || `Managed source permission repair failed: ${sourcePath}`,
-      "vibe64_session_source_permission_repair_failed"
-    );
   }
   await attachSessionSource(store, sessionId, {
     base_branch: baseline.branch,

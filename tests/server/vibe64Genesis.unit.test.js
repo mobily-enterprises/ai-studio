@@ -57,7 +57,7 @@ test("Vibe64 keeps structured questions as a direct-chat presentation contract",
   assert.match(prompt, /`Possible answers:`/u);
 });
 
-test("Genesis initialization creates its complete technology-neutral project foundation", async () => {
+test("Genesis initialization creates its complete technology-neutral project", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
 
@@ -81,6 +81,14 @@ test("the integration reads launch targets from the pinned Genesis package", asy
       projectRoot
     });
 
+    const waitingSetup = await inspectGenesisWorkspaceSetup({
+      environment: {},
+      projectRoot
+    });
+    assert.equal(waitingSetup.status, "unconfigured");
+    assert.equal(waitingSetup.diagnostics[0].code, "STACK_WORKSPACE_SETUP_WAITING");
+
+    await writeFile(path.join(projectRoot, "package.json"), "{}\n", "utf8");
     const setup = await inspectGenesisWorkspaceSetup({
       environment: {},
       projectRoot
@@ -102,7 +110,7 @@ test("the integration reads launch targets from the pinned Genesis package", asy
   });
 });
 
-test("a blank initialized project receives a Blueprint prompt before ordinary work", async () => {
+test("a blank initialized project stays in Genesis onboarding before ordinary work", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
@@ -119,13 +127,14 @@ test("a blank initialized project receives a Blueprint prompt before ordinary wo
 
     assert.equal(rendered.context.genesis, true);
     assert.equal(rendered.context.requestedTask, "work");
-    assert.equal(rendered.context.task, "blueprint");
+    assert.equal(rendered.context.task, "start");
     assert.match(rendered.prompt, /Build a book catalogue\./u);
-    assert.match(rendered.prompt, /genesis\/blueprint\.md/u);
+    assert.match(rendered.prompt, /"projectKind": "new"/u);
+    assert.match(rendered.prompt, /"availableStackPieces": \[/u);
   });
 });
 
-test("an existing project without Genesis receives adoption guidance without mutation", async () => {
+test("Genesis owns the opening conversation for an existing uninitialized project", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await writeFile(path.join(projectRoot, "app.js"), "export const answer = 42;\n", "utf8");
@@ -137,11 +146,11 @@ test("an existing project without Genesis receives adoption guidance without mut
       projectRoot
     });
 
-    assert.deepEqual(rendered.context, {
-      genesis: false,
-      task: "adopt"
-    });
-    assert.match(rendered.prompt, /Strongly recommend.*`genesis adopt`/u);
+    assert.equal(rendered.context.genesis, true);
+    assert.equal(rendered.context.requestedTask, "work");
+    assert.equal(rendered.context.task, "start");
+    assert.match(rendered.prompt, /"projectKind": "existing-uninitialized"/u);
+    assert.match(rendered.prompt, /strongly recommend `genesis adopt`/u);
     await assert.rejects(
       () => readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"),
       { code: "ENOENT" }

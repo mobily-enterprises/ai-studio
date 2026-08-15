@@ -10,8 +10,14 @@ import {
   genesisLaunchCommand,
   genesisLaunchDescriptor,
   genesisRuntimePacks,
+  inspectGenesisLaunchForContext,
+  inspectGenesisWorkspaceSetupForContext,
   listGenesisLaunchTargets
 } from "../../packages/vibe64-terminals/src/server/genesisLaunchTargets.js";
+import {
+  listLaunchTargets,
+  workspaceSetupLaunchDisabledReason
+} from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
 
 function launchInspection(targets = []) {
   return {
@@ -57,6 +63,9 @@ async function launchContext(t) {
     recursive: true
   });
   return {
+    projectEnvironment: {
+      DB_PASSWORD: "managed-project-value"
+    },
     runtime: {
       adapter: null,
       promptEnvironment: {
@@ -143,7 +152,7 @@ test("neutral sessions list explicit Genesis targets without exposing resource v
   });
 
   assert.equal(received.projectRoot, context.session.targetRoot);
-  assert.equal(received.environment.DB_PASSWORD, "do-not-return-this");
+  assert.equal(received.environment.DB_PASSWORD, "managed-project-value");
   assert.deepEqual(targets, [{
     available: true,
     defaultPreview: true,
@@ -157,6 +166,117 @@ test("neutral sessions list explicit Genesis targets without exposing resource v
     label: "Blocked app"
   }]);
   assert.doesNotMatch(JSON.stringify(targets), /do-not-return-this/u);
+});
+
+test("missing Genesis Stack leaves managed preview unconfigured", async (t) => {
+  const context = await launchContext(t);
+  const launch = await inspectGenesisLaunchForContext(context, {
+    inspect: async () => {
+      const error = new Error("Run genesis init first.");
+      error.code = "STACK_REQUIRED";
+      throw error;
+    }
+  });
+
+  assert.deepEqual(launch, {
+    status: "unconfigured",
+    targets: []
+  });
+});
+
+test("missing Genesis Stack leaves workspace preparation unconfigured", async (t) => {
+  const context = await launchContext(t);
+  const setup = await inspectGenesisWorkspaceSetupForContext(context, {
+    inspect: async () => {
+      const error = new Error("Run genesis init first.");
+      error.code = "STACK_REQUIRED";
+      throw error;
+    }
+  });
+
+  assert.deepEqual(setup, {
+    recipeHash: "",
+    status: "unconfigured",
+    steps: []
+  });
+});
+
+test("managed preview waits for declared workspace preparation", () => {
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      currentLabel: "Install dependencies",
+      status: "running"
+    }
+  }), "Workspace preparation is running: Install dependencies");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      diagnostic: "npm install failed",
+      status: "failed"
+    }
+  }), "npm install failed");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      status: "succeeded"
+    }
+  }), "");
+
+  const declaredSetup = {
+    recipeHash: "sha256:recipe",
+    status: "ready"
+  };
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      status: "unconfigured"
+    }
+  }, declaredSetup), "Workspace preparation is pending.");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      recipeHash: "sha256:old-recipe",
+      status: "succeeded"
+    }
+  }, declaredSetup), "Workspace preparation is pending.");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      recipeHash: "sha256:recipe",
+      status: "succeeded"
+    }
+  }, declaredSetup), "");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      diagnostic: "stale failure",
+      recipeHash: "sha256:old-recipe",
+      status: "failed"
+    }
+  }, {
+    status: "unconfigured"
+  }), "");
+});
+
+test("declaring a Stack cannot auto-start preview before its setup recipe succeeds", async (t) => {
+  const context = await launchContext(t);
+  context.session.workspaceSetup = {
+    status: "unconfigured"
+  };
+
+  assert.deepEqual(await listLaunchTargets(context, {
+    inspectLaunch: () => launchInspection([launchTarget()]),
+    inspectWorkspaceSetup: () => ({
+      recipeHash: "sha256:install",
+      status: "ready",
+      steps: [{
+        argv: ["npm", "install"],
+        label: "Install dependencies",
+        runtimeRequirements: ["nodejs"],
+        workdir: "."
+      }]
+    })
+  }), [{
+    available: false,
+    defaultPreview: true,
+    disabledReason: "Workspace preparation is pending.",
+    id: "app",
+    label: "Run app"
+  }]);
 });
 
 test("neutral sessions translate Genesis targets through the existing Vibe64 preview terminal", async (t) => {

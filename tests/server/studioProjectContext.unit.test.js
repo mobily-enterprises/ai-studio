@@ -24,13 +24,6 @@ import {
   resolveProjectRequestContext
 } from "../../packages/vibe64-core/src/server/projectRequestContext.js";
 import {
-  PROJECT_APPLICATION_MODE_EXISTING,
-  PROJECT_APPLICATION_MODE_NEW
-} from "../../packages/vibe64-core/src/server/projectApplication.js";
-import {
-  createProjectBootstrap
-} from "../../packages/vibe64-core/src/server/projectLifecycle.js";
-import {
   writeProjectRuntimeOpenState
 } from "../../packages/vibe64-core/src/server/projectRuntimeOpenState.js";
 import {
@@ -644,39 +637,41 @@ test("Studio project context does not admit unregistered GitHub folders", async 
   });
 });
 
-test("Studio project context rejects project records without bootstrap metadata", async () => {
+test("Studio project context accepts repository metadata without retired bootstrap state", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
-    const projectRoot = path.join(projectsRoot, "legacy-app");
+    const projectRoot = path.join(projectsRoot, "current-app");
     const context = createStudioProjectContext({
       explicitProjectsRoot: projectsRoot,
       env: {},
       home: root
     });
-    const recordPath = context.projectRecordPathForSlug("legacy-app");
-    const legacyMetadata = {
+    const recordPath = context.projectRecordPathForSlug("current-app");
+    const metadata = {
       repository: {
         defaultBranch: "main",
         github: {
-          fullName: "example/legacy-app"
+          fullName: "example/current-app"
         },
         mode: PROJECT_REPOSITORY_MODE_GITHUB
       }
     };
     await Promise.all([
       mkdir(projectRoot, { recursive: true }),
-      writeTestFile(recordPath, `${JSON.stringify(legacyMetadata, null, 2)}\n`)
+      writeTestFile(recordPath, `${JSON.stringify(metadata, null, 2)}\n`)
     ]);
 
-    await assert.rejects(() => context.listWorkspaceProjects(), {
-      code: "vibe64_project_bootstrap_missing"
+    const listed = await context.listWorkspaceProjects();
+    const state = await context.readWorkspaceProjectState({
+      slug: "current-app"
     });
-    await assert.rejects(() => context.readWorkspaceProjectState({
-      slug: "legacy-app"
-    }), {
-      code: "vibe64_project_bootstrap_missing"
-    });
-    assert.deepEqual(JSON.parse(await readFile(recordPath, "utf8")), legacyMetadata);
+
+    assert.deepEqual(listed.projects.map(({ slug }) => slug), ["current-app"]);
+    assert.equal(listed.projects[0].githubRepository.fullName, "example/current-app");
+    assert.equal(state.metadata.repository.mode, PROJECT_REPOSITORY_MODE_GITHUB);
+    assert.equal(state.metadata.repository.defaultBranch, "main");
+    assert.equal(state.metadata.repository.github.fullName, "example/current-app");
+    assert.deepEqual(JSON.parse(await readFile(recordPath, "utf8")), metadata);
   });
 });
 
@@ -752,7 +747,6 @@ test("Studio project context reads project records and ignores source config as 
     const runtimeRoot = context.projectRuntimeRootForSlug("canonical-app");
     await Promise.all([
       writeTestFile(recordPath, `${JSON.stringify({
-        bootstrap: createProjectBootstrap(PROJECT_APPLICATION_MODE_EXISTING),
         repository: {
           defaultBranch: "main",
           github: {
@@ -798,7 +792,6 @@ test("Studio project context lists and reads managed Git catalog records", async
     });
 
     const created = await context.createWorkspaceProjectRecord({
-      applicationMode: PROJECT_APPLICATION_MODE_EXISTING,
       repository: {
         mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT,
         defaultBranch: "main"
@@ -807,14 +800,12 @@ test("Studio project context lists and reads managed Git catalog records", async
     });
 
     assert.equal(created.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(created.project.applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
     assert.equal(created.project.githubRepository, undefined);
 
     const listed = await context.listWorkspaceProjects();
 
     assert.deepEqual(listed.projects.map((project) => project.slug), ["managed-app"]);
     assert.equal(listed.projects[0].repository.mode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(listed.projects[0].applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
     assert.equal(listed.projects[0].repository.defaultBranch, "main");
     assert.equal(listed.projects[0].repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
     assert.equal(listed.projects[0].githubRepository, undefined);
@@ -824,7 +815,6 @@ test("Studio project context lists and reads managed Git catalog records", async
     });
 
     assert.equal(read.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
-    assert.equal(read.project.applicationMode, PROJECT_APPLICATION_MODE_EXISTING);
     assert.equal(read.project.githubRepository, undefined);
   });
 });
@@ -851,57 +841,47 @@ test("Studio project context defaults new catalog records to managed Git metadat
       mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT,
       defaultBranch: "main"
     });
-    assert.equal(record.bootstrap.mode, PROJECT_APPLICATION_MODE_NEW);
-    assert.equal(record.bootstrap.status, "pending");
+    assert.deepEqual(Object.keys(record), ["repository"]);
   });
 });
 
-test("Studio project context keeps bootstrap pending through template setup and completes it explicitly", async () => {
+test("Studio project context discards retired bootstrap metadata while reading current records", async () => {
   await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
     const context = createStudioProjectContext({
-      explicitProjectsRoot: path.join(root, "projects"),
+      explicitProjectsRoot: projectsRoot,
       env: {},
       home: root
     });
-    await context.createWorkspaceProjectRecord({
-      slug: "template-app"
-    });
-    const templateCommit = "0123456789abcdef0123456789abcdef01234567";
+    const projectRoot = path.join(projectsRoot, "retired-state-app");
+    const recordPath = context.projectRecordPathForSlug("retired-state-app");
+    await Promise.all([
+      mkdir(projectRoot, { recursive: true }),
+      writeTestFile(recordPath, `${JSON.stringify({
+        bootstrap: {
+          mode: "new",
+          status: "pending"
+        },
+        repository: {
+          defaultBranch: "main",
+          mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
+        }
+      }, null, 2)}\n`)
+    ]);
 
-    await assert.rejects(
-      () => context.recordWorkspaceProjectTemplate({
-        commit: "not-a-commit",
-        slug: "template-app"
-      }),
-      {
-        code: "vibe64_project_bootstrap_template_invalid"
+    const read = await context.readWorkspaceProject({
+      slug: "retired-state-app"
+    });
+    const state = await context.readWorkspaceProjectState({
+      slug: "retired-state-app"
+    });
+
+    assert.equal(read.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
+    assert.deepEqual(state.metadata, {
+      repository: {
+        defaultBranch: "main",
+        mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
       }
-    );
-
-    await context.recordWorkspaceProjectTemplate({
-      commit: templateCommit,
-      slug: "template-app"
-    });
-
-    const pending = await context.readWorkspaceProject({
-      slug: "template-app"
-    });
-    assert.equal(pending.project.applicationMode, PROJECT_APPLICATION_MODE_NEW);
-    await context.completeWorkspaceProjectBootstrap({
-      slug: "template-app"
-    });
-    await context.completeWorkspaceProjectBootstrap({
-      slug: "template-app"
-    });
-    const complete = await context.readWorkspaceProject({
-      slug: "template-app"
-    });
-    assert.equal(complete.project.applicationMode, undefined);
-    const metadata = JSON.parse(await readFile(context.projectRecordPathForSlug("template-app"), "utf8"));
-    assert.deepEqual(metadata.bootstrap, {
-      mode: PROJECT_APPLICATION_MODE_NEW,
-      status: "complete",
-      templateCommit
     });
   });
 });

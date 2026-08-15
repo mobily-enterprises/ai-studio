@@ -355,7 +355,6 @@ test("agent preview help distinguishes duplicate previews from explicit referenc
   assert.match(result.stdout, /canonical preview server for the configured primary application/u);
   assert.match(result.stdout, /Do not start a duplicate copy/u);
   assert.match(result.stdout, /distinct secondary application explicitly requested by the user/u);
-  assert.match(result.stdout, /legacy reference app/u);
   assert.match(result.stdout, /vibe64-playwright \[--identity <default\|guest\|configured-name>\] test/u);
   assert.doesNotMatch(result.stdout, /only preview server the agent may use/u);
   assert.doesNotMatch(result.stdout, /any other development server/u);

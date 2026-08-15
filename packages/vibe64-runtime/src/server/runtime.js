@@ -46,7 +46,7 @@ function unsupportedSessionError(session = {}) {
   const sessionId = normalizeText(session.sessionId || session.id) || "(unknown)";
   return vibe64Error(
     `Session ${sessionId} uses an unsupported runtime format and cannot be opened.`,
-    "vibe64_legacy_session_unsupported"
+    "vibe64_session_runtime_unsupported"
   );
 }
 
@@ -284,9 +284,16 @@ class Vibe64SessionRuntime {
     task = "work"
   } = {}) {
     const session = assertSupportedSession(await this.store.readSession(sessionId));
-    const genesisTask = assertGenesisPromptTask(task, {
+    let genesisTask = assertGenesisPromptTask(task, {
       required: true
     });
+    if (genesisTask === "work") {
+      const conversation = await this.store.readConversationLog(sessionId);
+      const hasUserMessage = conversation.some((turn) => Boolean(turn?.user));
+      if (!hasUserMessage) {
+        genesisTask = "start";
+      }
+    }
     return this.promptRenderer({
       action: {
         genesisTask,

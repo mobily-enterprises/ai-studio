@@ -15,3 +15,24 @@ Important boundaries:
 - Do not create loose workboard files.
 - Do not run bare `jskit ...`. Use `npx jskit ...`.
 - Never deploy unless the user explicitly requests deployment.
+
+## Known Session Defects To Fix
+
+These defects were reproduced on the hosted `sas/dogandgroom` session
+`2026-08-15_01-59-27` on 2026-08-15. Do not lose them during the Genesis-first
+session rewrite:
+
+- Direct chat can continue successfully while a stale
+  `step-state/<current-step>` record remains `waiting_for_input` with
+  `source: system_recovery`. The UI then incorrectly shows “This session needs
+  recovery”. Goal state and direct-chat delivery must have one unambiguous
+  owner, and successful later delivery must supersede any stale recovery
+  marker without deleting or restarting the Codex thread.
+- Session source permissions must be correct when files are created. Every
+  hosted writer enters through the shared `vibe64` group with umask `0007`, and
+  managed project roots are setgid and carry the mandatory inherited default
+  group ACL. Do not add recursive permission repair after Git, agent, package,
+  or preview work; a host that cannot satisfy the creation-time contract must
+  fail before work begins. The incident evidence, exact modes, ACLs, and
+  cross-identity verification requirements are durable in
+  `docs/managed-session-filesystem-contract.md`.

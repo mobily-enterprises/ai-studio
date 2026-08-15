@@ -20,9 +20,6 @@ import {
 import {
   codexRuntimeContext
 } from "@local/studio-terminal-core/server/codexRuntimeContext";
-import {
-  repairManagedSourcePermissions
-} from "@local/vibe64-execution/server";
 import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
 import {
   terminalAppOwnerMetadata
@@ -301,43 +298,6 @@ function codexSessionWorktreeUnavailableFailure({
       : `Session clone directory does not exist: ${workdir}`,
     workdir: normalizeText(workdir)
   });
-}
-
-function codexManagedSourcePermissionFailure(repair = {}, workdir = "") {
-  const pathLabel = normalizeText(repair.path) || normalizeText(workdir);
-  return retryableTerminalFailure({
-    code: repair.code || "vibe64_managed_source_permission_repair_failed",
-    ok: false,
-    error: repair.error || `Managed source permission repair failed: ${pathLabel}`
-  });
-}
-
-async function ensureCodexManagedSourcePermissions(paths = []) {
-  const repair = await repairManagedSourcePermissions(paths);
-  return repair?.ok === false
-    ? codexManagedSourcePermissionFailure(repair)
-    : null;
-}
-
-async function repairCodexManagedSourcePermissions(paths = []) {
-  const failure = await ensureCodexManagedSourcePermissions(paths);
-  if (failure) {
-    throw new Error(failure.error || "Managed source permission repair failed.");
-  }
-  return {
-    ok: true
-  };
-}
-
-async function repairCodexSessionWorkdirPermissions(session = {}) {
-  const workdir = terminalWorktreePath(session);
-  if (!workdir) {
-    return {
-      ok: true,
-      skipped: true
-    };
-  }
-  return repairCodexManagedSourcePermissions([workdir]);
 }
 
 function codexAppServerAgentRun(session = {}) {
@@ -1010,7 +970,6 @@ function createCodexTerminalController({
   codexGitCommand = null,
   projectService,
   publishSessionChanged = async () => null,
-  repairSessionWorkdirPermissions = repairCodexSessionWorkdirPermissions,
   runCommand = runVibe64Command
 } = {}) {
   const initialCodexRuntime = codexRuntimeContext({
@@ -4812,23 +4771,6 @@ function createCodexTerminalController({
     return normalizeText(turnId) || await currentCodexAppServerTurnId(sessionId, threadId);
   }
 
-  async function repairCodexSessionWorkdirPermissionsAfterSettlement(session = {}, {
-    sessionId = "",
-    threadId = "",
-    turnId = ""
-  } = {}) {
-    try {
-      await repairSessionWorkdirPermissions(session);
-    } catch (error) {
-      vibe64SessionDebugLog("server.codexTerminal.appServerTurn.permissionRepair.error", {
-        error: vibe64SessionDebugError(error),
-        sessionId: normalizeText(sessionId),
-        threadId: normalizeText(threadId),
-        turnId: normalizeText(turnId)
-      });
-    }
-  }
-
   async function recordCodexAppServerProcessedResult(runtime, sessionId = "", threadId = "", turnId = "", result = {}) {
     await runtime.store.writeAgentRunEvent(sessionId, CODEX_APP_SERVER_AGENT_RUN_ID, {
       event: {
@@ -4882,11 +4824,6 @@ function createCodexTerminalController({
     codexAppServerProcessedTurns.delete(key);
     codexAppServerFinalizedTurns.add(key);
     cleanupCodexAppServerUntrackedTurn(normalizedThreadId, normalizedTurnId);
-    await repairCodexSessionWorkdirPermissionsAfterSettlement(session, {
-      sessionId: normalizedSessionId,
-      threadId: normalizedThreadId,
-      turnId: normalizedTurnId
-    });
     return result;
   }
 
@@ -5149,11 +5086,6 @@ function createCodexTerminalController({
         threadId: normalizedThreadId,
         turnId: normalizedTurnId
       });
-      await repairCodexSessionWorkdirPermissionsAfterSettlement(session, {
-        sessionId: normalizedSessionId,
-        threadId: normalizedThreadId,
-        turnId: normalizedTurnId
-      });
       return {
         ok: true,
         processed: false,
@@ -5198,11 +5130,6 @@ function createCodexTerminalController({
       cleanupCodexAppServerUntrackedTurn(normalizedThreadId, normalizedTurnId);
       await markCodexAppServerTurnIdle(normalizedSessionId, {
         status: normalizedStatus,
-        threadId: normalizedThreadId,
-        turnId: normalizedTurnId
-      });
-      await repairCodexSessionWorkdirPermissionsAfterSettlement(session, {
-        sessionId: normalizedSessionId,
         threadId: normalizedThreadId,
         turnId: normalizedTurnId
       });
@@ -5730,7 +5657,6 @@ function createCodexTerminalController({
             namespace,
             onClose: async () => {
               await cleanupCodexAttachments(targetRoot, sessionId);
-              await repairCodexSessionWorkdirPermissions(currentSession);
             },
             reuseRunning: (terminalSession) => {
               return terminalSession.metadata?.targetRoot === targetRoot &&
@@ -5776,11 +5702,6 @@ function createCodexTerminalController({
         error: `Main repo directory does not exist: ${targetRoot}`
       });
     }
-    const permissionFailure = await ensureCodexManagedSourcePermissions([targetRoot]);
-    if (permissionFailure) {
-      return permissionFailure;
-    }
-
     const session = {
       targetRoot
     };
@@ -5833,7 +5754,6 @@ function createCodexTerminalController({
       namespace,
       onClose: async () => {
         await cleanupCodexAttachments(targetRoot, GLOBAL_CODEX_TERMINAL_SCOPE);
-        await repairCodexManagedSourcePermissions([targetRoot]);
       },
       reuseRunning: (terminalSession) => {
         return terminalSession.metadata?.scope === GLOBAL_CODEX_TERMINAL_SCOPE &&
@@ -6213,6 +6133,15 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
+    const threadId = codexThreadIdForWorkdir(session, workdir);
+    if (!threadId) {
+      return {
+        ok: true,
+        sessionId: normalizedSessionId,
+        status: "notStarted",
+        threadId: ""
+      };
+    }
     const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
       runtime,
       targetRoot,
@@ -6225,70 +6154,67 @@ function createCodexTerminalController({
       return existing;
     }
     const reconciliation = (async () => {
-      const threadId = codexThreadIdForWorkdir(session, workdir);
       const provider = await ensureCodexAppServerDaemonForSession(normalizedSessionId, providerOptions);
-      if (threadId) {
-        try {
-          const loadedThreadIds = await codexAppServerLoadedThreadIds(provider);
-          if (loadedThreadIds?.has(threadId)) {
-            const subscription = subscribeCodexAppServerEvents(
-              normalizedSessionId,
-              provider,
-              threadId,
-              providerOptions
-            );
-            const subscriptionStatus = normalizeText(subscription?.status) || "subscribed";
-            if (subscriptionStatus !== "alreadySubscribed") {
-              await provider.resumeThread(threadId, {
-                cwd: workdir
-              });
+      try {
+        const loadedThreadIds = await codexAppServerLoadedThreadIds(provider);
+        if (loadedThreadIds?.has(threadId)) {
+          const subscription = subscribeCodexAppServerEvents(
+            normalizedSessionId,
+            provider,
+            threadId,
+            providerOptions
+          );
+          const subscriptionStatus = normalizeText(subscription?.status) || "subscribed";
+          if (subscriptionStatus !== "alreadySubscribed") {
+            await provider.resumeThread(threadId, {
+              cwd: workdir
+            });
+          }
+          rememberCodexAppServerManagedSession(providerKey, {
+            providerOptions,
+            sessionId: normalizedSessionId,
+            targetRoot,
+            threadId,
+            workdir
+          });
+          await reconcileCodexAppServerLoadedThreadStatus(
+            normalizedSessionId,
+            provider,
+            threadId,
+            {
+              observeLatestTurn: subscriptionStatus !== "alreadySubscribed"
             }
-            rememberCodexAppServerManagedSession(providerKey, {
-              providerOptions,
+          ).catch((error) => {
+            vibe64SessionDebugLog("server.codexTerminal.appServerThread.statusReconcile.error", {
+              error: vibe64SessionDebugError(error),
               sessionId: normalizedSessionId,
-              targetRoot,
-              threadId,
-              workdir
+              threadId
             });
-            await reconcileCodexAppServerLoadedThreadStatus(
-              normalizedSessionId,
-              provider,
-              threadId,
-              {
-                observeLatestTurn: subscriptionStatus !== "alreadySubscribed"
-              }
-            ).catch((error) => {
-              vibe64SessionDebugLog("server.codexTerminal.appServerThread.statusReconcile.error", {
-                error: vibe64SessionDebugError(error),
-                sessionId: normalizedSessionId,
-                threadId
-              });
-            });
-            await writeCodexAppServerReady(runtime, normalizedSessionId, "");
-            if (subscriptionStatus === "alreadySubscribed") {
-              return {
-                ok: true,
-                providerKey,
-                sessionId: normalizedSessionId,
-                status: "alreadySubscribed",
-                threadId
-              };
-            }
+          });
+          await writeCodexAppServerReady(runtime, normalizedSessionId, "");
+          if (subscriptionStatus === "alreadySubscribed") {
             return {
               ok: true,
               providerKey,
               sessionId: normalizedSessionId,
-              status: subscriptionStatus === "resubscribed" ? "resubscribed" : "loaded",
+              status: "alreadySubscribed",
               threadId
             };
           }
-        } catch (error) {
-          vibe64SessionDebugLog("server.codexTerminal.appServerThread.loadedList.error", {
-            error: vibe64SessionDebugError(error),
+          return {
+            ok: true,
+            providerKey,
             sessionId: normalizedSessionId,
+            status: subscriptionStatus === "resubscribed" ? "resubscribed" : "loaded",
             threadId
-          });
+          };
         }
+      } catch (error) {
+        vibe64SessionDebugLog("server.codexTerminal.appServerThread.loadedList.error", {
+          error: vibe64SessionDebugError(error),
+          sessionId: normalizedSessionId,
+          threadId
+        });
       }
       const prepared = await ensureCodexAppServerThreadReady(normalizedSessionId, {
         agentSettings
@@ -6632,7 +6558,7 @@ function createCodexTerminalController({
       const contextRefresh = codexContextRefreshPending(preparedSession) ? developerInstructions : "";
       const rendered = await runtime.renderPrompt(sessionId, {
         request: userRequest,
-        task: "work"
+        task: sessionBriefingIsDelivered(preparedSession) ? "work" : "start"
       });
       const terminalInput = normalizeText(rendered?.prompt);
       if (!terminalInput) {

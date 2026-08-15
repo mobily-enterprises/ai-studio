@@ -31,7 +31,7 @@ function projectService(root, {
     currentTargetRoot() {
       return root;
     },
-    async projectUserEnvironment() {
+    async projectExecutionEnvironment() {
       return userEnvironment;
     }
   };

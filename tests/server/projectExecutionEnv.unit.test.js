@@ -13,7 +13,7 @@ test("project execution environment comes from the project service", async () =>
   let request = null;
   const env = await loadProjectExecutionEnv({
     projectService: {
-      async projectUserEnvironment(input) {
+      async projectExecutionEnvironment(input) {
         request = input;
         return {
           DB_PORT: 3306,

@@ -12,7 +12,7 @@ import {
 import {
   createWorkspaceSetupRunner,
   WORKSPACE_SETUP_COMMAND_TIMEOUT_MS
-} from "../../packages/vibe64-sessions/src/server/workspaceSetup.js";
+} from "../../packages/vibe64-terminals/src/server/workspaceSetup.js";
 import {
   sourceMetadata,
   sourcePath,
@@ -80,7 +80,7 @@ test("workspace preparation executes declared argv in order through the managed 
         }]
       }),
       projectService: {
-        async projectUserEnvironment() {
+        async projectExecutionEnvironment() {
           return {
             PROJECT_SETTING: "configured"
           };
@@ -156,6 +156,80 @@ test("workspace preparation configuration never infers a package manager", async
     assert.equal(result.completion, null);
     assert.equal(result.state.status, "unconfigured");
     assert.equal(commandCount, 0);
+
+    const repeated = await runner.start({
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    assert.deepEqual(repeated.state, result.state);
+    assert.equal(
+      (await runtime.store.readSession(session.sessionId)).metadata.workspace_setup,
+      undefined
+    );
+  });
+});
+
+test("workspace preparation starts when a later Stack declaration supplies a recipe", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot);
+    let configured = false;
+    let commandCount = 0;
+    const runner = createWorkspaceSetupRunner({
+      inspect: () => configured
+        ? readySetup()
+        : {
+            components: [],
+            diagnostics: [],
+            runtimeRequirements: [],
+            source: null,
+            stackHash: "sha256:empty",
+            status: "unconfigured",
+            steps: []
+          },
+      projectService: {},
+      async runCommand() {
+        commandCount += 1;
+        return {
+          exitCode: 0,
+          ok: true
+        };
+      }
+    });
+
+    const unconfigured = await runner.start({ runtime, session });
+    assert.equal(unconfigured.state.status, "unconfigured");
+    configured = true;
+
+    const started = await runner.start({
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    assert.equal(started.state.status, "running");
+    assert.equal((await started.completion).status, "succeeded");
+    assert.equal(commandCount, 1);
+  });
+});
+
+test("workspace preparation treats a missing Genesis Stack as unconfigured", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot);
+    const runner = createWorkspaceSetupRunner({
+      inspect: async () => {
+        const error = new Error("Run genesis init first.");
+        error.code = "STACK_REQUIRED";
+        throw error;
+      },
+      projectService: {}
+    });
+
+    const result = await runner.start({ runtime, session });
+    assert.equal(result.completion, null);
+    assert.equal(result.state.status, "unconfigured");
+    assert.equal(result.state.diagnostic, "");
   });
 });
 
@@ -183,6 +257,14 @@ test("ambiguous setup remains an actionable session state without executing eith
     assert.match(result.state.diagnostic, /both declare workspace setup/u);
     assert.equal(commandCount, 0);
     assert.equal((await runtime.store.readSession(session.sessionId)).status, "active");
+
+    const repeated = await runner.start({
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    assert.deepEqual(repeated.state, result.state);
   });
 });
 
@@ -210,7 +292,7 @@ test("command failure records a short diagnostic and leaves the session active",
   });
 });
 
-test("an active preparation cannot overlap another run", async () => {
+test("an active preparation is shared instead of starting another run", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const { runtime, session } = await workspaceSession(targetRoot);
     let finishCommand;
@@ -224,10 +306,8 @@ test("an active preparation cannot overlap another run", async () => {
     });
 
     const started = await runner.start({ runtime, session });
-    await assert.rejects(
-      () => runner.start({ runtime, session }),
-      { code: "vibe64_workspace_setup_running" }
-    );
+    const joined = await runner.start({ runtime, session });
+    assert.equal(joined.completion, started.completion);
     finishCommand({ exitCode: 0, ok: true });
     await started.completion;
   });

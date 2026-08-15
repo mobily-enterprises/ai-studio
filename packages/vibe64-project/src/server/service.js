@@ -23,9 +23,6 @@ import {
   saveEnvUserValues
 } from "@local/vibe64-core/server/envUserValues";
 import {
-  pathExists
-} from "@local/vibe64-core/server/core";
-import {
   resolveStudioTargetRoot
 } from "@local/vibe64-core/server/studioRoots";
 import {
@@ -50,7 +47,7 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  inspectGenesisLaunch
+  inspectGenesisEnvironment
 } from "@local/vibe64-genesis/server";
 import {
   PROJECT_TEMPLATES,
@@ -61,6 +58,9 @@ import {
   readPreviewApplicationIdentities as readStoredPreviewApplicationIdentities,
   savePreviewApplicationIdentities as saveStoredPreviewApplicationIdentities
 } from "./previewApplicationIdentities.js";
+import {
+  materializeProjectEnvironmentFiles
+} from "./projectEnvironmentFiles.js";
 
 function resolveVibe64TargetRoot(targetRoot) {
   return resolveStudioTargetRoot({
@@ -169,14 +169,37 @@ function stackResourceRecords(resources = [], environment = {}) {
   return [...records.values()];
 }
 
+function environmentRecord(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, entry]) => [String(key || "").trim(), String(entry ?? "")])
+    .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)));
+}
+
+function declaredEnvironmentDefaults(defaults = []) {
+  if (!Array.isArray(defaults)) {
+    return {};
+  }
+  return environmentRecord(Object.fromEntries(defaults
+    .filter((entry) => entry && typeof entry.name === "string" && typeof entry.value === "string")
+    .map((entry) => [entry.name, entry.value])));
+}
+
+function genesisEnvironmentIsUnconfigured(error) {
+  return error?.code === "STACK_REQUIRED";
+}
+
 function createService({
   env = process.env,
-  inspectLaunch = inspectGenesisLaunch,
+  inspectEnvironment = inspectGenesisEnvironment,
   projectContext = null,
   projectTemplates = PROJECT_TEMPLATES,
   runCommand = undefined,
   targetRoot = ""
 } = {}) {
+  let resourceEnvironmentProvider = null;
   const studioProjectContext = projectContext || (String(targetRoot || "").trim()
     ? createStudioProjectContext({
         explicitTargetRoot: targetRoot
@@ -287,39 +310,87 @@ function createService({
     })).records;
   }
 
-  async function stackEnvRecords(input = {}, userRecords = []) {
+  async function resolvedProjectEnvironment(input = {}, userRecords = []) {
     const source = await sourceForInput(input);
     const projectRoot = source.sourceRoot;
+    const userEnvironment = runtimeConfigEnv(userRecords, {
+      scope: input.environment || input.scope || RUNTIME_CONFIG_SCOPES.DEV,
+      target: input.target
+    });
     if (!projectRoot) {
       return {
-        records: [],
+        effectiveEnvironment: {
+          ...env,
+          ...userEnvironment
+        },
+        environmentFiles: [],
+        projectEnvironment: userEnvironment,
+        resources: [],
         source,
         warning: ""
       };
     }
-    const environment = {
-      ...env,
-      ...runtimeConfigEnv(userRecords, {
-        scope: input.environment || input.scope || RUNTIME_CONFIG_SCOPES.DEV
-      })
-    };
+    let declaration;
     try {
-      const launch = await inspectLaunch({
-        environment,
+      declaration = await inspectEnvironment({
+        environment: {
+          ...env,
+          ...userEnvironment
+        },
         projectRoot
       });
-      return {
-        records: stackResourceRecords(launch.resources, environment),
-        source,
-        warning: ""
-      };
     } catch (error) {
       return {
-        records: [],
+        effectiveEnvironment: {
+          ...env,
+          ...userEnvironment
+        },
+        environmentFiles: [],
+        projectEnvironment: userEnvironment,
+        resources: [],
         source,
-        warning: String(error?.message || "")
+        warning: genesisEnvironmentIsUnconfigured(error)
+          ? ""
+          : String(error?.message || "")
       };
     }
+    const provided = resourceEnvironmentProvider && source.sessionId && declaration.resources.length > 0
+      ? await resourceEnvironmentProvider.environmentForResources({
+          components: declaration.components,
+          projectLocalRoot: selectedProjectRuntimeRoot(),
+          resources: declaration.resources,
+          serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
+          sessionId: source.sessionId,
+          sourceRoot: projectRoot,
+          targetRoot: selectedTargetRoot()
+        })
+      : {};
+    const platformEnvironment = environmentRecord(provided?.environment || provided);
+    const projectEnvironment = {
+      ...declaredEnvironmentDefaults(declaration.environmentDefaults),
+      ...userEnvironment,
+      ...platformEnvironment
+    };
+    return {
+      effectiveEnvironment: {
+        ...env,
+        ...projectEnvironment
+      },
+      environmentFiles: declaration.files,
+      projectEnvironment,
+      resources: declaration.resources,
+      source,
+      warning: ""
+    };
+  }
+
+  async function stackEnvRecords(input = {}, userRecords = []) {
+    const resolved = await resolvedProjectEnvironment(input, userRecords);
+    return {
+      records: stackResourceRecords(resolved.resources, resolved.effectiveEnvironment),
+      source: resolved.source,
+      warning: resolved.warning
+    };
   }
 
   async function envConfig(input = {}) {
@@ -436,28 +507,8 @@ function createService({
     };
   }
 
-  async function foundationState() {
-    requireSelectedTargetRoot();
-    const sourceRoot = selectedSourceRoot();
-    const genesisReady = Boolean(sourceRoot) && (await Promise.all([
-      pathExists(path.join(sourceRoot, "genesis", "blueprint.md")),
-      pathExists(path.join(sourceRoot, "genesis", "stack.md"))
-    ])).every(Boolean);
-    return {
-      genesisReady,
-      ok: true,
-      ready: true,
-      status: genesisReady ? "genesis-ready" : "adoption-recommended"
-    };
-  }
-
   async function promptEnvironment() {
-    return {
-      ...env,
-      ...runtimeConfigEnv(await userEnvRecords(), {
-        scope: RUNTIME_CONFIG_SCOPES.DEV
-      })
-    };
+    return (await resolvedProjectEnvironment({}, await userEnvRecords())).effectiveEnvironment;
   }
 
   async function previewApplicationIdentitiesState() {
@@ -543,11 +594,14 @@ function createService({
       return projectResult(() => listProjectsState());
     },
 
-    async projectUserEnvironment(input = {}) {
-      return runtimeConfigEnv(await userEnvRecords(), {
-        scope: input.environment || input.scope,
-        target: input.target
+    async projectExecutionEnvironment(input = {}) {
+      const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+      await materializeProjectEnvironmentFiles({
+        environment: resolved.projectEnvironment,
+        files: resolved.environmentFiles,
+        sourceRoot: resolved.source.sourceRoot
       });
+      return resolved.projectEnvironment;
     },
 
     async readCurrentProject() {
@@ -558,10 +612,6 @@ function createService({
       return projectResult(() => readEnvState(input));
     },
 
-    async readProjectFoundation() {
-      return projectResult(() => foundationState());
-    },
-
     async readPreviewApplicationIdentities() {
       return projectResult(() => previewApplicationIdentitiesState());
     },
@@ -570,9 +620,33 @@ function createService({
       return projectResult(async () => readAvailableProjectTemplates(await templateContext(input)));
     },
 
-    requireProjectFoundation: foundationState,
+    async releaseSessionResources(input = {}) {
+      const sessionId = String(input.sessionId || "").trim();
+      if (!sessionId || typeof resourceEnvironmentProvider?.removeSessionResources !== "function") {
+        return { ok: true };
+      }
+      const source = await sourceForInput({ sessionId });
+      return resourceEnvironmentProvider.removeSessionResources({
+        projectLocalRoot: selectedProjectRuntimeRoot(),
+        sessionId,
+        serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
+        sourceRoot: source.sourceRoot,
+        targetRoot: selectedTargetRoot()
+      });
+    },
+
     requireSelectedTargetRoot,
     runInProjectContext,
+
+    setResourceEnvironmentProvider(provider = null) {
+      if (
+        provider !== null &&
+        (!provider || typeof provider !== "object" || typeof provider.environmentForResources !== "function")
+      ) {
+        throw new TypeError("Vibe64 resource environment provider must expose environmentForResources() or be null.");
+      }
+      resourceEnvironmentProvider = provider;
+    },
 
     async saveEnvUserValues(input = {}) {
       return projectResult(() => saveEnvState(input));

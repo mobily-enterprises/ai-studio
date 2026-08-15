@@ -23,6 +23,7 @@ const GENESIS_PROMPT_TASKS = new Set([
   "deslop",
   "program",
   "review",
+  "start",
   "work"
 ]);
 
@@ -87,23 +88,18 @@ const initializeGenesisProject = initialize;
 const inspectGenesisLaunch = inspectLaunch;
 const refreshGenesisCities = indexCodebase;
 
+function inspectGenesisEnvironment(options = {}) {
+  if (typeof genesisCompiler.inspectEnvironment !== "function") {
+    throw new Error("The installed Genesis compiler does not expose environment inspection.");
+  }
+  return genesisCompiler.inspectEnvironment(options);
+}
+
 function inspectGenesisWorkspaceSetup(options = {}) {
   if (typeof genesisCompiler.inspectWorkspaceSetup !== "function") {
     throw new Error("The installed Genesis compiler does not expose workspace setup inspection.");
   }
   return genesisCompiler.inspectWorkspaceSetup(options);
-}
-
-function adoptionPrompt(request) {
-  return withVibe64ConversationContract([
-    "This existing project has not been adopted by Genesis.",
-    "Strongly recommend that the user run `genesis adopt` before substantial work. It preserves the existing implementation and prepares a prompt for its Blueprint and Program.",
-    "Do not mutate the project merely to bypass this missing explanatory foundation.",
-    "",
-    "USER REQUEST",
-    "",
-    request
-  ].join("\n"));
 }
 
 function withVibe64ConversationContract(prompt = "") {
@@ -134,28 +130,25 @@ async function renderGenesisPrompt({
     if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
       task = "blueprint";
       result = await generatePrompt({ environment, projectRoot, request, task });
-    } else if (error?.code === "BLUEPRINT_REQUIRED") {
-      return {
-        context: { genesis: false, task: "adopt" },
-        originalPrompt: request,
-        prompt: adoptionPrompt(request),
-        promptId: normalizeText(action.promptId || action.id) || "adopt"
-      };
+    } else if (error?.code === "BLUEPRINT_REQUIRED" && requestedTask !== "start") {
+      task = "start";
+      result = await generatePrompt({ environment, projectRoot, request, task });
     } else {
       throw error;
     }
   }
+  const effectiveTask = assertGenesisPromptTask(result.task) || task;
   return {
     context: {
       genesis: true,
       requestedTask,
-      task,
+      task: effectiveTask,
       verificationCommands: result.verificationCommands,
       warnings: result.warnings
     },
     originalPrompt: request,
     prompt: withVibe64ConversationContract(result.prompt),
-    promptId: normalizeText(action.promptId || action.id) || task
+    promptId: normalizeText(action.promptId || action.id) || effectiveTask
   };
 }
 
@@ -169,6 +162,7 @@ export {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisEnvironment,
   inspectGenesisLaunch,
   inspectGenesisWorkspaceSetup,
   refreshGenesisCities,

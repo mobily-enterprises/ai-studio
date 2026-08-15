@@ -40,13 +40,6 @@ export {
   runHelperCommand
 } from "./engines/helperClient.js";
 export {
-  REPAIR_OPERATION,
-  absoluteUniquePaths,
-  hostedManagedSourcePermissionsRequired,
-  managedSourcePermissionPaths,
-  repairManagedSourcePermissions
-} from "./managedSourcePermissions.js";
-export {
   runVibe64Command
 } from "./runVibe64Command.js";
 export {

@@ -45,17 +45,9 @@ async function createSeedRepository(root, {
     schemaVersion: 1,
     id,
     name: "Test",
-    kind: "foundation",
+    kind: "starter",
     repository,
     basedOn: null
-  }, null, 2)}\n`, "utf8");
-  await writeFile(path.join(root, "vibe64.project.json"), `${JSON.stringify({
-    schema: "vibe64.project",
-    schemaVersion: 1,
-    projectType: "jskit",
-    config: {
-      legacy: true
-    }
   }, null, 2)}\n`, "utf8");
   await git(root, ["add", "-A"]);
   await git(root, [
@@ -126,7 +118,7 @@ test("project templates expose friendly trusted registry records", async () => {
   assert.match(result.templates[0].description, /only Git and Genesis/u);
 });
 
-test("the blank foundation creates one Genesis root commit without selecting technology", async () => {
+test("the blank starter creates one Genesis root commit without selecting technology", async () => {
   await withTemporaryRoot(async (root) => {
     const sourceRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
@@ -155,9 +147,6 @@ test("the blank foundation creates one Genesis root commit without selecting tec
     assert.match(await readFile(path.join(sourceRoot, "genesis", "blueprint.md"), "utf8"), /Blueprint/u);
     assert.match(await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8"), /Stack/u);
     assert.ok(JSON.parse(await readFile(path.join(sourceRoot, ".codex", "hooks.json"), "utf8")));
-    await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.project.json"), "utf8"), {
-      code: "ENOENT"
-    });
   });
 });
 
@@ -194,11 +183,8 @@ test("project templates materialize an empty local source as one new root commit
     await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.seed.json"), "utf8"), {
       code: "ENOENT"
     });
-    await assert.rejects(() => readFile(path.join(sourceRoot, "vibe64.project.json"), "utf8"), {
-      code: "ENOENT"
-    });
     await assertSingleRootCommit(sourceRoot);
-    assert.match(await git(sourceRoot, ["log", "-1", "--format=%B"]), /Vibe64-Foundation: jskit-test/u);
+    assert.match(await git(sourceRoot, ["log", "-1", "--format=%B"]), /Vibe64-Starter: jskit-test/u);
 
     const after = await projectTemplateEligibility({
       project: {

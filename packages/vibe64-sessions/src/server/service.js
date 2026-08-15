@@ -11,7 +11,6 @@ import {
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 import { inspectSessionDiff } from "./sessionDiff.js";
-import { createWorkspaceSetupRunner } from "./workspaceSetup.js";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -97,8 +96,16 @@ function createService({
   if (!terminalService) {
     throw new TypeError("createService requires feature.vibe64-terminals.service.");
   }
-  const setupRunner = workspaceSetupRunner || createWorkspaceSetupRunner({
-    projectService
+  const setupRunner = workspaceSetupRunner || Object.freeze({
+    isRunning: (sessionId) => typeof terminalService.workspaceSetupIsRunning === "function" &&
+      terminalService.workspaceSetupIsRunning(sessionId),
+    start: ({ retry = false, runtime, session }) => terminalService.prepareWorkspaceSetup(
+      session.sessionId,
+      { retry, runtime, session }
+    ),
+    wait: (sessionId) => typeof terminalService.waitForWorkspaceSetup === "function"
+      ? terminalService.waitForWorkspaceSetup(sessionId)
+      : null
   });
 
   function observeWorkspaceSetup(sessionId, completion, {
@@ -142,6 +149,11 @@ function createService({
         });
         try {
           await terminalService.closeSessionTerminals(sessionId);
+          if (typeof projectService.releaseSessionResources === "function") {
+            await projectService.releaseSessionResources({
+              sessionId
+            });
+          }
           const session = await runtime.abandonSession(sessionId);
           await publishSessionChanged(sessionId, {
             operation: "updated",
@@ -203,19 +215,14 @@ function createService({
 
     async createSession(input = {}) {
       return sessionResult(async () => {
-        await projectService.requireProjectFoundation();
         const runtime = await projectService.createRuntime(sessionRuntimeOptions(terminalService));
         const session = await runtime.createSession({
           metadata: {
             created_by: text(input.vibe64User?.username || input.vibe64User?.name)
           }
         });
-        await terminalService.ensureAgentSession(session.sessionId, {
-          runtime,
-          session,
-          vibe64User: input.vibe64User || null
-        });
         const setup = await setupRunner.start({
+          retry: true,
           runtime,
           session
         });

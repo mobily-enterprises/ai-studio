@@ -35,13 +35,8 @@ import {
   pathExists
 } from "./core.js";
 import {
-  completedProjectBootstrap,
-  createProjectBootstrap,
-  normalizeProjectBootstrap,
-  normalizeProjectDeletion,
-  projectBootstrapApplicationMode,
-  projectBootstrapWithTemplate
-} from "./projectLifecycle.js";
+  normalizeProjectDeletion
+} from "./projectDeletion.js";
 import {
   PROJECT_REPOSITORY_MODE_GITHUB,
   PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
@@ -52,10 +47,6 @@ import {
   projectRepositoryStorageRole,
   projectRepositoryView
 } from "./projectRepository.js";
-import {
-  PROJECT_APPLICATION_MODE_NEW,
-  requireProjectApplicationMode
-} from "./projectApplication.js";
 
 const PROJECT_SLUG_MAX_LENGTH = 48;
 const PROJECT_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
@@ -308,18 +299,11 @@ function workspaceProjectRecord({
   const repositoryStorage = resolvedPath
     ? projectRepositoryStorageRole({
         mode: repositoryFields.repositoryMode,
-        projectRoot: resolvedPath
+        projectRoot: projectRuntimeRoot || resolvedPath
       })
     : null;
-  const bootstrap = Object.keys(metadata).length
-    ? normalizeProjectBootstrap(metadata.bootstrap)
-    : null;
-  const applicationMode = bootstrap ? projectBootstrapApplicationMode(bootstrap) : "";
   const deletion = normalizeProjectDeletion(metadata.deletion);
   return {
-    ...(applicationMode
-      ? { applicationMode }
-      : {}),
     ...repositoryFields,
     canonicalRepositoryPath: repositoryStorage?.pathField === "canonicalRepositoryPath"
       ? repositoryStorage.path
@@ -375,7 +359,6 @@ function projectMetadataFromInput(input = {}, {
   });
   return {
     ...repositoryMetadata,
-    ...(input?.bootstrap ? { bootstrap: normalizeProjectBootstrap(input.bootstrap) } : {}),
     ...(input?.deletion ? { deletion: normalizeProjectDeletion(input.deletion) } : {})
   };
 }
@@ -401,7 +384,6 @@ function normalizeProjectMetadata(metadata = {}) {
     throw error;
   }
   const normalized = projectMetadataFromInput(metadata);
-  normalizeProjectBootstrap(normalized.bootstrap);
   return normalized;
 }
 
@@ -420,7 +402,6 @@ async function writeProjectMetadata(projectRecordPath = "", metadata = {}, optio
     throw new Error("writeProjectMetadata requires projectRecordPath.");
   }
   const normalizedMetadata = projectMetadataFromInput(metadata, options);
-  normalizeProjectBootstrap(normalizedMetadata.bootstrap);
   await updateProjectRecordMetadata(metadataPath, () => normalizedMetadata);
   return normalizedMetadata;
 }
@@ -925,7 +906,9 @@ function createStudioProjectContext({
     };
   }
 
-  async function createWorkspaceProjectRecord(input = {}) {
+  async function createWorkspaceProjectRecord(input = {}, {
+    prepare = null
+  } = {}) {
     if (!projectCatalogEnabled) {
       throw projectCatalogUnavailableError();
     }
@@ -939,17 +922,7 @@ function createStudioProjectContext({
     if (await pathExists(targetRoot) || await pathExists(projectRuntimeRoot)) {
       throw projectSlugExistsError();
     }
-    const applicationMode = requireProjectApplicationMode(
-      input.applicationMode || PROJECT_APPLICATION_MODE_NEW
-    );
-    const metadataInput = {
-      ...input
-    };
-    delete metadataInput.applicationMode;
-    const metadata = projectMetadataFromInput({
-      ...metadataInput,
-      bootstrap: createProjectBootstrap(applicationMode)
-    }, {
+    const metadata = projectMetadataFromInput(input, {
       defaultRepositoryBranch: PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
       defaultRepositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
     });
@@ -969,6 +942,14 @@ function createStudioProjectContext({
       runtimeCreated = true;
       await mkdir(targetRoot);
       sourceCreated = true;
+      if (typeof prepare === "function") {
+        await prepare({
+          metadata,
+          projectRuntimeRoot,
+          slug,
+          targetRoot
+        });
+      }
       await writeProjectMetadata(projectRecordPathForSlug(slug), metadata);
       if (projectRepositoryView(metadata).repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
         await ensureLocalSourceMainBranch(targetRoot);
@@ -1138,22 +1119,6 @@ function createStudioProjectContext({
     };
   }
 
-  async function recordWorkspaceProjectTemplate(input = {}) {
-    return updateWorkspaceProjectState(input, (metadata) => ({
-      ...metadata,
-      bootstrap: projectBootstrapWithTemplate(metadata.bootstrap, {
-        commit: input.commit
-      })
-    }));
-  }
-
-  async function completeWorkspaceProjectBootstrap(input = {}) {
-    return updateWorkspaceProjectState(input, (metadata) => ({
-      ...metadata,
-      bootstrap: completedProjectBootstrap(metadata.bootstrap)
-    }));
-  }
-
   async function beginWorkspaceProjectDeletion(input = {}) {
     return updateWorkspaceProjectState(input, (metadata) => ({
       ...metadata,
@@ -1235,10 +1200,7 @@ function createStudioProjectContext({
       throw projectCatalogUnavailableError();
     }
 
-    const created = await createWorkspaceProjectRecord({
-      ...input,
-      applicationMode: PROJECT_APPLICATION_MODE_NEW
-    });
+    const created = await createWorkspaceProjectRecord(input);
     selectedTargetRoot = created.project.projectRoot;
     selectionSource = "workspace";
     return listProjects();
@@ -1256,7 +1218,6 @@ function createStudioProjectContext({
   return Object.freeze({
     assertWorkspaceProjectAvailable,
     beginWorkspaceProjectDeletion,
-    completeWorkspaceProjectBootstrap,
     completeWorkspaceProjectDeletionStep,
     createWorkspaceProject,
     createWorkspaceProjectRecord,
@@ -1296,7 +1257,6 @@ function createStudioProjectContext({
     listWorkspaceProjects,
     readWorkspaceProject,
     readWorkspaceProjectState,
-    recordWorkspaceProjectTemplate,
     requireSelectedTargetRoot,
     selectWorkspaceProject,
     updateWorkspaceProjectMetadata,

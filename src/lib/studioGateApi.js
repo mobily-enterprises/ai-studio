@@ -19,15 +19,10 @@ const TARGET_PROJECT_ENDPOINT = studioApiPath("studio/current-app");
 const STUDIO_HEALTH_ENDPOINT = studioApiPath("studio/health");
 const VIBE64_ENDPOINT = studioApiPath("vibe64");
 const PROJECT_SELECTION_ENDPOINT = `${VIBE64_ENDPOINT}/projects`;
-const PROJECT_FOUNDATION_ENDPOINT = `${VIBE64_ENDPOINT}/project-foundation`;
 const PROJECT_TEMPLATES_ENDPOINT = `${VIBE64_ENDPOINT}/project-templates`;
 const ENV_ENDPOINT = `${VIBE64_ENDPOINT}/env`;
 const ENV_USER_VALUES_ENDPOINT = `${ENV_ENDPOINT}/user-values`;
 const PREVIEW_IDENTITIES_ENDPOINT = `${VIBE64_ENDPOINT}/preview-identities`;
-
-function projectFoundationQueryKey(surfaceId, ownershipFilter, projectSlug) {
-  return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "project-foundation"];
-}
 
 function projectTemplatesQueryKey(surfaceId, ownershipFilter, projectSlug) {
   return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "project-templates"];
@@ -62,7 +57,6 @@ export {
   VIBE64_ENV_API_SUFFIX,
   VIBE64_ENV_USER_VALUES_API_SUFFIX,
   VIBE64_PREVIEW_IDENTITIES_API_SUFFIX,
-  PROJECT_FOUNDATION_ENDPOINT,
   PROJECT_SELECTION_ENDPOINT,
   PROJECT_TEMPLATES_ENDPOINT,
   ENV_ENDPOINT,
@@ -71,7 +65,6 @@ export {
   TARGET_PROJECT_API_SUFFIX,
   TARGET_PROJECT_ENDPOINT,
   STUDIO_HEALTH_ENDPOINT,
-  projectFoundationQueryKey,
   projectSelectionQueryKey,
   projectTemplatesQueryKey,
   envQueryKey,

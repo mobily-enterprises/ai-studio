@@ -17,7 +17,6 @@ const ALLOWED_OPERATIONS = new Set([
   "github-toolchain",
   "github-workflow-command",
   "managed-service",
-  "repair-managed-project-permissions",
   "vibe64-command"
 ]);
 const ALLOWED_COMMANDS = new Set([
@@ -79,10 +78,6 @@ async function main() {
   if (!ALLOWED_OPERATIONS.has(operation)) {
     throw new Error("Vibe64 exec helper rejected an unknown operation.");
   }
-  if (operation === "repair-managed-project-permissions") {
-    handleManagedProjectPermissionRepair(payload);
-    return;
-  }
   if (operation === "deployment-service") {
     handleDeploymentServiceOperation(payload);
     return;
@@ -106,6 +101,7 @@ async function main() {
   assertExpectedId("gid", payload.gid, targetUser.gid);
   const owner = resolveOwnerUser();
   assertEnabledForVibe64(owner, username);
+  assertUserInGroup(targetUser.username, VIBE64_GROUP);
   const cwd = resolveAllowedCwd(payload.cwd || "", owner.username, {
     operation,
     targetUser
@@ -116,6 +112,7 @@ async function main() {
     ? Buffer.from(String(payload.inputBase64), "base64")
     : undefined;
 
+  process.umask(0o007);
   const child = spawnSync("runuser", [
     "-u",
     targetUser.username,
@@ -159,40 +156,6 @@ function handleUserManagementOperation(operation = "", payload = {}, username = 
     resolveOsUser(username);
   }
   addUserToGroup(username, VIBE64_GROUP);
-}
-
-function handleManagedProjectPermissionRepair(payload = {}) {
-  const owner = resolveOwnerUser();
-  ensureGroup(VIBE64_GROUP);
-  const sourcePath = resolveAllowedProjectPath(payload.path || "", owner.username);
-  if (!existsSync(sourcePath)) {
-    return;
-  }
-  runRootCommand("chgrp", [
-    "-hR",
-    VIBE64_GROUP,
-    sourcePath
-  ]);
-  runRootCommand("find", [
-    sourcePath,
-    "-type",
-    "d",
-    "-exec",
-    "chmod",
-    "g+rwx,g+s",
-    "{}",
-    "+"
-  ]);
-  runRootCommand("find", [
-    sourcePath,
-    "-type",
-    "f",
-    "-exec",
-    "chmod",
-    "g+rwX",
-    "{}",
-    "+"
-  ]);
 }
 
 function handleDeploymentServiceOperation(payload = {}) {
@@ -542,6 +505,16 @@ function resolveOsUser(username = "") {
 function resolveOwnerUser() {
   const sudoUser = safeUsername(process.env.SUDO_USER || "");
   return resolveOsUser(sudoUser);
+}
+
+function assertUserInGroup(username = "", groupName = "") {
+  const result = spawnSync("id", ["-nG", username], {
+    encoding: "utf8"
+  });
+  const groups = String(result.stdout || "").trim().split(/\s+/u);
+  if (result.status !== 0 || !groups.includes(groupName)) {
+    throw new Error(`OS user is not enabled for the shared Vibe64 group: ${username}`);
+  }
 }
 
 function tryResolveOsUser(username = "") {

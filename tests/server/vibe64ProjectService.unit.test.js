@@ -66,32 +66,6 @@ test("a catalog project can be created and selected without project-type setup",
   });
 });
 
-test("foundation state recommends Genesis adoption but never blocks ordinary chat", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const service = projectService(targetRoot);
-
-    assert.deepEqual(await service.requireProjectFoundation(), {
-      genesisReady: false,
-      ok: true,
-      ready: true,
-      status: "adoption-recommended"
-    });
-
-    await mkdir(path.join(targetRoot, "genesis"), {
-      recursive: true
-    });
-    await Promise.all([
-      writeFile(path.join(targetRoot, "genesis", "blueprint.md"), "# Blueprint\n", "utf8"),
-      writeFile(path.join(targetRoot, "genesis", "stack.md"), "# Stack\n", "utf8")
-    ]);
-
-    const response = await service.readProjectFoundation();
-    assert.equal(response.ok, true);
-    assert.equal(response.genesisReady, true);
-    assert.equal(response.status, "genesis-ready");
-  });
-});
-
 test("Env is user-owned and reaches Genesis sessions without an adapter", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot, {
@@ -116,7 +90,7 @@ test("Env is user-owned and reaches Genesis sessions without an adapter", async 
 
     assert.equal(saved.ok, true);
     assert.equal(saved.env.records.find((record) => record.key === "BOOKS_API_KEY").value, "********");
-    assert.deepEqual(await service.projectUserEnvironment({
+    assert.deepEqual(await service.projectExecutionEnvironment({
       scope: "dev"
     }), {
       BOOKS_API_KEY: "secret-value",
@@ -147,8 +121,11 @@ test("reserved Vibe64 Env names require an explicit Genesis Stack declaration", 
 test("Genesis Stack resources define expected Env names without technology checks in Vibe64", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot, {
-      inspectLaunch() {
+      inspectEnvironment() {
         return {
+          components: ["example-stack"],
+          environmentDefaults: [],
+          files: [],
           resources: [{
             component: "example-stack",
             resource: {
@@ -156,9 +133,11 @@ test("Genesis Stack resources define expected Env names without technology check
                 allowEmpty: [],
                 required: ["EXAMPLE_ORIGIN", "VIBE64_EXAMPLE_TOKEN"]
               }],
-              id: "example-service"
+              id: "example-service",
+              kind: "example-service"
             }
-          }]
+          }],
+          status: "missing-inputs"
         };
       }
     });
@@ -180,6 +159,91 @@ test("Genesis Stack resources define expected Env names without technology check
       }
     });
     assert.equal(saved.ok, true);
+  });
+});
+
+test("a host resource provider satisfies Genesis resources and projects the resolved Env", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await mkdir(path.join(targetRoot, ".git", "info"), {
+      recursive: true
+    });
+    const providerCalls = [];
+    const service = projectService(targetRoot, {
+      inspectEnvironment() {
+        return {
+          components: ["example-stack"],
+          environmentDefaults: [{
+            name: "DB_CLIENT",
+            sources: ["component:example-stack"],
+            value: "mysql2"
+          }],
+          files: [{ format: "dotenv", path: ".env" }],
+          resources: [{
+            component: "example-stack",
+            resource: {
+              environmentAlternatives: [{
+                allowEmpty: [],
+                required: ["DB_HOST", "DB_PASSWORD"]
+              }],
+              id: "database",
+              kind: "mysql"
+            }
+          }],
+          status: "missing-inputs"
+        };
+      }
+    });
+    const released = [];
+    service.setResourceEnvironmentProvider({
+      async environmentForResources(input) {
+        providerCalls.push(input);
+        return {
+          environment: {
+            DB_HOST: "127.0.0.1",
+            DB_PASSWORD: "managed-secret"
+          }
+        };
+      },
+      async removeSessionResources(input) {
+        released.push(input);
+        return { ok: true };
+      }
+    });
+
+    const read = await service.readEnv();
+    assert.deepEqual(read.env.records.map((record) => record.key), ["DB_HOST", "DB_PASSWORD"]);
+    assert.equal(read.env.records.every((record) => record.valuePresent === false), true);
+    assert.equal(JSON.stringify(read).includes("managed-secret"), false);
+
+    assert.deepEqual(await service.projectExecutionEnvironment(), {
+      DB_CLIENT: "mysql2"
+    });
+    assert.equal(providerCalls.length, 0);
+
+    const store = await service.createSessionStore();
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "session-1"
+    });
+    await store.writeMetadataValue("session-1", "source_path", targetRoot);
+
+    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId: "session-1" }), {
+      DB_CLIENT: "mysql2",
+      DB_HOST: "127.0.0.1",
+      DB_PASSWORD: "managed-secret"
+    });
+    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
+    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
+    assert.match(await readFile(path.join(targetRoot, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
+    assert.equal(providerCalls.length, 1);
+    assert.equal(providerCalls[0].sessionId, "session-1");
+    assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
+    assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);
+    assert.equal(Object.hasOwn(providerCalls[0], "environment"), false);
+
+    assert.deepEqual(await service.releaseSessionResources({ sessionId: "session-1" }), { ok: true });
+    assert.equal(released.length, 1);
+    assert.equal(released[0].sessionId, "session-1");
   });
 });
 

@@ -1,11 +1,12 @@
 {
   "name": "@local/vibe64-project",
   "version": "0.1.0",
-  "description": "Owns project selection, Genesis foundations, Env values, and session runtime creation.",
+  "description": "Owns project selection, trusted starters, Env values, and session runtime creation.",
   "private": true,
   "type": "module",
   "exports": {
-    "./server/actions": "./src/server/actions.js"
+    "./server/actions": "./src/server/actions.js",
+    "./server/managedProject": "./src/server/managedProject.js"
   },
   "jskit": {
     "kind": "runtime",
@@ -35,11 +36,15 @@
         "surfaces": [
           {
             "subpath": "./server/registerRoutes",
-            "summary": "Registers project selection, Genesis foundation, and Env routes."
+            "summary": "Registers project selection, trusted starter, and Env routes."
           },
           {
             "subpath": "./server/service",
-            "summary": "Provides project selection, Genesis foundation state, Env state, and plain session runtimes."
+            "summary": "Provides project selection, trusted starters, Env state, and plain session runtimes."
+          },
+          {
+            "subpath": "./server/managedProject",
+            "summary": "Atomically prepares a blank Genesis working tree and its Vibe64-managed canonical Git repository."
           }
         ],
         "containerTokens": {

@@ -19,7 +19,6 @@ const RUNTIME_CONFIG_PHASES = Object.freeze({
   INSTALL: "install",
   MIGRATE: "migrate",
   PREVIEW: "preview",
-  SEED: "seed",
   SERVER: "server"
 });
 const RUNTIME_CONFIG_TARGETS = Object.freeze({

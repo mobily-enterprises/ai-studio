@@ -11,7 +11,6 @@
 <script setup>
 import StudioAppShellLayout from "@/components/StudioAppShellLayout.vue";
 import { RouterView } from "vue-router";
-import ProjectFoundationGate from "@/components/studio/ProjectFoundationGate.vue";
 import ProjectSelectionGate from "@/components/studio/ProjectSelectionGate.vue";
 import Vibe64AuthSettingsButton from "@/components/studio/Vibe64AuthSettingsButton.vue";
 import Vibe64SessionPanel from "@/components/studio/Vibe64SessionPanel.vue";
@@ -26,9 +25,6 @@ const {
   handleProjectSelectionError,
   handleProjectSelectionMissing,
   handleProjectSelectionReady,
-  handleProjectFoundationError,
-  handleProjectFoundationMissing,
-  handleProjectFoundationReady,
   mdiChevronDown,
   mdiChevronRight,
   mobileProjectAction,
@@ -50,13 +46,6 @@ const {
   targetFolderName
 } = useVibe64AppPage();
 
-function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionSlotProps = {}) {
-  const targetProject = projectGateSlotProps?.targetProject || {};
-  return {
-    ...projectSelectionSlotProps?.projectSelection?.currentProject,
-    ...targetProject
-  };
-}
 </script>
 
 <template>
@@ -182,29 +171,21 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
           @ready="handleProjectSelectionReady"
         >
           <template #default="projectSelectionSlotProps">
-            <ProjectFoundationGate
-              @error="handleProjectFoundationError"
-              @missing="handleProjectFoundationMissing"
-              @ready="handleProjectFoundationReady"
+            <Vibe64SessionPanel
+              :chat-collapsed="chatCollapsed"
+              :project-context="projectSelectionSlotProps?.projectSelection?.currentProject || {}"
+              :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
+              :project-pane="projectPane"
+              @title-change="emitPageTitle"
+              @project-attention="showProjectPane"
             >
-              <template #default="projectGateSlotProps">
-                <Vibe64SessionPanel
-                  :chat-collapsed="chatCollapsed"
-                  :project-context="projectContextForDashboard(projectGateSlotProps, projectSelectionSlotProps)"
-                  :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
-                  :project-pane="projectPane"
-                  @title-change="emitPageTitle"
-                  @project-attention="showProjectPane"
-                >
-                  <template #dashboard="dashboardSlotProps">
-                    <RouterView
-                      v-if="dashboardRouteActive"
-                      :dashboard-context="dashboardSlotProps?.dashboardContext || {}"
-                    />
-                  </template>
-                </Vibe64SessionPanel>
+              <template #dashboard="dashboardSlotProps">
+                <RouterView
+                  v-if="dashboardRouteActive"
+                  :dashboard-context="dashboardSlotProps?.dashboardContext || {}"
+                />
               </template>
-            </ProjectFoundationGate>
+            </Vibe64SessionPanel>
           </template>
         </ProjectSelectionGate>
       </div>
@@ -254,7 +235,6 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
   overflow: hidden;
 }
 
-.studio-screen__gate-scroll :deep(.project-foundation-gate),
 .studio-screen__gate-scroll :deep(.project-selection-gate) {
   display: flex;
   flex: 1 1 auto;
@@ -262,7 +242,7 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
   min-height: 0;
 }
 
-.studio-screen__gate-scroll :deep(.project-foundation-gate .studio-ai-sessions) {
+.studio-screen__gate-scroll :deep(.project-selection-gate .studio-ai-sessions) {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -471,7 +451,7 @@ function projectContextForDashboard(projectGateSlotProps = {}, projectSelectionS
 }
 
 @media (min-width: 981px) {
-  .studio-screen__gate-scroll :deep(.project-foundation-gate .studio-ai-sessions--autopilot) {
+  .studio-screen__gate-scroll :deep(.project-selection-gate .studio-ai-sessions--autopilot) {
     padding: 0;
   }
 }

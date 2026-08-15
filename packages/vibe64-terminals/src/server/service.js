@@ -52,6 +52,7 @@ import {
 import {
   runVibe64AgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
+import { createWorkspaceSetupRunner } from "./workspaceSetup.js";
 
 const PROJECT_RUNTIME_DORMANT_CLOSE_AFTER_MS = 30 * 60 * 1000;
 const PROJECT_RUNTIME_DORMANCY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -253,6 +254,27 @@ function createService({
     throw new TypeError("createService requires feature.vibe64-project.service.");
   }
 
+  const workspaceSetup = createWorkspaceSetupRunner({
+    projectService
+  });
+  const publishAgentSessionChanged = async (sessionId, payload = {}) => {
+    const publisher = publishSessionChanged.agentTerminal;
+    if (typeof publisher === "function") {
+      await publisher(sessionId, payload);
+    }
+    if (String(payload?.reason || "").trim() !== "codex-app-server-turn-idle") {
+      return;
+    }
+    void prepareWorkspaceSetup(sessionId, {
+      publish: true
+    }).catch((error) => {
+      vibe64SessionDebugLog("server.terminals.workspaceSetup.afterTurn.error", {
+        error: vibe64SessionDebugError(error),
+        sessionId
+      });
+    });
+  };
+
   const codexGitCommand = createCodexGitCommandService({
     authorizeActorAccess: authorizeCodexGitActorAccess,
     env,
@@ -261,6 +283,10 @@ function createService({
   });
   const launchTarget = createLaunchTargetTerminalController({
     env,
+    ensureWorkspacePrepared: (sessionId, context = {}) => prepareWorkspaceSetup(sessionId, {
+      ...context,
+      publish: true
+    }),
     projectService,
     publishSessionChanged: publishSessionChanged.launchTarget
   });
@@ -280,7 +306,7 @@ function createService({
     codexGitCommand,
     env,
     projectService,
-    publishSessionChanged: publishSessionChanged.agentTerminal
+    publishSessionChanged: publishAgentSessionChanged
   });
   const sessionAgent = createSessionAgentManager({
     providers: [createCodexSessionAgentProvider({
@@ -342,6 +368,51 @@ function createService({
       },
       reason
     });
+  }
+
+  async function prepareWorkspaceSetup(sessionId = "", {
+    publish = false,
+    retry = false,
+    runtime: existingRuntime = null,
+    session: existingSession = null
+  } = {}) {
+    const runtime = existingRuntime || await projectService.createRuntime({
+      inspectSource: false
+    });
+    const session = existingSession || await runtime.getSession(sessionId, {
+      inspectSource: false
+    });
+    const setup = await workspaceSetup.start({
+      retry,
+      runtime,
+      session
+    });
+    const setupChanged = String(setup.state?.updatedAt || "") !==
+      String(session.workspaceSetup?.updatedAt || "");
+    if (publish && setupChanged && typeof publishSessionChanged.agentTerminal === "function") {
+      await publishSessionChanged.agentTerminal(sessionId, {
+        reason: "workspace-setup-updated",
+        session: await runtime.getSession(sessionId, {
+          inspectSource: false
+        })
+      });
+      if (setup.completion) {
+        void setup.completion.then(async () => {
+          await publishSessionChanged.agentTerminal(sessionId, {
+            reason: "workspace-setup-completed",
+            session: await runtime.getSession(sessionId, {
+              inspectSource: false
+            })
+          });
+        }).catch((error) => {
+          vibe64SessionDebugLog("server.terminals.workspaceSetup.publish.error", {
+            error: vibe64SessionDebugError(error),
+            sessionId
+          });
+        });
+      }
+    }
+    return setup;
   }
 
   function projectRuntimeContext() {
@@ -703,6 +774,18 @@ function createService({
   const service = {
     createSessionSource(input = {}) {
       return createManagedSessionSource(input);
+    },
+
+    prepareWorkspaceSetup(sessionId, options = {}) {
+      return prepareWorkspaceSetup(sessionId, options);
+    },
+
+    workspaceSetupIsRunning(sessionId = "") {
+      return workspaceSetup.isRunning(sessionId);
+    },
+
+    waitForWorkspaceSetup(sessionId = "") {
+      return workspaceSetup.wait(sessionId);
     },
 
     async close() {

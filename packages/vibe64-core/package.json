@@ -30,9 +30,7 @@
     "./server/terminalWebSocketRoutes": "./src/server/terminalWebSocketRoutes.js",
     "./server/vibe64MembershipStore": "./src/server/vibe64MembershipStore.js",
     "./server/projectState": "./src/server/projectState.js",
-    "./server/projectApplication": "./src/server/projectApplication.js",
     "./server/projectRecordMetadata": "./src/server/projectRecordMetadata.js",
-    "./server/projectLifecycle": "./src/server/projectLifecycle.js",
     "./server/projectRuntimeOpenState": "./src/server/projectRuntimeOpenState.js",
     "./server/projectRuntimeIdentity": "./src/server/projectRuntimeIdentity.js",
     "./server/projectRequestContext": "./src/server/projectRequestContext.js",
@@ -41,8 +39,7 @@
     "./server/previewAuth": "./src/server/previewAuth.js",
     "./server/runtimeConfig": "./src/server/runtimeConfig.js",
     "./server/envUserValues": "./src/server/envUserValues.js",
-    "./shared": "./src/shared/index.js",
-    "./shared/projectApplication": "./src/shared/projectApplication.js"
+    "./shared": "./src/shared/index.js"
   },
   "jskit": {
     "kind": "runtime",

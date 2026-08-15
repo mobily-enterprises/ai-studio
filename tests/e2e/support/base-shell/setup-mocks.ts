@@ -3,8 +3,7 @@ import {
   bootstrapPayload,
   currentAppPayload,
   targetRoot,
-  readyProjectSelectionPayload,
-  readyProjectFoundationPayload
+  readyProjectSelectionPayload
 } from "../base-shell-data";
 import {
   fulfillJson,
@@ -145,9 +144,6 @@ async function mockProjectGateReady(page) {
   });
   await routeApiEndpoint(page, "/studio/current-app", async (route) => {
     await fulfillJson(route, currentAppPayload);
-  });
-  await routeApiEndpoint(page, "/vibe64/project-foundation", async (route) => {
-    await fulfillJson(route, readyProjectFoundationPayload);
   });
   await routeApiEndpoint(page, "/vibe64/env", async (route) => {
     await fulfillJson(route, envPayload);

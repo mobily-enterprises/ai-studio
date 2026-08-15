@@ -25,9 +25,6 @@ import {
   managedPreviewTarget
 } from "@local/studio-terminal-core/shared";
 import {
-  repairManagedSourcePermissions
-} from "@local/vibe64-execution/server";
-import {
   isLoopbackAddress,
   normalizeHostName
 } from "@local/vibe64-core/server/localStudioRequest";
@@ -77,6 +74,7 @@ import {
 } from "./terminalShared.js";
 import {
   projectExecutionEnvFromRecords,
+  loadProjectExecutionEnv,
   loadProjectExecutionEnvRecords,
   executionEnvFingerprint
 } from "./projectExecutionEnv.js";
@@ -88,6 +86,7 @@ import {
 } from "./previewIdentityCommand.js";
 import {
   createGenesisLaunchTargetTerminalSpec,
+  inspectGenesisWorkspaceSetupForContext,
   listGenesisLaunchTargets
 } from "./genesisLaunchTargets.js";
 
@@ -301,22 +300,6 @@ async function gitOutputOrEmpty(root = "", args = [], options = {}) {
   } catch {
     return "";
   }
-}
-
-function scheduleLaunchManagedSourcePermissionRepair(sourcePath = "") {
-  void repairManagedSourcePermissions([sourcePath]).then((result) => {
-    if (result?.ok === false) {
-      vibe64SessionDebugLog("server.launchTargetTerminal.permissionRepair.failed", {
-        error: result.error || "Managed source permission repair failed.",
-        path: result.path || sourcePath
-      });
-    }
-  }).catch((error) => {
-    vibe64SessionDebugLog("server.launchTargetTerminal.permissionRepair.error", {
-      error: vibe64SessionDebugError(error),
-      path: sourcePath
-    });
-  });
 }
 
 async function gitHead(root = "", options = {}) {
@@ -597,11 +580,32 @@ async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
   });
 }
 
-async function createLaunchContext(projectService, sessionId) {
+async function createLaunchContext(projectService, sessionId, {
+  awaitWorkspacePrepared = false,
+  ensureWorkspacePrepared = null
+} = {}) {
   const runtime = await projectService.createRuntime();
-  const session = await runtime.getSession(sessionId);
+  let session = await runtime.getSession(sessionId);
   assertSourceInspectionHealthy(session.sourceInspection);
+  if (typeof ensureWorkspacePrepared === "function") {
+    const setup = await ensureWorkspacePrepared(sessionId, {
+      runtime,
+      session
+    });
+    if (awaitWorkspacePrepared && setup?.completion) {
+      await setup.completion;
+    }
+    session = await runtime.getSession(sessionId);
+  }
   const targetRoot = sessionTerminalCwd(session, projectService);
+  const projectEnvironment = await loadProjectExecutionEnv({
+    projectService,
+    session,
+    sourcePath: targetRoot,
+    target: "launch",
+    targetRoot: session.targetRoot,
+    worktreePath: targetRoot
+  });
   const runtimeTargetRoot = String(
     (typeof projectService?.currentTargetRoot === "function"
       ? projectService.currentTargetRoot()
@@ -629,6 +633,7 @@ async function createLaunchContext(projectService, sessionId) {
   return {
     config: {},
     previewApplicationIdentities: previewIdentitySettings.identities || [],
+    projectEnvironment,
     projectsRoot: projectService?.selectedProject?.projectsRoot || "",
     runtimeTargetRoot,
     runtime,
@@ -641,8 +646,66 @@ async function createLaunchContext(projectService, sessionId) {
   };
 }
 
-async function listLaunchTargets(context) {
-  return listGenesisLaunchTargets(context);
+async function listLaunchTargets(context, {
+  inspectLaunch,
+  inspectWorkspaceSetup
+} = {}) {
+  const [targets, setup] = await Promise.all([
+    listGenesisLaunchTargets(context, inspectLaunch ? { inspect: inspectLaunch } : {}),
+    inspectGenesisWorkspaceSetupForContext(
+      context,
+      inspectWorkspaceSetup ? { inspect: inspectWorkspaceSetup } : {}
+    )
+  ]);
+  const disabledReason = workspaceSetupLaunchDisabledReason(context.session, setup);
+  if (!disabledReason) {
+    return targets;
+  }
+  return targets.map((target) => ({
+    ...target,
+    available: false,
+    disabledReason
+  }));
+}
+
+function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
+  const stored = session.workspaceSetup || {};
+  const storedStatus = String(stored.status || "").trim();
+  const inspectionStatus = String(inspection?.status || "").trim();
+
+  if (!inspectionStatus) {
+    return storedStatus === "running"
+      ? `Workspace preparation is running${stored.currentLabel ? `: ${stored.currentLabel}` : "."}`
+      : ["ambiguous", "failed"].includes(storedStatus)
+        ? String(stored.diagnostic || "Workspace preparation must be fixed before managed preview can start.").trim()
+        : "";
+  }
+  if (inspectionStatus === "unconfigured") {
+    return "";
+  }
+
+  const diagnostic = (Array.isArray(inspection?.diagnostics) ? inspection.diagnostics : [])
+    .map((entry) => String(
+      typeof entry === "string" ? entry : entry?.message || entry?.code || ""
+    ).trim())
+    .find(Boolean) || "";
+  if (inspectionStatus !== "ready") {
+    return diagnostic || "Genesis workspace preparation is not ready.";
+  }
+
+  const recipeHash = String(inspection?.recipeHash || "").trim();
+  const storedRecipeHash = String(stored.recipeHash || "").trim();
+  const currentRecipe = Boolean(recipeHash && storedRecipeHash === recipeHash);
+  if (currentRecipe && storedStatus === "succeeded") {
+    return "";
+  }
+  if (currentRecipe && storedStatus === "running") {
+    return `Workspace preparation is running${stored.currentLabel ? `: ${stored.currentLabel}` : "."}`;
+  }
+  if (currentRecipe && ["ambiguous", "failed"].includes(storedStatus)) {
+    return String(stored.diagnostic || "Workspace preparation must be fixed before managed preview can start.").trim();
+  }
+  return "Workspace preparation is pending.";
 }
 
 async function createLaunchTargetSpec(input = {}) {
@@ -1857,6 +1920,7 @@ async function resolveLaunchPreviewStatus({
 }
 
 function createLaunchTargetTerminalController({
+  ensureWorkspacePrepared = null,
   env = process.env,
   projectService,
   publishSessionChanged = async () => null,
@@ -2036,7 +2100,10 @@ function createLaunchTargetTerminalController({
 
     async startTerminal(sessionId, input = {}) {
       return vibe64Result(async () => withLaunchStartLock(sessionId, async () => {
-        const context = await createLaunchContext(projectService, sessionId);
+        const context = await createLaunchContext(projectService, sessionId, {
+          awaitWorkspacePrepared: true,
+          ensureWorkspacePrepared
+        });
         const cwd = sessionTerminalCwd(context.session, projectService);
         let forceRestart = input.forceRestart === true;
         let launchInput = normalizeLaunchInput(input.launchInput);
@@ -2256,7 +2323,6 @@ function createLaunchTargetTerminalController({
               namespace,
               namespaceLimitPrefix: namespace,
               onClose: async (event) => {
-                scheduleLaunchManagedSourcePermissionRepair(cwd);
                 await writePreviewDiagnostic(context.session, {
                   ...diagnosticBase,
                   commandPreview,
@@ -2282,7 +2348,6 @@ function createLaunchTargetTerminalController({
                 }
               },
               onStop: async (event) => {
-                scheduleLaunchManagedSourcePermissionRepair(cwd);
                 await writePreviewDiagnostic(context.session, {
                   ...diagnosticBase,
                   commandPreview,
@@ -2592,5 +2657,6 @@ export {
   launchRestartState,
   listLaunchTargets,
   previewPublicOriginForLaunch,
+  workspaceSetupLaunchDisabledReason,
   createLaunchTargetTerminalController
 };

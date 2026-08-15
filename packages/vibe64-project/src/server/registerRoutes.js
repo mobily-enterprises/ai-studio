@@ -49,15 +49,12 @@ function registerRoutes(app, {
   });
   routes.serviceRoute("GET", "/project-templates", {
     query: projectTemplatesReadInputValidator,
-    summary: "List project foundations."
+    summary: "List trusted starter projects."
   }, (request) => service().readProjectTemplates(withUser(request, routes.requestQuery(request))));
-  routes.serviceRoute("GET", "/project-foundation", {
-    summary: "Read the installed Genesis foundation."
-  }, () => service().readProjectFoundation());
   routes.serviceRoute("POST", "/project-templates/:templateId/apply", {
     body: projectTemplateApplyInputValidator,
     params: projectTemplateParamsValidator,
-    summary: "Apply a project foundation."
+    summary: "Apply a trusted starter project."
   }, (request) => service().applyProjectTemplate(
     request.params?.templateId,
     withUser(request, routes.requestBody(request))

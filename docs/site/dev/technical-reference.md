@@ -53,9 +53,15 @@ The files have deliberately different jobs:
 - `.genesis/verification.json` is present only after declared checks pass. It
   records exact code and Stack hashes; it is evidence, not a correctness claim.
 
-`genesis init` creates a technology-neutral foundation. `genesis adopt`
+`genesis init` creates a technology-neutral Genesis project. `genesis adopt`
 preserves an existing implementation and produces the prompt used to describe
 it. Neither operation needs a Vibe64 project type.
+
+A newly initialized blank project starts chat with the Genesis `start` prompt.
+The agent asks what the application is for, records the resulting product intent
+in the Blueprint, and then offers compatible Stack choices from the installed
+Genesis catalog. Vibe64 does not carry a separate onboarding prompt or choose a
+technology on the user's behalf.
 
 ## Vibe64-owned runtime state
 
@@ -140,6 +146,7 @@ Genesis owns:
 - prompt and focused context generation;
 - selected Stack guidance and Agent Skills;
 - generic resource declarations;
+- optional workspace-setup recipes with exact argument arrays;
 - argument-safe verification commands;
 - optional launch targets with abstract runtime requirements;
 - Machine and Program City generation.
@@ -157,6 +164,29 @@ Vibe64 does not infer a framework launch command for a Genesis project. If the
 selected Stack has no launch declaration, preview is unavailable with a clear
 diagnostic. An unknown runtime requirement is rejected rather than mapped to a
 similar host tool.
+
+Workspace setup and Launch are separate contracts. When Stack declares setup,
+Vibe64 runs its ordered commands through the managed execution gateway and
+records success against that exact recipe. Merely reading preview status never
+starts setup or a process. Launch remains pending until the current setup recipe
+has succeeded; a Stack with no setup recipe is simply unconfigured rather than
+failed. Component conflicts are reported instead of interleaving competing
+install commands.
+
+## Project environment projection
+
+Genesis Stack components declare resource kinds, environment variable names,
+and optional generated environment-file paths. They never supply or inspect
+secret values. Local Vibe64 uses the user's project Env; Vibe64 Online may
+provision declared MySQL or PostgreSQL resources and supply their values. Other
+Genesis hosts can satisfy the same declarations using their own environment
+mechanism.
+
+When Stack requests a dotenv projection, Vibe64 writes it deterministically
+with mode `0600`. It first protects the generated path and its preserved backup
+names in the repository's local `.git/info/exclude`, so secrets are never added
+to source history by an ordinary Git operation. An existing user-owned file is
+preserved before Vibe64 takes ownership. Symbolic-link paths are rejected.
 
 The browser toolchain is a Vibe64 release contract. Vibe64 exposes its exact
 managed Playwright version and browser path; project commands run with browser

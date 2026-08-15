@@ -1,8 +1,4 @@
 import {
-  readFile
-} from "node:fs/promises";
-
-import {
   CODEX_APP_SERVER_PROVIDER_ID,
   codexAppServerRequestIsInvalid,
   codexCliResumeCommand
@@ -24,8 +20,36 @@ const CODEX_SESSION_REASONING_SUMMARY = "concise";
 const CODEX_SESSION_APPROVAL_POLICY = "never";
 const CODEX_SESSION_SANDBOX = "danger-full-access";
 const CODEX_APP_SERVER_CONTEXT_TURN_TIMEOUT_MS = 60000;
-const CODEX_CONTEXT_RECOVERY_PROMPT_URL = new URL("./prompts/codex_context_recovery.txt", import.meta.url);
-let codexContextRecoveryTemplatePromise = null;
+const CODEX_CONTEXT_RECOVERY_TEMPLATE = `VIBE64_CONTEXT_RECOVERY: Codex provider thread recovery for Vibe64.
+
+Vibe64 tried to resume the previous Codex provider thread, but Codex app-server reported that it is not available anymore.
+
+Previous provider thread:
+{{previousThreadId}}
+
+Fresh provider thread:
+{{newThreadId}}
+
+Resume error:
+{{resumeError}}
+
+Session:
+{{sessionId}}
+
+Workdir:
+{{workdir}}
+
+The provider-side transcript for the previous thread is missing. The persisted Vibe64 UI conversation below is the authoritative user-visible history for this session.
+
+Use this conversation as context for future routed Vibe64 turns. If details are missing, work them out from the repository files, git state, and code changes in the session source. Do not assume the provider transcript is complete.
+
+Do not inspect files, run commands, or modify files for this recovery briefing.
+
+Reply exactly:
+Vibe64 Codex context restored.
+
+Persisted Vibe64 UI conversation:
+{{conversationLog}}`;
 
 function normalizeWorkdir(value = "") {
   return normalizeAgentText(value);
@@ -79,7 +103,8 @@ function codexAppServerTurnSettings({
     cwd: normalizedCwd,
     model: normalizeAgentText(model) || effectiveSettings.model,
     sandboxPolicy: {
-      type: "dangerFullAccess"
+      networkAccess: "enabled",
+      type: "externalSandbox"
     }
   };
   if (effectiveSettings.request.reasoning !== false) {
@@ -141,13 +166,6 @@ function codexAppServerTurnPrompt({
     prompt,
     promptLabel: normalizeAgentText(promptLabel) || "Real Vibe64 routed turn"
   });
-}
-
-function codexContextRecoveryTemplate() {
-  if (!codexContextRecoveryTemplatePromise) {
-    codexContextRecoveryTemplatePromise = readFile(CODEX_CONTEXT_RECOVERY_PROMPT_URL, "utf8");
-  }
-  return codexContextRecoveryTemplatePromise;
 }
 
 function renderCodexContextRecoveryTemplate(template = "", values = {}) {
@@ -223,7 +241,7 @@ async function codexContextRecoveryPrompt({
   const conversationLog = typeof runtime?.store?.readConversationLog === "function"
     ? await runtime.store.readConversationLog(sessionId)
     : [];
-  return renderCodexContextRecoveryTemplate(await codexContextRecoveryTemplate(), {
+  return renderCodexContextRecoveryTemplate(CODEX_CONTEXT_RECOVERY_TEMPLATE, {
     conversationLog: formatCodexRecoveryConversationLog(conversationLog),
     newThreadId: normalizeAgentText(newThreadId),
     previousThreadId: normalizeAgentText(previousThreadId),

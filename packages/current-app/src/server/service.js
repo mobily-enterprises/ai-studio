@@ -105,8 +105,8 @@ function createService({
   }
 
   async function projectEnvironment(input = {}) {
-    const userEnvironment = typeof projectService.projectUserEnvironment === "function"
-      ? await projectService.projectUserEnvironment({
+    const userEnvironment = typeof projectService.projectExecutionEnvironment === "function"
+      ? await projectService.projectExecutionEnvironment({
           scope: "dev",
           sessionId: input.sessionId
         })

@@ -161,12 +161,6 @@ function projectRepositoryMetadataFromInput(input = {}, {
   defaultMode = ""
 } = {}) {
   const source = isPlainObject(input) ? input : {};
-  if (Object.hasOwn(source, "applicationMode")) {
-    throw projectRepositoryMetadataError(
-      "vibe64_project_metadata_field_unsupported",
-      "Project applicationMode is creation input, not stored project metadata."
-    );
-  }
   if (
     Object.hasOwn(source.repository?.github || {}, "defaultBranch") ||
     Object.hasOwn(source.repository?.github || {}, "source")

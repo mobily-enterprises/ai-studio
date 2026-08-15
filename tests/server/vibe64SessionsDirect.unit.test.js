@@ -175,6 +175,52 @@ test("live workspace preparation prevents retry and close races", async () => {
   assert.equal(retried.code, "vibe64_workspace_setup_running");
 });
 
+test("closing a session releases its managed resources after terminals stop", async () => {
+  const calls = [];
+  const session = {
+    sessionId: "session-1",
+    sourcePath: "/srv/session-1/source",
+    status: "active"
+  };
+  const runtime = {
+    async abandonSession() {
+      calls.push("abandon");
+      return { ...session, status: "abandoned" };
+    },
+    async clearSessionClosing() {},
+    async getSession() {
+      return session;
+    },
+    async markSessionClosing() {
+      calls.push("closing");
+    }
+  };
+  const service = createService({
+    projectService: {
+      async createRuntime() {
+        return runtime;
+      },
+      async releaseSessionResources(input) {
+        calls.push(`resources:${input.sessionId}`);
+        return { ok: true };
+      }
+    },
+    terminalService: {
+      async closeSessionTerminals() {
+        calls.push("terminals");
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const result = await service.abandonSession("session-1");
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["closing", "terminals", "resources:session-1", "abandon"]);
+});
+
 test("new sessions publish running workspace preparation and its eventual result", async () => {
   const publications = [];
   let finishSetup;
@@ -206,19 +252,12 @@ test("new sessions publish running workspace preparation and its eventual result
     projectService: {
       async createRuntime() {
         return runtime;
-      },
-      async requireProjectFoundation() {
-        return { ok: true };
       }
     },
     async publishSessionChanged(...args) {
       publications.push(args);
     },
-    terminalService: {
-      async ensureAgentSession() {
-        return { ok: true };
-      }
-    },
+    terminalService: {},
     workspaceSetupRunner: {
       isRunning: () => true,
       start() {

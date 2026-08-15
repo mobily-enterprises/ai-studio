@@ -1,7 +1,8 @@
 import path from "node:path";
 
 import {
-  inspectGenesisLaunch
+  inspectGenesisLaunch,
+  inspectGenesisWorkspaceSetup
 } from "@local/vibe64-genesis/server";
 import {
   sessionSourcePath
@@ -65,19 +66,43 @@ function genesisLaunchProjectRoot(context = {}) {
   return sessionSourcePath(context.session || {});
 }
 
+async function inspectGenesisForContext(context = {}, inspect, unconfigured) {
+  const projectRoot = genesisLaunchProjectRoot(context);
+  if (!projectRoot) {
+    return unconfigured;
+  }
+  try {
+    return await inspect({
+      environment: {
+        ...(context.runtime?.promptEnvironment || process.env),
+        ...(context.projectEnvironment || {})
+      },
+      projectRoot
+    });
+  } catch (error) {
+    if (String(error?.code || "").trim() === "STACK_REQUIRED") {
+      return unconfigured;
+    }
+    throw error;
+  }
+}
+
 async function inspectGenesisLaunchForContext(context = {}, {
   inspect = inspectGenesisLaunch
 } = {}) {
-  const projectRoot = genesisLaunchProjectRoot(context);
-  if (!projectRoot) {
-    return {
-      status: "unconfigured",
-      targets: []
-    };
-  }
-  return inspect({
-    environment: context.runtime?.promptEnvironment || process.env,
-    projectRoot
+  return inspectGenesisForContext(context, inspect, {
+    status: "unconfigured",
+    targets: []
+  });
+}
+
+async function inspectGenesisWorkspaceSetupForContext(context = {}, {
+  inspect = inspectGenesisWorkspaceSetup
+} = {}) {
+  return inspectGenesisForContext(context, inspect, {
+    recipeHash: "",
+    status: "unconfigured",
+    steps: []
   });
 }
 
@@ -167,5 +192,6 @@ export {
   genesisLaunchTargetView,
   genesisRuntimePacks,
   inspectGenesisLaunchForContext,
+  inspectGenesisWorkspaceSetupForContext,
   listGenesisLaunchTargets
 };

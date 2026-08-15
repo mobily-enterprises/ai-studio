@@ -1,7 +1,7 @@
 {
   "name": "@local/vibe64-genesis",
   "version": "0.1.0",
-  "description": "Integrates Vibe64 with Genesis project foundations, prompts, workspace setup, launch declarations, and Cities.",
+  "description": "Integrates Vibe64 with Genesis initialization, prompts, workspace setup, launch declarations, and Cities.",
   "private": true,
   "type": "module",
   "exports": {
@@ -35,7 +35,7 @@
     "mutations": {
       "dependencies": {
         "runtime": {
-          "genesis-compiler": "github:mobily-enterprises/genesis-compiler#28ed4176db75789de8643fba65ea96fe32ab84ee"
+          "genesis-compiler": "1.2.1"
         },
         "dev": {}
       },
@@ -51,6 +51,6 @@
     }
   },
   "dependencies": {
-    "genesis-compiler": "github:mobily-enterprises/genesis-compiler#28ed4176db75789de8643fba65ea96fe32ab84ee"
+    "genesis-compiler": "1.2.1"
   }
 }

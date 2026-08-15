@@ -111,7 +111,7 @@ const PROJECT_TEMPLATES = Object.freeze([
 
 function projectTemplate(value = {}) {
   const repository = normalizeText(value.repository);
-  const kind = normalizeText(value.kind) || "foundation";
+  const kind = normalizeText(value.kind) || "starter";
   return Object.freeze({
     accent: normalizeText(value.accent),
     basedOn: value.basedOn || null,
@@ -240,7 +240,7 @@ function projectCanonicalRepositoryPath(project = {}, targetRoot = "") {
     code: "vibe64_project_canonical_repository_path_invalid",
     explicitPath: project.canonicalRepositoryPath,
     resolvePath: resolveProjectCanonicalRepositoryPath,
-    targetRoot
+    targetRoot: project.projectRuntimeRoot || targetRoot
   });
 }
 
@@ -249,7 +249,7 @@ function projectGithubMirrorPath(project = {}, targetRoot = "") {
     code: "vibe64_project_github_mirror_path_invalid",
     explicitPath: project.githubMirrorPath,
     resolvePath: resolveProjectGithubMirrorPath,
-    targetRoot
+    targetRoot: project.projectRuntimeRoot || targetRoot
   });
 }
 
@@ -624,14 +624,9 @@ async function createMaterializedCommit(template, repositoryPath, sourceRevision
     });
   }
 
-  await Promise.all([
-    rm(path.join(worktree, PROJECT_TEMPLATE_SOURCE_FILE), {
-      force: true
-    }),
-    rm(path.join(worktree, "vibe64.project.json"), {
-      force: true
-    })
-  ]);
+  await rm(path.join(worktree, PROJECT_TEMPLATE_SOURCE_FILE), {
+    force: true
+  });
 
   await initializeGenesisProject({
     projectRoot: worktree
@@ -644,7 +639,7 @@ async function createMaterializedCommit(template, repositoryPath, sourceRevision
   }
 
   const trailers = [
-    `Vibe64-Foundation: ${template.id}`,
+    `Vibe64-Starter: ${template.id}`,
     ...(template.repository ? [`Vibe64-Template-Repository: ${template.repository}`] : []),
     ...(sourceRevision ? [`Vibe64-Template-Revision: ${sourceRevision}`] : [])
   ].join("\n");
@@ -661,7 +656,7 @@ async function createMaterializedCommit(template, repositoryPath, sourceRevision
     "commit",
     "--allow-empty",
     "-m",
-    `Start from Vibe64 foundation: ${template.name}`,
+    `Start from Vibe64 starter: ${template.name}`,
     "-m",
     trailers
   ], {

@@ -42,6 +42,12 @@ Genesis for the selected project Stack and uses the returned portable contracts.
 </article>
 
 <article class="vibe-adapter-card">
+<div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">↓</div><span>OPTIONAL</span></div>
+<h3>Workspace setup</h3>
+<p>Ordered argument-safe preparation commands, relative working directories, and abstract runtime requirements. Genesis describes them; Vibe64 executes them only when preparation is explicitly requested.</p>
+</article>
+
+<article class="vibe-adapter-card">
 <div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">▶</div><span>OPTIONAL</span></div>
 <h3>Launch targets</h3>
 <p>Exact commands, relative working directory, abstract runtime requirements, and an application path. Genesis starts nothing; Vibe64 retains all process and preview policy.</p>
@@ -57,10 +63,10 @@ Genesis for the selected project Stack and uses the returned portable contracts.
 
 ## Built-in components
 
-The current Genesis package provides components for Node.js, Python, Java, C#,
-C and C++, PHP, Go, Rust, Ruby, Kotlin, Shell, MySQL, JSKIT, and JSKIT with
-MySQL. The language components select structural indexers for JavaScript and
-TypeScript where relevant.
+The current Genesis package provides components for Node.js, Vue, Python, Java,
+C#, C and C++, PHP, Go, Rust, Ruby, Kotlin, Shell, MySQL, PostgreSQL, JSKIT,
+JSKIT with MySQL, and JSKIT with PostgreSQL. The language components select
+structural indexers for JavaScript and TypeScript where relevant.
 
 This list is Genesis package data, not a Vibe64 project-type whitelist. Use the
 Genesis Stack listing for the exact version installed with Vibe64.

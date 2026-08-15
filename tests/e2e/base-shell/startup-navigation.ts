@@ -50,7 +50,7 @@ test.describe("studio startup navigation", () => {
     expect(apiRequests.count("/api/studio/current-app")).toBe(0);
   });
 
-  test("project workspace loads sessions directly after foundation selection", async ({ page }) => {
+  test("project workspace loads sessions directly after project selection", async ({ page }) => {
     await mockCurrentAppInspection(page);
 
     await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);

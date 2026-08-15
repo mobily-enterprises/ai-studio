@@ -85,7 +85,7 @@ test("plain runtime exposes compact workspace setup state without leaking its st
   });
 });
 
-test("plain runtime renders a Genesis prompt without a workflow action", async () => {
+test("plain runtime uses Genesis onboarding for the first user turn, then ordinary work", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       promptRenderer: renderTestGenesisPrompt,
@@ -96,16 +96,25 @@ test("plain runtime renders a Genesis prompt without a workflow action", async (
       sessionId: "prompt-session"
     });
 
-    const prompt = await runtime.renderPrompt("prompt-session", {
+    const firstPrompt = await runtime.renderPrompt("prompt-session", {
       request: "Add book search.",
       task: "work"
     });
 
-    assert.deepEqual(prompt.context, {
+    assert.deepEqual(firstPrompt.context, {
       genesis: true,
+      task: "start"
+    });
+    assert.match(firstPrompt.prompt, /Test Genesis prompt for start/u);
+
+    await runtime.writeConversationUserMessage("prompt-session", {
+      text: "Build a book catalogue."
+    });
+    const nextPrompt = await runtime.renderPrompt("prompt-session", {
+      request: "Use JSKIT.",
       task: "work"
     });
-    assert.match(prompt.prompt, /Test Genesis prompt for work/u);
+    assert.equal(nextPrompt.context.task, "work");
   });
 });
 
@@ -123,19 +132,19 @@ test("plain runtime refuses to return a session without chat-ready source", asyn
   });
 });
 
-test("plain runtime hides sessions owned by the removed adapter runtime", async () => {
+test("plain runtime hides sessions using an unsupported runtime record", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       targetRoot
     });
     await runtime.store.createSession({
-      runtimeKind: "legacy-adapter",
+      runtimeKind: "obsolete-runtime",
       sessionId: "old-session"
     });
 
     await assert.rejects(
       () => runtime.getSession("old-session"),
-      { code: "vibe64_legacy_session_unsupported" }
+      { code: "vibe64_session_runtime_unsupported" }
     );
     assert.deepEqual(await runtime.listSessions(), []);
   });

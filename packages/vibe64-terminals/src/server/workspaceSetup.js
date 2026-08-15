@@ -101,12 +101,6 @@ function commandDiagnostic(result = {}, label = "") {
   return `${label} exited with code ${Number(result.exitCode) || 1}.`;
 }
 
-function workspaceSetupError(message = "", code = "vibe64_workspace_setup_failed") {
-  const error = new Error(normalizeText(message) || "Workspace preparation failed.");
-  error.code = code;
-  return error;
-}
-
 function createWorkspaceSetupRunner({
   clock = () => new Date(),
   inspect = inspectGenesisWorkspaceSetup,
@@ -123,6 +117,19 @@ function createWorkspaceSetupRunner({
       ...value,
       updatedAt: stateTimestamp(clock)
     });
+  }
+
+  async function persistInspectedState(runtime, sessionId, previous, value) {
+    const next = workspaceSetupState(value);
+    const unchanged = [
+      "currentLabel",
+      "diagnostic",
+      "recipeHash",
+      "status"
+    ].every((name) => previous[name] === next[name]);
+    return unchanged && previous.status !== "running"
+      ? previous
+      : persist(runtime, sessionId, value);
   }
 
   async function failed(runtime, sessionId, {
@@ -225,16 +232,16 @@ function createWorkspaceSetupRunner({
     return completion;
   }
 
-  async function start({ runtime, session } = {}) {
+  async function start({ retry = false, runtime, session } = {}) {
     const sessionId = normalizeText(session?.sessionId || session?.id);
     if (!sessionId || !runtime?.store) {
       throw new TypeError("Workspace preparation requires a stored Vibe64 session.");
     }
     if (activeRuns.has(sessionId)) {
-      throw workspaceSetupError(
-        "Workspace preparation is already running.",
-        "vibe64_workspace_setup_running"
-      );
+      return {
+        completion: activeRuns.get(sessionId),
+        state: workspaceSetupState(session.workspaceSetup)
+      };
     }
     const sourcePath = sessionSourcePath(session);
     if (!sourcePath) {
@@ -243,6 +250,7 @@ function createWorkspaceSetupRunner({
       });
       return { completion: null, state };
     }
+    const previous = workspaceSetupState(session.workspaceSetup);
 
     let setup;
     try {
@@ -251,14 +259,30 @@ function createWorkspaceSetupRunner({
         projectRoot: sourcePath
       });
     } catch (error) {
-      const state = await failed(runtime, sessionId, {
-        diagnostic: normalizeText(error?.message) || "Genesis could not inspect workspace preparation."
+      if (normalizeText(error?.code) === "STACK_REQUIRED") {
+        const state = await persistInspectedState(runtime, sessionId, previous, {
+          currentLabel: "",
+          diagnostic: "",
+          finishedAt: "",
+          recipeHash: "",
+          startedAt: "",
+          status: "unconfigured"
+        });
+        return { completion: null, state };
+      }
+      const state = await persistInspectedState(runtime, sessionId, previous, {
+        currentLabel: "",
+        diagnostic: normalizeText(error?.message) || "Genesis could not inspect workspace preparation.",
+        finishedAt: stateTimestamp(clock),
+        recipeHash: "",
+        startedAt: "",
+        status: "failed"
       });
       return { completion: null, state };
     }
 
     if (normalizeText(setup?.status) === "unconfigured") {
-      const state = await persist(runtime, sessionId, {
+      const state = await persistInspectedState(runtime, sessionId, previous, {
         currentLabel: "",
         diagnostic: "",
         finishedAt: "",
@@ -273,7 +297,7 @@ function createWorkspaceSetupRunner({
         setup?.diagnostics,
         "STACK_WORKSPACE_SETUP_AMBIGUOUS"
       );
-      const state = await persist(runtime, sessionId, {
+      const state = await persistInspectedState(runtime, sessionId, previous, {
         currentLabel: "",
         diagnostic: diagnosticText(setup?.diagnostics) || "Genesis could not select one workspace preparation recipe.",
         finishedAt: stateTimestamp(clock),
@@ -288,10 +312,24 @@ function createWorkspaceSetupRunner({
     try {
       recipe = preparedRecipe(setup, sourcePath);
     } catch (error) {
-      const state = await failed(runtime, sessionId, {
-        diagnostic: normalizeText(error?.message)
+      const state = await persistInspectedState(runtime, sessionId, previous, {
+        currentLabel: "",
+        diagnostic: normalizeText(error?.message),
+        finishedAt: stateTimestamp(clock),
+        recipeHash: "",
+        startedAt: "",
+        status: "failed"
       });
       return { completion: null, state };
+    }
+    if (
+      previous.recipeHash === recipe.recipeHash &&
+      (previous.status === "succeeded" || (previous.status === "failed" && retry !== true))
+    ) {
+      return {
+        completion: null,
+        state: previous
+      };
     }
     const startedAt = stateTimestamp(clock);
     const state = await persist(runtime, sessionId, {

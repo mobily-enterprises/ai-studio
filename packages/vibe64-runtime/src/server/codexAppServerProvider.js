@@ -4,6 +4,7 @@ import {
   chmod,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
@@ -159,12 +160,91 @@ function signalProcessGroup(processGroupId, signal) {
   }
 }
 
-async function waitForProcessGroupExit(processGroupId, timeoutMs) {
+async function waitForProcessGroupsExit(processGroupIds = [], timeoutMs = 0) {
+  const groups = [...new Set(processGroupIds
+    .map((value) => Number(value))
+    .filter((value) => Number.isSafeInteger(value) && value > 0))];
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline && processGroupIsAlive(processGroupId)) {
+  while (Date.now() < deadline && groups.some(processGroupIsAlive)) {
     await delay(100);
   }
-  return !processGroupIsAlive(processGroupId);
+  return groups.every((processGroupId) => !processGroupIsAlive(processGroupId));
+}
+
+function linuxProcessStat(value = "") {
+  const text = String(value || "");
+  const commandEnd = text.lastIndexOf(")");
+  if (commandEnd < 0) {
+    return null;
+  }
+  const fields = text.slice(commandEnd + 1).trim().split(/\s+/u);
+  const parentPid = Number(fields[1]);
+  const processGroupId = Number(fields[2]);
+  if (
+    !Number.isSafeInteger(parentPid) || parentPid < 0 ||
+    !Number.isSafeInteger(processGroupId) || processGroupId <= 0
+  ) {
+    return null;
+  }
+  return {
+    parentPid,
+    processGroupId
+  };
+}
+
+async function descendantProcessGroups(rootPid = 0) {
+  const normalizedRootPid = Number(rootPid);
+  if (
+    process.platform !== "linux" ||
+    !Number.isSafeInteger(normalizedRootPid) ||
+    normalizedRootPid <= 0
+  ) {
+    return [];
+  }
+  const children = new Map();
+  for (const entry of await readdir("/proc", {
+    withFileTypes: true
+  }).catch(() => [])) {
+    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) {
+      continue;
+    }
+    const pid = Number(entry.name);
+    const statValue = await readFile(`/proc/${entry.name}/stat`, "utf8").catch(() => "");
+    const stat = linuxProcessStat(statValue);
+    if (!stat) {
+      continue;
+    }
+    const siblings = children.get(stat.parentPid) || [];
+    siblings.push({
+      pid,
+      processGroupId: stat.processGroupId
+    });
+    children.set(stat.parentPid, siblings);
+  }
+  const descendants = [];
+  const pending = [...(children.get(normalizedRootPid) || [])];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const child = pending.pop();
+    if (!child || visited.has(child.pid)) {
+      continue;
+    }
+    visited.add(child.pid);
+    descendants.push(child);
+    pending.push(...(children.get(child.pid) || []));
+  }
+  return [...new Set(descendants
+    .map(({ processGroupId }) => processGroupId)
+    .filter((processGroupId) => processGroupId !== normalizedRootPid))];
+}
+
+async function signalCodexProcessTree(rootPid = 0, signal = "SIGTERM") {
+  const descendantGroups = await descendantProcessGroups(rootPid);
+  for (const processGroupId of descendantGroups.reverse()) {
+    signalProcessGroup(processGroupId, signal);
+  }
+  signalProcessGroup(rootPid, signal);
+  return descendantGroups;
 }
 
 async function ensurePrivateDirectory(dirPath = "") {
@@ -482,13 +562,19 @@ async function stopCodexAppServerProcess(runtimeDir = "") {
       stopped: false
     };
   }
-  signalProcessGroup(pid, "SIGTERM");
-  let stopped = await waitForProcessGroupExit(pid, 3000);
+  let descendantGroups = await signalCodexProcessTree(pid, "SIGTERM");
+  let stopped = await waitForProcessGroupsExit([pid, ...descendantGroups], 3000);
   if (!stopped) {
-    signalProcessGroup(pid, "SIGKILL");
-    stopped = await waitForProcessGroupExit(pid, 1000);
+    descendantGroups = [
+      ...new Set([
+        ...descendantGroups,
+        ...await signalCodexProcessTree(pid, "SIGKILL")
+      ])
+    ];
+    stopped = await waitForProcessGroupsExit([pid, ...descendantGroups], 1000);
   }
   return {
+    descendantProcessGroups: descendantGroups,
     pid,
     stopped
   };
@@ -1009,6 +1095,8 @@ async function startCodexAppServerProcess({
     actor: "app",
     allowedRoots: processCwd ? [processCwd] : [],
     args: [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server",

@@ -117,7 +117,8 @@ test("codex app-server bridge uses the current Vibe64 Codex execution settings",
     effort: "xhigh",
     model: VIBE64_CODEX_DEFAULT_MODEL,
     sandboxPolicy: {
-      type: "dangerFullAccess"
+      networkAccess: "enabled",
+      type: "externalSandbox"
     },
     summary: "concise"
   });
@@ -132,7 +133,8 @@ test("codex app-server bridge uses the current Vibe64 Codex execution settings",
     effort: "high",
     model: VIBE64_CODEX_DEFAULT_MODEL,
     sandboxPolicy: {
-      type: "dangerFullAccess"
+      networkAccess: "enabled",
+      type: "externalSandbox"
     },
     summary: "concise"
   });
@@ -148,7 +150,8 @@ test("codex app-server bridge uses the current Vibe64 Codex execution settings",
     effort: "high",
     model: VIBE64_CODEX_SPARK_MODEL,
     sandboxPolicy: {
-      type: "dangerFullAccess"
+      networkAccess: "enabled",
+      type: "externalSandbox"
     }
   });
 });
@@ -166,7 +169,8 @@ test("codex app-server bridge sends Spark source explanations at medium effort",
     effort: "medium",
     model: VIBE64_CODEX_SPARK_MODEL,
     sandboxPolicy: {
-      type: "dangerFullAccess"
+      networkAccess: "enabled",
+      type: "externalSandbox"
     }
   });
 });
@@ -616,7 +620,8 @@ test("codex app-server bridge sends turns with app-server text input only", asyn
   assert.equal(result.input, "Do the work.");
   assert.equal(providerCalls[0].threadId, "thread-1");
   assert.deepEqual(providerCalls[0].params.sandboxPolicy, {
-    type: "dangerFullAccess"
+    networkAccess: "enabled",
+    type: "externalSandbox"
   });
   assert.equal(providerCalls[0].params.outputSchema, undefined);
 });

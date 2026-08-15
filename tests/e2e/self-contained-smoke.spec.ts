@@ -86,17 +86,6 @@ type MockReadyStudioShellOptions = {
 
 async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOptions = {}) {
   const failInitialGetCounts = new Map(Object.entries(options.failInitialGetCounts || {}));
-  let projectFoundationResolved = false;
-  let markProjectFoundationResolved = () => undefined;
-  const projectFoundationReady = new Promise<void>((resolve) => {
-    markProjectFoundationResolved = () => {
-      if (projectFoundationResolved) {
-        return;
-      }
-      projectFoundationResolved = true;
-      resolve();
-    };
-  });
   const apiPayloads = new Map<string, unknown>([
     [
       "/api/vibe64/accounts",
@@ -160,16 +149,6 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
         ],
         projectsRoot: "/workspace",
         targetRoot
-      }
-    ],
-    [
-      "/api/vibe64/project-foundation",
-      {
-        applicationMode: "existing",
-        foundationCommit: "0123456789abcdef0123456789abcdef01234567",
-        ok: true,
-        ready: true,
-        status: "complete"
       }
     ],
     [
@@ -277,15 +256,7 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
       return;
     }
 
-    if (apiPathname === "/api/studio/current-app") {
-      await projectFoundationReady;
-    }
-
     await fulfillJson(route, apiPayloads.get(apiPathname));
-
-    if (apiPathname === "/api/vibe64/project-foundation") {
-      markProjectFoundationResolved();
-    }
   });
 }
 

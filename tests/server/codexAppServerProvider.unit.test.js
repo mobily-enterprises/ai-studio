@@ -232,6 +232,37 @@ async function startOrphanedDetachedProcessGroup(directory) {
   };
 }
 
+async function startDetachedProcessWithDetachedCommand(directory) {
+  const commandPidPath = path.join(directory, "command.pid");
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const command = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { detached: true, stdio: 'ignore' });",
+    "writeFileSync(process.argv[1], String(command.pid));",
+    "command.unref();",
+    "setInterval(() => {}, 1000);"
+  ].join("\n");
+  const leader = spawn(process.execPath, ["-e", script, commandPidPath], {
+    detached: true,
+    stdio: "ignore"
+  });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const commandPid = Number(await readFile(commandPidPath, "utf8"));
+      if (commandPid > 0) {
+        return {
+          commandPid,
+          processGroupId: leader.pid
+        };
+      }
+    } catch {
+      // The child writes its PID immediately after spawning the command.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Detached command fixture did not start.");
+}
+
 class FakeWebSocket {
   static instances = [];
 
@@ -676,7 +707,9 @@ test("codex provider replaces a runtime whose socket exists but does not answer"
     assert.equal(runtime.reused, false);
     assert.equal(commandCalls.length, 1);
     assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
-    assert.deepEqual(commandCalls[0].args.slice(0, 3), [
+    assert.deepEqual(commandCalls[0].args.slice(0, 5), [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server"
@@ -766,6 +799,8 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.equal(runCall.purpose, "codex");
     assert.equal(runCall.command, STUDIO_MANAGED_CODEX_COMMAND);
     assert.deepEqual(runCall.args, [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server",
@@ -1011,6 +1046,78 @@ test("codex provider reuses and stops the detached process group after its leade
       }
     }
   });
+});
+
+test("codex provider stops detached command groups below its session runtime", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux /proc process-tree inspection is required.");
+    return;
+  }
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-command-tree");
+    await mkdir(runtimeDir, {
+      recursive: true
+    });
+    const fixture = await startDetachedProcessWithDetachedCommand(runtimeDir);
+    try {
+      await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+        pid: fixture.processGroupId
+      }));
+
+      const result = await stopCodexAppServerRuntime({
+        runtimeDir
+      });
+
+      assert.equal(result.stopped, true);
+      assert.equal(result.descendantProcessGroups.includes(fixture.commandPid), true);
+      assert.throws(
+        () => process.kill(-fixture.commandPid, 0),
+        {
+          code: "ESRCH"
+        }
+      );
+    } finally {
+      for (const processGroupId of [fixture.commandPid, fixture.processGroupId]) {
+        try {
+          process.kill(-processGroupId, "SIGKILL");
+        } catch {
+          // The assertion path normally stops both groups first.
+        }
+      }
+    }
+  });
+});
+
+test("codex provider keeps the session runtime after interrupting a turn", async () => {
+  const requests = [];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      requests.push({ method, params });
+      return {
+        ok: true
+      };
+    }
+  });
+  let runtimeStops = 0;
+  provider.stopRuntime = async () => {
+    runtimeStops += 1;
+    return {
+      stopped: true
+    };
+  };
+
+  const result = await provider.interruptTurn("thread-1", "turn-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(runtimeStops, 0);
+  assert.deepEqual(requests, [{
+    method: "turn/interrupt",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1"
+    }
+  }]);
 });
 
 test("codex provider treats inaccessible stale app-server runtime directories as cleanup skips", async (t) => {
@@ -1284,6 +1391,8 @@ test("codex provider starts a host-native app-server", async () => {
     assert.equal(commandCalls.length, 1);
     assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
     assert.deepEqual(commandCalls[0].args, [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server",

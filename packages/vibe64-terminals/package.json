@@ -45,7 +45,7 @@
           },
           {
             "subpath": "./server/service",
-            "summary": "Owns Codex conversation and managed terminal lifecycle."
+            "summary": "Owns Codex conversation, Genesis-declared workspace preparation, and managed terminal lifecycle."
           },
           {
             "subpath": "./server/projectExecutionEnv",

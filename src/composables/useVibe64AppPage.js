@@ -54,7 +54,7 @@ function useVibe64AppPage() {
   const pageError = ref("");
   const chatCollapsed = ref(false);
   const mobilePaneLayout = ref(false);
-  const savedProjectFoundationReady = ref(false);
+  const projectSelectionReady = ref(false);
   const projectPaneNavigationReadySlug = ref("");
   const lastDashboardRoutePath = ref("");
   let mobilePaneMediaQuery = null;
@@ -143,7 +143,7 @@ function useVibe64AppPage() {
         }
   ));
   const projectPaneNavigationVisible = computed(() => projectPaneNavigationReady({
-    foundationReady: savedProjectFoundationReady.value,
+    selectionReady: projectSelectionReady.value,
     projectSlug: projectSlug.value,
     readyProjectSlug: projectPaneNavigationReadySlug.value
   }));
@@ -247,9 +247,6 @@ function useVibe64AppPage() {
     handleProjectSelectionError,
     handleProjectSelectionMissing,
     handleProjectSelectionReady,
-    handleProjectFoundationError,
-    handleProjectFoundationMissing,
-    handleProjectFoundationReady,
     mdiChevronDown,
     mdiChevronRight,
     mobileProjectAction,
@@ -423,17 +420,10 @@ function useVibe64AppPage() {
     mobilePaneLayout.value = Boolean(mobilePaneMediaQuery?.matches);
   }
 
-  function handleProjectFoundationReady() {
-    pageError.value = "";
-    setProjectPaneNavigationReady(true);
-  }
-
   function handleProjectSelectionReady(selection = {}) {
     pageError.value = "";
     const selectedSlug = selectedProjectSlug(selection);
-    if (selectedSlug && selectedSlug !== projectSlug.value) {
-      setProjectPaneNavigationReady(false);
-    }
+    setProjectPaneNavigationReady(Boolean(selectedSlug && selectedSlug === projectSlug.value));
     emitPageTitle();
   }
 
@@ -449,20 +439,8 @@ function useVibe64AppPage() {
     emitPageTitle();
   }
 
-  function handleProjectFoundationMissing() {
-    pageError.value = "";
-    setProjectPaneNavigationReady(false);
-    emitPageTitle("Choose project foundation");
-  }
-
-  function handleProjectFoundationError(error) {
-    pageError.value = String(error || "");
-    setProjectPaneNavigationReady(false);
-    emitPageTitle();
-  }
-
   function setProjectPaneNavigationReady(ready = false) {
-    savedProjectFoundationReady.value = Boolean(ready);
+    projectSelectionReady.value = Boolean(ready);
     projectPaneNavigationReadySlug.value = ready ? projectSlug.value : "";
   }
 }
@@ -539,13 +517,13 @@ function dashboardReturnPath({
 }
 
 function projectPaneNavigationReady({
-  foundationReady = false,
+  selectionReady = false,
   projectSlug = "",
   readyProjectSlug = ""
 } = {}) {
   const currentSlug = String(projectSlug || "").trim();
   return Boolean(
-    foundationReady &&
+    selectionReady &&
     currentSlug &&
     String(readyProjectSlug || "").trim() === currentSlug
   );

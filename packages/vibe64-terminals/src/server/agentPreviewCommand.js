@@ -171,7 +171,7 @@ function usageText() {
     "Screenshot commands emit JSON metadata for a uniquely named, immutable PNG.",
     "This is the canonical preview server for the configured primary application.",
     "Do not start a duplicate copy of that application on another port.",
-    "A distinct secondary application explicitly requested by the user, such as a legacy reference app, may run separately without replacing this preview."
+    "A distinct secondary application explicitly requested by the user, such as a reference app, may run separately without replacing this preview."
   ].join("\n") + "\n";
 }
 

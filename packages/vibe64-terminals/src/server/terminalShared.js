@@ -21,9 +21,6 @@ import {
   shellQuote,
   stableHash
 } from "@local/vibe64-execution/server";
-import {
-  repairManagedSourcePermissions
-} from "@local/vibe64-execution/server";
 
 const CODEX_TERMINAL_NAMESPACE = "vibe64-codex";
 const GLOBAL_CODEX_TERMINAL_NAMESPACE = "vibe64-global-codex";
@@ -122,10 +119,6 @@ async function ensureTerminalSessionSourceGitSelfContained({
       repaired: false,
       skipped: true
     };
-  }
-  const permissionRepair = await repairManagedSourcePermissions([worktreePath]);
-  if (permissionRepair?.ok === false) {
-    throw new Error(permissionRepair.error || `Could not repair managed source permissions: ${worktreePath}`);
   }
   return ensureSessionSourceGitAlternatesDissociated(worktreePath);
 }

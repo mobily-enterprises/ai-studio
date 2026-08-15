@@ -62,14 +62,6 @@ const bootstrapPayload = {
   userSettings: null
 };
 
-const readyProjectFoundationPayload = {
-  applicationMode: "existing",
-  foundationCommit: "0123456789abcdef0123456789abcdef01234567",
-  ok: true,
-  ready: true,
-  status: "complete"
-};
-
 const currentAppPayload = {
   components: ["nodejs"],
   diagnostics: [],
@@ -136,7 +128,6 @@ export {
   bootstrapPayload,
   currentAppPayload,
   projectRuntimeRoot,
-  readyProjectFoundationPayload,
   readyProjectSelectionPayload,
   sessionRuntimeRoot,
   targetRoot,

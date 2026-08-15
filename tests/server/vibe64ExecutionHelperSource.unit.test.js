@@ -132,6 +132,15 @@ test("execution helper uses runuser instead of direct initgroups setuid flow", a
   assert.doesNotMatch(source, /process\.setgid/u);
 });
 
+test("execution helper creates collaborative files instead of repairing them later", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /assertUserInGroup\(targetUser\.username, VIBE64_GROUP\)/u);
+  assert.match(source, /process\.umask\(0o007\)/u);
+  assert.doesNotMatch(source, /repair-managed-project-permissions/u);
+  assert.doesNotMatch(source, /handleManagedProjectPermissionRepair/u);
+});
+
 test("execution helper centrally assigns the shared workspace TMPDIR", async () => {
   const source = await helperSource();
 
