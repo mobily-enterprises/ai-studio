@@ -1,7 +1,7 @@
 {
   "name": "@local/vibe64-genesis",
   "version": "0.1.0",
-  "description": "Integrates Vibe64 with Genesis initialization, prompts, workspace setup, launch declarations, and Cities.",
+  "description": "Integrates Vibe64 with Genesis initialization, prompts, workspace setup, launch and deployment declarations, and Cities.",
   "private": true,
   "type": "module",
   "exports": {
@@ -27,7 +27,7 @@
         "surfaces": [
           {
             "subpath": "./server",
-            "summary": "The Vibe64 boundary for Genesis initialization, prompts, workspace setup, launch declarations, checks, verification, and Cities."
+            "summary": "The Vibe64 boundary for Genesis initialization, prompts, workspace setup, launch and deployment declarations, checks, verification, and Cities."
           }
         ]
       }

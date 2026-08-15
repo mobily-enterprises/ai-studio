@@ -11,6 +11,7 @@ const {
   generatePrompt,
   indexCodebase,
   initialize,
+  inspectDeployment,
   inspectLaunch
 } = genesisCompiler;
 
@@ -85,6 +86,7 @@ function withGenesisCommandShim(shimDirectories = []) {
 
 const addGenesisStack = addStack;
 const initializeGenesisProject = initialize;
+const inspectGenesisDeployment = inspectDeployment;
 const inspectGenesisLaunch = inspectLaunch;
 const refreshGenesisCities = indexCodebase;
 
@@ -162,6 +164,7 @@ export {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisDeployment,
   inspectGenesisEnvironment,
   inspectGenesisLaunch,
   inspectGenesisWorkspaceSetup,
