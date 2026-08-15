@@ -1424,6 +1424,9 @@ test("jskit launch targets reject incoherent source and installed dependency ver
 
     await writeSourceLock(expectedVersion);
     await writeCatalog(staleVersion);
+    await writeProjectFile(targetRoot, "node_modules/@jskit-ai/shell-web/package.json", JSON.stringify({
+      version: expectedVersion
+    }, null, 2));
     const staleCatalogLockBeforeLaunch = await readFile(path.join(targetRoot, ".jskit", "lock.json"), "utf8");
     const staleCatalogSpec = await createJskitLaunchTargetTerminalSpec({
       launchTargetId: "dev",
@@ -1431,16 +1434,16 @@ test("jskit launch targets reject incoherent source and installed dependency ver
       targetRoot
     });
 
-    assert.deepEqual(staleCatalogSpec, {
-      message: updateMessage,
-      ok: false
-    });
+    assert.equal(staleCatalogSpec.ok, true);
     assert.equal(
       await readFile(path.join(targetRoot, ".jskit", "lock.json"), "utf8"),
       staleCatalogLockBeforeLaunch
     );
 
     await writeCatalog(expectedVersion);
+    await writeProjectFile(targetRoot, "node_modules/@jskit-ai/shell-web/package.json", JSON.stringify({
+      version: staleVersion
+    }, null, 2));
     const coherentLockBeforeLaunch = await readFile(path.join(targetRoot, ".jskit", "lock.json"), "utf8");
     const staleLaunchTarget = (await listJskitLaunchTargets({ session }))
       .find((target) => target.id === "dev");

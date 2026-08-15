@@ -650,8 +650,7 @@ async function jskitDependencyReadiness(session = {}, worktreePath = sessionSour
   const sourceMetadataOutOfSync = sourceLockFile.present && (
     !sourceLockState ||
     !sourceLockState.migrationsSynchronized ||
-    packageLockVersions && !packageVersionsInclude(packageLockVersions, sourceVersions) ||
-    catalogVersions && !packageVersionsInclude(catalogVersions, sourceVersions)
+    packageLockVersions && !packageVersionsInclude(packageLockVersions, sourceVersions)
   );
   if (sourceMetadataOutOfSync) {
     return {
