@@ -230,6 +230,7 @@ function useVibe64AutopilotView(props, emit) {
   const interrupting = ref(false);
   const optimisticMessages = ref([]);
   const questionAnswers = ref({});
+  const dismissedNumberedQuestionText = ref("");
   const saveWorkConfirmOpen = ref(false);
   const saveWorkSending = ref(false);
   const selectedAnswerChoice = ref("");
@@ -251,7 +252,11 @@ function useVibe64AutopilotView(props, emit) {
   const numberedQuestionInput = computed(() => (
     parseNumberedQuestionPrompt(latestAssistantQuestionText.value)
   ));
-  const numberedQuestions = computed(() => numberedQuestionInput.value.questions || []);
+  const numberedQuestions = computed(() => (
+    dismissedNumberedQuestionText.value === latestAssistantQuestionText.value
+      ? []
+      : numberedQuestionInput.value.questions || []
+  ));
   const answerChoices = computed(() => (
     numberedQuestions.value.length
       ? []
@@ -477,6 +482,15 @@ function useVibe64AutopilotView(props, emit) {
     questionAnswers.value = {};
     selectedAnswerChoice.value = "";
     return sendChatPayload(payload);
+  }
+
+  function dismissNumberedQuestions() {
+    if (!numberedQuestions.value.length) {
+      return false;
+    }
+    dismissedNumberedQuestionText.value = latestAssistantQuestionText.value;
+    questionAnswers.value = {};
+    return true;
   }
 
   function optimisticMessageById(messageId = "") {
@@ -819,6 +833,7 @@ function useVibe64AutopilotView(props, emit) {
     composerError.value = "";
     optimisticMessages.value = [];
     questionAnswers.value = {};
+    dismissedNumberedQuestionText.value = "";
     selectedAnswerChoice.value = "";
     workspaceSetupRetryError.value = "";
     systemReturnContext.value = null;
@@ -829,8 +844,11 @@ function useVibe64AutopilotView(props, emit) {
     workspaceSetupRetryError.value = "";
   });
 
-  watch(latestAssistantQuestionText, () => {
+  watch(latestAssistantQuestionText, (questionText) => {
     questionAnswers.value = {};
+    if (questionText !== dismissedNumberedQuestionText.value) {
+      dismissedNumberedQuestionText.value = "";
+    }
     selectedAnswerChoice.value = "";
   });
 
@@ -878,6 +896,7 @@ function useVibe64AutopilotView(props, emit) {
     currentAgentSettings,
     dashboardSessionContext,
     dashboardShellVisible,
+    dismissNumberedQuestions,
     confirmSaveWork,
     editOptimisticMessage,
     interrupting,

@@ -289,6 +289,7 @@ test("new sessions publish running workspace preparation and its eventual result
 test("workspace preparation starts newly configured recipes and retries failed attempts", async () => {
   let status = "succeeded";
   let startCount = 0;
+  const retryValues = [];
   const session = () => ({
     sessionId: "session-1",
     status: "active",
@@ -308,8 +309,9 @@ test("workspace preparation starts newly configured recipes and retries failed a
     terminalService: {},
     workspaceSetupRunner: {
       isRunning: () => false,
-      async start() {
+      async start(input) {
         startCount += 1;
+        retryValues.push(input.retry);
         status = "running";
         return {
           completion: null,
@@ -329,10 +331,12 @@ test("workspace preparation starts newly configured recipes and retries failed a
   assert.equal(newlyConfigured.ok, true);
   assert.equal(newlyConfigured.workspaceSetup.status, "running");
   assert.equal(startCount, 1);
+  assert.deepEqual(retryValues, [true]);
 
   status = "failed";
   const retried = await service.retryWorkspaceSetup("session-1");
   assert.equal(retried.ok, true);
   assert.equal(retried.workspaceSetup.status, "running");
   assert.equal(startCount, 2);
+  assert.deepEqual(retryValues, [true, true]);
 });

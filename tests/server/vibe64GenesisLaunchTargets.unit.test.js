@@ -123,10 +123,11 @@ test("Genesis launch argv substitution remains shell-safe", () => {
   );
 });
 
-test("Genesis launch descriptors pass preview identity capabilities through unchanged", () => {
+test("Genesis launch descriptors map preview identity runtimes through Vibe64's pinned runtime packs", () => {
   const previewIdentity = {
     command: [".vibe64/preview-identity"],
-    identityTypes: ["user"]
+    identityTypes: ["user"],
+    runtimes: ["nodejs"]
   };
   const descriptor = genesisLaunchDescriptor(launchTarget({
     previewIdentity
@@ -135,7 +136,10 @@ test("Genesis launch descriptors pass preview identity capabilities through unch
     worktreePath: "/tmp/vibe64-genesis-launch"
   });
 
-  assert.equal(descriptor.previewIdentity, previewIdentity);
+  assert.deepEqual(descriptor.previewIdentity, {
+    ...previewIdentity,
+    runtimes: ["node26"]
+  });
   assert.deepEqual(descriptor.readiness, {
     kind: "http",
     method: "GET",

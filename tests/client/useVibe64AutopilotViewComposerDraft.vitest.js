@@ -317,6 +317,42 @@ describe("useVibe64AutopilotView direct chat", () => {
     );
   });
 
+  it("lets the user leave structured questions and answer normally", async () => {
+    const props = viewProps({
+      conversationLog: {
+        turns: [{
+          assistant: {
+            text: "Please answer both.\n[1] Which file?\n[2] Which existing helper?"
+          }
+        }]
+      }
+    });
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = useVibe64AutopilotView(props, vi.fn());
+
+    view.composerDraft.value = "Let me explain this in my own words.";
+    expect(view.dismissNumberedQuestions()).toBe(true);
+    expect(view.numberedQuestions.value).toEqual([]);
+    expect(view.composerDraft.value).toBe("Let me explain this in my own words.");
+    expect(view.composerCanSubmit.value).toBe(true);
+
+    props.conversationLog = {
+      turns: [{
+        assistant: {
+          text: "Different questions.\n[1] Which subsystem?\n[2] Which operation?"
+        }
+      }]
+    };
+    await nextTick();
+
+    expect(view.numberedQuestions.value.map((question) => question.label)).toEqual([
+      "Which subsystem?",
+      "Which operation?"
+    ]);
+  });
+
   it("sends the focused save request through the same chat path", async () => {
     const sendAgentMessage = vi.fn(async () => true);
     const view = await createView({ sendAgentMessage });

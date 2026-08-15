@@ -167,6 +167,17 @@
               class="studio-autopilot__question-fields"
               aria-label="Assistant questions"
             >
+              <div class="studio-autopilot__question-fields-header">
+                <span>Answer the assistant's questions</span>
+                <v-btn
+                  aria-label="Answer normally instead"
+                  size="small"
+                  variant="text"
+                  @click="dismissNumberedQuestions"
+                >
+                  Answer normally
+                </v-btn>
+              </div>
               <v-text-field
                 v-for="question in numberedQuestions"
                 :key="question.name"
@@ -517,6 +528,7 @@ const {
   currentAgentSettings,
   dashboardSessionContext,
   dashboardShellVisible,
+  dismissNumberedQuestions,
   confirmSaveWork,
   editOptimisticMessage,
   interrupting,
@@ -765,6 +777,15 @@ async function attachPreviewFile(file) {
   display: grid;
   gap: 0.45rem;
   padding: 0.55rem 0.6rem 0;
+}
+
+.studio-autopilot__question-fields-header {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  display: flex;
+  font-size: 0.78rem;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .studio-autopilot__answer-choices {

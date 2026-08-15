@@ -332,6 +332,7 @@ function createService({
           throw error;
         }
         const setup = await setupRunner.start({
+          retry: true,
           runtime,
           session
         });

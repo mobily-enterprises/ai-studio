@@ -50,13 +50,19 @@ function genesisRuntimePacks(values = []) {
 
 function genesisLaunchTargetView(target = {}) {
   const runtime = genesisRuntimePacks(target.runtimeRequirements);
-  const available = target.available !== false && runtime.available;
+  const previewIdentityRuntime = genesisRuntimePacks(target.previewIdentity?.runtimes);
+  const available = target.available !== false && runtime.available && previewIdentityRuntime.available;
   return {
     available,
     ...(target.default === true ? { defaultPreview: true } : {}),
     disabledReason: available
       ? ""
-      : String(target.disabledReason || runtime.disabledReason || "This launch target is unavailable.").trim(),
+      : String(
+        target.disabledReason ||
+        runtime.disabledReason ||
+        previewIdentityRuntime.disabledReason ||
+        "This launch target is unavailable."
+      ).trim(),
     id: String(target.id || "").trim(),
     label: String(target.label || target.id || "").trim()
   };
@@ -131,6 +137,7 @@ function genesisLaunchDescriptor(target = {}, {
   worktreePath
 } = {}) {
   const runtime = genesisRuntimePacks(target.runtimeRequirements);
+  const previewIdentityRuntime = genesisRuntimePacks(target.previewIdentity?.runtimes);
   return {
     commands: (Array.isArray(target.steps) ? target.steps : []).map((step) => {
       const command = genesisLaunchCommand(step.argv, { host, port });
@@ -145,7 +152,12 @@ function genesisLaunchDescriptor(target = {}, {
       genesisLaunchSource: String(target.source || "").trim(),
       genesisRuntimeRequirements: normalizedRuntimeRequirements(target.runtimeRequirements)
     },
-    previewIdentity: target.previewIdentity || null,
+    previewIdentity: target.previewIdentity
+      ? {
+          ...target.previewIdentity,
+          runtimes: previewIdentityRuntime.runtimes
+        }
+      : null,
     readiness: target.readiness || null,
     runtimes: runtime.runtimes,
     urlPath: String(target.urlPath || "/").trim() || "/",
