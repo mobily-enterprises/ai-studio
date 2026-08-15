@@ -178,6 +178,21 @@ function environmentRecord(value = {}) {
     .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)));
 }
 
+function systemEnvironmentRecords(environment = {}, {
+  source = "system"
+} = {}) {
+  return Object.entries(environmentRecord(environment)).map(([key, value]) => ({
+    editable: false,
+    key,
+    owner: "system",
+    requiredFor: [],
+    scope: RUNTIME_CONFIG_SCOPES.DEV,
+    source,
+    value,
+    valuePresent: true
+  }));
+}
+
 function declaredEnvironmentDefaults(defaults = []) {
   if (!Array.isArray(defaults)) {
     return {};
@@ -366,17 +381,20 @@ function createService({
         })
       : {};
     const platformEnvironment = environmentRecord(provided?.environment || provided);
+    const defaultEnvironment = declaredEnvironmentDefaults(declaration.environmentDefaults);
     const projectEnvironment = {
-      ...declaredEnvironmentDefaults(declaration.environmentDefaults),
+      ...defaultEnvironment,
       ...userEnvironment,
       ...platformEnvironment
     };
     return {
+      defaultEnvironment,
       effectiveEnvironment: {
         ...env,
         ...projectEnvironment
       },
       environmentFiles: declaration.files,
+      platformEnvironment,
       projectEnvironment,
       resources: declaration.resources,
       source,
@@ -387,7 +405,15 @@ function createService({
   async function stackEnvRecords(input = {}, userRecords = []) {
     const resolved = await resolvedProjectEnvironment(input, userRecords);
     return {
-      records: stackResourceRecords(resolved.resources, resolved.effectiveEnvironment),
+      records: [
+        ...systemEnvironmentRecords(resolved.defaultEnvironment, {
+          source: "genesis-stack:default"
+        }),
+        ...systemEnvironmentRecords(resolved.platformEnvironment, {
+          source: "vibe64-host:managed-resource"
+        }),
+        ...stackResourceRecords(resolved.resources, resolved.effectiveEnvironment)
+      ],
       source: resolved.source,
       warning: resolved.warning
     };

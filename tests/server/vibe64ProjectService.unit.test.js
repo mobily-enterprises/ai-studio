@@ -211,8 +211,36 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
 
     const read = await service.readEnv();
-    assert.deepEqual(read.env.records.map((record) => record.key), ["DB_HOST", "DB_PASSWORD"]);
-    assert.equal(read.env.records.every((record) => record.valuePresent === false), true);
+    assert.deepEqual(read.env.records.map((record) => record.key), ["DB_CLIENT", "DB_HOST", "DB_PASSWORD"]);
+    assert.deepEqual(read.env.records.map((record) => ({
+      editable: record.editable,
+      key: record.key,
+      owner: record.owner,
+      source: record.source,
+      value: record.value,
+      valuePresent: record.valuePresent
+    })), [{
+      editable: false,
+      key: "DB_CLIENT",
+      owner: "system",
+      source: "genesis-stack:default",
+      value: "mysql2",
+      valuePresent: true
+    }, {
+      editable: true,
+      key: "DB_HOST",
+      owner: "user",
+      source: "genesis-stack:example-stack:database",
+      value: "",
+      valuePresent: false
+    }, {
+      editable: true,
+      key: "DB_PASSWORD",
+      owner: "user",
+      source: "genesis-stack:example-stack:database",
+      value: "********",
+      valuePresent: false
+    }]);
     assert.equal(JSON.stringify(read).includes("managed-secret"), false);
 
     assert.deepEqual(await service.projectExecutionEnvironment(), {
@@ -227,6 +255,38 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
     await store.writeMetadataValue("session-1", "source_path", targetRoot);
 
+    const sessionRead = await service.readEnv({ sessionId: "session-1" });
+    assert.deepEqual(sessionRead.env.records.map((record) => ({
+      editable: record.editable,
+      key: record.key,
+      owner: record.owner,
+      source: record.source,
+      value: record.value,
+      valuePresent: record.valuePresent
+    })), [{
+      editable: false,
+      key: "DB_CLIENT",
+      owner: "system",
+      source: "genesis-stack:default",
+      value: "mysql2",
+      valuePresent: true
+    }, {
+      editable: false,
+      key: "DB_HOST",
+      owner: "system",
+      source: "vibe64-host:managed-resource",
+      value: "127.0.0.1",
+      valuePresent: true
+    }, {
+      editable: false,
+      key: "DB_PASSWORD",
+      owner: "system",
+      source: "vibe64-host:managed-resource",
+      value: "********",
+      valuePresent: true
+    }]);
+    assert.equal(JSON.stringify(sessionRead).includes("managed-secret"), false);
+
     assert.deepEqual(await service.projectExecutionEnvironment({ sessionId: "session-1" }), {
       DB_CLIENT: "mysql2",
       DB_HOST: "127.0.0.1",
@@ -235,7 +295,7 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
     assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
     assert.match(await readFile(path.join(targetRoot, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
-    assert.equal(providerCalls.length, 1);
+    assert.equal(providerCalls.length, 2);
     assert.equal(providerCalls[0].sessionId, "session-1");
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);
