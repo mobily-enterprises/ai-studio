@@ -201,18 +201,22 @@ function tcpReadinessProbeCommand({
 }
 
 function httpReadinessProbeCommand({
+  expectedStatus = 200,
   href = "",
   marker = "",
+  method = "GET",
   timeoutSeconds = 90
 } = {}) {
   const script = [
     "const href = process.argv[1];",
     "const marker = process.argv[2];",
     "const timeoutMs = Number(process.argv[3]) * 1000;",
+    "const method = process.argv[4];",
+    "const expectedStatus = Number(process.argv[5]);",
     "const deadline = Date.now() + timeoutMs;",
     "async function retry() {",
     "  if (Date.now() >= deadline) {",
-    "    console.error(`[studio] Launch target did not become ready at ${href}.`);",
+    "    console.error(`[studio] Launch target did not become ready: ${method} ${href} did not return ${expectedStatus}.`);",
     "    process.exit(1);",
     "  }",
     "  await new Promise((resolve) => setTimeout(resolve, 250));",
@@ -223,11 +227,12 @@ function httpReadinessProbeCommand({
     "  const timeout = setTimeout(() => controller.abort(), 1000);",
     "  try {",
     "    const response = await fetch(href, {",
+    "      method,",
     "      redirect: 'manual',",
     "      signal: controller.signal",
     "    });",
     "    clearTimeout(timeout);",
-    "    if (response.status < 500) {",
+    "    if (response.status === expectedStatus) {",
     "      console.log(marker);",
     "      return;",
     "    }",
@@ -244,14 +249,18 @@ function httpReadinessProbeCommand({
     shellQuote(script),
     shellQuote(href),
     shellQuote(marker),
-    shellQuote(String(timeoutSeconds))
+    shellQuote(String(timeoutSeconds)),
+    shellQuote(String(method)),
+    shellQuote(String(expectedStatus))
   ].join(" ");
 }
 
 function commandWithHttpReadiness({
   command = "",
+  expectedStatus = 200,
   href = "",
   marker = "",
+  method = "GET",
   timeoutSeconds = 90
 } = {}) {
   return [
@@ -264,8 +273,10 @@ function commandWithHttpReadiness({
     "  }",
     "  trap cleanup_vibe64_launch EXIT INT TERM",
     `  ${httpReadinessProbeCommand({
+      expectedStatus,
       href,
       marker,
+      method,
       timeoutSeconds
     })}`,
     "  wait \"$vibe64_launch_pid\"",
@@ -274,8 +285,10 @@ function commandWithHttpReadiness({
 }
 
 function addReadinessMarkerToLaunchCommands(commands = [], {
+  expectedStatus = 200,
   href = "",
   marker = "",
+  method = "GET",
   waitForReadiness = true
 } = {}) {
   if (!waitForReadiness || !marker || !href) {
@@ -297,12 +310,42 @@ function addReadinessMarkerToLaunchCommands(commands = [], {
           ...entry,
           command: commandWithHttpReadiness({
             command: entry.command,
+            expectedStatus,
             href,
-            marker
+            marker,
+            method
           })
         }
       : entry),
     readinessMarker: marker
+  };
+}
+
+function normalizeHttpLaunchReadiness(readiness = null) {
+  if (!readiness || typeof readiness !== "object" || Array.isArray(readiness)) {
+    return null;
+  }
+  const kind = normalizeText(readiness.kind);
+  const method = normalizeText(readiness.method).toUpperCase();
+  const readinessPath = normalizeText(readiness.path);
+  const status = Number(readiness.status);
+  if (
+    kind !== "http" ||
+    method !== "GET" ||
+    !readinessPath.startsWith("/") ||
+    readinessPath.startsWith("//") ||
+    /[\\?#]/u.test(readinessPath) ||
+    !Number.isInteger(status) ||
+    status < 200 ||
+    status > 399
+  ) {
+    return null;
+  }
+  return {
+    kind,
+    method,
+    path: readinessPath,
+    status
   };
 }
 
@@ -453,9 +496,22 @@ async function createVibe64WebLaunchTargetTerminalSpec({
       kind: launch.openTarget?.kind || "url",
       label: launch.openTarget?.label || launch.openLabel || "Open browser"
     });
+    const declaredReadiness = normalizeHttpLaunchReadiness(launch.readiness);
+    if (launch.waitForReadiness !== false && !declaredReadiness) {
+      releasePortReservation();
+      return {
+        ok: false,
+        message: "Launch target must declare one valid HTTP readiness predicate."
+      };
+    }
+    const readinessHref = declaredReadiness
+      ? new URL(declaredReadiness.path, `http://127.0.0.1:${port}/`).href
+      : "";
     const readiness = addReadinessMarkerToLaunchCommands(normalizeLaunchCommands(launch), {
-      href: openTarget.href || targetUrl,
+      expectedStatus: declaredReadiness?.status,
+      href: readinessHref,
       marker: generatedReadinessMarker,
+      method: declaredReadiness?.method,
       waitForReadiness: launch.waitForReadiness !== false
     });
     const startupCommands = readiness.commands;
@@ -528,6 +584,7 @@ async function createVibe64WebLaunchTargetTerminalSpec({
         }
       } : {}),
       projectScope,
+      ...(declaredReadiness ? { readiness: declaredReadiness } : {}),
       readinessMarker: readiness.readinessMarker,
       launchReady: !readiness.readinessMarker,
       runRoot: workdir,
@@ -624,6 +681,7 @@ export {
   reserveAvailableWebLaunchTargetPort,
   commandWithHttpReadiness,
   httpReadinessProbeCommand,
+  normalizeHttpLaunchReadiness,
   launchReadinessMarker,
   tcpReadinessProbeCommand,
   webLaunchTargetStartupScript

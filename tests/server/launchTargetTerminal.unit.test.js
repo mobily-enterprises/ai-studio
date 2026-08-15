@@ -8,7 +8,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  createVibe64WebLaunchTargetTerminalSpec
+  createVibe64WebLaunchTargetTerminalSpec,
+  httpReadinessProbeCommand
 } from "@local/studio-terminal-core/server/launchTargetTerminal";
 import {
   VIBE64_RUNTIME_NAMESPACE_ENV
@@ -28,6 +29,30 @@ import {
 process.env[VIBE64_RUNTIME_NAMESPACE_ENV] = "unit-owner";
 
 const execFileAsync = promisify(execFile);
+
+test("HTTP launch readiness requires the declared exact success status", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((request, response) => {
+    response.writeHead(request.url === "/ready" ? 204 : 401);
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const marker = "[[READY-EXACT]]";
+    const command = httpReadinessProbeCommand({
+      expectedStatus: 204,
+      href: `http://127.0.0.1:${port}/ready`,
+      marker,
+      method: "GET",
+      timeoutSeconds: 1
+    });
+    const { stdout } = await execFileAsync("bash", ["-lc", command]);
+    assert.match(stdout, /\[\[READY-EXACT\]\]/u);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
 
 async function runGit(cwd, args) {
   await execFileAsync("git", args, {

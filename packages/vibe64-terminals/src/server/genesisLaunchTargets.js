@@ -146,6 +146,7 @@ function genesisLaunchDescriptor(target = {}, {
       genesisRuntimeRequirements: normalizedRuntimeRequirements(target.runtimeRequirements)
     },
     previewIdentity: target.previewIdentity || null,
+    readiness: target.readiness || null,
     runtimes: runtime.runtimes,
     urlPath: String(target.urlPath || "/").trim() || "/",
     workdir: path.resolve(worktreePath, String(target.workdir || ".").trim() || ".")

@@ -39,6 +39,12 @@ function launchTarget(overrides = {}) {
     id: "app",
     label: "Run app",
     preferredPort: 49000 + crypto.randomInt(500),
+    readiness: {
+      kind: "http",
+      method: "GET",
+      path: "/api/health",
+      status: 200
+    },
     runtimeRequirements: ["nodejs"],
     source: "project",
     steps: [{
@@ -130,6 +136,12 @@ test("Genesis launch descriptors pass preview identity capabilities through unch
   });
 
   assert.equal(descriptor.previewIdentity, previewIdentity);
+  assert.deepEqual(descriptor.readiness, {
+    kind: "http",
+    method: "GET",
+    path: "/api/health",
+    status: 200
+  });
 });
 
 test("neutral sessions list explicit Genesis targets without exposing resource values", async (t) => {
@@ -312,6 +324,24 @@ test("neutral sessions translate Genesis targets through the existing Vibe64 pre
   assert.match(spec.commandPreview, /--host=127\.0\.0\.1/u);
   assert.match(spec.commandPreview, new RegExp(`--port=${spec.metadata.port}`, "u"));
   assert.match(spec.args().join(" "), /VIBE64_LAUNCH_READY_V1/u);
+  assert.match(spec.args().join(" "), /api\/health/u);
+  assert.deepEqual(spec.metadata.readiness, target.readiness);
+});
+
+test("neutral launch rejects a target without an exact readiness declaration", async (t) => {
+  const context = await launchContext(t);
+  const target = launchTarget({ readiness: null });
+  const spec = await createGenesisLaunchTargetTerminalSpec({
+    context,
+    launchTargetId: target.id
+  }, {
+    inspect: () => launchInspection([target])
+  });
+
+  assert.deepEqual(spec, {
+    ok: false,
+    message: "Launch target must declare one valid HTTP readiness predicate."
+  });
 });
 
 test("unsupported Genesis runtimes disable a target before terminal creation", async (t) => {
