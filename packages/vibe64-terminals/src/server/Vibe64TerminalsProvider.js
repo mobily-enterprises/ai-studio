@@ -14,7 +14,8 @@ import {
   createVibe64SessionChangedPublisher
 } from "@local/vibe64-core/server/sessionRealtimeEvents";
 import {
-  VIBE64_PROJECT_CHANGED_EVENT
+  VIBE64_PROJECT_CHANGED_EVENT,
+  vibe64ProjectChangedServiceEvent
 } from "@local/vibe64-core/server/projectRealtimeEvents";
 import {
   jskitRuntimeEnv
@@ -150,14 +151,15 @@ class Vibe64TerminalsProvider {
         });
       },
       {
-        events: Object.fromEntries(
-          TERMINAL_SESSION_MUTATION_EVENT_METHODS.map((methodName) => [
+        events: {
+          ...Object.fromEntries(TERMINAL_SESSION_MUTATION_EVENT_METHODS.map((methodName) => [
             methodName,
             [vibe64SessionChangedServiceEvent({
               reason: TERMINAL_SESSION_MUTATION_EVENT_REASONS[methodName] || ""
             })]
-          ])
-        )
+          ])),
+          projectRuntime: [vibe64ProjectChangedServiceEvent()]
+        }
       }
     );
 

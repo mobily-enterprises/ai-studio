@@ -60,6 +60,7 @@ function createProviderApp({
   env = null
 } = {}) {
   const services = new Map();
+  const serviceOptions = new Map();
   return {
     actions() {},
     has(token) {
@@ -71,12 +72,24 @@ function createProviderApp({
       }
       throw new Error(`Unexpected app lookup: ${token}`);
     },
-    service(id, factory) {
+    service(id, factory, options = {}) {
       services.set(id, factory);
+      serviceOptions.set(id, options);
     },
+    serviceOptions,
     services
   };
 }
+
+test("terminals provider declares the project runtime realtime dispatcher", () => {
+  const app = createProviderApp();
+  new Vibe64TerminalsProvider().register(app);
+
+  const events = app.serviceOptions.get("feature.vibe64-terminals.service")?.events;
+  assert.equal(events.projectRuntime.length, 1);
+  assert.equal(events.projectRuntime[0].realtime.event, "vibe64.project.changed");
+  assert.equal(events.projectRuntime[0].realtime.audience, "all_clients");
+});
 
 test("terminals provider overlays only live preview routing values", () => {
   assert.deepEqual(terminalsProviderEnv({
