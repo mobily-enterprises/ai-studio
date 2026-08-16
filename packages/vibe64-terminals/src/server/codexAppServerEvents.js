@@ -540,6 +540,27 @@ function codexAppServerProviderThreadAssistantSegments(value = {}, turnId = "") 
   return turn ? codexAppServerProviderTurnAssistantSegments(turn) : [];
 }
 
+function codexAppServerResultOwnerTurnId({
+  notificationThreadId = "",
+  notificationTurnId = "",
+  trackedActive = false,
+  trackedState = "",
+  trackedThreadId = "",
+  trackedTurnId = ""
+} = {}) {
+  const normalizedNotificationThreadId = normalizeText(notificationThreadId);
+  const normalizedTrackedThreadId = normalizeText(trackedThreadId);
+  const normalizedTrackedTurnId = normalizeText(trackedTurnId);
+  const trackedTurnOwnsResult = trackedActive === true &&
+    ["active", "finalizing"].includes(normalizeText(trackedState)) &&
+    Boolean(normalizedTrackedTurnId) &&
+    Boolean(normalizedNotificationThreadId) &&
+    normalizedNotificationThreadId === normalizedTrackedThreadId;
+  return trackedTurnOwnsResult
+    ? normalizedTrackedTurnId
+    : normalizeText(notificationTurnId);
+}
+
 export {
   classifyCodexAppServerEvent,
   codexAppServerAssistantItemText,
@@ -557,6 +578,7 @@ export {
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
   codexAppServerProviderThreadAssistantSegments,
+  codexAppServerResultOwnerTurnId,
   codexAppServerStatusFromValue,
   codexAppServerUserMessageText
 };

@@ -130,6 +130,7 @@ import {
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
   codexAppServerProviderThreadAssistantSegments,
+  codexAppServerResultOwnerTurnId,
   codexAppServerStatusFromValue,
   codexAppServerUserMessageText
 } from "./codexAppServerEvents.js";
@@ -3051,11 +3052,14 @@ function createCodexTerminalController({
     const session = await runtime.getSession(normalizedSessionId);
     const currentTurn = codexAppServerTurnState(session);
     const currentTurnId = normalizeText(currentTurn.turnId);
-    const currentThreadOwnsNotification = currentTurn.active &&
-      normalizeText(currentTurn.threadId) === normalizedThreadId;
-    const normalizedTurnId = normalizeText(turnId) ||
-      (currentThreadOwnsNotification ? currentTurnId : "") ||
-      codexAppServerNotificationTurnId(notification);
+    const normalizedTurnId = codexAppServerResultOwnerTurnId({
+      notificationThreadId: normalizedThreadId,
+      notificationTurnId: normalizeText(turnId) || codexAppServerNotificationTurnId(notification),
+      trackedActive: currentTurn.active,
+      trackedState: currentTurn.state,
+      trackedThreadId: currentTurn.threadId,
+      trackedTurnId: currentTurnId
+    });
     const key = codexAppServerFinalAssistantResultKey(normalizedSessionId, normalizedThreadId, normalizedTurnId);
     const existing = codexAppServerFinalAssistantResults.get(key) || null;
     if (

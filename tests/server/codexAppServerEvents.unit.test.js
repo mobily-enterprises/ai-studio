@@ -4,8 +4,38 @@ import test from "node:test";
 import {
   classifyCodexAppServerEvent,
   codexAppServerContextRefreshReason,
-  codexAppServerErrorText
+  codexAppServerErrorText,
+  codexAppServerResultOwnerTurnId
 } from "../../packages/vibe64-terminals/src/server/codexAppServerEvents.js";
+
+test("Codex final answers belong to the active Vibe64 turn across internal provider turns", () => {
+  assert.equal(codexAppServerResultOwnerTurnId({
+    notificationThreadId: "thread-1",
+    notificationTurnId: "codex-internal-turn-2",
+    trackedActive: true,
+    trackedState: "active",
+    trackedThreadId: "thread-1",
+    trackedTurnId: "vibe64-provider-turn-1"
+  }), "vibe64-provider-turn-1");
+
+  assert.equal(codexAppServerResultOwnerTurnId({
+    notificationThreadId: "thread-1",
+    notificationTurnId: "codex-goal-turn-3",
+    trackedActive: true,
+    trackedState: "finalizing",
+    trackedThreadId: "thread-1",
+    trackedTurnId: "vibe64-goal-successor-turn-2"
+  }), "vibe64-goal-successor-turn-2");
+
+  assert.equal(codexAppServerResultOwnerTurnId({
+    notificationThreadId: "thread-stale",
+    notificationTurnId: "codex-stale-turn",
+    trackedActive: true,
+    trackedState: "active",
+    trackedThreadId: "thread-current",
+    trackedTurnId: "vibe64-current-turn"
+  }), "codex-stale-turn");
+});
 
 test("Codex app-server errors retain structured provider details", () => {
   const notification = {
