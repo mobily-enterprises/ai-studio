@@ -1848,17 +1848,28 @@ function createVibe64SessionStore({
   }
 
   async function writeConversationSystemMessage(sessionId, {
+    messageId = "",
     text = ""
   } = {}) {
     const messageText = normalizeText(text);
+    const normalizedMessageId = normalizeText(messageId);
     if (!messageText) {
       return null;
     }
     return mutateSession(sessionId, async (sessionPaths) => {
+      if (
+        normalizedMessageId &&
+        await conversationMessageIdExistsFromPaths(sessionPaths, normalizedMessageId)
+      ) {
+        return null;
+      }
       const turnId = nextConversationTurnId(await conversationTurnIds(sessionPaths));
       const createdAt = now();
       await writeTextFile(
-        path.join(conversationTurnRoot(sessionPaths, turnId), conversationMessageFileName("system", createdAt)),
+        path.join(
+          conversationTurnRoot(sessionPaths, turnId),
+          conversationMessageFileName("system", createdAt, normalizedMessageId)
+        ),
         `${messageText}\n`
       );
       return readConversationTurn(sessionPaths, turnId);

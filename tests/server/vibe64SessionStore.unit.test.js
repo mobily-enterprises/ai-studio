@@ -176,6 +176,36 @@ test("plain session store persists paged conversation messages", async () => {
   });
 });
 
+test("plain session store deduplicates durable system messages by message id", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "conversation-system-dedupe"
+    });
+    const first = await store.writeConversationSystemMessage("conversation-system-dedupe", {
+      messageId: "codex-turn-outcome-fixed",
+      text: "Codex was interrupted."
+    });
+    const duplicate = await store.writeConversationSystemMessage("conversation-system-dedupe", {
+      messageId: "codex-turn-outcome-fixed",
+      text: "Codex was interrupted."
+    });
+
+    assert.equal(first.system.messageId, "codex-turn-outcome-fixed");
+    assert.equal(duplicate, null);
+    const conversationLog = await store.readConversationLog("conversation-system-dedupe");
+    assert.equal(conversationLog.length, 1);
+    assert.equal(conversationLog[0].system.text, "Codex was interrupted.");
+
+    await store.writeStatus("conversation-system-dedupe", VIBE64_SESSION_STATUS.ABANDONED);
+    await store.compactClosedSession("conversation-system-dedupe");
+    const archivedLog = await store.readConversationLog("conversation-system-dedupe");
+    assert.equal(archivedLog.length, 1);
+    assert.equal(archivedLog[0].system.messageId, "codex-turn-outcome-fixed");
+  });
+});
+
 test("plain session store archives closed sessions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);

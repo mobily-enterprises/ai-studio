@@ -134,6 +134,10 @@ import {
   codexAppServerStatusFromValue,
   codexAppServerUserMessageText
 } from "./codexAppServerEvents.js";
+import {
+  CODEX_TURN_OUTCOME,
+  writeCodexTurnOutcomeNotice
+} from "./codexTurnOutcomeNotice.js";
 
 const CODEX_AGENT_PROVIDER = "codex";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -1800,6 +1804,7 @@ function createCodexTerminalController({
       normalizedTurnId,
       {
         error: codexAppServerReadyTurnFailureMessage(reason, error),
+        outcome: CODEX_TURN_OUTCOME.SERVICE_RESTART,
         status
       }
     );
@@ -2200,6 +2205,7 @@ function createCodexTerminalController({
     });
     if (codexAppServerTurnStatusIsProviderFailure(status)) {
       await stopCodexAppServerTurnWithProviderFailure(sessionId, currentTurn.threadId, completedTurnId, {
+        outcome: CODEX_TURN_OUTCOME.SERVICE_RESTART,
         status,
         verifyInactive: false
       });
@@ -3001,6 +3007,12 @@ function createCodexTerminalController({
       });
     } else if (!existingTurnId && typeof runtime.store?.writeConversationAssistantMessage === "function") {
       written = await runtime.store.writeConversationAssistantMessage(sessionId, {
+        messageId: codexAppServerConversationMessageId(
+          record.threadId,
+          record.turnId,
+          "assistant",
+          conversationText
+        ),
         text: conversationText
       });
     }
@@ -4984,6 +4996,55 @@ function createCodexTerminalController({
     return operation;
   }
 
+  async function recoverCodexAppServerFinalResponseBeforeOutcome(
+    sessionId = "",
+    threadId = "",
+    turnId = "",
+    status = ""
+  ) {
+    const result = await finalizeCodexAppServerAssistantResult(
+      sessionId,
+      threadId,
+      turnId,
+      {
+        recoverFromProvider: true,
+        status
+      }
+    );
+    if (result?.processed !== true) {
+      return result;
+    }
+    if (result.reason !== "already_finalized") {
+      return result;
+    }
+    const runtime = await createRuntimeForSession();
+    const session = await runtime.getSession(sessionId);
+    return codexAppServerTurnResultWasProcessed(session, threadId, turnId)
+      ? result
+      : {
+          ...result,
+          processed: false,
+          reason: "already_finalized_without_response"
+        };
+  }
+
+  async function writeCodexAppServerTurnOutcomeNotice(
+    runtime,
+    sessionId = "",
+    threadId = "",
+    turnId = "",
+    outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE
+  ) {
+    return writeCodexTurnOutcomeNotice({
+      outcome,
+      publishSessionChanged,
+      sessionId,
+      store: runtime?.store,
+      threadId,
+      turnId
+    });
+  }
+
   async function recoverCodexAppServerFinalizingTurn(sessionId = "", threadId = "", turnId = "", {
     status = "completed"
   } = {}) {
@@ -5219,6 +5280,7 @@ function createCodexTerminalController({
   async function stopCodexAppServerTurnWithProviderFailure(sessionId = "", threadId = "", turnId = "", {
     error = "",
     ok = false,
+    outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
     provider = null,
     status = "failed",
     verifyInactive = true
@@ -5257,7 +5319,23 @@ function createCodexTerminalController({
         status: "inProgress"
       };
     }
+    const recovered = await recoverCodexAppServerFinalResponseBeforeOutcome(
+      normalizedSessionId,
+      normalizedThreadId,
+      normalizedTurnId,
+      normalizedStatus
+    );
+    if (recovered?.processed) {
+      return recovered;
+    }
     const message = codexAppServerStoppedTurnMessage(normalizedStatus, error);
+    await writeCodexAppServerTurnOutcomeNotice(
+      runtime,
+      normalizedSessionId,
+      normalizedThreadId,
+      normalizedTurnId,
+      outcome
+    );
     await markCodexAppServerTurnIdle(normalizedSessionId, {
       error: message,
       status: normalizedStatus,
@@ -5284,18 +5362,14 @@ function createCodexTerminalController({
     const runtime = await createRuntimeForSession();
     const currentSession = await runtime.getSession(normalizedSessionId);
     const currentTurn = codexAppServerTurnState(currentSession);
-    if (readCodexAppServerFinalAssistantResult(normalizedSessionId, normalizedThreadId, normalizedTurnId)?.text) {
-      const recovered = await finalizeCodexAppServerAssistantResult(
-        normalizedSessionId,
-        normalizedThreadId,
-        normalizedTurnId,
-        {
-          status: normalizedStatus
-        }
-      );
-      if (recovered?.processed) {
-        return recovered;
-      }
+    const recovered = await recoverCodexAppServerFinalResponseBeforeOutcome(
+      normalizedSessionId,
+      normalizedThreadId,
+      normalizedTurnId,
+      normalizedStatus
+    );
+    if (recovered?.processed) {
+      return recovered;
     }
     if (!codexAppServerTurnCanReceiveProviderCompletion(currentTurn, normalizedThreadId, normalizedTurnId)) {
       codexAppServerFinalizedTurns.add(codexAppServerResultFinalizationKey(
@@ -5325,6 +5399,13 @@ function createCodexTerminalController({
     const message = codexAppServerResultDeliveryFailureMessage({
       error
     });
+    await writeCodexAppServerTurnOutcomeNotice(
+      runtime,
+      normalizedSessionId,
+      normalizedThreadId,
+      normalizedTurnId,
+      CODEX_TURN_OUTCOME.RESPONSE_DELIVERY_FAILURE
+    );
     await markCodexAppServerTurnIdle(normalizedSessionId, {
       error: message,
       status: normalizedStatus,
@@ -7546,6 +7627,7 @@ function createCodexTerminalController({
           {
             error: "Stopped by user.",
             ok: true,
+            outcome: CODEX_TURN_OUTCOME.USER_CANCELLED,
             status: "interrupted",
             verifyInactive: false
           }
@@ -7695,6 +7777,7 @@ function createCodexTerminalController({
       const stopped = await stopCodexAppServerTurnWithProviderFailure(sessionId, threadId, turnId, {
         error: "Stopped by user.",
         ok: true,
+        outcome: CODEX_TURN_OUTCOME.USER_CANCELLED,
         status: "interrupted",
         verifyInactive: false
       });

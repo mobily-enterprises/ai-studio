@@ -3,7 +3,8 @@ import {
   mdiAccountKeyOutline,
   mdiFileCogOutline,
   mdiHeartPulse,
-  mdiHistory
+  mdiHistory,
+  mdiInformationOutline
 } from "@mdi/js";
 
 import getPlacements, {
@@ -26,11 +27,12 @@ describe("Vibe64 dashboard placements", () => {
       ));
 
     const labels = dashboardLinks.map((placement) => placement.props.label);
-    expect(labels).toHaveLength(4);
+    expect(labels).toHaveLength(5);
     expect(labels).toEqual(expect.arrayContaining([
       "App access",
       "Env",
       "Health",
+      "Session info",
       "Session History"
     ]));
     expect(labels).not.toContain("Configure");
@@ -41,6 +43,7 @@ describe("Vibe64 dashboard placements", () => {
       ["App access", mdiAccountKeyOutline],
       ["Env", mdiFileCogOutline],
       ["Health", mdiHeartPulse],
+      ["Session info", mdiInformationOutline],
       ["Session History", mdiHistory]
     ]));
     for (const placement of dashboardLinks) {

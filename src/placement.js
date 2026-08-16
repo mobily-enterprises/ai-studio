@@ -3,7 +3,8 @@ import {
   mdiAccountKeyOutline,
   mdiFileCogOutline,
   mdiHeartPulse,
-  mdiHistory
+  mdiHistory,
+  mdiInformationOutline
 } from "@mdi/js";
 import {
   VIBE64_ACTIVE_SESSION_NAV_OWNER,
@@ -153,6 +154,22 @@ addPlacement({
     surface: "app",
     scopedSuffix: "/project/[slug]/dashboard/access",
     unscopedSuffix: "/project/[slug]/dashboard/access",
+    to: ""
+  }
+});
+addPlacement({
+  id: "vibe64.session-info.link",
+  target: "page.section-nav",
+  owner: "app-dashboard",
+  kind: "link",
+  surfaces: ["app"],
+  order: 500,
+  props: {
+    label: "Session info",
+    icon: mdiInformationOutline,
+    surface: "app",
+    scopedSuffix: "/project/[slug]/dashboard/session",
+    unscopedSuffix: "/project/[slug]/dashboard/session",
     to: ""
   }
 });

@@ -57,6 +57,7 @@ declare module 'vue-router/auto-routes' {
       | '/app/project/[slug]/dashboard/health/'
       | '/app/project/[slug]/dashboard/history/'
       | '/app/project/[slug]/dashboard/history/[sessionId]'
+      | '/app/project/[slug]/dashboard/session/'
     >,
     '/app/project/[slug]/dashboard': RouteRecordInfo<
       '/app/project/[slug]/dashboard',
@@ -69,6 +70,7 @@ declare module 'vue-router/auto-routes' {
       | '/app/project/[slug]/dashboard/health/'
       | '/app/project/[slug]/dashboard/history/'
       | '/app/project/[slug]/dashboard/history/[sessionId]'
+      | '/app/project/[slug]/dashboard/session/'
     >,
     '/app/project/[slug]/dashboard/[sessionTool]': RouteRecordInfo<
       '/app/project/[slug]/dashboard/[sessionTool]',
@@ -112,6 +114,13 @@ declare module 'vue-router/auto-routes' {
       { slug: ParamValue<false>, sessionId: ParamValue<false> },
       | never
     >,
+    '/app/project/[slug]/dashboard/session/': RouteRecordInfo<
+      '/app/project/[slug]/dashboard/session/',
+      '/app/project/:slug/dashboard/session',
+      { slug: ParamValue<true> },
+      { slug: ParamValue<false> },
+      | never
+    >,
   }
 
   /**
@@ -147,6 +156,7 @@ declare module 'vue-router/auto-routes' {
         | '/app/project/[slug]/dashboard/health/'
         | '/app/project/[slug]/dashboard/history/'
         | '/app/project/[slug]/dashboard/history/[sessionId]'
+        | '/app/project/[slug]/dashboard/session/'
       views:
         | 'default'
     }
@@ -159,6 +169,7 @@ declare module 'vue-router/auto-routes' {
         | '/app/project/[slug]/dashboard/health/'
         | '/app/project/[slug]/dashboard/history/'
         | '/app/project/[slug]/dashboard/history/[sessionId]'
+        | '/app/project/[slug]/dashboard/session/'
       views:
         | 'default'
     }
@@ -195,6 +206,12 @@ declare module 'vue-router/auto-routes' {
     'src/pages/app/project/[slug]/dashboard/history/[sessionId].vue': {
       routes:
         | '/app/project/[slug]/dashboard/history/[sessionId]'
+      views:
+        | never
+    }
+    'src/pages/app/project/[slug]/dashboard/session/index.vue': {
+      routes:
+        | '/app/project/[slug]/dashboard/session/'
       views:
         | never
     }
