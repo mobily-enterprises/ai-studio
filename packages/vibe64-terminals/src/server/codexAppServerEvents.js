@@ -278,7 +278,8 @@ function codexAppServerNotificationItemId(notification = {}) {
     event?.itemId ||
     event?.item_id ||
     payload.itemId ||
-    payload.item_id
+    payload.item_id ||
+    payload.id
   );
 }
 

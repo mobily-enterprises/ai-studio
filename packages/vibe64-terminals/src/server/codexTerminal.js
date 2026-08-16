@@ -3050,9 +3050,12 @@ function createCodexTerminalController({
     const runtime = await createRuntimeForSession();
     const session = await runtime.getSession(normalizedSessionId);
     const currentTurn = codexAppServerTurnState(session);
+    const currentTurnId = normalizeText(currentTurn.turnId);
+    const currentThreadOwnsNotification = currentTurn.active &&
+      normalizeText(currentTurn.threadId) === normalizedThreadId;
     const normalizedTurnId = normalizeText(turnId) ||
-      codexAppServerNotificationTurnId(notification) ||
-      normalizeText(currentTurn.turnId);
+      (currentThreadOwnsNotification ? currentTurnId : "") ||
+      codexAppServerNotificationTurnId(notification);
     const key = codexAppServerFinalAssistantResultKey(normalizedSessionId, normalizedThreadId, normalizedTurnId);
     const existing = codexAppServerFinalAssistantResults.get(key) || null;
     if (
@@ -5416,6 +5419,22 @@ function createCodexTerminalController({
       if (classification.kind === "final_assistant_result") {
         const event = codexAppServerNotificationEvent(notification);
         const payload = codexAppServerNotificationEventPayload(notification, event);
+        const params = codexAppServerNotificationParams(notification);
+        runCodexAppServerNotificationTask(notificationContext, () => {
+          return recordCodexAppServerFinalAssistantResult({
+            itemId: classification.itemId,
+            notification,
+            sessionId: normalizedSessionId,
+            source: classification.source,
+            text: classification.text,
+            threadId: normalizedThreadId,
+            turnId: normalizeText(
+              params.turnId ||
+              params.turn_id ||
+              params.turn?.id
+            )
+          });
+        });
         vibe64SessionDebugLog("server.codexTerminal.appServerFinalAssistantResult.received", {
           eventId: normalizeText(event?.id),
           eventType: codexAppServerNotificationEventType(notification, event),

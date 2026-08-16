@@ -120,7 +120,7 @@ test("Codex app-server event classifier recognizes task completion final text", 
       threadId: "thread-1"
     }
   }), {
-    itemId: "",
+    itemId: "task-complete-payload-1",
     kind: "final_assistant_result",
     source: "task_complete",
     text: "Task complete final result.",
@@ -144,7 +144,7 @@ test("Codex app-server event classifier recognizes task completion final text", 
       threadId: "thread-1",
       turnId: "turn-1"
     }
-  }).itemId, "");
+  }).itemId, "assistant-item-1");
 
   assert.deepEqual(classifyCodexAppServerEvent({
     method: "task_complete",
