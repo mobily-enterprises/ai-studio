@@ -46,6 +46,8 @@
   min-height: 0;
   overflow: hidden;
   padding-bottom: 0;
+  padding-left: 0;
+  padding-right: 0;
   padding-top: 0.35rem;
 }
 

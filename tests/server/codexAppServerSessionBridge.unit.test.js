@@ -258,6 +258,87 @@ test("codex app-server bridge starts a missing session thread and stores identit
   assert.equal(metadataValue(runtime, "agent_workflow_result_transport"), undefined);
 });
 
+test("codex app-server bridge activates exact project hooks for each new thread", async () => {
+  const runtime = fakeRuntime();
+  const providerCalls = [];
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async listHooks(cwds) {
+      providerCalls.push({
+        cwds,
+        method: "listHooks"
+      });
+      return {
+        data: [{
+          cwd: "/repo/worktree",
+          hooks: [{
+            currentHash: "sha256:genesis-begin",
+            enabled: true,
+            key: "/repo/worktree/.codex/hooks.json:user_prompt_submit:0:0",
+            source: "project"
+          }, {
+            currentHash: "sha256:ignored-plugin",
+            enabled: true,
+            key: "plugin:other",
+            source: "plugin"
+          }, {
+            currentHash: "sha256:ignored-disabled",
+            enabled: false,
+            key: "/repo/worktree/.codex/hooks.json:stop:0:0",
+            source: "project"
+          }]
+        }]
+      };
+    },
+    async startThread(params) {
+      providerCalls.push({
+        method: "startThread",
+        params
+      });
+      return {
+        id: "thread-started"
+      };
+    }
+  };
+
+  await ensureCodexAppServerThreadForSession({
+    provider,
+    runtime,
+    session: {
+      metadata: {},
+      sessionId: "session-1"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.deepEqual(providerCalls, [{
+    cwds: ["/repo/worktree"],
+    method: "listHooks"
+  }, {
+    method: "startThread",
+    params: {
+      approvalPolicy: "never",
+      config: {
+        hooks: {
+          state: {
+            "/repo/worktree/.codex/hooks.json:user_prompt_submit:0:0": {
+              trusted_hash: "sha256:genesis-begin"
+            }
+          }
+        }
+      },
+      cwd: "/repo/worktree",
+      developerInstructions: null,
+      model: VIBE64_CODEX_DEFAULT_MODEL,
+      sandbox: "danger-full-access",
+      sessionStartSource: "startup",
+      threadSource: "vibe64"
+    }
+  }]);
+});
+
 test("codex app-server bridge resumes an existing session thread", async () => {
   const runtime = fakeRuntime();
   const providerCalls = [];
@@ -308,6 +389,71 @@ test("codex app-server bridge resumes an existing session thread", async () => {
       threadId: "thread-existing"
     }
   ]);
+});
+
+test("codex app-server bridge refreshes project hook trust when resuming a thread", async () => {
+  const runtime = fakeRuntime();
+  const providerCalls = [];
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async listHooks(cwds) {
+      providerCalls.push({
+        cwds,
+        method: "listHooks"
+      });
+      return {
+        data: [{
+          cwd: "/repo/worktree",
+          hooks: [{
+            currentHash: "sha256:current-stop-hook",
+            enabled: true,
+            key: "/repo/worktree/.codex/hooks.json:stop:0:0",
+            source: "project"
+          }]
+        }]
+      };
+    },
+    async resumeThread(threadId, params) {
+      providerCalls.push({
+        method: "resumeThread",
+        params,
+        threadId
+      });
+      return {
+        id: threadId
+      };
+    }
+  };
+
+  await ensureCodexAppServerThreadForSession({
+    provider,
+    runtime,
+    session: {
+      metadata: {
+        agent_identity_conversation_id: "thread-existing",
+        agent_identity_provider: "codex",
+        agent_identity_status: "ready",
+        agent_identity_workdir: "/repo/worktree",
+        agent_transport_id: "codex_app_server"
+      },
+      sessionId: "session-1"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(providerCalls[1].method, "resumeThread");
+  assert.equal(providerCalls[1].threadId, "thread-existing");
+  assert.deepEqual(providerCalls[1].params.config, {
+    hooks: {
+      state: {
+        "/repo/worktree/.codex/hooks.json:stop:0:0": {
+          trusted_hash: "sha256:current-stop-hook"
+        }
+      }
+    }
+  });
 });
 
 test("codex app-server bridge replaces unreadable session threads after an invalid resume request", async () => {
@@ -664,6 +810,8 @@ test("codex app-server bridge starts plain threads without workflow tools", () =
   });
 
   assert.equal(Object.hasOwn(settings, "dynamicTools"), false);
+  assert.equal(settings.sessionStartSource, "startup");
+  assert.equal(settings.threadSource, "vibe64");
 });
 
 test("codex app-server bridge sends context refresh inside the next turn input", async () => {

@@ -1,50 +1,31 @@
-import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
-import {
-  createService,
-  startProjectRuntimeDormancyCleanupSchedule
-} from "./service.js";
-import { featureActions } from "./actions.js";
-import { registerRoutes } from "./registerRoutes.js";
-import {
-  vibe64SessionChangedServiceEvent,
-  createVibe64SessionChangedPublisher
-} from "@local/vibe64-core/server/sessionRealtimeEvents";
-import {
-  vibe64ProjectRuntimeChangedServiceEvent
-} from "@local/vibe64-core/server/projectRealtimeEvents";
-import {
-  jskitRuntimeEnv
-} from "@local/vibe64-core/server/jskitRuntimeEnv";
+import { defineFeature } from "@jskit-ai/kernel/server/features";
+
 import {
   VIBE64_PREVIEW_PUBLIC_DOMAIN_ENV,
   VIBE64_PREVIEW_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_USER_DOMAIN_ENV
 } from "@local/vibe64-core/server/launchPreviewProxyEnv";
+import {
+  getStudioProjectContext
+} from "@local/vibe64-core/server/studioProjectContext";
+import { createTerminalActions } from "./actions.js";
+import {
+  createProjectRuntimeChangedPublisher,
+  createTerminalSessionChangedPublisher
+} from "./events.js";
+import { registerRoutes } from "./registerRoutes.js";
+import {
+  createService,
+  startProjectRuntimeDormancyCleanupSchedule
+} from "./service.js";
 
-const VIBE64_TERMINALS_SERVICE = "feature.vibe64-terminals.service";
 const LIVE_PREVIEW_ROUTING_ENV_KEYS = Object.freeze([
   VIBE64_PREVIEW_PUBLIC_DOMAIN_ENV,
   VIBE64_PREVIEW_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_USER_DOMAIN_ENV
 ]);
-const TERMINAL_SESSION_MUTATION_EVENT_METHODS = Object.freeze([
-  "closeAgentTerminal",
-  "closeLaunchTargetTerminal",
-  "sendAgentMessage",
-  "startAgentTerminal",
-  "startLaunchTargetTerminal",
-  "stopLaunchTargetTerminal"
-]);
-const TERMINAL_SESSION_MUTATION_EVENT_REASONS = Object.freeze({
-  closeAgentTerminal: "agent-terminal-closed",
-  closeLaunchTargetTerminal: "launch-target-closed",
-  sendAgentMessage: "agent-message-sent",
-  startAgentTerminal: "agent-terminal-started",
-  startLaunchTargetTerminal: "launch-target-started",
-  stopLaunchTargetTerminal: "launch-target-stopped"
-});
 
 function terminalsProviderEnv(runtimeEnv = {}, liveEnv = process.env) {
   const env = {
@@ -59,129 +40,72 @@ function terminalsProviderEnv(runtimeEnv = {}, liveEnv = process.env) {
   return env;
 }
 
-class Vibe64TerminalsProvider {
-  static id = "feature.vibe64-terminals";
-
-  static startsAfter = [
-    "runtime.actions",
-    "feature.vibe64-project"
-  ];
-
-  constructor({
-    codexTerminalController = {}
-  } = {}) {
-    this.codexTerminalController = codexTerminalController;
-  }
-
-  register(app) {
-    if (
-      !app ||
-      typeof app.service !== "function" ||
-      typeof app.actions !== "function"
-    ) {
-      throw new Error("Vibe64TerminalsProvider requires application service()/actions().");
-    }
-    const appProviderEnv = terminalsProviderEnv(jskitRuntimeEnv(app));
-
-    app.service(
-      VIBE64_TERMINALS_SERVICE,
-      (scope) => {
-        const providerEnv = terminalsProviderEnv({
-          ...appProviderEnv,
-          ...jskitRuntimeEnv(scope, appProviderEnv)
-        });
-        const domainEvents = typeof scope.has === "function" && scope.has("domainEvents")
-          ? scope.make("domainEvents")
-          : null;
-        const publishAgentTerminalChanged = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "startAgentTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
-        const publishLaunchTargetChanged = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "startLaunchTargetTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
-        const publishLaunchTargetStopped = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "stopLaunchTargetTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
-        const publishLaunchTargetClosed = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "closeLaunchTargetTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
-        const publishAgentTerminalClosed = createVibe64SessionChangedPublisher({
-          domainEvents,
-          methodName: "closeAgentTerminal",
-          serviceToken: VIBE64_TERMINALS_SERVICE
-        });
-        return createService({
-          codexTerminalController: this.codexTerminalController,
-          env: providerEnv,
-          logger: app.logger || console,
-          projectService: scope.make("feature.vibe64-project.service"),
-          publishSessionChanged: {
-            agentTerminal: publishAgentTerminalChanged,
-            agentTerminalClosed: publishAgentTerminalClosed,
-            launchTarget: publishLaunchTargetChanged,
-            launchTargetClosed: publishLaunchTargetClosed,
-            launchTargetStopped: publishLaunchTargetStopped
-          }
-        });
-      },
-      {
-        events: {
-          ...Object.fromEntries(TERMINAL_SESSION_MUTATION_EVENT_METHODS.map((methodName) => [
-            methodName,
-            [vibe64SessionChangedServiceEvent({
-              reason: TERMINAL_SESSION_MUTATION_EVENT_REASONS[methodName] || ""
-            })]
-          ])),
-          closeProjectRuntime: [vibe64ProjectRuntimeChangedServiceEvent({
-            action: "runtime-closed"
-          })],
-          openProjectRuntime: [vibe64ProjectRuntimeChangedServiceEvent({
-            action: "runtime-opened"
-          })]
+function createVibe64TerminalsFeature({ codexTerminalController = {} } = {}) {
+  const cleanupSchedules = new WeakMap();
+  return defineFeature({
+    id: "vibe64.terminals",
+    domain: "vibe64-terminals",
+    requires: {
+      env: "runtime.env",
+      events: "runtime.events",
+      fastify: "runtime.fastify",
+      http: "runtime.http",
+      logger: "runtime.logger",
+      project: "vibe64.project"
+    },
+    provides: {
+      terminals: "vibe64.terminals"
+    },
+    actionDefaults: {
+      channels: ["api", "automation", "internal"],
+      surfaces: ["app"]
+    },
+    setup({ env, events, fastify, http, logger, project }) {
+      const sessionChanged = createTerminalSessionChangedPublisher(events);
+      const terminals = createService({
+        codexTerminalController,
+        env: terminalsProviderEnv(env),
+        logger,
+        projectService: project,
+        publishProjectRuntimeChanged: createProjectRuntimeChangedPublisher(events),
+        publishSessionChanged: {
+          agentTerminal: sessionChanged,
+          agentTerminalClosed: sessionChanged,
+          launchTarget: sessionChanged,
+          launchTargetClosed: sessionChanged,
+          launchTargetStopped: sessionChanged
         }
-      }
-    );
-
-    app.actions(
-      withActionDefaults(featureActions, {
-        domain: "feature",
-        dependencies: {
-          featureService: "feature.vibe64-terminals.service"
-        }
-      })
-    );
-  }
-
-  boot(app) {
-    registerRoutes(app, {
-      routeRelativePath: "vibe64",
-      routeSurface: "app"
-    });
-    if (typeof app?.make !== "function" || typeof app?.addHook !== "function") {
-      return;
+      });
+      registerRoutes(http, {
+        fastify,
+        projectContext: getStudioProjectContext(),
+        routeRelativePath: "vibe64",
+        routeSurface: "app",
+        terminals
+      });
+      return { terminals };
+    },
+    actions: ({ terminals }) => createTerminalActions({ terminals }),
+    async boot({ logger }, { outputs }) {
+      const schedule = startProjectRuntimeDormancyCleanupSchedule({
+        logger,
+        serviceFactory: () => outputs.terminals
+      });
+      cleanupSchedules.set(outputs.terminals, schedule);
+      await schedule.runNow();
+    },
+    async shutdown(_dependencies, { outputs }) {
+      cleanupSchedules.get(outputs.terminals)?.stop();
+      cleanupSchedules.delete(outputs.terminals);
+      await outputs.terminals.close();
     }
-    const dormantRuntimeCleanup = startProjectRuntimeDormancyCleanupSchedule({
-      logger: app.logger || app.log || console,
-      serviceFactory: () => app.make(VIBE64_TERMINALS_SERVICE)
-    });
-    app.addHook("onClose", async () => {
-      dormantRuntimeCleanup.stop();
-      const service = app.make(VIBE64_TERMINALS_SERVICE);
-      await service?.close?.();
-    });
-    void dormantRuntimeCleanup.runNow();
-  }
+  });
 }
+
+const Vibe64TerminalsProvider = createVibe64TerminalsFeature();
 
 export {
   Vibe64TerminalsProvider,
+  createVibe64TerminalsFeature,
   terminalsProviderEnv
 };

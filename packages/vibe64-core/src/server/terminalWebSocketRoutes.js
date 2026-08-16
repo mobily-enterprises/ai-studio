@@ -22,34 +22,23 @@ function publicTerminalSnapshot(session = {}) {
   return publicSession;
 }
 
-function resolveFastify(app) {
-  if (app && typeof app.get === "function") {
-    return app;
-  }
-  if (app && typeof app.make === "function") {
-    return app.make("jskit.fastify");
-  }
-  return null;
-}
-
 function registerTerminalWebSocketRoute(
-  app,
+  fastify,
   {
     projectContext = null,
     routePath,
     resize,
-    serviceId,
+    service,
     serviceUnavailableMessage,
     subscribe,
     write
   } = {}
 ) {
-  const fastify = resolveFastify(app);
   if (!fastify || typeof fastify.get !== "function") {
     throw new Error("registerTerminalWebSocketRoute requires Fastify get().");
   }
-  if (!app || typeof app.make !== "function") {
-    throw new Error("registerTerminalWebSocketRoute requires application make().");
+  if (!service || typeof service !== "object") {
+    throw new Error(serviceUnavailableMessage || "Terminal service is unavailable.");
   }
 
   fastify.get(
@@ -98,13 +87,6 @@ function registerTerminalWebSocketRoute(
           return runWithProjectRequestContext(projectContextValue, operation);
         };
 
-        let service;
-        try {
-          service = app.make(serviceId);
-        } catch (error) {
-          closeWithError(1011, String(error?.message || error || serviceUnavailableMessage));
-          return;
-        }
         const routeParams = request.params || {};
         const sessionId = String(routeParams.sessionId || "");
         const terminalSessionId = String(routeParams.terminalSessionId || "");

@@ -1595,9 +1595,8 @@ async function readyLaunchPreview({
     const previewTarget = await launchPreviewProxies.ensure({
       executePreviewIdentityCommand: terminal?.metadata?.previewIdentity
         ? async ({ selection }) => {
-            const runner = await previewIdentityCommandRunnerForLaunchTerminal({
+            const runner = previewIdentityCommandRunnerForLaunchTerminal({
               context,
-              projectService: options.projectService,
               runCommand: options.runCommand,
               targetHref,
               terminal
@@ -1681,9 +1680,8 @@ function launchExecutionProject(context = {}, terminalEnvRecords = {}) {
   };
 }
 
-async function previewIdentityCommandRunnerForLaunchTerminal({
+function previewIdentityCommandRunnerForLaunchTerminal({
   context = {},
-  projectService = null,
   runCommand = null,
   targetHref = "",
   terminal = null
@@ -1699,14 +1697,6 @@ async function previewIdentityCommandRunnerForLaunchTerminal({
   if (!previewAuthIdentityAvailable(previewAuth || {})) {
     return null;
   }
-  const terminalEnvRecords = await loadProjectExecutionEnvRecords({
-    projectService,
-    runCommand,
-    runtime: context.runtime,
-    session: context.session,
-    target: "launch-target",
-    targetRoot: context.targetRoot
-  });
   return createPreviewIdentityCommandRunner({
     allowedRoots: [
       context.targetRoot,
@@ -1714,14 +1704,18 @@ async function previewIdentityCommandRunnerForLaunchTerminal({
       capability.sourceRoot
     ].filter(Boolean),
     capability,
-    env: {
-      ...projectExecutionEnvFromRecords(terminalEnvRecords),
-      ...previewAuthEnvironment({
-        ...previewAuth,
-        previewIdentity: capability
-      })
-    },
-    project: launchExecutionProject(context, terminalEnvRecords),
+    // Identity exchange is a host-to-app protocol invocation, not another app
+    // launch. It needs only the one-time exchange secret and its declared
+    // aliases. Loading the complete project environment here can provision or
+    // inspect managed resources (notably a session database) while the user is
+    // waiting on a ten-second UI interaction.
+    env: previewAuthEnvironment({
+      ...previewAuth,
+      previewIdentity: capability
+    }),
+    project: launchExecutionProject(context, {
+      runtimeConfigEnv: {}
+    }),
     runCommand,
     runtimes: capability.runtimes,
     session: context.session || {},
@@ -2656,6 +2650,7 @@ export {
   launchReadinessMarkerLineSeen,
   launchRestartState,
   listLaunchTargets,
+  previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch,
   workspaceSetupLaunchDisabledReason,
   createLaunchTargetTerminalController

@@ -1,6 +1,9 @@
 # Vibe64 Agent Notes
 
-This repository is implemented as a JSKIT app, but the product is Vibe64. Use JSKIT commands for framework and app maintenance work, and run them through `npx jskit ...` from the repository. Do not assume a global `jskit` binary exists.
+This repository is implemented with JSKIT runtime APIs and package-owned source
+patterns, but the product is Vibe64. There is no current JSKIT CLI. Use the
+repository's npm scripts and the installed JSKIT skill and patterns for
+maintenance and verification.
 
 Important boundaries:
 
@@ -11,9 +14,10 @@ Important boundaries:
 - `vibe64.project.json` and `vibe64.runtime-lock.json` are unsupported obsolete contracts. Do not recreate or read them.
 - `.vibe64/` is not product, prompt, Stack, Program, indexing, or City authority. Keep only narrowly declared application helpers such as a Genesis Launch preview-identity executable when required.
 - Runtime/session state is Vibe64-owned runtime-local state, not source-owned repository content.
-- Use `npx jskit ...` freely for this repository's framework maintenance, verification, scaffold checks, generators, and JSKIT metadata.
 - Do not create loose workboard files.
-- Do not run bare `jskit ...`. Use `npx jskit ...`.
+- Do not restore `jskit doctor`, generator commands, scaffold provenance,
+  receipts, migration copies, or CLI-managed CI state. Verify current source,
+  runtime behavior, package boundaries, and tests through their direct owners.
 - Never deploy unless the user explicitly requests deployment.
 
 ## Known Session Defects To Fix

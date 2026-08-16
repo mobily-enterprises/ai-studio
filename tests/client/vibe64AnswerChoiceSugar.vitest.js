@@ -66,6 +66,25 @@ describe("vibe64AnswerChoiceSugar", () => {
     });
   });
 
+  it("treats Recommended as presentation metadata rather than submitted text", () => {
+    expect(parseAnswerChoicePrompt([
+      "Choose one.",
+      "Possible answers:",
+      "- Complete lifecycle (Recommended)",
+      "- Sending first"
+    ].join("\n")).choices).toEqual([
+      {
+        label: "Complete lifecycle",
+        recommended: true,
+        value: "Complete lifecycle"
+      },
+      {
+        label: "Sending first",
+        value: "Sending first"
+      }
+    ]);
+  });
+
   it("only activates for a single matching textarea message field", () => {
     const message = [
       "Choose.",

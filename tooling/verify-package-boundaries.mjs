@@ -254,9 +254,15 @@ function verifyRootPackage({
     }
   }
 
+  for (const dependencySection of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    if (rootManifest[dependencySection]?.["@jskit-ai/jskit-cli"]) {
+      errors.push(`root package.json ${dependencySection} must not restore the retired @jskit-ai/jskit-cli package.`);
+    }
+  }
+
   for (const [scriptName, scriptBody] of Object.entries(rootManifest.scripts || {})) {
-    if (/(^|[;&|]\s*)jskit\s/u.test(String(scriptBody))) {
-      errors.push(`root package.json script "${scriptName}" invokes bare jskit; use npx jskit.`);
+    if (/(?:^|[;&|]\s*)(?:npx\s+)?jskit(?:\s|$)/u.test(String(scriptBody))) {
+      errors.push(`root package.json script "${scriptName}" must not invoke the retired JSKIT CLI.`);
     }
   }
 }

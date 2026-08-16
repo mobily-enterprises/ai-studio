@@ -5,9 +5,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": "./src/client/index.js",
-    "./server": "./src/server/index.js",
-    "./server/MainServiceProvider": "./src/server/MainServiceProvider.js"
+    "./client": "./src/client/index.js"
   },
   "jskit": {
     "kind": "runtime",
@@ -15,16 +13,9 @@
       "provides": [],
       "requires": []
     },
-    "options": {},
     "runtime": {
       "server": {
-        "providerEntrypoint": "src/server/MainServiceProvider.js",
-        "providers": [
-          {
-            "entrypoint": "src/server/MainServiceProvider.js",
-            "export": "MainServiceProvider"
-          }
-        ]
+        "providers": []
       },
       "client": {
         "providers": [
@@ -34,49 +25,10 @@
           }
         ]
       }
-    },
-    "metadata": {
-      "jskit": {
-        "ownershipGuidance": {
-          "title": "App-local main lane",
-          "summary": "Keep @local/main focused on app composition and lightweight glue. Substantial server features should become dedicated packages instead of growing inside packages/main.",
-          "responsibilities": [
-            "packages/main server code: app-local composition and lightweight wiring only",
-            "substantial non-CRUD server features: scaffold a dedicated package with feature-server-generator",
-            "packages/main: do not add service/controller/route/repository feature trees here"
-          ],
-          "examples": [
-            "npx jskit generate feature-server-generator scaffold booking-engine",
-            "npx jskit generate feature-server-generator scaffold availability-engine --mode orchestrator"
-          ]
-        }
-      },
-      "server": {
-        "routes": []
-      },
-      "ui": {
-        "routes": [],
-        "elements": [],
-        "overrides": []
-      }
-    },
-    "mutations": {
-      "dependencies": {
-        "runtime": {
-          "@jskit-ai/realtime": "0.1.156"
-        },
-        "dev": {}
-      },
-      "packageJson": {
-        "scripts": {}
-      },
-      "procfile": {},
-      "text": [],
-      "files": []
     }
   },
   "dependencies": {
-    "@jskit-ai/kernel": "0.1.159",
-    "@jskit-ai/realtime": "0.1.156"
+    "@jskit-ai/kernel": "0.1.161",
+    "@jskit-ai/realtime": "0.1.158"
   }
 }

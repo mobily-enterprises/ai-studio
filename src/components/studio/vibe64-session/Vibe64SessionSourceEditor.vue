@@ -338,20 +338,15 @@
           />
           <div
             v-if="editor.loadingFile.value"
+            :aria-label="`Opening ${selectedFileName}`"
             aria-live="polite"
             class="vibe64-source-editor__file-loading"
             role="status"
           >
-            <v-progress-circular
-              color="primary"
-              indeterminate
-              size="30"
-              width="3"
+            <v-skeleton-loader
+              class="vibe64-source-editor__file-skeleton"
+              type="image"
             />
-            <div>
-              <strong>Opening {{ selectedFileName }}</strong>
-              <span>Loading the requested source file…</span>
-            </div>
           </div>
           <div
             v-if="editor.activeExplanation.value"
@@ -1648,30 +1643,16 @@ onBeforeUnmount(() => {
 }
 
 .vibe64-source-editor__file-loading {
-  align-items: center;
-  background:
-    radial-gradient(circle at 50% 20%, rgba(var(--v-theme-primary), 0.1), transparent 44%),
-    rgb(var(--v-theme-surface));
-  display: flex;
-  gap: 0.8rem;
+  background: rgb(var(--v-theme-surface));
   inset: 0;
-  justify-content: center;
+  overflow: hidden;
+  padding: 0.75rem;
   position: absolute;
   z-index: 4;
 }
 
-.vibe64-source-editor__file-loading > div {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.vibe64-source-editor__file-loading strong {
-  font-size: 0.82rem;
-}
-
-.vibe64-source-editor__file-loading span {
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  font-size: 0.72rem;
+.vibe64-source-editor__file-skeleton {
+  height: 100%;
 }
 
 .vibe64-source-editor__notice,

@@ -1,79 +1,96 @@
 import { describe, expect, it, vi } from "vitest";
+import { createCapabilityRuntime } from "@jskit-ai/kernel/shared/capabilities";
+
+vi.mock("/src/components/menus/MenuLinkItem.vue", () => ({ default: { name: "MenuLinkItem" } }));
+vi.mock("/src/components/menus/SurfaceAwareMenuLinkItem.vue", () => ({
+  default: { name: "SurfaceAwareMenuLinkItem" }
+}));
+vi.mock("/src/components/menus/TabLinkItem.vue", () => ({ default: { name: "TabLinkItem" } }));
+vi.mock("/src/components/menus/TopActionLinkItem.vue", () => ({ default: { name: "TopActionLinkItem" } }));
+vi.mock("/src/components/studio/Vibe64ActiveSessionNavItem.vue", () => ({
+  default: { name: "Vibe64ActiveSessionNavItem" }
+}));
+
 import {
-  resolveRealtimeClientListeners
-} from "@jskit-ai/realtime/client/listeners";
-import {
-  VIBE64_LIVE_QUERY_RECOVERY_LISTENER,
-  invalidateVibe64LiveQueries,
-  registerVibe64RealtimeListeners
+  attachVibe64RealtimeQueryRecovery,
+  invalidateVibe64LiveQueries
 } from "../../packages/main/src/client/vibe64RealtimeQueries.js";
+import { MainClientProvider } from "../../packages/main/src/client/providers/MainClientProvider.js";
 import {
   isVibe64LiveQuery
 } from "../../src/lib/vibe64LiveQueryRecovery.js";
 
-function createClientAppDouble() {
-  const instances = new Map();
-  const singletons = new Map();
-  const tags = new Map();
+function createRealtimeDouble() {
+  const listeners = new Map();
 
   return {
-    has(token) {
-      return instances.has(token) || singletons.has(token);
-    },
-    instance(token, value) {
-      instances.set(token, value);
-    },
-    make(token) {
-      if (instances.has(token)) {
-        return instances.get(token);
+    socket: {
+      on(event, listener) {
+        listeners.set(event, listener);
+      },
+      off(event, listener) {
+        if (listeners.get(event) === listener) {
+          listeners.delete(event);
+        }
       }
-      if (!singletons.has(token)) {
-        throw new Error(`Missing token: ${String(token)}`);
-      }
-      const resolved = singletons.get(token)(this);
-      instances.set(token, resolved);
-      return resolved;
     },
-    resolveTag(tagName) {
-      const tagged = tags.get(String(tagName || "").trim());
-      return tagged ? [...tagged].map((token) => this.make(token)) : [];
-    },
-    singleton(token, factory) {
-      singletons.set(token, factory);
-    },
-    tag(token, tagName) {
-      const normalizedTagName = String(tagName || "").trim();
-      if (!tags.has(normalizedTagName)) {
-        tags.set(normalizedTagName, new Set());
-      }
-      tags.get(normalizedTagName).add(token);
+    emit(event) {
+      return listeners.get(event)?.();
     }
   };
 }
 
 describe("MainClientProvider realtime integration", () => {
-  it("recovers active Vibe64 queries after a realtime reconnect", async () => {
-    const app = createClientAppDouble();
+  it("captures current client capabilities and recovers active Vibe64 queries after reconnect", async () => {
+    const registeredComponents = new Map();
+    const realtime = createRealtimeDouble();
     const invalidateQueries = vi.fn(async () => null);
-    app.instance("jskit.client.query-client", { invalidateQueries });
+    const runtime = createCapabilityRuntime({
+      providers: [MainClientProvider],
+      inputs: {
+        "client.components": {
+          register(id, component) {
+            registeredComponents.set(id, component);
+          }
+        },
+        "client.query": { invalidateQueries },
+        "client.realtime": realtime
+      }
+    });
 
-    registerVibe64RealtimeListeners(app);
-    const listener = resolveRealtimeClientListeners(app)
-      .find((entry) => entry.listenerId === VIBE64_LIVE_QUERY_RECOVERY_LISTENER);
-
-    expect(listener?.event).toBe("connect");
-    await listener.handle({ app });
+    await runtime.start();
+    expect(registeredComponents.size).toBe(5);
+    await realtime.emit("connect");
 
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
     const [{ predicate, refetchType }] = invalidateQueries.mock.calls[0];
     expect(refetchType).toBe("active");
     expect(predicate({ queryKey: ["vibe64", "project", "beepollen", "sessions"] })).toBe(true);
     expect(predicate({ queryKey: ["other", "project", "beepollen"] })).toBe(false);
+
+    await runtime.shutdown();
+    await realtime.emit("connect");
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
   it("ignores missing query clients", async () => {
     expect(isVibe64LiveQuery({ queryKey: ["vibe64", "sessions"] })).toBe(true);
     expect(isVibe64LiveQuery({ queryKey: ["other", "sessions"] })).toBe(false);
-    expect(await Promise.resolve(invalidateVibe64LiveQueries(createClientAppDouble()))).toBeNull();
+    expect(await Promise.resolve(invalidateVibe64LiveQueries(null))).toBeNull();
+  });
+
+  it("attaches directly to the realtime capability and returns an explicit detach function", () => {
+    const realtime = createRealtimeDouble();
+    const invalidateQueries = vi.fn();
+    const detach = attachVibe64RealtimeQueryRecovery({
+      queryClient: { invalidateQueries },
+      realtime
+    });
+
+    realtime.emit("connect");
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
+    detach();
+    realtime.emit("connect");
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
 });

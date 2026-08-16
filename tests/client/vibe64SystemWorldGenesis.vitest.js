@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +12,41 @@ import {
 } from "../../packages/vibe64-system-graph/src/client/world/worldLayout.js";
 
 describe("Genesis City world projection", () => {
+  it("keeps the Machine City navigator at region scale", () => {
+    const source = readFileSync(
+      "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",
+      "utf8"
+    );
+
+    expect(source).toContain("v-for=\"district in machineNavigatorDistricts\"");
+    expect(source).toContain("@click=\"inspectDistrict(district)\"");
+    expect(source).not.toContain("@click=\"inspectDistrict(district, { focus: true })\"");
+    expect(source).not.toContain(":icon=\"cityKind === 'machine' ? mdiFileCodeOutline");
+  });
+
+  it("keeps the mature batched-label and idle-frame performance boundaries", () => {
+    const renderer = readFileSync(
+      "packages/vibe64-system-graph/src/client/world/createSystemWorld.js",
+      "utf8"
+    );
+    const presentation = readFileSync(
+      "packages/vibe64-system-graph/src/client/world/cityPresentationObjects.js",
+      "utf8"
+    );
+    const component = readFileSync(
+      "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",
+      "utf8"
+    );
+
+    expect(renderer).toContain("createDistrictSurfaceLabels(");
+    expect(renderer).not.toContain("addLabel(district.title");
+    expect(renderer).toContain('controls.addEventListener("wake", markDirty)');
+    expect(presentation).toContain("one atlas");
+    expect(component).toContain("const shouldContinue = world?.frame(time) === true");
+    expect(component).toContain("<span>Precincts</span>");
+    expect(component).toContain("<span>Sections</span>");
+  });
+
   it("passes native Machine City districts, buildings, and functions by reference", () => {
     const districts = [{
       id: "directory:src",
@@ -44,11 +80,15 @@ describe("Genesis City world projection", () => {
       cityKind: "machine",
       cityLabel: "MACHINE CITY · FILES AND FUNCTIONS",
       districts,
-      functions
+      functions,
+      presentationCampuses: [],
+      presentationRegions: []
     });
     expect(overview.buildings).toBe(buildings);
     expect(overview.districts).toBe(districts);
     expect(overview.functions).toBe(functions);
+    expect(overview.presentationCampuses).toEqual([]);
+    expect(overview.presentationRegions).toEqual([]);
     expect(overview).not.toHaveProperty("adapter");
     expect(overview).not.toHaveProperty("relationships");
     expect(overview).not.toHaveProperty("findings");
@@ -99,6 +139,71 @@ describe("Genesis City world projection", () => {
     expect(overview.buildings[0]).not.toHaveProperty("evidence");
     expect(overview.links).toBe(links);
     expect(layout.districts[0].title).toBe("Catalog");
+  });
+
+  it("joins Program implemented-by links to exact Machine files without path inference", () => {
+    const machineFile = {
+      districtId: "directory:src",
+      id: "file:src/catalog.js",
+      lines: 20,
+      path: "src/catalog.js",
+      title: "catalog.js"
+    };
+    const unlinkedMachineFile = {
+      districtId: "directory:src",
+      id: "file:src/other.js",
+      lines: 10,
+      path: "src/other.js",
+      title: "other.js"
+    };
+    const operation = {
+      districtId: "subsystem:catalog",
+      id: "operation:catalog/list",
+      path: "genesis/program/catalog/list.md",
+      sources: ["src/catalog.js", "src/other.js"],
+      title: "List books"
+    };
+    const machineCity = {
+      buildings: [machineFile, unlinkedMachineFile],
+      districts: [],
+      functions: []
+    };
+    const programCity = {
+      buildings: [operation],
+      districts: [{
+        id: "subsystem:catalog",
+        parentId: null,
+        path: "catalog",
+        title: "Catalog"
+      }],
+      links: [{
+        fromId: operation.id,
+        kind: "implemented-by",
+        toId: machineFile.id
+      }, {
+        fromId: operation.id,
+        kind: "described-by",
+        toId: unlinkedMachineFile.id
+      }]
+    };
+
+    const overview = genesisCityWorld(machineCity, GENESIS_MACHINE_CITY_KIND, {
+      machineCity,
+      programCity
+    });
+
+    expect(overview.semantic.subsystems).toHaveLength(1);
+    expect(overview.semantic.subsystems[0].fileIds).toEqual([machineFile.id]);
+    expect(overview.semantic.operations[0].implementationLinks).toEqual([
+      expect.objectContaining({
+        fileId: machineFile.id,
+        operationId: operation.id,
+        subsystemId: "subsystem:catalog"
+      })
+    ]);
+    expect(overview.semantic.implementationLinks).toHaveLength(1);
+    expect(overview.semantic).not.toHaveProperty("dependencies");
+    expect(overview.semantic).not.toHaveProperty("executionSide");
   });
 
   it("normalizes unknown selector values to Machine City", () => {

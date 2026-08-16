@@ -107,6 +107,7 @@ async function deliverUploadedAttachments(onUploaded, uploaded = []) {
 
 function useCodexAttachments({
   canUpload = () => true,
+  onError = null,
   onUploaded = async () => null,
   sessionId,
   uploadAttachment
@@ -116,6 +117,19 @@ function useCodexAttachments({
   const status = ref("");
   const uploading = ref(false);
   const dragActive = computed(() => dragDepth.value > 0);
+
+  function reportAttachmentError(error, fallbackMessage = "Attachment upload failed.") {
+    const message = String(error?.message || error || fallbackMessage);
+    status.value = message;
+    if (typeof onError === "function") {
+      try {
+        onError(error || new Error(message), fallbackMessage);
+      } catch {
+        // Feedback presentation must not replace the recoverable attachment state.
+      }
+    }
+    return message;
+  }
 
   function resetDragState() {
     dragDepth.value = 0;
@@ -178,12 +192,12 @@ function useCodexAttachments({
         attachments.value.push(attachment);
       }
     } catch (error) {
-      uploadFailure = String(error?.message || error || "Attachment upload failed.");
+      uploadFailure = reportAttachmentError(error);
     }
     try {
       await deliverUploadedAttachments(onUploaded, uploaded);
     } catch (error) {
-      status.value = String(error?.message || error || "Attachment upload failed.");
+      reportAttachmentError(error);
     } finally {
       if (uploadFailure) {
         status.value = uploadFailure;
@@ -202,7 +216,9 @@ function useCodexAttachments({
     const files = codexAttachmentFilesFromPasteEvent(event);
     if (files.length < 1) {
       if (codexAttachmentClipboardLocalFileReference(event)) {
-        status.value = "Copied local files cannot be pasted from this browser. Drop the file or use Attach files.";
+        reportAttachmentError(
+          "Copied local files cannot be pasted from this browser. Drop the file or use Attach files."
+        );
       }
       return [];
     }

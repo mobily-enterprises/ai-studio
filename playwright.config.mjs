@@ -1,15 +1,35 @@
 import { defineConfig } from "@playwright/test";
-import { createJskitPlaywrightConfig } from "@jskit-ai/jskit-cli/test/playwright";
 
-const jskitConfig = createJskitPlaywrightConfig();
+const managedBaseUrl = String(process.env.PLAYWRIGHT_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/u, "");
+const baseURL = managedBaseUrl || "http://127.0.0.1:4173";
+const storageState = String(process.env.VIBE64_PLAYWRIGHT_STORAGE_STATE || "").trim();
+const useRunningServer = Boolean(managedBaseUrl) || process.env.VIBE64_LIVE_E2E === "1";
 
 export default defineConfig({
-  ...jskitConfig,
+  testDir: "./tests/e2e",
+  timeout: 60_000,
+  expect: {
+    timeout: 10_000
+  },
   reporter: process.env.CI ? "github" : "list",
   workers: 1,
   use: {
-    ...jskitConfig.use,
+    baseURL,
+    headless: true,
+    ...(storageState ? { storageState } : {}),
     trace: "retain-on-failure"
   },
-  ...(process.env.VIBE64_LIVE_E2E === "1" ? { webServer: undefined } : {})
+  ...(useRunningServer ? {} : {
+    webServer: {
+      command: "npm run build && node ./bin/server.js",
+      env: {
+        PORT: "4173"
+      },
+      url: `${baseURL}/api/health`,
+      reuseExistingServer: true,
+      timeout: 180_000
+    }
+  })
 });

@@ -1,3 +1,5 @@
+import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions";
+
 const VIBE64_ACCOUNTS_CHANGED_EVENT = "vibe64.accounts.changed";
 const VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT = "vibe64.accounts.auth-session.changed";
 const VIBE64_CONNECTIONS_CHANGED_EVENT = "vibe64.connections.changed";
@@ -38,12 +40,12 @@ function authSessionIdFromResult(result = {}) {
   return normalizeAccountValue(source.id || source.sessionId || "");
 }
 
-function accountIdFromServiceEvent({ result = {}, args = [] } = {}) {
-  return accountIdFromResult(result) || accountIdFromInput(args?.[0]) || "accounts";
+function accountIdFromExecution({ input = {}, result = {} } = {}) {
+  return accountIdFromResult(result) || accountIdFromInput(input) || "accounts";
 }
 
-function vibe64AccountsRealtimePayload({ result = {}, args = [] } = {}) {
-  const accountId = accountIdFromResult(result) || accountIdFromInput(args?.[0]);
+function vibe64AccountsRealtimePayload({ input = {}, result = {} } = {}) {
+  const accountId = accountIdFromResult(result) || accountIdFromInput(input);
   const source = result && typeof result === "object" && !Array.isArray(result)
     ? result
     : {};
@@ -55,8 +57,8 @@ function vibe64AccountsRealtimePayload({ result = {}, args = [] } = {}) {
   };
 }
 
-function vibe64ConnectionsRealtimePayload(options = {}) {
-  const payload = vibe64AccountsRealtimePayload(options);
+function vibe64ConnectionsRealtimePayload(execution = {}) {
+  const payload = vibe64AccountsRealtimePayload(execution);
   return {
     ...payload,
     ...(payload.accountId ? { connectionId: payload.accountId } : {})
@@ -79,65 +81,50 @@ function vibe64AccountAuthSessionRealtimePayload(session = {}) {
   };
 }
 
-function vibe64AccountsChangedServiceEvent({
-  operation = "updated"
-} = {}) {
-  return Object.freeze({
-    type: "entity.changed",
+function vibe64AccountsChangedActionEvent({ operation = "updated" } = {}) {
+  return createEntityChangedActionEvent({
     source: VIBE64_ACCOUNT_EVENT_SOURCE,
     entity: VIBE64_ACCOUNT_EVENT_ENTITY,
     operation,
-    entityId: accountIdFromServiceEvent,
-    realtime: Object.freeze({
+    entityId: accountIdFromExecution,
+    realtime: {
       event: VIBE64_ACCOUNTS_CHANGED_EVENT,
       audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
       payload: vibe64AccountsRealtimePayload
-    })
+    }
   });
 }
 
-function vibe64AccountAuthSessionChangedServiceEvent({
-  operation = "updated"
-} = {}) {
-  return Object.freeze({
-    type: "entity.changed",
+function vibe64AccountAuthSessionChangedActionEvent({ operation = "updated" } = {}) {
+  return createEntityChangedActionEvent({
     source: VIBE64_ACCOUNT_EVENT_SOURCE,
     entity: "account-auth-session",
     operation,
     entityId: ({ result = {} } = {}) => authSessionIdFromResult(result),
-    realtime: Object.freeze({
+    realtime: {
       event: VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
       audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
       payload: ({ result = {} } = {}) => vibe64AccountAuthSessionRealtimePayload(result)
-    })
+    }
   });
 }
 
-function vibe64ConnectionsChangedServiceEvent({
-  operation = "updated"
-} = {}) {
-  return Object.freeze({
-    type: "entity.changed",
+function vibe64ConnectionsChangedActionEvent({ operation = "updated" } = {}) {
+  return createEntityChangedActionEvent({
     source: VIBE64_ACCOUNT_EVENT_SOURCE,
     entity: "connection",
     operation,
-    entityId: accountIdFromServiceEvent,
-    realtime: Object.freeze({
+    entityId: accountIdFromExecution,
+    realtime: {
       event: VIBE64_CONNECTIONS_CHANGED_EVENT,
       audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
       payload: vibe64ConnectionsRealtimePayload
-    })
+    }
   });
 }
 
-function createVibe64AccountsChangedPublisher({
-  domainEvents = null,
-  methodName = "",
-  serviceToken = ""
-} = {}) {
-  const normalizedServiceToken = normalizeAccountValue(serviceToken);
-  const normalizedMethodName = normalizeAccountValue(methodName);
-  if (!domainEvents || typeof domainEvents.publish !== "function" || !normalizedServiceToken || !normalizedMethodName) {
+function createVibe64AccountsChangedPublisher({ events = null } = {}) {
+  if (!events || typeof events.publish !== "function") {
     return async function publishNoop() {
       return null;
     };
@@ -165,15 +152,15 @@ function createVibe64AccountsChangedPublisher({
     };
     const realtimePayload = {
       ...vibe64AccountsRealtimePayload({
-        args: [{
+        input: {
           accountId: normalizedAccountId
-        }],
+        },
         result
       }),
       ...(reason ? { reason } : {})
     };
 
-    const accountEvent = await domainEvents.publish({
+    const accountEvent = await events.publish({
       source: VIBE64_ACCOUNT_EVENT_SOURCE,
       entity: VIBE64_ACCOUNT_EVENT_ENTITY,
       operation: normalizeAccountValue(operation) || "updated",
@@ -183,18 +170,14 @@ function createVibe64AccountsChangedPublisher({
         id: null
       },
       occurredAt: new Date().toISOString(),
-      meta: {
-        service: {
-          token: normalizedServiceToken,
-          method: normalizedMethodName
-        },
-        realtime: {
-          event: VIBE64_ACCOUNTS_CHANGED_EVENT,
-          payload: realtimePayload
-        }
-      }
+      realtime: {
+        event: VIBE64_ACCOUNTS_CHANGED_EVENT,
+        audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+        payload: realtimePayload
+      },
+      type: "entity.changed"
     });
-    await domainEvents.publish({
+    await events.publish({
       source: VIBE64_ACCOUNT_EVENT_SOURCE,
       entity: "connection",
       operation: normalizeAccountValue(operation) || "updated",
@@ -204,32 +187,22 @@ function createVibe64AccountsChangedPublisher({
         id: null
       },
       occurredAt: new Date().toISOString(),
-      meta: {
-        service: {
-          token: normalizedServiceToken,
-          method: normalizedMethodName
-        },
-        realtime: {
-          event: VIBE64_CONNECTIONS_CHANGED_EVENT,
-          payload: {
-            ...realtimePayload,
-            connectionId: normalizedAccountId
-          }
+      realtime: {
+        event: VIBE64_CONNECTIONS_CHANGED_EVENT,
+        audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+        payload: {
+          ...realtimePayload,
+          connectionId: normalizedAccountId
         }
-      }
+      },
+      type: "entity.changed"
     });
     return accountEvent;
   };
 }
 
-function createVibe64AccountAuthSessionChangedPublisher({
-  domainEvents = null,
-  methodName = "",
-  serviceToken = ""
-} = {}) {
-  const normalizedServiceToken = normalizeAccountValue(serviceToken);
-  const normalizedMethodName = normalizeAccountValue(methodName);
-  if (!domainEvents || typeof domainEvents.publish !== "function" || !normalizedServiceToken || !normalizedMethodName) {
+function createVibe64AccountAuthSessionChangedPublisher({ events = null } = {}) {
+  if (!events || typeof events.publish !== "function") {
     return async function publishNoop() {
       return null;
     };
@@ -243,7 +216,7 @@ function createVibe64AccountAuthSessionChangedPublisher({
     if (!payload.sessionId) {
       return null;
     }
-    return domainEvents.publish({
+    return events.publish({
       source: VIBE64_ACCOUNT_EVENT_SOURCE,
       entity: "account-auth-session",
       operation: normalizeAccountValue(operation) || "updated",
@@ -253,19 +226,15 @@ function createVibe64AccountAuthSessionChangedPublisher({
         id: null
       },
       occurredAt: new Date().toISOString(),
-      meta: {
-        service: {
-          token: normalizedServiceToken,
-          method: normalizedMethodName
-        },
-        realtime: {
-          event: VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
-          payload: {
-            ...payload,
-            ...(reason ? { reason } : {})
-          }
+      realtime: {
+        event: VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
+        audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+        payload: {
+          ...payload,
+          ...(reason ? { reason } : {})
         }
-      }
+      },
+      type: "entity.changed"
     });
   };
 }
@@ -280,9 +249,9 @@ export {
   VIBE64_ACCOUNTS_CHANGED_EVENT,
   VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
   VIBE64_CONNECTIONS_CHANGED_EVENT,
-  vibe64AccountAuthSessionChangedServiceEvent,
-  vibe64AccountsChangedServiceEvent,
-  vibe64ConnectionsChangedServiceEvent,
+  vibe64AccountAuthSessionChangedActionEvent,
+  vibe64AccountsChangedActionEvent,
+  vibe64ConnectionsChangedActionEvent,
   createVibe64AccountAuthSessionChangedPublisher,
   createVibe64AccountsChangedPublisher
 };

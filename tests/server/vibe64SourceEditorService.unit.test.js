@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -50,10 +51,14 @@ async function createSourceEditorFixture({
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-source-editor-"));
   const sessionId = "session-1";
-  const sessionRoot = path.join(root, "state", "sessions", "active", sessionId);
-  const metadataRoot = path.join(sessionRoot, "metadata");
+  const temporaryRoot = path.join(root, "runtime-temp");
+  const sourceEditorTempRoot = path.join(
+    temporaryRoot,
+    "vibe64-source-editor",
+    crypto.createHash("sha256").update(sessionId).digest("hex").slice(0, 24)
+  );
   const sourceRoot = path.join(root, "managed-source", "sessions", "active", sessionId, "source");
-  await mkdir(metadataRoot, {
+  await mkdir(temporaryRoot, {
     recursive: true
   });
   await mkdir(path.join(sourceRoot, "src"), {
@@ -107,8 +112,6 @@ async function createSourceEditorFixture({
             return {
               metadata: sourceMetadata(sourceRoot),
               sessionId,
-              sessionRoot,
-              metadataRoot,
               sourceReady: true
             };
           }
@@ -116,13 +119,14 @@ async function createSourceEditorFixture({
       }
     },
     sourceFileObserver,
-    terminalService
+    terminalService,
+    temporaryRoot
   });
 
   return {
-    metadataRoot,
     root,
     service,
+    sourceEditorTempRoot,
     sourceRoot
   };
 }
@@ -388,7 +392,7 @@ test("source editor reads and saves files with hash conflict protection", async 
       []
     );
     assert.equal(
-      (await readdir(path.join(fixture.metadataRoot, "source-editor-temp"))).length,
+      (await readdir(fixture.sourceEditorTempRoot)).length,
       0
     );
 
@@ -897,7 +901,7 @@ test("source editor cleans abandoned explanation chats from its disk cleanup led
     }
 
     const ledgerPath = path.join(
-      fixture.metadataRoot,
+      fixture.sourceEditorTempRoot,
       "source-editor-explanation-cleanup.json"
     );
     const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));

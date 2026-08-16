@@ -15,13 +15,14 @@
     "kind": "runtime",
     "capabilities": {
       "provides": [
-        "feature.vibe64-system-graph"
+        "vibe64.system-graph"
       ],
       "requires": [
-        "feature.vibe64-project"
+        "runtime.actions",
+        "runtime.http",
+        "vibe64.project"
       ]
     },
-    "options": {},
     "runtime": {
       "server": {
         "providers": [
@@ -47,35 +48,16 @@
             "summary": "Reads and validates native Genesis Machine and Program City documents."
           }
         ],
-        "containerTokens": {
-          "server": [
-            "feature.vibe64-system-graph.service"
-          ],
-          "client": []
-        }
-      },
-      "jskit": {
-        "scaffoldShape": "feature-server-v1",
-        "scaffoldMode": "orchestrator",
-        "lane": "default"
+        "capabilities": [
+          "vibe64.system-graph"
+        ]
       }
-    },
-    "mutations": {
-      "dependencies": {
-        "runtime": {},
-        "dev": {}
-      },
-      "packageJson": {
-        "scripts": {}
-      },
-      "procfile": {},
-      "files": [],
-      "text": []
     }
   },
   "dependencies": {
-    "@jskit-ai/http-web": "0.1.4",
-    "@jskit-ai/shell-web": "0.1.163",
+    "@jskit-ai/kernel": "0.1.161",
+    "@jskit-ai/http-web": "0.1.6",
+    "@jskit-ai/shell-web": "0.1.165",
     "@local/vibe64-core": "0.1.0",
     "@local/vibe64-genesis": "0.1.0",
     "@local/vibe64-project": "0.1.0",

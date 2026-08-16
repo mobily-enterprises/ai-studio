@@ -18,7 +18,6 @@ const VIBE64_CHAT_COLUMN_MAX_WIDTH_PX = 720;
 const VIBE64_PROJECT_COLUMN_MIN_WIDTH_PX = 480;
 const VIBE64_PROJECT_COLUMN_GAP_PX = 12;
 const VIBE64_CHAT_COLUMN_KEYBOARD_STEP_PX = 16;
-const VIBE64_CHAT_COLUMN_RESIZING_CLASS = "studio-home-chat-column-resizing";
 
 const staticChatColumnBounds = Object.freeze({
   max: VIBE64_CHAT_COLUMN_MAX_WIDTH_PX,
@@ -95,6 +94,8 @@ function useVibe64ChatColumnResize() {
     bounds.value
   ));
   let drag = null;
+  let pendingLayoutWidth = null;
+  let resizeFrame = null;
   let resizeObserver = null;
   let windowResizeFallbackActive = false;
 
@@ -113,22 +114,58 @@ function useVibe64ChatColumnResize() {
     writeLocalStorageJson(VIBE64_CHAT_COLUMN_STORAGE_KEY, width.value);
   }
 
-  function updateBodyLayout(value) {
+  function layoutTargets() {
     if (typeof document === "undefined") {
+      return [];
+    }
+    return [
+      splitPane(),
+      document.querySelector(".studio-home-shell-heading")
+    ].filter(Boolean);
+  }
+
+  function applyLayoutWidth(value) {
+    for (const target of layoutTargets()) {
+      target.style.setProperty("--studio-home-chat-column-width", `${value}px`);
+    }
+    separator.value?.setAttribute?.("aria-valuenow", String(value));
+  }
+
+  function flushLayoutWidth() {
+    resizeFrame = null;
+    if (pendingLayoutWidth === null) {
       return;
     }
-    document.body.style.setProperty(
-      "--studio-home-chat-column-min-width",
-      `${VIBE64_CHAT_COLUMN_MIN_WIDTH_PX}px`
-    );
-    document.body.style.setProperty(
-      "--studio-home-chat-column-width",
-      `${value}px`
-    );
-    document.body.style.setProperty(
-      "--studio-home-project-gap",
-      `${VIBE64_PROJECT_COLUMN_GAP_PX}px`
-    );
+    const value = pendingLayoutWidth;
+    pendingLayoutWidth = null;
+    applyLayoutWidth(value);
+  }
+
+  function scheduleLayoutWidth(value) {
+    pendingLayoutWidth = value;
+    if (
+      resizeFrame !== null ||
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      if (resizeFrame === null) {
+        flushLayoutWidth();
+      }
+      return;
+    }
+    resizeFrame = window.requestAnimationFrame(flushLayoutWidth);
+  }
+
+  function cancelScheduledLayout() {
+    if (
+      resizeFrame !== null &&
+      typeof window !== "undefined" &&
+      typeof window.cancelAnimationFrame === "function"
+    ) {
+      window.cancelAnimationFrame(resizeFrame);
+    }
+    resizeFrame = null;
+    pendingLayoutWidth = null;
   }
 
   function stopResize(event) {
@@ -147,16 +184,15 @@ function useVibe64ChatColumnResize() {
       window.removeEventListener("pointerup", stopResize);
       window.removeEventListener("pointercancel", stopResize);
     }
-    if (typeof document !== "undefined") {
-      document.body.classList.remove(VIBE64_CHAT_COLUMN_RESIZING_CLASS);
-    }
     if (!completedDrag) {
       return;
     }
     if (completedDrag.target?.hasPointerCapture?.(completedDrag.pointerId)) {
       completedDrag.target.releasePointerCapture(completedDrag.pointerId);
     }
-    preferredWidth.value = width.value;
+    cancelScheduledLayout();
+    preferredWidth.value = completedDrag.width;
+    applyLayoutWidth(width.value);
     save();
   }
 
@@ -164,10 +200,11 @@ function useVibe64ChatColumnResize() {
     if (!drag || event.pointerId !== drag.pointerId) {
       return;
     }
-    preferredWidth.value = constrainVibe64ChatColumnWidth(
+    drag.width = constrainVibe64ChatColumnWidth(
       drag.startWidth + event.clientX - drag.startX,
       bounds.value
     );
+    scheduleLayoutWidth(drag.width);
   }
 
   function startResize(event) {
@@ -180,11 +217,11 @@ function useVibe64ChatColumnResize() {
       pointerId: event.pointerId,
       startWidth: width.value,
       startX: event.clientX,
-      target: event.currentTarget
+      target: event.currentTarget,
+      width: width.value
     };
     resizing.value = true;
     event.currentTarget?.setPointerCapture?.(event.pointerId);
-    document.body.classList.add(VIBE64_CHAT_COLUMN_RESIZING_CLASS);
     window.addEventListener("pointermove", moveResize);
     window.addEventListener("pointerup", stopResize);
     window.addEventListener("pointercancel", stopResize);
@@ -221,26 +258,26 @@ function useVibe64ChatColumnResize() {
     resizeObserver.observe(pane);
   }
 
-  watch(width, updateBodyLayout, { immediate: true });
+  watch(width, applyLayoutWidth, { immediate: true });
 
   onMounted(async () => {
     await nextTick();
     syncBounds();
+    applyLayoutWidth(width.value);
     observeSplitPane();
   });
 
   onBeforeUnmount(() => {
     stopResize();
+    cancelScheduledLayout();
     resizeObserver?.disconnect?.();
     resizeObserver = null;
     if (windowResizeFallbackActive && typeof window !== "undefined") {
       window.removeEventListener("resize", syncBounds);
     }
     windowResizeFallbackActive = false;
-    if (typeof document !== "undefined") {
-      document.body.style.removeProperty("--studio-home-chat-column-min-width");
-      document.body.style.removeProperty("--studio-home-chat-column-width");
-      document.body.style.removeProperty("--studio-home-project-gap");
+    for (const target of layoutTargets()) {
+      target.style.removeProperty("--studio-home-chat-column-width");
     }
   });
 

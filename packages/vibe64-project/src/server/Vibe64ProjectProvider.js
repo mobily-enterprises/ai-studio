@@ -1,79 +1,40 @@
-import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
+import { defineFeature } from "@jskit-ai/kernel/server/features";
 
-import {
-  createService
-} from "./service.js";
 import {
   getStudioProjectContext
 } from "@local/vibe64-core/server/studioProjectContext";
-import {
-  jskitRuntimeEnv
-} from "@local/vibe64-core/server/jskitRuntimeEnv";
-import {
-  vibe64ProjectChangedServiceEvent
-} from "@local/vibe64-core/server/projectRealtimeEvents";
-import { featureActions } from "./actions.js";
+import { createProjectActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
+import { createService } from "./service.js";
 
-const VIBE64_PROJECT_SERVICE = "feature.vibe64-project.service";
-
-class Vibe64ProjectProvider {
-  static id = "feature.vibe64-project";
-
-  static startsAfter = ["runtime.actions"];
-
-  register(app) {
-    if (
-      !app ||
-      typeof app.service !== "function" ||
-      typeof app.actions !== "function"
-    ) {
-      throw new Error("Vibe64ProjectProvider requires application service()/actions().");
-    }
-
-    const projectContext = getStudioProjectContext();
-    const env = jskitRuntimeEnv(app);
-
-    app.service(
-      VIBE64_PROJECT_SERVICE,
-      () => createService({
-        env,
-        projectContext
-      }),
-      {
-        events: {
-          applyProjectTemplate: [vibe64ProjectChangedServiceEvent({
-            operation: "updated"
-          })],
-          createProject: [vibe64ProjectChangedServiceEvent({
-            operation: "created"
-          })],
-          savePreviewApplicationIdentities: [vibe64ProjectChangedServiceEvent({
-            operation: "updated"
-          })],
-          selectProject: [vibe64ProjectChangedServiceEvent({
-            operation: "updated"
-          })]
-        }
-      }
-    );
-
-    app.actions(
-      withActionDefaults(featureActions, {
-        domain: "feature",
-        dependencies: {
-          featureService: "feature.vibe64-project.service"
-        }
-      })
-    );
-  }
-
-  boot(app) {
-    registerRoutes(app, {
+const Vibe64ProjectProvider = defineFeature({
+  id: "vibe64.project",
+  domain: "vibe64-project",
+  requires: {
+    env: "runtime.env",
+    http: "runtime.http"
+  },
+  provides: {
+    project: "vibe64.project"
+  },
+  actionDefaults: {
+    channels: ["api", "automation", "internal"],
+    surfaces: ["app"]
+  },
+  setup({ env, http }) {
+    const project = createService({
+      env,
+      projectContext: getStudioProjectContext()
+    });
+    registerRoutes(http, {
       routeRelativePath: "vibe64",
       routeSurface: "app"
     });
+    return { project };
+  },
+  actions({ project }) {
+    return createProjectActions({ project });
   }
-}
+});
 
 export { Vibe64ProjectProvider };

@@ -103,7 +103,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.agentStopVisible.value).toBe(true);
     expect(view.composerDisabled.value).toBe(false);
     expect(view.composerCanSubmit.value).toBe(true);
-    expect(view.composerHint.value).toContain("Send guidance");
+    expect(view.composerHint.value).toBe("");
   });
 
   it("keeps chat usable while workspace preparation runs", async () => {
@@ -128,6 +128,21 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.composerCanSubmit.value).toBe(true);
     await expect(view.retryWorkspaceSetup()).resolves.toBe(false);
     expect(retryWorkspaceSetup).not.toHaveBeenCalled();
+  });
+
+  it("keeps a ready workspace out of the chat activity area", async () => {
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          status: "succeeded"
+        }
+      }
+    });
+
+    expect(view.workspaceSetupVisible.value).toBe(false);
+    expect(view.workspaceSetupTitle.value).toBe("");
+    expect(view.composerHint.value).toBe("");
   });
 
   it("retries failed workspace preparation without blocking chat", async () => {
@@ -315,6 +330,42 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(sendAgentMessage.mock.calls[0][0].message).toBe(
       "[1] src/main.js\n[2] parseInput"
     );
+  });
+
+  it("keeps per-question choices from an ordinary assistant message", async () => {
+    const view = await createView({
+      conversationLog: {
+        turns: [{
+          assistant: {
+            text: [
+              "[1] Include callbacks?",
+              "Possible answers:",
+              "- Complete lifecycle (Recommended)",
+              "- Sending first",
+              "[2] Existing files?",
+              "Possible answers:",
+              "- No existing files (Recommended)",
+              "- Migration required"
+            ].join("\n")
+          }
+        }]
+      }
+    });
+
+    expect(view.numberedQuestions.value).toMatchObject([
+      {
+        choices: [
+          { recommended: true, value: "Complete lifecycle" },
+          { recommended: false, value: "Sending first" }
+        ]
+      },
+      {
+        choices: [
+          { recommended: true, value: "No existing files" },
+          { recommended: false, value: "Migration required" }
+        ]
+      }
+    ]);
   });
 
   it("lets the user leave structured questions and answer normally", async () => {

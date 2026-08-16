@@ -98,6 +98,47 @@ describe("vibe64NumberedQuestionSugar", () => {
     ]);
   });
 
+  it("keeps the suggested answers attached to each numbered question", () => {
+    const sugar = sugarForPrompt([
+      "[1] Should lifecycle callbacks be included?",
+      "Possible answers:",
+      "- Yes, complete lifecycle (Recommended)",
+      "- Sending adapters first",
+      "[2] Are there existing files to migrate?",
+      "Possible answers:",
+      "- No existing files (Recommended)",
+      "- Yes, migration required",
+      "[3] Which communications should the first cut cover?",
+      "Possible answers:",
+      "- Transactional first (Recommended)",
+      "- Transactional and marketing"
+    ].join("\n"));
+
+    expect(sugar.questions).toMatchObject([
+      {
+        choices: [
+          { label: "Yes, complete lifecycle", recommended: true, value: "Yes, complete lifecycle" },
+          { label: "Sending adapters first", recommended: false, value: "Sending adapters first" }
+        ],
+        label: "Should lifecycle callbacks be included?"
+      },
+      {
+        choices: [
+          { label: "No existing files", recommended: true, value: "No existing files" },
+          { label: "Yes, migration required", recommended: false, value: "Yes, migration required" }
+        ],
+        label: "Are there existing files to migrate?"
+      },
+      {
+        choices: [
+          { label: "Transactional first", recommended: true, value: "Transactional first" },
+          { label: "Transactional and marketing", recommended: false, value: "Transactional and marketing" }
+        ],
+        label: "Which communications should the first cut cover?"
+      }
+    ]);
+  });
+
   it("submits generated answers as one response field", () => {
     const sugar = sugarForPrompt([
       "[1] Which file should change?",

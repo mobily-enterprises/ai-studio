@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 
 const componentPath = path.resolve("src/components/studio/vibe64-session/Vibe64AutopilotView.vue");
 const composablePath = path.resolve("src/composables/useVibe64AutopilotView.js");
+const promptTextareaPath = path.resolve(
+  "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue"
+);
 const runtimeHostPath = path.resolve("src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue");
 
 describe("Vibe64 direct session view", () => {
@@ -47,21 +50,41 @@ describe("Vibe64 direct session view", () => {
   it("keeps direct source, City, preview, diff, terminal, and close controls", () => {
     const component = fs.readFileSync(componentPath, "utf8");
 
+    expect(component).toContain("<Vibe64SessionToolbar");
+    expect(component).toContain(":abandon=\"props.sessionAbandon\"");
     expect(component).toContain("<Vibe64SessionSourceEditor");
     expect(component).toContain("<Vibe64SystemWorldView");
     expect(component).toContain("<Vibe64LaunchControls");
     expect(component).toContain("<Vibe64SessionDiffPanel");
     expect(component).toContain("name=\"ai-terminal\"");
-    expect(component).toContain("title=\"Close session\"");
+    expect(component).not.toContain("Session tools");
+    expect(component).not.toContain("mdiDotsHorizontal");
   });
 
   it("offers preview attachments as ordinary direct-chat controls", () => {
     const component = fs.readFileSync(componentPath, "utf8");
+    const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");
 
     expect(component).toContain("aria-label=\"Attach visible preview\"");
     expect(component).toContain("aria-label=\"Attach console & network\"");
     expect(component).toContain("@preview-attachment-state=\"updatePreviewAttachmentState\"");
     expect(component).not.toContain("Composer menu");
+    expect(promptTextarea).toContain("const codexCommands = useVibe64CodexCommands();");
+    expect(promptTextarea).toContain("canUpload: () => props.attachmentsEnabled && !props.disabled");
+    expect(promptTextarea).toContain("onError: attachmentFeedback.error");
+    expect(promptTextarea).toContain('source: "vibe64.agent-attachment.upload.feedback"');
+    expect(promptTextarea).not.toContain("attachments.status.value");
+    expect(promptTextarea).not.toContain("Attachments are disabled for this prompt.");
+  });
+
+  it("labels active-turn messages as compact steering", () => {
+    const component = fs.readFileSync(componentPath, "utf8");
+    const composable = fs.readFileSync(composablePath, "utf8");
+
+    expect(component).toContain("agentStopVisible ? 'Steer assistant' : 'Send message'");
+    expect(component).toContain(":prepend-icon=\"agentStopVisible ? mdiArrowTopRight : undefined\"");
+    expect(component).toContain("<span v-if=\"agentStopVisible\">Steer</span>");
+    expect(composable).not.toContain("Send guidance while the assistant is working.");
   });
 
   it("passes only direct chat and tool state through the runtime host", () => {
@@ -92,5 +115,18 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("Retry setup");
     expect(composable).toContain("sendChatPayload(chatMessagePayload(workspaceSetupFixPrompt");
     expect(component).not.toMatch(/workspace.*(?:dialog|stepper)|(?:dialog|stepper).*workspace/iu);
+  });
+
+  it("uses multiline Enter and moves Tab directly from chat input to Send", () => {
+    const component = fs.readFileSync(componentPath, "utf8");
+    const composable = fs.readFileSync(composablePath, "utf8");
+    const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");
+
+    expect(component).toContain("tab-to-submit");
+    expect(component).toContain("@tab-to-submit=\"focusComposerSendButton\"");
+    expect(component).not.toContain("submit-on-enter");
+    expect(composable).not.toContain("Enter sends. Shift+Enter adds a line.");
+    expect(promptTextarea).toContain('event.key === "Enter" && !props.submitOnEnter');
+    expect(promptTextarea).toContain("event.stopPropagation()");
   });
 });

@@ -1,3 +1,5 @@
+import { answerChoiceFromLine } from "./vibe64AnswerChoiceSugar.js";
+
 const UI_QUESTION_FIELD_PREFIX = "__ui_question_";
 
 function inactiveNumberedQuestionSugar() {
@@ -44,12 +46,39 @@ function trailingAnswerChoiceLine(line = "") {
   return /^[-*]\s+.+/u.test(String(line || "").trim());
 }
 
+function numberedQuestionChoice(line = "") {
+  const choice = answerChoiceFromLine(line);
+  if (!choice) {
+    return null;
+  }
+  return {
+    ...choice,
+    recommended: choice.recommended === true
+  };
+}
+
 function trailingAnswerChoiceBlock(lines = [], startIndex = 0) {
   if (!trailingAnswerChoiceHeadingLine(lines[startIndex])) {
-    return false;
+    return null;
   }
-  const choices = lines.slice(startIndex + 1);
-  return choices.length >= 2 && choices.length <= 6 && choices.every(trailingAnswerChoiceLine);
+  const choices = [];
+  let nextIndex = startIndex + 1;
+  while (nextIndex < lines.length && trailingAnswerChoiceLine(lines[nextIndex])) {
+    const choice = numberedQuestionChoice(lines[nextIndex]);
+    if (!choice) {
+      return null;
+    }
+    choices.push(choice);
+    nextIndex += 1;
+  }
+  const uniqueValues = new Set(choices.map((choice) => choice.value));
+  if (choices.length < 2 || choices.length > 6 || uniqueValues.size !== choices.length) {
+    return null;
+  }
+  return {
+    choices,
+    nextIndex
+  };
 }
 
 function questionForMarkerMatch(match = [], index = 0) {
@@ -65,6 +94,7 @@ function questionForMarkerMatch(match = [], index = 0) {
     return null;
   }
   return {
+    choices: [],
     label,
     name: `${UI_QUESTION_FIELD_PREFIX}${number}`,
     number
@@ -82,16 +112,24 @@ function parseLineNumberedQuestionPrompt(value = "") {
 
   const intro = [];
   const questions = [];
-  for (let index = 0; index < lines.length; index += 1) {
+  for (let index = 0; index < lines.length;) {
     const line = lines[index];
     const match = numberedQuestionMarkerMatch(line);
     if (!match) {
       if (!questions.length) {
         intro.push(line);
+        index += 1;
         continue;
       }
-      if (trailingAnswerChoiceBlock(lines, index)) {
-        break;
+      const choiceBlock = trailingAnswerChoiceBlock(lines, index);
+      if (choiceBlock) {
+        const question = questions.at(-1);
+        if (question.choices.length) {
+          return inactiveNumberedQuestionSugar();
+        }
+        question.choices = choiceBlock.choices;
+        index = choiceBlock.nextIndex;
+        continue;
       }
       return inactiveNumberedQuestionSugar();
     }
@@ -101,6 +139,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
       return inactiveNumberedQuestionSugar();
     }
     questions.push(question);
+    index += 1;
   }
 
   if (questions.length < 2) {

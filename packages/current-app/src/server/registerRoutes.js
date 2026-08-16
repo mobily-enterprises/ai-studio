@@ -6,12 +6,12 @@ import {
 } from "./actions.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-function registerRoutes(app, {
+function registerRoutes(http, {
   projectContext = null,
   routeSurface = "",
   routeRelativePath = ""
 } = {}) {
-  const routes = createVibe64FeatureRoutes(app, {
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Current-app Studio routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,

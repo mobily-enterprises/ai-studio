@@ -1,11 +1,15 @@
 import {
   ACTION_ABANDON_SESSION,
+  ACTION_BROADCAST_SESSION_PREVIEW_STATE,
+  ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
+  ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION
 } from "./actions.js";
 import {
@@ -14,19 +18,18 @@ import {
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-function registerRoutes(app, {
+function registerRoutes(http, {
   projectContext = null,
   routeSurface = "",
   routeRelativePath = ""
 } = {}) {
-  const routes = createVibe64FeatureRoutes(app, {
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 session routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
     routeSurface,
     tags: ["studio", "vibe64-sessions"]
   });
-  const service = () => app.make("feature.vibe64-sessions.service");
 
   routes.actionRoute("GET", "/sessions", {
     actionId: ACTION_LIST_SESSIONS,
@@ -86,29 +89,43 @@ function registerRoutes(app, {
     summary: "Read a Vibe64 session conversation."
   });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-message", {
+  routes.actionRoute("POST", "/sessions/:sessionId/agent-message", {
+    actionId: ACTION_SEND_AGENT_MESSAGE,
     body: agentMessageInputValidator,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
     summary: "Send a message to the Vibe64 assistant."
-  }, (request) => service().sendAgentMessage(
-    request.params.sessionId,
-    withVibe64User(request, routes.requestBody(request))
-  ));
+  });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/agent-turn/interrupt", {
+  routes.actionRoute("POST", "/sessions/:sessionId/agent-turn/interrupt", {
+    actionId: ACTION_INTERRUPT_AGENT_TURN,
     body: agentTurnInterruptInputValidator,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
     summary: "Interrupt the active Vibe64 assistant turn."
-  }, (request) => service().interruptAgentTurn(
-    request.params.sessionId,
-    withVibe64User(request, routes.requestBody(request))
-  ));
+  });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/view-state", {
+  routes.actionRoute("POST", "/sessions/:sessionId/view-state", {
+    actionId: ACTION_BROADCAST_SESSION_VIEW_STATE,
+    buildInput: (request) => ({
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
     summary: "Publish a Vibe64 session view state."
-  }, (request) => service().broadcastSessionViewState(request.params.sessionId, routes.requestBody(request)));
+  });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/preview-state", {
+  routes.actionRoute("POST", "/sessions/:sessionId/preview-state", {
+    actionId: ACTION_BROADCAST_SESSION_PREVIEW_STATE,
+    buildInput: (request) => ({
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
     summary: "Publish the page displayed in a Vibe64 managed preview."
-  }, (request) => service().broadcastSessionPreviewState(request.params.sessionId, routes.requestBody(request)));
+  });
 
   routes.actionRoute("POST", "/sessions/:sessionId/abandon", {
     actionId: ACTION_ABANDON_SESSION,

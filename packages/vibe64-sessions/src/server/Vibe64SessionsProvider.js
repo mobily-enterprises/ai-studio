@@ -1,83 +1,41 @@
-import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
+import { defineFeature } from "@jskit-ai/kernel/server/features";
 
-import { createService } from "./service.js";
-import { featureActions } from "./actions.js";
+import { createSessionActions } from "./actions.js";
+import { createSessionChangedPublisher } from "./events.js";
 import { registerRoutes } from "./registerRoutes.js";
-import {
-  createVibe64SessionChangedPublisher,
-  vibe64SessionChangedServiceEvent
-} from "@local/vibe64-core/server/sessionRealtimeEvents";
-import {
-  vibe64SessionViewChangedServiceEvent
-} from "@local/vibe64-core/server/sessionViewRealtimeEvents";
-const VIBE64_SESSIONS_SERVICE = "feature.vibe64-sessions.service";
+import { createService } from "./service.js";
 
-class Vibe64SessionsProvider {
-  static id = "feature.vibe64-sessions";
-
-  static startsAfter = [
-    "runtime.actions",
-    "feature.vibe64-project",
-    "feature.vibe64-terminals"
-  ];
-
-  register(app) {
-    if (
-      !app ||
-      typeof app.service !== "function" ||
-      typeof app.actions !== "function"
-    ) {
-      throw new Error("Vibe64SessionsProvider requires application service()/actions().");
-    }
-    app.service(
-      VIBE64_SESSIONS_SERVICE,
-      (scope) => {
-        const domainEvents = typeof scope.has === "function" && scope.has("domainEvents")
-          ? scope.make("domainEvents")
-          : null;
-        return createService({
-          projectService: scope.make("feature.vibe64-project.service"),
-          publishSessionChanged: createVibe64SessionChangedPublisher({
-            domainEvents,
-            methodName: "sendAgentMessage",
-            serviceToken: VIBE64_SESSIONS_SERVICE
-          }),
-          terminalService: scope.make("feature.vibe64-terminals.service")
-        });
-      },
-      {
-        events: {
-          abandonSession: [vibe64SessionChangedServiceEvent()],
-          broadcastSessionViewState: [vibe64SessionViewChangedServiceEvent()],
-          createSession: [vibe64SessionChangedServiceEvent({
-            operation: "created"
-          })],
-          interruptAgentTurn: [vibe64SessionChangedServiceEvent({
-            reason: "session-agent-turn-interrupted"
-          })],
-          sendAgentMessage: [vibe64SessionChangedServiceEvent({
-            reason: "session-agent-message-accepted"
-          })]
-        }
-      }
-    );
-
-    app.actions(
-      withActionDefaults(featureActions, {
-        domain: "feature",
-        dependencies: {
-          featureService: "feature.vibe64-sessions.service"
-        }
-      })
-    );
-  }
-
-  boot(app) {
-    registerRoutes(app, {
+const Vibe64SessionsProvider = defineFeature({
+  id: "vibe64.sessions",
+  domain: "vibe64-sessions",
+  requires: {
+    events: "runtime.events",
+    http: "runtime.http",
+    project: "vibe64.project",
+    terminals: "vibe64.terminals"
+  },
+  provides: {
+    sessions: "vibe64.sessions"
+  },
+  actionDefaults: {
+    channels: ["api", "automation", "internal"],
+    surfaces: ["app"]
+  },
+  setup({ events, http, project, terminals }) {
+    const sessions = createService({
+      project,
+      publishSessionChanged: createSessionChangedPublisher(events),
+      terminals
+    });
+    registerRoutes(http, {
       routeRelativePath: "vibe64",
       routeSurface: "app"
     });
+    return { sessions };
+  },
+  actions({ sessions }) {
+    return createSessionActions({ sessions });
   }
-}
+});
 
 export { Vibe64SessionsProvider };

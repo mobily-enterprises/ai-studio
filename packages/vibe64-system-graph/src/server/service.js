@@ -87,7 +87,7 @@ function createService({
   refresher = refreshGenesisCities
 } = {}) {
   if (!projectService || typeof projectService.createRuntime !== "function") {
-    throw new TypeError("createService requires feature.vibe64-project.service.");
+    throw new TypeError("createService requires the Vibe64 Project API.");
   }
   if (typeof cityReader !== "function" || typeof refresher !== "function") {
     throw new TypeError("createService requires Genesis City reader and refresher functions.");

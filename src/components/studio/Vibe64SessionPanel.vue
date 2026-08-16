@@ -2,6 +2,7 @@
   <v-sheet
     rounded="lg"
     class="studio-ai-sessions studio-ai-sessions--autopilot studio-screen__panel"
+    :class="{ 'studio-ai-sessions--resizing': chatColumnResizing }"
   >
     <Transition name="studio-ai-sessions-error">
       <div
@@ -27,11 +28,10 @@
         role="status"
       >
         <div class="studio-ai-sessions__closing-card">
-          <v-progress-circular
+          <v-icon
             color="primary"
-            indeterminate
+            :icon="mdiArchiveArrowDownOutline"
             size="32"
-            width="3"
           />
           <strong>Closing session…</strong>
           <span>Stopping its tools and archiving its state.</span>
@@ -133,12 +133,11 @@
               class="studio-ai-sessions__preview-empty-loading"
               role="status"
             >
-              <v-progress-circular
-                indeterminate
-                size="20"
-                width="2"
+              <v-skeleton-loader
+                :aria-label="emptyStateStatusText"
+                class="studio-ai-sessions__preview-empty-skeleton"
+                type="button"
               />
-              <span>{{ emptyStateStatusText }}</span>
             </div>
             <Vibe64CreateSessionButton
               v-else
@@ -189,6 +188,7 @@
 </template>
 
 <script setup>
+import { mdiArchiveArrowDownOutline } from "@mdi/js";
 import Vibe64SessionRuntimeHost from "@/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 import Vibe64CreateSessionButton from "@/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
@@ -303,8 +303,7 @@ const {
   width: 2px;
 }
 
-:global(body.studio-home-chat-column-resizing),
-:global(body.studio-home-chat-column-resizing *) {
+.studio-ai-sessions--resizing {
   cursor: col-resize !important;
   user-select: none !important;
 }
@@ -433,12 +432,11 @@ const {
 }
 
 .studio-ai-sessions__preview-empty-loading {
-  align-items: center;
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  display: inline-flex;
-  font-size: 0.86rem;
-  gap: 0.55rem;
-  justify-content: center;
+  width: 10rem;
+}
+
+.studio-ai-sessions__preview-empty-skeleton {
+  width: 100%;
 }
 
 .studio-ai-sessions__error-overlay {

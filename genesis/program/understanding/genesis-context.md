@@ -1,0 +1,19 @@
+# Genesis project context
+
+Vibe64 presents and refreshes the portable project understanding maintained by
+Genesis without creating another interpretation of the application.
+
+## Sources
+
+- `packages/vibe64-genesis/src/server/index.js`
+- `packages/vibe64-system-graph/src/server/service.js`
+- `packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue`
+
+## Public contract
+
+New projects begin with Genesis and existing repositories can be adopted without
+moving their source. Agent turns receive Genesis task guidance. People can
+refresh and explore the detailed Machine City and explanatory Program City,
+navigate subsystems and operations to their participating files, and open those
+files for editing or discussion. Vibe64 displays only Genesis documents and
+does not infer a parallel architecture.

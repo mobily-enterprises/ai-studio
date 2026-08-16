@@ -1,11 +1,17 @@
 <template>
   <v-table class="runtime-config-records-table" density="compact">
+    <colgroup>
+      <col class="runtime-config-records-table__key-column">
+      <col class="runtime-config-records-table__value-column">
+      <col
+        v-if="showActions"
+        class="runtime-config-records-table__actions-column"
+      >
+    </colgroup>
     <thead>
       <tr>
         <th>Key</th>
         <th>Value</th>
-        <th>Source</th>
-        <th>Status</th>
         <th v-if="showActions">Actions</th>
       </tr>
     </thead>
@@ -42,17 +48,6 @@
           <template v-else>
             {{ recordValueLabel(record) }}
           </template>
-        </td>
-        <td>{{ sourceLabel(record.source) }}</td>
-        <td>
-          <v-chip
-            class="runtime-config-records-table__chip"
-            :color="recordStatusColor(record)"
-            size="x-small"
-            variant="tonal"
-          >
-            {{ recordStatus(record) }}
-          </v-chip>
         </td>
         <td v-if="showActions">
           <div class="runtime-config-records-table__edit">
@@ -156,14 +151,6 @@ function setDraftValue(record = {}, value = "") {
   };
 }
 
-function sourceLabel(source = "") {
-  return {
-    system: "System",
-    user: "User",
-    user_override: "User"
-  }[source] || source || "System";
-}
-
 function recordValueLabel(record = {}) {
   if (record.secret) {
     return secretIsRevealed(record)
@@ -187,28 +174,6 @@ function secretVisibilityLabel(record = {}) {
 
 function toggleSecretVisibility(record = {}) {
   emit(secretIsRevealed(record) ? "hide-secret" : "reveal-secret", record);
-}
-
-function recordStatus(record = {}) {
-  if (record.valuePresent === true) {
-    return "Present";
-  }
-  return recordMissing(record) ? "Missing" : "Empty";
-}
-
-function recordStatusColor(record = {}) {
-  const status = recordStatus(record);
-  if (status === "Present") {
-    return "success";
-  }
-  if (status === "Missing") {
-    return "warning";
-  }
-  return "default";
-}
-
-function recordMissing(record = {}) {
-  return record.missing === true || (Array.isArray(record.requiredFor) && record.requiredFor.length > 0);
 }
 
 function saveRecord(record = {}) {
@@ -247,10 +212,29 @@ async function copyKey(key = "") {
   border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
   border-radius: 8px;
   overflow: hidden;
+  width: 100%;
+}
+
+.runtime-config-records-table :deep(table) {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.runtime-config-records-table__key-column {
+  width: 30%;
+}
+
+.runtime-config-records-table__value-column {
+  width: 25%;
+}
+
+.runtime-config-records-table__actions-column {
+  width: 45%;
 }
 
 .runtime-config-records-table th,
 .runtime-config-records-table td {
+  min-width: 0;
   vertical-align: middle;
 }
 
@@ -259,10 +243,9 @@ async function copyKey(key = "") {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.86rem;
   font-weight: 650;
-}
-
-.runtime-config-records-table__chip {
-  text-transform: none;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .runtime-config-records-table__secret-value {
@@ -270,8 +253,7 @@ async function copyKey(key = "") {
   display: grid;
   gap: 0.25rem;
   grid-template-columns: minmax(0, 1fr) auto;
-  max-width: 32rem;
-  min-width: 12rem;
+  min-width: 0;
 }
 
 .runtime-config-records-table__secret-value code {
@@ -282,19 +264,24 @@ async function copyKey(key = "") {
 
 .runtime-config-records-table__edit {
   align-items: center;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 0.5rem;
-  min-width: 20rem;
+  grid-template-columns: minmax(7rem, 1fr) auto auto;
+  min-width: 0;
 }
 
 .runtime-config-records-table__edit :deep(.v-field) {
-  min-width: 12rem;
+  min-width: 0;
 }
 
 @media (max-width: 900px) {
   .runtime-config-records-table__edit {
-    min-width: 0;
+    align-items: stretch;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .runtime-config-records-table__edit :deep(.v-input) {
+    grid-column: 1 / -1;
   }
 }
 </style>

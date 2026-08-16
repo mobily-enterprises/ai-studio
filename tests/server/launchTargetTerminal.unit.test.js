@@ -18,6 +18,7 @@ import {
 import {
   createLaunchRestartBaseline,
   launchRestartState,
+  previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch
 } from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
 import {
@@ -212,6 +213,75 @@ test("web launch resolves preview identity from the explicit launch declaration"
     assert.equal(env.VIBE64_PREVIEW_IDENTITY_ENABLED, "true");
     assert.match(env.APP_PREVIEW_IDENTITY_SECRET, /^[a-f0-9]{64}$/u);
     assert.equal(env.VIBE64_PREVIEW_IDENTITY_SECRET, env.APP_PREVIEW_IDENTITY_SECRET);
+  } finally {
+    spec?.releasePortReservation?.();
+    await fixture.cleanup();
+  }
+});
+
+test("preview identity exchange does not reload or provision the project environment", async () => {
+  const fixture = await createLaunchSpecFixture();
+  let spec;
+  try {
+    await installPreviewIdentityExecutable(fixture.targetRoot);
+    spec = await createSpec({
+      launch: {
+        previewIdentity: previewIdentityCapability()
+      },
+      preferredPort: 47000 + crypto.randomInt(500),
+      session: fixture.session,
+      targetRoot: fixture.targetRoot
+    });
+    const terminalId = "terminal-preview-identity";
+    spec.env({ id: terminalId });
+    let invocation;
+    const runner = previewIdentityCommandRunnerForLaunchTerminal({
+      context: {
+        runtimeTargetRoot: fixture.targetRoot,
+        session: fixture.session,
+        targetRoot: fixture.targetRoot
+      },
+      runCommand: async (input) => {
+        invocation = input;
+        const request = JSON.parse(input.input);
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            identity: {
+              email: "ada@example.com",
+              userId: "42"
+            },
+            ok: true,
+            protocol: request.protocol,
+            requestId: request.requestId,
+            setCookie: ["app_session=native-session; Path=/; HttpOnly; SameSite=Lax"],
+            signedOut: false
+          })
+        };
+      },
+      targetHref: "http://127.0.0.1:4100/home",
+      terminal: {
+        id: terminalId,
+        metadata: spec.metadata
+      }
+    });
+
+    assert.equal(typeof runner, "function");
+    const result = await runner({
+      operation: "login-as",
+      selector: {
+        type: "email",
+        value: "ada@example.com"
+      }
+    });
+    assert.deepEqual(Object.keys(invocation.env).sort(), [
+      "APP_PREVIEW_IDENTITY_ENABLED",
+      "APP_PREVIEW_IDENTITY_SECRET",
+      "VIBE64_PREVIEW_IDENTITY_ENABLED",
+      "VIBE64_PREVIEW_IDENTITY_SECRET"
+    ]);
+    assert.deepEqual(invocation.project.runtimeConfigEnv, {});
+    assert.equal(result.identity.email, "ada@example.com");
   } finally {
     spec?.releasePortReservation?.();
     await fixture.cleanup();

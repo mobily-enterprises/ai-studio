@@ -1,9 +1,8 @@
 # @local/studio-terminal-core
 
-App-local JSKIT module scaffold.
+Shared terminal runtime primitives used by Vibe64's managed agent and preview
+processes.
 
-## Next Steps
-
-- Define runtime providers in the top-level `jskit` object in `package.json`.
-- Add client/server exports under `src/`.
-- Keep package identity and description in the standard top-level npm fields.
+The package owns runtime identity, command environment, terminal ownership,
+tool-home, and launch-target construction that several Vibe64 packages use. It
+does not own application workflows or technology-specific project behavior.

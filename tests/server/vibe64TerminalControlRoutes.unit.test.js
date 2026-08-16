@@ -16,37 +16,30 @@ function terminalControlRouteApp(service) {
   const registeredRoutes = [];
   const websocketRoutes = [];
   return {
+    fastify: {
+      get(path, options, handler) {
+        websocketRoutes.push({
+          handler,
+          options,
+          path
+        });
+      }
+    },
+    http: {
+      router: {
+        register(method, path, options, handler) {
+          registeredRoutes.push({
+            handler,
+            method,
+            options,
+            path
+          });
+        }
+      }
+    },
     registeredRoutes,
-    websocketRoutes,
-    make(token) {
-      if (token === "jskit.http.router") {
-        return {
-          register(method, path, options, handler) {
-            registeredRoutes.push({
-              handler,
-              method,
-              options,
-              path
-            });
-          }
-        };
-      }
-      if (token === "jskit.fastify") {
-        return {
-          get(path, options, handler) {
-            websocketRoutes.push({
-              handler,
-              options,
-              path
-            });
-          }
-        };
-      }
-      if (token === "feature.vibe64-terminals.service") {
-        return service;
-      }
-      throw new Error(`Unexpected app token: ${token}`);
-    }
+    service,
+    websocketRoutes
   };
 }
 
@@ -108,10 +101,12 @@ test("terminal control routes expose snapshot, text checks, exact text, and narr
         }
       };
       const app = terminalControlRouteApp(service);
-      registerRoutes(app, {
+      registerRoutes(app.http, {
+        fastify: app.fastify,
         projectContext,
         routeRelativePath: "vibe64",
-        routeSurface: "app"
+        routeSurface: "app",
+        terminals: app.service
       });
       assert.equal(findRegisteredRoute(app, {
         method: "POST",
@@ -195,10 +190,12 @@ test("assistant terminal control text uses the server Vibe64 user instead of bod
           };
         }
       });
-      registerRoutes(app, {
+      registerRoutes(app.http, {
+        fastify: app.fastify,
         projectContext,
         routeRelativePath: "vibe64",
-        routeSurface: "app"
+        routeSurface: "app",
+        terminals: app.service
       });
 
       const serverUser = {

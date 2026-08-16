@@ -11,22 +11,47 @@ import {
   findRegisteredRoute,
   routeProjectParams,
   testReply,
-  testRouteApp,
   withLocalRequestBypass,
   withRouteProject
 } from "./vibe64RouteTestHelpers.js";
 
+function testAccountRouteRuntime() {
+  const registeredRoutes = [];
+  return {
+    accounts: {
+      async subscribeAuthTerminal() {
+        return null;
+      }
+    },
+    fastify: {
+      get(path, options, handler) {
+        registeredRoutes.push({ handler, method: "GET", options, path });
+      }
+    },
+    http: {
+      router: {
+        register(method, path, options, handler) {
+          registeredRoutes.push({ handler, method, options, path });
+        }
+      }
+    },
+    registeredRoutes
+  };
+}
+
 test("accounts read route omits signed-in user in local editor mode", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
-      const app = testRouteApp();
-      registerRoutes(app, {
+      const runtime = testAccountRouteRuntime();
+      registerRoutes(runtime.http, {
+        accounts: runtime.accounts,
+        fastify: runtime.fastify,
         projectContext,
         routeRelativePath: "vibe64/accounts",
         routeSurface: "app"
       });
 
-      const route = findRegisteredRoute(app, {
+      const route = findRegisteredRoute(runtime, {
         method: "GET",
         path: `${apiRouteBase}/vibe64/accounts`
       });
@@ -60,14 +85,16 @@ test("accounts read route omits signed-in user in local editor mode", async () =
 test("accounts auth-session route preserves scoped slug params", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
-      const app = testRouteApp();
-      registerRoutes(app, {
+      const runtime = testAccountRouteRuntime();
+      registerRoutes(runtime.http, {
+        accounts: runtime.accounts,
+        fastify: runtime.fastify,
         projectContext,
         routeRelativePath: "vibe64/accounts",
         routeSurface: "app"
       });
 
-      const route = findRegisteredRoute(app, {
+      const route = findRegisteredRoute(runtime, {
         method: "GET",
         path: `${apiRouteBase}/vibe64/accounts/auth/:sessionId`
       });
@@ -113,14 +140,16 @@ test("accounts auth-session route preserves scoped slug params", async () => {
 test("accounts git identity route preserves scoped user input", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
-      const app = testRouteApp();
-      registerRoutes(app, {
+      const runtime = testAccountRouteRuntime();
+      registerRoutes(runtime.http, {
+        accounts: runtime.accounts,
+        fastify: runtime.fastify,
         projectContext,
         routeRelativePath: "vibe64/accounts",
         routeSurface: "app"
       });
 
-      const route = findRegisteredRoute(app, {
+      const route = findRegisteredRoute(runtime, {
         method: "POST",
         path: `${apiRouteBase}/vibe64/accounts/git-identity`
       });

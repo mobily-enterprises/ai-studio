@@ -3,7 +3,7 @@ name: Deploy Docs
 on:
   workflow_run:
     workflows:
-      - JSKIT Verify
+      - Vibe64 Verify
     types:
       - completed
     branches:

@@ -24,7 +24,10 @@ import {
 test("assistant attachment route opts into the attachment upload body limit", () => {
   const app = testApp();
 
-  registerRoutes(app);
+  registerRoutes(app.http, {
+    fastify: app.fastify,
+    terminals: app.terminals
+  });
 
   const attachmentRoute = app.registeredRoutes.find((route) => {
     return route.method === "POST" && route.path.endsWith("/sessions/:sessionId/agent-attachments");
@@ -161,14 +164,9 @@ function testApp() {
     }
   };
   return {
-    registeredRoutes,
-    registeredWebSocketRoutes,
-    make(token) {
-      if (token === "jskit.fastify") {
-        return fastify;
-      }
-      assert.equal(token, "jskit.http.router");
-      return {
+    fastify,
+    http: {
+      router: {
         register(method, path, options, handler) {
           registeredRoutes.push({
             handler,
@@ -177,7 +175,10 @@ function testApp() {
             path
           });
         }
-      };
-    }
+      }
+    },
+    registeredRoutes,
+    registeredWebSocketRoutes,
+    terminals: {}
   };
 }

@@ -65,6 +65,7 @@ function codexEffectiveAgentExecutionSettings(agentSettings = {}) {
 
 function codexAppServerThreadSettings({
   agentSettings = {},
+  config = null,
   cwd = "",
   developerInstructions = "",
   model = ""
@@ -76,6 +77,9 @@ function codexAppServerThreadSettings({
   const effectiveSettings = codexEffectiveAgentSettings(agentSettings);
   return {
     approvalPolicy: CODEX_SESSION_APPROVAL_POLICY,
+    ...(config && typeof config === "object" && !Array.isArray(config)
+      ? { config }
+      : {}),
     cwd: normalizedCwd,
     developerInstructions: normalizeAgentText(developerInstructions) || null,
     model: normalizeAgentText(model) || effectiveSettings.model,
@@ -84,7 +88,41 @@ function codexAppServerThreadSettings({
 }
 
 function codexAppServerThreadStartSettings(options = {}) {
-  return codexAppServerThreadSettings(options);
+  return {
+    ...codexAppServerThreadSettings(options),
+    sessionStartSource: "startup",
+    threadSource: "vibe64"
+  };
+}
+
+async function codexAppServerProjectHookTrustConfig(provider, cwd = "") {
+  const normalizedCwd = normalizeWorkdir(cwd);
+  if (!normalizedCwd || typeof provider?.listHooks !== "function") {
+    return null;
+  }
+  const result = await provider.listHooks([normalizedCwd]);
+  const record = (Array.isArray(result?.data) ? result.data : [])
+    .find((item) => normalizeWorkdir(item?.cwd) === normalizedCwd);
+  const trustedHooks = (Array.isArray(record?.hooks) ? record.hooks : [])
+    .filter((hook) => hook?.enabled === true && hook?.source === "project")
+    .map((hook) => [
+      normalizeAgentText(hook?.key),
+      normalizeAgentText(hook?.currentHash)
+    ])
+    .filter(([key, currentHash]) => key && currentHash);
+  if (trustedHooks.length === 0) {
+    return null;
+  }
+  return {
+    hooks: {
+      state: Object.fromEntries(trustedHooks.map(([key, currentHash]) => [
+        key,
+        {
+          trusted_hash: currentHash
+        }
+      ]))
+    }
+  };
 }
 
 function codexAppServerTurnSettings({
@@ -549,13 +587,16 @@ async function ensureCodexAppServerThreadForSession({
   const normalizedWorkdir = normalizeWorkdir(workdir);
   const appServerRuntime = await provider.ensureRuntime();
   const existingThreadId = codexAppServerThreadIdForSession(session, normalizedWorkdir);
+  const config = await codexAppServerProjectHookTrustConfig(provider, normalizedWorkdir);
   const threadSettings = codexAppServerThreadSettings({
     agentSettings,
+    config,
     cwd: normalizedWorkdir,
     developerInstructions
   });
   const threadStartSettings = codexAppServerThreadStartSettings({
     agentSettings,
+    config,
     cwd: normalizedWorkdir,
     developerInstructions
   });

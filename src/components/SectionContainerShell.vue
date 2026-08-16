@@ -252,8 +252,8 @@ onBeforeUnmount(() => {
 
 .section-container-shell__body {
   display: grid;
-  gap: 0.7rem;
-  grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
+  gap: 0.45rem;
+  grid-template-columns: minmax(10rem, 11.5rem) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -265,7 +265,7 @@ onBeforeUnmount(() => {
 }
 
 .section-container-shell__nav :deep(.v-list) {
-  padding: 0.15rem 0.3rem;
+  padding: 0.15rem 0.1rem;
 }
 
 .section-container-shell__nav :deep(.v-list-item) {
@@ -296,7 +296,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
-  padding-left: 1rem;
+  padding-left: 0.75rem;
   scrollbar-gutter: stable;
 }
 

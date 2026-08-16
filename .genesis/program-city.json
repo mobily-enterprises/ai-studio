@@ -1,0 +1,441 @@
+{
+  "buildings": [
+    {
+      "description": "People can connect the external accounts needed for agent and repository work\nand see whether the Studio host is ready to support them.",
+      "districtId": "subsystem:accounts",
+      "id": "operation:accounts/connections-and-health",
+      "implementationMap": "",
+      "name": "connections-and-health",
+      "path": "genesis/program/accounts/connections-and-health.md",
+      "publicContract": "The Accounts surface reports required providers, guides supported sign-in, and\nkeeps credentials in host-owned storage. Studio health performs read-only checks\nof workspace access, account readiness, command-line tools, Genesis, and the\nmanaged browser runtime. Failures identify the concrete host capability that is\nmissing without attempting project-specific repairs.",
+      "sourceFileIds": [
+        "file:packages/vibe64-accounts/src/server/service.js",
+        "file:packages/vibe64-accounts/src/server/Vibe64AccountsFeature.js",
+        "file:packages/studio-health/src/server/service.js",
+        "file:src/components/studio/StudioHealthScreen.vue"
+      ],
+      "sources": [
+        "packages/vibe64-accounts/src/server/service.js",
+        "packages/vibe64-accounts/src/server/Vibe64AccountsFeature.js",
+        "packages/studio-health/src/server/service.js",
+        "src/components/studio/StudioHealthScreen.vue"
+      ],
+      "subsystem": "accounts",
+      "title": "Accounts, connections, and Studio health"
+    },
+    {
+      "description": "People work with the coding agent through one ordinary project conversation,\nincluding follow-up guidance while a turn is active.",
+      "districtId": "subsystem:conversation",
+      "id": "operation:conversation/direct-chat",
+      "implementationMap": "",
+      "name": "direct-chat",
+      "path": "genesis/program/conversation/direct-chat.md",
+      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.",
+      "sourceFileIds": [
+        "file:packages/vibe64-sessions/src/server/service.js",
+        "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:src/composables/useVibe64AutopilotView.js",
+        "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+      ],
+      "sources": [
+        "packages/vibe64-sessions/src/server/service.js",
+        "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "src/composables/useVibe64AutopilotView.js",
+        "src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+      ],
+      "subsystem": "conversation",
+      "title": "Direct agent conversation"
+    },
+    {
+      "description": "People can supply the environment values a project needs while Vibe64 and its\nhost provide managed system values separately.",
+      "districtId": "subsystem:environment",
+      "id": "operation:environment/project-values",
+      "implementationMap": "",
+      "name": "project-values",
+      "path": "genesis/program/environment/project-values.md",
+      "publicContract": "The environment view distinguishes editable user values from host-owned system\nvalues, masks secrets, supports explicit add, replace, and confirmed removal,\nand applies values to session preparation, checks, launches, and agent work.\nWhen Genesis declares an environment-file projection, Vibe64 writes it outside\nordinary Git tracking with restrictive permissions and preserves a pre-existing\nuser file before taking ownership.",
+      "sourceFileIds": [
+        "file:packages/vibe64-project/src/server/service.js",
+        "file:packages/vibe64-project/src/server/projectEnvironmentFiles.js",
+        "file:src/components/studio/EnvPanel.vue"
+      ],
+      "sources": [
+        "packages/vibe64-project/src/server/service.js",
+        "packages/vibe64-project/src/server/projectEnvironmentFiles.js",
+        "src/components/studio/EnvPanel.vue"
+      ],
+      "subsystem": "environment",
+      "title": "Project environment"
+    },
+    {
+      "description": "Vibe64 can prepare a fresh session source using the exact recipe declared by\nthe project's selected Genesis Stack.",
+      "districtId": "subsystem:execution",
+      "id": "operation:execution/workspace-setup",
+      "implementationMap": "",
+      "name": "workspace-setup",
+      "path": "genesis/program/execution/workspace-setup.md",
+      "publicContract": "Preparation runs ordered argument arrays in the declared working directories\nwith supported managed runtimes and the project's resolved environment. It runs\nonce for a fresh recipe, records progress and the exact recipe identity, waits\nbefore starting dependent work, and exposes a retry after failure. Missing or\nambiguous declarations remain explicit; Vibe64 never guesses an installer.",
+      "sourceFileIds": [
+        "file:packages/vibe64-terminals/src/server/workspaceSetup.js",
+        "file:packages/vibe64-sessions/src/server/service.js",
+        "file:packages/vibe64-genesis/src/server/index.js"
+      ],
+      "sources": [
+        "packages/vibe64-terminals/src/server/workspaceSetup.js",
+        "packages/vibe64-sessions/src/server/service.js",
+        "packages/vibe64-genesis/src/server/index.js"
+      ],
+      "subsystem": "execution",
+      "title": "Workspace preparation"
+    },
+    {
+      "description": "People can inspect an application as one of a small set of named application\nusers without turning that convenience into a production sign-in mechanism.",
+      "districtId": "subsystem:preview",
+      "id": "operation:preview/application-identities",
+      "implementationMap": "",
+      "name": "application-identities",
+      "path": "genesis/program/preview/application-identities.md",
+      "publicContract": "The project workspace stores named selectors outside source control. When a\nGenesis launch target declares the identity protocol, Vibe64 offers those names\nand guest mode, invokes the application-owned identity command with a\nper-launch secret, and refreshes the managed browser session. Arbitrary caller\nidentities are rejected and Vibe64 never creates or changes application users.",
+      "sourceFileIds": [
+        "file:packages/vibe64-project/src/server/previewApplicationIdentities.js",
+        "file:packages/vibe64-terminals/src/server/previewIdentityCommand.js",
+        "file:src/components/studio/PreviewIdentitySettings.vue"
+      ],
+      "sources": [
+        "packages/vibe64-project/src/server/previewApplicationIdentities.js",
+        "packages/vibe64-terminals/src/server/previewIdentityCommand.js",
+        "src/components/studio/PreviewIdentitySettings.vue"
+      ],
+      "subsystem": "preview",
+      "title": "Preview application identities"
+    },
+    {
+      "description": "People can start and inspect a project application without leaving the coding\nworkspace.",
+      "districtId": "subsystem:preview",
+      "id": "operation:preview/managed-application",
+      "implementationMap": "",
+      "name": "managed-application",
+      "path": "genesis/program/preview/managed-application.md",
+      "publicContract": "Vibe64 lists only launch targets declared by Genesis, maps their abstract\nruntime needs to supported host tools, allocates the host and port, starts the\ndeclared commands, waits for the declared readiness condition, and proxies the\nresult into the managed preview. Status, logs, retry, stop, open, and fresh\nrestart remain available. The managed browser comes from Vibe64's pinned\nruntime and project commands cannot download their own browser.",
+      "sourceFileIds": [
+        "file:packages/vibe64-terminals/src/server/launchTargetTerminal.js",
+        "file:packages/vibe64-terminals/src/server/launchPreviewProxy.js",
+        "file:src/components/studio/Vibe64LaunchControls.vue"
+      ],
+      "sources": [
+        "packages/vibe64-terminals/src/server/launchTargetTerminal.js",
+        "packages/vibe64-terminals/src/server/launchPreviewProxy.js",
+        "src/components/studio/Vibe64LaunchControls.vue"
+      ],
+      "subsystem": "preview",
+      "title": "Managed application preview"
+    },
+    {
+      "description": "People can create, select, and reopen the projects available to their Vibe64\nworkspace.",
+      "districtId": "subsystem:projects",
+      "id": "operation:projects/catalog",
+      "implementationMap": "",
+      "name": "catalog",
+      "path": "genesis/program/projects/catalog.md",
+      "publicContract": "The catalog lists stable project identities, creates blank or trusted-template\nprojects, and selects one project as the current context. Project creation\nproduces a real Git source and Genesis foundation before a coding session uses\nit. Selection changes the active project without rewriting its application\nsource.",
+      "sourceFileIds": [
+        "file:packages/vibe64-project/src/server/service.js",
+        "file:packages/vibe64-project/src/server/actions.js",
+        "file:src/composables/useVibe64ProjectsResource.js"
+      ],
+      "sources": [
+        "packages/vibe64-project/src/server/service.js",
+        "packages/vibe64-project/src/server/actions.js",
+        "src/composables/useVibe64ProjectsResource.js"
+      ],
+      "subsystem": "projects",
+      "title": "Project catalog"
+    },
+    {
+      "description": "Each coding task can use a recoverable source workspace that is isolated from\nthe canonical project and from other sessions.",
+      "districtId": "subsystem:sessions",
+      "id": "operation:sessions/workspaces",
+      "implementationMap": "",
+      "name": "workspaces",
+      "path": "genesis/program/sessions/workspaces.md",
+      "publicContract": "People can create, select, inspect, and abandon sessions. A new session receives\nits own Git source and stable identity. Its conversation, source location,\nagent activity, workspace preparation, and diff remain available across UI\nrefreshes. Abandoning a session closes the active work while preserving the\nread-only history needed to recover its conversation and understand what\nhappened.",
+      "sourceFileIds": [
+        "file:packages/vibe64-sessions/src/server/service.js",
+        "file:packages/vibe64-runtime/src/server/runtime.js",
+        "file:packages/vibe64-terminals/src/server/sessionSource.js"
+      ],
+      "sources": [
+        "packages/vibe64-sessions/src/server/service.js",
+        "packages/vibe64-runtime/src/server/runtime.js",
+        "packages/vibe64-terminals/src/server/sessionSource.js"
+      ],
+      "subsystem": "sessions",
+      "title": "Isolated work sessions"
+    },
+    {
+      "description": "People can inspect and make focused source changes and review the complete Git\ndiff produced in a session.",
+      "districtId": "subsystem:source",
+      "id": "operation:source/edit-and-review",
+      "implementationMap": "",
+      "name": "edit-and-review",
+      "path": "genesis/program/source/edit-and-review.md",
+      "publicContract": "The source browser lists, searches, opens, edits, and saves allowed project\nfiles inside the selected session source. It rejects paths outside that source\nand reports concurrent changes rather than silently overwriting them. The\nreview surface presents the session's Git changes and can open an exact changed\nfile for inspection or discussion with the agent.",
+      "sourceFileIds": [
+        "file:packages/vibe64-source-editor/src/server/service.js",
+        "file:src/composables/useVibe64SourceEditor.js",
+        "file:src/components/studio/vibe64-session/Vibe64SessionDiffContent.vue"
+      ],
+      "sources": [
+        "packages/vibe64-source-editor/src/server/service.js",
+        "src/composables/useVibe64SourceEditor.js",
+        "src/components/studio/vibe64-session/Vibe64SessionDiffContent.vue"
+      ],
+      "subsystem": "source",
+      "title": "Source editing and change review"
+    },
+    {
+      "description": "Vibe64 presents and refreshes the portable project understanding maintained by\nGenesis without creating another interpretation of the application.",
+      "districtId": "subsystem:understanding",
+      "id": "operation:understanding/genesis-context",
+      "implementationMap": "",
+      "name": "genesis-context",
+      "path": "genesis/program/understanding/genesis-context.md",
+      "publicContract": "New projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance. People can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Vibe64 displays only Genesis documents and\ndoes not infer a parallel architecture.",
+      "sourceFileIds": [
+        "file:packages/vibe64-genesis/src/server/index.js",
+        "file:packages/vibe64-system-graph/src/server/service.js",
+        "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+      ],
+      "sources": [
+        "packages/vibe64-genesis/src/server/index.js",
+        "packages/vibe64-system-graph/src/server/service.js",
+        "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+      ],
+      "subsystem": "understanding",
+      "title": "Genesis project context"
+    }
+  ],
+  "diagnostics": [],
+  "districts": [
+    {
+      "id": "subsystem:accounts",
+      "parentId": null,
+      "path": "accounts",
+      "title": "accounts"
+    },
+    {
+      "id": "subsystem:conversation",
+      "parentId": null,
+      "path": "conversation",
+      "title": "conversation"
+    },
+    {
+      "id": "subsystem:environment",
+      "parentId": null,
+      "path": "environment",
+      "title": "environment"
+    },
+    {
+      "id": "subsystem:execution",
+      "parentId": null,
+      "path": "execution",
+      "title": "execution"
+    },
+    {
+      "id": "subsystem:preview",
+      "parentId": null,
+      "path": "preview",
+      "title": "preview"
+    },
+    {
+      "id": "subsystem:projects",
+      "parentId": null,
+      "path": "projects",
+      "title": "projects"
+    },
+    {
+      "id": "subsystem:sessions",
+      "parentId": null,
+      "path": "sessions",
+      "title": "sessions"
+    },
+    {
+      "id": "subsystem:source",
+      "parentId": null,
+      "path": "source",
+      "title": "source"
+    },
+    {
+      "id": "subsystem:understanding",
+      "parentId": null,
+      "path": "understanding",
+      "title": "understanding"
+    }
+  ],
+  "links": [
+    {
+      "fromId": "operation:accounts/connections-and-health",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-accounts/src/server/service.js"
+    },
+    {
+      "fromId": "operation:accounts/connections-and-health",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-accounts/src/server/Vibe64AccountsFeature.js"
+    },
+    {
+      "fromId": "operation:accounts/connections-and-health",
+      "kind": "implemented-by",
+      "toId": "file:packages/studio-health/src/server/service.js"
+    },
+    {
+      "fromId": "operation:accounts/connections-and-health",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/StudioHealthScreen.vue"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/service.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64AutopilotView.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+    },
+    {
+      "fromId": "operation:environment/project-values",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/service.js"
+    },
+    {
+      "fromId": "operation:environment/project-values",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/projectEnvironmentFiles.js"
+    },
+    {
+      "fromId": "operation:environment/project-values",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/EnvPanel.vue"
+    },
+    {
+      "fromId": "operation:execution/workspace-setup",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/workspaceSetup.js"
+    },
+    {
+      "fromId": "operation:execution/workspace-setup",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/service.js"
+    },
+    {
+      "fromId": "operation:execution/workspace-setup",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-genesis/src/server/index.js"
+    },
+    {
+      "fromId": "operation:preview/application-identities",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/previewApplicationIdentities.js"
+    },
+    {
+      "fromId": "operation:preview/application-identities",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/previewIdentityCommand.js"
+    },
+    {
+      "fromId": "operation:preview/application-identities",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/PreviewIdentitySettings.vue"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/launchTargetTerminal.js"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/launchPreviewProxy.js"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/Vibe64LaunchControls.vue"
+    },
+    {
+      "fromId": "operation:projects/catalog",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/service.js"
+    },
+    {
+      "fromId": "operation:projects/catalog",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/actions.js"
+    },
+    {
+      "fromId": "operation:projects/catalog",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64ProjectsResource.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/service.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/runtime.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/sessionSource.js"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-source-editor/src/server/service.js"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64SourceEditor.js"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64SessionDiffContent.vue"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-genesis/src/server/index.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-system-graph/src/server/service.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+    }
+  ],
+  "programHash": "sha256:ab352b671b92e8ad7478396ad136457da454bd7cdefeef8900f6f3b76baddd0e",
+  "schema": "genesis.program-city.v1",
+  "schemaVersion": 1,
+  "status": "valid"
+}

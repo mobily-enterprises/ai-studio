@@ -1,35 +1,36 @@
 import {
+  ACTION_APPLY_PROJECT_TEMPLATE,
+  ACTION_CREATE_PROJECT,
+  ACTION_LIST_PROJECTS,
+  ACTION_LIST_PROJECT_TEMPLATES,
+  ACTION_READ_ENV,
+  ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SELECT_PROJECT
+} from "./actions.js";
+import {
   projectCreateInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
-  projectTemplateApplyInputValidator,
   projectTemplateParamsValidator,
-  projectTemplatesReadInputValidator,
   previewApplicationIdentitiesInputValidator
 } from "./inputSchemas.js";
-import {
-  ACTION_CREATE_PROJECT,
-  ACTION_LIST_PROJECTS,
-  ACTION_READ_ENV,
-  ACTION_SAVE_ENV_USER_VALUES,
-  ACTION_SELECT_PROJECT
-} from "./actions.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-function registerRoutes(app, {
+function registerRoutes(http, {
   projectContext = null,
   routeSurface = "",
   routeRelativePath = ""
 } = {}) {
-  const routes = createVibe64FeatureRoutes(app, {
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 project routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
     routeSurface,
     tags: ["studio", "vibe64-project"]
   });
-  const service = () => app.make("feature.vibe64-project.service");
 
   routes.actionRoute("GET", "/projects", {
     actionId: ACTION_LIST_PROJECTS,
@@ -47,18 +48,20 @@ function registerRoutes(app, {
     buildInput: routes.requestBody,
     summary: "Select an existing Vibe64 project."
   });
-  routes.serviceRoute("GET", "/project-templates", {
-    query: projectTemplatesReadInputValidator,
+  routes.actionRoute("GET", "/project-templates", {
+    actionId: ACTION_LIST_PROJECT_TEMPLATES,
+    buildInput: (request) => withUser(request),
     summary: "List trusted starter projects."
-  }, (request) => service().readProjectTemplates(withUser(request, routes.requestQuery(request))));
-  routes.serviceRoute("POST", "/project-templates/:templateId/apply", {
-    body: projectTemplateApplyInputValidator,
+  });
+  routes.actionRoute("POST", "/project-templates/:templateId/apply", {
+    actionId: ACTION_APPLY_PROJECT_TEMPLATE,
     params: projectTemplateParamsValidator,
+    buildInput: (request) => withUser(request, {
+      ...routes.requestBody(request),
+      templateId: request.params?.templateId
+    }),
     summary: "Apply a trusted starter project."
-  }, (request) => service().applyProjectTemplate(
-    request.params?.templateId,
-    withUser(request, routes.requestBody(request))
-  ));
+  });
   routes.actionRoute("GET", "/env", {
     actionId: ACTION_READ_ENV,
     buildInput: routes.requestQuery,
@@ -71,13 +74,16 @@ function registerRoutes(app, {
     buildInput: routes.requestBody,
     summary: "Save user-owned project Env values."
   });
-  routes.serviceRoute("GET", "/preview-identities", {
+  routes.actionRoute("GET", "/preview-identities", {
+    actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
     summary: "Read project-local managed app identities."
-  }, () => service().readPreviewApplicationIdentities());
-  routes.serviceRoute("PUT", "/preview-identities", {
+  });
+  routes.actionRoute("PUT", "/preview-identities", {
+    actionId: ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
     body: previewApplicationIdentitiesInputValidator,
+    buildInput: routes.requestBody,
     summary: "Save project-local managed app identities."
-  }, (request) => service().savePreviewApplicationIdentities(routes.requestBody(request)));
+  });
 }
 
 function withUser(request, input = {}) {

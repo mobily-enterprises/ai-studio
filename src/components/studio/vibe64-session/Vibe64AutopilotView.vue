@@ -17,6 +17,8 @@
 
         <div class="studio-autopilot__header-actions">
           <v-btn
+            aria-label="Save work"
+            class="studio-autopilot__save-work"
             :disabled="saveWorkDisabled"
             :loading="saveWorkSending"
             :prepend-icon="mdiContentSaveOutline"
@@ -28,37 +30,6 @@
           >
             Save work
           </v-btn>
-          <v-menu location="bottom end">
-            <template #activator="{ props: menuProps }">
-              <v-btn
-                v-bind="menuProps"
-                aria-label="Session tools"
-                :icon="mdiDotsHorizontal"
-                size="small"
-                title="Session tools"
-                type="button"
-                variant="text"
-              />
-            </template>
-            <v-list density="compact" nav>
-              <v-list-item
-                v-for="tool in sessionToolControls"
-                :key="tool.id"
-                :disabled="tool.disabled"
-                :prepend-icon="tool.icon"
-                :subtitle="tool.disabled ? tool.title : ''"
-                :title="tool.label"
-                @click="selectSessionTool(tool.id)"
-              />
-              <v-divider />
-              <v-list-item
-                :disabled="sessionAbandonDisabled"
-                :prepend-icon="mdiClose"
-                title="Close session"
-                @click="requestSessionAbandon"
-              />
-            </v-list>
-          </v-menu>
         </div>
       </header>
 
@@ -83,7 +54,10 @@
         @resend-turn="resendOptimisticMessage"
       />
 
-      <div class="studio-autopilot__activity">
+      <div
+        v-if="workspaceSetupVisible || thinkingVisible"
+        class="studio-autopilot__activity"
+      >
         <div
           v-if="workspaceSetupVisible"
           class="studio-autopilot__workspace-setup"
@@ -157,9 +131,10 @@
           :placeholder="composerPlaceholder"
           :rows="2"
           :session-id="sessionId"
-          submit-on-enter
+          tab-to-submit
           @attachments-change="updateComposerAttachments"
           @submit="sendComposerMessage"
+          @tab-to-submit="focusComposerSendButton"
         >
           <template #input-start>
             <div
@@ -168,7 +143,6 @@
               aria-label="Assistant questions"
             >
               <div class="studio-autopilot__question-fields-header">
-                <span>Answer the assistant's questions</span>
                 <v-btn
                   aria-label="Answer normally instead"
                   size="small"
@@ -178,16 +152,38 @@
                   Answer normally
                 </v-btn>
               </div>
-              <v-text-field
+              <div
                 v-for="question in numberedQuestions"
                 :key="question.name"
-                v-model="questionAnswers[question.name]"
-                autocomplete="off"
-                density="compact"
-                hide-details="auto"
-                :label="`[${question.number}] ${question.label}`"
-                variant="outlined"
-              />
+                class="studio-autopilot__question-field"
+              >
+                <v-text-field
+                  v-model="questionAnswers[question.name]"
+                  autocomplete="off"
+                  density="compact"
+                  hide-details="auto"
+                  :label="`[${question.number}] ${question.label}`"
+                  variant="outlined"
+                />
+                <v-chip-group
+                  v-if="question.choices.length"
+                  v-model="questionAnswers[question.name]"
+                  class="studio-autopilot__question-choices"
+                  column
+                  selected-class="text-primary"
+                >
+                  <v-chip
+                    v-for="choice in question.choices"
+                    :key="choice.value"
+                    filter
+                    size="small"
+                    :value="choice.value"
+                    variant="outlined"
+                  >
+                    {{ choice.label }}<span v-if="choice.recommended"> · Recommended</span>
+                  </v-chip>
+                </v-chip-group>
+              </div>
             </div>
             <div
               v-else-if="answerChoices.length"
@@ -267,17 +263,26 @@
                 Stop
               </v-btn>
               <v-btn
-                aria-label="Send message"
+                ref="composerSendButton"
+                :aria-label="agentStopVisible ? 'Steer assistant' : 'Send message'"
+                :aria-disabled="!composerCanSubmit"
+                :class="{
+                  'studio-autopilot__send--inactive': !composerCanSubmit,
+                  'studio-autopilot__send--steer': agentStopVisible
+                }"
                 color="primary"
-                :disabled="!composerCanSubmit"
-                :icon="mdiSend"
+                :disabled="composerDisabled"
+                :icon="agentStopVisible ? undefined : mdiSend"
                 :loading="composerSending"
+                :prepend-icon="agentStopVisible ? mdiArrowTopRight : undefined"
                 size="small"
-                title="Send message"
+                :title="agentStopVisible ? 'Steer assistant' : 'Send message'"
                 type="button"
                 variant="flat"
                 @click="sendComposerMessage"
-              />
+              >
+                <span v-if="agentStopVisible">Steer</span>
+              </v-btn>
             </div>
           </template>
         </Vibe64AutopilotPromptTextarea>
@@ -468,10 +473,9 @@
 import { computed, defineAsyncComponent, ref } from "vue";
 import {
   mdiArrowLeft,
-  mdiClose,
+  mdiArrowTopRight,
   mdiConsoleNetworkOutline,
   mdiContentSaveOutline,
-  mdiDotsHorizontal,
   mdiEyePlusOutline,
   mdiPaperclip,
   mdiSend,
@@ -496,6 +500,7 @@ const Vibe64SystemWorldView = defineAsyncComponent(() => (
   import("@local/vibe64-system-graph/client").then((module) => module.loadVibe64SystemWorldView())
 ));
 const composerInput = ref(null);
+const composerSendButton = ref(null);
 
 const {
   Vibe64LaunchControls,
@@ -548,10 +553,8 @@ const {
   saveWorkConfirmOpen,
   saveWorkDisabled,
   saveWorkSending,
-  selectSessionTool,
   sessionId,
   sessionSourceRoot,
-  sessionToolControls,
   sessionToolbarVisible,
   selectedAnswerChoice,
   sourceEditorAskCodexAvailable,
@@ -583,18 +586,17 @@ const sessionAbandonDisabled = computed(() => Boolean(
   workspaceSetupRetrying.value
 ));
 
-function requestSessionAbandon() {
-  if (!sessionAbandonDisabled.value) {
-    props.sessionAbandon?.request?.();
-  }
-}
-
 async function sendComposerMessage() {
   const accepted = await submitComposerMessage();
   if (accepted) {
     composerInput.value?.clearAttachments?.();
   }
   return accepted;
+}
+
+function focusComposerSendButton() {
+  const button = composerSendButton.value?.$el || composerSendButton.value;
+  button?.focus?.();
 }
 
 async function attachPreviewFile(file) {
@@ -624,6 +626,8 @@ async function attachPreviewFile(file) {
 .studio-autopilot__chat-panel {
   background: rgb(var(--v-theme-surface));
   border-right: 1px solid rgba(var(--v-theme-outline), 0.14);
+  container-name: studio-chat-pane;
+  container-type: inline-size;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-height: 0;
@@ -638,11 +642,26 @@ async function attachPreviewFile(file) {
 .studio-autopilot__session-header {
   align-items: center;
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.12);
+  box-sizing: border-box;
   display: flex;
   gap: 0.45rem;
   justify-content: space-between;
   min-height: 3rem;
+  min-width: 0;
+  overflow: hidden;
   padding: 0.4rem 0.55rem;
+  width: 100%;
+}
+
+.studio-autopilot__session-header :deep(.studio-ai-sessions__toolbar) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.studio-autopilot__session-header :deep(.studio-ai-sessions__tabs) {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .studio-autopilot__header-actions,
@@ -763,14 +782,25 @@ async function attachPreviewFile(file) {
 
 .studio-autopilot__composer {
   border-top: 1px solid rgba(var(--v-theme-outline), 0.1);
+  box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  padding: 0 0.7rem 0.7rem;
+  padding: 4px;
+  width: 100%;
 }
 
 .studio-autopilot__composer-actions {
   width: 100%;
+}
+
+.studio-autopilot__send--inactive {
+  opacity: var(--v-disabled-opacity);
+}
+
+.studio-autopilot__send--steer {
+  min-width: 4.25rem;
+  padding-inline: 0.55rem;
 }
 
 .studio-autopilot__question-fields {
@@ -783,9 +813,43 @@ async function attachPreviewFile(file) {
   align-items: center;
   color: rgba(var(--v-theme-on-surface), 0.7);
   display: flex;
+  flex-wrap: wrap;
   font-size: 0.78rem;
+  gap: 0.25rem 0.5rem;
   justify-content: space-between;
   min-width: 0;
+}
+
+.studio-autopilot__question-fields-header > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.studio-autopilot__question-fields-header :deep(.v-btn) {
+  margin-left: auto;
+}
+
+.studio-autopilot__question-field {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.studio-autopilot__question-choices {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.studio-autopilot__question-choices :deep(.v-chip) {
+  height: auto;
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+
+.studio-autopilot__question-choices :deep(.v-chip__content) {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .studio-autopilot__answer-choices {
@@ -794,6 +858,18 @@ async function attachPreviewFile(file) {
 
 .studio-autopilot__composer-spacer {
   flex: 1 1 auto;
+}
+
+@container studio-chat-pane (max-width: 30rem) {
+  .studio-autopilot__save-work {
+    min-width: 2.5rem;
+    padding-inline: 0.5rem;
+    width: 2.5rem;
+  }
+
+  .studio-autopilot__save-work :deep(.v-btn__content) {
+    display: none;
+  }
 }
 
 .studio-autopilot__project-panel,

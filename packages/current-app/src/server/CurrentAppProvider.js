@@ -1,56 +1,38 @@
-import { withActionDefaults } from "@jskit-ai/kernel/shared/actions";
+import { defineFeature } from "@jskit-ai/kernel/server/features";
 
-import {
-  createService
-} from "./service.js";
-import { featureActions } from "./actions.js";
+import { createActions } from "./actions.js";
 import { registerRoutes } from "./registerRoutes.js";
-import {
-  jskitRuntimeEnv
-} from "@local/vibe64-core/server/jskitRuntimeEnv";
+import { createService } from "./service.js";
 
-class CurrentAppProvider {
-  static id = "feature.current-app";
-
-  static startsAfter = [
-    "runtime.actions",
-    "feature.vibe64-project"
-  ];
-
-  register(app) {
-    if (
-      !app ||
-      typeof app.service !== "function" ||
-      typeof app.actions !== "function"
-    ) {
-      throw new Error("CurrentAppProvider requires application service()/actions().");
-    }
-
-    const providerEnv = jskitRuntimeEnv(app);
-    app.service(
-      "feature.current-app.service",
-      (scope) => createService({
-        env: providerEnv,
-        projectService: scope.make("feature.vibe64-project.service")
-      })
-    );
-
-    app.actions(
-      withActionDefaults(featureActions, {
-        domain: "feature",
-        dependencies: {
-          featureService: "feature.current-app.service"
-        }
-      })
-    );
-  }
-
-  boot(app) {
-    registerRoutes(app, {
+const CurrentAppProvider = defineFeature({
+  id: "vibe64.current-app",
+  domain: "vibe64-current-app",
+  requires: {
+    env: "runtime.env",
+    http: "runtime.http",
+    project: "vibe64.project"
+  },
+  provides: {
+    currentApp: "vibe64.current-app"
+  },
+  actionDefaults: {
+    channels: ["api", "automation", "internal"],
+    surfaces: ["app"]
+  },
+  setup({ env, http, project }) {
+    const currentApp = createService({
+      env,
+      projectService: project
+    });
+    registerRoutes(http, {
       routeRelativePath: "studio/current-app",
       routeSurface: "app"
     });
+    return { currentApp };
+  },
+  actions({ currentApp }) {
+    return createActions({ currentApp });
   }
-}
+});
 
 export { CurrentAppProvider };

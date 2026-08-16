@@ -14,7 +14,7 @@ test("Vibe64 feature routes centralize route metadata and action dispatch", asyn
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const app = testRouteApp();
-      const routes = createVibe64FeatureRoutes(app, {
+      const routes = createVibe64FeatureRoutes(app.http, {
         localRequestMessage: "Local only.",
         projectContext,
         routeRelativePath: "vibe64",
@@ -87,7 +87,7 @@ test("Vibe64 feature routes support service response status overrides", async ()
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ projectContext }) => {
       const app = testRouteApp();
-      const routes = createVibe64FeatureRoutes(app, {
+      const routes = createVibe64FeatureRoutes(app.http, {
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app",
@@ -147,7 +147,7 @@ test("Vibe64 feature routes support service response status overrides", async ()
 test("Vibe64 feature routes can register global routes without project params", async () => {
   await withLocalRequestBypass(async () => {
     const app = testRouteApp();
-    const routes = createVibe64FeatureRoutes(app, {
+    const routes = createVibe64FeatureRoutes(app.http, {
       routeRelativePath: "vibe64/connections",
       routeSurface: "app",
       projectScoped: false

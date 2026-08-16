@@ -8,9 +8,27 @@ function patchSchema(fields) {
   });
 }
 
+const optionalUser = {
+  vibe64User: {
+    type: "object",
+    additionalProperties: true,
+    required: false
+  }
+};
+
 const projectsReadInputValidator = patchSchema({});
-const projectTemplatesReadInputValidator = patchSchema({});
-const projectTemplateApplyInputValidator = patchSchema({});
+const projectTemplatesReadInputValidator = patchSchema({
+  ...optionalUser
+});
+const projectTemplateApplyInputValidator = patchSchema({
+  ...optionalUser,
+  templateId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+const previewApplicationIdentitiesReadInputValidator = patchSchema({});
 
 const projectTemplateParamsValidator = patchSchema({
   slug: {
@@ -94,5 +112,6 @@ export {
   projectTemplateApplyInputValidator,
   projectTemplateParamsValidator,
   projectTemplatesReadInputValidator,
-  previewApplicationIdentitiesInputValidator
+  previewApplicationIdentitiesInputValidator,
+  previewApplicationIdentitiesReadInputValidator
 };

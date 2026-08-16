@@ -89,23 +89,11 @@ test("terminal websocket routes register through JSKIT app ownership", async () 
         };
       }
     };
-    const app = {
-      make(token) {
-        if (token === "jskit.fastify") {
-          return fastify;
-        }
-        if (token === "feature.unit-terminal.service") {
-          return service;
-        }
-        throw new Error(`Unknown token ${token}.`);
-      }
-    };
-
     await withProjectRequestContext(async ({ projectContext, slug }) => {
-      registerTerminalWebSocketRoute(app, {
+      registerTerminalWebSocketRoute(fastify, {
         projectContext,
         routePath: "/api/app/:slug/unit/sessions/:sessionId/terminal/:terminalSessionId/ws",
-        serviceId: "feature.unit-terminal.service",
+        service,
         serviceUnavailableMessage: "Unit terminal service is unavailable.",
         subscribe(resolvedService, { request, sessionId, subscriber, terminalSessionId }) {
           assert.equal(resolvedService, service);
@@ -242,23 +230,13 @@ test("terminal websocket guard accepts authenticated non-loopback requests", asy
         };
       }
     };
-    const app = {
-      make(token) {
-        if (token === "jskit.fastify") {
-          return fastify;
-        }
-        if (token === "feature.unit-terminal.service") {
-          return {};
-        }
-        throw new Error(`Unknown token ${token}.`);
-      }
-    };
+    const service = {};
 
     await withProjectRequestContext(async ({ projectContext, slug }) => {
-      registerTerminalWebSocketRoute(app, {
+      registerTerminalWebSocketRoute(fastify, {
         projectContext,
         routePath: "/api/app/:slug/unit/sessions/:sessionId/terminal/:terminalSessionId/ws",
-        serviceId: "feature.unit-terminal.service",
+        service,
         serviceUnavailableMessage: "Unit terminal service is unavailable.",
         subscribe(_service, { terminalSessionId }) {
           return {

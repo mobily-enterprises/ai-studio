@@ -116,6 +116,7 @@ import {
 import {
   useVibe64CodexCommands
 } from "@/composables/useVibe64CodexCommands.js";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   useCodexAttachments
 } from "@/composables/useCodexAttachments.js";
@@ -123,6 +124,7 @@ import {
 const emit = defineEmits([
   "attachments-change",
   "submit",
+  "tab-to-submit",
   "update:modelValue"
 ]);
 defineOptions({
@@ -178,6 +180,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  tabToSubmit: {
+    default: false,
+    type: Boolean
+  },
   sessionId: {
     default: "",
     type: String
@@ -188,15 +194,14 @@ const props = defineProps({
   }
 });
 
-const codexCommands = props.attachmentsEnabled
-  ? useVibe64CodexCommands()
-  : null;
-const uploadAttachment = codexCommands?.uploadAttachment || (async () => ({
-  error: "Attachments are disabled for this prompt.",
-  ok: false
-}));
+const codexCommands = useVibe64CodexCommands();
+const uploadAttachment = codexCommands.uploadAttachment;
+const attachmentFeedback = useUiFeedback({
+  source: "vibe64.agent-attachment.upload.feedback"
+});
 const attachments = useCodexAttachments({
   canUpload: () => props.attachmentsEnabled && !props.disabled,
+  onError: attachmentFeedback.error,
   onUploaded: async () => {
     emitAttachmentsChanged();
   },
@@ -216,12 +221,9 @@ const canUseFilePicker = computed(() => Boolean(
   !attachmentUploading.value
 ));
 const combinedErrorMessages = computed(() => {
-  const parentMessages = Array.isArray(props.errorMessages)
+  return Array.isArray(props.errorMessages)
     ? props.errorMessages
     : [props.errorMessages].filter(Boolean);
-  return attachments.status.value
-    ? [...parentMessages, attachments.status.value]
-    : parentMessages;
 });
 const hintVisible = computed(() => Boolean(
   props.hint &&
@@ -278,6 +280,22 @@ function handleTextareaInput(event = {}) {
 }
 
 function handleTextareaKeydown(event = {}) {
+  if (
+    props.tabToSubmit &&
+    event.key === "Tab" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  ) {
+    event.preventDefault();
+    emit("tab-to-submit");
+    return;
+  }
+  if (event.key === "Enter" && !props.submitOnEnter) {
+    event.stopPropagation();
+    return;
+  }
   if (
     !props.submitOnEnter ||
     event.key !== "Enter" ||
@@ -368,7 +386,7 @@ defineExpose({
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  padding: 0.56rem 2px 2px;
+  padding: 0;
   position: relative;
   text-align: left;
   width: 100%;

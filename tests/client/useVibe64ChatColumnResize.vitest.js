@@ -73,6 +73,28 @@ describe("useVibe64ChatColumnResize", () => {
     expect(result.code).not.toMatch(
       /body\.studio-home-chat-column-resizing\s*\{[^}]*width:/u
     );
+    expect(result.code).not.toContain("body.studio-home-chat-column-resizing");
+    expect(result.code).toMatch(
+      /studio-ai-sessions--resizing[^}]*cursor:\s*col-resize/u
+    );
+  });
+
+  it("coalesces drag layout updates and never writes inherited width state on body", () => {
+    const source = readFileSync(
+      "src/composables/useVibe64ChatColumnResize.js",
+      "utf8"
+    );
+
+    expect(source).toContain("window.requestAnimationFrame(flushLayoutWidth)");
+    expect(source).toContain("document.querySelector(\".studio-home-shell-heading\")");
+    expect(source).not.toContain("document.body.style.setProperty");
+    const moveResizeStart = source.indexOf("function moveResize");
+    const moveResizeEnd = source.indexOf("function startResize", moveResizeStart);
+    const moveResizeSource = source.slice(moveResizeStart, moveResizeEnd);
+    expect(moveResizeStart).toBeGreaterThanOrEqual(0);
+    expect(moveResizeEnd).toBeGreaterThan(moveResizeStart);
+    expect(moveResizeSource).toBeTruthy();
+    expect(moveResizeSource).not.toContain("preferredWidth.value =");
   });
 
   it("keeps the active chat pane on the same resizable column as its separator", () => {
@@ -83,6 +105,71 @@ describe("useVibe64ChatColumnResize", () => {
 
     expect(source).toMatch(
       /@media \(min-width: 981px\)[\s\S]*\.studio-autopilot\s*\{[\s\S]*var\(--studio-home-chat-column-width/u
+    );
+  });
+
+  it("does not wrap the active Studio panes in a shell-level horizontal gutter", () => {
+    const source = readFileSync(
+      "src/components/StudioAppShellLayout.vue",
+      "utf8"
+    );
+
+    expect(source).toMatch(
+      /body\.studio-home-shell-active \.shell-layout__content[\s\S]*padding-left:\s*0;[\s\S]*padding-right:\s*0;/u
+    );
+  });
+
+  it("contains toolbar and composer chrome at the narrowest desktop chat width", () => {
+    const filename = "src/components/studio/vibe64-session/Vibe64AutopilotView.vue";
+    const source = readFileSync(filename, "utf8");
+    const descriptor = parse(source, { filename }).descriptor;
+    const style = descriptor.styles[0];
+    const result = compileStyle({
+      filename,
+      id: "data-v-chat-containment-test",
+      scoped: style.scoped,
+      source: style.content
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.code).toContain("container-name: studio-chat-pane");
+    expect(result.code).toMatch(/studio-autopilot__session-header[^}]*box-sizing:\s*border-box/u);
+    expect(result.code).toMatch(/studio-autopilot__composer[^}]*box-sizing:\s*border-box/u);
+    expect(result.code).toMatch(/@container studio-chat-pane \(max-width: 30rem\)/u);
+    expect(result.code).toMatch(/studio-autopilot__save-work[^}]*width:\s*2\.5rem/u);
+    expect(source).not.toContain("Answer the assistant's questions");
+  });
+
+  it("keeps off-screen conversation turns out of wide-pane relayouts", () => {
+    const filename = "src/components/studio/vibe64-session/Vibe64ConversationLog.vue";
+    const source = readFileSync(filename, "utf8");
+    const descriptor = parse(source, { filename }).descriptor;
+    const style = descriptor.styles[0];
+    const result = compileStyle({
+      filename,
+      id: "data-v-chat-turn-containment-test",
+      scoped: style.scoped,
+      source: style.content
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.code).toMatch(
+      /studio-conversation-log__turn[^}]*content-visibility:\s*auto/u
+    );
+    expect(result.code).toMatch(
+      /studio-conversation-log__turn[^}]*contain-intrinsic-block-size:\s*auto 12rem/u
+    );
+  });
+
+  it("mounts only the visible project tool instead of retaining every heavy pane", () => {
+    const source = readFileSync(
+      "src/composables/useVibe64AutopilotView.js",
+      "utf8"
+    );
+
+    expect(source).not.toContain("mountedRightPaneTabs");
+    expect(source).toMatch(
+      /function rightPaneTabMounted[\s\S]*return rightPaneTab\.value === String\(tabId \|\| ""\);/u
     );
   });
 });

@@ -4,12 +4,6 @@ import {
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 
-const SOURCE_EDITOR_SERVICE_ID = "feature.vibe64-source-editor.service";
-
-function sourceEditorService(app) {
-  return app.make(SOURCE_EDITOR_SERVICE_ID);
-}
-
 function writeSourceEditorStreamEvent(rawReply, payload = {}) {
   rawReply.write(`${JSON.stringify({
     ...payload,
@@ -66,14 +60,20 @@ async function sendSourceEditorNdjsonStream(reply, run) {
 }
 
 function registerRoutes(
-  app,
+  http,
   {
+    publishFileChanged = async () => null,
+    publishFileOpened = async () => null,
     projectContext = null,
     routeSurface = "",
-    routeRelativePath = ""
+    routeRelativePath = "",
+    sourceEditor
   } = {}
 ) {
-  const routes = createVibe64FeatureRoutes(app, {
+  if (!sourceEditor || typeof sourceEditor.readTree !== "function") {
+    throw new TypeError("registerRoutes requires the Vibe64 Source Editor API.");
+  }
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 source editor routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
@@ -85,7 +85,7 @@ function registerRoutes(
     summary: "Read the editable source tree for a Vibe64 session."
   }, (request) => {
     const query = routes.requestQuery(request);
-    return sourceEditorService(app).readTree({
+    return sourceEditor.readTree({
       limit: query.limit,
       offset: query.offset,
       path: query.path,
@@ -98,7 +98,7 @@ function registerRoutes(
   }, async (request, reply) => {
     const query = routes.requestQuery(request);
     await sendVibe64EventStream(reply, ({ emit, isClosed, onClose }) => {
-      return sourceEditorService(app).streamFileChanges({
+      return sourceEditor.streamFileChanges({
         path: query.path,
         sessionId: request.params.sessionId
       }, {
@@ -121,7 +121,7 @@ function registerRoutes(
     summary: "Find editable source files in a Vibe64 session."
   }, (request) => {
     const query = routes.requestQuery(request);
-    return sourceEditorService(app).listFiles({
+    return sourceEditor.listFiles({
       limit: query.limit,
       query: query.q,
       sessionId: request.params.sessionId
@@ -132,7 +132,7 @@ function registerRoutes(
     summary: "Search editable source files in a Vibe64 session."
   }, (request) => {
     const query = routes.requestQuery(request);
-    return sourceEditorService(app).search({
+    return sourceEditor.search({
       limit: query.limit,
       query: query.q,
       sessionId: request.params.sessionId
@@ -144,7 +144,7 @@ function registerRoutes(
     summary: "Resolve a source path reference relative to an editable session file."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).resolvePath({
+    return sourceEditor.resolvePath({
       fromPath: body.fromPath,
       sessionId: request.params.sessionId,
       target: body.target
@@ -156,7 +156,7 @@ function registerRoutes(
     summary: "Explain a selected source range in a Vibe64 session."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).explainSelection({
+    return sourceEditor.explainSelection({
       agentSettings: body.agentSettings,
       endColumn: body.endColumn,
       endLine: body.endLine,
@@ -175,7 +175,7 @@ function registerRoutes(
   }, async (request, reply) => {
     const body = routes.requestBody(request);
     await sendSourceEditorNdjsonStream(reply, ({ emit, isClosed }) => {
-      return sourceEditorService(app).streamExplanation({
+      return sourceEditor.streamExplanation({
         agentSettings: body.agentSettings,
         assistantMessageId: body.assistantMessageId,
         endColumn: body.endColumn,
@@ -201,7 +201,7 @@ function registerRoutes(
     summary: "Clean abandoned temporary source explanation chats in a Vibe64 session."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).cleanupExplanations({
+    return sourceEditor.cleanupExplanations({
       activeExplanationIds: body.activeExplanationIds,
       originId: body.originId,
       sessionId: request.params.sessionId
@@ -211,7 +211,7 @@ function registerRoutes(
   routes.serviceRoute("DELETE", "/sessions/:sessionId/source-editor/explanations/:explanationId", {
     summary: "Dispose a temporary source explanation chat in a Vibe64 session."
   }, (request) => {
-    return sourceEditorService(app).deleteExplanation({
+    return sourceEditor.deleteExplanation({
       explanationId: request.params.explanationId,
       sessionId: request.params.sessionId
     });
@@ -220,7 +220,7 @@ function registerRoutes(
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/explanations/:explanationId/stop", {
     summary: "Stop a running temporary source explanation chat."
   }, (request) => {
-    return sourceEditorService(app).stopExplanation({
+    return sourceEditor.stopExplanation({
       explanationId: request.params.explanationId,
       sessionId: request.params.sessionId
     });
@@ -231,7 +231,7 @@ function registerRoutes(
     summary: "Add a follow-up question to a temporary source explanation chat."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).addExplanationFollowup({
+    return sourceEditor.addExplanationFollowup({
       agentSettings: body.agentSettings,
       explanationId: request.params.explanationId,
       message: body.message,
@@ -245,7 +245,7 @@ function registerRoutes(
   }, async (request, reply) => {
     const body = routes.requestBody(request);
     await sendSourceEditorNdjsonStream(reply, ({ emit, isClosed }) => {
-      return sourceEditorService(app).streamExplanationFollowup({
+      return sourceEditor.streamExplanationFollowup({
         agentSettings: body.agentSettings,
         assistantMessageId: body.assistantMessageId,
         explanationId: request.params.explanationId,
@@ -263,7 +263,7 @@ function registerRoutes(
     summary: "Read an editable source file from a Vibe64 session."
   }, (request) => {
     const query = routes.requestQuery(request);
-    return sourceEditorService(app).readFile({
+    return sourceEditor.readFile({
       path: query.path,
       sessionId: request.params.sessionId
     });
@@ -274,7 +274,7 @@ function registerRoutes(
     summary: "Create a new editable source file in a Vibe64 session."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).createFile({
+    return sourceEditor.createFile({
       originId: body.originId,
       path: body.path,
       projectSlug: body.projectSlug,
@@ -285,22 +285,24 @@ function registerRoutes(
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/open-file", {
     bodyLimit: 32 * 1024,
     summary: "Broadcast the selected source file for a Vibe64 session."
-  }, (request) => {
+  }, async (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).broadcastOpenFile({
+    const result = await sourceEditor.broadcastOpenFile({
       originId: body.originId,
       path: body.path,
       projectSlug: body.projectSlug,
       sessionId: request.params.sessionId
     });
+    await publishFileOpened(result);
+    return result;
   });
 
   routes.serviceRoute("PUT", "/sessions/:sessionId/source-editor/file", {
     bodyLimit: 2 * 1024 * 1024,
     summary: "Autosave an editable source file in a Vibe64 session."
-  }, (request) => {
+  }, async (request) => {
     const body = routes.requestBody(request);
-    return sourceEditorService(app).saveFile({
+    const result = await sourceEditor.saveFile({
       baseHash: body.baseHash,
       originId: body.originId,
       path: body.path,
@@ -308,6 +310,8 @@ function registerRoutes(
       sessionId: request.params.sessionId,
       text: body.text
     });
+    await publishFileChanged(result);
+    return result;
   });
 }
 

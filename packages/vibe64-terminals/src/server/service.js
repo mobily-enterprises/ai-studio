@@ -247,10 +247,11 @@ function createService({
   env = process.env,
   logger = null,
   projectService,
+  publishProjectRuntimeChanged = async () => null,
   publishSessionChanged = {}
 } = {}) {
   if (!projectService) {
-    throw new TypeError("createService requires feature.vibe64-project.service.");
+    throw new TypeError("createService requires vibe64.project.");
   }
 
   const workspaceSetup = createWorkspaceSetupRunner({
@@ -780,13 +781,17 @@ function createService({
         reason,
         targetRoot: context.targetRoot
       });
-      return {
+      const result = {
         ok: true,
         projectSlug: context.projectSlug,
         reason,
         runtime,
         targetRoot: context.targetRoot
       };
+      await publishProjectRuntimeChanged(result, {
+        action: "runtime-opened"
+      });
+      return result;
     },
 
     closeDormantProjectRuntime(input = {}) {
@@ -981,6 +986,9 @@ function createService({
           });
           result.runtime = runtime;
         }
+        await publishProjectRuntimeChanged(result, {
+          action: "runtime-closed"
+        });
         vibe64SessionDebugLog("server.terminals.closeProjectRuntime.done", {
           ...result,
           durationMs: vibe64SessionDebugDurationMs(startedAtMs),

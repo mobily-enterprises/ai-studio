@@ -98,10 +98,51 @@
     <div class="system-world__stage">
       <canvas
         ref="canvasElement"
-        aria-label="Interactive 3D Genesis City. Drag or use arrow keys to move, scroll or use W and S to zoom, click a building to inspect it, and double-click a building to open its source."
+        aria-label="Interactive 3D Genesis City. Drag or use arrow keys to move, scroll or use W and S to zoom, click a file, operation, district, or subsystem to inspect it, and double-click a building to open its source."
         class="system-world__canvas"
         tabindex="0"
       />
+
+      <div
+        v-if="hoveredImplementationBundle"
+        class="system-world__connection-tooltip"
+        :style="{
+          left: `${hoveredImplementationBundle.canvasX}px`,
+          top: `${hoveredImplementationBundle.canvasY}px`
+        }"
+      >
+        <span>Genesis implementation bundle</span>
+        <strong>{{ semanticSubsystemsById.get(hoveredImplementationBundle.subsystemId)?.title }}</strong>
+        <code>{{ machineDistrictsById.get(hoveredImplementationBundle.precinctId)?.path || "Project" }}</code>
+        <small>
+          {{ formatCount(hoveredImplementationBundle.operationIds.length, "operation") }} ·
+          {{ formatCount(hoveredImplementationBundle.fileIds.length, "file") }}
+        </small>
+      </div>
+
+      <div
+        v-if="cityKind === 'machine' && semanticSubsystems.length"
+        class="system-world__layer-controls"
+        aria-label="Genesis semantic layers"
+      >
+        <span>Layers</span>
+        <button
+          :class="{ 'system-world__layer-control--active': showSubsystems }"
+          type="button"
+          @click="toggleSemanticLayer('subsystems')"
+        >
+          Subsystem sky
+        </button>
+        <button
+          :class="{ 'system-world__layer-control--active': showImplementationLinks }"
+          :disabled="!showSubsystems"
+          title="Show the selected subsystem or operation's Genesis implemented-by links"
+          type="button"
+          @click="toggleSemanticLayer('implementations')"
+        >
+          Implementations
+        </button>
+      </div>
 
       <div v-if="loading && !currentCity" class="system-world__state-card" role="status">
         <span class="system-world__state-orbit" aria-hidden="true" />
@@ -166,27 +207,223 @@
         </button>
       </div>
 
-      <nav v-if="buildings.length" class="system-world__navigator" :aria-label="`${cityTitle} buildings`">
-        <header>
-          <span>{{ cityKind === 'machine' ? 'Files' : 'Operations' }}</span>
-          <strong>{{ buildings.length }}</strong>
-        </header>
-        <button
-          v-for="building in buildings"
-          :key="building.id"
-          :class="{ 'system-world__navigator-button--active': selectedBuilding?.id === building.id }"
-          type="button"
-          @click="inspectBuilding(building, { focus: true })"
-        >
-          <v-icon :icon="cityKind === 'machine' ? mdiFileCodeOutline : mdiLayersTripleOutline" size="13" />
-          <span>
-            <strong>{{ building.title }}</strong>
-            <small>{{ cityKind === 'machine' ? building.path : building.subsystem }}</small>
-          </span>
-        </button>
+      <nav v-if="buildings.length" class="system-world__navigator" :aria-label="`${cityTitle} explorer`">
+        <template v-if="cityKind === 'machine' && showSubsystems && semanticSubsystems.length">
+          <header>
+            <span>Subsystems</span>
+            <strong>{{ semanticSubsystems.length }}</strong>
+          </header>
+          <button
+            v-for="subsystem in semanticSubsystems"
+            :key="subsystem.id"
+            :class="{ 'system-world__navigator-button--active': selectedSemanticSubsystem?.id === subsystem.id }"
+            type="button"
+            @click="inspectSemanticSubsystem(subsystem)"
+          >
+            <v-icon :icon="mdiLayersTripleOutline" size="13" />
+            <span>
+              <strong>{{ subsystem.title }}</strong>
+              <small>{{ formatCount(subsystem.operations.length, 'operation') }} · {{ formatCount(subsystem.files.length, 'file') }}</small>
+            </span>
+          </button>
+        </template>
+        <template v-if="cityKind === 'machine'">
+          <template v-if="machineNavigatorRegions.length">
+            <header>
+              <span>Regions</span>
+              <strong>{{ machineNavigatorRegions.length }}</strong>
+            </header>
+            <button
+              v-for="region in machineNavigatorRegions"
+              :key="region.id"
+              :class="{ 'system-world__navigator-button--active': activePresentationRegionId === region.id }"
+              type="button"
+              @click="selectPresentationRegion(region)"
+            >
+              <v-icon :icon="mdiMapMarkerPath" size="13" />
+              <span>
+                <strong>{{ region.title }}</strong>
+                <small>{{ formatCount(region.buildingCount, 'file') }}</small>
+              </span>
+            </button>
+          </template>
+          <header v-if="!machineNavigatorRegions.length">
+            <span>Precincts</span>
+            <strong>{{ machineNavigatorDistricts.length }}</strong>
+          </header>
+          <header v-else>
+            <span>Campuses</span>
+            <strong>{{ machineNavigatorDistricts.length }}</strong>
+          </header>
+          <button
+            v-for="district in machineNavigatorDistricts"
+            :key="district.id"
+            :class="{ 'system-world__navigator-button--active': selectedDistrict?.id === district.id }"
+            type="button"
+            @click="inspectDistrict(district)"
+          >
+            <v-icon :icon="mdiMapMarkerPath" size="13" />
+            <span>
+              <strong>{{ district.title }}</strong>
+              <small>{{ district.path || 'Project root' }}</small>
+            </span>
+          </button>
+          <template v-if="machineNavigatorSections.length">
+            <header>
+              <span>Sections</span>
+              <strong>{{ machineNavigatorSections.length }}</strong>
+            </header>
+            <button
+              v-for="district in machineNavigatorSections"
+              :key="district.id"
+              :class="{ 'system-world__navigator-button--active': selectedDistrict?.id === district.id }"
+              type="button"
+              @click="inspectDistrict(district)"
+            >
+              <v-icon :icon="mdiFolderOutline" size="13" />
+              <span>
+                <strong>{{ district.title }}</strong>
+                <small>{{ district.path }}</small>
+              </span>
+            </button>
+          </template>
+        </template>
+        <template v-else>
+          <header>
+            <span>Operations</span>
+            <strong>{{ buildings.length }}</strong>
+          </header>
+          <button
+            v-for="building in buildings"
+            :key="building.id"
+            :class="{ 'system-world__navigator-button--active': selectedBuilding?.id === building.id }"
+            type="button"
+            @click="inspectBuilding(building)"
+          >
+            <v-icon :icon="mdiLayersTripleOutline" size="13" />
+            <span>
+              <strong>{{ building.title }}</strong>
+              <small>{{ building.subsystem }}</small>
+            </span>
+          </button>
+        </template>
       </nav>
 
-      <aside v-if="selectedBuilding" class="system-world__inspector">
+      <aside v-if="selectedSemanticOperation" class="system-world__inspector">
+        <span class="system-world__eyebrow">Program operation</span>
+        <h2>{{ selectedSemanticOperation.title }}</h2>
+        <p class="system-world__path">{{ selectedSemanticOperation.path }}</p>
+        <div class="system-world__chips">
+          <span>{{ selectedSemanticOperation.subsystem }}</span>
+          <span>{{ formatCount(selectedSemanticOperation.implementationLinks.length, 'implementation') }}</span>
+        </div>
+        <p v-if="selectedSemanticOperation.description">{{ selectedSemanticOperation.description }}</p>
+        <div class="system-world__section">
+          <strong>Public contract</strong>
+          <pre>{{ selectedSemanticOperation.publicContract }}</pre>
+        </div>
+        <div class="system-world__section">
+          <strong>Implemented by</strong>
+          <button
+            v-for="link in selectedSemanticOperation.implementationLinks"
+            :key="link.id"
+            class="system-world__source-link"
+            type="button"
+            @click="openSourceFile(link.file.path)"
+          >
+            {{ link.file.path }}
+          </button>
+        </div>
+        <div class="system-world__inspector-actions">
+          <v-btn
+            :prepend-icon="mdiCrosshairsGps"
+            size="small"
+            type="button"
+            variant="text"
+            @click="focusCurrentSelection"
+          >
+            Focus
+          </v-btn>
+          <v-btn
+            :prepend-icon="mdiFileCodeOutline"
+            size="small"
+            type="button"
+            variant="tonal"
+            @click="openSourceFile(selectedSemanticOperation.path)"
+          >
+            Open Program operation
+          </v-btn>
+          <v-btn
+            v-if="askChatAvailable"
+            :prepend-icon="mdiMessageOutline"
+            size="small"
+            type="button"
+            variant="text"
+            @click="askAboutSemanticSelection"
+          >
+            Explain in Chat
+          </v-btn>
+        </div>
+      </aside>
+
+      <aside v-else-if="selectedSemanticSubsystem" class="system-world__inspector">
+        <span class="system-world__eyebrow">Program subsystem</span>
+        <h2>{{ selectedSemanticSubsystem.title }}</h2>
+        <p class="system-world__path">{{ selectedSemanticSubsystem.path }}</p>
+        <div class="system-world__metrics">
+          <span><strong>{{ selectedSemanticSubsystem.operations.length }}</strong> operations</span>
+          <span><strong>{{ selectedSemanticSubsystem.files.length }}</strong> exact files</span>
+          <span><strong>{{ selectedSemanticSubsystem.implementationLinks.length }}</strong> links</span>
+        </div>
+        <div class="system-world__section">
+          <strong>Public operations</strong>
+          <button
+            v-for="operation in selectedSemanticSubsystem.operations"
+            :key="operation.id"
+            class="system-world__operation-link"
+            type="button"
+            @click="inspectSemanticOperation(operation)"
+          >
+            <strong>{{ operation.title }}</strong>
+            <span>{{ formatCount(operation.implementationLinks.length, 'implementation') }}</span>
+          </button>
+        </div>
+        <div class="system-world__section">
+          <strong>Participating files</strong>
+          <button
+            v-for="file in selectedSemanticSubsystem.files"
+            :key="file.id"
+            class="system-world__source-link"
+            type="button"
+            @click="openSourceFile(file.path)"
+          >
+            {{ file.path }}
+          </button>
+        </div>
+        <div class="system-world__inspector-actions">
+          <v-btn
+            :prepend-icon="mdiCrosshairsGps"
+            size="small"
+            type="button"
+            variant="text"
+            @click="focusCurrentSelection"
+          >
+            Focus
+          </v-btn>
+          <v-btn
+            v-if="askChatAvailable"
+            :prepend-icon="mdiMessageOutline"
+            size="small"
+            type="button"
+            variant="text"
+            @click="askAboutSemanticSelection"
+          >
+            Explain in Chat
+          </v-btn>
+        </div>
+      </aside>
+
+      <aside v-else-if="selectedBuilding" class="system-world__inspector">
         <span class="system-world__eyebrow">{{ cityKind === 'machine' ? 'Machine file' : 'Program operation' }}</span>
         <h2>{{ selectedBuilding.title }}</h2>
         <p class="system-world__path">{{ selectedBuilding.path }}</p>
@@ -249,6 +486,15 @@
 
         <div class="system-world__inspector-actions">
           <v-btn
+            :prepend-icon="mdiCrosshairsGps"
+            size="small"
+            type="button"
+            variant="text"
+            @click="focusCurrentSelection"
+          >
+            Focus
+          </v-btn>
+          <v-btn
             :prepend-icon="mdiFileCodeOutline"
             size="small"
             type="button"
@@ -278,6 +524,17 @@
           <span><strong>{{ selectedDistrict.buildingCount }}</strong> buildings</span>
           <span v-if="cityKind === 'machine'"><strong>{{ formatNumber(selectedDistrict.lines) }}</strong> lines</span>
         </div>
+        <div class="system-world__inspector-actions">
+          <v-btn
+            :prepend-icon="mdiCrosshairsGps"
+            size="small"
+            type="button"
+            variant="text"
+            @click="focusCurrentSelection"
+          >
+            Focus
+          </v-btn>
+        </div>
       </aside>
 
       <aside v-else-if="currentCity" class="system-world__orientation">
@@ -293,7 +550,7 @@
       </div>
 
       <div v-if="currentCity" class="system-world__legend">
-        <span>{{ cityKind === 'machine' ? 'Building height and footprint follow indexed line count' : 'Each building is one public Program operation' }}</span>
+        <span>{{ cityKind === 'machine' ? 'Building height and footprint follow indexed line count · cyan participation and gold implementation tethers come from Genesis implemented-by links' : 'Each building is one public Program operation' }}</span>
         <span>{{ cityKind === 'machine' ? 'Directory' : 'Subsystem' }} terraces follow native Genesis districts</span>
       </div>
     </div>
@@ -317,8 +574,10 @@ import {
   mdiCityVariantOutline,
   mdiCrosshairsGps,
   mdiFileCodeOutline,
+  mdiFolderOutline,
   mdiInformationOutline,
   mdiLayersTripleOutline,
+  mdiMapMarkerPath,
   mdiMapOutline,
   mdiMessageOutline,
   mdiMouse,
@@ -344,10 +603,13 @@ import {
   genesisCityWorld
 } from "../world/genesisCityWorld.js";
 import {
+  topLevelPrecincts
+} from "../world/worldLayout.js";
+import {
   createWorldViewHistory
 } from "../world/worldViewHistory.js";
 
-const rendererRevision = "057";
+const rendererRevision = "062";
 
 const props = defineProps({
   active: {
@@ -380,8 +642,14 @@ const emit = defineEmits([
 
 const canvasElement = ref(null);
 const cityKind = ref(GENESIS_MACHINE_CITY_KIND);
+const chosenPresentationRegionId = ref("");
+const hoveredImplementationBundle = ref(null);
 const selectedBuildingId = ref("");
 const selectedDistrict = ref(null);
+const selectedSemanticOperationId = ref("");
+const selectedSemanticSubsystemId = ref("");
+const showImplementationLinks = ref(false);
+const showSubsystems = ref(true);
 const worldError = ref("");
 const worldHistoryBusy = ref(false);
 const worldView = ref("perspective");
@@ -413,10 +681,63 @@ const {
 const currentCity = computed(() => (
   cityKind.value === GENESIS_PROGRAM_CITY_KIND ? programCity.value : machineCity.value
 ));
-const worldOverview = computed(() => genesisCityWorld(currentCity.value, cityKind.value));
+const worldOverview = computed(() => genesisCityWorld(currentCity.value, cityKind.value, {
+  machineCity: machineCity.value,
+  programCity: programCity.value
+}));
 const buildings = computed(() => currentCity.value?.buildings || []);
+const machineNavigatorRegions = computed(() => (
+  cityKind.value === GENESIS_MACHINE_CITY_KIND
+    ? currentCity.value?.presentationRegions || []
+    : []
+));
+const activePresentationRegionId = computed(() => (
+  chosenPresentationRegionId.value || machineNavigatorRegions.value[0]?.id || ""
+));
+const machineNavigatorDistricts = computed(() => {
+  if (cityKind.value !== GENESIS_MACHINE_CITY_KIND) {
+    return [];
+  }
+  if (machineNavigatorRegions.value.length > 0) {
+    const districtsById = new Map((currentCity.value?.districts || []).map((district) => [
+      district.id,
+      district
+    ]));
+    return (currentCity.value?.presentationCampuses || [])
+      .filter((campus) => campus.regionId === activePresentationRegionId.value)
+      .map((campus) => districtsById.get(campus.districtId))
+      .filter(Boolean)
+      .sort((left, right) => left.title.localeCompare(right.title));
+  }
+  return topLevelPrecincts(currentCity.value);
+});
+const machineNavigatorSections = computed(() => {
+  if (cityKind.value !== GENESIS_MACHINE_CITY_KIND || !selectedDistrict.value?.id) {
+    return [];
+  }
+  const districts = Array.isArray(currentCity.value?.districts)
+    ? currentCity.value.districts
+    : [];
+  return districts
+    .filter((district) => district.parentId === selectedDistrict.value.id)
+    .sort((left, right) => left.title.localeCompare(right.title));
+});
 const selectedBuilding = computed(() => (
   buildings.value.find((building) => building.id === selectedBuildingId.value) || null
+));
+const semanticSubsystems = computed(() => worldOverview.value?.semantic?.subsystems || []);
+const semanticSubsystemsById = computed(() => new Map(
+  semanticSubsystems.value.map((subsystem) => [subsystem.id, subsystem])
+));
+const machineDistrictsById = computed(() => new Map(
+  (machineCity.value?.districts || []).map((district) => [district.id, district])
+));
+const semanticOperations = computed(() => worldOverview.value?.semantic?.operations || []);
+const selectedSemanticSubsystem = computed(() => (
+  semanticSubsystems.value.find((subsystem) => subsystem.id === selectedSemanticSubsystemId.value) || null
+));
+const selectedSemanticOperation = computed(() => (
+  semanticOperations.value.find((operation) => operation.id === selectedSemanticOperationId.value) || null
 ));
 const functionsById = computed(() => new Map(
   (machineCity.value?.functions || []).map((entry) => [entry.id, entry])
@@ -482,9 +803,9 @@ function formatBytes(value = 0) {
 
 function renderFrame(time) {
   animationFrame = 0;
-  world?.frame(time);
-  if (props.active && world) {
-    animationFrame = requestAnimationFrame(renderFrame);
+  const shouldContinue = world?.frame(time) === true;
+  if (shouldContinue) {
+    startRenderLoop();
   }
 }
 
@@ -519,6 +840,10 @@ function sourceNavigationContext() {
     cityKind: cityKind.value,
     selectedBuildingId: selectedBuildingId.value,
     selectedDistrictId: selectedDistrict.value?.id || "",
+    selectedOperationId: selectedSemanticOperationId.value,
+    selectedSubsystemId: selectedSemanticSubsystemId.value,
+    semanticImplementationsVisible: showImplementationLinks.value,
+    semanticSubsystemsVisible: showSubsystems.value,
     view: worldView.value
   };
 }
@@ -535,6 +860,8 @@ function recordWorldNavigation() {
 function clearSelection() {
   selectedBuildingId.value = "";
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
   world?.clearSelection();
 }
 
@@ -544,21 +871,53 @@ function handleBuildingPick(selection = {}) {
   }
   recordWorldNavigation();
   selectedBuildingId.value = selection.buildingId;
+  const building = buildings.value.find((entry) => entry.id === selection.buildingId);
+  chosenPresentationRegionId.value = building?.presentationRegionId || chosenPresentationRegionId.value;
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
 }
 
 function handleDistrictPick(district = null) {
   recordWorldNavigation();
   selectedBuildingId.value = "";
   selectedDistrict.value = district;
+  chosenPresentationRegionId.value = district?.presentationRegionId || chosenPresentationRegionId.value;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
+}
+
+function handleSemanticSubsystemPick(subsystem = null) {
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = subsystem?.id || "";
+}
+
+function handleSemanticOperationPick(operation = null) {
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  selectedSemanticOperationId.value = operation?.id || "";
+  selectedSemanticSubsystemId.value = operation?.subsystemId || operation?.districtId || "";
 }
 
 function handleClearSelection() {
-  if (selectedBuildingId.value || selectedDistrict.value) {
+  if (
+    selectedBuildingId.value || selectedDistrict.value ||
+    selectedSemanticOperationId.value || selectedSemanticSubsystemId.value
+  ) {
     recordWorldNavigation();
   }
   selectedBuildingId.value = "";
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
+}
+
+function handleImplementationBundleHover(bundle = null) {
+  hoveredImplementationBundle.value = bundle;
 }
 
 function openPayload(path = "", {
@@ -613,9 +972,13 @@ async function createWorld() {
     world = createSystemWorld({
       canvas: canvasElement.value,
       onClearSelection: handleClearSelection,
+      onHoverImplementationBundle: handleImplementationBundleHover,
+      onInvalidate: startRenderLoop,
       onOpenBuilding: handleImmersiveFileOpen,
       onSelectBuilding: handleBuildingPick,
       onSelectDistrict: handleDistrictPick,
+      onSelectOperation: handleSemanticOperationPick,
+      onSelectSubsystem: handleSemanticSubsystemPick,
       reducedMotion
     });
     resizeObserver = new ResizeObserver(resizeWorld);
@@ -648,7 +1011,15 @@ async function applyOverview(nextOverview) {
       world.selectBuilding(selectedBuilding.value.id);
     } else if (selectedDistrict.value) {
       world.selectDistrict(selectedDistrict.value.id);
+    } else if (selectedSemanticOperation.value) {
+      world.selectOperation(selectedSemanticOperation.value.id);
+    } else if (selectedSemanticSubsystem.value) {
+      world.selectSubsystem(selectedSemanticSubsystem.value.id);
     }
+    world.setSemanticLayers({
+      implementations: showImplementationLinks.value,
+      subsystems: showSubsystems.value
+    });
     if (previousView.position) {
       world.restoreView(previousView);
     }
@@ -668,19 +1039,99 @@ function selectCity(kind, { recordHistory = true } = {}) {
   cityKind.value = nextKind;
   selectedBuildingId.value = "";
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
 }
 
-function inspectBuilding(building, { focus = false } = {}) {
+function inspectBuilding(building) {
   if (!building?.id) {
     return;
   }
   recordWorldNavigation();
   selectedBuildingId.value = building.id;
+  chosenPresentationRegionId.value = building.presentationRegionId || chosenPresentationRegionId.value;
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
   world?.selectBuilding(building.id);
-  if (focus) {
-    world?.focusBuilding(building.id);
+}
+
+function inspectDistrict(district) {
+  if (!district?.id) {
+    return;
   }
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = world?.selectDistrict(district.id) || district;
+  chosenPresentationRegionId.value = district.presentationRegionId || chosenPresentationRegionId.value;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
+}
+
+function selectPresentationRegion(region) {
+  if (region?.id) {
+    chosenPresentationRegionId.value = region.id;
+  }
+}
+
+function inspectSemanticSubsystem(subsystem) {
+  if (!subsystem?.id) {
+    return;
+  }
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = subsystem.id;
+  world?.selectSubsystem(subsystem.id);
+}
+
+function inspectSemanticOperation(operation) {
+  if (!operation?.id) {
+    return;
+  }
+  recordWorldNavigation();
+  selectedBuildingId.value = "";
+  selectedDistrict.value = null;
+  selectedSemanticOperationId.value = operation.id;
+  selectedSemanticSubsystemId.value = operation.subsystemId || operation.districtId || "";
+  world?.selectOperation(operation.id);
+}
+
+function focusCurrentSelection() {
+  if (!world) {
+    return false;
+  }
+  recordWorldNavigation();
+  if (selectedSemanticOperation.value) {
+    return world.focusOperation(selectedSemanticOperation.value.id);
+  }
+  if (selectedSemanticSubsystem.value) {
+    return world.focusSubsystem(selectedSemanticSubsystem.value.id);
+  }
+  if (selectedBuilding.value) {
+    return world.focusBuilding(selectedBuilding.value.id);
+  }
+  if (selectedDistrict.value) {
+    return world.focusDistrict(selectedDistrict.value.id);
+  }
+  return false;
+}
+
+function toggleSemanticLayer(layer) {
+  recordWorldNavigation();
+  if (layer === "subsystems") {
+    showSubsystems.value = !showSubsystems.value;
+  } else if (layer === "implementations") {
+    showImplementationLinks.value = !showImplementationLinks.value;
+    if (showImplementationLinks.value) {
+      showSubsystems.value = true;
+    }
+  }
+  world?.setSemanticLayers({
+    implementations: showImplementationLinks.value,
+    subsystems: showSubsystems.value
+  });
 }
 
 function fitWorld() {
@@ -765,6 +1216,34 @@ function askAboutSelection() {
   emit("ask-in-chat", { prompt });
 }
 
+function askAboutSemanticSelection() {
+  if (!props.askChatAvailable) {
+    return;
+  }
+  if (selectedSemanticOperation.value) {
+    emit("ask-in-chat", {
+      prompt: [
+        "Please explain this Genesis Program operation and how its declared implementation files realize it. Do not change code unless I ask.",
+        `Program module: ${selectedSemanticOperation.value.path}`,
+        `Subsystem: ${selectedSemanticOperation.value.subsystem}`,
+        `Operation: ${selectedSemanticOperation.value.title}`,
+        `Implementation files: ${selectedSemanticOperation.value.implementationLinks.map((link) => link.file.path).join(", ") || "none declared"}`
+      ].join("\n")
+    });
+    return;
+  }
+  if (selectedSemanticSubsystem.value) {
+    emit("ask-in-chat", {
+      prompt: [
+        "Please explain this Genesis Program subsystem using its public operations and declared implementation files. Do not change code unless I ask.",
+        `Subsystem: ${selectedSemanticSubsystem.value.title}`,
+        `Operations: ${selectedSemanticSubsystem.value.operations.map((operation) => operation.title).join(", ") || "none"}`,
+        `Implementation files: ${selectedSemanticSubsystem.value.files.map((file) => file.path).join(", ") || "none declared"}`
+      ].join("\n")
+    });
+  }
+}
+
 async function navigateWorldHistory(direction) {
   if (!world || !worldOverview.value || worldHistoryBusy.value) {
     return;
@@ -801,6 +1280,12 @@ async function applyRestoreRequest(request = {}) {
     worldView.value = request.view === "top" ? "top" : "perspective";
     world.setView(worldView.value);
     clearSelection();
+    showSubsystems.value = request.semanticSubsystemsVisible !== false;
+    showImplementationLinks.value = request.semanticImplementationsVisible === true;
+    world.setSemanticLayers({
+      implementations: showImplementationLinks.value,
+      subsystems: showSubsystems.value
+    });
     if (request.selectedBuildingId && buildings.value.some((building) => building.id === request.selectedBuildingId)) {
       selectedBuildingId.value = request.selectedBuildingId;
       world.selectBuilding(request.selectedBuildingId);
@@ -810,6 +1295,21 @@ async function applyRestoreRequest(request = {}) {
       if (district) {
         selectedDistrict.value = world.selectDistrict(district.id) || district;
         world.focusDistrict(district.id);
+      }
+    } else if (request.selectedOperationId) {
+      const operation = semanticOperations.value.find((entry) => entry.id === request.selectedOperationId);
+      if (operation) {
+        selectedSemanticOperationId.value = operation.id;
+        selectedSemanticSubsystemId.value = operation.subsystemId || operation.districtId || "";
+        world.selectOperation(operation.id);
+        world.focusOperation(operation.id);
+      }
+    } else if (request.selectedSubsystemId) {
+      const subsystem = semanticSubsystems.value.find((entry) => entry.id === request.selectedSubsystemId);
+      if (subsystem) {
+        selectedSemanticSubsystemId.value = subsystem.id;
+        world.selectSubsystem(subsystem.id);
+        world.focusSubsystem(subsystem.id);
       }
     }
     if (request.camera) {
@@ -868,6 +1368,8 @@ async function travelImmersiveFile(path = "") {
     }
     selectedBuildingId.value = located.building.id;
     selectedDistrict.value = null;
+    selectedSemanticOperationId.value = "";
+    selectedSemanticSubsystemId.value = "";
     world.selectBuilding(located.building.id);
     const anchor = await world.flyToBuilding(located.building.id);
     world.beginBuildingPortal(located.building.id);
@@ -913,7 +1415,12 @@ watch(() => props.sessionId, () => {
   worldViewHistory.clear();
   syncWorldHistoryAvailability();
   selectedBuildingId.value = "";
+  chosenPresentationRegionId.value = "";
   selectedDistrict.value = null;
+  selectedSemanticOperationId.value = "";
+  selectedSemanticSubsystemId.value = "";
+  showImplementationLinks.value = false;
+  showSubsystems.value = true;
   cityKind.value = GENESIS_MACHINE_CITY_KIND;
 });
 
@@ -942,6 +1449,7 @@ defineExpose({
   --city-blue: #56d8ff;
   background: #050914;
   color: #f4f8ff;
+  contain: layout paint style;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -979,10 +1487,11 @@ defineExpose({
 .system-world__city-switch { background: rgba(2, 8, 18, 0.5); border: 1px solid rgba(121, 180, 225, 0.17); border-radius: 0.7rem; padding: 0.14rem; }
 .system-world__view-actions { gap: 0.16rem; justify-content: flex-end; }
 
-.system-world__stage { min-height: 0; overflow: hidden; position: relative; }
+.system-world__stage { contain: layout paint; min-height: 0; overflow: hidden; position: relative; }
 .system-world__canvas {
   background: radial-gradient(circle at 24% 38%, rgba(31, 109, 153, 0.2), transparent 34%), linear-gradient(#080e1e, #040711);
   cursor: move;
+  contain: strict;
   display: block;
   height: 100%;
   outline: none;
@@ -990,6 +1499,25 @@ defineExpose({
 }
 .system-world__canvas:active { cursor: grabbing; }
 .system-world__canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--city-blue); }
+
+.system-world__connection-tooltip {
+  background: rgba(5, 9, 18, 0.96);
+  border: 1px solid rgba(241, 245, 249, 0.42);
+  border-radius: 0.55rem;
+  box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.42);
+  display: grid;
+  gap: 0.16rem;
+  max-width: 16rem;
+  padding: 0.48rem 0.58rem;
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(-100%);
+  z-index: 14;
+}
+.system-world__connection-tooltip > span { color: rgba(120, 222, 255, 0.72); font-size: 0.48rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.system-world__connection-tooltip > strong { color: #fff; font-size: 0.65rem; overflow-wrap: anywhere; }
+.system-world__connection-tooltip > code { color: rgba(218, 230, 248, 0.66); font-size: 0.5rem; overflow-wrap: anywhere; }
+.system-world__connection-tooltip > small { color: rgba(255, 224, 138, 0.68); font-size: 0.5rem; margin-top: 0.12rem; }
 
 .system-world__state-card {
   align-items: center;
@@ -1032,6 +1560,14 @@ defineExpose({
 }
 .system-world__progress-pulse { animation: system-pulse 1s ease-in-out infinite; background: var(--city-blue); border-radius: 50%; height: 0.42rem; width: 0.42rem; }
 @keyframes system-pulse { 50% { opacity: 0.25; transform: scale(0.7); } }
+
+.system-world__layer-controls { align-items: center; backdrop-filter: blur(14px); background: rgba(7, 13, 27, 0.9); border: 1px solid rgba(132, 164, 219, 0.2); border-radius: 0.55rem; display: flex; gap: 0.2rem; left: 50%; padding: 0.18rem; position: absolute; top: 0.65rem; transform: translateX(-50%); z-index: 10; }
+.system-world__layer-controls > span { color: rgba(218, 232, 255, 0.44); font-size: 0.48rem; padding: 0 0.28rem; text-transform: uppercase; }
+.system-world__layer-controls > button { background: rgba(123, 148, 191, 0.08); border: 1px solid transparent; border-radius: 0.38rem; color: rgba(218, 232, 255, 0.66); cursor: pointer; font: inherit; font-size: 0.52rem; padding: 0.3rem 0.48rem; }
+.system-world__layer-controls > button:hover,
+.system-world__layer-controls > button:focus-visible { background: rgba(93, 188, 238, 0.14); color: #fff; }
+.system-world__layer-controls > button.system-world__layer-control--active { background: rgba(83, 205, 241, 0.2); border-color: rgba(103, 223, 255, 0.42); color: #fff; }
+.system-world__layer-controls > button:disabled { cursor: default; opacity: 0.34; }
 
 .system-world__navigator {
   backdrop-filter: blur(16px);
@@ -1099,6 +1635,11 @@ defineExpose({
 .system-world__section pre { background: rgba(3, 8, 17, 0.48); border-radius: 0.45rem; color: rgba(226, 237, 253, 0.78); font: 0.62rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; overflow-wrap: anywhere; padding: 0.55rem; white-space: pre-wrap; }
 .system-world__source-link { background: rgba(86, 216, 255, 0.08); border: 1px solid rgba(86, 216, 255, 0.16); border-radius: 0.4rem; color: rgba(220, 241, 255, 0.82); cursor: pointer; font: 0.58rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; padding: 0.4rem 0.48rem; text-align: left; }
 .system-world__source-link:hover { background: rgba(86, 216, 255, 0.15); }
+.system-world__operation-link { align-items: center; background: rgba(92, 133, 191, 0.08); border: 1px solid transparent; border-radius: 0.45rem; color: inherit; cursor: pointer; display: flex; font: inherit; justify-content: space-between; padding: 0.44rem 0.5rem; text-align: left; }
+.system-world__operation-link:hover,
+.system-world__operation-link:focus-visible { background: rgba(86, 216, 255, 0.14); border-color: rgba(86, 216, 255, 0.22); }
+.system-world__operation-link strong { font-size: 0.64rem; }
+.system-world__operation-link span { color: rgba(208, 222, 244, 0.56); font-size: 0.54rem; }
 .system-world__inspector-actions { margin-top: 0.8rem; }
 
 .system-world__view-gizmo { align-items: center; background: rgba(7, 13, 27, 0.9); border: 1px solid rgba(125, 201, 239, 0.26); border-radius: 999px; bottom: 2.3rem; display: flex; gap: 0.2rem; left: 50%; padding: 0.22rem; position: absolute; transform: translateX(-50%); z-index: 9; }

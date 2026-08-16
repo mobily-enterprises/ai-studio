@@ -1,55 +1,43 @@
+import { defineFeature } from "@jskit-ai/kernel/server/features";
+
+import {
+  createSourceEditorFileChangedPublisher,
+  createSourceEditorFileOpenedPublisher
+} from "./events.js";
 import { createService } from "./service.js";
 import { registerRoutes } from "./registerRoutes.js";
-import {
-  vibe64SourceEditorFileChangedServiceEvent,
-  vibe64SourceEditorFileOpenedServiceEvent
-} from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 
-class Vibe64SourceEditorProvider {
-  static id = "feature.vibe64-source-editor";
-
-  static startsAfter = [
-    "feature.vibe64-project",
-    "feature.vibe64-terminals"
-  ];
-
-  register(app) {
-    if (
-      !app ||
-      typeof app.service !== "function"
-    ) {
-      throw new Error("Vibe64SourceEditorProvider requires application service().");
-    }
-
-    app.service(
-      "feature.vibe64-source-editor.service",
-      (scope) => {
-        return createService({
-          logger: app.logger || app.log || console,
-          projectService: scope.make("feature.vibe64-project.service"),
-          terminalService: scope.make("feature.vibe64-terminals.service")
-        });
-      },
-      {
-        events: {
-          broadcastOpenFile: [vibe64SourceEditorFileOpenedServiceEvent()],
-          saveFile: [vibe64SourceEditorFileChangedServiceEvent()]
-        }
-      }
-    );
-  }
-
-  boot(app) {
-    registerRoutes(app, {
-      routeRelativePath: "vibe64",
-      routeSurface: "app"
+const Vibe64SourceEditorProvider = defineFeature({
+  id: "vibe64.source-editor",
+  domain: "vibe64-source-editor",
+  requires: {
+    events: "runtime.events",
+    http: "runtime.http",
+    logger: "runtime.logger",
+    project: "vibe64.project",
+    terminals: "vibe64.terminals"
+  },
+  provides: {
+    sourceEditor: "vibe64.source-editor"
+  },
+  setup({ events, http, logger, project, terminals }) {
+    const sourceEditor = createService({
+      logger,
+      projectService: project,
+      terminalService: terminals
     });
-    if (typeof app?.make === "function" && typeof app?.addHook === "function") {
-      app.addHook("onClose", async () => {
-        await app.make("feature.vibe64-source-editor.service")?.close?.();
-      });
-    }
+    registerRoutes(http, {
+      publishFileChanged: createSourceEditorFileChangedPublisher(events),
+      publishFileOpened: createSourceEditorFileOpenedPublisher(events),
+      routeRelativePath: "vibe64",
+      routeSurface: "app",
+      sourceEditor
+    });
+    return { sourceEditor };
+  },
+  shutdown(_dependencies, { outputs }) {
+    outputs.sourceEditor.close();
   }
-}
+});
 
 export { Vibe64SourceEditorProvider };

@@ -208,6 +208,17 @@ function codexAppServerCommandRunner(runtimeDir, commandCalls = []) {
   };
 }
 
+function managedCodexAppServerArgs(call = {}) {
+  assert.equal(call.command, "/bin/sh");
+  assert.deepEqual(call.args?.slice(0, 4), [
+    "-c",
+    'umask 0007\nexec "$@"',
+    "vibe64-codex-app-server",
+    STUDIO_MANAGED_CODEX_COMMAND
+  ]);
+  return call.args.slice(4);
+}
+
 async function startOrphanedDetachedProcessGroup(directory) {
   const childPidPath = path.join(directory, "child.pid");
   const script = [
@@ -706,10 +717,13 @@ test("codex provider replaces a runtime whose socket exists but does not answer"
 
     assert.equal(runtime.reused, false);
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
-    assert.deepEqual(commandCalls[0].args.slice(0, 5), [
+    assert.equal(commandCalls[0].command, "/bin/sh");
+    assert.deepEqual(commandCalls[0].args.slice(0, 8), [
+      "-c",
+      'umask 0007\nexec "$@"',
+      "vibe64-codex-app-server",
+      STUDIO_MANAGED_CODEX_COMMAND,
       "--dangerously-bypass-approvals-and-sandbox",
-      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server"
@@ -797,12 +811,17 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     const runCall = commandCalls[0];
     assert.equal(runCall.mode, "detached");
     assert.equal(runCall.purpose, "codex");
-    assert.equal(runCall.command, STUDIO_MANAGED_CODEX_COMMAND);
+    assert.equal(runCall.command, "/bin/sh");
     assert.deepEqual(runCall.args, [
+      "-c",
+      'umask 0007\nexec "$@"',
+      "vibe64-codex-app-server",
+      STUDIO_MANAGED_CODEX_COMMAND,
       "--dangerously-bypass-approvals-and-sandbox",
-      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
+      "-c",
+      `projects={${JSON.stringify(workdir)}={trust_level="trusted"}}`,
       "app-server",
       "--listen",
       unixEndpointForRuntime(runtimeDir)
@@ -914,6 +933,54 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
   });
 });
 
+test("codex app-server process and every descendant start with the managed workspace umask", async () => {
+  await withTemporaryDirectory(async (root) => {
+    const runtimeDir = path.join(root, "runtime");
+    const workdir = path.join(root, "source");
+    const probePath = path.join(root, "umask.txt");
+    const fakeCodexPath = path.join(root, "fake-codex.cjs");
+    await mkdir(workdir, {
+      recursive: true
+    });
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      'const { writeFileSync } = require("node:fs");',
+      'const endpoint = process.argv[process.argv.indexOf("--listen") + 1] || "";',
+      'if (endpoint.startsWith("unix://")) writeFileSync(endpoint.slice("unix://".length), "");',
+      'writeFileSync(process.env.VIBE64_TEST_UMASK_PATH, process.umask().toString(8));',
+      "setInterval(() => {}, 1000);"
+    ].join("\n") + "\n", "utf8");
+    await chmod(fakeCodexPath, 0o755);
+
+    try {
+      await startCodexAppServerProcess({
+        authStateSignature: "test-auth-state-signature",
+        codexCommand: fakeCodexPath,
+        env: {
+          ...process.env,
+          VIBE64_TEST_UMASK_PATH: probePath
+        },
+        readyTimeoutMs: 2000,
+        runtimeDir,
+        WebSocketImpl: ResponsiveFakeWebSocket,
+        workdir
+      });
+      let observed = "";
+      for (let attempt = 0; attempt < 100 && !observed; attempt += 1) {
+        observed = await readFile(probePath, "utf8").catch(() => "");
+        if (!observed) {
+          await delay(10);
+        }
+      }
+      assert.equal(observed, "7");
+    } finally {
+      await stopCodexAppServerRuntime({
+        runtimeDir
+      });
+    }
+  });
+});
+
 test("codex provider uses external session source as the host process cwd", async () => {
   await withTemporaryDirectory(async (runtimeDir) => {
     const targetRoot = path.join(runtimeDir, "project-home");
@@ -934,7 +1001,7 @@ test("codex provider uses external session source as the host process cwd", asyn
     });
 
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
+    managedCodexAppServerArgs(commandCalls[0]);
     assert.equal(commandCalls[0].cwd, workdir);
   });
 });
@@ -962,7 +1029,7 @@ test("codex provider stores configured attachment root in metadata", async () =>
 
     assert.equal(runtime.attachmentHostRoot, attachmentRoot);
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
+    managedCodexAppServerArgs(commandCalls[0]);
 
     const stored = JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8"));
     assert.equal(stored.attachmentHostRoot, attachmentRoot);
@@ -1171,7 +1238,7 @@ test("codex provider includes namespace and runtime identity in the runtime dire
       });
 
       assert.equal(commandCalls.length, 1);
-      assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
+      managedCodexAppServerArgs(commandCalls[0]);
       assert.equal(commandCalls[0].cwd, workdir);
     });
   });
@@ -1212,10 +1279,7 @@ test("codex provider starts distinct app-server processes for distinct runtime i
 
     assert.notEqual(firstRuntimeDir, secondRuntimeDir);
     assert.equal(commandCalls.length, 2);
-    assert.deepEqual(commandCalls.map((entry) => entry.command), [
-      STUDIO_MANAGED_CODEX_COMMAND,
-      STUDIO_MANAGED_CODEX_COMMAND
-    ]);
+    commandCalls.forEach(managedCodexAppServerArgs);
     assert.deepEqual(commandCalls.map((entry) => entry.args.at(-1)), [
       unixEndpointForRuntime(firstRuntimeDir),
       unixEndpointForRuntime(secondRuntimeDir)
@@ -1243,7 +1307,7 @@ test("codex provider replaces old runtime metadata with host app-server metadata
 
     assert.equal(runtime.reused, false);
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
+    managedCodexAppServerArgs(commandCalls[0]);
 
     const stored = JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8"));
     assert.equal(stored.schemaVersion, CODEX_APP_SERVER_METADATA_SCHEMA_VERSION);
@@ -1287,7 +1351,7 @@ test("codex provider replaces a live app-server when Codex auth state changes", 
     assert.equal(runtime.reused, false);
     assert.equal(runtime.authStateSignature, newAuthStateSignature);
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
+    managedCodexAppServerArgs(commandCalls[0]);
 
     const stored = JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8"));
     assert.equal(stored.authStateSignature, newAuthStateSignature);
@@ -1389,10 +1453,8 @@ test("codex provider starts a host-native app-server", async () => {
     assert.equal(runtime.reused, false);
     assert.equal(runtime.endpoint, unixEndpointForRuntime(runtimeDir));
     assert.equal(commandCalls.length, 1);
-    assert.equal(commandCalls[0].command, STUDIO_MANAGED_CODEX_COMMAND);
-    assert.deepEqual(commandCalls[0].args, [
+    assert.deepEqual(managedCodexAppServerArgs(commandCalls[0]), [
       "--dangerously-bypass-approvals-and-sandbox",
-      "--dangerously-bypass-hook-trust",
       "-c",
       STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
       "app-server",
@@ -1443,10 +1505,7 @@ test("codex provider closes a connected client when Codex auth state changes", a
     assert.equal(provider.client, null);
     assert.equal(socket.closed, true);
     assert.equal(commandCalls.length, 2);
-    assert.deepEqual(commandCalls.map((call) => call.command), [
-      STUDIO_MANAGED_CODEX_COMMAND,
-      STUDIO_MANAGED_CODEX_COMMAND
-    ]);
+    commandCalls.forEach(managedCodexAppServerArgs);
   });
 });
 

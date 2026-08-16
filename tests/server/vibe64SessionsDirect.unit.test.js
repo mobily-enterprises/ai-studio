@@ -10,14 +10,21 @@ import {
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_UPDATE_CURRENT_SESSION,
-  featureActions
+  ACTION_SEND_AGENT_MESSAGE,
+  ACTION_INTERRUPT_AGENT_TURN,
+  ACTION_BROADCAST_SESSION_VIEW_STATE,
+  ACTION_BROADCAST_SESSION_PREVIEW_STATE,
+  createSessionActions
 } from "../../packages/vibe64-sessions/src/server/actions.js";
 import {
   createService
 } from "../../packages/vibe64-sessions/src/server/service.js";
+import {
+  createSessionChangedPublisher
+} from "../../packages/vibe64-sessions/src/server/events.js";
 
 test("sessions expose only direct chat and source actions", () => {
-  assert.deepEqual(featureActions.map((action) => action.id), [
+  assert.deepEqual(createSessionActions({ sessions: {} }).map((action) => action.id), [
     ACTION_LIST_SESSIONS,
     ACTION_CREATE_SESSION,
     ACTION_UPDATE_CURRENT_SESSION,
@@ -25,8 +32,54 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_INSPECT_SESSION_DIFF,
     ACTION_READ_SESSION_CONVERSATION_LOG,
     ACTION_RETRY_WORKSPACE_SETUP,
-    ACTION_ABANDON_SESSION
+    ACTION_ABANDON_SESSION,
+    ACTION_SEND_AGENT_MESSAGE,
+    ACTION_INTERRUPT_AGENT_TURN,
+    ACTION_BROADCAST_SESSION_VIEW_STATE,
+    ACTION_BROADCAST_SESSION_PREVIEW_STATE
   ]);
+});
+
+test("deferred session changes publish modern top-level realtime events", async () => {
+  const events = [];
+  const publish = createSessionChangedPublisher({
+    async publish(event) {
+      events.push(event);
+      return event;
+    }
+  });
+
+  await publish("session-1", {
+    originId: "tab:test",
+    payload: {
+      clientRefresh: {
+        includeLaunchTargets: true
+      }
+    },
+    reason: "workspace-setup-completed",
+    session: {
+      revision: 7,
+      sessionId: "session-1",
+      status: "active"
+    }
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "entity.changed");
+  assert.equal(events[0].entityId, "session-1");
+  assert.equal(events[0].realtime.event, "vibe64.session.changed");
+  assert.equal(events[0].realtime.audience, "all_clients");
+  assert.deepEqual(events[0].realtime.payload, {
+    clientRefresh: {
+      includeLaunchTargets: true
+    },
+    originId: "tab:test",
+    reason: "workspace-setup-completed",
+    revision: 7,
+    sessionId: "session-1",
+    status: "active"
+  });
+  assert.equal(Object.hasOwn(events[0], "meta"), false);
 });
 
 test("assistant messages use the plain message contract", async () => {
@@ -42,7 +95,7 @@ test("assistant messages use the plain message contract", async () => {
     }
   };
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return runtime;
       }
@@ -50,7 +103,7 @@ test("assistant messages use the plain message contract", async () => {
     async publishSessionChanged(...args) {
       publications.push(args);
     },
-    terminalService: {
+    terminals: {
       async sendAgentMessage(...args) {
         calls.push(args);
         return {
@@ -82,8 +135,8 @@ test("assistant messages use the plain message contract", async () => {
 
 test("empty assistant messages fail without starting a provider turn", async () => {
   const service = createService({
-    projectService: {},
-    terminalService: {}
+    project: {},
+    terminals: {}
   });
 
   assert.deepEqual(await service.sendAgentMessage("session-1", {
@@ -104,7 +157,7 @@ test("an early assistant message waits for workspace preparation and is sent onc
   });
   let sendCount = 0;
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return {
           async getSession() {
@@ -116,7 +169,7 @@ test("an early assistant message waits for workspace preparation and is sent onc
         };
       }
     },
-    terminalService: {
+    terminals: {
       async sendAgentMessage() {
         sendCount += 1;
         return { ok: true };
@@ -142,7 +195,7 @@ test("an early assistant message waits for workspace preparation and is sent onc
 
 test("live workspace preparation prevents retry and close races", async () => {
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return {
           async getSession() {
@@ -154,7 +207,7 @@ test("live workspace preparation prevents retry and close races", async () => {
         };
       }
     },
-    terminalService: {},
+    terminals: {},
     workspaceSetupRunner: {
       isRunning: () => true,
       start() {
@@ -196,7 +249,7 @@ test("closing a session releases its managed resources after terminals stop", as
     }
   };
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return runtime;
       },
@@ -205,7 +258,7 @@ test("closing a session releases its managed resources after terminals stop", as
         return { ok: true };
       }
     },
-    terminalService: {
+    terminals: {
       async closeSessionTerminals() {
         calls.push("terminals");
       }
@@ -249,7 +302,7 @@ test("new sessions publish running workspace preparation and its eventual result
     };
   });
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return runtime;
       }
@@ -257,7 +310,7 @@ test("new sessions publish running workspace preparation and its eventual result
     async publishSessionChanged(...args) {
       publications.push(args);
     },
-    terminalService: {},
+    terminals: {},
     workspaceSetupRunner: {
       isRunning: () => true,
       start() {
@@ -301,12 +354,12 @@ test("workspace preparation starts newly configured recipes and retries failed a
     }
   };
   const service = createService({
-    projectService: {
+    project: {
       async createRuntime() {
         return runtime;
       }
     },
-    terminalService: {},
+    terminals: {},
     workspaceSetupRunner: {
       isRunning: () => false,
       async start(input) {

@@ -2,9 +2,6 @@ const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.chang
 const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
 const VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT = "vibe64.source-editor.sync.error";
 const VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT = "vibe64.source-editor.sync.ready";
-const VIBE64_SOURCE_EDITOR_FILE_EVENT_ENTITY = "source_editor_file";
-const VIBE64_SOURCE_EDITOR_FILE_EVENT_SOURCE = "vibe64";
-const VIBE64_SOURCE_EDITOR_FILE_REALTIME_AUDIENCE = "all_clients";
 
 function normalizeSourceEditorFileValue(value = "") {
   return String(value || "").trim();
@@ -19,18 +16,18 @@ function plainObject(value = null) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function sourceEditorFileChangeFromServiceResult(result = {}) {
+function sourceEditorFileChangeFromResult(result = {}) {
   const source = plainObject(result) ? result : {};
   return plainObject(source.fileChange) ? source.fileChange : null;
 }
 
-function sourceEditorFileOpenFromServiceResult(result = {}) {
+function sourceEditorFileOpenFromResult(result = {}) {
   const source = plainObject(result) ? result : {};
   return plainObject(source.fileOpen) ? source.fileOpen : null;
 }
 
 function sourceEditorFileRealtimePayload({ result = {} } = {}) {
-  const fileChange = sourceEditorFileChangeFromServiceResult(result);
+  const fileChange = sourceEditorFileChangeFromResult(result);
   if (!fileChange) {
     return {};
   }
@@ -57,7 +54,7 @@ function sourceEditorFileRealtimePayload({ result = {} } = {}) {
 }
 
 function sourceEditorFileOpenRealtimePayload({ result = {} } = {}) {
-  const fileOpen = sourceEditorFileOpenFromServiceResult(result);
+  const fileOpen = sourceEditorFileOpenFromResult(result);
   if (!fileOpen) {
     return {};
   }
@@ -77,53 +74,11 @@ function sourceEditorFileOpenRealtimePayload({ result = {} } = {}) {
   };
 }
 
-function sourceEditorFileEntityIdFromServiceEvent({ result = {} } = {}) {
-  const payload = sourceEditorFileRealtimePayload({ result });
-  return payload.sessionId && payload.path ? `${payload.sessionId}:${payload.path}` : null;
-}
-
-function sourceEditorFileOpenEntityIdFromServiceEvent({ result = {} } = {}) {
-  const payload = sourceEditorFileOpenRealtimePayload({ result });
-  return payload.sessionId && payload.path ? `${payload.sessionId}:${payload.path}` : null;
-}
-
-function vibe64SourceEditorFileChangedServiceEvent() {
-  return Object.freeze({
-    type: "entity.changed",
-    source: VIBE64_SOURCE_EDITOR_FILE_EVENT_SOURCE,
-    entity: VIBE64_SOURCE_EDITOR_FILE_EVENT_ENTITY,
-    operation: "updated",
-    entityId: sourceEditorFileEntityIdFromServiceEvent,
-    realtime: Object.freeze({
-      audience: VIBE64_SOURCE_EDITOR_FILE_REALTIME_AUDIENCE,
-      event: VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-      payload: sourceEditorFileRealtimePayload
-    })
-  });
-}
-
-function vibe64SourceEditorFileOpenedServiceEvent() {
-  return Object.freeze({
-    type: "entity.changed",
-    source: VIBE64_SOURCE_EDITOR_FILE_EVENT_SOURCE,
-    entity: VIBE64_SOURCE_EDITOR_FILE_EVENT_ENTITY,
-    operation: "updated",
-    entityId: sourceEditorFileOpenEntityIdFromServiceEvent,
-    realtime: Object.freeze({
-      audience: VIBE64_SOURCE_EDITOR_FILE_REALTIME_AUDIENCE,
-      event: VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
-      payload: sourceEditorFileOpenRealtimePayload
-    })
-  });
-}
-
 export {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT,
   sourceEditorFileOpenRealtimePayload,
-  sourceEditorFileRealtimePayload,
-  vibe64SourceEditorFileChangedServiceEvent,
-  vibe64SourceEditorFileOpenedServiceEvent
+  sourceEditorFileRealtimePayload
 };

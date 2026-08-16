@@ -24,7 +24,7 @@ function patchSchema(fields) {
   });
 }
 
-const agentMessageInputValidator = patchSchema({
+const agentMessageFields = {
   agentSettings: {
     type: "object",
     additionalProperties: true,
@@ -46,11 +46,81 @@ const agentMessageInputValidator = patchSchema({
     noTrim: false,
     required: false
   }
+};
+
+const agentMessageInputValidator = patchSchema(agentMessageFields);
+const agentMessageActionInputValidator = patchSchema({
+  ...agentMessageFields,
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
 });
 
-const agentTurnInterruptInputValidator = patchSchema({
+const agentTurnInterruptFields = {
   ...optionalOrigin,
   reason: {
+    type: "string",
+    noTrim: false,
+    required: false
+  }
+};
+
+const agentTurnInterruptInputValidator = patchSchema(agentTurnInterruptFields);
+const agentTurnInterruptActionInputValidator = patchSchema({
+  ...agentTurnInterruptFields,
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionViewStateInputValidator = patchSchema({
+  ...optionalOrigin,
+  projectPane: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  projectSlug: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  routeFullPath: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionPreviewStateInputValidator = patchSchema({
+  ...optionalOrigin,
+  projectSlug: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  route: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  title: {
     type: "string",
     noTrim: false,
     required: false
@@ -145,7 +215,9 @@ const sessionConversationLogInputValidator = patchSchema({
 });
 
 export {
+  agentMessageActionInputValidator,
   agentMessageInputValidator,
+  agentTurnInterruptActionInputValidator,
   agentTurnInterruptInputValidator,
   currentSessionInputValidator,
   sessionConversationLogInputValidator,
@@ -153,5 +225,7 @@ export {
   sessionDiffInputValidator,
   sessionIdInputValidator,
   sessionInspectInputValidator,
-  sessionListInputValidator
+  sessionListInputValidator,
+  sessionPreviewStateInputValidator,
+  sessionViewStateInputValidator
 };

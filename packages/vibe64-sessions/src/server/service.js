@@ -69,9 +69,9 @@ function messageText(input = {}) {
   return text(input.message);
 }
 
-function sessionRuntimeOptions(terminalService) {
-  const createSessionSource = typeof terminalService?.createSessionSource === "function"
-    ? (context) => terminalService.createSessionSource(context)
+function sessionRuntimeOptions(terminals) {
+  const createSessionSource = typeof terminals?.createSessionSource === "function"
+    ? (context) => terminals.createSessionSource(context)
     : null;
   return createSessionSource ? { createSessionSource } : {};
 }
@@ -85,26 +85,26 @@ function publicSession(session = {}, extra = {}) {
 }
 
 function createService({
-  projectService,
+  project,
   publishSessionChanged = async () => null,
-  terminalService,
+  terminals,
   workspaceSetupRunner = null
 } = {}) {
-  if (!projectService) {
-    throw new TypeError("createService requires feature.vibe64-project.service.");
+  if (!project) {
+    throw new TypeError("createService requires vibe64.project.");
   }
-  if (!terminalService) {
-    throw new TypeError("createService requires feature.vibe64-terminals.service.");
+  if (!terminals) {
+    throw new TypeError("createService requires vibe64.terminals.");
   }
   const setupRunner = workspaceSetupRunner || Object.freeze({
-    isRunning: (sessionId) => typeof terminalService.workspaceSetupIsRunning === "function" &&
-      terminalService.workspaceSetupIsRunning(sessionId),
-    start: ({ retry = false, runtime, session }) => terminalService.prepareWorkspaceSetup(
+    isRunning: (sessionId) => typeof terminals.workspaceSetupIsRunning === "function" &&
+      terminals.workspaceSetupIsRunning(sessionId),
+    start: ({ retry = false, runtime, session }) => terminals.prepareWorkspaceSetup(
       session.sessionId,
       { retry, runtime, session }
     ),
-    wait: (sessionId) => typeof terminalService.waitForWorkspaceSetup === "function"
-      ? terminalService.waitForWorkspaceSetup(sessionId)
+    wait: (sessionId) => typeof terminals.waitForWorkspaceSetup === "function"
+      ? terminals.waitForWorkspaceSetup(sessionId)
       : null
   });
 
@@ -115,7 +115,7 @@ function createService({
       return;
     }
     void completion.then(async (workspaceSetup) => {
-      const runtime = await projectService.createRuntime({
+      const runtime = await project.createRuntime({
         inspectSource: false
       });
       await publishSessionChanged(sessionId, {
@@ -143,14 +143,14 @@ function createService({
           error.code = "vibe64_workspace_setup_running";
           throw error;
         }
-        const runtime = await projectService.createRuntime();
+        const runtime = await project.createRuntime();
         await runtime.markSessionClosing(sessionId, {
           reason: "abandoned"
         });
         try {
-          await terminalService.closeSessionTerminals(sessionId);
-          if (typeof projectService.releaseSessionResources === "function") {
-            await projectService.releaseSessionResources({
+          await terminals.closeSessionTerminals(sessionId);
+          if (typeof project.releaseSessionResources === "function") {
+            await project.releaseSessionResources({
               sessionId
             });
           }
@@ -215,7 +215,7 @@ function createService({
 
     async createSession(input = {}) {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime(sessionRuntimeOptions(terminalService));
+        const runtime = await project.createRuntime(sessionRuntimeOptions(terminals));
         const session = await runtime.createSession({
           metadata: {
             created_by: text(input.vibe64User?.username || input.vibe64User?.name)
@@ -244,10 +244,10 @@ function createService({
 
     async inspectSession(sessionId, input = {}) {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
+        const runtime = await project.createRuntime();
         const session = await runtime.getSession(sessionId);
-        const agentSession = typeof terminalService.agentSessionState === "function"
-          ? await terminalService.agentSessionState(sessionId, {
+        const agentSession = typeof terminals.agentSessionState === "function"
+          ? await terminals.agentSessionState(sessionId, {
               runtime,
               session
             })
@@ -265,7 +265,7 @@ function createService({
 
     async inspectSessionDiff(sessionId, options = {}) {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
+        const runtime = await project.createRuntime();
         return inspectSessionDiff(await runtime.getSession(sessionId, {
           inspectSource: false
         }), options);
@@ -273,14 +273,14 @@ function createService({
     },
 
     async interruptAgentTurn(sessionId, input = {}) {
-      return sessionResult(async () => terminalService.interruptAgentTurn(sessionId, input, {
-        runtime: await projectService.createRuntime()
+      return sessionResult(async () => terminals.interruptAgentTurn(sessionId, input, {
+        runtime: await project.createRuntime()
       }), "Vibe64 could not interrupt the assistant.");
     },
 
     async listSessions(input = {}) {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime({
+        const runtime = await project.createRuntime({
           inspectSource: false
         });
         const sessions = await runtime.listSessionSummaries(archiveListOptions(input.archive));
@@ -300,7 +300,7 @@ function createService({
 
     async readSessionConversationLog(sessionId, options = {}) {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime();
+        const runtime = await project.createRuntime();
         const pageOptions = conversationPageOptions(options);
         const result = await runtime.readConversationLogPage(sessionId, pageOptions);
         return {
@@ -318,7 +318,7 @@ function createService({
           error.code = "vibe64_workspace_setup_running";
           throw error;
         }
-        const runtime = await projectService.createRuntime({
+        const runtime = await project.createRuntime({
           inspectSource: false
         });
         const session = await runtime.getSession(sessionId, {
@@ -362,11 +362,11 @@ function createService({
         };
       }
       await setupRunner.wait(sessionId);
-      const runtime = await projectService.createRuntime();
+      const runtime = await project.createRuntime();
       const session = await runtime.getSession(sessionId);
       const messageId = text(input.messageId) || crypto.randomUUID();
       try {
-        const result = await terminalService.sendAgentMessage(sessionId, {
+        const result = await terminals.sendAgentMessage(sessionId, {
           ...input,
           messageId,
           message: request
@@ -399,7 +399,7 @@ function createService({
 
     async updateCurrentSession(sessionId = "") {
       return sessionResult(async () => {
-        const runtime = await projectService.createRuntime({
+        const runtime = await project.createRuntime({
           inspectSource: false
         });
         const current = await runtime.updateCurrentSession(sessionId);

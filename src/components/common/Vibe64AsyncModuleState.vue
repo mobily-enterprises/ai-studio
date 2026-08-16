@@ -3,51 +3,49 @@
     class="vibe64-async-module-state"
     :class="{ 'vibe64-async-module-state--loading': loading }"
     :style="stateStyle"
+    :aria-busy="loading"
   >
-    <div class="vibe64-async-module-state__icon">
-      <v-progress-circular
-        v-if="loading"
-        color="primary"
-        indeterminate
-        size="28"
-        width="3"
-      />
-      <v-icon
-        v-else
-        :icon="mdiAlertCircleOutline"
-        color="warning"
-        size="30"
-      />
-    </div>
-    <div class="vibe64-async-module-state__copy">
-      <h2>{{ title }}</h2>
-      <p>{{ message }}</p>
-      <p v-if="stale && !loading" class="vibe64-async-module-state__hint">
-        If retry keeps failing, reload Vibe64 to pick up the current app files.
-      </p>
-      <div
-        v-if="!loading"
-        class="vibe64-async-module-state__actions"
-      >
-        <v-btn
-          color="primary"
-          size="small"
-          type="button"
-          variant="flat"
-          @click="emit('retry')"
-        >
-          Retry
-        </v-btn>
-        <v-btn
-          size="small"
-          type="button"
-          variant="tonal"
-          @click="emit('reload')"
-        >
-          Reload Vibe64
-        </v-btn>
+    <v-skeleton-loader
+      v-if="loading"
+      :aria-label="title"
+      class="vibe64-async-module-state__skeleton"
+      type="article"
+    />
+    <template v-else>
+      <div class="vibe64-async-module-state__icon">
+        <v-icon
+          :icon="mdiAlertCircleOutline"
+          color="warning"
+          size="30"
+        />
       </div>
-    </div>
+      <div class="vibe64-async-module-state__copy">
+        <h2>{{ title }}</h2>
+        <p>{{ message }}</p>
+        <p v-if="stale" class="vibe64-async-module-state__hint">
+          If retry keeps failing, reload Vibe64 to pick up the current app files.
+        </p>
+        <div class="vibe64-async-module-state__actions">
+          <v-btn
+            color="primary"
+            size="small"
+            type="button"
+            variant="flat"
+            @click="emit('retry')"
+          >
+            Retry
+          </v-btn>
+          <v-btn
+            size="small"
+            type="button"
+            variant="tonal"
+            @click="emit('reload')"
+          >
+            Reload Vibe64
+          </v-btn>
+        </div>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -117,6 +115,12 @@ const stateStyle = computed(() => (
   display: flex;
   flex: 0 0 auto;
   min-height: 2rem;
+}
+
+.vibe64-async-module-state__skeleton {
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .vibe64-async-module-state__copy {

@@ -1,0 +1,57 @@
+{
+  "description": "Genesis project hooks.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v genesis >/dev/null 2>&1; then genesis hook session; else node --input-type=module --eval \"const {runCli}=await import('genesis-compiler/cli');process.exitCode=await runCli(['hook','session'])\"; fi",
+            "commandWindows": "genesis hook session",
+            "timeout": 5,
+            "statusMessage": "Loading Genesis guidance",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v genesis >/dev/null 2>&1; then genesis hook begin; else node --input-type=module --eval \"const {runCli}=await import('genesis-compiler/cli');process.exitCode=await runCli(['hook','begin'])\"; fi",
+            "commandWindows": "genesis hook begin",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v genesis >/dev/null 2>&1; then genesis hook stop; else node --input-type=module --eval \"const {runCli}=await import('genesis-compiler/cli');process.exitCode=await runCli(['hook','stop'])\"; fi",
+            "commandWindows": "genesis hook stop",
+            "timeout": 30,
+            "statusMessage": "Checking whether Genesis follow-up work is needed"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v genesis >/dev/null 2>&1; then genesis hook end; else node --input-type=module --eval \"const {runCli}=await import('genesis-compiler/cli');process.exitCode=await runCli(['hook','end'])\"; fi",
+            "commandWindows": "genesis hook end",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

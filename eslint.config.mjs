@@ -8,7 +8,6 @@ export default [
       "node_modules/**",
       "coverage/**",
       "test-results/**",
-      ".jskit/**",
       ".vibe64/sessions/**",
       ".vibe64/runtime/**",
       ".ai[-]studio/sessions/**",

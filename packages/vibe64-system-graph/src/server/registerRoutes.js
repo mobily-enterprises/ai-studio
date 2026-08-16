@@ -1,20 +1,18 @@
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
-const SYSTEM_GRAPH_SERVICE_ID = "feature.vibe64-system-graph.service";
-
-function systemGraphService(app) {
-  return app.make(SYSTEM_GRAPH_SERVICE_ID);
-}
-
 function registerRoutes(
-  app,
+  http,
   {
     projectContext = null,
     routeSurface = "",
-    routeRelativePath = ""
+    routeRelativePath = "",
+    systemGraph
   } = {}
 ) {
-  const routes = createVibe64FeatureRoutes(app, {
+  if (!systemGraph || typeof systemGraph.readStatus !== "function") {
+    throw new TypeError("registerRoutes requires the Vibe64 System Graph API.");
+  }
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 City routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
@@ -26,7 +24,7 @@ function registerRoutes(
   routes.serviceRoute("GET", `${sessionRoute}/status`, {
     summary: "Read Genesis Machine and Program City availability for an active session."
   }, (request) => {
-    return systemGraphService(app).readStatus({
+    return systemGraph.readStatus({
       sessionId: request.params.sessionId
     });
   });
@@ -34,7 +32,7 @@ function registerRoutes(
   routes.serviceRoute("GET", `${sessionRoute}/cities/machine`, {
     summary: "Read the native Genesis Machine City for an active session."
   }, (request) => {
-    return systemGraphService(app).readMachineCity({
+    return systemGraph.readMachineCity({
       sessionId: request.params.sessionId
     });
   });
@@ -42,7 +40,7 @@ function registerRoutes(
   routes.serviceRoute("GET", `${sessionRoute}/cities/program`, {
     summary: "Read the native Genesis Program City for an active session."
   }, (request) => {
-    return systemGraphService(app).readProgramCity({
+    return systemGraph.readProgramCity({
       sessionId: request.params.sessionId
     });
   });
@@ -51,13 +49,12 @@ function registerRoutes(
     bodyLimit: 16 * 1024,
     summary: "Synchronously refresh both Genesis Cities for an active session."
   }, (request) => {
-    return systemGraphService(app).refresh({
+    return systemGraph.refresh({
       sessionId: request.params.sessionId
     });
   });
 }
 
 export {
-  SYSTEM_GRAPH_SERVICE_ID,
   registerRoutes
 };

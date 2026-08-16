@@ -120,6 +120,13 @@ test("Env is user-owned and reaches Genesis sessions without an adapter", async 
 
     assert.equal(saved.ok, true);
     assert.equal(saved.env.records.find((record) => record.key === "BOOKS_API_KEY").value, "********");
+    const projectRuntimeRoot = service.currentProjectRuntimeRoot();
+    assert.notEqual(projectRuntimeRoot, targetRoot);
+    assert.equal((await stat(path.join(projectRuntimeRoot, "env", "user-values.json"))).mode & 0o777, 0o600);
+    await assert.rejects(
+      stat(path.join(targetRoot, "env", "user-values.json")),
+      { code: "ENOENT" }
+    );
     assert.deepEqual(await service.projectExecutionEnvironment({
       scope: "dev"
     }), {

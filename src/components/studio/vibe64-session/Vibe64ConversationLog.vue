@@ -19,13 +19,11 @@
       @click="emit('reload')"
     />
 
-    <v-progress-circular
+    <v-skeleton-loader
       v-if="loadingIndicatorVisible && !reloadable"
-      class="studio-conversation-log__loading"
-      color="primary"
-      indeterminate
-      size="18"
-      width="2"
+      aria-label="Loading conversation"
+      class="studio-conversation-log__loading-skeleton"
+      type="list-item-avatar-two-line@3"
     />
 
     <div
@@ -33,11 +31,10 @@
       class="studio-conversation-log__settling"
       aria-hidden="true"
     >
-      <v-progress-circular
-        color="primary"
-        indeterminate
-        size="18"
-        width="2"
+      <v-skeleton-loader
+        aria-label="Preparing conversation"
+        class="studio-conversation-log__settling-skeleton"
+        type="list-item-avatar-two-line@3"
       />
     </div>
 
@@ -209,7 +206,17 @@
                   class="studio-conversation-log__question"
                 >
                   <span class="studio-conversation-log__question-number">{{ question.number }}</span>
-                  <span class="studio-conversation-log__question-text">{{ question.label }}</span>
+                  <div class="studio-conversation-log__question-content">
+                    <span class="studio-conversation-log__question-text">{{ question.label }}</span>
+                    <ul
+                      v-if="question.choices.length"
+                      class="studio-conversation-log__question-choices"
+                    >
+                      <li v-for="choice in question.choices" :key="choice.value">
+                        {{ choice.label }}<span v-if="choice.recommended"> · Recommended</span>
+                      </li>
+                    </ul>
+                  </div>
                 </li>
               </ol>
             </div>
@@ -692,21 +699,24 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
   text-align: left;
 }
 
-.studio-conversation-log__loading {
+.studio-conversation-log__loading-skeleton {
+  inset: 0;
+  overflow: hidden;
   position: absolute;
-  right: 0.75rem;
-  top: 0.75rem;
   z-index: 1;
 }
 
 .studio-conversation-log__settling {
-  align-items: center;
   background: rgb(var(--v-theme-surface));
-  display: flex;
   inset: 0;
-  justify-content: center;
+  overflow: hidden;
+  padding: 0.5rem;
   position: absolute;
   z-index: 1;
+}
+
+.studio-conversation-log__settling-skeleton {
+  height: 100%;
 }
 
 .studio-conversation-log__reload {
@@ -754,6 +764,8 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
 }
 
 .studio-conversation-log__turn {
+  contain-intrinsic-block-size: auto 12rem;
+  content-visibility: auto;
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
@@ -1009,10 +1021,13 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
 }
 
 .studio-conversation-log__questions {
+  box-sizing: border-box;
   display: grid;
   gap: 0.28rem;
   list-style: none;
   margin: 0;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
 }
 
@@ -1021,9 +1036,12 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
   background: rgba(var(--v-theme-surface), 0.62);
   border: 1px solid rgba(var(--v-theme-outline), 0.2);
   border-radius: 8px;
+  box-sizing: border-box;
   display: grid;
   gap: 0.42rem;
   grid-template-columns: auto minmax(0, 1fr);
+  max-width: 100%;
+  min-width: 0;
   padding: 0.36rem 0.5rem;
 }
 
@@ -1046,7 +1064,28 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
   color: rgb(var(--v-theme-on-surface));
   font-size: 0.9rem;
   line-height: 1.35;
+  max-width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.studio-conversation-log__question-content {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.studio-conversation-log__question-choices {
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  display: grid;
+  font-size: 0.8rem;
+  gap: 0.12rem;
+  list-style: disc;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.studio-conversation-log__question-choices li {
   overflow-wrap: anywhere;
 }
 

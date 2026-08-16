@@ -5,13 +5,10 @@ import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   sourceEditorFileOpenRealtimePayload,
-  sourceEditorFileRealtimePayload,
-  vibe64SourceEditorFileChangedServiceEvent,
-  vibe64SourceEditorFileOpenedServiceEvent
+  sourceEditorFileRealtimePayload
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 
-test("Vibe64 source editor service event describes a saved file change", () => {
-  const event = vibe64SourceEditorFileChangedServiceEvent();
+test("Vibe64 source editor payload describes a saved file change", () => {
   const result = {
     fileChange: {
       hash: "hash-2",
@@ -26,14 +23,8 @@ test("Vibe64 source editor service event describes a saved file change", () => {
     ok: true
   };
 
-  assert.equal(event.type, "entity.changed");
-  assert.equal(event.source, "vibe64");
-  assert.equal(event.entity, "source_editor_file");
-  assert.equal(event.operation, "updated");
-  assert.equal(event.realtime.event, VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT);
-  assert.equal(event.realtime.audience, "all_clients");
-  assert.equal(event.entityId({ result }), "session-1:src/app.js");
-  assert.deepEqual(event.realtime.payload({ result }), {
+  assert.equal(VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT, "vibe64.source-editor.file.changed");
+  assert.deepEqual(sourceEditorFileRealtimePayload({ result }), {
     hash: "hash-2",
     mtimeMs: 123.4,
     originId: "tab-1",
@@ -45,10 +36,8 @@ test("Vibe64 source editor service event describes a saved file change", () => {
   });
 });
 
-test("Vibe64 source editor service event ignores incomplete file changes", () => {
-  const event = vibe64SourceEditorFileChangedServiceEvent();
-
-  assert.equal(event.entityId({
+test("Vibe64 source editor payload ignores incomplete file changes", () => {
+  assert.deepEqual(sourceEditorFileRealtimePayload({
     result: {
       fileChange: {
         hash: "hash-2",
@@ -57,7 +46,7 @@ test("Vibe64 source editor service event ignores incomplete file changes", () =>
       },
       ok: true
     }
-  }), null);
+  }), {});
   assert.deepEqual(sourceEditorFileRealtimePayload({
     result: {
       error: "Save failed.",
@@ -66,8 +55,7 @@ test("Vibe64 source editor service event ignores incomplete file changes", () =>
   }), {});
 });
 
-test("Vibe64 source editor service event describes an opened file", () => {
-  const event = vibe64SourceEditorFileOpenedServiceEvent();
+test("Vibe64 source editor payload describes an opened file", () => {
   const result = {
     fileOpen: {
       originId: "tab-1",
@@ -79,14 +67,8 @@ test("Vibe64 source editor service event describes an opened file", () => {
     ok: true
   };
 
-  assert.equal(event.type, "entity.changed");
-  assert.equal(event.source, "vibe64");
-  assert.equal(event.entity, "source_editor_file");
-  assert.equal(event.operation, "updated");
-  assert.equal(event.realtime.event, VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT);
-  assert.equal(event.realtime.audience, "all_clients");
-  assert.equal(event.entityId({ result }), "session-1:src/app.js");
-  assert.deepEqual(event.realtime.payload({ result }), {
+  assert.equal(VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT, "vibe64.source-editor.file.opened");
+  assert.deepEqual(sourceEditorFileOpenRealtimePayload({ result }), {
     originId: "tab-1",
     path: "src/app.js",
     projectSlug: "beepollen",
@@ -95,10 +77,8 @@ test("Vibe64 source editor service event describes an opened file", () => {
   });
 });
 
-test("Vibe64 source editor open-file event ignores incomplete open results", () => {
-  const event = vibe64SourceEditorFileOpenedServiceEvent();
-
-  assert.equal(event.entityId({
+test("Vibe64 source editor payload ignores incomplete open results", () => {
+  assert.deepEqual(sourceEditorFileOpenRealtimePayload({
     result: {
       fileOpen: {
         path: "src/app.js",
@@ -106,7 +86,7 @@ test("Vibe64 source editor open-file event ignores incomplete open results", () 
       },
       ok: true
     }
-  }), null);
+  }), {});
   assert.deepEqual(sourceEditorFileOpenRealtimePayload({
     result: {
       error: "Open failed.",

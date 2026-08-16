@@ -13,7 +13,7 @@ import {
 } from "./projectRequestContext.js";
 
 function createVibe64FeatureRoutes(
-  app,
+  http,
   {
     localRequestMessage = "Vibe64 routes only accept loopback Studio requests.",
     projectContext = null,
@@ -23,9 +23,9 @@ function createVibe64FeatureRoutes(
     tags = []
   } = {}
 ) {
-  requireApplication(app);
+  requireHttpCapability(http);
 
-  const router = app.make("jskit.http.router");
+  const router = http.router;
   const routeBase = resolveScopedApiBasePath({
     routeBase: projectScoped ? VIBE64_PROJECT_ROUTE_BASE : "/",
     relativePath: routeRelativePath,
@@ -116,9 +116,9 @@ function isProjectRequestError(error = {}) {
   ].includes(error?.code);
 }
 
-function requireApplication(app) {
-  if (!app || typeof app.make !== "function") {
-    throw new Error("createVibe64FeatureRoutes requires application make().");
+function requireHttpCapability(http) {
+  if (!http?.router || typeof http.router.register !== "function") {
+    throw new Error("createVibe64FeatureRoutes requires runtime.http with router.register().");
   }
 }
 

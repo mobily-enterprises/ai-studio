@@ -54,6 +54,12 @@ function answerChoiceFromLine(line = "") {
     return null;
   }
 
+  const recommendedMatch = text.match(/^(.{1,96}?)\s+\(recommended\)$/iu);
+  if (recommendedMatch) {
+    const label = normalizedChoiceText(recommendedMatch[1]);
+    return label ? { label, recommended: true, value: label } : null;
+  }
+
   const colonMatch = text.match(/^([^:]{1,96}):\s+(.+)$/u);
   if (colonMatch) {
     const label = normalizedChoiceText(colonMatch[1]);
@@ -163,6 +169,7 @@ function answerChoiceSubmissionFields(choiceValue = "", fieldName = "response") 
 
 export {
   UI_ANSWER_CHOICE_FIELD,
+  answerChoiceFromLine,
   answerChoiceInputFields,
   answerChoiceSubmissionFields,
   answerChoiceSugarForMessageInput,

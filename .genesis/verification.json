@@ -1,0 +1,15 @@
+{
+  "codeHash": "sha256:0e9e83afe6ebb9124570362696220a67b1a369bc8c43a5d8b156934a0021d1c7",
+  "commands": [
+    {
+      "argv": [
+        "npm",
+        "run",
+        "verify"
+      ],
+      "label": "application"
+    }
+  ],
+  "schemaVersion": 1,
+  "stackHash": "sha256:71711ecc8d89e64002b731abda31211204f1c80e4312b34e840aa7ed9e12fb97"
+}

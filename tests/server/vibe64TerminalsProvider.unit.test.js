@@ -8,25 +8,27 @@ import {
   VIBE64_SERVICE_DATA_ROOT_ENV
 } from "@local/vibe64-core/server/studioRoots";
 import {
-  Vibe64TerminalsProvider,
-  terminalsProviderEnv
-} from "../../packages/vibe64-terminals/src/server/Vibe64TerminalsProvider.js";
-import {
   VIBE64_PREVIEW_PUBLIC_DOMAIN_ENV,
   VIBE64_PREVIEW_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_USER_DOMAIN_ENV
 } from "@local/vibe64-core/server/launchPreviewProxyEnv";
+import {
+  createProjectRuntimeChangedPublisher,
+  createTerminalSessionChangedPublisher
+} from "../../packages/vibe64-terminals/src/server/events.js";
+import {
+  Vibe64TerminalsProvider,
+  createVibe64TerminalsFeature,
+  terminalsProviderEnv
+} from "../../packages/vibe64-terminals/src/server/Vibe64TerminalsProvider.js";
 
 async function withTemporaryRoot(callback) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-terminals-provider-"));
   try {
     return await callback(root);
   } finally {
-    await rm(root, {
-      force: true,
-      recursive: true
-    });
+    await rm(root, { force: true, recursive: true });
   }
 }
 
@@ -34,63 +36,50 @@ async function failingCodexAuthPreflight() {
   throw new Error("test Codex authentication unavailable");
 }
 
-async function withEnv(values = {}, callback) {
-  const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
-  try {
-    for (const [key, value] of Object.entries(values)) {
-      if (value == null) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-    return await callback();
-  } finally {
-    for (const [key, value] of previous) {
-      if (value == null) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  }
-}
-
-function createProviderApp({
-  env = null
-} = {}) {
-  const services = new Map();
-  const serviceOptions = new Map();
+function featureDependencies({ env = {}, project, published = [] } = {}) {
   return {
-    actions() {},
-    has(token) {
-      return token === "jskit.env" && env !== null;
+    actionCatalogue: {
+      register() {}
     },
-    make(token) {
-      if (token === "jskit.env" && env !== null) {
-        return env;
+    env,
+    events: {
+      async publish(event) {
+        published.push(event);
+        return event;
       }
-      throw new Error(`Unexpected app lookup: ${token}`);
     },
-    service(id, factory, options = {}) {
-      services.set(id, factory);
-      serviceOptions.set(id, options);
+    fastify: {
+      get() {}
     },
-    serviceOptions,
-    services
+    http: {
+      router: {
+        register() {}
+      }
+    },
+    logger: {
+      error() {},
+      info() {},
+      warn() {}
+    },
+    project
   };
 }
 
-test("terminals provider declares project runtime events on real service methods", () => {
-  const app = createProviderApp();
-  new Vibe64TerminalsProvider().register(app);
-
-  const events = app.serviceOptions.get("feature.vibe64-terminals.service")?.events;
-  assert.equal(Object.hasOwn(events, "projectRuntime"), false);
-  assert.equal(events.openProjectRuntime[0].action, "runtime-opened");
-  assert.equal(events.closeProjectRuntime[0].action, "runtime-closed");
-  assert.equal(events.openProjectRuntime[0].realtime.event, "vibe64.project.changed");
-  assert.equal(events.closeProjectRuntime[0].realtime.event, "vibe64.project.changed");
+test("terminals feature declares only named AI-first capabilities", () => {
+  assert.equal(Vibe64TerminalsProvider.id, "vibe64.terminals");
+  assert.deepEqual(Vibe64TerminalsProvider.provides, {
+    terminals: "vibe64.terminals"
+  });
+  assert.deepEqual(Vibe64TerminalsProvider.requires, {
+    env: "runtime.env",
+    events: "runtime.events",
+    fastify: "runtime.fastify",
+    http: "runtime.http",
+    logger: "runtime.logger",
+    project: "vibe64.project",
+    actionCatalogue: "runtime.actions"
+  });
+  assert.equal(Object.hasOwn(Vibe64TerminalsProvider, "register"), false);
 });
 
 test("terminals provider overlays only live preview routing values", () => {
@@ -114,185 +103,92 @@ test("terminals provider overlays only live preview routing values", () => {
   });
 });
 
-async function startGlobalCodexWithRegisteredService({
-  app,
-  env = null,
-  targetRoot
-} = {}) {
-  const runtime = {
-    adapter: {},
-    projectConfig: {}
-  };
-  const projectService = {
-    async createRuntime() {
-      return runtime;
-    },
-    currentTargetRoot() {
-      return targetRoot;
-    }
-  };
-  const scope = {
-    has(token) {
-      return token === "jskit.env" && env !== null;
-    },
-    make(token) {
-      if (token === "jskit.env" && env !== null) {
-        return env;
+test("terminals feature creates the direct API from runtime env", async () => {
+  await withTemporaryRoot(async (root) => {
+    const serviceDataRoot = path.join(root, "services");
+    const targetRoot = path.join(root, "project");
+    await mkdir(targetRoot, { recursive: true });
+    const feature = createVibe64TerminalsFeature({
+      codexTerminalController: {
+        codexAuthPreflight: failingCodexAuthPreflight
       }
-      assert.equal(token, "feature.vibe64-project.service");
-      return projectService;
-    }
-  };
-
-  const serviceFactory = app.services.get("feature.vibe64-terminals.service");
-  const service = serviceFactory(scope);
-  return service.startGlobalCodexTerminal();
-}
-
-test("terminals provider starts global Codex through the host command path after lazy service creation", async () => {
-  await withTemporaryRoot(async (root) => {
-    const serviceDataRoot = path.join(root, "services");
-    const targetRoot = path.join(root, "project");
-    await mkdir(targetRoot, {
-      recursive: true
     });
-
-    const app = createProviderApp();
-    await withEnv({
-      [VIBE64_SERVICE_DATA_ROOT_ENV]: serviceDataRoot
-    }, async () => {
-      new Vibe64TerminalsProvider({
-        codexTerminalController: {
-          codexAuthPreflight: failingCodexAuthPreflight
-        }
-      }).register(app);
-    });
-
-    await withEnv({
-      [VIBE64_SERVICE_DATA_ROOT_ENV]: null
-    }, async () => {
-      const result = await startGlobalCodexWithRegisteredService({
-        app,
-        targetRoot
-      });
-
-      assert.equal(result.ok, false);
-      assert.match(result.error, /test Codex authentication unavailable/u);
-      assert.doesNotMatch(result.error, /toolchain|image/u);
-      assert.doesNotMatch(result.error, /Codex account storage is not available/u);
-    });
-  });
-});
-
-test("terminals provider reads root env from JSKIT runtime env without resolving a terminal image", async () => {
-  await withTemporaryRoot(async (root) => {
-    const serviceDataRoot = path.join(root, "services");
-    const targetRoot = path.join(root, "project");
-    await mkdir(targetRoot, {
-      recursive: true
-    });
-
-    const app = createProviderApp({
+    const outputs = await feature.setup(featureDependencies({
       env: {
         [VIBE64_SERVICE_DATA_ROOT_ENV]: serviceDataRoot
-      }
-    });
-    await withEnv({
-      [VIBE64_SERVICE_DATA_ROOT_ENV]: null
-    }, async () => {
-      new Vibe64TerminalsProvider({
-        codexTerminalController: {
-          codexAuthPreflight: failingCodexAuthPreflight
-        }
-      }).register(app);
-      const result = await startGlobalCodexWithRegisteredService({
-        app,
-        targetRoot
-      });
-
-      assert.equal(result.ok, false);
-      assert.match(result.error, /test Codex authentication unavailable/u);
-      assert.doesNotMatch(result.error, /toolchain|image/u);
-      assert.doesNotMatch(result.error, /Codex account storage is not available/u);
-    });
-  });
-});
-
-test("terminals provider reads scoped JSKIT runtime env without resolving a terminal image", async () => {
-  await withTemporaryRoot(async (root) => {
-    const serviceDataRoot = path.join(root, "services");
-    const targetRoot = path.join(root, "project");
-    await mkdir(targetRoot, {
-      recursive: true
-    });
-
-    const app = createProviderApp();
-    await withEnv({
-      [VIBE64_SERVICE_DATA_ROOT_ENV]: null
-    }, async () => {
-      new Vibe64TerminalsProvider({
-        codexTerminalController: {
-          codexAuthPreflight: failingCodexAuthPreflight
-        }
-      }).register(app);
-      const result = await startGlobalCodexWithRegisteredService({
-        app,
-        env: {
-          [VIBE64_SERVICE_DATA_ROOT_ENV]: serviceDataRoot
+      },
+      project: {
+        async createRuntime() {
+          return { adapter: {}, projectConfig: {} };
         },
-        targetRoot
-      });
+        currentTargetRoot() {
+          return targetRoot;
+        }
+      }
+    }), { profile: "test" });
 
-      assert.equal(result.ok, false);
-      assert.match(result.error, /test Codex authentication unavailable/u);
-      assert.doesNotMatch(result.error, /toolchain|image/u);
-      assert.doesNotMatch(result.error, /Codex account storage is not available/u);
+    const result = await outputs.terminals.startGlobalCodexTerminal();
+    assert.equal(result.ok, false);
+    assert.match(result.error, /test Codex authentication unavailable/u);
+    assert.doesNotMatch(result.error, /toolchain|image/u);
+    await feature.shutdown(featureDependencies({ project: {} }), {
+      outputs,
+      profile: "test"
     });
   });
 });
 
-test("terminals provider closes preview resources during application shutdown", async () => {
-  const hooks = new Map();
+test("terminal events publish direct session and project events without service receipts", async () => {
+  const published = [];
+  const events = {
+    async publish(event) {
+      published.push(event);
+      return event;
+    }
+  };
+  await createTerminalSessionChangedPublisher(events)("session-1", {
+    reason: "launch-target-started"
+  });
+  await createProjectRuntimeChangedPublisher(events)({
+    ok: true,
+    projectSlug: "dogandgroom",
+    runtime: { open: true },
+    targetRoot: "/project"
+  }, {
+    action: "runtime-opened"
+  });
+
+  assert.equal(published[0].realtime.event, "vibe64.session.changed");
+  assert.equal(published[0].realtime.payload.reason, "launch-target-started");
+  assert.equal(published[1].realtime.event, "vibe64.project.changed");
+  assert.equal(published[1].action, "runtime-opened");
+  assert.equal(Object.hasOwn(published[0], "meta"), false);
+  assert.equal(Object.hasOwn(published[1], "meta"), false);
+});
+
+test("terminals feature owns dormancy startup and shutdown", async () => {
   let closeCalls = 0;
-  const service = {
+  let cleanupCalls = 0;
+  const terminals = {
     async close() {
       closeCalls += 1;
     },
     async closeDormantProjectRuntimes() {
-      return {
-        closedCount: 0,
-        failed: [],
-        ok: true,
-        projectCount: 0
-      };
+      cleanupCalls += 1;
+      return { closedCount: 0, failed: [], ok: true, projectCount: 0 };
     }
   };
-  const router = {
-    register() {}
-  };
-  const fastify = {
-    get() {}
-  };
-  const app = {
-    addHook(name, hook) {
-      hooks.set(name, hook);
-    },
-    make(token) {
-      if (token === "feature.vibe64-terminals.service") {
-        return service;
-      }
-      if (token === "jskit.fastify") {
-        return fastify;
-      }
-      if (token === "jskit.http.router") {
-        return router;
-      }
-      throw new Error(`Unexpected app lookup: ${token}`);
+  const feature = createVibe64TerminalsFeature();
+  const dependencies = {
+    logger: {
+      error() {},
+      info() {},
+      warn() {}
     }
   };
+  await feature.boot(dependencies, { outputs: { terminals }, profile: "test" });
+  await feature.shutdown(dependencies, { outputs: { terminals }, profile: "test" });
 
-  new Vibe64TerminalsProvider().boot(app);
-  await hooks.get("onClose")();
-
+  assert.equal(cleanupCalls, 1);
   assert.equal(closeCalls, 1);
 });

@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,33 +8,29 @@ const TEST_PROJECT_SLUG = "unit_project";
 
 function testRouteApp() {
   const registeredRoutes = [];
-  return {
-    registeredRoutes,
-    make(token) {
-      if (token === "jskit.fastify") {
-        return {
-          get(path, options, handler) {
-            registeredRoutes.push({
-              handler,
-              method: "GET",
-              options,
-              path
-            });
-          }
-        };
-      }
-      assert.equal(token, "jskit.http.router");
-      return {
-        register(method, path, options, handler) {
-          registeredRoutes.push({
-            handler,
-            method,
-            options,
-            path
-          });
-        }
-      };
+  const router = {
+    register(method, path, options, handler) {
+      registeredRoutes.push({
+        handler,
+        method,
+        options,
+        path
+      });
     }
+  };
+  return {
+    fastify: {
+      get(path, options, handler) {
+        registeredRoutes.push({
+          handler,
+          method: "GET",
+          options,
+          path
+        });
+      }
+    },
+    http: { router },
+    registeredRoutes,
   };
 }
 

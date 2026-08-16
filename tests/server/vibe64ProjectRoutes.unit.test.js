@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ACTION_SAVE_ENV_USER_VALUES
+  ACTION_APPLY_PROJECT_TEMPLATE,
+  ACTION_LIST_PROJECT_TEMPLATES,
+  ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES
 } from "../../packages/vibe64-project/src/server/actions.js";
 import { registerRoutes } from "../../packages/vibe64-project/src/server/registerRoutes.js";
 import {
@@ -14,11 +18,15 @@ import {
   withRouteProject
 } from "./vibe64RouteTestHelpers.js";
 
+function routeHttp(app) {
+  return app.http;
+}
+
 test("Env user value route returns 400 for read-only provider Env writes", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const app = testRouteApp();
-      registerRoutes(app, {
+      registerRoutes(routeHttp(app), {
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app"
@@ -91,32 +99,8 @@ test("project template routes preserve Vibe64 user context", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const calls = [];
-      const service = {
-        async applyProjectTemplate(templateId, input) {
-          calls.push({
-            input,
-            method: "applyProjectTemplate",
-            templateId
-          });
-          return {
-            ok: true
-          };
-        },
-        async readProjectTemplates(input) {
-          calls.push({
-            input,
-            method: "readProjectTemplates"
-          });
-          return {
-            ok: true,
-            templates: []
-          };
-        }
-      };
       const app = testRouteApp();
-      const make = app.make.bind(app);
-      app.make = (token) => token === "feature.vibe64-project.service" ? service : make(token);
-      registerRoutes(app, {
+      registerRoutes(routeHttp(app), {
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app"
@@ -154,29 +138,45 @@ test("project template routes preserve Vibe64 user context", async () => {
           query: {}
         },
         params: routeProjectParams(),
-        vibe64User
+        vibe64User,
+        async executeAction(action) {
+          calls.push(action);
+          return {
+            ok: true,
+            templates: []
+          };
+        }
       }, testReply());
       await applyRoute.handler({
         body: {},
+        input: {
+          body: {}
+        },
         params: routeProjectParams({
           templateId: "jskit-database"
         }),
-        vibe64User
+        vibe64User,
+        async executeAction(action) {
+          calls.push(action);
+          return {
+            ok: true
+          };
+        }
       }, testReply());
 
       assert.deepEqual(calls, [
         {
+          actionId: ACTION_LIST_PROJECT_TEMPLATES,
           input: {
             vibe64User
-          },
-          method: "readProjectTemplates"
+          }
         },
         {
+          actionId: ACTION_APPLY_PROJECT_TEMPLATE,
           input: {
+            templateId: "jskit-database",
             vibe64User
-          },
-          method: "applyProjectTemplate",
-          templateId: "jskit-database"
+          }
         }
       ]);
     });
@@ -192,29 +192,8 @@ test("managed app identity routes expose direct project-local GET and PUT operat
         type: "email",
         value: "admin@example.test"
       }];
-      const service = {
-        async readPreviewApplicationIdentities() {
-          calls.push({ method: "read" });
-          return {
-            identities,
-            ok: true
-          };
-        },
-        async savePreviewApplicationIdentities(input) {
-          calls.push({
-            input,
-            method: "save"
-          });
-          return {
-            identities: input.identities,
-            ok: true
-          };
-        }
-      };
       const app = testRouteApp();
-      const make = app.make.bind(app);
-      app.make = (token) => token === "feature.vibe64-project.service" ? service : make(token);
-      registerRoutes(app, {
+      registerRoutes(routeHttp(app), {
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app"
@@ -240,7 +219,14 @@ test("managed app identity routes expose direct project-local GET and PUT operat
       const readReply = testReply();
       const saveReply = testReply();
       await readRoute.handler({
-        params: routeProjectParams()
+        params: routeProjectParams(),
+        async executeAction(action) {
+          calls.push(action);
+          return {
+            identities,
+            ok: true
+          };
+        }
       }, readReply);
       await saveRoute.handler({
         input: {
@@ -248,20 +234,28 @@ test("managed app identity routes expose direct project-local GET and PUT operat
             identities
           }
         },
-        params: routeProjectParams()
+        params: routeProjectParams(),
+        async executeAction(action) {
+          calls.push(action);
+          return {
+            identities: action.input.identities,
+            ok: true
+          };
+        }
       }, saveReply);
 
       assert.equal(readReply.statusCode, 200);
       assert.equal(saveReply.statusCode, 200);
       assert.deepEqual(calls, [
         {
-          method: "read"
+          actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+          input: {}
         },
         {
+          actionId: ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
           input: {
             identities
-          },
-          method: "save"
+          }
         }
       ]);
     });

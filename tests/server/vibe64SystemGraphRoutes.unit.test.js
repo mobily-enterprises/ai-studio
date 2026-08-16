@@ -27,12 +27,18 @@ test("System graph exposes only native Genesis City status, reads, and synchrono
         return { ok: true };
       }]));
       const app = testRouteApp();
-      const make = app.make.bind(app);
-      app.make = (token) => token === "feature.vibe64-system-graph.service" ? service : make(token);
-      registerRoutes(app, {
+      const http = {
+        router: {
+          register(method, path, options, handler) {
+            app.registeredRoutes.push({ handler, method, options, path });
+          }
+        }
+      };
+      registerRoutes(http, {
         projectContext,
         routeRelativePath: "vibe64",
-        routeSurface: "app"
+        routeSurface: "app",
+        systemGraph: service
       });
 
       const routes = [

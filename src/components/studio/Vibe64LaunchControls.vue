@@ -1197,13 +1197,8 @@ onBeforeUnmount(() => {
 
 .vibe64-launch-controls__dock {
   align-items: center;
-  background: rgba(var(--v-theme-primary), 0.08);
-  border: 1px solid rgba(var(--v-theme-primary), 0.18);
-  border-radius: 999px;
   display: flex;
   gap: 0.04rem;
-  min-height: 2.05rem;
-  padding: 0 0.16rem;
 }
 
 .vibe64-launch-controls__terminal-toggle--hide {

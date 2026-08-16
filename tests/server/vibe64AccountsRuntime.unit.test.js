@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { createActionProvider } from "@jskit-ai/kernel/server/actions";
+import {
+  createCapabilityRuntime,
+  defineProvider
+} from "@jskit-ai/kernel/shared/capabilities";
 
 import {
   VIBE64_SYSTEM_ROOT_ENV,
@@ -25,11 +30,14 @@ import {
   PROJECT_REPOSITORY_MODE_MANAGED_GIT
 } from "@local/vibe64-core/server/projectRepository";
 import {
-  Vibe64AccountsProvider
-} from "../../packages/vibe64-accounts/src/server/Vibe64AccountsProvider.js";
+  Vibe64AccountsFeature,
+  createConnections
+} from "../../packages/vibe64-accounts/src/server/Vibe64AccountsFeature.js";
 import {
-  VIBE64_CONNECTIONS_SERVICE
-} from "../../packages/vibe64-runtime/src/server/connectionReadiness.js";
+  ACTION_LOGOUT_ACCOUNT,
+  ACTION_READ_ACCOUNTS,
+  createActions
+} from "../../packages/vibe64-accounts/src/server/actions.js";
 import {
   GITHUB_RECONNECT_REQUIRED_CODE,
   githubCliFailureDetails
@@ -37,8 +45,7 @@ import {
 import {
   createAccountsRuntime,
   createService,
-  GITHUB_ACCOUNT_MODE_USER,
-  VIBE64_ACCOUNTS_SERVICE
+  GITHUB_ACCOUNT_MODE_USER
 } from "../../packages/vibe64-accounts/src/server/service.js";
 import {
   createVibe64AccountAuthSessionChangedPublisher,
@@ -178,53 +185,76 @@ function withEnv(values, callback) {
   }
 }
 
-function createProviderApp({
-  env = null
+async function startAccountsFeature({
+  accountRuntime = null,
+  env = {},
+  project = null,
+  terminals = null
 } = {}) {
-  const services = new Map();
-  const serviceRegistrations = new Map();
-  return {
-    actions() {},
-    has(token) {
-      return token === "jskit.env" && env !== null;
+  const registeredRoutes = [];
+  const publishedEvents = [];
+  let observed = null;
+  const projectApi = project || {
+    currentTargetRoot() {
+      return "";
     },
-    make(token) {
-      if (token === "jskit.env" && env !== null) {
-        return env;
-      }
-      throw new Error(`Unexpected app lookup: ${token}`);
-    },
-    service(id, factory, options = {}) {
-      services.set(id, factory);
-      serviceRegistrations.set(id, {
-        factory,
-        options
-      });
-    },
-    serviceRegistrations,
-    services
-  };
-}
-
-function accountServiceScope() {
-  return {
-    has() {
-      return false;
-    },
-    make(id) {
-      if (id === "feature.vibe64-project.service") {
-        return {
-          currentTargetRoot() {
-            return "";
-          }
-        };
-      }
-      throw new Error(`Unexpected service lookup: ${id}`);
+    async readCurrentProject() {
+      return {};
     }
   };
+  const observer = defineProvider({
+    id: "test.vibe64-accounts-observer",
+    requires: {
+      accounts: "vibe64.accounts",
+      actions: "runtime.actions",
+      connections: "vibe64.connections"
+    },
+    setup(dependencies) {
+      observed = dependencies;
+    }
+  });
+  const runtime = createCapabilityRuntime({
+    providers: [
+      createActionProvider(),
+      Vibe64AccountsFeature,
+      observer
+    ],
+    inputs: {
+      "vibe64.project": projectApi,
+      "runtime.env": env,
+      "runtime.events": {
+        async publish(event) {
+          publishedEvents.push(event);
+          return event;
+        }
+      },
+      "runtime.fastify": {
+        get(pathname, options, handler) {
+          registeredRoutes.push({ handler, method: "GET", options, path: pathname });
+        }
+      },
+      "runtime.http": {
+        router: {
+          register(method, pathname, options, handler) {
+            registeredRoutes.push({ handler, method, options, path: pathname });
+          }
+        }
+      },
+      ...(accountRuntime ? { "vibe64.accounts.runtime": accountRuntime } : {}),
+      ...(terminals ? { "vibe64.terminals": terminals } : {})
+    }
+  });
+  await runtime.start();
+  return {
+    ...observed,
+    project: projectApi,
+    publishedEvents,
+    registeredRoutes,
+    runtime
+  };
 }
 
-test("accounts provider captures system and target roots before lazy service creation", async () => {
+test("accounts feature reads roots only from its named runtime env capability", async () => {
   await withTempDir(async (root) => {
     const systemRoot = path.join(root, "system");
     const targetRoot = path.join(root, "target");
@@ -233,96 +263,48 @@ test("accounts provider captures system and target roots before lazy service cre
     });
     await writeReadyCodexMarker(systemRoot);
 
-    const app = createProviderApp();
-
-    await withEnv({
-      [VIBE64_SYSTEM_ROOT_ENV]: systemRoot,
-      [VIBE64_TARGET_ROOT_ENV]: targetRoot
-    }, () => {
-      new Vibe64AccountsProvider().register(app);
-    });
-
-    const serviceFactory = app.services.get(VIBE64_ACCOUNTS_SERVICE);
-    assert.equal(typeof serviceFactory, "function");
-
-    const service = await withEnv({
+    const feature = await withEnv({
       [VIBE64_SYSTEM_ROOT_ENV]: path.join(root, "wrong-system"),
       [VIBE64_TARGET_ROOT_ENV]: path.join(root, "wrong-target")
-    }, () => serviceFactory(accountServiceScope()));
-
-    const status = await service.getStatus({
-      accountIds: ["codex"]
-    });
-    assert.equal(status.ok, true);
-    assert.equal(status.ready, true);
-    assert.equal(status.accounts.find((account) => account.id === "codex")?.connected, true);
-    assert.equal(status.targetRoot, targetRoot);
-  });
-});
-
-test("accounts provider reads system and target roots from JSKIT runtime env", async () => {
-  await withTempDir(async (root) => {
-    const systemRoot = path.join(root, "system");
-    const targetRoot = path.join(root, "target");
-    await mkdir(targetRoot, {
-      recursive: true
-    });
-    await writeReadyCodexMarker(systemRoot);
-
-    const app = createProviderApp({
+    }, () => startAccountsFeature({
       env: {
         [VIBE64_SYSTEM_ROOT_ENV]: systemRoot,
         [VIBE64_TARGET_ROOT_ENV]: targetRoot
       }
-    });
+    }));
 
-    await withEnv({
-      [VIBE64_SYSTEM_ROOT_ENV]: null,
-      [VIBE64_TARGET_ROOT_ENV]: null
-    }, () => {
-      new Vibe64AccountsProvider().register(app);
-    });
-
-    const serviceFactory = app.services.get(VIBE64_ACCOUNTS_SERVICE);
-    assert.equal(typeof serviceFactory, "function");
-
-    const service = await withEnv({
-      [VIBE64_SYSTEM_ROOT_ENV]: null,
-      [VIBE64_TARGET_ROOT_ENV]: null
-    }, () => serviceFactory(accountServiceScope()));
-
-    const status = await service.getStatus({
+    const status = await feature.accounts.getStatus({
       accountIds: ["codex"]
     });
     assert.equal(status.ok, true);
     assert.equal(status.ready, true);
     assert.equal(status.accounts.find((account) => account.id === "codex")?.connected, true);
     assert.equal(status.targetRoot, targetRoot);
+    assert.equal(feature.registeredRoutes.some((route) => route.path.endsWith("/vibe64/accounts")), true);
+    await feature.runtime.shutdown();
   });
 });
 
-test("accounts provider does not publish realtime events for auth-session reads", () => {
-  const app = createProviderApp();
+test("accounts actions capture the feature API and keep auth-session reads event-free", async () => {
+  const calls = [];
+  const actions = createActions({
+    accounts: {
+      async getStatus(input) {
+        calls.push(input);
+        return { ok: true };
+      }
+    }
+  });
+  const readAction = actions.find((action) => action.id === ACTION_READ_ACCOUNTS);
+  const logoutAction = actions.find((action) => action.id === ACTION_LOGOUT_ACCOUNT);
 
-  new Vibe64AccountsProvider().register(app);
-
-  const registration = app.serviceRegistrations.get(VIBE64_ACCOUNTS_SERVICE);
-  assert.equal(typeof registration?.factory, "function");
-  assert.deepEqual(Object.keys(registration.options.events).sort(), [
-    "logout",
-    "saveGitIdentity",
-    "startAuth"
-  ]);
-  assert.equal(Object.hasOwn(registration.options.events, "readAuthSession"), false);
+  assert.equal(Object.hasOwn(readAction, "events"), false);
+  assert.equal(logoutAction.events.length, 2);
+  assert.deepEqual(await readAction.execute({ refresh: true }), { ok: true });
+  assert.deepEqual(calls, [{ refresh: true }]);
 });
 
-test("connections service does not include adapter-owned app auth readiness", async () => {
-  const app = createProviderApp();
-  new Vibe64AccountsProvider().register(app);
-
-  const serviceFactory = app.services.get(VIBE64_CONNECTIONS_SERVICE);
-  assert.equal(typeof serviceFactory, "function");
-
+test("connection readiness contains only the accounts required by the current project", async () => {
   const accountStatus = {
     accounts: [
       {
@@ -339,31 +321,24 @@ test("connections service does not include adapter-owned app auth readiness", as
     ok: true,
     ready: true
   };
-  const service = serviceFactory({
-    make(id) {
-      if (id === VIBE64_ACCOUNTS_SERVICE) {
+  const connections = createConnections({
+    accounts: {
+      async getStatus() {
+        return accountStatus;
+      }
+    },
+    project: {
+      async readCurrentProject() {
         return {
-          async getStatus() {
-            return accountStatus;
+          repository: {
+            mode: PROJECT_REPOSITORY_MODE_GITHUB
           }
         };
       }
-      if (id === "feature.vibe64-project.service") {
-        return {
-          async readCurrentProject() {
-            return {
-              repository: {
-                mode: PROJECT_REPOSITORY_MODE_GITHUB
-              }
-            };
-          }
-        };
-      }
-      throw new Error(`Unexpected service lookup: ${id}`);
     }
   });
 
-  const projectStatus = await service.getStatus({});
+  const projectStatus = await connections.getStatus({});
   assert.equal(projectStatus.ready, true);
   assert.equal(projectStatus.blockedReason, "");
   assert.deepEqual(projectStatus.connections.map((connection) => connection.id), [
@@ -400,61 +375,45 @@ test("accounts status can read Codex-only readiness without a GitHub user", asyn
 });
 
 test("connections service requests GitHub only for GitHub repository projects", async () => {
-  const app = createProviderApp();
-  new Vibe64AccountsProvider().register(app);
-
-  const serviceFactory = app.services.get(VIBE64_CONNECTIONS_SERVICE);
-  assert.equal(typeof serviceFactory, "function");
-
   const accountInputs = [];
   let currentProject = {
     repository: {
       mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
     }
   };
-  const service = serviceFactory({
-    has(id) {
-      return id === "feature.vibe64-project.service";
+  const connections = createConnections({
+    accounts: {
+      async getStatus(input = {}) {
+        accountInputs.push(input);
+        const accountIds = Array.isArray(input.providerIds) ? input.providerIds : [];
+        return {
+          accounts: accountIds.map((accountId) => ({
+            connected: true,
+            id: accountId,
+            required: true
+          })),
+          ok: true,
+          ready: true
+        };
+      }
     },
-    make(id) {
-      if (id === VIBE64_ACCOUNTS_SERVICE) {
-        return {
-          async getStatus(input = {}) {
-            accountInputs.push(input);
-            const accountIds = Array.isArray(input.providerIds) ? input.providerIds : [];
-            return {
-              accounts: accountIds.map((accountId) => ({
-                connected: true,
-                id: accountId,
-                required: true
-              })),
-              ok: true,
-              ready: true
-            };
-          }
-        };
+    project: {
+      async readCurrentProject() {
+        return currentProject;
+      },
+      async listProjects() {
+        throw new Error("Connection readiness should not list every project.");
       }
-      if (id === "feature.vibe64-project.service") {
-        return {
-          async readCurrentProject() {
-            return currentProject;
-          },
-          async listProjects() {
-            throw new Error("Connection readiness should not list every project.");
-          }
-        };
-      }
-      throw new Error(`Unexpected service lookup: ${id}`);
     }
   });
 
-  const managedStatus = await service.getStatus({});
+  const managedStatus = await connections.getStatus({});
   currentProject = {
     repository: {
       mode: PROJECT_REPOSITORY_MODE_GITHUB
     }
   };
-  const githubStatus = await service.getStatus({});
+  const githubStatus = await connections.getStatus({});
 
   assert.deepEqual(accountInputs.map((input) => input.providerIds), [
     ["codex"],
@@ -465,12 +424,6 @@ test("connections service requests GitHub only for GitHub repository projects", 
 });
 
 test("connections service treats local-source projects with GitHub metadata as non-GitHub", async () => {
-  const app = createProviderApp();
-  new Vibe64AccountsProvider().register(app);
-
-  const serviceFactory = app.services.get(VIBE64_CONNECTIONS_SERVICE);
-  assert.equal(typeof serviceFactory, "function");
-
   const accountInputs = [];
   const currentProject = {
     githubRepository: {
@@ -481,40 +434,30 @@ test("connections service treats local-source projects with GitHub metadata as n
     },
     repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
   };
-  const service = serviceFactory({
-    has(id) {
-      return id === "feature.vibe64-project.service";
+  const connections = createConnections({
+    accounts: {
+      async getStatus(input = {}) {
+        accountInputs.push(input);
+        const accountIds = Array.isArray(input.providerIds) ? input.providerIds : [];
+        return {
+          accounts: accountIds.map((accountId) => ({
+            connected: true,
+            id: accountId,
+            required: true
+          })),
+          ok: true,
+          ready: true
+        };
+      }
     },
-    make(id) {
-      if (id === VIBE64_ACCOUNTS_SERVICE) {
-        return {
-          async getStatus(input = {}) {
-            accountInputs.push(input);
-            const accountIds = Array.isArray(input.providerIds) ? input.providerIds : [];
-            return {
-              accounts: accountIds.map((accountId) => ({
-                connected: true,
-                id: accountId,
-                required: true
-              })),
-              ok: true,
-              ready: true
-            };
-          }
-        };
+    project: {
+      async readCurrentProject() {
+        return currentProject;
       }
-      if (id === "feature.vibe64-project.service") {
-        return {
-          async readCurrentProject() {
-            return currentProject;
-          }
-        };
-      }
-      throw new Error(`Unexpected service lookup: ${id}`);
     }
   });
 
-  const status = await service.getStatus({});
+  const status = await connections.getStatus({});
 
   assert.deepEqual(accountInputs.map((input) => input.providerIds), [
     ["codex"]
@@ -525,14 +468,12 @@ test("connections service treats local-source projects with GitHub metadata as n
 test("auth-session publisher emits a scoped session event", async () => {
   const events = [];
   const publishAuthSessionChanged = createVibe64AccountAuthSessionChangedPublisher({
-    domainEvents: {
+    events: {
       async publish(event) {
         events.push(event);
         return event;
       }
-    },
-    methodName: "startAuth",
-    serviceToken: VIBE64_ACCOUNTS_SERVICE
+    }
   });
 
   await publishAuthSessionChanged({
@@ -550,9 +491,9 @@ test("auth-session publisher emits a scoped session event", async () => {
   assert.equal(events.length, 1);
   assert.equal(events[0].entity, "account-auth-session");
   assert.equal(events[0].entityId, "auth-session-1");
-  assert.equal(events[0].meta.service.method, "startAuth");
-  assert.equal(events[0].meta.realtime.event, VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT);
-  assert.deepEqual(events[0].meta.realtime.payload, {
+  assert.equal(Object.hasOwn(events[0], "meta"), false);
+  assert.equal(events[0].realtime.event, VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT);
+  assert.deepEqual(events[0].realtime.payload, {
     accountId: "codex",
     outputVersion: 2,
     reason: "terminal-output",

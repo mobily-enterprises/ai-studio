@@ -6,6 +6,22 @@ const mocks = vi.hoisted(() => ({
   socketHandlers: []
 }));
 
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
+  useRealtimeEvent(options = {}) {
+    mocks.socketHandlers.push({
+      event: options.event,
+      handler(payload) {
+        const context = { event: options.event, payload, socket: null };
+        if (typeof options.matches === "function" && options.matches(context) !== true) {
+          return undefined;
+        }
+        return options.onEvent?.(context);
+      }
+    });
+    return { active: { value: true } };
+  }
+}));
+
 const testRenderer = createRenderer({
   createComment(text) {
     return {

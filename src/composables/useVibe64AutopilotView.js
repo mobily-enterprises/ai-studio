@@ -295,9 +295,7 @@ function useVibe64AutopilotView(props, emit) {
   const composerHint = computed(() => (
     structuredQuestionActive.value
       ? "Answer the assistant, then send one combined reply."
-      : agentActive.value
-      ? "Send guidance while the assistant is working."
-      : "Enter sends. Shift+Enter adds a line."
+      : ""
   ));
   const composerPlaceholder = computed(() => (
     numberedQuestions.value.length
@@ -320,12 +318,13 @@ function useVibe64AutopilotView(props, emit) {
   const workspaceSetupNeedsAttention = computed(() => (
     workspaceSetupStatus.value === "failed" || workspaceSetupStatus.value === "ambiguous"
   ));
-  const workspaceSetupVisible = computed(() => workspaceSetupStatus.value !== "unconfigured");
+  const workspaceSetupVisible = computed(() => (
+    workspaceSetupRunning.value || workspaceSetupNeedsAttention.value
+  ));
   const workspaceSetupTitle = computed(() => ({
     ambiguous: "Workspace setup needs a choice",
     failed: "Workspace preparation failed",
-    running: "Preparing workspace…",
-    succeeded: "Workspace ready"
+    running: "Preparing workspace…"
   })[workspaceSetupStatus.value] || "");
   const workspaceSetupCurrentLabel = computed(() => (
     workspaceSetupRunning.value
@@ -625,7 +624,6 @@ function useVibe64AutopilotView(props, emit) {
   }
 
   const rightPaneTab = ref("preview");
-  const mountedRightPaneTabs = ref(["preview"]);
   const lastDashboardRoutePath = ref("");
   const sourceEditorOpenRequest = ref(null);
   const systemRestoreRequest = ref(null);
@@ -712,14 +710,8 @@ function useVibe64AutopilotView(props, emit) {
   }
 
   function rightPaneTabMounted(tabId = "") {
-    return mountedRightPaneTabs.value.includes(String(tabId || ""));
+    return rightPaneTab.value === String(tabId || "");
   }
-
-  watch(rightPaneTab, (tabId) => {
-    if (tabId && !mountedRightPaneTabs.value.includes(tabId)) {
-      mountedRightPaneTabs.value = [...mountedRightPaneTabs.value, tabId];
-    }
-  }, { immediate: true });
 
   const activeSessionNav = computed(() => ({
     label: sessionNavLabel(props.session || {}),

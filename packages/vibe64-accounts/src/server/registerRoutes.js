@@ -13,22 +13,25 @@ import {
   accountsReadInputValidator,
   gitIdentityInputValidator
 } from "./inputSchemas.js";
-import {
-  VIBE64_ACCOUNTS_SERVICE
-} from "./service.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 import { registerTerminalWebSocketRoute } from "@local/vibe64-core/server/terminalWebSocketRoutes";
 
 function registerRoutes(
-  app,
+  http,
   {
+    accounts = null,
+    fastify = null,
     projectContext = null,
     routeSurface = "",
     routeRelativePath = "",
     projectScoped = true
   } = {}
 ) {
-  const routes = createVibe64FeatureRoutes(app, {
+  if (!accounts || typeof accounts.subscribeAuthTerminal !== "function") {
+    throw new TypeError("registerRoutes requires the Vibe64 Accounts API.");
+  }
+
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 account routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
@@ -79,7 +82,7 @@ function registerRoutes(
     summary: "Cancel an Vibe64 account login session."
   });
 
-  registerTerminalWebSocketRoute(app, {
+  registerTerminalWebSocketRoute(fastify, {
     projectContext,
     resize(service, { cols, request, rows, terminalSessionId }) {
       return service.resizeAuthTerminal(withVibe64User(request, {
@@ -90,8 +93,7 @@ function registerRoutes(
       });
     },
     routePath: `${routes.routeBase}/auth/:terminalSessionId/ws`,
-    serviceId: VIBE64_ACCOUNTS_SERVICE,
-    serviceUnavailableMessage: "Vibe64 account service is unavailable.",
+    service: accounts,
     subscribe(service, { request, subscriber, terminalSessionId }) {
       return service.subscribeAuthTerminal(withVibe64User(request, {
         sessionId: terminalSessionId

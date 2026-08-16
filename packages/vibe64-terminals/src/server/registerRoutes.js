@@ -22,29 +22,29 @@ import {
   terminalSessionControlSnapshot
 } from "@local/vibe64-execution/server/terminalSessions";
 
-const VIBE64_TERMINALS_SERVICE = "feature.vibe64-terminals.service";
 const VIBE64_TERMINALS_UNAVAILABLE = "Vibe64 terminal service is unavailable.";
 
-function getTerminalService(app) {
-  return app.make("feature.vibe64-terminals.service");
-}
-
 function registerRoutes(
-  app,
+  http,
   {
+    fastify,
     projectContext = null,
     routeSurface = "",
-    routeRelativePath = ""
+    routeRelativePath = "",
+    terminals
   } = {}
 ) {
-  const routes = createVibe64FeatureRoutes(app, {
+  if (!terminals || typeof terminals !== "object") {
+    throw new TypeError(VIBE64_TERMINALS_UNAVAILABLE);
+  }
+  const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 terminal routes only accept loopback Studio requests.",
     projectContext,
     routeRelativePath,
     routeSurface,
     tags: ["studio", "vibe64-terminals"]
   });
-  const terminalService = () => getTerminalService(app);
+  const terminalService = () => terminals;
 
   routes.serviceRoute("GET", "/codex-terminal", {
     summary: "Read global Vibe64 Codex terminal status."
@@ -175,7 +175,7 @@ function registerRoutes(
     write: (terminalSessionId, data) => terminalService().writeGlobalCodexTerminal(terminalSessionId, data)
   });
 
-  registerVibe64TerminalWebSocketRoutes(app, routes, {
+  registerVibe64TerminalWebSocketRoutes(fastify, routes, terminals, {
     projectContext
   });
 }
@@ -400,13 +400,13 @@ function registerTerminalControlRoutes(routes, {
   });
 }
 
-function registerVibe64TerminalWebSocketRoutes(app, routes, {
+function registerVibe64TerminalWebSocketRoutes(fastify, routes, terminals, {
   projectContext = null
 } = {}) {
-  registerTerminalWebSocketRoute(app, {
+  registerTerminalWebSocketRoute(fastify, {
     projectContext,
     routePath: `${routes.routeBase}/codex-terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
+    service: terminals,
     serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
     subscribe(service, { subscriber, terminalSessionId }) {
       return service.subscribeGlobalCodexTerminal(terminalSessionId, subscriber);
@@ -419,10 +419,10 @@ function registerVibe64TerminalWebSocketRoutes(app, routes, {
     }
   });
 
-  registerTerminalWebSocketRoute(app, {
+  registerTerminalWebSocketRoute(fastify, {
     projectContext,
     routePath: `${routes.routeBase}/sessions/:sessionId/agent-terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
+    service: terminals,
     serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeAgentTerminal(sessionId, terminalSessionId, subscriber);
@@ -438,10 +438,10 @@ function registerVibe64TerminalWebSocketRoutes(app, routes, {
     }
   });
 
-  registerTerminalWebSocketRoute(app, {
+  registerTerminalWebSocketRoute(fastify, {
     projectContext,
     routePath: `${routes.routeBase}/sessions/:sessionId/launch-terminal/:terminalSessionId/ws`,
-    serviceId: VIBE64_TERMINALS_SERVICE,
+    service: terminals,
     serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
       return service.subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber);

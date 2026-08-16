@@ -63,8 +63,6 @@ import {
 } from "@local/studio-terminal-core/server/codexRuntimeContext";
 
 const ACCOUNT_AUTH_NAMESPACE = "vibe64-accounts";
-const VIBE64_ACCOUNTS_SERVICE = "feature.vibe64-accounts.service";
-const VIBE64_ACCOUNTS_RUNTIME_SERVICE = "feature.vibe64-accounts.runtime";
 const BROWSER_AUTH_MODE = "browser";
 const DEVICE_AUTH_MODE = "device";
 const API_KEY_AUTH_MODE = "api_key";
@@ -2235,8 +2233,6 @@ export {
   gitIdentitySaveCommandArgs,
   ghLoginCommandArgs,
   terminalArgsForAuth,
-  VIBE64_ACCOUNTS_SERVICE,
-  VIBE64_ACCOUNTS_RUNTIME_SERVICE,
   githubCredentialContext,
   resolveVibe64AccountsRoot
 };

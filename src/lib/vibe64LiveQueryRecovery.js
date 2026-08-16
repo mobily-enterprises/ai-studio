@@ -3,17 +3,7 @@ function isVibe64LiveQuery(query = {}) {
   return queryKey[0] === "vibe64";
 }
 
-function invalidateVibe64LiveQueries(app) {
-  if (
-    !app ||
-    typeof app.has !== "function" ||
-    typeof app.make !== "function" ||
-    !app.has("jskit.client.query-client")
-  ) {
-    return null;
-  }
-
-  const queryClient = app.make("jskit.client.query-client");
+function invalidateVibe64LiveQueries(queryClient) {
   if (!queryClient || typeof queryClient.invalidateQueries !== "function") {
     return null;
   }

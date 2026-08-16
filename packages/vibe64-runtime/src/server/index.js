@@ -3,7 +3,6 @@ export * from "./agentWriteLock.js";
 export * from "./codexAppServerProvider.js";
 export * from "./codexAppServerSessionBridge.js";
 export * from "./codexAttachmentPaths.js";
-export * from "./connectionReadiness.js";
 export * from "./currentSessionAlias.js";
 export * from "./runtime.js";
 export * from "./sessionDebugLog.js";

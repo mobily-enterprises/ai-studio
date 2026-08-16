@@ -1,22 +1,19 @@
-import { registerRealtimeClientListener } from "@jskit-ai/realtime/client/listeners";
 import {
   invalidateVibe64LiveQueries
 } from "/src/lib/vibe64LiveQueryRecovery.js";
 
-const VIBE64_LIVE_QUERY_RECOVERY_LISTENER = "local.main.vibe64-live-query-recovery-listener";
+function attachVibe64RealtimeQueryRecovery({ queryClient, realtime } = {}) {
+  const socket = realtime?.socket;
+  if (!socket || typeof socket.on !== "function") {
+    throw new TypeError("Vibe64 realtime query recovery requires a realtime socket.");
+  }
 
-function registerVibe64RealtimeListeners(app) {
-  registerRealtimeClientListener(app, VIBE64_LIVE_QUERY_RECOVERY_LISTENER, () => ({
-    listenerId: VIBE64_LIVE_QUERY_RECOVERY_LISTENER,
-    event: "connect",
-    handle({ app: runtimeApp }) {
-      return invalidateVibe64LiveQueries(runtimeApp);
-    }
-  }));
+  const recoverQueries = () => invalidateVibe64LiveQueries(queryClient);
+  socket.on("connect", recoverQueries);
+  return () => socket.off?.("connect", recoverQueries);
 }
 
 export {
-  VIBE64_LIVE_QUERY_RECOVERY_LISTENER,
-  invalidateVibe64LiveQueries,
-  registerVibe64RealtimeListeners
+  attachVibe64RealtimeQueryRecovery,
+  invalidateVibe64LiveQueries
 };

@@ -1,36 +1,39 @@
+import { defineProvider } from "@jskit-ai/kernel/shared/capabilities";
 import MenuLinkItem from "/src/components/menus/MenuLinkItem.vue";
 import SurfaceAwareMenuLinkItem from "/src/components/menus/SurfaceAwareMenuLinkItem.vue";
 import TabLinkItem from "/src/components/menus/TabLinkItem.vue";
 import TopActionLinkItem from "/src/components/menus/TopActionLinkItem.vue";
 import Vibe64ActiveSessionNavItem from "/src/components/studio/Vibe64ActiveSessionNavItem.vue";
 import {
-  registerVibe64RealtimeListeners
+  attachVibe64RealtimeQueryRecovery
 } from "../vibe64RealtimeQueries.js";
 
-const mainClientComponents = [];
+const detachQueryRecoveryByRealtime = new WeakMap();
 
-function registerMainClientComponent(token, resolveComponent) {
-  mainClientComponents.push({ token, resolveComponent });
-}
-
-class MainClientProvider {
-  static id = "local.main.client";
-
-  register(app) {
-    for (const { token, resolveComponent } of mainClientComponents) {
-      app.singleton(token, resolveComponent);
-    }
-    registerVibe64RealtimeListeners(app);
+const MainClientProvider = defineProvider({
+  id: "local.main.client",
+  requires: {
+    components: "client.components",
+    queryClient: "client.query",
+    realtime: "client.realtime"
+  },
+  setup({ components, queryClient, realtime }) {
+    components.register("local.main.ui.menu-link-item", MenuLinkItem);
+    components.register("local.main.ui.surface-aware-menu-link-item", SurfaceAwareMenuLinkItem);
+    components.register("local.main.ui.tab-link-item", TabLinkItem);
+    components.register("local.main.ui.top-action-link-item", TopActionLinkItem);
+    components.register("local.main.vibe64.active-session-nav-item", Vibe64ActiveSessionNavItem);
+    detachQueryRecoveryByRealtime.set(
+      realtime,
+      attachVibe64RealtimeQueryRecovery({ queryClient, realtime })
+    );
+  },
+  shutdown({ realtime }) {
+    detachQueryRecoveryByRealtime.get(realtime)?.();
+    detachQueryRecoveryByRealtime.delete(realtime);
   }
-}
+});
 
 export {
-  MainClientProvider,
-  registerMainClientComponent
+  MainClientProvider
 };
-
-registerMainClientComponent("local.main.ui.menu-link-item", () => MenuLinkItem);
-registerMainClientComponent("local.main.ui.surface-aware-menu-link-item", () => SurfaceAwareMenuLinkItem);
-registerMainClientComponent("local.main.ui.tab-link-item", () => TabLinkItem);
-registerMainClientComponent("local.main.ui.top-action-link-item", () => TopActionLinkItem);
-registerMainClientComponent("local.main.vibe64.active-session-nav-item", () => Vibe64ActiveSessionNavItem);

@@ -187,7 +187,9 @@ describe("useCodexAttachments", () => {
   });
 
   it("clears the busy flag when a consumer cannot use the uploaded file", async () => {
+    const onError = vi.fn();
     const attachments = useCodexAttachments({
+      onError,
       onUploaded: async () => {
         throw new Error("Codex path could not be injected.");
       },
@@ -205,11 +207,17 @@ describe("useCodexAttachments", () => {
 
     expect(attachments.uploading.value).toBe(false);
     expect(attachments.status.value).toBe("Codex path could not be injected.");
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Codex path could not be injected." }),
+      "Attachment upload failed."
+    );
   });
 
   it("still hands off files uploaded before a later upload fails", async () => {
+    const onError = vi.fn();
     const onUploaded = vi.fn();
     const attachments = useCodexAttachments({
+      onError,
       onUploaded,
       sessionId: ref("session-1"),
       uploadAttachment: async (_sessionId, file) => {
@@ -237,6 +245,10 @@ describe("useCodexAttachments", () => {
     expect(uploaded.map((attachment) => attachment.fileName)).toEqual(["kept.txt"]);
     expect(onUploaded).toHaveBeenCalledWith(uploaded);
     expect(attachments.status.value).toBe("Second upload failed.");
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Second upload failed." }),
+      "Attachment upload failed."
+    );
   });
 
   it("uploads pasted files without blocking normal text paste", async () => {
@@ -301,9 +313,11 @@ describe("useCodexAttachments", () => {
   });
 
   it("reports copied local file references that browsers do not expose as files", async () => {
+    const onError = vi.fn();
     const preventDefault = vi.fn();
     const uploadAttachment = vi.fn();
     const attachments = useCodexAttachments({
+      onError,
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -329,6 +343,10 @@ describe("useCodexAttachments", () => {
     expect(preventDefault).not.toHaveBeenCalled();
     expect(uploadAttachment).not.toHaveBeenCalled();
     expect(attachments.status.value).toBe("Copied local files cannot be pasted from this browser. Drop the file or use Attach files.");
+    expect(onError).toHaveBeenCalledWith(
+      "Copied local files cannot be pasted from this browser. Drop the file or use Attach files.",
+      "Attachment upload failed."
+    );
 
     attachments.clearStatus();
     expect(await attachments.handlePaste({
@@ -343,6 +361,7 @@ describe("useCodexAttachments", () => {
     expect(preventDefault).not.toHaveBeenCalled();
     expect(uploadAttachment).not.toHaveBeenCalled();
     expect(attachments.status.value).toBe("Copied local files cannot be pasted from this browser. Drop the file or use Attach files.");
+    expect(onError).toHaveBeenCalledTimes(2);
   });
 
   it("formats uploaded attachment paths as plain terminal input", () => {

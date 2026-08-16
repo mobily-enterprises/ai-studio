@@ -11,13 +11,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createInstalledRuntime,
   registerSurfaceRequestConstraint,
-  resolveRuntimeProfileFromSurface,
-  tryCreateProviderRuntimeFromApp
+  resolveRuntimeProfileFromSurface
 } from "@jskit-ai/kernel/server/platform";
-import {
-  closeSocketIoServer
-} from "@jskit-ai/realtime/server/runtime";
+import { loadAppConfigFromAppRoot } from "@jskit-ai/kernel/server/support";
 import { matchesPathPrefix, normalizePathname } from "@jskit-ai/kernel/shared/surface/paths";
 import { surfaceRuntime } from "./server/lib/surfaceRuntime.js";
 import {
@@ -102,18 +100,6 @@ function registerSocketIoUpgradeHandoff(app) {
 
     reply.hijack();
   });
-}
-
-async function closeRealtimeSocketIoServer(providerRuntime = null) {
-  const runtimeApp = providerRuntime?.app;
-  if (!runtimeApp || typeof runtimeApp.has !== "function" || typeof runtimeApp.make !== "function") {
-    return;
-  }
-  if (runtimeApp.has("runtime.realtime.io") !== true) {
-    return;
-  }
-
-  await closeSocketIoServer(runtimeApp.make("runtime.realtime.io"));
 }
 
 function hasFileExtension(pathname) {
@@ -540,16 +526,17 @@ async function createServer(options = {}) {
     delete process.env[VIBE64_TARGET_ROOT_ENV];
   }
   let runtime;
-  const createProviderRuntime = typeof options?.createProviderRuntime === "function"
-    ? options.createProviderRuntime
-    : tryCreateProviderRuntimeFromApp;
+  const createRuntime = typeof options?.createInstalledRuntime === "function"
+    ? options.createInstalledRuntime
+    : createInstalledRuntime;
   try {
-    runtime = await createProviderRuntime({
+    runtime = await createRuntime({
       appRoot,
       profile: resolveRuntimeProfileFromSurface({
         surfaceRuntime,
         serverSurface: runtimeEnv.SERVER_SURFACE
       }),
+      config: await loadAppConfigFromAppRoot({ appRoot }),
       env: providerEnv,
       logger: app.log,
       fastify: app
@@ -576,10 +563,6 @@ async function createServer(options = {}) {
       process.env[VIBE64_TARGET_ROOT_ENV] = previousStudioTargetRoot;
     }
   }
-
-  app.addHook("preClose", async () => {
-    await closeRealtimeSocketIoServer(runtime);
-  });
 
   registerSurfaceRequestConstraint({
     fastify: app,
@@ -660,7 +643,6 @@ async function createServer(options = {}) {
       {
         component: "jskit-runtime",
         event: "vibe64.server.jskit_runtime_registered",
-        routeCount: runtime.routeCount,
         surface: surfaceRuntime.normalizeSurfaceMode(runtimeEnv.SERVER_SURFACE),
         projectsRoot: projectContext.projectsRoot,
         systemRoot,
@@ -668,7 +650,7 @@ async function createServer(options = {}) {
         providerPackages: runtime.providerPackageOrder,
         packageOrder: runtime.packageOrder
       },
-      "Registered JSKIT provider server runtime."
+      "Registered JSKIT capability runtime."
     );
   }
 
@@ -693,7 +675,7 @@ async function startServer(options = {}) {
   const app = await createServer({
     appRoot: options?.appRoot,
     browserLifecycleShutdownDelayMs: options?.browserLifecycleShutdownDelayMs,
-    createProviderRuntime: options?.createProviderRuntime,
+    createInstalledRuntime: options?.createInstalledRuntime,
     githubAccountMode: options?.githubAccountMode,
     logLevel: options?.logLevel,
     managedSourceRoot: options?.managedSourceRoot,
@@ -769,7 +751,6 @@ async function startServer(options = {}) {
 export {
   browserUrlForListenAddress,
   browserUrlForPublicOrigin,
-  closeRealtimeSocketIoServer,
   createServer,
   createSignalShutdownHandler,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,

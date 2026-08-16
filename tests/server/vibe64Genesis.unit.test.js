@@ -14,7 +14,6 @@ import {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
-  inspectGenesisDeployment,
   inspectGenesisLaunch,
   inspectGenesisWorkspaceSetup,
   renderGenesisPrompt,
@@ -98,7 +97,6 @@ test("the integration reads launch targets from the pinned Genesis package", asy
       environment: {},
       projectRoot
     });
-    const deployment = await inspectGenesisDeployment({ projectRoot });
 
     assert.equal(setup.status, "ready");
     assert.deepEqual(setup.steps.map((step) => step.argv), [["npm", "install"]]);
@@ -106,22 +104,8 @@ test("the integration reads launch targets from the pinned Genesis package", asy
     assert.equal(launch.targets[0].id, "app");
     assert.deepEqual(launch.targets[0].runtimeRequirements, ["nodejs"]);
     assert.deepEqual(launch.targets[0].steps.map((step) => step.argv), [
-      ["npm", "run", "build"],
-      ["npm", "start"]
+      ["npm", "run", "develop"]
     ]);
-    assert.equal(deployment.status, "ready");
-    assert.deepEqual(deployment.steps.map(({ role, argv }) => ({ role, argv })), [
-      { role: "prepare", argv: ["npm", "install"] },
-      { role: "build", argv: ["npm", "run", "build"] },
-      { role: "migrate", argv: ["npm", "run", "db:prepare"] },
-      { role: "serve", argv: ["npm", "start"] }
-    ]);
-    assert.deepEqual(deployment.readiness, {
-      kind: "http",
-      method: "GET",
-      path: "/api/health",
-      status: 200
-    });
   });
 });
 

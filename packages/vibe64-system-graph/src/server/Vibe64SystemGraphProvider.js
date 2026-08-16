@@ -1,36 +1,30 @@
-import {
-  createService
-} from "./service.js";
-import {
-  registerRoutes,
-  SYSTEM_GRAPH_SERVICE_ID
-} from "./registerRoutes.js";
+import { defineFeature } from "@jskit-ai/kernel/server/features";
 
-class Vibe64SystemGraphProvider {
-  static id = "feature.vibe64-system-graph";
+import { registerRoutes } from "./registerRoutes.js";
+import { createService } from "./service.js";
 
-  static startsAfter = [
-    "feature.vibe64-project"
-  ];
-
-  register(app) {
-    if (!app || typeof app.service !== "function") {
-      throw new Error("Vibe64SystemGraphProvider requires application service().");
-    }
-    app.service(SYSTEM_GRAPH_SERVICE_ID, (scope) => {
-      return createService({
-        projectService: scope.make("feature.vibe64-project.service")
-      });
+const Vibe64SystemGraphProvider = defineFeature({
+  id: "vibe64.system-graph",
+  domain: "vibe64-system-graph",
+  requires: {
+    http: "runtime.http",
+    project: "vibe64.project"
+  },
+  provides: {
+    systemGraph: "vibe64.system-graph"
+  },
+  setup({ http, project }) {
+    const systemGraph = createService({
+      projectService: project
     });
-  }
-
-  boot(app) {
-    registerRoutes(app, {
+    registerRoutes(http, {
       routeRelativePath: "vibe64",
-      routeSurface: "app"
+      routeSurface: "app",
+      systemGraph
     });
+    return { systemGraph };
   }
-}
+});
 
 export {
   Vibe64SystemGraphProvider

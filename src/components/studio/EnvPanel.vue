@@ -134,7 +134,7 @@
         :records="records"
         :save-busy="saveBusy"
         system-title="System values"
-        @remove-record="removeRecord"
+        @remove-record="requestRemoveRecord"
         @save-record="saveRecord"
       />
     </template>
@@ -143,6 +143,39 @@
       name="tab-panel"
       :active-tab="activeTab"
     />
+
+    <v-dialog
+      v-model="removeConfirmOpen"
+      max-width="30rem"
+    >
+      <v-card>
+        <v-card-title>Remove Env value?</v-card-title>
+        <v-card-text>
+          <code>{{ pendingRemovalKey }}</code> will no longer be supplied to this
+          project's development processes.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn
+            :disabled="saveBusy"
+            type="button"
+            variant="text"
+            @click="cancelRemoveRecord"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            color="error"
+            :loading="saveBusy"
+            type="button"
+            variant="flat"
+            @click="confirmRemoveRecord"
+          >
+            Remove
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </section>
 </template>
 
@@ -181,6 +214,7 @@ const PROJECT_ENVIRONMENT_LABEL = "development";
 
 const activeTab = ref(PROJECT_ENV_TAB);
 const newValue = ref(emptyNewValue());
+const pendingRemoval = ref(null);
 
 const envResource = useEndpointResource({
   fallbackLoadError: "Env could not load.",
@@ -234,6 +268,15 @@ const envUnavailableMessage = computed(() => String(
   "Project Env is unavailable. Fix the project configuration and try again."
 ));
 const saveBusy = computed(() => saveCommand.isRunning === true);
+const removeConfirmOpen = computed({
+  get: () => Boolean(pendingRemoval.value),
+  set: (open) => {
+    if (!open && !saveBusy.value) {
+      pendingRemoval.value = null;
+    }
+  }
+});
+const pendingRemovalKey = computed(() => String(pendingRemoval.value?.key || ""));
 const projectEnvTabActive = computed(() => activeTab.value === PROJECT_ENV_TAB);
 const records = computed(() => Array.isArray(env.value?.records) ? env.value.records : []);
 const missingRecords = computed(() => records.value.filter(recordMissing));
@@ -288,8 +331,23 @@ async function saveRecord({
   });
 }
 
-async function removeRecord(record = {}) {
+function requestRemoveRecord(record = {}) {
   if (!recordEditable(record)) {
+    return;
+  }
+  pendingRemoval.value = record;
+}
+
+function cancelRemoveRecord() {
+  if (!saveBusy.value) {
+    pendingRemoval.value = null;
+  }
+}
+
+async function confirmRemoveRecord() {
+  const record = pendingRemoval.value;
+  if (!recordEditable(record)) {
+    pendingRemoval.value = null;
     return;
   }
   await saveValues({
@@ -297,6 +355,7 @@ async function removeRecord(record = {}) {
       remove: true
     }
   });
+  pendingRemoval.value = null;
 }
 
 async function saveNewValue() {

@@ -44,7 +44,7 @@ import {
   prepareCodexAttachmentRoot
 } from "./codexAttachmentPaths.js";
 
-const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 13;
+const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 15;
 const CODEX_APP_SERVER_PROVIDER_ID = AGENT_PROVIDER_IDS.CODEX_APP_SERVER;
 const CODEX_APP_SERVER_TRANSPORT = Object.freeze({
   UNIX: "unix"
@@ -63,6 +63,12 @@ const CODEX_APP_SERVER_INVALID_REQUEST_CODE = -32600;
 const CODEX_AUTH_PREFLIGHT_TIMEOUT_MS = 15000;
 const CODEX_AUTH_PREFLIGHT_OUTPUT_TAIL_BYTES = 4096;
 const CODEX_APP_SERVER_CLIENT_VERSION = "0.1.0";
+const CODEX_APP_SERVER_MANAGED_UMASK = "0007";
+const CODEX_APP_SERVER_MANAGED_SHELL = "/bin/sh";
+const CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT = [
+  `umask ${CODEX_APP_SERVER_MANAGED_UMASK}`,
+  'exec "$@"'
+].join("\n");
 const CODEX_APP_SERVER_UNIX_SOCKET_PATH_MAX_BYTES = process.platform === "linux" ? 107 : 103;
 const VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV = "VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR";
 const CODEX_APP_SERVER_ENDPOINT_STATUS = Object.freeze({
@@ -374,6 +380,15 @@ function codexAppServerLockDir(runtimeDir = "") {
 
 function codexAppServerUnixEndpoint(socketPath = "") {
   return `unix://${socketPath}`;
+}
+
+function codexAppServerProjectTrustOverride(workdir = "") {
+  const normalizedWorkdir = normalizeAgentText(workdir);
+  if (!normalizedWorkdir) {
+    return "";
+  }
+  const projectRoot = path.resolve(normalizedWorkdir);
+  return `projects={${JSON.stringify(projectRoot)}={trust_level="trusted"}}`;
 }
 
 async function currentCodexAuthStateSignature(options = {}) {
@@ -1082,6 +1097,7 @@ async function startCodexAppServerProcess({
     targetRoot,
     workdir
   });
+  const projectTrustOverride = codexAppServerProjectTrustOverride(workdir);
   const normalizedTerminalEnv = normalizeCodexAppServerTerminalEnv(terminalEnv);
   const normalizedRuntimes = codexAppServerRuntimes(runtimes);
   const baseEnv = codexAppServerCommandBaseEnv({
@@ -1091,20 +1107,32 @@ async function startCodexAppServerProcess({
   await rm(socketPath, {
     force: true
   });
+  const codexArgs = [
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-c",
+    STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
+    ...(projectTrustOverride
+      ? [
+          "-c",
+          projectTrustOverride
+        ]
+      : []),
+    "app-server",
+    "--listen",
+    endpoint
+  ];
   const startResult = await commandRunner({
     actor: "app",
     allowedRoots: processCwd ? [processCwd] : [],
     args: [
-      "--dangerously-bypass-approvals-and-sandbox",
-      "--dangerously-bypass-hook-trust",
       "-c",
-      STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
-      "app-server",
-      "--listen",
-      endpoint
+      CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT,
+      "vibe64-codex-app-server",
+      codexCommand,
+      ...codexArgs
     ],
     baseEnv,
-    command: codexCommand,
+    command: CODEX_APP_SERVER_MANAGED_SHELL,
     credentialHome: codexAppServerCredentialHome(normalizedToolHomeSource, baseEnv),
     cwd: processCwd || process.cwd(),
     envPolicy: "auth",
@@ -1846,6 +1874,18 @@ class CodexAppServerAgentProvider {
     return this.runRequest(
       () => client.request("thread/loaded/list", params),
       "codex-app-server-thread-loaded-list"
+    );
+  }
+
+  async listHooks(cwds = []) {
+    const client = await this.activeClient();
+    return this.runRequest(
+      () => client.request("hooks/list", {
+        cwds: (Array.isArray(cwds) ? cwds : [cwds])
+          .map(normalizeAgentText)
+          .filter(Boolean)
+      }),
+      "codex-app-server-hooks-list"
     );
   }
 

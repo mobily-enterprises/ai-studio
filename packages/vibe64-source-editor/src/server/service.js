@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -98,10 +99,11 @@ function createService({
   logger = console,
   projectService,
   sourceFileObserver = null,
-  terminalService = null
+  terminalService = null,
+  temporaryRoot = tmpdir()
 } = {}) {
   if (!projectService || typeof projectService.createRuntime !== "function") {
-    throw new TypeError("createService requires feature.vibe64-project.service.");
+    throw new TypeError("createService requires the Vibe64 Project API.");
   }
   const sourceExplanationGenerator = typeof explanationGenerator === "function"
     ? explanationGenerator
@@ -144,7 +146,7 @@ function createService({
       policy: sourceEditorFilePolicy(),
       session,
       sessionId: normalizedSessionId,
-      sourceEditorTempRoot: sourceEditorTempRoot(session),
+      sourceEditorTempRoot: sourceEditorTempRoot(temporaryRoot, normalizedSessionId),
       sourceRoot
     };
   }
@@ -1515,16 +1517,7 @@ function sourceEditorExplanationStore(explanationChats = null) {
 }
 
 function sourceEditorExplanationCleanupPath(context = {}) {
-  const metadataRoot = normalizeText(context.session?.metadataRoot);
-  if (!metadataRoot) {
-    throw sourceEditorError(
-      "Session metadata root is unavailable for source explanation cleanup.",
-      "vibe64_source_explanation_cleanup_metadata_unavailable",
-      { sessionId: context.sessionId },
-      500
-    );
-  }
-  return path.join(metadataRoot, SOURCE_EDITOR_EXPLANATION_CLEANUP_FILE);
+  return path.join(context.sourceEditorTempRoot, SOURCE_EDITOR_EXPLANATION_CLEANUP_FILE);
 }
 
 function normalizeSourceEditorCleanupRecord(value = {}) {
@@ -3089,12 +3082,16 @@ function assertTextBuffer(buffer, relativePath = "") {
   }
 }
 
-function sourceEditorTempRoot(session = {}) {
-  const metadataRoot = normalizeText(session.metadataRoot);
-  if (!metadataRoot) {
-    throw sourceEditorError("Source editor save requires session metadata storage.", "vibe64_source_editor_temp_root_missing", {}, 500);
+function sourceEditorTempRoot(temporaryRoot = "", sessionId = "") {
+  const root = normalizeText(temporaryRoot);
+  if (!path.isAbsolute(root)) {
+    throw sourceEditorError("Source editor requires an absolute runtime temp root.", "vibe64_source_editor_temp_root_missing", {}, 500);
   }
-  return path.join(metadataRoot, "source-editor-temp");
+  const sessionKey = crypto.createHash("sha256")
+    .update(normalizeText(sessionId))
+    .digest("hex")
+    .slice(0, 24);
+  return path.join(root, "vibe64-source-editor", sessionKey);
 }
 
 async function writeSourceEditorTextFile(context = {}, absolutePath = "", text = "") {
