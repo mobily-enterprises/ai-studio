@@ -130,7 +130,7 @@ import {
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
   codexAppServerProviderThreadAssistantSegments,
-  codexAppServerResultOwnerTurnId,
+  codexAppServerOutputOwnerTurnId,
   codexAppServerStatusFromValue,
   codexAppServerUserMessageText
 } from "./codexAppServerEvents.js";
@@ -3052,7 +3052,7 @@ function createCodexTerminalController({
     const session = await runtime.getSession(normalizedSessionId);
     const currentTurn = codexAppServerTurnState(session);
     const currentTurnId = normalizeText(currentTurn.turnId);
-    const normalizedTurnId = codexAppServerResultOwnerTurnId({
+    const normalizedTurnId = codexAppServerOutputOwnerTurnId({
       notificationThreadId: normalizedThreadId,
       notificationTurnId: normalizeText(turnId) || codexAppServerNotificationTurnId(notification),
       trackedActive: currentTurn.active,
@@ -3236,17 +3236,19 @@ function createCodexTerminalController({
       .trim();
   }
 
-  function recordCodexAppServerReasoningNotification(threadId = "", notification = {}) {
+  function recordCodexAppServerReasoningNotification(threadId = "", notification = {}, {
+    turnId = ""
+  } = {}) {
     const method = normalizeText(notification.method);
     if (method !== "item/reasoning/summaryPartAdded" && method !== "item/reasoning/summaryTextDelta") {
       return false;
     }
     const normalizedThreadId = normalizeText(threadId);
-    const turnId = codexAppServerNotificationTurnId(notification);
+    const normalizedTurnId = normalizeText(turnId) || codexAppServerNotificationTurnId(notification);
     if (!normalizedThreadId) {
       return false;
     }
-    const state = codexAppServerReasoningTurnState(normalizedThreadId, turnId);
+    const state = codexAppServerReasoningTurnState(normalizedThreadId, normalizedTurnId);
     const summaryKey = codexAppServerReasoningSummaryKey(notification);
     const summary = state.summaries.get(summaryKey) || {
       currentSegment: null
@@ -3272,6 +3274,33 @@ function createCodexTerminalController({
     }
     state.summaries.set(summaryKey, summary);
     return false;
+  }
+
+  async function recordCodexAppServerReasoningForSession(sessionId = "", threadId = "", notification = {}) {
+    const normalizedSessionId = normalizeText(sessionId);
+    const normalizedThreadId = normalizeText(threadId);
+    const runtime = await createRuntimeForSession();
+    const session = await runtime.getSession(normalizedSessionId);
+    const currentTurn = codexAppServerTurnState(session);
+    const ownerTurnId = codexAppServerOutputOwnerTurnId({
+      notificationThreadId: normalizedThreadId,
+      notificationTurnId: codexAppServerNotificationTurnId(notification),
+      trackedActive: currentTurn.active,
+      trackedState: currentTurn.state,
+      trackedThreadId: currentTurn.threadId,
+      trackedTurnId: currentTurn.turnId
+    });
+    if (!recordCodexAppServerReasoningNotification(normalizedThreadId, notification, {
+      turnId: ownerTurnId
+    })) {
+      return false;
+    }
+    await queueCodexAppServerReasoningPersist(
+      normalizedSessionId,
+      normalizedThreadId,
+      ownerTurnId
+    );
+    return true;
   }
 
   function readCodexAppServerReasoningText(threadId = "", turnId = "") {
@@ -5410,15 +5439,14 @@ function createCodexTerminalController({
         });
         return;
       }
-      if (
-        classification.kind === "reasoning_summary" &&
-        recordCodexAppServerReasoningNotification(normalizedThreadId, notification)
-      ) {
-        runCodexAppServerNotificationTask(notificationContext, () => queueCodexAppServerReasoningPersist(
-          normalizedSessionId,
-          normalizedThreadId,
-          codexAppServerNotificationTurnId(notification)
-        ));
+      if (classification.kind === "reasoning_summary") {
+        runCodexAppServerNotificationTask(notificationContext, () => {
+          return recordCodexAppServerReasoningForSession(
+            normalizedSessionId,
+            normalizedThreadId,
+            notification
+          );
+        });
       }
       if (classification.kind === "final_assistant_result") {
         const event = codexAppServerNotificationEvent(notification);

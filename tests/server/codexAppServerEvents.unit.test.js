@@ -5,11 +5,11 @@ import {
   classifyCodexAppServerEvent,
   codexAppServerContextRefreshReason,
   codexAppServerErrorText,
-  codexAppServerResultOwnerTurnId
+  codexAppServerOutputOwnerTurnId
 } from "../../packages/vibe64-terminals/src/server/codexAppServerEvents.js";
 
-test("Codex final answers belong to the active Vibe64 turn across internal provider turns", () => {
-  assert.equal(codexAppServerResultOwnerTurnId({
+test("Codex output belongs to the active Vibe64 turn across internal provider turns", () => {
+  assert.equal(codexAppServerOutputOwnerTurnId({
     notificationThreadId: "thread-1",
     notificationTurnId: "codex-internal-turn-2",
     trackedActive: true,
@@ -18,7 +18,7 @@ test("Codex final answers belong to the active Vibe64 turn across internal provi
     trackedTurnId: "vibe64-provider-turn-1"
   }), "vibe64-provider-turn-1");
 
-  assert.equal(codexAppServerResultOwnerTurnId({
+  assert.equal(codexAppServerOutputOwnerTurnId({
     notificationThreadId: "thread-1",
     notificationTurnId: "codex-goal-turn-3",
     trackedActive: true,
@@ -27,7 +27,7 @@ test("Codex final answers belong to the active Vibe64 turn across internal provi
     trackedTurnId: "vibe64-goal-successor-turn-2"
   }), "vibe64-goal-successor-turn-2");
 
-  assert.equal(codexAppServerResultOwnerTurnId({
+  assert.equal(codexAppServerOutputOwnerTurnId({
     notificationThreadId: "thread-stale",
     notificationTurnId: "codex-stale-turn",
     trackedActive: true,

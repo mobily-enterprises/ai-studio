@@ -540,7 +540,7 @@ function codexAppServerProviderThreadAssistantSegments(value = {}, turnId = "") 
   return turn ? codexAppServerProviderTurnAssistantSegments(turn) : [];
 }
 
-function codexAppServerResultOwnerTurnId({
+function codexAppServerOutputOwnerTurnId({
   notificationThreadId = "",
   notificationTurnId = "",
   trackedActive = false,
@@ -578,7 +578,7 @@ export {
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
   codexAppServerProviderThreadAssistantSegments,
-  codexAppServerResultOwnerTurnId,
+  codexAppServerOutputOwnerTurnId,
   codexAppServerStatusFromValue,
   codexAppServerUserMessageText
 };
