@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-  APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV,
   PREVIEW_IDENTITY_LOGIN_OPERATION,
   PREVIEW_IDENTITY_LOGOUT_OPERATION,
   PREVIEW_IDENTITY_SELECTOR_EMAIL,
@@ -67,7 +66,7 @@ test("preview identity selections normalize login and logout operations", () => 
 test("application command preview identity validates one direct app-owned invocation", () => {
   const secret = createPreviewAuthSecret();
   const previewIdentity = normalizePreviewIdentityCommandCapability({
-    command: [".vibe64/bin/preview-identity"],
+    command: ["tools/preview-identity"],
     environment: {
       enabled: "APP_PREVIEW_IDENTITY_ENABLED",
       secret: "APP_PREVIEW_IDENTITY_SECRET"
@@ -77,16 +76,14 @@ test("application command preview identity validates one direct app-owned invoca
     runtimes: ["node26"]
   });
 
-  assert.deepEqual(previewIdentity.command, [".vibe64/bin/preview-identity"]);
+  assert.deepEqual(previewIdentity.command, ["tools/preview-identity"]);
   assert.deepEqual(previewAuthEnvironment({
     kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
     previewIdentity,
     secret
   }), {
     APP_PREVIEW_IDENTITY_ENABLED: "true",
-    APP_PREVIEW_IDENTITY_SECRET: secret,
-    VIBE64_PREVIEW_IDENTITY_ENABLED: "true",
-    VIBE64_PREVIEW_IDENTITY_SECRET: secret
+    APP_PREVIEW_IDENTITY_SECRET: secret
   });
   assert.equal(previewAuthIdentityAvailable({
     kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND
@@ -99,7 +96,7 @@ test("application command preview identity validates one direct app-owned invoca
 
 test("application command preview identity rejects Vibe64 viewer mappings", () => {
   assert.throws(() => normalizePreviewIdentityCommandCapability({
-    command: [".vibe64/bin/preview-identity"],
+    command: ["tools/preview-identity"],
     identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
     viewerIdentityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL]
@@ -108,7 +105,7 @@ test("application command preview identity rejects Vibe64 viewer mappings", () =
 
 test("application command preview identity rejects colliding environment aliases", () => {
   assert.throws(() => normalizePreviewIdentityCommandCapability({
-    command: [".vibe64/bin/preview-identity"],
+    command: ["tools/preview-identity"],
     environment: {
       enabled: "APP_PREVIEW_IDENTITY",
       secret: "APP_PREVIEW_IDENTITY"
@@ -116,22 +113,14 @@ test("application command preview identity rejects colliding environment aliases
     identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL
   }), /must be different/u);
-  assert.throws(() => normalizePreviewIdentityCommandCapability({
-    command: [".vibe64/bin/preview-identity"],
-    environment: {
-      secret: APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV
-    },
-    identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
-    protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL
-  }), /environment variable is invalid/u);
 });
 
-test("application command preview identity requires an app-owned Vibe64 executable", () => {
+test("application command preview identity requires an app-owned project-relative executable", () => {
   assert.throws(() => normalizePreviewIdentityCommandCapability({
     command: ["node", "./scripts/preview-identity.mjs"],
     identityTypes: [PREVIEW_IDENTITY_SELECTOR_EMAIL],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL
-  }), /app-owned file under \.vibe64\/bin/u);
+  }), /committed app-owned project-relative file/u);
 });
 
 test("application command grants reject viewer subjects", () => {

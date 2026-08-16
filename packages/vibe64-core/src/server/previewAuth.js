@@ -5,8 +5,6 @@ import path from "node:path";
 const APPLICATION_COMMAND_PREVIEW_AUTH_KIND = "application-command";
 const COOKIE_PROFILE_PREVIEW_AUTH_KIND = "cookie-profile";
 const VIBE64_SELF_PREVIEW_AUTH_KIND = "vibe64-self";
-const APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV = "VIBE64_PREVIEW_IDENTITY_ENABLED";
-const APPLICATION_PREVIEW_IDENTITY_SECRET_ENV = "VIBE64_PREVIEW_IDENTITY_SECRET";
 const PREVIEW_IDENTITY_CONTROL_PATH = "/__vibe64/preview-identity";
 const PREVIEW_IDENTITY_GRANT_PREFIX = "vibe64-preview-identity-v1";
 const PREVIEW_IDENTITY_GRANT_TTL_SECONDS = 60;
@@ -30,11 +28,9 @@ const PREVIEW_IDENTITY_SELECTOR_TYPES = Object.freeze([
   PREVIEW_IDENTITY_SELECTOR_LOGIN,
   PREVIEW_IDENTITY_SELECTOR_USER_ID
 ]);
-const PREVIEW_IDENTITY_COMMAND_PROTOCOL = "vibe64.preview-identity.command.v1";
-const PREVIEW_IDENTITY_COMMAND_DIRECTORY = ".vibe64/bin";
+const PREVIEW_IDENTITY_COMMAND_PROTOCOL = "genesis.preview-identity.command.v1";
 const PREVIEW_IDENTITY_COMMAND_DEFAULT_TIMEOUT_MS = 10_000;
 const PREVIEW_IDENTITY_COMMAND_MAX_TIMEOUT_MS = 30_000;
-const PREVIEW_IDENTITY_COMMAND_PATH_PATTERN = /^\.vibe64\/bin\/[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const PREVIEW_IDENTITY_COMMAND_ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/u;
 const PREVIEW_IDENTITY_COMMAND_RESERVED_ENV_NAMES = new Set([
   "HOME",
@@ -42,9 +38,7 @@ const PREVIEW_IDENTITY_COMMAND_RESERVED_ENV_NAMES = new Set([
   "NODE_OPTIONS",
   "PATH",
   "TMPDIR",
-  "USER",
-  APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV,
-  APPLICATION_PREVIEW_IDENTITY_SECRET_ENV
+  "USER"
 ]);
 const PREVIEW_IDENTITY_GRANT_SCOPE_KEYS = Object.freeze([
   "projectScope",
@@ -238,6 +232,14 @@ function normalizePreviewIdentityCommandEnvironmentName(value = "", label = "env
   return name;
 }
 
+function previewIdentityCommandPathValid(value = "") {
+  const command = String(value || "");
+  return command.includes("/") &&
+    !command.includes("\\") &&
+    !/[\0\r\n]/u.test(command) &&
+    command.split("/").every((part) => part && ![".", ".."].includes(part));
+}
+
 function normalizePreviewIdentityCommandCapability(value = null) {
   if (!value) {
     return null;
@@ -267,9 +269,9 @@ function normalizePreviewIdentityCommandCapability(value = null) {
       "Preview identity command must contain between 1 and 64 non-empty arguments."
     );
   }
-  if (!PREVIEW_IDENTITY_COMMAND_PATH_PATTERN.test(command[0])) {
+  if (!previewIdentityCommandPathValid(command[0])) {
     throw previewIdentityCommandError(
-      `Preview identity executable must be an app-owned file under ${PREVIEW_IDENTITY_COMMAND_DIRECTORY}.`
+      "Preview identity executable must be a committed app-owned project-relative file."
     );
   }
   const identityTypes = normalizePreviewIdentityTypes(value.identityTypes);
@@ -323,8 +325,6 @@ function previewIdentityCommandEnvironment({
   }
   const normalizedSecret = requirePreviewAuthSecret(secret);
   return {
-    [APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV]: "true",
-    [APPLICATION_PREVIEW_IDENTITY_SECRET_ENV]: normalizedSecret,
     ...(capability.environment.enabled
       ? { [capability.environment.enabled]: "true" }
       : {}),
@@ -767,11 +767,8 @@ function normalizeCookiePreviewAuthCookie(value = {}, index = 0) {
 
 export {
   APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
-  APPLICATION_PREVIEW_IDENTITY_ENABLED_ENV,
-  APPLICATION_PREVIEW_IDENTITY_SECRET_ENV,
   COOKIE_PROFILE_PREVIEW_AUTH_KIND,
   PREVIEW_IDENTITY_CONTROL_PATH,
-  PREVIEW_IDENTITY_COMMAND_DIRECTORY,
   PREVIEW_IDENTITY_COMMAND_PROTOCOL,
   PREVIEW_IDENTITY_LOGIN_OPERATION,
   PREVIEW_IDENTITY_LOGOUT_OPERATION,

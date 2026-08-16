@@ -13,7 +13,7 @@ import {
 
 function capability() {
   return {
-    command: [".vibe64/bin/preview-identity"],
+    command: ["tools/preview-identity"],
     identityTypes: ["email", "user-id"],
     protocol: PREVIEW_IDENTITY_COMMAND_PROTOCOL,
     runtimes: ["node26"]
@@ -57,7 +57,7 @@ test("preview identity command runner invokes the app directly with bounded mana
     capability: capability(),
     env: {
       APP_DATABASE_URL: "managed-database",
-      VIBE64_PREVIEW_IDENTITY_SECRET: "private-secret"
+      APP_PREVIEW_IDENTITY_SECRET: "private-secret"
     },
     project: {
       targetRoot: "/workspace/app"
@@ -96,7 +96,7 @@ test("preview identity command runner invokes the app directly with bounded mana
   });
 
   assert.equal(invocation.actor, "app");
-  assert.equal(invocation.command, "/workspace/app/.vibe64/bin/preview-identity");
+  assert.equal(invocation.command, "/workspace/app/tools/preview-identity");
   assert.deepEqual(invocation.args, []);
   assert.equal(invocation.cwd, "/workspace/app");
   assert.equal(invocation.envPolicy, "preview");

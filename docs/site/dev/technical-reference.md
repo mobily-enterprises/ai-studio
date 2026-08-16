@@ -196,9 +196,9 @@ Chrome or Chromium itself.
 ## Application preview identity
 
 An optional `previewIdentity` declaration on a Genesis Launch target advertises
-application identity switching. It names a committed, application-owned
-executable directly below `.vibe64/bin`, declares the
-`vibe64.preview-identity.command.v1` protocol, and lists the application
+application identity switching. It names a safe committed, application-owned
+project-relative executable such as `tools/preview-identity`, declares the
+`genesis.preview-identity.command.v1` protocol, and lists the application
 identifier types it accepts: email, login, or user ID. It may also declare
 app-specific enable and secret environment variable names, command runtime
 requirements, and a timeout.
@@ -215,15 +215,10 @@ application selector such as email, login, or user ID; the first entry is the
 default. Managed Preview and Playwright select a configured entry by name or
 request guest mode. Callers cannot submit arbitrary application identities.
 
-For an enabled preview launch, Vibe64 supplies:
-
-```text
-VIBE64_PREVIEW_IDENTITY_ENABLED=true
-VIBE64_PREVIEW_IDENTITY_SECRET=<random per-launch secret>
-```
-
-Vibe64 also supplies any app-specific enable and secret variable names declared
-by Genesis Launch. The executable reads one protocol request from standard
+For an enabled preview launch, Vibe64 supplies `true` and a fresh per-launch
+secret only through the application-specific environment names declared by
+Genesis Launch. These are system launch values, not user-managed project Env
+values. The executable reads one protocol request from standard
 input and writes one response to standard output. It remains responsible for
 locating an existing user, rejecting missing or disabled users, and creating or
 clearing the application's normal browser session. Vibe64 never creates

@@ -113,13 +113,13 @@ async function createLaunchSpecFixture() {
 
 function previewIdentityCapability() {
   return {
-    command: [".vibe64/bin/preview-identity"],
+    command: ["tools/preview-identity"],
     environment: {
       enabled: "APP_PREVIEW_IDENTITY_ENABLED",
       secret: "APP_PREVIEW_IDENTITY_SECRET"
     },
     identityTypes: ["email", "user-id"],
-    protocol: "vibe64.preview-identity.command.v1",
+    protocol: "genesis.preview-identity.command.v1",
     runtimes: ["node26"]
   };
 }
@@ -130,7 +130,7 @@ async function installPreviewIdentityExecutable(targetRoot, {
   if (!includeExecutable) {
     return;
   }
-  const executablePath = path.join(targetRoot, ".vibe64", "bin", "preview-identity");
+  const executablePath = path.join(targetRoot, "tools", "preview-identity");
   await mkdir(path.dirname(executablePath), {
     recursive: true
   });
@@ -205,14 +205,14 @@ test("web launch resolves preview identity from the explicit launch declaration"
 
     assert.equal(spec.ok, true);
     assert.equal(spec.metadata.previewAuth, "application-command");
-    assert.deepEqual(spec.metadata.previewIdentity.command, [".vibe64/bin/preview-identity"]);
+    assert.deepEqual(spec.metadata.previewIdentity.command, ["tools/preview-identity"]);
     assert.deepEqual(spec.metadata.previewIdentity.identityTypes, ["email", "user-id"]);
     assert.equal(spec.metadata.previewIdentity.sourceRoot, fixture.targetRoot);
     const env = spec.env({ id: "terminal-preview-identity" });
     assert.equal(env.APP_PREVIEW_IDENTITY_ENABLED, "true");
-    assert.equal(env.VIBE64_PREVIEW_IDENTITY_ENABLED, "true");
     assert.match(env.APP_PREVIEW_IDENTITY_SECRET, /^[a-f0-9]{64}$/u);
-    assert.equal(env.VIBE64_PREVIEW_IDENTITY_SECRET, env.APP_PREVIEW_IDENTITY_SECRET);
+    assert.equal(env.VIBE64_PREVIEW_IDENTITY_ENABLED, undefined);
+    assert.equal(env.VIBE64_PREVIEW_IDENTITY_SECRET, undefined);
   } finally {
     spec?.releasePortReservation?.();
     await fixture.cleanup();
@@ -276,9 +276,7 @@ test("preview identity exchange does not reload or provision the project environ
     });
     assert.deepEqual(Object.keys(invocation.env).sort(), [
       "APP_PREVIEW_IDENTITY_ENABLED",
-      "APP_PREVIEW_IDENTITY_SECRET",
-      "VIBE64_PREVIEW_IDENTITY_ENABLED",
-      "VIBE64_PREVIEW_IDENTITY_SECRET"
+      "APP_PREVIEW_IDENTITY_SECRET"
     ]);
     assert.deepEqual(invocation.project.runtimeConfigEnv, {});
     assert.equal(result.identity.email, "ada@example.com");
