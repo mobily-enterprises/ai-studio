@@ -149,7 +149,12 @@ test("Genesis owns the opening conversation for an existing uninitialized projec
     assert.equal(rendered.context.requestedTask, "work");
     assert.equal(rendered.context.task, "start");
     assert.match(rendered.prompt, /"projectKind": "existing-uninitialized"/u);
-    assert.match(rendered.prompt, /strongly recommend `genesis adopt`/u);
+    assert.match(
+      rendered.prompt,
+      /strongly recommend preparing the existing project for\s+guided editing/u
+    );
+    assert.match(rendered.prompt, /Do not require the user to know\s+Genesis terminology/u);
+    assert.match(rendered.prompt, /If they approve, run `genesis adopt`\s+yourself/u);
     await assert.rejects(
       () => readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"),
       { code: "ENOENT" }
