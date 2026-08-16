@@ -201,7 +201,7 @@
                     :prepend-icon="mdiAccountCircleOutline"
                     :subtitle="`${previewIdentityTypeLabel(identity.type)}: ${identity.value}`"
                     :title="identity.name"
-                    @click="selectPreviewConfiguredIdentity(identity)"
+                    @click="selectPreviewIdentityFromMenu(identity)"
                   />
                   <v-list-item
                     :active="previewIdentityCurrent?.mode === 'guest'"
@@ -222,6 +222,19 @@
                 >
                   {{ previewIdentityError }}
                 </v-alert>
+                <div
+                  v-if="previewIdentityFixAvailable"
+                  class="vibe64-launch-controls__identity-recovery"
+                >
+                  <v-btn
+                    size="small"
+                    type="button"
+                    variant="text"
+                    @click="requestCodexPreviewIdentityFix"
+                  >
+                    Ask Codex to fix
+                  </v-btn>
+                </div>
               </v-card>
             </v-menu>
 
@@ -781,6 +794,10 @@ const embeddedTerminalStyle = Object.freeze({
 });
 
 const props = defineProps({
+  askCodexToFixPreviewIdentity: {
+    default: null,
+    type: Function
+  },
   attachPreviewFile: {
     default: null,
     type: Function
@@ -965,11 +982,42 @@ const {
 });
 
 const previewDiagnosticsAttachmentBusy = ref(false);
+const previewIdentityFailedSelection = ref(null);
+const previewIdentityFixAvailable = computed(() => Boolean(
+  previewIdentityError.value &&
+  previewIdentityFailedSelection.value &&
+  typeof props.askCodexToFixPreviewIdentity === "function"
+));
 const previewDiagnosticsAttachmentAvailable = computed(() => Boolean(
   previewDiagnosticsAvailable.value &&
   typeof props.attachPreviewFile === "function"
 ));
 let previewDiagnosticsAttachmentSequence = 0;
+
+async function selectPreviewIdentityFromMenu(identity = {}) {
+  previewIdentityFailedSelection.value = identity;
+  const selected = await selectPreviewConfiguredIdentity(identity);
+  if (selected) {
+    previewIdentityFailedSelection.value = null;
+  }
+  return selected;
+}
+
+function requestCodexPreviewIdentityFix() {
+  if (!previewIdentityFixAvailable.value) {
+    return false;
+  }
+  return props.askCodexToFixPreviewIdentity({
+    error: previewIdentityError.value,
+    identity: previewIdentityFailedSelection.value
+  });
+}
+
+watch(previewIdentityError, (error) => {
+  if (!error) {
+    previewIdentityFailedSelection.value = null;
+  }
+});
 
 async function attachPreviewDiagnostics() {
   if (
@@ -1302,6 +1350,12 @@ onBeforeUnmount(() => {
 .vibe64-launch-controls__identity-error {
   margin: 0 0.75rem 0.75rem;
   overflow-wrap: anywhere;
+}
+
+.vibe64-launch-controls__identity-recovery {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0.5rem 0.5rem;
 }
 
 .vibe64-launch-controls__attention-button {

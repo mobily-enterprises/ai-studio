@@ -424,6 +424,7 @@
         role="tabpanel"
       >
         <Vibe64LaunchControls
+          :ask-codex-to-fix-preview-identity="askCodexToFixPreviewIdentity"
           :attach-preview-file="attachPreviewFile"
           :auto-start-managed-preview="!props.sessionSelectionClosed"
           button-label="Run"
@@ -510,6 +511,7 @@ const {
   answerChoices,
   askCodexAboutSourceEditorFile,
   askCodexAboutSystemContext,
+  askCodexToFixPreviewIdentity,
   askCodexToFixWorkspaceSetup,
   attachPreviewDiagnostics,
   backToDashboard,

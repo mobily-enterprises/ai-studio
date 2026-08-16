@@ -186,6 +186,21 @@ function workspaceSetupFixPrompt(workspaceSetup = {}) {
   ].join("\n\n");
 }
 
+function previewIdentityFixPrompt({
+  error = "",
+  identity = {}
+} = {}) {
+  const name = normalizedAgentTurnText(identity?.name) || "configured identity";
+  const type = normalizedAgentTurnText(identity?.type) || "selector";
+  const value = normalizedAgentTurnText(identity?.value) || "unknown";
+  const diagnostic = normalizedAgentTurnText(error) || "The application rejected the identity.";
+  return [
+    `The managed preview could not sign in as \`${name}\` (${type}: \`${value}\`):`,
+    diagnostic,
+    "Please diagnose and fix this in the current application. Ensure its app-owned, idempotent development seed creates this user profile and any workspace membership the app requires in every fresh database, then run the normal database preparation command and verify the identity exchange. Keep preview authentication material host-managed; do not add, reveal, or hardcode Vibe64 secrets."
+  ].join("\n\n");
+}
+
 function useVibe64AutopilotView(props, emit) {
   const route = useRoute();
   const router = useRouter();
@@ -369,6 +384,13 @@ function useVibe64AutopilotView(props, emit) {
       ...workspaceSetup.value,
       diagnostic: workspaceSetupDiagnostic.value
     })));
+  }
+
+  function askCodexToFixPreviewIdentity(input = {}) {
+    if (composerDisabled.value) {
+      return false;
+    }
+    return sendChatPayload(chatMessagePayload(previewIdentityFixPrompt(input)));
   }
 
   function updateComposerAttachments(attachments = []) {
@@ -864,6 +886,7 @@ function useVibe64AutopilotView(props, emit) {
     answerChoices,
     askCodexAboutSourceEditorFile,
     askCodexAboutSystemContext,
+    askCodexToFixPreviewIdentity,
     askCodexToFixWorkspaceSetup,
     attachPreviewDiagnostics,
     backToDashboard,
@@ -939,6 +962,7 @@ function useVibe64AutopilotView(props, emit) {
 
 export {
   agentConnectionThinkingLabel,
+  previewIdentityFixPrompt,
   useVibe64AutopilotView,
   workspaceSetupFixPrompt,
   vibe64AutopilotViewEmits,

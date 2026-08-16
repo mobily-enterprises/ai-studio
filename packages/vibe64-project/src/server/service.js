@@ -474,6 +474,12 @@ function createService({
       projectLocalRoot: selectedProjectRuntimeRoot(),
       values
     });
+    const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+    await materializeProjectEnvironmentFiles({
+      environment: resolved.projectEnvironment,
+      files: resolved.environmentFiles,
+      sourceRoot: resolved.source.sourceRoot
+    });
     return readEnvState(input);
   }
 

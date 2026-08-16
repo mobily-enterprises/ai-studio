@@ -141,6 +141,48 @@ test("Env is user-owned and reaches Genesis sessions without an adapter", async 
   });
 });
 
+test("saving or removing Env values immediately refreshes declared environment files", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    await mkdir(path.join(targetRoot, ".git", "info"), {
+      recursive: true
+    });
+    const service = projectService(targetRoot, {
+      inspectEnvironment() {
+        return {
+          components: ["example-stack"],
+          environmentDefaults: [],
+          files: [{ format: "dotenv", path: ".env" }],
+          resources: [],
+          status: "ready"
+        };
+      }
+    });
+
+    const saved = await service.saveEnvUserValues({
+      environment: "dev",
+      values: {
+        PREVIEW_AUTH_SECRET: {
+          secret: true,
+          value: "temporary-secret"
+        }
+      }
+    });
+    assert.equal(saved.ok, true);
+    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /PREVIEW_AUTH_SECRET=temporary-secret/u);
+
+    const removed = await service.saveEnvUserValues({
+      environment: "dev",
+      values: {
+        PREVIEW_AUTH_SECRET: {
+          remove: true
+        }
+      }
+    });
+    assert.equal(removed.ok, true);
+    assert.doesNotMatch(await readFile(path.join(targetRoot, ".env"), "utf8"), /PREVIEW_AUTH_SECRET/u);
+  });
+});
+
 test("reserved Vibe64 Env names require an explicit Genesis Stack declaration", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);

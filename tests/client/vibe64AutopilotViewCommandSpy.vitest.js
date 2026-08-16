@@ -117,6 +117,22 @@ describe("Vibe64 direct session view", () => {
     expect(component).not.toMatch(/workspace.*(?:dialog|stepper)|(?:dialog|stepper).*workspace/iu);
   });
 
+  it("turns a rejected managed preview identity into an ordinary Codex repair request", () => {
+    const component = fs.readFileSync(componentPath, "utf8");
+    const composable = fs.readFileSync(composablePath, "utf8");
+    const launchControls = fs.readFileSync(
+      path.resolve("src/components/studio/Vibe64LaunchControls.vue"),
+      "utf8"
+    );
+
+    expect(component).toContain(":ask-codex-to-fix-preview-identity=\"askCodexToFixPreviewIdentity\"");
+    expect(launchControls).toContain("previewIdentityFixAvailable");
+    expect(launchControls).toContain("Ask Codex to fix");
+    expect(composable).toContain("sendChatPayload(chatMessagePayload(previewIdentityFixPrompt(input)))");
+    expect(composable).toContain("app-owned, idempotent development seed");
+    expect(composable).toContain("Keep preview authentication material host-managed");
+  });
+
   it("uses multiline Enter and moves Tab directly from chat input to Send", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
