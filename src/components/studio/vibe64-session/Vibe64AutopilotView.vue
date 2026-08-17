@@ -311,12 +311,12 @@
         :dashboard-context="dashboardSessionContext"
       >
         <div
-          v-show="rightPaneTab === 'dashboard'"
+          v-show="dashboardRouteVisible"
           class="studio-autopilot__right-pane-page"
           role="tabpanel"
         >
           <slot
-            v-if="rightPaneTabMounted('dashboard')"
+            v-if="dashboardRouteVisible"
             name="dashboard"
             :dashboard-context="dashboardSessionContext"
           />
@@ -548,6 +548,7 @@ const {
   conversationScrollKey,
   currentAgentSettings,
   dashboardSessionContext,
+  dashboardRouteVisible,
   dashboardShellVisible,
   dismissNumberedQuestions,
   confirmSaveWork,

@@ -46,6 +46,7 @@ import {
 import SAVE_WORK_PROMPT from "@/prompts/save-work-commit-and-push.md?raw";
 
 const DIRECT_SESSION_TOOL_IDS = new Set([
+  "info",
   "editor",
   "system",
   "diff",
@@ -671,6 +672,7 @@ function useVibe64AutopilotView(props, emit) {
     projectPaneValue.value === "dashboard" &&
     !STANDALONE_SESSION_TOOL_IDS.has(rightPaneTab.value)
   ));
+  const dashboardRouteVisible = computed(() => ["dashboard", "info"].includes(rightPaneTab.value));
   const sessionToolBackPath = computed(() => (
     lastDashboardRoutePath.value || projectAppPath(projectSlug.value, "/dashboard/env")
   ));
@@ -916,6 +918,7 @@ function useVibe64AutopilotView(props, emit) {
     conversationScrollKey,
     currentAgentSettings,
     dashboardSessionContext,
+    dashboardRouteVisible,
     dashboardShellVisible,
     dismissNumberedQuestions,
     confirmSaveWork,
