@@ -142,7 +142,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
     index += 1;
   }
 
-  if (questions.length < 2) {
+  if (!questions.length || (questions.length === 1 && !questions[0].choices.length)) {
     return inactiveNumberedQuestionSugar();
   }
   return {

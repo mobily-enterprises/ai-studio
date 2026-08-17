@@ -139,6 +139,41 @@ describe("vibe64NumberedQuestionSugar", () => {
     ]);
   });
 
+  it("renders choices for one explicitly numbered question", () => {
+    const sugar = sugarForPrompt([
+      "[1] Should I implement that complete template-management system?",
+      "",
+      "Possible answers:",
+      "- Full editable templates (Recommended)",
+      "- Central code templates only",
+      "- Discuss the design first"
+    ].join("\n"));
+
+    expect(sugar.questions).toMatchObject([
+      {
+        choices: [
+          {
+            label: "Full editable templates",
+            recommended: true,
+            value: "Full editable templates"
+          },
+          {
+            label: "Central code templates only",
+            recommended: false,
+            value: "Central code templates only"
+          },
+          {
+            label: "Discuss the design first",
+            recommended: false,
+            value: "Discuss the design first"
+          }
+        ],
+        label: "Should I implement that complete template-management system?",
+        number: 1
+      }
+    ]);
+  });
+
   it("submits generated answers as one response field", () => {
     const sugar = sugarForPrompt([
       "[1] Which file should change?",
