@@ -39,6 +39,13 @@ function sourceContext(root, sessionId = "session-1") {
   const metadata = {};
   return {
     metadata,
+    project: {
+      repository: {
+        defaultBranch: "main",
+        mode: "local_source"
+      },
+      repositoryMode: "local_source"
+    },
     runtime: {
       projectSessionSourceRoot: path.join(root, "managed-source"),
       targetRoot: path.join(root, "project")
@@ -74,6 +81,69 @@ test("Vibe64 creates an isolated Git source for a session", async () => {
     assert.equal(context.metadata.source_kind, "session_clone");
     assert.equal(context.metadata.source_path, result.sourcePath);
     assert.equal(context.metadata.source_path_authority, SESSION_SOURCE_PATH_AUTHORITY_MANAGED);
+  });
+});
+
+test("Vibe64 creates a GitHub session from the canonical remote instead of the stale project cache", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remoteRoot = path.join(root, "remote.git");
+    const publisherRoot = path.join(root, "publisher");
+    const context = sourceContext(root, "canonical-github-session");
+    await git(root, ["init", "--bare", remoteRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    await git(root, ["clone", "--branch", "main", remoteRoot, context.runtime.targetRoot]);
+    const staleCommit = await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]);
+
+    await writeFile(path.join(publisherRoot, "app.txt"), "canonical\n", "utf8");
+    await git(publisherRoot, ["add", "app.txt"]);
+    await git(publisherRoot, ["commit", "-m", "canonical update"]);
+    await git(publisherRoot, ["push", "origin", "main"]);
+    const canonicalCommit = await git(publisherRoot, ["rev-parse", "HEAD"]);
+    assert.notEqual(staleCommit, canonicalCommit);
+    context.project = {
+      githubRepository: {
+        cloneUrl: remoteRoot
+      },
+      repository: {
+        defaultBranch: "main",
+        github: {
+          cloneUrl: remoteRoot
+        },
+        mode: "github"
+      },
+      repositoryMode: "github"
+    };
+
+    const result = await createSessionSource(context);
+
+    assert.equal(result.commit, canonicalCommit);
+    assert.equal(context.metadata.base_commit, canonicalCommit);
+    assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "canonical");
+    assert.equal(await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]), staleCommit);
+  });
+});
+
+test("Vibe64 never falls back to a stale cache when the canonical remote is unavailable", async () => {
+  await withTemporaryRoot(async (root) => {
+    const context = sourceContext(root, "unavailable-canonical-session");
+    await createProject(context.runtime.targetRoot);
+    context.project = {
+      githubRepository: {
+        cloneUrl: path.join(root, "missing-remote.git")
+      },
+      repository: {
+        defaultBranch: "main",
+        mode: "github"
+      },
+      repositoryMode: "github"
+    };
+
+    await assert.rejects(
+      createSessionSource(context),
+      (error) => error?.code === "vibe64_session_source_git_failed"
+    );
   });
 });
 
