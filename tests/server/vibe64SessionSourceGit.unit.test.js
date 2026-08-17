@@ -129,27 +129,46 @@ test("Vibe64 creates a GitHub session from the canonical remote instead of the s
   });
 });
 
-test("hosted GitHub session cloning uses the requesting user's credential transport", () => {
-  const options = githubSourceCommandOptions({
+test("hosted GitHub session cloning reads the requester's token but retains the daemon filesystem actor", async () => {
+  let tokenRequest = null;
+  const options = await githubSourceCommandOptions({
     gid: 1001,
     home: "/home/ada",
     uid: 1001,
     username: "ada"
   }, {
     [VIBE64_GITHUB_ACCOUNT_MODE_ENV]: "user"
+  }, {
+    async runCommand(request) {
+      tokenRequest = request;
+      return {
+        ok: true,
+        stdout: "github-token\n"
+      };
+    }
   });
 
-  assert.deepEqual(options, {
+  assert.deepEqual(tokenRequest, {
     actor: "named-user",
-    credentialHome: {
-      gid: 1001,
-      home: "/home/ada",
-      scope: "user",
-      uid: 1001,
-      username: "ada"
+    allowedRoots: ["/home/ada"],
+    args: ["auth", "token"],
+    command: "gh",
+    cwd: "/home/ada",
+    envPolicy: "auth",
+    gitTransport: "none",
+    mode: "capture",
+    project: {
+      ownerUserKey: "ada"
     },
-    gitTransport: "github-https",
+    purpose: "github-api",
+    runtimes: ["gh"],
+    timeout: 60_000,
     userKey: "ada"
+  });
+  assert.deepEqual(options, {
+    actor: "daemon",
+    gitAuthToken: "github-token",
+    gitTransport: "github-token"
   });
 });
 

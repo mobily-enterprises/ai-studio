@@ -33,9 +33,11 @@ function sourceError(message = "", code = "vibe64_session_source_failed") {
 async function runGit(cwd = "", args = [], allowedRoots = [], {
   actor = "daemon",
   credentialHome = null,
+  gitAuthToken = "",
   gitTransport = "none",
   userKey = ""
 } = {}) {
+  const githubTransport = gitTransport === "github-https" || gitTransport === "github-token";
   const result = await runVibe64Command({
     actor,
     allowedRoots,
@@ -44,10 +46,11 @@ async function runGit(cwd = "", args = [], allowedRoots = [], {
     ...(credentialHome ? { credentialHome } : {}),
     cwd,
     envPolicy: "project",
+    ...(gitAuthToken ? { gitAuthToken } : {}),
     gitSafeDirectories: allowedRoots,
     gitTransport,
     mode: "capture",
-    purpose: gitTransport === "github-https" ? "github" : "source",
+    purpose: githubTransport ? "github" : "source",
     runtimes: gitTransport === "github-https" ? ["git", "gh"] : ["git"],
     timeout: 60_000,
     ...(userKey ? { userKey } : {})
@@ -61,7 +64,9 @@ async function runGit(cwd = "", args = [], allowedRoots = [], {
   return normalizeText(result.stdout || result.output);
 }
 
-function githubSourceCommandOptions(vibe64User = null, env = process.env) {
+async function githubSourceCommandOptions(vibe64User = null, env = process.env, {
+  runCommand = runVibe64Command
+} = {}) {
   const accountMode = normalizeGithubAccountMode(
     env?.[VIBE64_GITHUB_ACCOUNT_MODE_ENV],
     GITHUB_ACCOUNT_MODE_LOCAL
@@ -77,18 +82,48 @@ function githubSourceCommandOptions(vibe64User = null, env = process.env) {
       context.code || "vibe64_session_source_github_credentials_required"
     );
   }
-  const actor = accountMode === GITHUB_ACCOUNT_MODE_LOCAL ? "daemon" : "named-user";
-  return {
-    actor,
-    credentialHome: {
-      gid: context.gid,
-      home: context.home,
-      scope: context.scope,
-      uid: context.uid,
-      username: context.username
+  if (accountMode === GITHUB_ACCOUNT_MODE_LOCAL) {
+    return {
+      actor: "daemon",
+      credentialHome: {
+        gid: context.gid,
+        home: context.home,
+        scope: context.scope,
+        uid: context.uid,
+        username: context.username
+      },
+      gitTransport: "github-https"
+    };
+  }
+  const tokenResult = await runCommand({
+    actor: "named-user",
+    allowedRoots: [context.home],
+    args: ["auth", "token"],
+    command: "gh",
+    cwd: context.home,
+    envPolicy: "auth",
+    gitTransport: "none",
+    mode: "capture",
+    project: {
+      ownerUserKey: context.username
     },
-    gitTransport: "github-https",
-    userKey: actor === "named-user" ? context.username : ""
+    purpose: "github-api",
+    runtimes: ["gh"],
+    timeout: 60_000,
+    userKey: context.username
+  });
+  const token = tokenResult?.ok === true ? normalizeText(tokenResult.stdout) : "";
+  if (!token) {
+    throw sourceError(
+      normalizeText(tokenResult?.stderr || tokenResult?.error) ||
+        "GitHub authentication is not ready for this Vibe64 account.",
+      "vibe64_session_source_github_credentials_required"
+    );
+  }
+  return {
+    actor: "daemon",
+    gitAuthToken: token,
+    gitTransport: "github-token"
   };
 }
 
@@ -291,7 +326,7 @@ async function createSessionSource({
         branch: canonical.branch,
         cacheRoot: canonical.cacheRoot,
         commandOptions: canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
-          ? githubSourceCommandOptions(vibe64User, env)
+          ? await githubSourceCommandOptions(vibe64User, env)
           : {},
         source: canonical.source,
         sourceParent,

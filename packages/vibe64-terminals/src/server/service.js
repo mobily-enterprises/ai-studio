@@ -755,6 +755,7 @@ function createService({
     async createSessionSource(input = {}) {
       return createManagedSessionSource({
         ...input,
+        env,
         project: await projectService.readCurrentProject()
       });
     },
