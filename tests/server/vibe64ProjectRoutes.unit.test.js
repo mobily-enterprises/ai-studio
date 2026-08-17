@@ -167,6 +167,79 @@ test("Env user value route returns 400 for read-only provider Env writes", async
   });
 });
 
+test("Env reveal returns one uncached secret through the project service", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const calls = [];
+      const app = testRouteApp();
+      registerRoutes(routeHttp(app), {
+        project: {
+          async revealEnvSecret(input) {
+            calls.push(input);
+            return {
+              key: input.key,
+              ok: true,
+              value: "private"
+            };
+          }
+        },
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+      const route = findRegisteredRoute(app, {
+        method: "POST",
+        path: `${apiRouteBase}/vibe64/env/reveal`
+      });
+      assert.ok(route);
+      const headers = {};
+      const reply = {
+        ...testReply(),
+        header(key, value) {
+          headers[key] = value;
+          return this;
+        }
+      };
+
+      await route.handler({
+        body: {
+          environment: "dev",
+          key: "DB_PASSWORD",
+          sessionId: "session-1"
+        },
+        input: {
+          body: {
+            environment: "dev",
+            key: "DB_PASSWORD",
+            sessionId: "session-1"
+          }
+        },
+        params: routeProjectParams(),
+        vibe64User: {
+          role: "owner",
+          username: "owner"
+        }
+      }, reply);
+
+      assert.deepEqual(calls, [{
+        environment: "dev",
+        key: "DB_PASSWORD",
+        sessionId: "session-1",
+        vibe64User: {
+          role: "owner",
+          username: "owner"
+        }
+      }]);
+      assert.deepEqual(headers, {
+        "cache-control": "no-store",
+        pragma: "no-cache"
+      });
+      assert.equal(reply.statusCode, 200);
+      assert.equal(reply.payload.value, "private");
+    });
+  });
+});
+
 test("project template routes preserve Vibe64 user context", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {

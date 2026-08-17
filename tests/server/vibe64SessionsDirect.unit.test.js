@@ -150,6 +150,46 @@ test("empty assistant messages fail without starting a provider turn", async () 
   assert.equal(Object.hasOwn(service, "readComposerDraft"), false);
 });
 
+test("failed assistant delivery is published as failed, not accepted", async () => {
+  const publications = [];
+  const session = {
+    sessionId: "session-1",
+    status: "active"
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return session;
+          }
+        };
+      }
+    },
+    async publishSessionChanged(...args) {
+      publications.push(args);
+    },
+    terminals: {
+      async sendAgentMessage() {
+        return {
+          code: "codex_thread_reconciliation_failed",
+          error: "Codex thread reconciliation failed.",
+          ok: false
+        };
+      }
+    }
+  });
+
+  const result = await service.sendAgentMessage("session-1", {
+    message: "Continue the import.",
+    messageId: "message:test"
+  });
+
+  assert.equal(result.error, "Codex thread reconciliation failed.");
+  assert.equal(result.ok, false);
+  assert.equal(publications[0][1].reason, "session-agent-message-failed");
+});
+
 test("an early assistant message waits for workspace preparation and is sent once", async () => {
   let finishSetup;
   const setupFinished = new Promise((resolve) => {

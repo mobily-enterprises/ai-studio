@@ -34,6 +34,9 @@ import {
   currentProjectRequestContext
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
+  logOperationalEvent
+} from "@local/vibe64-core/server/logging";
+import {
   clearProjectRuntimeOpenState,
   readProjectRuntimeOpenState,
   writeProjectRuntimeOpenState
@@ -1056,10 +1059,41 @@ function createService({
       return sessionAgent.interruptTurn(sessionId, input, options);
     },
 
-    sendAgentMessage(sessionId, input = {}, options = {}) {
-      return runMainAgentWrite(sessionId, options, (context) => (
-        sessionAgent.sendMessage(sessionId, input, context)
-      ));
+    async sendAgentMessage(sessionId, input = {}, options = {}) {
+      const startedAt = Date.now();
+      try {
+        const result = await runMainAgentWrite(sessionId, options, (context) => (
+          sessionAgent.sendMessage(sessionId, input, context)
+        ));
+        if (result?.ok === false) {
+          logOperationalEvent(logger, "warn", {
+            code: result.code,
+            component: "vibe64.agent_message",
+            durationMs: Date.now() - startedAt,
+            error: result.error || result.errors?.[0]?.message,
+            event: "vibe64.agent_message.delivery_failed",
+            messageId: input.messageId,
+            operationOutcome: result.operationOutcome,
+            refreshRecommended: result.refreshRecommended,
+            retryable: result.retryable,
+            sessionId,
+            threadId: result.thread?.id,
+            turnId: result.turn?.id
+          }, "Vibe64 assistant message delivery failed.");
+        }
+        return result;
+      } catch (error) {
+        logOperationalEvent(logger, "warn", {
+          code: error?.code,
+          component: "vibe64.agent_message",
+          durationMs: Date.now() - startedAt,
+          error,
+          event: "vibe64.agent_message.delivery_failed",
+          messageId: input.messageId,
+          sessionId
+        }, "Vibe64 assistant message delivery failed.");
+        throw error;
+      }
     },
 
     ensureAgentSession(sessionId, options = {}) {

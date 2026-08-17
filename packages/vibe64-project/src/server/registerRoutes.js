@@ -15,6 +15,7 @@ import {
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEnvReadInputValidator,
+  projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
   projectTemplateParamsValidator,
@@ -23,6 +24,7 @@ import {
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
 function registerRoutes(http, {
+  project = null,
   projectContext = null,
   routeSurface = "",
   routeRelativePath = ""
@@ -71,6 +73,22 @@ function registerRoutes(http, {
     query: projectEnvReadInputValidator,
     summary: "Read project Env values."
   });
+  routes.serviceRoute("POST", "/env/reveal", {
+    body: projectEnvSecretRevealInputValidator,
+    statusCode: envSecretRevealStatusCode,
+    summary: "Reveal one project development secret to the Vibe64 owner."
+  }, async (request, reply) => {
+    if (!project || typeof project.revealEnvSecret !== "function") {
+      throw new TypeError("Project Env secret reveal requires vibe64.project.");
+    }
+    reply
+      .header("cache-control", "no-store")
+      .header("pragma", "no-cache");
+    return project.revealEnvSecret({
+      ...routes.requestBody(request),
+      vibe64User: request.vibe64User || null
+    });
+  });
   routes.actionRoute("PUT", "/env/user-values", {
     actionId: ACTION_SAVE_ENV_USER_VALUES,
     body: projectEnvUserValuesInputValidator,
@@ -97,6 +115,19 @@ function registerRoutes(http, {
     buildInput: routes.requestBody,
     summary: "Save project-local managed app identities."
   });
+}
+
+function envSecretRevealStatusCode(response = {}) {
+  if (response?.ok === true) {
+    return 200;
+  }
+  if (response?.code === "vibe64_owner_required") {
+    return 403;
+  }
+  if (response?.code === "vibe64_env_variable_not_found") {
+    return 404;
+  }
+  return 400;
 }
 
 function withUser(request, input = {}) {

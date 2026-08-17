@@ -132,9 +132,14 @@
         editable-title="User values"
         :environment-label="environmentLabel"
         :records="records"
+        :revealed-secrets="revealedSecrets"
         :save-busy="saveBusy"
+        :secret-reveal-busy-key="secretRevealBusyKey"
+        secret-reveal-enabled
         system-title="System values"
+        @hide-secret="hideSecret"
         @remove-record="requestRemoveRecord"
+        @reveal-secret="revealSecret"
         @save-record="saveRecord"
       />
     </template>
@@ -180,19 +185,22 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import RuntimeConfigRecordsView from "@/components/studio/RuntimeConfigRecordsView.vue";
+import { useRuntimeConfigSecretReveal } from "@/composables/useRuntimeConfigSecretReveal.js";
 import {
   VIBE64_SURFACE_ID
 } from "@/lib/vibe64RequestConfig.js";
 import {
   ENV_ENDPOINT,
+  ENV_SECRET_REVEAL_ENDPOINT,
   ENV_USER_VALUES_ENDPOINT,
   VIBE64_PROJECT_CHANGED_EVENT,
+  VIBE64_ENV_SECRET_REVEAL_API_SUFFIX,
   VIBE64_ENV_USER_VALUES_API_SUFFIX,
   envQueryKey
 } from "@/lib/studioGateApi.js";
@@ -258,6 +266,44 @@ const saveCommand = useCommand({
   writeMethod: "PUT"
 });
 
+const revealCommand = useCommand({
+  access: "never",
+  apiSuffix: VIBE64_ENV_SECRET_REVEAL_API_SUFFIX,
+  buildCommandOptions: () => ({
+    method: "POST",
+    path: ENV_SECRET_REVEAL_ENDPOINT
+  }),
+  buildRawPayload: (_model, { context }) => ({
+    environment: PROJECT_ENVIRONMENT,
+    key: context.key,
+    ...(selectedSessionId.value ? { sessionId: selectedSessionId.value } : {})
+  }),
+  fallbackRunError: "Env secret could not be revealed.",
+  messages: {
+    error: "Env secret could not be revealed."
+  },
+  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+  placementSource: "vibe64.env.secret.reveal",
+  suppressSuccessMessage: true,
+  surfaceId: VIBE64_SURFACE_ID,
+  writeMethod: "POST"
+});
+
+const {
+  clearRevealedSecrets,
+  hideSecret,
+  revealedSecrets,
+  revealSecret,
+  secretRevealBusyKey
+} = useRuntimeConfigSecretReveal({
+  async revealValue(key) {
+    const response = await revealCommand.run({ key });
+    return response?.ok === false ? null : response?.value;
+  }
+});
+
+watch([projectSlug, selectedSessionId], clearRevealedSecrets);
+
 const env = computed(() => envResource.data.value?.env || {});
 const envConfigSourceLabel = computed(() => String(env.value?.configSource?.label || ""));
 const envLoading = computed(() => envResource.isLoading.value === true);
@@ -313,6 +359,7 @@ function selectExpectedRecord(record = {}) {
 }
 
 async function refresh() {
+  clearRevealedSecrets();
   await envResource.reload();
 }
 
@@ -373,6 +420,7 @@ async function saveNewValue() {
 }
 
 async function saveValues(values = {}) {
+  clearRevealedSecrets();
   await saveCommand.run({
     values
   });

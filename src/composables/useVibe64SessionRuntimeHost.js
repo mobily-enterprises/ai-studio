@@ -19,6 +19,7 @@ import {
   VIBE64_SURFACE_ID,
   vibe64SessionPath
 } from "@/lib/vibe64SessionRequestConfig.js";
+import { vibe64ApiResponseError } from "@/lib/vibe64ApiResponses.js";
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
@@ -256,10 +257,16 @@ function useVibe64SessionRuntimeHost(props, emit) {
           { body, method: "POST", signal }
         );
         void refreshSessionData().catch(() => null);
-        return result?.ok !== false;
-      } catch {
+        if (result?.ok === false) {
+          throw new Error(vibe64ApiResponseError(result, "Message could not be sent."));
+        }
+        return true;
+      } catch (error) {
         void refreshSessionData().catch(() => null);
-        return false;
+        if (controller.signal.aborted) {
+          return false;
+        }
+        throw error;
       } finally {
         if (messageId && pendingMessageControllers.get(messageId) === controller) {
           pendingMessageControllers.delete(messageId);

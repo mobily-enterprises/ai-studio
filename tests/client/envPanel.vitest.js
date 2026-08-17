@@ -39,6 +39,17 @@ describe("Env panel", () => {
     expect(source).toMatch(/grid-template-columns:\s*minmax\(7rem, 1fr\) auto auto/u);
   });
 
+  it("reveals every present secret through the shared record view with row loading", () => {
+    const panel = componentSource("src/components/studio/EnvPanel.vue");
+    const table = componentSource("src/components/studio/RuntimeConfigRecordsTable.vue");
+
+    expect(panel).toContain("secret-reveal-enabled");
+    expect(panel).toContain(':secret-reveal-busy-key="secretRevealBusyKey"');
+    expect(panel).toContain('@reveal-secret="revealSecret"');
+    expect(table).toContain("v-if=\"secretRevealEnabled && record.valuePresent\"");
+    expect(table).toContain(':loading="secretRevealBusyKey === record.key"');
+  });
+
   it("keeps the dashboard rail compact", () => {
     const source = componentSource("src/components/SectionContainerShell.vue");
 

@@ -375,9 +375,12 @@ function createService({
           session,
           vibe64User: input.vibe64User || null
         });
+        const accepted = result?.ok !== false;
         await publishSessionChanged(sessionId, {
           originId: text(input.originId),
-          reason: "session-agent-message-accepted",
+          reason: accepted
+            ? "session-agent-message-accepted"
+            : "session-agent-message-failed",
           session: await runtime.getSession(sessionId, {
             inspectSource: false
           })
@@ -385,7 +388,7 @@ function createService({
         return {
           ...result,
           messageId,
-          ok: result?.ok !== false,
+          ok: accepted,
           sessionId
         };
       } catch (error) {

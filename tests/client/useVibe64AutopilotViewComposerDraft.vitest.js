@@ -273,6 +273,25 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.chatTurns.value.at(-1)?.user?.text).toBe("Try this change.");
   });
 
+  it("shows the server's delivery failure instead of a generic send error", async () => {
+    const sendAgentMessage = vi.fn(async () => {
+      throw new Error("Codex app-server connection closed during thread reconciliation.");
+    });
+    const view = await createView({ sendAgentMessage });
+    view.composerDraft.value = "Continue the import.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+
+    const failedTurn = view.chatTurns.value.at(-1);
+    expect(failedTurn.optimistic).toMatchObject({
+      error: "Codex app-server connection closed during thread reconciliation.",
+      status: "failed"
+    });
+    expect(view.composerError.value).toBe(
+      "Codex app-server connection closed during thread reconciliation."
+    );
+  });
+
   it("exposes only direct non-Git session tools", async () => {
     const diffLoad = vi.fn(async () => true);
     const view = await createView({

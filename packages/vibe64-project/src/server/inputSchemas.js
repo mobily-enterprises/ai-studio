@@ -77,6 +77,22 @@ const projectEnvReadInputValidator = patchSchema({
   }
 });
 
+const projectEnvSecretRevealInputValidator = patchSchema({
+  environment: {
+    type: "string",
+    noTrim: false
+  },
+  key: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
+});
+
 const projectEnvUserValuesInputValidator = patchSchema({
   environment: {
     type: "string",
@@ -117,6 +133,7 @@ export {
   projectDevelopmentDatabaseScopeInputValidator,
   projectCreateInputValidator,
   projectEnvReadInputValidator,
+  projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
   projectSelectInputValidator,

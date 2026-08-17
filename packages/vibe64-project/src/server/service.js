@@ -460,6 +460,42 @@ function createService({
     };
   }
 
+  async function revealEnvSecretState(input = {}) {
+    if (input.vibe64User && input.vibe64User.role !== "owner") {
+      throw vibe64Error(
+        "Only the Vibe64 owner can reveal development secrets.",
+        "vibe64_owner_required"
+      );
+    }
+    const key = normalizeRuntimeConfigKey(input.key);
+    const { config } = await envConfig(input);
+    const record = config.view?.records?.find((candidate) => candidate?.key === key);
+    if (!record) {
+      throw vibe64Error(
+        "That development secret is not available.",
+        "vibe64_env_variable_not_found"
+      );
+    }
+    if (record.secret !== true) {
+      throw vibe64Error(
+        `${key} is not a secret value.`,
+        "vibe64_env_variable_not_secret"
+      );
+    }
+    const value = String(config.values?.[key] ?? "");
+    if (record.valuePresent !== true || !value) {
+      throw vibe64Error(
+        `${key} has no value to reveal.`,
+        "vibe64_env_secret_value_missing"
+      );
+    }
+    return {
+      key,
+      ok: true,
+      value
+    };
+  }
+
   async function saveEnvState(input = {}) {
     const values = input.values && typeof input.values === "object" && !Array.isArray(input.values)
       ? input.values
@@ -732,6 +768,10 @@ function createService({
 
     async readEnv(input = {}) {
       return projectResult(() => readEnvState(input));
+    },
+
+    async revealEnvSecret(input = {}) {
+      return projectResult(() => revealEnvSecretState(input));
     },
 
     async readPreviewApplicationIdentities() {

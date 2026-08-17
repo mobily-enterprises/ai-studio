@@ -166,6 +166,20 @@ test("Env is user-owned and reaches Genesis sessions without an adapter", async 
 
     assert.equal(saved.ok, true);
     assert.equal(saved.env.records.find((record) => record.key === "BOOKS_API_KEY").value, "********");
+    assert.deepEqual(await service.revealEnvSecret({
+      environment: "dev",
+      key: "BOOKS_API_KEY"
+    }), {
+      key: "BOOKS_API_KEY",
+      ok: true,
+      value: "secret-value"
+    });
+    const publicValueReveal = await service.revealEnvSecret({
+      environment: "dev",
+      key: "BOOKS_ORIGIN"
+    });
+    assert.equal(publicValueReveal.code, "vibe64_env_variable_not_secret");
+    assert.equal(publicValueReveal.ok, false);
     const projectRuntimeRoot = service.currentProjectRuntimeRoot();
     assert.notEqual(projectRuntimeRoot, targetRoot);
     assert.equal((await stat(path.join(projectRuntimeRoot, "env", "user-values.json"))).mode & 0o777, 0o600);
@@ -412,6 +426,14 @@ test("a host resource provider satisfies Genesis resources and projects the reso
       valuePresent: true
     }]);
     assert.equal(JSON.stringify(sessionRead).includes("managed-secret"), false);
+    assert.deepEqual(await service.revealEnvSecret({
+      key: "DB_PASSWORD",
+      sessionId: "session-1"
+    }), {
+      key: "DB_PASSWORD",
+      ok: true,
+      value: "managed-secret"
+    });
 
     assert.deepEqual(await service.projectExecutionEnvironment({ sessionId: "session-1" }), {
       DB_CLIENT: "mysql2",
@@ -421,9 +443,9 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
     assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
     assert.match(await readFile(path.join(targetRoot, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
-    assert.equal(providerCalls.length, 2);
-    assert.equal(providerCalls[0].sessionId, "session-1");
-    assert.equal(providerCalls[0].developmentDatabaseScope, "session");
+    assert.equal(providerCalls.length, 3);
+    assert.equal(providerCalls.every((call) => call.sessionId === "session-1"), true);
+    assert.equal(providerCalls.every((call) => call.developmentDatabaseScope === "session"), true);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);
     assert.equal(Object.hasOwn(providerCalls[0], "environment"), false);
