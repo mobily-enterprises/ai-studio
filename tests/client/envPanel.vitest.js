@@ -27,6 +27,9 @@ describe("Env panel", () => {
     expect(settingsSource).toContain("A separate database for each session");
     expect(settingsSource).toContain("One database shared by this project");
     expect(settingsSource).toContain("not supplied to the application as an environment value");
+    expect(settingsSource).toContain("event: VIBE64_SESSION_CHANGED_EVENT");
+    expect(settingsSource).toContain("matches: sessionListRealtimeShouldRefresh");
+    expect(settingsSource).toContain("void resource.reload()");
     expect(settingsSource).not.toContain("NO_WORKTREE_DB");
   });
 

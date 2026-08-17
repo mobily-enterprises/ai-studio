@@ -109,6 +109,14 @@ test("managed development database scope is project state and changes only witho
     });
     assert.equal(blocked.ok, false);
     assert.equal(blocked.errors[0].code, "vibe64_development_database_scope_busy");
+
+    await store.writeStatus("open-session", "abandoned");
+    await store.compactClosedSession("open-session");
+    assert.deepEqual((await service.readSettings()).developmentDatabase, {
+      canChange: true,
+      managed: true,
+      scope: "project"
+    });
   });
 });
 

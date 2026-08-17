@@ -84,10 +84,14 @@ import { computed, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
+import {
+  sessionListRealtimeShouldRefresh
+} from "@/composables/useVibe64SessionData.js";
 import {
   DEVELOPMENT_DATABASE_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
@@ -98,6 +102,9 @@ import {
 import {
   VIBE64_SURFACE_ID
 } from "@/lib/vibe64RequestConfig.js";
+import {
+  VIBE64_SESSION_CHANGED_EVENT
+} from "@/lib/vibe64SessionRequestConfig.js";
 
 const projectSlug = useVibe64ProjectSlug();
 const scopeDraft = ref("session");
@@ -155,6 +162,14 @@ watch(() => developmentDatabase.value.scope, (scope) => {
   }
 }, {
   immediate: true
+});
+
+useRealtimeEvent({
+  event: VIBE64_SESSION_CHANGED_EVENT,
+  matches: sessionListRealtimeShouldRefresh,
+  onEvent() {
+    void resource.reload();
+  }
 });
 
 async function refresh() {
