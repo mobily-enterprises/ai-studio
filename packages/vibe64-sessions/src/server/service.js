@@ -219,6 +219,9 @@ function createService({
         const session = await runtime.createSession({
           metadata: {
             created_by: text(input.vibe64User?.username || input.vibe64User?.name)
+          },
+          sourceContext: {
+            vibe64User: input.vibe64User || null
           }
         });
         const setup = await setupRunner.start({

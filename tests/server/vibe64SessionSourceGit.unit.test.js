@@ -9,8 +9,12 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  createSessionSource
+  createSessionSource,
+  githubSourceCommandOptions
 } from "../../packages/vibe64-terminals/src/server/sessionSource.js";
+import {
+  VIBE64_GITHUB_ACCOUNT_MODE_ENV
+} from "../../packages/vibe64-execution/src/server/credentialHomes.js";
 import {
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
@@ -122,6 +126,30 @@ test("Vibe64 creates a GitHub session from the canonical remote instead of the s
     assert.equal(context.metadata.base_commit, canonicalCommit);
     assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "canonical");
     assert.equal(await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]), staleCommit);
+  });
+});
+
+test("hosted GitHub session cloning uses the requesting user's credential transport", () => {
+  const options = githubSourceCommandOptions({
+    gid: 1001,
+    home: "/home/ada",
+    uid: 1001,
+    username: "ada"
+  }, {
+    [VIBE64_GITHUB_ACCOUNT_MODE_ENV]: "user"
+  });
+
+  assert.deepEqual(options, {
+    actor: "named-user",
+    credentialHome: {
+      gid: 1001,
+      home: "/home/ada",
+      scope: "user",
+      uid: 1001,
+      username: "ada"
+    },
+    gitTransport: "github-https",
+    userKey: "ada"
   });
 });
 

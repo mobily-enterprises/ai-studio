@@ -20,8 +20,11 @@ test("plain runtime creates a Genesis session and awaits source materialization"
   await withTemporaryRoot(async (targetRoot) => {
     const calls = [];
     const runtime = new Vibe64SessionRuntime({
-      createSessionSource: async ({ session, store }) => {
-        calls.push(session.sessionId);
+      createSessionSource: async ({ session, store, vibe64User }) => {
+        calls.push({
+          sessionId: session.sessionId,
+          vibe64User
+        });
         const metadata = sourceMetadata(targetRoot, session.sessionId);
         await mkdir(metadata.source_path, {
           recursive: true
@@ -34,10 +37,20 @@ test("plain runtime creates a Genesis session and awaits source materialization"
     });
 
     const created = await runtime.createSession({
-      sessionId: "plain-session"
+      sessionId: "plain-session",
+      sourceContext: {
+        vibe64User: {
+          username: "ada"
+        }
+      }
     });
 
-    assert.deepEqual(calls, ["plain-session"]);
+    assert.deepEqual(calls, [{
+      sessionId: "plain-session",
+      vibe64User: {
+        username: "ada"
+      }
+    }]);
     assert.equal(created.companion.id, "genesis");
     assert.equal(created.sourcePath, sourcePath(targetRoot, "plain-session"));
     assert.equal(created.sourceReady, true);

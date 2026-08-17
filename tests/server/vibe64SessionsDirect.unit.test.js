@@ -316,6 +316,7 @@ test("closing a session releases its managed resources after terminals stop", as
 
 test("new sessions publish running workspace preparation and its eventual result", async () => {
   const publications = [];
+  const sessionCreationInputs = [];
   let finishSetup;
   const session = {
     sessionId: "session-1",
@@ -325,7 +326,8 @@ test("new sessions publish running workspace preparation and its eventual result
     }
   };
   const runtime = {
-    async createSession() {
+    async createSession(input) {
+      sessionCreationInputs.push(input);
       return session;
     },
     async getSession() {
@@ -367,8 +369,25 @@ test("new sessions publish running workspace preparation and its eventual result
     }
   });
 
-  const created = await service.createSession({ originId: "tab:test" });
+  const vibe64User = {
+    gid: 1001,
+    home: "/home/ada",
+    uid: 1001,
+    username: "ada"
+  };
+  const created = await service.createSession({
+    originId: "tab:test",
+    vibe64User
+  });
   assert.equal(created.workspaceSetup.status, "running");
+  assert.deepEqual(sessionCreationInputs, [{
+    metadata: {
+      created_by: "ada"
+    },
+    sourceContext: {
+      vibe64User
+    }
+  }]);
   assert.equal(publications[0][1].reason, "session-created");
   assert.equal(publications[0][1].session.workspaceSetup.status, "running");
 

@@ -17,6 +17,10 @@ import {
   targetSessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
+  GITHUB_ACCOUNT_MODE_LOCAL,
+  VIBE64_GITHUB_ACCOUNT_MODE_ENV,
+  githubCredentialContext,
+  normalizeGithubAccountMode,
   runVibe64Command
 } from "@local/vibe64-execution/server";
 
@@ -26,19 +30,27 @@ function sourceError(message = "", code = "vibe64_session_source_failed") {
   return vibe64Error(message || "Vibe64 could not create the session source.", code);
 }
 
-async function runGit(cwd = "", args = [], allowedRoots = []) {
+async function runGit(cwd = "", args = [], allowedRoots = [], {
+  actor = "daemon",
+  credentialHome = null,
+  gitTransport = "none",
+  userKey = ""
+} = {}) {
   const result = await runVibe64Command({
-    actor: "daemon",
+    actor,
     allowedRoots,
     args,
     command: "git",
+    ...(credentialHome ? { credentialHome } : {}),
     cwd,
     envPolicy: "project",
     gitSafeDirectories: allowedRoots,
+    gitTransport,
     mode: "capture",
-    purpose: "source",
-    runtimes: ["git"],
-    timeout: 60_000
+    purpose: gitTransport === "github-https" ? "github" : "source",
+    runtimes: gitTransport === "github-https" ? ["git", "gh"] : ["git"],
+    timeout: 60_000,
+    ...(userKey ? { userKey } : {})
   });
   if (result?.ok !== true) {
     throw sourceError(
@@ -47,6 +59,37 @@ async function runGit(cwd = "", args = [], allowedRoots = []) {
     );
   }
   return normalizeText(result.stdout || result.output);
+}
+
+function githubSourceCommandOptions(vibe64User = null, env = process.env) {
+  const accountMode = normalizeGithubAccountMode(
+    env?.[VIBE64_GITHUB_ACCOUNT_MODE_ENV],
+    GITHUB_ACCOUNT_MODE_LOCAL
+  );
+  const context = githubCredentialContext({
+    vibe64User
+  }, {
+    accountMode
+  });
+  if (context?.ok === false) {
+    throw sourceError(
+      context.error || "Connect GitHub before creating a session from this project.",
+      context.code || "vibe64_session_source_github_credentials_required"
+    );
+  }
+  const actor = accountMode === GITHUB_ACCOUNT_MODE_LOCAL ? "daemon" : "named-user";
+  return {
+    actor,
+    credentialHome: {
+      gid: context.gid,
+      home: context.home,
+      scope: context.scope,
+      uid: context.uid,
+      username: context.username
+    },
+    gitTransport: "github-https",
+    userKey: actor === "named-user" ? context.username : ""
+  };
 }
 
 async function optionalGitOutput(cwd = "", args = [], allowedRoots = []) {
@@ -143,6 +186,7 @@ function canonicalProjectSource(project = {}, targetRoot = "") {
 async function cloneCanonicalSource({
   branch = "",
   cacheRoot = "",
+  commandOptions = {},
   source = "",
   sourceParent = "",
   sourcePath = ""
@@ -161,7 +205,7 @@ async function cloneCanonicalSource({
     "--branch", branch,
     source,
     sourcePath
-  ], roots);
+  ], roots, commandOptions);
   const commit = await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], roots);
   return {
     branch,
@@ -182,10 +226,12 @@ async function attachSessionSource(store, sessionId = "", metadata = {}) {
 }
 
 async function createSessionSource({
+  env = process.env,
   project = {},
   runtime,
   session = {},
-  store
+  store,
+  vibe64User = null
 } = {}) {
   const sessionId = normalizeText(session.sessionId || session.id);
   const targetRoot = normalizeText(runtime?.targetRoot || session.targetRoot);
@@ -244,6 +290,9 @@ async function createSessionSource({
       baseline = await cloneCanonicalSource({
         branch: canonical.branch,
         cacheRoot: canonical.cacheRoot,
+        commandOptions: canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
+          ? githubSourceCommandOptions(vibe64User, env)
+          : {},
         source: canonical.source,
         sourceParent,
         sourcePath
@@ -279,5 +328,6 @@ async function createSessionSource({
 }
 
 export {
-  createSessionSource
+  createSessionSource,
+  githubSourceCommandOptions
 };

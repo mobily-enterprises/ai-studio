@@ -155,6 +155,7 @@ class Vibe64SessionRuntime {
   async createSession({
     metadata = {},
     sessionId = "",
+    sourceContext = {},
     status = VIBE64_SESSION_STATUS.ACTIVE
   } = {}) {
     let session = await this.store.createSession({
@@ -166,6 +167,7 @@ class Vibe64SessionRuntime {
     try {
       if (this.createSessionSource) {
         await this.createSessionSource({
+          ...(sourceContext && typeof sourceContext === "object" ? sourceContext : {}),
           runtime: this,
           session,
           store: this.store
