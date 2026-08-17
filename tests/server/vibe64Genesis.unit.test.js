@@ -155,6 +155,36 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
   });
 });
 
+test("Vibe64 keeps its installed Stack catalog available for a migrated project prompt", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await writeFile(
+      path.join(projectRoot, "genesis", "blueprint.md"),
+      "# Blueprint\n\nPeople manage an existing application.\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(projectRoot, "genesis", "stack.md"),
+      "# Stack\n\n## Components\n- `nodejs`\n- `jskit`\n- `vue`\n",
+      "utf8"
+    );
+    await writeFile(path.join(projectRoot, "app.js"), "export const app = true;\n", "utf8");
+
+    const rendered = await renderGenesisPrompt({
+      input: {
+        conversationRequest: "Continue the existing work."
+      },
+      projectRoot
+    });
+
+    assert.equal(rendered.context.genesis, true);
+    assert.equal(rendered.context.task, "work");
+    assert.match(rendered.prompt, /Continue the existing work\./u);
+    assert.match(rendered.prompt, /SELECTED STACK GUIDANCE/u);
+  });
+});
+
 test("Genesis owns the opening conversation for an existing uninitialized project", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
