@@ -7,6 +7,12 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
+  PROJECT_REPOSITORY_MODE_GITHUB,
+  PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
+  PROJECT_REPOSITORY_MODE_MANAGED_GIT,
+  normalizeRepositoryMode
+} from "@local/vibe64-core/server/projectRepository";
+import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
   targetSessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
@@ -51,7 +57,7 @@ async function optionalGitOutput(cwd = "", args = [], allowedRoots = []) {
   }
 }
 
-async function ensureProjectBaseline(targetRoot = "") {
+async function ensureLocalProjectBaseline(targetRoot = "") {
   const roots = [targetRoot];
   const gitDirectory = await optionalGitOutput(targetRoot, ["rev-parse", "--git-dir"], roots);
   if (!gitDirectory) {
@@ -83,6 +89,87 @@ async function ensureProjectBaseline(targetRoot = "") {
   };
 }
 
+function canonicalProjectSource(project = {}, targetRoot = "") {
+  const repository = project?.repository && typeof project.repository === "object"
+    ? project.repository
+    : {};
+  const mode = normalizeRepositoryMode(project.repositoryMode || repository.mode);
+  const branch = normalizeText(repository.defaultBranch);
+  if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
+    const github = project.githubRepository || repository.github || {};
+    const remoteUrl = normalizeText(github.cloneUrl);
+    if (!remoteUrl || !branch) {
+      throw sourceError(
+        "The GitHub project does not declare a complete canonical repository and default branch.",
+        "vibe64_session_source_canonical_repository_missing"
+      );
+    }
+    return {
+      branch,
+      cacheRoot: targetRoot,
+      mode,
+      remoteUrl,
+      source: remoteUrl
+    };
+  }
+  if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
+    const repositoryPath = normalizeText(project.canonicalRepositoryPath);
+    if (!repositoryPath || !branch) {
+      throw sourceError(
+        "The Vibe64 Git project does not declare a complete canonical repository and default branch.",
+        "vibe64_session_source_canonical_repository_missing"
+      );
+    }
+    return {
+      branch,
+      cacheRoot: targetRoot,
+      mode,
+      remoteUrl: repositoryPath,
+      source: repositoryPath
+    };
+  }
+  if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+    return {
+      mode,
+      source: targetRoot
+    };
+  }
+  throw sourceError(
+    "The project does not declare whether its canonical source is GitHub, Vibe64 Git, or local source.",
+    "vibe64_session_source_repository_mode_missing"
+  );
+}
+
+async function cloneCanonicalSource({
+  branch = "",
+  cacheRoot = "",
+  source = "",
+  sourceParent = "",
+  sourcePath = ""
+} = {}) {
+  const roots = [cacheRoot, source, sourceParent, sourcePath]
+    .map(normalizeText)
+    .filter((value) => path.isAbsolute(value));
+  const referenceArgs = cacheRoot && await pathExists(path.join(cacheRoot, ".git"))
+    ? ["--reference-if-able", cacheRoot, "--dissociate"]
+    : [];
+  await runGit(sourceParent, [
+    "clone",
+    "--no-hardlinks",
+    ...referenceArgs,
+    "--single-branch",
+    "--branch", branch,
+    source,
+    sourcePath
+  ], roots);
+  const commit = await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], roots);
+  return {
+    branch,
+    commit,
+    remoteUrl: source
+  };
+}
+
 async function attachSessionSource(store, sessionId = "", metadata = {}) {
   const write = async () => {
     await Promise.all(Object.entries(metadata).map(([name, value]) => (
@@ -95,6 +182,7 @@ async function attachSessionSource(store, sessionId = "", metadata = {}) {
 }
 
 async function createSessionSource({
+  project = {},
   runtime,
   session = {},
   store
@@ -124,12 +212,17 @@ async function createSessionSource({
   const sourcePath = targetSessionSourcePath(sourceRoot, sessionId);
   const sourceParent = path.dirname(sourcePath);
   const branch = `${SESSION_BRANCH_PREFIX}${sessionId}`;
-  const baseline = await ensureProjectBaseline(targetRoot);
+  const canonical = canonicalProjectSource(project, targetRoot);
+  let baseline = canonical.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+    ? await ensureLocalProjectBaseline(targetRoot)
+    : null;
   await mkdir(sourceParent, {
     recursive: true
   });
 
-  const sourceRoots = [targetRoot, sourceParent, sourcePath];
+  const sourceRoots = [targetRoot, canonical.source, sourceParent, sourcePath]
+    .map(normalizeText)
+    .filter((value) => path.isAbsolute(value));
   const existingTopLevel = await optionalGitOutput(sourcePath, ["rev-parse", "--show-toplevel"], sourceRoots);
   if (existingTopLevel && path.resolve(existingTopLevel) !== path.resolve(sourcePath)) {
     throw sourceError(
@@ -138,33 +231,48 @@ async function createSessionSource({
     );
   }
   if (!existingTopLevel) {
-    await runGit(sourceParent, [
-      "clone",
-      "--no-hardlinks",
-      "--single-branch",
-      "--branch", baseline.branch,
-      targetRoot,
-      sourcePath
-    ], sourceRoots);
+    if (canonical.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+      await runGit(sourceParent, [
+        "clone",
+        "--no-hardlinks",
+        "--single-branch",
+        "--branch", baseline.branch,
+        targetRoot,
+        sourcePath
+      ], sourceRoots);
+    } else {
+      baseline = await cloneCanonicalSource({
+        branch: canonical.branch,
+        cacheRoot: canonical.cacheRoot,
+        source: canonical.source,
+        sourceParent,
+        sourcePath
+      });
+    }
   }
-  await runGit(sourcePath, ["checkout", "-B", branch, baseline.commit], sourceRoots);
-  if (baseline.remoteUrl) {
-    await runGit(sourcePath, ["remote", "set-url", "origin", baseline.remoteUrl], sourceRoots);
+  const resolvedBaseline = baseline || {
+    branch: canonical.branch,
+    commit: await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], sourceRoots),
+    remoteUrl: canonical.remoteUrl
+  };
+  await runGit(sourcePath, ["checkout", "-B", branch, resolvedBaseline.commit], sourceRoots);
+  if (resolvedBaseline.remoteUrl) {
+    await runGit(sourcePath, ["remote", "set-url", "origin", resolvedBaseline.remoteUrl], sourceRoots);
   }
   await attachSessionSource(store, sessionId, {
-    base_branch: baseline.branch,
-    base_commit: baseline.commit,
+    base_branch: resolvedBaseline.branch,
+    base_commit: resolvedBaseline.commit,
     branch,
     main_checkout_root: targetRoot,
-    source_default_branch: baseline.branch,
+    source_default_branch: resolvedBaseline.branch,
     source_kind: "session_clone",
     source_path: sourcePath,
     source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
-    source_remote_url: baseline.remoteUrl
+    source_remote_url: resolvedBaseline.remoteUrl
   });
   return {
     branch,
-    commit: baseline.commit,
+    commit: resolvedBaseline.commit,
     ok: true,
     sourcePath
   };

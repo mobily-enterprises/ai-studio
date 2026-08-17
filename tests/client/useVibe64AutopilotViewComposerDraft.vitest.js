@@ -301,6 +301,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
 
     expect(view.sessionToolControls.value.map((tool) => tool.id)).toEqual([
+      "info",
       "editor",
       "system",
       "diff",
@@ -308,8 +309,15 @@ describe("useVibe64AutopilotView direct chat", () => {
     ]);
     expect(view.sessionToolControls.value.map((tool) => tool.id)).not.toContain("session-details");
 
+    expect(view.selectSessionTool("info")).toBe(true);
+    await nextTick();
+    expect(view.dashboardRouteVisible.value).toBe(true);
+    expect(router.push).toHaveBeenCalledWith("/app/project/chat-test/dashboard/session");
+
+    router.push.mockClear();
     expect(view.selectSessionTool("diff")).toBe(true);
     await nextTick();
+    expect(view.dashboardRouteVisible.value).toBe(false);
     expect(diffLoad).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith("/app/project/chat-test/dashboard/diff");
   });

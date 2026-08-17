@@ -752,8 +752,11 @@ function createService({
   }
 
   const service = {
-    createSessionSource(input = {}) {
-      return createManagedSessionSource(input);
+    async createSessionSource(input = {}) {
+      return createManagedSessionSource({
+        ...input,
+        project: await projectService.readCurrentProject()
+      });
     },
 
     prepareWorkspaceSetup(sessionId, options = {}) {
