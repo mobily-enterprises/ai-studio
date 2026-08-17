@@ -66,6 +66,52 @@ test("a catalog project can be created and selected without project-type setup",
   });
 });
 
+test("managed development database scope is project state and changes only without open sessions", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectsRoot = path.join(temporaryRoot, "projects");
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: projectsRoot,
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const service = createService({
+      env: {},
+      projectContext
+    });
+    await service.createProject({ name: "Shared catalogue" });
+    service.setResourceEnvironmentProvider({
+      async environmentForResources() {
+        return { environment: {} };
+      },
+      managedDevelopmentDatabase: true
+    });
+
+    const initial = await service.readSettings();
+    assert.deepEqual(initial.developmentDatabase, {
+      canChange: true,
+      managed: true,
+      scope: "session"
+    });
+    const saved = await service.saveDevelopmentDatabaseScope({
+      scope: "project"
+    });
+    assert.equal(saved.ok, true);
+    assert.equal(saved.scope, "project");
+
+    const store = await service.createSessionStore();
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "open-session"
+    });
+    const blocked = await service.saveDevelopmentDatabaseScope({
+      scope: "session"
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.errors[0].code, "vibe64_development_database_scope_busy");
+  });
+});
+
 test("the project service exposes the selected session source without leaking its storage layout", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);
@@ -274,6 +320,7 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
     const released = [];
     service.setResourceEnvironmentProvider({
+      managedDevelopmentDatabase: true,
       async environmentForResources(input) {
         providerCalls.push(input);
         return {
@@ -376,6 +423,7 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.match(await readFile(path.join(targetRoot, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
     assert.equal(providerCalls.length, 2);
     assert.equal(providerCalls[0].sessionId, "session-1");
+    assert.equal(providerCalls[0].developmentDatabaseScope, "session");
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);
     assert.equal(Object.hasOwn(providerCalls[0], "environment"), false);
@@ -383,6 +431,7 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.deepEqual(await service.releaseSessionResources({ sessionId: "session-1" }), { ok: true });
     assert.equal(released.length, 1);
     assert.equal(released[0].sessionId, "session-1");
+    assert.equal(released[0].developmentDatabaseScope, "session");
   });
 });
 

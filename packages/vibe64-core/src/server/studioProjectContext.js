@@ -313,6 +313,9 @@ function workspaceProjectRecord({
           projectRuntimeRoot
         })
       : "",
+    developmentDatabaseScope: normalizeDevelopmentDatabaseScope(
+      metadata.developmentDatabaseScope
+    ),
     path: resolvedPath,
     projectLocalRoot: projectRuntimeRoot,
     projectRoot: resolvedPath,
@@ -359,8 +362,25 @@ function projectMetadataFromInput(input = {}, {
   });
   return {
     ...repositoryMetadata,
+    ...(Object.hasOwn(input, "developmentDatabaseScope")
+      ? {
+          developmentDatabaseScope: normalizeDevelopmentDatabaseScope(
+            input.developmentDatabaseScope
+          )
+        }
+      : {}),
     ...(input?.deletion ? { deletion: normalizeProjectDeletion(input.deletion) } : {})
   };
+}
+
+function normalizeDevelopmentDatabaseScope(value = "session") {
+  const scope = String(value || "session").trim();
+  if (!["project", "session"].includes(scope)) {
+    const error = new Error(`Invalid development database scope: ${scope || "(empty)"}.`);
+    error.code = "vibe64_development_database_scope_invalid";
+    throw error;
+  }
+  return scope;
 }
 
 function normalizeProjectMetadata(metadata = {}) {
@@ -376,6 +396,7 @@ function normalizeProjectMetadata(metadata = {}) {
     .filter((field) => ![
       "bootstrap",
       "deletion",
+      "developmentDatabaseScope",
       "repository"
     ].includes(field));
   if (unsupportedFields.length > 0) {
@@ -1045,7 +1066,10 @@ function createStudioProjectContext({
     await updateWorkspaceProjectState({ slug }, async (currentMetadata) => {
       const metadata = {
         ...currentMetadata,
-        ...projectMetadataFromInput(input)
+        ...projectMetadataFromInput({
+          ...input,
+          repository: input.repository || currentMetadata.repository
+        })
       };
       if (projectRepositoryView(metadata).repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
         await ensureLocalSourceMainBranch(targetRoot);
@@ -1292,6 +1316,7 @@ export {
   configureStudioProjectContext,
   createStudioProjectContext,
   getStudioProjectContext,
+  normalizeDevelopmentDatabaseScope,
   normalizeProjectSlug,
   pathInsideOrEqual,
   projectSlugFromName,

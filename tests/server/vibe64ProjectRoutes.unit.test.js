@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   ACTION_APPLY_PROJECT_TEMPLATE,
   ACTION_LIST_PROJECT_TEMPLATES,
+  ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES
 } from "../../packages/vibe64-project/src/server/actions.js";
@@ -21,6 +23,76 @@ import {
 function routeHttp(app) {
   return app.http;
 }
+
+test("project settings routes own the development database choice outside Env", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const app = testRouteApp();
+      registerRoutes(routeHttp(app), {
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+
+      const readRoute = findRegisteredRoute(app, {
+        method: "GET",
+        path: `${apiRouteBase}/vibe64/settings`
+      });
+      const saveRoute = findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/settings/development-database`
+      });
+      assert.ok(readRoute);
+      assert.ok(saveRoute);
+      assert.equal(findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/env/development-database`
+      }), null);
+      assert.deepEqual(saveRoute.options.body.schema.patch({ scope: "project" }), {
+        errors: {},
+        validatedObject: {
+          scope: "project"
+        }
+      });
+      const calls = [];
+      const executeAction = async (action) => {
+        calls.push(action);
+        return { ok: true };
+      };
+      await readRoute.handler({
+        input: {
+          query: {}
+        },
+        params: routeProjectParams(),
+        executeAction
+      }, testReply());
+      await saveRoute.handler({
+        body: {
+          scope: "project"
+        },
+        input: {
+          body: {
+            scope: "project"
+          }
+        },
+        params: routeProjectParams(),
+        executeAction
+      }, testReply());
+      assert.deepEqual(calls, [
+        {
+          actionId: ACTION_READ_PROJECT_SETTINGS,
+          input: {}
+        },
+        {
+          actionId: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
+          input: {
+            scope: "project"
+          }
+        }
+      ]);
+    });
+  });
+});
 
 test("Env user value route returns 400 for read-only provider Env writes", async () => {
   await withLocalRequestBypass(async () => {

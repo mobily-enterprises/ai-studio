@@ -491,5 +491,6 @@ function reloadPage() {
   .env-panel__add {
     grid-template-columns: 1fr;
   }
+
 }
 </style>

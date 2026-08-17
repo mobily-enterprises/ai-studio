@@ -2,6 +2,7 @@ import {
   mdiFileCompare,
   mdiFileCodeOutline,
   mdiGraphOutline,
+  mdiInformationOutline,
   mdiRobotOutline
 } from "@mdi/js";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
@@ -10,6 +11,14 @@ const VIBE64_ACTIVE_SESSION_NAV_TARGET = "page.active-session-nav";
 const VIBE64_ACTIVE_SESSION_NAV_OWNER = "vibe64-session";
 
 const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
+  {
+    icon: mdiInformationOutline,
+    id: "info",
+    label: "Session info",
+    order: 100,
+    routeSegment: "session",
+    title: "View paths and Git context for the active session"
+  },
   {
     icon: mdiFileCodeOutline,
     id: "editor",

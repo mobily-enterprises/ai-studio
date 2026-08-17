@@ -57,8 +57,8 @@ test("project and sessions register routes and captured actions during setup", a
   assert.equal(typeof projectOutputs.project.createRuntime, "function");
   assert.equal(projectActions.length, 1);
   assert.equal(projectActions[0].contributorId, "vibe64.project");
-  assert.equal(projectActions[0].actions.length, 9);
-  assert.equal(projectRoutes.length, 9);
+  assert.equal(projectActions[0].actions.length, 11);
+  assert.equal(projectRoutes.length, 11);
   assert.equal(projectActions[0].actions.some((action) => Object.hasOwn(action, "dependencies")), false);
 
   const sessionActions = [];

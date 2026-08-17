@@ -1,10 +1,10 @@
 import { createPlacementRegistry } from "@jskit-ai/shell-web/client/placement";
 import {
   mdiAccountKeyOutline,
+  mdiCogOutline,
   mdiFileCogOutline,
   mdiHeartPulse,
-  mdiHistory,
-  mdiInformationOutline
+  mdiHistory
 } from "@mdi/js";
 import {
   VIBE64_ACTIVE_SESSION_NAV_OWNER,
@@ -122,6 +122,23 @@ function activeSessionNavPlacementVisible({ activeSessionNav } = {}) {
   return activeSessionNav?.visible === true;
 }
 
+addPlacement({
+  id: "vibe64.project-settings.link",
+  target: "page.section-nav",
+  owner: "app-dashboard",
+  kind: "link",
+  surfaces: ["app"],
+  order: 250,
+  props: {
+    label: "Project settings",
+    icon: mdiCogOutline,
+    surface: "app",
+    scopedSuffix: "/project/[slug]/dashboard/settings",
+    unscopedSuffix: "/project/[slug]/dashboard/settings",
+    to: ""
+  }
+});
+
 // jskit:ui-generator.page.link:app:/dashboard/env
 {
   addPlacement({
@@ -154,22 +171,6 @@ addPlacement({
     surface: "app",
     scopedSuffix: "/project/[slug]/dashboard/access",
     unscopedSuffix: "/project/[slug]/dashboard/access",
-    to: ""
-  }
-});
-addPlacement({
-  id: "vibe64.session-info.link",
-  target: "page.section-nav",
-  owner: "app-dashboard",
-  kind: "link",
-  surfaces: ["app"],
-  order: 500,
-  props: {
-    label: "Session info",
-    icon: mdiInformationOutline,
-    surface: "app",
-    scopedSuffix: "/project/[slug]/dashboard/session",
-    unscopedSuffix: "/project/[slug]/dashboard/session",
     to: ""
   }
 });

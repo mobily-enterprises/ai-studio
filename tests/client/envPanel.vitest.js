@@ -19,6 +19,17 @@ describe("Env panel", () => {
     expect(source).toMatch(/\[record\.key\]:\s*\{\s*remove:\s*true/u);
   });
 
+  it("keeps Online database lifetime separate from application Env", () => {
+    const envSource = componentSource("src/components/studio/EnvPanel.vue");
+    const settingsSource = componentSource("src/components/studio/ProjectSettingsPanel.vue");
+
+    expect(envSource).not.toContain("Development database");
+    expect(settingsSource).toContain("A separate database for each session");
+    expect(settingsSource).toContain("One database shared by this project");
+    expect(settingsSource).toContain("not supplied to the application as an environment value");
+    expect(settingsSource).not.toContain("NO_WORKTREE_DB");
+  });
+
   it("uses a compact table without redundant source and status columns", () => {
     const source = componentSource("src/components/studio/RuntimeConfigRecordsTable.vue");
 

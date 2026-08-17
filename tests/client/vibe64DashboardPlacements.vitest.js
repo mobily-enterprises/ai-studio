@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   mdiAccountKeyOutline,
+  mdiCogOutline,
   mdiFileCogOutline,
   mdiHeartPulse,
-  mdiHistory,
-  mdiInformationOutline
+  mdiHistory
 } from "@mdi/js";
 
 import getPlacements, {
@@ -32,18 +32,19 @@ describe("Vibe64 dashboard placements", () => {
       "App access",
       "Env",
       "Health",
-      "Session info",
+      "Project settings",
       "Session History"
     ]));
     expect(labels).not.toContain("Configure");
     expect(labels).not.toContain("Github repository");
     expect(labels).not.toContain("Run");
+    expect(labels).not.toContain("Session info");
     expect(labels).not.toContain("Publish");
     expect(dashboardLinks.map((placement) => [placement.props.label, placement.props.icon])).toEqual(expect.arrayContaining([
       ["App access", mdiAccountKeyOutline],
       ["Env", mdiFileCogOutline],
       ["Health", mdiHeartPulse],
-      ["Session info", mdiInformationOutline],
+      ["Project settings", mdiCogOutline],
       ["Session History", mdiHistory]
     ]));
     for (const placement of dashboardLinks) {
@@ -114,6 +115,7 @@ describe("Vibe64 dashboard placements", () => {
     expect(sessionPlacements.slice(1).map((placement) => placement.props.toolId)).toEqual(
       VIBE64_SESSION_TOOL_DEFINITIONS.map((tool) => tool.id)
     );
+    expect(sessionPlacements.slice(1).map((placement) => placement.props.label)).toContain("Session info");
     expect(sessionPlacements.slice(1).map((placement) => [
       placement.props.toolId,
       placement.props.label,

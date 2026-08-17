@@ -29,6 +29,7 @@ const projectTemplateApplyInputValidator = patchSchema({
   }
 });
 const previewApplicationIdentitiesReadInputValidator = patchSchema({});
+const projectSettingsReadInputValidator = patchSchema({});
 
 const projectTemplateParamsValidator = patchSchema({
   slug: {
@@ -92,6 +93,15 @@ const projectEnvUserValuesInputValidator = patchSchema({
   }
 });
 
+const projectDevelopmentDatabaseScopeInputValidator = patchSchema({
+  scope: {
+    type: "string",
+    enum: ["project", "session"],
+    noTrim: false,
+    required: true
+  }
+});
+
 const previewApplicationIdentitiesInputValidator = patchSchema({
   identities: {
     type: "array",
@@ -104,11 +114,13 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
 });
 
 export {
+  projectDevelopmentDatabaseScopeInputValidator,
   projectCreateInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
   projectSelectInputValidator,
+  projectSettingsReadInputValidator,
   projectTemplateApplyInputValidator,
   projectTemplateParamsValidator,
   projectTemplatesReadInputValidator,

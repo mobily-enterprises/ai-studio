@@ -30,7 +30,8 @@ import {
 } from "@local/vibe64-core/server/core";
 import {
   createStudioProjectContext,
-  getStudioProjectContext
+  getStudioProjectContext,
+  normalizeDevelopmentDatabaseScope
 } from "@local/vibe64-core/server/studioProjectContext";
 import {
   currentProjectLocalRoot,
@@ -96,6 +97,9 @@ function publicProject(project = {}, {
   const slug = context?.slug || project.slug || project.name || path.basename(projectRoot);
   return {
     canonicalRepositoryPath: project.canonicalRepositoryPath || "",
+    developmentDatabaseScope: normalizeDevelopmentDatabaseScope(
+      project.developmentDatabaseScope
+    ),
     githubMirrorPath: project.githubMirrorPath || "",
     ...(project.githubRepository ? { githubRepository: project.githubRepository } : {}),
     name: slug,
@@ -375,6 +379,7 @@ function createService({
     const provided = resourceEnvironmentProvider && source.sessionId && declaration.resources.length > 0
       ? await resourceEnvironmentProvider.environmentForResources({
           components: declaration.components,
+          developmentDatabaseScope: await currentDevelopmentDatabaseScope(),
           projectLocalRoot: selectedProjectRuntimeRoot(),
           resources: declaration.resources,
           serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
@@ -529,6 +534,62 @@ function createService({
     return listed.currentProject || null;
   }
 
+  async function currentDevelopmentDatabaseScope() {
+    const project = await currentProjectState();
+    return normalizeDevelopmentDatabaseScope(project?.developmentDatabaseScope);
+  }
+
+  function managedDevelopmentDatabaseAvailable() {
+    return resourceEnvironmentProvider?.managedDevelopmentDatabase === true;
+  }
+
+  async function developmentDatabaseState() {
+    if (!managedDevelopmentDatabaseAvailable()) {
+      return {
+        managed: false,
+        scope: "external"
+      };
+    }
+    const openSessions = await sessionStore().listSessions({
+      statusGroup: "open"
+    });
+    return {
+      canChange: openSessions.length === 0,
+      ...(openSessions.length > 0
+        ? { disabledReason: "Close all project sessions before changing the development database." }
+        : {}),
+      managed: true,
+      scope: await currentDevelopmentDatabaseScope()
+    };
+  }
+
+  async function saveDevelopmentDatabaseScopeState(input = {}) {
+    if (!managedDevelopmentDatabaseAvailable()) {
+      throw vibe64Error(
+        "This Vibe64 installation does not manage development databases.",
+        "vibe64_managed_development_database_unavailable"
+      );
+    }
+    const openSessions = await sessionStore().listSessions({
+      statusGroup: "open"
+    });
+    if (openSessions.length > 0) {
+      throw vibe64Error(
+        "Close all project sessions before changing the development database.",
+        "vibe64_development_database_scope_busy"
+      );
+    }
+    const slug = path.basename(requireSelectedTargetRoot());
+    await studioProjectContext.updateWorkspaceProjectMetadata({
+      developmentDatabaseScope: normalizeDevelopmentDatabaseScope(input.scope),
+      slug
+    });
+    return {
+      ...(await developmentDatabaseState()),
+      ok: true
+    };
+  }
+
   async function templateContext(input = {}) {
     return {
       env,
@@ -681,6 +742,12 @@ function createService({
       return projectResult(async () => readAvailableProjectTemplates(await templateContext(input)));
     },
 
+    async readSettings() {
+      return projectResult(async () => ({
+        developmentDatabase: await developmentDatabaseState()
+      }));
+    },
+
     async releaseSessionResources(input = {}) {
       const sessionId = String(input.sessionId || "").trim();
       if (!sessionId || typeof resourceEnvironmentProvider?.removeSessionResources !== "function") {
@@ -688,6 +755,7 @@ function createService({
       }
       const source = await sourceForInput({ sessionId });
       return resourceEnvironmentProvider.removeSessionResources({
+        developmentDatabaseScope: await currentDevelopmentDatabaseScope(),
         projectLocalRoot: selectedProjectRuntimeRoot(),
         sessionId,
         serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
@@ -711,6 +779,10 @@ function createService({
 
     async saveEnvUserValues(input = {}) {
       return projectResult(() => saveEnvState(input));
+    },
+
+    async saveDevelopmentDatabaseScope(input = {}) {
+      return projectResult(() => saveDevelopmentDatabaseScopeState(input));
     },
 
     async savePreviewApplicationIdentities(input = {}) {

@@ -4,13 +4,16 @@ import {
   ACTION_LIST_PROJECTS,
   ACTION_LIST_PROJECT_TEMPLATES,
   ACTION_READ_ENV,
+  ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT
 } from "./actions.js";
 import {
   projectCreateInputValidator,
+  projectDevelopmentDatabaseScopeInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
@@ -73,6 +76,16 @@ function registerRoutes(http, {
     body: projectEnvUserValuesInputValidator,
     buildInput: routes.requestBody,
     summary: "Save user-owned project Env values."
+  });
+  routes.actionRoute("GET", "/settings", {
+    actionId: ACTION_READ_PROJECT_SETTINGS,
+    summary: "Read Vibe64-owned project settings."
+  });
+  routes.actionRoute("PUT", "/settings/development-database", {
+    actionId: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
+    body: projectDevelopmentDatabaseScopeInputValidator,
+    buildInput: routes.requestBody,
+    summary: "Choose whether Online manages one development database per session or per project."
   });
   routes.actionRoute("GET", "/preview-identities", {
     actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,

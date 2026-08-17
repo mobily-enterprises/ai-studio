@@ -675,6 +675,44 @@ test("Studio project context accepts repository metadata without retired bootstr
   });
 });
 
+test("Studio project context stores the development database scope without replacing repository metadata", async () => {
+  await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
+    const context = createStudioProjectContext({
+      explicitProjectsRoot: projectsRoot,
+      env: {},
+      home: root
+    });
+    await context.createWorkspaceProjectRecord({
+      repository: {
+        defaultBranch: "main",
+        mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
+      },
+      slug: "shared-data-app"
+    });
+
+    await context.updateWorkspaceProjectMetadata({
+      developmentDatabaseScope: "project",
+      slug: "shared-data-app"
+    });
+
+    const state = await context.readWorkspaceProjectState({
+      slug: "shared-data-app"
+    });
+    const listed = await context.listWorkspaceProjects();
+    assert.equal(state.metadata.developmentDatabaseScope, "project");
+    assert.equal(state.metadata.repository.mode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
+    assert.equal(listed.projects[0].developmentDatabaseScope, "project");
+    await assert.rejects(
+      () => context.updateWorkspaceProjectMetadata({
+        developmentDatabaseScope: "forever",
+        slug: "shared-data-app"
+      }),
+      { code: "vibe64_development_database_scope_invalid" }
+    );
+  });
+});
+
 test("Project repository view reads GitHub metadata only from repository contract", () => {
   const currentView = projectRepositoryView({
     repository: {

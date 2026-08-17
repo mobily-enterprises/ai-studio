@@ -2,10 +2,12 @@ import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions"
 
 import {
   projectCreateInputValidator,
+  projectDevelopmentDatabaseScopeInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
   projectSelectInputValidator,
+  projectSettingsReadInputValidator,
   projectTemplateApplyInputValidator,
   projectTemplatesReadInputValidator,
   previewApplicationIdentitiesInputValidator,
@@ -19,6 +21,8 @@ const ACTION_LIST_PROJECT_TEMPLATES = "vibe64.project.templates.list";
 const ACTION_APPLY_PROJECT_TEMPLATE = "vibe64.project.templates.apply";
 const ACTION_READ_ENV = "vibe64.project.env.read";
 const ACTION_SAVE_ENV_USER_VALUES = "vibe64.project.env.user-values.save";
+const ACTION_READ_PROJECT_SETTINGS = "vibe64.project.settings.read";
+const ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE = "vibe64.project.development-database.scope.save";
 const ACTION_READ_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.read";
 const ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.save";
 const VIBE64_PROJECT_CHANGED_EVENT = "vibe64.project.changed";
@@ -143,6 +147,19 @@ function createProjectActions({ project } = {}) {
       execute: (input) => project.saveEnvUserValues(input)
     }),
     action({
+      id: ACTION_READ_PROJECT_SETTINGS,
+      kind: "query",
+      input: projectSettingsReadInputValidator,
+      execute: () => project.readSettings()
+    }),
+    action({
+      id: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
+      kind: "command",
+      input: projectDevelopmentDatabaseScopeInputValidator,
+      events: [projectChangedEvent()],
+      execute: (input) => project.saveDevelopmentDatabaseScope(input)
+    }),
+    action({
       id: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
       kind: "query",
       input: previewApplicationIdentitiesReadInputValidator,
@@ -164,8 +181,10 @@ export {
   ACTION_LIST_PROJECTS,
   ACTION_LIST_PROJECT_TEMPLATES,
   ACTION_READ_ENV,
+  ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT,
   createProjectActions

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ACTION_CREATE_PROJECT,
   ACTION_READ_ENV,
+  ACTION_READ_PROJECT_SETTINGS,
   ACTION_SAVE_ENV_USER_VALUES,
   createProjectActions
 } from "../../packages/vibe64-project/src/server/actions.js";
@@ -32,6 +33,27 @@ test("Env read action forwards its input", async () => {
   await action.execute(input, {});
 
   assert.deepEqual(calls, [[input]]);
+});
+
+test("project settings read action uses the Vibe64 project settings boundary", async () => {
+  let calls = 0;
+  const action = featureAction({
+    async readSettings() {
+      calls += 1;
+      return {
+        developmentDatabase: {
+          managed: true,
+          scope: "session"
+        },
+        ok: true
+      };
+    }
+  }, ACTION_READ_PROJECT_SETTINGS);
+
+  const result = await action.execute({}, {});
+
+  assert.equal(calls, 1);
+  assert.equal(result.developmentDatabase.scope, "session");
 });
 
 test("project mutations publish first-class action events", async () => {
