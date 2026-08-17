@@ -326,7 +326,7 @@ const props = defineProps({
 
 const emit = defineEmits(["cancel-turn", "edit-turn", "load-more", "open-source-file", "reload", "resend-turn"]);
 
-const THINKING_PREVIEW_LIMIT = 5;
+const THINKING_PREVIEW_LIMIT = 3;
 const DISPLAY_MESSAGE_CACHE_LIMIT = 500;
 const bodyElement = ref(null);
 const bottomElement = ref(null);

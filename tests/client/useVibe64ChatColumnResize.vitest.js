@@ -172,7 +172,7 @@ describe("useVibe64ChatColumnResize", () => {
       "utf8"
     );
 
-    expect(conversation).toContain("THINKING_PREVIEW_LIMIT = 5");
+    expect(conversation).toContain("THINKING_PREVIEW_LIMIT = 3");
     expect(conversation).toContain("DISPLAY_MESSAGE_CACHE_LIMIT = 500");
     expect(conversation).toContain("visibleThinkingMessages(turn, entry)");
     expect(conversation).toContain("entry.messages.slice(-THINKING_PREVIEW_LIMIT)");
