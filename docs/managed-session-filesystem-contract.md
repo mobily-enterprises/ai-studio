@@ -52,6 +52,15 @@ Credentials and filesystem identity are separate concerns. GitHub, database,
 preview-identity, and application credentials must not determine source
 ownership or write access.
 
+Every routine operation inside a managed project/session source runs as the
+workspace daemon (`v64d_<workspace>`). This includes agent commands, Git index
+and worktree operations, package managers, generators, workspace setup, and
+preview processes. A selected human account supplies Git authorship and remote
+authorization; it does not change the Unix identity of the Git process. This
+single-writer rule makes an application-owned `0600` file readable to Git
+without any permission repair and removes cross-identity races from live
+source work.
+
 Before any actor, agent, package manager, generated-file writer, or preview
 watcher starts, every managed project/session source namespace must have:
 
@@ -62,8 +71,11 @@ watcher starts, every managed project/session source namespace must have:
 - inherited default group ACL: `vibe64:rwx`;
 - no access for other users.
 
-The human users allowed to operate on a workspace and its
-`v64d_<workspace>` daemon must be members of `vibe64`. A missing group, missing
+The human users allowed to administer a workspace and its
+`v64d_<workspace>` daemon must be members of `vibe64`. Shared group access
+remains mandatory for maintenance, recovery, and explicit host inspection; it
+is not the routine mutation path and product correctness must not depend on a
+second Unix identity being able to race a live writer. A missing group, missing
 ACL tools, wrong ownership, wrong mode, absent default ACL, or missing group
 membership is a startup failure. It is never repaired after a command.
 
@@ -74,14 +86,18 @@ watcher in an intermediate unsafe state.
 
 ## Required proof
 
-Host verification must cover both identities, not merely inspect shell source:
+Host verification must exercise the credential/filesystem separation, not
+merely inspect shell source:
 
 1. Start or model a watcher as the workspace daemon.
-2. Create and atomically replace a generated source file as the human actor
-   using umask `0022`.
-3. Prove that the daemon can immediately rewrite it.
-4. Repeat the boundary across Git checkout/reset and a generated router file.
-5. Prove newly created directories retain setgid and the mandatory default ACL.
+2. Create a deliberately private (`0600`) source file as that daemon.
+3. Run Git with a human account's authorship and remote authorization while
+   retaining the daemon filesystem identity; prove it can stage the file.
+4. Prove authenticated fetch/push transport does not change the filesystem
+   actor.
+5. Repeat the boundary across Git checkout/reset, an atomic replacement, and a
+   generated router file.
+6. Prove newly created directories retain setgid and the mandatory default ACL.
 
 Preview recovery has a related invariant: a failed preview must offer a working
 fresh-start/retry path. Restart logic must not reject a new terminal merely
@@ -92,7 +108,8 @@ because the previous process has already failed.
 - no recursive `chown`, `chgrp`, `chmod`, or ACL repair after commands;
 - no timing gap between a writer completing and a watcher gaining access;
 - no reliance on a cooperative application umask alone;
-- no single-user assumption for hosted session sources;
+- no routine source mutation under a selected human credential owner's Unix
+  identity;
 - no weakening the project tree to world-readable or world-writable modes;
 - no application-source workaround for a host filesystem defect.
 

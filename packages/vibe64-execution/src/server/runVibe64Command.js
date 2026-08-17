@@ -23,6 +23,7 @@ import {
 } from "./policy/cwdPolicy.js";
 import {
   assertActorHomeEnv,
+  assertManagedSourceFilesystemActor,
   processMatchesActor,
   realUserActorRequiresInstalledHelper
 } from "./policy/permissionPolicy.js";
@@ -50,6 +51,7 @@ async function runVibe64Command(input = {}) {
     const cwd = assertCwdAllowed(request.cwd, {
       allowedRoots: request.allowedRoots
     });
+    assertManagedSourceFilesystemActor(actor, request, cwd);
     const requiresHelper = realUserActorRequiresInstalledHelper(actor);
 
     if (request.mode === "pty") {

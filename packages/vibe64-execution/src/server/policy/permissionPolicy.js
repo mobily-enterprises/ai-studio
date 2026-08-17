@@ -34,6 +34,26 @@ function realUserActorRequiresInstalledHelper(actor = {}, {
   return isManagedWorkspaceRuntime(env) || !processMatchesActor(actor);
 }
 
+function assertManagedSourceFilesystemActor(actor = {}, request = {}, cwd = "") {
+  if (!actor.requiresRealUser) {
+    return;
+  }
+  const sourceRoot = normalizeAbsolutePath(request.session?.targetRoot);
+  const commandCwd = normalizeAbsolutePath(cwd);
+  if (!sourceRoot || !commandCwd) {
+    return;
+  }
+  const relative = path.relative(sourceRoot, commandCwd);
+  if (relative && (relative.startsWith("..") || path.isAbsolute(relative))) {
+    return;
+  }
+  const error = new Error(
+    "Managed session source commands must retain the workspace daemon filesystem identity."
+  );
+  error.code = "vibe64_command_managed_source_real_user_forbidden";
+  throw error;
+}
+
 function assertActorHomeEnv(actor = {}, env = {}) {
   const actorHome = normalizeAbsolutePath(actor.user?.home);
   const envHome = normalizeAbsolutePath(env.HOME);
@@ -50,6 +70,7 @@ function assertActorHomeEnv(actor = {}, env = {}) {
 
 export {
   assertActorHomeEnv,
+  assertManagedSourceFilesystemActor,
   isManagedWorkspaceRuntime,
   realUserActorRequiresInstalledHelper,
   processMatchesActor

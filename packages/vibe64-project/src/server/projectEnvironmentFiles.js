@@ -16,6 +16,8 @@ const GENERATED_ENV_HEADER = [
 ].join("\n");
 const GIT_EXCLUDE_BEGIN = "# BEGIN Vibe64 managed environment files";
 const GIT_EXCLUDE_END = "# END Vibe64 managed environment files";
+const MANAGED_SOURCE_DIRECTORY_MODE = 0o2770;
+const MANAGED_SOURCE_FILE_MODE = 0o660;
 
 function dotenvValue(value = "") {
   const text = String(value ?? "");
@@ -155,21 +157,21 @@ async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
     ""
   ].join("\n");
   if (existing === expected) {
-    await chmod(excludePath, 0o600);
+    await chmod(excludePath, MANAGED_SOURCE_FILE_MODE);
     return;
   }
 
   await mkdir(infoDirectory, {
-    mode: 0o700,
+    mode: MANAGED_SOURCE_DIRECTORY_MODE,
     recursive: true
   });
   const temporaryPath = `${excludePath}.vibe64-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(temporaryPath, expected, {
-      mode: 0o600
+      mode: MANAGED_SOURCE_FILE_MODE
     });
     await rename(temporaryPath, excludePath);
-    await chmod(excludePath, 0o600);
+    await chmod(excludePath, MANAGED_SOURCE_FILE_MODE);
   } catch (error) {
     await rm(temporaryPath, {
       force: true
@@ -191,9 +193,10 @@ async function writeGeneratedDotenv({
   if (existing !== null && !generatedDotenvIsOwned(existing)) {
     preservedPath = await backupPath(filePath, now);
     await rename(filePath, preservedPath);
+    await chmod(preservedPath, MANAGED_SOURCE_FILE_MODE);
   }
   if (existing === expected && !preservedPath) {
-    await chmod(filePath, 0o600);
+    await chmod(filePath, MANAGED_SOURCE_FILE_MODE);
     return {
       changed: false,
       format: "dotenv",
@@ -202,17 +205,17 @@ async function writeGeneratedDotenv({
     };
   }
   await mkdir(path.dirname(filePath), {
-    mode: 0o700,
+    mode: MANAGED_SOURCE_DIRECTORY_MODE,
     recursive: true
   });
   const temporaryPath = `${filePath}.vibe64-${process.pid}-${randomUUID()}`;
   try {
     await writeFile(temporaryPath, expected, {
-      mode: 0o600
+      mode: MANAGED_SOURCE_FILE_MODE
     });
-    await chmod(temporaryPath, 0o600);
+    await chmod(temporaryPath, MANAGED_SOURCE_FILE_MODE);
     await rename(temporaryPath, filePath);
-    await chmod(filePath, 0o600);
+    await chmod(filePath, MANAGED_SOURCE_FILE_MODE);
   } catch (error) {
     await rm(temporaryPath, {
       force: true

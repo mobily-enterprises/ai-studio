@@ -30,7 +30,7 @@ async function temporarySource(t) {
   return root;
 }
 
-test("project environment files are deterministic private Stack projections", async (t) => {
+test("project environment files are deterministic shared-workspace Stack projections", async (t) => {
   const sourceRoot = await temporarySource(t);
   const first = await materializeProjectEnvironmentFiles({
     environment: {
@@ -58,7 +58,7 @@ test("project environment files are deterministic private Stack projections", as
     "DB_PORT=3306",
     ""
   ].join("\n"));
-  assert.equal((await lstat(path.join(sourceRoot, ".env"))).mode & 0o777, 0o600);
+  assert.equal((await lstat(path.join(sourceRoot, ".env"))).mode & 0o777, 0o660);
   assert.equal(await readFile(path.join(sourceRoot, ".git", "info", "exclude"), "utf8"), [
     "# Keep local rules.",
     "",
@@ -68,7 +68,7 @@ test("project environment files are deterministic private Stack projections", as
     "# END Vibe64 managed environment files",
     ""
   ].join("\n"));
-  assert.equal((await lstat(path.join(sourceRoot, ".git", "info", "exclude"))).mode & 0o777, 0o600);
+  assert.equal((await lstat(path.join(sourceRoot, ".git", "info", "exclude"))).mode & 0o777, 0o660);
 });
 
 test("project environment files preserve an unmanaged file before taking ownership", async (t) => {
@@ -87,6 +87,7 @@ test("project environment files preserve an unmanaged file before taking ownersh
     ".env.vibe64-backup-2026-08-15T01-02-03-004Z"
   ));
   assert.equal(await readFile(result.preservedPath, "utf8"), "PERSONAL=true\n");
+  assert.equal((await lstat(result.preservedPath)).mode & 0o777, 0o660);
   assert.match(await readFile(path.join(sourceRoot, ".env"), "utf8"), /DB_HOST=127\.0\.0\.1/u);
 });
 

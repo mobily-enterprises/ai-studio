@@ -18,6 +18,7 @@ import {
 } from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
 import {
   assertActorHomeEnv,
+  assertManagedSourceFilesystemActor,
   isManagedWorkspaceRuntime,
   realUserActorRequiresInstalledHelper
 } from "../../packages/vibe64-execution/src/server/policy/permissionPolicy.js";
@@ -353,6 +354,50 @@ test("execution gateway owner-user actor exposes matching real-user env", async 
     home: currentUser.homedir,
     logname: currentUser.username,
     user: currentUser.username
+  });
+});
+
+test("execution gateway forbids a human filesystem actor inside managed session source", async () => {
+  const currentUser = os.userInfo();
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-source-actor-"));
+  try {
+    const result = await runVibe64Command({
+      actor: "owner-user",
+      allowedRoots: [sourceRoot],
+      command: process.execPath,
+      cwd: sourceRoot,
+      args: ["-e", "console.log('must-not-run')"],
+      session: {
+        sessionId: "session-1",
+        targetRoot: sourceRoot
+      },
+      userKey: currentUser.username
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_command_managed_source_real_user_forbidden");
+    assert.match(result.error, /workspace daemon filesystem identity/u);
+  } finally {
+    await rm(sourceRoot, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("managed source actor policy permits the daemon and rejects a real user", () => {
+  const sourceRoot = path.join(os.tmpdir(), "vibe64-source-policy");
+  assert.doesNotThrow(() => assertManagedSourceFilesystemActor({
+    requiresRealUser: false
+  }, {
+    session: { targetRoot: sourceRoot }
+  }, sourceRoot));
+  assert.throws(() => assertManagedSourceFilesystemActor({
+    requiresRealUser: true
+  }, {
+    session: { targetRoot: sourceRoot }
+  }, path.join(sourceRoot, "nested")), {
+    code: "vibe64_command_managed_source_real_user_forbidden"
   });
 });
 

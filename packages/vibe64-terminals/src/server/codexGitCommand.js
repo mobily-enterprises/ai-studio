@@ -45,6 +45,92 @@ const CODEX_GIT_COMMAND_DIR_NAME = "codex-git-command";
 const CODEX_GIT_COMMAND_WRAPPER_NAMES = Object.freeze(["git", "gh"]);
 const CODEX_GIT_COMMAND_INPUT_MAX_BYTES = 20 * 1024 * 1024;
 const CODEX_GIT_COMMAND_TIMEOUT_MS = 120_000;
+const CODEX_LOCAL_GIT_OPERATIONS = new Set([
+  "add",
+  "am",
+  "apply",
+  "archive",
+  "bisect",
+  "blame",
+  "branch",
+  "bundle",
+  "cat-file",
+  "check-attr",
+  "check-ignore",
+  "check-mailmap",
+  "check-ref-format",
+  "checkout",
+  "cherry",
+  "cherry-pick",
+  "clean",
+  "commit",
+  "config",
+  "describe",
+  "diff",
+  "diff-files",
+  "diff-index",
+  "diff-tree",
+  "fast-export",
+  "fast-import",
+  "for-each-ref",
+  "format-patch",
+  "fsck",
+  "gc",
+  "grep",
+  "hash-object",
+  "help",
+  "index-pack",
+  "init",
+  "log",
+  "ls-files",
+  "ls-tree",
+  "merge",
+  "merge-base",
+  "merge-file",
+  "merge-index",
+  "merge-tree",
+  "mktag",
+  "mktree",
+  "mv",
+  "name-rev",
+  "notes",
+  "prune",
+  "read-tree",
+  "rebase",
+  "reflog",
+  "replace",
+  "reset",
+  "restore",
+  "rev-list",
+  "rev-parse",
+  "rm",
+  "show",
+  "show-branch",
+  "show-ref",
+  "sparse-checkout",
+  "stage",
+  "stash",
+  "status",
+  "switch",
+  "tag",
+  "update-index",
+  "update-ref",
+  "verify-commit",
+  "verify-pack",
+  "verify-tag",
+  "whatchanged",
+  "worktree",
+  "write-tree"
+]);
+const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
+  "-C",
+  "-c",
+  "--exec-path",
+  "--git-dir",
+  "--namespace",
+  "--super-prefix",
+  "--work-tree"
+]);
 const VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV = "VIBE64_CODEX_GIT_COMMAND_SESSION_ID";
 const VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV = "VIBE64_CODEX_GIT_COMMAND_SOCKET";
 const VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV = "VIBE64_CODEX_GIT_COMMAND_TOKEN";
@@ -404,6 +490,83 @@ function gatewayGitIdentityUserKey(session = {}, actor = {}, toolHome = {}) {
     : normalizeText(toolHome.ownerUserKey || actor.actorUserKey);
 }
 
+function gitOperation(args = []) {
+  const values = Array.isArray(args) ? args.map((arg) => String(arg)) : [];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = normalizeText(values[index]);
+    if (!value) {
+      continue;
+    }
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUES.has(value)) {
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--git-dir=") ||
+      value.startsWith("--work-tree=") ||
+      value.startsWith("--namespace=") ||
+      value.startsWith("--exec-path=") ||
+      value.startsWith("--super-prefix=")) {
+      continue;
+    }
+    if (value.startsWith("-")) {
+      continue;
+    }
+    return value;
+  }
+  return "";
+}
+
+function commandRequiresGithubToken(command = "", args = []) {
+  if (normalizeText(command) === "gh") {
+    return true;
+  }
+  const operation = gitOperation(args);
+  return !operation || !CODEX_LOCAL_GIT_OPERATIONS.has(operation);
+}
+
+async function readGithubToken({
+  actor = {},
+  gatewayCommandRunner,
+  session = {},
+  toolHome = {}
+} = {}) {
+  const userKey = gatewayGitIdentityUserKey(session, actor, toolHome);
+  const credentialRoot = normalizeText(toolHome.toolHomeSource);
+  const result = await gatewayCommandRunner({
+    actor: "owner-user",
+    allowedRoots: [credentialRoot],
+    args: ["auth", "token"],
+    command: "gh",
+    cwd: credentialRoot,
+    envPolicy: "auth",
+    gitTransport: "none",
+    mode: "capture",
+    project: {
+      ownerUserKey: toolHome.ownerUserKey
+    },
+    purpose: "github",
+    runtimes: ["gh"],
+    session: {
+      metadata: session.metadata || {},
+      sessionId: actor.sessionId
+    },
+    timeout: CODEX_GIT_COMMAND_TIMEOUT_MS,
+    userKey
+  });
+  const token = result?.ok === true ? normalizeText(result.stdout) : "";
+  if (!token) {
+    return responseError(
+      "GitHub authentication is not ready for this Vibe64 account.",
+      "vibe64_codex_git_command_github_auth_unavailable",
+      { statusCode: 403 }
+    );
+  }
+  return {
+    ok: true,
+    token
+  };
+}
+
 function logGitCommandResult(logger, result = {}, fields = {}) {
   const ok = result?.ok !== false && Number(result?.exitCode || 0) === 0;
   const args = Array.isArray(fields.args) ? fields.args : [];
@@ -485,16 +648,6 @@ function createCodexGitCommandService({
     if (actor.sessionId !== sessionId) {
       return finish(responseError("Codex git command actor belongs to a different session.", "vibe64_codex_git_actor_session_mismatch"), actor);
     }
-    const toolHome = actor.githubRequired === false
-      ? localGitCommandToolHome()
-      : await resolveGithubHomeForStoredActor({
-          accountMode: actor.actorScope,
-          env,
-          ownerUserKey: actor.actorUserKey
-        });
-    if (toolHome.ok === false) {
-      return finish(toolHome, actor);
-    }
     const cwd = validateCommandCwd(input.cwd, actor);
     if (cwd.ok === false) {
       return finish(cwd, actor);
@@ -524,31 +677,59 @@ function createCodexGitCommandService({
         });
       }
     }
+    const requiresGithubToken = actor.githubRequired !== false && commandRequiresGithubToken(command, args);
+    const toolHome = actor.githubRequired === false || !requiresGithubToken
+      ? localGitCommandToolHome()
+      : await resolveGithubHomeForStoredActor({
+          accountMode: actor.actorScope,
+          env,
+          ownerUserKey: actor.actorUserKey
+        });
+    if (toolHome.ok === false) {
+      return finish(toolHome, actor);
+    }
+    const githubToken = requiresGithubToken
+      ? await readGithubToken({
+          actor,
+          gatewayCommandRunner,
+          session,
+          toolHome
+        })
+      : { ok: true, token: "" };
+    if (githubToken.ok === false) {
+      return finish(githubToken, actor);
+    }
     const inputBuffer = normalizeText(input.inputBase64)
       ? Buffer.from(normalizeText(input.inputBase64), "base64")
       : undefined;
     const gatewayUserKey = gatewayGitIdentityUserKey(session, actor, toolHome);
     const result = await gatewayCommandRunner({
-      actor: actor.githubRequired === false ? "app" : "owner-user",
+      actor: "app",
       allowedRoots: [
         actor.targetRoot
       ],
       args,
       command,
       cwd: cwd.cwd,
+      env: command === "gh" && githubToken.token
+        ? { GH_TOKEN: githubToken.token }
+        : {},
       envPolicy: "auth",
       gitSafeDirectories: [
         actor.targetRoot,
         cwd.cwd
       ],
-      gitTransport: actor.githubRequired === false ? "none" : "github-https",
+      gitAuthToken: command === "git" ? githubToken.token : "",
+      gitTransport: command === "git" && githubToken.token ? "github-token" : "none",
       input: inputBuffer,
       mode: "capture",
       project: {
-        ownerUserKey: actor.githubRequired === false ? "" : toolHome.ownerUserKey,
+        ownerUserKey: actor.githubRequired === false
+          ? ""
+          : toolHome.ownerUserKey || actor.actorUserKey,
         tenant: env.VIBE64_WORKSPACE || env.VIBE64_RUNTIME_NAMESPACE || ""
       },
-      purpose: actor.githubRequired === false ? "codex" : "github",
+      purpose: githubToken.token ? "github" : "codex",
       runtimes: ["git", "gh"],
       session: {
         metadata: session.metadata || {},

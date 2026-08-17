@@ -255,14 +255,54 @@ test("Codex rejects gh for a non-GitHub session", async () => {
   });
 });
 
-test("Codex runs GitHub commands as the stored Vibe64 OS actor", async () => {
+test("Codex keeps local Git filesystem work on the daemon identity", async () => {
   await withTemporaryRoot(async (root) => {
     const session = githubSession(root);
     await mkdir(session.metadata.source_path, { recursive: true });
-    let gatewayCall = null;
+    const gatewayCalls = [];
     const service = serviceForSession(session, {
       async runGatewayCommand(request) {
-        gatewayCall = request;
+        gatewayCalls.push(request);
+        return {
+          exitCode: 0,
+          ok: true,
+          stdout: "staged"
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["add", "-A"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    const user = currentOsUser();
+    assert.equal(result.ok, true);
+    assert.equal(gatewayCalls.length, 1);
+    assert.equal(gatewayCalls[0].actor, "app");
+    assert.equal(gatewayCalls[0].gitTransport, "none");
+    assert.equal(gatewayCalls[0].gitAuthToken, "");
+    assert.equal(gatewayCalls[0].userKey, user.username);
+    assert.equal(gatewayCalls[0].project.ownerUserKey, user.username);
+  });
+});
+
+test("Codex separates GitHub authorization from the Git filesystem identity", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root);
+    await mkdir(session.metadata.source_path, { recursive: true });
+    const gatewayCalls = [];
+    const service = serviceForSession(session, {
+      async runGatewayCommand(request) {
+        gatewayCalls.push(request);
+        if (request.command === "gh") {
+          return {
+            exitCode: 0,
+            ok: true,
+            stdout: "secret-github-token\n"
+          };
+        }
         return {
           exitCode: 0,
           ok: true,
@@ -280,11 +320,19 @@ test("Codex runs GitHub commands as the stored Vibe64 OS actor", async () => {
 
     const user = currentOsUser();
     assert.equal(result.ok, true);
-    assert.equal(gatewayCall.actor, "owner-user");
-    assert.equal(gatewayCall.gitTransport, "github-https");
-    assert.equal(gatewayCall.input.toString("utf8"), "stdin");
-    assert.equal(gatewayCall.userKey, user.username);
-    assert.equal(gatewayCall.project.ownerUserKey, user.username);
-    assert.equal(gatewayCall.session.metadata.session_git_command_actor_user_key, user.username);
+    assert.equal(gatewayCalls.length, 2);
+    assert.equal(gatewayCalls[0].actor, "owner-user");
+    assert.equal(gatewayCalls[0].command, "gh");
+    assert.deepEqual(gatewayCalls[0].args, ["auth", "token"]);
+    assert.equal(gatewayCalls[0].cwd, user.home);
+    assert.equal(gatewayCalls[0].session.targetRoot, undefined);
+    assert.equal(gatewayCalls[1].actor, "app");
+    assert.equal(gatewayCalls[1].command, "git");
+    assert.equal(gatewayCalls[1].gitTransport, "github-token");
+    assert.equal(gatewayCalls[1].gitAuthToken, "secret-github-token");
+    assert.equal(gatewayCalls[1].input.toString("utf8"), "stdin");
+    assert.equal(gatewayCalls[1].userKey, user.username);
+    assert.equal(gatewayCalls[1].project.ownerUserKey, user.username);
+    assert.equal(gatewayCalls[1].session.metadata.session_git_command_actor_user_key, user.username);
   });
 });
