@@ -143,6 +143,24 @@ test("plain runtime refuses to return a session without chat-ready source", asyn
     const blocked = await runtime.store.readSession("missing-source");
     assert.equal(blocked.status, "blocked");
     assert.equal(blocked.metadata.source_creation_failed, "yes");
+    assert.deepEqual(
+      (await runtime.listSessionSummaries({ statusGroup: "open" })).map((session) => session.sessionId),
+      ["missing-source"]
+    );
+  });
+});
+
+test("plain runtime excludes open state records whose managed source no longer exists", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({ targetRoot });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "ghost-session"),
+      runtimeKind: "genesis",
+      sessionId: "ghost-session"
+    });
+
+    assert.deepEqual(await runtime.listSessionSummaries({ statusGroup: "open" }), []);
+    assert.deepEqual(await runtime.listSessions({ statusGroup: "open" }), []);
   });
 });
 

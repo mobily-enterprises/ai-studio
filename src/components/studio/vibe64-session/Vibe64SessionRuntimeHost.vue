@@ -10,6 +10,7 @@
       :cancel-agent-message="cancelAgentMessage"
       :conversation-log="conversationLog"
       :diff="dialogs.diff"
+      :github-actor-teleport-target="props.githubActorTeleportTarget"
       :interrupt-agent-turn="interruptAgentTurn"
       :page="guardedPage"
       :project-context="props.projectContext"
@@ -73,6 +74,10 @@ const props = defineProps({
   chatCollapsed: {
     default: false,
     type: Boolean
+  },
+  githubActorTeleportTarget: {
+    default: "",
+    type: String
   },
   sessionData: {
     required: true,

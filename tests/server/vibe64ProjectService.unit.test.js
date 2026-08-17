@@ -10,6 +10,9 @@ import {
   createStudioProjectContext
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
 
@@ -112,6 +115,23 @@ test("managed development database scope is project state and changes only witho
 
     const store = await service.createSessionStore();
     await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "ghost-session"
+    });
+    assert.deepEqual((await service.readSettings()).developmentDatabase, {
+      canChange: true,
+      managed: true,
+      scope: "project"
+    });
+
+    const sessionSource = path.join(temporaryRoot, "managed-source", "sessions", "active", "open-session", "source");
+    await mkdir(sessionSource, { recursive: true });
+    await store.createSession({
+      metadata: {
+        source_kind: "session_clone",
+        source_path: sessionSource,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
       runtimeKind: "genesis",
       sessionId: "open-session"
     });

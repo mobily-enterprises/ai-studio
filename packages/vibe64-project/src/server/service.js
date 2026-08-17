@@ -600,7 +600,9 @@ function createService({
         scope: "external"
       };
     }
-    const openSessions = await sessionStore().listSessions({
+    const openSessions = await (await createRuntime({
+      inspectSource: false
+    })).listSessionSummaries({
       statusGroup: "open"
     });
     return {
@@ -620,7 +622,9 @@ function createService({
         "vibe64_managed_development_database_unavailable"
       );
     }
-    const openSessions = await sessionStore().listSessions({
+    const openSessions = await (await createRuntime({
+      inspectSource: false
+    })).listSessionSummaries({
       statusGroup: "open"
     });
     if (openSessions.length > 0) {

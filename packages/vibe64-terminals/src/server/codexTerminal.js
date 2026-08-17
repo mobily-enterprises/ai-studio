@@ -6664,6 +6664,7 @@ function createCodexTerminalController({
       });
       const actorResult = await recordSessionGitCommandActor({
         env,
+        overwrite: true,
         reason: "codex-prompt",
         runtime,
         session: preparedSession,

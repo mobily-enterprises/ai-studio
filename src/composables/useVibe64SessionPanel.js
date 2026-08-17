@@ -19,6 +19,10 @@ const vibe64SessionPanelProps = {
     default: false,
     type: Boolean
   },
+  githubActorTeleportTarget: {
+    default: "",
+    type: String
+  },
   projectContext: {
     default: () => ({}),
     type: Object

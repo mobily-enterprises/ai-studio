@@ -41,6 +41,9 @@ import {
   vibe64SessionStatusLabel
 } from "@/lib/vibe64SessionViewModel.js";
 import {
+  sessionGithubCommandActor
+} from "@/lib/vibe64GitCommandActor.js";
+import {
   defineVibe64AsyncComponent
 } from "@/lib/vibe64AsyncComponent.js";
 import SAVE_WORK_PROMPT from "@/prompts/save-work-commit-and-push.md?raw";
@@ -78,6 +81,10 @@ const vibe64AutopilotViewProps = {
   conversationLog: {
     default: () => ({}),
     type: Object
+  },
+  githubActorTeleportTarget: {
+    default: "",
+    type: String
   },
   diff: {
     default: () => ({}),
@@ -228,6 +235,11 @@ function useVibe64AutopilotView(props, emit) {
       : null;
   });
   const sessionId = computed(() => normalizedAgentTurnText(props.session?.sessionId));
+  const sessionGithubActor = computed(() => sessionGithubCommandActor(props.session || {}));
+  const sessionGithubActorHeaderVisible = computed(() => Boolean(
+    props.active &&
+    String(props.githubActorTeleportTarget || "").trim()
+  ));
   const sessionSourceRoot = computed(() => vibe64SessionSourcePath(props.session || {}));
   const activeAgentTurn = computed(() => {
     const turn = props.session?.agentSession?.turn;
@@ -942,6 +954,8 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkSending,
     selectSessionTool,
     sessionId,
+    sessionGithubActor,
+    sessionGithubActorHeaderVisible,
     sessionSourceRoot,
     sessionToolControls,
     sessionToolbarVisible,

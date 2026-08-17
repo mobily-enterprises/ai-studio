@@ -43,8 +43,9 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("@click=\"confirmSaveWork\"");
     expect(composable).toContain("sendChatPayload(chatMessagePayload(SAVE_WORK_PROMPT))");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
-    expect(combined).not.toContain("sessionGithubActor");
-    expect(combined).not.toContain("githubActorTeleportTarget");
+    expect(component).toContain("sessionGithubActor.displayLabel");
+    expect(component).toContain(":to=\"props.githubActorTeleportTarget\"");
+    expect(composable).toContain("sessionGithubCommandActor(props.session || {})");
   });
 
   it("keeps direct source, City, preview, diff, terminal, and close controls", () => {

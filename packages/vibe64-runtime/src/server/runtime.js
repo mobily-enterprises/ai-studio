@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 
 import {
   normalizeText,
+  pathExists,
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
@@ -120,6 +121,20 @@ function sessionSourceCreationFailed(session = {}) {
   return normalizeText(session?.metadata?.source_creation_failed).toLowerCase() === "yes";
 }
 
+async function sessionIsListable(session = {}) {
+  if (!sessionIsSupported(session)) {
+    return false;
+  }
+  if (session.archived === true || closedSessionStatus(session.status)) {
+    return true;
+  }
+  if (sessionSourceCreationFailed(session)) {
+    return true;
+  }
+  const sourcePath = sessionSourcePath(session);
+  return Boolean(sourcePath && await pathExists(sourcePath));
+}
+
 class Vibe64SessionRuntime {
   constructor({
     clock = undefined,
@@ -213,15 +228,17 @@ class Vibe64SessionRuntime {
 
   async listSessions(options = {}) {
     const sessions = await this.store.listSessions(options);
+    const listable = await Promise.all(sessions.map(sessionIsListable));
     return Promise.all(sessions
-      .filter(sessionIsSupported)
+      .filter((_session, index) => listable[index])
       .map((session) => this.sessionView(session)));
   }
 
   async listSessionSummaries(options = {}) {
     const sessions = await this.store.listSessions(options);
+    const listable = await Promise.all(sessions.map(sessionIsListable));
     return sessions
-      .filter(sessionIsSupported)
+      .filter((_session, index) => listable[index])
       .map((session) => plainSessionView(session, {
         sourceInspection: null
       }));

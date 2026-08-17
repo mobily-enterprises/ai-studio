@@ -3,6 +3,20 @@
     class="studio-autopilot"
     :class="{ 'studio-autopilot--chat-collapsed': chatCollapsed }"
   >
+    <Teleport
+      v-if="sessionGithubActorHeaderVisible"
+      :to="props.githubActorTeleportTarget"
+    >
+      <div
+        class="studio-home-shell-session-github-actor"
+        :class="{ 'studio-home-shell-session-github-actor--inactive': !sessionGithubActor.active }"
+        role="status"
+        :title="sessionGithubActor.title"
+      >
+        <v-icon :icon="mdiGithub" size="14" />
+        <span>{{ sessionGithubActor.displayLabel }}</span>
+      </div>
+    </Teleport>
     <section class="studio-autopilot__chat-panel" aria-label="Session chat">
       <header class="studio-autopilot__session-header">
         <Vibe64SessionToolbar
@@ -492,6 +506,7 @@ import {
   mdiConsoleNetworkOutline,
   mdiContentSaveOutline,
   mdiEyePlusOutline,
+  mdiGithub,
   mdiPaperclip,
   mdiSend,
   mdiStopCircleOutline
@@ -571,6 +586,8 @@ const {
   saveWorkDisabled,
   saveWorkSending,
   sessionId,
+  sessionGithubActor,
+  sessionGithubActorHeaderVisible,
   sessionSourceRoot,
   sessionToolbarVisible,
   selectedAnswerChoice,
@@ -634,6 +651,30 @@ async function attachPreviewFile(file) {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+.studio-home-shell-session-github-actor {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 650;
+  gap: 0.24rem;
+  line-height: 1;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 0.36rem;
+  white-space: nowrap;
+}
+
+.studio-home-shell-session-github-actor span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.studio-home-shell-session-github-actor--inactive {
+  color: rgba(var(--v-theme-on-surface), 0.46);
 }
 
 .studio-autopilot--chat-collapsed {

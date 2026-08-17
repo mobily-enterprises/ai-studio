@@ -16,6 +16,9 @@ import Vibe64AuthSettingsButton from "@/components/studio/Vibe64AuthSettingsButt
 import Vibe64SessionPanel from "@/components/studio/Vibe64SessionPanel.vue";
 import { useVibe64AppPage } from "@/composables/useVibe64AppPage.js";
 
+const githubActorHostId = "studio-home-shell-github-actor";
+const githubActorTeleportTarget = `#${githubActorHostId}`;
+
 const {
   chatCollapsed,
   chatToggleIcon,
@@ -83,6 +86,10 @@ const {
               />
             </v-list>
           </v-menu>
+          <div
+            :id="githubActorHostId"
+            class="studio-home-shell-github-actor-host"
+          />
           <!--
           <h1
             v-if="pageTitle"
@@ -173,6 +180,7 @@ const {
           <template #default="projectSelectionSlotProps">
             <Vibe64SessionPanel
               :chat-collapsed="chatCollapsed"
+              :github-actor-teleport-target="githubActorTeleportTarget"
               :project-context="projectSelectionSlotProps?.projectSelection?.currentProject || {}"
               :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
               :project-pane="projectPane"
@@ -292,6 +300,19 @@ const {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.studio-home-shell-github-actor-host {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 1.65rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.studio-home-shell-github-actor-host:empty {
+  display: none;
 }
 
 .studio-home-shell-title {
