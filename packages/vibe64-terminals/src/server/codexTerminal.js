@@ -3114,24 +3114,13 @@ function createCodexTerminalController({
     }
 
     const normalizedSource = normalizeText(source);
-    let segments = Array.isArray(existing?.segments)
-      ? existing.segments.map((segment) => ({ ...segment }))
-      : [];
-    const existingItemIndex = segments.findIndex((segment) => (
-      normalizeText(segment.itemId) === normalizedItemId
-    ));
     const segment = {
       itemId: normalizedItemId,
       source: normalizedSource,
       text: assistantText
     };
-    if (existingItemIndex >= 0) {
-      segments.splice(existingItemIndex, 1, segment);
-    } else {
-      segments.push(segment);
-    }
-
-    const bundledText = segments.map((entry) => normalizeText(entry.text)).filter(Boolean).join("\n\n");
+    const segments = [segment];
+    const bundledText = assistantText;
     const record = {
       ...existing,
       conversationText: codexAppServerFinalAssistantConversationText(bundledText, segments),
@@ -3162,7 +3151,7 @@ function createCodexTerminalController({
       return {
         ...record,
         recorded: true,
-        reason: existing ? "appended" : "recorded"
+        reason: existing ? "updated" : "recorded"
       };
     } catch (error) {
       if (existing) {
@@ -5486,7 +5475,7 @@ function createCodexTerminalController({
     const unsubscribeNotifications = provider.subscribe((notification = {}) => {
       const method = normalizeText(notification.method);
       const notificationThreadId = codexAppServerNotificationThreadId(notification);
-      if (notificationThreadId && notificationThreadId !== normalizedThreadId) {
+      if (notificationThreadId !== normalizedThreadId) {
         return;
       }
       const notificationContext = {
