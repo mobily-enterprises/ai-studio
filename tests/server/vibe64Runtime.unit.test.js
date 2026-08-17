@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -11,6 +11,7 @@ import {
 } from "@local/vibe64-runtime/server/workspaceSetupState";
 import {
   renderTestGenesisPrompt,
+  managedSessionSourceRoot,
   sourceMetadata,
   sourcePath,
   withTemporaryRoot
@@ -142,6 +143,31 @@ test("plain runtime refuses to return a session without chat-ready source", asyn
     const blocked = await runtime.store.readSession("missing-source");
     assert.equal(blocked.status, "blocked");
     assert.equal(blocked.metadata.source_creation_failed, "yes");
+  });
+});
+
+test("a blocked session whose source creation failed can be closed and archived", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const projectSessionSourceRoot = managedSessionSourceRoot(targetRoot);
+    const failedSourcePath = sourcePath(targetRoot, "failed-source");
+    const runtime = new Vibe64SessionRuntime({
+      projectSessionSourceRoot,
+      targetRoot
+    });
+
+    await assert.rejects(
+      () => runtime.createSession({ sessionId: "failed-source" }),
+      { code: "vibe64_session_source_creator_required" }
+    );
+    await mkdir(failedSourcePath, {
+      recursive: true
+    });
+
+    const closed = await runtime.abandonSession("failed-source");
+    assert.equal(closed.status, "abandoned");
+    assert.equal(closed.archived, true);
+    assert.deepEqual(await runtime.listSessions({ statusGroup: "open" }), []);
+    await assert.rejects(() => access(failedSourcePath));
   });
 });
 

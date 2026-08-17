@@ -96,4 +96,30 @@ describe("useVibe64SessionDialogs", () => {
     expect(clearSelectedSession).not.toHaveBeenCalled();
     expect(dialogs.abandon.closing.value).toBe(false);
   });
+
+  it("rejects a structured close failure instead of reporting success", async () => {
+    commandMocks.useCommand.mockImplementationOnce((options = {}) => ({
+      isRunning: false,
+      message: "",
+      run: vi.fn(async (context = {}) => {
+        const response = {
+          errors: [{ message: "The failed session could not be archived." }],
+          ok: false
+        };
+        await options.onRunSuccess?.(response, { context });
+        return response;
+      })
+    }));
+    const clearSelectedSession = vi.fn();
+    const refreshSessionData = vi.fn();
+    const dialogs = useVibe64SessionDialogs(dialogOptions({
+      clearSelectedSession,
+      refreshSessionData
+    }));
+
+    dialogs.abandon.request();
+    await expect(dialogs.abandon.confirm()).rejects.toThrow("The failed session could not be archived.");
+    expect(clearSelectedSession).not.toHaveBeenCalled();
+    expect(refreshSessionData).not.toHaveBeenCalled();
+  });
 });

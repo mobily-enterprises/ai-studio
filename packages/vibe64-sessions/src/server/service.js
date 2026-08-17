@@ -144,12 +144,17 @@ function createService({
           throw error;
         }
         const runtime = await project.createRuntime();
+        const currentSession = await runtime.getSession(sessionId, {
+          inspectSource: false
+        });
+        const sourceCreationFailed = currentSession.sourceReady !== true &&
+          text(currentSession.metadata?.source_creation_failed).toLowerCase() === "yes";
         await runtime.markSessionClosing(sessionId, {
           reason: "abandoned"
         });
         try {
           await terminals.closeSessionTerminals(sessionId);
-          if (typeof project.releaseSessionResources === "function") {
+          if (!sourceCreationFailed && typeof project.releaseSessionResources === "function") {
             await project.releaseSessionResources({
               sessionId
             });

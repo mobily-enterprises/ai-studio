@@ -314,6 +314,55 @@ test("closing a session releases its managed resources after terminals stop", as
   assert.deepEqual(calls, ["closing", "terminals", "resources:session-1", "abandon"]);
 });
 
+test("closing a source-creation failure does not release resources that were never provisioned", async () => {
+  const calls = [];
+  const session = {
+    metadata: {
+      source_creation_failed: "yes"
+    },
+    sessionId: "failed-source",
+    sourceReady: false,
+    status: "blocked"
+  };
+  const runtime = {
+    async abandonSession() {
+      calls.push("abandon");
+      return { ...session, status: "abandoned" };
+    },
+    async clearSessionClosing() {},
+    async getSession() {
+      return session;
+    },
+    async markSessionClosing() {
+      calls.push("closing");
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      },
+      async releaseSessionResources() {
+        calls.push("resources");
+        throw new Error("resources must not be released");
+      }
+    },
+    terminals: {
+      async closeSessionTerminals() {
+        calls.push("terminals");
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const result = await service.abandonSession("failed-source");
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["closing", "terminals", "abandon"]);
+});
+
 test("new sessions publish running workspace preparation and its eventual result", async () => {
   const publications = [];
   const sessionCreationInputs = [];

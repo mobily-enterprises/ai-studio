@@ -52,7 +52,14 @@ function useVibe64SessionDialogs({
       error: "Vibe64 session could not be closed.",
       success: "Vibe64 session closed."
     },
-    onRunSuccess: async (_response, { context } = {}) => {
+    onRunSuccess: async (response, { context } = {}) => {
+      if (response?.ok !== true) {
+        throw new Error(
+          response?.errors?.[0]?.message ||
+          response?.error ||
+          "Vibe64 session could not be closed."
+        );
+      }
       if (!context?.sessionId || context.sessionId === unref(selectedSessionId)) {
         clearSelectedSession();
       }

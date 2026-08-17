@@ -1,4 +1,5 @@
 import process from "node:process";
+import { rm } from "node:fs/promises";
 
 import {
   normalizeText,
@@ -9,7 +10,8 @@ import {
 } from "@local/vibe64-core/server/studioRoots";
 import {
   sessionHasSource,
-  sessionSourcePath
+  sessionSourcePath,
+  targetSessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
   assertGenesisPromptTask,
@@ -112,6 +114,10 @@ function plainSessionView(session = {}, {
 
 function closedSessionStatus(status = "") {
   return normalizeText(status) === VIBE64_SESSION_STATUS.ABANDONED;
+}
+
+function sessionSourceCreationFailed(session = {}) {
+  return normalizeText(session?.metadata?.source_creation_failed).toLowerCase() === "yes";
 }
 
 class Vibe64SessionRuntime {
@@ -363,9 +369,21 @@ class Vibe64SessionRuntime {
       reason
     });
     try {
-      await this.archiveSessionSource(sessionId, {
-        reason
-      });
+      if (sessionHasSource(session)) {
+        await this.archiveSessionSource(sessionId, {
+          reason
+        });
+      } else if (sessionSourceCreationFailed(session)) {
+        const failedSourcePath = targetSessionSourcePath(this.projectSessionSourceRoot, sessionId);
+        if (failedSourcePath) {
+          await rm(failedSourcePath, {
+            force: true,
+            recursive: true
+          });
+        }
+      } else {
+        await this.assertSourceHealthy(session);
+      }
       await this.store.writeStatus(sessionId, VIBE64_SESSION_STATUS.ABANDONED);
       if (typeof this.store.compactClosedSession === "function") {
         await this.store.compactClosedSession(sessionId);
