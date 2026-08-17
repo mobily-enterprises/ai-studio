@@ -135,6 +135,7 @@ describe("useVibe64ChatColumnResize", () => {
     expect(result.code).toContain("container-name: studio-chat-pane");
     expect(result.code).toMatch(/studio-autopilot__session-header[^}]*box-sizing:\s*border-box/u);
     expect(result.code).toMatch(/studio-autopilot__composer[^}]*box-sizing:\s*border-box/u);
+    expect(result.code).toMatch(/studio-autopilot__project-panel[^}]*contain:\s*strict/u);
     expect(result.code).toMatch(/@container studio-chat-pane \(max-width: 30rem\)/u);
     expect(result.code).toMatch(/studio-autopilot__save-work[^}]*width:\s*2\.5rem/u);
     expect(source).not.toContain("Answer the assistant's questions");
@@ -159,6 +160,31 @@ describe("useVibe64ChatColumnResize", () => {
     expect(result.code).toMatch(
       /studio-conversation-log__turn[^}]*contain-intrinsic-block-size:\s*auto 12rem/u
     );
+  });
+
+  it("bounds thinking, message parsing, and live scroll work", () => {
+    const conversation = readFileSync(
+      "src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
+      "utf8"
+    );
+    const view = readFileSync(
+      "src/composables/useVibe64AutopilotView.js",
+      "utf8"
+    );
+
+    expect(conversation).toContain("THINKING_PREVIEW_LIMIT = 5");
+    expect(conversation).toContain("DISPLAY_MESSAGE_CACHE_LIMIT = 500");
+    expect(conversation).toContain("visibleThinkingMessages(turn, entry)");
+    expect(conversation).toContain("entry.messages.slice(-THINKING_PREVIEW_LIMIT)");
+    expect(conversation).toContain("Show all ${entry.messages.length} progress ${");
+    expect(conversation).toContain(":aria-expanded=\"thinkingGroupExpanded(turn, entry)\"");
+    expect(conversation).toContain('turn.pending ? "active" : "completed"');
+    expect(conversation).toMatch(/return turn\.pending[\s\S]*entry\.messages\.slice\(-THINKING_PREVIEW_LIMIT\)[\s\S]*:\s*\[\];/u);
+    expect(conversation).toContain('pending: turn.pending === true');
+    expect(conversation).toContain('"Hide progress updates"');
+    expect(conversation).toContain("window.requestAnimationFrame(() =>");
+    expect(conversation).toContain('scrollToLatestMessageNow({ behavior: "auto" })');
+    expect(view).not.toContain("}, { deep: true });");
   });
 
   it("mounts only the visible project tool instead of retaining every heavy pane", () => {

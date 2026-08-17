@@ -595,6 +595,9 @@ function useVibe64AutopilotView(props, emit) {
 
   const chatTurns = computed(() => {
     const turns = Array.isArray(props.conversationLog?.turns) ? props.conversationLog.turns : [];
+    if (!optimisticMessages.value.length) {
+      return turns;
+    }
     const optimistic = unmatchedOptimisticMessages(turns, optimisticMessages.value);
     return [
       ...turns,
@@ -867,11 +870,14 @@ function useVibe64AutopilotView(props, emit) {
   });
 
   watch(() => props.conversationLog?.turns, (turns) => {
+    if (!optimisticMessages.value.length) {
+      return;
+    }
     const remaining = unmatchedOptimisticMessages(turns, optimisticMessages.value);
     if (remaining.length !== optimisticMessages.value.length) {
       optimisticMessages.value = remaining;
     }
-  }, { deep: true });
+  });
 
   watch(() => Boolean(composerSending.value || interrupting.value || saveWorkSending.value), (busy) => {
     emit("busy-change", busy);

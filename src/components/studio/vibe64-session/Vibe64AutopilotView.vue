@@ -263,26 +263,40 @@
                 Stop
               </v-btn>
               <v-btn
+                v-if="agentStopVisible"
                 ref="composerSendButton"
-                :aria-label="agentStopVisible ? 'Steer assistant' : 'Send message'"
+                aria-label="Steer assistant"
                 :aria-disabled="!composerCanSubmit"
-                :class="{
-                  'studio-autopilot__send--inactive': !composerCanSubmit,
-                  'studio-autopilot__send--steer': agentStopVisible
-                }"
+                class="studio-autopilot__send--steer"
+                :class="{ 'studio-autopilot__send--inactive': !composerCanSubmit }"
                 color="primary"
                 :disabled="composerDisabled"
-                :icon="agentStopVisible ? undefined : mdiSend"
                 :loading="composerSending"
-                :prepend-icon="agentStopVisible ? mdiArrowTopRight : undefined"
+                :prepend-icon="mdiArrowTopRight"
                 size="small"
-                :title="agentStopVisible ? 'Steer assistant' : 'Send message'"
+                title="Steer assistant"
                 type="button"
                 variant="flat"
                 @click="sendComposerMessage"
               >
-                <span v-if="agentStopVisible">Steer</span>
+                Steer
               </v-btn>
+              <v-btn
+                v-else
+                ref="composerSendButton"
+                aria-label="Send message"
+                :aria-disabled="!composerCanSubmit"
+                :class="{ 'studio-autopilot__send--inactive': !composerCanSubmit }"
+                color="primary"
+                :disabled="composerDisabled"
+                :icon="mdiSend"
+                :loading="composerSending"
+                size="small"
+                title="Send message"
+                type="button"
+                variant="flat"
+                @click="sendComposerMessage"
+              />
             </div>
           </template>
         </Vibe64AutopilotPromptTextarea>
@@ -885,6 +899,7 @@ async function attachPreviewFile(file) {
 }
 
 .studio-autopilot__project-panel {
+  contain: strict;
   overflow: hidden;
   position: relative;
 }

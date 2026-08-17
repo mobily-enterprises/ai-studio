@@ -81,9 +81,13 @@ describe("Vibe64 direct session view", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
 
-    expect(component).toContain("agentStopVisible ? 'Steer assistant' : 'Send message'");
-    expect(component).toContain(":prepend-icon=\"agentStopVisible ? mdiArrowTopRight : undefined\"");
-    expect(component).toContain("<span v-if=\"agentStopVisible\">Steer</span>");
+    expect(component).toContain('v-if="agentStopVisible"');
+    expect(component).toContain('aria-label="Steer assistant"');
+    expect(component).toContain(':prepend-icon="mdiArrowTopRight"');
+    expect(component).toContain('v-else');
+    expect(component).toContain('aria-label="Send message"');
+    expect(component).toContain(':icon="mdiSend"');
+    expect(component).not.toContain(":icon=\"agentStopVisible ? undefined : mdiSend\"");
     expect(composable).not.toContain("Send guidance while the assistant is working.");
   });
 
@@ -145,4 +149,5 @@ describe("Vibe64 direct session view", () => {
     expect(promptTextarea).toContain('event.key === "Enter" && !props.submitOnEnter');
     expect(promptTextarea).toContain("event.stopPropagation()");
   });
+
 });

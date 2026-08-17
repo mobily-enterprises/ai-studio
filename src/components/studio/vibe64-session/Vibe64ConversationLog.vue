@@ -169,8 +169,17 @@
             v-if="entry.role === 'thinking'"
             class="studio-conversation-log__thinking"
           >
+            <button
+              v-if="thinkingGroupCollapsible(turn, entry)"
+              :aria-expanded="thinkingGroupExpanded(turn, entry)"
+              class="studio-conversation-log__thinking-toggle"
+              type="button"
+              @click="toggleThinkingGroup(turn, entry)"
+            >
+              {{ thinkingGroupToggleLabel(turn, entry) }}
+            </button>
             <div
-              v-for="message in entry.messages"
+              v-for="message in visibleThinkingMessages(turn, entry)"
               :key="message.key"
               class="studio-conversation-log__thinking-message"
             >
@@ -317,11 +326,16 @@ const props = defineProps({
 
 const emit = defineEmits(["cancel-turn", "edit-turn", "load-more", "open-source-file", "reload", "resend-turn"]);
 
+const THINKING_PREVIEW_LIMIT = 5;
+const DISPLAY_MESSAGE_CACHE_LIMIT = 500;
 const bodyElement = ref(null);
 const bottomElement = ref(null);
+const expandedThinkingGroups = ref(new Set());
 const followingLatest = ref(true);
 const initialScrollSettled = ref(false);
 const userScrollIntent = ref(false);
+const displayMessageCache = new Map();
+let liveScrollFrame = 0;
 let userScrollIntentTimer = null;
 let initialScrollVersion = 0;
 let loadMoreScrollSnapshot = null;
@@ -342,9 +356,22 @@ function displayTime(value = "") {
 function displayMessage(message = null, {
   allowNumberedQuestions = false,
   preserveParagraphLineBreaks = false
-} = {}) {
+} = {}, cacheKey = "") {
   if (!message) {
     return null;
+  }
+  const normalizedCacheKey = String(cacheKey || "").trim();
+  const cached = normalizedCacheKey ? displayMessageCache.get(normalizedCacheKey) : null;
+  if (
+    cached &&
+    cached.allowNumberedQuestions === allowNumberedQuestions &&
+    cached.at === message.at &&
+    cached.messageId === message.messageId &&
+    cached.preserveParagraphLineBreaks === preserveParagraphLineBreaks &&
+    cached.role === message.role &&
+    cached.text === message.text
+  ) {
+    return cached.value;
   }
   const questionInput = allowNumberedQuestions
     ? parseNumberedQuestionPrompt(message.text)
@@ -353,7 +380,7 @@ function displayMessage(message = null, {
         questions: []
       };
   const hasQuestions = questionInput.questions.length > 0;
-  return {
+  const value = {
     ...message,
     blocks: parseLongTextReviewBlocks(hasQuestions ? questionInput.intro : message.text, {
       preserveParagraphLineBreaks
@@ -361,6 +388,24 @@ function displayMessage(message = null, {
     questions: hasQuestions ? questionInput.questions : [],
     displayAt: displayTime(message.at)
   };
+  if (normalizedCacheKey) {
+    if (
+      displayMessageCache.size >= DISPLAY_MESSAGE_CACHE_LIMIT &&
+      !displayMessageCache.has(normalizedCacheKey)
+    ) {
+      displayMessageCache.delete(displayMessageCache.keys().next().value);
+    }
+    displayMessageCache.set(normalizedCacheKey, {
+      allowNumberedQuestions,
+      at: message.at,
+      messageId: message.messageId,
+      preserveParagraphLineBreaks,
+      role: message.role,
+      text: message.text,
+      value
+    });
+  }
+  return value;
 }
 
 function displayThinkingMessage(message = null) {
@@ -400,7 +445,7 @@ function conversationMessageKey(message = {}, index = 0) {
   ].join(":");
 }
 
-function displayAgentTimeline(turn = {}) {
+function displayAgentTimeline(turn = {}, turnKey = "") {
   const timeline = [];
   for (const [index, message] of conversationAgentMessages(turn).entries()) {
     const role = String(message?.role || "").trim();
@@ -429,7 +474,7 @@ function displayAgentTimeline(turn = {}) {
       key: conversationMessageKey(message, index),
       message: displayMessage(message, {
         allowNumberedQuestions: true
-      }),
+      }, `${turnKey}:agent:${conversationMessageKey(message, index)}`),
       role
     });
   }
@@ -450,18 +495,65 @@ function handleLongTextLinkClick(payload = {}) {
 }
 
 const displayTurns = computed(() => (Array.isArray(props.turns) ? props.turns : [])
-  .map((turn, index) => ({
-    agentTimeline: displayAgentTimeline(turn),
-    optimistic: turn.optimistic && typeof turn.optimistic === "object" && !Array.isArray(turn.optimistic)
-      ? turn.optimistic
-      : null,
-    system: displayMessage(turn.system),
-    turnId: String(turn.turnId || index + 1),
-    user: displayMessage(turn.user, {
-      preserveParagraphLineBreaks: true
-    })
-  }))
+  .map((turn, index) => {
+    const turnId = String(turn.turnId || index + 1);
+    return {
+      agentTimeline: displayAgentTimeline(turn, turnId),
+      optimistic: turn.optimistic && typeof turn.optimistic === "object" && !Array.isArray(turn.optimistic)
+        ? turn.optimistic
+        : null,
+      pending: turn.pending === true,
+      system: displayMessage(turn.system, {}, `${turnId}:system`),
+      turnId,
+      user: displayMessage(turn.user, {
+        preserveParagraphLineBreaks: true
+      }, `${turnId}:user`)
+    };
+  })
   .filter((turn) => turn.system || turn.user || turn.agentTimeline.length));
+
+function thinkingGroupKey(turn = {}, entry = {}) {
+  return `${turn.turnId}:${turn.pending ? "active" : "completed"}:${entry.key}`;
+}
+
+function thinkingGroupExpanded(turn = {}, entry = {}) {
+  return expandedThinkingGroups.value.has(thinkingGroupKey(turn, entry));
+}
+
+function thinkingGroupCollapsible(turn = {}, entry = {}) {
+  return turn.pending
+    ? entry.messages.length > THINKING_PREVIEW_LIMIT
+    : entry.messages.length > 0;
+}
+
+function visibleThinkingMessages(turn = {}, entry = {}) {
+  if (thinkingGroupExpanded(turn, entry)) {
+    return entry.messages;
+  }
+  return turn.pending
+    ? entry.messages.slice(-THINKING_PREVIEW_LIMIT)
+    : [];
+}
+
+function thinkingGroupToggleLabel(turn = {}, entry = {}) {
+  if (thinkingGroupExpanded(turn, entry)) {
+    return turn.pending
+      ? `Show latest ${THINKING_PREVIEW_LIMIT} progress updates`
+      : "Hide progress updates";
+  }
+  return `Show all ${entry.messages.length} progress ${entry.messages.length === 1 ? "update" : "updates"}`;
+}
+
+function toggleThinkingGroup(turn = {}, entry = {}) {
+  const key = thinkingGroupKey(turn, entry);
+  const next = new Set(expandedThinkingGroups.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  expandedThinkingGroups.value = next;
+}
 
 const loadingIndicatorVisible = computed(() => Boolean(
   props.loading &&
@@ -531,7 +623,8 @@ const autoScrollEnabled = computed(() => Boolean(
 
 const {
   clearScheduledScrolls,
-  scrollAfterLayout: scrollToLatestMessage
+  scrollAfterLayout: scrollToLatestMessage,
+  scrollNow: scrollToLatestMessageNow
 } = useScrollToBottom({
   anchor: bottomElement,
   enabled: autoScrollEnabled,
@@ -591,10 +684,32 @@ function queueInitialBottomScroll() {
 function queueLiveBottomScroll({
   force = false
 } = {}) {
-  void scrollToLatestMessageAfterLayout({
-    behavior: "smooth",
-    force
+  if (force) {
+    followingLatest.value = true;
+    clearUserScrollIntent();
+  }
+  if (liveScrollFrame) {
+    return;
+  }
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    void scrollToLatestMessageAfterLayout({ behavior: "auto" });
+    return;
+  }
+  liveScrollFrame = window.requestAnimationFrame(() => {
+    liveScrollFrame = 0;
+    scrollToLatestMessageNow({ behavior: "auto" });
   });
+}
+
+function clearLiveBottomScroll() {
+  if (
+    liveScrollFrame &&
+    typeof window !== "undefined" &&
+    typeof window.cancelAnimationFrame === "function"
+  ) {
+    window.cancelAnimationFrame(liveScrollFrame);
+  }
+  liveScrollFrame = 0;
 }
 
 function updateLatestFollowFromScroll(event = {}) {
@@ -609,6 +724,7 @@ function updateLatestFollowFromScroll(event = {}) {
     return;
   }
   if (!shouldFollow) {
+    clearLiveBottomScroll();
     clearScheduledScrolls();
   }
 }
@@ -628,6 +744,7 @@ function requestLoadMore() {
 }
 
 onBeforeUnmount(() => {
+  clearLiveBottomScroll();
   clearUserScrollIntent();
 });
 
@@ -883,6 +1000,21 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
 
 .studio-conversation-log__thinking-message {
   white-space: pre-wrap;
+}
+
+.studio-conversation-log__thinking-toggle {
+  background: transparent;
+  border: 0;
+  color: rgb(var(--v-theme-primary));
+  cursor: pointer;
+  font: inherit;
+  justify-self: start;
+  padding: 0.12rem 0;
+  text-align: left;
+}
+
+.studio-conversation-log__thinking-toggle:hover {
+  text-decoration: underline;
 }
 
 .studio-conversation-log__system {

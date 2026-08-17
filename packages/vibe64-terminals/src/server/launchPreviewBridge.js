@@ -39,11 +39,13 @@ function launchPreviewBridgeScript({
   let consoleCharacterCount = 0;
   let consoleDroppedEntryCount = 0;
   let consoleSequence = 0;
+  let networkCharacterCount = 0;
   let networkDroppedEntryCount = 0;
   let networkSequence = 0;
   let networkSuppressedResourceCount = 0;
   const consoleEntries = [];
   const networkEntries = [];
+  const networkEntryCharacterCounts = new WeakMap();
   const maxConsoleCharacters = 200000;
   const maxConsoleEntries = 500;
   const maxConsoleEntryCharacters = 12000;
@@ -150,10 +152,16 @@ function launchPreviewBridgeScript({
     }
   }
   function pruneNetworkEntries() {
-    let characters = networkEntries.reduce((total, entry) => total + networkEntryCharacters(entry), 0);
-    while (networkEntries.length > maxNetworkEntries || characters > maxNetworkCharacters) {
+    while (
+      networkEntries.length > maxNetworkEntries ||
+      networkCharacterCount > maxNetworkCharacters
+    ) {
       const removed = networkEntries.shift();
-      characters = Math.max(0, characters - networkEntryCharacters(removed));
+      networkCharacterCount = Math.max(
+        0,
+        networkCharacterCount - Number(networkEntryCharacterCounts.get(removed) || 0)
+      );
+      networkEntryCharacterCounts.delete(removed);
       networkDroppedEntryCount += 1;
     }
   }
@@ -176,6 +184,9 @@ function launchPreviewBridgeScript({
       url: targetResourceHref(values.url || window.location.href)
     };
     networkEntries.push(entry);
+    const characters = networkEntryCharacters(entry);
+    networkEntryCharacterCounts.set(entry, characters);
+    networkCharacterCount += characters;
     pruneNetworkEntries();
     return entry;
   }
@@ -183,7 +194,11 @@ function launchPreviewBridgeScript({
     if (!entry || !networkEntries.includes(entry)) {
       return;
     }
+    const previousCharacters = Number(networkEntryCharacterCounts.get(entry) || 0);
     Object.assign(entry, values);
+    const nextCharacters = networkEntryCharacters(entry);
+    networkEntryCharacterCounts.set(entry, nextCharacters);
+    networkCharacterCount += nextCharacters - previousCharacters;
     pruneNetworkEntries();
   }
   function networkHeaders(value) {
