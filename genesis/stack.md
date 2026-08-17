@@ -1,5 +1,8 @@
 # Stack
 
+## Stack packages
+- `genesis-stack`
+
 ## Components
 - `nodejs`
 - `jskit`

@@ -319,6 +319,25 @@ function verifyPackageContract({
     packageJsonPath
   });
 
+  if (manifest.name !== "@local/vibe64-genesis") {
+    const directGenesisImports = directImports.get("genesis-compiler");
+    if (directGenesisImports) {
+      errors.push(
+        `${manifest.name} imports genesis-compiler from ${sortedValues(directGenesisImports).join(", ")}; only @local/vibe64-genesis may interpret Genesis contracts.`
+      );
+    }
+    if (dependencyNames.has("genesis-compiler")) {
+      errors.push(
+        `${manifest.name} must consume Genesis through @local/vibe64-genesis, not depend on genesis-compiler directly.`
+      );
+    }
+    if (dependencyNames.has("genesis-stack")) {
+      errors.push(
+        `${manifest.name} must consume the curated Stack catalog through @local/vibe64-genesis, not depend on genesis-stack directly.`
+      );
+    }
+  }
+
   if (manifest.private !== true) {
     errors.push(`${relativePath(packageJsonPath)} must remain private while it is named ${manifest.name}.`);
   }

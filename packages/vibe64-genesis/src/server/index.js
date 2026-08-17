@@ -7,16 +7,21 @@ import * as genesisCompiler from "genesis-compiler";
 const require = createRequire(import.meta.url);
 
 const {
+  GENESIS_CONTRACTS,
   addStack,
   generatePrompt,
   indexCodebase,
   initialize,
-  inspectLaunch
+  inspectDeployment,
+  inspectEnvironment,
+  inspectLaunch,
+  inspectWorkspaceSetup
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
 const GENESIS_MACHINE_CITY_PATH = ".genesis/machine-city.json";
 const GENESIS_PROGRAM_CITY_PATH = ".genesis/program-city.json";
+const VIBE64_STACK_PACKAGES = Object.freeze(["genesis-stack"]);
 const GENESIS_PROMPT_TASKS = new Set([
   "blueprint",
   "describe",
@@ -83,23 +88,47 @@ function withGenesisCommandShim(shimDirectories = []) {
   ];
 }
 
-const addGenesisStack = addStack;
-const initializeGenesisProject = initialize;
-const inspectGenesisLaunch = inspectLaunch;
-const refreshGenesisCities = indexCodebase;
+function withVibe64StackCatalog(options = {}) {
+  return {
+    ...options,
+    stackPackages: VIBE64_STACK_PACKAGES
+  };
+}
+
+function addGenesisStack(options = {}) {
+  return addStack(withVibe64StackCatalog(options));
+}
+
+function initializeGenesisProject(options = {}) {
+  return initialize(withVibe64StackCatalog(options));
+}
+
+function refreshGenesisCities(options = {}) {
+  return indexCodebase(withVibe64StackCatalog(options));
+}
+
+async function exactGenesisInspection(inspector, contract, options = {}) {
+  const result = await inspector(withVibe64StackCatalog(options));
+  if (result?.contract !== contract) {
+    throw new Error(`Genesis returned ${result?.contract || "no contract identity"}; expected ${contract}.`);
+  }
+  return result;
+}
+
+function inspectGenesisDeployment(options = {}) {
+  return exactGenesisInspection(inspectDeployment, GENESIS_CONTRACTS.deployment, options);
+}
 
 function inspectGenesisEnvironment(options = {}) {
-  if (typeof genesisCompiler.inspectEnvironment !== "function") {
-    throw new Error("The installed Genesis compiler does not expose environment inspection.");
-  }
-  return genesisCompiler.inspectEnvironment(options);
+  return exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options);
+}
+
+function inspectGenesisLaunch(options = {}) {
+  return exactGenesisInspection(inspectLaunch, GENESIS_CONTRACTS.launch, options);
 }
 
 function inspectGenesisWorkspaceSetup(options = {}) {
-  if (typeof genesisCompiler.inspectWorkspaceSetup !== "function") {
-    throw new Error("The installed Genesis compiler does not expose workspace setup inspection.");
-  }
-  return genesisCompiler.inspectWorkspaceSetup(options);
+  return exactGenesisInspection(inspectWorkspaceSetup, GENESIS_CONTRACTS.workspaceSetup, options);
 }
 
 function withVibe64ConversationContract(prompt = "") {
@@ -125,14 +154,14 @@ async function renderGenesisPrompt({
   let task = requestedTask;
   let result;
   try {
-    result = await generatePrompt({ environment, projectRoot, request, task });
+    result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
   } catch (error) {
     if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
       task = "blueprint";
-      result = await generatePrompt({ environment, projectRoot, request, task });
+      result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
     } else if (error?.code === "BLUEPRINT_REQUIRED" && requestedTask !== "start") {
       task = "start";
-      result = await generatePrompt({ environment, projectRoot, request, task });
+      result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
     } else {
       throw error;
     }
@@ -162,6 +191,7 @@ export {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisDeployment,
   inspectGenesisEnvironment,
   inspectGenesisLaunch,
   inspectGenesisWorkspaceSetup,

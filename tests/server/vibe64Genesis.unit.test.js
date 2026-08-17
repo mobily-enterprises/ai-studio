@@ -14,6 +14,8 @@ import {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisDeployment,
+  inspectGenesisEnvironment,
   inspectGenesisLaunch,
   inspectGenesisWorkspaceSetup,
   renderGenesisPrompt,
@@ -80,6 +82,10 @@ test("the integration reads launch targets from the pinned Genesis package", asy
       pieces: ["jskit"],
       projectRoot
     });
+    assert.match(
+      await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8"),
+      /## Stack packages\n- `genesis-stack`/u
+    );
 
     const waitingSetup = await inspectGenesisWorkspaceSetup({
       environment: {},
@@ -99,13 +105,28 @@ test("the integration reads launch targets from the pinned Genesis package", asy
     });
 
     assert.equal(setup.status, "ready");
+    assert.equal(setup.contract, "genesis.workspace-setup.v1");
     assert.deepEqual(setup.steps.map((step) => step.argv), [["npm", "install"]]);
     assert.equal(launch.status, "ready");
+    assert.equal(launch.contract, "genesis.launch.v1");
     assert.equal(launch.targets[0].id, "app");
     assert.deepEqual(launch.targets[0].runtimeRequirements, ["nodejs"]);
     assert.deepEqual(launch.targets[0].steps.map((step) => step.argv), [
       ["npm", "run", "develop"]
     ]);
+  });
+});
+
+test("the exact Genesis boundary exposes environment and deployment contracts", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+
+    const environment = await inspectGenesisEnvironment({ projectRoot });
+    const deployment = await inspectGenesisDeployment({ projectRoot });
+
+    assert.equal(environment.contract, "genesis.environment.v1");
+    assert.equal(deployment.contract, "genesis.deployment.v1");
   });
 });
 
@@ -130,6 +151,7 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.match(rendered.prompt, /Build a book catalogue\./u);
     assert.match(rendered.prompt, /"projectKind": "new"/u);
     assert.match(rendered.prompt, /"availableStackPieces": \[/u);
+    assert.match(rendered.prompt, /"id": "jskit"/u);
   });
 });
 

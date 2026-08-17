@@ -21,6 +21,14 @@ codebase, tests, Git review, or the coding agent.
 6. Load applicable technology skills from `.agents/skills/` or from the
    agent's own installed skill catalog.
 
+For an existing application's first Stack selection, inspect its real setup,
+build, and launch commands before relying on component defaults. A selected
+component describes its current foundation; it does not silently port older
+source. When the existing commands differ, keep the implementation unchanged
+and declare exact project-owned `## Workspace setup` and `## Launch` overrides.
+Do not claim the inherited component recipe is usable until it matches the
+source.
+
 Program is concise, fallible explanation. Its Sources and optional
 Implementation maps aid navigation but never substitute for reading code,
 tests, and runtime behavior.
@@ -36,7 +44,7 @@ Neither is authority or proof; both may be regenerated with `genesis index`.
 - Do not edit the Blueprint, Program, or `.genesis/` during implementation; the
   separate reconciliation turn owns explanatory updates. Keep an exact Stack
   `## Launch` declaration aligned when the implementation establishes or
-  intentionally changes how the project is started or how Vibe64 may request
+  intentionally changes how the project is started or how a preview host may request
   an application preview identity. Record only capability metadata and
   environment variable names there, never environment values or secrets.
 - Follow established project and technology seams instead of creating parallel

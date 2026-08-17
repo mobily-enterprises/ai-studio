@@ -1,7 +1,7 @@
 {
   "name": "@local/vibe64-genesis",
   "version": "0.1.0",
-  "description": "Integrates Vibe64 with Genesis initialization, prompts, workspace setup, launch declarations, and Cities.",
+  "description": "The exact Vibe64 boundary for Genesis project operations and normalized contracts.",
   "private": true,
   "type": "module",
   "exports": {
@@ -26,13 +26,14 @@
         "surfaces": [
           {
             "subpath": "./server",
-            "summary": "The Vibe64 boundary for Genesis initialization, prompts, workspace setup, launch declarations, checks, verification, and Cities."
+            "summary": "The exact Vibe64 boundary for Genesis initialization, prompts, environment, workspace setup, launch, deployment, checks, verification, and Cities."
           }
         ]
       }
     }
   },
   "dependencies": {
-    "genesis-compiler": "1.2.5"
+    "genesis-compiler": "1.2.8",
+    "genesis-stack": "1.0.0"
   }
 }

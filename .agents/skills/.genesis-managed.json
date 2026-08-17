@@ -10,11 +10,11 @@
       "source": "genesis:skills/genesis-program"
     },
     "genesis-project": {
-      "hash": "sha256:eacf99f1ab69b2583f4e32cc55c24e47579e0f3b73665b0bb2a12b4cabeed28d",
+      "hash": "sha256:38385538d89ceee6b982786141acf0164a13d581def9044eb82b62c8afadfdc5",
       "source": "genesis:skills/genesis-project"
     },
     "jskit": {
-      "hash": "sha256:2ccbc9db10bd34aef3e625f9c3cb79cb731fffd15235bffa434278806a99add0",
+      "hash": "sha256:f89540a51ab177dcef12b524ecb2a437daf8a68e8b9ad5a1e8510497872cd54b",
       "source": "npm:@jskit-ai/agent-docs/skills/jskit"
     }
   }
