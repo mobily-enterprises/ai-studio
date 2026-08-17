@@ -544,7 +544,7 @@ async function readGithubToken({
     project: {
       ownerUserKey: toolHome.ownerUserKey
     },
-    purpose: "github",
+    purpose: "github-api",
     runtimes: ["gh"],
     session: {
       metadata: session.metadata || {},
@@ -555,8 +555,9 @@ async function readGithubToken({
   });
   const token = result?.ok === true ? normalizeText(result.stdout) : "";
   if (!token) {
+    const error = normalizeText(result?.stderr || result?.error);
     return responseError(
-      "GitHub authentication is not ready for this Vibe64 account.",
+      error || "GitHub authentication is not ready for this Vibe64 account.",
       "vibe64_codex_git_command_github_auth_unavailable",
       { statusCode: 403 }
     );

@@ -325,6 +325,7 @@ test("Codex separates GitHub authorization from the Git filesystem identity", as
     assert.equal(gatewayCalls[0].command, "gh");
     assert.deepEqual(gatewayCalls[0].args, ["auth", "token"]);
     assert.equal(gatewayCalls[0].cwd, user.home);
+    assert.equal(gatewayCalls[0].purpose, "github-api");
     assert.equal(gatewayCalls[0].session.targetRoot, undefined);
     assert.equal(gatewayCalls[1].actor, "app");
     assert.equal(gatewayCalls[1].command, "git");
@@ -334,5 +335,31 @@ test("Codex separates GitHub authorization from the Git filesystem identity", as
     assert.equal(gatewayCalls[1].userKey, user.username);
     assert.equal(gatewayCalls[1].project.ownerUserKey, user.username);
     assert.equal(gatewayCalls[1].session.metadata.session_git_command_actor_user_key, user.username);
+  });
+});
+
+test("Codex reports the underlying GitHub token lookup failure", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root);
+    await mkdir(session.metadata.source_path, { recursive: true });
+    const service = serviceForSession(session, {
+      async runGatewayCommand() {
+        return {
+          exitCode: 2,
+          ok: false,
+          stderr: "GitHub token lookup failed in the user home."
+        };
+      }
+    });
+
+    const result = await service.run({
+      args: ["fetch", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_codex_git_command_github_auth_unavailable");
+    assert.equal(result.error, "GitHub token lookup failed in the user home.");
   });
 });
