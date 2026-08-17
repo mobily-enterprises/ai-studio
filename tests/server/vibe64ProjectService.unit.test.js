@@ -80,7 +80,13 @@ test("managed development database scope is project state and changes only witho
       projectContext
     });
     await service.createProject({ name: "Shared catalogue" });
+    let nameRequests = 0;
     service.setResourceEnvironmentProvider({
+      developmentDatabaseNameForProject({ slug }) {
+        nameRequests += 1;
+        assert.equal(slug, "shared-catalogue");
+        return "merc_shared_catalogue";
+      },
       async environmentForResources() {
         return { environment: {} };
       },
@@ -98,6 +104,11 @@ test("managed development database scope is project state and changes only witho
     });
     assert.equal(saved.ok, true);
     assert.equal(saved.scope, "project");
+    assert.equal(nameRequests, 1);
+    assert.equal(
+      (await service.listProjects()).currentProject.developmentDatabaseName,
+      "merc_shared_catalogue"
+    );
 
     const store = await service.createSessionStore();
     await store.createSession({
@@ -117,6 +128,11 @@ test("managed development database scope is project state and changes only witho
       managed: true,
       scope: "project"
     });
+    const savedAgain = await service.saveDevelopmentDatabaseScope({
+      scope: "project"
+    });
+    assert.equal(savedAgain.ok, true);
+    assert.equal(nameRequests, 1);
   });
 });
 

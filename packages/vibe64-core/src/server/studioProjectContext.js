@@ -316,6 +316,9 @@ function workspaceProjectRecord({
     developmentDatabaseScope: normalizeDevelopmentDatabaseScope(
       metadata.developmentDatabaseScope
     ),
+    developmentDatabaseName: normalizeDevelopmentDatabaseName(
+      metadata.developmentDatabaseName
+    ),
     path: resolvedPath,
     projectLocalRoot: projectRuntimeRoot,
     projectRoot: resolvedPath,
@@ -369,6 +372,13 @@ function projectMetadataFromInput(input = {}, {
           )
         }
       : {}),
+    ...(Object.hasOwn(input, "developmentDatabaseName")
+      ? {
+          developmentDatabaseName: normalizeDevelopmentDatabaseName(
+            input.developmentDatabaseName
+          )
+        }
+      : {}),
     ...(input?.deletion ? { deletion: normalizeProjectDeletion(input.deletion) } : {})
   };
 }
@@ -381,6 +391,16 @@ function normalizeDevelopmentDatabaseScope(value = "session") {
     throw error;
   }
   return scope;
+}
+
+function normalizeDevelopmentDatabaseName(value = "") {
+  const name = String(value || "").trim();
+  if (name && !/^[a-z0-9][a-z0-9_]{0,62}$/u.test(name)) {
+    const error = new Error(`Invalid development database name: ${name}.`);
+    error.code = "vibe64_development_database_name_invalid";
+    throw error;
+  }
+  return name;
 }
 
 function normalizeProjectMetadata(metadata = {}) {
@@ -396,6 +416,7 @@ function normalizeProjectMetadata(metadata = {}) {
     .filter((field) => ![
       "bootstrap",
       "deletion",
+      "developmentDatabaseName",
       "developmentDatabaseScope",
       "repository"
     ].includes(field));
@@ -1316,6 +1337,7 @@ export {
   configureStudioProjectContext,
   createStudioProjectContext,
   getStudioProjectContext,
+  normalizeDevelopmentDatabaseName,
   normalizeDevelopmentDatabaseScope,
   normalizeProjectSlug,
   pathInsideOrEqual,

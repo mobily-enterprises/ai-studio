@@ -31,6 +31,7 @@ import {
 import {
   createStudioProjectContext,
   getStudioProjectContext,
+  normalizeDevelopmentDatabaseName,
   normalizeDevelopmentDatabaseScope
 } from "@local/vibe64-core/server/studioProjectContext";
 import {
@@ -99,6 +100,9 @@ function publicProject(project = {}, {
     canonicalRepositoryPath: project.canonicalRepositoryPath || "",
     developmentDatabaseScope: normalizeDevelopmentDatabaseScope(
       project.developmentDatabaseScope
+    ),
+    developmentDatabaseName: normalizeDevelopmentDatabaseName(
+      project.developmentDatabaseName
     ),
     githubMirrorPath: project.githubMirrorPath || "",
     ...(project.githubRepository ? { githubRepository: project.githubRepository } : {}),
@@ -376,10 +380,13 @@ function createService({
           : String(error?.message || "")
       };
     }
-    const provided = resourceEnvironmentProvider && source.sessionId && declaration.resources.length > 0
+    const developmentDatabase = resourceEnvironmentProvider && source.sessionId && declaration.resources.length > 0
+      ? await currentDevelopmentDatabaseConfiguration()
+      : null;
+    const provided = developmentDatabase
       ? await resourceEnvironmentProvider.environmentForResources({
           components: declaration.components,
-          developmentDatabaseScope: await currentDevelopmentDatabaseScope(),
+          ...developmentDatabase,
           projectLocalRoot: selectedProjectRuntimeRoot(),
           resources: declaration.resources,
           serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
@@ -571,8 +578,15 @@ function createService({
   }
 
   async function currentDevelopmentDatabaseScope() {
+    return (await currentDevelopmentDatabaseConfiguration()).developmentDatabaseScope;
+  }
+
+  async function currentDevelopmentDatabaseConfiguration() {
     const project = await currentProjectState();
-    return normalizeDevelopmentDatabaseScope(project?.developmentDatabaseScope);
+    return {
+      developmentDatabaseName: normalizeDevelopmentDatabaseName(project?.developmentDatabaseName),
+      developmentDatabaseScope: normalizeDevelopmentDatabaseScope(project?.developmentDatabaseScope)
+    };
   }
 
   function managedDevelopmentDatabaseAvailable() {
@@ -616,8 +630,35 @@ function createService({
       );
     }
     const slug = path.basename(requireSelectedTargetRoot());
+    const scope = normalizeDevelopmentDatabaseScope(input.scope);
+    const currentProject = await currentProjectState();
+    let developmentDatabaseName = normalizeDevelopmentDatabaseName(
+      currentProject?.developmentDatabaseName
+    );
+    if (scope === "project" && !developmentDatabaseName) {
+      if (typeof resourceEnvironmentProvider?.developmentDatabaseNameForProject !== "function") {
+        throw vibe64Error(
+          "This Vibe64 installation cannot name a managed project database.",
+          "vibe64_managed_development_database_name_unavailable"
+        );
+      }
+      developmentDatabaseName = normalizeDevelopmentDatabaseName(
+        await resourceEnvironmentProvider.developmentDatabaseNameForProject({
+          serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
+          slug,
+          targetRoot: requireSelectedTargetRoot()
+        })
+      );
+      if (!developmentDatabaseName) {
+        throw vibe64Error(
+          "The managed project database name is empty.",
+          "vibe64_managed_development_database_name_unavailable"
+        );
+      }
+    }
     await studioProjectContext.updateWorkspaceProjectMetadata({
-      developmentDatabaseScope: normalizeDevelopmentDatabaseScope(input.scope),
+      ...(developmentDatabaseName ? { developmentDatabaseName } : {}),
+      developmentDatabaseScope: scope,
       slug
     });
     return {
@@ -795,7 +836,7 @@ function createService({
       }
       const source = await sourceForInput({ sessionId });
       return resourceEnvironmentProvider.removeSessionResources({
-        developmentDatabaseScope: await currentDevelopmentDatabaseScope(),
+        ...(await currentDevelopmentDatabaseConfiguration()),
         projectLocalRoot: selectedProjectRuntimeRoot(),
         sessionId,
         serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
