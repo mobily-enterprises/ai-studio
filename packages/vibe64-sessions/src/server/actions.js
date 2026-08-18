@@ -9,6 +9,7 @@ import {
   sessionInspectInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
+  sessionSaveInputValidator,
   sessionViewStateInputValidator
 } from "./inputSchemas.js";
 import {
@@ -19,6 +20,8 @@ import {
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
 const ACTION_CREATE_SESSION = "vibe64.sessions.create";
 const ACTION_UPDATE_CURRENT_SESSION = "vibe64.sessions.current.update";
+const ACTION_INSPECT_SESSION_WORK = "vibe64.sessions.work.inspect";
+const ACTION_SAVE_SESSION_WORK = "vibe64.sessions.work.save";
 const ACTION_INSPECT_SESSION = "vibe64.sessions.inspect";
 const ACTION_INSPECT_SESSION_DIFF = "vibe64.sessions.diff.inspect";
 const ACTION_READ_SESSION_CONVERSATION_LOG = "vibe64.sessions.conversation-log.read";
@@ -95,6 +98,19 @@ function createSessionActions({ sessions } = {}) {
       })
     }),
     action({
+      id: ACTION_INSPECT_SESSION_WORK,
+      kind: "query",
+      input: sessionIdInputValidator,
+      execute: (input) => sessions.inspectSessionWork(input.sessionId)
+    }),
+    action({
+      id: ACTION_SAVE_SESSION_WORK,
+      kind: "command",
+      input: sessionSaveInputValidator,
+      events: [sessionChangedActionEvent({ reason: "session-work-saved" })],
+      execute: (input) => sessions.saveSessionWork(input.sessionId, withoutSessionId(input))
+    }),
+    action({
       id: ACTION_READ_SESSION_CONVERSATION_LOG,
       kind: "query",
       input: sessionConversationLogInputValidator,
@@ -157,10 +173,12 @@ export {
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
+  ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
   createSessionActions

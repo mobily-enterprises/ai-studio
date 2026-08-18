@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, proxyRefs, unref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
@@ -108,6 +108,54 @@ function useVibe64SessionRuntimeHost(props, emit) {
   const activeAgentWorking = computed(() => runtimeHostAgentWorking({
     selectedSession: selectedSession.value
   }));
+  const workState = ref({
+    error: "",
+    loading: false,
+    operation: null,
+    unsaved: false
+  });
+
+  async function refreshWorkState() {
+    const sessionId = selectedSessionId.value;
+    if (!sessionId || selectedSessionClosed.value) {
+      workState.value = {
+        error: "",
+        loading: false,
+        operation: null,
+        unsaved: false
+      };
+      return workState.value;
+    }
+    workState.value = {
+      ...workState.value,
+      loading: true
+    };
+    try {
+      const result = await getHttpWebClient().request(
+        vibe64SessionPath(
+          readRefOrGetterValue(props.sessionData.sessionsApiPath),
+          sessionId,
+          "/work"
+        ),
+        { method: "GET" }
+      );
+      if (result?.ok === false) {
+        throw new Error(vibe64ApiResponseError(result, "Session work could not be inspected."));
+      }
+      workState.value = {
+        ...result,
+        error: "",
+        loading: false
+      };
+    } catch (error) {
+      workState.value = {
+        ...workState.value,
+        error: error instanceof Error ? error.message : String(error || "Session work could not be inspected."),
+        loading: false
+      };
+    }
+    return workState.value;
+  }
 
   async function refreshSessionData(options = {}) {
     const includeList = options?.includeList === true;
@@ -300,6 +348,34 @@ function useVibe64SessionRuntimeHost(props, emit) {
     return true;
   }
 
+  async function saveSessionWork(input = {}) {
+    const sessionId = selectedSessionId.value;
+    if (!sessionId) {
+      return false;
+    }
+    const result = await getHttpWebClient().request(
+      vibe64SessionPath(
+        readRefOrGetterValue(props.sessionData.sessionsApiPath),
+        sessionId,
+        "/save"
+      ),
+      {
+        body: vibe64RealtimeOriginPayload({
+          message: String(input?.message || "Save Vibe64 work")
+        }),
+        method: "POST"
+      }
+    );
+    await Promise.allSettled([
+      refreshSessionData({ reason: "session-work-save" }),
+      refreshWorkState()
+    ]);
+    if (result?.ok === false) {
+      throw new Error(vibe64ApiResponseError(result, "Session work could not be saved."));
+    }
+    return result;
+  }
+
   async function cancelAgentMessage(messageId = "") {
     const normalizedId = String(messageId || "").trim();
     const controller = pendingMessageControllers.get(normalizedId);
@@ -350,6 +426,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
       error: pageError.value,
       sessionId: selectedSessionId.value
     });
+    void refreshWorkState();
   });
 
   watch([activeAgentWorking, () => guardedPage.value.busy], emitBusy, { flush: "post" });
@@ -365,6 +442,14 @@ function useVibe64SessionRuntimeHost(props, emit) {
       void conversationLog.reload().catch(() => null);
     }
   });
+  watch(() => {
+    const task = (Array.isArray(selectedSession.value?.backgroundTasks)
+      ? selectedSession.value.backgroundTasks
+      : []).find((entry) => entry?.id === "codex_turn_checkpoint" || entry?.id === "save-work");
+    return `${selectedSessionId.value}:${task?.updatedAt || ""}`;
+  }, () => {
+    void refreshWorkState();
+  }, { flush: "post" });
 
   onBeforeUnmount(() => {
     for (const controller of pendingMessageControllers.values()) {
@@ -388,12 +473,15 @@ function useVibe64SessionRuntimeHost(props, emit) {
     guardedPage,
     interruptAgentTurn,
     refreshSessionData,
+    refreshWorkState,
     review,
     retryWorkspaceSetup,
+    saveSessionWork,
     selectedAgentTerminalId,
     selection,
     sendAgentMessage,
-    setAutopilotBusy: () => null
+    setAutopilotBusy: () => null,
+    workState
   };
 }
 

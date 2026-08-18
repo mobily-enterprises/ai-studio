@@ -46,7 +46,6 @@ import {
 import {
   defineVibe64AsyncComponent
 } from "@/lib/vibe64AsyncComponent.js";
-import SAVE_WORK_PROMPT from "@/prompts/save-work-commit-and-push.md?raw";
 
 const DIRECT_SESSION_TOOL_IDS = new Set([
   "info",
@@ -122,6 +121,10 @@ const vibe64AutopilotViewProps = {
     default: async () => false,
     type: Function
   },
+  saveSessionWork: {
+    default: async () => false,
+    type: Function
+  },
   sendAgentMessage: {
     default: async () => false,
     type: Function
@@ -143,6 +146,10 @@ const vibe64AutopilotViewProps = {
     type: [String, Object, Function]
   },
   sessionToolbar: {
+    default: () => ({}),
+    type: Object
+  },
+  workState: {
     default: () => ({}),
     type: Object
   }
@@ -260,6 +267,8 @@ function useVibe64AutopilotView(props, emit) {
   const questionAnswers = ref({});
   const dismissedNumberedQuestionText = ref("");
   const saveWorkConfirmOpen = ref(false);
+  const saveWorkError = ref("");
+  const saveWorkExpanded = ref(false);
   const saveWorkSending = ref(false);
   const selectedAnswerChoice = ref("");
   const workspaceSetupRetryError = ref("");
@@ -563,8 +572,17 @@ function useVibe64AutopilotView(props, emit) {
   }
 
   const saveWorkDisabled = computed(() => Boolean(
-    composerDisabled.value || agentActive.value || saveWorkSending.value
+    composerDisabled.value || agentActive.value || saveWorkSending.value || props.workState?.loading
   ));
+  const saveWorkUnsaved = computed(() => props.workState?.unsaved === true);
+  const saveWorkOperation = computed(() => props.workState?.operation || null);
+  const saveWorkOutput = computed(() => (Array.isArray(saveWorkOperation.value?.events)
+    ? saveWorkOperation.value.events
+      .map((event) => [event.at, event.message].filter(Boolean).join("  "))
+      .filter(Boolean)
+      .join("\n")
+    : ""));
+  const saveWorkStatus = computed(() => String(saveWorkOperation.value?.status || ""));
 
   function requestSaveWork() {
     if (saveWorkDisabled.value) {
@@ -583,12 +601,21 @@ function useVibe64AutopilotView(props, emit) {
       return false;
     }
     saveWorkSending.value = true;
+    saveWorkError.value = "";
+    saveWorkExpanded.value = true;
     try {
-      const sent = await sendChatPayload(chatMessagePayload(SAVE_WORK_PROMPT));
-      if (sent) {
+      const result = await props.saveSessionWork({
+        message: "Save Vibe64 work"
+      });
+      if (result?.ok !== false) {
         saveWorkConfirmOpen.value = false;
       }
-      return sent;
+      return result;
+    } catch (error) {
+      saveWorkError.value = error instanceof Error
+        ? error.message
+        : String(error || "Session work could not be saved.");
+      return false;
     } finally {
       saveWorkSending.value = false;
     }
@@ -951,7 +978,13 @@ function useVibe64AutopilotView(props, emit) {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
+    saveWorkError,
+    saveWorkExpanded,
+    saveWorkOperation,
+    saveWorkOutput,
     saveWorkSending,
+    saveWorkStatus,
+    saveWorkUnsaved,
     selectSessionTool,
     sessionId,
     sessionGithubActor,

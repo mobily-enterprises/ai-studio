@@ -1,20 +1,31 @@
 import {
   agentAttachmentActionInputValidator,
+  agentAttachmentDeleteActionInputValidator,
   launchTargetActionInputValidator,
   openLaunchTargetActionInputValidator,
-  previewIdentityActionInputValidator
+  previewIdentityActionInputValidator,
+  temporaryConversationCreateActionInputValidator,
+  temporaryConversationInputValidator,
+  temporaryConversationStopActionInputValidator,
+  temporaryConversationTurnActionInputValidator
 } from "./inputSchemas.js";
 
 const ACTION_START_LAUNCH_TARGET_TERMINAL = "vibe64.terminals.launch-target-terminal.start";
 const ACTION_OPEN_LAUNCH_TARGET = "vibe64.terminals.launch-target.open";
 const ACTION_SELECT_PREVIEW_IDENTITY = "vibe64.terminals.preview-identity.select";
 const ACTION_UPLOAD_AGENT_ATTACHMENT = "vibe64.terminals.agent-attachment.upload";
+const ACTION_DELETE_AGENT_ATTACHMENT = "vibe64.terminals.agent-attachment.delete";
+const ACTION_CREATE_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.create";
+const ACTION_READ_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.read";
+const ACTION_START_TEMPORARY_CONVERSATION_TURN = "vibe64.terminals.temporary-conversation.turn.start";
+const ACTION_STOP_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.stop";
+const ACTION_DELETE_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.delete";
 
-function action({ execute, id, idempotency = "optional", input }) {
+function action({ execute, id, idempotency = "optional", input, kind = "command" }) {
   return Object.freeze({
     id,
     version: 1,
-    kind: "command",
+    kind,
     input,
     output: null,
     idempotency,
@@ -61,14 +72,56 @@ function createTerminalActions({ terminals } = {}) {
       id: ACTION_UPLOAD_AGENT_ATTACHMENT,
       input: agentAttachmentActionInputValidator,
       execute: (input) => terminals.uploadAgentAttachment(input.sessionId, input)
+    }),
+    action({
+      id: ACTION_DELETE_AGENT_ATTACHMENT,
+      input: agentAttachmentDeleteActionInputValidator,
+      execute: (input) => terminals.deleteAgentAttachment(input.sessionId, input)
+    }),
+    action({
+      id: ACTION_CREATE_TEMPORARY_CONVERSATION,
+      input: temporaryConversationCreateActionInputValidator,
+      execute: (input) => terminals.createAgentConversation(input.sessionId, {
+        agentSettings: input.agentSettings || {},
+        ephemeral: true,
+        policy: input.policy || ""
+      })
+    }),
+    action({
+      id: ACTION_READ_TEMPORARY_CONVERSATION,
+      idempotency: "none",
+      input: temporaryConversationInputValidator,
+      kind: "query",
+      execute: (input) => terminals.readAgentConversation(input.sessionId, input)
+    }),
+    action({
+      id: ACTION_START_TEMPORARY_CONVERSATION_TURN,
+      input: temporaryConversationTurnActionInputValidator,
+      execute: (input) => terminals.startAgentConversationTurn(input.sessionId, input)
+    }),
+    action({
+      id: ACTION_STOP_TEMPORARY_CONVERSATION,
+      input: temporaryConversationStopActionInputValidator,
+      execute: (input) => terminals.stopAgentConversation(input.sessionId, input)
+    }),
+    action({
+      id: ACTION_DELETE_TEMPORARY_CONVERSATION,
+      input: temporaryConversationInputValidator,
+      execute: (input) => terminals.deleteAgentConversation(input.sessionId, input)
     })
   ]);
 }
 
 export {
+  ACTION_CREATE_TEMPORARY_CONVERSATION,
+  ACTION_DELETE_AGENT_ATTACHMENT,
+  ACTION_DELETE_TEMPORARY_CONVERSATION,
   ACTION_OPEN_LAUNCH_TARGET,
+  ACTION_READ_TEMPORARY_CONVERSATION,
   ACTION_SELECT_PREVIEW_IDENTITY,
   ACTION_START_LAUNCH_TARGET_TERMINAL,
+  ACTION_START_TEMPORARY_CONVERSATION_TURN,
+  ACTION_STOP_TEMPORARY_CONVERSATION,
   ACTION_UPLOAD_AGENT_ATTACHMENT,
   createTerminalActions
 };

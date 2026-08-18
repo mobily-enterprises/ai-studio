@@ -8,6 +8,11 @@ import {
 import process from "node:process";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
+import {
+  inspectSessionWork as inspectManagedSessionWork,
+  recoverSessionWorkSave as recoverManagedSessionWorkSave,
+  saveSessionWork as saveManagedSessionWork
+} from "./sessionWorkSave.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
 import {
   recordSessionGitCommandActor as writeSessionGitCommandActor
@@ -900,6 +905,118 @@ function createService({
       });
     },
 
+    async saveSessionWork(sessionId, input = {}) {
+      const normalizedSessionId = String(sessionId || "").trim();
+      const runtime = input.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      let session = input.session?.sessionId === normalizedSessionId
+        ? input.session
+        : await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+      let execution = await codexGitCommand.sessionWorkSaveContext({
+        session,
+        sessionId: normalizedSessionId
+      });
+      if (execution?.ok === false && input.vibe64User) {
+        const recorded = await service.recordSessionGitCommandActor(normalizedSessionId, {
+          reason: "session-save",
+          runtime,
+          session,
+          vibe64User: input.vibe64User
+        });
+        if (recorded?.ok !== false) {
+          session = recorded.session || await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+          execution = await codexGitCommand.sessionWorkSaveContext({
+            session,
+            sessionId: normalizedSessionId
+          });
+        }
+      }
+      if (execution?.ok === false) {
+        const error = new Error(execution.error || "The Git actor for this Save is not available.");
+        error.code = execution.code || "vibe64_session_save_actor_unavailable";
+        throw error;
+      }
+      return saveManagedSessionWork({
+        commandOptions: execution.commandOptions,
+        identity: execution.identity,
+        message: input.message || "Save Vibe64 work",
+        onProgress: input.onProgress,
+        operationId: input.operationId,
+        project: await projectService.readCurrentProject(),
+        runCommand: execution.runCommand,
+        runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+        siblingWork: async () => {
+          const sessions = typeof runtime.listSessions === "function"
+            ? await runtime.listSessions({ statusGroup: "open" })
+            : await runtime.listSessionSummaries({ statusGroup: "open" });
+          const project = await projectService.readCurrentProject();
+          const siblings = [];
+          for (const sibling of sessions) {
+            const siblingId = sessionRecordId(sibling);
+            if (!siblingId || siblingId === normalizedSessionId || !terminalWorktreePath(sibling)) {
+              continue;
+            }
+            siblings.push(await inspectManagedSessionWork({
+              project,
+              session: sibling
+            }));
+          }
+          return siblings;
+        },
+        session
+      });
+    },
+
+    async recoverSessionWorkSave(sessionId, input = {}) {
+      const normalizedSessionId = String(sessionId || "").trim();
+      const runtime = input.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      const session = input.session?.sessionId === normalizedSessionId
+        ? input.session
+        : await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+      const execution = await codexGitCommand.sessionWorkSaveContext({
+        session,
+        sessionId: normalizedSessionId
+      });
+      if (execution?.ok === false) {
+        const error = new Error(execution.error || "The Git actor for Save recovery is not available.");
+        error.code = execution.code || "vibe64_session_save_actor_unavailable";
+        throw error;
+      }
+      return recoverManagedSessionWorkSave({
+        commandOptions: execution.commandOptions,
+        project: await projectService.readCurrentProject(),
+        recovery: input.recovery || {},
+        runCommand: execution.runCommand,
+        runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+        session
+      });
+    },
+
+    async inspectSessionWork(sessionId, input = {}) {
+      const normalizedSessionId = String(sessionId || "").trim();
+      const runtime = input.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      const session = input.session?.sessionId === normalizedSessionId
+        ? input.session
+        : await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+      return inspectManagedSessionWork({
+        project: await projectService.readCurrentProject(),
+        session
+      });
+    },
+
     async closeProjectRuntime(input = {}) {
       const startedAtMs = Date.now();
       const context = projectRuntimeContext();
@@ -1216,6 +1333,10 @@ function createService({
 
     uploadAgentAttachment(sessionId, input = {}, options = {}) {
       return sessionAgent.uploadAttachment(sessionId, input, options);
+    },
+
+    deleteAgentAttachment(sessionId, input = {}, options = {}) {
+      return sessionAgent.deleteAttachment(sessionId, input, options);
     },
 
     waitForAgentConversationTurn(sessionId, input = {}, options = {}) {

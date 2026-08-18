@@ -8,6 +8,10 @@ const promptTextareaPath = path.resolve(
   "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue"
 );
 const runtimeHostPath = path.resolve("src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue");
+const temporaryAiPath = path.resolve(
+  "src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
+);
+const temporaryAiComposablePath = path.resolve("src/composables/useVibe64TemporaryAi.js");
 
 describe("Vibe64 direct session view", () => {
   it("is chat-first and contains no workflow state-machine surface", () => {
@@ -34,18 +38,42 @@ describe("Vibe64 direct session view", () => {
     }
   });
 
-  it("offers save as an ordinary confirmed chat request, not Git orchestration", () => {
+  it("offers native confirmed Save with persistent operation output, not an AI prompt", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
     const combined = `${component}\n${composable}`;
 
     expect(component).toContain("Save work");
     expect(component).toContain("@click=\"confirmSaveWork\"");
-    expect(composable).toContain("sendChatPayload(chatMessagePayload(SAVE_WORK_PROMPT))");
+    expect(component).toContain("<Vibe64TerminalSurface");
+    expect(component).toContain(':color="saveWorkUnsaved ? \'error\' : undefined"');
+    expect(composable).toContain("await props.saveSessionWork({");
+    expect(composable).toContain("const saveWorkUnsaved = computed");
+    expect(composable).not.toContain("SAVE_WORK_PROMPT");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
     expect(component).toContain("sessionGithubActor.displayLabel");
     expect(component).toContain(":to=\"props.githubActorTeleportTarget\"");
     expect(composable).toContain("sessionGithubCommandActor(props.session || {})");
+  });
+
+  it("keeps temporary AI unmistakable, ephemeral, multi-task, and attachment-owned", () => {
+    const component = fs.readFileSync(componentPath, "utf8");
+    const temporaryAi = fs.readFileSync(temporaryAiPath, "utf8");
+    const temporaryAiComposable = fs.readFileSync(temporaryAiComposablePath, "utf8");
+
+    expect(component).toContain("Open temporary AI");
+    expect(component).toContain("Resolve with temporary AI");
+    expect(component).toContain("<Vibe64TemporaryAiWorkspace");
+    expect(temporaryAi).toContain("Not saved to session history");
+    expect(temporaryAi).toContain('v-for="task in temporary.tasks.value"');
+    expect(temporaryAi).toContain("<Vibe64AgentSettingsMenu");
+    expect(temporaryAi).toContain("<Vibe64AutopilotPromptTextarea");
+    expect(temporaryAi).not.toContain("Attach visible preview");
+    expect(temporaryAi).not.toContain("console & network");
+    expect(temporaryAiComposable).toContain("beforeunload");
+    expect(temporaryAiComposable).toContain("keepalive: true");
+    expect(temporaryAiComposable).toContain("vibe64AgentAttachmentDeletePath");
+    expect(temporaryAiComposable).not.toMatch(/localStorage|sessionStorage/gu);
   });
 
   it("keeps direct source, City, preview, diff, terminal, and close controls", () => {
@@ -98,6 +126,8 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).toContain(":send-agent-message=\"sendAgentMessage\"");
     expect(runtimeHost).toContain(":conversation-log=\"conversationLog\"");
     expect(runtimeHost).toContain(":retry-workspace-setup=\"retryWorkspaceSetup\"");
+    expect(runtimeHost).toContain(":save-session-work=\"saveSessionWork\"");
+    expect(runtimeHost).toContain(":work-state=\"workState\"");
     expect(runtimeHost).not.toContain(":source-safety=\"sourceSafety\"");
     expect(runtimeHost).not.toContain(":autopilot-steps=");
     expect(runtimeHost).not.toContain(":automation-enabled=");

@@ -160,6 +160,21 @@ const sessionIdInputValidator = patchSchema({
   }
 });
 
+const sessionSaveInputValidator = patchSchema({
+  ...optionalOrigin,
+  ...optionalUser,
+  message: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
 const sessionInspectInputValidator = patchSchema({
   ...optionalOrigin,
   ...optionalUser,
@@ -227,5 +242,6 @@ export {
   sessionInspectInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
+  sessionSaveInputValidator,
   sessionViewStateInputValidator
 };

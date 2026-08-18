@@ -1,0 +1,30 @@
+# Save session work
+
+People can deliberately publish the complete current session work to the
+project's configured source authority without asking the coding agent to run
+Git commands.
+
+## Sources
+
+- `packages/vibe64-terminals/src/server/sessionWorkSave.js`
+- `packages/vibe64-sessions/src/server/service.js`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
+
+## Public contract
+
+Save captures tracked, staged, unstaged, and relevant untracked session work,
+preserves non-conflicting canonical changes, and publishes one ordinary commit
+to the exact configured GitHub, managed-Git, or local-source authority. It
+refuses ambiguous authority, overlapping sibling work, conflicting changes,
+dirty local authority, or a moving canonical branch. Progress and bounded
+command output remain visible across reloads. A verified publication advances
+the session baseline and preserves any later session edits; an interrupted Save
+is reconciled only when the canonical authority proves the prepared commit was
+already published.
+
+## Implementation map
+
+- `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,
+  non-advertised worktree checkpoints without changing the user's index.
+- `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes
+  canonical source mutations across processes.

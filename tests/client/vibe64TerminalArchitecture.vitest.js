@@ -72,4 +72,18 @@ describe("Vibe64 terminal architecture", () => {
     expect(source).toContain("const errorDetailsOpen = ref(false);");
     expect(source).toContain("errorDetailsOpen.value = false;\n  emit(\"retry\");");
   });
+
+  it("uses the canonical terminal surface for bounded non-interactive operation output", () => {
+    const source = readFileSync(terminalSurfacePath, "utf8");
+
+    expect(source).toContain('v-if="bodyMode === \'terminal\'"');
+    expect(source).toContain('class="vibe64-terminal-surface__log"');
+    expect(source).toContain('role="log"');
+    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('<slot name="output" :output="output">');
+    expect(source).toContain('validator: (value) => ["log", "terminal"].includes(value)');
+    expect(source).toContain("vibe64-terminal-surface--mobile-takeover");
+    expect(source).toContain("height: 100dvh");
+    expect(source.match(/vibe64-terminal-surface__mount/gu)).toHaveLength(3);
+  });
 });

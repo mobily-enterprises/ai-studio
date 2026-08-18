@@ -66,6 +66,9 @@ import {
 import {
   materializeProjectEnvironmentFiles
 } from "./projectEnvironmentFiles.js";
+import {
+  runProjectSourceExclusive as runProjectSourceMutationExclusive
+} from "./projectSourceMutationLock.js";
 
 function resolveVibe64TargetRoot(targetRoot) {
   return resolveStudioTargetRoot({
@@ -851,6 +854,14 @@ function createService({
 
     requireSelectedTargetRoot,
     runInProjectContext,
+
+    runProjectSourceExclusive(operation, options = {}) {
+      return runProjectSourceMutationExclusive(
+        selectedProjectRuntimeRoot(),
+        operation,
+        options
+      );
+    },
 
     setResourceEnvironmentProvider(provider = null) {
       if (

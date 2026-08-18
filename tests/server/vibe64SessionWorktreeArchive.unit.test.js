@@ -12,6 +12,10 @@ import {
   Vibe64SessionRuntime
 } from "@local/vibe64-runtime/server";
 import {
+  checkpointRefs,
+  createGitTurnCheckpoint
+} from "@local/vibe64-execution/server";
+import {
   sourceMetadata,
   sourcePath as testSessionSourcePath,
   withTemporaryRoot
@@ -374,5 +378,74 @@ test("archives session clone commits into a saved bundle", async () => {
     assert.equal(archivedMetadata.source_recovery_kind, "session_clone");
     assert.equal(archivedMetadata.source_recovery_bundle_artifact, "recovery/branch.bundle");
     assert.equal(archivedMetadata.source_recovery_untracked_artifact, "recovery/untracked-files.tar.gz");
+  });
+});
+
+test("archives and proves restoration of hidden turn checkpoint refs before removing source", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const baseCommit = await createGitProject(targetRoot);
+    const runtime = new Vibe64SessionRuntime({
+      targetRoot
+    });
+    const sessionId = "checkpoint_archive";
+    const worktreePath = testSessionSourcePath(targetRoot, sessionId);
+    await runtime.createSession({
+      metadata: {
+        base_branch: "main",
+        base_commit: baseCommit,
+        branch: `vibe64/${sessionId}`,
+        source_default_branch: "main",
+        source_remote_url: targetRoot,
+        ...sourceMetadata(targetRoot, sessionId)
+      },
+      sessionId
+    });
+    await createSessionClone({
+      baseCommit,
+      branch: `vibe64/${sessionId}`,
+      sourcePath: worktreePath,
+      targetRoot
+    });
+    await writeProjectFile(worktreePath, "app.txt", "checkpointed only\n");
+    const checkpoint = await createGitTurnCheckpoint({
+      outerTurnId: "client-message-archive",
+      outcome: "completed",
+      sessionId,
+      timestamp: "2026-08-18T09:00:00.000Z",
+      worktreePath
+    });
+
+    const archiveSession = await runtime.getSession(sessionId);
+    const archiveResult = await runtime.archiveSessionSource(archiveSession, {
+      reason: "abandoned"
+    });
+    assert.equal(archiveResult.removed, true);
+    assert.equal(await pathExists(worktreePath), false);
+    const archivedMetadata = await runtime.store.readMetadata(sessionId);
+    assert.equal(
+      archivedMetadata.source_recovery_checkpoint_bundle_artifact,
+      "recovery/checkpoints.bundle"
+    );
+
+    const restoreRoot = path.join(targetRoot, "checkpoint-restore.git");
+    await mkdir(restoreRoot, { recursive: true });
+    await git(restoreRoot, ["init", "--bare"]);
+    const artifact = path.join(
+      runtime.store.paths(sessionId).artifactsRoot,
+      archivedMetadata.source_recovery_checkpoint_bundle_artifact
+    );
+    const refs = checkpointRefs({
+      outerTurnId: "client-message-archive",
+      sessionId
+    });
+    await git(restoreRoot, [
+      "fetch",
+      artifact,
+      `${refs.turnRef}:${refs.turnRef}`,
+      `${refs.latestRef}:${refs.latestRef}`
+    ]);
+    assert.equal(await git(restoreRoot, ["rev-parse", refs.turnRef]), checkpoint.commit);
+    assert.equal(await git(restoreRoot, ["rev-parse", refs.latestRef]), checkpoint.commit);
+    assert.equal(await git(restoreRoot, ["show", `${checkpoint.commit}:app.txt`]), "checkpointed only");
   });
 });

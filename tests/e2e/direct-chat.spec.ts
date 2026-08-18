@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import { expect, test, type Page, type Request, type Route } from "@playwright/test";
 
 import {
@@ -15,11 +13,6 @@ import {
 } from "./support/base-shell/http";
 
 const SESSION_ID = "direct-chat-session";
-const SAVE_WORK_PROMPT = (await readFile(
-  new URL("../../src/prompts/save-work-commit-and-push.md", import.meta.url),
-  "utf8"
-)).trim();
-
 test.describe("direct chat", () => {
   test("sends an ordinary chat message without orchestration metadata or a prompts section", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
@@ -49,16 +42,15 @@ test.describe("direct chat", () => {
     await expect(composer).toHaveValue("");
   });
 
-  test("keeps the commit-and-push prompt behind the Save work confirmation", async ({ page }) => {
+  test("saves through the native project operation without sending a chat message", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
-    let finishDelivery = () => undefined;
-    const deliveryPending = new Promise<void>((resolve) => {
-      finishDelivery = () => resolve();
-    });
+    const saves: Record<string, unknown>[] = [];
     await mockDirectChat(page, {
       onMessage(body) {
         messages.push(body);
-        return deliveryPending;
+      },
+      onSave(body) {
+        saves.push(body);
       }
     });
 
@@ -68,29 +60,20 @@ test.describe("direct chat", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("Save current work?", { exact: true })).toBeVisible();
-    await expect(dialog.getByText(/authorized canonical destination/iu)).toBeVisible();
-    await expect(dialog.getByText(/will not force-push, rebase, open a pull request, or deploy/iu)).toBeVisible();
+    await expect(dialog.getByText(/canonical repository/iu)).toBeVisible();
+    await expect(dialog.getByText(/concurrent canonical changes/iu)).toBeVisible();
 
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(dialog).not.toBeVisible();
     expect(messages).toHaveLength(0);
 
     await page.getByRole("button", { name: "Save work", exact: true }).click();
-    const confirmButton = dialog.getByRole("button", { name: "Send to Codex", exact: true });
+    const confirmButton = dialog.getByRole("button", { name: "Save", exact: true });
     await confirmButton.click();
 
-    await expect(confirmButton).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Save work", exact: true })).toBeDisabled();
-    finishDelivery();
-
-    await expect.poll(() => messages).toHaveLength(1);
-    expect(messages[0]).toEqual(expect.objectContaining({
-      displayMessage: SAVE_WORK_PROMPT,
-      message: SAVE_WORK_PROMPT
-    }));
-    expect(messages[0].messageId).toMatch(/^message:tab:/u);
-    expect(messages[0]).not.toHaveProperty("actionId");
-    expect(messages[0]).not.toHaveProperty("intentId");
+    await expect.poll(() => saves).toHaveLength(1);
+    expect(saves[0]).toEqual({ message: "Save Vibe64 work" });
+    expect(messages).toHaveLength(0);
     await expect(dialog).not.toBeVisible();
   });
 
@@ -102,6 +85,54 @@ test.describe("direct chat", () => {
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
     await expect(page.getByRole("button", { name: "Save work", exact: true })).toBeDisabled();
+  });
+
+  test("keeps multiple temporary AI tasks visibly separate from the main conversation", async ({ page }) => {
+    const messages: Record<string, unknown>[] = [];
+    const temporaryStarts: Record<string, unknown>[] = [];
+    const temporaryTurns: Record<string, unknown>[] = [];
+    await mockDirectChat(page, {
+      onMessage(body) {
+        messages.push(body);
+      },
+      onTemporaryConversation(body) {
+        temporaryStarts.push(body);
+      },
+      onTemporaryTurn(body) {
+        temporaryTurns.push(body);
+      }
+    });
+
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+    await page.getByRole("button", { name: "Open temporary AI" }).click();
+
+    const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+    await expect(workspace).toBeVisible();
+    await expect(workspace.getByText("Not saved to session history", { exact: true })).toBeVisible();
+    await expect(workspace.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
+
+    await workspace.getByRole("button", { name: "New", exact: true }).click();
+    await expect(workspace.getByRole("button", { name: "Temporary 2", exact: true })).toBeVisible();
+    await expect(workspace.getByRole("button", { name: "Close Temporary 1" })).toBeVisible();
+    await expect(workspace.getByRole("button", { name: "Close Temporary 2" })).toBeVisible();
+
+    await workspace.getByLabel("Message temporary AI").fill("Inspect this without changing it.");
+    await workspace.getByRole("button", { name: "Send to temporary AI" }).click();
+
+    await expect.poll(() => temporaryStarts).toHaveLength(1);
+    expect(temporaryStarts[0]).toEqual(expect.objectContaining({ policy: "read" }));
+    await expect.poll(() => temporaryTurns).toHaveLength(1);
+    expect(temporaryTurns[0]).toEqual(expect.objectContaining({
+      message: "Inspect this without changing it.",
+      policy: "read",
+      promptLabel: "Temporary 2"
+    }));
+    expect(messages).toHaveLength(0);
+    await expect(workspace.getByText("Temporary answer", { exact: true })).toBeVisible();
+
+    await workspace.getByRole("button", { name: "Close Temporary 2" }).click();
+    await workspace.getByRole("button", { name: "Close Temporary 1" }).click();
+    await expect(workspace).not.toBeVisible();
   });
 
   test("submits assistant numbered questions through the same chat endpoint", async ({ page }) => {
@@ -142,11 +173,17 @@ test.describe("direct chat", () => {
 async function mockDirectChat(page: Page, {
   agentActive = false,
   conversationLog = [],
-  onMessage = () => undefined
+  onMessage = () => undefined,
+  onSave = () => undefined,
+  onTemporaryConversation = () => undefined,
+  onTemporaryTurn = () => undefined
 }: {
   agentActive?: boolean;
   conversationLog?: Record<string, unknown>[];
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onSave?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onTemporaryConversation?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onTemporaryTurn?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
 } = {}) {
   await mockProjectGateReady(page);
   const session = directSession({ agentActive });
@@ -176,6 +213,52 @@ async function mockDirectChat(page: Page, {
         ok: true,
         sessionId: SESSION_ID
       });
+      return;
+    }
+    if (method === "POST" && url.pathname.endsWith("/save")) {
+      const body = requestBodyWithoutOrigin(request);
+      await onSave(body);
+      await fulfillJson(route, {
+        ok: true,
+        operation: {
+          events: [{ message: "Saved to the canonical project repository." }],
+          status: "succeeded"
+        },
+        sessionId: SESSION_ID,
+        status: "saved"
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname.endsWith("/temporary-conversations")) {
+      const body = requestBodyWithoutOrigin(request);
+      await onTemporaryConversation(body);
+      await fulfillJson(route, {
+        conversationId: "temporary-conversation-1",
+        ok: true
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname.endsWith("/temporary-conversations/temporary-conversation-1/turns")) {
+      const body = requestBodyWithoutOrigin(request);
+      await onTemporaryTurn(body);
+      await fulfillJson(route, {
+        ok: true,
+        runId: "temporary-run-1",
+        status: "inProgress"
+      });
+      return;
+    }
+    if (method === "GET" && url.pathname.endsWith("/temporary-conversations/temporary-conversation-1")) {
+      await fulfillJson(route, {
+        message: "Temporary answer",
+        ok: true,
+        runId: "temporary-run-1",
+        status: "completed"
+      });
+      return;
+    }
+    if (method === "DELETE" && url.pathname.endsWith("/temporary-conversations/temporary-conversation-1")) {
+      await fulfillJson(route, { ok: true });
       return;
     }
     if (method === "GET" && url.pathname.endsWith("/conversation-log")) {

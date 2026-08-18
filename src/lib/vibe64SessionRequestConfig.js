@@ -42,6 +42,42 @@ function vibe64AgentAttachmentPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/agent-attachments");
 }
 
+function vibe64AgentAttachmentDeletePath(
+  sessionsApiPath = "",
+  sessionId = "",
+  attachmentId = ""
+) {
+  return `${vibe64AgentAttachmentPath(sessionsApiPath, sessionId)}/${encodePathSegment(attachmentId)}`;
+}
+
+function vibe64TemporaryConversationsPath(sessionsApiPath = "", sessionId = "") {
+  return vibe64SessionPath(sessionsApiPath, sessionId, "/temporary-conversations");
+}
+
+function vibe64TemporaryConversationPath(
+  sessionsApiPath = "",
+  sessionId = "",
+  conversationId = ""
+) {
+  return `${vibe64TemporaryConversationsPath(sessionsApiPath, sessionId)}/${encodePathSegment(conversationId)}`;
+}
+
+function vibe64TemporaryConversationTurnsPath(
+  sessionsApiPath = "",
+  sessionId = "",
+  conversationId = ""
+) {
+  return `${vibe64TemporaryConversationPath(sessionsApiPath, sessionId, conversationId)}/turns`;
+}
+
+function vibe64TemporaryConversationStopPath(
+  sessionsApiPath = "",
+  sessionId = "",
+  conversationId = ""
+) {
+  return `${vibe64TemporaryConversationPath(sessionsApiPath, sessionId, conversationId)}/stop`;
+}
+
 function vibe64AgentTerminalPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
   return vibe64SessionPath(
     sessionsApiPath,
@@ -224,6 +260,7 @@ export {
   VIBE64_SURFACE_ID,
   DEFAULT_MAX_OPEN_SESSIONS,
   SELECTED_SESSION_STORAGE_KEY,
+  vibe64AgentAttachmentDeletePath,
   vibe64AgentAttachmentPath,
   vibe64AgentSessionsReconcilePath,
   vibe64AgentTerminalPath,
@@ -256,6 +293,10 @@ export {
   vibe64SourceEditorResolvePathPath,
   vibe64SourceEditorSearchPath,
   vibe64SourceEditorTreePath,
+  vibe64TemporaryConversationPath,
+  vibe64TemporaryConversationsPath,
+  vibe64TemporaryConversationStopPath,
+  vibe64TemporaryConversationTurnsPath,
   vibe64SessionsQueryKey,
   agentSettingsInputFromContext
 };

@@ -23,6 +23,16 @@ import {
 
 process.env[VIBE64_RUNTIME_NAMESPACE_ENV] = "unit-owner";
 
+const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
+  "base_commit",
+  "repository_mode",
+  "source",
+  "source_kind",
+  "source_path",
+  "source_path_authority",
+  "source_removed"
+]);
+
 function runProcessWithInput(command, args = [], {
   cwd = "",
   env = process.env,
@@ -101,7 +111,12 @@ function serviceForSession(session = {}, {
           async readSessionSourceDescriptor(sessionId) {
             assert.equal(sessionId, session.sessionId);
             return {
-              metadata: session.metadata,
+              metadata: Object.fromEntries(
+                SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES.map((name) => [
+                  name,
+                  session.metadata?.[name] || ""
+                ])
+              ),
               sessionId,
               targetRoot: session.targetRoot
             };
@@ -150,6 +165,45 @@ test("Codex runs local Git inside the managed session source", async () => {
     assert.equal(gatewayCall.purpose, "codex");
     assert.equal(gatewayCall.session.sessionId, session.sessionId);
     assert.ok(metadataReads.includes("github_repository"));
+    assert.ok(metadataReads.includes("source_remote_url"));
+  });
+});
+
+test("Codex recognizes a GitHub session from its source remote URL", async () => {
+  await withTemporaryRoot(async (root) => {
+    const session = githubSession(root);
+    delete session.metadata.github_repository;
+    await mkdir(session.metadata.source_path, { recursive: true });
+    const gatewayCalls = [];
+    const service = serviceForSession(session, {
+      async runGatewayCommand(request) {
+        gatewayCalls.push(request);
+        return request.command === "gh"
+          ? {
+              exitCode: 0,
+              ok: true,
+              stdout: "secret-github-token\n"
+            }
+          : {
+              exitCode: 0,
+              ok: true,
+              stdout: "fetched"
+            };
+      }
+    });
+
+    const result = await service.run({
+      args: ["fetch", "origin", "main"],
+      command: "git",
+      sessionId: session.sessionId
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(gatewayCalls.length, 2);
+    assert.equal(gatewayCalls[0].command, "gh");
+    assert.equal(gatewayCalls[1].command, "git");
+    assert.equal(gatewayCalls[1].gitTransport, "github-token");
+    assert.equal(gatewayCalls[1].gitAuthToken, "secret-github-token");
   });
 });
 

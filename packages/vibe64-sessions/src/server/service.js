@@ -10,6 +10,7 @@ import {
   vibe64SessionDebugError,
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
+import { vibe64AgentRunStateIsActive } from "@local/vibe64-runtime/server/sessionStore";
 import { inspectSessionDiff } from "./sessionDiff.js";
 
 function text(value = "") {
@@ -84,6 +85,14 @@ function publicSession(session = {}, extra = {}) {
   };
 }
 
+const SESSION_SAVE_TASK_ID = "save-work";
+
+function activeAgentRun(session = {}) {
+  return (Array.isArray(session.agentRuns) ? session.agentRuns : []).find((run) => (
+    run?.active === true || vibe64AgentRunStateIsActive(run?.state)
+  )) || null;
+}
+
 function createService({
   project,
   publishSessionChanged = async () => null,
@@ -133,6 +142,49 @@ function createService({
         sessionId
       });
     });
+  }
+
+  async function recoverInterruptedSave(runtime, session, task) {
+    if (task?.status !== "running" || typeof terminals.recoverSessionWorkSave !== "function") {
+      return task;
+    }
+    try {
+      const result = await terminals.recoverSessionWorkSave(session.sessionId, {
+        recovery: task,
+        runtime,
+        session
+      });
+      if (result.reconciled === true) {
+        await runtime.store.writeMetadataValue(session.sessionId, "base_commit", result.saveCommit);
+      }
+      return runtime.store.writeBackgroundTaskEvent(session.sessionId, SESSION_SAVE_TASK_ID, {
+        event: {
+          kind: "save-recovered",
+          message: result.reconciled === true
+            ? "Interrupted Save recovered and reconciled."
+            : "Interrupted Save was published and needs local reconciliation.",
+          status: "ready"
+        },
+        patch: {
+          ...result,
+          status: "ready"
+        }
+      });
+    } catch (error) {
+      return runtime.store.writeBackgroundTaskEvent(session.sessionId, SESSION_SAVE_TASK_ID, {
+        event: {
+          kind: "save-recovery-failed",
+          message: text(error?.message) || "Interrupted Save needs attention.",
+          status: "failed"
+        },
+        patch: {
+          code: text(error?.code),
+          error: text(error?.message) || "Interrupted Save needs attention.",
+          retryable: error?.retryable === true,
+          status: "failed"
+        }
+      });
+    }
   }
 
   return Object.freeze({
@@ -269,6 +321,140 @@ function createService({
           ...(uiSync ? { uiSync } : {})
         });
       });
+    },
+
+    async inspectSessionWork(sessionId) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({
+          inspectSource: false
+        });
+        const session = await runtime.getSession(sessionId, {
+          inspectSource: false
+        });
+        const existingTask = await runtime.store.readBackgroundTask(sessionId, SESSION_SAVE_TASK_ID);
+        const operation = await recoverInterruptedSave(runtime, session, existingTask);
+        const work = await terminals.inspectSessionWork(sessionId, {
+          runtime,
+          session
+        });
+        return {
+          ...work,
+          operation,
+          ok: true
+        };
+      }, "Vibe64 could not inspect this session's work.");
+    },
+
+    async saveSessionWork(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({
+          inspectSource: false
+        });
+        const session = await runtime.getSession(sessionId, {
+          inspectSource: false
+        });
+        if (activeAgentRun(session)) {
+          const error = new Error("Wait for the assistant turn to finish before saving this work.");
+          error.code = "vibe64_session_save_agent_active";
+          throw error;
+        }
+        const operationId = crypto.randomUUID();
+        await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
+          event: {
+            kind: "save-started",
+            message: "Saving session work.",
+            status: "running"
+          },
+          patch: {
+            operationId,
+            status: "running"
+          }
+        });
+        await publishSessionChanged(sessionId, {
+          operation: "updated",
+          originId: text(input.originId),
+          reason: "session-save-started",
+          session: await runtime.getSession(sessionId, { inspectSource: false })
+        });
+        try {
+          const result = await terminals.saveSessionWork(sessionId, {
+            message: input.message,
+            operationId,
+            onProgress: async (progress = {}) => {
+              await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
+                event: {
+                  kind: text(progress.kind) || "save-progress",
+                  message: text(progress.message),
+                  status: "running"
+                },
+                patch: {
+                  ...progress,
+                  operationId,
+                  status: "running"
+                }
+              });
+              await publishSessionChanged(sessionId, {
+                operation: "updated",
+                originId: text(input.originId),
+                reason: "session-save-progress",
+                session: await runtime.getSession(sessionId, { inspectSource: false })
+              });
+            },
+            runtime,
+            session,
+            vibe64User: input.vibe64User || null
+          });
+          if (result.reconciled === true) {
+            await runtime.store.writeMetadataValue(sessionId, "base_commit", result.saveCommit);
+          }
+          const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
+            event: {
+              kind: result.status,
+              message: result.reconciled === true
+                ? "Session work was saved."
+                : "Session work was published and needs local reconciliation.",
+              status: "ready"
+            },
+            patch: {
+              ...result,
+              status: "ready"
+            }
+          });
+          await publishSessionChanged(sessionId, {
+            operation: "updated",
+            originId: text(input.originId),
+            reason: "session-save-completed",
+            session: await runtime.getSession(sessionId, { inspectSource: false })
+          });
+          return {
+            ...result,
+            operation: task,
+            ok: true
+          };
+        } catch (error) {
+          const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
+            event: {
+              kind: "save-failed",
+              message: text(error?.message) || "Session Save failed.",
+              status: "failed"
+            },
+            patch: {
+              code: text(error?.code),
+              error: text(error?.message) || "Session Save failed.",
+              operationId,
+              status: "failed"
+            }
+          });
+          await publishSessionChanged(sessionId, {
+            operation: "updated",
+            originId: text(input.originId),
+            reason: "session-save-failed",
+            session: await runtime.getSession(sessionId, { inspectSource: false }),
+            task
+          });
+          throw error;
+        }
+      }, "Vibe64 could not save this session's work.");
     },
 
     async inspectSessionDiff(sessionId, options = {}) {

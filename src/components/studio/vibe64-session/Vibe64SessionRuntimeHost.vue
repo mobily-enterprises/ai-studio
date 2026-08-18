@@ -18,12 +18,14 @@
       :refresh-session-data="refreshSessionData"
       :review="review"
       :retry-workspace-setup="retryWorkspaceSetup"
+      :save-session-work="saveSessionWork"
       :session-abandon="dialogs.abandon"
       :session="selection.selectedSession"
       :sessions-api-path="sessionData.sessionsApiPath"
       :session-selection-closed="selection.isClosed"
       :session-toolbar="autopilotSessionToolbar"
       :send-agent-message="sendAgentMessage"
+      :work-state="workState"
       :project-pane="props.projectPane"
       @busy-change="setAutopilotBusy"
       @project-attention="emitProjectAttention"
@@ -127,10 +129,12 @@ const {
   refreshSessionData,
   review,
   retryWorkspaceSetup,
+  saveSessionWork,
   selectedAgentTerminalId,
   selection,
   setAutopilotBusy,
-  sendAgentMessage
+  sendAgentMessage,
+  workState
 } = useVibe64SessionRuntimeHost(props, emit);
 </script>
 

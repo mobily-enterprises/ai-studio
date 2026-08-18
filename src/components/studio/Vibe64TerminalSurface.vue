@@ -7,7 +7,8 @@
       'vibe64-terminal-surface--collapsed': !expanded,
       'vibe64-terminal-surface--draggable': draggable,
       'vibe64-terminal-surface--fill': fill,
-      'vibe64-terminal-surface--focused': focused
+      'vibe64-terminal-surface--focused': focused,
+      'vibe64-terminal-surface--mobile-takeover': mobileTakeover
     }"
   >
     <header
@@ -115,6 +116,7 @@
         </div>
 
         <div
+          v-if="bodyMode === 'terminal'"
           class="vibe64-terminal-surface__host"
           :style="hostStyle"
           @click="$emit('focus')"
@@ -122,6 +124,15 @@
         >
           <div :ref="terminalHostRef" class="vibe64-terminal-surface__mount" />
         </div>
+        <pre
+          v-else
+          class="vibe64-terminal-surface__log"
+          :style="hostStyle"
+          aria-atomic="false"
+          aria-live="polite"
+          role="log"
+          tabindex="0"
+        ><slot name="output" :output="output">{{ output || "Waiting for output…" }}</slot></pre>
       </div>
 
       <footer class="vibe64-terminal-surface__footer">
@@ -144,6 +155,11 @@ import { mdiAlertCircleOutline } from "@mdi/js";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
 
 const props = defineProps({
+  bodyMode: {
+    default: "terminal",
+    validator: (value) => ["log", "terminal"].includes(value),
+    type: String
+  },
   closeLabel: {
     default: "Close",
     type: String
@@ -188,6 +204,10 @@ const props = defineProps({
     default: "clamp(18rem, 48vh, 34rem)",
     type: String
   },
+  mobileTakeover: {
+    default: false,
+    type: Boolean
+  },
   output: {
     default: "",
     type: String
@@ -229,7 +249,7 @@ const props = defineProps({
     type: String
   },
   terminalHostRef: {
-    required: true,
+    default: null,
     type: Function
   },
   title: {
@@ -377,7 +397,27 @@ watch(() => props.starting, (starting) => {
   overflow: hidden;
 }
 
+.vibe64-terminal-surface__log {
+  background: #101216;
+  border-radius: 0.45rem;
+  color: #f1f3f4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+  height: var(--vibe64-terminal-host-height);
+  line-height: 1.45;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.65rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .vibe64-terminal-surface--fill .vibe64-terminal-surface__host {
+  height: 100%;
+}
+
+.vibe64-terminal-surface--fill .vibe64-terminal-surface__log {
   height: 100%;
 }
 
@@ -391,5 +431,24 @@ watch(() => props.starting, (starting) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .vibe64-terminal-surface--mobile-takeover:not(.vibe64-terminal-surface--collapsed) {
+    border-radius: 0 !important;
+    height: 100dvh;
+    inset: 0;
+    position: fixed;
+    z-index: 2400;
+  }
+
+  .vibe64-terminal-surface--mobile-takeover:not(.vibe64-terminal-surface--collapsed) .vibe64-terminal-surface__stage {
+    flex: 1 1 0;
+  }
+
+  .vibe64-terminal-surface--mobile-takeover:not(.vibe64-terminal-surface--collapsed) .vibe64-terminal-surface__host,
+  .vibe64-terminal-surface--mobile-takeover:not(.vibe64-terminal-surface--collapsed) .vibe64-terminal-surface__log {
+    height: 100%;
+  }
 }
 </style>

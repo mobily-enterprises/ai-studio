@@ -201,6 +201,7 @@ function createSessionAgentManager({
     closeTerminal: sessionMethod("closeTerminal"),
     createConversation: sessionMethod("createConversation"),
     deleteConversation: sessionMethod("deleteConversation"),
+    deleteAttachment: sessionMethod("deleteAttachment"),
     deleteDetachedChatThread: sessionMethod("deleteDetachedChatThread"),
     describeProvider(options = {}) {
       const provider = providerFor(options);

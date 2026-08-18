@@ -5,10 +5,12 @@ import {
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
+  ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION
 } from "./actions.js";
@@ -74,6 +76,23 @@ function registerRoutes(http, {
       });
     },
     summary: "Inspect changes in a Vibe64 session source tree."
+  });
+
+  routes.actionRoute("GET", "/sessions/:sessionId/work", {
+    actionId: ACTION_INSPECT_SESSION_WORK,
+    buildInput: (request) => withVibe64User(request, {
+      sessionId: request.params.sessionId
+    }),
+    summary: "Inspect whether a Vibe64 session has work to save."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/save", {
+    actionId: ACTION_SAVE_SESSION_WORK,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Save session work to the project's canonical repository."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/conversation-log", {

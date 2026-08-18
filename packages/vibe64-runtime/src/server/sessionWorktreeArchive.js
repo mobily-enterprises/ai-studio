@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -10,6 +10,7 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
+  checkpointRefRoot,
   runVibe64Command
 } from "@local/vibe64-execution/server";
 
@@ -18,6 +19,7 @@ const SNAPSHOT_TIMEOUT_MS = 60_000;
 const COMMAND_BUFFER_BYTES = 50 * 1024 * 1024;
 const RECOVERY_ARTIFACT_ROOT = "recovery";
 const RECOVERY_BRANCH_BUNDLE_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/branch.bundle`;
+const RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/checkpoints.bundle`;
 const RECOVERY_PATCH_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/worktree.patch`;
 const RECOVERY_UNTRACKED_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/untracked-files.tar.gz`;
 const RECOVERY_UNTRACKED_LIST_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/untracked-files.list`;
@@ -297,6 +299,131 @@ async function writeBranchRecoveryBundle({
   return RECOVERY_BRANCH_BUNDLE_ARTIFACT;
 }
 
+async function writeCheckpointRecoveryBundle({
+  artifactsRoot = "",
+  session = {},
+  worktreePath = ""
+} = {}) {
+  if (metadataValue(session, "source_kind") !== "session_clone") {
+    return metadataValue(session, "source_recovery_checkpoint_bundle_artifact");
+  }
+  const refRoot = checkpointRefRoot(session.sessionId);
+  const refsResult = await runGit(worktreePath, [
+    "for-each-ref",
+    "--format=%(objectname) %(refname)",
+    `${refRoot}/`
+  ], {
+    timeout: 15_000
+  });
+  if (!refsResult.ok) {
+    throw vibe64Error(
+      `Cannot inspect session checkpoints before archive: ${refsResult.output}`,
+      "vibe64_worktree_archive_checkpoint_refs_failed"
+    );
+  }
+  const refs = String(refsResult.stdout || "")
+    .split("\n")
+    .map((line) => normalizeText(line))
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(" ");
+      return {
+        commit: separator > 0 ? normalizeText(line.slice(0, separator)) : "",
+        ref: separator > 0 ? normalizeText(line.slice(separator + 1)) : ""
+      };
+    });
+  if (refs.length < 1) {
+    return "";
+  }
+  if (refs.some(({ commit, ref }) => !commit || !ref.startsWith(`${refRoot}/`))) {
+    throw vibe64Error(
+      "Session checkpoint refs are not valid durable Git refs.",
+      "vibe64_worktree_archive_checkpoint_refs_invalid"
+    );
+  }
+
+  const recoveryRoot = path.join(artifactsRoot, RECOVERY_ARTIFACT_ROOT);
+  const bundlePath = path.join(artifactsRoot, RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT);
+  await mkdir(recoveryRoot, {
+    recursive: true
+  });
+  const bundleResult = await runGit(worktreePath, [
+    "bundle",
+    "create",
+    bundlePath,
+    ...refs.map(({ ref }) => ref)
+  ], {
+    allowedRoots: [artifactsRoot],
+    timeout: SNAPSHOT_TIMEOUT_MS
+  });
+  if (!bundleResult.ok) {
+    throw vibe64Error(
+      `Cannot snapshot session checkpoints before archive: ${bundleResult.output}`,
+      "vibe64_worktree_archive_checkpoint_bundle_failed"
+    );
+  }
+  const verifyResult = await runGit(worktreePath, [
+    "bundle",
+    "verify",
+    bundlePath
+  ], {
+    allowedRoots: [artifactsRoot],
+    timeout: SNAPSHOT_TIMEOUT_MS
+  });
+  if (!verifyResult.ok) {
+    throw vibe64Error(
+      `Session checkpoint bundle could not be validated: ${verifyResult.output}`,
+      "vibe64_worktree_archive_checkpoint_bundle_invalid"
+    );
+  }
+
+  const verificationRoot = await mkdtemp(path.join(recoveryRoot, ".checkpoint-restore-"));
+  try {
+    const initResult = await runGit(verificationRoot, ["init", "--bare"], {
+      allowedRoots: [artifactsRoot],
+      timeout: 15_000
+    });
+    if (!initResult.ok) {
+      throw vibe64Error(
+        `Cannot initialize checkpoint restore verification: ${initResult.output}`,
+        "vibe64_worktree_archive_checkpoint_restore_init_failed"
+      );
+    }
+    const fetchResult = await runGit(verificationRoot, [
+      "fetch",
+      bundlePath,
+      ...refs.map(({ ref }) => `${ref}:${ref}`)
+    ], {
+      allowedRoots: [artifactsRoot],
+      timeout: SNAPSHOT_TIMEOUT_MS
+    });
+    if (!fetchResult.ok) {
+      throw vibe64Error(
+        `Session checkpoint bundle could not be restored: ${fetchResult.output}`,
+        "vibe64_worktree_archive_checkpoint_restore_failed"
+      );
+    }
+    for (const { commit, ref } of refs) {
+      const restored = await runGit(verificationRoot, ["rev-parse", "--verify", ref], {
+        allowedRoots: [artifactsRoot],
+        timeout: 15_000
+      });
+      if (!restored.ok || normalizeText(restored.stdout) !== commit) {
+        throw vibe64Error(
+          `Session checkpoint bundle restored an unexpected ref: ${ref}`,
+          "vibe64_worktree_archive_checkpoint_restore_mismatch"
+        );
+      }
+    }
+  } finally {
+    await rm(verificationRoot, {
+      force: true,
+      recursive: true
+    });
+  }
+  return RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT;
+}
+
 async function archiveSessionSource({
   reason = "archive",
   session = {},
@@ -363,12 +490,20 @@ async function archiveSessionSource({
       worktreePath
     })
     : metadataValue(session, "source_recovery_bundle_artifact");
+  const checkpointBundleArtifact = worktreeIsGitWorktree
+    ? await writeCheckpointRecoveryBundle({
+      artifactsRoot: session.artifactsRoot,
+      session,
+      worktreePath
+    })
+    : metadataValue(session, "source_recovery_checkpoint_bundle_artifact");
   const archivedAt = new Date().toISOString();
   await writeMetadataValues(store, sessionId, {
     source_recovery_base_branch: metadataValue(session, "base_branch"),
     source_recovery_base_commit: metadataValue(session, "base_commit"),
     source_recovery_branch: branch,
     source_recovery_bundle_artifact: branchBundleArtifact,
+    source_recovery_checkpoint_bundle_artifact: checkpointBundleArtifact,
     source_recovery_default_branch: metadataValue(session, "source_default_branch") || metadataValue(session, "base_branch"),
     source_recovery_dirty: dirtyArtifacts.dirty ? "yes" : "no",
     source_recovery_head: head,

@@ -75,6 +75,9 @@ function createCodexSessionAgentProvider({
     async deleteConversation(context, input = {}) {
       return controller.deleteConversation(context.sessionId, input);
     },
+    async deleteAttachment(context, input = {}) {
+      return controller.deleteAttachment(context.sessionId, input);
+    },
     async deleteDetachedChatThread(context, input = {}) {
       return controller.deleteDetachedChatThread(context.sessionId, input);
     },

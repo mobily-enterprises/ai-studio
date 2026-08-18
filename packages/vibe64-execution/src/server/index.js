@@ -43,6 +43,12 @@ export {
   runVibe64Command
 } from "./runVibe64Command.js";
 export {
+  checkpointRefRoot,
+  checkpointRefs,
+  createGitTurnCheckpoint,
+  writeGitWorktreeTree
+} from "./gitTurnCheckpoint.js";
+export {
   resolveCommandEnv
 } from "./env/resolveCommandEnv.js";
 export {

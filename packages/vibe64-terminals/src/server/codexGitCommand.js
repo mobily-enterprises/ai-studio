@@ -138,7 +138,8 @@ const VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV = "VIBE64_CODEX_GIT_COMMAND_WRAPP
 const CODEX_GIT_COMMAND_METADATA_NAMES = Object.freeze([
   ...SESSION_GIT_COMMAND_ACTOR_METADATA_KEYS,
   "agent_identity_conversation_id",
-  "github_repository"
+  "github_repository",
+  "source_remote_url"
 ]);
 
 const commandServers = new Map();
@@ -608,6 +609,95 @@ function createCodexGitCommandService({
   runGatewayCommand = runVibe64Command
 } = {}) {
   const gatewayCommandRunner = typeof runGatewayCommand === "function" ? runGatewayCommand : runVibe64Command;
+
+  async function sessionWorkSaveContext({
+    session: suppliedSession = null,
+    sessionId: suppliedSessionId = ""
+  } = {}) {
+    const sessionId = normalizeText(suppliedSessionId || suppliedSession?.sessionId || suppliedSession?.id);
+    if (!sessionId) {
+      return responseError(
+        "Session Save requires a session id.",
+        "vibe64_session_save_session_required"
+      );
+    }
+    const session = suppliedSession || await readGitCommandSession(projectService, sessionId);
+    const actor = gitCommandActorFromSession(session, {
+      command: "git"
+    });
+    if (actor.ok === false) {
+      return actor;
+    }
+    const authorize = typeof authorizeActorAccess === "function"
+      ? authorizeActorAccess
+      : typeof projectService?.authorizeCodexGitActorAccess === "function"
+        ? projectService.authorizeCodexGitActorAccess.bind(projectService)
+        : null;
+    if (actor.githubRequired !== false && authorize) {
+      const access = await authorize({
+        actor,
+        session,
+        targetRoot: actor.targetRoot,
+        workdir: actor.workdir
+      });
+      if (access === false || access?.ok === false) {
+        return responseError(
+          access?.error || "This GitHub actor no longer has access to this project session.",
+          access?.code || "vibe64_codex_git_actor_access_denied",
+          {
+            statusCode: access?.statusCode || 403
+          }
+        );
+      }
+    }
+    if (actor.githubRequired === false) {
+      return {
+        actor,
+        commandOptions: {},
+        identity: {
+          email: "vibe64@localhost",
+          name: "Vibe64 Save"
+        },
+        ok: true,
+        runCommand: gatewayCommandRunner
+      };
+    }
+    const toolHome = await resolveGithubHomeForStoredActor({
+      accountMode: actor.actorScope,
+      env,
+      ownerUserKey: actor.actorUserKey
+    });
+    if (toolHome.ok === false) {
+      return toolHome;
+    }
+    const githubToken = await readGithubToken({
+      actor,
+      gatewayCommandRunner,
+      session,
+      toolHome
+    });
+    if (githubToken.ok === false) {
+      return githubToken;
+    }
+    const actorLabel = normalizeText(actor.actorUserKey) || "Vibe64 user";
+    return {
+      actor,
+      commandOptions: {
+        actor: "app",
+        gitAuthToken: githubToken.token,
+        gitTransport: "github-token",
+        purpose: "github",
+        userKey: gatewayGitIdentityUserKey(session, actor, toolHome)
+      },
+      identity: {
+        email: `${actorLabel.replace(/[^a-z0-9._-]+/giu, "-")}@users.noreply.vibe64.dev`,
+        name: actorLabel
+      },
+      ok: true,
+      runCommand: gatewayCommandRunner
+    };
+  }
+
   async function run(input = {}) {
     const startedAtMs = Date.now();
     const command = normalizeText(input.command);
@@ -756,7 +846,8 @@ function createCodexGitCommandService({
   }
 
   return {
-    run
+    run,
+    sessionWorkSaveContext
   };
 }
 

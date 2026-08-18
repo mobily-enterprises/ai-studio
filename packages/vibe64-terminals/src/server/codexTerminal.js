@@ -95,6 +95,7 @@ import {
   executionEnvFingerprint
 } from "./projectExecutionEnv.js";
 import {
+  createGitTurnCheckpoint,
   runVibe64Command,
   stableHash
 } from "@local/vibe64-execution/server";
@@ -143,6 +144,7 @@ const CODEX_AGENT_PROVIDER = "codex";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const CODEX_APP_SERVER_TASK_ID = "codex_app_server";
 const CODEX_CONTEXT_TASK_ID = "codex_context";
+const CODEX_TURN_CHECKPOINT_TASK_ID = "codex_turn_checkpoint";
 const CODEX_APP_SERVER_PROVIDER_KEY_DELIMITER = "\u001f";
 const CODEX_APP_SERVER_RESULT_PROCESSED_EVENT = "codex-app-server-result-processed";
 const CODEX_CONTEXT_REFRESH_PENDING_METADATA = Object.freeze([
@@ -358,6 +360,7 @@ function codexAppServerTurnStateFromAgentRun(run = {}) {
     completedAt: normalizeText(run.finishedAt),
     error: normalizeText(run.error),
     inputSource: normalizeText(run.inputSource),
+    outerTurnId: normalizeText(run.outerTurnId),
     runId: normalizeText(run.id),
     runState,
     startedAt: normalizeText(run.startedAt),
@@ -502,6 +505,7 @@ function codexAppServerTurnState(session = {}) {
     active: false,
     completedAt: "",
     error: "",
+    outerTurnId: "",
     runId: "",
     runState: "",
     startedAt: "",
@@ -989,6 +993,7 @@ function createCodexTerminalController({
   codexToolHomeSource = initialCodexRuntime.toolHomeSource;
 
   const codexAppServerProviders = new Map();
+  const codexAppServerEphemeralConversations = new Map();
   const codexAppServerEventSubscriptions = new Map();
   const codexAppServerManagedSessions = new Map();
   const codexAppServerWellbeingTimers = new Map();
@@ -4177,7 +4182,9 @@ function createCodexTerminalController({
   function codexAppServerAgentRunPatch({
     error = "",
     inputSource = "",
+    outerTurnId = "",
     runState = VIBE64_AGENT_RUN_STATE.COMPLETED,
+    session = {},
     status = "",
     threadId = "",
     turnId = "",
@@ -4197,6 +4204,11 @@ function createCodexTerminalController({
     const normalizedInputSource = normalizeText(inputSource);
     if (normalizedInputSource) {
       patch.inputSource = normalizedInputSource;
+    }
+    const normalizedOuterTurnId = normalizeText(outerTurnId) ||
+      normalizeText(codexAppServerAgentRun(session)?.outerTurnId);
+    if (normalizedOuterTurnId) {
+      patch.outerTurnId = normalizedOuterTurnId;
     }
     if (
       normalizedRunState === VIBE64_AGENT_RUN_STATE.STARTING ||
@@ -4229,6 +4241,7 @@ function createCodexTerminalController({
       completedAt: normalizeText(runPatch.finishedAt),
       error: normalizeText(runPatch.error),
       inputSource: normalizeText(runPatch.inputSource),
+      outerTurnId: normalizeText(runPatch.outerTurnId),
       runId: CODEX_APP_SERVER_AGENT_RUN_ID,
       runState,
       startedAt: normalizeText(runPatch.startedAt),
@@ -4243,6 +4256,7 @@ function createCodexTerminalController({
         active,
         id: CODEX_APP_SERVER_AGENT_RUN_ID,
         inputSource: turn.inputSource,
+        outerTurnId: turn.outerTurnId,
         provider: CODEX_AGENT_PROVIDER,
         providerInterface: "codex_app_server",
         providerStatus: turn.status,
@@ -4263,6 +4277,7 @@ function createCodexTerminalController({
           error: turn.error,
           id: turn.turnId,
           inputSource: turn.inputSource,
+          outerTurnId: turn.outerTurnId,
           runState: turn.runState,
           startedAt: turn.startedAt,
           state: turn.state,
@@ -4324,8 +4339,10 @@ function createCodexTerminalController({
     return threadMatches && turnMatches;
   }
 
-  async function claimCodexAppServerTurnStart(runtime, sessionId = "") {
+  async function claimCodexAppServerTurnStart(runtime, sessionId = "", outerTurnId = "") {
     const normalizedSessionId = normalizeText(sessionId);
+    const normalizedOuterTurnId = normalizeText(outerTurnId) ||
+      `vibe64:${crypto.randomUUID()}`;
     if (!normalizedSessionId) {
       return {
         claimed: false,
@@ -4353,6 +4370,7 @@ function createCodexTerminalController({
       const updatedAt = new Date().toISOString();
       const runPatch = codexAppServerAgentRunPatch({
         inputSource: "chat",
+        outerTurnId: normalizedOuterTurnId,
         runState: VIBE64_AGENT_RUN_STATE.STARTING,
         session: currentSession,
         status: "starting",
@@ -4770,6 +4788,131 @@ function createCodexTerminalController({
     return result;
   }
 
+  function checkpointOutcomeForCodexTurn(status = "", turnOutcome = "") {
+    const normalizedTurnOutcome = normalizeText(turnOutcome);
+    if (normalizedTurnOutcome === CODEX_TURN_OUTCOME.USER_CANCELLED) {
+      return "cancelled";
+    }
+    if (normalizedTurnOutcome === CODEX_TURN_OUTCOME.SERVICE_RESTART) {
+      return "interrupted";
+    }
+    if (normalizedTurnOutcome === CODEX_TURN_OUTCOME.RESPONSE_DELIVERY_FAILURE) {
+      return "failed";
+    }
+    const normalizedStatus = normalizeText(status);
+    if (normalizedStatus === "interrupted") {
+      return "interrupted";
+    }
+    if (normalizedStatus === "completed") {
+      return "completed";
+    }
+    return "failed";
+  }
+
+  async function checkpointCodexAppServerTurn(sessionId = "", {
+    status = "completed",
+    turnOutcome = ""
+  } = {}) {
+    const normalizedSessionId = normalizeText(sessionId);
+    const runtime = await createRuntimeForSession();
+    const session = await runtime.getSession(normalizedSessionId);
+    const turn = codexAppServerTurnState(session);
+    const outerTurnId = normalizeText(turn.outerTurnId);
+    if (!outerTurnId || normalizeText(turn.inputSource) === "terminal") {
+      return {
+        ok: true,
+        processed: false,
+        reason: "outer_turn_unavailable"
+      };
+    }
+    const worktreePath = terminalWorktreePath(session);
+    const outcome = checkpointOutcomeForCodexTurn(status, turnOutcome);
+    const timestamp = normalizeText(turn.completedAt || turn.updatedAt);
+    try {
+      const project = typeof projectService?.readCurrentProject === "function"
+        ? await projectService.readCurrentProject()
+        : projectService?.selectedProject || {};
+      const checkpoint = await createGitTurnCheckpoint({
+        outerTurnId,
+        outcome,
+        project,
+        sessionId: normalizedSessionId,
+        timestamp,
+        worktreePath
+      });
+      const task = await runtime.store.writeBackgroundTaskEvent(
+        normalizedSessionId,
+        CODEX_TURN_CHECKPOINT_TASK_ID,
+        {
+          event: {
+            kind: checkpoint.created ? "checkpoint-created" : "checkpoint-confirmed",
+            message: ""
+          },
+          patch: {
+            checkpointCommit: checkpoint.commit,
+            checkpointOutcome: outcome,
+            checkpointTurnId: outerTurnId,
+            error: "",
+            status: "ready"
+          },
+          shouldWrite({ previous }) {
+            return normalizeText(previous.checkpointCommit) !== checkpoint.commit ||
+              normalizeText(previous.checkpointTurnId) !== outerTurnId ||
+              normalizeText(previous.status) !== "ready";
+          }
+        }
+      );
+      await publishSessionChanged(normalizedSessionId, {
+        reason: "codex-turn-checkpoint-updated",
+        session: await runtime.getSession(normalizedSessionId)
+      });
+      return {
+        checkpoint,
+        ok: true,
+        processed: true,
+        task
+      };
+    } catch (error) {
+      const checkpointError = errorMessage(error, "Vibe64 could not create a recoverable turn checkpoint.");
+      const task = await runtime.store.writeBackgroundTaskEvent(
+        normalizedSessionId,
+        CODEX_TURN_CHECKPOINT_TASK_ID,
+        {
+          event: {
+            kind: "checkpoint-failed",
+            message: checkpointError
+          },
+          patch: {
+            checkpointOutcome: outcome,
+            checkpointTurnId: outerTurnId,
+            error: checkpointError,
+            status: "failed"
+          },
+          shouldWrite({ previous }) {
+            return normalizeText(previous.checkpointTurnId) !== outerTurnId ||
+              normalizeText(previous.error) !== checkpointError ||
+              normalizeText(previous.status) !== "failed";
+          }
+        }
+      );
+      await publishSessionChanged(normalizedSessionId, {
+        reason: "codex-turn-checkpoint-failed",
+        session: await runtime.getSession(normalizedSessionId)
+      });
+      vibe64SessionDebugLog("server.codexTerminal.appServerTurn.checkpoint.error", {
+        error: vibe64SessionDebugError(error),
+        outerTurnId,
+        sessionId: normalizedSessionId
+      });
+      return {
+        error: checkpointError,
+        ok: false,
+        processed: true,
+        task
+      };
+    }
+  }
+
   async function markCodexAppServerTurnIdle(sessionId = "", input = {}) {
     const status = normalizeText(input.status) || "completed";
     const result = await writeCodexAppServerAgentRun(sessionId, {
@@ -4783,7 +4926,16 @@ function createCodexTerminalController({
     });
     clearCodexAppServerActiveTimer(sessionId);
     clearCodexAppServerFinalizingTimer(sessionId, input.threadId, input.turnId);
-    return result;
+    if (result?.processed === false) {
+      return result;
+    }
+    return {
+      ...result,
+      checkpoint: await checkpointCodexAppServerTurn(sessionId, {
+        status,
+        turnOutcome: normalizeText(input.turnOutcome)
+      })
+    };
   }
 
   async function currentCodexAppServerTurnId(sessionId = "", threadId = "") {
@@ -5329,7 +5481,8 @@ function createCodexTerminalController({
       error: message,
       status: normalizedStatus,
       threadId: normalizedThreadId,
-      turnId: normalizedTurnId
+      turnId: normalizedTurnId,
+      turnOutcome: outcome
     });
     cleanupCodexAppServerUntrackedTurn(normalizedThreadId, normalizedTurnId);
     return {
@@ -5399,7 +5552,8 @@ function createCodexTerminalController({
       error: message,
       status: normalizedStatus,
       threadId: normalizedThreadId,
-      turnId: normalizedTurnId
+      turnId: normalizedTurnId,
+      turnOutcome: CODEX_TURN_OUTCOME.RESPONSE_DELIVERY_FAILURE
     });
     cleanupCodexAppServerUntrackedTurn(normalizedThreadId, normalizedTurnId);
     vibe64SessionDebugLog("server.codexTerminal.appServerAgentResult.missing", {
@@ -6568,7 +6722,7 @@ function createCodexTerminalController({
       sessionId
     });
 
-    const claim = await claimCodexAppServerTurnStart(runtime, sessionId);
+    const claim = await claimCodexAppServerTurnStart(runtime, sessionId, messageId);
     if (!claim?.claimed) {
       vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.claimObserved", {
         code: String(claim?.response?.code || ""),
@@ -7099,10 +7253,18 @@ function createCodexTerminalController({
         return context;
       }
       const threadSettings = await codexAppServerConversationThreadSettings(context, input);
-      const thread = await context.provider.startThread(threadSettings);
+      const thread = await context.provider.startThread({
+        ...threadSettings,
+        ...(input.ephemeral === true ? { ephemeral: true } : {})
+      });
       const conversationId = normalizeText(thread.id || thread.response?.thread?.id);
       if (!conversationId) {
         throw new Error("Codex app-server did not return a conversation id.");
+      }
+      if (input.ephemeral === true) {
+        const conversations = codexAppServerEphemeralConversations.get(sessionId) || new Set();
+        conversations.add(conversationId);
+        codexAppServerEphemeralConversations.set(sessionId, conversations);
       }
       return {
         conversationId,
@@ -7247,10 +7409,24 @@ function createCodexTerminalController({
     const result = await deleteDetachedCodexAppServerChatThread(sessionId, {
       threadId: input.conversationId
     });
+    const conversationId = normalizeText(input.conversationId);
+    const conversations = codexAppServerEphemeralConversations.get(sessionId);
+    conversations?.delete(conversationId);
+    if (conversations?.size === 0) {
+      codexAppServerEphemeralConversations.delete(sessionId);
+    }
     return {
       ...result,
-      conversationId: normalizeText(input.conversationId)
+      conversationId
     };
+  }
+
+  async function cleanupCodexAppServerEphemeralConversations(sessionId) {
+    const conversationIds = [...(codexAppServerEphemeralConversations.get(sessionId) || [])];
+    for (const conversationId of conversationIds) {
+      await deleteCodexAppServerConversation(sessionId, { conversationId }).catch(() => null);
+    }
+    codexAppServerEphemeralConversations.delete(sessionId);
   }
 
   async function streamDetachedCodexAppServerChatTurn(sessionId, input = {}, options = {}) {
@@ -8151,6 +8327,7 @@ function createCodexTerminalController({
 
     async closeAllForSession(sessionId) {
       clearCodexAppServerSessionRecoveryTimers(sessionId);
+      await cleanupCodexAppServerEphemeralConversations(sessionId);
       let session = null;
       let providerOptions = null;
       let unsubscribeResult = null;
@@ -8298,6 +8475,9 @@ function createCodexTerminalController({
       return vibe64Result(async () => {
         if (!codexAppServerPromptDeliveryEnabled) {
           return codexAppServerControlDisabledResult();
+        }
+        for (const sessionId of [...codexAppServerEphemeralConversations.keys()]) {
+          await cleanupCodexAppServerEphemeralConversations(sessionId);
         }
         return stopCodexAppServerProvidersForTargetRoot(input);
       });
@@ -8461,6 +8641,33 @@ function createCodexTerminalController({
           sessionId,
           targetRoot
         });
+      });
+    },
+
+    async deleteAttachment(sessionId, input = {}) {
+      return vibe64Result(async () => {
+        const attachmentId = normalizeText(input.attachmentId);
+        if (!attachmentId) {
+          return {
+            code: "vibe64_agent_attachment_id_required",
+            error: "Attachment id is required.",
+            ok: false
+          };
+        }
+        const runtime = await createRuntimeForSession();
+        const session = await runtime.getSession(sessionId);
+        const targetRoot = terminalTargetRoot(session, projectService);
+        if (!targetRoot) {
+          return {
+            ok: false,
+            error: "Vibe64 Codex target root is not available."
+          };
+        }
+        await cleanupCodexAttachments(targetRoot, sessionId, attachmentId);
+        return {
+          attachmentId,
+          ok: true
+        };
       });
     },
 

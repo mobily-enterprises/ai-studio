@@ -47,6 +47,27 @@
       "title": "Direct agent conversation"
     },
     {
+      "description": "People can open one or more clearly separate, short-lived AI tasks for focused\nhelp without adding those exchanges to the main project conversation or\nsession history.",
+      "districtId": "subsystem:conversation",
+      "id": "operation:conversation/temporary-assistance",
+      "implementationMap": "",
+      "name": "temporary-assistance",
+      "path": "genesis/program/conversation/temporary-assistance.md",
+      "publicContract": "Each temporary task has its own model settings, optional attachments, message\nstream, and explicit read-only or workspace-writing policy. Temporary tasks do\nnot offer preview, console, or network diagnostic attachments and are visually\ndistinct from the durable project conversation. Closing a task stops its live\nturn, deletes its provider conversation and exact uploaded attachments, and\nremoves its browser-local state. Tasks are not restored after reload and never\nappear in session History.",
+      "sourceFileIds": [
+        "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:src/composables/useVibe64TemporaryAi.js",
+        "file:src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
+      ],
+      "sources": [
+        "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "src/composables/useVibe64TemporaryAi.js",
+        "src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
+      ],
+      "subsystem": "conversation",
+      "title": "Temporary AI assistance"
+    },
+    {
       "description": "People can supply the environment values a project needs while Vibe64 and its\nhost provide managed system values separately.",
       "districtId": "subsystem:environment",
       "id": "operation:environment/project-values",
@@ -194,6 +215,27 @@
       "title": "Source editing and change review"
     },
     {
+      "description": "People can deliberately publish the complete current session work to the\nproject's configured source authority without asking the coding agent to run\nGit commands.",
+      "districtId": "subsystem:source",
+      "id": "operation:source/save-work",
+      "implementationMap": "- `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,\n  non-advertised worktree checkpoints without changing the user's index.\n- `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes\n  canonical source mutations across processes.",
+      "name": "save-work",
+      "path": "genesis/program/source/save-work.md",
+      "publicContract": "Save captures tracked, staged, unstaged, and relevant untracked session work,\npreserves non-conflicting canonical changes, and publishes one ordinary commit\nto the exact configured GitHub, managed-Git, or local-source authority. It\nrefuses ambiguous authority, overlapping sibling work, conflicting changes,\ndirty local authority, or a moving canonical branch. Progress and bounded\ncommand output remain visible across reloads. A verified publication advances\nthe session baseline and preserves any later session edits; an interrupted Save\nis reconciled only when the canonical authority proves the prepared commit was\nalready published.",
+      "sourceFileIds": [
+        "file:packages/vibe64-terminals/src/server/sessionWorkSave.js",
+        "file:packages/vibe64-sessions/src/server/service.js",
+        "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
+      ],
+      "sources": [
+        "packages/vibe64-terminals/src/server/sessionWorkSave.js",
+        "packages/vibe64-sessions/src/server/service.js",
+        "src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
+      ],
+      "subsystem": "source",
+      "title": "Save session work"
+    },
+    {
       "description": "Vibe64 presents and refreshes the portable project understanding maintained by\nGenesis without creating another interpretation of the application.",
       "districtId": "subsystem:understanding",
       "id": "operation:understanding/genesis-context",
@@ -314,6 +356,21 @@
       "toId": "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
     },
     {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64TemporaryAi.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
+    },
+    {
       "fromId": "operation:environment/project-values",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-project/src/server/service.js"
@@ -419,6 +476,21 @@
       "toId": "file:src/components/studio/vibe64-session/Vibe64SessionDiffContent.vue"
     },
     {
+      "fromId": "operation:source/save-work",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/sessionWorkSave.js"
+    },
+    {
+      "fromId": "operation:source/save-work",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/service.js"
+    },
+    {
+      "fromId": "operation:source/save-work",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
+    },
+    {
       "fromId": "operation:understanding/genesis-context",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-genesis/src/server/index.js"
@@ -434,7 +506,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:ab352b671b92e8ad7478396ad136457da454bd7cdefeef8900f6f3b76baddd0e",
+  "programHash": "sha256:626681f141ef9766a0442b926305097c813d56f2b376635ccae8dd68543c7f2b",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

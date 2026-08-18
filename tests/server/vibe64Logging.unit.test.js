@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createStreamingLogSanitizer,
   createVibe64FastifyLoggerOptions,
   logOperationalEvent,
   operationalLogFields,
@@ -140,6 +141,41 @@ test("Vibe64 operational logging sanitizes embedded secrets in ordinary strings"
     },
     event: "vibe64.deploy.failed"
   });
+});
+
+test("streaming operation output redacts exact secrets across process chunk boundaries", () => {
+  const secret = "canary-secret-value";
+  const sanitizer = createStreamingLogSanitizer({
+    secrets: [secret]
+  });
+  const output = [
+    sanitizer.push("starting\nvalue=canary-se"),
+    sanitizer.push("cret-value\nfinished\n"),
+    sanitizer.flush()
+  ].join("");
+
+  assert.equal(output.includes(secret), false);
+  assert.equal(output.includes("canary-se"), false);
+  assert.match(output, /value=\[redacted\]/u);
+  assert.match(output, /starting/u);
+  assert.match(output, /finished/u);
+});
+
+test("streaming operation output bounds an unterminated line without splitting known secrets", () => {
+  const secret = "four-part-secret";
+  const sanitizer = createStreamingLogSanitizer({
+    pendingLimit: 1024,
+    secrets: [secret]
+  });
+  const output = [
+    sanitizer.push(`${"x".repeat(1100)}four-part-`),
+    sanitizer.push("secret"),
+    sanitizer.flush()
+  ].join("");
+
+  assert.equal(output.includes(secret), false);
+  assert.equal(output.includes("four-part-"), false);
+  assert.match(output, /\[redacted\]/u);
 });
 
 test("Vibe64 operational log helper writes redacted structured payloads", () => {

@@ -222,3 +222,29 @@ test("plain session store archives closed sessions", async () => {
     assert.equal(session.manifest.runtimeKind, "genesis");
   });
 });
+
+test("plain session store bounds durable background-task events at write time", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    const sessionId = "bounded-background-task";
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId
+    });
+    for (let index = 0; index < 220; index += 1) {
+      await store.writeBackgroundTaskEvent(sessionId, "checkpoint", {
+        event: {
+          kind: "checkpoint",
+          message: `checkpoint ${index}`
+        },
+        patch: {
+          status: "ready"
+        }
+      });
+    }
+    const task = await store.readBackgroundTask(sessionId, "checkpoint");
+    assert.equal(task.events.length, 200);
+    assert.equal(task.events[0].message, "checkpoint 20");
+    assert.equal(task.events.at(-1).message, "checkpoint 219");
+  });
+});

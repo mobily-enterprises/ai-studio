@@ -6,9 +6,11 @@ import {
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_WORK,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
+  ACTION_SAVE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
@@ -30,6 +32,8 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_UPDATE_CURRENT_SESSION,
     ACTION_INSPECT_SESSION,
     ACTION_INSPECT_SESSION_DIFF,
+    ACTION_INSPECT_SESSION_WORK,
+    ACTION_SAVE_SESSION_WORK,
     ACTION_READ_SESSION_CONVERSATION_LOG,
     ACTION_RETRY_WORKSPACE_SETUP,
     ACTION_ABANDON_SESSION,
@@ -188,6 +192,190 @@ test("failed assistant delivery is published as failed, not accepted", async () 
   assert.equal(result.error, "Codex thread reconciliation failed.");
   assert.equal(result.ok, false);
   assert.equal(publications[0][1].reason, "session-agent-message-failed");
+});
+
+test("session work inspection includes the durable native Save operation", async () => {
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return { sessionId: "session-1", status: "active" };
+          },
+          store: {
+            async readBackgroundTask(sessionId, taskId) {
+              assert.equal(sessionId, "session-1");
+              assert.equal(taskId, "save-work");
+              return { id: taskId, status: "ready" };
+            }
+          }
+        };
+      }
+    },
+    terminals: {
+      async inspectSessionWork(sessionId) {
+        assert.equal(sessionId, "session-1");
+        return { canonicalCommit: "abc123", unsaved: true };
+      }
+    }
+  });
+
+  const result = await service.inspectSessionWork("session-1");
+  assert.equal(result.ok, true);
+  assert.equal(result.unsaved, true);
+  assert.deepEqual(result.operation, { id: "save-work", status: "ready" });
+});
+
+test("work inspection reconciles an interrupted published Save exactly once", async () => {
+  const writes = [];
+  const metadata = [];
+  const runningTask = {
+    checkpointCommit: "checkpoint",
+    checkpointTree: "tree",
+    expectedCanonicalCommit: "old",
+    id: "save-work",
+    operationId: "save-1",
+    proposedCommit: "saved",
+    status: "running"
+  };
+  const runtime = {
+    async getSession() {
+      return { sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async readBackgroundTask() {
+        return runningTask;
+      },
+      async writeBackgroundTaskEvent(_sessionId, _taskId, input) {
+        writes.push(input);
+        return { ...runningTask, ...input.patch, events: [input.event] };
+      },
+      async writeMetadataValue(...args) {
+        metadata.push(args);
+      }
+    }
+  };
+  let recoverCalls = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async inspectSessionWork() {
+        return { unsaved: false };
+      },
+      async recoverSessionWorkSave(_sessionId, input) {
+        recoverCalls += 1;
+        assert.equal(input.recovery, runningTask);
+        return {
+          reconciled: true,
+          saveCommit: "saved",
+          status: "saved"
+        };
+      }
+    }
+  });
+
+  const result = await service.inspectSessionWork("session-1");
+  assert.equal(result.ok, true);
+  assert.equal(result.operation.status, "ready");
+  assert.equal(recoverCalls, 1);
+  assert.deepEqual(metadata, [["session-1", "base_commit", "saved"]]);
+  assert.equal(writes[0].event.kind, "save-recovered");
+});
+
+test("native Save persists bounded progress and advances the session base only after reconciliation", async () => {
+  const taskEvents = [];
+  const metadata = [];
+  const publications = [];
+  const runtime = {
+    async getSession() {
+      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async writeBackgroundTaskEvent(sessionId, taskId, input) {
+        assert.equal(sessionId, "session-1");
+        assert.equal(taskId, "save-work");
+        assert.ok(["running", "ready", "failed"].includes(input.patch.status));
+        taskEvents.push(input);
+        return {
+          ...input.patch,
+          events: taskEvents.map((entry) => entry.event),
+          id: taskId
+        };
+      },
+      async writeMetadataValue(sessionId, name, value) {
+        metadata.push([sessionId, name, value]);
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    async publishSessionChanged(...args) {
+      publications.push(args);
+    },
+    terminals: {
+      async saveSessionWork(sessionId, input) {
+        assert.equal(sessionId, "session-1");
+        await input.onProgress({ kind: "canonical-refreshed", message: "Canonical source refreshed." });
+        return {
+          reconciled: true,
+          saveCommit: "def456",
+          status: "saved"
+        };
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1", { originId: "tab:test" });
+  assert.equal(result.ok, true);
+  assert.equal(result.operation.status, "ready");
+  assert.deepEqual(metadata, [["session-1", "base_commit", "def456"]]);
+  assert.deepEqual(taskEvents.map((entry) => entry.event.kind), [
+    "save-started",
+    "canonical-refreshed",
+    "saved"
+  ]);
+  assert.deepEqual(publications.map((entry) => entry[1].reason), [
+    "session-save-started",
+    "session-save-progress",
+    "session-save-completed"
+  ]);
+});
+
+test("native Save rejects every active provider state before touching Git", async () => {
+  let saveCalls = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return {
+              agentRuns: [{ active: false, state: "finalizing" }],
+              sessionId: "session-1",
+              status: "active"
+            };
+          }
+        };
+      }
+    },
+    terminals: {
+      async saveSessionWork() {
+        saveCalls += 1;
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_session_save_agent_active");
+  assert.equal(saveCalls, 0);
 });
 
 test("an early assistant message waits for workspace preparation and is sent once", async () => {

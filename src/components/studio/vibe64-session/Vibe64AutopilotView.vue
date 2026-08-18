@@ -31,13 +31,26 @@
 
         <div class="studio-autopilot__header-actions">
           <v-btn
+            aria-label="Open temporary AI"
+            :disabled="!sessionId"
+            :prepend-icon="mdiRobotOutline"
+            size="small"
+            title="Open a temporary AI conversation"
+            type="button"
+            variant="text"
+            @click="openTemporaryAi"
+          >
+            Temporary AI
+          </v-btn>
+          <v-btn
             aria-label="Save work"
             class="studio-autopilot__save-work"
+            :color="saveWorkUnsaved ? 'error' : undefined"
             :disabled="saveWorkDisabled"
             :loading="saveWorkSending"
             :prepend-icon="mdiContentSaveOutline"
             size="small"
-            title="Ask Codex to commit this work and push only to an authorized canonical remote"
+            title="Save this session's work to the canonical repository"
             type="button"
             variant="tonal"
             @click="requestSaveWork"
@@ -46,6 +59,37 @@
           </v-btn>
         </div>
       </header>
+
+      <Vibe64TerminalSurface
+        v-if="saveWorkOperation || saveWorkSending || saveWorkError"
+        body-mode="log"
+        :collapsible="true"
+        :error="saveWorkError"
+        error-title="Save needs attention"
+        :expanded="saveWorkExpanded"
+        height="clamp(8rem, 22vh, 14rem)"
+        mobile-takeover
+        :output="saveWorkOutput"
+        :show-close="false"
+        :show-interrupt="false"
+        :starting="saveWorkSending"
+        :status="saveWorkStatus"
+        subtitle="Canonical project Save"
+        title="Save work"
+        @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
+      />
+
+      <div v-if="saveWorkError" class="studio-autopilot__save-recovery">
+        <v-btn
+          :prepend-icon="mdiRobotOutline"
+          size="x-small"
+          type="button"
+          variant="tonal"
+          @click="openTemporaryAiForSaveError"
+        >
+          Resolve with temporary AI
+        </v-btn>
+      </div>
 
       <Vibe64ConversationLog
         class="studio-autopilot__conversation"
@@ -315,6 +359,13 @@
           </template>
         </Vibe64AutopilotPromptTextarea>
       </div>
+
+      <Vibe64TemporaryAiWorkspace
+        ref="temporaryAiWorkspace"
+        :agent-settings="currentAgentSettings"
+        :session-id="sessionId"
+        :sessions-api-path="props.sessionsApiPath"
+      />
     </section>
 
     <section class="studio-autopilot__project-panel" aria-label="Project">
@@ -474,9 +525,8 @@
       <v-card>
         <v-card-title>Save current work?</v-card-title>
         <v-card-text>
-          Codex will commit the current project changes. It will push only when the repository has a clearly
-          configured, authorized canonical destination. It will not force-push, rebase, open a pull request, or
-          deploy.
+          Vibe64 will save this session to the project's canonical repository. It preserves concurrent canonical
+          changes and stops before publishing if another open session changed the same files.
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -490,7 +540,7 @@
             variant="flat"
             @click="confirmSaveWork"
           >
-            Send to Codex
+            Save
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -508,14 +558,17 @@ import {
   mdiEyePlusOutline,
   mdiGithub,
   mdiPaperclip,
+  mdiRobotOutline,
   mdiSend,
   mdiStopCircleOutline
 } from "@mdi/js";
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
+import Vibe64TerminalSurface from "@/components/studio/Vibe64TerminalSurface.vue";
 import Vibe64SessionSourceEditor from "@/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
+import Vibe64TemporaryAiWorkspace from "@/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
 import Vibe64DashboardShell from "@/components/studio/Vibe64DashboardShell.vue";
 import { resolveStudioRequestUrl } from "@/lib/studioUrls.js";
 import {
@@ -531,6 +584,7 @@ const Vibe64SystemWorldView = defineAsyncComponent(() => (
 ));
 const composerInput = ref(null);
 const composerSendButton = ref(null);
+const temporaryAiWorkspace = ref(null);
 
 const {
   Vibe64LaunchControls,
@@ -584,7 +638,13 @@ const {
   rightPaneTabMounted,
   saveWorkConfirmOpen,
   saveWorkDisabled,
+  saveWorkError,
+  saveWorkExpanded,
+  saveWorkOperation,
+  saveWorkOutput,
   saveWorkSending,
+  saveWorkStatus,
+  saveWorkUnsaved,
   sessionId,
   sessionGithubActor,
   sessionGithubActorHeaderVisible,
@@ -631,6 +691,21 @@ async function sendComposerMessage() {
 function focusComposerSendButton() {
   const button = composerSendButton.value?.$el || composerSendButton.value;
   button?.focus?.();
+}
+
+function openTemporaryAi() {
+  temporaryAiWorkspace.value?.openTask?.();
+}
+
+function openTemporaryAiForSaveError() {
+  temporaryAiWorkspace.value?.openTask?.({
+    draft: [
+      "Help resolve this Vibe64 Save problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
+      saveWorkError.value
+    ].filter(Boolean).join("\n\n"),
+    policy: "workspace_write",
+    title: "Resolve Save"
+  });
 }
 
 async function attachPreviewFile(file) {
@@ -691,6 +766,11 @@ async function attachPreviewFile(file) {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.studio-autopilot__save-recovery {
+  padding: 0.2rem 0.55rem;
 }
 
 .studio-autopilot--chat-collapsed .studio-autopilot__chat-panel {

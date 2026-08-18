@@ -54,6 +54,7 @@ function viewProps(overrides = {}) {
     refreshSessionData: vi.fn(async () => null),
     review: {},
     retryWorkspaceSetup: vi.fn(async () => true),
+    saveSessionWork: vi.fn(async () => ({ ok: true, status: "saved" })),
     sendAgentMessage: vi.fn(async () => true),
     session: {
       agentSession: {
@@ -431,20 +432,20 @@ describe("useVibe64AutopilotView direct chat", () => {
     ]);
   });
 
-  it("sends the focused save request through the same chat path", async () => {
+  it("saves work through the native Save operation without sending a chat prompt", async () => {
     const sendAgentMessage = vi.fn(async () => true);
-    const view = await createView({ sendAgentMessage });
+    const saveSessionWork = vi.fn(async () => ({ ok: true, status: "saved" }));
+    const view = await createView({ saveSessionWork, sendAgentMessage });
 
     expect(view.requestSaveWork()).toBe(true);
     expect(view.saveWorkConfirmOpen.value).toBe(true);
-    await expect(view.confirmSaveWork()).resolves.toBe(true);
+    await expect(view.confirmSaveWork()).resolves.toEqual({
+      ok: true,
+      status: "saved"
+    });
 
-    expect(sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
-      messageId: expect.stringMatching(/^message:tab:/u)
-    }));
-    expect(sendAgentMessage.mock.calls[0][0].message).toContain(
-      "Never rebase, force-push"
-    );
+    expect(saveSessionWork).toHaveBeenCalledWith({ message: "Save Vibe64 work" });
+    expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.saveWorkConfirmOpen.value).toBe(false);
   });
 });

@@ -48,6 +48,7 @@ const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "source_recovery_base_commit",
   "source_recovery_branch",
   "source_recovery_bundle_artifact",
+  "source_recovery_checkpoint_bundle_artifact",
   "source_recovery_default_branch",
   "source_recovery_dirty",
   "source_recovery_head",
@@ -65,6 +66,7 @@ const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
 ]);
 const CLOSED_SESSION_ARCHIVE_TIMEOUT_MS = 60_000;
 const COMMAND_BUFFER_BYTES = 50 * 1024 * 1024;
+const BACKGROUND_TASK_EVENT_LIMIT = 200;
 const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const BACKGROUND_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
@@ -1532,7 +1534,7 @@ function createVibe64SessionStore({
         events: [
           ...(Array.isArray(previous.events) ? previous.events : []),
           eventRecord
-        ],
+        ].slice(-BACKGROUND_TASK_EVENT_LIMIT),
         finishedAt: status === BACKGROUND_TASK_STATUS.RUNNING
           ? ""
           : normalizeText(patch.finishedAt || previous.finishedAt) || eventAt,

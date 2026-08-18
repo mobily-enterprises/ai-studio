@@ -55,6 +55,40 @@ const agentAttachmentActionInputValidator = validator({
   ...agentAttachmentFields,
   sessionId: sessionIdField
 });
+const agentAttachmentDeleteActionInputValidator = validator({
+  attachmentId: requiredText,
+  sessionId: sessionIdField
+});
+const temporaryConversationCreateActionInputValidator = validator({
+  agentSettings: {
+    type: "object",
+    additionalProperties: true,
+    required: false
+  },
+  policy: optionalText,
+  sessionId: sessionIdField
+});
+const temporaryConversationInputValidator = validator({
+  conversationId: requiredText,
+  sessionId: sessionIdField
+});
+const temporaryConversationTurnActionInputValidator = validator({
+  agentSettings: {
+    type: "object",
+    additionalProperties: true,
+    required: false
+  },
+  conversationId: requiredText,
+  message: requiredText,
+  policy: optionalText,
+  promptLabel: optionalText,
+  sessionId: sessionIdField
+});
+const temporaryConversationStopActionInputValidator = validator({
+  conversationId: requiredText,
+  runId: optionalText,
+  sessionId: sessionIdField
+});
 const launchTargetInputValidator = validator(launchTargetFields);
 const launchTargetActionInputValidator = validator({
   ...launchTargetFields,
@@ -104,6 +138,7 @@ const terminalControlKeyInputValidator = validator({
 
 export {
   agentAttachmentActionInputValidator,
+  agentAttachmentDeleteActionInputValidator,
   agentAttachmentInputValidator,
   launchTargetActionInputValidator,
   launchTargetInputValidator,
@@ -111,5 +146,9 @@ export {
   previewIdentityActionInputValidator,
   previewIdentityInputValidator,
   terminalControlKeyInputValidator,
-  terminalControlTextInputValidator
+  terminalControlTextInputValidator,
+  temporaryConversationCreateActionInputValidator,
+  temporaryConversationInputValidator,
+  temporaryConversationStopActionInputValidator,
+  temporaryConversationTurnActionInputValidator
 };
