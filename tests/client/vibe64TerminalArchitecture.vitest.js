@@ -70,6 +70,7 @@ describe("Vibe64 terminal architecture", () => {
     expect(terminalStage).not.toContain("<StudioErrorNotice");
     expect(source).toContain("class=\"d-sr-only\" role=\"alert\"");
     expect(source).toContain("const errorDetailsOpen = ref(false);");
+    expect(source).toContain("errorDetailsOpen.value = Boolean(error && openErrorDetails);");
     expect(source).toContain("errorDetailsOpen.value = false;\n  emit(\"retry\");");
   });
 

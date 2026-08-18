@@ -208,6 +208,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  openErrorDetails: {
+    default: false,
+    type: Boolean
+  },
   output: {
     default: "",
     type: String
@@ -286,9 +290,12 @@ function retry() {
   emit("retry");
 }
 
-watch(() => props.error, () => {
-  errorDetailsOpen.value = false;
-});
+watch([
+  () => props.error,
+  () => props.openErrorDetails
+], ([error, openErrorDetails]) => {
+  errorDetailsOpen.value = Boolean(error && openErrorDetails);
+}, { immediate: true });
 
 watch(() => props.starting, (starting) => {
   if (starting) {

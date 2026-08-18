@@ -950,7 +950,7 @@ function createService({
         project: await projectService.readCurrentProject(),
         runCommand: execution.runCommand,
         runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-        siblingWork: async () => {
+        siblingWork: async ({ operationId }) => {
           const sessions = typeof runtime.listSessions === "function"
             ? await runtime.listSessions({ statusGroup: "open" })
             : await runtime.listSessionSummaries({ statusGroup: "open" });
@@ -962,6 +962,7 @@ function createService({
               continue;
             }
             siblings.push(await inspectManagedSessionWork({
+              comparisonOperationId: operationId,
               project,
               session: sibling
             }));

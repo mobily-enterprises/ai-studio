@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  inspectSessionWork,
   recoverSessionWorkSave,
   saveSessionWork
 } from "../../packages/vibe64-terminals/src/server/sessionWorkSave.js";
@@ -336,35 +337,97 @@ test("Save reports a real three-way conflict without changing canonical authorit
   }
 });
 
-test("Save rejects overlapping unsaved work in another open session", async () => {
+test("Save permits same-file sibling work when Git proves the edits merge cleanly", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    await writeFile(path.join(fixture.seed, "mergeable.txt"), "first\nsecond\nthird\nfourth\n", "utf8");
+    await git(fixture.seed, ["add", "mergeable.txt"]);
+    await git(fixture.seed, ["commit", "-m", "add mergeable file"]);
+    await git(fixture.seed, ["push", "origin", "main"]);
+    fixture.baseCommit = await git(fixture.seed, ["rev-parse", "HEAD"]);
+    const session = await sessionForRemote(root, fixture);
+    const sibling = await sessionForRemote(root, fixture, "session-2");
+    await writeFile(path.join(session.sourcePath, "mergeable.txt"), "current\nsecond\nthird\nfourth\n", "utf8");
+    await writeFile(path.join(sibling.sourcePath, "mergeable.txt"), "first\nsecond\nthird\nsibling\n", "utf8");
+
+    const project = githubProject(root, fixture.remote);
+    const result = await saveSessionWork({
+      operationId: "save-sibling-clean-overlap",
+      project,
+      runCommand: commandRunner,
+      session,
+      siblingWork: async ({ operationId }) => [await inspectSessionWork({
+        comparisonOperationId: operationId,
+        project,
+        runCommand: commandRunner,
+        session: sibling
+      })]
+    });
+
+    assert.equal(result.status, "saved");
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "mergeable.txt"), "utf8"), "current\nsecond\nthird\nfourth\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Save rejects only a genuine same-file sibling merge conflict", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
     const session = await sessionForRemote(root, fixture);
-    await writeFile(path.join(session.sourcePath, "shared.txt"), "session\n", "utf8");
+    const sibling = await sessionForRemote(root, fixture, "session-2");
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "current\n", "utf8");
+    await writeFile(path.join(sibling.sourcePath, "shared.txt"), "sibling\n", "utf8");
+    const project = githubProject(root, fixture.remote);
 
-    await assert.rejects(
-      saveSessionWork({
-        operationId: "save-sibling-conflict",
-        project: githubProject(root, fixture.remote),
+    await assert.rejects(saveSessionWork({
+      operationId: "save-sibling-conflict",
+      project,
+      runCommand: commandRunner,
+      session,
+      siblingWork: async ({ operationId }) => [await inspectSessionWork({
+        comparisonOperationId: operationId,
+        project,
         runCommand: commandRunner,
-        session,
-        siblingWork: async () => [{
-          changedPaths: ["shared.txt", "sibling-only.txt"],
-          sessionId: "session-2"
-        }]
-      }),
-      (error) => {
-        assert.equal(error.code, "vibe64_session_save_sibling_conflict");
-        assert.deepEqual(error.siblingConflicts, [{
-          paths: ["shared.txt"],
-          sessionId: "session-2"
-        }]);
-        return true;
-      }
-    );
+        session: sibling
+      })]
+    }), (error) => {
+      assert.equal(error.code, "vibe64_session_save_sibling_conflict");
+      assert.deepEqual(error.siblingConflicts, [{
+        classification: "conflict",
+        paths: ["shared.txt"],
+        sessionId: "session-2"
+      }]);
+      return true;
+    });
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), fixture.baseCommit);
-    assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "session\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("work inspection is clean when the session tree matches its canonical tracking ref", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "published.txt"), "published\n", "utf8");
+    await git(session.sourcePath, ["add", "published.txt"]);
+    await git(session.sourcePath, ["commit", "-m", "published work"]);
+    await git(session.sourcePath, ["push", "origin", "HEAD:main"]);
+
+    const result = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(result.unsaved, false);
+    assert.deepEqual(result.changedPaths, []);
+    assert.notEqual(result.canonicalCommit, fixture.baseCommit);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

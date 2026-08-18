@@ -82,6 +82,7 @@ function commandProject(context = {}, project = {}) {
 }
 
 async function git(runCommand, context, args, {
+  additionalAllowedRoots = [],
   commandOptions = {},
   cwd = context.worktreePath,
   env = {},
@@ -93,7 +94,11 @@ async function git(runCommand, context, args, {
     context.worktreePath,
     context.projectRoot,
     path.dirname(context.worktreePath),
-    ...(path.isAbsolute(context.remoteUrl) ? [context.remoteUrl, path.dirname(context.remoteUrl)] : [])
+    ...(path.isAbsolute(context.remoteUrl) ? [context.remoteUrl, path.dirname(context.remoteUrl)] : []),
+    ...additionalAllowedRoots.flatMap((root) => {
+      const normalized = text(root);
+      return normalized ? [normalized, path.dirname(normalized)] : [];
+    })
   ];
   const result = await runCommand({
     actor: "daemon",
@@ -147,8 +152,23 @@ async function changedPathsBetween(runCommand, context, baseCommit, tree, option
     .sort((left, right) => left.localeCompare(right));
 }
 
+async function localCanonicalCommit(runCommand, context, options = {}) {
+  const trackingRef = `refs/remotes/origin/${context.branch}`;
+  const tracked = await gitOutput(runCommand, context, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    trackingRef
+  ], {
+    ...options,
+    required: false
+  });
+  return tracked || context.baseCommit;
+}
+
 async function inspectSessionWork({
   commandOptions = {},
+  comparisonOperationId = "",
   project = {},
   runCommand = runVibe64Command,
   session = {}
@@ -160,27 +180,58 @@ async function inspectSessionWork({
     runCommand,
     worktreePath: context.worktreePath
   });
+  const canonicalCommit = await localCanonicalCommit(runCommand, context, {
+    commandOptions,
+    project
+  });
   const baseTree = await gitOutput(runCommand, context, [
     "rev-parse",
-    `${context.baseCommit}^{tree}`
+    `${canonicalCommit}^{tree}`
   ], {
     commandOptions,
     project
   });
   const changedPaths = tree === baseTree
     ? []
-    : await changedPathsBetween(runCommand, context, context.baseCommit, tree, {
+    : await changedPathsBetween(runCommand, context, canonicalCommit, tree, {
         commandOptions,
         project
       });
+  const comparisonRef = comparisonOperationId
+    ? saveRef(context, comparisonOperationId, "comparison")
+    : "";
+  const comparisonCommit = comparisonRef
+    ? await gitOutput(runCommand, context, [
+        "-c", "user.name=Vibe64 Save",
+        "-c", "user.email=vibe64@localhost",
+        "commit-tree",
+        tree,
+        "-p",
+        canonicalCommit
+      ], {
+        commandOptions,
+        input: "Vibe64 sibling Save comparison\n",
+        project
+      })
+    : "";
+  if (comparisonRef) {
+    await git(runCommand, context, ["update-ref", comparisonRef, comparisonCommit], {
+      commandOptions,
+      project
+    });
+  }
   return {
     baseCommit: context.baseCommit,
+    canonicalCommit,
     changedPaths,
+    comparisonCommit,
+    comparisonRef,
     mode: context.mode,
     ok: true,
     sessionId: context.sessionId,
     tree,
-    unsaved: changedPaths.length > 0
+    unsaved: changedPaths.length > 0,
+    worktreePath: context.worktreePath
   };
 }
 
@@ -260,26 +311,23 @@ async function mergeTrees(runCommand, context, {
   checkpointTree,
   commandOptions,
   identity,
-  project
+  project,
+  virtualCommit = ""
 }) {
-  const virtualCommit = await gitOutput(runCommand, context, [
-    "-c", `user.name=${identity.name}`,
-    "-c", `user.email=${identity.email}`,
-    "commit-tree",
-    checkpointTree,
-    "-p",
-    baseCommit
-  ], {
+  const mergeInputCommit = virtualCommit || await createVirtualCommit(runCommand, context, {
+    baseCommit,
     commandOptions,
-    input: "Vibe64 session Save merge input\n",
-    project
+    identity,
+    message: "Vibe64 session Save merge input",
+    project,
+    tree: checkpointTree
   });
   const merged = await git(runCommand, context, [
     "merge-tree",
     "--write-tree",
     "--messages",
     canonicalCommit,
-    virtualCommit
+    mergeInputCommit
   ], {
     commandOptions,
     project,
@@ -297,8 +345,120 @@ async function mergeTrees(runCommand, context, {
   }
   return {
     mergedTree,
-    virtualCommit
+    virtualCommit: mergeInputCommit
   };
+}
+
+async function createVirtualCommit(runCommand, context, {
+  baseCommit,
+  commandOptions,
+  identity,
+  message,
+  project,
+  tree
+}) {
+  return gitOutput(runCommand, context, [
+    "-c", `user.name=${identity.name}`,
+    "-c", `user.email=${identity.email}`,
+    "commit-tree",
+    tree,
+    "-p",
+    baseCommit
+  ], {
+    commandOptions,
+    input: `${text(message) || "Vibe64 virtual commit"}\n`,
+    project
+  });
+}
+
+function siblingLocalRef(context, operationId, siblingSessionId) {
+  const siblingDigest = crypto.createHash("sha256")
+    .update(text(siblingSessionId))
+    .digest("hex")
+    .slice(0, 24);
+  return saveRef(context, operationId, `sibling-${siblingDigest}`);
+}
+
+async function compareSiblingWork(runCommand, context, {
+  commandOptions,
+  currentVirtualCommit,
+  operationId,
+  project,
+  sibling
+}) {
+  const siblingSessionId = text(sibling?.sessionId);
+  const comparisonCommit = text(sibling?.comparisonCommit);
+  const comparisonRef = text(sibling?.comparisonRef);
+  const siblingWorktreePath = text(sibling?.worktreePath);
+  if (!siblingSessionId || !comparisonCommit || !comparisonRef || !siblingWorktreePath) {
+    return {
+      classification: "unknown",
+      paths: Array.isArray(sibling?.overlappingPaths) ? sibling.overlappingPaths : [],
+      sessionId: siblingSessionId
+    };
+  }
+  const localRef = siblingLocalRef(context, operationId, siblingSessionId);
+  try {
+    await git(runCommand, context, [
+      "fetch",
+      "--no-tags",
+      siblingWorktreePath,
+      `+${comparisonRef}:${localRef}`
+    ], {
+      additionalAllowedRoots: [siblingWorktreePath],
+      project
+    });
+    const importedCommit = await gitOutput(runCommand, context, [
+      "rev-parse",
+      "--verify",
+      localRef
+    ], { commandOptions, project });
+    if (importedCommit !== comparisonCommit) {
+      return {
+        classification: "unknown",
+        paths: sibling.overlappingPaths,
+        sessionId: siblingSessionId
+      };
+    }
+    const mergeBase = await git(runCommand, context, [
+      "merge-base",
+      currentVirtualCommit,
+      importedCommit
+    ], {
+      commandOptions,
+      project,
+      required: false
+    });
+    if (mergeBase?.ok !== true || !output(mergeBase)) {
+      return {
+        classification: "unknown",
+        paths: sibling.overlappingPaths,
+        sessionId: siblingSessionId
+      };
+    }
+    const merged = await git(runCommand, context, [
+      "merge-tree",
+      "--write-tree",
+      "--messages",
+      currentVirtualCommit,
+      importedCommit
+    ], {
+      commandOptions,
+      project,
+      required: false
+    });
+    return {
+      classification: merged?.ok === true ? "overlap-clean" : "conflict",
+      paths: sibling.overlappingPaths,
+      sessionId: siblingSessionId
+    };
+  } finally {
+    await git(runCommand, context, ["update-ref", "-d", localRef], {
+      commandOptions,
+      project,
+      required: false
+    });
+  }
 }
 
 async function createSaveCommit(runCommand, context, {
@@ -499,22 +659,46 @@ async function saveSessionWork({
       checkpoint.tree,
       { commandOptions, project }
     );
+    const currentVirtualCommit = await createVirtualCommit(runCommand, context, {
+      baseCommit: context.baseCommit,
+      commandOptions,
+      identity: author,
+      message: "Vibe64 session sibling comparison",
+      project,
+      tree: checkpoint.tree
+    });
     const siblings = await siblingWork({
       changedPaths,
-      context
+      context,
+      operationId
     });
     const changedPathSet = new Set(changedPaths);
-    const siblingConflicts = (Array.isArray(siblings) ? siblings : [])
+    const siblingCandidates = (Array.isArray(siblings) ? siblings : [])
       .map((sibling) => ({
-        paths: (Array.isArray(sibling?.changedPaths) ? sibling.changedPaths : [])
+        ...sibling,
+        overlappingPaths: (Array.isArray(sibling?.changedPaths) ? sibling.changedPaths : [])
           .filter((filePath) => changedPathSet.has(filePath))
-          .sort((left, right) => left.localeCompare(right)),
-        sessionId: text(sibling?.sessionId)
+          .sort((left, right) => left.localeCompare(right))
       }))
-      .filter((sibling) => sibling.sessionId && sibling.paths.length);
+      .filter((sibling) => text(sibling?.sessionId) && sibling.overlappingPaths.length);
+    const siblingResults = [];
+    for (const sibling of siblingCandidates) {
+      siblingResults.push(await compareSiblingWork(runCommand, context, {
+        commandOptions,
+        currentVirtualCommit,
+        operationId,
+        project,
+        sibling
+      }));
+    }
+    const siblingConflicts = siblingResults.filter(({ classification }) => (
+      classification === "conflict" || classification === "unknown"
+    ));
     if (siblingConflicts.length) {
       throw saveError(
-        "This work overlaps unsaved changes in another open session.",
+        siblingConflicts.some(({ classification }) => classification === "unknown")
+          ? "Vibe64 could not prove that overlapping work in another open session merges cleanly."
+          : "This work conflicts with unsaved changes in another open session.",
         "vibe64_session_save_sibling_conflict",
         { siblingConflicts }
       );
@@ -554,7 +738,8 @@ async function saveSessionWork({
       checkpointTree: checkpoint.tree,
       commandOptions,
       identity: author,
-      project
+      project,
+      virtualCommit: currentVirtualCommit
     });
     const saveCommit = await createSaveCommit(runCommand, context, {
       canonicalCommit,

@@ -576,6 +576,9 @@ function useVibe64AutopilotView(props, emit) {
   ));
   const saveWorkUnsaved = computed(() => props.workState?.unsaved === true);
   const saveWorkOperation = computed(() => props.workState?.operation || null);
+  const saveWorkOperationActive = computed(() => ["queued", "running", "starting"].includes(
+    String(saveWorkOperation.value?.status || "").trim().toLowerCase()
+  ));
   const saveWorkOutput = computed(() => (Array.isArray(saveWorkOperation.value?.events)
     ? saveWorkOperation.value.events
       .map((event) => [event.at, event.message].filter(Boolean).join("  "))
@@ -618,6 +621,7 @@ function useVibe64AutopilotView(props, emit) {
       return false;
     } finally {
       saveWorkSending.value = false;
+      saveWorkExpanded.value = false;
     }
   }
 
@@ -981,6 +985,7 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkError,
     saveWorkExpanded,
     saveWorkOperation,
+    saveWorkOperationActive,
     saveWorkOutput,
     saveWorkSending,
     saveWorkStatus,

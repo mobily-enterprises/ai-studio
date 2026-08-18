@@ -447,5 +447,20 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(saveSessionWork).toHaveBeenCalledWith({ message: "Save Vibe64 work" });
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.saveWorkConfirmOpen.value).toBe(false);
+    expect(view.saveWorkExpanded.value).toBe(false);
+  });
+
+  it("collapses failed Save output while retaining the actionable error", async () => {
+    const view = await createView({
+      saveSessionWork: vi.fn(async () => {
+        throw new Error("Conflicting sibling work");
+      })
+    });
+
+    view.requestSaveWork();
+    await expect(view.confirmSaveWork()).resolves.toBe(false);
+
+    expect(view.saveWorkExpanded.value).toBe(false);
+    expect(view.saveWorkError.value).toBe("Conflicting sibling work");
   });
 });

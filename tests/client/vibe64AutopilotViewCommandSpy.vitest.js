@@ -46,9 +46,17 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("Save work");
     expect(component).toContain("@click=\"confirmSaveWork\"");
     expect(component).toContain("<Vibe64TerminalSurface");
+    expect(component.indexOf("<Vibe64ConversationLog")).toBeLessThan(
+      component.indexOf("<Vibe64TerminalSurface")
+    );
+    expect(component).toContain(':open-error-details="true"');
+    expect(component).toContain('#error-actions');
     expect(component).toContain(':color="saveWorkUnsaved ? \'error\' : undefined"');
     expect(composable).toContain("await props.saveSessionWork({");
     expect(composable).toContain("const saveWorkUnsaved = computed");
+    expect(composable).toContain("const saveWorkOperationActive = computed");
+    expect(component).toContain("saveWorkOperationActive || saveWorkSending || saveWorkError");
+    expect(composable).toContain("saveWorkExpanded.value = false;");
     expect(composable).not.toContain("SAVE_WORK_PROMPT");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
     expect(component).toContain("sessionGithubActor.displayLabel");

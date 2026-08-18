@@ -60,37 +60,6 @@
         </div>
       </header>
 
-      <Vibe64TerminalSurface
-        v-if="saveWorkOperation || saveWorkSending || saveWorkError"
-        body-mode="log"
-        :collapsible="true"
-        :error="saveWorkError"
-        error-title="Save needs attention"
-        :expanded="saveWorkExpanded"
-        height="clamp(8rem, 22vh, 14rem)"
-        mobile-takeover
-        :output="saveWorkOutput"
-        :show-close="false"
-        :show-interrupt="false"
-        :starting="saveWorkSending"
-        :status="saveWorkStatus"
-        subtitle="Canonical project Save"
-        title="Save work"
-        @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
-      />
-
-      <div v-if="saveWorkError" class="studio-autopilot__save-recovery">
-        <v-btn
-          :prepend-icon="mdiRobotOutline"
-          size="x-small"
-          type="button"
-          variant="tonal"
-          @click="openTemporaryAiForSaveError"
-        >
-          Resolve with temporary AI
-        </v-btn>
-      </div>
-
       <Vibe64ConversationLog
         class="studio-autopilot__conversation"
         :error="props.conversationLog?.error"
@@ -113,9 +82,41 @@
       />
 
       <div
-        v-if="workspaceSetupVisible || thinkingVisible"
+        v-if="saveWorkOperationActive || saveWorkSending || saveWorkError || workspaceSetupVisible || thinkingVisible"
         class="studio-autopilot__activity"
       >
+        <Vibe64TerminalSurface
+          v-if="saveWorkOperationActive || saveWorkSending || saveWorkError"
+          body-mode="log"
+          :collapsible="true"
+          :error="saveWorkError"
+          error-title="Save needs attention"
+          :expanded="saveWorkExpanded"
+          height="clamp(8rem, 22vh, 14rem)"
+          mobile-takeover
+          :open-error-details="true"
+          :output="saveWorkOutput"
+          :show-close="false"
+          :show-interrupt="false"
+          :starting="saveWorkSending"
+          :status="saveWorkStatus"
+          subtitle="Canonical project Save"
+          title="Save work"
+          @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
+        >
+          <template v-if="saveWorkError" #error-actions>
+            <v-btn
+              :prepend-icon="mdiRobotOutline"
+              size="x-small"
+              type="button"
+              variant="tonal"
+              @click="openTemporaryAiForSaveError"
+            >
+              Resolve with temporary AI
+            </v-btn>
+          </template>
+        </Vibe64TerminalSurface>
+
         <div
           v-if="workspaceSetupVisible"
           class="studio-autopilot__workspace-setup"
@@ -526,7 +527,7 @@
         <v-card-title>Save current work?</v-card-title>
         <v-card-text>
           Vibe64 will save this session to the project's canonical repository. It preserves concurrent canonical
-          changes and stops before publishing if another open session changed the same files.
+          changes and stops before publishing only when another open session has changes that Git cannot merge cleanly.
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -640,7 +641,7 @@ const {
   saveWorkDisabled,
   saveWorkError,
   saveWorkExpanded,
-  saveWorkOperation,
+  saveWorkOperationActive,
   saveWorkOutput,
   saveWorkSending,
   saveWorkStatus,
@@ -767,10 +768,6 @@ async function attachPreviewFile(file) {
   min-width: 0;
   overflow: hidden;
   position: relative;
-}
-
-.studio-autopilot__save-recovery {
-  padding: 0.2rem 0.55rem;
 }
 
 .studio-autopilot--chat-collapsed .studio-autopilot__chat-panel {
