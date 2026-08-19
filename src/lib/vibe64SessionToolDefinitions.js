@@ -3,7 +3,8 @@ import {
   mdiFileCodeOutline,
   mdiGraphOutline,
   mdiInformationOutline,
-  mdiRobotOutline
+  mdiRobotOutline,
+  mdiSourceRepository
 } from "@mdi/js";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 
@@ -20,6 +21,22 @@ const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
     title: "View paths and Git context for the active session"
   },
   {
+    icon: mdiFileCompare,
+    id: "changes",
+    label: "Current changes",
+    order: 150,
+    routeSegment: "changes",
+    title: "Review files changed in this session"
+  },
+  {
+    icon: mdiSourceRepository,
+    id: "repository",
+    label: "Repository",
+    order: 175,
+    routeSegment: "repository",
+    title: "Review saved versions and update this session"
+  },
+  {
     icon: mdiFileCodeOutline,
     id: "editor",
     label: "Files",
@@ -34,14 +51,6 @@ const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
     order: 250,
     routeSegment: "system",
     title: "Explore the Machine and Program Cities"
-  },
-  {
-    icon: mdiFileCompare,
-    id: "diff",
-    label: "Changes",
-    order: 500,
-    routeSegment: "diff",
-    title: "Review changes in the session clone"
   },
   {
     icon: mdiRobotOutline,

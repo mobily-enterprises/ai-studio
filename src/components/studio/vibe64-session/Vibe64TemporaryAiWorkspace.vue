@@ -4,36 +4,6 @@
     class="vibe64-temporary-ai"
     aria-label="Temporary AI workspace"
   >
-    <header class="vibe64-temporary-ai__header">
-      <div class="vibe64-temporary-ai__identity">
-        <v-icon :icon="mdiRobotOutline" size="20" />
-        <div>
-          <strong>Temporary AI</strong>
-          <span>Not saved to session history</span>
-        </div>
-      </div>
-      <div class="vibe64-temporary-ai__header-actions">
-        <v-btn
-          :prepend-icon="mdiPlus"
-          size="small"
-          type="button"
-          variant="text"
-          @click="temporary.openTask()"
-        >
-          New
-        </v-btn>
-        <v-btn
-          aria-label="Hide temporary AI"
-          :icon="mdiClose"
-          size="small"
-          title="Hide temporary AI"
-          type="button"
-          variant="text"
-          @click="temporary.closeWorkspace"
-        />
-      </div>
-    </header>
-
     <nav class="vibe64-temporary-ai__tabs" aria-label="Temporary AI tasks">
       <div
         v-for="task in temporary.tasks.value"
@@ -51,9 +21,9 @@
         </button>
         <v-btn
           :aria-label="`Close ${task.title}`"
-          height="48"
+          height="32"
           :icon="mdiClose"
-          min-width="48"
+          min-width="32"
           size="x-small"
           :title="`Close ${task.title}`"
           type="button"
@@ -61,28 +31,42 @@
           @click="temporary.closeTask(task.id)"
         />
       </div>
+      <v-btn
+        aria-label="New temporary AI task"
+        class="vibe64-temporary-ai__new-task"
+        height="32"
+        :icon="mdiPlus"
+        min-width="32"
+        size="x-small"
+        title="New temporary AI task"
+        type="button"
+        variant="text"
+        @click="temporary.openTask()"
+      />
+      <span class="vibe64-temporary-ai__tabs-spacer" />
+      <v-btn
+        v-if="activeTask"
+        :aria-label="activeTask.policy === workspaceWritePolicy
+          ? 'Read/write: temporary AI may edit this session'
+          : 'Read-only: temporary AI cannot edit this session'"
+        class="vibe64-temporary-ai__policy"
+        :color="activeTask.policy === workspaceWritePolicy ? 'warning' : undefined"
+        :disabled="activeTask.busy"
+        height="28"
+        min-width="40"
+        size="x-small"
+        :title="activeTask.policy === workspaceWritePolicy
+          ? 'R/W: temporary AI may edit this session. Click to make it read-only.'
+          : 'R/O: temporary AI cannot edit this session. Click to allow edits.'"
+        type="button"
+        variant="tonal"
+        @click="togglePolicy(activeTask)"
+      >
+        {{ activeTask.policy === workspaceWritePolicy ? "R/W" : "R/O" }}
+      </v-btn>
     </nav>
 
     <template v-if="activeTask">
-      <div class="vibe64-temporary-ai__mode">
-        <v-chip
-          :color="activeTask.policy === workspaceWritePolicy ? 'warning' : undefined"
-          size="small"
-          variant="tonal"
-        >
-          {{ activeTask.policy === workspaceWritePolicy ? "May edit this session" : "Read-only guidance" }}
-        </v-chip>
-        <v-btn
-          :disabled="activeTask.busy"
-          size="x-small"
-          type="button"
-          variant="text"
-          @click="togglePolicy(activeTask)"
-        >
-          {{ activeTask.policy === workspaceWritePolicy ? "Make read-only" : "Allow edits" }}
-        </v-btn>
-      </div>
-
       <div class="vibe64-temporary-ai__messages" aria-live="polite">
         <div
           v-if="activeTask.messages.length === 0"
@@ -97,13 +81,42 @@
           :class="`vibe64-temporary-ai__message--${message.role}`"
         >
           <strong>{{ message.role === "user" ? "You" : "Temporary AI" }}</strong>
+          <div
+            v-if="message.role === 'assistant' && message.progressUpdates?.length"
+            class="vibe64-temporary-ai__progress"
+            aria-label="Temporary AI progress"
+          >
+            <span
+              v-for="update in message.progressUpdates"
+              :key="update.id"
+              class="vibe64-temporary-ai__progress-update"
+            >
+              {{ update.text }}
+            </span>
+          </div>
           <p v-if="message.text">{{ message.text }}</p>
-          <span v-else-if="message.status === 'inProgress'">Working…</span>
+          <span v-else-if="['starting', 'inProgress'].includes(message.status)">Working…</span>
+          <span v-else-if="message.status === 'interrupted'">Stopped.</span>
+          <span v-else-if="message.status === 'failed'">Temporary AI stopped with an error.</span>
         </article>
       </div>
 
-      <div v-if="activeTask.error" class="vibe64-temporary-ai__error" role="alert">
-        {{ activeTask.error }}
+      <div
+        v-if="activeTask.error || activeTask.busy"
+        class="vibe64-temporary-ai__feedback"
+      >
+        <div v-if="activeTask.error" class="vibe64-temporary-ai__error" role="alert">
+          {{ activeTask.error }}
+        </div>
+        <div
+          v-if="activeTask.busy"
+          class="vibe64-temporary-ai__activity"
+          aria-live="polite"
+          role="status"
+        >
+          <span class="vibe64-temporary-ai__activity-mark" aria-hidden="true" />
+          <span>{{ activeTaskActivityLabel }}</span>
+        </div>
       </div>
 
       <Vibe64AutopilotPromptTextarea
@@ -178,7 +191,6 @@ import {
   mdiClose,
   mdiPaperclip,
   mdiPlus,
-  mdiRobotOutline,
   mdiStopCircleOutline
 } from "@mdi/js";
 
@@ -214,6 +226,10 @@ const temporary = useVibe64TemporaryAi({
   sessionsApiPath: resolvedSessionsApiPath
 });
 const activeTask = temporary.activeTask;
+const activeTaskActivityLabel = computed(() => {
+  const updates = activeTask.value?.messages?.at(-1)?.progressUpdates;
+  return updates?.at(-1)?.text || "Temporary AI is working...";
+});
 const workspaceWritePolicy = TEMPORARY_AI_WORKSPACE_WRITE_POLICY;
 
 async function sendActiveTask() {
@@ -244,7 +260,9 @@ function updateActiveAgentSetting(parameterId = "", value = "") {
 }
 
 defineExpose({
-  openTask: temporary.openTask
+  closeWorkspace: temporary.closeWorkspace,
+  openTask: temporary.openTask,
+  showWorkspace: temporary.showWorkspace
 });
 </script>
 
@@ -256,7 +274,7 @@ defineExpose({
   bottom: 0.3rem;
   box-shadow: 0 14px 38px rgba(15, 23, 42, 0.22);
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   left: 0.3rem;
   min-height: 0;
   overflow: hidden;
@@ -266,52 +284,31 @@ defineExpose({
   z-index: 12;
 }
 
-.vibe64-temporary-ai__header,
-.vibe64-temporary-ai__identity,
-.vibe64-temporary-ai__header-actions,
-.vibe64-temporary-ai__composer-actions,
-.vibe64-temporary-ai__mode {
+.vibe64-temporary-ai__composer-actions {
   align-items: center;
   display: flex;
 }
 
-.vibe64-temporary-ai__header {
-  background: rgba(var(--v-theme-tertiary), 0.09);
-  border-bottom: 1px solid rgba(var(--v-theme-tertiary), 0.2);
-  justify-content: space-between;
-  padding: 0.45rem 0.55rem;
-}
-
-.vibe64-temporary-ai__identity {
-  gap: 0.45rem;
-}
-
-.vibe64-temporary-ai__identity div {
-  display: grid;
-}
-
-.vibe64-temporary-ai__identity span {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.72rem;
-}
-
 .vibe64-temporary-ai__tabs {
+  align-items: center;
+  background: rgba(var(--v-theme-tertiary), 0.06);
+  border-bottom: 1px solid rgba(var(--v-theme-tertiary), 0.18);
   display: flex;
   gap: 0.25rem;
   overflow-x: auto;
-  padding: 0.35rem 0.45rem 0;
+  padding: 0.25rem 0.35rem;
 }
 
 .vibe64-temporary-ai__tab {
   align-items: center;
   background: rgba(var(--v-theme-on-surface), 0.05);
   border: 1px solid transparent;
-  border-radius: 8px 8px 0 0;
+  border-radius: 999px;
   color: inherit;
   display: inline-flex;
   flex: 0 0 auto;
-  min-height: 3rem;
-  padding-left: 0.25rem;
+  min-height: 2rem;
+  padding-left: 0.15rem;
 }
 
 .vibe64-temporary-ai__tab-select {
@@ -323,7 +320,7 @@ defineExpose({
   cursor: pointer;
   display: inline-flex;
   gap: 0.35rem;
-  padding: 0.35rem 0.45rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.55rem;
 }
 
 .vibe64-temporary-ai__tab--active {
@@ -332,16 +329,24 @@ defineExpose({
   font-weight: 650;
 }
 
+.vibe64-temporary-ai__new-task {
+  flex: 0 0 auto;
+}
+
+.vibe64-temporary-ai__tabs-spacer {
+  flex: 1 1 auto;
+}
+
+.vibe64-temporary-ai__policy {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
 .vibe64-temporary-ai__busy {
   background: rgb(var(--v-theme-primary));
   border-radius: 50%;
   height: 0.45rem;
   width: 0.45rem;
-}
-
-.vibe64-temporary-ai__mode {
-  gap: 0.25rem;
-  padding: 0.35rem 0.55rem;
 }
 
 .vibe64-temporary-ai__messages {
@@ -383,15 +388,51 @@ defineExpose({
   white-space: pre-wrap;
 }
 
+.vibe64-temporary-ai__progress {
+  display: grid;
+  gap: 0.18rem;
+  margin: 0.15rem 0;
+}
+
+.vibe64-temporary-ai__progress-update {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  display: block;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .vibe64-temporary-ai__message span,
 .vibe64-temporary-ai__error {
   color: rgba(var(--v-theme-on-surface), 0.66);
   font-size: 0.82rem;
 }
 
+.vibe64-temporary-ai__feedback {
+  min-width: 0;
+}
+
 .vibe64-temporary-ai__error {
   color: rgb(var(--v-theme-error));
   padding: 0.3rem 0.55rem;
+}
+
+.vibe64-temporary-ai__activity {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.66);
+  display: flex;
+  font-size: 0.78rem;
+  gap: 0.45rem;
+  min-height: 1.8rem;
+  padding: 0.15rem 0.55rem;
+}
+
+.vibe64-temporary-ai__activity-mark {
+  animation: vibe64-temporary-ai-pulse 1.2s ease-in-out infinite;
+  background: rgb(var(--v-theme-primary));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.42rem;
+  width: 0.42rem;
 }
 
 .vibe64-temporary-ai :deep(.studio-autopilot-prompt-textarea) {
@@ -405,6 +446,17 @@ defineExpose({
 
 .vibe64-temporary-ai__spacer {
   flex: 1 1 auto;
+}
+
+@keyframes vibe64-temporary-ai-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 720px) {

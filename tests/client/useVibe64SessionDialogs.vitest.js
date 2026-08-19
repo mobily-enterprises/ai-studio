@@ -6,20 +6,6 @@ const commandMocks = vi.hoisted(() => ({ useCommand: vi.fn() }));
 vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
   useCommand: commandMocks.useCommand
 }));
-vi.mock("@/composables/useVibe64DiffDialog.js", () => ({
-  useVibe64DiffDialog: () => ({
-    clearDiffDialog: vi.fn(),
-    closeDiffDialog: vi.fn(),
-    diffDialogOpen: ref(false),
-    diffError: ref(""),
-    diffLoading: ref(false),
-    diffPayload: ref(null),
-    loadDiff: vi.fn(),
-    loadFullDiff: vi.fn(),
-    openDiffDialog: vi.fn()
-  })
-}));
-
 import { useVibe64SessionDialogs } from "../../src/composables/useVibe64SessionDialogs.js";
 
 function dialogOptions(overrides = {}) {

@@ -2,14 +2,19 @@ import {
   agentMessageActionInputValidator,
   agentTurnInterruptActionInputValidator,
   currentSessionInputValidator,
+  repositoryHistoryInputValidator,
+  repositoryVersionFileDiffInputValidator,
+  repositoryVersionFilesInputValidator,
   sessionConversationLogInputValidator,
+  sessionChangeDiffInputValidator,
+  sessionChangesInputValidator,
   sessionCreateInputValidator,
-  sessionDiffInputValidator,
   sessionIdInputValidator,
   sessionInspectInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
   sessionSaveInputValidator,
+  sessionUpdateInputValidator,
   sessionViewStateInputValidator
 } from "./inputSchemas.js";
 import {
@@ -22,8 +27,11 @@ const ACTION_CREATE_SESSION = "vibe64.sessions.create";
 const ACTION_UPDATE_CURRENT_SESSION = "vibe64.sessions.current.update";
 const ACTION_INSPECT_SESSION_WORK = "vibe64.sessions.work.inspect";
 const ACTION_SAVE_SESSION_WORK = "vibe64.sessions.work.save";
+const ACTION_CHECK_SESSION_UPDATES = "vibe64.sessions.updates.check";
+const ACTION_UPDATE_SESSION_WORK = "vibe64.sessions.updates.apply";
 const ACTION_INSPECT_SESSION = "vibe64.sessions.inspect";
-const ACTION_INSPECT_SESSION_DIFF = "vibe64.sessions.diff.inspect";
+const ACTION_INSPECT_SESSION_CHANGES = "vibe64.sessions.changes.inspect";
+const ACTION_INSPECT_SESSION_CHANGE_DIFF = "vibe64.sessions.changes.diff.inspect";
 const ACTION_READ_SESSION_CONVERSATION_LOG = "vibe64.sessions.conversation-log.read";
 const ACTION_RETRY_WORKSPACE_SETUP = "vibe64.sessions.workspace-setup.retry";
 const ACTION_ABANDON_SESSION = "vibe64.sessions.abandon";
@@ -31,6 +39,9 @@ const ACTION_SEND_AGENT_MESSAGE = "vibe64.sessions.agent-message.send";
 const ACTION_INTERRUPT_AGENT_TURN = "vibe64.sessions.agent-turn.interrupt";
 const ACTION_BROADCAST_SESSION_VIEW_STATE = "vibe64.sessions.view-state.broadcast";
 const ACTION_BROADCAST_SESSION_PREVIEW_STATE = "vibe64.sessions.preview-state.broadcast";
+const ACTION_INSPECT_REPOSITORY_HISTORY = "vibe64.repository.history.inspect";
+const ACTION_INSPECT_REPOSITORY_VERSION_FILES = "vibe64.repository.history.files.inspect";
+const ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF = "vibe64.repository.history.diff.inspect";
 
 function action({ events = [], execute, id, input, kind }) {
   return Object.freeze({
@@ -62,6 +73,24 @@ function createSessionActions({ sessions } = {}) {
 
   return Object.freeze([
     action({
+      id: ACTION_INSPECT_REPOSITORY_HISTORY,
+      kind: "query",
+      input: repositoryHistoryInputValidator,
+      execute: (input) => sessions.inspectRepositoryHistory(input || {})
+    }),
+    action({
+      id: ACTION_INSPECT_REPOSITORY_VERSION_FILES,
+      kind: "query",
+      input: repositoryVersionFilesInputValidator,
+      execute: (input) => sessions.inspectRepositoryVersionFiles(input || {})
+    }),
+    action({
+      id: ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
+      kind: "query",
+      input: repositoryVersionFileDiffInputValidator,
+      execute: (input) => sessions.inspectRepositoryVersionFileDiff(input || {})
+    }),
+    action({
       id: ACTION_LIST_SESSIONS,
       kind: "query",
       input: sessionListInputValidator,
@@ -89,12 +118,21 @@ function createSessionActions({ sessions } = {}) {
       })
     }),
     action({
-      id: ACTION_INSPECT_SESSION_DIFF,
+      id: ACTION_INSPECT_SESSION_CHANGES,
       kind: "query",
-      input: sessionDiffInputValidator,
-      execute: (input) => sessions.inspectSessionDiff(input.sessionId, {
-        full: input.full,
-        lineLimit: input.lineLimit
+      input: sessionChangesInputValidator,
+      execute: (input) => sessions.inspectSessionChanges(input.sessionId, {
+        limit: input.limit,
+        offset: input.offset
+      })
+    }),
+    action({
+      id: ACTION_INSPECT_SESSION_CHANGE_DIFF,
+      kind: "query",
+      input: sessionChangeDiffInputValidator,
+      execute: (input) => sessions.inspectSessionChangeDiff(input.sessionId, {
+        lineLimit: input.lineLimit,
+        path: input.path
       })
     }),
     action({
@@ -109,6 +147,19 @@ function createSessionActions({ sessions } = {}) {
       input: sessionSaveInputValidator,
       events: [sessionChangedActionEvent({ reason: "session-work-saved" })],
       execute: (input) => sessions.saveSessionWork(input.sessionId, withoutSessionId(input))
+    }),
+    action({
+      id: ACTION_CHECK_SESSION_UPDATES,
+      kind: "command",
+      input: sessionUpdateInputValidator,
+      execute: (input) => sessions.checkSessionUpdates(input.sessionId, withoutSessionId(input))
+    }),
+    action({
+      id: ACTION_UPDATE_SESSION_WORK,
+      kind: "command",
+      input: sessionUpdateInputValidator,
+      events: [sessionChangedActionEvent({ reason: "session-work-updated" })],
+      execute: (input) => sessions.updateSessionWork(input.sessionId, withoutSessionId(input))
     }),
     action({
       id: ACTION_READ_SESSION_CONVERSATION_LOG,
@@ -167,12 +218,17 @@ function createSessionActions({ sessions } = {}) {
 }
 
 export {
+  ACTION_CHECK_SESSION_UPDATES,
+  ACTION_INSPECT_REPOSITORY_HISTORY,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
-  ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_CHANGE_DIFF,
+  ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
@@ -181,5 +237,6 @@ export {
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_SESSION_WORK,
   createSessionActions
 };

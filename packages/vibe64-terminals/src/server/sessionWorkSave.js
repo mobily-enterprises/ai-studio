@@ -8,12 +8,25 @@ import {
   normalizeRepositoryMode
 } from "@local/vibe64-core/server/projectRepository";
 import {
+  repositoryUpdateRelationship,
+  repositoryUpdateStrategy
+} from "@local/vibe64-core/shared";
+import {
   createGitTurnCheckpoint,
   runVibe64Command,
   writeGitWorktreeTree
 } from "@local/vibe64-execution/server";
+import {
+  GIT_HISTORY_RECORD_FORMAT,
+  parseGitHistoryRecords
+} from "./gitHistoryRecords.js";
 
 const SAVE_TIMEOUT_MS = 120_000;
+const DEFAULT_CHANGE_FILE_LIMIT = 200;
+const MAX_CHANGE_FILE_LIMIT = 500;
+const DEFAULT_CHANGE_DIFF_LINE_LIMIT = 800;
+const MAX_CHANGE_DIFF_LINE_LIMIT = 5000;
+const INCOMING_VERSION_LIMIT = 5;
 
 function text(value = "") {
   return String(value || "").trim();
@@ -43,6 +56,7 @@ function repositoryContext(session = {}, project = {}) {
   const worktreePath = text(session.sourcePath || sessionMetadata.source_path);
   const sessionId = text(session.sessionId || session.id);
   const baseCommit = text(sessionMetadata.base_commit);
+  const lastCanonicalCommit = text(sessionMetadata.canonical_commit) || baseCommit;
   const projectRoot = text(project.path || project.projectRoot);
   if (!mode || !branch || !worktreePath || !sessionId || !baseCommit || !projectRoot) {
     throw saveError(
@@ -64,6 +78,7 @@ function repositoryContext(session = {}, project = {}) {
   return {
     baseCommit,
     branch,
+    lastCanonicalCommit,
     mode,
     projectRoot,
     remoteUrl,
@@ -152,18 +167,328 @@ async function changedPathsBetween(runCommand, context, baseCommit, tree, option
     .sort((left, right) => left.localeCompare(right));
 }
 
-async function localCanonicalCommit(runCommand, context, options = {}) {
-  const trackingRef = `refs/remotes/origin/${context.branch}`;
-  const tracked = await gitOutput(runCommand, context, [
+async function countCommitsBetween(runCommand, context, fromCommit, toCommit, options = {}) {
+  const count = Number(await gitOutput(runCommand, context, [
+    "rev-list",
+    "--count",
+    `${fromCommit}..${toCommit}`
+  ], options));
+  return Number.isSafeInteger(count) && count >= 0 ? count : 0;
+}
+
+async function incomingVersionsBetween(
+  runCommand,
+  context,
+  fromCommit,
+  toCommit,
+  options = {}
+) {
+  const result = await git(runCommand, context, [
+    "log",
+    "--topo-order",
+    `--max-count=${INCOMING_VERSION_LIMIT + 1}`,
+    "-z",
+    `--format=${GIT_HISTORY_RECORD_FORMAT}`,
+    `${fromCommit}..${toCommit}`
+  ], options);
+  const records = parseGitHistoryRecords(String(result.stdout || result.output || ""));
+  return {
+    incomingVersions: records.slice(0, INCOMING_VERSION_LIMIT),
+    incomingVersionsTruncated: records.length > INCOMING_VERSION_LIMIT
+  };
+}
+
+async function optionalGitOutput(runCommand, context, args, options = {}) {
+  const result = await git(runCommand, context, args, {
+    ...options,
+    required: false
+  });
+  return result?.ok === true ? output(result) : "";
+}
+
+async function commitTree(runCommand, context, commit, options = {}) {
+  return gitOutput(runCommand, context, [
     "rev-parse",
     "--verify",
-    "--quiet",
-    trackingRef
+    `${commit}^{tree}`
+  ], options);
+}
+
+async function commitIsAncestor(runCommand, context, ancestor, descendant, options = {}) {
+  if (ancestor === descendant) {
+    return true;
+  }
+  const result = await git(runCommand, context, [
+    "merge-base",
+    "--is-ancestor",
+    ancestor,
+    descendant
   ], {
     ...options,
     required: false
   });
-  return tracked || context.baseCommit;
+  return result?.ok === true;
+}
+
+async function observedCanonicalCommit(runCommand, context, options = {}) {
+  const [stable, recorded, base] = await Promise.all([
+    optionalGitOutput(runCommand, context, [
+      "rev-parse",
+      "--verify",
+      `${canonicalRef(context)}^{commit}`
+    ], options),
+    context.lastCanonicalCommit
+    ? await optionalGitOutput(runCommand, context, [
+        "rev-parse",
+        "--verify",
+        `${context.lastCanonicalCommit}^{commit}`
+      ], options)
+      : "",
+    gitOutput(runCommand, context, [
+      "rev-parse",
+      "--verify",
+      `${context.baseCommit}^{commit}`
+    ], options)
+  ]);
+  let observed = stable || recorded || base;
+  for (const candidate of [recorded, base].filter(Boolean)) {
+    if (candidate === observed) {
+      continue;
+    }
+    if (await commitIsAncestor(runCommand, context, observed, candidate, options)) {
+      observed = candidate;
+    }
+  }
+  return observed;
+}
+
+async function sessionWorkComparison(runCommand, context, {
+  baseCommit,
+  canonicalCommit,
+  sessionHead,
+  worktreeTree
+}, options = {}) {
+  const [baseTree, canonicalTree] = await Promise.all([
+    commitTree(runCommand, context, baseCommit, options),
+    commitTree(runCommand, context, canonicalCommit, options)
+  ]);
+  if (worktreeTree === canonicalTree) {
+    return {
+      baseTree,
+      canonicalTree,
+      changeBaseCommit: canonicalCommit,
+      changeBaseTree: canonicalTree,
+      changedPaths: [],
+      sessionMatchesCanonical: true
+    };
+  }
+  const changeBaseCommit = await gitOutput(runCommand, context, [
+    "merge-base",
+    canonicalCommit,
+    sessionHead
+  ], options);
+  const changeBaseTree = changeBaseCommit === canonicalCommit
+    ? canonicalTree
+    : await commitTree(runCommand, context, changeBaseCommit, options);
+  const changedPaths = worktreeTree === changeBaseTree
+    ? []
+    : await changedPathsBetween(
+        runCommand,
+        context,
+        changeBaseCommit,
+        worktreeTree,
+        options
+      );
+  return {
+    baseTree,
+    canonicalTree,
+    changeBaseCommit,
+    changeBaseTree,
+    changedPaths,
+    sessionMatchesCanonical: worktreeTree === canonicalTree
+  };
+}
+
+function boundedInteger(value, fallback, maximum) {
+  const number = Number.parseInt(String(value ?? ""), 10);
+  return Number.isSafeInteger(number) && number > 0
+    ? Math.min(number, maximum)
+    : fallback;
+}
+
+function parseGitNameStatusZ(value = "") {
+  const fields = String(value || "").split("\0");
+  const files = new Map();
+  for (let index = 0; index < fields.length;) {
+    const status = text(fields[index++]);
+    if (!status) {
+      continue;
+    }
+    const previousPath = /^[CR]/u.test(status) ? text(fields[index++]) : "";
+    const filePath = text(fields[index++]);
+    if (!filePath) {
+      continue;
+    }
+    files.set(filePath, {
+      path: filePath,
+      ...(previousPath ? { previousPath } : {}),
+      status: status.slice(0, 1)
+    });
+  }
+  return files;
+}
+
+function numericStat(value = "") {
+  const normalized = text(value);
+  if (normalized === "-") {
+    return null;
+  }
+  const number = Number.parseInt(normalized, 10);
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function parseGitNumstatZ(value = "") {
+  const fields = String(value || "").split("\0");
+  const stats = new Map();
+  for (let index = 0; index < fields.length;) {
+    const record = fields[index++];
+    if (!record) {
+      continue;
+    }
+    const [added, deleted, filePath = ""] = record.split("\t");
+    const renamed = !filePath;
+    if (renamed) {
+      index += 1;
+    }
+    const targetPath = text(renamed ? fields[index++] : filePath);
+    if (!targetPath) {
+      continue;
+    }
+    stats.set(targetPath, {
+      added: numericStat(added),
+      deleted: numericStat(deleted)
+    });
+  }
+  return stats;
+}
+
+async function sessionChangeFiles(runCommand, context, canonicalCommit, worktreeTree, options = {}) {
+  const [statusResult, statResult] = await Promise.all([
+    git(runCommand, context, [
+      "diff-tree",
+      "--no-commit-id",
+      "-r",
+      "-M",
+      "--name-status",
+      "-z",
+      canonicalCommit,
+      worktreeTree
+    ], options),
+    git(runCommand, context, [
+      "diff-tree",
+      "--no-commit-id",
+      "-r",
+      "-M",
+      "--numstat",
+      "-z",
+      canonicalCommit,
+      worktreeTree
+    ], options)
+  ]);
+  const files = parseGitNameStatusZ(statusResult.stdout || statusResult.output);
+  const stats = parseGitNumstatZ(statResult.stdout || statResult.output);
+  return [...files.values()]
+    .map((file) => ({
+      ...file,
+      ...(stats.get(file.path) || { added: 0, deleted: 0 })
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function safeChangePath(value = "") {
+  const normalized = text(value).replaceAll("\\", "/");
+  if (
+    !normalized ||
+    normalized.includes("\0") ||
+    path.posix.isAbsolute(normalized) ||
+    path.posix.normalize(normalized) !== normalized ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw saveError("Choose a changed project file.", "vibe64_session_change_path_invalid");
+  }
+  return normalized;
+}
+
+async function inspectSessionChanges({
+  commandOptions = {},
+  limit = DEFAULT_CHANGE_FILE_LIMIT,
+  offset = 0,
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const work = await inspectSessionWork({ commandOptions, project, runCommand, session });
+  const context = repositoryContext(session, project);
+  const files = work.unsaved
+    ? await sessionChangeFiles(runCommand, context, work.changeBaseCommit, work.worktreeTree, {
+        commandOptions,
+        project
+      })
+    : [];
+  const boundedLimit = boundedInteger(limit, DEFAULT_CHANGE_FILE_LIMIT, MAX_CHANGE_FILE_LIMIT);
+  const boundedOffset = Math.max(0, Number.parseInt(String(offset ?? ""), 10) || 0);
+  return {
+    ...work,
+    files: files.slice(boundedOffset, boundedOffset + boundedLimit),
+    limit: boundedLimit,
+    offset: boundedOffset,
+    totalCount: files.length,
+    truncated: boundedOffset + boundedLimit < files.length
+  };
+}
+
+async function inspectSessionChangeDiff({
+  commandOptions = {},
+  lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
+  path: requestedPath = "",
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const filePath = safeChangePath(requestedPath);
+  const work = await inspectSessionWork({ commandOptions, project, runCommand, session });
+  if (!work.changedPaths.includes(filePath)) {
+    throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
+  }
+  const context = repositoryContext(session, project);
+  const result = await git(runCommand, context, [
+    "diff",
+    "--no-ext-diff",
+    "--find-renames",
+    "--unified=3",
+    work.changeBaseCommit,
+    work.worktreeTree,
+    "--",
+    filePath
+  ], {
+    commandOptions,
+    project
+  });
+  const lines = String(result.stdout || result.output || "").replaceAll("\r\n", "\n").split("\n");
+  const boundedLimit = boundedInteger(lineLimit, DEFAULT_CHANGE_DIFF_LINE_LIMIT, MAX_CHANGE_DIFF_LINE_LIMIT);
+  return {
+    canonicalCommit: work.canonicalCommit,
+    changeBaseCommit: work.changeBaseCommit,
+    diff: lines.slice(0, boundedLimit).join("\n"),
+    lineLimit: boundedLimit,
+    ok: true,
+    path: filePath,
+    shownLines: Math.min(lines.length, boundedLimit),
+    totalLines: lines.length,
+    truncated: lines.length > boundedLimit,
+    worktreeTree: work.worktreeTree
+  };
 }
 
 async function inspectSessionWork({
@@ -180,23 +505,40 @@ async function inspectSessionWork({
     runCommand,
     worktreePath: context.worktreePath
   });
-  const canonicalCommit = await localCanonicalCommit(runCommand, context, {
-    commandOptions,
-    project
-  });
-  const baseTree = await gitOutput(runCommand, context, [
-    "rev-parse",
-    `${canonicalCommit}^{tree}`
-  ], {
-    commandOptions,
-    project
-  });
-  const changedPaths = tree === baseTree
-    ? []
-    : await changedPathsBetween(runCommand, context, canonicalCommit, tree, {
-        commandOptions,
-        project
-      });
+  const [canonicalCommit, sessionHead] = await Promise.all([
+    observedCanonicalCommit(runCommand, context, { commandOptions, project }),
+    gitOutput(runCommand, context, [
+      "rev-parse",
+      "--verify",
+      "HEAD^{commit}"
+    ], {
+      commandOptions,
+      project
+    })
+  ]);
+  const [headTree, ahead, behind, comparison] = await Promise.all([
+    gitOutput(runCommand, context, [
+      "rev-parse",
+      `${sessionHead}^{tree}`
+    ], {
+      commandOptions,
+      project
+    }),
+    countCommitsBetween(runCommand, context, canonicalCommit, sessionHead, {
+      commandOptions,
+      project
+    }),
+    countCommitsBetween(runCommand, context, sessionHead, canonicalCommit, {
+      commandOptions,
+      project
+    }),
+    sessionWorkComparison(runCommand, context, {
+      baseCommit: context.baseCommit,
+      canonicalCommit,
+      sessionHead,
+      worktreeTree: tree
+    }, { commandOptions, project })
+  ]);
   const comparisonRef = comparisonOperationId
     ? saveRef(context, comparisonOperationId, "comparison")
     : "";
@@ -207,7 +549,7 @@ async function inspectSessionWork({
         "commit-tree",
         tree,
         "-p",
-        canonicalCommit
+        comparison.changeBaseCommit
       ], {
         commandOptions,
         input: "Vibe64 sibling Save comparison\n",
@@ -220,17 +562,32 @@ async function inspectSessionWork({
       project
     });
   }
+  const relationship = repositoryUpdateRelationship(ahead, behind);
   return {
+    ahead,
     baseCommit: context.baseCommit,
+    behind,
+    branch: context.branch,
     canonicalCommit,
-    changedPaths,
+    canonicalTree: comparison.canonicalTree,
+    changeBaseCommit: comparison.changeBaseCommit,
+    changeBaseTree: comparison.changeBaseTree,
+    changedPaths: comparison.changedPaths,
     comparisonCommit,
     comparisonRef,
+    dirty: tree !== headTree,
     mode: context.mode,
     ok: true,
+    repositoryMode: context.mode,
+    relationship,
+    sessionMatchesCanonical: comparison.sessionMatchesCanonical,
+    sessionHead,
     sessionId: context.sessionId,
     tree,
-    unsaved: changedPaths.length > 0,
+    updateAvailable: behind > 0,
+    updateStrategy: repositoryUpdateStrategy(relationship),
+    unsaved: comparison.changedPaths.length > 0,
+    worktreeTree: tree,
     worktreePath: context.worktreePath
   };
 }
@@ -247,6 +604,28 @@ function saveRef(context, operationId, label) {
   return `refs/vibe64/save/${digest}/${label}`;
 }
 
+function canonicalRef(context) {
+  const digest = crypto.createHash("sha256")
+    .update(context.branch)
+    .digest("hex")
+    .slice(0, 32);
+  return `refs/vibe64/canonical/${digest}`;
+}
+
+async function rememberCanonicalCommit(runCommand, context, commit, options = {}) {
+  const verified = await gitOutput(runCommand, context, [
+    "rev-parse",
+    "--verify",
+    `${commit}^{commit}`
+  ], options);
+  await git(runCommand, context, [
+    "update-ref",
+    canonicalRef(context),
+    verified
+  ], options);
+  return verified;
+}
+
 async function readRemoteCanonical(runCommand, context, operationId, options) {
   await git(runCommand, context, ["remote", "set-url", "origin", context.remoteUrl], options);
   const canonicalRef = saveRef(context, operationId, "canonical");
@@ -256,7 +635,8 @@ async function readRemoteCanonical(runCommand, context, operationId, options) {
     "origin",
     `+refs/heads/${context.branch}:${canonicalRef}`
   ], options);
-  return gitOutput(runCommand, context, ["rev-parse", "--verify", canonicalRef], options);
+  const commit = await gitOutput(runCommand, context, ["rev-parse", "--verify", canonicalRef], options);
+  return rememberCanonicalCommit(runCommand, context, commit, options);
 }
 
 async function assertLocalAuthority(runCommand, context, options) {
@@ -300,9 +680,29 @@ async function assertLocalAuthority(runCommand, context, options) {
 }
 
 async function readCanonical(runCommand, context, operationId, options) {
-  return context.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
-    ? assertLocalAuthority(runCommand, context, options)
-    : readRemoteCanonical(runCommand, context, operationId, options);
+  if (context.mode !== PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+    return readRemoteCanonical(runCommand, context, operationId, options);
+  }
+  const authorityCommit = await assertLocalAuthority(runCommand, context, options);
+  const canonicalRef = saveRef(context, operationId, "canonical");
+  await git(runCommand, context, [
+    "fetch",
+    "--no-tags",
+    context.projectRoot,
+    `+refs/heads/${context.branch}:${canonicalRef}`
+  ], options);
+  const importedCommit = await gitOutput(runCommand, context, [
+    "rev-parse",
+    "--verify",
+    canonicalRef
+  ], options);
+  if (importedCommit !== authorityCommit) {
+    throw saveError(
+      "The local project baseline changed while Vibe64 was reading it.",
+      "vibe64_session_save_authority_advanced"
+    );
+  }
+  return rememberCanonicalCommit(runCommand, context, importedCommit, options);
 }
 
 async function mergeTrees(runCommand, context, {
@@ -318,7 +718,7 @@ async function mergeTrees(runCommand, context, {
     baseCommit,
     commandOptions,
     identity,
-    message: "Vibe64 session Save merge input",
+    message: "Vibe64 session rebase input",
     project,
     tree: checkpointTree
   });
@@ -336,12 +736,12 @@ async function mergeTrees(runCommand, context, {
   if (merged?.ok !== true) {
     throw saveError(
       text(merged?.stdout || merged?.stderr || merged?.output) || "Session changes conflict with canonical work.",
-      "vibe64_session_save_conflict"
+      "vibe64_session_update_conflict"
     );
   }
   const mergedTree = output(merged).split(/\r?\n/u)[0];
   if (!/^[0-9a-f]{40,64}$/u.test(mergedTree)) {
-    throw saveError("Git did not produce a valid merged tree.", "vibe64_session_save_merge_invalid");
+    throw saveError("Git did not produce a valid rebased tree.", "vibe64_session_update_merge_invalid");
   }
   return {
     mergedTree,
@@ -469,6 +869,13 @@ async function createSaveCommit(runCommand, context, {
   message,
   project
 }) {
+  const subject = text(message);
+  if (!subject) {
+    throw saveError(
+      "Save requires an assistant-generated commit subject.",
+      "vibe64_session_save_message_required"
+    );
+  }
   return gitOutput(runCommand, context, [
     "-c", `user.name=${identity.name}`,
     "-c", `user.email=${identity.email}`,
@@ -478,7 +885,7 @@ async function createSaveCommit(runCommand, context, {
     canonicalCommit
   ], {
     commandOptions,
-    input: `${text(message) || "Save Vibe64 work"}\n`,
+    input: `${subject}\n`,
     project
   });
 }
@@ -500,17 +907,49 @@ async function publishSaveCommit(runCommand, context, saveCommit, canonicalCommi
       ...options,
       cwd: context.projectRoot
     });
-    return gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
+    const verified = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
       ...options,
       cwd: context.projectRoot
     });
+    await rememberCanonicalCommit(runCommand, context, verified, options);
+    return verified;
   }
   const pushArgs = ["push"];
   if (context.mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
     pushArgs.push("--push-option=vibe64-atomic");
   }
   pushArgs.push("origin", `${saveCommit}:refs/heads/${context.branch}`);
-  await git(runCommand, context, pushArgs, options);
+  const pushed = await git(runCommand, context, pushArgs, {
+    ...options,
+    required: false
+  });
+  if (pushed?.ok !== true) {
+    const remote = await git(runCommand, context, [
+      "ls-remote",
+      "--heads",
+      "origin",
+      `refs/heads/${context.branch}`
+    ], {
+      ...options,
+      required: false
+    });
+    const remoteCommit = output(remote).split(/\s+/u)[0] || "";
+    if (remoteCommit && remoteCommit !== canonicalCommit) {
+      throw saveError(
+        "The saved project changed while Save was publishing. Update this session (rebase), then save again.",
+        "vibe64_session_save_update_required",
+        {
+          canonicalCommit: remoteCommit,
+          reconciledCommit: canonicalCommit,
+          updateRequired: true
+        }
+      );
+    }
+    throw saveError(
+      text(pushed?.stderr || pushed?.stdout || pushed?.output || pushed?.error) || "Git Save publication failed.",
+      text(pushed?.code) || "vibe64_session_save_git_failed"
+    );
+  }
   const remote = await gitOutput(runCommand, context, [
     "ls-remote",
     "--heads",
@@ -524,14 +963,476 @@ async function publishSaveCommit(runCommand, context, saveCommit, canonicalCommi
       "vibe64_session_save_verification_failed"
     );
   }
+  await rememberCanonicalCommit(runCommand, context, verified, options);
   return verified;
 }
 
 async function currentCanonicalCommit(runCommand, context, operationId, options) {
-  if (context.mode !== PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
-    return readRemoteCanonical(runCommand, context, operationId, options);
+  return readCanonical(runCommand, context, operationId, options);
+}
+
+async function checkSessionUpdates({
+  commandOptions = {},
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand = runVibe64Command,
+  runProjectSourceExclusive = async (operation) => operation(),
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  return runProjectSourceExclusive(async () => {
+    await assertBranch(runCommand, context, { commandOptions, project });
+    const canonicalCommit = await currentCanonicalCommit(
+      runCommand,
+      context,
+      operationId,
+      { commandOptions, project }
+    );
+    const [sessionHead, worktreeTree] = await Promise.all([
+      gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
+        commandOptions,
+        project
+      }),
+      writeGitWorktreeTree({
+        baseCommit: "HEAD",
+        project: commandProject(context, project),
+        runCommand,
+        worktreePath: context.worktreePath
+      })
+    ]);
+    const ancestor = await git(runCommand, context, [
+      "merge-base",
+      "--is-ancestor",
+      context.baseCommit,
+      canonicalCommit
+    ], {
+      commandOptions,
+      project,
+      required: false
+    });
+    if (ancestor?.ok !== true) {
+      throw saveError(
+        "The saved project history no longer descends from this session's starting version.",
+        "vibe64_session_update_history_diverged"
+      );
+    }
+    const [ahead, behind, canonicalInSession, canonicalTree] = await Promise.all([
+      countCommitsBetween(runCommand, context, canonicalCommit, sessionHead, {
+        commandOptions,
+        project
+      }),
+      countCommitsBetween(runCommand, context, sessionHead, canonicalCommit, {
+        commandOptions,
+        project
+      }),
+      commitIsAncestor(runCommand, context, canonicalCommit, sessionHead, {
+        commandOptions,
+        project
+      }),
+      commitTree(runCommand, context, canonicalCommit, { commandOptions, project })
+    ]);
+    const relationship = repositoryUpdateRelationship(ahead, behind);
+    const incoming = behind > 0
+      ? await incomingVersionsBetween(runCommand, context, sessionHead, canonicalCommit, {
+          commandOptions,
+          project
+        })
+      : { incomingVersions: [], incomingVersionsTruncated: false };
+    return {
+      ahead,
+      baseCommit: context.baseCommit,
+      behind,
+      canonicalCommit,
+      ...incoming,
+      ok: true,
+      operationId,
+      reconciled: canonicalInSession,
+      repositoryMode: context.mode,
+      relationship,
+      sessionCurrent: canonicalInSession,
+      sessionHead,
+      sessionMatchesCanonical: worktreeTree === canonicalTree,
+      updateAvailable: !canonicalInSession,
+      updateStrategy: repositoryUpdateStrategy(relationship)
+    };
+  }, {
+    operation: `check-session-updates:${context.sessionId}`
+  });
+}
+
+async function applySessionUpdate(runCommand, context, {
+  canonicalCommit,
+  checkpointCommit,
+  checkpointTree,
+  commandOptions,
+  mergedCommit,
+  mergedTree,
+  oldHead,
+  oldIndexTree,
+  project
+}) {
+  const currentTree = await writeGitWorktreeTree({
+    baseCommit: "HEAD",
+    project: commandProject(context, project),
+    runCommand,
+    worktreePath: context.worktreePath
+  });
+  if (currentTree !== checkpointTree) {
+    throw saveError(
+      "This session changed while its update was being prepared. Retry when the assistant is idle.",
+      "vibe64_session_update_worktree_changed"
+    );
   }
-  return assertLocalAuthority(runCommand, context, options);
+  try {
+    await git(runCommand, context, ["read-tree", "--reset", "-u", mergedCommit], {
+      commandOptions,
+      project
+    });
+    await git(runCommand, context, ["update-ref", "HEAD", canonicalCommit, oldHead], {
+      commandOptions,
+      project
+    });
+    await git(runCommand, context, ["read-tree", canonicalCommit], {
+      commandOptions,
+      project
+    });
+    const updatedTree = await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: context.worktreePath
+    });
+    if (updatedTree !== mergedTree) {
+      throw saveError(
+        "The updated session did not match the prepared merged work.",
+        "vibe64_session_update_verification_failed"
+      );
+    }
+    await rememberCanonicalCommit(runCommand, context, canonicalCommit, {
+      commandOptions,
+      project
+    });
+    return { currentTree: updatedTree, reconciled: true, status: "updated" };
+  } catch (error) {
+    const currentHead = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
+      commandOptions,
+      project
+    }).catch(() => "");
+    await git(runCommand, context, ["read-tree", "--reset", "-u", checkpointCommit], {
+      commandOptions,
+      project,
+      required: false
+    });
+    if (currentHead && currentHead !== oldHead) {
+      await git(runCommand, context, ["update-ref", "HEAD", oldHead, currentHead], {
+        commandOptions,
+        project,
+        required: false
+      });
+    }
+    await git(runCommand, context, ["read-tree", oldIndexTree], {
+      commandOptions,
+      project,
+      required: false
+    });
+    throw error;
+  }
+}
+
+async function updateSessionWork({
+  commandOptions = {},
+  identity = {},
+  onProgress = async () => null,
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand = runVibe64Command,
+  runProjectSourceExclusive = async (operation) => operation(),
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  const author = {
+    email: text(identity.email) || "vibe64@localhost",
+    name: text(identity.name) || "Vibe64 Update"
+  };
+  return runProjectSourceExclusive(async () => {
+    await assertBranch(runCommand, context, { commandOptions, project });
+    await onProgress({ kind: "checkpoint", message: "Capturing this session's complete worktree.", stage: "checkpointing" });
+    const checkpoint = await createGitTurnCheckpoint({
+      outerTurnId: `update:${operationId}`,
+      outcome: "completed",
+      project: commandProject(context, project),
+      runCommand,
+      sessionId: context.sessionId,
+      timestamp: new Date().toISOString(),
+      worktreePath: context.worktreePath
+    });
+    const [oldHead, oldIndexTree] = await Promise.all([
+      gitOutput(runCommand, context, ["rev-parse", "HEAD"], { commandOptions, project }),
+      gitOutput(runCommand, context, ["write-tree"], { commandOptions, project })
+    ]);
+    await onProgress({
+      checkpointCommit: checkpoint.commit,
+      checkpointTree: checkpoint.tree,
+      kind: "checkpoint",
+      message: "Session checkpoint captured.",
+      oldHead,
+      oldIndexTree,
+      stage: "checkpointed"
+    });
+    const canonicalCommit = await currentCanonicalCommit(
+      runCommand,
+      context,
+      operationId,
+      { commandOptions, project }
+    );
+    const ancestor = await git(runCommand, context, [
+      "merge-base",
+      "--is-ancestor",
+      context.baseCommit,
+      canonicalCommit
+    ], {
+      commandOptions,
+      project,
+      required: false
+    });
+    if (ancestor?.ok !== true) {
+      throw saveError(
+        "The saved project history no longer descends from this session's starting version.",
+        "vibe64_session_update_history_diverged"
+      );
+    }
+    const comparison = await sessionWorkComparison(runCommand, context, {
+      baseCommit: context.baseCommit,
+      canonicalCommit,
+      sessionHead: oldHead,
+      worktreeTree: checkpoint.tree
+    }, { commandOptions, project });
+    const canonicalInSession = await commitIsAncestor(
+      runCommand,
+      context,
+      canonicalCommit,
+      oldHead,
+      { commandOptions, project }
+    );
+    if (canonicalInSession) {
+      return {
+        baseCommit: context.baseCommit,
+        canonicalCommit,
+        canonicalTree: comparison.canonicalTree,
+        changeBaseCommit: comparison.changeBaseCommit,
+        checkpointCommit: checkpoint.commit,
+        checkpointTree: checkpoint.tree,
+        currentTree: checkpoint.tree,
+        ok: true,
+        operationId,
+        mode: context.mode,
+        reconciled: true,
+        repositoryMode: context.mode,
+        sessionCurrent: canonicalInSession,
+        sessionMatchesCanonical: comparison.sessionMatchesCanonical,
+        status: "already_current"
+      };
+    }
+    if (comparison.sessionMatchesCanonical) {
+      await onProgress({
+        canonicalCommit,
+        checkpointCommit: checkpoint.commit,
+        checkpointTree: checkpoint.tree,
+        kind: "update",
+        mergedCommit: canonicalCommit,
+        mergedTree: comparison.canonicalTree,
+        message: "A conflict-free session update is ready.",
+        oldHead,
+        oldIndexTree,
+        stage: "prepared"
+      });
+      await onProgress({ kind: "update", message: "Updating this session (rebase).", stage: "mutating" });
+      const reconciliation = await applySessionUpdate(runCommand, context, {
+        canonicalCommit,
+        checkpointCommit: checkpoint.commit,
+        checkpointTree: checkpoint.tree,
+        commandOptions,
+        mergedCommit: canonicalCommit,
+        mergedTree: comparison.canonicalTree,
+        oldHead,
+        oldIndexTree,
+        project
+      });
+      return {
+        baseCommit: context.baseCommit,
+        canonicalCommit,
+        canonicalTree: comparison.canonicalTree,
+        changeBaseCommit: comparison.changeBaseCommit,
+        checkpointCommit: checkpoint.commit,
+        checkpointTree: checkpoint.tree,
+        mergedCommit: canonicalCommit,
+        mergedTree: comparison.canonicalTree,
+        ok: true,
+        oldHead,
+        oldIndexTree,
+        operationId,
+        mode: context.mode,
+        repositoryMode: context.mode,
+        sessionCurrent: true,
+        sessionMatchesCanonical: true,
+        ...reconciliation
+      };
+    }
+    const { mergedTree } = await mergeTrees(runCommand, context, {
+      baseCommit: comparison.changeBaseCommit,
+      canonicalCommit,
+      checkpointTree: checkpoint.tree,
+      commandOptions,
+      identity: author,
+      project
+    });
+    const mergedCommit = await createVirtualCommit(runCommand, context, {
+      baseCommit: canonicalCommit,
+      commandOptions,
+      identity: author,
+      message: "Vibe64 session update result",
+      project,
+      tree: mergedTree
+    });
+    await onProgress({
+      canonicalCommit,
+      checkpointCommit: checkpoint.commit,
+      checkpointTree: checkpoint.tree,
+      kind: "update",
+      mergedCommit,
+      mergedTree,
+      message: "A conflict-free session update is ready.",
+      oldHead,
+      oldIndexTree,
+      stage: "prepared"
+    });
+    await onProgress({ kind: "update", message: "Updating this session (rebase).", stage: "mutating" });
+    const reconciliation = await applySessionUpdate(runCommand, context, {
+      canonicalCommit,
+      checkpointCommit: checkpoint.commit,
+      checkpointTree: checkpoint.tree,
+      commandOptions,
+      mergedCommit,
+      mergedTree,
+      oldHead,
+      oldIndexTree,
+      project
+    });
+    return {
+      baseCommit: context.baseCommit,
+      canonicalCommit,
+      changeBaseCommit: comparison.changeBaseCommit,
+      checkpointCommit: checkpoint.commit,
+      checkpointTree: checkpoint.tree,
+      mergedCommit,
+      mergedTree,
+      ok: true,
+      oldHead,
+      oldIndexTree,
+      operationId,
+      mode: context.mode,
+      repositoryMode: context.mode,
+      ...reconciliation
+    };
+  }, {
+    operation: `update-session:${context.sessionId}`
+  });
+}
+
+async function recoverSessionWorkUpdate({
+  commandOptions = {},
+  project = {},
+  recovery = {},
+  runCommand = runVibe64Command,
+  runProjectSourceExclusive = async (operation) => operation(),
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  const required = [
+    "canonicalCommit",
+    "checkpointCommit",
+    "checkpointTree",
+    "mergedCommit",
+    "mergedTree",
+    "oldHead",
+    "oldIndexTree"
+  ];
+  if (required.some((key) => !text(recovery[key]))) {
+    throw saveError(
+      "The interrupted session update stopped before mutation and can be retried.",
+      "vibe64_session_update_interrupted_retryable",
+      { retryable: true }
+    );
+  }
+  return runProjectSourceExclusive(async () => {
+    const head = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
+      commandOptions,
+      project
+    });
+    const tree = await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: context.worktreePath
+    });
+    const headIsOld = head === recovery.oldHead;
+    const headIsCanonical = head === recovery.canonicalCommit;
+    const treeIsCheckpoint = tree === recovery.checkpointTree;
+    const treeIsMerged = tree === recovery.mergedTree;
+    if ((!headIsOld && !headIsCanonical) || (!treeIsCheckpoint && !treeIsMerged)) {
+      throw saveError(
+        "The interrupted session update cannot be recovered automatically because the worktree changed.",
+        "vibe64_session_update_recovery_changed"
+      );
+    }
+    if (treeIsCheckpoint) {
+      await git(runCommand, context, ["read-tree", "--reset", "-u", recovery.mergedCommit], {
+        commandOptions,
+        project
+      });
+    }
+    if (headIsOld) {
+      await git(runCommand, context, [
+        "update-ref",
+        "HEAD",
+        recovery.canonicalCommit,
+        recovery.oldHead
+      ], {
+        commandOptions,
+        project
+      });
+    }
+    await git(runCommand, context, ["read-tree", recovery.canonicalCommit], {
+      commandOptions,
+      project
+    });
+    const recoveredTree = await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: context.worktreePath
+    });
+    if (recoveredTree !== recovery.mergedTree) {
+      throw saveError(
+        "The interrupted session update could not reproduce its prepared worktree.",
+        "vibe64_session_update_verification_failed"
+      );
+    }
+    await rememberCanonicalCommit(runCommand, context, recovery.canonicalCommit, {
+      commandOptions,
+      project
+    });
+    return {
+      ...recovery,
+      currentTree: recoveredTree,
+      ok: true,
+      reconciled: true,
+      recovered: true,
+      status: "updated"
+    };
+  }, {
+    operation: `recover-update-session:${context.sessionId}`
+  });
 }
 
 async function reconcileSession(runCommand, context, {
@@ -611,7 +1512,8 @@ async function reconcileSession(runCommand, context, {
 async function saveSessionWork({
   commandOptions = {},
   identity = {},
-  message = "Save Vibe64 work",
+  expectedMessageTree = "",
+  message = "",
   operationId = crypto.randomUUID(),
   project = {},
   runCommand = runVibe64Command,
@@ -652,15 +1554,75 @@ async function saveSessionWork({
       message: "Session checkpoint captured.",
       stage: "checkpointed"
     });
-    const changedPaths = await changedPathsBetween(
+    if (text(expectedMessageTree) && checkpoint.tree !== text(expectedMessageTree)) {
+      throw saveError(
+        "The session changed while Vibe64 was naming this work. Save was not started; try again.",
+        "vibe64_session_save_message_stale"
+      );
+    }
+    await onProgress({ kind: "canonical", message: "Reading the current canonical branch.", stage: "canonical-reading" });
+    const [canonicalCommit, sessionHead] = await Promise.all([
+      readCanonical(runCommand, context, operationId, { commandOptions, project }),
+      gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
+        commandOptions,
+        project
+      })
+    ]);
+    await onProgress({
+      expectedCanonicalCommit: canonicalCommit,
+      kind: "canonical",
+      message: "Canonical branch read.",
+      stage: "canonical-read"
+    });
+    const ancestor = await git(runCommand, context, [
+      "merge-base",
+      "--is-ancestor",
+      context.baseCommit,
+      canonicalCommit
+    ], {
+      commandOptions,
+      project,
+      required: false
+    });
+    if (ancestor?.ok !== true) {
+      throw saveError(
+        "Canonical history no longer descends from this session's saved base.",
+        "vibe64_session_save_history_diverged"
+      );
+    }
+    const canonicalInSession = await commitIsAncestor(
       runCommand,
       context,
-      context.baseCommit,
-      checkpoint.tree,
+      canonicalCommit,
+      sessionHead,
       { commandOptions, project }
     );
-    const currentVirtualCommit = await createVirtualCommit(runCommand, context, {
+    if (canonicalCommit !== context.baseCommit && !canonicalInSession) {
+      throw saveError(
+        "The saved project has changed. Update this session (rebase) before saving its work.",
+        "vibe64_session_save_update_required",
+        {
+          canonicalCommit,
+          reconciledCommit: context.baseCommit,
+          updateRequired: true
+        }
+      );
+    }
+    const comparison = await sessionWorkComparison(runCommand, context, {
       baseCommit: context.baseCommit,
+      canonicalCommit,
+      sessionHead,
+      worktreeTree: checkpoint.tree
+    }, { commandOptions, project });
+    const changedPaths = comparison.changedPaths;
+    if (!changedPaths.length) {
+      throw saveError(
+        "This session has no work to save.",
+        "vibe64_session_save_no_changes"
+      );
+    }
+    const currentVirtualCommit = await createVirtualCommit(runCommand, context, {
+      baseCommit: comparison.changeBaseCommit,
       commandOptions,
       identity: author,
       message: "Vibe64 session sibling comparison",
@@ -703,49 +1665,13 @@ async function saveSessionWork({
         { siblingConflicts }
       );
     }
-    await onProgress({ kind: "canonical", message: "Reading the current canonical branch.", stage: "canonical-reading" });
-    const canonicalCommit = await readCanonical(runCommand, context, operationId, {
-      commandOptions,
-      project
-    });
-    await onProgress({
-      expectedCanonicalCommit: canonicalCommit,
-      kind: "canonical",
-      message: "Canonical branch read.",
-      stage: "canonical-read"
-    });
-    const ancestor = await git(runCommand, context, [
-      "merge-base",
-      "--is-ancestor",
-      context.baseCommit,
-      canonicalCommit
-    ], {
-      commandOptions,
-      project,
-      required: false
-    });
-    if (ancestor?.ok !== true) {
-      throw saveError(
-        "Canonical history no longer descends from this session's saved base.",
-        "vibe64_session_save_history_diverged"
-      );
-    }
-    await onProgress({ kind: "merge", message: "Merging session work with current canonical work.", stage: "merging" });
-    const { mergedTree, virtualCommit } = await mergeTrees(runCommand, context, {
-      baseCommit: context.baseCommit,
-      canonicalCommit,
-      changedPaths,
-      checkpointTree: checkpoint.tree,
-      commandOptions,
-      identity: author,
-      project,
-      virtualCommit: currentVirtualCommit
-    });
+    const mergedTree = checkpoint.tree;
+    const virtualCommit = currentVirtualCommit;
     const saveCommit = await createSaveCommit(runCommand, context, {
       canonicalCommit,
       commandOptions,
       identity: author,
-      mergedTree,
+      mergedTree: checkpoint.tree,
       message,
       project
     });
@@ -783,6 +1709,8 @@ async function saveSessionWork({
     return {
       baseCommit: context.baseCommit,
       canonicalCommit,
+      changeBaseCommit: comparison.changeBaseCommit,
+      changedPaths,
       checkpointCommit: checkpoint.commit,
       checkpointTree: checkpoint.tree,
       mergedTree,
@@ -865,8 +1793,18 @@ async function recoverSessionWorkSave({
 }
 
 export {
+  checkSessionUpdates,
+  inspectSessionChangeDiff,
+  inspectSessionChanges,
   inspectSessionWork,
+  parseGitNameStatusZ,
+  parseGitNumstatZ,
+  repositoryUpdateRelationship,
+  repositoryUpdateStrategy,
   recoverSessionWorkSave,
+  recoverSessionWorkUpdate,
   repositoryContext,
-  saveSessionWork
+  safeChangePath,
+  saveSessionWork,
+  updateSessionWork
 };

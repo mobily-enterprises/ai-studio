@@ -143,8 +143,8 @@ describe("Vibe64 app page", () => {
 
     expect(dashboardReturnPath({
       dashboardBasePath: "/app/project/beepollen/dashboard",
-      lastDashboardRoutePath: "/app/project/beepollen/dashboard/diff"
-    })).toBe("/app/project/beepollen/dashboard/diff");
+      lastDashboardRoutePath: "/app/project/beepollen/dashboard/repository"
+    })).toBe("/app/project/beepollen/dashboard/repository");
 
     expect(dashboardReturnPath({
       dashboardBasePath: "/app/project/beepollen/dashboard",

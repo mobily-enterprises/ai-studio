@@ -174,6 +174,7 @@
         :toolbar-sessions="toolbar.sessions"
         @busy-change="setRuntimeBusy"
         @page-error-change="setRuntimePageError"
+        @work-state-change="setRuntimeWorkState"
         @toolbar-controls-ready="setRuntimeToolbarControls"
         @project-attention="emitProjectAttention"
       >
@@ -228,6 +229,7 @@ const {
   sessionData,
   setRuntimeBusy,
   setRuntimePageError,
+  setRuntimeWorkState,
   setRuntimeToolbarControls,
   toolbar,
   visiblePageError

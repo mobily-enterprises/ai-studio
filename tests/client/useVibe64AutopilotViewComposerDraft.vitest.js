@@ -46,13 +46,11 @@ function viewProps(overrides = {}) {
     conversationLog: {
       turns: []
     },
-    diff: {},
     interruptAgentTurn: vi.fn(async () => true),
     page: {},
     projectContext: {},
     projectPane: "dashboard",
     refreshSessionData: vi.fn(async () => null),
-    review: {},
     retryWorkspaceSetup: vi.fn(async () => true),
     saveSessionWork: vi.fn(async () => ({ ok: true, status: "saved" })),
     sendAgentMessage: vi.fn(async () => true),
@@ -293,19 +291,15 @@ describe("useVibe64AutopilotView direct chat", () => {
     );
   });
 
-  it("exposes only direct non-Git session tools", async () => {
-    const diffLoad = vi.fn(async () => true);
-    const view = await createView({
-      diff: {
-        load: diffLoad
-      }
-    });
+  it("exposes only the direct session tools, including changes and history", async () => {
+    const view = await createView();
 
     expect(view.sessionToolControls.value.map((tool) => tool.id)).toEqual([
       "info",
+      "changes",
+      "repository",
       "editor",
       "system",
-      "diff",
       "ai-terminal"
     ]);
     expect(view.sessionToolControls.value.map((tool) => tool.id)).not.toContain("session-details");
@@ -315,12 +309,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.dashboardRouteVisible.value).toBe(true);
     expect(router.push).toHaveBeenCalledWith("/app/project/chat-test/dashboard/session");
 
-    router.push.mockClear();
-    expect(view.selectSessionTool("diff")).toBe(true);
-    await nextTick();
-    expect(view.dashboardRouteVisible.value).toBe(false);
-    expect(diffLoad).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith("/app/project/chat-test/dashboard/diff");
+    expect(view.selectSessionTool("diff")).toBe(false);
   });
 
   it("prefills chat from source and City tools", async () => {
@@ -435,7 +424,15 @@ describe("useVibe64AutopilotView direct chat", () => {
   it("saves work through the native Save operation without sending a chat prompt", async () => {
     const sendAgentMessage = vi.fn(async () => true);
     const saveSessionWork = vi.fn(async () => ({ ok: true, status: "saved" }));
-    const view = await createView({ saveSessionWork, sendAgentMessage });
+    const view = await createView({
+      saveSessionWork,
+      sendAgentMessage,
+      workState: {
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
 
     expect(view.requestSaveWork()).toBe(true);
     expect(view.saveWorkConfirmOpen.value).toBe(true);
@@ -444,7 +441,7 @@ describe("useVibe64AutopilotView direct chat", () => {
       status: "saved"
     });
 
-    expect(saveSessionWork).toHaveBeenCalledWith({ message: "Save Vibe64 work" });
+    expect(saveSessionWork).toHaveBeenCalledWith();
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.saveWorkConfirmOpen.value).toBe(false);
     expect(view.saveWorkExpanded.value).toBe(false);
@@ -454,7 +451,12 @@ describe("useVibe64AutopilotView direct chat", () => {
     const view = await createView({
       saveSessionWork: vi.fn(async () => {
         throw new Error("Conflicting sibling work");
-      })
+      }),
+      workState: {
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
     });
 
     view.requestSaveWork();
@@ -462,5 +464,36 @@ describe("useVibe64AutopilotView direct chat", () => {
 
     expect(view.saveWorkExpanded.value).toBe(false);
     expect(view.saveWorkError.value).toBe("Conflicting sibling work");
+  });
+
+  it("fails closed when Save has no work or the canonical version needs checking", async () => {
+    const noChanges = await createView({
+      workState: {
+        unsaved: false,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+    expect(noChanges.saveWorkDisabled.value).toBe(true);
+    expect(noChanges.saveWorkTitle.value).toBe("No work to save");
+
+    const updateSessionWork = vi.fn(async () => ({ ok: true, status: "updated" }));
+    const updatePending = await createView({
+      updateSessionWork,
+      workState: {
+        unsaved: true,
+        updateAvailable: true,
+        updateStatusPending: true
+      }
+    });
+    expect(updatePending.saveWorkDisabled.value).toBe(false);
+    expect(updatePending.saveWorkActionLabel.value).toBe("Update this session (rebase)");
+    expect(updatePending.saveWorkTitle.value).toContain("preserving its current work");
+    await expect(updatePending.requestSaveWork()).resolves.toEqual({
+      ok: true,
+      status: "updated"
+    });
+    expect(updateSessionWork).toHaveBeenCalledOnce();
+    expect(updatePending.saveWorkConfirmOpen.value).toBe(false);
   });
 });

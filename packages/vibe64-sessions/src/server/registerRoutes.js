@@ -1,10 +1,15 @@
 import {
+  ACTION_CHECK_SESSION_UPDATES,
+  ACTION_INSPECT_REPOSITORY_HISTORY,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
-  ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_CHANGE_DIFF,
+  ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
@@ -12,7 +17,8 @@ import {
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
-  ACTION_UPDATE_CURRENT_SESSION
+  ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_SESSION_WORK
 } from "./actions.js";
 import {
   agentMessageInputValidator,
@@ -31,6 +37,49 @@ function registerRoutes(http, {
     routeRelativePath,
     routeSurface,
     tags: ["studio", "vibe64-sessions"]
+  });
+
+  routes.actionRoute("GET", "/repository/history", {
+    actionId: ACTION_INSPECT_REPOSITORY_HISTORY,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        cursor: firstValue(query.cursor),
+        limit: firstValue(query.limit),
+        sessionId: firstValue(query.sessionId)
+      });
+    },
+    summary: "Read a pinned page of project version history."
+  });
+
+  routes.actionRoute("GET", "/repository/history/:commit/files", {
+    actionId: ACTION_INSPECT_REPOSITORY_VERSION_FILES,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        commit: request.params.commit,
+        historySnapshotCommit: firstValue(query.historySnapshotCommit),
+        limit: firstValue(query.limit),
+        offset: firstValue(query.offset),
+        sessionId: firstValue(query.sessionId)
+      });
+    },
+    summary: "List files changed by one project version."
+  });
+
+  routes.actionRoute("GET", "/repository/history/:commit/diff", {
+    actionId: ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        commit: request.params.commit,
+        historySnapshotCommit: firstValue(query.historySnapshotCommit),
+        lineLimit: firstValue(query.lineLimit),
+        path: firstValue(query.path),
+        sessionId: firstValue(query.sessionId)
+      });
+    },
+    summary: "Read one file diff from a project version."
   });
 
   routes.actionRoute("GET", "/sessions", {
@@ -65,25 +114,38 @@ function registerRoutes(http, {
     summary: "Inspect a Vibe64 chat session."
   });
 
-  routes.actionRoute("GET", "/sessions/:sessionId/diff", {
-    actionId: ACTION_INSPECT_SESSION_DIFF,
-    buildInput(request) {
-      const query = routes.requestQuery(request);
-      return withVibe64User(request, {
-        full: firstValue(query.full),
-        lineLimit: firstValue(query.lineLimit),
-        sessionId: request.params.sessionId
-      });
-    },
-    summary: "Inspect changes in a Vibe64 session source tree."
-  });
-
   routes.actionRoute("GET", "/sessions/:sessionId/work", {
     actionId: ACTION_INSPECT_SESSION_WORK,
     buildInput: (request) => withVibe64User(request, {
       sessionId: request.params.sessionId
     }),
     summary: "Inspect whether a Vibe64 session has work to save."
+  });
+
+  routes.actionRoute("GET", "/sessions/:sessionId/changes", {
+    actionId: ACTION_INSPECT_SESSION_CHANGES,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        limit: firstValue(query.limit),
+        offset: firstValue(query.offset),
+        sessionId: request.params.sessionId
+      });
+    },
+    summary: "List the files that differ from this session's canonical project version."
+  });
+
+  routes.actionRoute("GET", "/sessions/:sessionId/changes/diff", {
+    actionId: ACTION_INSPECT_SESSION_CHANGE_DIFF,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        lineLimit: firstValue(query.lineLimit),
+        path: firstValue(query.path),
+        sessionId: request.params.sessionId
+      });
+    },
+    summary: "Read the bounded diff for one current project file."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/save", {
@@ -93,6 +155,24 @@ function registerRoutes(http, {
       sessionId: request.params.sessionId
     }),
     summary: "Save session work to the project's canonical repository."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/updates/check", {
+    actionId: ACTION_CHECK_SESSION_UPDATES,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Check whether this session has a newer saved project version."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/updates/apply", {
+    actionId: ACTION_UPDATE_SESSION_WORK,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Update this session (rebase) without publishing or discarding its work."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/conversation-log", {

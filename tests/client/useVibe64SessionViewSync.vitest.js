@@ -89,17 +89,17 @@ describe("useVibe64SessionViewSync", () => {
     } = await import("../../src/composables/useVibe64SessionViewSync.js");
 
     expect(normalizeSessionViewRouteFullPath(
-      "/app/project/beepollen/dashboard//diff?mode=review#changes",
+      "/app/project/beepollen/dashboard//repository?mode=review#changes",
       "beepollen"
-    )).toBe("/app/project/beepollen/dashboard/diff?mode=review#changes");
+    )).toBe("/app/project/beepollen/dashboard/repository?mode=review#changes");
     expect(sessionViewProjectPane("/app/project/beepollen", "beepollen")).toBe("preview");
     expect(sessionViewProjectPane("/app/project/beepollen/dashboard/env", "beepollen")).toBe("dashboard");
     expect(normalizeSessionViewRouteFullPath(
-      "/app/project/other/dashboard/diff",
+      "/app/project/other/dashboard/repository",
       "beepollen"
     )).toBe("");
     expect(normalizeSessionViewRouteFullPath(
-      "https://example.com/app/project/beepollen/dashboard/diff",
+      "https://example.com/app/project/beepollen/dashboard/repository",
       "beepollen"
     )).toBe("");
   });
@@ -175,7 +175,7 @@ describe("useVibe64SessionViewSync", () => {
       payload: {
         originId: "other-tab",
         projectSlug: "beepollen",
-        routeFullPath: "/app/project/beepollen/dashboard/diff",
+        routeFullPath: "/app/project/beepollen/dashboard/repository",
         sessionId: "session-1"
       }
     })).toBe(true);
@@ -183,7 +183,7 @@ describe("useVibe64SessionViewSync", () => {
       payload: {
         originId: vibe64BrowserTabOriginId(),
         projectSlug: "beepollen",
-        routeFullPath: "/app/project/beepollen/dashboard/diff",
+        routeFullPath: "/app/project/beepollen/dashboard/repository",
         sessionId: "session-1"
       }
     })).toBe(false);
@@ -191,7 +191,7 @@ describe("useVibe64SessionViewSync", () => {
       payload: {
         originId: "other-tab",
         projectSlug: "beepollen",
-        routeFullPath: "/app/project/beepollen/dashboard/diff",
+        routeFullPath: "/app/project/beepollen/dashboard/repository",
         sessionId: "session-2"
       }
     })).toBe(false);
@@ -199,7 +199,7 @@ describe("useVibe64SessionViewSync", () => {
       payload: {
         originId: "other-tab",
         projectSlug: "other-project",
-        routeFullPath: "/app/project/other-project/dashboard/diff",
+        routeFullPath: "/app/project/other-project/dashboard/repository",
         sessionId: "session-1"
       }
     })).toBe(false);
@@ -208,7 +208,7 @@ describe("useVibe64SessionViewSync", () => {
       payload: {
         originId: "other-tab",
         projectSlug: "beepollen",
-        routeFullPath: "/app/project/beepollen/dashboard/diff",
+        routeFullPath: "/app/project/beepollen/dashboard/repository",
         sessionId: "session-1"
       }
     });
@@ -216,7 +216,7 @@ describe("useVibe64SessionViewSync", () => {
     await flushPromises();
 
     expect(mocks.routerPushCalls).toEqual([
-      "/app/project/beepollen/dashboard/diff"
+      "/app/project/beepollen/dashboard/repository"
     ]);
     expect(mocks.requestCalls).toEqual([]);
   });

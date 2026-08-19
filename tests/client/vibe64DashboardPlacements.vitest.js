@@ -116,6 +116,7 @@ describe("Vibe64 dashboard placements", () => {
       VIBE64_SESSION_TOOL_DEFINITIONS.map((tool) => tool.id)
     );
     expect(sessionPlacements.slice(1).map((placement) => placement.props.label)).toContain("Session info");
+    expect(sessionPlacements.slice(1).map((placement) => placement.props.label)).toContain("Repository");
     expect(sessionPlacements.slice(1).map((placement) => [
       placement.props.toolId,
       placement.props.label,

@@ -49,15 +49,15 @@ import {
 
 const DIRECT_SESSION_TOOL_IDS = new Set([
   "info",
+  "changes",
+  "repository",
   "editor",
   "system",
-  "diff",
   "ai-terminal"
 ]);
 const STANDALONE_SESSION_TOOL_IDS = new Set([
   "editor",
-  "system",
-  "diff"
+  "system"
 ]);
 const vibe64AutopilotViewEmits = ["busy-change", "project-attention"];
 const vibe64AutopilotViewProps = {
@@ -85,10 +85,6 @@ const vibe64AutopilotViewProps = {
     default: "",
     type: String
   },
-  diff: {
-    default: () => ({}),
-    type: Object
-  },
   interruptAgentTurn: {
     default: async () => false,
     type: Function
@@ -113,15 +109,15 @@ const vibe64AutopilotViewProps = {
     default: async () => null,
     type: Function
   },
-  review: {
-    default: () => ({}),
-    type: Object
-  },
   retryWorkspaceSetup: {
     default: async () => false,
     type: Function
   },
   saveSessionWork: {
+    default: async () => false,
+    type: Function
+  },
+  updateSessionWork: {
     default: async () => false,
     type: Function
   },
@@ -225,12 +221,6 @@ function useVibe64AutopilotView(props, emit) {
     loader: () => import("@/components/studio/Vibe64LaunchControls.vue"),
     minHeight: "10rem"
   });
-  const Vibe64SessionDiffPanel = defineVibe64AsyncComponent({
-    label: "Diff viewer",
-    loader: () => import("@/components/studio/vibe64-session/Vibe64SessionDiffPanel.vue"),
-    minHeight: "14rem"
-  });
-
   const agentSettings = useVibe64AgentSettings();
   const currentAgentSettings = computed(() => agentSettings.settings.value);
   const requestAgentSettings = computed(() => {
@@ -303,11 +293,19 @@ function useVibe64AutopilotView(props, emit) {
     numberedQuestions.value.length || answerChoices.value.length
   ));
 
+  const repositoryOperationActive = computed(() => [
+    props.workState?.operation,
+    props.workState?.updateOperation
+  ].some((operation) => ["queued", "running", "starting"].includes(
+    String(operation?.status || "").trim().toLowerCase()
+  )));
+
   const composerDisabled = computed(() => Boolean(
     !props.active ||
     !sessionId.value ||
     props.sessionSelectionClosed ||
-    composerSending.value
+    composerSending.value ||
+    repositoryOperationActive.value
   ));
   const composerCanSubmit = computed(() => Boolean(
     !composerDisabled.value && (
@@ -571,11 +569,51 @@ function useVibe64AutopilotView(props, emit) {
     return sendChatPayload(message.payload);
   }
 
-  const saveWorkDisabled = computed(() => Boolean(
-    composerDisabled.value || agentActive.value || saveWorkSending.value || props.workState?.loading
-  ));
   const saveWorkUnsaved = computed(() => props.workState?.unsaved === true);
-  const saveWorkOperation = computed(() => props.workState?.operation || null);
+  const saveWorkRequiresUpdate = computed(() => Boolean(
+    props.workState?.updateAvailable === true || props.workState?.updateStatusPending === true
+  ));
+  const saveWorkDisabled = computed(() => Boolean(
+    composerDisabled.value ||
+    agentActive.value ||
+    saveWorkSending.value ||
+    props.workState?.loading ||
+    props.workState?.error ||
+    (!saveWorkRequiresUpdate.value && !saveWorkUnsaved.value)
+  ));
+  const saveWorkActionLabel = computed(() => (
+    saveWorkRequiresUpdate.value ? "Update this session (rebase)" : "Save work"
+  ));
+  const saveWorkTitle = computed(() => {
+    if (repositoryOperationActive.value) {
+      return "Wait for the current repository operation to finish";
+    }
+    if (agentActive.value || composerSending.value) {
+      return "Wait for the assistant turn to finish before saving";
+    }
+    if (props.workState?.loading) {
+      return "Checking whether this session has work to save";
+    }
+    if (props.workState?.error) {
+      return "Repository status is unavailable; check for updates before saving";
+    }
+    if (saveWorkRequiresUpdate.value) {
+      return "Update this session (rebase) with the latest saved project version while preserving its current work. Save will be available when the update finishes.";
+    }
+    if (!saveWorkUnsaved.value) {
+      return "No work to save";
+    }
+    return "Save this session's work to the project repository";
+  });
+  const saveWorkOperation = computed(() => {
+    const updateOperation = props.workState?.updateOperation || null;
+    const updateActive = ["queued", "running", "starting"].includes(
+      String(updateOperation?.status || "").trim().toLowerCase()
+    );
+    return updateActive || saveWorkRequiresUpdate.value
+      ? updateOperation
+      : props.workState?.operation || null;
+  });
   const saveWorkOperationActive = computed(() => ["queued", "running", "starting"].includes(
     String(saveWorkOperation.value?.status || "").trim().toLowerCase()
   ));
@@ -587,9 +625,29 @@ function useVibe64AutopilotView(props, emit) {
     : ""));
   const saveWorkStatus = computed(() => String(saveWorkOperation.value?.status || ""));
 
+  async function updateBeforeSave() {
+    saveWorkSending.value = true;
+    saveWorkError.value = "";
+    saveWorkExpanded.value = true;
+    try {
+      return await props.updateSessionWork();
+    } catch (error) {
+      saveWorkError.value = error instanceof Error
+        ? error.message
+        : String(error || "This session could not be updated.");
+      return false;
+    } finally {
+      saveWorkSending.value = false;
+      saveWorkExpanded.value = false;
+    }
+  }
+
   function requestSaveWork() {
     if (saveWorkDisabled.value) {
       return false;
+    }
+    if (saveWorkRequiresUpdate.value) {
+      return updateBeforeSave();
     }
     saveWorkConfirmOpen.value = true;
     return true;
@@ -607,9 +665,7 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkError.value = "";
     saveWorkExpanded.value = true;
     try {
-      const result = await props.saveSessionWork({
-        message: "Save Vibe64 work"
-      });
+      const result = await props.saveSessionWork();
       if (result?.ok !== false) {
         saveWorkConfirmOpen.value = false;
       }
@@ -715,7 +771,12 @@ function useVibe64AutopilotView(props, emit) {
     projectPaneValue.value === "dashboard" &&
     !STANDALONE_SESSION_TOOL_IDS.has(rightPaneTab.value)
   ));
-  const dashboardRouteVisible = computed(() => ["dashboard", "info"].includes(rightPaneTab.value));
+  const dashboardRouteVisible = computed(() => [
+    "dashboard",
+    "info",
+    "changes",
+    "repository"
+  ].includes(rightPaneTab.value));
   const sessionToolBackPath = computed(() => (
     lastDashboardRoutePath.value || projectAppPath(projectSlug.value, "/dashboard/env")
   ));
@@ -727,12 +788,6 @@ function useVibe64AutopilotView(props, emit) {
         title: sessionSourceRoot.value
           ? (toolId === "editor" ? "Browse session source files" : "Explore the current project Cities")
           : "Create the session source first"
-      };
-    }
-    if (toolId === "diff") {
-      return {
-        disabled: props.review?.diffDisabled === true,
-        title: props.review?.diffTitle || "Review session source changes"
       };
     }
     return {};
@@ -764,9 +819,6 @@ function useVibe64AutopilotView(props, emit) {
       if (targetPath && normalizeProjectRoutePath(targetPath) !== normalizeProjectRoutePath(route.path)) {
         void router.push(targetPath);
       }
-    }
-    if (toolId === "diff" && !props.diff?.payload && !props.diff?.loading) {
-      void props.diff?.load?.();
     }
     emit("project-attention");
     return true;
@@ -802,10 +854,13 @@ function useVibe64AutopilotView(props, emit) {
     copyText: typeof props.page?.copyText === "function" ? props.page.copyText : null,
     embeddedShell: true,
     projectContext: props.projectContext || {},
+    requestSaveWork,
     session: props.session || null,
     sessionId: sessionId.value,
+    sessionsApiPath: props.sessionsApiPath,
     statusColor: vibe64SessionStatusColor(props.session?.status),
-    statusLabel: vibe64SessionStatusLabel(props.session?.status)
+    statusLabel: vibe64SessionStatusLabel(props.session?.status),
+    workState: props.workState || null
   }));
 
   const systemBackAvailable = computed(() => Boolean(
@@ -930,7 +985,6 @@ function useVibe64AutopilotView(props, emit) {
 
   return {
     Vibe64LaunchControls,
-    Vibe64SessionDiffPanel,
     agentActive,
     agentStopEnabled,
     agentStopVisible,
@@ -982,6 +1036,7 @@ function useVibe64AutopilotView(props, emit) {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
+    saveWorkActionLabel,
     saveWorkError,
     saveWorkExpanded,
     saveWorkOperation,
@@ -989,6 +1044,8 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkOutput,
     saveWorkSending,
     saveWorkStatus,
+    saveWorkTitle,
+    saveWorkRequiresUpdate,
     saveWorkUnsaved,
     selectSessionTool,
     sessionId,

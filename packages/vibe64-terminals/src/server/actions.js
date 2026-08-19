@@ -92,22 +92,34 @@ function createTerminalActions({ terminals } = {}) {
       idempotency: "none",
       input: temporaryConversationInputValidator,
       kind: "query",
-      execute: (input) => terminals.readAgentConversation(input.sessionId, input)
+      execute: (input) => terminals.readAgentConversation(input.sessionId, {
+        ...input,
+        ephemeral: true
+      })
     }),
     action({
       id: ACTION_START_TEMPORARY_CONVERSATION_TURN,
       input: temporaryConversationTurnActionInputValidator,
-      execute: (input) => terminals.startAgentConversationTurn(input.sessionId, input)
+      execute: (input) => terminals.startAgentConversationTurn(input.sessionId, {
+        ...input,
+        ephemeral: true
+      })
     }),
     action({
       id: ACTION_STOP_TEMPORARY_CONVERSATION,
       input: temporaryConversationStopActionInputValidator,
-      execute: (input) => terminals.stopAgentConversation(input.sessionId, input)
+      execute: (input) => terminals.stopAgentConversation(input.sessionId, {
+        ...input,
+        ephemeral: true
+      })
     }),
     action({
       id: ACTION_DELETE_TEMPORARY_CONVERSATION,
       input: temporaryConversationInputValidator,
-      execute: (input) => terminals.deleteAgentConversation(input.sessionId, input)
+      execute: (input) => terminals.deleteAgentConversation(input.sessionId, {
+        ...input,
+        ephemeral: true
+      })
     })
   ]);
 }

@@ -76,6 +76,9 @@ test("temporary conversation actions reuse the terminal lifecycle and always sta
     policy: "workspace_write"
   });
   assert.deepEqual(calls.slice(1).map((entry) => entry[0]), ["read", "start", "stop", "delete"]);
+  for (const call of calls.slice(1)) {
+    assert.equal(call[2].ephemeral, true, `${call[0]} must remain inside the ephemeral lifecycle`);
+  }
 });
 
 test("one attachment cleanup action targets only its exact attachment", async () => {

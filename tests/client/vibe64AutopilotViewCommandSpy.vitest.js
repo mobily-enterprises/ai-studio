@@ -43,7 +43,9 @@ describe("Vibe64 direct session view", () => {
     const composable = fs.readFileSync(composablePath, "utf8");
     const combined = `${component}\n${composable}`;
 
-    expect(component).toContain("Save work");
+    expect(component).toContain("saveWorkActionLabel");
+    expect(component).toContain(":icon=\"mdiIncognito\"");
+    expect(component).toContain("saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline");
     expect(component).toContain("@click=\"confirmSaveWork\"");
     expect(component).toContain("<Vibe64TerminalSurface");
     expect(component.indexOf("<Vibe64ConversationLog")).toBeLessThan(
@@ -51,8 +53,9 @@ describe("Vibe64 direct session view", () => {
     );
     expect(component).toContain(':open-error-details="true"');
     expect(component).toContain('#error-actions');
-    expect(component).toContain(':color="saveWorkUnsaved ? \'error\' : undefined"');
-    expect(composable).toContain("await props.saveSessionWork({");
+    expect(component).toContain("saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'error' : undefined)");
+    expect(composable).toContain("await props.saveSessionWork();");
+    expect(composable).toContain("await props.updateSessionWork();");
     expect(composable).toContain("const saveWorkUnsaved = computed");
     expect(composable).toContain("const saveWorkOperationActive = computed");
     expect(component).toContain("saveWorkOperationActive || saveWorkSending || saveWorkError");
@@ -72,19 +75,37 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("Open temporary AI");
     expect(component).toContain("Resolve with temporary AI");
     expect(component).toContain("<Vibe64TemporaryAiWorkspace");
-    expect(temporaryAi).toContain("Not saved to session history");
+    expect(component).toContain("temporaryAiWorkspace.value?.showWorkspace?.()");
+    expect(component).toContain("@select-session=\"activateRealSession\"");
+    expect(component).toContain("temporaryAiWorkspace.value?.closeWorkspace?.()");
+    expect(temporaryAi).toContain('aria-label="New temporary AI task"');
+    expect(temporaryAi).toContain("showWorkspace: temporary.showWorkspace");
+    expect(temporaryAi).not.toContain("Not saved to session history");
+    expect(temporaryAi).not.toContain("vibe64-temporary-ai__header");
+    expect(temporaryAi).toContain('"R/W" : "R/O"');
+    expect(temporaryAi).not.toContain("Read-only guidance");
+    expect(temporaryAi).not.toContain("Allow edits");
     expect(temporaryAi).toContain('v-for="task in temporary.tasks.value"');
     expect(temporaryAi).toContain("<Vibe64AgentSettingsMenu");
     expect(temporaryAi).toContain("<Vibe64AutopilotPromptTextarea");
+    expect(temporaryAi).toContain('aria-label="Temporary AI progress"');
+    expect(temporaryAi).toContain("activeTaskActivityLabel");
+    expect(temporaryAi).toContain('class="vibe64-temporary-ai__activity"');
+    expect(temporaryAi).toContain('role="status"');
+    expect(temporaryAi).toContain('v-for="update in message.progressUpdates"');
     expect(temporaryAi).not.toContain("Attach visible preview");
     expect(temporaryAi).not.toContain("console & network");
     expect(temporaryAiComposable).toContain("beforeunload");
     expect(temporaryAiComposable).toContain("keepalive: true");
     expect(temporaryAiComposable).toContain("vibe64AgentAttachmentDeletePath");
+    expect(temporaryAiComposable).toContain("function showWorkspace()");
+    expect(temporaryAiComposable).toContain("if (tasks.value.length === 0)");
+    expect(temporaryAiComposable).toContain("progressUpdates: temporaryAiProgressUpdates(response.progressUpdates)");
+    expect(temporaryAiComposable).toContain('status: "failed"');
     expect(temporaryAiComposable).not.toMatch(/localStorage|sessionStorage/gu);
   });
 
-  it("keeps direct source, City, preview, diff, terminal, and close controls", () => {
+  it("keeps direct source, City, preview, terminal, and close controls", () => {
     const component = fs.readFileSync(componentPath, "utf8");
 
     expect(component).toContain("<Vibe64SessionToolbar");
@@ -92,7 +113,6 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("<Vibe64SessionSourceEditor");
     expect(component).toContain("<Vibe64SystemWorldView");
     expect(component).toContain("<Vibe64LaunchControls");
-    expect(component).toContain("<Vibe64SessionDiffPanel");
     expect(component).toContain("name=\"ai-terminal\"");
     expect(component).not.toContain("Session tools");
     expect(component).not.toContain("mdiDotsHorizontal");
@@ -135,6 +155,7 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).toContain(":conversation-log=\"conversationLog\"");
     expect(runtimeHost).toContain(":retry-workspace-setup=\"retryWorkspaceSetup\"");
     expect(runtimeHost).toContain(":save-session-work=\"saveSessionWork\"");
+    expect(runtimeHost).toContain(":update-session-work=\"updateSessionWork\"");
     expect(runtimeHost).toContain(":work-state=\"workState\"");
     expect(runtimeHost).not.toContain(":source-safety=\"sourceSafety\"");
     expect(runtimeHost).not.toContain(":autopilot-steps=");

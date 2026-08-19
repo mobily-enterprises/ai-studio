@@ -10,6 +10,9 @@ import {
   vibe64AgentAttachmentPath,
   vibe64ConversationLogPath,
   vibe64ConversationLogQueryKey,
+  vibe64RepositoryHistoryPath,
+  vibe64RepositoryVersionFilesPath,
+  vibe64SessionChangesPath,
   vibe64SessionQueryKey,
   vibe64SessionPath,
   vibe64SessionPreviewStatePath,
@@ -86,6 +89,20 @@ describe("Vibe64 session request config", () => {
     expect(vibe64SourceEditorExplanationStopPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/stop`);
     expect(vibe64SourceEditorExplanationFollowupsPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/followups`);
     expect(vibe64SourceEditorExplanationFollowupsStreamPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one/followups/stream`);
+    expect(vibe64SessionChangesPath(apiPath, sessionId, { limit: 50, offset: 200 })).toBe(
+      `${apiPath}/2026-05-16_01%3Atwo/changes?offset=200&limit=50`
+    );
+    expect(vibe64RepositoryHistoryPath(apiPath, { sessionId, cursor: "page two" })).toBe(
+      "/api/studio/vibe64/repository/history?sessionId=2026-05-16_01%3Atwo&cursor=page+two"
+    );
+    expect(vibe64RepositoryVersionFilesPath(apiPath, "abc", {
+      historySnapshotCommit: "def",
+      limit: 25,
+      offset: 50,
+      sessionId
+    })).toBe(
+      "/api/studio/vibe64/repository/history/abc/files?sessionId=2026-05-16_01%3Atwo&historySnapshotCommit=def&offset=50&limit=25"
+    );
   });
 
 });

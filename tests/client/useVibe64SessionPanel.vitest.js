@@ -5,7 +5,8 @@ import {
   sessionPanelEmptyStateActivity,
   sessionPanelRuntimeHostDiagnostics,
   sessionPanelSelectedSessionClosing,
-  sessionPanelToolbarSessions
+  sessionPanelToolbarSessions,
+  sessionRepositoryWorkState
 } from "../../src/composables/useVibe64SessionPanel.js";
 
 describe("useVibe64SessionPanel", () => {
@@ -41,10 +42,12 @@ describe("useVibe64SessionPanel", () => {
     };
 
     expect(sessionPanelDashboardContext(projectContext)).toEqual({
-      projectContext
+      projectContext,
+      sessionsApiPath: ""
     });
     expect(sessionPanelDashboardContext(null)).toEqual({
-      projectContext: {}
+      projectContext: {},
+      sessionsApiPath: ""
     });
   });
 
@@ -144,7 +147,8 @@ describe("useVibe64SessionPanel", () => {
     expect(sessionPanelToolbarSessions({
       runtimeStateBySessionId: {
         "session-b": {
-          agentThinking: true
+          agentThinking: true,
+          repositoryWorkState: { checkedAt: "now", state: "unsaved" }
         },
         "session-d": {
           busy: true
@@ -160,27 +164,73 @@ describe("useVibe64SessionPanel", () => {
       },
       selectedSessionId: "session-a",
       sessions
-    })).toEqual([
-      {
-        agentThinking: true,
-        sessionId: "session-a",
-        sessionName: "Alpha"
-      },
-      {
-        agentThinking: true,
-        sessionId: "session-b",
-        sessionName: "Beta"
-      },
-      {
-        agentThinking: true,
-        sessionId: "session-d",
-        sessionName: "Delta"
-      },
-      {
-        agentThinking: false,
-        sessionId: "session-c",
-        sessionName: "Gamma"
-      }
+    })).toMatchObject([
+      { agentThinking: true, repositoryWorkState: { state: "checking" }, sessionId: "session-a" },
+      { agentThinking: true, repositoryWorkState: { state: "unsaved" }, sessionId: "session-b" },
+      { agentThinking: true, repositoryWorkState: { state: "checking" }, sessionId: "session-d" },
+      { agentThinking: false, repositoryWorkState: { state: "checking" }, sessionId: "session-c" }
     ]);
+  });
+
+  it("never reports unknown or failed repository inspection as saved", () => {
+    expect(sessionRepositoryWorkState(null)).toEqual({ checkedAt: "", state: "checking" });
+    expect(sessionRepositoryWorkState({ error: "Git unavailable", unsaved: null })).toEqual({
+      checkedAt: "",
+      state: "unavailable"
+    });
+    expect(sessionRepositoryWorkState({ checkedAt: "now", unsaved: false })).toEqual({
+      checkedAt: "now",
+      state: "saved"
+    });
+    expect(sessionRepositoryWorkState({
+      checkedAt: "now",
+      changedPaths: ["one.js", "two.js"],
+      unsaved: true,
+      updateAvailable: true
+    })).toEqual({
+      changedCount: 2,
+      checkedAt: "now",
+      state: "unsaved",
+      updateAvailable: true
+    });
+    expect(sessionRepositoryWorkState({
+      checkedAt: "now",
+      unsaved: false,
+      updateAvailable: true
+    })).toEqual({
+      checkedAt: "now",
+      state: "update_available"
+    });
+    expect(sessionRepositoryWorkState({
+      operation: { status: "running" },
+      unsaved: true
+    }).state).toBe("saving");
+    expect(sessionRepositoryWorkState({
+      updateOperation: { status: "failed" },
+      unsaved: false
+    }).state).toBe("needs_help");
+  });
+
+  it("keeps ten uninspected session chips in a bounded honest checking state", () => {
+    const sessions = Array.from({ length: 10 }, (_, index) => ({
+      sessionId: `session-${index + 1}`,
+      status: "active"
+    }));
+    const projected = sessionPanelToolbarSessions({
+      runtimeStateBySessionId: {
+        "session-1": {
+          repositoryWorkState: { checkedAt: "now", state: "unsaved" }
+        }
+      },
+      selectedSession: sessions[0],
+      selectedSessionId: "session-1",
+      sessions
+    });
+
+    expect(projected).toHaveLength(10);
+    expect(projected[0].repositoryWorkState.state).toBe("unsaved");
+    expect(projected.slice(1).map((session) => session.repositoryWorkState.state))
+      .toEqual(Array(9).fill("checking"));
+    expect(projected.some((session) => session.repositoryWorkState.state === "saved")).toBe(false);
   });
 });

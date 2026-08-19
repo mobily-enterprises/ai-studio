@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTION_INSPECT_REPOSITORY_HISTORY,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
+  ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
-  ACTION_INSPECT_SESSION_DIFF,
+  ACTION_INSPECT_SESSION_CHANGE_DIFF,
+  ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_SAVE_SESSION_WORK,
+  ACTION_CHECK_SESSION_UPDATES,
+  ACTION_UPDATE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
@@ -27,13 +33,19 @@ import {
 
 test("sessions expose only direct chat and source actions", () => {
   assert.deepEqual(createSessionActions({ sessions: {} }).map((action) => action.id), [
+    ACTION_INSPECT_REPOSITORY_HISTORY,
+    ACTION_INSPECT_REPOSITORY_VERSION_FILES,
+    ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
     ACTION_LIST_SESSIONS,
     ACTION_CREATE_SESSION,
     ACTION_UPDATE_CURRENT_SESSION,
     ACTION_INSPECT_SESSION,
-    ACTION_INSPECT_SESSION_DIFF,
+    ACTION_INSPECT_SESSION_CHANGES,
+    ACTION_INSPECT_SESSION_CHANGE_DIFF,
     ACTION_INSPECT_SESSION_WORK,
     ACTION_SAVE_SESSION_WORK,
+    ACTION_CHECK_SESSION_UPDATES,
+    ACTION_UPDATE_SESSION_WORK,
     ACTION_READ_SESSION_CONVERSATION_LOG,
     ACTION_RETRY_WORKSPACE_SETUP,
     ACTION_ABANDON_SESSION,
@@ -205,7 +217,7 @@ test("session work inspection includes the durable native Save operation", async
           store: {
             async readBackgroundTask(sessionId, taskId) {
               assert.equal(sessionId, "session-1");
-              assert.equal(taskId, "save-work");
+              assert.ok(["save-work", "update-session"].includes(taskId));
               return { id: taskId, status: "ready" };
             }
           }
@@ -224,6 +236,7 @@ test("session work inspection includes the durable native Save operation", async
   assert.equal(result.ok, true);
   assert.equal(result.unsaved, true);
   assert.deepEqual(result.operation, { id: "save-work", status: "ready" });
+  assert.deepEqual(result.updateOperation, { id: "update-session", status: "ready" });
 });
 
 test("work inspection reconciles an interrupted published Save exactly once", async () => {
@@ -282,17 +295,97 @@ test("work inspection reconciles an interrupted published Save exactly once", as
   assert.equal(result.ok, true);
   assert.equal(result.operation.status, "ready");
   assert.equal(recoverCalls, 1);
-  assert.deepEqual(metadata, [["session-1", "base_commit", "saved"]]);
+  assert.deepEqual(metadata, [
+    ["session-1", "canonical_commit", "saved"],
+    ["session-1", "base_commit", "saved"]
+  ]);
   assert.equal(writes[0].event.kind, "save-recovered");
+});
+
+test("work inspection recovers an interrupted prepared Update and advances its base once", async () => {
+  const writes = [];
+  const metadata = [];
+  const runningUpdate = {
+    canonicalCommit: "canonical-new",
+    checkpointCommit: "checkpoint",
+    checkpointTree: "tree",
+    id: "update-session",
+    mergedCommit: "merged",
+    mergedTree: "merged-tree",
+    oldHead: "old-head",
+    oldIndexTree: "old-index",
+    operationId: "update-1",
+    stage: "prepared",
+    status: "running"
+  };
+  const runtime = {
+    async getSession() {
+      return { sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async readBackgroundTask(_sessionId, taskId) {
+        return taskId === "update-session"
+          ? runningUpdate
+          : { id: "save-work", status: "ready" };
+      },
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        writes.push([taskId, input]);
+        return { ...runningUpdate, ...input.patch, events: [input.event], id: taskId };
+      },
+      async writeMetadataValue(...args) {
+        metadata.push(args);
+      }
+    }
+  };
+  let recoverCalls = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async inspectSessionWork() {
+        return { unsaved: true };
+      },
+      async recoverSessionWorkUpdate(_sessionId, input) {
+        recoverCalls += 1;
+        assert.equal(input.recovery, runningUpdate);
+        return {
+          canonicalCommit: "canonical-new",
+          reconciled: true,
+          status: "updated"
+        };
+      }
+    }
+  });
+
+  const result = await service.inspectSessionWork("session-1");
+  assert.equal(result.ok, true);
+  assert.equal(result.updateOperation.status, "ready");
+  assert.equal(recoverCalls, 1);
+  assert.deepEqual(metadata, [
+    ["session-1", "canonical_commit", "canonical-new"],
+    ["session-1", "base_commit", "canonical-new"]
+  ]);
+  assert.equal(writes[0][0], "update-session");
+  assert.equal(writes[0][1].event.kind, "update-recovered");
 });
 
 test("native Save persists bounded progress and advances the session base only after reconciliation", async () => {
   const taskEvents = [];
   const metadata = [];
   const publications = [];
+  const sessions = new Map([
+    ["session-1", { agentRuns: [], sessionId: "session-1", status: "active" }],
+    ["session-2", { agentRuns: [], sessionId: "session-2", status: "active" }]
+  ]);
   const runtime = {
-    async getSession() {
-      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    async getSession(sessionId) {
+      return sessions.get(sessionId);
+    },
+    async listSessionSummaries() {
+      return [...sessions.values()];
     },
     store: {
       async writeBackgroundTaskEvent(sessionId, taskId, input) {
@@ -323,6 +416,7 @@ test("native Save persists bounded progress and advances the session base only a
     terminals: {
       async saveSessionWork(sessionId, input) {
         assert.equal(sessionId, "session-1");
+        await input.onRepositoryWriteAcquired();
         await input.onProgress({ kind: "canonical-refreshed", message: "Canonical source refreshed." });
         return {
           reconciled: true,
@@ -336,7 +430,11 @@ test("native Save persists bounded progress and advances the session base only a
   const result = await service.saveSessionWork("session-1", { originId: "tab:test" });
   assert.equal(result.ok, true);
   assert.equal(result.operation.status, "ready");
-  assert.deepEqual(metadata, [["session-1", "base_commit", "def456"]]);
+  assert.deepEqual(metadata, [
+    ["session-1", "canonical_commit", "def456"],
+    ["session-1", "base_commit", "def456"],
+    ["session-2", "canonical_commit", "def456"]
+  ]);
   assert.deepEqual(taskEvents.map((entry) => entry.event.kind), [
     "save-started",
     "canonical-refreshed",
@@ -345,8 +443,290 @@ test("native Save persists bounded progress and advances the session base only a
   assert.deepEqual(publications.map((entry) => entry[1].reason), [
     "session-save-started",
     "session-save-progress",
-    "session-save-completed"
+    "session-save-completed",
+    "repository-canonical-changed"
   ]);
+  assert.equal(publications[3][0], "session-2");
+  assert.deepEqual(publications[3][1].payload, {
+    canonicalCommit: "def456",
+    sourceSessionId: "session-1"
+  });
+});
+
+test("one exact update check is cached and invalidates every sibling session", async () => {
+  const metadata = [];
+  const publications = [];
+  const sessions = new Map([
+    ["session-1", {
+      agentRuns: [],
+      metadata: { base_commit: "canonical-old" },
+      sessionId: "session-1",
+      status: "active"
+    }],
+    ["session-2", {
+      agentRuns: [],
+      metadata: { base_commit: "canonical-old" },
+      sessionId: "session-2",
+      status: "active"
+    }]
+  ]);
+  const runtime = {
+    async getSession(sessionId) {
+      return sessions.get(sessionId);
+    },
+    async listSessionSummaries() {
+      return [...sessions.values()];
+    },
+    store: {
+      async writeMetadataValue(sessionId, name, value) {
+        metadata.push([sessionId, name, value]);
+        const session = sessions.get(sessionId);
+        session.metadata = {
+          ...session.metadata,
+          [name]: value
+        };
+      }
+    }
+  };
+  let exactChecks = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    async publishSessionChanged(...args) {
+      publications.push(args);
+    },
+    terminals: {
+      async checkSessionUpdates() {
+        exactChecks += 1;
+        return {
+          ahead: 0,
+          behind: 2,
+          canonicalCommit: "canonical-new",
+          incomingVersions: [
+            {
+              author: "Merc",
+              committedAt: "2026-08-19T07:14:00.000Z",
+              commit: "a".repeat(40),
+              message: "Newest saved work"
+            },
+            {
+              author: "Geoff",
+              committedAt: "2026-08-19T07:13:00.000Z",
+              commit: "b".repeat(40),
+              isMerge: true,
+              message: "Earlier saved work"
+            }
+          ],
+          incomingVersionsTruncated: false,
+          reconciled: false,
+          sessionHead: "session-old",
+          updateAvailable: true
+        };
+      }
+    }
+  });
+
+  const result = await service.checkSessionUpdates("session-1");
+  const cached = await service.checkSessionUpdates("session-1");
+  assert.equal(result.updateAvailable, true);
+  assert.equal(result.relationship, "behind");
+  assert.equal(result.updateStrategy, "rebase");
+  assert.equal(cached.cached, true);
+  assert.equal(exactChecks, 1);
+  assert.match(result.checkedAt, /^\d{4}-\d{2}-\d{2}T/u);
+  assert.equal(metadata[0][0], "session-1");
+  assert.equal(metadata[0][1], "canonical_commit");
+  assert.equal(metadata[0][2], "canonical-new");
+  assert.equal(metadata[1][0], "session-1");
+  assert.equal(metadata[1][1], "repository_update_check");
+  assert.deepEqual(JSON.parse(metadata[1][2]), {
+    ahead: 0,
+    behind: 2,
+    canonicalCommit: "canonical-new",
+    checkedAt: result.checkedAt,
+    incomingVersions: [
+      {
+        author: "Merc",
+        committedAt: "2026-08-19T07:14:00.000Z",
+        commit: "a".repeat(40),
+        isMerge: false,
+        message: "Newest saved work",
+        shortCommit: "aaaaaaaa"
+      },
+      {
+        author: "Geoff",
+        committedAt: "2026-08-19T07:13:00.000Z",
+        commit: "b".repeat(40),
+        isMerge: true,
+        message: "Earlier saved work",
+        shortCommit: "bbbbbbbb"
+      }
+    ],
+    incomingVersionsTruncated: false,
+    relationship: "behind",
+    sessionHead: "session-old",
+    updateAvailable: true,
+    updateStrategy: "rebase"
+  });
+  assert.deepEqual(metadata[2], ["session-2", "canonical_commit", "canonical-new"]);
+  assert.deepEqual(publications.map((entry) => [entry[0], entry[1].reason]), [
+    ["session-1", "session-repository-checked"],
+    ["session-2", "repository-canonical-changed"]
+  ]);
+});
+
+test("repository history returns the last successful update check from session state", async () => {
+  const checkedAt = "2026-08-19T07:15:00.000Z";
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return {
+              metadata: {
+                canonical_commit: "canonical-new",
+                repository_update_check: JSON.stringify({
+                  ahead: 3,
+                  behind: 2,
+                  canonicalCommit: "canonical-new",
+                  checkedAt,
+                  incomingVersions: [
+                    {
+                      author: "Merc",
+                      committedAt: "2026-08-19T07:14:00.000Z",
+                      commit: "c".repeat(40),
+                      isMerge: false,
+                      message: "Latest saved work"
+                    },
+                    {
+                      author: "Geoff",
+                      committedAt: "2026-08-19T07:13:00.000Z",
+                      commit: "b".repeat(40),
+                      isMerge: true,
+                      message: "Earlier saved work"
+                    }
+                  ],
+                  relationship: "diverged",
+                  sessionHead: "session-local"
+                })
+              },
+              sessionId: "session-1"
+            };
+          }
+        };
+      }
+    },
+    terminals: {
+      async inspectRepositoryHistory() {
+        return {
+          historySnapshotCommit: "canonical-new",
+          versions: []
+        };
+      }
+    }
+  });
+
+  const result = await service.inspectRepositoryHistory({ sessionId: "session-1" });
+  assert.deepEqual(result.updateCheck, {
+    ahead: 3,
+    behind: 2,
+    canonicalCommit: "canonical-new",
+    checkedAt,
+    incomingVersions: [
+      {
+        author: "Merc",
+        committedAt: "2026-08-19T07:14:00.000Z",
+        commit: "c".repeat(40),
+        isMerge: false,
+        message: "Latest saved work",
+        shortCommit: "cccccccc"
+      },
+      {
+        author: "Geoff",
+        committedAt: "2026-08-19T07:13:00.000Z",
+        commit: "b".repeat(40),
+        isMerge: true,
+        message: "Earlier saved work",
+        shortCommit: "bbbbbbbb"
+      }
+    ],
+    incomingVersionsTruncated: false,
+    relationship: "diverged",
+    sessionHead: "session-local",
+    updateAvailable: true,
+    updateStrategy: "rebase"
+  });
+});
+
+test("repository history does not reuse an update check from an older canonical version", async () => {
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return {
+              metadata: {
+                canonical_commit: "canonical-new",
+                repository_update_check: JSON.stringify({
+                  ahead: 0,
+                  behind: 1,
+                  canonicalCommit: "canonical-old",
+                  checkedAt: "2026-08-19T07:15:00.000Z",
+                  relationship: "behind"
+                })
+              },
+              sessionId: "session-1"
+            };
+          }
+        };
+      }
+    },
+    terminals: {
+      async inspectRepositoryHistory() {
+        return { versions: [] };
+      }
+    }
+  });
+
+  const result = await service.inspectRepositoryHistory({ sessionId: "session-1" });
+  assert.equal(Object.hasOwn(result, "updateCheck"), false);
+});
+
+test("repository history does not reuse an old behind check without incoming version facts", async () => {
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return {
+              metadata: {
+                canonical_commit: "canonical-new",
+                repository_update_check: JSON.stringify({
+                  ahead: 0,
+                  behind: 1,
+                  canonicalCommit: "canonical-new",
+                  checkedAt: "2026-08-19T07:15:00.000Z",
+                  relationship: "behind"
+                })
+              },
+              sessionId: "session-1"
+            };
+          }
+        };
+      }
+    },
+    terminals: {
+      async inspectRepositoryHistory() {
+        return { versions: [] };
+      }
+    }
+  });
+
+  const result = await service.inspectRepositoryHistory({ sessionId: "session-1" });
+  assert.equal(Object.hasOwn(result, "updateCheck"), false);
 });
 
 test("native Save rejects every active provider state before touching Git", async () => {
@@ -368,6 +748,10 @@ test("native Save rejects every active provider state before touching Git", asyn
     terminals: {
       async saveSessionWork() {
         saveCalls += 1;
+        const error = new Error("Wait for the assistant turn to finish before saving this session's work.");
+        error.code = "vibe64_session_save_agent_active";
+        error.retryable = true;
+        throw error;
       }
     }
   });
@@ -375,7 +759,7 @@ test("native Save rejects every active provider state before touching Git", asyn
   const result = await service.saveSessionWork("session-1");
   assert.equal(result.ok, false);
   assert.equal(result.code, "vibe64_session_save_agent_active");
-  assert.equal(saveCalls, 0);
+  assert.equal(saveCalls, 1);
 });
 
 test("an early assistant message waits for workspace preparation and is sent once", async () => {

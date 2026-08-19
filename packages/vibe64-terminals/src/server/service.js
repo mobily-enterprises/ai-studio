@@ -9,10 +9,23 @@ import process from "node:process";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
 import {
+  checkSessionUpdates as checkManagedSessionUpdates,
+  inspectSessionChangeDiff as inspectManagedSessionChangeDiff,
+  inspectSessionChanges as inspectManagedSessionChanges,
   inspectSessionWork as inspectManagedSessionWork,
   recoverSessionWorkSave as recoverManagedSessionWorkSave,
-  saveSessionWork as saveManagedSessionWork
+  recoverSessionWorkUpdate as recoverManagedSessionWorkUpdate,
+  saveSessionWork as saveManagedSessionWork,
+  updateSessionWork as updateManagedSessionWork
 } from "./sessionWorkSave.js";
+import {
+  generateSessionSaveCommitMessage
+} from "./sessionSaveCommitMessage.js";
+import {
+  inspectRepositoryHistory as inspectManagedRepositoryHistory,
+  repositoryVersionFileDiff as inspectManagedRepositoryVersionFileDiff,
+  repositoryVersionFiles as inspectManagedRepositoryVersionFiles
+} from "./repositoryHistory.js";
 import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
 import {
   recordSessionGitCommandActor as writeSessionGitCommandActor
@@ -343,6 +356,34 @@ function createService({
       }
     );
     return exclusive.value;
+  }
+
+  async function runSessionRepositoryWrite(
+    sessionId = "",
+    options = {},
+    {
+      activeCode = "vibe64_session_repository_agent_active",
+      activeMessage = "Wait for the assistant turn to finish before changing this session's repository."
+    } = {},
+    operation
+  ) {
+    const result = await runMainAgentWrite(sessionId, options, async (context) => {
+      if (sessionHasActiveAgentRun(context.session)) {
+        const error = new Error(activeMessage);
+        error.code = activeCode;
+        error.retryable = true;
+        throw error;
+      }
+      await options.onRepositoryWriteAcquired?.();
+      return operation(context);
+    });
+    if (result?.ok === false && result?.code === "vibe64_agent_write_mode_busy") {
+      const error = new Error(result.error || "Another session operation is starting. Try again in a moment.");
+      error.code = result.code;
+      error.retryable = true;
+      throw error;
+    }
+    return result;
   }
 
   async function publishTerminalSessionChanged(kind = "", sessionId = "", reason = "") {
@@ -756,6 +797,47 @@ function createService({
     );
   }
 
+  async function sessionWorkExecution(sessionId, input = {}, reason = "session-work") {
+    const normalizedSessionId = String(sessionId || "").trim();
+    const runtime = input.runtime || await projectService.createRuntime({ inspectSource: false });
+    let session = input.session?.sessionId === normalizedSessionId
+      ? input.session
+      : await runtime.getSession(normalizedSessionId, { inspectSource: false });
+    let execution = await codexGitCommand.sessionWorkSaveContext({
+      session,
+      sessionId: normalizedSessionId
+    });
+    if (execution?.ok === false && input.vibe64User) {
+      const targetRoot = terminalTargetRoot(session, projectService);
+      const workdir = terminalWorktreePath(session) || targetRoot;
+      const recorded = targetRoot
+        ? await writeSessionGitCommandActor({
+            env,
+            reason,
+            runtime,
+            session,
+            targetRoot,
+            threadId: session.metadata?.agent_identity_conversation_id || "",
+            vibe64User: input.vibe64User,
+            workdir
+          })
+        : null;
+      if (recorded?.ok !== false && recorded) {
+        session = recorded.session || await runtime.getSession(normalizedSessionId, { inspectSource: false });
+        execution = await codexGitCommand.sessionWorkSaveContext({
+          session,
+          sessionId: normalizedSessionId
+        });
+      }
+    }
+    if (execution?.ok === false) {
+      const error = new Error(execution.error || "The Git actor for this repository operation is not available.");
+      error.code = execution.code || "vibe64_session_work_actor_unavailable";
+      throw error;
+    }
+    return { execution, normalizedSessionId, runtime, session };
+  }
+
   const service = {
     async createSessionSource(input = {}) {
       return createManagedSessionSource({
@@ -906,99 +988,150 @@ function createService({
     },
 
     async saveSessionWork(sessionId, input = {}) {
-      const normalizedSessionId = String(sessionId || "").trim();
-      const runtime = input.runtime || await projectService.createRuntime({
-        inspectSource: false
-      });
-      let session = input.session?.sessionId === normalizedSessionId
-        ? input.session
-        : await runtime.getSession(normalizedSessionId, {
-            inspectSource: false
-          });
-      let execution = await codexGitCommand.sessionWorkSaveContext({
-        session,
-        sessionId: normalizedSessionId
-      });
-      if (execution?.ok === false && input.vibe64User) {
-        const recorded = await service.recordSessionGitCommandActor(normalizedSessionId, {
-          reason: "session-save",
-          runtime,
-          session,
-          vibe64User: input.vibe64User
+      return runSessionRepositoryWrite(sessionId, input, {
+        activeCode: "vibe64_session_save_agent_active",
+        activeMessage: "Wait for the assistant turn to finish before saving this work."
+      }, async (context) => {
+        const { execution, normalizedSessionId, runtime, session } = await sessionWorkExecution(
+          sessionId,
+          context,
+          "session-save"
+        );
+        const project = await projectService.readCurrentProject();
+        await input.onProgress?.({
+          kind: "message",
+          message: "Writing a concise name for this work.",
+          stage: "message-writing"
         });
-        if (recorded?.ok !== false) {
-          session = recorded.session || await runtime.getSession(normalizedSessionId, {
-            inspectSource: false
-          });
-          execution = await codexGitCommand.sessionWorkSaveContext({
-            session,
-            sessionId: normalizedSessionId
-          });
-        }
-      }
-      if (execution?.ok === false) {
-        const error = new Error(execution.error || "The Git actor for this Save is not available.");
-        error.code = execution.code || "vibe64_session_save_actor_unavailable";
-        throw error;
-      }
-      return saveManagedSessionWork({
+        const changes = await inspectManagedSessionChanges({
+          commandOptions: execution.commandOptions,
+          limit: 40,
+          project,
+          runCommand: execution.runCommand,
+          session
+        });
+        const message = await generateSessionSaveCommitMessage({
+          changes,
+          deleteThread: (threadInput) => sessionAgent.deleteDetachedChatThread(
+            normalizedSessionId,
+            threadInput,
+            { runtime, session }
+          ),
+          runAgentTurn: (turnInput, options) => sessionAgent.streamDetachedChatTurn(
+            normalizedSessionId,
+            turnInput,
+            { ...options, runtime, session }
+          )
+        });
+        await input.onProgress?.({
+          kind: "message",
+          message: "Version name ready.",
+          stage: "message-ready"
+        });
+        return saveManagedSessionWork({
+          commandOptions: execution.commandOptions,
+          expectedMessageTree: changes.worktreeTree,
+          identity: execution.identity,
+          message,
+          onProgress: input.onProgress,
+          operationId: input.operationId,
+          project,
+          runCommand: execution.runCommand,
+          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+          siblingWork: async ({ operationId }) => {
+            const sessions = typeof runtime.listSessions === "function"
+              ? await runtime.listSessions({ statusGroup: "open" })
+              : await runtime.listSessionSummaries({ statusGroup: "open" });
+            const project = await projectService.readCurrentProject();
+            const siblings = [];
+            for (const sibling of sessions) {
+              const siblingId = sessionRecordId(sibling);
+              if (!siblingId || siblingId === normalizedSessionId || !terminalWorktreePath(sibling)) {
+                continue;
+              }
+              siblings.push(await inspectManagedSessionWork({
+                comparisonOperationId: operationId,
+                project,
+                session: sibling
+              }));
+            }
+            return siblings;
+          },
+          session
+        });
+      });
+    },
+
+    async checkSessionUpdates(sessionId, input = {}) {
+      const { execution, session } = await sessionWorkExecution(sessionId, input, "session-update-check");
+      return checkManagedSessionUpdates({
         commandOptions: execution.commandOptions,
-        identity: execution.identity,
-        message: input.message || "Save Vibe64 work",
-        onProgress: input.onProgress,
         operationId: input.operationId,
         project: await projectService.readCurrentProject(),
         runCommand: execution.runCommand,
         runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-        siblingWork: async ({ operationId }) => {
-          const sessions = typeof runtime.listSessions === "function"
-            ? await runtime.listSessions({ statusGroup: "open" })
-            : await runtime.listSessionSummaries({ statusGroup: "open" });
-          const project = await projectService.readCurrentProject();
-          const siblings = [];
-          for (const sibling of sessions) {
-            const siblingId = sessionRecordId(sibling);
-            if (!siblingId || siblingId === normalizedSessionId || !terminalWorktreePath(sibling)) {
-              continue;
-            }
-            siblings.push(await inspectManagedSessionWork({
-              comparisonOperationId: operationId,
-              project,
-              session: sibling
-            }));
-          }
-          return siblings;
-        },
         session
       });
     },
 
+    async updateSessionWork(sessionId, input = {}) {
+      return runSessionRepositoryWrite(sessionId, input, {
+        activeCode: "vibe64_session_update_agent_active",
+        activeMessage: "Wait for the assistant turn to finish before updating this session."
+      }, async (context) => {
+        const { execution, session } = await sessionWorkExecution(sessionId, context, "session-update");
+        return updateManagedSessionWork({
+          commandOptions: execution.commandOptions,
+          identity: execution.identity,
+          onProgress: input.onProgress,
+          operationId: input.operationId,
+          project: await projectService.readCurrentProject(),
+          runCommand: execution.runCommand,
+          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+          session
+        });
+      });
+    },
+
+    async recoverSessionWorkUpdate(sessionId, input = {}) {
+      return runSessionRepositoryWrite(sessionId, input, {}, async (context) => {
+        const { execution, session } = await sessionWorkExecution(
+          sessionId,
+          context,
+          "session-update-recovery"
+        );
+        return recoverManagedSessionWorkUpdate({
+          commandOptions: execution.commandOptions,
+          project: await projectService.readCurrentProject(),
+          recovery: input.recovery || {},
+          runCommand: execution.runCommand,
+          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+          session
+        });
+      });
+    },
+
     async recoverSessionWorkSave(sessionId, input = {}) {
-      const normalizedSessionId = String(sessionId || "").trim();
-      const runtime = input.runtime || await projectService.createRuntime({
-        inspectSource: false
-      });
-      const session = input.session?.sessionId === normalizedSessionId
-        ? input.session
-        : await runtime.getSession(normalizedSessionId, {
-            inspectSource: false
-          });
-      const execution = await codexGitCommand.sessionWorkSaveContext({
-        session,
-        sessionId: normalizedSessionId
-      });
-      if (execution?.ok === false) {
-        const error = new Error(execution.error || "The Git actor for Save recovery is not available.");
-        error.code = execution.code || "vibe64_session_save_actor_unavailable";
-        throw error;
-      }
-      return recoverManagedSessionWorkSave({
-        commandOptions: execution.commandOptions,
-        project: await projectService.readCurrentProject(),
-        recovery: input.recovery || {},
-        runCommand: execution.runCommand,
-        runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-        session
+      return runSessionRepositoryWrite(sessionId, input, {}, async (context) => {
+        const normalizedSessionId = String(sessionId || "").trim();
+        const { session } = context;
+        const execution = await codexGitCommand.sessionWorkSaveContext({
+          session,
+          sessionId: normalizedSessionId
+        });
+        if (execution?.ok === false) {
+          const error = new Error(execution.error || "The Git actor for Save recovery is not available.");
+          error.code = execution.code || "vibe64_session_save_actor_unavailable";
+          throw error;
+        }
+        return recoverManagedSessionWorkSave({
+          commandOptions: execution.commandOptions,
+          project: await projectService.readCurrentProject(),
+          recovery: input.recovery || {},
+          runCommand: execution.runCommand,
+          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+          session
+        });
       });
     },
 
@@ -1015,6 +1148,73 @@ function createService({
       return inspectManagedSessionWork({
         project: await projectService.readCurrentProject(),
         session
+      });
+    },
+
+    async inspectSessionChanges(sessionId, input = {}) {
+      const normalizedSessionId = String(sessionId || "").trim();
+      const runtime = input.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      const session = input.session?.sessionId === normalizedSessionId
+        ? input.session
+        : await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+      return inspectManagedSessionChanges({
+        limit: input.limit,
+        offset: input.offset,
+        project: await projectService.readCurrentProject(),
+        session
+      });
+    },
+
+    async inspectSessionChangeDiff(sessionId, input = {}) {
+      const normalizedSessionId = String(sessionId || "").trim();
+      const runtime = input.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      const session = input.session?.sessionId === normalizedSessionId
+        ? input.session
+        : await runtime.getSession(normalizedSessionId, {
+            inspectSource: false
+          });
+      return inspectManagedSessionChangeDiff({
+        lineLimit: input.lineLimit,
+        path: input.path,
+        project: await projectService.readCurrentProject(),
+        session
+      });
+    },
+
+    async inspectRepositoryHistory(input = {}) {
+      return inspectManagedRepositoryHistory({
+        cursor: input.cursor,
+        limit: input.limit,
+        project: await projectService.readCurrentProject(),
+        session: input.session || null
+      });
+    },
+
+    async inspectRepositoryVersionFiles(input = {}) {
+      return inspectManagedRepositoryVersionFiles({
+        commit: input.commit,
+        historySnapshotCommit: input.historySnapshotCommit,
+        limit: input.limit,
+        offset: input.offset,
+        project: await projectService.readCurrentProject(),
+        session: input.session || null
+      });
+    },
+
+    async inspectRepositoryVersionFileDiff(input = {}) {
+      return inspectManagedRepositoryVersionFileDiff({
+        commit: input.commit,
+        historySnapshotCommit: input.historySnapshotCommit,
+        lineLimit: input.lineLimit,
+        path: input.path,
+        project: await projectService.readCurrentProject(),
+        session: input.session || null
       });
     },
 

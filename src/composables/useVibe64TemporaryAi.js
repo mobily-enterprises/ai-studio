@@ -29,11 +29,32 @@ function temporaryAiText(value = "") {
 }
 
 function temporaryAiRequestError(response = {}, fallback = "Temporary AI request failed.") {
-  return new Error(vibe64ApiResponseError(response, fallback));
+  return Object.assign(new Error(vibe64ApiResponseError(response, fallback)), {
+    code: temporaryAiText(response.code),
+    conversationExpired: response.conversationExpired === true
+  });
 }
 
 function temporaryAiTurnIsActive(status = "") {
-  return temporaryAiText(status) === "inProgress";
+  return ["starting", "inProgress"].includes(temporaryAiText(status));
+}
+
+function temporaryAiProgressUpdates(value = []) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((update = {}, index) => ({
+    id: temporaryAiText(update.id) || `progress:${index + 1}`,
+    text: temporaryAiText(update.text)
+  })).filter((update) => update.text);
+}
+
+function temporaryAiTurnMessages(messages = [], runId = "", update = {}) {
+  return messages.map((message) => (
+    message.runId === runId && message.role === "assistant"
+      ? { ...message, ...update }
+      : message
+  ));
 }
 
 function useVibe64TemporaryAi({
@@ -102,6 +123,17 @@ function useVibe64TemporaryAi({
       activeTaskId.value = taskId;
       open.value = true;
     }
+  }
+
+  function showWorkspace() {
+    if (tasks.value.length === 0) {
+      return openTask();
+    }
+    if (!tasks.value.some((task) => task.id === activeTaskId.value)) {
+      activeTaskId.value = tasks.value[0].id;
+    }
+    open.value = true;
+    return activeTask.value;
   }
 
   function updateDraft(taskId = "", draft = "") {
@@ -191,25 +223,34 @@ function useVibe64TemporaryAi({
         { method: "GET" }
       );
       const text = temporaryAiText(response.message || response.rawText);
-      const messages = task.messages.map((message) => (
-        message.runId === task.runId && message.role === "assistant"
-          ? { ...message, text, status: response.status }
-          : message
-      ));
-      const active = temporaryAiTurnIsActive(response.status);
+      const status = temporaryAiText(response.status) || "completed";
+      const messages = temporaryAiTurnMessages(task.messages, task.runId, {
+        progressUpdates: temporaryAiProgressUpdates(response.progressUpdates),
+        status,
+        text
+      });
+      const active = temporaryAiTurnIsActive(status);
       updateTask(taskId, {
         busy: active,
+        conversationId: response.conversationExpired === true ? "" : task.conversationId,
         error: active ? "" : temporaryAiText(response.error),
         messages,
-        status: response.status || (active ? "inProgress" : "completed")
+        runId: response.conversationExpired === true ? "" : task.runId,
+        status
       });
       if (active) {
         pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
       }
     } catch (error) {
+      const message = temporaryAiText(error?.message || error) || "Temporary AI response could not be read.";
       updateTask(taskId, {
         busy: false,
-        error: temporaryAiText(error?.message || error) || "Temporary AI response could not be read.",
+        conversationId: error?.conversationExpired === true ? "" : task.conversationId,
+        error: message,
+        messages: temporaryAiTurnMessages(task.messages, task.runId, {
+          status: "failed"
+        }),
+        runId: error?.conversationExpired === true ? "" : task.runId,
         status: "failed"
       });
     }
@@ -256,6 +297,7 @@ function useVibe64TemporaryAi({
           role: "assistant",
           runId: response.runId,
           status: response.status || "inProgress",
+          progressUpdates: [],
           text: ""
         }
       ];
@@ -272,7 +314,10 @@ function useVibe64TemporaryAi({
     } catch (error) {
       updateTask(taskId, {
         busy: false,
+        conversationId: error?.conversationExpired === true ? "" : task.conversationId,
+        draft: task.draft,
         error: temporaryAiText(error?.message || error) || "Temporary AI message could not be sent.",
+        runId: error?.conversationExpired === true ? "" : task.runId,
         status: "failed"
       });
       return false;
@@ -296,7 +341,13 @@ function useVibe64TemporaryAi({
         method: "POST"
       }
     );
-    updateTask(taskId, { busy: false, status: "interrupted" });
+    updateTask(taskId, {
+      busy: false,
+      messages: temporaryAiTurnMessages(task.messages, task.runId, {
+        status: "interrupted"
+      }),
+      status: "interrupted"
+    });
     return true;
   }
 
@@ -401,6 +452,7 @@ function useVibe64TemporaryAi({
     openTask,
     selectTask,
     send,
+    showWorkspace,
     stopTask,
     tasks,
     updateAgentSetting,

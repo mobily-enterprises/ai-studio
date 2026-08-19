@@ -178,6 +178,7 @@ const CODEX_APP_SERVER_LIVE_PROGRESS_MAX_LENGTH = 320;
 const CODEX_APP_SERVER_SNAPSHOT_RECOVERY_ITEM_LIMIT = 25;
 const CODEX_APP_SERVER_DETACHED_TURN_TIMEOUT_MS = 180_000;
 const CODEX_APP_SERVER_DETACHED_FAILURE_DETAIL_GRACE_MS = 500;
+const CODEX_APP_SERVER_EPHEMERAL_PROGRESS_LIMIT = 24;
 const CODEX_VISIBLE_TERMINAL_DETACHED_IDLE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_RESULT_DELIVERY_FAILURE_MESSAGE =
   "Codex app-server finished this turn, but Vibe64 did not receive the assistant result text.";
@@ -7041,7 +7042,64 @@ function createCodexTerminalController({
     };
   }
 
+  function codexAppServerEphemeralConversation(sessionId = "", conversationId = "") {
+    return codexAppServerEphemeralConversations.get(sessionId)?.get(conversationId) || null;
+  }
+
+  function codexAppServerEphemeralConversationSnapshot(state = {}) {
+    return {
+      conversationId: normalizeText(state.conversationId),
+      error: normalizeText(state.error),
+      message: normalizeText(state.message),
+      ok: true,
+      outcome: state.outcome || null,
+      progressUpdates: Array.isArray(state.progressUpdates)
+        ? state.progressUpdates.map((update = {}) => ({
+            id: normalizeText(update.id),
+            text: normalizeText(update.text)
+          })).filter((update) => update.id && update.text)
+        : [],
+      rawText: normalizeText(state.rawText),
+      runId: normalizeText(state.runId),
+      status: normalizeText(state.status) || "ready"
+    };
+  }
+
+  function codexAppServerExpiredEphemeralConversation(conversationId = "", input = {}) {
+    return {
+      conversationExpired: true,
+      conversationId: normalizeText(conversationId),
+      error: "This Temporary AI task ended when Vibe64 restarted. Send the message again to start a new task.",
+      message: "",
+      ok: true,
+      progressUpdates: [],
+      rawText: "",
+      runId: normalizeText(input.runId),
+      status: "failed"
+    };
+  }
+
+  function appendCodexAppServerEphemeralProgress(state = {}, classification = {}) {
+    const text = normalizeText(classification.text);
+    if (!text) {
+      return;
+    }
+    const progressUpdates = Array.isArray(state.progressUpdates) ? state.progressUpdates : [];
+    if (progressUpdates.at(-1)?.text === text) {
+      return;
+    }
+    state.nextProgressSequence = Number(state.nextProgressSequence || 0) + 1;
+    state.progressUpdates = [
+      ...progressUpdates,
+      {
+        id: `progress:${state.nextProgressSequence}`,
+        text
+      }
+    ].slice(-CODEX_APP_SERVER_EPHEMERAL_PROGRESS_LIMIT);
+  }
+
   function createCodexAppServerDetachedTurnWatcher(provider = null, threadId = "", {
+    includeThreadHistory = true,
     onEvent = null,
     timeoutMs = CODEX_APP_SERVER_DETACHED_TURN_TIMEOUT_MS
   } = {}) {
@@ -7096,7 +7154,12 @@ function createCodexTerminalController({
     }
 
     async function resultFromThread() {
-      if (!normalizedThreadId || !targetTurnId || typeof provider?.readThread !== "function") {
+      if (
+        !includeThreadHistory ||
+        !normalizedThreadId ||
+        !targetTurnId ||
+        typeof provider?.readThread !== "function"
+      ) {
         return {
           status: "",
           statusType: "",
@@ -7137,6 +7200,7 @@ function createCodexTerminalController({
         }));
         finalText = authoritative.text || finalText;
         if (!finalText) {
+          pendingCompletionStatus = normalizeText(status) || "completed";
           const systemError = authoritative.statusType === "systemError" || authoritative.status === "failed";
           failAfterDetailGrace(new Error(systemError
             ? "Codex app-server thread entered a system error before producing an assistant response."
@@ -7217,6 +7281,13 @@ function createCodexTerminalController({
                 }
                 if (classification.kind === "final_assistant_result" && classification.text) {
                   finalText = classification.text;
+                  if (pendingCompletionStatus && targetTurnId) {
+                    const status = pendingCompletionStatus;
+                    pendingCompletionStatus = "";
+                    clearTimeout(failureDetailTimeout);
+                    failureDetailTimeout = null;
+                    void finishFromCompletion(status);
+                  }
                 }
                 const method = normalizeText(notification.method);
                 if (method !== "turn/completed" && method !== "thread/status/changed") {
@@ -7262,8 +7333,19 @@ function createCodexTerminalController({
         throw new Error("Codex app-server did not return a conversation id.");
       }
       if (input.ephemeral === true) {
-        const conversations = codexAppServerEphemeralConversations.get(sessionId) || new Set();
-        conversations.add(conversationId);
+        const conversations = codexAppServerEphemeralConversations.get(sessionId) || new Map();
+        conversations.set(conversationId, {
+          conversationId,
+          error: "",
+          message: "",
+          nextProgressSequence: 0,
+          outcome: null,
+          progressUpdates: [],
+          rawText: "",
+          runId: "",
+          status: "ready",
+          watcher: null
+        });
         codexAppServerEphemeralConversations.set(sessionId, conversations);
       }
       return {
@@ -7290,21 +7372,110 @@ function createCodexTerminalController({
       if (context.ok === false) {
         return context;
       }
-      const threadSettings = await codexAppServerConversationThreadSettings(context, input);
-      await context.provider.resumeThread(conversationId, threadSettings);
-      const delivery = await sendCodexAppServerPromptForSession({
-        agentSettings: context.agentSettings,
-        outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
-        prompt,
-        promptLabel: normalizeText(input.promptLabel) || "Focused Vibe64 task",
-        provider: context.provider,
-        threadId: conversationId,
-        workdir: context.workdir
-      });
+      const ephemeralConversation = codexAppServerEphemeralConversation(sessionId, conversationId);
+      if (input.ephemeral === true && !ephemeralConversation) {
+        return {
+          ...codexAppServerExpiredEphemeralConversation(conversationId, input),
+          code: "vibe64_temporary_conversation_expired",
+          ok: false,
+        };
+      }
+      if (!ephemeralConversation) {
+        const threadSettings = await codexAppServerConversationThreadSettings(context, input);
+        await context.provider.resumeThread(conversationId, threadSettings);
+      }
+      let watcher = null;
+      let waitForResult = null;
+      if (ephemeralConversation) {
+        Object.assign(ephemeralConversation, {
+          error: "",
+          message: "",
+          outcome: null,
+          progressUpdates: [],
+          rawText: "",
+          runId: "",
+          status: "starting"
+        });
+        watcher = createCodexAppServerDetachedTurnWatcher(context.provider, conversationId, {
+          includeThreadHistory: false,
+          onEvent(classification = {}) {
+            const current = codexAppServerEphemeralConversation(sessionId, conversationId);
+            if (!current || (classification.turnId && current.runId && classification.turnId !== current.runId)) {
+              return;
+            }
+            if (["live_progress", "thinking"].includes(classification.kind)) {
+              appendCodexAppServerEphemeralProgress(current, classification);
+            }
+          }
+        });
+        waitForResult = watcher.wait();
+        void waitForResult.catch(() => null);
+        ephemeralConversation.watcher = watcher;
+      }
+      let delivery = null;
+      try {
+        delivery = await sendCodexAppServerPromptForSession({
+          agentSettings: context.agentSettings,
+          outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
+          prompt,
+          promptLabel: normalizeText(input.promptLabel) || "Focused Vibe64 task",
+          provider: context.provider,
+          threadId: conversationId,
+          workdir: context.workdir
+        });
+      } catch (error) {
+        watcher?.failNow(error);
+        await waitForResult?.catch(() => null);
+        if (ephemeralConversation) {
+          Object.assign(ephemeralConversation, {
+            error: errorMessage(error, "Temporary AI message could not be sent."),
+            status: "failed",
+            watcher: null
+          });
+        }
+        throw error;
+      }
       const runId = normalizeText(delivery.turn?.id);
       const status = normalizeText(delivery.turn?.status || delivery.turn?.raw?.status);
       if (!runId) {
+        watcher?.failNow(new Error("Codex app-server accepted a conversation turn without returning its id."));
+        await waitForResult?.catch(() => null);
         throw new Error("Codex app-server accepted a conversation turn without returning its id.");
+      }
+      if (ephemeralConversation) {
+        Object.assign(ephemeralConversation, {
+          runId,
+          status: codexAppServerTurnStatusIsSuccessfulComplete(status) ? status : "inProgress"
+        });
+        watcher.setTurnId(runId);
+        if (codexAppServerTurnStatusIsProviderFailure(status)) {
+          watcher.failNow(new Error(`Codex app-server turn ${status}.`));
+        } else if (codexAppServerTurnStatusIsSuccessfulComplete(status)) {
+          await watcher.completeNow(status);
+        }
+        void waitForResult.then((result = {}) => {
+          const current = codexAppServerEphemeralConversation(sessionId, conversationId);
+          if (!current || current.runId !== runId) {
+            return;
+          }
+          const response = codexAppServerConversationResponse(result.text);
+          Object.assign(current, {
+            error: "",
+            ...response,
+            status: result.status || "completed",
+            watcher: null
+          });
+        }).catch((error) => {
+          const current = codexAppServerEphemeralConversation(sessionId, conversationId);
+          if (!current || current.runId !== runId || current.status === "interrupted") {
+            return;
+          }
+          Object.assign(current, {
+            error: errorMessage(error, "Temporary AI turn failed."),
+            status: "failed",
+            watcher: null
+          });
+        });
       }
       return {
         conversationId,
@@ -7324,6 +7495,13 @@ function createCodexTerminalController({
           error: "Assistant conversation id is required.",
           ok: false
         };
+      }
+      const ephemeralConversation = codexAppServerEphemeralConversation(sessionId, conversationId);
+      if (ephemeralConversation) {
+        return codexAppServerEphemeralConversationSnapshot(ephemeralConversation);
+      }
+      if (input.ephemeral === true) {
+        return codexAppServerExpiredEphemeralConversation(conversationId, input);
       }
       const context = await codexAppServerConversationContext(sessionId, input);
       if (context.ok === false) {
@@ -7394,23 +7572,47 @@ function createCodexTerminalController({
   }
 
   async function stopCodexAppServerConversation(sessionId, input = {}) {
+    const conversationId = normalizeText(input.conversationId);
+    const ephemeralConversation = codexAppServerEphemeralConversation(sessionId, conversationId);
+    if (input.ephemeral === true && !ephemeralConversation) {
+      return {
+        conversationExpired: true,
+        conversationId,
+        ok: true,
+        runId: normalizeText(input.runId),
+        status: "interrupted"
+      };
+    }
     const result = await interruptDetachedCodexAppServerChatTurn(sessionId, {
       threadId: input.conversationId,
       turnId: input.runId
     });
+    if (ephemeralConversation) {
+      ephemeralConversation.status = "interrupted";
+      ephemeralConversation.watcher?.failNow(new Error("Temporary AI turn was stopped."));
+      ephemeralConversation.watcher = null;
+    }
     return {
       ...result,
-      conversationId: normalizeText(input.conversationId),
+      conversationId,
       runId: normalizeText(input.runId)
     };
   }
 
   async function deleteCodexAppServerConversation(sessionId, input = {}) {
+    const conversationId = normalizeText(input.conversationId);
+    const conversations = codexAppServerEphemeralConversations.get(sessionId);
+    if (input.ephemeral === true && !conversations?.has(conversationId)) {
+      return {
+        conversationExpired: true,
+        conversationId,
+        ok: true
+      };
+    }
     const result = await deleteDetachedCodexAppServerChatThread(sessionId, {
       threadId: input.conversationId
     });
-    const conversationId = normalizeText(input.conversationId);
-    const conversations = codexAppServerEphemeralConversations.get(sessionId);
+    conversations?.get(conversationId)?.watcher?.failNow(new Error("Temporary AI conversation was closed."));
     conversations?.delete(conversationId);
     if (conversations?.size === 0) {
       codexAppServerEphemeralConversations.delete(sessionId);
@@ -7422,7 +7624,7 @@ function createCodexTerminalController({
   }
 
   async function cleanupCodexAppServerEphemeralConversations(sessionId) {
-    const conversationIds = [...(codexAppServerEphemeralConversations.get(sessionId) || [])];
+    const conversationIds = [...(codexAppServerEphemeralConversations.get(sessionId)?.keys() || [])];
     for (const conversationId of conversationIds) {
       await deleteCodexAppServerConversation(sessionId, { conversationId }).catch(() => null);
     }
@@ -7480,7 +7682,10 @@ function createCodexTerminalController({
         }
       }
       if (!thread) {
-        thread = await provider.startThread(threadSettings);
+        thread = await provider.startThread({
+          ...threadSettings,
+          ...(input.ephemeral === true ? { ephemeral: true } : {})
+        });
       }
       const threadId = normalizeText(thread.id || thread.response?.thread?.id || requestedThreadId);
       if (!threadId) {

@@ -9,14 +9,12 @@
       :chat-collapsed="props.chatCollapsed"
       :cancel-agent-message="cancelAgentMessage"
       :conversation-log="conversationLog"
-      :diff="dialogs.diff"
       :github-actor-teleport-target="props.githubActorTeleportTarget"
       :interrupt-agent-turn="interruptAgentTurn"
       :page="guardedPage"
       :project-context="props.projectContext"
       :preview-toolbar-teleport-target="props.previewToolbarTeleportTarget"
       :refresh-session-data="refreshSessionData"
-      :review="review"
       :retry-workspace-setup="retryWorkspaceSetup"
       :save-session-work="saveSessionWork"
       :session-abandon="dialogs.abandon"
@@ -25,6 +23,7 @@
       :session-selection-closed="selection.isClosed"
       :session-toolbar="autopilotSessionToolbar"
       :send-agent-message="sendAgentMessage"
+      :update-session-work="updateSessionWork"
       :work-state="workState"
       :project-pane="props.projectPane"
       @busy-change="setAutopilotBusy"
@@ -53,10 +52,7 @@
       </template>
     </Vibe64AutopilotView>
 
-    <Vibe64SessionDialogs
-      :dialogs="dialogs"
-      :short-session-id="sessionData.shortSessionId"
-    />
+    <Vibe64SessionDialogs :dialogs="dialogs" :short-session-id="sessionData.shortSessionId" />
   </section>
 </template>
 
@@ -110,6 +106,7 @@ const props = defineProps({
 const emit = defineEmits([
   "busy-change",
   "page-error-change",
+  "work-state-change",
   "toolbar-controls-ready",
   "project-attention"
 ]);
@@ -127,13 +124,13 @@ const {
   guardedPage,
   interruptAgentTurn,
   refreshSessionData,
-  review,
   retryWorkspaceSetup,
   saveSessionWork,
   selectedAgentTerminalId,
   selection,
   setAutopilotBusy,
   sendAgentMessage,
+  updateSessionWork,
   workState
 } = useVibe64SessionRuntimeHost(props, emit);
 </script>

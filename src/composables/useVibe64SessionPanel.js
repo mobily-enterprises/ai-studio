@@ -1,4 +1,4 @@
-import { computed, proxyRefs, reactive, ref, watch } from "vue";
+import { computed, proxyRefs, reactive, ref, unref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   blockingVibe64SessionPageError
@@ -9,6 +9,9 @@ import {
 import {
   useVibe64SessionData
 } from "@/composables/useVibe64SessionData.js";
+import {
+  useVibe64SessionRepositoryStatusRegistry
+} from "@/composables/useVibe64SessionRepositoryStatusRegistry.js";
 import {
   sessionRecordHasActiveAgentWork
 } from "@/lib/vibe64MountedSessionState.js";
@@ -59,6 +62,15 @@ function useVibe64SessionPanel(props, emit) {
     selectedSession: sessionData.selectedSession,
     selectedSessionId: sessionData.selectedSessionId
   });
+  let repositoryStatusRegistry = {
+    observe: () => null
+  };
+  repositoryStatusRegistry = useVibe64SessionRepositoryStatusRegistry({
+    onState: applyRuntimeWorkState,
+    selectedSessionId: () => selection.selectedSessionId,
+    sessions: sessionData.sessions,
+    sessionsApiPath: sessionData.sessionsApiPath
+  });
   const toolbarSessions = computed(() => sessionPanelToolbarSessions({
     runtimeStateBySessionId,
     selectedSession: selection.selectedSession,
@@ -77,7 +89,10 @@ function useVibe64SessionPanel(props, emit) {
   const projectPane = computed(() => normalizeProjectPane(props.projectPane || route.query.pane));
   const chatCollapsed = computed(() => Boolean(props.chatCollapsed));
   const dashboardProjectActive = computed(() => projectPane.value === "dashboard");
-  const emptyDashboardContext = computed(() => sessionPanelDashboardContext(props.projectContext));
+  const emptyDashboardContext = computed(() => sessionPanelDashboardContext(
+    props.projectContext,
+    sessionData.sessionsApiPath
+  ));
   const emptyBlockedReason = computed(() => String(
     !toolbar.canCreateSession && toolbar.createSessionTitle ? toolbar.createSessionTitle : ""
   ).trim());
@@ -223,6 +238,7 @@ function useVibe64SessionPanel(props, emit) {
     sessionData,
     setRuntimeBusy,
     setRuntimePageError,
+    setRuntimeWorkState,
     setRuntimeToolbarControls,
     toolbar,
     visiblePageError
@@ -246,7 +262,11 @@ function useVibe64SessionPanel(props, emit) {
         toolbarControls: null,
         agentThinking: false,
         busy: false,
-        pageError: ""
+        pageError: "",
+        repositoryWorkState: {
+          checkedAt: "",
+          state: "checking"
+        }
       };
     }
     return runtimeStateBySessionId[key];
@@ -295,6 +315,69 @@ function useVibe64SessionPanel(props, emit) {
       state.pageError = String(error || "");
     }
   }
+
+  function setRuntimeWorkState({
+    sessionId = "",
+    workState = null
+  } = {}) {
+    applyRuntimeWorkState({ sessionId, workState });
+    repositoryStatusRegistry.observe(sessionId, workState);
+  }
+
+  function applyRuntimeWorkState({
+    sessionId = "",
+    workState = null
+  } = {}) {
+    const state = ensureRuntimeState(sessionId);
+    if (state) {
+      state.repositoryWorkState = sessionRepositoryWorkState(workState);
+    }
+  }
+}
+
+function sessionRepositoryWorkState(workState = null) {
+  const source = workState && typeof workState === "object" ? workState : {};
+  const operationStatus = String(source.operation?.status || "").trim();
+  const updateStatus = String(source.updateOperation?.status || "").trim();
+  if (operationStatus === "running") {
+    return {
+      checkedAt: String(source.checkedAt || ""),
+      state: "saving"
+    };
+  }
+  if (updateStatus === "running") {
+    return {
+      checkedAt: String(source.checkedAt || ""),
+      state: "updating"
+    };
+  }
+  if (operationStatus === "failed" || updateStatus === "failed") {
+    return {
+      checkedAt: String(source.checkedAt || ""),
+      state: "needs_help"
+    };
+  }
+  if (source.loading || source.unsaved === null || source.unsaved === undefined) {
+    return {
+      checkedAt: String(source.checkedAt || ""),
+      state: source.error ? "unavailable" : "checking"
+    };
+  }
+  const changedCount = Array.isArray(source.changedPaths) ? source.changedPaths.length : 0;
+  if (source.unsaved === true) {
+    return {
+      changedCount,
+      checkedAt: String(source.checkedAt || ""),
+      state: "unsaved",
+      updateAvailable: source.updateAvailable === true
+    };
+  }
+  return {
+    checkedAt: String(source.checkedAt || ""),
+    state: source.error
+      ? "unavailable"
+      : (source.updateAvailable === true ? "update_available" : "saved")
+  };
 }
 
 function normalizeProjectPane(value = "") {
@@ -320,12 +403,13 @@ function sessionPanelSelectedSessionClosing({
   return Boolean(abandon?.closing && selectedId && closingId === selectedId);
 }
 
-function sessionPanelDashboardContext(projectContext = {}) {
+function sessionPanelDashboardContext(projectContext = {}, sessionsApiPath = "") {
   const safeProjectContext = projectContext && typeof projectContext === "object" && !Array.isArray(projectContext)
     ? projectContext
     : {};
   return {
-    projectContext: safeProjectContext
+    projectContext: safeProjectContext,
+    sessionsApiPath: String(unref(sessionsApiPath) || "")
   };
 }
 
@@ -353,7 +437,11 @@ function sessionPanelToolbarSessions({
     );
     return {
       ...session,
-      agentThinking
+      agentThinking,
+      repositoryWorkState: runtimeState?.repositoryWorkState || {
+        checkedAt: "",
+        state: "checking"
+      }
     };
   });
 }
@@ -415,6 +503,7 @@ export {
   sessionPanelEmptyStateActivity,
   sessionPanelRuntimeHostDiagnostics,
   sessionPanelSelectedSessionClosing,
+  sessionRepositoryWorkState,
   sessionPanelToolbarSessions,
   useVibe64SessionPanel,
   vibe64SessionPanelEmits,

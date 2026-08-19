@@ -13,8 +13,9 @@
           'studio-ai-sessions__tab--thinking': sessionItem.agentThinking
         }"
         :size="compact ? 'small' : 'large'"
+        :aria-label="sessionTabAriaLabel(sessionItem)"
         variant="flat"
-        @click="toolbar.selectSession(sessionItem.sessionId)"
+        @click="selectSession(sessionItem.sessionId)"
       >
         <span class="studio-ai-sessions__tab-main">
           <span
@@ -22,6 +23,13 @@
             :class="`studio-ai-sessions__status-dot--${sessionItem.status}`"
           />
           <span class="studio-ai-sessions__tab-label">{{ sessionTabLabel(sessionItem) }}</span>
+          <v-icon
+            class="studio-ai-sessions__repository-state"
+            :class="`studio-ai-sessions__repository-state--${repositoryState(sessionItem)}`"
+            :icon="repositoryStateIcon(sessionItem)"
+            size="14"
+            :title="repositoryStateLabel(sessionItem)"
+          />
         </span>
         <span
           v-if="sessionItem.sessionId === selectedSessionId"
@@ -58,9 +66,17 @@
 <script setup>
 import { computed } from "vue";
 import {
-  mdiClose
+  mdiAlertCircleOutline,
+  mdiCheckCircleOutline,
+  mdiClose,
+  mdiCloudDownloadOutline,
+  mdiContentSaveAlertOutline,
+  mdiDotsHorizontalCircleOutline
 } from "@mdi/js";
 import Vibe64CreateSessionButton from "@/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
+import {
+  visibleVibe64ToolbarSessions
+} from "@/lib/vibe64SessionToolbarVisibility.js";
 
 const props = defineProps({
   abandon: {
@@ -97,12 +113,69 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(["select-session"]);
+
+function selectSession(sessionId = "") {
+  emit("select-session", sessionId);
+  props.toolbar.selectSession?.(sessionId);
+}
+
 function sessionTabLabel(sessionItem = {}) {
   const sessionName = String(sessionItem.sessionName || sessionItem.metadata?.issue_word || "").trim();
   if (sessionName) {
     return sessionName;
   }
   return props.toolbar.shortSessionId?.(sessionItem.sessionId) || String(sessionItem.sessionId || "");
+}
+
+function repositoryState(sessionItem = {}) {
+  const state = String(sessionItem?.repositoryWorkState?.state || "checking");
+  return [
+    "needs_help",
+    "saved",
+    "saving",
+    "unavailable",
+    "unsaved",
+    "update_available",
+    "updating"
+  ].includes(state) ? state : "checking";
+}
+
+function repositoryStateLabel(sessionItem = {}) {
+  const state = repositoryState(sessionItem);
+  if (state === "unsaved") {
+    const changedCount = Number(sessionItem?.repositoryWorkState?.changedCount || 0);
+    const changeLabel = changedCount === 1 ? "1 change" : `${changedCount || "Unsaved"} changes`;
+    return sessionItem?.repositoryWorkState?.updateAvailable
+      ? `${changeLabel}; update available`
+      : changeLabel;
+  }
+  return ({
+    checking: "Checking whether work is saved",
+    needs_help: "Repository needs help",
+    saved: "All work is saved",
+    saving: "Saving work",
+    unavailable: "Save status is unavailable",
+    update_available: "Update available",
+    updating: "Updating session"
+  })[state];
+}
+
+function repositoryStateIcon(sessionItem = {}) {
+  return ({
+    checking: mdiDotsHorizontalCircleOutline,
+    needs_help: mdiAlertCircleOutline,
+    saved: mdiCheckCircleOutline,
+    saving: mdiDotsHorizontalCircleOutline,
+    unavailable: mdiAlertCircleOutline,
+    unsaved: mdiContentSaveAlertOutline,
+    update_available: mdiCloudDownloadOutline,
+    updating: mdiDotsHorizontalCircleOutline
+  })[repositoryState(sessionItem)];
+}
+
+function sessionTabAriaLabel(sessionItem = {}) {
+  return `${sessionTabLabel(sessionItem)}. ${repositoryStateLabel(sessionItem)}.`;
 }
 
 const allSessions = computed(() => Array.isArray(props.toolbar.sessions) ? props.toolbar.sessions : []);
@@ -114,18 +187,11 @@ const createSessionButtonClass = computed(() => [
   }
 ]);
 const visibleSessions = computed(() => {
-  const limit = sessionLimit.value;
-  if (limit < 1 || allSessions.value.length <= limit) {
-    return allSessions.value;
-  }
-  const selectedIndex = allSessions.value.findIndex((sessionItem) => sessionItem.sessionId === props.selectedSessionId);
-  if (selectedIndex < 0 || selectedIndex < limit) {
-    return allSessions.value.slice(0, limit);
-  }
-  return [
-    ...allSessions.value.slice(0, Math.max(0, limit - 1)),
-    allSessions.value[selectedIndex]
-  ];
+  return visibleVibe64ToolbarSessions({
+    limit: sessionLimit.value,
+    selectedSessionId: props.selectedSessionId,
+    sessions: allSessions.value
+  });
 });
 </script>
 
@@ -216,6 +282,21 @@ const visibleSessions = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.studio-ai-sessions__repository-state {
+  color: rgba(var(--v-theme-on-surface), 0.52);
+  flex: 0 0 auto;
+  margin-inline-start: 0.42rem;
+}
+
+.studio-ai-sessions__repository-state--saved {
+  color: rgb(var(--v-theme-success));
+}
+
+.studio-ai-sessions__repository-state--unsaved,
+.studio-ai-sessions__repository-state--unavailable {
+  color: rgb(var(--v-theme-error));
 }
 
 .studio-ai-sessions__tab-close-slot {

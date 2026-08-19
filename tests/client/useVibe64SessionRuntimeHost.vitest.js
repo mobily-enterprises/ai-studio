@@ -1,4 +1,3 @@
-import { ref } from "vue";
 import { describe, expect, it } from "vitest";
 import { validateSchemaPayload } from "@jskit-ai/kernel/shared/validators";
 
@@ -25,16 +24,12 @@ describe("Vibe64 direct session runtime host", () => {
   });
 
   it("projects only the supplied direct-session dialogs", () => {
-    const diffOpen = ref(false);
     const dialogs = proxySessionDialogs({
-      abandon: { open: ref(true) },
-      diff: { open: diffOpen }
+      abandon: { open: true }
     });
 
-    expect(Object.keys(dialogs)).toEqual(["abandon", "diff"]);
-    expect(dialogs.diff.open).toBe(false);
-    diffOpen.value = true;
-    expect(dialogs.diff.open).toBe(true);
+    expect(Object.keys(dialogs)).toEqual(["abandon"]);
+    expect(dialogs.abandon.open).toBe(true);
   });
 
   it("uses the provider turn projection as visible assistant activity", () => {

@@ -163,9 +163,18 @@ const sessionIdInputValidator = patchSchema({
 const sessionSaveInputValidator = patchSchema({
   ...optionalOrigin,
   ...optionalUser,
-  message: {
+  sessionId: {
     type: "string",
     noTrim: false,
+    required: true
+  }
+});
+
+const sessionUpdateInputValidator = patchSchema({
+  ...optionalOrigin,
+  ...optionalUser,
+  force: {
+    type: "boolean",
     required: false
   },
   sessionId: {
@@ -190,18 +199,36 @@ const sessionInspectInputValidator = patchSchema({
   }
 });
 
-const sessionDiffInputValidator = patchSchema({
-  ...optionalOrigin,
+const sessionChangesInputValidator = patchSchema({
   ...optionalUser,
-  full: {
+  limit: {
     type: "string",
     noTrim: false,
     required: false
   },
+  offset: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionChangeDiffInputValidator = patchSchema({
+  ...optionalUser,
   lineLimit: {
     type: "string",
     noTrim: false,
     required: false
+  },
+  path: {
+    type: "string",
+    noTrim: true,
+    required: true
   },
   sessionId: {
     type: "string",
@@ -229,19 +256,49 @@ const sessionConversationLogInputValidator = patchSchema({
   }
 });
 
+const repositoryHistoryInputValidator = patchSchema({
+  ...optionalUser,
+  cursor: { type: "string", noTrim: false, required: false },
+  limit: { type: "string", noTrim: false, required: false },
+  sessionId: { type: "string", noTrim: false, required: true }
+});
+
+const repositoryVersionFilesInputValidator = patchSchema({
+  ...optionalUser,
+  commit: { type: "string", noTrim: false, required: true },
+  historySnapshotCommit: { type: "string", noTrim: false, required: true },
+  limit: { type: "string", noTrim: false, required: false },
+  offset: { type: "string", noTrim: false, required: false },
+  sessionId: { type: "string", noTrim: false, required: true }
+});
+
+const repositoryVersionFileDiffInputValidator = patchSchema({
+  ...optionalUser,
+  commit: { type: "string", noTrim: false, required: true },
+  historySnapshotCommit: { type: "string", noTrim: false, required: true },
+  lineLimit: { type: "string", noTrim: false, required: false },
+  path: { type: "string", noTrim: true, required: true },
+  sessionId: { type: "string", noTrim: false, required: true }
+});
+
 export {
   agentMessageActionInputValidator,
   agentMessageInputValidator,
   agentTurnInterruptActionInputValidator,
   agentTurnInterruptInputValidator,
   currentSessionInputValidator,
+  repositoryHistoryInputValidator,
+  repositoryVersionFileDiffInputValidator,
+  repositoryVersionFilesInputValidator,
   sessionConversationLogInputValidator,
+  sessionChangeDiffInputValidator,
+  sessionChangesInputValidator,
   sessionCreateInputValidator,
-  sessionDiffInputValidator,
   sessionIdInputValidator,
   sessionInspectInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
   sessionSaveInputValidator,
+  sessionUpdateInputValidator,
   sessionViewStateInputValidator
 };

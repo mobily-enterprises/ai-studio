@@ -10,8 +10,10 @@ import {
   vibe64SessionDebugError,
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
-import { vibe64AgentRunStateIsActive } from "@local/vibe64-runtime/server/sessionStore";
-import { inspectSessionDiff } from "./sessionDiff.js";
+import {
+  REPOSITORY_UPDATE_RELATIONSHIPS,
+  normalizeRepositoryUpdateCheck
+} from "@local/vibe64-core/shared";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -21,11 +23,67 @@ function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+const REPOSITORY_UPDATE_CHECK_METADATA = "repository_update_check";
+const REPOSITORY_UPDATE_CHECK_CACHE_MS = 25_000;
+function repositoryUpdateCheckIsFresh(value = {}, now = Date.now()) {
+  const checkedAt = Date.parse(text(value?.checkedAt));
+  return Number.isFinite(checkedAt) && now - checkedAt >= 0 &&
+    now - checkedAt < REPOSITORY_UPDATE_CHECK_CACHE_MS;
+}
+
+function cachedRepositoryUpdateCheck(session = {}) {
+  const raw = text(session?.metadata?.[REPOSITORY_UPDATE_CHECK_METADATA]);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = record(JSON.parse(raw));
+    const checkedAt = text(parsed.checkedAt);
+    const relationship = text(parsed.relationship);
+    if (
+      !checkedAt ||
+      !Number.isFinite(Date.parse(checkedAt)) ||
+      !REPOSITORY_UPDATE_RELATIONSHIPS.has(relationship) ||
+      (Number(parsed.behind || 0) > 0 && !Array.isArray(parsed.incomingVersions)) ||
+      (
+        text(session?.metadata?.canonical_commit) &&
+        text(parsed.canonicalCommit) !== text(session.metadata.canonical_commit)
+      )
+    ) {
+      return null;
+    }
+    const normalized = normalizeRepositoryUpdateCheck(parsed, checkedAt);
+    return normalized.relationship === relationship ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistRepositoryUpdateCheck(runtime, sessionId, result = {}) {
+  const status = normalizeRepositoryUpdateCheck(result);
+  await runtime.store.writeMetadataValue(
+    sessionId,
+    REPOSITORY_UPDATE_CHECK_METADATA,
+    JSON.stringify(status)
+  );
+  return status;
+}
+
 function sessionResult(operation, fallbackMessage = "Vibe64 session request failed.") {
   return vibe64Result(operation, {
     fallbackCode: "vibe64_session_request_failed",
     fallbackMessage
   });
+}
+
+function requiredRepositorySessionId(value = "") {
+  const sessionId = text(value);
+  if (!sessionId) {
+    const error = new Error("Select a session before opening its repository history.");
+    error.code = "vibe64_repository_history_session_required";
+    throw error;
+  }
+  return sessionId;
 }
 
 function archiveListOptions(value = "") {
@@ -86,12 +144,7 @@ function publicSession(session = {}, extra = {}) {
 }
 
 const SESSION_SAVE_TASK_ID = "save-work";
-
-function activeAgentRun(session = {}) {
-  return (Array.isArray(session.agentRuns) ? session.agentRuns : []).find((run) => (
-    run?.active === true || vibe64AgentRunStateIsActive(run?.state)
-  )) || null;
-}
+const SESSION_UPDATE_TASK_ID = "update-session";
 
 function createService({
   project,
@@ -116,6 +169,44 @@ function createService({
       ? terminals.waitForWorkspaceSetup(sessionId)
       : null
   });
+
+  async function publishCanonicalChanged(runtime, sourceSessionId, canonicalCommit, {
+    originId = ""
+  } = {}) {
+    const sessions = typeof runtime.listSessionSummaries === "function"
+      ? await runtime.listSessionSummaries({ statusGroup: "open" })
+      : [];
+    const deliveries = await Promise.allSettled(sessions.map(async (candidate) => {
+      const candidateId = text(candidate?.sessionId);
+      if (!candidateId || candidateId === sourceSessionId) {
+        return;
+      }
+      await runtime.store.writeMetadataValue(
+        candidateId,
+        "canonical_commit",
+        canonicalCommit
+      );
+      await publishSessionChanged(candidateId, {
+        operation: "updated",
+        originId: text(originId),
+        payload: {
+          canonicalCommit,
+          sourceSessionId
+        },
+        reason: "repository-canonical-changed",
+        session: candidate
+      });
+    }));
+    deliveries.forEach((delivery, index) => {
+      if (delivery.status === "rejected") {
+        vibe64SessionDebugLog("server.sessions.repositoryCanonicalChanged.publish.error", {
+          error: vibe64SessionDebugError(delivery.reason),
+          sessionId: text(sessions[index]?.sessionId),
+          sourceSessionId
+        });
+      }
+    });
+  }
 
   function observeWorkspaceSetup(sessionId, completion, {
     originId = ""
@@ -154,6 +245,7 @@ function createService({
         runtime,
         session
       });
+      await runtime.store.writeMetadataValue(session.sessionId, "canonical_commit", result.saveCommit);
       if (result.reconciled === true) {
         await runtime.store.writeMetadataValue(session.sessionId, "base_commit", result.saveCommit);
       }
@@ -187,7 +279,78 @@ function createService({
     }
   }
 
+  async function recoverInterruptedUpdate(runtime, session, task) {
+    if (task?.status !== "running" || typeof terminals.recoverSessionWorkUpdate !== "function") {
+      return task;
+    }
+    try {
+      const result = await terminals.recoverSessionWorkUpdate(session.sessionId, {
+        recovery: task,
+        runtime,
+        session
+      });
+      await runtime.store.writeMetadataValue(session.sessionId, "canonical_commit", result.canonicalCommit);
+      if (result.reconciled === true) {
+        await runtime.store.writeMetadataValue(session.sessionId, "base_commit", result.canonicalCommit);
+      }
+      return runtime.store.writeBackgroundTaskEvent(session.sessionId, SESSION_UPDATE_TASK_ID, {
+        event: {
+          kind: "update-recovered",
+          message: "Interrupted session update recovered.",
+          status: "ready"
+        },
+        patch: { ...result, status: "ready" }
+      });
+    } catch (error) {
+      return runtime.store.writeBackgroundTaskEvent(session.sessionId, SESSION_UPDATE_TASK_ID, {
+        event: {
+          kind: "update-recovery-failed",
+          message: text(error?.message) || "Interrupted session update needs attention.",
+          status: "failed"
+        },
+        patch: {
+          code: text(error?.code),
+          error: text(error?.message) || "Interrupted session update needs attention.",
+          retryable: error?.retryable === true,
+          status: "failed"
+        }
+      });
+    }
+  }
+
   return Object.freeze({
+    async inspectRepositoryHistory(input = {}) {
+      return sessionResult(async () => {
+        const sessionId = requiredRepositorySessionId(input.sessionId);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const history = await terminals.inspectRepositoryHistory({ ...input, session });
+        const updateCheck = cachedRepositoryUpdateCheck(session);
+        return {
+          ...history,
+          ...(updateCheck ? { updateCheck } : {})
+        };
+      }, "Vibe64 could not read project version history.");
+    },
+
+    async inspectRepositoryVersionFiles(input = {}) {
+      return sessionResult(async () => {
+        const sessionId = requiredRepositorySessionId(input.sessionId);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        return terminals.inspectRepositoryVersionFiles({ ...input, session });
+      }, "Vibe64 could not read this project version.");
+    },
+
+    async inspectRepositoryVersionFileDiff(input = {}) {
+      return sessionResult(async () => {
+        const sessionId = requiredRepositorySessionId(input.sessionId);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        return terminals.inspectRepositoryVersionFileDiff({ ...input, session });
+      }, "Vibe64 could not read this version's file change.");
+    },
+
     async abandonSession(sessionId, input = {}) {
       return sessionResult(async () => {
         if (setupRunner.isRunning(sessionId)) {
@@ -333,6 +496,8 @@ function createService({
         });
         const existingTask = await runtime.store.readBackgroundTask(sessionId, SESSION_SAVE_TASK_ID);
         const operation = await recoverInterruptedSave(runtime, session, existingTask);
+        const updateTask = await runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID);
+        const updateOperation = await recoverInterruptedUpdate(runtime, session, updateTask);
         const work = await terminals.inspectSessionWork(sessionId, {
           runtime,
           session
@@ -340,9 +505,42 @@ function createService({
         return {
           ...work,
           operation,
+          updateOperation,
           ok: true
         };
       }, "Vibe64 could not inspect this session's work.");
+    },
+
+    async inspectSessionChanges(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({
+          inspectSource: false
+        });
+        const session = await runtime.getSession(sessionId, {
+          inspectSource: false
+        });
+        return terminals.inspectSessionChanges(sessionId, {
+          ...input,
+          runtime,
+          session
+        });
+      }, "Vibe64 could not inspect this session's current changes.");
+    },
+
+    async inspectSessionChangeDiff(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({
+          inspectSource: false
+        });
+        const session = await runtime.getSession(sessionId, {
+          inspectSource: false
+        });
+        return terminals.inspectSessionChangeDiff(sessionId, {
+          ...input,
+          runtime,
+          session
+        });
+      }, "Vibe64 could not inspect this changed file.");
     },
 
     async saveSessionWork(sessionId, input = {}) {
@@ -353,32 +551,30 @@ function createService({
         const session = await runtime.getSession(sessionId, {
           inspectSource: false
         });
-        if (activeAgentRun(session)) {
-          const error = new Error("Wait for the assistant turn to finish before saving this work.");
-          error.code = "vibe64_session_save_agent_active";
-          throw error;
-        }
         const operationId = crypto.randomUUID();
-        await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
-          event: {
-            kind: "save-started",
-            message: "Saving session work.",
-            status: "running"
-          },
-          patch: {
-            operationId,
-            status: "running"
-          }
-        });
-        await publishSessionChanged(sessionId, {
-          operation: "updated",
-          originId: text(input.originId),
-          reason: "session-save-started",
-          session: await runtime.getSession(sessionId, { inspectSource: false })
-        });
+        let operationStarted = false;
         try {
           const result = await terminals.saveSessionWork(sessionId, {
-            message: input.message,
+            onRepositoryWriteAcquired: async () => {
+              operationStarted = true;
+              await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
+                event: {
+                  kind: "save-started",
+                  message: "Saving session work.",
+                  status: "running"
+                },
+                patch: {
+                  operationId,
+                  status: "running"
+                }
+              });
+              await publishSessionChanged(sessionId, {
+                operation: "updated",
+                originId: text(input.originId),
+                reason: "session-save-started",
+                session: await runtime.getSession(sessionId, { inspectSource: false })
+              });
+            },
             operationId,
             onProgress: async (progress = {}) => {
               await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
@@ -404,6 +600,7 @@ function createService({
             session,
             vibe64User: input.vibe64User || null
           });
+          await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.saveCommit);
           if (result.reconciled === true) {
             await runtime.store.writeMetadataValue(sessionId, "base_commit", result.saveCommit);
           }
@@ -426,12 +623,18 @@ function createService({
             reason: "session-save-completed",
             session: await runtime.getSession(sessionId, { inspectSource: false })
           });
+          await publishCanonicalChanged(runtime, sessionId, result.saveCommit, {
+            originId: input.originId
+          });
           return {
             ...result,
             operation: task,
             ok: true
           };
         } catch (error) {
+          if (!operationStarted) {
+            throw error;
+          }
           const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
             event: {
               kind: "save-failed",
@@ -457,13 +660,147 @@ function createService({
       }, "Vibe64 could not save this session's work.");
     },
 
-    async inspectSessionDiff(sessionId, options = {}) {
+    async checkSessionUpdates(sessionId, input = {}) {
       return sessionResult(async () => {
-        const runtime = await project.createRuntime();
-        return inspectSessionDiff(await runtime.getSession(sessionId, {
-          inspectSource: false
-        }), options);
-      });
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const cached = cachedRepositoryUpdateCheck(session);
+        if (input.force !== true && cached && repositoryUpdateCheckIsFresh(cached)) {
+          return {
+            ...cached,
+            cached: true,
+            ok: true
+          };
+        }
+        const previousCanonicalCommit = text(
+          session?.metadata?.canonical_commit || session?.metadata?.base_commit
+        );
+        const result = await terminals.checkSessionUpdates(sessionId, {
+          ...input,
+          operationId: crypto.randomUUID(),
+          runtime,
+          session
+        });
+        await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.canonicalCommit);
+        if (result.reconciled === true) {
+          await runtime.store.writeMetadataValue(sessionId, "base_commit", result.canonicalCommit);
+        }
+        const updateCheck = await persistRepositoryUpdateCheck(runtime, sessionId, result);
+        await publishSessionChanged(sessionId, {
+          operation: "updated",
+          originId: text(input.originId),
+          reason: "session-repository-checked",
+          session: await runtime.getSession(sessionId, { inspectSource: false })
+        });
+        if (previousCanonicalCommit && previousCanonicalCommit !== result.canonicalCommit) {
+          await publishCanonicalChanged(runtime, sessionId, result.canonicalCommit, {
+            originId: input.originId
+          });
+        }
+        return {
+          ...result,
+          ...updateCheck
+        };
+      }, "Vibe64 could not check this session for updates.");
+    },
+
+    async updateSessionWork(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const operationId = crypto.randomUUID();
+        let operationStarted = false;
+        try {
+          const result = await terminals.updateSessionWork(sessionId, {
+            onRepositoryWriteAcquired: async () => {
+              operationStarted = true;
+              await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
+                event: {
+                  kind: "update-started",
+                  message: "Updating this session (rebase).",
+                  status: "running"
+                },
+                patch: { operationId, status: "running" }
+              });
+              await publishSessionChanged(sessionId, {
+                operation: "updated",
+                originId: text(input.originId),
+                reason: "session-update-started",
+                session: await runtime.getSession(sessionId, { inspectSource: false })
+              });
+            },
+            operationId,
+            onProgress: async (progress = {}) => {
+              await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
+                event: {
+                  kind: text(progress.kind) || "update-progress",
+                  message: text(progress.message),
+                  status: "running"
+                },
+                patch: { ...progress, operationId, status: "running" }
+              });
+            },
+            runtime,
+            session,
+            vibe64User: input.vibe64User || null
+          });
+          await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.canonicalCommit);
+          if (result.reconciled === true) {
+            await runtime.store.writeMetadataValue(sessionId, "base_commit", result.canonicalCommit);
+          }
+          const refreshedSession = await runtime.getSession(sessionId, { inspectSource: false });
+          const refreshedWork = await terminals.inspectSessionWork(sessionId, {
+            runtime,
+            session: refreshedSession
+          });
+          const updateCheck = await persistRepositoryUpdateCheck(runtime, sessionId, refreshedWork);
+          const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
+            event: {
+              kind: result.status,
+              message: result.status === "already_current" ? "This session was already current." : "This session was updated.",
+              status: "ready"
+            },
+            patch: { ...result, status: "ready" }
+          });
+          await publishSessionChanged(sessionId, {
+            operation: "updated",
+            originId: text(input.originId),
+            reason: "session-update-completed",
+            session: await runtime.getSession(sessionId, { inspectSource: false })
+          });
+          return {
+            ...result,
+            ...updateCheck,
+            ok: true,
+            operation: task
+          };
+        } catch (error) {
+          if (!operationStarted) {
+            throw error;
+          }
+          const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
+            event: {
+              kind: "update-failed",
+              message: text(error?.message) || "Session update failed.",
+              status: "failed"
+            },
+            patch: {
+              code: text(error?.code),
+              error: text(error?.message) || "Session update failed.",
+              operationId,
+              status: "failed"
+            }
+          });
+          await publishSessionChanged(sessionId, {
+            operation: "updated",
+            originId: text(input.originId),
+            reason: "session-update-failed",
+            session: await runtime.getSession(sessionId, { inspectSource: false }),
+            task
+          });
+          throw error;
+        }
+      }, "Vibe64 could not update this session.");
     },
 
     async interruptAgentTurn(sessionId, input = {}) {

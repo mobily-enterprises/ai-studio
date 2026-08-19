@@ -109,20 +109,22 @@ function useVibe64SessionRuntimeHost(props, emit) {
     selectedSession: selectedSession.value
   }));
   const workState = ref({
+    checkedAt: "",
     error: "",
-    loading: false,
+    loading: true,
     operation: null,
-    unsaved: false
+    unsaved: null
   });
 
   async function refreshWorkState() {
     const sessionId = selectedSessionId.value;
     if (!sessionId || selectedSessionClosed.value) {
       workState.value = {
+        checkedAt: new Date().toISOString(),
         error: "",
         loading: false,
         operation: null,
-        unsaved: false
+        unsaved: null
       };
       return workState.value;
     }
@@ -144,14 +146,17 @@ function useVibe64SessionRuntimeHost(props, emit) {
       }
       workState.value = {
         ...result,
+        checkedAt: new Date().toISOString(),
         error: "",
         loading: false
       };
     } catch (error) {
       workState.value = {
-        ...workState.value,
+        checkedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error || "Session work could not be inspected."),
-        loading: false
+        loading: false,
+        operation: null,
+        unsaved: null
       };
     }
     return workState.value;
@@ -184,8 +189,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     sessionsApiPath: props.sessionData.sessionsApiPath
   });
   const dialogs = proxySessionDialogs({
-    abandon: dialogModels.abandon,
-    diff: dialogModels.diff
+    abandon: dialogModels.abandon
   });
   const conversationLog = proxyRefs(useVibe64ConversationLog({
     active: computed(() => Boolean(selectedSessionId.value)),
@@ -199,12 +203,6 @@ function useVibe64SessionRuntimeHost(props, emit) {
     selectedSessionTitle,
     statusColor: vibe64SessionStatusColor,
     statusLabel: vibe64SessionStatusLabel
-  });
-  const review = proxyRefs({
-    diffDisabled: computed(() => Boolean(!selectedSessionId.value || selectedSessionClosed.value)),
-    diffTitle: computed(() => selectedSessionClosed.value
-      ? "Changes are unavailable after the session is closed."
-      : "Review changes in the session workspace.")
   });
   const autopilotSessionToolbar = proxyRefs({
     canCreateSession: props.sessionData.canCreateSession,
@@ -348,7 +346,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     return true;
   }
 
-  async function saveSessionWork(input = {}) {
+  async function saveSessionWork() {
     const sessionId = selectedSessionId.value;
     if (!sessionId) {
       return false;
@@ -360,9 +358,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
         "/save"
       ),
       {
-        body: vibe64RealtimeOriginPayload({
-          message: String(input?.message || "Save Vibe64 work")
-        }),
+        body: vibe64RealtimeOriginPayload(),
         method: "POST"
       }
     );
@@ -372,6 +368,32 @@ function useVibe64SessionRuntimeHost(props, emit) {
     ]);
     if (result?.ok === false) {
       throw new Error(vibe64ApiResponseError(result, "Session work could not be saved."));
+    }
+    return result;
+  }
+
+  async function updateSessionWork() {
+    const sessionId = selectedSessionId.value;
+    if (!sessionId) {
+      return false;
+    }
+    const result = await getHttpWebClient().request(
+      vibe64SessionPath(
+        readRefOrGetterValue(props.sessionData.sessionsApiPath),
+        sessionId,
+        "/updates/apply"
+      ),
+      {
+        body: vibe64RealtimeOriginPayload(),
+        method: "POST"
+      }
+    );
+    await Promise.allSettled([
+      refreshSessionData({ reason: "session-work-update" }),
+      refreshWorkState()
+    ]);
+    if (result?.ok === false) {
+      throw new Error(vibe64ApiResponseError(result, "This session could not be updated."));
     }
     return result;
   }
@@ -390,9 +412,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   function emitToolbarControls() {
     emit("toolbar-controls-ready", {
       controls: {
-        abandon: dialogs.abandon,
-        diff: dialogs.diff,
-        review
+        abandon: dialogs.abandon
       },
       sessionId: selectedSessionId.value
     });
@@ -436,6 +456,12 @@ function useVibe64SessionRuntimeHost(props, emit) {
       sessionId: selectedSessionId.value
     });
   }, { flush: "post" });
+  watch(workState, (state) => {
+    emit("work-state-change", {
+      sessionId: selectedSessionId.value,
+      workState: { ...state }
+    });
+  }, { deep: true, flush: "post", immediate: true });
   watch(() => props.active, (active, previous) => {
     if (active && previous === false) {
       void mounted.reconcileMountedAgentSession("selected");
@@ -445,7 +471,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   watch(() => {
     const task = (Array.isArray(selectedSession.value?.backgroundTasks)
       ? selectedSession.value.backgroundTasks
-      : []).find((entry) => entry?.id === "codex_turn_checkpoint" || entry?.id === "save-work");
+      : []).find((entry) => ["codex_turn_checkpoint", "save-work", "update-session"].includes(entry?.id));
     return `${selectedSessionId.value}:${task?.updatedAt || ""}`;
   }, () => {
     void refreshWorkState();
@@ -474,13 +500,13 @@ function useVibe64SessionRuntimeHost(props, emit) {
     interruptAgentTurn,
     refreshSessionData,
     refreshWorkState,
-    review,
     retryWorkspaceSetup,
     saveSessionWork,
     selectedAgentTerminalId,
     selection,
     sendAgentMessage,
     setAutopilotBusy: () => null,
+    updateSessionWork,
     workState
   };
 }

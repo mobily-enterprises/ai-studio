@@ -38,6 +38,96 @@ function vibe64SessionPath(sessionsApiPath = "", sessionId = "", suffix = "") {
   return `${sessionsApiPath}/${encodePathSegment(sessionId)}${suffix}`;
 }
 
+function vibe64RepositoryApiPath(sessionsApiPath = "") {
+  const normalized = String(sessionsApiPath || "").replace(/\/+$/u, "");
+  return normalized.endsWith(VIBE64_SESSIONS_API_SUFFIX)
+    ? `${normalized.slice(0, -VIBE64_SESSIONS_API_SUFFIX.length)}/vibe64/repository`
+    : `${normalized}/repository`;
+}
+
+function vibe64RepositoryHistoryPath(sessionsApiPath = "", options = {}) {
+  const params = new URLSearchParams();
+  const sessionId = String(options?.sessionId || "").trim();
+  const cursor = String(options?.cursor || "").trim();
+  if (sessionId) {
+    params.set("sessionId", sessionId);
+  }
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  const query = params.toString();
+  const base = `${vibe64RepositoryApiPath(sessionsApiPath)}/history`;
+  return query ? `${base}?${query}` : base;
+}
+
+function vibe64RepositoryVersionFilesPath(
+  sessionsApiPath = "",
+  commit = "",
+  options = {}
+) {
+  const params = new URLSearchParams();
+  const sessionId = String(options?.sessionId || "").trim();
+  const historySnapshotCommit = String(options?.historySnapshotCommit || "").trim();
+  if (sessionId) {
+    params.set("sessionId", sessionId);
+  }
+  if (historySnapshotCommit) {
+    params.set("historySnapshotCommit", historySnapshotCommit);
+  }
+  if (Number.isInteger(Number(options?.offset)) && Number(options.offset) > 0) {
+    params.set("offset", String(Number(options.offset)));
+  }
+  if (Number.isInteger(Number(options?.limit)) && Number(options.limit) > 0) {
+    params.set("limit", String(Number(options.limit)));
+  }
+  const query = params.toString();
+  const base = `${vibe64RepositoryApiPath(sessionsApiPath)}/history/${encodePathSegment(commit)}/files`;
+  return query ? `${base}?${query}` : base;
+}
+
+function vibe64RepositoryVersionDiffPath(
+  sessionsApiPath = "",
+  commit = "",
+  sourcePath = "",
+  options = {}
+) {
+  const params = new URLSearchParams({ path: String(sourcePath || "") });
+  const sessionId = String(options?.sessionId || "").trim();
+  const historySnapshotCommit = String(options?.historySnapshotCommit || "").trim();
+  if (sessionId) {
+    params.set("sessionId", sessionId);
+  }
+  if (historySnapshotCommit) {
+    params.set("historySnapshotCommit", historySnapshotCommit);
+  }
+  return `${vibe64RepositoryApiPath(sessionsApiPath)}/history/${encodePathSegment(commit)}/diff?${params.toString()}`;
+}
+
+function vibe64SessionChangesPath(sessionsApiPath = "", sessionId = "", options = {}) {
+  const params = new URLSearchParams();
+  if (Number.isInteger(Number(options?.offset)) && Number(options.offset) > 0) {
+    params.set("offset", String(Number(options.offset)));
+  }
+  if (Number.isInteger(Number(options?.limit)) && Number(options.limit) > 0) {
+    params.set("limit", String(Number(options.limit)));
+  }
+  const query = params.toString();
+  const base = vibe64SessionPath(sessionsApiPath, sessionId, "/changes");
+  return query ? `${base}?${query}` : base;
+}
+
+function vibe64SessionCheckUpdatesPath(sessionsApiPath = "", sessionId = "") {
+  return vibe64SessionPath(sessionsApiPath, sessionId, "/updates/check");
+}
+
+function vibe64SessionChangeDiffPath(
+  sessionsApiPath = "",
+  sessionId = "",
+  sourcePath = ""
+) {
+  return `${vibe64SessionPath(sessionsApiPath, sessionId, "/changes/diff")}?path=${encodeURIComponent(String(sourcePath || ""))}`;
+}
+
 function vibe64AgentAttachmentPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/agent-attachments");
 }
@@ -273,6 +363,13 @@ export {
   vibe64LaunchTargetsPath,
   vibe64LaunchTargetsQueryKey,
   vibe64PreviewIdentityPath,
+  vibe64RepositoryApiPath,
+  vibe64RepositoryHistoryPath,
+  vibe64RepositoryVersionDiffPath,
+  vibe64RepositoryVersionFilesPath,
+  vibe64SessionChangeDiffPath,
+  vibe64SessionCheckUpdatesPath,
+  vibe64SessionChangesPath,
   vibe64LaunchTerminalPath,
   vibe64LaunchTerminalStopPath,
   vibe64SessionPath,

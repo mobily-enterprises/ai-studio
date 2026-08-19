@@ -13,7 +13,7 @@ the canonical project and from other sessions.
 
 People can create, select, inspect, and abandon sessions. A new session receives
 its own Git source and stable identity. Its conversation, source location,
-agent activity, workspace preparation, and diff remain available across UI
+agent activity, workspace preparation, and repository status remain available across UI
 refreshes. Abandoning a session closes the active work while preserving the
 read-only history needed to recover its conversation and understand what
 happened.

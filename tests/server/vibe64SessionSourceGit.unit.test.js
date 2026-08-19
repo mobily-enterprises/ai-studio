@@ -80,6 +80,7 @@ test("Vibe64 creates an isolated Git source for a session", async () => {
     assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD"]), baseline);
     assert.equal(context.metadata.base_branch, "main");
     assert.equal(context.metadata.base_commit, baseline);
+    assert.equal(context.metadata.canonical_commit, baseline);
     assert.equal(context.metadata.branch, "vibe64/session-1");
     assert.equal(context.metadata.main_checkout_root, context.runtime.targetRoot);
     assert.equal(context.metadata.source_kind, "session_clone");
@@ -124,6 +125,7 @@ test("Vibe64 creates a GitHub session from the canonical remote instead of the s
 
     assert.equal(result.commit, canonicalCommit);
     assert.equal(context.metadata.base_commit, canonicalCommit);
+    assert.equal(context.metadata.canonical_commit, canonicalCommit);
     assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "canonical");
     assert.equal(await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]), staleCommit);
   });

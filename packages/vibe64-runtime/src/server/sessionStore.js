@@ -39,6 +39,7 @@ const CLOSED_SESSION_ARCHIVE_KIND = "vibe64.closed_session_archive";
 const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "base_branch",
   "base_commit",
+  "canonical_commit",
   "branch",
   "main_checkout_root",
   "source_default_branch",
@@ -87,6 +88,7 @@ const CONVERSATION_MESSAGE_FILE_PATTERN =
 const CONVERSATION_TURN_ID_PATTERN = /^\d{6}$/u;
 const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "base_commit",
+  "canonical_commit",
   "repository_mode",
   "source",
   "source_kind",

@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  checkSessionUpdates,
+  inspectSessionChangeDiff,
+  inspectSessionChanges,
   inspectSessionWork,
+  recoverSessionWorkUpdate,
   recoverSessionWorkSave,
-  saveSessionWork
+  saveSessionWork as saveSessionWorkImplementation,
+  updateSessionWork
 } from "../../packages/vibe64-terminals/src/server/sessionWorkSave.js";
 import {
   canonicalRepositoryBackupPath,
@@ -75,6 +80,13 @@ async function commandRunner(request = {}) {
     } else {
       child.stdin.end();
     }
+  });
+}
+
+function saveSessionWork(input = {}) {
+  return saveSessionWorkImplementation({
+    message: "Improve tested project behavior",
+    ...input
   });
 }
 
@@ -144,7 +156,288 @@ function managedGitProject(root, canonicalRepositoryPath) {
   };
 }
 
-test("Save preserves disjoint canonical work and publishes one ordinary commit", async () => {
+test("work inspection compares the complete session tree with its verified canonical base", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "committed-locally.txt"), "session work\n", "utf8");
+    await git(session.sourcePath, ["add", "committed-locally.txt"]);
+    await git(session.sourcePath, ["commit", "-m", "local session commit"]);
+
+    const result = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.repositoryMode, "github");
+    assert.equal(result.canonicalCommit, fixture.baseCommit);
+    assert.equal(result.sessionHead, await git(session.sourcePath, ["rev-parse", "HEAD"]));
+    assert.equal(result.dirty, false, "the working tree itself is clean");
+    assert.equal(result.unsaved, true, "the complete session tree still differs from canonical");
+    assert.equal(result.ahead, 1);
+    assert.equal(result.behind, 0);
+    assert.equal(result.updateAvailable, false);
+    assert.deepEqual(result.changedPaths, ["committed-locally.txt"]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("current changes returns a bounded canonical file list and one selected-file diff", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "changed\n", "utf8");
+    await writeFile(path.join(session.sourcePath, "new file.txt"), "new\n", "utf8");
+
+    const changes = await inspectSessionChanges({
+      limit: 1,
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(changes.unsaved, true);
+    assert.equal(changes.totalCount, 2);
+    assert.equal(changes.files.length, 1);
+    assert.equal(changes.truncated, true);
+    assert.deepEqual(changes.files[0], {
+      added: 1,
+      deleted: 0,
+      path: "new file.txt",
+      status: "A"
+    });
+
+    const fileDiff = await inspectSessionChangeDiff({
+      path: "shared.txt",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(fileDiff.path, "shared.txt");
+    assert.match(fileDiff.diff, /-initial/u);
+    assert.match(fileDiff.diff, /\+changed/u);
+    assert.equal(fileDiff.truncated, false);
+
+    await assert.rejects(inspectSessionChangeDiff({
+      path: "../outside.txt",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    }), (error) => error.code === "vibe64_session_change_path_invalid");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Update preserves unsaved session work while advancing to newer GitHub work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "remote.txt"), "remote\n", "utf8");
+    await git(canonicalWriter, ["add", "remote.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "remote advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
+
+    const check = await checkSessionUpdates({
+      operationId: "check-github-update",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(check.behind, 1);
+    assert.equal(check.ahead, 0);
+    assert.equal(check.relationship, "behind");
+    assert.equal(check.updateStrategy, "rebase");
+    assert.equal(check.updateAvailable, true);
+    assert.equal(check.incomingVersions.length, 1);
+    assert.equal(check.incomingVersions[0].commit, canonicalCommit);
+    assert.equal(check.incomingVersions[0].message, "remote advance");
+    assert.equal(check.incomingVersionsTruncated, false);
+
+    const result = await updateSessionWork({
+      operationId: "apply-github-update",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(result.status, "updated");
+    assert.equal(result.canonicalCommit, canonicalCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "remote.txt"), "utf8"), "remote\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /local\.txt/u);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Update check distinguishes diverged history from a normal fast-forward", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "session-commit.txt"), "session\n", "utf8");
+    await git(session.sourcePath, ["add", "session-commit.txt"]);
+    await git(session.sourcePath, ["commit", "-m", "session commit"]);
+
+    const canonicalWriter = path.join(root, "canonical-writer-diverged");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "remote-commit.txt"), "remote\n", "utf8");
+    await git(canonicalWriter, ["add", "remote-commit.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "remote commit"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+
+    const check = await checkSessionUpdates({
+      operationId: "check-diverged-update",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(check.ahead, 1);
+    assert.equal(check.behind, 1);
+    assert.equal(check.relationship, "diverged");
+    assert.equal(check.updateAvailable, true);
+    assert.equal(check.updateStrategy, "rebase");
+    assert.equal(check.incomingVersions.length, 1);
+    assert.equal(check.incomingVersions[0].message, "remote commit");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Update leaves HEAD, index, and worktree untouched when newer work conflicts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "shared.txt"), "remote\n", "utf8");
+    await git(canonicalWriter, ["add", "shared.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "remote conflict"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "local\n", "utf8");
+    const beforeHead = await git(session.sourcePath, ["rev-parse", "HEAD"]);
+    const beforeIndex = await git(session.sourcePath, ["write-tree"]);
+    const beforeStatus = await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]);
+
+    await assert.rejects(updateSessionWork({
+      operationId: "apply-conflicting-update",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    }), (error) => error.code === "vibe64_session_update_conflict");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), beforeHead);
+    assert.equal(await git(session.sourcePath, ["write-tree"]), beforeIndex);
+    assert.equal(await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]), beforeStatus);
+    assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "local\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("interrupted Update recovery applies the prepared result exactly once", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "remote.txt"), "remote\n", "utf8");
+    await git(canonicalWriter, ["add", "remote.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "remote advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
+    let recovery = {};
+
+    await assert.rejects(updateSessionWork({
+      onProgress: async (progress) => {
+        recovery = { ...recovery, ...progress };
+        if (progress.stage === "mutating") {
+          throw new Error("simulated restart");
+        }
+      },
+      operationId: "recover-update",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    }), /simulated restart/u);
+
+    const result = await recoverSessionWorkUpdate({
+      project: githubProject(root, fixture.remote),
+      recovery,
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(result.recovered, true);
+    assert.equal(result.status, "updated");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), recovery.canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "remote.txt"), "utf8"), "remote\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("local-source Update imports the clean project baseline as canonical authority", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const baseline = path.join(root, "baseline");
+    await git(root, ["init", "--initial-branch=main", baseline]);
+    await writeFile(path.join(baseline, "base.txt"), "initial\n", "utf8");
+    await git(baseline, ["add", "base.txt"]);
+    await git(baseline, ["commit", "-m", "initial"]);
+    const baseCommit = await git(baseline, ["rev-parse", "HEAD"]);
+    const source = path.join(root, "session-local");
+    await git(root, ["clone", "--branch", "main", baseline, source]);
+    await git(source, ["checkout", "-b", "vibe64/session-local"]);
+    await writeFile(path.join(source, "local.txt"), "local\n", "utf8");
+    await writeFile(path.join(baseline, "remote.txt"), "baseline\n", "utf8");
+    await git(baseline, ["add", "remote.txt"]);
+    await git(baseline, ["commit", "-m", "baseline advance"]);
+    const canonicalCommit = await git(baseline, ["rev-parse", "HEAD"]);
+    const project = {
+      path: baseline,
+      repository: { defaultBranch: "main", mode: "local_source" }
+    };
+    const session = {
+      metadata: {
+        base_branch: "main",
+        base_commit: baseCommit,
+        branch: "vibe64/session-local",
+        source_path: source
+      },
+      sessionId: "session-local",
+      sourcePath: source
+    };
+
+    const result = await updateSessionWork({
+      operationId: "local-update",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(result.canonicalCommit, canonicalCommit);
+    assert.equal(await git(source, ["rev-parse", "HEAD"]), canonicalCommit);
+    assert.equal(await readFile(path.join(source, "remote.txt"), "utf8"), "baseline\n");
+    assert.equal(await readFile(path.join(source, "local.txt"), "utf8"), "local\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Save refuses canonical advances until explicit Update rebases the session", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -158,13 +451,30 @@ test("Save preserves disjoint canonical work and publishes one ordinary commit",
     const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
     await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
 
+    const project = githubProject(root, fixture.remote);
+    await assert.rejects(saveSessionWork({
+      operationId: "save-before-rebase",
+      project,
+      runCommand: commandRunner,
+      session
+    }), (error) => error.code === "vibe64_session_save_update_required");
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
+
+    const updated = await updateSessionWork({
+      operationId: "rebase-before-save",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    session.metadata.base_commit = updated.canonicalCommit;
     const result = await saveSessionWork({
       identity: {
         email: "person@example.test",
         name: "Person"
       },
       operationId: "save-1",
-      project: githubProject(root, fixture.remote),
+      project,
       runCommand: commandRunner,
       session
     });
@@ -175,6 +485,10 @@ test("Save preserves disjoint canonical work and publishes one ordinary commit",
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
     assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), result.saveCommit);
     assert.equal(await git(session.sourcePath, ["rev-parse", `${result.saveCommit}^`]), canonicalCommit);
+    assert.equal(
+      await git(session.sourcePath, ["log", "-1", "--format=%s"]),
+      "Improve tested project behavior"
+    );
     assert.equal(await readFile(path.join(session.sourcePath, "remote.txt"), "utf8"), "remote\n");
     assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
     assert.equal(await git(session.sourcePath, ["status", "--porcelain"]), "");
@@ -183,7 +497,7 @@ test("Save preserves disjoint canonical work and publishes one ordinary commit",
   }
 });
 
-test("a second Save reconciles from the verified base and preserves a later canonical advance", async () => {
+test("a second Save also requires explicit Update after a later canonical advance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -207,6 +521,20 @@ test("a second Save reconciles from the verified base and preserves a later cano
     const canonicalSecond = await git(canonicalWriter, ["rev-parse", "HEAD"]);
     await writeFile(path.join(session.sourcePath, "second.txt"), "second\n", "utf8");
 
+    await assert.rejects(saveSessionWork({
+      operationId: "save-second-before-rebase",
+      project,
+      runCommand: commandRunner,
+      session
+    }), (error) => error.code === "vibe64_session_save_update_required");
+
+    const updated = await updateSessionWork({
+      operationId: "rebase-second-save",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    session.metadata.base_commit = updated.canonicalCommit;
     const second = await saveSessionWork({
       operationId: "save-second",
       project,
@@ -307,7 +635,63 @@ test("managed-Git Save uses the guarded canonical push and preserves its backup"
   }
 });
 
-test("Save reports a real three-way conflict without changing canonical authority", async () => {
+test("managed-Git Update reads the guarded canonical authority without publishing session work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const canonicalRepositoryPath = path.join(root, "canonical-repository", "repository.git");
+    await runScript(canonicalRepositoryInitializeScript({
+      defaultBranch: "main",
+      repositoryPath: canonicalRepositoryPath
+    }), root);
+    await runScript(canonicalRepositoryInstallRefScript({
+      repositoryPath: canonicalRepositoryPath,
+      sourceRef: "refs/heads/main",
+      sourceRepository: fixture.seed,
+      targetRef: "refs/heads/main"
+    }), root);
+    const session = await sessionForRemote(root, {
+      ...fixture,
+      remote: canonicalRepositoryPath
+    }, "managed-update");
+    await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
+
+    await writeFile(path.join(fixture.seed, "canonical.txt"), "canonical\n", "utf8");
+    await git(fixture.seed, ["add", "canonical.txt"]);
+    await git(fixture.seed, ["commit", "-m", "managed canonical advance"]);
+    await git(fixture.seed, ["remote", "add", "canonical", canonicalRepositoryPath]);
+    await git(fixture.seed, [
+      "push",
+      "--push-option=vibe64-atomic",
+      "canonical",
+      "HEAD:refs/heads/main"
+    ]);
+    const canonicalCommit = await git(fixture.seed, ["rev-parse", "HEAD"]);
+
+    const result = await updateSessionWork({
+      operationId: "managed-update",
+      project: managedGitProject(root, canonicalRepositoryPath),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(result.mode, "managed_git");
+    assert.equal(result.canonicalCommit, canonicalCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "canonical.txt"), "utf8"), "canonical\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /local\.txt/u);
+    assert.equal(
+      await git(root, ["--git-dir", canonicalRepositoryPath, "rev-parse", "refs/heads/main"]),
+      canonicalCommit,
+      "Update must not publish session work"
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("explicit Update reports a real three-way conflict without changing canonical authority", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -322,13 +706,13 @@ test("Save reports a real three-way conflict without changing canonical authorit
     await writeFile(path.join(session.sourcePath, "shared.txt"), "session\n", "utf8");
 
     await assert.rejects(
-      saveSessionWork({
-        operationId: "save-conflict",
+      updateSessionWork({
+        operationId: "update-conflict",
         project: githubProject(root, fixture.remote),
         runCommand: commandRunner,
         session
       }),
-      (error) => error.code === "vibe64_session_save_conflict"
+      (error) => error.code === "vibe64_session_update_conflict"
     );
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), canonicalCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "session\n");
@@ -409,7 +793,7 @@ test("Save rejects only a genuine same-file sibling merge conflict", async () =>
   }
 });
 
-test("work inspection is clean when the session tree matches its canonical tracking ref", async () => {
+test("work inspection trusts only the platform-verified canonical snapshot, not mutable tracking refs", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -419,15 +803,212 @@ test("work inspection is clean when the session tree matches its canonical track
     await git(session.sourcePath, ["commit", "-m", "published work"]);
     await git(session.sourcePath, ["push", "origin", "HEAD:main"]);
 
-    const result = await inspectSessionWork({
+    const publishedCommit = await git(session.sourcePath, ["rev-parse", "HEAD"]);
+    await mkdir(path.join(session.sourcePath, "node_modules", "ignored-package"), { recursive: true });
+    await writeFile(path.join(session.sourcePath, ".git", "info", "exclude"), "node_modules/\n", "utf8");
+    await writeFile(path.join(session.sourcePath, "node_modules", "ignored-package", "index.js"), "ignored\n", "utf8");
+
+    const beforeCheck = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(beforeCheck.canonicalCommit, fixture.baseCommit);
+    assert.equal(beforeCheck.unsaved, true);
+
+    const checked = await checkSessionUpdates({
+      operationId: "check-pulled-canonical",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(checked.behind, 0);
+    assert.equal(checked.reconciled, true);
+    assert.equal(checked.sessionCurrent, true);
+    assert.equal(checked.updateAvailable, false);
+
+    const inspected = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(inspected.unsaved, false);
+    assert.deepEqual(inspected.changedPaths, []);
+    assert.equal(inspected.canonicalCommit, publishedCommit);
+    assert.equal(inspected.changeBaseCommit, publishedCommit);
+    assert.equal(inspected.sessionMatchesCanonical, true);
+
+    const updated = await updateSessionWork({
+      operationId: "update-pulled-canonical",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(updated.status, "already_current");
+    assert.equal(updated.canonicalCommit, publishedCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), publishedCommit);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Save publishes only session-authored work after the session incorporates canonical updates", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer-pulled");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "canonical.txt"), "canonical\n", "utf8");
+    await git(canonicalWriter, ["add", "canonical.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "canonical update"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+
+    await git(session.sourcePath, ["pull", "--ff-only", "origin", "main"]);
+    await writeFile(path.join(session.sourcePath, "session-only.txt"), "session\n", "utf8");
+
+    const result = await saveSessionWork({
+      operationId: "save-after-pull",
       project: githubProject(root, fixture.remote),
       runCommand: commandRunner,
       session
     });
 
-    assert.equal(result.unsaved, false);
-    assert.deepEqual(result.changedPaths, []);
-    assert.notEqual(result.canonicalCommit, fixture.baseCommit);
+    assert.equal(result.changeBaseCommit, canonicalCommit);
+    assert.deepEqual(result.changedPaths, ["session-only.txt"]);
+    assert.equal(await git(session.sourcePath, ["rev-parse", `${result.saveCommit}^`]), canonicalCommit);
+    assert.equal(
+      await git(session.sourcePath, ["diff-tree", "--no-commit-id", "--name-only", "-r", result.saveCommit]),
+      "session-only.txt"
+    );
+    assert.equal(await readFile(path.join(session.sourcePath, "canonical.txt"), "utf8"), "canonical\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("work inspection reports a canonical advance as an update instead of local changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer-observed");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "remote.txt"), "remote\n", "utf8");
+    await git(canonicalWriter, ["add", "remote.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "remote advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+    await git(session.sourcePath, ["fetch", "origin", "main"]);
+
+    await checkSessionUpdates({
+      operationId: "check-observed-canonical",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    const inspected = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(inspected.unsaved, false);
+    assert.deepEqual(inspected.changedPaths, []);
+    assert.equal(inspected.canonicalCommit, canonicalCommit);
+    assert.equal(inspected.changeBaseCommit, fixture.baseCommit);
+    assert.equal(inspected.behind, 1);
+    assert.equal(inspected.updateAvailable, true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("work inspection does not resurrect saved work when canonical advances beyond the session head", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "already-saved.txt"), "saved\n", "utf8");
+    await git(session.sourcePath, ["add", "already-saved.txt"]);
+    await git(session.sourcePath, ["commit", "-m", "already saved"]);
+    await git(session.sourcePath, ["push", "origin", "HEAD:main"]);
+    const sessionHead = await git(session.sourcePath, ["rev-parse", "HEAD"]);
+
+    const canonicalWriter = path.join(root, "canonical-writer-after-session");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "canonical-only.txt"), "canonical\n", "utf8");
+    await git(canonicalWriter, ["add", "canonical-only.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "canonical advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+    await git(session.sourcePath, ["fetch", "origin", "main"]);
+
+    await checkSessionUpdates({
+      operationId: "check-canonical-after-session",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    const inspected = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(inspected.sessionHead, sessionHead);
+    assert.equal(inspected.canonicalCommit, canonicalCommit);
+    assert.equal(inspected.changeBaseCommit, sessionHead);
+    assert.equal(inspected.unsaved, false);
+    assert.deepEqual(inspected.changedPaths, []);
+    assert.equal(inspected.behind, 1);
+    assert.equal(inspected.updateAvailable, true);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("work inspection reports only new session edits when canonical advances beyond the session head", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "already-saved.txt"), "saved\n", "utf8");
+    await git(session.sourcePath, ["add", "already-saved.txt"]);
+    await git(session.sourcePath, ["commit", "-m", "already saved"]);
+    await git(session.sourcePath, ["push", "origin", "HEAD:main"]);
+    const sessionHead = await git(session.sourcePath, ["rev-parse", "HEAD"]);
+
+    const canonicalWriter = path.join(root, "canonical-writer-with-session-edit");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "canonical-only.txt"), "canonical\n", "utf8");
+    await git(canonicalWriter, ["add", "canonical-only.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "canonical advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    await git(session.sourcePath, ["fetch", "origin", "main"]);
+
+    await checkSessionUpdates({
+      operationId: "check-canonical-with-session-edit",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+    await writeFile(path.join(session.sourcePath, "session-only.txt"), "session\n", "utf8");
+
+    const inspected = await inspectSessionWork({
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(inspected.changeBaseCommit, sessionHead);
+    assert.equal(inspected.unsaved, true);
+    assert.deepEqual(inspected.changedPaths, ["session-only.txt"]);
+    assert.equal(inspected.behind, 1);
+    assert.equal(inspected.updateAvailable, true);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

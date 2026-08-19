@@ -27,35 +27,34 @@
           :selected-session-id="sessionId"
           :selection-closed="sessionAbandonDisabled"
           :toolbar="props.sessionToolbar"
+          @select-session="activateRealSession"
         />
 
         <div class="studio-autopilot__header-actions">
           <v-btn
             aria-label="Open temporary AI"
             :disabled="!sessionId"
-            :prepend-icon="mdiRobotOutline"
+            :icon="mdiIncognito"
             size="small"
             title="Open a temporary AI conversation"
             type="button"
             variant="text"
             @click="openTemporaryAi"
-          >
-            Temporary AI
-          </v-btn>
+          />
           <v-btn
-            aria-label="Save work"
+            :aria-label="saveWorkActionLabel"
             class="studio-autopilot__save-work"
-            :color="saveWorkUnsaved ? 'error' : undefined"
+            :color="saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'error' : undefined)"
             :disabled="saveWorkDisabled"
             :loading="saveWorkSending"
-            :prepend-icon="mdiContentSaveOutline"
+            :prepend-icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"
             size="small"
-            title="Save this session's work to the canonical repository"
+            :title="saveWorkTitle"
             type="button"
             variant="tonal"
             @click="requestSaveWork"
           >
-            Save work
+            {{ saveWorkActionLabel }}
           </v-btn>
         </div>
       </header>
@@ -90,7 +89,7 @@
           body-mode="log"
           :collapsible="true"
           :error="saveWorkError"
-          error-title="Save needs attention"
+          :error-title="`${saveWorkActionLabel} needs attention`"
           :expanded="saveWorkExpanded"
           height="clamp(8rem, 22vh, 14rem)"
           mobile-takeover
@@ -100,8 +99,8 @@
           :show-interrupt="false"
           :starting="saveWorkSending"
           :status="saveWorkStatus"
-          subtitle="Canonical project Save"
-          title="Save work"
+          :subtitle="saveWorkRequiresUpdate ? 'Replay current work on the latest saved version' : 'Canonical project Save'"
+          :title="saveWorkActionLabel"
           @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
         >
           <template v-if="saveWorkError" #error-actions>
@@ -110,7 +109,7 @@
               size="x-small"
               type="button"
               variant="tonal"
-              @click="openTemporaryAiForSaveError"
+              @click="openTemporaryAiForRepositoryActionError"
             >
               Resolve with temporary AI
             </v-btn>
@@ -374,7 +373,7 @@
         v-if="props.projectPane === 'dashboard'"
         v-show="dashboardShellVisible"
         class="studio-autopilot__dashboard-shell"
-        :dashboard-context="dashboardSessionContext"
+        :dashboard-context="dashboardContext"
       >
         <div
           v-show="dashboardRouteVisible"
@@ -384,7 +383,7 @@
           <slot
             v-if="dashboardRouteVisible"
             name="dashboard"
-            :dashboard-context="dashboardSessionContext"
+            :dashboard-context="dashboardContext"
           />
         </div>
 
@@ -472,32 +471,6 @@
         />
       </section>
 
-      <section
-        v-show="props.projectPane === 'dashboard' && rightPaneTab === 'diff'"
-        class="studio-autopilot__right-pane-page studio-autopilot__session-tool-pane"
-        role="tabpanel"
-      >
-        <header class="studio-autopilot__session-tool-header">
-          <v-btn
-            :prepend-icon="mdiArrowLeft"
-            size="x-small"
-            type="button"
-            variant="tonal"
-            @click="backToDashboard"
-          >
-            Back to dashboard
-          </v-btn>
-        </header>
-        <Vibe64SessionDiffPanel
-          v-if="rightPaneTabMounted('diff')"
-          :active="props.projectPane === 'dashboard' && rightPaneTab === 'diff'"
-          class="studio-autopilot__session-tool-content"
-          :diff="props.diff"
-          :review="props.review"
-          @open-source-file="openSourceEditorFile"
-        />
-      </section>
-
       <div
         v-show="props.projectPane !== 'dashboard'"
         class="studio-autopilot__right-pane-page"
@@ -550,7 +523,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, ref } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import {
   mdiArrowLeft,
   mdiArrowTopRight,
@@ -558,9 +531,11 @@ import {
   mdiContentSaveOutline,
   mdiEyePlusOutline,
   mdiGithub,
+  mdiIncognito,
   mdiPaperclip,
   mdiRobotOutline,
   mdiSend,
+  mdiSourcePull,
   mdiStopCircleOutline
 } from "@mdi/js";
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
@@ -589,7 +564,6 @@ const temporaryAiWorkspace = ref(null);
 
 const {
   Vibe64LaunchControls,
-  Vibe64SessionDiffPanel,
   agentStopEnabled,
   agentStopVisible,
   answerChoices,
@@ -638,6 +612,7 @@ const {
   rightPaneTab,
   rightPaneTabMounted,
   saveWorkConfirmOpen,
+  saveWorkActionLabel,
   saveWorkDisabled,
   saveWorkError,
   saveWorkExpanded,
@@ -645,6 +620,8 @@ const {
   saveWorkOutput,
   saveWorkSending,
   saveWorkStatus,
+  saveWorkTitle,
+  saveWorkRequiresUpdate,
   saveWorkUnsaved,
   sessionId,
   sessionGithubActor,
@@ -674,6 +651,12 @@ const {
   workspaceSetupVisible
 } = useVibe64AutopilotView(props, emit);
 
+const dashboardContext = computed(() => ({
+  ...(dashboardSessionContext.value || {}),
+  requestUpdateWork: props.updateSessionWork,
+  requestTemporaryAi: openTemporaryAiForRepositoryError
+}));
+
 const sessionAbandonDisabled = computed(() => Boolean(
   props.sessionSelectionClosed ||
   props.sessionAbandon?.command?.isRunning ||
@@ -695,19 +678,41 @@ function focusComposerSendButton() {
 }
 
 function openTemporaryAi() {
-  temporaryAiWorkspace.value?.openTask?.();
+  temporaryAiWorkspace.value?.showWorkspace?.();
 }
 
-function openTemporaryAiForSaveError() {
+function activateRealSession() {
+  temporaryAiWorkspace.value?.closeWorkspace?.();
+}
+
+function openTemporaryAiForRepositoryActionError() {
+  const action = saveWorkRequiresUpdate.value ? "Update" : "Save";
   temporaryAiWorkspace.value?.openTask?.({
     draft: [
-      "Help resolve this Vibe64 Save problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
+      `Help resolve this Vibe64 ${action} problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:`,
       saveWorkError.value
     ].filter(Boolean).join("\n\n"),
     policy: "workspace_write",
-    title: "Resolve Save"
+    title: `Resolve ${action}`
   });
 }
+
+function openTemporaryAiForRepositoryError({ error = "", title = "Resolve repository problem" } = {}) {
+  temporaryAiWorkspace.value?.openTask?.({
+    draft: [
+      "Help resolve this Vibe64 repository problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
+      String(error || "").trim()
+    ].filter(Boolean).join("\n\n"),
+    policy: "workspace_write",
+    title
+  });
+}
+
+watch(() => props.active, (active, wasActive) => {
+  if (active && !wasActive) {
+    activateRealSession();
+  }
+});
 
 async function attachPreviewFile(file) {
   const uploaded = await composerInput.value?.attachFiles?.([file]);
@@ -1076,7 +1081,7 @@ async function attachPreviewFile(file) {
 }
 
 @media (max-width: 900px) {
-  .studio-autopilot {
+  .studio-autopilot:not(.studio-autopilot--chat-collapsed) {
     grid-template-columns: minmax(17rem, 44%) minmax(0, 1fr);
   }
 }

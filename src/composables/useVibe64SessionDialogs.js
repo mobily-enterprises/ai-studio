@@ -1,7 +1,6 @@
 import { computed, ref, unref } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
-import { useVibe64DiffDialog } from "@/composables/useVibe64DiffDialog.js";
 import {
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
@@ -23,21 +22,6 @@ function useVibe64SessionDialogs({
   const abandonDialogSessionTitle = ref("");
   const abandonClosingSessionId = ref("");
   const resolvedSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || ""));
-
-  const {
-    clearDiffDialog,
-    closeDiffDialog,
-    diffDialogOpen,
-    diffError,
-    diffLoading,
-    diffPayload,
-    loadDiff,
-    loadFullDiff,
-    openDiffDialog
-  } = useVibe64DiffDialog({
-    canOpen: () => Boolean(unref(selectedSessionId) && !unref(isSelectedSessionClosed)),
-    selectedSessionId
-  });
 
   const abandonCommand = useCommand({
     access: "never",
@@ -122,7 +106,6 @@ function useVibe64SessionDialogs({
 
   function clear() {
     clearAbandonDialog();
-    clearDiffDialog();
   }
 
   return {
@@ -138,17 +121,7 @@ function useVibe64SessionDialogs({
       sessionTitle: abandonDialogSessionTitle
     },
     busy: computed(() => Boolean(abandonClosingSessionId.value)),
-    clear,
-    diff: {
-      close: closeDiffDialog,
-      error: diffError,
-      load: loadDiff,
-      loadFull: loadFullDiff,
-      loading: diffLoading,
-      open: diffDialogOpen,
-      openDialog: openDiffDialog,
-      payload: diffPayload
-    }
+    clear
   };
 }
 

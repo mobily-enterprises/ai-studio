@@ -25,6 +25,7 @@ process.env[VIBE64_RUNTIME_NAMESPACE_ENV] = "unit-owner";
 
 const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "base_commit",
+  "canonical_commit",
   "repository_mode",
   "source",
   "source_kind",
