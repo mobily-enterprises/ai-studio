@@ -1406,6 +1406,18 @@ function createCodexTerminalController({
     if (existing) {
       return existing;
     }
+    const nextFields = codexAppServerProviderKeyFields(providerKey);
+    for (const currentKey of [...codexAppServerProviders.keys()]) {
+      const currentFields = codexAppServerProviderKeyFields(currentKey);
+      if (
+        currentFields.sessionId === nextFields.sessionId &&
+        currentFields.targetRoot === nextFields.targetRoot &&
+        currentFields.runtimeInstanceId === nextFields.runtimeInstanceId &&
+        currentFields.workdir === nextFields.workdir
+      ) {
+        closeCodexAppServerProvider(currentKey);
+      }
+    }
     const provider = codexAppServerProviderFactory(options);
     codexAppServerProviders.set(providerKey, provider);
     return provider;

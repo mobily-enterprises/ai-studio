@@ -140,6 +140,75 @@ async function withConversationController(operation) {
   }
 }
 
+test("a changed session environment retires the previous provider for the same runtime", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-provider-ownership-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = "test";
+  const session = {
+    metadata: {
+      source_path: targetRoot
+    },
+    sessionId: "session-1",
+    targetRoot
+  };
+  let environmentVersion = "one";
+  const providers = [];
+  const controller = createCodexTerminalController({
+    codexAppServerProviderFactory() {
+      const provider = {
+        closed: 0,
+        close() {
+          provider.closed += 1;
+        },
+        async ensureAvailable() {},
+        async startThread() {
+          return { id: `conversation-${providers.length + 1}` };
+        }
+      };
+      providers.push(provider);
+      return provider;
+    },
+    env: {
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return {
+          async getSession() {
+            return session;
+          },
+          stateRoot: targetRoot
+        };
+      },
+      async projectExecutionEnvironment() {
+        return {
+          PROVIDER_OWNERSHIP_VERSION: environmentVersion,
+          VIBE64_RUNTIME_NAMESPACE: "test",
+          VIBE64_WORKSPACE: "test"
+        };
+      }
+    }
+  });
+  try {
+    const first = await controller.createConversation("session-1");
+    assert.equal(first.ok, true, JSON.stringify(first));
+    environmentVersion = "two";
+    const second = await controller.createConversation("session-1");
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(providers.length, 2);
+    assert.equal(providers[0].closed, 1);
+    assert.equal(providers[1].closed, 0);
+  } finally {
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(targetRoot, { force: true, recursive: true });
+  }
+});
+
 test("temporary conversations start turns without resuming a nonexistent rollout", async () => {
   await withConversationController(async ({ calls, controller }) => {
     const conversation = await controller.createConversation("session-1", {
