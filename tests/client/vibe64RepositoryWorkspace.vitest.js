@@ -84,8 +84,11 @@ describe("Vibe64 Repository workspace", () => {
     expect(repositoryWorkspace).toContain("Someone saved new project work after this session started");
     expect(repositoryWorkspace).toContain("Saved versions this session needs");
     expect(repositoryWorkspace).toContain("repositoryIncomingVersions");
-    expect(repositoryWorkspace.match(/Update this session \(rebase\)/gu)).toHaveLength(5);
-    expect(repositoryWorkspace).toContain("replay its current work on the latest saved version");
+    expect(repositoryWorkspace.match(/Update this session \(rebase\)/gu)).toHaveLength(7);
+    expect(repositoryWorkspace).toContain("replay its unsaved work on the latest saved version");
+    expect(repositoryWorkspace).toContain("will move it to the latest saved version");
+    expect(repositoryWorkspace).toContain('changes.payload?.unsaved === true');
+    expect(repositoryWorkspace).not.toContain("Your current work is preserved when you update");
     expect(repositoryWorkspace).toContain("Last checked");
     expect(repositoryComposable).toContain("result.updateCheck");
     expect(repositoryComposable).toContain("cached: true");
@@ -146,6 +149,23 @@ describe("Vibe64 Repository workspace", () => {
     expect(repositoryWorkspace).not.toContain("repositoryFileStatusLabel");
     expect(repositoryComposable).not.toContain("repositoryFileStatusLabel");
     expect(fileBrowser.match(/function fileStatusLabel/gu)).toHaveLength(1);
+  });
+
+  it("does not describe a clean but outdated session as matching the saved project", async () => {
+    const [repositoryWorkspace, repositoryComposable, autopilotView, runtimeHost] = await Promise.all([
+      source("src/components/studio/repository/Vibe64RepositoryWorkspace.vue"),
+      source("src/composables/useVibe64RepositoryWorkspace.js"),
+      source("src/composables/useVibe64AutopilotView.js"),
+      source("src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue")
+    ]);
+
+    expect(repositoryWorkspace).toContain("No unsaved file changes");
+    expect(repositoryWorkspace).toContain("no file changes waiting to be saved");
+    expect(repositoryWorkspace).not.toContain("This session matches the project’s saved version");
+    expect(repositoryComposable).toContain('typeof context.value.refreshSessionWork === "function"');
+    expect(repositoryComposable).toContain("await context.value.refreshSessionWork()");
+    expect(autopilotView).toContain("refreshSessionWork: props.refreshSessionWork");
+    expect(runtimeHost).toContain(':refresh-session-work="refreshWorkState"');
   });
 
   it("gives the selected project tool the full mobile width when chat is collapsed", async () => {

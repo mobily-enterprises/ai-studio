@@ -186,6 +186,7 @@
 
 <script setup>
 import { computed, ref } from "vue";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiArrowUp,
   mdiClose,
@@ -220,8 +221,18 @@ const props = defineProps({
 const prompt = ref(null);
 const sendButton = ref(null);
 const resolvedSessionsApiPath = computed(() => readRefOrGetterValue(props.sessionsApiPath));
+const temporaryAiFeedback = useUiFeedback({
+  source: "vibe64.temporary-ai.feedback"
+});
 const temporary = useVibe64TemporaryAi({
   agentSettings: computed(() => props.agentSettings),
+  onTaskFinished(task = {}) {
+    if (task.status === "completed") {
+      temporaryAiFeedback.success(`${task.title} finished. Review the result before continuing.`);
+      return;
+    }
+    temporaryAiFeedback.error(task.error, `${task.title} stopped with an error.`);
+  },
   sessionId: computed(() => props.sessionId),
   sessionsApiPath: resolvedSessionsApiPath
 });

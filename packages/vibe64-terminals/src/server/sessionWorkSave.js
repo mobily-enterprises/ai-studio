@@ -27,6 +27,10 @@ const MAX_CHANGE_FILE_LIMIT = 500;
 const DEFAULT_CHANGE_DIFF_LINE_LIMIT = 800;
 const MAX_CHANGE_DIFF_LINE_LIMIT = 5000;
 const INCOMING_VERSION_LIMIT = 5;
+const SIBLING_CONFLICT_DETAIL_LIMIT = 4;
+const SIBLING_CONFLICT_PATH_LIMIT = 20;
+const SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT = 24_000;
+const SIBLING_CONFLICT_PATCH_LINE_LIMIT = 300;
 
 function text(value = "") {
   return String(value || "").trim();
@@ -41,6 +45,9 @@ function metadata(session = {}) {
 function saveError(message, code = "vibe64_session_save_failed", details = {}) {
   const error = new Error(message || "Vibe64 could not save this session.");
   error.code = code;
+  error.details = details && typeof details === "object" && !Array.isArray(details)
+    ? { ...details }
+    : {};
   Object.assign(error, details);
   return error;
 }
@@ -612,6 +619,16 @@ function canonicalRef(context) {
   return `refs/vibe64/canonical/${digest}`;
 }
 
+async function deleteOperationRef(runCommand, context, ref, options = {}) {
+  if (!text(ref)) {
+    return;
+  }
+  await git(runCommand, context, ["update-ref", "-d", ref], {
+    ...options,
+    required: false
+  });
+}
+
 async function rememberCanonicalCommit(runCommand, context, commit, options = {}) {
   const verified = await gitOutput(runCommand, context, [
     "rev-parse",
@@ -628,15 +645,19 @@ async function rememberCanonicalCommit(runCommand, context, commit, options = {}
 
 async function readRemoteCanonical(runCommand, context, operationId, options) {
   await git(runCommand, context, ["remote", "set-url", "origin", context.remoteUrl], options);
-  const canonicalRef = saveRef(context, operationId, "canonical");
-  await git(runCommand, context, [
-    "fetch",
-    "--no-tags",
-    "origin",
-    `+refs/heads/${context.branch}:${canonicalRef}`
-  ], options);
-  const commit = await gitOutput(runCommand, context, ["rev-parse", "--verify", canonicalRef], options);
-  return rememberCanonicalCommit(runCommand, context, commit, options);
+  const operationRef = saveRef(context, operationId, "canonical");
+  try {
+    await git(runCommand, context, [
+      "fetch",
+      "--no-tags",
+      "origin",
+      `+refs/heads/${context.branch}:${operationRef}`
+    ], options);
+    const commit = await gitOutput(runCommand, context, ["rev-parse", "--verify", operationRef], options);
+    return rememberCanonicalCommit(runCommand, context, commit, options);
+  } finally {
+    await deleteOperationRef(runCommand, context, operationRef, options);
+  }
 }
 
 async function assertLocalAuthority(runCommand, context, options) {
@@ -684,25 +705,29 @@ async function readCanonical(runCommand, context, operationId, options) {
     return readRemoteCanonical(runCommand, context, operationId, options);
   }
   const authorityCommit = await assertLocalAuthority(runCommand, context, options);
-  const canonicalRef = saveRef(context, operationId, "canonical");
-  await git(runCommand, context, [
-    "fetch",
-    "--no-tags",
-    context.projectRoot,
-    `+refs/heads/${context.branch}:${canonicalRef}`
-  ], options);
-  const importedCommit = await gitOutput(runCommand, context, [
-    "rev-parse",
-    "--verify",
-    canonicalRef
-  ], options);
-  if (importedCommit !== authorityCommit) {
-    throw saveError(
-      "The local project baseline changed while Vibe64 was reading it.",
-      "vibe64_session_save_authority_advanced"
-    );
+  const operationRef = saveRef(context, operationId, "canonical");
+  try {
+    await git(runCommand, context, [
+      "fetch",
+      "--no-tags",
+      context.projectRoot,
+      `+refs/heads/${context.branch}:${operationRef}`
+    ], options);
+    const importedCommit = await gitOutput(runCommand, context, [
+      "rev-parse",
+      "--verify",
+      operationRef
+    ], options);
+    if (importedCommit !== authorityCommit) {
+      throw saveError(
+        "The local project baseline changed while Vibe64 was reading it.",
+        "vibe64_session_save_authority_advanced"
+      );
+    }
+    return rememberCanonicalCommit(runCommand, context, importedCommit, options);
+  } finally {
+    await deleteOperationRef(runCommand, context, operationRef, options);
   }
-  return rememberCanonicalCommit(runCommand, context, importedCommit, options);
 }
 
 async function mergeTrees(runCommand, context, {
@@ -726,6 +751,8 @@ async function mergeTrees(runCommand, context, {
     "merge-tree",
     "--write-tree",
     "--messages",
+    "--name-only",
+    "-z",
     canonicalCommit,
     mergeInputCommit
   ], {
@@ -733,20 +760,138 @@ async function mergeTrees(runCommand, context, {
     project,
     required: false
   });
-  if (merged?.ok !== true) {
+  const tokens = String(merged?.stdout || merged?.output || "").split("\0");
+  const mergedTree = text(tokens.shift());
+  if (!/^[0-9a-f]{40,64}$/u.test(mergedTree)) {
     throw saveError(
-      text(merged?.stdout || merged?.stderr || merged?.output) || "Session changes conflict with canonical work.",
-      "vibe64_session_update_conflict"
+      merged?.ok === true
+        ? "Git did not produce a valid rebased tree."
+        : "Vibe64 could not prepare the conflicting files for review.",
+      "vibe64_session_update_merge_invalid"
     );
   }
-  const mergedTree = output(merged).split(/\r?\n/u)[0];
-  if (!/^[0-9a-f]{40,64}$/u.test(mergedTree)) {
-    throw saveError("Git did not produce a valid rebased tree.", "vibe64_session_update_merge_invalid");
+  if (merged?.ok !== true) {
+    const conflictPaths = [];
+    while (tokens.length > 0) {
+      const value = tokens.shift();
+      if (!value) {
+        break;
+      }
+      conflictPaths.push(value);
+    }
+    if (!conflictPaths.length) {
+      throw saveError(
+        "Vibe64 could not identify which files conflict with the latest saved version.",
+        "vibe64_session_update_merge_invalid"
+      );
+    }
+    return {
+      conflictPaths: [...new Set(conflictPaths)].sort((left, right) => left.localeCompare(right)),
+      conflictTree: mergedTree,
+      mergedTree: "",
+      virtualCommit: mergeInputCommit
+    };
   }
   return {
+    conflictPaths: [],
+    conflictTree: "",
     mergedTree,
     virtualCommit: mergeInputCommit
   };
+}
+
+function normalizedConflictRecovery(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const conflictPaths = Array.isArray(value.conflictPaths)
+    ? [...new Set(value.conflictPaths.map(String).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right))
+    : [];
+  const recovery = {
+    baseCommit: text(value.baseCommit),
+    canonicalCommit: text(value.canonicalCommit),
+    checkpointTree: text(value.checkpointTree),
+    conflictPaths,
+    conflictTree: text(value.conflictTree),
+    oldHead: text(value.oldHead),
+    oldIndexTree: text(value.oldIndexTree)
+  };
+  return Object.values(recovery).some((entry) => Array.isArray(entry) ? entry.length === 0 : !entry)
+    ? null
+    : recovery;
+}
+
+function samePaths(left = [], right = []) {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function conflictMessage(conflictPaths = [], reason = "") {
+  const count = conflictPaths.length;
+  const files = conflictPaths.slice(0, 3).join(", ");
+  const suffix = count > 3 ? ` and ${count - 3} more` : "";
+  if (reason === "unchanged") {
+    return `The ${count === 1 ? "conflicting file has" : "conflicting files have"} not changed since the failed update. Review ${count === 1 ? "it" : "them"} with Temporary AI, then retry Update this session (rebase).`;
+  }
+  if (reason === "outside") {
+    return "Files outside the original conflict changed after the failed update. Review the update again before retrying.";
+  }
+  return `${count} ${count === 1 ? "file needs" : "files need"} review before this session can update: ${files}${suffix}. Open Temporary AI, resolve the listed ${count === 1 ? "file" : "files"}, then retry Update this session (rebase).`;
+}
+
+function conflictRecoveryError(recovery, reason = "") {
+  return saveError(
+    conflictMessage(recovery.conflictPaths, reason),
+    "vibe64_session_update_conflict",
+    {
+      conflictPaths: recovery.conflictPaths,
+      conflictRecovery: recovery
+    }
+  );
+}
+
+async function resolvedConflictTree(runCommand, context, {
+  checkpointTree,
+  commandOptions,
+  currentRecovery,
+  previousRecovery,
+  project
+}) {
+  const previous = normalizedConflictRecovery(previousRecovery);
+  if (!previous) {
+    throw conflictRecoveryError(currentRecovery);
+  }
+  const stable = [
+    "baseCommit",
+    "canonicalCommit",
+    "oldHead",
+    "oldIndexTree"
+  ].every((key) => previous[key] === currentRecovery[key]) &&
+    samePaths(previous.conflictPaths, currentRecovery.conflictPaths);
+  if (!stable) {
+    throw conflictRecoveryError(currentRecovery);
+  }
+  const changedAfterFailure = await changedPathsBetween(
+    runCommand,
+    context,
+    previous.checkpointTree,
+    checkpointTree,
+    { commandOptions, project }
+  );
+  if (!changedAfterFailure.length) {
+    throw conflictRecoveryError(currentRecovery, "unchanged");
+  }
+  const conflictPathSet = new Set(currentRecovery.conflictPaths);
+  if (changedAfterFailure.some((entry) => !conflictPathSet.has(entry))) {
+    throw conflictRecoveryError(currentRecovery, "outside");
+  }
+  return writeGitWorktreeTree({
+    baseCommit: currentRecovery.conflictTree,
+    paths: currentRecovery.conflictPaths,
+    project: commandProject(context, project),
+    runCommand,
+    worktreePath: context.worktreePath
+  });
 }
 
 async function createVirtualCommit(runCommand, context, {
@@ -777,6 +922,55 @@ function siblingLocalRef(context, operationId, siblingSessionId) {
     .digest("hex")
     .slice(0, 24);
   return saveRef(context, operationId, `sibling-${siblingDigest}`);
+}
+
+function boundedConflictPatch(value = "") {
+  const source = String(value || "");
+  const lines = source.split(/\r?\n/u);
+  const lineBounded = lines.length > SIBLING_CONFLICT_PATCH_LINE_LIMIT
+    ? lines.slice(0, SIBLING_CONFLICT_PATCH_LINE_LIMIT).join("\n")
+    : source;
+  const patch = lineBounded.length > SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT
+    ? lineBounded.slice(0, SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT)
+    : lineBounded;
+  return {
+    patch,
+    truncated: patch.length < source.length
+  };
+}
+
+async function siblingConflictPatch(runCommand, context, {
+  commandOptions,
+  fromCommit,
+  paths,
+  project,
+  toCommit
+}) {
+  const selectedPaths = (Array.isArray(paths) ? paths : [])
+    .map(text)
+    .filter(Boolean)
+    .slice(0, SIBLING_CONFLICT_PATH_LIMIT);
+  if (!selectedPaths.length) {
+    return { patch: "", truncated: false };
+  }
+  const result = await git(runCommand, context, [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--unified=3",
+    fromCommit,
+    toCommit,
+    "--",
+    ...selectedPaths
+  ], {
+    commandOptions,
+    project,
+    required: false
+  });
+  if (result?.ok !== true) {
+    return { patch: "", truncated: false, unavailable: true };
+  }
+  return boundedConflictPatch(String(result.stdout || result.output || ""));
 }
 
 async function compareSiblingWork(runCommand, context, {
@@ -836,6 +1030,7 @@ async function compareSiblingWork(runCommand, context, {
         sessionId: siblingSessionId
       };
     }
+    const mergeBaseCommit = output(mergeBase);
     const merged = await git(runCommand, context, [
       "merge-tree",
       "--write-tree",
@@ -847,16 +1042,47 @@ async function compareSiblingWork(runCommand, context, {
       project,
       required: false
     });
+    if (merged?.ok === true) {
+      return {
+        classification: "overlap-clean",
+        paths: sibling.overlappingPaths,
+        sessionId: siblingSessionId
+      };
+    }
+    const [current, siblingPatch] = await Promise.all([
+      siblingConflictPatch(runCommand, context, {
+        commandOptions,
+        fromCommit: mergeBaseCommit,
+        paths: sibling.overlappingPaths,
+        project,
+        toCommit: currentVirtualCommit
+      }),
+      siblingConflictPatch(runCommand, context, {
+        commandOptions,
+        fromCommit: mergeBaseCommit,
+        paths: sibling.overlappingPaths,
+        project,
+        toCommit: importedCommit
+      })
+    ]);
     return {
-      classification: merged?.ok === true ? "overlap-clean" : "conflict",
-      paths: sibling.overlappingPaths,
+      classification: "conflict",
+      current,
+      paths: sibling.overlappingPaths.slice(0, SIBLING_CONFLICT_PATH_LIMIT),
+      pathsTruncated: sibling.overlappingPaths.length > SIBLING_CONFLICT_PATH_LIMIT,
+      sibling: siblingPatch,
       sessionId: siblingSessionId
     };
   } finally {
-    await git(runCommand, context, ["update-ref", "-d", localRef], {
+    await deleteOperationRef(runCommand, context, localRef, {
       commandOptions,
-      project,
-      required: false
+      project
+    });
+    await deleteOperationRef(runCommand, context, comparisonRef, {
+      additionalAllowedRoots: [siblingWorktreePath],
+      commandOptions,
+      cwd: siblingWorktreePath,
+      project
     });
   }
 }
@@ -1141,6 +1367,7 @@ async function applySessionUpdate(runCommand, context, {
 
 async function updateSessionWork({
   commandOptions = {},
+  conflictRecovery = null,
   identity = {},
   onProgress = async () => null,
   operationId = crypto.randomUUID(),
@@ -1278,7 +1505,7 @@ async function updateSessionWork({
         ...reconciliation
       };
     }
-    const { mergedTree } = await mergeTrees(runCommand, context, {
+    const mergeResult = await mergeTrees(runCommand, context, {
       baseCommit: comparison.changeBaseCommit,
       canonicalCommit,
       checkpointTree: checkpoint.tree,
@@ -1286,6 +1513,26 @@ async function updateSessionWork({
       identity: author,
       project
     });
+    const currentRecovery = mergeResult.conflictPaths.length > 0
+      ? {
+          baseCommit: comparison.changeBaseCommit,
+          canonicalCommit,
+          checkpointTree: checkpoint.tree,
+          conflictPaths: mergeResult.conflictPaths,
+          conflictTree: mergeResult.conflictTree,
+          oldHead,
+          oldIndexTree
+        }
+      : null;
+    const mergedTree = currentRecovery
+      ? await resolvedConflictTree(runCommand, context, {
+          checkpointTree: checkpoint.tree,
+          commandOptions,
+          currentRecovery,
+          previousRecovery: conflictRecovery,
+          project
+        })
+      : mergeResult.mergedTree;
     const mergedCommit = await createVirtualCommit(runCommand, context, {
       baseCommit: canonicalCommit,
       commandOptions,
@@ -1657,12 +1904,17 @@ async function saveSessionWork({
       classification === "conflict" || classification === "unknown"
     ));
     if (siblingConflicts.length) {
+      const boundedSiblingConflicts = siblingConflicts.slice(0, SIBLING_CONFLICT_DETAIL_LIMIT);
       throw saveError(
         siblingConflicts.some(({ classification }) => classification === "unknown")
           ? "Vibe64 could not prove that overlapping work in another open session merges cleanly."
           : "This work conflicts with unsaved changes in another open session.",
         "vibe64_session_save_sibling_conflict",
-        { siblingConflicts }
+        {
+          siblingConflictCount: siblingConflicts.length,
+          siblingConflicts: boundedSiblingConflicts,
+          siblingConflictsTruncated: siblingConflicts.length > boundedSiblingConflicts.length
+        }
       );
     }
     const mergedTree = checkpoint.tree;

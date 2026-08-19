@@ -281,6 +281,47 @@ test("Update preserves unsaved session work while advancing to newer GitHub work
   }
 });
 
+test("repeated update checks retain only the stable canonical cache ref", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-check-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+
+    await checkSessionUpdates({
+      operationId: "check-one",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    await checkSessionUpdates({
+      operationId: "check-two",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(
+      await git(session.sourcePath, [
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/vibe64/save"
+      ]),
+      ""
+    );
+    assert.equal(
+      (await git(session.sourcePath, [
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/vibe64/canonical"
+      ])).split("\n").filter(Boolean).length,
+      1
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("Update check distinguishes diverged history from a normal fast-forward", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
   try {
@@ -324,24 +365,64 @@ test("Update leaves HEAD, index, and worktree untouched when newer work conflict
     const canonicalWriter = path.join(root, "canonical-writer");
     await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
     await writeFile(path.join(canonicalWriter, "shared.txt"), "remote\n", "utf8");
-    await git(canonicalWriter, ["add", "shared.txt"]);
+    await writeFile(path.join(canonicalWriter, "remote-only.txt"), "remote only\n", "utf8");
+    await git(canonicalWriter, ["add", "shared.txt", "remote-only.txt"]);
     await git(canonicalWriter, ["commit", "-m", "remote conflict"]);
     await git(canonicalWriter, ["push", "origin", "main"]);
     await writeFile(path.join(session.sourcePath, "shared.txt"), "local\n", "utf8");
+    await writeFile(path.join(session.sourcePath, "local-only.txt"), "local only\n", "utf8");
     const beforeHead = await git(session.sourcePath, ["rev-parse", "HEAD"]);
     const beforeIndex = await git(session.sourcePath, ["write-tree"]);
     const beforeStatus = await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]);
+    let conflictRecovery = null;
 
     await assert.rejects(updateSessionWork({
       operationId: "apply-conflicting-update",
       project: githubProject(root, fixture.remote),
       runCommand: commandRunner,
       session
-    }), (error) => error.code === "vibe64_session_update_conflict");
+    }), (error) => {
+      conflictRecovery = error.details?.conflictRecovery || null;
+      assert.equal(error.code, "vibe64_session_update_conflict");
+      assert.deepEqual(error.details?.conflictPaths, ["shared.txt"]);
+      assert.ok(conflictRecovery);
+      return true;
+    });
     assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), beforeHead);
     assert.equal(await git(session.sourcePath, ["write-tree"]), beforeIndex);
     assert.equal(await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]), beforeStatus);
     assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "local\n");
+
+    await assert.rejects(updateSessionWork({
+      conflictRecovery,
+      operationId: "retry-unreviewed-conflict",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    }), (error) => {
+      assert.equal(error.code, "vibe64_session_update_conflict");
+      assert.match(error.message, /has not changed since the failed update/u);
+      return true;
+    });
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), beforeHead);
+    assert.equal(await git(session.sourcePath, ["write-tree"]), beforeIndex);
+
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "remote\nlocal\n", "utf8");
+    const updated = await updateSessionWork({
+      conflictRecovery,
+      operationId: "retry-reviewed-conflict",
+      project: githubProject(root, fixture.remote),
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(updated.status, "updated");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), updated.canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "remote\nlocal\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "remote-only.txt"), "utf8"), "remote only\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "local-only.txt"), "utf8"), "local only\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /shared\.txt/u);
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /local-only\.txt/u);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -752,6 +833,14 @@ test("Save permits same-file sibling work when Git proves the edits merge cleanl
     assert.equal(result.status, "saved");
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "mergeable.txt"), "utf8"), "current\nsecond\nthird\nfourth\n");
+    assert.equal(
+      await git(session.sourcePath, ["for-each-ref", "--format=%(refname)", "refs/vibe64/save"]),
+      ""
+    );
+    assert.equal(
+      await git(sibling.sourcePath, ["for-each-ref", "--format=%(refname)", "refs/vibe64/save"]),
+      ""
+    );
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -780,11 +869,20 @@ test("Save rejects only a genuine same-file sibling merge conflict", async () =>
       })]
     }), (error) => {
       assert.equal(error.code, "vibe64_session_save_sibling_conflict");
-      assert.deepEqual(error.siblingConflicts, [{
-        classification: "conflict",
-        paths: ["shared.txt"],
-        sessionId: "session-2"
-      }]);
+      assert.equal(error.details.siblingConflictCount, 1);
+      assert.equal(error.details.siblingConflicts.length, 1);
+      assert.equal(error.details.siblingConflictsTruncated, false);
+      const [conflict] = error.details.siblingConflicts;
+      assert.equal(conflict.classification, "conflict");
+      assert.deepEqual(conflict.paths, ["shared.txt"]);
+      assert.equal(conflict.pathsTruncated, false);
+      assert.equal(conflict.sessionId, "session-2");
+      assert.match(conflict.current.patch, /\+current/u);
+      assert.match(conflict.sibling.patch, /\+sibling/u);
+      assert.equal(conflict.current.truncated, false);
+      assert.equal(conflict.sibling.truncated, false);
+      assert.deepEqual(error.siblingConflicts, error.details.siblingConflicts);
+      assert.doesNotMatch(JSON.stringify(conflict), new RegExp(root.replaceAll("\\", "\\\\"), "u"));
       return true;
     });
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), fixture.baseCommit);

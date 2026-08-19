@@ -160,6 +160,7 @@ function fileStatusLabel(value = "") {
 }
 
 .vibe64-repository-file-browser__detail {
+  align-content: start;
   align-self: start;
   display: grid;
   gap: 0.65rem;

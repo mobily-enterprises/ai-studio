@@ -450,7 +450,18 @@ describe("useVibe64AutopilotView direct chat", () => {
   it("collapses failed Save output while retaining the actionable error", async () => {
     const view = await createView({
       saveSessionWork: vi.fn(async () => {
-        throw new Error("Conflicting sibling work");
+        const error = new Error("Conflicting sibling work");
+        error.code = "vibe64_session_save_sibling_conflict";
+        error.details = {
+          siblingConflicts: [{
+            classification: "conflict",
+            current: { patch: "+current" },
+            paths: ["shared.txt"],
+            sessionId: "session-2",
+            sibling: { patch: "+sibling" }
+          }]
+        };
+        throw error;
       }),
       workState: {
         unsaved: true,
@@ -464,6 +475,73 @@ describe("useVibe64AutopilotView direct chat", () => {
 
     expect(view.saveWorkExpanded.value).toBe(false);
     expect(view.saveWorkError.value).toBe("Conflicting sibling work");
+    expect(view.saveWorkFailure.value).toMatchObject({
+      code: "vibe64_session_save_sibling_conflict",
+      details: {
+        siblingConflicts: [{ sessionId: "session-2" }]
+      }
+    });
+    expect(view.saveWorkConfirmOpen.value).toBe(false);
+  });
+
+  it("treats a Save authority race as an ordinary update requirement", async () => {
+    const view = await createView({
+      saveSessionWork: vi.fn(async () => ({
+        code: "vibe64_session_save_update_required",
+        error: "Update before saving.",
+        ok: false
+      })),
+      workState: {
+        operation: {
+          code: "vibe64_session_save_update_required",
+          error: "Update before saving.",
+          operationId: "save-race",
+          status: "failed"
+        },
+        unsaved: true,
+        updateAvailable: true,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkRequiresUpdate.value).toBe(true);
+    expect(view.saveWorkError.value).toBe("");
+    expect(view.saveWorkFailure.value).toBeNull();
+    expect(view.saveWorkCanResolveWithTemporaryAi.value).toBe(false);
+  });
+
+  it("restores an actionable Save failure from durable operation state after reload", async () => {
+    const view = await createView({
+      workState: {
+        operation: {
+          code: "vibe64_session_save_sibling_conflict",
+          details: {
+            siblingConflictCount: 1,
+            siblingConflicts: [{
+              classification: "conflict",
+              current: { patch: "+current" },
+              paths: ["shared.txt"],
+              sessionId: "session-2",
+              sibling: { patch: "+sibling" }
+            }]
+          },
+          error: "Conflicting sibling work",
+          operationId: "save-1",
+          status: "failed"
+        },
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkError.value).toBe("Conflicting sibling work");
+    expect(view.saveWorkFailure.value).toMatchObject({
+      code: "vibe64_session_save_sibling_conflict",
+      details: {
+        siblingConflicts: [{ sessionId: "session-2" }]
+      }
+    });
   });
 
   it("fails closed when Save has no work or the canonical version needs checking", async () => {
@@ -488,12 +566,64 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
     expect(updatePending.saveWorkDisabled.value).toBe(false);
     expect(updatePending.saveWorkActionLabel.value).toBe("Update this session (rebase)");
-    expect(updatePending.saveWorkTitle.value).toContain("preserving its current work");
+    expect(updatePending.saveWorkTitle.value).toContain("preserving its unsaved work");
     await expect(updatePending.requestSaveWork()).resolves.toEqual({
       ok: true,
       status: "updated"
     });
     expect(updateSessionWork).toHaveBeenCalledOnce();
     expect(updatePending.saveWorkConfirmOpen.value).toBe(false);
+  });
+
+  it("keeps a failed rebase labeled as an update while Save stays unavailable", async () => {
+    const updateOperation = {
+      code: "vibe64_session_update_conflict",
+      error: "One file needs review.",
+      operationId: "update-1",
+      status: "failed"
+    };
+    const view = await createView({
+      workState: {
+        operation: null,
+        unsaved: false,
+        updateAvailable: false,
+        updateOperation,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkDisabled.value).toBe(true);
+    expect(view.saveWorkActionLabel.value).toBe("Save work");
+    expect(view.saveWorkActivityIsUpdate.value).toBe(true);
+    expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
+    expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
+  });
+
+  it("turns the toolbar Save action into Update when the panel monitor finds an incoming version", async () => {
+    const updateSessionWork = vi.fn(async () => ({ ok: true, status: "updated" }));
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: {
+            state: "update_available"
+          },
+          sessionId: "session-1"
+        }]
+      },
+      updateSessionWork,
+      workState: {
+        unsaved: false,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkDisabled.value).toBe(false);
+    expect(view.saveWorkActionLabel.value).toBe("Update this session (rebase)");
+    expect(view.saveWorkTitle.value).toBe(
+      "Update this session (rebase) to the latest saved project version."
+    );
+    await expect(view.requestSaveWork()).resolves.toEqual({ ok: true, status: "updated" });
+    expect(updateSessionWork).toHaveBeenCalledOnce();
   });
 });

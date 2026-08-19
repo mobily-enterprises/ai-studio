@@ -372,6 +372,186 @@ test("work inspection recovers an interrupted prepared Update and advances its b
   assert.equal(writes[0][1].event.kind, "update-recovered");
 });
 
+test("work inspection observes a live Save without mistaking it for an interrupted operation", async () => {
+  let backgroundTask = { id: "save-work", status: "ready" };
+  let continueSave;
+  let saveStarted;
+  const saveStartedPromise = new Promise((resolve) => {
+    saveStarted = resolve;
+  });
+  const continueSavePromise = new Promise((resolve) => {
+    continueSave = resolve;
+  });
+  const runtime = {
+    async getSession() {
+      return { sessionId: "session-1", status: "active" };
+    },
+    async listSessionSummaries() {
+      return [{ sessionId: "session-1", status: "active" }];
+    },
+    store: {
+      async readBackgroundTask(_sessionId, taskId) {
+        return taskId === "save-work"
+          ? backgroundTask
+          : { id: taskId, status: "ready" };
+      },
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        backgroundTask = {
+          ...backgroundTask,
+          ...input.patch,
+          events: [...(backgroundTask.events || []), input.event],
+          id: taskId
+        };
+        return backgroundTask;
+      },
+      async writeMetadataValue() {}
+    }
+  };
+  let recoveryCalls = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async inspectSessionWork() {
+        return { unsaved: true };
+      },
+      async recoverSessionWorkSave() {
+        recoveryCalls += 1;
+        throw new Error("A live Save must not be recovered.");
+      },
+      async saveSessionWork(_sessionId, input) {
+        await input.onRepositoryWriteAcquired();
+        saveStarted();
+        await continueSavePromise;
+        return {
+          reconciled: true,
+          saveCommit: "saved",
+          status: "saved"
+        };
+      }
+    }
+  });
+
+  const saving = service.saveSessionWork("session-1");
+  await saveStartedPromise;
+  const inspected = await service.inspectSessionWork("session-1");
+  assert.equal(inspected.operation.status, "running");
+  assert.equal(recoveryCalls, 0);
+
+  continueSave();
+  const saved = await saving;
+  assert.equal(saved.ok, true);
+  assert.equal(saved.operation.status, "ready");
+});
+
+test("failed Save persists and returns a bounded sibling conflict bundle for recovery", async () => {
+  let backgroundTask = { id: "save-work", status: "ready" };
+  const conflictDetails = {
+    siblingConflicts: [{
+      classification: "conflict",
+      current: { patch: "+current", truncated: false },
+      paths: ["shared.txt"],
+      sessionId: "session-2",
+      sibling: { patch: "+sibling", truncated: false }
+    }]
+  };
+  const runtime = {
+    async getSession() {
+      return { sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        backgroundTask = {
+          ...backgroundTask,
+          ...input.patch,
+          events: [...(backgroundTask.events || []), input.event],
+          id: taskId
+        };
+        return backgroundTask;
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async saveSessionWork(_sessionId, input) {
+        await input.onRepositoryWriteAcquired();
+        const error = new Error("This work conflicts with another open session.");
+        error.code = "vibe64_session_save_sibling_conflict";
+        error.details = conflictDetails;
+        throw error;
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_session_save_sibling_conflict");
+  assert.deepEqual(result.details.siblingConflicts, conflictDetails.siblingConflicts);
+  assert.equal(backgroundTask.status, "failed");
+  assert.deepEqual(backgroundTask.details, conflictDetails);
+});
+
+test("Save authority races become a ready update requirement rather than an AI failure", async () => {
+  let backgroundTask = { id: "save-work", status: "ready" };
+  const publications = [];
+  const runtime = {
+    async getSession() {
+      return { sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        backgroundTask = {
+          ...backgroundTask,
+          ...input.patch,
+          events: [...(backgroundTask.events || []), input.event],
+          id: taskId
+        };
+        return backgroundTask;
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    async publishSessionChanged(_sessionId, change) {
+      publications.push(change);
+    },
+    terminals: {
+      async saveSessionWork(_sessionId, input) {
+        await input.onRepositoryWriteAcquired();
+        const error = new Error("The saved project changed. Update this session (rebase).");
+        error.code = "vibe64_session_save_update_required";
+        error.details = {
+          canonicalCommit: "new",
+          reconciledCommit: "old",
+          updateRequired: true
+        };
+        throw error;
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_session_save_update_required");
+  assert.equal(backgroundTask.status, "ready");
+  assert.equal(backgroundTask.updateRequired, true);
+  assert.equal(Object.hasOwn(backgroundTask, "error"), false);
+  assert.equal(backgroundTask.events.at(-1).kind, "save-update-required");
+  assert.equal(publications.at(-1).reason, "session-save-update-required");
+});
+
 test("native Save persists bounded progress and advances the session base only after reconciliation", async () => {
   const taskEvents = [];
   const metadata = [];
@@ -451,6 +631,232 @@ test("native Save persists bounded progress and advances the session base only a
     canonicalCommit: "def456",
     sourceSessionId: "session-1"
   });
+});
+
+test("a reconciled Save supersedes an older failed session update", async () => {
+  const tasks = new Map([
+    ["update-session", {
+      code: "vibe64_session_update_conflict",
+      error: "Conflict",
+      events: [],
+      id: "update-session",
+      status: "failed"
+    }]
+  ]);
+  const runtime = {
+    async getSession() {
+      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    },
+    async listSessionSummaries() {
+      return [{ agentRuns: [], sessionId: "session-1", status: "active" }];
+    },
+    store: {
+      async readBackgroundTask(_sessionId, taskId) {
+        return tasks.get(taskId) || null;
+      },
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        const prior = tasks.get(taskId) || { events: [], id: taskId };
+        const task = {
+          ...prior,
+          ...input.patch,
+          events: [...(prior.events || []), input.event],
+          id: taskId
+        };
+        tasks.set(taskId, task);
+        return task;
+      },
+      async writeMetadataValue() {}
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async saveSessionWork(_sessionId, input) {
+        await input.onRepositoryWriteAcquired();
+        return {
+          reconciled: true,
+          saveCommit: "saved-commit",
+          status: "saved"
+        };
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(tasks.get("update-session").status, "ready");
+  assert.equal(tasks.get("update-session").code, "");
+  assert.equal(tasks.get("update-session").error, "");
+  assert.equal(tasks.get("update-session").resolvedBySaveCommit, "saved-commit");
+  assert.equal(tasks.get("update-session").events.at(-1).kind, "update-superseded-by-save");
+});
+
+test("work inspection repairs a failed update superseded by a later reconciled Save", async () => {
+  const tasks = new Map([
+    ["save-work", {
+      events: [],
+      id: "save-work",
+      reconciled: true,
+      saveCommit: "saved-commit",
+      status: "ready",
+      updatedAt: "2026-08-19T12:01:00.000Z"
+    }],
+    ["update-session", {
+      code: "vibe64_session_update_conflict",
+      error: "Conflict",
+      events: [],
+      id: "update-session",
+      status: "failed",
+      updatedAt: "2026-08-19T12:00:00.000Z"
+    }]
+  ]);
+  const runtime = {
+    async getSession() {
+      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async readBackgroundTask(_sessionId, taskId) {
+        return tasks.get(taskId) || null;
+      },
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        const prior = tasks.get(taskId) || { events: [], id: taskId };
+        const task = {
+          ...prior,
+          ...input.patch,
+          events: [...(prior.events || []), input.event],
+          id: taskId
+        };
+        tasks.set(taskId, task);
+        return task;
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async inspectSessionWork() {
+        return { unsaved: false };
+      }
+    }
+  });
+
+  const result = await service.inspectSessionWork("session-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updateOperation.status, "ready");
+  assert.equal(result.updateOperation.code, "");
+  assert.equal(result.updateOperation.resolvedBySaveCommit, "saved-commit");
+});
+
+test("a failed Update persists conflict recovery and supplies it to the reviewed retry", async () => {
+  const conflictRecovery = {
+    baseCommit: "base",
+    canonicalCommit: "canonical",
+    checkpointTree: "checkpoint",
+    conflictPaths: ["shared.txt"],
+    conflictTree: "conflict-tree",
+    oldHead: "head",
+    oldIndexTree: "index"
+  };
+  const tasks = new Map();
+  const metadata = [];
+  const session = {
+    agentRuns: [],
+    metadata: {},
+    sessionId: "session-1",
+    status: "active"
+  };
+  const runtime = {
+    async getSession() {
+      return session;
+    },
+    async listSessionSummaries() {
+      return [session];
+    },
+    store: {
+      async readBackgroundTask(_sessionId, taskId) {
+        return tasks.get(taskId) || null;
+      },
+      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
+        const prior = tasks.get(taskId) || { events: [], id: taskId };
+        const task = {
+          ...prior,
+          ...input.patch,
+          events: [...(prior.events || []), input.event],
+          id: taskId
+        };
+        tasks.set(taskId, task);
+        return task;
+      },
+      async writeMetadataValue(_sessionId, name, value) {
+        metadata.push([name, value]);
+        session.metadata[name] = value;
+      }
+    }
+  };
+  let updates = 0;
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    async publishSessionChanged() {},
+    terminals: {
+      async inspectSessionWork() {
+        return {
+          ahead: 0,
+          behind: 0,
+          canonicalCommit: "canonical",
+          sessionHead: "canonical",
+          updateAvailable: false
+        };
+      },
+      async updateSessionWork(_sessionId, input) {
+        updates += 1;
+        await input.onRepositoryWriteAcquired();
+        if (updates === 1) {
+          assert.equal(input.conflictRecovery, null);
+          const error = new Error("One file needs review.");
+          error.code = "vibe64_session_update_conflict";
+          error.details = {
+            conflictPaths: ["shared.txt"],
+            conflictRecovery
+          };
+          throw error;
+        }
+        assert.deepEqual(input.conflictRecovery, conflictRecovery);
+        return {
+          canonicalCommit: "canonical",
+          reconciled: true,
+          status: "updated"
+        };
+      }
+    }
+  });
+
+  const failed = await service.updateSessionWork("session-1");
+  assert.equal(failed.ok, false);
+  assert.equal(tasks.get("update-session").status, "failed");
+  assert.deepEqual(tasks.get("update-session").conflictRecovery, conflictRecovery);
+
+  const retried = await service.updateSessionWork("session-1");
+  assert.equal(retried.ok, true);
+  assert.equal(retried.operation.status, "ready");
+  assert.equal(retried.operation.conflictRecovery, null);
+  assert.deepEqual(retried.operation.conflictPaths, []);
+  assert.equal(retried.operation.code, "");
+  assert.equal(retried.operation.error, "");
+  assert.ok(metadata.some(([name, value]) => name === "base_commit" && value === "canonical"));
 });
 
 test("one exact update check is cached and invalidates every sibling session", async () => {

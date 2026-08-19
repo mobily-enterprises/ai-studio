@@ -59,6 +59,7 @@ function temporaryAiTurnMessages(messages = [], runId = "", update = {}) {
 
 function useVibe64TemporaryAi({
   agentSettings = () => defaultVibe64AgentSettings(),
+  onTaskFinished = null,
   sessionId,
   sessionsApiPath
 } = {}) {
@@ -86,6 +87,26 @@ function useVibe64TemporaryAi({
       task.id === taskId ? { ...task, ...update } : task
     ));
     return tasks.value.find((task) => task.id === taskId) || null;
+  }
+
+  function reportTaskFinished(taskId = "") {
+    if (typeof onTaskFinished !== "function") {
+      return;
+    }
+    const task = tasks.value.find((candidate) => candidate.id === taskId);
+    if (!task) {
+      return;
+    }
+    try {
+      onTaskFinished(Object.freeze({
+        error: temporaryAiText(task.error),
+        id: task.id,
+        status: temporaryAiText(task.status),
+        title: temporaryAiText(task.title) || "Temporary AI"
+      }));
+    } catch {
+      // Feedback must never interfere with the completed task state.
+    }
   }
 
   function openTask({
@@ -240,6 +261,8 @@ function useVibe64TemporaryAi({
       });
       if (active) {
         pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
+      } else {
+        reportTaskFinished(taskId);
       }
     } catch (error) {
       const message = temporaryAiText(error?.message || error) || "Temporary AI response could not be read.";
@@ -253,6 +276,7 @@ function useVibe64TemporaryAi({
         runId: error?.conversationExpired === true ? "" : task.runId,
         status: "failed"
       });
+      reportTaskFinished(taskId);
     }
   }
 
@@ -320,6 +344,7 @@ function useVibe64TemporaryAi({
         runId: error?.conversationExpired === true ? "" : task.runId,
         status: "failed"
       });
+      reportTaskFinished(taskId);
       return false;
     }
   }

@@ -19,7 +19,7 @@ import {
   VIBE64_SURFACE_ID,
   vibe64SessionPath
 } from "@/lib/vibe64SessionRequestConfig.js";
-import { vibe64ApiResponseError } from "@/lib/vibe64ApiResponses.js";
+import { vibe64ApiError, vibe64ApiResponseError } from "@/lib/vibe64ApiResponses.js";
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
@@ -366,8 +366,11 @@ function useVibe64SessionRuntimeHost(props, emit) {
       refreshSessionData({ reason: "session-work-save" }),
       refreshWorkState()
     ]);
+    if (result?.ok === false && result?.code === "vibe64_session_save_update_required") {
+      return result;
+    }
     if (result?.ok === false) {
-      throw new Error(vibe64ApiResponseError(result, "Session work could not be saved."));
+      throw vibe64ApiError(result, "Session work could not be saved.");
     }
     return result;
   }
@@ -393,7 +396,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
       refreshWorkState()
     ]);
     if (result?.ok === false) {
-      throw new Error(vibe64ApiResponseError(result, "This session could not be updated."));
+      throw vibe64ApiError(result, "This session could not be updated.");
     }
     return result;
   }

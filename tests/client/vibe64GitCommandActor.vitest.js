@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  sessionGithubCommandActor
+  sessionGithubCommandActor,
+  sessionUsesGithub
 } from "@/lib/vibe64GitCommandActor.js";
 
 describe("session GitHub command actor", () => {
@@ -13,6 +14,7 @@ describe("session GitHub command actor", () => {
       }
     })).toMatchObject({
       active: true,
+      available: true,
       displayLabel: "merc",
       label: "GitHub: merc"
     });
@@ -25,9 +27,24 @@ describe("session GitHub command actor", () => {
       }
     })).toMatchObject({
       active: false,
+      available: true,
       displayLabel: "not selected",
       label: "GitHub: not selected"
     });
     expect(sessionGithubCommandActor({ metadata: {} }).displayLabel).toBe("not selected");
+  });
+
+  it("does not offer a GitHub actor for managed Git or local source sessions", () => {
+    const managedSession = {
+      metadata: {
+        source_remote_url: "/state/project/canonical-repository/repository.git"
+      }
+    };
+
+    expect(sessionUsesGithub(managedSession)).toBe(false);
+    expect(sessionGithubCommandActor(managedSession)).toMatchObject({
+      active: false,
+      available: false
+    });
   });
 });

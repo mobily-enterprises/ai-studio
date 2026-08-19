@@ -2,6 +2,16 @@ function vibe64ApiResponseError(response = {}, fallback = "Vibe64 request failed
   return String(response.errors?.[0]?.message || response.error || response.message || fallback);
 }
 
+function vibe64ApiError(response = {}, fallback = "Vibe64 request failed.") {
+  const error = new Error(vibe64ApiResponseError(response, fallback));
+  error.code = String(response?.code || response?.errors?.[0]?.code || "");
+  error.details = response?.details && typeof response.details === "object" && !Array.isArray(response.details)
+    ? response.details
+    : null;
+  error.response = response;
+  return error;
+}
+
 function vibe64ResourceResponseError(response = null, fallback = "Vibe64 request failed.") {
   if (!response || typeof response !== "object" || response.ok !== false) {
     return "";
@@ -10,6 +20,7 @@ function vibe64ResourceResponseError(response = null, fallback = "Vibe64 request
 }
 
 export {
+  vibe64ApiError,
   vibe64ApiResponseError,
   vibe64ResourceResponseError
 };

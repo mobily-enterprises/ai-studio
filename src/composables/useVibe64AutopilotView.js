@@ -109,6 +109,10 @@ const vibe64AutopilotViewProps = {
     default: async () => null,
     type: Function
   },
+  refreshSessionWork: {
+    default: async () => null,
+    type: Function
+  },
   retryWorkspaceSetup: {
     default: async () => false,
     type: Function
@@ -235,6 +239,7 @@ function useVibe64AutopilotView(props, emit) {
   const sessionGithubActor = computed(() => sessionGithubCommandActor(props.session || {}));
   const sessionGithubActorHeaderVisible = computed(() => Boolean(
     props.active &&
+    sessionGithubActor.value.available &&
     String(props.githubActorTeleportTarget || "").trim()
   ));
   const sessionSourceRoot = computed(() => vibe64SessionSourcePath(props.session || {}));
@@ -258,6 +263,7 @@ function useVibe64AutopilotView(props, emit) {
   const dismissedNumberedQuestionText = ref("");
   const saveWorkConfirmOpen = ref(false);
   const saveWorkError = ref("");
+  const saveWorkFailure = ref(null);
   const saveWorkExpanded = ref(false);
   const saveWorkSending = ref(false);
   const selectedAnswerChoice = ref("");
@@ -570,8 +576,19 @@ function useVibe64AutopilotView(props, emit) {
   }
 
   const saveWorkUnsaved = computed(() => props.workState?.unsaved === true);
+  const toolbarRepositoryWorkState = computed(() => {
+    const selectedId = String(props.session?.sessionId || "").trim();
+    const sessions = Array.isArray(props.sessionToolbar?.sessions)
+      ? props.sessionToolbar.sessions
+      : [];
+    return sessions.find((session) => String(session?.sessionId || "").trim() === selectedId)
+      ?.repositoryWorkState || null;
+  });
   const saveWorkRequiresUpdate = computed(() => Boolean(
-    props.workState?.updateAvailable === true || props.workState?.updateStatusPending === true
+    props.workState?.updateAvailable === true ||
+    props.workState?.updateStatusPending === true ||
+    toolbarRepositoryWorkState.value?.updateAvailable === true ||
+    ["update_available", "updating"].includes(toolbarRepositoryWorkState.value?.state)
   ));
   const saveWorkDisabled = computed(() => Boolean(
     composerDisabled.value ||
@@ -583,6 +600,16 @@ function useVibe64AutopilotView(props, emit) {
   ));
   const saveWorkActionLabel = computed(() => (
     saveWorkRequiresUpdate.value ? "Update this session (rebase)" : "Save work"
+  ));
+  const saveWorkFailureIsUpdate = computed(() => (
+    String(saveWorkFailure.value?.code || "").startsWith("vibe64_session_update_") ||
+    String(props.workState?.updateOperation?.code || "").startsWith("vibe64_session_update_")
+  ));
+  const saveWorkActivityIsUpdate = computed(() => (
+    saveWorkRequiresUpdate.value || saveWorkFailureIsUpdate.value
+  ));
+  const saveWorkActivityLabel = computed(() => (
+    saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
   ));
   const saveWorkTitle = computed(() => {
     if (repositoryOperationActive.value) {
@@ -598,7 +625,9 @@ function useVibe64AutopilotView(props, emit) {
       return "Repository status is unavailable; check for updates before saving";
     }
     if (saveWorkRequiresUpdate.value) {
-      return "Update this session (rebase) with the latest saved project version while preserving its current work. Save will be available when the update finishes.";
+      return saveWorkUnsaved.value
+        ? "Update this session (rebase) with the latest saved project version while preserving its unsaved work. Save will be available when the update finishes."
+        : "Update this session (rebase) to the latest saved project version.";
     }
     if (!saveWorkUnsaved.value) {
       return "No work to save";
@@ -610,7 +639,7 @@ function useVibe64AutopilotView(props, emit) {
     const updateActive = ["queued", "running", "starting"].includes(
       String(updateOperation?.status || "").trim().toLowerCase()
     );
-    return updateActive || saveWorkRequiresUpdate.value
+    return updateActive || saveWorkActivityIsUpdate.value
       ? updateOperation
       : props.workState?.operation || null;
   });
@@ -625,13 +654,52 @@ function useVibe64AutopilotView(props, emit) {
     : ""));
   const saveWorkStatus = computed(() => String(saveWorkOperation.value?.status || ""));
 
+  watch(() => ({
+    code: String(saveWorkOperation.value?.code || ""),
+    details: saveWorkOperation.value?.details || null,
+    error: String(saveWorkOperation.value?.error || ""),
+    operationId: String(saveWorkOperation.value?.operationId || ""),
+    status: String(saveWorkOperation.value?.status || "").trim().toLowerCase()
+  }), (operation) => {
+    if (operation.code === "vibe64_session_save_update_required") {
+      if (saveWorkFailure.value?.code === operation.code) {
+        saveWorkError.value = "";
+        saveWorkFailure.value = null;
+      }
+      return;
+    }
+    if (operation.status !== "failed" || !operation.error) {
+      return;
+    }
+    saveWorkError.value = operation.error;
+    saveWorkFailure.value = {
+      code: operation.code,
+      details: operation.details,
+      message: operation.error
+    };
+  }, { immediate: true });
+  const saveWorkCanResolveWithTemporaryAi = computed(() => [
+    "vibe64_session_save_history_diverged",
+    "vibe64_session_save_sibling_conflict",
+    "vibe64_session_update_conflict",
+    "vibe64_session_update_history_diverged"
+  ].includes(String(saveWorkFailure.value?.code || "")));
+
   async function updateBeforeSave() {
     saveWorkSending.value = true;
     saveWorkError.value = "";
+    saveWorkFailure.value = null;
     saveWorkExpanded.value = true;
     try {
       return await props.updateSessionWork();
     } catch (error) {
+      saveWorkFailure.value = error && typeof error === "object"
+        ? {
+            code: String(error.code || error.response?.code || ""),
+            details: error.details || error.response?.details || null,
+            message: error instanceof Error ? error.message : String(error || "")
+          }
+        : null;
       saveWorkError.value = error instanceof Error
         ? error.message
         : String(error || "This session could not be updated.");
@@ -663,14 +731,20 @@ function useVibe64AutopilotView(props, emit) {
     }
     saveWorkSending.value = true;
     saveWorkError.value = "";
+    saveWorkFailure.value = null;
     saveWorkExpanded.value = true;
+    saveWorkConfirmOpen.value = false;
     try {
       const result = await props.saveSessionWork();
-      if (result?.ok !== false) {
-        saveWorkConfirmOpen.value = false;
-      }
       return result;
     } catch (error) {
+      saveWorkFailure.value = error && typeof error === "object"
+        ? {
+            code: String(error.code || error.response?.code || ""),
+            details: error.details || error.response?.details || null,
+            message: error instanceof Error ? error.message : String(error || "")
+          }
+        : null;
       saveWorkError.value = error instanceof Error
         ? error.message
         : String(error || "Session work could not be saved.");
@@ -854,6 +928,7 @@ function useVibe64AutopilotView(props, emit) {
     copyText: typeof props.page?.copyText === "function" ? props.page.copyText : null,
     embeddedShell: true,
     projectContext: props.projectContext || {},
+    refreshSessionWork: props.refreshSessionWork,
     requestSaveWork,
     session: props.session || null,
     sessionId: sessionId.value,
@@ -1036,9 +1111,13 @@ function useVibe64AutopilotView(props, emit) {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
+    saveWorkActivityIsUpdate,
+    saveWorkActivityLabel,
     saveWorkActionLabel,
     saveWorkError,
     saveWorkExpanded,
+    saveWorkFailure,
+    saveWorkCanResolveWithTemporaryAi,
     saveWorkOperation,
     saveWorkOperationActive,
     saveWorkOutput,

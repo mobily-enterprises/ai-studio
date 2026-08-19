@@ -7080,7 +7080,9 @@ function createCodexTerminalController({
   }
 
   function appendCodexAppServerEphemeralProgress(state = {}, classification = {}) {
-    const text = normalizeText(classification.text);
+    const rawText = normalizeText(classification.text);
+    const taskResult = normalizeVibe64AgentTaskResult(rawText);
+    const text = taskResult?.kind === "continue" ? taskResult.message : rawText;
     if (!text) {
       return;
     }

@@ -169,6 +169,8 @@ function createService({
       ? terminals.waitForWorkspaceSetup(sessionId)
       : null
   });
+  const activeSaveOperations = new Map();
+  const activeUpdateOperations = new Map();
 
   async function publishCanonicalChanged(runtime, sourceSessionId, canonicalCommit, {
     originId = ""
@@ -239,6 +241,9 @@ function createService({
     if (task?.status !== "running" || typeof terminals.recoverSessionWorkSave !== "function") {
       return task;
     }
+    if (activeSaveOperations.get(session.sessionId) === text(task.operationId)) {
+      return task;
+    }
     try {
       const result = await terminals.recoverSessionWorkSave(session.sessionId, {
         recovery: task,
@@ -283,6 +288,9 @@ function createService({
     if (task?.status !== "running" || typeof terminals.recoverSessionWorkUpdate !== "function") {
       return task;
     }
+    if (activeUpdateOperations.get(session.sessionId) === text(task.operationId)) {
+      return task;
+    }
     try {
       const result = await terminals.recoverSessionWorkUpdate(session.sessionId, {
         recovery: task,
@@ -316,6 +324,44 @@ function createService({
         }
       });
     }
+  }
+
+  async function resolveSupersededUpdateFailure(runtime, sessionId, saveResult = {}, options = {}) {
+    if (
+      saveResult?.reconciled !== true ||
+      typeof runtime?.store?.readBackgroundTask !== "function"
+    ) {
+      return null;
+    }
+    const task = await runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID);
+    if (task?.status !== "failed") {
+      return task || null;
+    }
+    if (options.knownNewer !== true) {
+      const saveUpdatedAt = Date.parse(text(saveResult.updatedAt));
+      const updateUpdatedAt = Date.parse(text(task.updatedAt));
+      if (
+        !Number.isFinite(saveUpdatedAt) ||
+        !Number.isFinite(updateUpdatedAt) ||
+        saveUpdatedAt <= updateUpdatedAt
+      ) {
+        return task;
+      }
+    }
+    return runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
+      event: {
+        kind: "update-superseded-by-save",
+        message: "The repository issue was resolved by the completed Save.",
+        status: "ready"
+      },
+      patch: {
+        code: "",
+        error: "",
+        resolvedBySaveCommit: text(saveResult.saveCommit),
+        retryable: false,
+        status: "ready"
+      }
+    });
   }
 
   return Object.freeze({
@@ -497,7 +543,10 @@ function createService({
         const existingTask = await runtime.store.readBackgroundTask(sessionId, SESSION_SAVE_TASK_ID);
         const operation = await recoverInterruptedSave(runtime, session, existingTask);
         const updateTask = await runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID);
-        const updateOperation = await recoverInterruptedUpdate(runtime, session, updateTask);
+        const recoveredUpdateOperation = await recoverInterruptedUpdate(runtime, session, updateTask);
+        const updateOperation = recoveredUpdateOperation?.status === "failed"
+          ? await resolveSupersededUpdateFailure(runtime, sessionId, operation)
+          : recoveredUpdateOperation;
         const work = await terminals.inspectSessionWork(sessionId, {
           runtime,
           session
@@ -557,6 +606,7 @@ function createService({
           const result = await terminals.saveSessionWork(sessionId, {
             onRepositoryWriteAcquired: async () => {
               operationStarted = true;
+              activeSaveOperations.set(sessionId, operationId);
               await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
                 event: {
                   kind: "save-started",
@@ -617,6 +667,7 @@ function createService({
               status: "ready"
             }
           });
+          await resolveSupersededUpdateFailure(runtime, sessionId, result, { knownNewer: true });
           await publishSessionChanged(sessionId, {
             operation: "updated",
             originId: text(input.originId),
@@ -635,27 +686,39 @@ function createService({
           if (!operationStarted) {
             throw error;
           }
+          const updateRequired = error?.code === "vibe64_session_save_update_required";
+          const failureDetails = error?.code === "vibe64_session_save_sibling_conflict" &&
+            error?.details && typeof error.details === "object" && !Array.isArray(error.details)
+            ? error.details
+            : null;
           const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
             event: {
-              kind: "save-failed",
+              kind: updateRequired ? "save-update-required" : "save-failed",
               message: text(error?.message) || "Session Save failed.",
-              status: "failed"
+              status: updateRequired ? "ready" : "failed"
             },
             patch: {
               code: text(error?.code),
-              error: text(error?.message) || "Session Save failed.",
+              ...(failureDetails ? { details: failureDetails } : {}),
+              ...(updateRequired
+                ? { updateRequired: true }
+                : { error: text(error?.message) || "Session Save failed." }),
               operationId,
-              status: "failed"
+              status: updateRequired ? "ready" : "failed"
             }
           });
           await publishSessionChanged(sessionId, {
             operation: "updated",
             originId: text(input.originId),
-            reason: "session-save-failed",
+            reason: updateRequired ? "session-save-update-required" : "session-save-failed",
             session: await runtime.getSession(sessionId, { inspectSource: false }),
             task
           });
           throw error;
+        } finally {
+          if (activeSaveOperations.get(sessionId) === operationId) {
+            activeSaveOperations.delete(sessionId);
+          }
         }
       }, "Vibe64 could not save this session's work.");
     },
@@ -708,12 +771,19 @@ function createService({
       return sessionResult(async () => {
         const runtime = await project.createRuntime({ inspectSource: false });
         const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const previousTask = await runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID);
+        const conflictRecovery = previousTask?.status === "failed" &&
+          previousTask?.conflictRecovery && typeof previousTask.conflictRecovery === "object"
+          ? previousTask.conflictRecovery
+          : null;
         const operationId = crypto.randomUUID();
         let operationStarted = false;
         try {
           const result = await terminals.updateSessionWork(sessionId, {
+            conflictRecovery,
             onRepositoryWriteAcquired: async () => {
               operationStarted = true;
+              activeUpdateOperations.set(sessionId, operationId);
               await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_UPDATE_TASK_ID, {
                 event: {
                   kind: "update-started",
@@ -760,7 +830,14 @@ function createService({
               message: result.status === "already_current" ? "This session was already current." : "This session was updated.",
               status: "ready"
             },
-            patch: { ...result, status: "ready" }
+            patch: {
+              ...result,
+              code: "",
+              conflictPaths: [],
+              conflictRecovery: null,
+              error: "",
+              status: "ready"
+            }
           });
           await publishSessionChanged(sessionId, {
             operation: "updated",
@@ -786,6 +863,10 @@ function createService({
             },
             patch: {
               code: text(error?.code),
+              conflictPaths: Array.isArray(error?.details?.conflictPaths)
+                ? error.details.conflictPaths
+                : [],
+              conflictRecovery: error?.details?.conflictRecovery || null,
               error: text(error?.message) || "Session update failed.",
               operationId,
               status: "failed"
@@ -799,6 +880,10 @@ function createService({
             task
           });
           throw error;
+        } finally {
+          if (activeUpdateOperations.get(sessionId) === operationId) {
+            activeUpdateOperations.delete(sessionId);
+          }
         }
       }, "Vibe64 could not update this session.");
     },

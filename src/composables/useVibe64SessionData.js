@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, proxyRefs, watch } from "vue";
+import { computed, onScopeDispose, proxyRefs, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
@@ -223,6 +223,11 @@ function useVibe64SessionData({
     surfaceId: VIBE64_SURFACE_ID,
     writeMethod: "POST"
   });
+  const createSessionPending = ref(false);
+  // useCommand's observable operation state is shared by placement source. It
+  // may still describe a creation in another project after project navigation,
+  // so it cannot own this page's local loading state.
+  const createSessionRunning = computed(() => createSessionPending.value);
   const updateCurrentSessionCommand = useCommand({
     access: "never",
     apiSuffix: VIBE64_CURRENT_SESSION_API_SUFFIX,
@@ -358,31 +363,43 @@ function useVibe64SessionData({
     sessionSelection.clear();
   }
 
+  let createSessionInFlight = null;
+
   async function createSession() {
+    if (createSessionInFlight) {
+      return createSessionInFlight;
+    }
     const startedAtMs = Date.now();
     vibe64SessionDebugLog("client.sessionData.createSession.start");
-    try {
-      const response = await createSessionCommand.run();
-      vibe64SessionDebugLog("client.sessionData.createSession.done", {
-        ...vibe64SessionDebugSummary(response || {}),
-        code: String(response?.code || response?.errors?.[0]?.code || ""),
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        ok: response?.ok !== false
-      });
-      return response;
-    } catch (error) {
-      vibe64SessionDebugLog("client.sessionData.createSession.error", {
-        durationMs: vibe64SessionDebugDurationMs(startedAtMs),
-        error: vibe64SessionDebugError(error)
-      });
-      throw error;
-    }
+    createSessionPending.value = true;
+    createSessionInFlight = (async () => {
+      try {
+        const response = await createSessionCommand.run();
+        vibe64SessionDebugLog("client.sessionData.createSession.done", {
+          ...vibe64SessionDebugSummary(response || {}),
+          code: String(response?.code || response?.errors?.[0]?.code || ""),
+          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
+          ok: response?.ok !== false
+        });
+        return response;
+      } catch (error) {
+        vibe64SessionDebugLog("client.sessionData.createSession.error", {
+          durationMs: vibe64SessionDebugDurationMs(startedAtMs),
+          error: vibe64SessionDebugError(error)
+        });
+        throw error;
+      } finally {
+        createSessionPending.value = false;
+        createSessionInFlight = null;
+      }
+    })();
+    return createSessionInFlight;
   }
 
   const selectionReconciliationState = computed(() => {
     const nextSessions = sessions.value;
     return {
-      createSessionRunning: createSessionCommand.isRunning,
+      createSessionRunning: createSessionRunning.value,
       currentSessionApiPath: currentSessionApiPath.value,
       nextSessions,
       selectedSessionId: String(selectedSessionId.value || ""),
@@ -452,6 +469,7 @@ function useVibe64SessionData({
     clearSelectedSession,
     createSession,
     createSessionCommand,
+    createSessionRunning,
     createSessionTitle,
     isSelectedSessionClosed,
     pageLoading,

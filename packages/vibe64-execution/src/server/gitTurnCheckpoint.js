@@ -102,6 +102,7 @@ async function createGitTurnCheckpoint({
 
 async function writeGitWorktreeTree({
   baseCommit = "HEAD",
+  paths = [],
   project = {},
   runCommand = runVibe64Command,
   worktreePath = ""
@@ -121,11 +122,14 @@ async function writeGitWorktreeTree({
       "read-tree",
       baseCommit || "HEAD"
     ], { env: indexEnv, project });
+    const selectedPaths = Array.isArray(paths)
+      ? paths.map((entry) => String(entry || "")).filter(Boolean)
+      : [];
     await requiredGitOutput(runCommand, normalizedWorktreePath, [
       "add",
       "-A",
       "--",
-      "."
+      ...(selectedPaths.length > 0 ? selectedPaths : ["."])
     ], { env: indexEnv, project });
     return await requiredGitOutput(runCommand, normalizedWorktreePath, [
       "write-tree"

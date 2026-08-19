@@ -1082,6 +1082,7 @@ function createService({
         const { execution, session } = await sessionWorkExecution(sessionId, context, "session-update");
         return updateManagedSessionWork({
           commandOptions: execution.commandOptions,
+          conflictRecovery: input.conflictRecovery,
           identity: execution.identity,
           onProgress: input.onProgress,
           operationId: input.operationId,

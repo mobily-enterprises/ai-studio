@@ -81,6 +81,7 @@ function useVibe64SessionPanel(props, emit) {
     canCreateSession: sessionData.canCreateSession,
     createSession: sessionData.createSession,
     createSessionCommand: sessionData.createSessionCommand,
+    createSessionRunning: sessionData.createSessionRunning,
     createSessionTitle: sessionData.createSessionTitle,
     selectSession: sessionData.selectSessionId,
     sessions: toolbarSessions,
@@ -111,7 +112,7 @@ function useVibe64SessionPanel(props, emit) {
     return mountedRuntimeSessionIds.value.filter((sessionId) => visibleSessionIds.has(sessionId));
   });
   const emptyStateActivity = computed(() => sessionPanelEmptyStateActivity({
-    createSessionRunning: sessionData.createSessionCommand.isRunning,
+    createSessionRunning: sessionData.createSessionRunning.value,
     runtimeHostSessionCount: runtimeHostSessionIds.value.length,
     selectedSession: selection.selectedSession,
     sessionListInitialLoading: sessionData.sessionList.isInitialLoading
@@ -338,6 +339,7 @@ function useVibe64SessionPanel(props, emit) {
 function sessionRepositoryWorkState(workState = null) {
   const source = workState && typeof workState === "object" ? workState : {};
   const operationStatus = String(source.operation?.status || "").trim();
+  const operationCode = String(source.operation?.code || "").trim();
   const updateStatus = String(source.updateOperation?.status || "").trim();
   if (operationStatus === "running") {
     return {
@@ -351,7 +353,10 @@ function sessionRepositoryWorkState(workState = null) {
       state: "updating"
     };
   }
-  if (operationStatus === "failed" || updateStatus === "failed") {
+  if (
+    (operationStatus === "failed" && operationCode !== "vibe64_session_save_update_required") ||
+    updateStatus === "failed"
+  ) {
     return {
       checkedAt: String(source.checkedAt || ""),
       state: "needs_help"

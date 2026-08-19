@@ -8,7 +8,8 @@ import { promisify } from "node:util";
 
 import {
   checkpointRefs,
-  createGitTurnCheckpoint
+  createGitTurnCheckpoint,
+  writeGitWorktreeTree
 } from "../../packages/vibe64-execution/src/server/gitTurnCheckpoint.js";
 
 const execFileAsync = promisify(execFile);
@@ -66,6 +67,29 @@ test("turn checkpoint retries are object-identical and a later turn advances lat
     assert.notEqual(second.commit, first.commit);
     assert.equal(second.baseCommit, first.commit);
     assert.equal(await git(root, ["rev-parse", second.latestRef]), second.commit);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("a worktree tree can overlay only selected resolution paths onto a prepared tree", async () => {
+  const root = await createRepository();
+  try {
+    await writeFile(path.join(root, "canonical-only.txt"), "canonical\n", "utf8");
+    await git(root, ["add", "canonical-only.txt"]);
+    const preparedTree = await git(root, ["write-tree"]);
+    await git(root, ["reset", "--", "canonical-only.txt"]);
+    await writeFile(path.join(root, "tracked.txt"), "resolved\n", "utf8");
+    await writeFile(path.join(root, "canonical-only.txt"), "old worktree\n", "utf8");
+
+    const result = await writeGitWorktreeTree({
+      baseCommit: preparedTree,
+      paths: ["tracked.txt"],
+      worktreePath: root
+    });
+
+    assert.equal(await git(root, ["show", `${result}:tracked.txt`]), "resolved");
+    assert.equal(await git(root, ["show", `${result}:canonical-only.txt`]), "canonical");
   } finally {
     await rm(root, { force: true, recursive: true });
   }

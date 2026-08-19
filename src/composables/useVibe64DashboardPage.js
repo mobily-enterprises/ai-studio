@@ -30,6 +30,21 @@ function useVibe64DashboardPage() {
   };
 }
 
+function activeSessionMobileSectionLinks(activeSessionNav = null) {
+  if (!activeSessionNav?.visible || !Array.isArray(activeSessionNav.tools)) {
+    return [];
+  }
+  return activeSessionNav.tools
+    .map((tool) => ({
+      disabled: tool?.disabled === true,
+      icon: String(tool?.icon || ""),
+      id: `active-session:${String(tool?.id || tool?.to || tool?.label || "")}`,
+      label: String(tool?.label || ""),
+      to: String(tool?.to || "")
+    }))
+    .filter((tool) => Boolean(tool.id !== "active-session:" && tool.label && tool.to));
+}
+
 function dashboardSectionSuffix(placement = {}) {
   const suffix = String(placement?.props?.scopedSuffix || placement?.props?.unscopedSuffix || "").trim();
   if (!suffix) {
@@ -44,5 +59,6 @@ function dashboardSectionSuffix(placement = {}) {
 }
 
 export {
+  activeSessionMobileSectionLinks,
   useVibe64DashboardPage
 };

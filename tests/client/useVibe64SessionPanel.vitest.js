@@ -209,6 +209,21 @@ describe("useVibe64SessionPanel", () => {
       updateOperation: { status: "failed" },
       unsaved: false
     }).state).toBe("needs_help");
+    expect(sessionRepositoryWorkState({
+      changedPaths: ["local.txt"],
+      operation: {
+        code: "vibe64_session_save_update_required",
+        error: "Update before saving.",
+        status: "failed"
+      },
+      unsaved: true,
+      updateAvailable: true
+    })).toEqual({
+      changedCount: 1,
+      checkedAt: "",
+      state: "unsaved",
+      updateAvailable: true
+    });
   });
 
   it("keeps ten uninspected session chips in a bounded honest checking state", () => {

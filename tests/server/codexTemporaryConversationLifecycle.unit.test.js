@@ -217,6 +217,35 @@ test("temporary conversations expose live progress and final text without readin
   });
 });
 
+test("temporary conversations expose the human message from structured progress", async () => {
+  await withConversationController(async ({ controller, subscribers }) => {
+    const conversation = await controller.createConversation("session-1", {
+      ephemeral: true
+    });
+    const turn = await controller.startConversationTurn("session-1", {
+      conversationId: conversation.conversationId,
+      message: "Resolve this conflict."
+    });
+
+    emitCodexNotification(subscribers, codexEvent({
+      message: JSON.stringify({
+        kind: "continue",
+        message: "Comparing both intended changes.",
+        report: ""
+      })
+    }));
+    const working = await controller.readConversation("session-1", {
+      conversationId: conversation.conversationId,
+      runId: turn.runId
+    });
+
+    assert.deepEqual(working.progressUpdates, [{
+      id: "progress:1",
+      text: "Comparing both intended changes."
+    }]);
+  });
+});
+
 test("an expired temporary conversation never falls back to persistent thread history", async () => {
   await withConversationController(async ({ calls, controller }) => {
     const result = await controller.readConversation("session-1", {

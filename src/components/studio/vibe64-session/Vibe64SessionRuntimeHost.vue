@@ -15,6 +15,7 @@
       :project-context="props.projectContext"
       :preview-toolbar-teleport-target="props.previewToolbarTeleportTarget"
       :refresh-session-data="refreshSessionData"
+      :refresh-session-work="refreshWorkState"
       :retry-workspace-setup="retryWorkspaceSetup"
       :save-session-work="saveSessionWork"
       :session-abandon="dialogs.abandon"
@@ -124,6 +125,7 @@ const {
   guardedPage,
   interruptAgentTurn,
   refreshSessionData,
+  refreshWorkState,
   retryWorkspaceSetup,
   saveSessionWork,
   selectedAgentTerminalId,

@@ -45,6 +45,20 @@ async function temporaryAiWithDraft() {
   return { task, temporary };
 }
 
+async function temporaryAiWithFinishedObserver(onTaskFinished) {
+  const { useVibe64TemporaryAi } = await import(
+    "../../src/composables/useVibe64TemporaryAi.js"
+  );
+  const temporary = useVibe64TemporaryAi({
+    onTaskFinished,
+    sessionId: () => "session-1",
+    sessionsApiPath: () => "/api/vibe64/sessions"
+  });
+  const task = temporary.openTask({ title: "Resolve Update" });
+  temporary.updateDraft(task.id, "Resolve this conflict safely.");
+  return { task, temporary };
+}
+
 describe("useVibe64TemporaryAi", () => {
   beforeEach(() => {
     mocks.requests.length = 0;
@@ -90,6 +104,33 @@ describe("useVibe64TemporaryAi", () => {
     expect(temporary.activeTask.value.messages.at(-1)).toMatchObject({
       status: "completed",
       text: "The conflict can be resolved safely."
+    });
+  });
+
+  it("reports a completed task exactly once for global user feedback", async () => {
+    const onTaskFinished = vi.fn();
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The working files are ready for Vibe64 to retry.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const { task, temporary } = await temporaryAiWithFinishedObserver(onTaskFinished);
+
+    await temporary.send(task.id);
+    await flushPromises();
+
+    expect(onTaskFinished).toHaveBeenCalledTimes(1);
+    expect(onTaskFinished).toHaveBeenCalledWith({
+      error: "",
+      id: task.id,
+      status: "completed",
+      title: "Resolve Update"
     });
   });
 
