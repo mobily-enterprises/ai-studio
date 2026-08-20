@@ -1093,9 +1093,13 @@ async function attachPreviewFile(file) {
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   .studio-autopilot:not(.studio-autopilot--chat-collapsed) {
-    grid-template-columns: minmax(17rem, 44%) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 0;
+  }
+
+  .studio-autopilot:not(.studio-autopilot--chat-collapsed) .studio-autopilot__project-panel {
+    visibility: hidden;
   }
 }
 </style>

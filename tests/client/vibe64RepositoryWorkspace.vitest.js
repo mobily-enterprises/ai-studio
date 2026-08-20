@@ -168,13 +168,17 @@ describe("Vibe64 Repository workspace", () => {
     expect(runtimeHost).toContain(':refresh-session-work="refreshWorkState"');
   });
 
-  it("gives the selected project tool the full mobile width when chat is collapsed", async () => {
+  it("uses mutually exclusive full-width panes on mobile", async () => {
     const autopilotView = await source(
       "src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
     );
 
+    expect(autopilotView).toContain("@media (max-width: 980px)");
     expect(autopilotView).toMatch(
-      /@media \(max-width: 900px\)[\s\S]*?\.studio-autopilot:not\(\.studio-autopilot--chat-collapsed\)[\s\S]*?grid-template-columns:/u
+      /\.studio-autopilot:not\(\.studio-autopilot--chat-collapsed\) \{\s*grid-template-columns: minmax\(0, 1fr\) 0;/u
+    );
+    expect(autopilotView).toMatch(
+      /\.studio-autopilot:not\(\.studio-autopilot--chat-collapsed\) \.studio-autopilot__project-panel \{\s*visibility: hidden;/u
     );
   });
 });

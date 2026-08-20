@@ -921,6 +921,45 @@ test("mobile project navigation uses action labels after showing the project pan
   })).toBeVisible();
 });
 
+test("mobile shows either the chat or project pane at full width", async ({ page }) => {
+  await page.setViewportSize({
+    height: 844,
+    width: 390
+  });
+  await mockLaunchTerminalSocket(page);
+  await mockLaunchSession(page);
+
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+  const shell = page.locator(".studio-autopilot");
+  const chat = page.getByRole("region", { name: "Session chat", exact: true });
+  const project = page.getByRole("region", { name: "Project", exact: true });
+
+  await expect(chat).toBeVisible();
+  await expect(project).toBeHidden();
+  await expect.poll(async () => ({
+    chat: Math.round((await chat.boundingBox())?.width || 0),
+    shell: Math.round((await shell.boundingBox())?.width || 0)
+  })).toEqual({
+    chat: 390,
+    shell: 390
+  });
+
+  await page.getByRole("button", {
+    name: "Show project"
+  }).click();
+
+  await expect(chat).toBeHidden();
+  await expect(project).toBeVisible();
+  await expect.poll(async () => ({
+    project: Math.round((await project.boundingBox())?.width || 0),
+    shell: Math.round((await shell.boundingBox())?.width || 0)
+  })).toEqual({
+    project: 390,
+    shell: 390
+  });
+});
+
 test("mobile dashboard section links keep the active project slug", async ({ page }) => {
   await page.setViewportSize({
     height: 844,
