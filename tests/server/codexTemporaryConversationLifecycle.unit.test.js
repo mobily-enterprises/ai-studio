@@ -131,6 +131,7 @@ async function withConversationController(operation) {
   try {
     await operation({ calls, controller, subscribers });
   } finally {
+    await controller.closeAllForSession("session-1");
     if (previousRuntimeNamespace === undefined) {
       delete process.env.VIBE64_RUNTIME_NAMESPACE;
     } else {
@@ -200,6 +201,7 @@ test("a changed session environment retires the previous provider for the same r
     assert.equal(providers[0].closed, 1);
     assert.equal(providers[1].closed, 0);
   } finally {
+    await controller.closeAllForSession("session-1");
     if (previousRuntimeNamespace === undefined) {
       delete process.env.VIBE64_RUNTIME_NAMESPACE;
     } else {
