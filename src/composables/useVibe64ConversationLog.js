@@ -42,6 +42,7 @@ const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "codex-app-server-terminal-assistant-message",
   "codex-app-server-terminal-thinking-message",
   "codex-app-server-terminal-user-message",
+  "codex-turn-outcome",
   "codex-app-server-message-delivered",
   "session-agent-message-cancelled",
   "session-agent-message-delivered",

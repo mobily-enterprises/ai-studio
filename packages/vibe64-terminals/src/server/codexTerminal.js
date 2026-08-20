@@ -2223,7 +2223,7 @@ function createCodexTerminalController({
     });
     if (codexAppServerTurnStatusIsProviderFailure(status)) {
       await stopCodexAppServerTurnWithProviderFailure(sessionId, currentTurn.threadId, completedTurnId, {
-        outcome: CODEX_TURN_OUTCOME.SERVICE_RESTART,
+        error: codexAppServerThreadError(thread),
         status,
         verifyInactive: false
       });
@@ -5187,9 +5187,11 @@ function createCodexTerminalController({
     sessionId = "",
     threadId = "",
     turnId = "",
-    outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE
+    outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
+    detail = ""
   ) {
     return writeCodexTurnOutcomeNotice({
+      detail,
       outcome,
       publishSessionChanged,
       sessionId,
@@ -5488,7 +5490,8 @@ function createCodexTerminalController({
       normalizedSessionId,
       normalizedThreadId,
       normalizedTurnId,
-      outcome
+      outcome,
+      error
     );
     await markCodexAppServerTurnIdle(normalizedSessionId, {
       error: message,

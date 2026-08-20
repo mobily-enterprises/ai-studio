@@ -25,6 +25,13 @@ test("Codex turn outcome notices distinguish terminal outcomes", () => {
     codexTurnOutcomeNoticeMessage(CODEX_TURN_OUTCOME.RESPONSE_DELIVERY_FAILURE),
     /could not recover its final response/u
   );
+  assert.match(
+    codexTurnOutcomeNoticeMessage(
+      CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
+      "You've hit your usage limit. Try again tomorrow."
+    ),
+    /^Codex could not finish: You've hit your usage limit\. Try again tomorrow\. Saved file changes remain\.$/u
+  );
 });
 
 test("Codex turn outcome notice ids are stable per provider thread and turn", () => {
@@ -51,6 +58,7 @@ test("Codex turn outcome notices publish only newly persisted entries", async ()
     }
   };
   const input = {
+    detail: "Provider quota exhausted.",
     outcome: CODEX_TURN_OUTCOME.SERVICE_RESTART,
     publishSessionChanged: async (...args) => published.push(args),
     sessionId: "session-1",
@@ -66,6 +74,7 @@ test("Codex turn outcome notices publish only newly persisted entries", async ()
   assert.equal(duplicate.reason, "already_written");
   assert.equal(writes[0].message.messageId, writes[1].message.messageId);
   assert.match(writes[0].message.text, /Vibe64 restart/u);
+  assert.match(writes[0].message.text, /Provider quota exhausted/u);
   assert.deepEqual(published, [["session-1", {
     payload: {
       conversationLogPatch: {

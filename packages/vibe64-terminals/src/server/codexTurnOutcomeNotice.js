@@ -22,9 +22,18 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
-function codexTurnOutcomeNoticeMessage(outcome = "") {
-  return CODEX_TURN_OUTCOME_MESSAGES[normalizeText(outcome)] ||
+function codexTurnOutcomeNoticeMessage(outcome = "", detail = "") {
+  const normalizedOutcome = normalizeText(outcome);
+  const message = CODEX_TURN_OUTCOME_MESSAGES[normalizedOutcome] ||
     CODEX_TURN_OUTCOME_MESSAGES[CODEX_TURN_OUTCOME.PROVIDER_FAILURE];
+  const normalizedDetail = normalizeText(detail);
+  if (!normalizedDetail) {
+    return message;
+  }
+  if (!normalizedOutcome || normalizedOutcome === CODEX_TURN_OUTCOME.PROVIDER_FAILURE) {
+    return `Codex could not finish: ${normalizedDetail} Saved file changes remain.`;
+  }
+  return `${message} Details: ${normalizedDetail}`;
 }
 
 function codexTurnOutcomeNoticeMessageId(threadId = "", turnId = "") {
@@ -40,6 +49,7 @@ function codexTurnOutcomeNoticeMessageId(threadId = "", turnId = "") {
 }
 
 async function writeCodexTurnOutcomeNotice({
+  detail = "",
   outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
   publishSessionChanged = async () => null,
   sessionId = "",
@@ -61,7 +71,7 @@ async function writeCodexTurnOutcomeNotice({
   }
   const turn = await store.writeConversationSystemMessage(normalizedSessionId, {
     messageId,
-    text: codexTurnOutcomeNoticeMessage(outcome)
+    text: codexTurnOutcomeNoticeMessage(outcome, detail)
   });
   if (!turn) {
     return {
