@@ -34,6 +34,10 @@ import {
   createSessionSource as createManagedSessionSource
 } from "./sessionSource.js";
 import {
+  GENESIS_DERIVED_ARTIFACT_PATHS,
+  refreshGenesisCities
+} from "@local/vibe64-genesis/server";
+import {
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
   terminalTargetRoot,
@@ -1030,15 +1034,17 @@ function createService({
         });
         return saveManagedSessionWork({
           commandOptions: execution.commandOptions,
+          derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
           expectedMessageTree: changes.worktreeTree,
           identity: execution.identity,
           message,
           onProgress: input.onProgress,
           operationId: input.operationId,
           project,
+          refreshDerivedArtifacts: refreshGenesisCities,
           runCommand: execution.runCommand,
           runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-          siblingWork: async ({ operationId }) => {
+          siblingWork: async () => {
             const sessions = typeof runtime.listSessions === "function"
               ? await runtime.listSessions({ statusGroup: "open" })
               : await runtime.listSessionSummaries({ statusGroup: "open" });
@@ -1050,7 +1056,6 @@ function createService({
                 continue;
               }
               siblings.push(await inspectManagedSessionWork({
-                comparisonOperationId: operationId,
                 project,
                 session: sibling
               }));
@@ -1087,6 +1092,8 @@ function createService({
           onProgress: input.onProgress,
           operationId: input.operationId,
           project: await projectService.readCurrentProject(),
+          derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
+          refreshDerivedArtifacts: refreshGenesisCities,
           runCommand: execution.runCommand,
           runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
           session
@@ -1147,6 +1154,7 @@ function createService({
             inspectSource: false
           });
       return inspectManagedSessionWork({
+        derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
         project: await projectService.readCurrentProject(),
         session
       });
@@ -1163,6 +1171,7 @@ function createService({
             inspectSource: false
           });
       return inspectManagedSessionChanges({
+        derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
         limit: input.limit,
         offset: input.offset,
         project: await projectService.readCurrentProject(),
@@ -1181,6 +1190,7 @@ function createService({
             inspectSource: false
           });
       return inspectManagedSessionChangeDiff({
+        derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
         lineLimit: input.lineLimit,
         path: input.path,
         project: await projectService.readCurrentProject(),

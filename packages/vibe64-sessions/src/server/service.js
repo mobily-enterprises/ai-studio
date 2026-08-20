@@ -687,10 +687,6 @@ function createService({
             throw error;
           }
           const updateRequired = error?.code === "vibe64_session_save_update_required";
-          const failureDetails = error?.code === "vibe64_session_save_sibling_conflict" &&
-            error?.details && typeof error.details === "object" && !Array.isArray(error.details)
-            ? error.details
-            : null;
           const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
             event: {
               kind: updateRequired ? "save-update-required" : "save-failed",
@@ -699,7 +695,6 @@ function createService({
             },
             patch: {
               code: text(error?.code),
-              ...(failureDetails ? { details: failureDetails } : {}),
               ...(updateRequired
                 ? { updateRequired: true }
                 : { error: text(error?.message) || "Session Save failed." }),

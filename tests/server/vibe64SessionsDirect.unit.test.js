@@ -447,58 +447,6 @@ test("work inspection observes a live Save without mistaking it for an interrupt
   assert.equal(saved.operation.status, "ready");
 });
 
-test("failed Save persists and returns a bounded sibling conflict bundle for recovery", async () => {
-  let backgroundTask = { id: "save-work", status: "ready" };
-  const conflictDetails = {
-    siblingConflicts: [{
-      classification: "conflict",
-      current: { patch: "+current", truncated: false },
-      paths: ["shared.txt"],
-      sessionId: "session-2",
-      sibling: { patch: "+sibling", truncated: false }
-    }]
-  };
-  const runtime = {
-    async getSession() {
-      return { sessionId: "session-1", status: "active" };
-    },
-    store: {
-      async writeBackgroundTaskEvent(_sessionId, taskId, input) {
-        backgroundTask = {
-          ...backgroundTask,
-          ...input.patch,
-          events: [...(backgroundTask.events || []), input.event],
-          id: taskId
-        };
-        return backgroundTask;
-      }
-    }
-  };
-  const service = createService({
-    project: {
-      async createRuntime() {
-        return runtime;
-      }
-    },
-    terminals: {
-      async saveSessionWork(_sessionId, input) {
-        await input.onRepositoryWriteAcquired();
-        const error = new Error("This work conflicts with another open session.");
-        error.code = "vibe64_session_save_sibling_conflict";
-        error.details = conflictDetails;
-        throw error;
-      }
-    }
-  });
-
-  const result = await service.saveSessionWork("session-1");
-  assert.equal(result.ok, false);
-  assert.equal(result.code, "vibe64_session_save_sibling_conflict");
-  assert.deepEqual(result.details.siblingConflicts, conflictDetails.siblingConflicts);
-  assert.equal(backgroundTask.status, "failed");
-  assert.deepEqual(backgroundTask.details, conflictDetails);
-});
-
 test("Save authority races become a ready update requirement rather than an AI failure", async () => {
   let backgroundTask = { id: "save-work", status: "ready" };
   const publications = [];

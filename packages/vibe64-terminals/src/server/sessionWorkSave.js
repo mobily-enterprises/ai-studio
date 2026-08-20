@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -27,13 +28,18 @@ const MAX_CHANGE_FILE_LIMIT = 500;
 const DEFAULT_CHANGE_DIFF_LINE_LIMIT = 800;
 const MAX_CHANGE_DIFF_LINE_LIMIT = 5000;
 const INCOMING_VERSION_LIMIT = 5;
-const SIBLING_CONFLICT_DETAIL_LIMIT = 4;
-const SIBLING_CONFLICT_PATH_LIMIT = 20;
-const SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT = 24_000;
-const SIBLING_CONFLICT_PATCH_LINE_LIMIT = 300;
+const SIBLING_ADVISORY_DETAIL_LIMIT = 4;
+const SIBLING_ADVISORY_PATH_LIMIT = 20;
 
 function text(value = "") {
   return String(value || "").trim();
+}
+
+function normalizedDerivedArtifactPaths(paths = []) {
+  return [...new Set((Array.isArray(paths) ? paths : [])
+    .map(text)
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function metadata(session = {}) {
@@ -429,19 +435,27 @@ function safeChangePath(value = "") {
 
 async function inspectSessionChanges({
   commandOptions = {},
+  derivedArtifactPaths = [],
   limit = DEFAULT_CHANGE_FILE_LIMIT,
   offset = 0,
   project = {},
   runCommand = runVibe64Command,
   session = {}
 } = {}) {
-  const work = await inspectSessionWork({ commandOptions, project, runCommand, session });
+  const work = await inspectSessionWork({
+    commandOptions,
+    derivedArtifactPaths,
+    project,
+    runCommand,
+    session
+  });
   const context = repositoryContext(session, project);
+  const changedPathSet = new Set(work.changedPaths);
   const files = work.unsaved
     ? await sessionChangeFiles(runCommand, context, work.changeBaseCommit, work.worktreeTree, {
         commandOptions,
         project
-      })
+      }).then((items) => items.filter((item) => changedPathSet.has(item.path)))
     : [];
   const boundedLimit = boundedInteger(limit, DEFAULT_CHANGE_FILE_LIMIT, MAX_CHANGE_FILE_LIMIT);
   const boundedOffset = Math.max(0, Number.parseInt(String(offset ?? ""), 10) || 0);
@@ -457,6 +471,7 @@ async function inspectSessionChanges({
 
 async function inspectSessionChangeDiff({
   commandOptions = {},
+  derivedArtifactPaths = [],
   lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
   path: requestedPath = "",
   project = {},
@@ -464,7 +479,13 @@ async function inspectSessionChangeDiff({
   session = {}
 } = {}) {
   const filePath = safeChangePath(requestedPath);
-  const work = await inspectSessionWork({ commandOptions, project, runCommand, session });
+  const work = await inspectSessionWork({
+    commandOptions,
+    derivedArtifactPaths,
+    project,
+    runCommand,
+    session
+  });
   if (!work.changedPaths.includes(filePath)) {
     throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
   }
@@ -500,7 +521,7 @@ async function inspectSessionChangeDiff({
 
 async function inspectSessionWork({
   commandOptions = {},
-  comparisonOperationId = "",
+  derivedArtifactPaths = [],
   project = {},
   runCommand = runVibe64Command,
   session = {}
@@ -546,29 +567,10 @@ async function inspectSessionWork({
       worktreeTree: tree
     }, { commandOptions, project })
   ]);
-  const comparisonRef = comparisonOperationId
-    ? saveRef(context, comparisonOperationId, "comparison")
-    : "";
-  const comparisonCommit = comparisonRef
-    ? await gitOutput(runCommand, context, [
-        "-c", "user.name=Vibe64 Save",
-        "-c", "user.email=vibe64@localhost",
-        "commit-tree",
-        tree,
-        "-p",
-        comparison.changeBaseCommit
-      ], {
-        commandOptions,
-        input: "Vibe64 sibling Save comparison\n",
-        project
-      })
-    : "";
-  if (comparisonRef) {
-    await git(runCommand, context, ["update-ref", comparisonRef, comparisonCommit], {
-      commandOptions,
-      project
-    });
-  }
+  const derivedPathSet = new Set((Array.isArray(derivedArtifactPaths) ? derivedArtifactPaths : [])
+    .map(text)
+    .filter(Boolean));
+  const changedPaths = comparison.changedPaths.filter((filePath) => !derivedPathSet.has(filePath));
   const relationship = repositoryUpdateRelationship(ahead, behind);
   return {
     ahead,
@@ -579,21 +581,19 @@ async function inspectSessionWork({
     canonicalTree: comparison.canonicalTree,
     changeBaseCommit: comparison.changeBaseCommit,
     changeBaseTree: comparison.changeBaseTree,
-    changedPaths: comparison.changedPaths,
-    comparisonCommit,
-    comparisonRef,
+    changedPaths,
     dirty: tree !== headTree,
     mode: context.mode,
     ok: true,
     repositoryMode: context.mode,
     relationship,
-    sessionMatchesCanonical: comparison.sessionMatchesCanonical,
+    sessionMatchesCanonical: changedPaths.length === 0,
     sessionHead,
     sessionId: context.sessionId,
     tree,
     updateAvailable: behind > 0,
     updateStrategy: repositoryUpdateStrategy(relationship),
-    unsaved: comparison.changedPaths.length > 0,
+    unsaved: changedPaths.length > 0,
     worktreeTree: tree,
     worktreePath: context.worktreePath
   };
@@ -916,173 +916,135 @@ async function createVirtualCommit(runCommand, context, {
   });
 }
 
-function siblingLocalRef(context, operationId, siblingSessionId) {
-  const siblingDigest = crypto.createHash("sha256")
-    .update(text(siblingSessionId))
-    .digest("hex")
-    .slice(0, 24);
-  return saveRef(context, operationId, `sibling-${siblingDigest}`);
-}
-
-function boundedConflictPatch(value = "") {
-  const source = String(value || "");
-  const lines = source.split(/\r?\n/u);
-  const lineBounded = lines.length > SIBLING_CONFLICT_PATCH_LINE_LIMIT
-    ? lines.slice(0, SIBLING_CONFLICT_PATCH_LINE_LIMIT).join("\n")
-    : source;
-  const patch = lineBounded.length > SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT
-    ? lineBounded.slice(0, SIBLING_CONFLICT_PATCH_CHARACTER_LIMIT)
-    : lineBounded;
-  return {
-    patch,
-    truncated: patch.length < source.length
-  };
-}
-
-async function siblingConflictPatch(runCommand, context, {
+async function treeWithDerivedArtifactsFromCommit(runCommand, context, {
   commandOptions,
-  fromCommit,
-  paths,
+  derivedArtifactPaths = [],
   project,
-  toCommit
+  sourceCommit,
+  tree
 }) {
-  const selectedPaths = (Array.isArray(paths) ? paths : [])
-    .map(text)
-    .filter(Boolean)
-    .slice(0, SIBLING_CONFLICT_PATH_LIMIT);
-  if (!selectedPaths.length) {
-    return { patch: "", truncated: false };
+  const paths = normalizedDerivedArtifactPaths(derivedArtifactPaths);
+  if (!paths.length) {
+    return tree;
   }
-  const result = await git(runCommand, context, [
-    "diff",
-    "--no-color",
-    "--no-ext-diff",
-    "--unified=3",
-    fromCommit,
-    toCommit,
-    "--",
-    ...selectedPaths
-  ], {
+  const temporaryRoot = await mkdtemp(path.join(path.dirname(context.worktreePath), ".vibe64-derived-index-"));
+  const indexFile = path.join(temporaryRoot, "index");
+  const env = { GIT_INDEX_FILE: indexFile };
+  const options = {
+    additionalAllowedRoots: [temporaryRoot],
     commandOptions,
-    project,
-    required: false
-  });
-  if (result?.ok !== true) {
-    return { patch: "", truncated: false, unavailable: true };
+    env,
+    project
+  };
+  try {
+    await git(runCommand, context, ["read-tree", tree], options);
+    for (const filePath of paths) {
+      const result = await git(runCommand, context, [
+        "ls-tree",
+        "-z",
+        sourceCommit,
+        "--",
+        filePath
+      ], {
+        commandOptions,
+        project
+      });
+      const match = /^(\d+)\s+\S+\s+([0-9a-f]{40,64})\t([^\0]+)\0$/u.exec(String(result.stdout || ""));
+      if (match && match[3] === filePath) {
+        await git(runCommand, context, [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          match[1],
+          match[2],
+          filePath
+        ], options);
+      } else {
+        await git(runCommand, context, [
+          "update-index",
+          "--force-remove",
+          "--",
+          filePath
+        ], {
+          ...options,
+          required: false
+        });
+      }
+    }
+    return await gitOutput(runCommand, context, ["write-tree"], options);
+  } finally {
+    await rm(temporaryRoot, { force: true, recursive: true });
   }
-  return boundedConflictPatch(String(result.stdout || result.output || ""));
 }
 
-async function compareSiblingWork(runCommand, context, {
+async function regenerateDerivedArtifactTree(runCommand, context, {
+  baseCommit,
   commandOptions,
-  currentVirtualCommit,
-  operationId,
+  derivedArtifactPaths = [],
+  identity,
   project,
-  sibling
+  refreshDerivedArtifacts,
+  tree
 }) {
-  const siblingSessionId = text(sibling?.sessionId);
-  const comparisonCommit = text(sibling?.comparisonCommit);
-  const comparisonRef = text(sibling?.comparisonRef);
-  const siblingWorktreePath = text(sibling?.worktreePath);
-  if (!siblingSessionId || !comparisonCommit || !comparisonRef || !siblingWorktreePath) {
-    return {
-      classification: "unknown",
-      paths: Array.isArray(sibling?.overlappingPaths) ? sibling.overlappingPaths : [],
-      sessionId: siblingSessionId
-    };
+  const paths = normalizedDerivedArtifactPaths(derivedArtifactPaths);
+  if (!paths.length) {
+    return tree;
   }
-  const localRef = siblingLocalRef(context, operationId, siblingSessionId);
+  if (typeof refreshDerivedArtifacts !== "function") {
+    throw saveError(
+      "The project declares generated artifacts but their owning tool is unavailable.",
+      "vibe64_session_derived_artifact_refresh_unavailable"
+    );
+  }
+  const sourceCommit = await createVirtualCommit(runCommand, context, {
+    baseCommit,
+    commandOptions,
+    identity,
+    message: "Vibe64 derived artifact input",
+    project,
+    tree
+  });
+  const temporaryRoot = await mkdtemp(path.join(path.dirname(context.worktreePath), ".vibe64-derived-worktree-"));
+  const temporaryWorktree = path.join(temporaryRoot, "source");
+  const options = {
+    additionalAllowedRoots: [temporaryRoot, temporaryWorktree],
+    commandOptions,
+    project
+  };
+  let registered = false;
   try {
     await git(runCommand, context, [
-      "fetch",
-      "--no-tags",
-      siblingWorktreePath,
-      `+${comparisonRef}:${localRef}`
-    ], {
-      additionalAllowedRoots: [siblingWorktreePath],
-      project
+      "worktree",
+      "add",
+      "--detach",
+      temporaryWorktree,
+      sourceCommit
+    ], options);
+    registered = true;
+    await refreshDerivedArtifacts({ projectRoot: temporaryWorktree });
+    return await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: temporaryWorktree
     });
-    const importedCommit = await gitOutput(runCommand, context, [
-      "rev-parse",
-      "--verify",
-      localRef
-    ], { commandOptions, project });
-    if (importedCommit !== comparisonCommit) {
-      return {
-        classification: "unknown",
-        paths: sibling.overlappingPaths,
-        sessionId: siblingSessionId
-      };
-    }
-    const mergeBase = await git(runCommand, context, [
-      "merge-base",
-      currentVirtualCommit,
-      importedCommit
-    ], {
-      commandOptions,
-      project,
-      required: false
-    });
-    if (mergeBase?.ok !== true || !output(mergeBase)) {
-      return {
-        classification: "unknown",
-        paths: sibling.overlappingPaths,
-        sessionId: siblingSessionId
-      };
-    }
-    const mergeBaseCommit = output(mergeBase);
-    const merged = await git(runCommand, context, [
-      "merge-tree",
-      "--write-tree",
-      "--messages",
-      currentVirtualCommit,
-      importedCommit
-    ], {
-      commandOptions,
-      project,
-      required: false
-    });
-    if (merged?.ok === true) {
-      return {
-        classification: "overlap-clean",
-        paths: sibling.overlappingPaths,
-        sessionId: siblingSessionId
-      };
-    }
-    const [current, siblingPatch] = await Promise.all([
-      siblingConflictPatch(runCommand, context, {
-        commandOptions,
-        fromCommit: mergeBaseCommit,
-        paths: sibling.overlappingPaths,
-        project,
-        toCommit: currentVirtualCommit
-      }),
-      siblingConflictPatch(runCommand, context, {
-        commandOptions,
-        fromCommit: mergeBaseCommit,
-        paths: sibling.overlappingPaths,
-        project,
-        toCommit: importedCommit
-      })
-    ]);
-    return {
-      classification: "conflict",
-      current,
-      paths: sibling.overlappingPaths.slice(0, SIBLING_CONFLICT_PATH_LIMIT),
-      pathsTruncated: sibling.overlappingPaths.length > SIBLING_CONFLICT_PATH_LIMIT,
-      sibling: siblingPatch,
-      sessionId: siblingSessionId
-    };
   } finally {
-    await deleteOperationRef(runCommand, context, localRef, {
+    if (registered) {
+      await git(runCommand, context, [
+        "worktree",
+        "remove",
+        "--force",
+        temporaryWorktree
+      ], {
+        ...options,
+        required: false
+      });
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+    await git(runCommand, context, ["worktree", "prune"], {
       commandOptions,
-      project
-    });
-    await deleteOperationRef(runCommand, context, comparisonRef, {
-      additionalAllowedRoots: [siblingWorktreePath],
-      commandOptions,
-      cwd: siblingWorktreePath,
-      project
+      project,
+      required: false
     });
   }
 }
@@ -1368,10 +1330,12 @@ async function applySessionUpdate(runCommand, context, {
 async function updateSessionWork({
   commandOptions = {},
   conflictRecovery = null,
+  derivedArtifactPaths = [],
   identity = {},
   onProgress = async () => null,
   operationId = crypto.randomUUID(),
   project = {},
+  refreshDerivedArtifacts = null,
   runCommand = runVibe64Command,
   runProjectSourceExclusive = async (operation) => operation(),
   session = {}
@@ -1434,6 +1398,9 @@ async function updateSessionWork({
       sessionHead: oldHead,
       worktreeTree: checkpoint.tree
     }, { commandOptions, project });
+    const derivedPathSet = new Set(normalizedDerivedArtifactPaths(derivedArtifactPaths));
+    const authoredChangedPaths = comparison.changedPaths
+      .filter((filePath) => !derivedPathSet.has(filePath));
     const canonicalInSession = await commitIsAncestor(
       runCommand,
       context,
@@ -1460,14 +1427,33 @@ async function updateSessionWork({
         status: "already_current"
       };
     }
-    if (comparison.sessionMatchesCanonical) {
+    if (!authoredChangedPaths.length) {
+      const mergedTree = await regenerateDerivedArtifactTree(runCommand, context, {
+        baseCommit: canonicalCommit,
+        commandOptions,
+        derivedArtifactPaths,
+        identity: author,
+        project,
+        refreshDerivedArtifacts,
+        tree: comparison.canonicalTree
+      });
+      const mergedCommit = mergedTree === comparison.canonicalTree
+        ? canonicalCommit
+        : await createVirtualCommit(runCommand, context, {
+            baseCommit: canonicalCommit,
+            commandOptions,
+            identity: author,
+            message: "Vibe64 regenerated derived artifacts",
+            project,
+            tree: mergedTree
+          });
       await onProgress({
         canonicalCommit,
         checkpointCommit: checkpoint.commit,
         checkpointTree: checkpoint.tree,
         kind: "update",
-        mergedCommit: canonicalCommit,
-        mergedTree: comparison.canonicalTree,
+        mergedCommit,
+        mergedTree,
         message: "A conflict-free session update is ready.",
         oldHead,
         oldIndexTree,
@@ -1479,8 +1465,8 @@ async function updateSessionWork({
         checkpointCommit: checkpoint.commit,
         checkpointTree: checkpoint.tree,
         commandOptions,
-        mergedCommit: canonicalCommit,
-        mergedTree: comparison.canonicalTree,
+        mergedCommit,
+        mergedTree,
         oldHead,
         oldIndexTree,
         project
@@ -1492,8 +1478,8 @@ async function updateSessionWork({
         changeBaseCommit: comparison.changeBaseCommit,
         checkpointCommit: checkpoint.commit,
         checkpointTree: checkpoint.tree,
-        mergedCommit: canonicalCommit,
-        mergedTree: comparison.canonicalTree,
+        mergedCommit,
+        mergedTree,
         ok: true,
         oldHead,
         oldIndexTree,
@@ -1505,10 +1491,17 @@ async function updateSessionWork({
         ...reconciliation
       };
     }
+    const checkpointTreeForMerge = await treeWithDerivedArtifactsFromCommit(runCommand, context, {
+      commandOptions,
+      derivedArtifactPaths,
+      project,
+      sourceCommit: canonicalCommit,
+      tree: checkpoint.tree
+    });
     const mergeResult = await mergeTrees(runCommand, context, {
       baseCommit: comparison.changeBaseCommit,
       canonicalCommit,
-      checkpointTree: checkpoint.tree,
+      checkpointTree: checkpointTreeForMerge,
       commandOptions,
       identity: author,
       project
@@ -1524,15 +1517,24 @@ async function updateSessionWork({
           oldIndexTree
         }
       : null;
-    const mergedTree = currentRecovery
+    const mergedSourceTree = currentRecovery
       ? await resolvedConflictTree(runCommand, context, {
           checkpointTree: checkpoint.tree,
           commandOptions,
           currentRecovery,
           previousRecovery: conflictRecovery,
           project
-        })
+      })
       : mergeResult.mergedTree;
+    const mergedTree = await regenerateDerivedArtifactTree(runCommand, context, {
+      baseCommit: canonicalCommit,
+      commandOptions,
+      derivedArtifactPaths,
+      identity: author,
+      project,
+      refreshDerivedArtifacts,
+      tree: mergedSourceTree
+    });
     const mergedCommit = await createVirtualCommit(runCommand, context, {
       baseCommit: canonicalCommit,
       commandOptions,
@@ -1706,29 +1708,12 @@ async function reconcileSession(runCommand, context, {
     commandOptions,
     project
   });
-  const patch = (await git(runCommand, context, [
-    "diff",
-    "--binary",
-    checkpointCommit,
-    saveCommit,
-    "--"
-  ], {
+  const oldHead = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
     commandOptions,
     project
-  })).stdout || "";
+  });
   try {
-    await git(runCommand, context, ["read-tree", checkpointCommit], {
-      commandOptions,
-      project
-    });
-    if (patch) {
-      await git(runCommand, context, ["apply", "--index", "--binary", "-"], {
-        commandOptions,
-        input: patch,
-        project
-      });
-    }
-    const oldHead = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
+    await git(runCommand, context, ["read-tree", "--reset", "-u", saveCommit], {
       commandOptions,
       project
     });
@@ -1742,6 +1727,11 @@ async function reconcileSession(runCommand, context, {
       status: "saved"
     };
   } catch (error) {
+    await git(runCommand, context, ["read-tree", "--reset", "-u", checkpointCommit], {
+      commandOptions,
+      project,
+      required: false
+    });
     await git(runCommand, context, ["read-tree", oldIndexTree], {
       commandOptions,
       project,
@@ -1758,11 +1748,13 @@ async function reconcileSession(runCommand, context, {
 
 async function saveSessionWork({
   commandOptions = {},
+  derivedArtifactPaths = [],
   identity = {},
   expectedMessageTree = "",
   message = "",
   operationId = crypto.randomUUID(),
   project = {},
+  refreshDerivedArtifacts = null,
   runCommand = runVibe64Command,
   runProjectSourceExclusive = async (operation) => operation(),
   onProgress = async () => null,
@@ -1861,21 +1853,14 @@ async function saveSessionWork({
       sessionHead,
       worktreeTree: checkpoint.tree
     }, { commandOptions, project });
-    const changedPaths = comparison.changedPaths;
+    const derivedPathSet = new Set(normalizedDerivedArtifactPaths(derivedArtifactPaths));
+    const changedPaths = comparison.changedPaths.filter((filePath) => !derivedPathSet.has(filePath));
     if (!changedPaths.length) {
       throw saveError(
         "This session has no work to save.",
         "vibe64_session_save_no_changes"
       );
     }
-    const currentVirtualCommit = await createVirtualCommit(runCommand, context, {
-      baseCommit: comparison.changeBaseCommit,
-      commandOptions,
-      identity: author,
-      message: "Vibe64 session sibling comparison",
-      project,
-      tree: checkpoint.tree
-    });
     const siblings = await siblingWork({
       changedPaths,
       context,
@@ -1890,40 +1875,51 @@ async function saveSessionWork({
           .sort((left, right) => left.localeCompare(right))
       }))
       .filter((sibling) => text(sibling?.sessionId) && sibling.overlappingPaths.length);
-    const siblingResults = [];
-    for (const sibling of siblingCandidates) {
-      siblingResults.push(await compareSiblingWork(runCommand, context, {
-        commandOptions,
-        currentVirtualCommit,
-        operationId,
-        project,
-        sibling
-      }));
+    const siblingAdvisories = siblingCandidates.map((sibling) => ({
+      paths: sibling.overlappingPaths.slice(0, SIBLING_ADVISORY_PATH_LIMIT),
+      pathsTruncated: sibling.overlappingPaths.length > SIBLING_ADVISORY_PATH_LIMIT,
+      sessionId: sibling.sessionId
+    }));
+    if (siblingAdvisories.length) {
+      await onProgress({
+        kind: "sibling-advisory",
+        message: siblingAdvisories.length === 1
+          ? "Another open session edits some of the same files. Save will continue; that session must update before it can save."
+          : `${siblingAdvisories.length} other open sessions edit some of the same files. Save will continue; those sessions must update before they can save.`,
+        siblingAdvisories: siblingAdvisories.slice(0, SIBLING_ADVISORY_DETAIL_LIMIT),
+        siblingAdvisoryCount: siblingAdvisories.length,
+        stage: "sibling-advisory"
+      });
     }
-    const siblingConflicts = siblingResults.filter(({ classification }) => (
-      classification === "conflict" || classification === "unknown"
-    ));
-    if (siblingConflicts.length) {
-      const boundedSiblingConflicts = siblingConflicts.slice(0, SIBLING_CONFLICT_DETAIL_LIMIT);
-      throw saveError(
-        siblingConflicts.some(({ classification }) => classification === "unknown")
-          ? "Vibe64 could not prove that overlapping work in another open session merges cleanly."
-          : "This work conflicts with unsaved changes in another open session.",
-        "vibe64_session_save_sibling_conflict",
-        {
-          siblingConflictCount: siblingConflicts.length,
-          siblingConflicts: boundedSiblingConflicts,
-          siblingConflictsTruncated: siblingConflicts.length > boundedSiblingConflicts.length
-        }
-      );
-    }
-    const mergedTree = checkpoint.tree;
-    const virtualCommit = currentVirtualCommit;
+    const sourceTree = await treeWithDerivedArtifactsFromCommit(runCommand, context, {
+      commandOptions,
+      derivedArtifactPaths,
+      project,
+      sourceCommit: canonicalCommit,
+      tree: checkpoint.tree
+    });
+    const mergedTree = await regenerateDerivedArtifactTree(runCommand, context, {
+      baseCommit: canonicalCommit,
+      commandOptions,
+      derivedArtifactPaths,
+      identity: author,
+      project,
+      refreshDerivedArtifacts,
+      tree: sourceTree
+    });
+    const virtualCommit = await createVirtualCommit(runCommand, context, {
+      baseCommit: comparison.changeBaseCommit,
+      commandOptions,
+      identity: author,
+      message: "Vibe64 session Save input",
+      project,
+      tree: mergedTree
+    });
     const saveCommit = await createSaveCommit(runCommand, context, {
       canonicalCommit,
       commandOptions,
       identity: author,
-      mergedTree: checkpoint.tree,
+      mergedTree,
       message,
       project
     });
@@ -1970,6 +1966,8 @@ async function saveSessionWork({
       ok: true,
       operationId,
       saveCommit,
+      siblingAdvisories: siblingAdvisories.slice(0, SIBLING_ADVISORY_DETAIL_LIMIT),
+      siblingAdvisoryCount: siblingAdvisories.length,
       status: reconciliation.status,
       verifiedCommit,
       virtualCommit,

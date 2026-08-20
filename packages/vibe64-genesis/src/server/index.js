@@ -13,14 +13,13 @@ const {
   indexCodebase,
   initialize,
   inspectDeployment,
+  inspectDerivedArtifacts,
   inspectEnvironment,
   inspectLaunch,
   inspectWorkspaceSetup
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
-const GENESIS_MACHINE_CITY_PATH = ".genesis/machine-city.json";
-const GENESIS_PROGRAM_CITY_PATH = ".genesis/program-city.json";
 const VIBE64_STACK_PACKAGES = Object.freeze(["genesis-stack"]);
 const GENESIS_PROMPT_TASKS = new Set([
   "blueprint",
@@ -107,6 +106,34 @@ function refreshGenesisCities(options = {}) {
   return indexCodebase(withVibe64StackCatalog(options));
 }
 
+function inspectGenesisDerivedArtifacts() {
+  const result = inspectDerivedArtifacts();
+  if (result?.contract !== GENESIS_CONTRACTS.derivedArtifacts) {
+    throw new Error(`Genesis returned ${result?.contract || "no contract identity"}; expected ${GENESIS_CONTRACTS.derivedArtifacts}.`);
+  }
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts : [];
+  if (!artifacts.length || artifacts.some((artifact) => !normalizeText(artifact?.path))) {
+    throw new Error("Genesis returned an invalid derived-artifact contract.");
+  }
+  return {
+    ...result,
+    artifacts: artifacts.map((artifact) => ({ ...artifact }))
+  };
+}
+
+const GENESIS_DERIVED_ARTIFACT_CONTRACT = inspectGenesisDerivedArtifacts();
+const GENESIS_DERIVED_ARTIFACT_PATHS = Object.freeze(
+  GENESIS_DERIVED_ARTIFACT_CONTRACT.artifacts.map((artifact) => artifact.path)
+);
+const GENESIS_DERIVED_ARTIFACTS_BY_ID = new Map(
+  GENESIS_DERIVED_ARTIFACT_CONTRACT.artifacts.map((artifact) => [artifact.id, artifact])
+);
+const GENESIS_MACHINE_CITY_PATH = GENESIS_DERIVED_ARTIFACTS_BY_ID.get("machine-city")?.path;
+const GENESIS_PROGRAM_CITY_PATH = GENESIS_DERIVED_ARTIFACTS_BY_ID.get("program-city")?.path;
+if (!GENESIS_MACHINE_CITY_PATH || !GENESIS_PROGRAM_CITY_PATH) {
+  throw new Error("Genesis did not declare both City projection artifacts.");
+}
+
 async function exactGenesisInspection(inspector, contract, options = {}) {
   const result = await inspector(withVibe64StackCatalog(options));
   if (result?.contract !== contract) {
@@ -183,6 +210,7 @@ async function renderGenesisPrompt({
 
 export {
   GENESIS_BLUEPRINT_PATH,
+  GENESIS_DERIVED_ARTIFACT_PATHS,
   GENESIS_MACHINE_CITY_PATH,
   GENESIS_PROGRAM_CITY_PATH,
   addGenesisStack,
@@ -191,6 +219,7 @@ export {
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisDerivedArtifacts,
   inspectGenesisDeployment,
   inspectGenesisEnvironment,
   inspectGenesisLaunch,

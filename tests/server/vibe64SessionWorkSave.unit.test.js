@@ -281,6 +281,54 @@ test("Update preserves unsaved session work while advancing to newer GitHub work
   }
 });
 
+test("Update resolves Genesis-derived overlap by regenerating from the merged authored source", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const canonicalWriter = path.join(root, "canonical-writer-derived");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    for (const worktreePath of [session.sourcePath, canonicalWriter]) {
+      await mkdir(path.join(worktreePath, ".genesis"), { recursive: true });
+    }
+    await writeFile(path.join(canonicalWriter, "remote.txt"), "remote\n", "utf8");
+    await writeFile(path.join(canonicalWriter, ".genesis", "machine-city.json"), "{\"remote\":true}\n", "utf8");
+    await git(canonicalWriter, ["add", "remote.txt", ".genesis/machine-city.json"]);
+    await git(canonicalWriter, ["commit", "-m", "remote authored advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
+    await writeFile(path.join(session.sourcePath, ".genesis", "machine-city.json"), "{\"local\":true}\n", "utf8");
+
+    const result = await updateSessionWork({
+      derivedArtifactPaths: [".genesis/machine-city.json", ".genesis/program-city.json"],
+      operationId: "update-derived-overlap",
+      project: githubProject(root, fixture.remote),
+      refreshDerivedArtifacts: async ({ projectRoot }) => {
+        await mkdir(path.join(projectRoot, ".genesis"), { recursive: true });
+        const local = await readFile(path.join(projectRoot, "local.txt"), "utf8");
+        const remote = await readFile(path.join(projectRoot, "remote.txt"), "utf8");
+        const content = JSON.stringify({ local: local.trim(), remote: remote.trim() }) + "\n";
+        await writeFile(path.join(projectRoot, ".genesis", "machine-city.json"), content, "utf8");
+        await writeFile(path.join(projectRoot, ".genesis", "program-city.json"), content, "utf8");
+      },
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(result.status, "updated");
+    assert.equal(result.canonicalCommit, canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "local.txt"), "utf8"), "local\n");
+    assert.equal(await readFile(path.join(session.sourcePath, "remote.txt"), "utf8"), "remote\n");
+    assert.equal(
+      await readFile(path.join(session.sourcePath, ".genesis", "machine-city.json"), "utf8"),
+      '{"local":"local","remote":"remote"}\n'
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("repeated update checks retain only the stable canonical cache ref", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-check-"));
   try {
@@ -802,7 +850,7 @@ test("explicit Update reports a real three-way conflict without changing canonic
   }
 });
 
-test("Save permits same-file sibling work when Git proves the edits merge cleanly", async () => {
+test("Save warns about same-file sibling work without blocking canonical Save", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -822,8 +870,7 @@ test("Save permits same-file sibling work when Git proves the edits merge cleanl
       project,
       runCommand: commandRunner,
       session,
-      siblingWork: async ({ operationId }) => [await inspectSessionWork({
-        comparisonOperationId: operationId,
+      siblingWork: async () => [await inspectSessionWork({
         project,
         runCommand: commandRunner,
         session: sibling
@@ -831,6 +878,12 @@ test("Save permits same-file sibling work when Git proves the edits merge cleanl
     });
 
     assert.equal(result.status, "saved");
+    assert.equal(result.siblingAdvisoryCount, 1);
+    assert.deepEqual(result.siblingAdvisories, [{
+      paths: ["mergeable.txt"],
+      pathsTruncated: false,
+      sessionId: "session-2"
+    }]);
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "mergeable.txt"), "utf8"), "current\nsecond\nthird\nfourth\n");
     assert.equal(
@@ -846,7 +899,7 @@ test("Save permits same-file sibling work when Git proves the edits merge cleanl
   }
 });
 
-test("Save rejects only a genuine same-file sibling merge conflict", async () => {
+test("Save warns about conflicting sibling edits without treating them as canonical conflicts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -856,36 +909,109 @@ test("Save rejects only a genuine same-file sibling merge conflict", async () =>
     await writeFile(path.join(sibling.sourcePath, "shared.txt"), "sibling\n", "utf8");
     const project = githubProject(root, fixture.remote);
 
-    await assert.rejects(saveSessionWork({
+    const result = await saveSessionWork({
       operationId: "save-sibling-conflict",
       project,
       runCommand: commandRunner,
       session,
-      siblingWork: async ({ operationId }) => [await inspectSessionWork({
-        comparisonOperationId: operationId,
+      siblingWork: async () => [await inspectSessionWork({
         project,
         runCommand: commandRunner,
         session: sibling
       })]
-    }), (error) => {
-      assert.equal(error.code, "vibe64_session_save_sibling_conflict");
-      assert.equal(error.details.siblingConflictCount, 1);
-      assert.equal(error.details.siblingConflicts.length, 1);
-      assert.equal(error.details.siblingConflictsTruncated, false);
-      const [conflict] = error.details.siblingConflicts;
-      assert.equal(conflict.classification, "conflict");
-      assert.deepEqual(conflict.paths, ["shared.txt"]);
-      assert.equal(conflict.pathsTruncated, false);
-      assert.equal(conflict.sessionId, "session-2");
-      assert.match(conflict.current.patch, /\+current/u);
-      assert.match(conflict.sibling.patch, /\+sibling/u);
-      assert.equal(conflict.current.truncated, false);
-      assert.equal(conflict.sibling.truncated, false);
-      assert.deepEqual(error.siblingConflicts, error.details.siblingConflicts);
-      assert.doesNotMatch(JSON.stringify(conflict), new RegExp(root.replaceAll("\\", "\\\\"), "u"));
-      return true;
     });
-    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), fixture.baseCommit);
+    assert.equal(result.status, "saved");
+    assert.equal(result.siblingAdvisoryCount, 1);
+    assert.deepEqual(result.siblingAdvisories, [{
+      paths: ["shared.txt"],
+      pathsTruncated: false,
+      sessionId: "session-2"
+    }]);
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Save ignores sibling overlap that exists only in Genesis-derived artifacts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const sibling = await sessionForRemote(root, fixture, "session-2");
+    for (const worktreePath of [session.sourcePath, sibling.sourcePath]) {
+      await mkdir(path.join(worktreePath, ".genesis"), { recursive: true });
+    }
+    await writeFile(path.join(session.sourcePath, "authored.txt"), "authored\n", "utf8");
+    await writeFile(path.join(session.sourcePath, ".genesis", "machine-city.json"), "{\"session\":true}\n", "utf8");
+    await writeFile(path.join(sibling.sourcePath, ".genesis", "machine-city.json"), "{\"sibling\":true}\n", "utf8");
+    const project = githubProject(root, fixture.remote);
+
+    const result = await saveSessionWork({
+      derivedArtifactPaths: [".genesis/machine-city.json", ".genesis/program-city.json"],
+      operationId: "save-derived-sibling-overlap",
+      project,
+      refreshDerivedArtifacts: async ({ projectRoot }) => {
+        await mkdir(path.join(projectRoot, ".genesis"), { recursive: true });
+        const authored = await readFile(path.join(projectRoot, "authored.txt"), "utf8");
+        await writeFile(
+          path.join(projectRoot, ".genesis", "machine-city.json"),
+          JSON.stringify({ authored: authored.trim() }) + "\n",
+          "utf8"
+        );
+        await writeFile(
+          path.join(projectRoot, ".genesis", "program-city.json"),
+          JSON.stringify({ authored: authored.trim() }) + "\n",
+          "utf8"
+        );
+      },
+      runCommand: commandRunner,
+      session,
+      siblingWork: async () => [await inspectSessionWork({
+        project,
+        runCommand: commandRunner,
+        session: sibling
+      })]
+    });
+
+    assert.equal(result.status, "saved");
+    assert.equal(result.siblingAdvisoryCount, 0);
+    assert.deepEqual(result.siblingAdvisories, []);
+    assert.deepEqual(result.changedPaths, ["authored.txt"]);
+    assert.equal(
+      await git(fixture.remote, ["show", "main:.genesis/machine-city.json"]),
+      '{"authored":"authored"}'
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("Save leaves canonical and session source untouched when derived-artifact regeneration fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(session.sourcePath, "authored.txt"), "important\n", "utf8");
+    const beforeCanonical = await git(fixture.remote, ["rev-parse", "refs/heads/main"]);
+    const beforeHead = await git(session.sourcePath, ["rev-parse", "HEAD"]);
+    const beforeStatus = await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]);
+
+    await assert.rejects(saveSessionWork({
+      derivedArtifactPaths: [".genesis/machine-city.json", ".genesis/program-city.json"],
+      operationId: "save-derived-refresh-failure",
+      project: githubProject(root, fixture.remote),
+      refreshDerivedArtifacts: async () => {
+        throw new Error("derived refresh failed");
+      },
+      runCommand: commandRunner,
+      session
+    }), /derived refresh failed/u);
+
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), beforeCanonical);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), beforeHead);
+    assert.equal(await git(session.sourcePath, ["status", "--porcelain=v1", "-z"]), beforeStatus);
+    assert.equal(await readFile(path.join(session.sourcePath, "authored.txt"), "utf8"), "important\n");
   } finally {
     await rm(root, { force: true, recursive: true });
   }

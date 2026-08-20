@@ -450,43 +450,6 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkExpanded.value).toBe(false);
   });
 
-  it("collapses failed Save output while retaining the actionable error", async () => {
-    const view = await createView({
-      saveSessionWork: vi.fn(async () => {
-        const error = new Error("Conflicting sibling work");
-        error.code = "vibe64_session_save_sibling_conflict";
-        error.details = {
-          siblingConflicts: [{
-            classification: "conflict",
-            current: { patch: "+current" },
-            paths: ["shared.txt"],
-            sessionId: "session-2",
-            sibling: { patch: "+sibling" }
-          }]
-        };
-        throw error;
-      }),
-      workState: {
-        unsaved: true,
-        updateAvailable: false,
-        updateStatusPending: false
-      }
-    });
-
-    view.requestSaveWork();
-    await expect(view.confirmSaveWork()).resolves.toBe(false);
-
-    expect(view.saveWorkExpanded.value).toBe(false);
-    expect(view.saveWorkError.value).toBe("Conflicting sibling work");
-    expect(view.saveWorkFailure.value).toMatchObject({
-      code: "vibe64_session_save_sibling_conflict",
-      details: {
-        siblingConflicts: [{ sessionId: "session-2" }]
-      }
-    });
-    expect(view.saveWorkConfirmOpen.value).toBe(false);
-  });
-
   it("treats a Save authority race as an ordinary update requirement", async () => {
     const view = await createView({
       saveSessionWork: vi.fn(async () => ({
@@ -511,40 +474,6 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkError.value).toBe("");
     expect(view.saveWorkFailure.value).toBeNull();
     expect(view.saveWorkCanResolveWithTemporaryAi.value).toBe(false);
-  });
-
-  it("restores an actionable Save failure from durable operation state after reload", async () => {
-    const view = await createView({
-      workState: {
-        operation: {
-          code: "vibe64_session_save_sibling_conflict",
-          details: {
-            siblingConflictCount: 1,
-            siblingConflicts: [{
-              classification: "conflict",
-              current: { patch: "+current" },
-              paths: ["shared.txt"],
-              sessionId: "session-2",
-              sibling: { patch: "+sibling" }
-            }]
-          },
-          error: "Conflicting sibling work",
-          operationId: "save-1",
-          status: "failed"
-        },
-        unsaved: true,
-        updateAvailable: false,
-        updateStatusPending: false
-      }
-    });
-
-    expect(view.saveWorkError.value).toBe("Conflicting sibling work");
-    expect(view.saveWorkFailure.value).toMatchObject({
-      code: "vibe64_session_save_sibling_conflict",
-      details: {
-        siblingConflicts: [{ sessionId: "session-2" }]
-      }
-    });
   });
 
   it("fails closed when Save has no work or the canonical version needs checking", async () => {

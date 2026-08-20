@@ -8,12 +8,14 @@ import { promisify } from "node:util";
 import { runVibe64Command } from "@local/vibe64-execution/server";
 import { codexRuntimeContext } from "@local/studio-terminal-core/server/codexRuntimeContext";
 import {
+  GENESIS_DERIVED_ARTIFACT_PATHS,
   addGenesisStack,
   assertGenesisPromptTask,
   genesisPackageBinDirectory,
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisDerivedArtifacts,
   inspectGenesisDeployment,
   inspectGenesisEnvironment,
   inspectGenesisLaunch,
@@ -126,8 +128,22 @@ test("the exact Genesis boundary exposes environment and deployment contracts", 
     const deployment = await inspectGenesisDeployment({ projectRoot });
 
     assert.equal(environment.contract, "genesis.environment.v1");
-    assert.equal(deployment.contract, "genesis.deployment.v1");
+    assert.equal(deployment.contract, "genesis.deployment.v2");
   });
+});
+
+test("the exact Genesis boundary exposes the portable derived-artifact contract", () => {
+  const result = inspectGenesisDerivedArtifacts();
+
+  assert.equal(result.contract, "genesis.derived-artifacts.v1");
+  assert.deepEqual(GENESIS_DERIVED_ARTIFACT_PATHS, [
+    ".genesis/machine-city.json",
+    ".genesis/program-city.json"
+  ]);
+  assert.deepEqual(
+    result.artifacts.map((artifact) => artifact.recreator),
+    ["index-codebase", "index-codebase"]
+  );
 });
 
 test("a blank initialized project stays in Genesis onboarding before ordinary work", async () => {

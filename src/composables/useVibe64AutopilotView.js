@@ -711,7 +711,6 @@ function useVibe64AutopilotView(props, emit) {
   }, { immediate: true });
   const saveWorkCanResolveWithTemporaryAi = computed(() => [
     "vibe64_session_save_history_diverged",
-    "vibe64_session_save_sibling_conflict",
     "vibe64_session_update_conflict",
     "vibe64_session_update_history_diverged"
   ].includes(String(saveWorkFailure.value?.code || "")));
