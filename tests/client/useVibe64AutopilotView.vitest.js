@@ -40,8 +40,8 @@ describe("direct chat messages", () => {
       sequence: 2
     });
 
-    expect(first).toBe("message:tab:test:ya:1");
-    expect(second).toBe("message:tab:test:ya:2");
+    expect(first).toBe("message_tab_test_ya_1");
+    expect(second).toBe("message_tab_test_ya_2");
   });
 
   it("removes optimistic messages when canonical conversation turns arrive", () => {
@@ -61,5 +61,15 @@ describe("direct chat messages", () => {
       ...optimistic,
       status: "failed"
     }])).toHaveLength(1);
+    expect(unmatchedOptimisticMessages([{
+      user: {
+        at: "2026-08-14T01:03:00.000Z",
+        messageId: "message:test",
+        text: "Server-rendered text"
+      }
+    }], [{
+      ...optimistic,
+      status: "failed"
+    }])).toEqual([]);
   });
 });

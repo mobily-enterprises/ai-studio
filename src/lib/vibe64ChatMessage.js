@@ -21,7 +21,8 @@ function createChatMessageId({
     throw new TypeError("Chat message ids require a browser origin and timestamp.");
   }
   const number = Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 1;
-  return `message:${origin}:${timestamp.toString(36)}:${number.toString(36)}`;
+  const safeOrigin = origin.replace(/[^A-Za-z0-9_-]+/gu, "_");
+  return `message_${safeOrigin}_${timestamp.toString(36)}_${number.toString(36)}`;
 }
 
 function chatMessagePayload(message = "", attachments = []) {
@@ -41,6 +42,11 @@ function chatMessagePayload(message = "", attachments = []) {
 }
 
 function turnMatchesOptimisticMessage(turn = {}, optimistic = {}) {
+  const canonicalMessageId = chatText(turn?.user?.messageId);
+  const optimisticMessageId = chatText(optimistic.id);
+  if (canonicalMessageId && optimisticMessageId) {
+    return canonicalMessageId === optimisticMessageId;
+  }
   if (chatText(turn?.user?.text) !== optimistic.text) {
     return false;
   }
@@ -52,9 +58,6 @@ function unmatchedOptimisticMessages(turns = [], optimisticMessages = []) {
   const conversationTurns = Array.isArray(turns) ? turns : [];
   const matchedTurnIndexes = new Set();
   return (Array.isArray(optimisticMessages) ? optimisticMessages : []).filter((message) => {
-    if (message?.status === "failed") {
-      return true;
-    }
     const turnIndex = conversationTurns.findIndex((turn, index) => (
       !matchedTurnIndexes.has(index) && turnMatchesOptimisticMessage(turn, message)
     ));

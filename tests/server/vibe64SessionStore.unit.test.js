@@ -206,6 +206,33 @@ test("plain session store deduplicates durable system messages by message id", a
   });
 });
 
+test("plain session store gives one durable user turn to one message id", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "conversation-user-dedupe"
+    });
+    const first = await store.writeConversationUserMessage("conversation-user-dedupe", {
+      messageId: "message_tab_test_one_1",
+      text: "Apply the fix."
+    });
+    const duplicate = await store.writeConversationUserMessage("conversation-user-dedupe", {
+      messageId: "message_tab_test_one_1",
+      text: "Apply the fix."
+    });
+
+    assert.equal(first.user.messageId, "message_tab_test_one_1");
+    assert.equal(duplicate, null);
+    assert.equal(await store.conversationMessageIdExists(
+      "conversation-user-dedupe",
+      "message_tab_test_one_1"
+    ), true);
+    const conversationLog = await store.readConversationLog("conversation-user-dedupe");
+    assert.equal(conversationLog.length, 1);
+  });
+});
+
 test("plain session store archives closed sessions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);

@@ -23,8 +23,6 @@ import { vibe64ApiError, vibe64ApiResponseError } from "@/lib/vibe64ApiResponses
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
-const AGENT_MESSAGE_ACCEPT_TIMEOUT_MS = 10_000;
-
 function agentTurnControlPayloadFromContext(context = {}) {
   const source = context && typeof context === "object" && !Array.isArray(context) ? context : {};
   const {
@@ -73,14 +71,8 @@ function runtimeHostAgentWorking({ selectedSession = null } = {}) {
   return sessionRecordHasActiveAgentWork(selectedSession);
 }
 
-function agentMessageAcceptanceSignal(controller, { waitingForWorkspaceSetup = false } = {}) {
-  if (waitingForWorkspaceSetup) {
-    return controller.signal;
-  }
-  const timeout = AbortSignal.timeout(AGENT_MESSAGE_ACCEPT_TIMEOUT_MS);
-  return typeof AbortSignal.any === "function"
-    ? AbortSignal.any([controller.signal, timeout])
-    : timeout;
+function agentMessageAcceptanceSignal(controller) {
+  return controller.signal;
 }
 
 function useVibe64SessionRuntimeHost(props, emit) {
@@ -290,10 +282,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     }
     const request = messageRequestTail.then(async () => {
       try {
-        const waitingForWorkspaceSetup = selectedSession.value?.workspaceSetup?.status === "running";
-        const signal = agentMessageAcceptanceSignal(controller, {
-          waitingForWorkspaceSetup
-        });
+        const signal = agentMessageAcceptanceSignal(controller);
         const result = await getHttpWebClient().request(
           vibe64SessionPath(
             readRefOrGetterValue(props.sessionData.sessionsApiPath),

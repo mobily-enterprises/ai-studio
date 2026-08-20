@@ -1719,18 +1719,35 @@ function createVibe64SessionStore({
     return Math.min(number, 100);
   }
 
+  async function conversationMessageIdExists(sessionId, messageId = "") {
+    return withReadableSessionPaths(sessionId, (sessionPaths) => (
+      conversationMessageIdExistsFromPaths(sessionPaths, messageId)
+    ));
+  }
+
   async function writeConversationUserMessage(sessionId, {
+    messageId = "",
     text = ""
   } = {}) {
     const messageText = normalizeText(text);
+    const normalizedMessageId = normalizeText(messageId);
     if (!messageText) {
       return null;
     }
     return mutateSession(sessionId, async (sessionPaths) => {
+      if (
+        normalizedMessageId &&
+        await conversationMessageIdExistsFromPaths(sessionPaths, normalizedMessageId)
+      ) {
+        return null;
+      }
       const turnId = nextConversationTurnId(await conversationTurnIds(sessionPaths));
       const createdAt = now();
       await writeTextFile(
-        path.join(conversationTurnRoot(sessionPaths, turnId), conversationMessageFileName("user", createdAt)),
+        path.join(
+          conversationTurnRoot(sessionPaths, turnId),
+          conversationMessageFileName("user", createdAt, normalizedMessageId)
+        ),
         `${messageText}\n`
       );
       return readConversationTurn(sessionPaths, turnId);
@@ -2453,6 +2470,7 @@ function createVibe64SessionStore({
   return {
     createSession,
     compactClosedSession,
+    conversationMessageIdExists,
     deleteMetadataValue,
     deleteMetadataValues,
     listSessions,

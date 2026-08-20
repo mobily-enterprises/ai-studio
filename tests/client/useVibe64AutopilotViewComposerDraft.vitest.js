@@ -186,7 +186,7 @@ describe("useVibe64AutopilotView direct chat", () => {
         "Two Stack components declare different setup recipes."
       ),
       message: expect.stringContaining("preserving the existing work"),
-      messageId: expect.stringMatching(/^message:tab:/u)
+      messageId: expect.stringMatching(/^message_tab_/u)
     }));
     expect(view.chatTurns.value.at(-1)?.user?.text).toContain(
       "Workspace preparation needs attention"
@@ -204,7 +204,7 @@ describe("useVibe64AutopilotView direct chat", () => {
       displayMessage: "Make the smallest safe change.",
       message: "Make the smallest safe change."
     }));
-    expect(sendAgentMessage.mock.calls[0][0].messageId).toMatch(/^message:tab:/u);
+    expect(sendAgentMessage.mock.calls[0][0].messageId).toMatch(/^message_tab_/u);
     expect(view.composerDraft.value).toBe("");
     expect(view.chatTurns.value.at(-1)?.user?.text).toBe("Make the smallest safe change.");
   });
@@ -269,6 +269,9 @@ describe("useVibe64AutopilotView direct chat", () => {
 
     await expect(view.resendOptimisticMessage(failedTurn.optimistic.id)).resolves.toBe(true);
     expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+    expect(sendAgentMessage.mock.calls[1][0].messageId).toBe(
+      sendAgentMessage.mock.calls[0][0].messageId
+    );
     expect(view.chatTurns.value.at(-1)?.user?.text).toBe("Try this change.");
   });
 

@@ -995,6 +995,8 @@ function createCodexTerminalController({
 
   const codexAppServerProviders = new Map();
   const codexAppServerEphemeralConversations = new Map();
+  const codexAppServerMessageDeliveries = new Map();
+  const codexAppServerConversationTurnStarts = new Map();
   const codexAppServerEventSubscriptions = new Map();
   const codexAppServerManagedSessions = new Map();
   const codexAppServerWellbeingTimers = new Map();
@@ -7061,6 +7063,10 @@ function createCodexTerminalController({
     return codexAppServerEphemeralConversations.get(sessionId)?.get(conversationId) || null;
   }
 
+  function codexAppServerConversationTurnIsActive(status = "") {
+    return ["starting", "inProgress"].includes(normalizeText(status));
+  }
+
   function codexAppServerEphemeralConversationSnapshot(state = {}) {
     return {
       conversationId: normalizeText(state.conversationId),
@@ -7075,6 +7081,7 @@ function createCodexTerminalController({
           })).filter((update) => update.id && update.text)
         : [],
       rawText: normalizeText(state.rawText),
+      messageId: normalizeText(state.messageId),
       runId: normalizeText(state.runId),
       status: normalizeText(state.status) || "ready"
     };
@@ -7355,6 +7362,7 @@ function createCodexTerminalController({
           conversationId,
           error: "",
           message: "",
+          messageId: "",
           nextProgressSequence: 0,
           outcome: null,
           progressUpdates: [],
@@ -7374,7 +7382,15 @@ function createCodexTerminalController({
   }
 
   async function startCodexAppServerConversationTurn(sessionId, input = {}) {
-    return vibe64Result(async () => {
+    const messageId = normalizeText(input.messageId);
+    const deliveryKey = messageId
+      ? `${normalizeText(sessionId)}\0${normalizeText(input.conversationId)}\0${messageId}`
+      : "";
+    const existing = deliveryKey ? codexAppServerConversationTurnStarts.get(deliveryKey) : null;
+    if (existing) {
+      return existing;
+    }
+    const start = vibe64Result(async () => {
       const conversationId = normalizeText(input.conversationId);
       const prompt = normalizeText(input.message || input.prompt);
       if (!conversationId || !prompt) {
@@ -7397,6 +7413,16 @@ function createCodexTerminalController({
           ok: false,
         };
       }
+      if (ephemeralConversation && messageId && ephemeralConversation.messageId === messageId) {
+        return codexAppServerEphemeralConversationSnapshot(ephemeralConversation);
+      }
+      if (ephemeralConversation && codexAppServerConversationTurnIsActive(ephemeralConversation.status)) {
+        return {
+          code: "vibe64_temporary_conversation_turn_active",
+          error: "Temporary AI is already working on this conversation.",
+          ok: false
+        };
+      }
       if (!ephemeralConversation) {
         const threadSettings = await codexAppServerConversationThreadSettings(context, input);
         await context.provider.resumeThread(conversationId, threadSettings);
@@ -7407,6 +7433,7 @@ function createCodexTerminalController({
         Object.assign(ephemeralConversation, {
           error: "",
           message: "",
+          messageId,
           outcome: null,
           progressUpdates: [],
           rawText: "",
@@ -7496,11 +7523,22 @@ function createCodexTerminalController({
       }
       return {
         conversationId,
+        messageId,
         ok: true,
         runId,
         status
       };
     });
+    if (deliveryKey) {
+      codexAppServerConversationTurnStarts.set(deliveryKey, start);
+    }
+    try {
+      return await start;
+    } finally {
+      if (deliveryKey && codexAppServerConversationTurnStarts.get(deliveryKey) === start) {
+        codexAppServerConversationTurnStarts.delete(deliveryKey);
+      }
+    }
   }
 
   async function readCodexAppServerConversation(sessionId, input = {}) {
@@ -8198,7 +8236,7 @@ function createCodexTerminalController({
     });
   }
 
-  async function writeCodexAppServerDeliveredUserMessage(runtime, sessionId = "", text = "") {
+  async function writeCodexAppServerDeliveredUserMessage(runtime, sessionId = "", text = "", messageId = "") {
     const normalizedSessionId = normalizeText(sessionId);
     const message = normalizeText(text);
     if (
@@ -8209,6 +8247,7 @@ function createCodexTerminalController({
       return null;
     }
     const written = await runtime.store.writeConversationUserMessage(normalizedSessionId, {
+      messageId: normalizeText(messageId),
       text: message
     });
     if (!written) {
@@ -8296,6 +8335,18 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
+    if (
+      messageId &&
+      typeof runtime.store.conversationMessageIdExists === "function" &&
+      await runtime.store.conversationMessageIdExists(sessionId, messageId)
+    ) {
+      return withCodexState({
+        delivered: true,
+        duplicate: true,
+        ok: true,
+        operationOutcome: "message_already_delivered"
+      }, session);
+    }
     const vibe64User = input?.vibe64User || null;
     let currentSession = session;
     let turn = codexAppServerTurnState(currentSession);
@@ -8515,7 +8566,8 @@ function createCodexTerminalController({
     const conversationTurn = await writeCodexAppServerDeliveredUserMessage(
       runtime,
       sessionId,
-      displayMessage || message
+      displayMessage || message,
+      messageId
     );
     splitCodexAppServerReasoningTurn(threadId, turnId);
     currentSession = await runtime.getSession(sessionId);
@@ -8733,7 +8785,13 @@ function createCodexTerminalController({
     },
 
     async sendMessage(sessionId, input = {}, options = {}) {
-      return vibe64Result(async () => {
+      const messageId = normalizeText(input?.messageId);
+      const deliveryKey = messageId ? `${normalizeText(sessionId)}\0${messageId}` : "";
+      const existing = deliveryKey ? codexAppServerMessageDeliveries.get(deliveryKey) : null;
+      if (existing) {
+        return existing;
+      }
+      const delivery = vibe64Result(async () => {
         if (!codexAppServerPromptDeliveryEnabled) {
           return writeCodexAppServerControlDisabledFailure(sessionId);
         }
@@ -8763,7 +8821,8 @@ function createCodexTerminalController({
         const conversationTurn = await writeCodexAppServerDeliveredUserMessage(
           runtime,
           sessionId,
-          displayMessage || message
+          displayMessage || message,
+          messageId
         );
         return {
           ...started,
@@ -8773,6 +8832,16 @@ function createCodexTerminalController({
           newTurnRequired: false
         };
       });
+      if (deliveryKey) {
+        codexAppServerMessageDeliveries.set(deliveryKey, delivery);
+      }
+      try {
+        return await delivery;
+      } finally {
+        if (deliveryKey && codexAppServerMessageDeliveries.get(deliveryKey) === delivery) {
+          codexAppServerMessageDeliveries.delete(deliveryKey);
+        }
+      }
     },
 
     async terminalState(sessionId, {

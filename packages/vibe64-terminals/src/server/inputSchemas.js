@@ -79,6 +79,7 @@ const temporaryConversationTurnActionInputValidator = validator({
     required: false
   },
   conversationId: requiredText,
+  messageId: optionalText,
   message: requiredText,
   policy: optionalText,
   promptLabel: optionalText,

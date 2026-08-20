@@ -472,11 +472,11 @@ function useVibe64AutopilotView(props, emit) {
     ));
   }
 
-  async function sendChatPayload(payload = {}) {
+  async function sendChatPayload(payload = {}, { messageId: existingMessageId = "" } = {}) {
     if (composerSending.value || !normalizedAgentTurnText(payload?.message)) {
       return false;
     }
-    const messageId = nextMessageId();
+    const messageId = String(existingMessageId || "").trim() || nextMessageId();
     const optimistic = optimisticMessage(payload, messageId);
     optimisticMessages.value = [
       ...optimisticMessages.value,
@@ -572,7 +572,7 @@ function useVibe64AutopilotView(props, emit) {
       return false;
     }
     optimisticMessages.value = optimisticMessages.value.filter((item) => item.id !== messageId);
-    return sendChatPayload(message.payload);
+    return sendChatPayload(message.payload, { messageId });
   }
 
   const toolbarRepositoryWorkState = computed(() => {

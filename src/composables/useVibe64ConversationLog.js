@@ -45,6 +45,7 @@ const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "codex-turn-outcome",
   "codex-app-server-message-delivered",
   "session-agent-message-cancelled",
+  "session-agent-message-accepted",
   "session-agent-message-delivered",
   "session-agent-message-failed"
 ]);

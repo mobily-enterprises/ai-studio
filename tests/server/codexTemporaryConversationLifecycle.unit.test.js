@@ -229,6 +229,28 @@ test("temporary conversations start turns without resuming a nonexistent rollout
   });
 });
 
+test("temporary conversation retries reuse the accepted provider turn", async () => {
+  await withConversationController(async ({ calls, controller }) => {
+    const conversation = await controller.createConversation("session-1", {
+      ephemeral: true
+    });
+    const input = {
+      conversationId: conversation.conversationId,
+      ephemeral: true,
+      message: "Explain this conflict.",
+      messageId: "message_temporary_test"
+    };
+
+    const first = await controller.startConversationTurn("session-1", input);
+    const retried = await controller.startConversationTurn("session-1", input);
+
+    assert.equal(first.runId, "turn-1");
+    assert.equal(retried.runId, "turn-1");
+    assert.equal(retried.messageId, input.messageId);
+    assert.equal(calls.filter(([kind]) => kind === "turn").length, 1);
+  });
+});
+
 test("persistent conversations still resume their saved rollout before a turn", async () => {
   await withConversationController(async ({ calls, controller }) => {
     const conversation = await controller.createConversation("session-1");

@@ -21,7 +21,7 @@ const TEMPORARY_AI_POLL_INTERVAL_MS = 650;
 const TEMPORARY_AI_WORKSPACE_WRITE_POLICY = "workspace_write";
 
 function temporaryAiId(prefix = "temporary") {
-  return `${prefix}:${crypto.randomUUID()}`;
+  return `${prefix}_${crypto.randomUUID()}`;
 }
 
 function temporaryAiText(value = "") {
@@ -126,6 +126,7 @@ function useVibe64TemporaryAi({
       id: temporaryAiId("temporary-ai"),
       messages: [],
       ownedAttachmentIds: [],
+      pendingMessageId: "",
       policy: policy === TEMPORARY_AI_WORKSPACE_WRITE_POLICY
         ? TEMPORARY_AI_WORKSPACE_WRITE_POLICY
         : "read",
@@ -158,7 +159,10 @@ function useVibe64TemporaryAi({
   }
 
   function updateDraft(taskId = "", draft = "") {
-    updateTask(taskId, { draft: String(draft || "") });
+    updateTask(taskId, {
+      draft: String(draft || ""),
+      pendingMessageId: ""
+    });
   }
 
   function updateAgentSetting(taskId = "", parameterId = "", value = "") {
@@ -289,7 +293,14 @@ function useVibe64TemporaryAi({
     if (!payload?.message) {
       return false;
     }
-    updateTask(taskId, { busy: true, draft: "", error: "", status: "starting" });
+    const messageId = task.pendingMessageId || temporaryAiId("message");
+    updateTask(taskId, {
+      busy: true,
+      draft: "",
+      error: "",
+      pendingMessageId: messageId,
+      status: "starting"
+    });
     try {
       const conversationId = await ensureConversation(task);
       const response = await request(
@@ -301,6 +312,7 @@ function useVibe64TemporaryAi({
         {
           body: {
             agentSettings: task.agentSettings,
+            messageId,
             message: payload.message,
             policy: task.policy,
             promptLabel: task.title
@@ -311,7 +323,7 @@ function useVibe64TemporaryAi({
       const messages = [
         ...task.messages,
         {
-          id: temporaryAiId("message"),
+          id: messageId,
           role: "user",
           status: "completed",
           text: payload.displayMessage
@@ -330,6 +342,7 @@ function useVibe64TemporaryAi({
         busy: true,
         conversationId,
         messages,
+        pendingMessageId: "",
         runId: response.runId,
         status: response.status || "inProgress"
       });
@@ -341,6 +354,7 @@ function useVibe64TemporaryAi({
         conversationId: error?.conversationExpired === true ? "" : task.conversationId,
         draft: task.draft,
         error: temporaryAiText(error?.message || error) || "Temporary AI message could not be sent.",
+        pendingMessageId: messageId,
         runId: error?.conversationExpired === true ? "" : task.runId,
         status: "failed"
       });

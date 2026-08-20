@@ -159,4 +159,31 @@ describe("useVibe64TemporaryAi", () => {
     });
     expect(temporary.activeTask.value.messages.at(-1).status).toBe("failed");
   });
+
+  it("reuses one message id after an ambiguous turn request failure", async () => {
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      () => {
+        throw new Error("Network request failed.");
+      },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "Recovered without another turn.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const { task, temporary } = await temporaryAiWithDraft();
+
+    await expect(temporary.send(task.id)).resolves.toBe(false);
+    await expect(temporary.send(task.id)).resolves.toBe(true);
+    await flushPromises();
+
+    const turnRequests = mocks.requests.filter(([path]) => path.endsWith("/turns"));
+    expect(turnRequests).toHaveLength(2);
+    expect(turnRequests[0][1].body.messageId).toMatch(/^message_/u);
+    expect(turnRequests[1][1].body.messageId).toBe(turnRequests[0][1].body.messageId);
+  });
 });
