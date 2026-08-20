@@ -626,4 +626,79 @@ describe("useVibe64AutopilotView direct chat", () => {
     await expect(view.requestSaveWork()).resolves.toEqual({ ok: true, status: "updated" });
     expect(updateSessionWork).toHaveBeenCalledOnce();
   });
+
+  it("enables Save when the newer toolbar inspection finds unsaved work", async () => {
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: {
+            changedCount: 10,
+            checkedAt: "2026-08-20T06:20:00.000Z",
+            state: "unsaved"
+          },
+          sessionId: "session-1"
+        }]
+      },
+      workState: {
+        checkedAt: "2026-08-20T06:10:00.000Z",
+        unsaved: false,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkUnsaved.value).toBe(true);
+    expect(view.saveWorkDisabled.value).toBe(false);
+    expect(view.saveWorkActionLabel.value).toBe("Save work");
+    expect(view.saveWorkTitle.value).toBe("Save this session's work to the project repository");
+  });
+
+  it("does not revive stale unsaved toolbar state after a newer selected-session check", async () => {
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: {
+            changedCount: 10,
+            checkedAt: "2026-08-20T06:10:00.000Z",
+            state: "unsaved"
+          },
+          sessionId: "session-1"
+        }]
+      },
+      workState: {
+        checkedAt: "2026-08-20T06:20:00.000Z",
+        unsaved: false,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkUnsaved.value).toBe(false);
+    expect(view.saveWorkDisabled.value).toBe(true);
+    expect(view.saveWorkTitle.value).toBe("No work to save");
+  });
+
+  it("does not start a duplicate operation while the repository monitor sees an update running", async () => {
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: {
+            checkedAt: "2026-08-20T06:20:00.000Z",
+            state: "updating"
+          },
+          sessionId: "session-1"
+        }]
+      },
+      workState: {
+        checkedAt: "2026-08-20T06:10:00.000Z",
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkActionLabel.value).toBe("Update this session (rebase)");
+    expect(view.saveWorkDisabled.value).toBe(true);
+    expect(view.saveWorkTitle.value).toBe("Wait for the current repository operation to finish");
+  });
 });

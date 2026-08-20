@@ -575,7 +575,6 @@ function useVibe64AutopilotView(props, emit) {
     return sendChatPayload(message.payload);
   }
 
-  const saveWorkUnsaved = computed(() => props.workState?.unsaved === true);
   const toolbarRepositoryWorkState = computed(() => {
     const selectedId = String(props.session?.sessionId || "").trim();
     const sessions = Array.isArray(props.sessionToolbar?.sessions)
@@ -584,18 +583,50 @@ function useVibe64AutopilotView(props, emit) {
     return sessions.find((session) => String(session?.sessionId || "").trim() === selectedId)
       ?.repositoryWorkState || null;
   });
+  const saveWorkRepositoryState = computed(() => {
+    const inspected = props.workState && typeof props.workState === "object"
+      ? props.workState
+      : {};
+    const monitored = toolbarRepositoryWorkState.value;
+    const inspectedAt = Date.parse(String(inspected.checkedAt || "")) || 0;
+    const monitoredAt = Date.parse(String(monitored?.checkedAt || "")) || 0;
+    const monitoredState = String(monitored?.state || "");
+    if (!monitored || monitoredAt < inspectedAt) {
+      return inspected;
+    }
+    const monitoredUnsaved = monitoredState === "unsaved"
+      ? true
+      : ["saved", "update_available"].includes(monitoredState)
+        ? false
+        : inspected.unsaved;
+    return {
+      ...inspected,
+      checkedAt: monitored.checkedAt || inspected.checkedAt,
+      error: ["needs_help", "unavailable"].includes(monitoredState)
+        ? inspected.error || "Repository status is unavailable."
+        : "",
+      loading: monitoredState === "checking",
+      unsaved: monitoredUnsaved,
+      updateAvailable: monitored.updateAvailable === true ||
+        ["update_available", "updating"].includes(monitoredState),
+      updateStatusPending: monitoredState === "updating"
+    };
+  });
+  const saveWorkUnsaved = computed(() => saveWorkRepositoryState.value?.unsaved === true);
   const saveWorkRequiresUpdate = computed(() => Boolean(
-    props.workState?.updateAvailable === true ||
-    props.workState?.updateStatusPending === true ||
-    toolbarRepositoryWorkState.value?.updateAvailable === true ||
-    ["update_available", "updating"].includes(toolbarRepositoryWorkState.value?.state)
+    saveWorkRepositoryState.value?.updateAvailable === true ||
+    saveWorkRepositoryState.value?.updateStatusPending === true
+  ));
+  const saveWorkRepositoryBusy = computed(() => ["saving", "updating"].includes(
+    String(toolbarRepositoryWorkState.value?.state || "")
   ));
   const saveWorkDisabled = computed(() => Boolean(
     composerDisabled.value ||
     agentActive.value ||
     saveWorkSending.value ||
-    props.workState?.loading ||
-    props.workState?.error ||
+    saveWorkRepositoryBusy.value ||
+    saveWorkRepositoryState.value?.loading ||
+    saveWorkRepositoryState.value?.error ||
     (!saveWorkRequiresUpdate.value && !saveWorkUnsaved.value)
   ));
   const saveWorkActionLabel = computed(() => (
@@ -612,16 +643,16 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
   ));
   const saveWorkTitle = computed(() => {
-    if (repositoryOperationActive.value) {
+    if (repositoryOperationActive.value || saveWorkRepositoryBusy.value) {
       return "Wait for the current repository operation to finish";
     }
     if (agentActive.value || composerSending.value) {
       return "Wait for the assistant turn to finish before saving";
     }
-    if (props.workState?.loading) {
+    if (saveWorkRepositoryState.value?.loading) {
       return "Checking whether this session has work to save";
     }
-    if (props.workState?.error) {
+    if (saveWorkRepositoryState.value?.error) {
       return "Repository status is unavailable; check for updates before saving";
     }
     if (saveWorkRequiresUpdate.value) {
