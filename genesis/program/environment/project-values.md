@@ -7,6 +7,7 @@ host provide managed system values separately.
 
 - `packages/vibe64-project/src/server/service.js`
 - `packages/vibe64-project/src/server/projectEnvironmentFiles.js`
+- `packages/vibe64-terminals/src/server/agentEnvCommand.js`
 - `src/components/studio/EnvPanel.vue`
 
 ## Public contract
@@ -17,3 +18,10 @@ and applies values to session preparation, checks, launches, and agent work.
 When Genesis declares an environment-file projection, Vibe64 writes it outside
 ordinary Git tracking with restrictive permissions and preserves a pre-existing
 user file before taking ownership.
+
+Project agents receive the managed `vibe64-env` command. It reads configuration
+metadata without exposing values and delegates explicit development mutations
+to the project Env service. A host may contribute a production Env provider
+through the terminal service; public/local Vibe64 otherwise reports production
+as unavailable. Mutations require an explicit scope, accept values only on
+stdin, never copy values between scopes, and never reveal stored values.

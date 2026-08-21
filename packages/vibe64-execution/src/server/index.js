@@ -161,3 +161,6 @@ export {
 export {
   agentPreviewWrapperSource
 } from "./runtime/agentPreviewWrapperSource.js";
+export {
+  agentEnvWrapperSource
+} from "./runtime/agentEnvWrapperSource.js";

@@ -111,6 +111,11 @@ import {
   prepareAgentPreviewCommand
 } from "./agentPreviewCommand.js";
 import {
+  VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV,
+  VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV,
+  prepareAgentEnvCommand
+} from "./agentEnvCommand.js";
+import {
   agentTerminalIdentityForWorkdir,
   agentTerminalIdentityState
 } from "./agentTerminalIdentity.js";
@@ -145,6 +150,7 @@ const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 const CODEX_APP_SERVER_TASK_ID = "codex_app_server";
 const CODEX_CONTEXT_TASK_ID = "codex_context";
 const CODEX_TURN_CHECKPOINT_TASK_ID = "codex_turn_checkpoint";
+const CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA = "agent_briefing_fingerprint";
 const CODEX_APP_SERVER_PROVIDER_KEY_DELIMITER = "\u001f";
 const CODEX_APP_SERVER_RESULT_PROCESSED_EVENT = "codex-app-server-result-processed";
 const CODEX_CONTEXT_REFRESH_PENDING_METADATA = Object.freeze([
@@ -184,6 +190,8 @@ const CODEX_APP_SERVER_RESULT_DELIVERY_FAILURE_MESSAGE =
   "Codex app-server finished this turn, but Vibe64 did not receive the assistant result text.";
 const CODEX_TERMINAL_OUTPUT_SNAPSHOT_MAX_LENGTH = 4 * 1024 * 1024;
 const CODEX_APP_SERVER_PROVIDER_TRANSIENT_ENV_KEYS = new Set([
+  VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV,
+  VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV,
   "VIBE64_CODEX_GIT_COMMAND_SOCKET",
   "VIBE64_CODEX_GIT_COMMAND_TOKEN"
 ]);
@@ -865,6 +873,16 @@ function sessionBriefingIsDelivered(session = {}) {
   return normalizeText(session.metadata?.agent_briefing_delivered) === "yes";
 }
 
+function codexSessionBriefingFingerprint(developerInstructions = "") {
+  return stableHash(normalizeText(developerInstructions));
+}
+
+function codexSessionBriefingNeedsRefresh(session = {}, developerInstructions = "") {
+  return sessionBriefingIsDelivered(session) &&
+    normalizeText(session.metadata?.[CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA]) !==
+      codexSessionBriefingFingerprint(developerInstructions);
+}
+
 function codexAppServerDeveloperInstructions(session = {}) {
   const briefing = vibe64SessionBriefing({ session });
   return [
@@ -967,6 +985,7 @@ function codexTerminalArgs({
 }
 
 function createCodexTerminalController({
+  agentEnvCommand = null,
   agentPreviewCommand = null,
   codexAuthPreflight = assertCodexAuthPreflightReady,
   codexAppServerActiveReconcileMs = CODEX_APP_SERVER_ACTIVE_RECONCILE_MS,
@@ -1208,7 +1227,7 @@ function createCodexTerminalController({
     };
   }
 
-  async function codexGitCommandEnv({
+  async function codexManagedCommandEnv({
     runtime = null,
     sessionId = ""
   } = {}) {
@@ -1230,9 +1249,15 @@ function createCodexTerminalController({
       sessionId,
       wrapperHostDir: prepared.hostWrapperDir
     });
+    const envPrepared = await prepareAgentEnvCommand({
+      commandService: agentEnvCommand,
+      sessionId,
+      wrapperHostDir: prepared.hostWrapperDir
+    });
     return {
       ...(prepared.env || {}),
-      ...(previewPrepared?.env || {})
+      ...(previewPrepared?.env || {}),
+      ...(envPrepared?.env || {})
     };
   }
 
@@ -1288,7 +1313,7 @@ function createCodexTerminalController({
         target,
         targetRoot
       }),
-      ...await codexGitCommandEnv({
+      ...await codexManagedCommandEnv({
         runtime,
         sessionId
       })
@@ -1601,7 +1626,7 @@ function createCodexTerminalController({
         });
     const effectiveTerminalEnv = {
       ...baseTerminalEnv,
-        ...await codexGitCommandEnv({
+        ...await codexManagedCommandEnv({
           runtime: effectiveRuntime,
           sessionId: effectiveRuntimeInstanceId
         })
@@ -6632,6 +6657,7 @@ function createCodexTerminalController({
           });
           return {
             currentSession,
+            developerInstructions,
             provider,
             providerOptions,
             thread
@@ -6642,6 +6668,7 @@ function createCodexTerminalController({
         sessionId
       });
       const preparedSession = prepared.currentSession;
+      const developerInstructions = prepared.developerInstructions;
       const provider = prepared.provider;
       const providerOptions = prepared.providerOptions;
       const thread = prepared.thread;
@@ -6667,7 +6694,12 @@ function createCodexTerminalController({
           await Promise.all([
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_delivered", "yes"),
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_delivered_at", deliveredAt),
-            runtime.store.writeMetadataValue(sessionId, "agent_briefing_transport", "codex_app_server")
+            runtime.store.writeMetadataValue(sessionId, "agent_briefing_transport", "codex_app_server"),
+            runtime.store.writeMetadataValue(
+              sessionId,
+              CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA,
+              codexSessionBriefingFingerprint(developerInstructions)
+            )
           ]);
         });
       }
@@ -6849,7 +6881,14 @@ function createCodexTerminalController({
         throw new Error(actorResult.error || "GitHub identity is not available for the user who authorized this Codex prompt.");
       }
       const refreshMetadata = preparedSession.metadata || {};
-      const contextRefresh = codexContextRefreshPending(preparedSession) ? developerInstructions : "";
+      const providerContextRefreshPending = codexContextRefreshPending(preparedSession);
+      const briefingNeedsRefresh = codexSessionBriefingNeedsRefresh(
+        preparedSession,
+        developerInstructions
+      );
+      const contextRefresh = providerContextRefreshPending || briefingNeedsRefresh
+        ? developerInstructions
+        : "";
       const rendered = await runtime.renderPrompt(sessionId, {
         request: userRequest,
         task: sessionBriefingIsDelivered(preparedSession) ? "work" : "start"
@@ -6930,10 +6969,17 @@ function createCodexTerminalController({
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_delivered", "yes"),
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_delivered_at", deliveredAt),
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_transport", "codex_app_server")
+          ] : []),
+          ...(briefingWasDelivered || briefingNeedsRefresh ? [
+            runtime.store.writeMetadataValue(
+              sessionId,
+              CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA,
+              codexSessionBriefingFingerprint(developerInstructions)
+            )
           ] : [])
         ]);
       });
-      if (contextRefresh) {
+      if (providerContextRefreshPending) {
         await clearCodexAppServerContextRefreshPending(runtime.store, sessionId, {
           delivery: "prompt",
           reason: refreshMetadata.codex_context_refresh_reason,
@@ -8996,6 +9042,8 @@ export {
   codexAppTerminalOwnerMetadata,
   codexGitCommandShimDirs,
   codexRemoteEndpointForWorkdir,
+  codexSessionBriefingFingerprint,
+  codexSessionBriefingNeedsRefresh,
   codexTerminalArgs,
   createCodexTerminalController
 };

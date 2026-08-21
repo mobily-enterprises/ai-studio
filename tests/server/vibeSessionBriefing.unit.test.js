@@ -20,3 +20,20 @@ test("Vibe64 briefing keeps browser versions and browser installation under plat
   assert.match(briefing, /never choose or download another browser version/u);
   assert.match(briefing, /Do not start a duplicate server/u);
 });
+
+test("Vibe64 briefing directs agents to manage scoped Env and report successful mutations", () => {
+  const briefing = vibe64SessionBriefing({
+    session: {
+      sessionId: "env-session",
+      targetRoot: "/srv/projects/demo"
+    }
+  });
+
+  assert.match(briefing, /`vibe64-env status \[development\|production\|all\]`/u);
+  assert.match(briefing, /Pass values only on stdin, never as positional arguments/u);
+  assert.match(briefing, /Development and production Env are separate/u);
+  assert.match(briefing, /Do not tell the user to create an Env entry manually/u);
+  assert.match(briefing, /stores user values outside Git/u);
+  assert.match(briefing, /tell the user exactly which scope and key names were created, updated, or removed/u);
+  assert.match(briefing, /never claim a mutation succeeded unless the command did/u);
+});

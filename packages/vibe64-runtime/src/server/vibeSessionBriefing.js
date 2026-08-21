@@ -14,6 +14,17 @@ function vibeManagedPreviewPolicyInstruction() {
   ].join("\n");
 }
 
+function vibeManagedEnvPolicyInstruction() {
+  return [
+    "- Use `vibe64-env status [development|production|all]` to inspect which project Env keys are configured or missing. The command reports metadata only and never reveals values.",
+    "- When the user supplies an Env value, or an app-local value is legitimately generated as part of the task, pipe the exact value into `vibe64-env set <development|production> <KEY> [--secret]`. Pass values only on stdin, never as positional arguments.",
+    "- Development and production Env are separate. Use the scope the task actually requires and never copy a value between scopes without explicit user direction.",
+    "- Do not tell the user to create an Env entry manually when the value is available to you and `vibe64-env` can save it. Never invent missing third-party credentials; ask the user for a value when one is genuinely required and unavailable.",
+    "- Do not put user Env values or secrets in repository files or edit Vibe64 runtime/session storage. Vibe64 stores user values outside Git and materializes any Genesis-declared environment files.",
+    "- After every successful Env mutation, tell the user exactly which scope and key names were created, updated, or removed. Never repeat values, and never claim a mutation succeeded unless the command did."
+  ].join("\n");
+}
+
 function vibe64SessionBriefing({
   session = {}
 } = {}) {
@@ -29,6 +40,9 @@ function vibe64SessionBriefing({
     "",
     "Managed preview:",
     vibeManagedPreviewPolicyInstruction(),
+    "",
+    "Project Env:",
+    vibeManagedEnvPolicyInstruction(),
     "",
     "Git and GitHub:",
     "- Use the managed `git` and `gh` commands on PATH. Do not bypass them with absolute host binaries, a stripped PATH, or alternate credentials.",

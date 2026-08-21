@@ -6,6 +6,7 @@ import {
   createCodexSessionAgentProvider
 } from "./agent/providers/codexSessionAgentProvider.js";
 import process from "node:process";
+import { createAgentEnvCommandService } from "./agentEnvCommand.js";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
 import {
@@ -319,8 +320,13 @@ function createService({
     launchTarget,
     logger
   });
+  const agentEnvCommand = createAgentEnvCommandService({
+    logger,
+    projectService
+  });
   const codex = createCodexTerminalController({
     ...codexTerminalController,
+    agentEnvCommand,
     agentPreviewCommand,
     codexAppServerProviderOptions: selfTargetCodexAppServerProviderOptions({
       codexTerminalController,
@@ -629,6 +635,7 @@ function createService({
 
   function closeAllSessionTerminals(sessionId) {
     return closeTerminalControllersForSession(sessionId, [
+      { controller: agentEnvCommand, label: "agentEnv" },
       { controller: agentPreviewCommand, label: "agentPreview" },
       { controller: launchTarget, label: "launchTarget" },
       {
@@ -849,6 +856,10 @@ function createService({
         env,
         project: await projectService.readCurrentProject()
       });
+    },
+
+    setProductionEnvironmentProvider(provider = null) {
+      agentEnvCommand.setProductionEnvironmentProvider(provider);
     },
 
     prepareWorkspaceSetup(sessionId, options = {}) {
