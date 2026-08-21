@@ -239,6 +239,49 @@ test("session work inspection includes the durable native Save operation", async
   assert.deepEqual(result.updateOperation, { id: "update-session", status: "ready" });
 });
 
+test("session work inspection returns operations read after repository inspection", async () => {
+  let saveTask = {
+    id: "save-work",
+    message: "Reconciling the session onto the saved commit.",
+    status: "running",
+    updatedAt: "2026-08-21T09:26:37.991Z"
+  };
+  const updateTask = { id: "update-session", status: "ready" };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return { sessionId: "session-1", status: "active" };
+          },
+          store: {
+            async readBackgroundTask(_sessionId, taskId) {
+              return taskId === "save-work" ? saveTask : updateTask;
+            }
+          }
+        };
+      }
+    },
+    terminals: {
+      async inspectSessionWork() {
+        saveTask = {
+          id: "save-work",
+          message: "Session work was saved.",
+          status: "ready",
+          updatedAt: "2026-08-21T09:26:55.716Z"
+        };
+        return { canonicalCommit: "saved", unsaved: false };
+      }
+    }
+  });
+
+  const result = await service.inspectSessionWork("session-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.unsaved, false);
+  assert.deepEqual(result.operation, saveTask);
+});
+
 test("work inspection reconciles an interrupted published Save exactly once", async () => {
   const writes = [];
   const metadata = [];
@@ -251,17 +294,21 @@ test("work inspection reconciles an interrupted published Save exactly once", as
     proposedCommit: "saved",
     status: "running"
   };
+  let saveTask = runningTask;
   const runtime = {
     async getSession() {
       return { sessionId: "session-1", status: "active" };
     },
     store: {
-      async readBackgroundTask() {
-        return runningTask;
+      async readBackgroundTask(_sessionId, taskId) {
+        return taskId === "save-work"
+          ? saveTask
+          : { id: "update-session", status: "ready" };
       },
       async writeBackgroundTaskEvent(_sessionId, _taskId, input) {
         writes.push(input);
-        return { ...runningTask, ...input.patch, events: [input.event] };
+        saveTask = { ...saveTask, ...input.patch, events: [input.event] };
+        return saveTask;
       },
       async writeMetadataValue(...args) {
         metadata.push(args);
@@ -318,6 +365,7 @@ test("work inspection recovers an interrupted prepared Update and advances its b
     stage: "prepared",
     status: "running"
   };
+  let updateTask = runningUpdate;
   const runtime = {
     async getSession() {
       return { sessionId: "session-1", status: "active" };
@@ -325,12 +373,13 @@ test("work inspection recovers an interrupted prepared Update and advances its b
     store: {
       async readBackgroundTask(_sessionId, taskId) {
         return taskId === "update-session"
-          ? runningUpdate
+          ? updateTask
           : { id: "save-work", status: "ready" };
       },
       async writeBackgroundTaskEvent(_sessionId, taskId, input) {
         writes.push([taskId, input]);
-        return { ...runningUpdate, ...input.patch, events: [input.event], id: taskId };
+        updateTask = { ...updateTask, ...input.patch, events: [input.event], id: taskId };
+        return updateTask;
       },
       async writeMetadataValue(...args) {
         metadata.push(args);

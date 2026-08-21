@@ -5,12 +5,58 @@ import { agentMessageInputValidator } from "../../packages/vibe64-sessions/src/s
 import {
   agentMessageAcceptanceSignal,
   agentTurnControlPayloadFromContext,
+  createVibe64SessionWorkRefreshQueue,
   proxySessionDialogs,
   runtimeHostAgentWorking,
-  runtimeHostToolbarSessions
+  runtimeHostToolbarSessions,
+  runtimeHostWorkTaskRevision
 } from "../../src/composables/useVibe64SessionRuntimeHost.js";
 
 describe("Vibe64 direct session runtime host", () => {
+  it("serializes work inspection and suppresses an invalidated response", async () => {
+    let active = 0;
+    let calls = 0;
+    let maximumActive = 0;
+    const releases = [];
+    const states = [];
+    const queue = createVibe64SessionWorkRefreshQueue({
+      async inspect({ isCurrent }) {
+        const call = calls;
+        calls += 1;
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        const state = await new Promise((resolve) => {
+          releases[call] = resolve;
+        });
+        active -= 1;
+        if (isCurrent()) {
+          states.push(state);
+        }
+      }
+    });
+
+    const first = queue.request();
+    await Promise.resolve();
+    const second = queue.request();
+    const third = queue.request();
+    expect(calls).toBe(1);
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+
+    releases[0]({ operation: { status: "running" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+
+    releases[1]({ operation: { status: "ready" } });
+    await Promise.all([first, second, third]);
+
+    expect(maximumActive).toBe(1);
+    expect(calls).toBe(2);
+    expect(states).toEqual([{ operation: { status: "ready" } }]);
+    queue.dispose();
+  });
+
   it("lets an early chat request wait for declared workspace preparation", () => {
     const controller = new AbortController();
     const signal = agentMessageAcceptanceSignal(controller, {
@@ -21,6 +67,39 @@ describe("Vibe64 direct session runtime host", () => {
     expect(signal.aborted).toBe(false);
     controller.abort();
     expect(signal.aborted).toBe(true);
+  });
+
+  it("tracks every repository background task instead of only the oldest one", () => {
+    const checkpoint = {
+      events: [{ at: "2026-08-21T09:00:00.000Z", kind: "checkpoint-confirmed", status: "ready" }],
+      id: "codex_turn_checkpoint",
+      status: "ready",
+      updatedAt: "2026-08-21T09:00:00.000Z"
+    };
+    const running = runtimeHostWorkTaskRevision({
+      backgroundTasks: [
+        checkpoint,
+        {
+          events: [{ at: "2026-08-21T09:26:37.991Z", kind: "reconcile", status: "running" }],
+          id: "save-work",
+          status: "running",
+          updatedAt: "2026-08-21T09:26:37.991Z"
+        }
+      ]
+    });
+    const ready = runtimeHostWorkTaskRevision({
+      backgroundTasks: [
+        checkpoint,
+        {
+          events: [{ at: "2026-08-21T09:26:55.716Z", kind: "saved", status: "ready" }],
+          id: "save-work",
+          status: "ready",
+          updatedAt: "2026-08-21T09:26:55.716Z"
+        }
+      ]
+    });
+
+    expect(ready).not.toBe(running);
   });
 
   it("projects only the supplied direct-session dialogs", () => {

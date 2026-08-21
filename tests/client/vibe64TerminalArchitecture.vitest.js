@@ -82,6 +82,8 @@ describe("Vibe64 terminal architecture", () => {
     expect(source).toContain('role="log"');
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('<slot name="output" :output="output">');
+    expect(source).toContain('v-if="bodyMode === \'log\' && status"');
+    expect(source).toContain('v-if="bodyMode === \'terminal\' || $slots.footer"');
     expect(source).toContain('validator: (value) => ["log", "terminal"].includes(value)');
     expect(source).toContain("vibe64-terminal-surface--mobile-takeover");
     expect(source).toContain("height: 100dvh");

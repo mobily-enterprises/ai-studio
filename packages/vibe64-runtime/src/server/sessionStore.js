@@ -1541,12 +1541,23 @@ function createVibe64SessionStore({
           ? ""
           : normalizeText(patch.finishedAt || previous.finishedAt) || eventAt,
         id: normalizedTaskId,
+        kind: Object.hasOwn(patch, "kind")
+          ? normalizeText(patch.kind)
+          : normalizeText(eventRecord.kind || previous.kind),
+        message: Object.hasOwn(patch, "message")
+          ? normalizeText(patch.message)
+          : Object.hasOwn(event, "message")
+            ? normalizeText(event.message)
+            : normalizeText(previous.message),
         startedAt: status === BACKGROUND_TASK_STATUS.RUNNING && previousStatus !== BACKGROUND_TASK_STATUS.RUNNING
           ? eventAt
           : normalizeText(patch.startedAt || previous.startedAt) || eventAt,
         status,
         updatedAt: eventAt
       };
+      if (status !== BACKGROUND_TASK_STATUS.RUNNING && !Object.hasOwn(patch, "stage")) {
+        delete record.stage;
+      }
       if (status !== BACKGROUND_TASK_STATUS.FAILED && !Object.hasOwn(patch, "error")) {
         record.error = "";
       }

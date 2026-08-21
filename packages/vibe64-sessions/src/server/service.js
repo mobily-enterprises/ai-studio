@@ -551,10 +551,14 @@ function createService({
           runtime,
           session
         });
+        const [latestOperation, latestUpdateOperation] = await Promise.all([
+          runtime.store.readBackgroundTask(sessionId, SESSION_SAVE_TASK_ID),
+          runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID)
+        ]);
         return {
           ...work,
-          operation,
-          updateOperation,
+          operation: latestOperation || operation,
+          updateOperation: latestUpdateOperation || updateOperation,
           ok: true
         };
       }, "Vibe64 could not inspect this session's work.");

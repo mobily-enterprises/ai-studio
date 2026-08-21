@@ -23,6 +23,8 @@ import { vibe64ApiError, vibe64ApiResponseError } from "@/lib/vibe64ApiResponses
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
+const SESSION_WORK_TASK_IDS = ["codex_turn_checkpoint", "save-work", "update-session"];
+
 function agentTurnControlPayloadFromContext(context = {}) {
   const source = context && typeof context === "object" && !Array.isArray(context) ? context : {};
   const {
@@ -75,6 +77,66 @@ function agentMessageAcceptanceSignal(controller) {
   return controller.signal;
 }
 
+function createVibe64SessionWorkRefreshQueue({ inspect } = {}) {
+  if (typeof inspect !== "function") {
+    throw new TypeError("Session work refresh requires an inspector.");
+  }
+  let active = null;
+  let disposed = false;
+  let refreshAfterActive = false;
+
+  async function drain() {
+    do {
+      refreshAfterActive = false;
+      await inspect({
+        isCurrent: () => !disposed && !refreshAfterActive
+      });
+    } while (!disposed && refreshAfterActive);
+  }
+
+  function request() {
+    if (disposed) {
+      return Promise.resolve();
+    }
+    if (active) {
+      refreshAfterActive = true;
+      return active;
+    }
+    active = Promise.resolve().then(drain).finally(() => {
+      active = null;
+    });
+    return active;
+  }
+
+  return Object.freeze({
+    dispose() {
+      disposed = true;
+      refreshAfterActive = false;
+    },
+    request
+  });
+}
+
+function runtimeHostWorkTaskRevision(session = {}) {
+  return (Array.isArray(session?.backgroundTasks) ? session.backgroundTasks : [])
+    .filter((task) => SESSION_WORK_TASK_IDS.includes(String(task?.id || "")))
+    .map((task) => {
+      const events = Array.isArray(task?.events) ? task.events : [];
+      const latestEvent = events.at(-1) || {};
+      return [
+        String(task?.id || ""),
+        String(task?.status || ""),
+        String(task?.updatedAt || ""),
+        String(events.length),
+        String(latestEvent.at || ""),
+        String(latestEvent.kind || ""),
+        String(latestEvent.status || "")
+      ].join(":");
+    })
+    .sort()
+    .join("|");
+}
+
 function useVibe64SessionRuntimeHost(props, emit) {
   const selectedSessionId = computed(() => String(props.sessionId || "").trim());
   const selectedListSession = computed(() => {
@@ -107,23 +169,35 @@ function useVibe64SessionRuntimeHost(props, emit) {
     operation: null,
     unsaved: null
   });
+  let workStateActive = true;
 
-  async function refreshWorkState() {
+  async function inspectWorkState({ isCurrent }) {
     const sessionId = selectedSessionId.value;
-    if (!sessionId || selectedSessionClosed.value) {
-      workState.value = {
-        checkedAt: new Date().toISOString(),
-        error: "",
-        loading: false,
-        operation: null,
-        unsaved: null
-      };
-      return workState.value;
+    const sessionClosed = selectedSessionClosed.value;
+    const requestIsCurrent = () => Boolean(
+      workStateActive &&
+      isCurrent() &&
+      selectedSessionId.value === sessionId &&
+      selectedSessionClosed.value === sessionClosed
+    );
+    if (!sessionId || sessionClosed) {
+      if (requestIsCurrent()) {
+        workState.value = {
+          checkedAt: new Date().toISOString(),
+          error: "",
+          loading: false,
+          operation: null,
+          unsaved: null
+        };
+      }
+      return;
     }
-    workState.value = {
-      ...workState.value,
-      loading: true
-    };
+    if (requestIsCurrent()) {
+      workState.value = {
+        ...workState.value,
+        loading: true
+      };
+    }
     try {
       const result = await getHttpWebClient().request(
         vibe64SessionPath(
@@ -136,21 +210,33 @@ function useVibe64SessionRuntimeHost(props, emit) {
       if (result?.ok === false) {
         throw new Error(vibe64ApiResponseError(result, "Session work could not be inspected."));
       }
-      workState.value = {
-        ...result,
-        checkedAt: new Date().toISOString(),
-        error: "",
-        loading: false
-      };
+      if (requestIsCurrent()) {
+        workState.value = {
+          ...result,
+          checkedAt: new Date().toISOString(),
+          error: "",
+          loading: false
+        };
+      }
     } catch (error) {
-      workState.value = {
-        checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error || "Session work could not be inspected."),
-        loading: false,
-        operation: null,
-        unsaved: null
-      };
+      if (requestIsCurrent()) {
+        workState.value = {
+          checkedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error || "Session work could not be inspected."),
+          loading: false,
+          operation: null,
+          unsaved: null
+        };
+      }
     }
+  }
+
+  const workStateRefreshQueue = createVibe64SessionWorkRefreshQueue({
+    inspect: inspectWorkState
+  });
+
+  async function refreshWorkState() {
+    await workStateRefreshQueue.request();
     return workState.value;
   }
 
@@ -461,15 +547,14 @@ function useVibe64SessionRuntimeHost(props, emit) {
     }
   });
   watch(() => {
-    const task = (Array.isArray(selectedSession.value?.backgroundTasks)
-      ? selectedSession.value.backgroundTasks
-      : []).find((entry) => ["codex_turn_checkpoint", "save-work", "update-session"].includes(entry?.id));
-    return `${selectedSessionId.value}:${task?.updatedAt || ""}`;
+    return `${selectedSessionId.value}:${selectedSessionClosed.value}:${runtimeHostWorkTaskRevision(selectedSession.value)}`;
   }, () => {
     void refreshWorkState();
   }, { flush: "post" });
 
   onBeforeUnmount(() => {
+    workStateActive = false;
+    workStateRefreshQueue.dispose();
     for (const controller of pendingMessageControllers.values()) {
       controller.abort();
     }
@@ -506,8 +591,10 @@ function useVibe64SessionRuntimeHost(props, emit) {
 export {
   agentMessageAcceptanceSignal,
   agentTurnControlPayloadFromContext,
+  createVibe64SessionWorkRefreshQueue,
   proxySessionDialogs,
   runtimeHostAgentWorking,
   runtimeHostToolbarSessions,
+  runtimeHostWorkTaskRevision,
   useVibe64SessionRuntimeHost
 };

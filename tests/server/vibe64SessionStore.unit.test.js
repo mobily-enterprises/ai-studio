@@ -275,3 +275,44 @@ test("plain session store bounds durable background-task events at write time", 
     assert.equal(task.events.at(-1).message, "checkpoint 219");
   });
 });
+
+test("plain session store finalizes a background task's visible summary", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    const sessionId = "finalized-background-task";
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId
+    });
+    await store.writeBackgroundTaskEvent(sessionId, "save-work", {
+      event: {
+        kind: "reconcile",
+        message: "Reconciling the session onto the saved commit.",
+        status: "running"
+      },
+      patch: {
+        kind: "reconcile",
+        message: "Reconciling the session onto the saved commit.",
+        stage: "reconciling",
+        status: "running"
+      }
+    });
+    await store.writeBackgroundTaskEvent(sessionId, "save-work", {
+      event: {
+        kind: "saved",
+        message: "Session work was saved.",
+        status: "ready"
+      },
+      patch: {
+        saveCommit: "saved-commit",
+        status: "ready"
+      }
+    });
+
+    const task = await store.readBackgroundTask(sessionId, "save-work");
+    assert.equal(task.kind, "saved");
+    assert.equal(task.message, "Session work was saved.");
+    assert.equal(task.status, "ready");
+    assert.equal(Object.hasOwn(task, "stage"), false);
+  });
+});

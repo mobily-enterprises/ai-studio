@@ -23,6 +23,9 @@
       </div>
 
       <div class="vibe64-terminal-surface__actions" @pointerdown.stop>
+        <v-chip v-if="bodyMode === 'log' && status" size="x-small" variant="tonal">
+          {{ status }}
+        </v-chip>
         <v-btn
           v-if="error"
           :aria-controls="errorDetailsId"
@@ -135,7 +138,10 @@
         ><slot name="output" :output="output">{{ output || "Waiting for output…" }}</slot></pre>
       </div>
 
-      <footer class="vibe64-terminal-surface__footer">
+      <footer
+        v-if="bodyMode === 'terminal' || $slots.footer"
+        class="vibe64-terminal-surface__footer"
+      >
         <slot name="footer" :command-preview="commandPreview" :status="status">
           <span class="vibe64-terminal-surface__command">
             {{ commandPreview || "No command running." }}
