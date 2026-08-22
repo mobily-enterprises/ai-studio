@@ -44,7 +44,7 @@ import {
   VIBE64_INTERACTIVE_RUNTIME_PACKS
 } from "@local/vibe64-execution/server";
 import {
-  genesisPackageBinDirectory
+  genesisCommandShimDirectory
 } from "@local/vibe64-genesis/server";
 
 async function withTemporaryDirectory(callback) {
@@ -841,7 +841,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.ok(runCall.runtimes.includes("playwright"));
     assert.deepEqual(runCall.shimDirs, [
       gitCommandWrapperHostDir,
-      genesisPackageBinDirectory()
+      genesisCommandShimDirectory()
     ]);
     const envProbe = await runVibe64Command({
       ...runCall,

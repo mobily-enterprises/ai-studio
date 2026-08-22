@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+
+import { runCli } from "genesis-compiler/cli";
+
+const VIBE64_STACK_PACKAGES = Object.freeze(["genesis-stack"]);
+
+function withVibe64StackPackages(argv = []) {
+  if (!argv.length || argv.includes("--help") || argv.includes("-h") || argv[0] === "help") {
+    return argv;
+  }
+  const [command, ...args] = argv;
+  const supplied = new Set(args.flatMap((value, index) => (
+    value === "--stack-package" && args[index + 1] ? [args[index + 1]] : []
+  )));
+  const packages = VIBE64_STACK_PACKAGES
+    .filter((name) => !supplied.has(name))
+    .flatMap((name) => ["--stack-package", name]);
+  return [command, ...packages, ...args];
+}
+
+process.exitCode = await runCli(withVibe64StackPackages(process.argv.slice(2)));

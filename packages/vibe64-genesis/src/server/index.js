@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as genesisCompiler from "genesis-compiler";
 
@@ -96,11 +97,16 @@ function genesisPackageBinDirectory() {
   return path.join(nodeModulesRoot, ".bin");
 }
 
+function genesisCommandShimDirectory() {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin");
+}
+
 function withGenesisCommandShim(shimDirectories = []) {
-  const bin = genesisPackageBinDirectory();
+  const bin = genesisCommandShimDirectory();
+  const compilerBin = genesisPackageBinDirectory();
   const directories = Array.isArray(shimDirectories) ? shimDirectories : [];
   return [
-    ...directories.filter((directory) => normalizeText(directory) !== bin),
+    ...directories.filter((directory) => ![bin, compilerBin].includes(normalizeText(directory))),
     bin
   ];
 }
@@ -261,6 +267,7 @@ export {
   addGenesisStack,
   assertGenesisPromptTask,
   genesisPackageBinDirectory,
+  genesisCommandShimDirectory,
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,

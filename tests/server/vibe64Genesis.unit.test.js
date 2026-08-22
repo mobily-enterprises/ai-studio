@@ -11,6 +11,7 @@ import {
   GENESIS_DERIVED_ARTIFACT_PATHS,
   addGenesisStack,
   assertGenesisPromptTask,
+  genesisCommandShimDirectory,
   genesisPackageBinDirectory,
   genesisPromptRequest,
   genesisPromptTask,
@@ -343,8 +344,8 @@ test("Genesis owns the opening conversation for an existing uninitialized projec
 });
 
 test("Codex execution shims receive the installed Genesis executable exactly once", () => {
-  const bin = genesisPackageBinDirectory();
-  const first = withGenesisCommandShim(["/managed/git", bin]);
+  const bin = genesisCommandShimDirectory();
+  const first = withGenesisCommandShim(["/managed/git", genesisPackageBinDirectory(), bin]);
   const second = withGenesisCommandShim(first);
 
   assert.deepEqual(first, ["/managed/git", bin]);
@@ -374,5 +375,26 @@ test("Codex discovers Genesis through execution shims without caller-owned PATH"
   });
 
   assert.equal(result.ok, true, result.output);
-  assert.equal(result.stdout.trim(), path.join(genesisPackageBinDirectory(), "genesis"));
+  assert.equal(result.stdout.trim(), path.join(genesisCommandShimDirectory(), "genesis"));
+});
+
+test("the managed Genesis command exposes Vibe64's curated Stack catalog", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+
+    const result = await execFileAsync(path.join(genesisCommandShimDirectory(), "genesis"), [
+      "stack",
+      "add",
+      "jskit"
+    ], {
+      cwd: projectRoot
+    });
+
+    assert.match(result.stdout, /stack: updated/u);
+    const stack = await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8");
+    assert.match(stack, /- `genesis-stack`/u);
+    assert.match(stack, /- `jskit`/u);
+    assert.match(stack, /- `nodejs`/u);
+  });
 });
