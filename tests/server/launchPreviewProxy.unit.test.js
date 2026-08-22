@@ -13,7 +13,8 @@ import {
   PREVIEW_IDENTITY_REQUEST_MESSAGE_TYPE,
   PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
   PREVIEW_LOCATION_MESSAGE_TYPE,
-  PREVIEW_QUERY_MESSAGE_TYPE
+  PREVIEW_QUERY_MESSAGE_TYPE,
+  PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE
 } from "../../packages/vibe64-terminals/src/shared/launchPreviewProtocol.js";
 import {
   runWithProjectRequestContext
@@ -61,6 +62,9 @@ test("launch preview bridge injects once and reports target URLs", () => {
   assert.match(injected, new RegExp(PREVIEW_QUERY_MESSAGE_TYPE, "u"));
   assert.match(injected, new RegExp(PREVIEW_IDENTITY_REQUEST_MESSAGE_TYPE, "u"));
   assert.match(injected, new RegExp(PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE, "u"));
+  assert.match(injected, new RegExp(PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE, "u"));
+  assert.match(injected, /Application resource failed to load/u);
+  assert.match(injected, /resourceFailurePublished/u);
   assert.match(injected, /force: true/u);
   assert.match(injected, /title: String\(document\.title/u);
   assert.match(injected, /networkCharacterCount/u);

@@ -715,6 +715,50 @@ test("@preview-lifecycle becomes usable from the bridge handshake while an app m
   expect(launchSession.getPreviewModuleCompleted()).toBe(false);
 });
 
+test("@preview-lifecycle reports a failed app module and retries the iframe once", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  await mockLaunchTerminalSocket(page);
+  const launchSession = await mockLaunchSession(page, {
+    previewModuleFailureCount: 1
+  });
+
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+  await expect(page.locator(".v-snackbar", {
+    hasText: "Preview could not load an application resource. Retrying automatically…"
+  })).toBeVisible();
+  await expect.poll(() => launchSession.getPreviewModuleRequestCount()).toBe(2);
+  await expect.poll(() => launchSession.getPreviewModuleCompleted()).toBe(true);
+  await expect.poll(() => launchSession.getPreviewLoadCount()).toBe(2);
+  expect(consoleErrors.some((message) => (
+    message.includes("[Vibe64 preview]") &&
+    message.includes("Application resource failed to load")
+  ))).toBe(true);
+});
+
+test("@preview-lifecycle bounds automatic retries when an app module keeps failing", async ({ page }) => {
+  await mockLaunchTerminalSocket(page);
+  const launchSession = await mockLaunchSession(page, {
+    previewModuleFailureCount: 10
+  });
+
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+  await expect(page.locator(".v-snackbar", {
+    hasText: "Preview could not load an application resource after retrying. Use Reload preview to try again."
+  })).toBeVisible();
+  await expect.poll(() => launchSession.getPreviewModuleRequestCount()).toBe(2);
+  await page.waitForTimeout(750);
+  expect(launchSession.getPreviewLoadCount()).toBe(2);
+  expect(launchSession.getPreviewModuleRequestCount()).toBe(2);
+  expect(launchSession.getPreviewModuleCompleted()).toBe(false);
+});
+
 test("@preview-lifecycle lets a slow first iframe load finish without restarting it", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
@@ -1412,6 +1456,7 @@ async function mockLaunchSession(page: Page, {
   previewIdentity = null,
   previewIdentityExchange = null,
   previewIdentityExchangeDelayMs = 0,
+  previewModuleFailureCount = 0,
   previewResponseDelayMs = 0,
   previewModuleDelayMs = 0,
   session = sessionPayload(),
@@ -1429,6 +1474,7 @@ async function mockLaunchSession(page: Page, {
   previewIdentity?: Record<string, unknown> | null;
   previewIdentityExchange?: ((selection: PreviewIdentitySelection) => PreviewIdentityExchangeResult) | null;
   previewIdentityExchangeDelayMs?: number;
+  previewModuleFailureCount?: number;
   previewResponseDelayMs?: number;
   previewModuleDelayMs?: number;
   session?: ReturnType<typeof sessionPayload>;
@@ -1457,6 +1503,7 @@ async function mockLaunchSession(page: Page, {
   let launchStatusSequenceIndex = 0;
   let previewLoadCount = 0;
   let previewModuleCompleted = false;
+  let previewModuleRequestCount = 0;
   let previewIdentityGrantSequence = 0;
   const previewServer = previewBootstrapToken
     ? await startPreviewAppServer({
@@ -1665,6 +1712,15 @@ async function mockLaunchSession(page: Page, {
       const request = route.request();
       const url = new URL(request.url());
       if (url.pathname === "/vibe64-test-late-module.js") {
+        previewModuleRequestCount += 1;
+        if (previewModuleRequestCount <= previewModuleFailureCount) {
+          await route.fulfill({
+            body: "Application module failed to load.",
+            contentType: "text/plain",
+            status: 502
+          });
+          return;
+        }
         await new Promise((resolve) => {
           setTimeout(resolve, previewModuleDelayMs);
         });
@@ -1717,7 +1773,7 @@ async function mockLaunchSession(page: Page, {
       }
       await route.fulfill({
         body: previewAppHtml({
-          lateModule: previewModuleDelayMs > 0,
+          lateModule: previewModuleDelayMs > 0 || previewModuleFailureCount > 0,
           targetOrigin: new URL(TARGET_APP_URL).origin
         }),
         contentType: "text/html"
@@ -1751,6 +1807,9 @@ async function mockLaunchSession(page: Page, {
     },
     getPreviewModuleCompleted() {
       return previewModuleCompleted;
+    },
+    getPreviewModuleRequestCount() {
+      return previewModuleRequestCount;
     },
     getPreviewIdentitySelections() {
       return [...previewIdentitySelections];

@@ -6,7 +6,8 @@ import {
   PREVIEW_IDENTITY_REQUEST_MESSAGE_TYPE,
   PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
   PREVIEW_LOCATION_MESSAGE_TYPE,
-  PREVIEW_QUERY_MESSAGE_TYPE
+  PREVIEW_QUERY_MESSAGE_TYPE,
+  PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE
 } from "../shared/launchPreviewProtocol.js";
 import {
   PREVIEW_IDENTITY_CONTROL_PATH
@@ -26,6 +27,7 @@ function launchPreviewBridgeScript({
     identityResponseMessageType: PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
     locationMessageType: PREVIEW_LOCATION_MESSAGE_TYPE,
     queryMessageType: PREVIEW_QUERY_MESSAGE_TYPE,
+    resourceFailureMessageType: PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE,
     targetOrigin: String(targetOrigin || ""),
     version: PREVIEW_BRIDGE_VERSION
   });
@@ -43,6 +45,7 @@ function launchPreviewBridgeScript({
   let networkDroppedEntryCount = 0;
   let networkSequence = 0;
   let networkSuppressedResourceCount = 0;
+  let resourceFailurePublished = false;
   const consoleEntries = [];
   const networkEntries = [];
   const networkEntryCharacterCounts = new WeakMap();
@@ -508,6 +511,9 @@ function launchPreviewBridgeScript({
   function internalConsoleMessage(values = []) {
     return typeof values?.[0] === "string" && values[0].startsWith("[VIBE64_SESSION_DEBUG]");
   }
+  const originalConsoleError = typeof window.console?.error === "function"
+    ? window.console.error.bind(window.console)
+    : null;
   for (const level of ["debug", "error", "info", "log", "warn"]) {
     const original = window.console?.[level];
     if (typeof original !== "function") {
@@ -532,17 +538,36 @@ function launchPreviewBridgeScript({
     const resourceUrl = String(target?.currentSrc || target?.src || target?.href || "");
     if (target && target !== window && resourceUrl) {
       const resourceKind = String(target.tagName || "resource").toLowerCase();
+      const resourceRole = String(target?.rel || target?.as || "").toLowerCase();
+      const applicationResource = resourceKind === "script" || (
+        resourceKind === "link" && /(?:^|\\s)(?:modulepreload|preload|stylesheet)(?:\\s|$)/u.test(resourceRole)
+      );
+      const safeResourceUrl = targetResourceHref(resourceUrl);
       appendConsoleEntry("error", [
         "Failed to load " + resourceKind + ":",
-        resourceUrl
+        safeResourceUrl
       ], "resource");
+      originalConsoleError?.(
+        "[Vibe64 preview] Application resource failed to load.",
+        safeResourceUrl
+      );
       appendNetworkEntry({
         error: "Resource failed to load",
         kind: resourceKind,
         method: "GET",
         phase: "failed",
-        url: resourceUrl
+        url: safeResourceUrl
       });
+      if (applicationResource && !resourceFailurePublished) {
+        resourceFailurePublished = true;
+        window.parent.postMessage({
+          href: safeResourceUrl,
+          kind: resourceKind,
+          timestamp: new Date().toISOString(),
+          type: config.resourceFailureMessageType,
+          version: config.version
+        }, "*");
+      }
     }
   }, true);
   window.addEventListener("unhandledrejection", (event) => {

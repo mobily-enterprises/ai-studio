@@ -733,6 +733,15 @@
     </v-dialog>
 
     <v-snackbar
+      v-model="previewResourceNoticeVisible"
+      color="error"
+      location="bottom center"
+      :timeout="7000"
+    >
+      {{ previewResourceNoticeText }}
+    </v-snackbar>
+
+    <v-snackbar
       v-model="previewAttachmentNoticeVisible"
       :color="previewAttachmentNoticeColor"
       location="bottom center"
@@ -928,6 +937,8 @@ const {
   previewNoticeVisible,
   previewRecoveryLabel,
   previewRecoveryVisible,
+  previewResourceNoticeText,
+  previewResourceNoticeVisible,
   previewTerminalRecoveryVisible,
   previewToolbarRecoveryVisible,
   previewToolbarExpanded,

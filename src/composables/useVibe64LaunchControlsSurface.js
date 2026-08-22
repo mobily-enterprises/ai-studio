@@ -16,7 +16,8 @@ import {
   PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
   PREVIEW_LOCATION_MESSAGE_TYPE,
   PREVIEW_PROXY_TOKEN_QUERY_PARAM,
-  PREVIEW_QUERY_MESSAGE_TYPE
+  PREVIEW_QUERY_MESSAGE_TYPE,
+  PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE
 } from "@local/vibe64-terminals/shared/launchPreviewProtocol";
 import {
   managedPreviewTarget,
@@ -58,6 +59,8 @@ const PREVIEW_DISPLAY_QUERY_PARAMS = Object.freeze([
 ]);
 const PREVIEW_DIAGNOSTICS_TIMEOUT_MS = 3000;
 const PREVIEW_IDENTITY_TIMEOUT_MS = 10000;
+const PREVIEW_RESOURCE_RETRY_DELAY_MS = 250;
+const PREVIEW_RESOURCE_RETRY_LIMIT = 1;
 
 function previewUrlWithoutDisplayParams(value = "") {
   const text = String(value || "").trim();
@@ -651,9 +654,14 @@ function useVibe64LaunchControlsSurface(props) {
   const previewIdentityCurrent = ref(null);
   const previewIdentityError = ref("");
   const previewIdentityRequested = ref(null);
+  const previewResourceNoticeText = ref("");
+  const previewResourceNoticeVisible = ref(false);
   let previewIdentityAutomaticAttempt = "";
   let previewIdentityLifecycle = "";
   let previewIdentityReloadRequestId = 0;
+  let previewResourceRetryCount = 0;
+  let previewResourceRetryLifecycle = "";
+  let previewResourceRetryTimer = null;
   const previewFrameRequest = ref({
     id: 0,
     identity: "",
@@ -1001,6 +1009,82 @@ function useVibe64LaunchControlsSurface(props) {
     });
   }
 
+  function cancelPreviewResourceRetry() {
+    if (previewResourceRetryTimer !== null) {
+      clearTimeout(previewResourceRetryTimer);
+      previewResourceRetryTimer = null;
+    }
+  }
+
+  function resetPreviewResourceRecovery(lifecycle = "") {
+    cancelPreviewResourceRetry();
+    previewResourceRetryCount = 0;
+    previewResourceRetryLifecycle = String(lifecycle || "");
+    previewResourceNoticeText.value = "";
+    previewResourceNoticeVisible.value = false;
+  }
+
+  function showPreviewResourceNotice(message = "") {
+    previewResourceNoticeText.value = String(message || "");
+    previewResourceNoticeVisible.value = Boolean(previewResourceNoticeText.value);
+  }
+
+  function handlePreviewResourceFailure(message = {}) {
+    const lifecycle = previewIdentityLifecycleKey.value;
+    if (!lifecycle || !previewUrl.value) {
+      return false;
+    }
+    if (previewResourceRetryLifecycle !== lifecycle) {
+      resetPreviewResourceRecovery(lifecycle);
+    }
+    if (previewResourceRetryTimer !== null) {
+      return false;
+    }
+
+    const resourceKind = String(message?.kind || "resource").trim() || "resource";
+    const resourceUrl = String(message?.href || "").trim();
+    const willRetry = previewResourceRetryCount < PREVIEW_RESOURCE_RETRY_LIMIT;
+    const notice = willRetry
+      ? "Preview could not load an application resource. Retrying automatically…"
+      : "Preview could not load an application resource after retrying. Use Reload preview to try again.";
+    showPreviewResourceNotice(notice);
+    console.error(`[Vibe64 preview] ${notice}`, {
+      resourceKind,
+      resourceUrl
+    });
+    previewDebugLog("resource.failed", {
+      resourceKind,
+      resourceUrl,
+      retryCount: previewResourceRetryCount,
+      willRetry
+    });
+    if (!willRetry) {
+      return false;
+    }
+
+    previewResourceRetryCount += 1;
+    const failedFrameRequestId = previewFrameRequestId.value;
+    previewResourceRetryTimer = setTimeout(() => {
+      previewResourceRetryTimer = null;
+      if (
+        previewResourceRetryLifecycle !== previewIdentityLifecycleKey.value ||
+        failedFrameRequestId !== previewFrameRequestId.value
+      ) {
+        return;
+      }
+      const reloaded = requestPreviewFrame({
+        force: true,
+        reason: "resource-load-retry"
+      });
+      if (!reloaded) {
+        const failureNotice = "Preview could not be reloaded automatically. Use Reload preview to try again.";
+        showPreviewResourceNotice(failureNotice);
+        console.error(`[Vibe64 preview] ${failureNotice}`);
+      }
+    }, PREVIEW_RESOURCE_RETRY_DELAY_MS);
+    return true;
+  }
+
   function clearPreviewFrame(reason = "") {
     resetPreviewBridge(reason || "frame-cleared");
     if (!previewFrameRequest.value.src) {
@@ -1059,6 +1143,7 @@ function useVibe64LaunchControlsSurface(props) {
   }
 
   async function reloadPreview() {
+    resetPreviewResourceRecovery(previewIdentityLifecycleKey.value);
     const requestIdBeforeRefresh = previewFrameRequestId.value;
     await refreshLaunchTargets();
     await nextTick();
@@ -1645,7 +1730,8 @@ function useVibe64LaunchControlsSurface(props) {
       PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
       PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE,
       PREVIEW_IDENTITY_RESPONSE_MESSAGE_TYPE,
-      PREVIEW_LOCATION_MESSAGE_TYPE
+      PREVIEW_LOCATION_MESSAGE_TYPE,
+      PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE
     ].includes(previewMessageType(value));
   }
 
@@ -1682,6 +1768,10 @@ function useVibe64LaunchControlsSurface(props) {
       // The bridge announces readiness as soon as its listeners are installed.
       // Application modules and rendering may still be pending.
       markPreviewFrameReady(previewFrameRequestId.value, "bridge-ready");
+      return;
+    }
+    if (messageType === PREVIEW_RESOURCE_FAILURE_MESSAGE_TYPE) {
+      handlePreviewResourceFailure(event.data);
       return;
     }
     if (messageType === PREVIEW_DIAGNOSTICS_RESPONSE_MESSAGE_TYPE) {
@@ -1730,6 +1820,7 @@ function useVibe64LaunchControlsSurface(props) {
     }
     previewIdentityLifecycle = lifecycle;
     previewIdentityAutomaticAttempt = "";
+    resetPreviewResourceRecovery(lifecycle);
     resetPreviewIdentityState();
     previewBridgeRequests.rejectAll("The active application preview changed.");
     previewDiagnosticsBusy.value = false;
@@ -1824,6 +1915,7 @@ function useVibe64LaunchControlsSurface(props) {
   
   onBeforeUnmount(() => {
     window.removeEventListener("message", handlePreviewBridgeMessage);
+    cancelPreviewResourceRetry();
     previewBridgeRequests.rejectAll("The application preview closed.");
   });
 
@@ -1910,6 +2002,8 @@ function useVibe64LaunchControlsSurface(props) {
     previewNoticeVisible,
     previewRecoveryLabel,
     previewRecoveryVisible,
+    previewResourceNoticeText,
+    previewResourceNoticeVisible,
     previewState,
     previewTerminalRecoveryVisible,
     previewToolbarRecoveryVisible,
