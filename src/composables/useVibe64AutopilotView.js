@@ -343,7 +343,7 @@ function useVibe64AutopilotView(props, emit) {
       ? "Optional additional context…"
       : answerChoices.value.length
         ? "Choose an answer above, or type another answer…"
-        : "Ask Codex to work on this project…"
+        : "What would you like to work on? A rough idea is enough…"
   ));
   const workspaceSetup = computed(() => {
     const value = props.session?.workspaceSetup;
