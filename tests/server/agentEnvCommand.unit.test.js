@@ -112,7 +112,7 @@ function createProductionProvider({
           secret: input.secret === true,
           source: "user_override",
           value: input.secret ? "********" : input.value,
-          valuePresent: true
+          valuePresent: String(input.value ?? "").length > 0
         }
       ];
       return {
@@ -195,11 +195,74 @@ test("agent Env status reports both scopes without exposing values", async () =>
   assert.equal(payload.scopes.development.records[0].key, "PUBLIC_ORIGIN");
   assert.equal(payload.scopes.production.records[0].key, "API_TOKEN");
   assert.equal(payload.scopes.production.records[0].secret, true);
+  assert.equal(payload.scopes.production.records[0].state, "configured");
+  assert.equal(payload.scopes.production.records[0].stored, true);
   assert.equal(Object.hasOwn(payload.scopes.development.records[0], "value"), false);
   assert.equal(Object.hasOwn(payload.scopes.production.records[0], "value"), false);
   assert.doesNotMatch(result.stdout, /development\.example\.test/u);
   assert.doesNotMatch(result.stdout, /\*\*\*\*\*\*\*\*/u);
   assert.deepEqual(project.state.contexts, ["demo"]);
+});
+
+test("agent Env persists and reports empty development and production values", async () => {
+  const project = createProjectService();
+  const production = createProductionProvider();
+  const command = createAgentEnvCommandService({
+    productionEnvironmentProvider: production,
+    projectService: project
+  });
+  await command.bindSession("empty-session");
+
+  const development = await command.run({
+    args: ["set", "development", "EMPTY_SECRET", "--secret", "--json"],
+    sessionId: "empty-session",
+    stdin: ""
+  });
+  const productionResult = await command.run({
+    args: ["set", "production", "EMPTY_PLAIN", "--json"],
+    sessionId: "empty-session",
+    stdin: ""
+  });
+  const status = await command.run({
+    args: ["status", "all", "--json"],
+    sessionId: "empty-session"
+  });
+  const developmentPayload = JSON.parse(development.stdout);
+  const productionPayload = JSON.parse(productionResult.stdout);
+  const statusPayload = JSON.parse(status.stdout);
+
+  assert.equal(development.ok, true);
+  assert.equal(developmentPayload.created, true);
+  assert.equal(developmentPayload.empty, true);
+  assert.equal(productionResult.ok, true);
+  assert.equal(productionPayload.created, true);
+  assert.equal(productionPayload.empty, true);
+  assert.deepEqual(project.state.saves[0].values, {
+    EMPTY_SECRET: {
+      secret: true,
+      value: ""
+    }
+  });
+  assert.deepEqual(production.state.sets, [{
+    key: "EMPTY_PLAIN",
+    secret: false,
+    value: ""
+  }]);
+  assert.deepEqual(statusPayload.scopes.development.records[0], {
+    configured: false,
+    editable: true,
+    key: "EMPTY_SECRET",
+    missing: true,
+    owner: "user",
+    requiredFor: [],
+    scope: "development",
+    secret: true,
+    source: "user",
+    state: "empty",
+    stored: true
+  });
+  assert.equal(statusPayload.scopes.production.records[0].state, "empty");
+  assert.equal(statusPayload.scopes.production.records[0].stored, true);
 });
 
 test("agent Env creates development values through the project service and never echoes them", async () => {
@@ -413,6 +476,22 @@ test("agent Env wrapper forwards stdin over its authenticated session socket", a
     assert.doesNotMatch(executed.stdout, new RegExp(secretValue, "u"));
     assert.equal(executed.stderr, "");
     assert.equal(project.state.saves[0].values.WRAPPER_TOKEN.value, secretValue);
+
+    const empty = await runWithInput(prepared.hostWrapperPath, [
+      "set",
+      "development",
+      "EMPTY_WRAPPER_VALUE"
+    ], {
+      env: {
+        ...process.env,
+        ...prepared.env
+      },
+      input: ""
+    });
+
+    assert.equal(empty.code, 0);
+    assert.match(empty.stdout, /Created development Env EMPTY_WRAPPER_VALUE with an empty value/u);
+    assert.equal(project.state.saves[1].values.EMPTY_WRAPPER_VALUE.value, "");
   } finally {
     await command.closeAllForSession(sessionId);
     await rm(root, {

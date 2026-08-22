@@ -67,6 +67,7 @@ function usageText() {
     "  vibe64-env remove <development|production> <KEY> [--json]",
     "",
     "Values are accepted only on stdin and are never printed by this command.",
+    "Zero-length stdin stores an empty value; whitespace is preserved as an exact value.",
     "Development and production are separate scopes; this command never copies values between them."
   ].join("\n") + "\n";
 }
@@ -171,9 +172,11 @@ function validateParsedCommand(parsed = {}) {
   return null;
 }
 
-function statusRecord(record = {}, scope = "") {
+function statusRecord(record = {}, scope = "", isUserValueRecord = () => false) {
+  const configured = record?.valuePresent === true;
+  const stored = isUserValueRecord(record) === true;
   return {
-    configured: record?.valuePresent === true,
+    configured,
     editable: record?.editable === true,
     key: normalizeText(record?.key),
     missing: record?.missing === true || record?.valuePresent !== true,
@@ -181,21 +184,23 @@ function statusRecord(record = {}, scope = "") {
     requiredFor: Array.isArray(record?.requiredFor) ? record.requiredFor.map(normalizeText).filter(Boolean) : [],
     scope,
     secret: record?.secret === true,
-    source: normalizeText(record?.source)
+    source: normalizeText(record?.source),
+    state: configured ? "configured" : stored ? "empty" : "missing",
+    stored
   };
 }
 
-function sortedStatusRecords(records = [], scope = "") {
+function sortedStatusRecords(records = [], scope = "", isUserValueRecord = () => false) {
   return (Array.isArray(records) ? records : [])
-    .map((record) => statusRecord(record, scope))
+    .map((record) => statusRecord(record, scope, isUserValueRecord))
     .filter((record) => record.key)
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
-function scopeStatus(scope = "", records = []) {
+function scopeStatus(scope = "", records = [], isUserValueRecord = () => false) {
   return {
     available: true,
-    records: sortedStatusRecords(records, scope),
+    records: sortedStatusRecords(records, scope, isUserValueRecord),
     scope
   };
 }
@@ -224,7 +229,7 @@ function humanStatus(statuses = []) {
     }
     for (const record of status.records) {
       const details = [
-        record.configured ? "configured" : "missing",
+        record.state,
         record.secret ? "secret" : "plain",
         record.editable ? "editable" : "managed",
         record.requiredFor.length > 0 ? `required for ${record.requiredFor.join(", ")}` : ""
@@ -239,6 +244,7 @@ function mutationStdout({
   action = "set",
   changed = false,
   created = false,
+  empty = false,
   key = "",
   scope = ""
 } = {}) {
@@ -248,7 +254,8 @@ function mutationStdout({
       ? `Removed ${label} Env ${key}.\nStored Env state remains outside Git.\n`
       : `${label[0].toUpperCase()}${label.slice(1)} Env ${key} was not stored; no change.\n`;
   }
-  return `${created ? "Created" : "Updated"} ${label} Env ${key}.\nStored by Vibe64 outside Git; the value was not printed.\n`;
+  const emptyLabel = empty ? " with an empty value" : "";
+  return `${created ? "Created" : "Updated"} ${label} Env ${key}${emptyLabel}.\nStored by Vibe64 outside Git; the value was not printed.\n`;
 }
 
 function mutationPayload(input = {}, {
@@ -263,6 +270,7 @@ function mutationPayload(input = {}, {
     storedOutsideGit: true,
     ...(input.action === "set" ? {
       created: input.created === true,
+      empty: input.empty === true,
       secret: input.secret === true
     } : {})
   };
@@ -621,7 +629,11 @@ function createAgentEnvCommandService({
         statuses.push(unavailableProductionStatus());
         continue;
       }
-      statuses.push(scopeStatus(scope, await environment.readRecords({ sessionId })));
+      statuses.push(scopeStatus(
+        scope,
+        await environment.readRecords({ sessionId }),
+        environment.isUserValueRecord
+      ));
     }
     if (parsed.scope === ENV_SCOPE_PRODUCTION && statuses[0]?.available === false) {
       return responseError(
@@ -643,12 +655,6 @@ function createAgentEnvCommandService({
   }
 
   async function setResult(parsed = {}, sessionId = "", stdin = "") {
-    if (stdin.length === 0) {
-      return responseError(
-        `No value was provided on stdin for ${parsed.key}.`,
-        "vibe64_agent_env_command_value_required"
-      );
-    }
     const key = normalizeRuntimeConfigKey(parsed.key);
     const environment = environmentForScope(parsed.scope);
     if (!environment) {
@@ -671,6 +677,7 @@ function createAgentEnvCommandService({
       action: "set",
       changed: true,
       created: !environment.isUserValueRecord(previous),
+      empty: stdin.length === 0,
       key,
       scope: parsed.scope,
       secret
