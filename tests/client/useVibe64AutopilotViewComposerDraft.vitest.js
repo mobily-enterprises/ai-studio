@@ -84,6 +84,39 @@ describe("useVibe64AutopilotView direct chat", () => {
     router.push.mockReset();
   });
 
+  it("welcomes the person before the first message without creating an agent turn", async () => {
+    const view = await createView();
+
+    expect(view.chatTurns.value).toEqual([]);
+    expect(view.emptyConversationWelcome.value).toBe(
+      "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together."
+    );
+
+    const loadingView = await createView({
+      conversationLog: {
+        loading: true,
+        turns: []
+      }
+    });
+    expect(loadingView.chatTurns.value).toEqual([]);
+    expect(loadingView.emptyConversationWelcome.value).toBe("");
+
+    const existingView = await createView({
+      conversationLog: {
+        turns: [{
+          assistant: {
+            role: "assistant",
+            text: "Existing reply."
+          },
+          turnId: "turn-1"
+        }]
+      }
+    });
+    expect(existingView.chatTurns.value).toHaveLength(1);
+    expect(existingView.chatTurns.value[0].turnId).toBe("turn-1");
+    expect(existingView.emptyConversationWelcome.value).toBe("");
+  });
+
   it("keeps chat available for steering while Codex is working", async () => {
     const view = await createView({
       session: {

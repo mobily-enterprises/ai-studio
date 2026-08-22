@@ -72,6 +72,7 @@
         :source-root="sessionSourceRoot"
         :turns="chatTurns"
         :visible="conversationLogVisible"
+        :welcome-message="emptyConversationWelcome"
         @cancel-turn="cancelOptimisticMessage"
         @edit-turn="editOptimisticMessage"
         @load-more="loadMoreChatTurns"
@@ -599,6 +600,7 @@ const {
   dismissNumberedQuestions,
   confirmSaveWork,
   editOptimisticMessage,
+  emptyConversationWelcome,
   interrupting,
   loadMoreChatTurns,
   numberedQuestions,

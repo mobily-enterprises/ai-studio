@@ -58,6 +58,22 @@
       @wheel.passive="markUserScrollIntent"
     >
       <div
+        v-if="welcomeMessage"
+        class="studio-conversation-log__welcome"
+        role="status"
+      >
+        <div class="studio-conversation-log__assistant-header">
+          <span class="studio-conversation-log__avatar studio-conversation-log__avatar--assistant">
+            <v-icon :icon="mdiRobotOutline" size="16" />
+          </span>
+          <div class="studio-conversation-log__message-header">
+            <span>{{ assistantLabel }}</span>
+          </div>
+        </div>
+        <p>{{ welcomeMessage }}</p>
+      </div>
+
+      <div
         v-if="hasMoreBefore || loadingMore || loadMoreError"
         class="studio-conversation-log__load-more"
       >
@@ -321,6 +337,10 @@ const props = defineProps({
   visible: {
     default: false,
     type: Boolean
+  },
+  welcomeMessage: {
+    default: "",
+    type: String
   }
 });
 
@@ -853,6 +873,23 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
   overflow-x: hidden;
   overflow-y: auto;
   padding-right: 0.15rem;
+}
+
+.studio-conversation-log__welcome {
+  background: rgba(var(--v-theme-primary), 0.08);
+  border: 1px solid rgba(var(--v-theme-primary), 0.18);
+  border-radius: 16px;
+  color: rgb(var(--v-theme-on-surface));
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+  margin: 0.1rem 0.15rem 0;
+  padding: 0.8rem 0.9rem 0.9rem;
+}
+
+.studio-conversation-log__welcome p {
+  line-height: 1.48;
+  margin: 0;
 }
 
 .studio-conversation-log__body--settling {

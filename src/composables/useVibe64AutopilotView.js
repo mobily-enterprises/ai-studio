@@ -59,6 +59,7 @@ const STANDALONE_SESSION_TOOL_IDS = new Set([
   "editor",
   "system"
 ]);
+const EMPTY_CONVERSATION_WELCOME = "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together.";
 const vibe64AutopilotViewEmits = ["busy-change", "project-attention"];
 const vibe64AutopilotViewProps = {
   active: {
@@ -829,6 +830,14 @@ function useVibe64AutopilotView(props, emit) {
       }))
     ];
   });
+  const emptyConversationWelcome = computed(() => (
+    sessionId.value &&
+    !props.conversationLog?.loading &&
+    !props.conversationLog?.error &&
+    !chatTurns.value.length
+      ? EMPTY_CONVERSATION_WELCOME
+      : ""
+  ));
   const conversationLogVisible = computed(() => Boolean(props.active));
   const conversationScrollKey = computed(() => `${sessionId.value}:${chatTurns.value.length}`);
   const chatReloading = ref(false);
@@ -1134,6 +1143,7 @@ function useVibe64AutopilotView(props, emit) {
     dismissNumberedQuestions,
     confirmSaveWork,
     editOptimisticMessage,
+    emptyConversationWelcome,
     interrupting,
     loadMoreChatTurns,
     numberedQuestions,
