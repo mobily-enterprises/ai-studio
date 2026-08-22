@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   classifyCodexAppServerEvent,
+  codexAppServerAutomaticHookNoOutput,
   codexAppServerContextRefreshReason,
   codexAppServerErrorText,
-  codexAppServerOutputOwnerTurnId
+  codexAppServerOutputOwnerTurnId,
+  codexAppServerProviderThreadAssistantSegments
 } from "../../packages/vibe64-terminals/src/server/codexAppServerEvents.js";
 
 test("Codex output belongs to the active Vibe64 turn across internal provider turns", () => {
@@ -191,6 +193,47 @@ test("Codex app-server event classifier recognizes task completion final text", 
     threadId: "thread-2",
     turnId: "turn-2"
   });
+});
+
+test("Codex app-server identifies native hook prompts and omits their no-output result", () => {
+  const hookPrompt = {
+    fragments: [{
+      hookRunId: "stop:1",
+      text: "This is an automatic cleanup follow-up."
+    }],
+    id: "hook-prompt-1",
+    type: "hookPrompt"
+  };
+  assert.deepEqual(classifyCodexAppServerEvent({
+    method: "item/completed",
+    params: {
+      item: hookPrompt,
+      threadId: "thread-1",
+      turnId: "turn-1"
+    }
+  }), {
+    itemId: "hook-prompt-1",
+    kind: "hook_prompt",
+    source: "item/completed",
+    text: "This is an automatic cleanup follow-up.",
+    threadId: "thread-1",
+    turnId: "turn-1"
+  });
+  assert.equal(codexAppServerAutomaticHookNoOutput("VIBE64_AUTOMATIC_HOOK_NO_OUTPUT"), true);
+  assert.deepEqual(codexAppServerProviderThreadAssistantSegments({
+    turns: [{
+      id: "turn-1",
+      items: [
+        { id: "main-answer", phase: "final_answer", text: "Here is the answer.", type: "agentMessage" },
+        hookPrompt,
+        { id: "no-output", phase: "final_answer", text: "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT", type: "agentMessage" },
+        { id: "cleanup", phase: "final_answer", text: "Cleanup corrected one helper.", type: "agentMessage" }
+      ]
+    }]
+  }, "turn-1"), [
+    { itemId: "main-answer", text: "Here is the answer." },
+    { itemId: "cleanup", text: "Cleanup corrected one helper." }
+  ]);
 });
 
 test("Codex app-server context refresh classification uses structured protocol signals only", () => {

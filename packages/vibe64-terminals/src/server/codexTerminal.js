@@ -121,6 +121,7 @@ import {
 } from "./agentTerminalIdentity.js";
 import {
   classifyCodexAppServerEvent,
+  codexAppServerAutomaticHookNoOutput,
   codexAppServerAssistantItemText,
   codexAppServerContentText,
   codexAppServerContextRefreshReason,
@@ -1033,6 +1034,7 @@ function createCodexTerminalController({
   const codexAppServerReasoningPersistQueues = new Map();
   const codexAppServerLiveProgressItems = new Set();
   const codexAppServerLiveProgressFingerprints = new Set();
+  const codexAppServerAutomaticHookThreads = new Set();
   const codexAppServerMirroredTerminalItems = new Set();
   const codexAppServerNotificationTasks = new Map();
 
@@ -3098,6 +3100,12 @@ function createCodexTerminalController({
     const normalizedThreadId = normalizeText(threadId);
     const assistantText = normalizeText(text);
     const normalizedItemId = normalizeText(itemId) || codexAppServerNotificationItemId(notification);
+    if (codexAppServerAutomaticHookNoOutput(assistantText)) {
+      return {
+        recorded: false,
+        reason: "automatic_hook_no_output"
+      };
+    }
     if (!normalizedSessionId || !normalizedThreadId || !assistantText || !normalizedItemId) {
       return {
         recorded: false,
@@ -5682,6 +5690,10 @@ function createCodexTerminalController({
         turnId: codexAppServerNotificationTurnId(notification)
       };
       const classification = classifyCodexAppServerEvent(notification);
+      if (classification.kind === "hook_prompt") {
+        codexAppServerAutomaticHookThreads.add(normalizedThreadId);
+        return;
+      }
       const contextRefreshReason = codexAppServerContextRefreshReason(notification);
       if (contextRefreshReason) {
         runCodexAppServerNotificationTask(notificationContext, () => {
@@ -5706,7 +5718,10 @@ function createCodexTerminalController({
         });
         return;
       }
-      if (classification.kind === "reasoning_summary") {
+      if (
+        classification.kind === "reasoning_summary" &&
+        !codexAppServerAutomaticHookThreads.has(normalizedThreadId)
+      ) {
         runCodexAppServerNotificationTask(notificationContext, () => {
           return recordCodexAppServerReasoningForSession(
             normalizedSessionId,
@@ -5751,6 +5766,9 @@ function createCodexTerminalController({
         classification.kind === "thinking" ||
         classification.kind === "live_progress"
       ) {
+        if (codexAppServerAutomaticHookThreads.has(normalizedThreadId)) {
+          return;
+        }
         runCodexAppServerNotificationTask(notificationContext, () => {
           return writeCodexAppServerLiveProgress(normalizedSessionId, normalizedThreadId, notification);
         });
@@ -5771,6 +5789,7 @@ function createCodexTerminalController({
         }
       }
       if (method === "turn/started") {
+        codexAppServerAutomaticHookThreads.delete(normalizedThreadId);
         runCodexAppServerNotificationTask(notificationContext, () => markCodexAppServerProviderTurnActive(normalizedSessionId, {
           source: "turn_started",
           status: codexAppServerNotificationTurnStatus(notification) || "inProgress",
@@ -5780,6 +5799,7 @@ function createCodexTerminalController({
         return;
       }
       if (method === "turn/completed") {
+        codexAppServerAutomaticHookThreads.delete(normalizedThreadId);
         const turnId = codexAppServerNotificationTurnId(notification);
         const status = codexAppServerNotificationTurnStatus(notification) || "completed";
         if (codexAppServerTurnStatusIsProviderFailure(status)) {
@@ -5820,6 +5840,7 @@ function createCodexTerminalController({
           });
           return;
         }
+        codexAppServerAutomaticHookThreads.delete(normalizedThreadId);
         const turnId = codexAppServerNotificationTurnId(notification);
         if (codexAppServerTurnStatusIsProviderFailure(status)) {
           runCodexAppServerNotificationTask(notificationContext, () => {

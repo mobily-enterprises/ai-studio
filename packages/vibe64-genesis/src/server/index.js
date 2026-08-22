@@ -39,6 +39,7 @@ const {
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
+const VIBE64_AUTOMATIC_HOOK_NO_OUTPUT = "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT";
 const VIBE64_STACK_PACKAGES = Object.freeze(["genesis-stack"]);
 const GENESIS_PROMPT_TASKS = new Set([
   "blueprint",
@@ -210,7 +211,13 @@ function withVibe64ConversationContract(prompt = "") {
     "",
     "If you need user input, ask no more than three concise, high-impact questions at once.",
     "When asking multiple questions, put each on its own line as `[1] Question`, `[2] Question`, and so on.",
-    "When a question has a small fixed set of useful answers, finish with `Possible answers:` and a short bullet list. The user can always type a different answer."
+    "When a question has a small fixed set of useful answers, finish with `Possible answers:` and a short bullet list. The user can always type a different answer.",
+    "",
+    "AUTOMATIC HOOK FOLLOW-UPS",
+    "",
+    "A hook prompt is internal follow-up work, not a new human message. Do not send commentary, progress announcements, or routine review summaries during it.",
+    `If an automatic hook follow-up changes no project files and finds no new blocker or failure, make its final answer exactly \`${VIBE64_AUTOMATIC_HOOK_NO_OUTPUT}\`.`,
+    "If it changes files or finds a new blocker or failure, give only the concise result the person needs."
   ].join("\n");
 }
 
@@ -259,6 +266,7 @@ export {
   GENESIS_PROGRAM_CITY_PATH,
   VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
   VIBE64_APPLICATION_DEPLOYMENT_SECTION,
+  VIBE64_AUTOMATIC_HOOK_NO_OUTPUT,
   VIBE64_LAUNCH_CONTRACT,
   VIBE64_LAUNCH_SECTION,
   VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,

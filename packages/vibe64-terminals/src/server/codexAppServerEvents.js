@@ -2,6 +2,7 @@ import {
   isPlainObject,
   normalizeText
 } from "@local/vibe64-core/server/core";
+import { VIBE64_AUTOMATIC_HOOK_NO_OUTPUT } from "@local/vibe64-genesis/server";
 
 const CODEX_APP_SERVER_CONTEXT_COMPACTION_SIGNALS = new Set(
   ["context", "thread", "conversation"].flatMap((subject) => (
@@ -266,6 +267,20 @@ function codexAppServerAssistantItemText(item = {}) {
   );
 }
 
+function codexAppServerHookPromptText(item = {}) {
+  if (!isPlainObject(item) || normalizeText(item.type) !== "hookPrompt") {
+    return "";
+  }
+  return (Array.isArray(item.fragments) ? item.fragments : [])
+    .map((fragment) => normalizeText(fragment?.text))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function codexAppServerAutomaticHookNoOutput(text = "") {
+  return normalizeText(text) === VIBE64_AUTOMATIC_HOOK_NO_OUTPUT;
+}
+
 function codexAppServerNotificationItemId(notification = {}) {
   const params = codexAppServerNotificationParams(notification);
   const item = codexAppServerNotificationItem(notification);
@@ -347,6 +362,14 @@ function classifyCodexAppServerEvent(notification = {}) {
       kind: "final_assistant_result",
       source: eventType,
       text: finalEventText
+    };
+  }
+
+  if (itemType === "hookPrompt") {
+    return {
+      ...base,
+      kind: "hook_prompt",
+      text: codexAppServerHookPromptText(item)
     };
   }
 
@@ -523,7 +546,12 @@ function codexAppServerProviderTurnAssistantSegments(turn = {}) {
     .map((item) => {
       const itemId = normalizeText(item.id);
       const text = codexAppServerAssistantItemText(item);
-      if (!itemId || !text || seenItemIds.has(itemId)) {
+      if (
+        !itemId ||
+        !text ||
+        codexAppServerAutomaticHookNoOutput(text) ||
+        seenItemIds.has(itemId)
+      ) {
         return null;
       }
       seenItemIds.add(itemId);
@@ -563,6 +591,7 @@ function codexAppServerOutputOwnerTurnId({
 
 export {
   classifyCodexAppServerEvent,
+  codexAppServerAutomaticHookNoOutput,
   codexAppServerAssistantItemText,
   codexAppServerContentText,
   codexAppServerContextRefreshReason,

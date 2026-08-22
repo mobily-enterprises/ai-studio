@@ -9,6 +9,7 @@ import { runVibe64Command } from "@local/vibe64-execution/server";
 import { codexRuntimeContext } from "@local/studio-terminal-core/server/codexRuntimeContext";
 import {
   GENESIS_DERIVED_ARTIFACT_PATHS,
+  VIBE64_AUTOMATIC_HOOK_NO_OUTPUT,
   addGenesisStack,
   assertGenesisPromptTask,
   genesisCommandShimDirectory,
@@ -63,6 +64,8 @@ test("Vibe64 keeps structured questions as a direct-chat presentation contract",
   assert.match(prompt, /no more than three concise/u);
   assert.match(prompt, /`\[1\] Question`/u);
   assert.match(prompt, /`Possible answers:`/u);
+  assert.match(prompt, /Do not send commentary, progress announcements/u);
+  assert.match(prompt, new RegExp(VIBE64_AUTOMATIC_HOOK_NO_OUTPUT, "u"));
 });
 
 test("Genesis initialization creates its complete technology-neutral project", async () => {
