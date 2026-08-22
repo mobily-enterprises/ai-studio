@@ -95,12 +95,14 @@
           mobile-takeover
           :open-error-details="true"
           :output="saveWorkOutput"
+          :retryable="saveWorkRetryable"
           :show-close="false"
           :show-interrupt="false"
           :starting="saveWorkSending"
           :status="saveWorkStatus"
           :subtitle="saveWorkActivityIsUpdate ? 'Replay current work on the latest saved version' : 'Canonical project Save'"
           :title="saveWorkActivityLabel"
+          @retry="retrySaveWork"
           @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
         >
           <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
@@ -605,6 +607,7 @@ const {
   projectSlug,
   questionAnswers,
   reloadChatPane,
+  retrySaveWork,
   retryWorkspaceSetup,
   requestSaveWork,
   resendOptimisticMessage,
@@ -621,6 +624,7 @@ const {
   saveWorkCanResolveWithTemporaryAi,
   saveWorkOperationActive,
   saveWorkOutput,
+  saveWorkRetryable,
   saveWorkSending,
   saveWorkStatus,
   saveWorkTitle,

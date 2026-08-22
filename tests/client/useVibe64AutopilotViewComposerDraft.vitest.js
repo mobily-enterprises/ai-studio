@@ -585,6 +585,39 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkTitle.value).toBe("Save this session's work to the project repository");
   });
 
+  it("keeps failed Save work retryable when repository inspection is still healthy", async () => {
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: {
+            checkedAt: "2026-08-21T03:00:00.000Z",
+            state: "needs_help"
+          },
+          sessionId: "session-1"
+        }]
+      },
+      workState: {
+        checkedAt: "2026-08-21T02:59:00.000Z",
+        error: "",
+        operation: {
+          code: "vibe64_session_save_git_failed",
+          error: "The managed repository could not publish this Save.",
+          operationId: "save-failed",
+          status: "failed"
+        },
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkError.value).toBe("The managed repository could not publish this Save.");
+    expect(view.saveWorkDisabled.value).toBe(false);
+    expect(view.saveWorkRetryable.value).toBe(true);
+    expect(view.retrySaveWork()).toBe(true);
+    expect(view.saveWorkConfirmOpen.value).toBe(true);
+  });
+
   it("does not revive stale unsaved toolbar state after a newer selected-session check", async () => {
     const view = await createView({
       sessionToolbar: {

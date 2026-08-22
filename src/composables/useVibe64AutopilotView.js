@@ -602,9 +602,9 @@ function useVibe64AutopilotView(props, emit) {
     return {
       ...inspected,
       checkedAt: monitored.checkedAt || inspected.checkedAt,
-      error: ["needs_help", "unavailable"].includes(monitoredState)
+      error: monitoredState === "unavailable"
         ? inspected.error || "Repository status is unavailable."
-        : "",
+        : inspected.error || "",
       loading: monitoredState === "checking",
       unsaved: monitoredUnsaved,
       updateAvailable: monitored.updateAvailable === true ||
@@ -714,6 +714,11 @@ function useVibe64AutopilotView(props, emit) {
     "vibe64_session_update_conflict",
     "vibe64_session_update_history_diverged"
   ].includes(String(saveWorkFailure.value?.code || "")));
+  const saveWorkRetryable = computed(() => Boolean(
+    saveWorkError.value &&
+    !saveWorkDisabled.value &&
+    !saveWorkCanResolveWithTemporaryAi.value
+  ));
 
   async function updateBeforeSave() {
     saveWorkSending.value = true;
@@ -749,6 +754,10 @@ function useVibe64AutopilotView(props, emit) {
     }
     saveWorkConfirmOpen.value = true;
     return true;
+  }
+
+  function retrySaveWork() {
+    return saveWorkRetryable.value ? requestSaveWork() : false;
   }
 
   function cancelSaveWork() {
@@ -1133,6 +1142,7 @@ function useVibe64AutopilotView(props, emit) {
     projectSlug,
     questionAnswers,
     reloadChatPane,
+    retrySaveWork,
     retryWorkspaceSetup,
     requestSaveWork,
     resendOptimisticMessage,
@@ -1151,6 +1161,7 @@ function useVibe64AutopilotView(props, emit) {
     saveWorkOperation,
     saveWorkOperationActive,
     saveWorkOutput,
+    saveWorkRetryable,
     saveWorkSending,
     saveWorkStatus,
     saveWorkTitle,
