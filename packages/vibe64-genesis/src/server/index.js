@@ -40,6 +40,7 @@ const {
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
 const VIBE64_AUTOMATIC_HOOK_NO_OUTPUT = "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT";
+const VIBE64_HIDDEN_ONBOARDING_STACK_PIECES = Object.freeze(["vue"]);
 const VIBE64_STACK_PACKAGES = Object.freeze(["genesis-stack"]);
 const GENESIS_PROMPT_TASKS = new Set([
   "blueprint",
@@ -112,9 +113,12 @@ function withGenesisCommandShim(shimDirectories = []) {
   ];
 }
 
-function withVibe64StackCatalog(options = {}) {
+function withVibe64StackCatalog(options = {}, {
+  prompt = false
+} = {}) {
   return {
     ...options,
+    ...(prompt ? { hiddenStackPieces: VIBE64_HIDDEN_ONBOARDING_STACK_PIECES } : {}),
     stackPackages: VIBE64_STACK_PACKAGES
   };
 }
@@ -203,7 +207,9 @@ async function inspectVibe64WorkspaceSetup(options = {}) {
   });
 }
 
-function withVibe64ConversationContract(prompt = "") {
+function withVibe64ConversationContract(prompt = "", {
+  task = ""
+} = {}) {
   return [
     normalizeText(prompt),
     "",
@@ -212,6 +218,16 @@ function withVibe64ConversationContract(prompt = "") {
     "If you need user input, ask no more than three concise, high-impact questions at once.",
     "When asking multiple questions, put each on its own line as `[1] Question`, `[2] Question`, and so on.",
     "When a question has a small fixed set of useful answers, finish with `Possible answers:` and a short bullet list. The user can always type a different answer.",
+    ...(task === "start" ? [
+      "",
+      "VIBE64 NEW-PROJECT OPENING",
+      "",
+      "Apply the following rules only when GENESIS CONTEXT says `projectKind` is `new`.",
+      "Begin the first reply with a brief, warm welcome. If the person has not described an idea yet, invite them to write what they would like to make and stop there; do not lead with technical questions.",
+      "Keep the conversation in friendly product language. Do not mention Genesis, Stack, JSKIT, Vue, or other internal foundation names unless the person explicitly asks about technology.",
+      "When the idea is clearly a web app and the person has not requested a technology, use Vibe64's standard web-app foundation by running `genesis stack add jskit`. This is an explicit Vibe64 host default and overrides the earlier generic instruction not to select technology silently for this case.",
+      "Do not offer standalone `vue` as a new-project choice. Honor an explicit technology request; otherwise ask about technology only when the product cannot use the standard web-app foundation."
+    ] : []),
     "",
     "AUTOMATIC HOOK FOLLOW-UPS",
     "",
@@ -232,14 +248,20 @@ async function renderGenesisPrompt({
   let task = requestedTask;
   let result;
   try {
-    result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
+    result = await generatePrompt(
+      withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+    );
   } catch (error) {
     if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
       task = "blueprint";
-      result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
+      result = await generatePrompt(
+        withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+      );
     } else if (error?.code === "BLUEPRINT_REQUIRED" && requestedTask !== "start") {
       task = "start";
-      result = await generatePrompt(withVibe64StackCatalog({ environment, projectRoot, request, task }));
+      result = await generatePrompt(
+        withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+      );
     } else {
       throw error;
     }
@@ -254,7 +276,9 @@ async function renderGenesisPrompt({
       warnings: result.warnings
     },
     originalPrompt: request,
-    prompt: withVibe64ConversationContract(result.prompt),
+    prompt: withVibe64ConversationContract(result.prompt, {
+      task: effectiveTask
+    }),
     promptId: normalizeText(action.promptId || action.id) || effectiveTask
   };
 }

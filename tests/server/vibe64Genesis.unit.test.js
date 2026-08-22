@@ -66,6 +66,7 @@ test("Vibe64 keeps structured questions as a direct-chat presentation contract",
   assert.match(prompt, /`Possible answers:`/u);
   assert.match(prompt, /Do not send commentary, progress announcements/u);
   assert.match(prompt, new RegExp(VIBE64_AUTOMATIC_HOOK_NO_OUTPUT, "u"));
+  assert.doesNotMatch(prompt, /VIBE64 NEW-PROJECT OPENING/u);
 });
 
 test("Genesis initialization creates its complete technology-neutral project", async () => {
@@ -284,6 +285,16 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.match(rendered.prompt, /"projectKind": "new"/u);
     assert.match(rendered.prompt, /"availableStackPieces": \[/u);
     assert.match(rendered.prompt, /"id": "jskit"/u);
+    assert.doesNotMatch(rendered.prompt, /"id": "vue"/u);
+    assert.match(rendered.prompt, /Begin the first reply with a brief, warm welcome/u);
+    assert.match(rendered.prompt, /invite them to write what they would like to make/u);
+    assert.match(rendered.prompt, /running `genesis stack add jskit`/u);
+    assert.match(rendered.prompt, /Do not offer standalone `vue`/u);
+    assert.match(rendered.prompt, /Do not mention Genesis, Stack, JSKIT, Vue/u);
+    assert.ok(
+      rendered.prompt.indexOf("explicit Vibe64 host default") >
+        rendered.prompt.indexOf("Never silently select a technology")
+    );
   });
 });
 
