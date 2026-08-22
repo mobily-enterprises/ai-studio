@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
   mkdir,
+  readdir,
   readFile,
   writeFile
 } from "node:fs/promises";
@@ -29,6 +30,44 @@ async function git(cwd, args = []) {
     cwd
   });
   return String(result.stdout || "").trim();
+}
+
+async function runGatewayCommand(request = {}) {
+  try {
+    const result = await execFileAsync(request.command, request.args || [], {
+      cwd: request.cwd
+    });
+    return {
+      ok: true,
+      output: `${result.stdout || ""}${result.stderr || ""}`,
+      stderr: String(result.stderr || ""),
+      stdout: String(result.stdout || "")
+    };
+  } catch (error) {
+    return {
+      code: "vibe64_test_command_failed",
+      ok: false,
+      output: `${error?.stdout || ""}${error?.stderr || error?.message || ""}`,
+      stderr: String(error?.stderr || error?.message || ""),
+      stdout: String(error?.stdout || "")
+    };
+  }
+}
+
+function githubTemplateProject(remotePath, runtimeRoot) {
+  return {
+    githubMirrorPath: path.join(runtimeRoot, "github-mirror", "repository.git"),
+    projectRuntimeRoot: runtimeRoot,
+    repository: {
+      defaultBranch: "main",
+      github: {
+        cloneUrl: remotePath,
+        fullName: "local/destination"
+      },
+      mode: PROJECT_REPOSITORY_MODE_GITHUB
+    },
+    repositoryMode: PROJECT_REPOSITORY_MODE_GITHUB
+  };
 }
 
 async function createSeedRepository(root, {
@@ -322,6 +361,250 @@ test("project templates push one root commit to an empty GitHub-backed destinati
     await assertSingleRootCommit(root, {
       gitDir: remotePath
     });
+  });
+});
+
+test("GitHub blank materialization is token-backed, runtime-owned, and journals before publication", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remotePath = path.join(root, "destination.git");
+    const runtimeRoot = path.join(root, "runtime");
+    const stages = [];
+    const requests = [];
+    await git(root, ["init", "--bare", "--initial-branch=main", remotePath]);
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
+
+    const result = await applyProjectTemplate({
+      afterAuthorityVerification: async (materialization) => {
+        stages.push("verified");
+        assert.equal(
+          await git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
+          materialization.commit
+        );
+        await assert.rejects(() => readdir(path.join(runtimeRoot, "github-mirror")), {
+          code: "ENOENT"
+        });
+      },
+      beforeAuthorityMutation: async (materialization) => {
+        stages.push("prepared");
+        assert.match(materialization.commit, /^[0-9a-f]{40}$/u);
+        await assert.rejects(
+          () => git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"])
+        );
+      },
+      env: {},
+      input: {
+        gitAuthToken: "test-github-token"
+      },
+      project: githubTemplateProject(remotePath, runtimeRoot),
+      projectRuntimeRoot: runtimeRoot,
+      runCommand: async (request) => {
+        requests.push(request);
+        return runGatewayCommand(request);
+      },
+      targetRoot: runtimeRoot,
+      templateId: "genesis-blank",
+      templates: [PROJECT_TEMPLATES[0]]
+    });
+
+    assert.deepEqual(stages, ["prepared", "verified"]);
+    assert.equal(result.materialization.mirrorRefreshed, true);
+    assert.equal(
+      await git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
+      result.materialization.commit
+    );
+    assert.match(
+      await git(root, ["--git-dir", remotePath, "show", "main:genesis/blueprint.md"]),
+      /Blueprint/u
+    );
+    await assertSingleRootCommit(root, {
+      gitDir: remotePath
+    });
+    assert.deepEqual(await readdir(path.join(runtimeRoot, "tmp")), []);
+
+    const githubRequests = requests.filter((request) => request.gitTransport === "github-token");
+    assert.ok(githubRequests.length > 0);
+    assert.ok(githubRequests.every((request) => request.actor === "daemon"));
+    assert.ok(githubRequests.every((request) => request.gitAuthToken === "test-github-token"));
+    assert.ok(githubRequests.every((request) => !request.args.some((arg) => String(arg).includes("test-github-token"))));
+    await assertSingleRootCommit(runtimeRoot, {
+      gitDir: path.join(runtimeRoot, "github-mirror", "repository.git")
+    });
+    assert.deepEqual(await readdir(path.join(runtimeRoot, "tmp")), []);
+  });
+});
+
+test("GitHub materialization rejects an unrelated non-empty repository", async () => {
+  await withTemporaryRoot(async (root) => {
+    const sourceRoot = path.join(root, "existing-source");
+    const remotePath = path.join(root, "destination.git");
+    const runtimeRoot = path.join(root, "runtime");
+    const existingCommit = await createSeedRepository(sourceRoot);
+    await git(root, ["clone", "--bare", sourceRoot, remotePath]);
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
+
+    await assert.rejects(
+      () => applyProjectTemplate({
+        env: {},
+        input: {
+          gitAuthToken: "test-github-token"
+        },
+        project: githubTemplateProject(remotePath, runtimeRoot),
+        projectRuntimeRoot: runtimeRoot,
+        runCommand: runGatewayCommand,
+        targetRoot: runtimeRoot,
+        templateId: "genesis-blank",
+        templates: [PROJECT_TEMPLATES[0]]
+      }),
+      {
+        code: "vibe64_project_template_destination_not_empty",
+        statusCode: 409
+      }
+    );
+
+    assert.equal(
+      await git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
+      existingCommit
+    );
+    await assert.rejects(() => readdir(path.join(runtimeRoot, "tmp")), {
+      code: "ENOENT"
+    });
+    await assert.rejects(() => readdir(path.join(runtimeRoot, "github-mirror")), {
+      code: "ENOENT"
+    });
+  });
+});
+
+test("GitHub materialization preserves verified publication when mirror refresh fails", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remotePath = path.join(root, "destination.git");
+    const runtimeRoot = path.join(root, "runtime");
+    await git(root, ["init", "--bare", "--initial-branch=main", remotePath]);
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
+
+    const result = await applyProjectTemplate({
+      env: {},
+      input: {
+        gitAuthToken: "test-github-token"
+      },
+      project: githubTemplateProject(remotePath, runtimeRoot),
+      projectRuntimeRoot: runtimeRoot,
+      runCommand: async (request) => {
+        if (
+          request.command === "bash" &&
+          request.args?.[0] === "-c" &&
+          request.args?.[2] === "vibe64-github-mirror-refresh"
+        ) {
+          return {
+            code: "vibe64_test_mirror_failed",
+            ok: false,
+            stderr: "simulated disposable mirror failure"
+          };
+        }
+        return runGatewayCommand(request);
+      },
+      targetRoot: runtimeRoot,
+      templateId: "genesis-blank",
+      templates: [PROJECT_TEMPLATES[0]]
+    });
+
+    assert.equal(result.materialization.mirrorRefreshed, false);
+    assert.equal(
+      await git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
+      result.materialization.commit
+    );
+    await assertSingleRootCommit(root, {
+      gitDir: remotePath
+    });
+    assert.deepEqual(await readdir(path.join(runtimeRoot, "tmp")), []);
+  });
+});
+
+test("GitHub materialization removes temporary work after every authoritative and journal failure stage", async () => {
+  await withTemporaryRoot(async (root) => {
+    for (const stage of [
+      "genesis",
+      "commit",
+      "before-authority",
+      "push",
+      "verification",
+      "after-verification"
+    ]) {
+      const caseRoot = path.join(root, stage);
+      const remotePath = path.join(caseRoot, "destination.git");
+      const runtimeRoot = path.join(caseRoot, "runtime");
+      let remoteReadCount = 0;
+      await mkdir(caseRoot, {
+        recursive: true
+      });
+      await git(caseRoot, ["init", "--bare", "--initial-branch=main", remotePath]);
+      await mkdir(runtimeRoot, {
+        recursive: true
+      });
+
+      const runCommand = async (request) => {
+        if (
+          (stage === "commit" && request.command === "git" && request.args?.includes("commit")) ||
+          (stage === "push" && request.command === "git" && request.args?.includes("push"))
+        ) {
+          return {
+            code: `vibe64_test_${stage}_failed`,
+            ok: false,
+            stderr: `simulated ${stage} failure`
+          };
+        }
+        const result = await runGatewayCommand(request);
+        if (request.command === "git" && request.args?.includes("ls-remote")) {
+          remoteReadCount += 1;
+          if (stage === "verification" && remoteReadCount === 2) {
+            const output = `${"0".repeat(40)}\trefs/heads/main\n`;
+            return {
+              ...result,
+              output,
+              stdout: output
+            };
+          }
+        }
+        return result;
+      };
+
+      await assert.rejects(() => applyProjectTemplate({
+        ...(stage === "after-verification" ? {
+          afterAuthorityVerification: async () => {
+            throw new Error("simulated verified-journal failure");
+          }
+        } : {}),
+        ...(stage === "before-authority" ? {
+          beforeAuthorityMutation: async () => {
+            throw new Error("simulated prepared-journal failure");
+          }
+        } : {}),
+        env: {},
+        ...(stage === "genesis" ? {
+          initializeProject: async () => {
+            const error = new Error("simulated Genesis failure");
+            error.code = "vibe64_test_genesis_failed";
+            throw error;
+          }
+        } : {}),
+        input: {
+          gitAuthToken: "test-github-token"
+        },
+        project: githubTemplateProject(remotePath, runtimeRoot),
+        projectRuntimeRoot: runtimeRoot,
+        runCommand,
+        targetRoot: runtimeRoot,
+        templateId: "genesis-blank",
+        templates: [PROJECT_TEMPLATES[0]]
+      }));
+
+      assert.deepEqual(await readdir(path.join(runtimeRoot, "tmp")), [], stage);
+    }
   });
 });
 

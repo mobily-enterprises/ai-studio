@@ -303,11 +303,13 @@ async function runTemplateCommand(command = "git", args = [], {
   allowedRoots = [],
   credentialHome = null,
   cwd = "",
+  gitAuthToken = "",
   gitTransport = "none",
   runCommand = runVibe64Command,
   timeout = PROJECT_TEMPLATE_GIT_TIMEOUT_MS,
   userKey = ""
 } = {}) {
+  const githubTransport = gitTransport === "github-https" || gitTransport === "github-token";
   const result = await runCommand({
     actor,
     allowedRoots,
@@ -316,10 +318,11 @@ async function runTemplateCommand(command = "git", args = [], {
     ...(credentialHome ? { credentialHome } : {}),
     cwd,
     envPolicy: "project",
+    ...(gitAuthToken ? { gitAuthToken } : {}),
     gitSafeDirectories: allowedRoots,
     gitTransport,
     mode: "capture",
-    purpose: gitTransport === "github-https" ? "github" : "source",
+    purpose: githubTransport ? "github" : "source",
     runtimes: gitTransport === "github-https" ? ["git", "gh"] : ["git"],
     timeout,
     ...(userKey ? { userKey } : {})
@@ -349,6 +352,14 @@ async function gitOutputOrEmpty(args = [], options = {}) {
 function githubCommandOptions(input = {}, {
   env = process.env
 } = {}) {
+  const gitAuthToken = normalizeText(input.gitAuthToken);
+  if (gitAuthToken) {
+    return {
+      actor: "daemon",
+      gitAuthToken,
+      gitTransport: "github-token"
+    };
+  }
   const accountMode = normalizeGithubAccountMode(
     env?.[VIBE64_GITHUB_ACCOUNT_MODE_ENV],
     GITHUB_ACCOUNT_MODE_LOCAL
@@ -628,7 +639,7 @@ async function createMaterializedCommit(template, repositoryPath, sourceRevision
     force: true
   });
 
-  await initializeGenesisProject({
+  await (options.initializeProject || initializeGenesisProject)({
     projectRoot: worktree
   });
   if (template.stackPieces.length > 0) {
@@ -939,7 +950,10 @@ async function withProjectTemplateLock(key = "", operation) {
 }
 
 async function applyProjectTemplate({
+  afterAuthorityVerification = null,
+  beforeAuthorityMutation = null,
   env = process.env,
+  initializeProject = initializeGenesisProject,
   input = {},
   project = null,
   projectRuntimeRoot = "",
@@ -952,6 +966,8 @@ async function applyProjectTemplate({
   const template = resolveProjectTemplate(templateId, templates);
   const lockKey = path.resolve(targetRoot || sourceRoot || projectRuntimeRoot);
   return withProjectTemplateLock(lockKey, async () => {
+    const mode = projectRepositoryMode(project, sourceRoot);
+    const branch = projectDefaultBranch(project);
     const currentEligibility = await projectTemplateEligibility({
       checkGithubRemote: true,
       env,
@@ -972,24 +988,35 @@ async function applyProjectTemplate({
       );
     }
 
-    const mode = projectRepositoryMode(project, sourceRoot);
-    const branch = projectDefaultBranch(project);
     const temporaryRoot = await createTemporaryRoot(projectRuntimeRoot, targetRoot);
     try {
       const sourceRepositoryPath = await createTemplateSourceRepository(template, {
         runCommand,
         temporaryRoot
       });
-      const sourceRevision = template.kind === "blank"
+      let commit;
+      let sourceRevision = "";
+      sourceRevision = template.kind === "blank"
         ? ""
         : (await validateTemplateSource(template, sourceRepositoryPath, {
             runCommand,
             temporaryRoot
           })).sourceRevision;
-      const commit = await createMaterializedCommit(template, sourceRepositoryPath, sourceRevision, {
+      commit = await createMaterializedCommit(template, sourceRepositoryPath, sourceRevision, {
+        initializeProject,
         runCommand,
         temporaryRoot
       });
+
+      const materialization = {
+        branch,
+        commit,
+        repositoryMode: mode,
+        sourceRevision
+      };
+      if (typeof beforeAuthorityMutation === "function") {
+        await beforeAuthorityMutation(materialization);
+      }
 
       if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
         await materializeLocalSource({
@@ -1020,13 +1047,6 @@ async function applyProjectTemplate({
           runCommand,
           targetRoot
         });
-        await refreshGithubMirror({
-          env,
-          input,
-          project,
-          runCommand,
-          targetRoot
-        });
       }
 
       await verifyMaterializedCommit({
@@ -1041,12 +1061,25 @@ async function applyProjectTemplate({
         sourceRoot: sourceRoot || targetRoot,
         targetRoot
       });
+      if (typeof afterAuthorityVerification === "function") {
+        await afterAuthorityVerification(materialization);
+      }
+
+      const mirrorRefreshed = mode === PROJECT_REPOSITORY_MODE_GITHUB
+        ? await refreshGithubMirror({
+            env,
+            input,
+            project,
+            runCommand,
+            targetRoot
+          })
+        : false;
       return {
         materialization: {
-          branch,
-          commit,
-          repositoryMode: mode,
-          sourceRevision
+          ...materialization,
+          ...(mode === PROJECT_REPOSITORY_MODE_GITHUB ? {
+            mirrorRefreshed
+          } : {}),
         },
         ok: true,
         template: publicProjectTemplate(template)
