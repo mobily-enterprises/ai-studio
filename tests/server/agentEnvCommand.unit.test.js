@@ -77,6 +77,7 @@ function createProductionProvider({
   records = []
 } = {}) {
   const state = {
+    reads: [],
     records: [...records],
     removes: [],
     sets: []
@@ -86,7 +87,8 @@ function createProductionProvider({
     isUserValueRecord(record = null) {
       return record?.source === "user_override";
     },
-    async readRecords() {
+    async readRecords(input = {}) {
+      state.reads.push(input);
       return {
         ok: true,
         records: state.records
@@ -227,9 +229,14 @@ test("agent Env persists and reports empty development and production values", a
     args: ["status", "all", "--json"],
     sessionId: "empty-session"
   });
+  const removedProduction = await command.run({
+    args: ["remove", "production", "EMPTY_PLAIN", "--json"],
+    sessionId: "empty-session"
+  });
   const developmentPayload = JSON.parse(development.stdout);
   const productionPayload = JSON.parse(productionResult.stdout);
   const statusPayload = JSON.parse(status.stdout);
+  const removedProductionPayload = JSON.parse(removedProduction.stdout);
 
   assert.equal(development.ok, true);
   assert.equal(developmentPayload.created, true);
@@ -245,8 +252,14 @@ test("agent Env persists and reports empty development and production values", a
   });
   assert.deepEqual(production.state.sets, [{
     key: "EMPTY_PLAIN",
+    projectSlug: "demo",
     secret: false,
     value: ""
+  }]);
+  assert.equal(removedProductionPayload.changed, true);
+  assert.deepEqual(production.state.removes, [{
+    key: "EMPTY_PLAIN",
+    projectSlug: "demo"
   }]);
   assert.deepEqual(statusPayload.scopes.development.records[0], {
     configured: false,
@@ -331,11 +344,13 @@ test("agent Env production writes use only the Online production provider", asyn
   assert.equal(Object.hasOwn(payload, "value"), false);
   assert.deepEqual(production.state.sets, [{
     key: "DEPLOY_TOKEN",
+    projectSlug: "demo",
     secret: true,
     value: secretValue
   }]);
   assert.deepEqual(project.state.saves, []);
   assert.deepEqual(project.state.contexts, ["demo"]);
+  assert.deepEqual(production.state.reads, [{ projectSlug: "demo" }]);
   assert.doesNotMatch(result.stdout, new RegExp(secretValue, "u"));
 });
 

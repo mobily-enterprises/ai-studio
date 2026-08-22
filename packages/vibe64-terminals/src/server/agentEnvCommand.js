@@ -533,7 +533,7 @@ function createAgentEnvCommandService({
           "vibe64_agent_env_command_project_binding_changed"
         );
       }
-      return operation();
+      return operation(binding);
     });
   }
 
@@ -582,30 +582,37 @@ function createAgentEnvCommandService({
       }), `Development Env ${key} could not be saved.`);
     }
   });
+  // The session binding is the authority for which project an agent may
+  // manage. Carry only that validated identity across the Online persistence
+  // boundary instead of relying on ambient request context surviving it.
   const productionEnvironment = Object.freeze({
     isUserValueRecord(record = null) {
       return productionProvider.isUserValueRecord(record);
     },
-    async readRecords() {
+    async readRecords({ projectSlug = "" } = {}) {
       const result = assertOperationResult(
-        await productionProvider.readRecords(),
+        await productionProvider.readRecords({ projectSlug }),
         "Production Env could not be read."
       );
       return Array.isArray(result?.records) ? result.records : [];
     },
-    async removeVariable({ key = "" } = {}) {
+    async removeVariable({
+      key = "",
+      projectSlug = ""
+    } = {}) {
       assertOperationResult(
-        await productionProvider.removeVariable({ key }),
+        await productionProvider.removeVariable({ key, projectSlug }),
         `Production Env ${key} could not be removed.`
       );
     },
     async setVariable({
       key = "",
+      projectSlug = "",
       secret = false,
       value = ""
     } = {}) {
       assertOperationResult(
-        await productionProvider.setVariable({ key, secret, value }),
+        await productionProvider.setVariable({ key, projectSlug, secret, value }),
         `Production Env ${key} could not be saved.`
       );
     }
@@ -618,7 +625,7 @@ function createAgentEnvCommandService({
     return productionProvider ? productionEnvironment : null;
   }
 
-  async function statusResult(parsed = {}, sessionId = "") {
+  async function statusResult(parsed = {}, sessionId = "", projectSlug = "") {
     const scopes = parsed.scope === ENV_SCOPE_ALL
       ? [ENV_SCOPE_DEVELOPMENT, ENV_SCOPE_PRODUCTION]
       : [parsed.scope];
@@ -631,7 +638,7 @@ function createAgentEnvCommandService({
       }
       statuses.push(scopeStatus(
         scope,
-        await environment.readRecords({ sessionId }),
+        await environment.readRecords({ projectSlug, sessionId }),
         environment.isUserValueRecord
       ));
     }
@@ -654,7 +661,7 @@ function createAgentEnvCommandService({
     };
   }
 
-  async function setResult(parsed = {}, sessionId = "", stdin = "") {
+  async function setResult(parsed = {}, sessionId = "", stdin = "", projectSlug = "") {
     const key = normalizeRuntimeConfigKey(parsed.key);
     const environment = environmentForScope(parsed.scope);
     if (!environment) {
@@ -663,12 +670,13 @@ function createAgentEnvCommandService({
         "vibe64_agent_env_command_production_unavailable"
       );
     }
-    const previousRecords = await environment.readRecords({ sessionId });
+    const previousRecords = await environment.readRecords({ projectSlug, sessionId });
     const previous = recordForKey(previousRecords, key);
     assertRecordEditable(previous, parsed.scope, key);
     const secret = parsed.secret || previous?.secret === true || runtimeConfigKeyLooksSecret(key);
     await environment.setVariable({
       key,
+      projectSlug,
       secret,
       sessionId,
       value: stdin
@@ -684,7 +692,7 @@ function createAgentEnvCommandService({
     }, parsed);
   }
 
-  async function removeResult(parsed = {}, sessionId = "") {
+  async function removeResult(parsed = {}, sessionId = "", projectSlug = "") {
     const key = normalizeRuntimeConfigKey(parsed.key);
     const environment = environmentForScope(parsed.scope);
     if (!environment) {
@@ -693,12 +701,12 @@ function createAgentEnvCommandService({
         "vibe64_agent_env_command_production_unavailable"
       );
     }
-    const previousRecords = await environment.readRecords({ sessionId });
+    const previousRecords = await environment.readRecords({ projectSlug, sessionId });
     const previous = recordForKey(previousRecords, key);
     assertRecordEditable(previous, parsed.scope, key);
     const stored = environment.isUserValueRecord(previous);
     if (stored) {
-      await environment.removeVariable({ key, sessionId });
+      await environment.removeVariable({ key, projectSlug, sessionId });
     }
     return mutationPayload({
       action: "remove",
@@ -709,14 +717,15 @@ function createAgentEnvCommandService({
     }, parsed);
   }
 
-  async function execute(parsed = {}, input = {}) {
+  async function execute(parsed = {}, input = {}, binding = {}) {
+    const projectSlug = normalizeText(binding.projectSlug);
     if (parsed.command === "status") {
-      return statusResult(parsed, normalizeText(input.sessionId));
+      return statusResult(parsed, normalizeText(input.sessionId), projectSlug);
     }
     if (parsed.command === "set") {
-      return setResult(parsed, normalizeText(input.sessionId), String(input.stdin ?? ""));
+      return setResult(parsed, normalizeText(input.sessionId), String(input.stdin ?? ""), projectSlug);
     }
-    return removeResult(parsed, normalizeText(input.sessionId));
+    return removeResult(parsed, normalizeText(input.sessionId), projectSlug);
   }
 
   async function run(input = {}) {
@@ -726,7 +735,10 @@ function createAgentEnvCommandService({
     let result;
     try {
       const validation = validateParsedCommand(parsed);
-      result = validation || await runInSessionProject(sessionId, () => execute(parsed, input));
+      result = validation || await runInSessionProject(
+        sessionId,
+        (binding) => execute(parsed, input, binding)
+      );
     } catch (error) {
       const payload = vibe64ErrorResponse(error, {
         fallbackCode: "vibe64_agent_env_command_failed",
