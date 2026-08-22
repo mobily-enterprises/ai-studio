@@ -509,7 +509,7 @@ Failure:
 `packages/vibe64-terminals/src/server/launchTargetTerminal.js`
 
 Vibe64 owns the execution environment for direct agent turns and declared
-Genesis Launch targets. Launch declarations provide literal commands and
+Vibe64 Launch targets. Launch declarations provide literal commands and
 abstract runtime requirements; Vibe64 resolves those requirements to managed
 runtime packs, supplies project Env, allocates ports, and supervises the
 process. Project code does not assemble host `PATH`, browser paths, or account
@@ -562,7 +562,7 @@ If new code needs to run any of these:
 - `opencode`
 - Playwright
 - preview commands
-- Genesis Launch preparation and server commands
+- Vibe64 workspace-preparation and launch commands
 - source inspection and archive commands
 
 then it should almost certainly call `runVibe64Command()`.

@@ -37,7 +37,7 @@ function projectService(root, {
   };
 }
 
-test("current app returns the explicit Genesis launch contract", async () => {
+test("current app returns the explicit Vibe64 launch contract", async () => {
   await withTemporaryRoot(async (root) => {
     const calls = [];
     const service = createService({
@@ -79,7 +79,7 @@ test("current app returns the explicit Genesis launch contract", async () => {
   });
 });
 
-test("missing Genesis launch declarations are unconfigured, not guessed", async () => {
+test("missing Vibe64 launch declarations are unconfigured, not guessed", async () => {
   await withTemporaryRoot(async (root) => {
     const service = createService({
       inspectLaunch() {

@@ -106,10 +106,11 @@ convergence, exhaustive Program ownership, or whole-application correctness.
 <p class="vibe-step"><strong>04</strong> / 04 <span>Host policy stays local</span></p>
 <h2>Declarations do not become process authority.</h2>
 <p>
-Genesis may declare abstract launch requirements. Vibe64 maps only supported
-requirements to pinned runtime packs and retains ports, readiness, proxies,
-process lifetime, environment policy, and the exact Playwright and Chromium
-release. Generated projects never provision their own browser.
+Genesis transports the opaque Launch section. Vibe64 validates its own
+contract, maps only supported requirements to pinned runtime packs, and retains
+ports, readiness, proxies, process lifetime, environment policy, and the exact
+Playwright and Chromium release. Generated projects never provision their own
+browser.
 </p>
 <a class="vibe-button vibe-button--primary" href="/dev/technical-reference">Read the contracts</a>
 </div>
@@ -148,12 +149,12 @@ release. Generated projects never provision their own browser.
 
 <details class="vibe-faq-item">
 <summary>How is technology support added?</summary>
-<p>Through Genesis Stack components and authoritative Agent Skills, not a Vibe64 project-type adapter. Components may contribute guidance, resources, indexers, cleanup rules, verification commands, and optional launch declarations.</p>
+<p>Through Genesis Stack components and authoritative Agent Skills, not a Vibe64 project-type adapter. Components may contribute guidance, resources, indexers, cleanup rules, Verification commands, and opaque consumer-owned sections.</p>
 </details>
 
 <details class="vibe-faq-item">
 <summary>Who decides how an app runs?</summary>
-<p>The project Stack may describe an exact launch target. Genesis validates the declaration. Vibe64 decides whether it can satisfy the runtime requirements and owns the resulting process and preview.</p>
+<p>The project Stack may carry an exact Vibe64 Launch contract. Genesis composes it opaquely; Vibe64 validates the schema, decides whether it can satisfy the runtime requirements, and owns the resulting process and preview.</p>
 </details>
 </div>
 </div>

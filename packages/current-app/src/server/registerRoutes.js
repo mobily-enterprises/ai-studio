@@ -23,7 +23,7 @@ function registerRoutes(http, {
     actionId: ACTION_READ_CURRENT_APP,
     buildInput: routes.requestQuery,
     query: currentAppQueryInputValidator,
-    summary: "Inspect the current project's Genesis launch targets."
+    summary: "Inspect the current project's Vibe64 launch targets."
   });
 }
 

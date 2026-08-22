@@ -14,7 +14,7 @@
       "source": "genesis:skills/genesis-project"
     },
     "jskit": {
-      "hash": "sha256:f89540a51ab177dcef12b524ecb2a437daf8a68e8b9ad5a1e8510497872cd54b",
+      "hash": "sha256:5a58a7121402312ba902211b55ec8c7bc6043c578e5c43b022cc3e56d0dfb719",
       "source": "npm:@jskit-ai/agent-docs/skills/jskit"
     }
   }

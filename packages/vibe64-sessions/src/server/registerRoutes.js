@@ -241,7 +241,7 @@ function registerRoutes(http, {
       ...routes.requestBody(request),
       sessionId: request.params.sessionId
     }),
-    summary: "Retry the declared Genesis workspace preparation recipe."
+    summary: "Retry the declared Vibe64 workspace preparation recipe."
   });
 }
 

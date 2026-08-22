@@ -14,7 +14,10 @@ browser identities, and attachments without putting private machine state into
 the project. It shows clear status and failures and lets people retry or ask the
 agent for help.
 
-Genesis remains the portable authority for what a project is, how its program
-is explained, which technologies it uses, how its workspace is prepared, how
-it is checked, and how it may be launched. Vibe64 presents and safely executes
-those declarations without inventing a competing project model.
+Genesis remains the portable authority for what a project is, how its Program
+is explained, which technologies it uses, its environment/resource
+declarations, and its explicit Verification evidence. It also composes and
+transports other named Stack sections without interpreting them. Vibe64 owns
+the strict mechanical contracts for workspace setup, launch, preview identity,
+and application deployment, then executes them under its host policy without
+inventing commands from a framework or project shape.

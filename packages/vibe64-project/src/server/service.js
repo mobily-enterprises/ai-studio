@@ -321,7 +321,7 @@ function createService({
         label: "Project baseline",
         rootKind: "project-root",
         sessionId: "",
-        sourceRoot: selectedSourceRoot() || selectedTargetRoot()
+        sourceRoot: selectedSourceRoot()
       };
     }
     const session = await sessionStore().readSession(sessionId);

@@ -139,39 +139,43 @@ does not treat `VIBE64_SYSTEM_ROOT` as a casual state-placement preference.
 
 ## Execution ownership
 
-Genesis supplies project declarations. Vibe64 supplies execution policy.
+Genesis supplies its own declarations and opaque section transport. Vibe64
+owns the operational contracts it consumes and the execution policy.
 
 Genesis owns:
 
 - prompt and focused context generation;
 - selected Stack guidance and Agent Skills;
 - generic resource declarations;
-- optional workspace-setup recipes with exact argument arrays;
 - argument-safe verification commands;
-- optional launch targets with abstract runtime requirements;
+- exact opaque Stack-section composition without private interpretation;
 - Machine and Program City generation.
 
 Vibe64 owns:
 
 - Git repositories, branches, worktrees, credentials, commits, and pushes;
 - user Env storage and secret handling;
+- strict mechanical parsing of `vibe64.workspace-setup.v1`,
+  `vibe64.launch.v1`, `vibe64.preview-identity.command.v1`, and
+  `vibe64.application-deployment.v1`;
 - mapping supported runtime requirements to pinned runtime packs;
 - process creation, interruption, logs, recovery, and cleanup;
 - port allocation, readiness, proxying, and preview URLs;
 - the exact Playwright and Chromium release available to generated projects.
 
-Vibe64 does not infer a framework launch command for a Genesis project. If the
-selected Stack has no launch declaration, preview is unavailable with a clear
-diagnostic. An unknown runtime requirement is rejected rather than mapped to a
-similar host tool.
+Vibe64 does not infer a framework launch command. If the Stack has no Vibe64
+Launch section, preview is unavailable with a clear diagnostic. An unknown
+runtime requirement is rejected rather than mapped to a similar host tool.
 
-Workspace setup and Launch are separate contracts. When Stack declares setup,
-Vibe64 runs its ordered commands through the managed execution gateway and
-records success against that exact recipe. Merely reading preview status never
-starts setup or a process. Launch remains pending until the current setup recipe
-has succeeded; a Stack with no setup recipe is simply unconfigured rather than
-failed. Component conflicts are reported instead of interleaving competing
-install commands.
+Workspace setup and Launch are separate Vibe64 contracts carried in opaque
+Stack sections. Vibe64 accepts only their strict Markdown v1 grammars: headings
+and list roles provide structure, descriptive labels remain readable, and each
+command and argument is a separate backticked value. Vibe64 runs setup's ordered
+argv through the managed execution gateway and records success against that
+exact recipe. Merely reading preview status never starts setup or a process.
+Launch remains pending until the current setup recipe has succeeded; a Stack
+with no setup recipe is simply unconfigured rather than failed. Component
+conflicts are reported instead of interleaving competing commands.
 
 ## Project environment projection
 
@@ -195,19 +199,18 @@ Chrome or Chromium itself.
 
 ## Application preview identity
 
-An optional `previewIdentity` declaration on a Genesis Launch target advertises
+An optional `previewIdentity` declaration on a Vibe64 Launch target advertises
 application identity switching. It names a safe committed, application-owned
 project-relative executable such as `tools/preview-identity`, declares the
-`genesis.preview-identity.command.v1` protocol, and lists the application
+`vibe64.preview-identity.command.v1` protocol, and lists the application
 identifier types it accepts: email, login, or user ID. It may also declare
 app-specific enable and secret environment variable names, command runtime
 requirements, and a timeout.
 
-Genesis validates and reports this declaration. It does not execute the
-command, store identity selections, read environment values, provide secrets,
-or control a browser. Vibe64 maps the declared runtime requirements to its
-pinned runtime packs, verifies the executable, and owns command execution and
-the preview browser lifecycle.
+Genesis transports the Launch section without parsing it. Vibe64 validates the
+declaration, maps its runtime requirements to pinned runtime packs, verifies the
+executable, and owns command execution, identity selections, secrets, and the
+preview browser lifecycle.
 
 Vibe64 stores managed app identities in project-local runtime state, outside
 Git and the Genesis files. Each entry contains a Vibe64-facing name plus one
@@ -217,7 +220,7 @@ request guest mode. Callers cannot submit arbitrary application identities.
 
 For an enabled preview launch, Vibe64 supplies `true` and a fresh per-launch
 secret only through the application-specific environment names declared by
-Genesis Launch. These are system launch values, not user-managed project Env
+the Vibe64 Launch contract. These are system launch values, not user-managed project Env
 values. The executable reads one protocol request from standard
 input and writes one response to standard output. It remains responsible for
 locating an existing user, rejecting missing or disabled users, and creating or

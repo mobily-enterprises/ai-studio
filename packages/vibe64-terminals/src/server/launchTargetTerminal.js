@@ -85,10 +85,10 @@ import {
   createPreviewIdentityCommandRunner
 } from "./previewIdentityCommand.js";
 import {
-  createGenesisLaunchTargetTerminalSpec,
-  inspectGenesisWorkspaceSetupForContext,
-  listGenesisLaunchTargets
-} from "./genesisLaunchTargets.js";
+  createVibe64LaunchTargetTerminalSpec,
+  inspectVibe64WorkspaceSetupForContext,
+  listVibe64LaunchTargets
+} from "./vibe64LaunchTargets.js";
 
 const LAUNCH_METADATA = Object.freeze({
   agentHref: "launch_target_agent_href",
@@ -651,8 +651,8 @@ async function listLaunchTargets(context, {
   inspectWorkspaceSetup
 } = {}) {
   const [targets, setup] = await Promise.all([
-    listGenesisLaunchTargets(context, inspectLaunch ? { inspect: inspectLaunch } : {}),
-    inspectGenesisWorkspaceSetupForContext(
+    listVibe64LaunchTargets(context, inspectLaunch ? { inspect: inspectLaunch } : {}),
+    inspectVibe64WorkspaceSetupForContext(
       context,
       inspectWorkspaceSetup ? { inspect: inspectWorkspaceSetup } : {}
     )
@@ -690,7 +690,7 @@ function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
     ).trim())
     .find(Boolean) || "";
   if (inspectionStatus !== "ready") {
-    return diagnostic || "Genesis workspace preparation is not ready.";
+    return diagnostic || "Vibe64 workspace preparation is not ready.";
   }
 
   const recipeHash = String(inspection?.recipeHash || "").trim();
@@ -709,7 +709,7 @@ function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
 }
 
 async function createLaunchTargetSpec(input = {}) {
-  return createGenesisLaunchTargetTerminalSpec(input);
+  return createVibe64LaunchTargetTerminalSpec(input);
 }
 
 function findLaunchTarget(targets = [], launchTargetId = "") {

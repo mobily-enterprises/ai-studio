@@ -6,14 +6,14 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  createGenesisLaunchTargetTerminalSpec,
-  genesisLaunchCommand,
-  genesisLaunchDescriptor,
-  genesisRuntimePacks,
-  inspectGenesisLaunchForContext,
-  inspectGenesisWorkspaceSetupForContext,
-  listGenesisLaunchTargets
-} from "../../packages/vibe64-terminals/src/server/genesisLaunchTargets.js";
+  createVibe64LaunchTargetTerminalSpec,
+  vibe64LaunchCommand,
+  vibe64LaunchDescriptor,
+  vibe64RuntimePacks,
+  inspectVibe64LaunchForContext,
+  inspectVibe64WorkspaceSetupForContext,
+  listVibe64LaunchTargets
+} from "../../packages/vibe64-terminals/src/server/vibe64LaunchTargets.js";
 import {
   listLaunchTargets,
   workspaceSetupLaunchDisabledReason
@@ -90,25 +90,25 @@ async function launchContext(t) {
   };
 }
 
-test("Genesis abstract runtimes map only through Vibe64-owned pinned packs", () => {
-  assert.deepEqual(genesisRuntimePacks(["nodejs", "php", "composer"]), {
+test("Vibe64 abstract runtimes map only through Vibe64-owned pinned packs", () => {
+  assert.deepEqual(vibe64RuntimePacks(["nodejs", "php", "composer"]), {
     available: true,
     disabledReason: "",
     runtimes: ["node26", "php", "composer"],
     unsupported: []
   });
-  assert.deepEqual(genesisRuntimePacks(["future-runtime"]), {
+  assert.deepEqual(vibe64RuntimePacks(["future-runtime"]), {
     available: false,
     disabledReason: "Vibe64 does not provide a pinned runtime for: future-runtime.",
     runtimes: [],
     unsupported: ["future-runtime"]
   });
-  assert.deepEqual(genesisRuntimePacks(["playwright"]).runtimes, ["playwright"]);
+  assert.deepEqual(vibe64RuntimePacks(["playwright"]).runtimes, ["playwright"]);
 });
 
-test("Genesis launch argv substitution remains shell-safe", () => {
+test("Vibe64 launch argv substitution remains shell-safe", () => {
   assert.equal(
-    genesisLaunchCommand([
+    vibe64LaunchCommand([
       "tool",
       "--host={host}",
       "--port",
@@ -123,13 +123,13 @@ test("Genesis launch argv substitution remains shell-safe", () => {
   );
 });
 
-test("Genesis launch descriptors map preview identity runtimes through Vibe64's pinned runtime packs", () => {
+test("Vibe64 launch descriptors map preview identity runtimes through Vibe64's pinned runtime packs", () => {
   const previewIdentity = {
     command: [".vibe64/preview-identity"],
     identityTypes: ["user"],
     runtimes: ["nodejs"]
   };
-  const descriptor = genesisLaunchDescriptor(launchTarget({
+  const descriptor = vibe64LaunchDescriptor(launchTarget({
     previewIdentity
   }), {
     port: 4123,
@@ -148,10 +148,10 @@ test("Genesis launch descriptors map preview identity runtimes through Vibe64's 
   });
 });
 
-test("neutral sessions list explicit Genesis targets without exposing resource values", async (t) => {
+test("neutral sessions list explicit Vibe64 targets without exposing resource values", async (t) => {
   const context = await launchContext(t);
   let received = null;
-  const targets = await listGenesisLaunchTargets(context, {
+  const targets = await listVibe64LaunchTargets(context, {
     inspect(input) {
       received = input;
       return launchInspection([
@@ -186,7 +186,7 @@ test("neutral sessions list explicit Genesis targets without exposing resource v
 
 test("missing Genesis Stack leaves managed preview unconfigured", async (t) => {
   const context = await launchContext(t);
-  const launch = await inspectGenesisLaunchForContext(context, {
+  const launch = await inspectVibe64LaunchForContext(context, {
     inspect: async () => {
       const error = new Error("Run genesis init first.");
       error.code = "STACK_REQUIRED";
@@ -202,7 +202,7 @@ test("missing Genesis Stack leaves managed preview unconfigured", async (t) => {
 
 test("missing Genesis Stack leaves workspace preparation unconfigured", async (t) => {
   const context = await launchContext(t);
-  const setup = await inspectGenesisWorkspaceSetupForContext(context, {
+  const setup = await inspectVibe64WorkspaceSetupForContext(context, {
     inspect: async () => {
       const error = new Error("Run genesis init first.");
       error.code = "STACK_REQUIRED";
@@ -295,7 +295,7 @@ test("declaring a Stack cannot auto-start preview before its setup recipe succee
   }]);
 });
 
-test("neutral sessions translate Genesis targets through the existing Vibe64 preview terminal", async (t) => {
+test("neutral sessions translate Vibe64 targets through the existing Vibe64 preview terminal", async (t) => {
   const context = await launchContext(t);
   const sourceSubdirectory = path.join(context.session.targetRoot, "web");
   await mkdir(sourceSubdirectory);
@@ -311,7 +311,7 @@ test("neutral sessions translate Genesis targets through the existing Vibe64 pre
     }],
     workdir: "web"
   });
-  const spec = await createGenesisLaunchTargetTerminalSpec({
+  const spec = await createVibe64LaunchTargetTerminalSpec({
     context,
     launchTargetId: target.id
   }, {
@@ -322,7 +322,7 @@ test("neutral sessions translate Genesis targets through the existing Vibe64 pre
   assert.equal(spec.ok, true);
   assert.equal(spec.cwd, sourceSubdirectory);
   assert.deepEqual(spec.runtimes, ["node26"]);
-  assert.equal(spec.metadata.genesisLaunchSource, "project");
+  assert.equal(spec.metadata.vibe64LaunchSource, "project");
   assert.equal(spec.metadata.urlPath, "/catalogue");
   assert.match(spec.commandPreview, /npm run prepare/u);
   assert.match(spec.commandPreview, /--host=127\.0\.0\.1/u);
@@ -335,7 +335,7 @@ test("neutral sessions translate Genesis targets through the existing Vibe64 pre
 test("neutral launch rejects a target without an exact readiness declaration", async (t) => {
   const context = await launchContext(t);
   const target = launchTarget({ readiness: null });
-  const spec = await createGenesisLaunchTargetTerminalSpec({
+  const spec = await createVibe64LaunchTargetTerminalSpec({
     context,
     launchTargetId: target.id
   }, {
@@ -348,13 +348,13 @@ test("neutral launch rejects a target without an exact readiness declaration", a
   });
 });
 
-test("unsupported Genesis runtimes disable a target before terminal creation", async (t) => {
+test("unsupported Vibe64 runtimes disable a target before terminal creation", async (t) => {
   const context = await launchContext(t);
   const target = launchTarget({
     runtimeRequirements: ["future-runtime"]
   });
 
-  assert.deepEqual(await listGenesisLaunchTargets(context, {
+  assert.deepEqual(await listVibe64LaunchTargets(context, {
     inspect: () => launchInspection([target])
   }), [{
     available: false,
@@ -363,7 +363,7 @@ test("unsupported Genesis runtimes disable a target before terminal creation", a
     id: "app",
     label: "Run app"
   }]);
-  assert.deepEqual(await createGenesisLaunchTargetTerminalSpec({
+  assert.deepEqual(await createVibe64LaunchTargetTerminalSpec({
     context,
     launchTargetId: target.id
   }, {

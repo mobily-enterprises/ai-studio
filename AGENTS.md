@@ -9,16 +9,35 @@ Important boundaries:
 
 - `/home/merc/Development/current/vibe64` is the writable public Vibe64 source of truth.
 - `/home/merc/Development/current/vibe64-online/submodules/public-vibe64-local-editor` is a deployment-managed read-only submodule mirror. Do not edit, commit, or deploy from inside that submodule.
-- To deploy editor changes: change, commit, and push `/home/merc/Development/current/vibe64`; then update, commit, and push `/home/merc/Development/current/vibe64-online`; then run `npm run deploy` from `/home/merc/Development/current/vibe64-online`.
+- To release editor changes to hosted Vibe64: change, commit, and push this
+  repository, commit and push any ordinary Online changes, then run `npm run
+  deploy` from `/home/merc/Development/current/vibe64-online`. The Online
+  deploy workflow verifies both published checkouts and owns the public-editor
+  gitlink update and its pointer-only commit; do not duplicate those steps by
+  hand.
 - Genesis owns project intent, technology guidance, explanatory Program, agent skills, hooks, verification guidance, and Machine/Program Cities. Its portable files live below `genesis/`, `.genesis/`, `.agents/skills/`, and `.codex/hooks.json`.
 - `vibe64.project.json` and `vibe64.runtime-lock.json` are unsupported obsolete contracts. Do not recreate or read them.
-- `.vibe64/` is not product, prompt, Stack, Program, indexing, or City authority. Keep only narrowly declared application helpers such as a Genesis Launch preview-identity executable when required.
+- `.vibe64/` is not product, prompt, Stack, Program, indexing, or City authority. Keep only narrowly declared application helpers such as a Vibe64 Launch preview-identity executable when required.
 - Runtime/session state is Vibe64-owned runtime-local state, not source-owned repository content.
 - Do not create loose workboard files.
 - Do not restore `jskit doctor`, generator commands, scaffold provenance,
   receipts, migration copies, or CLI-managed CI state. Verify current source,
   runtime behavior, package boundaries, and tests through their direct owners.
 - Never deploy unless the user explicitly requests deployment.
+
+## Deployment Terminology
+
+- The Deploy feature presented by hosted Vibe64 is product functionality that
+  publishes the selected user's project from its Vibe64-owned Deployment
+  contract. Genesis composes and returns that Stack section as opaque text; it
+  does not define deployment.
+- This repository's `## Deployment` section describes only how this public
+  Vibe64 application itself may run as a managed application. Its schema is
+  interpreted mechanically by `@local/vibe64-genesis`, not by Genesis.
+- Releasing public Vibe64 into the hosted platform is neither of those things;
+  it is owned by `npm run deploy` in the private `vibe64-online` repository.
+
+Keep those scopes separate even though they share the word "deploy."
 
 ## Known Session Defects To Fix
 

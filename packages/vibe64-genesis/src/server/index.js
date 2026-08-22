@@ -4,6 +4,26 @@ import path from "node:path";
 
 import * as genesisCompiler from "genesis-compiler";
 
+import {
+  VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
+  VIBE64_APPLICATION_DEPLOYMENT_SECTION,
+  parseVibe64DeploymentLines,
+  vibe64DeploymentInspection
+} from "./applicationDeployment.js";
+import {
+  VIBE64_LAUNCH_CONTRACT,
+  VIBE64_LAUNCH_SECTION,
+  VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,
+  parseVibe64LaunchLines,
+  vibe64LaunchInspection
+} from "./launch.js";
+import {
+  VIBE64_WORKSPACE_SETUP_CONTRACT,
+  VIBE64_WORKSPACE_SETUP_SECTION,
+  parseVibe64WorkspaceSetupLines,
+  vibe64WorkspaceSetupInspection
+} from "./workspaceSetup.js";
+
 const require = createRequire(import.meta.url);
 
 const {
@@ -12,11 +32,9 @@ const {
   generatePrompt,
   indexCodebase,
   initialize,
-  inspectDeployment,
   inspectDerivedArtifacts,
   inspectEnvironment,
-  inspectLaunch,
-  inspectWorkspaceSetup
+  inspectStackSection
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
@@ -142,20 +160,40 @@ async function exactGenesisInspection(inspector, contract, options = {}) {
   return result;
 }
 
-function inspectGenesisDeployment(options = {}) {
-  return exactGenesisInspection(inspectDeployment, GENESIS_CONTRACTS.deployment, options);
+function inspectGenesisStackSection(name, options = {}) {
+  return exactGenesisInspection(
+    (inspectionOptions) => inspectStackSection({ ...inspectionOptions, name }),
+    GENESIS_CONTRACTS.stackSection,
+    options
+  );
+}
+
+async function inspectVibe64Deployment(options = {}) {
+  const [section, environment] = await Promise.all([
+    inspectGenesisStackSection(VIBE64_APPLICATION_DEPLOYMENT_SECTION, options),
+    exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options)
+  ]);
+  return vibe64DeploymentInspection({ environment, section });
 }
 
 function inspectGenesisEnvironment(options = {}) {
   return exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options);
 }
 
-function inspectGenesisLaunch(options = {}) {
-  return exactGenesisInspection(inspectLaunch, GENESIS_CONTRACTS.launch, options);
+async function inspectVibe64Launch(options = {}) {
+  const [section, environment] = await Promise.all([
+    inspectGenesisStackSection(VIBE64_LAUNCH_SECTION, options),
+    exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options)
+  ]);
+  return vibe64LaunchInspection({ environment, section });
 }
 
-function inspectGenesisWorkspaceSetup(options = {}) {
-  return exactGenesisInspection(inspectWorkspaceSetup, GENESIS_CONTRACTS.workspaceSetup, options);
+async function inspectVibe64WorkspaceSetup(options = {}) {
+  const section = await inspectGenesisStackSection(VIBE64_WORKSPACE_SETUP_SECTION, options);
+  return vibe64WorkspaceSetupInspection({
+    projectRoot: options.projectRoot,
+    section
+  });
 }
 
 function withVibe64ConversationContract(prompt = "") {
@@ -213,6 +251,13 @@ export {
   GENESIS_DERIVED_ARTIFACT_PATHS,
   GENESIS_MACHINE_CITY_PATH,
   GENESIS_PROGRAM_CITY_PATH,
+  VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
+  VIBE64_APPLICATION_DEPLOYMENT_SECTION,
+  VIBE64_LAUNCH_CONTRACT,
+  VIBE64_LAUNCH_SECTION,
+  VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,
+  VIBE64_WORKSPACE_SETUP_CONTRACT,
+  VIBE64_WORKSPACE_SETUP_SECTION,
   addGenesisStack,
   assertGenesisPromptTask,
   genesisPackageBinDirectory,
@@ -220,10 +265,14 @@ export {
   genesisPromptTask,
   initializeGenesisProject,
   inspectGenesisDerivedArtifacts,
-  inspectGenesisDeployment,
+  inspectGenesisStackSection,
+  inspectVibe64Deployment,
   inspectGenesisEnvironment,
-  inspectGenesisLaunch,
-  inspectGenesisWorkspaceSetup,
+  inspectVibe64Launch,
+  inspectVibe64WorkspaceSetup,
+  parseVibe64LaunchLines,
+  parseVibe64DeploymentLines,
+  parseVibe64WorkspaceSetupLines,
   refreshGenesisCities,
   renderGenesisPrompt,
   withVibe64ConversationContract,

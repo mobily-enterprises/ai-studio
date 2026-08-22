@@ -119,7 +119,7 @@ function previewIdentityCapability() {
       secret: "APP_PREVIEW_IDENTITY_SECRET"
     },
     identityTypes: ["email", "user-id"],
-    protocol: "genesis.preview-identity.command.v1",
+    protocol: "vibe64.preview-identity.command.v1",
     runtimes: ["node26"]
   };
 }

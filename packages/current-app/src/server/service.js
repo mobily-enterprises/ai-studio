@@ -11,7 +11,7 @@ import {
   projectServiceTargetRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
-  inspectGenesisLaunch
+  inspectVibe64Launch
 } from "@local/vibe64-genesis/server";
 
 const EXPECTED_UNCONFIGURED_CODES = new Set([
@@ -36,7 +36,7 @@ function unconfiguredCurrentApp(root = "", message = "") {
   return {
     components: [],
     diagnostics: [],
-    message: message || "Genesis does not declare a launch target for this project yet.",
+    message: message || "Vibe64 does not declare a launch target for this project yet.",
     ok: true,
     ready: false,
     resources: [],
@@ -66,7 +66,7 @@ function launchView(root = "", launch = {}) {
 function createService({
   appRoot = "",
   env = process.env,
-  inspectLaunch = inspectGenesisLaunch,
+  inspectLaunch = inspectVibe64Launch,
   projectService
 } = {}) {
   if (!projectService || typeof projectService.createRuntime !== "function") {
@@ -122,7 +122,7 @@ function createService({
       return currentAppResult(async () => {
         const root = await rootForInput(input);
         if (!root) {
-          return unconfiguredCurrentApp("", "Choose a project source or session before inspecting Genesis launch targets.");
+          return unconfiguredCurrentApp("", "Choose a project source or session before inspecting Vibe64 launch targets.");
         }
         try {
           return launchView(root, await inspectLaunch({

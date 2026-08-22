@@ -240,7 +240,7 @@ test("ambiguous setup remains an actionable session state without executing eith
     const runner = createWorkspaceSetupRunner({
       inspect: () => ({
         diagnostics: [{
-          code: "STACK_WORKSPACE_SETUP_AMBIGUOUS",
+          code: "STACK_SECTION_AMBIGUOUS",
           message: "JSKIT and Laravel both declare workspace setup. Add one project override."
         }],
         status: "blocked",

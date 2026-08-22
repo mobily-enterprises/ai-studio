@@ -7,7 +7,7 @@
   "exports": {
     "./server/actions": "./src/server/actions.js",
     "./server/codexGitCommand": "./src/server/codexGitCommand.js",
-    "./server/genesisLaunchTargets": "./src/server/genesisLaunchTargets.js",
+    "./server/vibe64LaunchTargets": "./src/server/vibe64LaunchTargets.js",
     "./server/launchPreviewProxy": "./src/server/launchPreviewProxy.js",
     "./server/projectExecutionEnv": "./src/server/projectExecutionEnv.js",
     "./shared/launchPreviewProtocol": "./src/shared/launchPreviewProtocol.js"
@@ -50,15 +50,15 @@
           },
           {
             "subpath": "./server/service",
-            "summary": "Owns Codex conversation, Genesis-declared workspace preparation, and managed terminal lifecycle."
+            "summary": "Owns Codex conversation, Vibe64-declared workspace preparation, and managed terminal lifecycle."
           },
           {
             "subpath": "./server/projectExecutionEnv",
             "summary": "Resolves Vibe64-owned project Env for terminal processes."
           },
           {
-            "subpath": "./server/genesisLaunchTargets",
-            "summary": "Translates explicit Genesis launch declarations into Vibe64-owned managed preview terminals."
+            "subpath": "./server/vibe64LaunchTargets",
+            "summary": "Translates explicit Vibe64 launch declarations into Vibe64-owned managed preview terminals."
           }
         ],
         "capabilities": [

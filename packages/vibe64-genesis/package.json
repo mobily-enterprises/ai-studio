@@ -1,7 +1,7 @@
 {
   "name": "@local/vibe64-genesis",
   "version": "0.1.0",
-  "description": "The exact Vibe64 boundary for Genesis project operations and normalized contracts.",
+  "description": "The Vibe64-owned interpretation boundary for opaque Genesis Stack sections.",
   "private": true,
   "type": "module",
   "exports": {
@@ -26,14 +26,14 @@
         "surfaces": [
           {
             "subpath": "./server",
-            "summary": "The exact Vibe64 boundary for Genesis initialization, prompts, environment, workspace setup, launch, deployment, checks, verification, and Cities."
+            "summary": "Uses Genesis transport while Vibe64 owns workspace setup, launch, preview identity, and application deployment contracts."
           }
         ]
       }
     }
   },
   "dependencies": {
-    "genesis-compiler": "1.2.11",
-    "genesis-stack": "1.0.0"
+    "genesis-compiler": "1.2.13",
+    "genesis-stack": "1.0.2"
   }
 }

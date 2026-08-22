@@ -11,15 +11,15 @@ import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
-  inspectGenesisWorkspaceSetup
+  inspectVibe64WorkspaceSetup
 } from "@local/vibe64-genesis/server";
 import {
   workspaceSetupState,
   writeWorkspaceSetupState
 } from "@local/vibe64-runtime/server/workspaceSetupState";
 import {
-  genesisRuntimePacks
-} from "@local/vibe64-terminals/server/genesisLaunchTargets";
+  vibe64RuntimePacks
+} from "@local/vibe64-terminals/server/vibe64LaunchTargets";
 import {
   loadProjectExecutionEnv
 } from "@local/vibe64-terminals/server/projectExecutionEnv";
@@ -69,14 +69,14 @@ function setupStep(step = {}, index = 0, sourcePath = "") {
 function preparedRecipe(setup = {}, sourcePath = "") {
   const recipeHash = normalizeText(setup.recipeHash);
   if (!recipeHash) {
-    throw new Error("Genesis returned a ready workspace preparation recipe without an identity.");
+    throw new Error("Vibe64 produced a ready workspace preparation recipe without an identity.");
   }
   const steps = (Array.isArray(setup.steps) ? setup.steps : [])
     .map((step, index) => setupStep(step, index, sourcePath));
   if (steps.length < 1) {
-    throw new Error("Genesis returned a ready workspace preparation recipe without any steps.");
+    throw new Error("Vibe64 produced a ready workspace preparation recipe without any steps.");
   }
-  const runtime = genesisRuntimePacks([
+  const runtime = vibe64RuntimePacks([
     ...(Array.isArray(setup.runtimeRequirements) ? setup.runtimeRequirements : []),
     ...steps.flatMap((step) => step.runtimeRequirements)
   ]);
@@ -103,7 +103,7 @@ function commandDiagnostic(result = {}, label = "") {
 
 function createWorkspaceSetupRunner({
   clock = () => new Date(),
-  inspect = inspectGenesisWorkspaceSetup,
+  inspect = inspectVibe64WorkspaceSetup,
   projectService,
   runCommand = runVibe64Command
 } = {}) {
@@ -272,7 +272,7 @@ function createWorkspaceSetupRunner({
       }
       const state = await persistInspectedState(runtime, sessionId, previous, {
         currentLabel: "",
-        diagnostic: normalizeText(error?.message) || "Genesis could not inspect workspace preparation.",
+        diagnostic: normalizeText(error?.message) || "Vibe64 could not inspect workspace preparation.",
         finishedAt: stateTimestamp(clock),
         recipeHash: "",
         startedAt: "",
@@ -295,11 +295,11 @@ function createWorkspaceSetupRunner({
     if (normalizeText(setup?.status) !== "ready") {
       const ambiguous = diagnosticsInclude(
         setup?.diagnostics,
-        "STACK_WORKSPACE_SETUP_AMBIGUOUS"
+        "STACK_SECTION_AMBIGUOUS"
       );
       const state = await persistInspectedState(runtime, sessionId, previous, {
         currentLabel: "",
-        diagnostic: diagnosticText(setup?.diagnostics) || "Genesis could not select one workspace preparation recipe.",
+        diagnostic: diagnosticText(setup?.diagnostics) || "Vibe64 could not select one workspace preparation recipe.",
         finishedAt: stateTimestamp(clock),
         recipeHash: "",
         startedAt: "",

@@ -1,7 +1,7 @@
 {
   "name": "@local/current-app",
   "version": "0.1.0",
-  "description": "Inspect the current project's explicit Genesis launch targets.",
+  "description": "Inspect the current project's explicit Vibe64 launch targets.",
   "private": true,
   "type": "module",
   "exports": {
@@ -41,7 +41,7 @@
         "surfaces": [
           {
             "subpath": "./server/actions",
-            "summary": "Exports the Genesis launch inspection action."
+            "summary": "Exports the Vibe64 launch inspection action."
           }
         ]
       }

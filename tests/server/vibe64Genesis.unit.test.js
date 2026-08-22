@@ -16,10 +16,13 @@ import {
   genesisPromptTask,
   initializeGenesisProject,
   inspectGenesisDerivedArtifacts,
-  inspectGenesisDeployment,
   inspectGenesisEnvironment,
-  inspectGenesisLaunch,
-  inspectGenesisWorkspaceSetup,
+  inspectVibe64Launch,
+  inspectVibe64WorkspaceSetup,
+  inspectVibe64Deployment,
+  parseVibe64DeploymentLines,
+  parseVibe64LaunchLines,
+  parseVibe64WorkspaceSetupLines,
   renderGenesisPrompt,
   withVibe64ConversationContract,
   withGenesisCommandShim
@@ -76,7 +79,7 @@ test("Genesis initialization creates its complete technology-neutral project", a
   });
 });
 
-test("the integration reads launch targets from the pinned Genesis package", async () => {
+test("Vibe64 interprets its setup and launch contracts from the pinned Stack package", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
@@ -89,28 +92,28 @@ test("the integration reads launch targets from the pinned Genesis package", asy
       /## Stack packages\n- `genesis-stack`/u
     );
 
-    const waitingSetup = await inspectGenesisWorkspaceSetup({
+    const waitingSetup = await inspectVibe64WorkspaceSetup({
       environment: {},
       projectRoot
     });
     assert.equal(waitingSetup.status, "unconfigured");
-    assert.equal(waitingSetup.diagnostics[0].code, "STACK_WORKSPACE_SETUP_WAITING");
+    assert.equal(waitingSetup.diagnostics[0].code, "VIBE64_WORKSPACE_SETUP_WAITING");
 
     await writeFile(path.join(projectRoot, "package.json"), "{}\n", "utf8");
-    const setup = await inspectGenesisWorkspaceSetup({
+    const setup = await inspectVibe64WorkspaceSetup({
       environment: {},
       projectRoot
     });
-    const launch = await inspectGenesisLaunch({
+    const launch = await inspectVibe64Launch({
       environment: {},
       projectRoot
     });
 
     assert.equal(setup.status, "ready");
-    assert.equal(setup.contract, "genesis.workspace-setup.v1");
+    assert.equal(setup.contract, "vibe64.workspace-setup.v1");
     assert.deepEqual(setup.steps.map((step) => step.argv), [["npm", "install"]]);
     assert.equal(launch.status, "ready");
-    assert.equal(launch.contract, "genesis.launch.v1");
+    assert.equal(launch.contract, "vibe64.launch.v1");
     assert.equal(launch.targets[0].id, "app");
     assert.deepEqual(launch.targets[0].runtimeRequirements, ["nodejs"]);
     assert.deepEqual(launch.targets[0].steps.map((step) => step.argv), [
@@ -119,16 +122,125 @@ test("the integration reads launch targets from the pinned Genesis package", asy
   });
 });
 
-test("the exact Genesis boundary exposes environment and deployment contracts", async () => {
+test("Vibe64 owns deployment interpretation while Genesis exposes its opaque Stack section", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
 
     const environment = await inspectGenesisEnvironment({ projectRoot });
-    const deployment = await inspectGenesisDeployment({ projectRoot });
+    await writeFile(
+      path.join(projectRoot, "genesis", "stack.md"),
+      [
+        "# Stack",
+        "",
+        "## Components",
+        "",
+        "## Deployment",
+        "",
+        "- Runtimes: `nodejs`",
+        "- Ready when: `GET` `/health` returns `204`",
+        "- Serve `Start`: `node` `server.js`",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const deployment = await inspectVibe64Deployment({ projectRoot });
 
     assert.equal(environment.contract, "genesis.environment.v1");
-    assert.equal(deployment.contract, "genesis.deployment.v2");
+    assert.equal(deployment.contract, "vibe64.application-deployment.v1");
+    assert.equal(deployment.status, "ready");
+    assert.equal(deployment.readiness.path, "/health");
+    assert.deepEqual(deployment.steps.at(-1).argv, ["node", "server.js"]);
+  });
+});
+
+test("Vibe64 rejects unsafe Deployment content that Genesis deliberately leaves opaque", () => {
+  const invalid = [
+    ["- Runtimes: `nodejs`", "- Serve `Start`: `npm` `start`"],
+    ["- Workdir: `../escape`", "- Ready when: `GET` `/` returns `200`", "- Serve `Start`: `npm` `start`"],
+    ["- Runtimes: `nodejs`", "- Ready when: `GET` `/` returns `200`", "- Serve `Start`: `npm start`"],
+    ["- Recreate on restore: `../node_modules`", "- Ready when: `GET` `/` returns `200`", "- Prepare `Install`: `npm` `ci`", "- Serve `Start`: `npm` `start`"],
+    ["- Recreate on restore: `node_modules`", "- Ready when: `GET` `/` returns `200`", "- Build `Build`: `npm` `run` `build`", "- Serve `Start`: `npm` `start`"],
+    ["- Ready when: `GET` `/` returns `200`", "- Serve `Start`: `npm` `start`", "- Build `After start`: `npm` `run` `build`"],
+    ["```json vibe64.application-deployment.v1", "{\"version\":1}", "```"]
+  ];
+  for (const lines of invalid) {
+    assert.throws(
+      () => parseVibe64DeploymentLines(lines),
+      (error) => error?.code === "VIBE64_DEPLOYMENT_INVALID"
+    );
+  }
+});
+
+test("Vibe64 setup and launch parse only their canonical Markdown grammar", () => {
+  assert.deepEqual(parseVibe64WorkspaceSetupLines([
+    "- Prepare `Install` with `nodejs`: `npm` `install`"
+  ]), [{
+    label: "Install",
+    argv: ["npm", "install"],
+    runtimeRequirements: ["nodejs"],
+    workdir: "."
+  }]);
+
+  const launch = parseVibe64LaunchLines([
+    "### Target `app`: Run app",
+    "",
+    "- Default.",
+    "- Runtimes: `nodejs`",
+    "- Ready when: `GET` `/health` returns `200`",
+    "- Serve `Develop`: `npm` `run` `develop`",
+    "",
+    "#### Preview identity",
+    "",
+    "- Command: `tools/preview-identity`",
+    "- Protocol: `vibe64.preview-identity.command.v1`",
+    "- Identity types: `email`",
+    "- Runtimes: `nodejs`"
+  ]);
+  assert.equal(launch.targets[0].steps[0].role, "server");
+  assert.equal(launch.targets[0].previewIdentity.protocol, "vibe64.preview-identity.command.v1");
+
+  assert.throws(
+    () => parseVibe64WorkspaceSetupLines([
+      "```json vibe64.workspace-setup.v1",
+      "{\"version\":1}",
+      "```"
+    ]),
+    (error) => error?.code === "VIBE64_WORKSPACE_SETUP_INVALID"
+  );
+  assert.throws(
+    () => parseVibe64LaunchLines([
+      "```json vibe64.launch.v1",
+      "{\"version\":1}",
+      "```"
+    ]),
+    (error) => error?.code === "VIBE64_LAUNCH_INVALID"
+  );
+});
+
+test("Vibe64 executes the current JSKIT Deployment declaration exactly", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await addGenesisStack({ pieces: ["jskit"], projectRoot });
+
+    const deployment = await inspectVibe64Deployment({ projectRoot });
+
+    assert.equal(deployment.contract, "vibe64.application-deployment.v1");
+    assert.equal(deployment.source, "component:jskit");
+    assert.deepEqual(deployment.artifact, { disposablePaths: ["node_modules"] });
+    assert.deepEqual(deployment.steps.map(({ role, argv }) => ({ role, argv })), [
+      { role: "prepare", argv: ["npm", "ci"] },
+      { role: "build", argv: ["npm", "run", "build"] },
+      { role: "migrate", argv: ["npm", "run", "db:prepare"] },
+      { role: "serve", argv: ["npm", "start"] }
+    ]);
+    assert.deepEqual(deployment.readiness, {
+      kind: "http",
+      method: "GET",
+      path: "/api/health",
+      status: 200
+    });
   });
 });
 

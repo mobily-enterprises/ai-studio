@@ -69,6 +69,35 @@ test("a catalog project can be created and selected without project-type setup",
   });
 });
 
+test("a catalog project without a baseline checkout does not inspect its metadata directory", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectsRoot = path.join(temporaryRoot, "projects");
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: projectsRoot,
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    let inspections = 0;
+    const service = createService({
+      env: {},
+      inspectEnvironment() {
+        inspections += 1;
+        throw new Error("the project metadata directory is not source");
+      },
+      projectContext
+    });
+    await service.createProject({ name: "Remote catalogue" });
+
+    const response = await service.readEnv();
+
+    assert.equal(response.ok, true);
+    assert.equal(response.env.configSource.sourceRoot, "");
+    assert.equal(response.env.stackWarning, undefined);
+    assert.equal(inspections, 0);
+  });
+});
+
 test("managed development database scope is project state and changes only without open sessions", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
     const projectsRoot = path.join(temporaryRoot, "projects");

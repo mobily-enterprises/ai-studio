@@ -19,6 +19,11 @@ When Genesis declares an environment-file projection, Vibe64 writes it outside
 ordinary Git tracking with restrictive permissions and preserves a pre-existing
 user file before taking ownership.
 
+Stack declarations are inspected only from a real baseline checkout or an
+explicit session source. A hosted catalog project's metadata namespace is not
+source and is never passed to Genesis merely because no baseline checkout is
+available; Env values remain usable without one.
+
 Project agents receive the managed `vibe64-env` command. It reads configuration
 metadata without exposing values and delegates explicit development mutations
 to the project Env service. A host may contribute a production Env provider
