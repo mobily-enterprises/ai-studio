@@ -296,11 +296,19 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.match(rendered.prompt, /"projectKind": "new"/u);
     assert.match(rendered.prompt, /"availableStackPieces": \[/u);
     assert.match(rendered.prompt, /"id": "jskit"/u);
+    assert.match(rendered.prompt, /"id": "jskit-mysql"/u);
     assert.doesNotMatch(rendered.prompt, /"id": "vue"/u);
+    assert.doesNotMatch(rendered.prompt, /"id": "jskit-postgresql"/u);
+    assert.doesNotMatch(rendered.prompt, /"id": "postgresql"/u);
     assert.match(rendered.prompt, /interface has already welcomed the person/u);
     assert.match(rendered.prompt, /without repeating that greeting/u);
     assert.match(rendered.prompt, /invite them to write what they would like to make/u);
-    assert.match(rendered.prompt, /running `genesis stack add jskit`/u);
+    assert.match(rendered.prompt, /genesis stack add jskit-mysql/u);
+    assert.match(rendered.prompt, /otherwise run `genesis stack add jskit`/u);
+    assert.match(rendered.prompt, /Do not ask the person to choose a database/u);
+    assert.match(rendered.prompt, /PostgreSQL is temporarily unavailable/u);
+    assert.match(rendered.prompt, /explicitly requests PostgreSQL/u);
+    assert.match(rendered.prompt, /do not silently substitute MySQL/u);
     assert.match(rendered.prompt, /Do not offer standalone `vue`/u);
     assert.match(rendered.prompt, /Do not mention Genesis, Stack, JSKIT, Vue/u);
     assert.ok(
@@ -422,5 +430,25 @@ test("the managed Genesis command exposes Vibe64's curated Stack catalog", async
     assert.match(stack, /- `genesis-stack`/u);
     assert.match(stack, /- `jskit`/u);
     assert.match(stack, /- `nodejs`/u);
+  });
+});
+
+test("the temporary onboarding gate preserves the installed PostgreSQL Stack piece", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+
+    const result = await execFileAsync(path.join(genesisCommandShimDirectory(), "genesis"), [
+      "stack",
+      "add",
+      "jskit-postgresql"
+    ], {
+      cwd: projectRoot
+    });
+
+    assert.match(result.stdout, /stack: updated/u);
+    const stack = await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8");
+    assert.match(stack, /- `jskit-postgresql`/u);
+    assert.match(stack, /- `postgresql`/u);
   });
 });
