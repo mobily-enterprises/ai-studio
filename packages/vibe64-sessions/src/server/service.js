@@ -257,9 +257,11 @@ function createService({
       return runtime.store.writeBackgroundTaskEvent(session.sessionId, SESSION_SAVE_TASK_ID, {
         event: {
           kind: "save-recovered",
-          message: result.reconciled === true
-            ? "Interrupted Save recovered and reconciled."
-            : "Interrupted Save was published and needs local reconciliation.",
+          message: result.cacheMaintenance?.retryable === true
+            ? "Interrupted Save recovered. The local clone cache could not be refreshed and will be retried later."
+            : result.reconciled === true
+              ? "Interrupted Save recovered and reconciled."
+              : "Interrupted Save was published and needs local reconciliation.",
           status: "ready"
         },
         patch: {
@@ -661,9 +663,11 @@ function createService({
           const task = await runtime.store.writeBackgroundTaskEvent(sessionId, SESSION_SAVE_TASK_ID, {
             event: {
               kind: result.status,
-              message: result.reconciled === true
-                ? "Session work was saved."
-                : "Session work was published and needs local reconciliation.",
+              message: result.cacheMaintenance?.retryable === true
+                ? "Session work was saved. The local clone cache could not be refreshed and will be retried later."
+                : result.reconciled === true
+                  ? "Session work was saved."
+                  : "Session work was published and needs local reconciliation.",
               status: "ready"
             },
             patch: {

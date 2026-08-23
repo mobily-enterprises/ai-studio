@@ -14,6 +14,7 @@ import {
 } from "@local/vibe64-core/shared";
 import {
   createGitTurnCheckpoint,
+  githubMirrorRefreshInvocation,
   runVibe64Command,
   writeGitWorktreeTree
 } from "@local/vibe64-execution/server";
@@ -109,14 +110,13 @@ function commandProject(context = {}, project = {}) {
   };
 }
 
-async function git(runCommand, context, args, {
+async function saveCommand(runCommand, context, command, args, {
   additionalAllowedRoots = [],
   commandOptions = {},
   cwd = context.worktreePath,
   env = {},
   input,
-  project = {},
-  required = true
+  project = {}
 } = {}) {
   const allowedRoots = [
     context.worktreePath,
@@ -128,11 +128,11 @@ async function git(runCommand, context, args, {
       return normalized ? [normalized, path.dirname(normalized)] : [];
     })
   ];
-  const result = await runCommand({
+  return runCommand({
     actor: "daemon",
     allowedRoots,
     args,
-    command: "git",
+    command,
     cwd,
     env,
     envPolicy: "session",
@@ -145,6 +145,13 @@ async function git(runCommand, context, args, {
     timeout: SAVE_TIMEOUT_MS,
     ...commandOptions
   });
+}
+
+async function git(runCommand, context, args, {
+  required = true,
+  ...options
+} = {}) {
+  const result = await saveCommand(runCommand, context, "git", args, options);
   if (required && result?.ok !== true) {
     throw saveError(
       text(result?.stderr || result?.stdout || result?.output || result?.error) || "Git Save command failed.",
@@ -1155,6 +1162,99 @@ async function publishSaveCommit(runCommand, context, saveCommit, canonicalCommi
   return verified;
 }
 
+async function refreshVerifiedGithubMirror(
+  runCommand,
+  context,
+  verifiedCommit,
+  { commandOptions = {}, project = {} } = {}
+) {
+  if (context.mode !== PROJECT_REPOSITORY_MODE_GITHUB) {
+    return {
+      attempted: false,
+      kind: "none",
+      retryable: false,
+      status: "not_applicable"
+    };
+  }
+  const mirrorPath = text(project.githubMirrorPath);
+  const retryable = (code, reason) => ({
+    attempted: Boolean(mirrorPath),
+    branch: context.branch,
+    code,
+    kind: "github_mirror",
+    message: "Your work was saved, but Vibe64 could not refresh its local clone cache. A later session or Save will retry it.",
+    reason,
+    retryable: true,
+    status: "retryable",
+    verifiedCommit
+  });
+  if (!mirrorPath || !path.isAbsolute(mirrorPath)) {
+    return retryable(
+      "vibe64_session_save_github_mirror_missing",
+      "configuration_missing"
+    );
+  }
+
+  try {
+    const [command, ...args] = githubMirrorRefreshInvocation({
+      mirrorPath,
+      remoteUrl: context.remoteUrl
+    });
+    const refresh = await saveCommand(runCommand, context, command, args, {
+      additionalAllowedRoots: [mirrorPath],
+      commandOptions,
+      project
+    });
+    if (refresh?.ok !== true) {
+      return retryable(
+        text(refresh?.code) || "vibe64_session_save_github_mirror_refresh_failed",
+        "refresh_failed"
+      );
+    }
+    const localOptions = {
+      additionalAllowedRoots: [mirrorPath],
+      commandOptions,
+      project,
+      required: false
+    };
+    const [mirrorCommitResult, mirrorOriginResult] = await Promise.all([
+      git(runCommand, context, [
+        "--git-dir", mirrorPath,
+        "rev-parse", "--verify", `refs/heads/${context.branch}^{commit}`
+      ], localOptions),
+      git(runCommand, context, [
+        "--git-dir", mirrorPath,
+        "remote", "get-url", "origin"
+      ], localOptions)
+    ]);
+    const mirrorCommit = mirrorCommitResult?.ok === true ? output(mirrorCommitResult) : "";
+    const mirrorOrigin = mirrorOriginResult?.ok === true ? output(mirrorOriginResult) : "";
+    if (mirrorCommit !== verifiedCommit || mirrorOrigin !== context.remoteUrl) {
+      return {
+        ...retryable(
+          "vibe64_session_save_github_mirror_verification_failed",
+          "verification_failed"
+        ),
+        mirrorCommit
+      };
+    }
+    return {
+      attempted: true,
+      branch: context.branch,
+      kind: "github_mirror",
+      mirrorCommit,
+      retryable: false,
+      status: "current",
+      verifiedCommit
+    };
+  } catch {
+    return retryable(
+      "vibe64_session_save_github_mirror_refresh_failed",
+      "refresh_interrupted"
+    );
+  }
+}
+
 async function currentCanonicalCommit(runCommand, context, operationId, options) {
   return readCanonical(runCommand, context, operationId, options);
 }
@@ -1946,6 +2046,20 @@ async function saveSessionWork({
       stage: "published",
       verifiedCommit
     });
+    const cacheMaintenance = await refreshVerifiedGithubMirror(
+      runCommand,
+      context,
+      verifiedCommit,
+      { commandOptions, project }
+    );
+    if (cacheMaintenance.retryable === true) {
+      await onProgress({
+        cacheMaintenance,
+        kind: "cache-warning",
+        message: cacheMaintenance.message,
+        stage: "cache-maintenance-warning"
+      });
+    }
     await onProgress({ kind: "reconcile", message: "Reconciling the session onto the saved commit.", stage: "reconciling" });
     const reconciliation = await reconcileSession(runCommand, context, {
       checkpointCommit: checkpoint.commit,
@@ -1956,6 +2070,7 @@ async function saveSessionWork({
     });
     return {
       baseCommit: context.baseCommit,
+      cacheMaintenance,
       canonicalCommit,
       changeBaseCommit: comparison.changeBaseCommit,
       changedPaths,
@@ -2020,6 +2135,12 @@ async function recoverSessionWorkSave({
         { authorityCommit, expectedCanonicalCommit, proposedCommit }
       );
     }
+    const cacheMaintenance = await refreshVerifiedGithubMirror(
+      runCommand,
+      context,
+      proposedCommit,
+      { commandOptions, project }
+    );
     const reconciliation = await reconcileSession(runCommand, context, {
       checkpointCommit,
       checkpointTree,
@@ -2030,6 +2151,7 @@ async function recoverSessionWorkSave({
     return {
       ...recovery,
       authorityCommit,
+      cacheMaintenance,
       ok: true,
       recovered: true,
       saveCommit: proposedCommit,

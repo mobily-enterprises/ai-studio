@@ -630,6 +630,80 @@ test("native Save persists bounded progress and advances the session base only a
   });
 });
 
+test("a successful Save keeps mirror maintenance failure as a visible retryable warning", async () => {
+  const taskEvents = [];
+  const runtime = {
+    async getSession() {
+      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    },
+    async listSessionSummaries() {
+      return [{ agentRuns: [], sessionId: "session-1", status: "active" }];
+    },
+    store: {
+      async readBackgroundTask() {
+        return null;
+      },
+      async writeBackgroundTaskEvent(_sessionId, _taskId, input) {
+        taskEvents.push(input);
+        return {
+          ...input.patch,
+          events: taskEvents.map((entry) => entry.event),
+          id: "save-work"
+        };
+      },
+      async writeMetadataValue() {}
+    }
+  };
+  const cacheMaintenance = {
+    attempted: true,
+    code: "vibe64_test_cache_refresh_failed",
+    kind: "github_mirror",
+    message: "Your work was saved, but Vibe64 could not refresh its local clone cache. A later session or Save will retry it.",
+    reason: "refresh_failed",
+    retryable: true,
+    status: "retryable"
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    async publishSessionChanged() {},
+    terminals: {
+      async saveSessionWork(_sessionId, input) {
+        await input.onRepositoryWriteAcquired();
+        await input.onProgress({
+          cacheMaintenance,
+          kind: "cache-warning",
+          message: cacheMaintenance.message,
+          stage: "cache-maintenance-warning"
+        });
+        return {
+          cacheMaintenance,
+          reconciled: true,
+          saveCommit: "saved-with-warning",
+          status: "saved"
+        };
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.operation.status, "ready");
+  assert.equal(result.operation.cacheMaintenance.status, "retryable");
+  assert.equal(result.operation.cacheMaintenance.retryable, true);
+  assert.deepEqual(taskEvents.map((entry) => entry.event.kind), [
+    "save-started",
+    "cache-warning",
+    "saved"
+  ]);
+  assert.match(taskEvents.at(-1).event.message, /local clone cache could not be refreshed/u);
+  assert.equal(Object.hasOwn(result.operation, "error"), false);
+});
+
 test("a reconciled Save supersedes an older failed session update", async () => {
   const tasks = new Map([
     ["update-session", {

@@ -124,11 +124,14 @@ async function sessionForRemote(root, fixture, id = "session-1") {
 }
 
 function githubProject(root, remote) {
+  const projectRuntimeRoot = path.join(root, "project-runtime");
   return {
+    githubMirrorPath: path.join(projectRuntimeRoot, "github-mirror", "repository.git"),
     githubRepository: {
       cloneUrl: remote
     },
     path: path.join(root, "project-cache"),
+    projectRuntimeRoot,
     repository: {
       defaultBranch: "main",
       mode: "github"
@@ -626,6 +629,279 @@ test("Save refuses canonical advances until explicit Update rebases the session"
   }
 });
 
+test("verified GitHub Saves refresh cold, warm, and stale mirrors only after remote verification", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-mirror-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    const requests = [];
+    const token = "save-private-token";
+    const runCommand = async (request) => {
+      requests.push(request);
+      return commandRunner(request);
+    };
+    const save = async (operationId, filename) => {
+      await writeFile(path.join(session.sourcePath, filename), `${operationId}\n`, "utf8");
+      const requestOffset = requests.length;
+      const result = await saveSessionWork({
+        commandOptions: {
+          gitAuthToken: token,
+          gitTransport: "github-token"
+        },
+        operationId,
+        project,
+        runCommand,
+        session
+      });
+      const operationRequests = requests.slice(requestOffset);
+      const verificationIndex = operationRequests.findIndex((request) => (
+        request.command === "git" && request.args?.[0] === "ls-remote"
+      ));
+      const refreshIndex = operationRequests.findIndex((request) => (
+        request.command === "bash" && request.args?.includes("vibe64-github-mirror-refresh")
+      ));
+      assert.ok(verificationIndex >= 0);
+      assert.ok(refreshIndex > verificationIndex);
+      const refreshRequest = operationRequests[refreshIndex];
+      assert.equal(refreshRequest.gitAuthToken, token);
+      assert.equal(refreshRequest.gitTransport, "github-token");
+      assert.ok(refreshRequest.args.includes(fixture.remote));
+      assert.ok(refreshRequest.args.includes(project.githubMirrorPath));
+      assert.equal(JSON.stringify(refreshRequest.args).includes(token), false);
+      assert.equal(JSON.stringify(result).includes(token), false);
+      assert.deepEqual(result.cacheMaintenance, {
+        attempted: true,
+        branch: "main",
+        kind: "github_mirror",
+        mirrorCommit: result.saveCommit,
+        retryable: false,
+        status: "current",
+        verifiedCommit: result.saveCommit
+      });
+      assert.equal(
+        await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+        result.saveCommit
+      );
+      assert.equal(
+        await git(root, ["--git-dir", project.githubMirrorPath, "remote", "get-url", "origin"]),
+        fixture.remote
+      );
+      session.metadata.base_commit = result.saveCommit;
+      session.metadata.canonical_commit = result.saveCommit;
+      return result;
+    };
+
+    const cold = await save("save-cold-mirror", "cold.txt");
+    const warm = await save("save-warm-mirror", "warm.txt");
+    assert.notEqual(cold.saveCommit, warm.saveCommit);
+
+    const canonicalWriter = path.join(root, "external-canonical-writer");
+    await git(root, ["clone", "--branch", "main", fixture.remote, canonicalWriter]);
+    await writeFile(path.join(canonicalWriter, "external.txt"), "external canonical advance\n", "utf8");
+    await git(canonicalWriter, ["add", "external.txt"]);
+    await git(canonicalWriter, ["commit", "-m", "external canonical advance"]);
+    await git(canonicalWriter, ["push", "origin", "main"]);
+    const externalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
+    assert.equal(
+      await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+      warm.saveCommit,
+      "the mirror is stale before the next verified Save"
+    );
+
+    const updated = await updateSessionWork({
+      operationId: "update-before-stale-mirror-save",
+      project,
+      runCommand,
+      session
+    });
+    assert.equal(updated.canonicalCommit, externalCommit);
+    session.metadata.base_commit = updated.canonicalCommit;
+    session.metadata.canonical_commit = updated.canonicalCommit;
+    const stale = await save("save-stale-mirror", "after-external.txt");
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), stale.saveCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", `${stale.saveCommit}^`]), externalCommit);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("a GitHub mirror failure remains a visible retryable warning after successful publication", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-mirror-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    const progress = [];
+    let rejectedRefresh = false;
+    await writeFile(path.join(session.sourcePath, "published-despite-cache.txt"), "saved\n", "utf8");
+
+    const first = await saveSessionWork({
+      onProgress: async (event) => {
+        progress.push(event);
+      },
+      operationId: "save-cache-refresh-failure",
+      project,
+      runCommand: async (request) => {
+        if (
+          !rejectedRefresh &&
+          request.command === "bash" &&
+          request.args?.includes("vibe64-github-mirror-refresh")
+        ) {
+          rejectedRefresh = true;
+          return {
+            code: "vibe64_test_cache_refresh_failed",
+            ok: false,
+            stderr: "simulated disposable cache failure"
+          };
+        }
+        return commandRunner(request);
+      },
+      session
+    });
+
+    assert.equal(first.status, "saved");
+    assert.equal(first.reconciled, true);
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), first.saveCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), first.saveCommit);
+    assert.equal(first.cacheMaintenance.status, "retryable");
+    assert.equal(first.cacheMaintenance.retryable, true);
+    assert.equal(first.cacheMaintenance.reason, "refresh_failed");
+    assert.equal(first.cacheMaintenance.code, "vibe64_test_cache_refresh_failed");
+    assert.match(first.cacheMaintenance.message, /work was saved/u);
+    assert.equal(progress.at(-2).kind, "cache-warning");
+    assert.equal(progress.at(-2).cacheMaintenance.status, "retryable");
+
+    session.metadata.base_commit = first.saveCommit;
+    session.metadata.canonical_commit = first.saveCommit;
+    await writeFile(path.join(session.sourcePath, "cache-retry.txt"), "retry\n", "utf8");
+    const retry = await saveSessionWork({
+      operationId: "save-cache-refresh-retry",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(retry.cacheMaintenance.status, "current");
+    assert.equal(retry.cacheMaintenance.retryable, false);
+    assert.equal(
+      await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+      retry.saveCommit
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("GitHub Saves never refresh the mirror before a publish is accepted and verified", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-no-mirror-"));
+  try {
+    const runCase = async (name, operation) => {
+      const caseRoot = path.join(root, name);
+      await mkdir(caseRoot, { recursive: true });
+      const fixture = await createRemoteFixture(caseRoot);
+      const session = await sessionForRemote(caseRoot, fixture);
+      const project = githubProject(caseRoot, fixture.remote);
+      const requests = [];
+      await operation({
+        fixture,
+        project,
+        requests,
+        runCommand: async (request) => {
+          requests.push(request);
+          return commandRunner(request);
+        },
+        session
+      });
+      assert.equal(
+        requests.some((request) => (
+          request.command === "bash" &&
+          request.args?.includes("vibe64-github-mirror-refresh")
+        )),
+        false,
+        name
+      );
+      await assert.rejects(
+        () => git(caseRoot, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+        undefined,
+        name
+      );
+    };
+
+    await runCase("no-changes", async ({ project, runCommand, session }) => {
+      await assert.rejects(saveSessionWork({
+        operationId: "save-no-changes",
+        project,
+        runCommand,
+        session
+      }), (error) => error.code === "vibe64_session_save_no_changes");
+    });
+
+    await runCase("canonical-conflict", async ({ fixture, project, runCommand, session }) => {
+      const writer = path.join(path.dirname(fixture.remote), "conflict-writer");
+      await git(path.dirname(fixture.remote), ["clone", "--branch", "main", fixture.remote, writer]);
+      await writeFile(path.join(writer, "shared.txt"), "canonical conflict\n", "utf8");
+      await git(writer, ["add", "shared.txt"]);
+      await git(writer, ["commit", "-m", "canonical conflict"]);
+      await git(writer, ["push", "origin", "main"]);
+      await writeFile(path.join(session.sourcePath, "shared.txt"), "session conflict\n", "utf8");
+      await assert.rejects(saveSessionWork({
+        operationId: "save-canonical-conflict",
+        project,
+        runCommand,
+        session
+      }), (error) => error.code === "vibe64_session_save_update_required");
+    });
+
+    await runCase("push-rejected", async ({ project, requests, session }) => {
+      await writeFile(path.join(session.sourcePath, "push-rejected.txt"), "local\n", "utf8");
+      await assert.rejects(saveSessionWork({
+        operationId: "save-push-rejected",
+        project,
+        runCommand: async (request) => {
+          requests.push(request);
+          if (request.command === "git" && request.args?.[0] === "push") {
+            return {
+              code: "vibe64_test_push_rejected",
+              ok: false,
+              stderr: "simulated push rejection"
+            };
+          }
+          return commandRunner(request);
+        },
+        session
+      }), (error) => error.code === "vibe64_test_push_rejected");
+    });
+
+    await runCase("verification-mismatch", async ({ fixture, project, requests, session }) => {
+      let pushed = false;
+      await writeFile(path.join(session.sourcePath, "verification-mismatch.txt"), "local\n", "utf8");
+      await assert.rejects(saveSessionWork({
+        operationId: "save-verification-mismatch",
+        project,
+        runCommand: async (request) => {
+          requests.push(request);
+          if (request.command === "git" && request.args?.[0] === "push") {
+            const result = await commandRunner(request);
+            pushed = result.ok === true;
+            return result;
+          }
+          if (pushed && request.command === "git" && request.args?.[0] === "ls-remote") {
+            return {
+              ok: true,
+              stdout: `${fixture.baseCommit}\trefs/heads/main\n`
+            };
+          }
+          return commandRunner(request);
+        },
+        session
+      }), (error) => error.code === "vibe64_session_save_verification_failed");
+      assert.equal(pushed, true);
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("a second Save also requires explicit Update after a later canonical advance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
@@ -682,6 +958,88 @@ test("a second Save also requires explicit Update after a later canonical advanc
   }
 });
 
+test("concurrent GitHub Saves serialize, then the losing session updates and saves with an exact mirror", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-concurrent-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const firstSession = await sessionForRemote(root, fixture, "session-first");
+    const secondSession = await sessionForRemote(root, fixture, "session-second");
+    const project = githubProject(root, fixture.remote);
+    await writeFile(path.join(firstSession.sourcePath, "first-session.txt"), "first\n", "utf8");
+    await writeFile(path.join(secondSession.sourcePath, "second-session.txt"), "second\n", "utf8");
+    let releasePrevious = Promise.resolve();
+    const runProjectSourceExclusive = async (operation) => {
+      const previous = releasePrevious;
+      let release;
+      releasePrevious = new Promise((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    };
+
+    const attempts = await Promise.allSettled([
+      saveSessionWork({
+        operationId: "concurrent-save-first",
+        project,
+        runCommand: commandRunner,
+        runProjectSourceExclusive,
+        session: firstSession
+      }),
+      saveSessionWork({
+        operationId: "concurrent-save-second",
+        project,
+        runCommand: commandRunner,
+        runProjectSourceExclusive,
+        session: secondSession
+      })
+    ]);
+    const successes = attempts.filter((attempt) => attempt.status === "fulfilled");
+    const failures = attempts.filter((attempt) => attempt.status === "rejected");
+    assert.equal(successes.length, 1);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].reason.code, "vibe64_session_save_update_required");
+    const firstPublished = successes[0].value;
+    assert.equal(firstPublished.cacheMaintenance.status, "current");
+    assert.equal(
+      await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+      firstPublished.saveCommit
+    );
+
+    const losingSession = attempts[0].status === "rejected" ? firstSession : secondSession;
+    const updated = await updateSessionWork({
+      operationId: "update-concurrent-loser",
+      project,
+      runCommand: commandRunner,
+      runProjectSourceExclusive,
+      session: losingSession
+    });
+    losingSession.metadata.base_commit = updated.canonicalCommit;
+    losingSession.metadata.canonical_commit = updated.canonicalCommit;
+    const secondPublished = await saveSessionWork({
+      operationId: "save-concurrent-loser-after-update",
+      project,
+      runCommand: commandRunner,
+      runProjectSourceExclusive,
+      session: losingSession
+    });
+    assert.equal(secondPublished.cacheMaintenance.status, "current");
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), secondPublished.saveCommit);
+    assert.equal(
+      await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+      secondPublished.saveCommit
+    );
+    assert.equal(await git(losingSession.sourcePath, ["show", "HEAD:first-session.txt"]), "first");
+    assert.equal(await git(losingSession.sourcePath, ["show", "HEAD:second-session.txt"]), "second");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("Save reports published_needs_reconcile when the worktree changes after its checkpoint", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
@@ -716,6 +1074,7 @@ test("Save reports published_needs_reconcile when the worktree changes after its
 test("managed-Git Save uses the guarded canonical push and preserves its backup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
+    const requests = [];
     const fixture = await createRemoteFixture(root);
     const canonicalRepositoryPath = path.join(root, "canonical-repository", "repository.git");
     await runScript(canonicalRepositoryInitializeScript({
@@ -737,12 +1096,22 @@ test("managed-Git Save uses the guarded canonical push and preserves its backup"
     const result = await saveSessionWork({
       operationId: "save-managed",
       project: managedGitProject(root, canonicalRepositoryPath),
-      runCommand: commandRunner,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
       session
     });
 
     assert.equal(result.mode, "managed_git");
     assert.equal(result.status, "saved");
+    assert.deepEqual(result.cacheMaintenance, {
+      attempted: false,
+      kind: "none",
+      retryable: false,
+      status: "not_applicable"
+    });
+    assert.equal(requests.some((request) => request.command === "bash"), false);
     assert.equal(
       await git(root, ["--git-dir", canonicalRepositoryPath, "rev-parse", "refs/heads/main"]),
       result.saveCommit
@@ -1241,6 +1610,7 @@ test("work inspection reports only new session edits when canonical advances bey
 test("local-source Save advances the clean configured baseline", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
+    const requests = [];
     const baseline = path.join(root, "baseline");
     await git(root, ["init", "--initial-branch=main", baseline]);
     await writeFile(path.join(baseline, "app.txt"), "initial\n", "utf8");
@@ -1270,10 +1640,20 @@ test("local-source Save advances the clean configured baseline", async () => {
           mode: "local_source"
         }
       },
-      runCommand: commandRunner,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
       session
     });
     assert.equal(result.status, "saved");
+    assert.deepEqual(result.cacheMaintenance, {
+      attempted: false,
+      kind: "none",
+      retryable: false,
+      status: "not_applicable"
+    });
+    assert.equal(requests.some((request) => request.command === "bash"), false);
     assert.equal(await git(baseline, ["rev-parse", "HEAD"]), result.saveCommit);
     assert.equal(await readFile(path.join(baseline, "app.txt"), "utf8"), "saved\n");
   } finally {
@@ -1388,6 +1768,7 @@ test("interrupted Save recovery verifies published authority and reconciles with
   try {
     const fixture = await createRemoteFixture(root);
     const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
     await writeFile(path.join(session.sourcePath, "recovered.txt"), "recovered\n", "utf8");
     let recovery = {};
     await assert.rejects(saveSessionWork({
@@ -1398,7 +1779,7 @@ test("interrupted Save recovery verifies published authority and reconciles with
           throw new Error("simulated service restart");
         }
       },
-      project: githubProject(root, fixture.remote),
+      project,
       runCommand: commandRunner,
       session
     }), /simulated service restart/u);
@@ -1406,7 +1787,7 @@ test("interrupted Save recovery verifies published authority and reconciles with
     assert.notEqual(await git(session.sourcePath, ["rev-parse", "HEAD"]), recovery.proposedCommit);
 
     const result = await recoverSessionWorkSave({
-      project: githubProject(root, fixture.remote),
+      project,
       recovery,
       runCommand: commandRunner,
       session
@@ -1415,6 +1796,12 @@ test("interrupted Save recovery verifies published authority and reconciles with
     assert.equal(result.recovered, true);
     assert.equal(result.reconciled, true);
     assert.equal(result.saveCommit, recovery.proposedCommit);
+    assert.equal(result.cacheMaintenance.status, "current");
+    assert.equal(result.cacheMaintenance.mirrorCommit, recovery.proposedCommit);
+    assert.equal(
+      await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
+      recovery.proposedCommit
+    );
     assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), recovery.proposedCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "recovered.txt"), "utf8"), "recovered\n");
   } finally {
