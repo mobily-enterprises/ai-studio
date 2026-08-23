@@ -11,6 +11,9 @@ import {
   codexAppServerRuntimeDir
 } from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
+  createVibe64SessionStore
+} from "../../packages/vibe64-runtime/src/server/sessionStore.js";
+import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 
@@ -225,6 +228,254 @@ test("a changed session environment retires the previous provider for the same r
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(providers.length, 2);
     assert.equal(providers[0].closed, 1);
+    assert.equal(providers[1].closed, 0);
+  } finally {
+    await controller.closeAllForSession("session-1");
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("an active chat keeps its provider across environment changes until the next turn", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-active-provider-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = "test";
+  const projectContextRoot = path.join(temporaryRoot, "authority");
+  const projectRuntimeRoot = path.join(temporaryRoot, "runtime");
+  const sourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "session-1",
+    "source"
+  );
+  await Promise.all([
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true }),
+    mkdir(sourcePath, { recursive: true })
+  ]);
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot: path.join(temporaryRoot, "managed", "sessions")
+  });
+  await store.createSession({
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+    },
+    runtimeKind: "genesis",
+    sessionId: "session-1"
+  });
+
+  let environmentVersion = "one";
+  let nextTurn = 0;
+  const providers = [];
+  const runtime = {
+    async getSession(sessionId) {
+      return store.readSession(sessionId);
+    },
+    async renderPrompt(_sessionId, { request } = {}) {
+      return {
+        prompt: String(request || "Continue.")
+      };
+    },
+    stateRoot: projectRuntimeRoot,
+    store
+  };
+  const controller = createCodexTerminalController({
+    codexAppServerActiveReconcileMs: 60_000,
+    codexAppServerDaemonWellbeingMs: 60_000,
+    codexAppServerProviderFactory(options) {
+      const subscribers = new Set();
+      const providerNumber = providers.length + 1;
+      const provider = {
+        closed: 0,
+        options,
+        status: "idle",
+        steeredMessages: [],
+        threadId: "11111111-1111-4111-8111-111111111111",
+        turnId: "",
+        close() {
+          provider.closed += 1;
+        },
+        async ensureAvailable() {},
+        async ensureRuntime() {
+          return {
+            endpoint: `unix://${path.join(temporaryRoot, `provider-${providerNumber}.sock`)}`,
+            runtimeDir: path.join(temporaryRoot, `provider-${providerNumber}`),
+            socketPath: path.join(temporaryRoot, `provider-${providerNumber}.sock`),
+            transport: "unix"
+          };
+        },
+        async interruptTurn() {
+          provider.status = "interrupted";
+          return {
+            status: "interrupted"
+          };
+        },
+        isAvailable() {
+          return provider.closed === 0;
+        },
+        async listLoadedThreads() {
+          return {
+            data: [provider.threadId]
+          };
+        },
+        async readThread() {
+          return {
+            turns: provider.turnId ? [{
+              id: provider.turnId,
+              items: [{
+                id: `answer-${provider.turnId}`,
+                phase: "final_answer",
+                text: "The original turn completed safely.",
+                type: "agentMessage"
+              }],
+              status: provider.status
+            }] : []
+          };
+        },
+        async readThreadStatus() {
+          return {
+            status: provider.status,
+            turnId: provider.turnId
+          };
+        },
+        async resumeThread(threadId) {
+          provider.threadId = threadId;
+          return {
+            id: threadId
+          };
+        },
+        async sendTurn() {
+          nextTurn += 1;
+          provider.status = "inProgress";
+          provider.turnId = `turn-${nextTurn}`;
+          return {
+            id: provider.turnId,
+            raw: {
+              status: provider.status
+            }
+          };
+        },
+        async startThread() {
+          return {
+            id: provider.threadId
+          };
+        },
+        async steerTurn(threadId, turnId, message) {
+          provider.steeredMessages.push({
+            message,
+            threadId,
+            turnId
+          });
+          return {
+            id: turnId
+          };
+        },
+        async stopRuntime() {},
+        subscribe(callback) {
+          subscribers.add(callback);
+          return () => subscribers.delete(callback);
+        }
+      };
+      providers.push(provider);
+      return provider;
+    },
+    env: {
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return runtime;
+      },
+      createSessionStore() {
+        return store;
+      },
+      async projectExecutionEnvironment() {
+        return {
+          PROVIDER_OWNERSHIP_VERSION: environmentVersion,
+          VIBE64_RUNTIME_NAMESPACE: "test",
+          VIBE64_WORKSPACE: "test"
+        };
+      }
+    }
+  });
+
+  try {
+    const started = await controller.sendMessage("session-1", {
+      message: "Start the work.",
+      messageId: "message-1"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].options.terminalEnv.PROVIDER_OWNERSHIP_VERSION, "one");
+
+    environmentVersion = "two";
+    const ensured = await controller.ensureThread("session-1");
+    assert.equal(ensured.ok, true, JSON.stringify(ensured));
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].closed, 0);
+
+    const steered = await controller.sendMessage("session-1", {
+      message: "Use this additional detail.",
+      messageId: "message-2"
+    });
+    assert.equal(steered.ok, true, JSON.stringify(steered));
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].closed, 0);
+    assert.deepEqual(providers[0].steeredMessages, [{
+      message: "Use this additional detail.",
+      threadId: providers[0].threadId,
+      turnId: "turn-1"
+    }]);
+
+    const activeReconciliation = await controller.reconcileThreads([{
+      sessionId: "session-1"
+    }]);
+    assert.equal(activeReconciliation.ok, true, JSON.stringify(activeReconciliation));
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].closed, 0);
+
+    providers[0].status = "completed";
+    const completedReconciliation = await controller.reconcileThreads([{
+      sessionId: "session-1"
+    }]);
+    assert.equal(completedReconciliation.ok, true, JSON.stringify(completedReconciliation));
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].closed, 0);
+    const completedSession = await store.readSession("session-1");
+    assert.equal(completedSession.agentRuns.find(({ id }) => id === "codex_app_server")?.state, "completed");
+    assert.match(
+      JSON.stringify(await store.readConversationLog("session-1")),
+      /The original turn completed safely\./u
+    );
+
+    const restarted = await controller.sendMessage("session-1", {
+      message: "Start the next turn.",
+      messageId: "message-3"
+    });
+    assert.equal(restarted.ok, true, JSON.stringify(restarted));
+    assert.equal(providers.length, 2);
+    assert.equal(providers[0].closed, 1);
+    assert.equal(providers[1].closed, 0);
+    assert.equal(providers[1].options.terminalEnv.PROVIDER_OWNERSHIP_VERSION, "two");
+
+    environmentVersion = "three";
+    const interrupted = await controller.interruptTurn("session-1", {
+      controlRequestId: "interrupt-1"
+    });
+    assert.equal(interrupted.ok, true, JSON.stringify(interrupted));
+    assert.equal(providers.length, 2);
     assert.equal(providers[1].closed, 0);
   } finally {
     await controller.closeAllForSession("session-1");

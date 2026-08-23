@@ -1450,26 +1450,41 @@ function createCodexTerminalController({
     return provider?.isAvailable?.() === true;
   }
 
-  function availableManagedCodexAppServerProvider(sessionId = "", {
+  // Project Env is provider startup input. Once a turn is active, its managed
+  // provider remains authoritative through steering, recovery, and completion;
+  // an idle acquisition is the boundary that may adopt changed Env.
+  async function ensureCodexAppServerProviderForActiveTurn(session = {}, {
     executionRoot = "",
     workdir = ""
   } = {}) {
-    const normalizedSessionId = normalizeText(sessionId);
-    const normalizedExecutionRoot = normalizeText(executionRoot);
-    const normalizedWorkdir = normalizeText(workdir);
+    const normalizedSessionId = normalizeText(session.sessionId || session.id);
+    const turn = codexAppServerTurnState(session);
+    if (!normalizedSessionId || !turn.active || !turn.threadId) {
+      return null;
+    }
+    const normalizedExecutionRoot = normalizeText(executionRoot) || terminalSessionSourceRoot(session);
+    const normalizedWorkdir = normalizeText(workdir) || terminalWorktreePath(session);
     for (const [providerKey, managed] of codexAppServerManagedSessions.entries()) {
       const fields = codexAppServerProviderKeyFields(providerKey);
       if (
         fields.sessionId !== normalizedSessionId ||
         (normalizedExecutionRoot && fields.executionRoot !== normalizedExecutionRoot) ||
         (normalizedWorkdir && fields.workdir !== normalizedWorkdir) ||
-        normalizeText(managed?.sessionId) !== normalizedSessionId
+        normalizeText(managed?.sessionId) !== normalizedSessionId ||
+        normalizeText(managed?.threadId) !== turn.threadId
       ) {
         continue;
       }
       const provider = codexAppServerProviders.get(providerKey);
-      if (provider?.isAvailable?.() === true) {
-        return provider;
+      if (provider) {
+        return {
+          provider: await ensureCodexAppServerDaemonForSession(
+            normalizedSessionId,
+            managed.providerOptions
+          ),
+          providerKey,
+          providerOptions: managed.providerOptions
+        };
       }
     }
     return null;
@@ -2142,7 +2157,8 @@ function createCodexTerminalController({
     if (!sessionId || !trackedTurn.active || !trackedTurn.threadId || !sessionHasCodexAppServerRuntime(session)) {
       return session;
     }
-    const provider = await ensureCodexAppServerDaemonForSession(
+    const activeProvider = await ensureCodexAppServerProviderForActiveTurn(session);
+    const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
       sessionId,
       await codexAppServerRuntimeOptionsForSession(session, {
         runtime
@@ -2264,11 +2280,14 @@ function createCodexTerminalController({
     }
     const runtime = options.runtime || await createRuntimeForSession();
     const session = options.session || await runtime.getSession(sessionId);
-    const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
-      ...options,
-      runtime
-    });
-    const provider = await ensureCodexAppServerDaemonForSession(sessionId, providerOptions);
+    const activeProvider = await ensureCodexAppServerProviderForActiveTurn(session, options);
+    const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
+      sessionId,
+      await codexAppServerRuntimeOptionsForSession(session, {
+        ...options,
+        runtime
+      })
+    );
     return provider.ensureRuntime();
   }
 
@@ -4082,7 +4101,8 @@ function createCodexTerminalController({
       if (!sessionHasCodexAppServerRuntime(session)) {
         return [];
       }
-      const provider = await ensureCodexAppServerDaemonForSession(
+      const activeProvider = await ensureCodexAppServerProviderForActiveTurn(session);
+      const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
         normalizedSessionId,
         await codexAppServerRuntimeOptionsForSession(session, {
           runtime
@@ -6468,19 +6488,29 @@ function createCodexTerminalController({
         threadId: ""
       };
     }
-    const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
+    const activeProvider = await ensureCodexAppServerProviderForActiveTurn(session, {
+      executionRoot,
+      workdir
+    });
+    const providerOptions = activeProvider?.providerOptions || await codexAppServerRuntimeOptionsForSession(session, {
       runtime,
       executionRoot,
       toolHomeSource,
       workdir
     });
-    const providerKey = codexAppServerProviderKey(normalizedSessionId, providerOptions);
+    const providerKey = activeProvider?.providerKey || codexAppServerProviderKey(
+      normalizedSessionId,
+      providerOptions
+    );
     const existing = codexAppServerThreadReconciliations.get(providerKey);
     if (existing) {
       return existing;
     }
     const reconciliation = (async () => {
-      const provider = await ensureCodexAppServerDaemonForSession(normalizedSessionId, providerOptions);
+      const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
+        normalizedSessionId,
+        providerOptions
+      );
       try {
         const loadedThreadIds = await codexAppServerLoadedThreadIds(provider);
         if (loadedThreadIds?.has(threadId)) {
@@ -6634,24 +6664,34 @@ function createCodexTerminalController({
     try {
       const prepared = await withCodexSessionStartupGate({
         operation: async (currentSession) => {
-          const terminalEnv = await codexProjectTerminalEnv({
-            runtime,
-            session: currentSession,
-            sessionId
-          });
-          const providerOptions = await codexAppServerRuntimeOptionsForSession(currentSession, {
-            terminalEnv,
-            runtime,
-            executionRoot,
-            toolHomeSource,
-            workdir
-          });
           const health = await writeCodexAppServerRunning(runtime, sessionId, {
             kind: "app_server_started",
             message: "Preparing Codex app-server for this session."
           });
           healthAttempt = health.healthAttempt;
-          const provider = await ensureCodexAppServerDaemonForSession(sessionId, providerOptions);
+          const activeProvider = await ensureCodexAppServerProviderForActiveTurn(currentSession, {
+            executionRoot,
+            workdir
+          });
+          let providerOptions = activeProvider?.providerOptions;
+          if (!providerOptions) {
+            const terminalEnv = await codexProjectTerminalEnv({
+              runtime,
+              session: currentSession,
+              sessionId
+            });
+            providerOptions = await codexAppServerRuntimeOptionsForSession(currentSession, {
+              terminalEnv,
+              runtime,
+              executionRoot,
+              toolHomeSource,
+              workdir
+            });
+          }
+          const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
+            sessionId,
+            providerOptions
+          );
           const developerInstructions = codexAppServerDeveloperInstructions(currentSession);
           const thread = await ensureCodexAppServerThreadForSession({
             agentSettings,
@@ -7072,7 +7112,11 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
-    const provider = await ensureCodexAppServerDaemonForSession(
+    const activeProvider = await ensureCodexAppServerProviderForActiveTurn(session, {
+      executionRoot,
+      workdir
+    });
+    const provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
       sessionId,
       await codexAppServerRuntimeOptionsForSession(session, {
         runtime,
@@ -8029,7 +8073,11 @@ function createCodexTerminalController({
     let provider = null;
     let providerPreflight = null;
     if (currentTurn.active && threadId) {
-      provider = await ensureCodexAppServerDaemonForSession(
+      const activeProvider = await ensureCodexAppServerProviderForActiveTurn(currentSession, {
+        executionRoot,
+        workdir
+      });
+      provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
         sessionId,
         await codexAppServerRuntimeOptionsForSession(currentSession, {
           runtime,
@@ -8140,7 +8188,11 @@ function createCodexTerminalController({
         }, currentSession);
       }
       if (!provider) {
-        provider = await ensureCodexAppServerDaemonForSession(
+        const activeProvider = await ensureCodexAppServerProviderForActiveTurn(currentSession, {
+          executionRoot,
+          workdir
+        });
+        provider = activeProvider?.provider || await ensureCodexAppServerDaemonForSession(
           sessionId,
           await codexAppServerRuntimeOptionsForSession(currentSession, {
             runtime,
@@ -8414,18 +8466,12 @@ function createCodexTerminalController({
         reason: "thread_missing"
       });
     }
-    const ownershipMatchesTrackedTurn = Boolean(
-      turnOwnership &&
-      normalizeText(turnOwnership.threadId) === threadId &&
-      normalizeText(turnOwnership.turnId) === normalizeText(turn.turnId)
-    );
-    let provider = ownershipMatchesTrackedTurn
-      ? availableManagedCodexAppServerProvider(sessionId, {
-          executionRoot,
-          workdir
-        })
-      : null;
-    if (provider) {
+    const activeProvider = await ensureCodexAppServerProviderForActiveTurn(currentSession, {
+      executionRoot,
+      workdir
+    });
+    let provider = activeProvider?.provider || null;
+    if (activeProvider) {
       vibe64SessionDebugLog("server.codexTerminal.appServerMessage.providerReused", {
         messageId,
         sessionId,
