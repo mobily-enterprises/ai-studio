@@ -41,7 +41,6 @@ const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "base_commit",
   "canonical_commit",
   "branch",
-  "main_checkout_root",
   "source_default_branch",
   "source_kind",
   "source_path",
@@ -97,6 +96,7 @@ const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "source_removed"
 ]);
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
+const RETIRED_MAIN_CHECKOUT_ROOT_METADATA = "main_checkout_root";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const BACKGROUND_TASK_STATUS = Object.freeze({
   FAILED: "failed",
@@ -122,6 +122,25 @@ const TERMINAL_AGENT_RUN_STATES = new Set([
   VIBE64_AGENT_RUN_STATE.INTERRUPTED,
   VIBE64_AGENT_RUN_STATE.TIMED_OUT
 ]);
+
+function assertSessionMetadataSupported(metadata = {}, sessionId = "") {
+  if (isPlainObject(metadata) && Object.hasOwn(metadata, RETIRED_MAIN_CHECKOUT_ROOT_METADATA)) {
+    throw vibe64Error(
+      `Session ${normalizeText(sessionId) || "(unknown)"} contains retired main_checkout_root metadata. Correct this stored record explicitly before opening it.`,
+      "vibe64_session_main_checkout_root_unsupported"
+    );
+  }
+  return metadata;
+}
+
+function assertSessionMetadataNameWritable(name = "") {
+  if (normalizeText(name) === RETIRED_MAIN_CHECKOUT_ROOT_METADATA) {
+    throw vibe64Error(
+      "main_checkout_root is retired session metadata and cannot be written.",
+      "vibe64_session_main_checkout_root_retired"
+    );
+  }
+}
 const ACTIVE_AGENT_RUN_STATES = new Set([
   VIBE64_AGENT_RUN_STATE.ACTIVE,
   VIBE64_AGENT_RUN_STATE.FINALIZING,
@@ -611,11 +630,11 @@ function sessionPathsFromRoot({
   closingSessionsRoot = "",
   closedSessionsRoot = "",
   currentSessionAliasPath = "",
+  projectContextRoot = "",
   sessionId = "",
   sessionRoot = "",
   sessionsRoot = "",
-  stateRoot = "",
-  targetRoot = ""
+  stateRoot = ""
 } = {}) {
   return {
     activeSessionsRoot,
@@ -628,25 +647,25 @@ function sessionPathsFromRoot({
     currentSessionAliasPath,
     manifestPath: sessionRoot ? path.join(sessionRoot, "session.json") : "",
     metadataRoot: sessionRoot ? path.join(sessionRoot, "metadata") : "",
+    projectContextRoot,
     sessionId,
     sessionRoot,
     sessionsRoot,
     stateRoot,
-    statusPath: sessionRoot ? path.join(sessionRoot, "status") : "",
-    targetRoot
+    statusPath: sessionRoot ? path.join(sessionRoot, "status") : ""
   };
 }
 
 function resolveVibe64SessionPaths({
+  projectContextRoot = process.cwd(),
+  projectRuntimeRoot = "",
   projectSessionSourceRoot = "",
-  sessionId = "",
-  stateRoot = "",
-  targetRoot = process.cwd()
+  sessionId = ""
 } = {}) {
-  const normalizedTargetRoot = normalizeTargetRoot(targetRoot);
-  const resolvedStateRoot = stateRoot ? path.resolve(stateRoot) : "";
+  const normalizedProjectContextRoot = normalizeTargetRoot(projectContextRoot);
+  const resolvedStateRoot = projectRuntimeRoot ? path.resolve(projectRuntimeRoot) : "";
   if (!resolvedStateRoot) {
-    throw vibe64Error("Vibe64 session paths require projectLocalRoot.", "vibe64_project_local_root_required");
+    throw vibe64Error("Vibe64 session paths require projectRuntimeRoot.", "vibe64_project_runtime_root_required");
   }
   const sessionsRoot = path.join(resolvedStateRoot, "sessions");
   const sourceSessionsRoot = projectSessionSourceRoot
@@ -664,11 +683,11 @@ function resolveVibe64SessionPaths({
     currentSessionAliasPath: sourceSessionsRoot
       ? resolveVibe64CurrentSessionAliasPath(sourceSessionsRoot)
       : "",
+    projectContextRoot: normalizedProjectContextRoot,
     sessionId: normalizedSessionId,
     sessionRoot,
     sessionsRoot,
-    stateRoot: resolvedStateRoot,
-    targetRoot: normalizedTargetRoot
+    stateRoot: resolvedStateRoot
   });
 }
 
@@ -818,25 +837,24 @@ function conversationTurnHasMessages(turn = {}) {
 
 function createVibe64SessionStore({
   clock = undefined,
-  projectLocalRoot = "",
-  projectSessionSourceRoot = "",
-  stateRoot = "",
-  targetRoot = process.cwd()
+  projectContextRoot = process.cwd(),
+  projectRuntimeRoot = "",
+  projectSessionSourceRoot = ""
 } = {}) {
-  const normalizedTargetRoot = normalizeTargetRoot(targetRoot);
-  const resolvedProjectLocalRoot = String(projectLocalRoot || stateRoot || "").trim();
-  if (!resolvedProjectLocalRoot) {
-    throw vibe64Error("Vibe64 session store requires projectLocalRoot.", "vibe64_project_local_root_required");
+  const normalizedProjectContextRoot = normalizeTargetRoot(projectContextRoot);
+  const resolvedProjectRuntimeRoot = String(projectRuntimeRoot || "").trim();
+  if (!resolvedProjectRuntimeRoot) {
+    throw vibe64Error("Vibe64 session store requires projectRuntimeRoot.", "vibe64_project_runtime_root_required");
   }
-  const normalizedStateRoot = path.resolve(resolvedProjectLocalRoot);
+  const normalizedStateRoot = path.resolve(resolvedProjectRuntimeRoot);
   const now = createClockNow(clock);
 
   function paths(sessionId = "") {
     return resolveVibe64SessionPaths({
+      projectContextRoot: normalizedProjectContextRoot,
+      projectRuntimeRoot: normalizedStateRoot,
       projectSessionSourceRoot,
-      sessionId,
-      stateRoot: normalizedStateRoot,
-      targetRoot: normalizedTargetRoot
+      sessionId
     });
   }
 
@@ -847,11 +865,11 @@ function createVibe64SessionStore({
       closingSessionsRoot: rootPaths.closingSessionsRoot,
       closedSessionsRoot: rootPaths.closedSessionsRoot,
       currentSessionAliasPath: rootPaths.currentSessionAliasPath,
+      projectContextRoot: rootPaths.projectContextRoot,
       sessionId: assertValidVibe64SessionId(sessionId),
       sessionRoot,
       sessionsRoot: rootPaths.sessionsRoot,
-      stateRoot: rootPaths.stateRoot,
-      targetRoot: rootPaths.targetRoot
+      stateRoot: rootPaths.stateRoot
     });
   }
 
@@ -1000,15 +1018,20 @@ function createVibe64SessionStore({
       sessionName: normalizeText(summary.sessionName),
       sessionRoot: "",
       status: assertVibe64SessionStatus(status || summary.status),
-      targetRoot: normalizeText(summary.targetRoot),
       updatedAt
     };
   }
 
   function closedArchiveSummary(record = {}) {
     const index = isPlainObject(record.index) ? record.index : {};
+    assertSessionMetadataSupported(index.metadata, record.sessionId);
     return {
-      ...index,
+      createdAt: normalizeText(index.createdAt),
+      manifest: isPlainObject(index.manifest) ? index.manifest : {},
+      metadata: isPlainObject(index.metadata) ? index.metadata : {},
+      revision: revisionNumber(index.revision),
+      sessionName: normalizeText(index.sessionName),
+      updatedAt: normalizeText(index.updatedAt),
       archiveMetadataPath: record.metadataPath,
       archivePath: record.archivePath,
       archiveStatus: record.status,
@@ -1054,6 +1077,7 @@ function createVibe64SessionStore({
   }
 
   async function withExtractedClosedArchive(record, operation) {
+    assertSessionMetadataSupported(record?.index?.metadata, record?.sessionId);
     const extractionRoot = path.join(paths().sessionsRoot, ".archive-read", `${record.sessionId}-${randomUUID()}`);
     const extractedSessionRoot = path.join(extractionRoot, record.sessionId);
     try {
@@ -1268,6 +1292,7 @@ function createVibe64SessionStore({
   }
 
   async function writeMetadataValue(sessionId, name, value) {
+    assertSessionMetadataNameWritable(name);
     return mutateSession(sessionId, async (sessionPaths) => {
       await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
     });
@@ -1335,9 +1360,9 @@ function createVibe64SessionStore({
       );
       return {
         metadata: Object.fromEntries(metadataEntries),
+        projectContextRoot: sessionPaths.projectContextRoot,
         sessionId: sessionPaths.sessionId,
-        sessionRoot: sessionPaths.sessionRoot,
-        targetRoot: sessionPaths.targetRoot
+        sessionRoot: sessionPaths.sessionRoot
       };
     });
   }
@@ -1939,6 +1964,7 @@ function createVibe64SessionStore({
       readAgentRunsFromPaths(sessionPaths),
       readBackgroundTasksFromPaths(sessionPaths)
     ]);
+    assertSessionMetadataSupported(metadata, sessionPaths.sessionId);
     const archived = Boolean(archiveRecord);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
     return {
@@ -1951,13 +1977,13 @@ function createVibe64SessionStore({
       manifest,
       metadata,
       metadataRoot: archived ? "" : sessionPaths.metadataRoot,
+      projectContextRoot: sessionPaths.projectContextRoot,
       revision: revisionNumber(manifest.revision),
       sessionId: sessionPaths.sessionId,
       sessionName,
       sessionRoot: archived ? "" : sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
       status,
-      targetRoot: sessionPaths.targetRoot,
       updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt),
       ...(archived
         ? {
@@ -1997,6 +2023,7 @@ function createVibe64SessionStore({
       readStatusFromPaths(sessionPaths),
       readMetadataFromPaths(sessionPaths)
     ]);
+    assertSessionMetadataSupported(metadata, sessionPaths.sessionId);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
     return {
       createdAt: normalizeText(manifest.createdAt),
@@ -2007,13 +2034,13 @@ function createVibe64SessionStore({
         updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
       },
       metadata,
+      projectContextRoot: sessionPaths.projectContextRoot,
       revision: revisionNumber(manifest.revision),
       sessionId: sessionPaths.sessionId,
       sessionName,
       sessionRoot: sessionPaths.sessionRoot,
       stateRoot: sessionPaths.stateRoot,
       status,
-      targetRoot: sessionPaths.targetRoot,
       updatedAt: normalizeText(manifest.updatedAt || manifest.createdAt)
     };
   }
@@ -2393,7 +2420,6 @@ function createVibe64SessionStore({
       revision: 1,
       schemaVersion: VIBE64_SESSION_SCHEMA_VERSION,
       sessionId: resolvedSessionId,
-      targetRoot: sessionPaths.targetRoot,
       updatedAt: createdAt
     };
     await Promise.all([

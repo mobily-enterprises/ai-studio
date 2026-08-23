@@ -50,9 +50,9 @@ test("managed blank projects begin as one canonical Genesis commit without a nam
   ]);
 
   const initialized = await initializeManagedGenesisProject({
+    projectContextRoot: namespaceRoot,
     projectRuntimeRoot,
-    runCommand: directCommand,
-    targetRoot: namespaceRoot
+    runCommand: directCommand
   });
   const canonicalCommit = (await execFileAsync("git", [
     "--git-dir", initialized.repositoryPath, "rev-parse", "refs/heads/main"
@@ -123,9 +123,9 @@ test("managed Genesis initialization removes its temporary checkout after every 
             throw new Error("simulated Genesis failure");
           }
         } : {}),
+        projectContextRoot: namespaceRoot,
         projectRuntimeRoot,
         runCommand,
-        targetRoot: namespaceRoot
       }),
       undefined,
       stage

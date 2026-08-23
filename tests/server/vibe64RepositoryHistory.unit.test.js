@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -50,9 +50,9 @@ async function commandRunner(request = {}) {
 
 function localProject(root) {
   return {
-    path: root,
     repository: { defaultBranch: "main", mode: "local_source" },
-    repositoryMode: "local_source"
+    repositoryMode: "local_source",
+    sourceRoot: root
   };
 }
 
@@ -68,8 +68,53 @@ test("a session without a source never falls through to a project repository cac
   }), (error) => error.code === "vibe64_repository_history_session_source_missing");
 });
 
+test("hosted history uses repository storage and never the hosted namespace", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-hosted-history-"));
+  const hostedNamespace = path.join(root, "namespace");
+  const repositoryStorageRoot = path.join(root, "runtime", "github-mirror");
+  const repositoryPath = path.join(repositoryStorageRoot, "repository.git");
+  try {
+    await mkdir(path.join(hostedNamespace, ".git"), { recursive: true });
+    await writeFile(path.join(hostedNamespace, ".git", "HOSTILE"), "untouched\n", "utf8");
+    await mkdir(repositoryStorageRoot, { recursive: true });
+    await git(repositoryStorageRoot, ["init", "--bare", repositoryPath]);
+
+    const requests = [];
+    const context = repositoryReadContext({
+      githubMirrorPath: repositoryPath,
+      path: hostedNamespace,
+      projectRoot: hostedNamespace,
+      repository: { defaultBranch: "main", mode: "github" },
+      repositoryMode: "github"
+    });
+    assert.equal(context.cwd, repositoryStorageRoot);
+    assert.equal(context.executionRoot, repositoryStorageRoot);
+
+    await assert.rejects(inspectRepositoryHistory({
+      project: {
+        githubMirrorPath: repositoryPath,
+        path: hostedNamespace,
+        projectRoot: hostedNamespace,
+        repository: { defaultBranch: "main", mode: "github" },
+        repositoryMode: "github"
+      },
+      runCommand: async (request) => {
+        requests.push(request);
+        return { ok: false, stderr: "missing branch" };
+      }
+    }));
+    assert.ok(requests.length > 0);
+    assert.ok(requests.every((request) => request.cwd !== hostedNamespace));
+    assert.ok(requests.every((request) => !request.allowedRoots.includes(hostedNamespace)));
+    assert.equal(await readFile(path.join(hostedNamespace, ".git", "HOSTILE"), "utf8"), "untouched\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("version history pins pagination and exposes bounded per-version files and diffs", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-history-"));
+  const managedSourceRoot = `${root}-managed-sources`;
   try {
     await git(root, ["init", "--initial-branch=main"]);
     await writeFile(path.join(root, "first.txt"), "first\n", "utf8");
@@ -80,6 +125,9 @@ test("version history pins pagination and exposes bounded per-version files and 
     await git(root, ["add", "second.txt"]);
     await git(root, ["commit", "-m", "<script>not markup</script>"]);
     const secondCommit = await git(root, ["rev-parse", "HEAD"]);
+    const sessionSourceRoot = path.join(managedSourceRoot, "sessions", "active", "session-1", "source");
+    await mkdir(path.dirname(sessionSourceRoot), { recursive: true });
+    await git(path.dirname(sessionSourceRoot), ["clone", root, sessionSourceRoot]);
 
     const firstPage = await inspectRepositoryHistory({
       limit: 1,
@@ -103,10 +151,15 @@ test("version history pins pagination and exposes bounded per-version files and 
           base_branch: "main",
           base_commit: rootCommit,
           canonical_commit: secondCommit,
-          source_path: root
+          repository_mode: "local_source",
+          source_kind: "session_clone",
+          source_path: sessionSourceRoot,
+          source_path_authority: "managed_session_source"
         },
+        projectContextRoot: root,
         sessionId: "session-1",
-        sourcePath: root
+        sessionRoot: path.join(path.dirname(root), "runtime", "session-1"),
+        sourcePath: sessionSourceRoot
       }
     });
     assert.equal(sessionHistory.historySnapshotCommit, secondCommit);
@@ -163,6 +216,9 @@ test("version history pins pagination and exposes bounded per-version files and 
       runCommand: commandRunner
     }), (error) => error.code === "vibe64_repository_history_snapshot_invalid");
   } finally {
-    await rm(root, { force: true, recursive: true });
+    await Promise.all([
+      rm(root, { force: true, recursive: true }),
+      rm(managedSourceRoot, { force: true, recursive: true })
+    ]);
   }
 });

@@ -80,12 +80,7 @@ function vibe64SessionInfoFacts(session = null, project = {}) {
   const sessionId = text(session.sessionId);
   const sessionRoot = text(session.sessionRoot);
   const sourcePath = text(session.sourcePath || session.source || metadata.source_path);
-  const projectSource = text(
-    metadata.main_checkout_root ||
-    project.sourceRoot ||
-    project.projectRoot ||
-    project.path
-  );
+  const projectSource = text(project.sourceRoot);
   const branch = text(metadata.branch || session.branch);
   const baseBranch = text(metadata.base_branch || metadata.source_default_branch);
   const baseCommit = text(metadata.base_commit);

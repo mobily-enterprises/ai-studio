@@ -183,7 +183,7 @@ function resolveVibe64SourceContractRoot(targetRoot = process.cwd()) {
   return normalizeRoot(targetRoot, process.cwd());
 }
 
-function resolveVibe64ProjectLocalRoot(targetRoot = process.cwd(), {
+function resolveVibe64ProjectRuntimeRoot(targetRoot = process.cwd(), {
   systemRoot = "",
   home = os.homedir()
 } = {}) {
@@ -232,8 +232,8 @@ function resolveVibe64Roots({
   });
   return Object.freeze({
     managedSourceRoot,
-    projectLocalRoot: resolvedTargetRoot
-      ? resolveVibe64ProjectLocalRoot(resolvedTargetRoot, {
+    projectRuntimeRoot: resolvedTargetRoot
+      ? resolveVibe64ProjectRuntimeRoot(resolvedTargetRoot, {
           home,
           systemRoot
         })
@@ -260,7 +260,7 @@ export {
   resolveDefaultManagedSourceRoot,
   resolveExplicitStudioTargetRoot,
   resolveVibe64ManagedSourceRoot,
-  resolveVibe64ProjectLocalRoot,
+  resolveVibe64ProjectRuntimeRoot,
   resolveVibe64SourceContractRoot,
   resolveVibe64Roots,
   resolveVibe64ServiceDataRoot,

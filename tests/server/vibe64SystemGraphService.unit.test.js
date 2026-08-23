@@ -9,6 +9,9 @@ import {
   GENESIS_PROGRAM_CITY_PATH
 } from "../../packages/vibe64-genesis/src/server/index.js";
 import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
   readGenesisCity
 } from "../../packages/vibe64-system-graph/src/server/genesisCities.js";
 import {
@@ -108,9 +111,12 @@ function projectServiceFor(root) {
       return {
         async getSession(sessionId) {
           return {
+            metadata: {
+              source_kind: "session_clone",
+              source_path: root,
+              source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+            },
             sessionId,
-            sourcePath: root,
-            targetRoot: root
           };
         }
       };
@@ -134,11 +140,13 @@ async function writeCities(root, {
 }
 
 async function withTempRoot(operation) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-city-"));
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-city-"));
+  const root = path.join(temporaryRoot, "sessions", "active", "session-1", "source");
   try {
+    await mkdir(root, { recursive: true });
     await operation(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 

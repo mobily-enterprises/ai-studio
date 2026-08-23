@@ -179,9 +179,8 @@ function resolveProjectTemplate(templateId = "", templates = PROJECT_TEMPLATES) 
   return template;
 }
 
-function projectRepositoryMode(project = {}, sourceRoot = "") {
-  return normalizeRepositoryMode(project.repositoryMode || project.repository?.mode) ||
-    (sourceRoot ? PROJECT_REPOSITORY_MODE_LOCAL_SOURCE : "");
+function projectRepositoryMode(project = {}) {
+  return normalizeRepositoryMode(project.repositoryMode || project.repository?.mode);
 }
 
 function projectDefaultBranch(project = {}) {
@@ -208,13 +207,13 @@ function projectGithubCloneUrl(project = {}) {
 function projectRepositoryStoragePath({
   code = "vibe64_project_repository_storage_path_invalid",
   explicitPath = "",
-  resolvePath,
-  targetRoot = ""
+  projectRuntimeRoot = "",
+  resolvePath
 } = {}) {
   const configuredPath = normalizeText(explicitPath);
-  const expectedPath = targetRoot && typeof resolvePath === "function"
+  const expectedPath = projectRuntimeRoot && typeof resolvePath === "function"
     ? resolvePath({
-        projectRoot: targetRoot
+        projectRuntimeRoot
       })
     : "";
   if (
@@ -235,21 +234,21 @@ function projectRepositoryStoragePath({
   return configuredPath || expectedPath;
 }
 
-function projectCanonicalRepositoryPath(project = {}, targetRoot = "") {
+function projectCanonicalRepositoryPath(project = {}, projectRuntimeRoot = "") {
   return projectRepositoryStoragePath({
     code: "vibe64_project_canonical_repository_path_invalid",
     explicitPath: project.canonicalRepositoryPath,
-    resolvePath: resolveProjectCanonicalRepositoryPath,
-    targetRoot: project.projectRuntimeRoot || targetRoot
+    projectRuntimeRoot: project.projectRuntimeRoot || projectRuntimeRoot,
+    resolvePath: resolveProjectCanonicalRepositoryPath
   });
 }
 
-function projectGithubMirrorPath(project = {}, targetRoot = "") {
+function projectGithubMirrorPath(project = {}, projectRuntimeRoot = "") {
   return projectRepositoryStoragePath({
     code: "vibe64_project_github_mirror_path_invalid",
     explicitPath: project.githubMirrorPath,
-    resolvePath: resolveProjectGithubMirrorPath,
-    targetRoot: project.projectRuntimeRoot || targetRoot
+    projectRuntimeRoot: project.projectRuntimeRoot || projectRuntimeRoot,
+    resolvePath: resolveProjectGithubMirrorPath
   });
 }
 
@@ -425,16 +424,16 @@ async function localSourceEligibility({
 
 async function canonicalGitEligibility({
   project,
-  runCommand,
-  targetRoot
+  projectRuntimeRoot,
+  runCommand
 } = {}) {
-  const repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
+  const repositoryPath = projectCanonicalRepositoryPath(project, projectRuntimeRoot);
   if (!repositoryPath || !await pathIsDirectory(repositoryPath)) {
     return eligibility(true);
   }
   const refs = await runGit(["--git-dir", repositoryPath, "for-each-ref", "--format=%(refname)"], {
-    allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
-    cwd: targetRoot,
+    allowedRoots: [projectRuntimeRoot, path.dirname(repositoryPath), repositoryPath],
+    cwd: projectRuntimeRoot,
     runCommand
   });
   return refs
@@ -444,8 +443,8 @@ async function canonicalGitEligibility({
 
 async function remoteGithubRefs(project = {}, input = {}, {
   env = process.env,
-  runCommand = runVibe64Command,
-  targetRoot = ""
+  projectRuntimeRoot = "",
+  runCommand = runVibe64Command
 } = {}) {
   const cloneUrl = projectGithubCloneUrl(project);
   if (!cloneUrl) {
@@ -458,8 +457,8 @@ async function remoteGithubRefs(project = {}, input = {}, {
     ...githubCommandOptions(input, {
       env
     }),
-    allowedRoots: [targetRoot],
-    cwd: targetRoot,
+    allowedRoots: [projectRuntimeRoot],
+    cwd: projectRuntimeRoot,
     runCommand
   });
 }
@@ -471,21 +470,26 @@ async function projectTemplateEligibility({
   project = null,
   projectRuntimeRoot = "",
   runCommand = runVibe64Command,
-  sourceRoot = "",
-  targetRoot = ""
+  sourceRoot = ""
 } = {}) {
-  if (!project || !targetRoot) {
+  if (!project) {
+    return eligibility(false, "vibe64_project_not_selected", "Choose a project before selecting a template.");
+  }
+  const mode = projectRepositoryMode(project);
+  const repositoryContextRoot = mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+    ? sourceRoot
+    : projectRuntimeRoot;
+  if (!repositoryContextRoot) {
     return eligibility(false, "vibe64_project_not_selected", "Choose a project before selecting a template.");
   }
   if (await activeProjectSessionExists(projectRuntimeRoot)) {
     return eligibility(false, "vibe64_project_template_active_sessions", "This project already has an active session.");
   }
 
-  const mode = projectRepositoryMode(project, sourceRoot);
   if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
     return localSourceEligibility({
       runCommand,
-      sourceRoot: sourceRoot || targetRoot
+      sourceRoot
     });
   }
   if (mode !== PROJECT_REPOSITORY_MODE_MANAGED_GIT && mode !== PROJECT_REPOSITORY_MODE_GITHUB) {
@@ -495,8 +499,8 @@ async function projectTemplateEligibility({
   if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
     return canonicalGitEligibility({
       project,
-      runCommand,
-      targetRoot
+      projectRuntimeRoot,
+      runCommand
     });
   }
 
@@ -505,8 +509,8 @@ async function projectTemplateEligibility({
   }
   const refs = await remoteGithubRefs(project, input, {
     env,
-    runCommand,
-    targetRoot
+    projectRuntimeRoot,
+    runCommand
   });
   return refs
     ? eligibility(false, "vibe64_project_template_destination_not_empty", "This GitHub repository already contains source.")
@@ -744,8 +748,8 @@ async function materializeLocalSource({
 }
 
 async function ensureCanonicalRepository(repositoryPath = "", branch = "main", {
-  runCommand,
-  targetRoot
+  projectRuntimeRoot,
+  runCommand
 } = {}) {
   const repositoryRoot = path.dirname(repositoryPath);
   await mkdir(repositoryRoot, {
@@ -755,7 +759,7 @@ async function ensureCanonicalRepository(repositoryPath = "", branch = "main", {
     defaultBranch: branch,
     repositoryPath
   }), {
-    allowedRoots: [targetRoot, repositoryRoot, repositoryPath],
+    allowedRoots: [projectRuntimeRoot, repositoryRoot, repositoryPath],
     cwd: repositoryRoot,
     runCommand
   });
@@ -764,15 +768,15 @@ async function ensureCanonicalRepository(repositoryPath = "", branch = "main", {
 async function materializeCanonicalGit({
   branch,
   project,
+  projectRuntimeRoot,
   runCommand,
   sourceRepositoryPath,
-  targetRoot,
   temporaryRoot
 } = {}) {
-  const repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
+  const repositoryPath = projectCanonicalRepositoryPath(project, projectRuntimeRoot);
   await ensureCanonicalRepository(repositoryPath, branch, {
-    runCommand,
-    targetRoot
+    projectRuntimeRoot,
+    runCommand
   });
   await runShell(canonicalRepositoryInstallRefScript({
     repositoryPath,
@@ -780,8 +784,8 @@ async function materializeCanonicalGit({
     sourceRepository: sourceRepositoryPath,
     targetRef: `refs/heads/${branch}`
   }), {
-    allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath, temporaryRoot, sourceRepositoryPath],
-    cwd: targetRoot,
+    allowedRoots: [projectRuntimeRoot, path.dirname(repositoryPath), repositoryPath, temporaryRoot, sourceRepositoryPath],
+    cwd: projectRuntimeRoot,
     runCommand
   });
 }
@@ -792,9 +796,9 @@ async function pushGithubDestination({
   env,
   input,
   project,
+  projectRuntimeRoot,
   repositoryPath,
-  runCommand,
-  targetRoot
+  runCommand
 } = {}) {
   const cloneUrl = projectGithubCloneUrl(project);
   const githubOptions = githubCommandOptions(input, {
@@ -810,15 +814,15 @@ async function pushGithubDestination({
       `${PROJECT_TEMPLATE_MATERIALIZED_REF}:refs/heads/${branch}`
     ], {
       ...githubOptions,
-      allowedRoots: [targetRoot, path.dirname(repositoryPath), repositoryPath],
-      cwd: targetRoot,
+      allowedRoots: [projectRuntimeRoot, path.dirname(repositoryPath), repositoryPath],
+      cwd: path.dirname(repositoryPath),
       runCommand
     });
   } catch (error) {
     const remoteRef = await gitOutputOrEmpty(["ls-remote", "--heads", cloneUrl, `refs/heads/${branch}`], {
       ...githubOptions,
-      allowedRoots: [targetRoot],
-      cwd: targetRoot,
+      allowedRoots: [projectRuntimeRoot],
+      cwd: projectRuntimeRoot,
       runCommand
     });
     const remoteCommit = normalizeText(remoteRef.split(/\s+/u)[0]);
@@ -832,11 +836,11 @@ async function refreshGithubMirror({
   env,
   input,
   project,
-  runCommand,
-  targetRoot
+  projectRuntimeRoot,
+  runCommand
 } = {}) {
   const cloneUrl = projectGithubCloneUrl(project);
-  const mirrorPath = projectGithubMirrorPath(project, targetRoot);
+  const mirrorPath = projectGithubMirrorPath(project, projectRuntimeRoot);
   if (!cloneUrl || !mirrorPath) {
     return false;
   }
@@ -849,8 +853,8 @@ async function refreshGithubMirror({
       ...githubCommandOptions(input, {
         env
       }),
-      allowedRoots: [targetRoot, path.dirname(mirrorPath), mirrorPath],
-      cwd: targetRoot,
+      allowedRoots: [projectRuntimeRoot, path.dirname(mirrorPath), mirrorPath],
+      cwd: projectRuntimeRoot,
       runCommand
     });
     return true;
@@ -866,23 +870,27 @@ async function verifyMaterializedCommit({
   input,
   mode,
   project,
+  projectRuntimeRoot,
   runCommand,
   sourceRepositoryPath,
-  sourceRoot,
-  targetRoot
+  sourceRoot
 } = {}) {
   let repositoryPath = "";
   let verifiedRef = `refs/heads/${branch}`;
   if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
-    repositoryPath = projectCanonicalRepositoryPath(project, targetRoot);
+    repositoryPath = projectCanonicalRepositoryPath(project, projectRuntimeRoot);
   } else if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
     repositoryPath = sourceRepositoryPath;
     verifiedRef = PROJECT_TEMPLATE_MATERIALIZED_REF;
   }
   const gitPrefix = repositoryPath ? ["--git-dir", repositoryPath] : [];
-  const cwd = repositoryPath ? targetRoot : sourceRoot;
+  const cwd = repositoryPath
+    ? (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT
+        ? projectRuntimeRoot
+        : path.dirname(repositoryPath))
+    : sourceRoot;
   const allowedRoots = repositoryPath
-    ? [targetRoot, path.dirname(repositoryPath), repositoryPath]
+    ? [projectRuntimeRoot, path.dirname(repositoryPath), repositoryPath]
     : [sourceRoot];
   const [count, parents] = await Promise.all([
     runGit([...gitPrefix, "rev-list", "--count", verifiedRef], {
@@ -905,8 +913,8 @@ async function verifyMaterializedCommit({
   if (mode === PROJECT_REPOSITORY_MODE_GITHUB) {
     const refs = await remoteGithubRefs(project, input, {
       env,
-      runCommand,
-      targetRoot
+      projectRuntimeRoot,
+      runCommand
     });
     const remoteCommit = normalizeText(refs
       .split(/\r?\n/u)
@@ -921,8 +929,22 @@ async function verifyMaterializedCommit({
   }
 }
 
-async function createTemporaryRoot(projectRuntimeRoot = "", targetRoot = "") {
-  const runtimeRoot = projectRuntimeRoot || path.join(targetRoot, ".vibe64-local");
+async function createTemporaryRoot({
+  mode = "",
+  projectRuntimeRoot = "",
+  sourceRoot = ""
+} = {}) {
+  const runtimeRoot = projectRuntimeRoot || (
+    mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE && sourceRoot
+      ? path.join(sourceRoot, ".vibe64-local")
+      : ""
+  );
+  if (!runtimeRoot) {
+    throw templateError(
+      "vibe64_project_template_runtime_root_missing",
+      "Project template materialization requires an explicit runtime state root."
+    );
+  }
   const temporaryParent = path.join(runtimeRoot, "tmp");
   await mkdir(temporaryParent, {
     recursive: true
@@ -959,14 +981,22 @@ async function applyProjectTemplate({
   projectRuntimeRoot = "",
   runCommand = runVibe64Command,
   sourceRoot = "",
-  targetRoot = "",
   templateId = "",
   templates = PROJECT_TEMPLATES
 } = {}) {
   const template = resolveProjectTemplate(templateId, templates);
-  const lockKey = path.resolve(targetRoot || sourceRoot || projectRuntimeRoot);
+  const mode = projectRepositoryMode(project);
+  const lockRoot = projectRuntimeRoot || (
+    mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE ? sourceRoot : ""
+  );
+  if (!lockRoot) {
+    throw templateError(
+      "vibe64_project_template_context_missing",
+      "Project template materialization requires an explicit repository context."
+    );
+  }
+  const lockKey = path.resolve(lockRoot);
   return withProjectTemplateLock(lockKey, async () => {
-    const mode = projectRepositoryMode(project, sourceRoot);
     const branch = projectDefaultBranch(project);
     const currentEligibility = await projectTemplateEligibility({
       checkGithubRemote: true,
@@ -975,8 +1005,7 @@ async function applyProjectTemplate({
       project,
       projectRuntimeRoot,
       runCommand,
-      sourceRoot,
-      targetRoot
+      sourceRoot
     });
     if (!currentEligibility.eligible) {
       throw templateError(
@@ -988,7 +1017,11 @@ async function applyProjectTemplate({
       );
     }
 
-    const temporaryRoot = await createTemporaryRoot(projectRuntimeRoot, targetRoot);
+    const temporaryRoot = await createTemporaryRoot({
+      mode,
+      projectRuntimeRoot,
+      sourceRoot
+    });
     try {
       const sourceRepositoryPath = await createTemplateSourceRepository(template, {
         runCommand,
@@ -1024,16 +1057,16 @@ async function applyProjectTemplate({
           commit,
           runCommand,
           sourceRepositoryPath,
-          sourceRoot: sourceRoot || targetRoot,
+          sourceRoot,
           temporaryRoot
         });
       } else if (mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
         await materializeCanonicalGit({
           branch,
           project,
+          projectRuntimeRoot,
           runCommand,
           sourceRepositoryPath,
-          targetRoot,
           temporaryRoot
         });
       } else {
@@ -1043,9 +1076,9 @@ async function applyProjectTemplate({
           env,
           input,
           project,
+          projectRuntimeRoot,
           repositoryPath: sourceRepositoryPath,
-          runCommand,
-          targetRoot
+          runCommand
         });
       }
 
@@ -1056,10 +1089,10 @@ async function applyProjectTemplate({
         input,
         mode,
         project,
+        projectRuntimeRoot,
         runCommand,
         sourceRepositoryPath,
-        sourceRoot: sourceRoot || targetRoot,
-        targetRoot
+        sourceRoot
       });
       if (typeof afterAuthorityVerification === "function") {
         await afterAuthorityVerification(materialization);
@@ -1070,8 +1103,8 @@ async function applyProjectTemplate({
             env,
             input,
             project,
-            runCommand,
-            targetRoot
+            projectRuntimeRoot,
+            runCommand
           })
         : false;
       return {

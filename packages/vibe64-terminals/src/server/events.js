@@ -63,10 +63,6 @@ function createProjectRuntimeChangedPublisher(events) {
     }
     const payload = Object.freeze({
       projectSlug,
-      ...(source.targetRoot ? {
-        projectRoot: String(source.targetRoot).trim(),
-        targetRoot: String(source.targetRoot).trim()
-      } : {}),
       runtime: source.runtime,
       ...(source.runtime?.open === false ? { message: "Project is closed." } : {})
     });

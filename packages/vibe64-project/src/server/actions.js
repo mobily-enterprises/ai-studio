@@ -68,12 +68,9 @@ function projectSlug(value = {}) {
 
 function projectRealtimePayload(value = {}) {
   const source = record(value);
-  const project = projectRecord(source);
   const slug = projectSlug(source);
   return {
     ...(slug ? { projectSlug: slug } : {}),
-    ...(project.projectRoot ? { projectRoot: String(project.projectRoot).trim() } : {}),
-    ...(source.targetRoot ? { targetRoot: String(source.targetRoot).trim() } : {}),
     ...(typeof source.hasSelection === "boolean" ? { hasSelection: source.hasSelection } : {})
   };
 }

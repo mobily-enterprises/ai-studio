@@ -164,13 +164,21 @@ test("work inspection compares the complete session tree with its verified canon
   try {
     const fixture = await createRemoteFixture(root);
     const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    const hostileMarker = path.join(project.path, ".git", "HOSTILE");
+    const requests = [];
+    await mkdir(path.dirname(hostileMarker), { recursive: true });
+    await writeFile(hostileMarker, "must remain untouched\n", "utf8");
     await writeFile(path.join(session.sourcePath, "committed-locally.txt"), "session work\n", "utf8");
     await git(session.sourcePath, ["add", "committed-locally.txt"]);
     await git(session.sourcePath, ["commit", "-m", "local session commit"]);
 
     const result = await inspectSessionWork({
-      project: githubProject(root, fixture.remote),
-      runCommand: commandRunner,
+      project,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
       session
     });
 
@@ -178,6 +186,11 @@ test("work inspection compares the complete session tree with its verified canon
     assert.equal(result.repositoryMode, "github");
     assert.equal(result.canonicalCommit, fixture.baseCommit);
     assert.equal(result.sessionHead, await git(session.sourcePath, ["rev-parse", "HEAD"]));
+    assert.ok(requests.length > 0);
+    assert.ok(requests.every((request) => path.resolve(request.cwd) !== path.resolve(project.path)));
+    assert.ok(requests.every((request) => !(request.allowedRoots || [])
+      .some((rootPath) => path.resolve(rootPath) === path.resolve(project.path))));
+    assert.equal(await readFile(hostileMarker, "utf8"), "must remain untouched\n");
     assert.equal(result.dirty, false, "the working tree itself is clean");
     assert.equal(result.unsaved, true, "the complete session tree still differs from canonical");
     assert.equal(result.ahead, 1);
@@ -540,7 +553,7 @@ test("local-source Update imports the clean project baseline as canonical author
     await git(baseline, ["commit", "-m", "baseline advance"]);
     const canonicalCommit = await git(baseline, ["rev-parse", "HEAD"]);
     const project = {
-      path: baseline,
+      sourceRoot: baseline,
       repository: { defaultBranch: "main", mode: "local_source" }
     };
     const session = {
@@ -1634,7 +1647,7 @@ test("local-source Save advances the clean configured baseline", async () => {
     const result = await saveSessionWork({
       operationId: "save-local",
       project: {
-        path: baseline,
+        sourceRoot: baseline,
         repository: {
           defaultBranch: "main",
           mode: "local_source"
@@ -1679,7 +1692,7 @@ test("local-source Save rejects a baseline checked out on the wrong branch", asy
     await assert.rejects(saveSessionWork({
       operationId: "save-local-wrong-branch",
       project: {
-        path: baseline,
+        sourceRoot: baseline,
         repository: {
           defaultBranch: "main",
           mode: "local_source"
@@ -1726,7 +1739,7 @@ test("local-source interrupted Save recovery verifies the clean baseline before 
       sourcePath: source
     };
     const project = {
-      path: baseline,
+      sourceRoot: baseline,
       repository: {
         defaultBranch: "main",
         mode: "local_source"

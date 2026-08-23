@@ -39,6 +39,17 @@ async function initializeGit(projectRoot) {
   });
 }
 
+test("Genesis inspection never falls back to the server working directory", async () => {
+  await assert.rejects(
+    () => inspectGenesisEnvironment({}),
+    /explicit absolute projectRoot/u
+  );
+  await assert.rejects(
+    () => inspectGenesisEnvironment({ projectRoot: "relative-project" }),
+    /explicit absolute projectRoot/u
+  );
+});
+
 test("the Genesis integration maps Vibe actions to explicit Genesis tasks and requests", () => {
   assert.equal(genesisPromptTask({ genesisTask: "program" }), "program");
   assert.equal(genesisPromptTask({ genesisTask: "deslop", promptId: "anything" }), "deslop");

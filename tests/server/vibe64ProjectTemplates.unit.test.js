@@ -140,8 +140,7 @@ test("project templates expose friendly trusted registry records", async () => {
       repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
     },
     projectRuntimeRoot: "/tmp/vibe64-template-registry-runtime",
-    sourceRoot: "/path/that/does/not/exist",
-    targetRoot: "/path/that/does/not/exist"
+    sourceRoot: "/path/that/does/not/exist"
   });
 
   assert.equal(result.ok, true);
@@ -175,7 +174,6 @@ test("the blank starter creates one Genesis root commit without selecting techno
       },
       projectRuntimeRoot: runtimeRoot,
       sourceRoot,
-      targetRoot: sourceRoot,
       templateId: "genesis-blank",
       templates: [PROJECT_TEMPLATES[0]]
     });
@@ -209,7 +207,6 @@ test("project templates materialize an empty local source as one new root commit
       },
       projectRuntimeRoot: runtimeRoot,
       sourceRoot,
-      targetRoot: sourceRoot,
       templateId: "jskit-test",
       templates: [testTemplate(seedRoot)]
     });
@@ -230,8 +227,7 @@ test("project templates materialize an empty local source as one new root commit
         repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
       },
       projectRuntimeRoot: runtimeRoot,
-      sourceRoot,
-      targetRoot: sourceRoot
+      sourceRoot
     });
     assert.equal(after.eligible, false);
     assert.equal(after.code, "vibe64_project_template_destination_not_empty");
@@ -261,7 +257,6 @@ test("project templates reject source metadata outside the trusted registry", as
         },
         projectRuntimeRoot: runtimeRoot,
         sourceRoot,
-        targetRoot: sourceRoot,
         templateId: "jskit-test",
         templates: [testTemplate(seedRoot)]
       }),
@@ -275,13 +270,17 @@ test("project templates reject source metadata outside the trusted registry", as
 test("project templates materialize managed canonical Git as one root commit", async () => {
   await withTemporaryRoot(async (root) => {
     const seedRoot = path.join(root, "seed");
-    const targetRoot = path.join(root, "project");
+    const hostedNamespace = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const repositoryPath = path.join(targetRoot, "canonical-repository", "repository.git");
+    const repositoryPath = path.join(runtimeRoot, "canonical-repository", "repository.git");
     await createSeedRepository(seedRoot);
-    await mkdir(targetRoot, {
+    await mkdir(path.join(hostedNamespace, ".git"), {
       recursive: true
     });
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
+    await writeFile(path.join(hostedNamespace, ".git", "HOSTILE"), "must remain untouched\n", "utf8");
 
     const result = await applyProjectTemplate({
       project: {
@@ -293,35 +292,42 @@ test("project templates materialize managed canonical Git as one root commit", a
         repositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
       },
       projectRuntimeRoot: runtimeRoot,
-      targetRoot,
       templateId: "jskit-test",
       templates: [testTemplate(seedRoot)]
     });
 
     assert.equal(result.materialization.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
     assert.equal(
-      await git(targetRoot, ["--git-dir", repositoryPath, "show", "main:README.md"]),
+      await git(runtimeRoot, ["--git-dir", repositoryPath, "show", "main:README.md"]),
       "# Test project template"
     );
     await assert.rejects(
-      () => git(targetRoot, ["--git-dir", repositoryPath, "show", "main:vibe64.seed.json"]),
+      () => git(runtimeRoot, ["--git-dir", repositoryPath, "show", "main:vibe64.seed.json"]),
       /does not exist in/u
     );
-    await assertSingleRootCommit(targetRoot, {
+    await assertSingleRootCommit(runtimeRoot, {
       gitDir: repositoryPath
     });
+    assert.equal(
+      await readFile(path.join(hostedNamespace, ".git", "HOSTILE"), "utf8"),
+      "must remain untouched\n"
+    );
   });
 });
 
 test("project templates push one root commit to an empty GitHub-backed destination", async () => {
   await withTemporaryRoot(async (root) => {
     const seedRoot = path.join(root, "seed");
-    const targetRoot = path.join(root, "project");
+    const hostedNamespace = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const repositoryPath = path.join(targetRoot, "github-mirror", "repository.git");
+    const repositoryPath = path.join(runtimeRoot, "github-mirror", "repository.git");
     const remotePath = path.join(root, "destination.git");
     await createSeedRepository(seedRoot);
-    await mkdir(targetRoot, {
+    await mkdir(path.join(hostedNamespace, ".git"), {
+      recursive: true
+    });
+    await writeFile(path.join(hostedNamespace, ".git", "HOSTILE"), "must remain untouched\n", "utf8");
+    await mkdir(runtimeRoot, {
       recursive: true
     });
     await git(root, ["init", "--bare", remotePath]);
@@ -345,7 +351,6 @@ test("project templates push one root commit to an empty GitHub-backed destinati
         repositoryMode: PROJECT_REPOSITORY_MODE_GITHUB
       },
       projectRuntimeRoot: runtimeRoot,
-      targetRoot,
       templateId: "jskit-test",
       templates: [testTemplate(seedRoot)]
     });
@@ -355,12 +360,16 @@ test("project templates push one root commit to an empty GitHub-backed destinati
       await git(root, ["--git-dir", remotePath, "rev-parse", "refs/heads/main"]),
       result.materialization.commit
     );
-    await assertSingleRootCommit(targetRoot, {
+    await assertSingleRootCommit(runtimeRoot, {
       gitDir: repositoryPath
     });
     await assertSingleRootCommit(root, {
       gitDir: remotePath
     });
+    assert.equal(
+      await readFile(path.join(hostedNamespace, ".git", "HOSTILE"), "utf8"),
+      "must remain untouched\n"
+    );
   });
 });
 
@@ -403,7 +412,6 @@ test("GitHub blank materialization is token-backed, runtime-owned, and journals 
         requests.push(request);
         return runGatewayCommand(request);
       },
-      targetRoot: runtimeRoot,
       templateId: "genesis-blank",
       templates: [PROJECT_TEMPLATES[0]]
     });
@@ -455,7 +463,6 @@ test("GitHub materialization rejects an unrelated non-empty repository", async (
         project: githubTemplateProject(remotePath, runtimeRoot),
         projectRuntimeRoot: runtimeRoot,
         runCommand: runGatewayCommand,
-        targetRoot: runtimeRoot,
         templateId: "genesis-blank",
         templates: [PROJECT_TEMPLATES[0]]
       }),
@@ -508,7 +515,6 @@ test("GitHub materialization preserves verified publication when mirror refresh 
         }
         return runGatewayCommand(request);
       },
-      targetRoot: runtimeRoot,
       templateId: "genesis-blank",
       templates: [PROJECT_TEMPLATES[0]]
     });
@@ -598,7 +604,6 @@ test("GitHub materialization removes temporary work after every authoritative an
         project: githubTemplateProject(remotePath, runtimeRoot),
         projectRuntimeRoot: runtimeRoot,
         runCommand,
-        targetRoot: runtimeRoot,
         templateId: "genesis-blank",
         templates: [PROJECT_TEMPLATES[0]]
       }));
@@ -622,8 +627,7 @@ test("project template eligibility rejects source, history, and active sessions"
         repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
       },
       projectRuntimeRoot: runtimeRoot,
-      sourceRoot,
-      targetRoot: sourceRoot
+      sourceRoot
     });
     assert.equal(existingSource.eligible, false);
     assert.equal(existingSource.code, "vibe64_project_template_destination_not_empty");
@@ -641,14 +645,16 @@ test("project template eligibility rejects source, history, and active sessions"
         repositoryMode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
       },
       projectRuntimeRoot: activeRuntime,
-      sourceRoot: emptyTarget,
-      targetRoot: emptyTarget
+      sourceRoot: emptyTarget
     });
     assert.equal(activeSession.eligible, false);
     assert.equal(activeSession.code, "vibe64_project_template_active_sessions");
 
     const importedRoot = path.join(root, "imported");
     await createSeedRepository(importedRoot);
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
     const importedGithub = await projectTemplateEligibility({
       checkGithubRemote: true,
       project: {
@@ -662,8 +668,7 @@ test("project template eligibility rejects source, history, and active sessions"
         },
         repositoryMode: PROJECT_REPOSITORY_MODE_GITHUB
       },
-      projectRuntimeRoot: runtimeRoot,
-      targetRoot: emptyTarget
+      projectRuntimeRoot: runtimeRoot
     });
     assert.equal(importedGithub.eligible, false);
     assert.equal(importedGithub.code, "vibe64_project_template_destination_not_empty");
@@ -673,11 +678,10 @@ test("project template eligibility rejects source, history, and active sessions"
 test("concurrent project template requests serialize and only one can commit", async () => {
   await withTemporaryRoot(async (root) => {
     const seedRoot = path.join(root, "seed");
-    const targetRoot = path.join(root, "project");
     const runtimeRoot = path.join(root, "runtime");
-    const canonicalRepositoryPath = path.join(targetRoot, "canonical-repository", "repository.git");
+    const canonicalRepositoryPath = path.join(runtimeRoot, "canonical-repository", "repository.git");
     await createSeedRepository(seedRoot);
-    await mkdir(targetRoot, {
+    await mkdir(runtimeRoot, {
       recursive: true
     });
     const options = {
@@ -690,7 +694,6 @@ test("concurrent project template requests serialize and only one can commit", a
         repositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
       },
       projectRuntimeRoot: runtimeRoot,
-      targetRoot,
       templateId: "jskit-test",
       templates: [testTemplate(seedRoot)]
     };
@@ -705,7 +708,7 @@ test("concurrent project template requests serialize and only one can commit", a
     for (const rejected of results.filter((result) => result.status === "rejected")) {
       assert.equal(rejected.reason.code, "vibe64_project_template_destination_not_empty");
     }
-    await assertSingleRootCommit(targetRoot, {
+    await assertSingleRootCommit(runtimeRoot, {
       gitDir: canonicalRepositoryPath
     });
   });

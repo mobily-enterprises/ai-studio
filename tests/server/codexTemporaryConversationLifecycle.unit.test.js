@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,9 @@ import test from "node:test";
 import {
   createCodexTerminalController
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
+import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 
 function createProvider(calls, subscribers) {
   return {
@@ -90,19 +93,45 @@ function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+async function managedSessionFixture(temporaryRoot) {
+  const projectContextRoot = path.join(temporaryRoot, "authority");
+  const projectRuntimeRoot = path.join(temporaryRoot, "runtime");
+  const sourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "session-1",
+    "source"
+  );
+  await Promise.all([
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true }),
+    mkdir(sourcePath, { recursive: true })
+  ]);
+  return {
+    projectRuntimeRoot,
+    session: {
+      metadata: {
+        repository_mode: "local_source",
+        source_kind: "session_clone",
+        source_path: sourcePath,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      projectContextRoot,
+      sessionId: "session-1",
+      sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-1")
+    }
+  };
+}
+
 async function withConversationController(operation) {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-temporary-conversation-"));
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-temporary-conversation-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
   const calls = [];
   const subscribers = new Set();
-  const session = {
-    metadata: {
-      source_path: targetRoot
-    },
-    sessionId: "session-1",
-    targetRoot
-  };
+  const { projectRuntimeRoot, session } = await managedSessionFixture(temporaryRoot);
   const controller = createCodexTerminalController({
     codexAppServerProviderFactory() {
       return createProvider(calls, subscribers);
@@ -117,7 +146,7 @@ async function withConversationController(operation) {
           async getSession() {
             return session;
           },
-          stateRoot: targetRoot
+          stateRoot: projectRuntimeRoot
         };
       },
       async projectExecutionEnvironment() {
@@ -137,21 +166,15 @@ async function withConversationController(operation) {
     } else {
       process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
     }
-    await rm(targetRoot, { force: true, recursive: true });
+    await rm(temporaryRoot, { force: true, recursive: true });
   }
 }
 
 test("a changed session environment retires the previous provider for the same runtime", async () => {
-  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-provider-ownership-"));
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-provider-ownership-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
-  const session = {
-    metadata: {
-      source_path: targetRoot
-    },
-    sessionId: "session-1",
-    targetRoot
-  };
+  const { projectRuntimeRoot, session } = await managedSessionFixture(temporaryRoot);
   let environmentVersion = "one";
   const providers = [];
   const controller = createCodexTerminalController({
@@ -179,7 +202,7 @@ test("a changed session environment retires the previous provider for the same r
           async getSession() {
             return session;
           },
-          stateRoot: targetRoot
+          stateRoot: projectRuntimeRoot
         };
       },
       async projectExecutionEnvironment() {
@@ -207,7 +230,7 @@ test("a changed session environment retires the previous provider for the same r
     } else {
       process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
     }
-    await rm(targetRoot, { force: true, recursive: true });
+    await rm(temporaryRoot, { force: true, recursive: true });
   }
 });
 

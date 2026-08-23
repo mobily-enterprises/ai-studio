@@ -310,12 +310,12 @@ function codexAppServerRuntimeBaseDir({
 }
 
 function codexAppServerRuntimeScope({
-  targetRoot = "",
+  executionRoot = "",
   workdir = ""
 } = {}) {
-  const normalizedTargetRoot = normalizeAgentText(targetRoot);
-  if (normalizedTargetRoot) {
-    return path.resolve(normalizedTargetRoot);
+  const normalizedExecutionRoot = normalizeAgentText(executionRoot);
+  if (normalizedExecutionRoot) {
+    return path.resolve(normalizedExecutionRoot);
   }
   const normalizedWorkdir = normalizeAgentText(workdir);
   return normalizedWorkdir ? path.resolve(normalizedWorkdir) : "";
@@ -516,15 +516,15 @@ async function assertCodexAuthPreflightReady(options = {}, {
 }
 
 function codexAppServerProcessCwd({
-  targetRoot = "",
+  executionRoot = "",
   workdir = ""
 } = {}) {
   const normalizedWorkdir = normalizeAgentText(workdir) ? path.resolve(workdir) : "";
   if (normalizedWorkdir) {
     return normalizedWorkdir;
   }
-  const normalizedTargetRoot = normalizeAgentText(targetRoot) ? path.resolve(targetRoot) : "";
-  return normalizedTargetRoot;
+  const normalizedExecutionRoot = normalizeAgentText(executionRoot) ? path.resolve(executionRoot) : "";
+  return normalizedExecutionRoot;
 }
 
 function codexAppServerRuntimeDirIsManaged(runtimeDir = "") {
@@ -1060,11 +1060,11 @@ async function startCodexAppServerProcess({
   codexCommand = STUDIO_MANAGED_CODEX_COMMAND,
   commandRunner = defaultCommandRunner,
   env = process.env,
+  executionRoot = "",
   readyTimeoutMs = CODEX_APP_SERVER_READY_TIMEOUT_MS,
   systemRoot = "",
   project = {},
   session = {},
-  targetRoot = "",
   terminalEnv = {},
   toolHomeSource = "",
   userKey = "",
@@ -1074,8 +1074,8 @@ async function startCodexAppServerProcess({
   runtimes = [],
   runtimeDir = codexAppServerRuntimeDir({
     env,
+    executionRoot,
     runtimeInstanceId,
-    targetRoot,
     workdir
   })
 } = {}) {
@@ -1094,7 +1094,7 @@ async function startCodexAppServerProcess({
   const endpoint = codexAppServerUnixEndpoint(socketPath);
   const logPath = codexAppServerLogPath(runtimeDir);
   const processCwd = codexAppServerProcessCwd({
-    targetRoot,
+    executionRoot,
     workdir
   });
   const projectTrustOverride = codexAppServerProjectTrustOverride(workdir);

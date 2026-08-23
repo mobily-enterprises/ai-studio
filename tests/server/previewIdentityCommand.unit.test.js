@@ -60,7 +60,7 @@ test("preview identity command runner invokes the app directly with bounded mana
       APP_PREVIEW_IDENTITY_SECRET: "private-secret"
     },
     project: {
-      targetRoot: "/workspace/app"
+      sessionSourceRoot: "/workspace/app"
     },
     runCommand: async (input) => {
       invocation = input;

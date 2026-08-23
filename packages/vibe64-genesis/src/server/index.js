@@ -164,6 +164,10 @@ if (!GENESIS_MACHINE_CITY_PATH || !GENESIS_PROGRAM_CITY_PATH) {
 }
 
 async function exactGenesisInspection(inspector, contract, options = {}) {
+  const projectRoot = normalizeText(options.projectRoot);
+  if (!projectRoot || !path.isAbsolute(projectRoot)) {
+    throw new TypeError("Genesis inspection requires an explicit absolute projectRoot.");
+  }
   const result = await inspector(withVibe64StackCatalog(options));
   if (result?.contract !== contract) {
     throw new Error(`Genesis returned ${result?.contract || "no contract identity"}; expected ${contract}.`);

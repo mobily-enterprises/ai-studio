@@ -34,7 +34,7 @@ function normalizeRepositoryMode(value = "") {
 
 function projectRepositoryStorageRole({
   mode = "",
-  projectRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
   const repositoryMode = normalizeRepositoryMode(mode);
   if (repositoryMode === PROJECT_REPOSITORY_MODE_MANAGED_GIT) {
@@ -42,12 +42,12 @@ function projectRepositoryStorageRole({
       directory: PROJECT_CANONICAL_REPOSITORY_DIR,
       durable: true,
       inactivePath: resolveProjectGithubMirrorPath({
-        projectRoot
+        projectRuntimeRoot
       }),
       inactivePathField: "githubMirrorPath",
       label: "Canonical repository",
       path: resolveProjectCanonicalRepositoryPath({
-        projectRoot
+        projectRuntimeRoot
       }),
       pathField: "canonicalRepositoryPath"
     };
@@ -57,12 +57,12 @@ function projectRepositoryStorageRole({
       directory: PROJECT_GITHUB_MIRROR_DIR,
       durable: false,
       inactivePath: resolveProjectCanonicalRepositoryPath({
-        projectRoot
+        projectRuntimeRoot
       }),
       inactivePathField: "canonicalRepositoryPath",
       label: "GitHub mirror",
       path: resolveProjectGithubMirrorPath({
-        projectRoot
+        projectRuntimeRoot
       }),
       pathField: "githubMirrorPath"
     };

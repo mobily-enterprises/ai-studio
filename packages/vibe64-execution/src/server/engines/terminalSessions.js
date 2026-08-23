@@ -704,7 +704,7 @@ function startTerminalSession({
       type: "status"
     });
     void (async () => {
-      await runCloseHook(session, "exit");
+      await runCloseHook(session, session.stopHookStarted ? "stop" : "exit");
       session.status = "exited";
       sendToSubscribers(session, {
         closeError: session.closeError || "",

@@ -41,7 +41,7 @@ import {
 import {
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
-  terminalTargetRoot,
+  terminalSessionSourceRoot,
   terminalWorktreePath,
   terminalProjectScopeKey
 } from "./terminalShared.js";
@@ -51,7 +51,7 @@ import {
   listTerminalSessions
 } from "@local/vibe64-execution/server/terminalSessions";
 import {
-  projectServiceTargetRoot
+  projectServiceNamespaceRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
   currentProjectRequestContext
@@ -453,32 +453,26 @@ function createService({
 
   function projectRuntimeContext() {
     const requestContext = currentProjectRequestContext();
-    const targetRoot = requestContext?.targetRoot ||
-      projectServiceTargetRoot(projectService) ||
-      projectService.targetRoot ||
+    const projectContextRoot = requestContext?.targetRoot ||
+      projectServiceNamespaceRoot(projectService) ||
       "";
     const projectRuntimeRoot = requestContext?.projectRuntimeRoot ||
-      requestContext?.projectLocalRoot ||
       (typeof projectService.currentProjectRuntimeRoot === "function"
         ? projectService.currentProjectRuntimeRoot()
-        : "") ||
-      (typeof projectService.currentProjectLocalRoot === "function"
-        ? projectService.currentProjectLocalRoot()
         : "");
     const projectSlug = String(requestContext?.slug || "").trim() ||
       String(terminalProjectScopeKey()).replace(/^project:/u, "").trim();
     return {
-      projectLocalRoot: projectRuntimeRoot,
+      projectContextRoot,
       projectRuntimeRoot,
-      projectSlug,
-      targetRoot
+      projectSlug
     };
   }
 
   async function currentProjectRuntimeOpenState() {
     const context = projectRuntimeContext();
     const runtime = await readProjectRuntimeOpenState({
-      projectLocalRoot: context.projectLocalRoot
+      projectRuntimeRoot: context.projectRuntimeRoot
     });
     return {
       context,
@@ -654,9 +648,9 @@ function createService({
     }
     const reason = PROJECT_RUNTIME_MARKER_MISSING_REASON;
     vibe64SessionDebugLog(eventName, {
+      projectContextRoot: context.projectContextRoot,
       projectSlug: context.projectSlug,
-      reason,
-      targetRoot: context.targetRoot
+      reason
     });
     const closeResult = await service.closeProjectRuntime({
       reason
@@ -738,7 +732,7 @@ function createService({
         reason: PROJECT_RUNTIME_MARKER_MISSING_REASON,
         runtime,
         skipped: true,
-        targetRoot: context.targetRoot
+        projectContextRoot: context.projectContextRoot
       };
     }
     const sessions = await listOpenProjectRuntimeSessions();
@@ -757,14 +751,14 @@ function createService({
         reason: dormancy.activeAgentSessionIds.length ? "active-agent-run" : "not-dormant",
         runtime,
         skipped: true,
-        targetRoot: context.targetRoot
+        projectContextRoot: context.projectContextRoot
       };
     }
     vibe64SessionDebugLog("server.terminals.projectRuntime.dormantClose.start", {
       idleMs: dormancy.idleMs,
       lastActivityAt: dormancy.lastActivityAt,
+      projectContextRoot: context.projectContextRoot,
       projectSlug: context.projectSlug,
-      targetRoot: context.targetRoot
     });
     const closeResult = await service.closeProjectRuntime({
       reason: PROJECT_RUNTIME_IDLE_TIMEOUT_REASON
@@ -778,7 +772,7 @@ function createService({
       reason: PROJECT_RUNTIME_IDLE_TIMEOUT_REASON,
       runtime: closeResult?.runtime || runtime,
       skipped: false,
-      targetRoot: context.targetRoot
+      projectContextRoot: context.projectContextRoot
     };
   }
 
@@ -819,15 +813,15 @@ function createService({
       sessionId: normalizedSessionId
     });
     if (execution?.ok === false && input.vibe64User) {
-      const targetRoot = terminalTargetRoot(session, projectService);
-      const workdir = terminalWorktreePath(session) || targetRoot;
-      const recorded = targetRoot
+      const sessionSourceRoot = terminalSessionSourceRoot(session);
+      const workdir = terminalWorktreePath(session);
+      const recorded = sessionSourceRoot && workdir
         ? await writeSessionGitCommandActor({
             env,
             reason,
             runtime,
             session,
-            targetRoot,
+            sourceRoot: sessionSourceRoot,
             threadId: session.metadata?.agent_identity_conversation_id || "",
             vibe64User: input.vibe64User,
             workdir
@@ -885,17 +879,16 @@ function createService({
       const context = projectRuntimeContext();
       const reason = String(input?.reason || "project-open").trim() || "project-open";
       const runtime = await writeProjectRuntimeOpenState({
-        projectLocalRoot: context.projectLocalRoot,
+        projectRuntimeRoot: context.projectRuntimeRoot,
         projectSlug: context.projectSlug,
-        reason,
-        targetRoot: context.targetRoot
+        reason
       });
       const result = {
         ok: true,
+        projectContextRoot: context.projectContextRoot,
         projectSlug: context.projectSlug,
         reason,
-        runtime,
-        targetRoot: context.targetRoot
+        runtime
       };
       await publishProjectRuntimeChanged(result, {
         action: "runtime-opened"
@@ -938,8 +931,8 @@ function createService({
           results.push({
             error: error instanceof Error ? error.message : String(error || "Dormant project runtime cleanup failed."),
             ok: false,
-            projectSlug: project.slug,
-            targetRoot: project.projectRoot
+            projectContextRoot: String(project.projectContextRoot || project.projectRoot || "").trim(),
+            projectSlug: project.slug
           });
         }
       }
@@ -981,21 +974,21 @@ function createService({
         : await runtime.getSession(normalizedSessionId, {
             inspectSource: false
           });
-      const targetRoot = terminalTargetRoot(session, projectService);
-      if (!targetRoot) {
+      const sessionSourceRoot = terminalSessionSourceRoot(session);
+      if (!sessionSourceRoot) {
         return {
-          code: "vibe64_session_git_command_actor_target_root_missing",
-          error: "Vibe64 session target root is not available for Git command actor tracking.",
+          code: "vibe64_session_git_command_actor_source_root_missing",
+          error: "Vibe64 session source root is not available for Git command actor tracking.",
           ok: false
         };
       }
-      const workdir = terminalWorktreePath(session) || targetRoot;
+      const workdir = terminalWorktreePath(session);
       return writeSessionGitCommandActor({
         env,
         reason: input.reason || "session-interaction",
         runtime,
         session,
-        targetRoot,
+        sourceRoot: sessionSourceRoot,
         threadId: session.metadata?.agent_identity_conversation_id || "",
         vibe64User: input.vibe64User || null,
         workdir
@@ -1244,7 +1237,7 @@ function createService({
       const startedAtMs = Date.now();
       const context = projectRuntimeContext();
       const projectScope = context.projectSlug ? `project:${context.projectSlug}` : terminalProjectScopeKey();
-      const targetRoot = context.targetRoot;
+      const projectContextRoot = context.projectContextRoot;
       const reason = String(input?.reason || "project-close").trim() || "project-close";
       const failed = [];
       let agentProviderRuntimesStopped = 0;
@@ -1291,8 +1284,8 @@ function createService({
         }
 
         const agentResult = await sessionAgent.closeProject({
-          reason,
-          targetRoot
+          projectContextRoot,
+          reason
         });
         agentProviderRuntimesStopped = Number(agentResult?.stopped || 0);
         for (const error of Array.isArray(agentResult?.failed) ? agentResult.failed : []) {
@@ -1308,7 +1301,7 @@ function createService({
         projectNamespaceCount = Number(namespaceResult.namespaceCount || 0);
         projectTerminalClosed = Number(namespaceResult.closed || 0);
         const cwdResult = await closeTerminalSessionsForCwdRoot(
-          targetRoot
+          projectContextRoot
         );
         projectCwdTerminalClosed = Number(cwdResult.closed || 0);
         projectCwdNamespaceCount = Number(cwdResult.namespaceCount || 0);
@@ -1318,18 +1311,18 @@ function createService({
           ok: failed.length === 0,
           projectCwdNamespaceCount,
           projectCwdTerminalClosed,
+          projectContextRoot,
           projectNamespaceCount,
           projectSlug: context.projectSlug,
           projectScope,
           projectTerminalClosed,
           reason,
           sessionCount,
-          sessionTerminalClosed,
-          targetRoot
+          sessionTerminalClosed
         };
         if (result.ok === true) {
           const runtime = await clearProjectRuntimeOpenState({
-            projectLocalRoot: context.projectLocalRoot
+            projectRuntimeRoot: context.projectRuntimeRoot
           });
           result.runtime = runtime;
         }

@@ -18,14 +18,14 @@ const CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES = Number.MAX_SAFE_INTEGER;
 const ATTACHMENT_TTL_MS = 30 * 60 * 1000;
 const attachmentCleanupTimers = new Map();
 
-function attachmentSessionKey(targetRoot, sessionId) {
-  return path.join(stableHash(targetRuntimeIdentity(targetRoot)), stableHash(sessionId));
+function attachmentSessionKey(executionRoot, sessionId) {
+  return path.join(stableHash(targetRuntimeIdentity(executionRoot)), stableHash(sessionId));
 }
 
-function attachmentHostDirectory(targetRoot, sessionId, attachmentId = "") {
+function attachmentHostDirectory(executionRoot, sessionId, attachmentId = "") {
   const parts = [
     codexAttachmentHostRoot(),
-    ...attachmentSessionKey(targetRoot, sessionId).split(path.sep)
+    ...attachmentSessionKey(executionRoot, sessionId).split(path.sep)
   ];
   if (attachmentId) {
     parts.push(attachmentId);
@@ -55,11 +55,11 @@ function decodeAttachmentData(value = "") {
   return Buffer.from(normalized, "base64");
 }
 
-async function cleanupCodexAttachments(targetRoot, sessionId, attachmentId = "") {
+async function cleanupCodexAttachments(executionRoot, sessionId, attachmentId = "") {
   const cleanupPath = attachmentId
-    ? attachmentHostDirectory(targetRoot, sessionId, attachmentId)
-    : attachmentHostDirectory(targetRoot, sessionId);
-  const timerKey = `${stableHash(targetRuntimeIdentity(targetRoot))}:${stableHash(sessionId)}:${attachmentId}`;
+    ? attachmentHostDirectory(executionRoot, sessionId, attachmentId)
+    : attachmentHostDirectory(executionRoot, sessionId);
+  const timerKey = `${stableHash(targetRuntimeIdentity(executionRoot))}:${stableHash(sessionId)}:${attachmentId}`;
   const timer = attachmentCleanupTimers.get(timerKey);
   if (timer) {
     clearTimeout(timer);
@@ -71,15 +71,15 @@ async function cleanupCodexAttachments(targetRoot, sessionId, attachmentId = "")
   });
 }
 
-function scheduleAttachmentCleanup(targetRoot, sessionId, attachmentId) {
-  const timerKey = `${stableHash(targetRuntimeIdentity(targetRoot))}:${stableHash(sessionId)}:${attachmentId}`;
+function scheduleAttachmentCleanup(executionRoot, sessionId, attachmentId) {
+  const timerKey = `${stableHash(targetRuntimeIdentity(executionRoot))}:${stableHash(sessionId)}:${attachmentId}`;
   const existingTimer = attachmentCleanupTimers.get(timerKey);
   if (existingTimer) {
     clearTimeout(existingTimer);
   }
   const timer = setTimeout(() => {
     attachmentCleanupTimers.delete(timerKey);
-    void cleanupCodexAttachments(targetRoot, sessionId, attachmentId);
+    void cleanupCodexAttachments(executionRoot, sessionId, attachmentId);
   }, ATTACHMENT_TTL_MS);
   timer.unref?.();
   attachmentCleanupTimers.set(timerKey, timer);
@@ -88,7 +88,7 @@ function scheduleAttachmentCleanup(targetRoot, sessionId, attachmentId) {
 async function storeCodexAttachment({
   input = {},
   sessionId = "",
-  targetRoot = ""
+  executionRoot = ""
 } = {}) {
   const fileName = sanitizeAttachmentFileName(input?.fileName);
   const data = decodeAttachmentData(input?.dataBase64);
@@ -100,13 +100,13 @@ async function storeCodexAttachment({
   }
 
   const attachmentId = crypto.randomUUID();
-  const hostDirectory = attachmentHostDirectory(targetRoot, sessionId, attachmentId);
+  const hostDirectory = attachmentHostDirectory(executionRoot, sessionId, attachmentId);
   const hostPath = path.join(hostDirectory, fileName);
   await mkdir(hostDirectory, {
     recursive: true
   });
   await writeFile(hostPath, data);
-  scheduleAttachmentCleanup(targetRoot, sessionId, attachmentId);
+  scheduleAttachmentCleanup(executionRoot, sessionId, attachmentId);
 
   return {
     ok: true,

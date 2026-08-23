@@ -17,8 +17,8 @@ import {
   normalizeRepositoryMode
 } from "@local/vibe64-core/server/projectRepository";
 import {
-  SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
-  targetSessionSourcePath
+  managedSessionSourcePath,
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
   GITHUB_ACCOUNT_MODE_LOCAL,
@@ -151,25 +151,25 @@ async function optionalGitOutput(cwd = "", args = [], allowedRoots = [], options
   }
 }
 
-async function ensureLocalProjectBaseline(targetRoot = "", commandOptions = {}) {
-  const roots = [targetRoot];
-  const gitDirectory = await optionalGitOutput(targetRoot, ["rev-parse", "--git-dir"], roots, commandOptions);
+async function ensureLocalProjectBaseline(standaloneSourceRoot = "", commandOptions = {}) {
+  const roots = [standaloneSourceRoot];
+  const gitDirectory = await optionalGitOutput(standaloneSourceRoot, ["rev-parse", "--git-dir"], roots, commandOptions);
   if (!gitDirectory) {
-    await runGit(targetRoot, ["init", "--initial-branch=main"], roots, commandOptions);
+    await runGit(standaloneSourceRoot, ["init", "--initial-branch=main"], roots, commandOptions);
   }
-  let branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots, commandOptions) || "main";
-  let commit = await optionalGitOutput(targetRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
+  let branch = await optionalGitOutput(standaloneSourceRoot, ["branch", "--show-current"], roots, commandOptions) || "main";
+  let commit = await optionalGitOutput(standaloneSourceRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
   if (!commit) {
-    await runGit(targetRoot, ["add", "-A"], roots, commandOptions);
-    await runGit(targetRoot, [
+    await runGit(standaloneSourceRoot, ["add", "-A"], roots, commandOptions);
+    await runGit(standaloneSourceRoot, [
       "-c", "user.name=Vibe64",
       "-c", "user.email=vibe64@localhost",
       "commit", "--allow-empty", "-m", "Initial commit"
     ], roots, commandOptions);
-    commit = await runGit(targetRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
-    branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots, commandOptions) || branch;
+    commit = await runGit(standaloneSourceRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
+    branch = await optionalGitOutput(standaloneSourceRoot, ["branch", "--show-current"], roots, commandOptions) || branch;
   }
-  const dirty = await runGit(targetRoot, ["status", "--porcelain"], roots, commandOptions);
+  const dirty = await runGit(standaloneSourceRoot, ["status", "--porcelain"], roots, commandOptions);
   if (dirty) {
     throw sourceError(
       "The project source has uncommitted changes. Save or discard them before starting a session so its source has an exact Git baseline.",
@@ -179,11 +179,11 @@ async function ensureLocalProjectBaseline(targetRoot = "", commandOptions = {}) 
   return {
     branch,
     commit,
-    remoteUrl: await optionalGitOutput(targetRoot, ["remote", "get-url", "origin"], roots, commandOptions)
+    remoteUrl: await optionalGitOutput(standaloneSourceRoot, ["remote", "get-url", "origin"], roots, commandOptions)
   };
 }
 
-function canonicalProjectSource(project = {}, targetRoot = "") {
+function canonicalProjectSource(project = {}, standaloneSourceRoot = "") {
   const repository = project?.repository && typeof project.repository === "object"
     ? project.repository
     : {};
@@ -222,9 +222,15 @@ function canonicalProjectSource(project = {}, targetRoot = "") {
     };
   }
   if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+    if (!standaloneSourceRoot) {
+      throw sourceError(
+        "The standalone project does not declare its local source folder.",
+        "vibe64_session_source_local_root_missing"
+      );
+    }
     return {
       mode,
-      source: targetRoot
+      source: standaloneSourceRoot
     };
   }
   throw sourceError(
@@ -414,31 +420,41 @@ async function createSessionSource({
   vibe64User = null
 } = {}) {
   const sessionId = normalizeText(session.sessionId || session.id);
-  const targetRoot = normalizeText(runtime?.targetRoot || session.targetRoot);
-  const sourceRoot = normalizeText(runtime?.projectSessionSourceRoot);
-  if (!sessionId || !targetRoot || !sourceRoot || !store) {
+  const projectContextRoot = normalizeText(runtime?.projectContextRoot);
+  const managedSessionSourceRoot = normalizeText(runtime?.projectSessionSourceRoot);
+  if (!sessionId || !projectContextRoot || !managedSessionSourceRoot || !store) {
     throw sourceError(
-      "Session source creation requires a session id, project root, managed source root, and session store.",
+      "Session source creation requires a session id, project context root, managed source root, and session store.",
       "vibe64_session_source_context_missing"
     );
   }
-  if (!path.isAbsolute(targetRoot) || !path.isAbsolute(sourceRoot)) {
+  if (!path.isAbsolute(projectContextRoot) || !path.isAbsolute(managedSessionSourceRoot)) {
     throw sourceError(
-      "Session source creation requires absolute project and managed source paths.",
+      "Session source creation requires absolute project-context and managed-source paths.",
       "vibe64_session_source_path_invalid"
     );
   }
-  if (!await pathExists(targetRoot)) {
+  if (!await pathExists(projectContextRoot)) {
     throw sourceError(
-      `Project source does not exist: ${targetRoot}`,
-      "vibe64_session_source_project_missing"
+      `Project context root does not exist: ${projectContextRoot}`,
+      "vibe64_session_project_context_missing"
     );
   }
 
-  const sourcePath = targetSessionSourcePath(sourceRoot, sessionId);
+  const repositoryMode = normalizeRepositoryMode(project.repositoryMode || project.repository?.mode);
+  const standaloneSourceRoot = repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+    ? normalizeText(project.sourceRoot)
+    : "";
+  if (repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE && !standaloneSourceRoot) {
+    throw sourceError(
+      "Standalone session creation requires the explicitly selected local source.",
+      "vibe64_session_local_source_missing"
+    );
+  }
+  const sourcePath = managedSessionSourcePath(managedSessionSourceRoot, sessionId);
   const sourceParent = path.dirname(sourcePath);
   const branch = `${SESSION_BRANCH_PREFIX}${sessionId}`;
-  const canonical = canonicalProjectSource(project, targetRoot);
+  const canonical = canonicalProjectSource(project, standaloneSourceRoot);
   const githubCommandOptions = canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
     ? {
         ...await githubSourceCommandOptions(vibe64User, env, {
@@ -461,7 +477,7 @@ async function createSessionSource({
         refresh: "not_applicable"
       };
   let baseline = canonical.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
-    ? await ensureLocalProjectBaseline(targetRoot, {
+    ? await ensureLocalProjectBaseline(standaloneSourceRoot, {
         runCommand
       })
     : null;
@@ -469,7 +485,7 @@ async function createSessionSource({
     recursive: true
   });
 
-  const sourceRoots = [targetRoot, canonical.source, sourceParent, sourcePath]
+  const sourceRoots = [standaloneSourceRoot, canonical.source, sourceParent, sourcePath]
     .map(normalizeText)
     .filter((value) => path.isAbsolute(value));
   const existingTopLevel = await optionalGitOutput(sourcePath, ["rev-parse", "--show-toplevel"], sourceRoots, {
@@ -488,7 +504,7 @@ async function createSessionSource({
         "--no-hardlinks",
         "--single-branch",
         "--branch", baseline.branch,
-        targetRoot,
+        standaloneSourceRoot,
         sourcePath
       ], sourceRoots, {
         runCommand
@@ -525,7 +541,7 @@ async function createSessionSource({
     base_commit: resolvedBaseline.commit,
     canonical_commit: resolvedBaseline.commit,
     branch,
-    main_checkout_root: targetRoot,
+    repository_mode: canonical.mode,
     source_default_branch: resolvedBaseline.branch,
     source_kind: "session_clone",
     source_cache_attempted: cache.attempted ? "yes" : "no",

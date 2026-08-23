@@ -1729,10 +1729,10 @@ function normalizePreviewAuth(value = {}, {
     profilePath: String(value.profilePath || ""),
     projectScope: String(value.projectScope || ""),
     secret: String(value.secret || ""),
+    sessionSourceRoot: String(value.sessionSourceRoot || ""),
     sessionId: String(value.sessionId || ""),
     sessionRoot: String(value.sessionRoot || ""),
     targetHref: String(value.targetHref || targetHref || ""),
-    targetRoot: String(value.targetRoot || ""),
     terminalSessionId: String(value.terminalSessionId || "")
   };
 }
@@ -1749,10 +1749,10 @@ function previewAuthFingerprint(value = null) {
     value.secret
       ? crypto.createHash("sha256").update(String(value.secret)).digest("hex")
       : "",
+    value.sessionSourceRoot,
     value.sessionId,
     value.sessionRoot,
     value.targetHref,
-    value.targetRoot,
     value.terminalSessionId
   ]);
 }

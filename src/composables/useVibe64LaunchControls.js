@@ -87,8 +87,9 @@ function browserCanOpenTarget(target = {}) {
 }
 
 function launchBrowserTargetName(session = {}, projectSlug = currentProjectSlugFromLocation()) {
-  const source = session?.targetRoot || session?.source || session?.sessionRoot || session?.sessionId || "target";
-  return `vibe64-launch-${stableLocalStorageKeyPart(`${projectSlug || ""}:${source}`)}`;
+  const projectScope = String(projectSlug || "").trim() ||
+    String(session?.sessionId || session?.id || "project").trim();
+  return `vibe64-launch-${stableLocalStorageKeyPart(projectScope)}`;
 }
 
 function launchTerminalStorageKey(session = {}, projectSlug = currentProjectSlugFromLocation()) {

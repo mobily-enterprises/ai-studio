@@ -107,7 +107,9 @@ test("terminals feature creates the direct API from runtime env", async () => {
   await withTemporaryRoot(async (root) => {
     const serviceDataRoot = path.join(root, "services");
     const targetRoot = path.join(root, "project");
+    const runtimeRoot = path.join(root, "runtime");
     await mkdir(targetRoot, { recursive: true });
+    await mkdir(runtimeRoot, { recursive: true });
     const feature = createVibe64TerminalsFeature({
       codexTerminalController: {
         codexAuthPreflight: failingCodexAuthPreflight
@@ -119,7 +121,10 @@ test("terminals feature creates the direct API from runtime env", async () => {
       },
       project: {
         async createRuntime() {
-          return { adapter: {}, projectConfig: {} };
+          return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
+        },
+        currentProjectRuntimeRoot() {
+          return runtimeRoot;
         },
         currentTargetRoot() {
           return targetRoot;

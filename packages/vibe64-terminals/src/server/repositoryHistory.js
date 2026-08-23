@@ -6,6 +6,9 @@ import {
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   normalizeRepositoryMode
 } from "@local/vibe64-core/server/projectRepository";
+import {
+  sessionSourcePath
+} from "@local/vibe64-core/server/sessionSourcePath";
 import { runVibe64Command } from "@local/vibe64-execution/server";
 import {
   parseGitNameStatusZ,
@@ -55,27 +58,26 @@ function repositoryReadContext(project = {}, session = null) {
     session?.metadata?.source_default_branch ||
     session?.metadata?.base_branch
   );
-  const projectRoot = text(project.path || project.projectRoot);
-  const sessionRoot = text(session?.sourcePath || session?.metadata?.source_path);
-  if (!mode || !branch || !projectRoot) {
+  const sessionSourceRoot = session ? sessionSourcePath(session) : "";
+  if (!mode || !branch) {
     throw repositoryError(
-      "Version history requires a repository mode, default branch, and project root.",
+      "Version history requires a repository mode and default branch.",
       "vibe64_repository_history_context_incomplete"
     );
   }
-  if (session && !sessionRoot) {
+  if (session && !sessionSourceRoot) {
     throw repositoryError(
       "Create the session source before opening its version history.",
       "vibe64_repository_history_session_source_missing"
     );
   }
-  if (sessionRoot) {
+  if (sessionSourceRoot) {
     return {
       argsPrefix: [],
       branch,
-      cwd: sessionRoot,
+      cwd: sessionSourceRoot,
+      executionRoot: sessionSourceRoot,
       mode,
-      projectRoot,
       sessionId: text(session.sessionId || session.id),
       snapshotRef:
         text(session?.metadata?.canonical_commit) ||
@@ -93,24 +95,32 @@ function repositoryReadContext(project = {}, session = null) {
         "vibe64_repository_history_cache_missing"
       );
     }
+    const repositoryStorageRoot = path.dirname(repositoryPath);
     return {
       argsPrefix: ["--git-dir", repositoryPath],
       branch,
-      cwd: projectRoot,
+      cwd: repositoryStorageRoot,
+      executionRoot: repositoryStorageRoot,
       mode,
-      projectRoot,
       repositoryPath,
       sessionId: "",
       snapshotRef: `refs/heads/${branch}`
     };
   }
   if (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+    const standaloneSourceRoot = text(project.sourceRoot);
+    if (!standaloneSourceRoot) {
+      throw repositoryError(
+        "Standalone version history requires the explicitly selected local source folder.",
+        "vibe64_repository_history_local_source_missing"
+      );
+    }
     return {
       argsPrefix: [],
       branch,
-      cwd: projectRoot,
+      cwd: standaloneSourceRoot,
+      executionRoot: standaloneSourceRoot,
       mode,
-      projectRoot,
       sessionId: "",
       snapshotRef: `refs/heads/${branch}`
     };
@@ -125,7 +135,6 @@ async function git(context, args, {
 } = {}) {
   const roots = [
     context.cwd,
-    context.projectRoot,
     ...(context.repositoryPath ? [context.repositoryPath, path.dirname(context.repositoryPath)] : [])
   ];
   const result = await runCommand({
@@ -139,7 +148,7 @@ async function git(context, args, {
     input,
     mode: "capture",
     project: {
-      projectRoot: context.projectRoot,
+      projectRoot: context.executionRoot,
       repositoryMode: context.mode,
       sessionId: context.sessionId
     },

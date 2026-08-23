@@ -186,7 +186,7 @@ async function writePreviewDiagnostic(session = {}, record = {}, {
     sessionId: String(record.sessionId || session.sessionId || session.id || "").trim(),
     sessionRoot,
     status: String(record.status || "failed").trim() || "failed",
-    targetRoot: String(record.targetRoot || session.targetRoot || "").trim(),
+    sessionSourceRoot: String(record.sessionSourceRoot || sessionTerminalCwd(session) || "").trim(),
     ...(record.reason ? { reason: String(record.reason) } : {}),
     ...(record.launchTargetId ? { launchTargetId: normalizeLaunchTargetId(record.launchTargetId) } : {}),
     ...(record.cwd ? { cwd: String(record.cwd) } : {}),
@@ -597,25 +597,19 @@ async function createLaunchContext(projectService, sessionId, {
     }
     session = await runtime.getSession(sessionId);
   }
-  const targetRoot = sessionTerminalCwd(session, projectService);
+  const sessionSourceRoot = sessionTerminalCwd(session);
   const projectEnvironment = await loadProjectExecutionEnv({
     projectService,
     session,
-    sourcePath: targetRoot,
-    target: "launch",
-    targetRoot: session.targetRoot,
-    worktreePath: targetRoot
+    target: "launch"
   });
-  const runtimeTargetRoot = String(
-    (typeof projectService?.currentTargetRoot === "function"
-      ? projectService.currentTargetRoot()
-      : "") ||
-    session.targetRoot ||
-    projectService?.targetRoot ||
-    targetRoot
-  ).trim();
+  const projectContextRoot = typeof projectService?.currentTargetRoot === "function"
+    ? String(projectService.currentTargetRoot() || "").trim()
+    : "";
   const previewIdentitySettings = typeof projectService?.readPreviewApplicationIdentities === "function"
-    ? await projectService.readPreviewApplicationIdentities()
+    ? await projectService.readPreviewApplicationIdentities({
+        sessionId: session.sessionId
+      })
     : {
         identities: [],
         ok: true
@@ -635,14 +629,14 @@ async function createLaunchContext(projectService, sessionId, {
     previewApplicationIdentities: previewIdentitySettings.identities || [],
     projectEnvironment,
     projectsRoot: projectService?.selectedProject?.projectsRoot || "",
-    runtimeTargetRoot,
+    projectContextRoot,
     runtime,
     serviceDataRoot: typeof projectService?.currentServiceDataRoot === "function"
       ? projectService.currentServiceDataRoot()
       : "",
     session,
     store: runtime.store,
-    targetRoot
+    sessionSourceRoot
   };
 }
 
@@ -674,11 +668,9 @@ function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
   const inspectionStatus = String(inspection?.status || "").trim();
 
   if (!inspectionStatus) {
-    return storedStatus === "running"
-      ? `Workspace preparation is running${stored.currentLabel ? `: ${stored.currentLabel}` : "."}`
-      : ["ambiguous", "failed"].includes(storedStatus)
-        ? String(stored.diagnostic || "Workspace preparation must be fixed before managed preview can start.").trim()
-        : "";
+    return ["ambiguous", "failed"].includes(storedStatus)
+      ? String(stored.diagnostic || "Workspace preparation must be fixed before managed preview can start.").trim()
+      : "";
   }
   if (inspectionStatus === "unconfigured") {
     return "";
@@ -700,12 +692,16 @@ function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
     return "";
   }
   if (currentRecipe && storedStatus === "running") {
-    return `Workspace preparation is running${stored.currentLabel ? `: ${stored.currentLabel}` : "."}`;
+    return "";
   }
   if (currentRecipe && ["ambiguous", "failed"].includes(storedStatus)) {
-    return String(stored.diagnostic || "Workspace preparation must be fixed before managed preview can start.").trim();
+    return String(
+      stored.diagnostic || "Workspace preparation must be fixed before managed preview can start."
+    ).trim();
   }
-  return "Workspace preparation is pending.";
+  // Starting a launch target owns running and awaiting the current recipe.
+  // A new or changed recipe is therefore pending work, not a disabled target.
+  return "";
 }
 
 async function createLaunchTargetSpec(input = {}) {
@@ -1040,7 +1036,7 @@ function previewAuthForLaunchTerminal(terminal = {}, {
     sessionId,
     sessionRoot: String(metadata.sessionRoot || ""),
     targetHref,
-    targetRoot: String(metadata.targetRoot || metadata.runRoot || ""),
+    sessionSourceRoot: String(metadata.sessionSourceRoot || ""),
     terminalSessionId: String(terminal.id || "")
   };
 }
@@ -1181,7 +1177,7 @@ async function launchRestartRecoveryForTerminal({
     return null;
   }
   const metadata = terminal.metadata || {};
-  const worktreePath = String(metadata.runRoot || metadata.targetRoot || context.targetRoot || "").trim();
+  const worktreePath = String(metadata.runRoot || metadata.sessionSourceRoot || context.sessionSourceRoot || "").trim();
   if (!worktreePath) {
     return null;
   }
@@ -1204,7 +1200,7 @@ async function launchRestartRecoveryForTerminal({
     vibe64SessionDebugLog("server.launchTargetTerminal.restartState.error", {
       error: vibe64SessionDebugError(error),
       sessionId: context.session?.sessionId || "",
-      targetRoot: context.targetRoot || "",
+      sessionSourceRoot: context.sessionSourceRoot || "",
       terminalSessionId: terminal.id || ""
     }, {
       level: "warn"
@@ -1674,9 +1670,9 @@ function launchExecutionProject(context = {}, terminalEnvRecords = {}) {
     config: context.config || {},
     projectsRoot: context.projectsRoot || "",
     runtimeConfigEnv: terminalEnvRecords.runtimeConfigEnv,
-    runtimeTargetRoot: context.runtimeTargetRoot || "",
+    runtimeTargetRoot: context.projectContextRoot || "",
     serviceDataRoot: context.serviceDataRoot || "",
-    targetRoot: context.targetRoot || ""
+    targetRoot: context.sessionSourceRoot || ""
   };
 }
 
@@ -1699,8 +1695,7 @@ function previewIdentityCommandRunnerForLaunchTerminal({
   }
   return createPreviewIdentityCommandRunner({
     allowedRoots: [
-      context.targetRoot,
-      context.runtimeTargetRoot,
+      context.sessionSourceRoot,
       capability.sourceRoot
     ].filter(Boolean),
     capability,
@@ -1771,7 +1766,7 @@ async function missingLaunchPreviewStatus({
     vibe64SessionDebugLog("server.launchTargetTerminal.restartReconcile.clearMetadata.error", {
       error: vibe64SessionDebugError(error),
       sessionId,
-      targetRoot: context.targetRoot
+      sessionSourceRoot: context.sessionSourceRoot
     }, {
       level: "warn"
     });
@@ -1788,7 +1783,7 @@ async function missingLaunchPreviewStatus({
     reason: recovery.reason,
     sessionId,
     targetHref: String(openTarget?.href || lastLaunchTarget?.openTarget?.href || "").trim(),
-    targetRoot: context.targetRoot
+    sessionSourceRoot: context.sessionSourceRoot
   }, {
     level: "warn"
   });
@@ -2242,8 +2237,7 @@ function createLaunchTargetTerminalController({
             runCommand,
             runtime: context.runtime,
             session: context.session,
-            target: "launch-target",
-            targetRoot: context.targetRoot
+            target: "launch-target"
           });
           const terminalEnv = projectExecutionEnvFromRecords(terminalEnvRecords);
           const launchEnvironment = composeLaunchTerminalEnvironment({
@@ -2253,8 +2247,7 @@ function createLaunchTargetTerminalController({
             terminalEnv
           });
           const commandAllowedRoots = [
-            context.targetRoot,
-            context.runtimeTargetRoot,
+            context.sessionSourceRoot,
             spec.cwd,
             cwd,
             ...launchSpecAllowedRoots(spec)
@@ -2317,16 +2310,18 @@ function createLaunchTargetTerminalController({
               namespace,
               namespaceLimitPrefix: namespace,
               onClose: async (event) => {
-                await writePreviewDiagnostic(context.session, {
-                  ...diagnosticBase,
-                  commandPreview,
-                  exitCode: event.exitCode ?? null,
-                  launchTargetId: launchTarget.id,
-                  outputTail: event.output,
-                  reason: event.exitCode === 0 ? "process_exited" : "process_exited_nonzero",
-                  status: event.exitCode === 0 ? "exited" : "failed",
-                  terminalSessionId: event.id
-                });
+                if (event.reason === "exit") {
+                  await writePreviewDiagnostic(context.session, {
+                    ...diagnosticBase,
+                    commandPreview,
+                    exitCode: event.exitCode ?? null,
+                    launchTargetId: launchTarget.id,
+                    outputTail: event.output,
+                    reason: event.exitCode === 0 ? "process_exited" : "process_exited_nonzero",
+                    status: event.exitCode === 0 ? "exited" : "failed",
+                    terminalSessionId: event.id
+                  });
+                }
                 await launchPreviewProxies.close({
                   sessionId,
                   terminalSessionId: event.id

@@ -6,7 +6,7 @@ import {
   getStudioProjectContext,
   normalizeProjectSlug,
   resolveStudioProjectsRoot,
-  resolveProjectRoot
+  resolveProjectContextRoot
 } from "./studioProjectContext.js";
 
 const VIBE64_PROJECT_ROUTE_BASE = "/app/:slug";
@@ -50,19 +50,17 @@ async function resolveProjectRequestContext({
     slug
   });
   const project = result.project || {};
-  const targetRoot = project.projectRoot || project.path || resolveProjectRoot({
+  const targetRoot = project.projectRoot || project.path || resolveProjectContextRoot({
     projectsRoot,
     slug
   });
-  const projectLocalRoot = project.projectLocalRoot || "";
-  const projectRuntimeRoot = project.projectRuntimeRoot || projectLocalRoot;
-  const projectSessionSourceRoot = project.projectSessionSourceRoot || targetRoot;
+  const projectRuntimeRoot = project.projectRuntimeRoot || "";
+  const projectSessionSourceRoot = project.projectSessionSourceRoot || "";
   const sourceRoot = project.sourceRoot || "";
   const sourceConfigRoot = project.sourceConfigRoot || "";
   const projectRecordPath = project.projectRecordPath || "";
   return Object.freeze({
     projectRecordPath,
-    projectLocalRoot,
     projectRuntimeRoot,
     projectSessionSourceRoot,
     projectsRoot,
@@ -85,18 +83,15 @@ function explicitProjectRequestContextForSlug(projectContext = {}, slug = "", pr
   ) {
     return null;
   }
-  const projectLocalRoot = typeof projectContext.projectLocalRootForTarget === "function"
-    ? projectContext.projectLocalRootForTarget(targetRoot)
-    : "";
   const projectRuntimeRoot = typeof projectContext.projectRuntimeRootForTarget === "function"
     ? projectContext.projectRuntimeRootForTarget(targetRoot)
-    : projectLocalRoot;
+    : "";
   const projectSessionSourceRoot = typeof projectContext.projectSessionSourceRootForTarget === "function"
     ? projectContext.projectSessionSourceRootForTarget(targetRoot)
-    : targetRoot;
+    : "";
   const sourceRoot = typeof projectContext.sourceRootForTarget === "function"
     ? projectContext.sourceRootForTarget(targetRoot)
-    : targetRoot;
+    : "";
   const sourceConfigRoot = typeof projectContext.sourceConfigRootForTarget === "function"
     ? projectContext.sourceConfigRootForTarget(targetRoot)
     : "";
@@ -105,7 +100,6 @@ function explicitProjectRequestContextForSlug(projectContext = {}, slug = "", pr
     : "";
   return Object.freeze({
     projectRecordPath,
-    projectLocalRoot,
     projectRuntimeRoot,
     projectSessionSourceRoot,
     projectsRoot,
@@ -123,10 +117,6 @@ function currentProjectRequestContext() {
 
 function currentProjectTargetRoot() {
   return String(currentProjectRequestContext()?.targetRoot || "").trim();
-}
-
-function currentProjectLocalRoot() {
-  return String(currentProjectRequestContext()?.projectLocalRoot || "").trim();
 }
 
 function currentProjectRuntimeRoot() {
@@ -197,7 +187,6 @@ function projectRequestErrorStatusCode(error = {}) {
 export {
   VIBE64_PROJECT_ROUTE_BASE,
   currentProjectRecordPath,
-  currentProjectLocalRoot,
   currentProjectRequestContext,
   currentProjectRuntimeRoot,
   currentProjectSessionSourceRoot,

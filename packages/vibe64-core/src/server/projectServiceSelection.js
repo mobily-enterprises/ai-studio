@@ -1,10 +1,11 @@
-function projectServiceTargetRoot(projectService = null) {
+function projectServiceSourceRoot(projectService = null) {
   if (projectService && typeof projectService.currentProjectSourceRoot === "function") {
-    const sourceRoot = String(projectService.currentProjectSourceRoot() || "").trim();
-    if (sourceRoot) {
-      return sourceRoot;
-    }
+    return String(projectService.currentProjectSourceRoot() || "").trim();
   }
+  return "";
+}
+
+function projectServiceNamespaceRoot(projectService = null) {
   if (!projectService || typeof projectService.currentTargetRoot !== "function") {
     return "";
   }
@@ -12,5 +13,6 @@ function projectServiceTargetRoot(projectService = null) {
 }
 
 export {
-  projectServiceTargetRoot
+  projectServiceNamespaceRoot,
+  projectServiceSourceRoot
 };

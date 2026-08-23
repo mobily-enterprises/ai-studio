@@ -68,13 +68,13 @@ function vibe64LaunchTargetView(target = {}) {
   };
 }
 
-function vibe64LaunchProjectRoot(context = {}) {
+function vibe64LaunchSourceRoot(context = {}) {
   return sessionSourcePath(context.session || {});
 }
 
 async function inspectVibe64ForContext(context = {}, inspect, unconfigured) {
-  const projectRoot = vibe64LaunchProjectRoot(context);
-  if (!projectRoot) {
+  const sourceRoot = vibe64LaunchSourceRoot(context);
+  if (!sourceRoot) {
     return unconfigured;
   }
   try {
@@ -83,7 +83,7 @@ async function inspectVibe64ForContext(context = {}, inspect, unconfigured) {
         ...(context.runtime?.promptEnvironment || process.env),
         ...(context.projectEnvironment || {})
       },
-      projectRoot
+      projectRoot: sourceRoot
     });
   } catch (error) {
     if (String(error?.code || "").trim() === "STACK_REQUIRED") {
@@ -192,8 +192,7 @@ async function createVibe64LaunchTargetTerminalSpec({
       port,
       worktreePath
     }),
-    session: context.session || {},
-    targetRoot: context.session?.targetRoot || context.targetRoot || ""
+    session: context.session || {}
   });
 }
 

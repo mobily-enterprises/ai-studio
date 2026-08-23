@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, mkdir } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -12,10 +13,20 @@ import {
 import {
   renderTestGenesisPrompt,
   managedSessionSourceRoot,
+  projectRuntimeRoot,
   sourceMetadata,
   sourcePath,
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
+
+test("session runtime never derives private state from a project context path", () => {
+  assert.throws(
+    () => new Vibe64SessionRuntime({
+      projectContextRoot: "/var/lib/vibe64/merc/projects/example"
+    }),
+    (error) => error?.code === "vibe64_project_runtime_root_required"
+  );
+});
 
 test("plain runtime creates a Genesis session and awaits source materialization", async () => {
   await withTemporaryRoot(async (targetRoot) => {
@@ -34,7 +45,8 @@ test("plain runtime creates a Genesis session and awaits source materialization"
           store.writeMetadataValue(session.sessionId, name, value)
         )));
       },
-      targetRoot
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
     });
 
     const created = await runtime.createSession({
@@ -55,6 +67,8 @@ test("plain runtime creates a Genesis session and awaits source materialization"
     assert.equal(created.companion.id, "genesis");
     assert.equal(created.sourcePath, sourcePath(targetRoot, "plain-session"));
     assert.equal(created.sourceReady, true);
+    assert.equal(Object.hasOwn(created, "standaloneSourceRoot"), false);
+    assert.equal(Object.hasOwn(created, "targetRoot"), false);
     assert.deepEqual(created.workspaceSetup, {
       currentLabel: "",
       diagnostic: "",
@@ -75,9 +89,28 @@ test("plain runtime creates a Genesis session and awaits source materialization"
   });
 });
 
+test("plain runtime rejects a standalone authority folder presented as session source", async () => {
+  await withTemporaryRoot(async (standaloneSourceRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: standaloneSourceRoot,
+      projectRuntimeRoot: projectRuntimeRoot(standaloneSourceRoot)
+    });
+    await assert.rejects(runtime.createSession({
+      metadata: {
+        repository_mode: "local_source",
+        source_path: standaloneSourceRoot
+      },
+      sessionId: "standalone-session"
+    }), (error) => error?.code === "vibe64_session_source_creator_required");
+  });
+});
+
 test("plain runtime exposes compact workspace setup state without leaking its storage field", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const runtime = new Vibe64SessionRuntime({ targetRoot });
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
     await runtime.createSession({
       metadata: sourceMetadata(targetRoot, "setup-state-session"),
       sessionId: "setup-state-session"
@@ -103,7 +136,8 @@ test("plain runtime uses Genesis onboarding for the first user turn, then ordina
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       promptRenderer: renderTestGenesisPrompt,
-      targetRoot
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
     });
     await runtime.createSession({
       metadata: sourceMetadata(targetRoot, "prompt-session"),
@@ -134,7 +168,10 @@ test("plain runtime uses Genesis onboarding for the first user turn, then ordina
 
 test("plain runtime refuses to return a session without chat-ready source", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const runtime = new Vibe64SessionRuntime({ targetRoot });
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
 
     await assert.rejects(
       () => runtime.createSession({ sessionId: "missing-source" }),
@@ -150,9 +187,41 @@ test("plain runtime refuses to return a session without chat-ready source", asyn
   });
 });
 
+test("prompt rendering never falls back to a project context directory", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let rendered = false;
+    await mkdir(path.join(targetRoot, ".git"), {
+      recursive: true
+    });
+    const runtime = new Vibe64SessionRuntime({
+      promptRenderer() {
+        rendered = true;
+        return {};
+      },
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    await runtime.store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "namespace-only"
+    });
+
+    await assert.rejects(
+      () => runtime.renderPrompt("namespace-only", {
+        request: "Inspect this project."
+      }),
+      { code: "vibe64_session_source_required" }
+    );
+    assert.equal(rendered, false);
+  });
+});
+
 test("plain runtime excludes open state records whose managed source no longer exists", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const runtime = new Vibe64SessionRuntime({ targetRoot });
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
     await runtime.store.createSession({
       metadata: sourceMetadata(targetRoot, "ghost-session"),
       runtimeKind: "genesis",
@@ -169,8 +238,9 @@ test("a blocked session whose source creation failed can be closed and archived"
     const projectSessionSourceRoot = managedSessionSourceRoot(targetRoot);
     const failedSourcePath = sourcePath(targetRoot, "failed-source");
     const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
       projectSessionSourceRoot,
-      targetRoot
     });
 
     await assert.rejects(
@@ -192,7 +262,8 @@ test("a blocked session whose source creation failed can be closed and archived"
 test("plain runtime hides sessions using an unsupported runtime record", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
-      targetRoot
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
     });
     await runtime.store.createSession({
       runtimeKind: "obsolete-runtime",

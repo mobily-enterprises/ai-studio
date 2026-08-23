@@ -20,7 +20,7 @@ const SESSION_GIT_COMMAND_ACTOR_METADATA_KEYS = Object.freeze([
   "session_git_command_actor_updated_at",
   "session_git_command_actor_scope",
   "session_git_command_actor_session_id",
-  "session_git_command_actor_target_root",
+  "session_git_command_actor_source_root",
   "session_git_command_actor_thread_id",
   "session_git_command_actor_user_key",
   "session_git_command_actor_workdir"
@@ -44,7 +44,7 @@ function sessionGitCommandActorMetadata({
   env = process.env,
   reason = "",
   session = {},
-  targetRoot = "",
+  sourceRoot = "",
   threadId = "",
   vibe64User = null,
   workdir = ""
@@ -64,10 +64,10 @@ function sessionGitCommandActorMetadata({
     );
   }
   const normalizedSessionId = normalizeText(session.sessionId || session.id);
-  const normalizedTargetRoot = normalizeText(targetRoot);
-  if (!normalizedSessionId || !normalizedTargetRoot) {
+  const normalizedSourceRoot = normalizeText(sourceRoot);
+  if (!normalizedSessionId || !normalizedSourceRoot) {
     return responseError(
-      "Session Git command actor metadata requires a session id and target root.",
+      "Session Git command actor metadata requires a session id and source root.",
       "vibe64_session_git_command_actor_context_required"
     );
   }
@@ -77,11 +77,11 @@ function sessionGitCommandActorMetadata({
       session_git_command_actor_reason: normalizeText(reason),
       session_git_command_actor_scope: ownerScope,
       session_git_command_actor_session_id: normalizedSessionId,
-      session_git_command_actor_target_root: normalizedTargetRoot,
+      session_git_command_actor_source_root: normalizedSourceRoot,
       session_git_command_actor_thread_id: normalizeText(threadId),
       session_git_command_actor_updated_at: now.toISOString(),
       session_git_command_actor_user_key: ownerUserKey,
-      session_git_command_actor_workdir: normalizeText(workdir) || normalizedTargetRoot
+      session_git_command_actor_workdir: normalizeText(workdir) || normalizedSourceRoot
     },
     ok: true
   };
@@ -91,15 +91,15 @@ function sessionGitCommandActorMetadataFromExistingActor({
   actor = {},
   reason = "",
   session = {},
-  targetRoot = "",
+  sourceRoot = "",
   threadId = "",
   workdir = ""
 } = {}) {
   const normalizedSessionId = normalizeText(session.sessionId || session.id || actor.sessionId);
-  const normalizedTargetRoot = normalizeText(targetRoot) || normalizeText(actor.targetRoot);
-  if (!actor.actorScope || !actor.actorUserKey || !normalizedSessionId || !normalizedTargetRoot) {
+  const normalizedSourceRoot = normalizeText(sourceRoot) || normalizeText(actor.sourceRoot);
+  if (!actor.actorScope || !actor.actorUserKey || !normalizedSessionId || !normalizedSourceRoot) {
     return responseError(
-      "Session Git command actor metadata requires a session id, target root, and stored actor.",
+      "Session Git command actor metadata requires a session id, source root, and stored actor.",
       "vibe64_session_git_command_actor_context_required"
     );
   }
@@ -109,11 +109,11 @@ function sessionGitCommandActorMetadataFromExistingActor({
       session_git_command_actor_reason: normalizeText(reason) || normalizeText(actor.actorReason),
       session_git_command_actor_scope: normalizeText(actor.actorScope),
       session_git_command_actor_session_id: normalizedSessionId,
-      session_git_command_actor_target_root: normalizedTargetRoot,
+      session_git_command_actor_source_root: normalizedSourceRoot,
       session_git_command_actor_thread_id: normalizeText(threadId) || normalizeText(actor.threadId),
       session_git_command_actor_updated_at: now.toISOString(),
       session_git_command_actor_user_key: normalizeText(actor.actorUserKey),
-      session_git_command_actor_workdir: normalizeText(workdir) || normalizeText(actor.workdir) || normalizedTargetRoot
+      session_git_command_actor_workdir: normalizeText(workdir) || normalizeText(actor.workdir) || normalizedSourceRoot
     },
     ok: true,
     preservedActor: true
@@ -139,11 +139,11 @@ function sessionGitCommandActorFromMetadata(session = {}) {
     actorUpdatedAt: normalizeText(metadata.session_git_command_actor_updated_at),
     actorUserKey: normalizeText(metadata.session_git_command_actor_user_key),
     sessionId,
-    targetRoot: normalizeText(metadata.session_git_command_actor_target_root),
+    sourceRoot: normalizeText(metadata.session_git_command_actor_source_root),
     threadId: normalizeText(metadata.session_git_command_actor_thread_id),
     workdir: normalizeText(metadata.session_git_command_actor_workdir)
   };
-  if (!actor.actorScope || !actor.actorUserKey || !actor.sessionId || !actor.targetRoot) {
+  if (!actor.actorScope || !actor.actorUserKey || !actor.sessionId || !actor.sourceRoot) {
     return responseError(
       "Vibe64 does not have a complete GitHub command actor for this session.",
       "vibe64_session_git_command_actor_missing"
@@ -183,7 +183,7 @@ async function writeSessionGitCommandActorMetadata(runtime, sessionId = "", meta
     actorUserKey: normalizeText(metadata.session_git_command_actor_user_key),
     reason: normalizeText(metadata.session_git_command_actor_reason) || normalizeText(reason),
     sessionId: normalizedSessionId,
-    targetRoot: normalizeText(metadata.session_git_command_actor_target_root),
+    sourceRoot: normalizeText(metadata.session_git_command_actor_source_root),
     threadId: normalizeText(metadata.session_git_command_actor_thread_id),
     workdir: normalizeText(metadata.session_git_command_actor_workdir)
   });
@@ -197,7 +197,7 @@ async function recordSessionGitCommandActor({
   runtime = null,
   session = {},
   sessionId = "",
-  targetRoot = "",
+  sourceRoot = "",
   threadId = "",
   vibe64User = null,
   workdir = ""
@@ -221,7 +221,7 @@ async function recordSessionGitCommandActor({
       actor: existingActor,
       reason,
       session: sessionContext,
-      targetRoot,
+      sourceRoot,
       threadId,
       workdir
     })
@@ -229,7 +229,7 @@ async function recordSessionGitCommandActor({
       env,
       reason,
       session: sessionContext,
-      targetRoot,
+      sourceRoot,
       threadId,
       vibe64User,
       workdir
@@ -240,7 +240,7 @@ async function recordSessionGitCommandActor({
       error: normalizeText(actorMetadata.error),
       reason: normalizeText(reason),
       sessionId: normalizedSessionId,
-      targetRoot: normalizeText(targetRoot),
+      sourceRoot: normalizeText(sourceRoot),
       workdir: normalizeText(workdir)
     });
     return actorMetadata;

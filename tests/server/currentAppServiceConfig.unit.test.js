@@ -10,7 +10,7 @@ import {
 } from "./vibe64TestHelpers.js";
 
 function projectService(root, {
-  sessionRoot = "",
+  sessionSourceRoot = "",
   userEnvironment = {}
 } = {}) {
   return {
@@ -18,9 +18,14 @@ function projectService(root, {
       return {
         async getSession(sessionId) {
           return {
+            metadata: {
+              source_kind: "session_clone",
+              source_path: sessionSourceRoot,
+              source_path_authority: "managed_session_source"
+            },
             sessionId,
-            sourcePath: sessionRoot,
-            targetRoot: sessionRoot
+            sessionRoot: path.join(root, "runtime", sessionId),
+            sourcePath: sessionSourceRoot
           };
         }
       };
@@ -118,9 +123,40 @@ test("a project without a baseline source is unconfigured until a session exists
   assert.match(response.message, /Choose a project/u);
 });
 
+test("current app never inspects a hosted namespace as source", async () => {
+  let inspected = false;
+  const hostedNamespace = "/var/lib/vibe64/merc/projects/demo";
+  const service = createService({
+    inspectLaunch() {
+      inspected = true;
+      return {};
+    },
+    projectService: {
+      ...projectService(""),
+      currentTargetRoot() {
+        return hostedNamespace;
+      }
+    }
+  });
+
+  const response = await service.inspectCurrentApp();
+
+  assert.equal(response.ok, true);
+  assert.equal(response.status, "unconfigured");
+  assert.equal(inspected, false);
+  assert.equal(response.root, "");
+});
+
 test("session inspection uses that session's source directory", async () => {
   await withTemporaryRoot(async (root) => {
-    const sessionRoot = path.join(root, "session-source");
+    const sessionSourceRoot = path.join(
+      path.dirname(root),
+      "managed-source",
+      "sessions",
+      "active",
+      "session-1",
+      "source"
+    );
     let inspectedRoot = "";
     const service = createService({
       inspectLaunch({ projectRoot }) {
@@ -131,7 +167,7 @@ test("session inspection uses that session's source directory", async () => {
         };
       },
       projectService: projectService(root, {
-        sessionRoot
+        sessionSourceRoot
       })
     });
 
@@ -140,8 +176,8 @@ test("session inspection uses that session's source directory", async () => {
     });
 
     assert.equal(response.ok, true);
-    assert.equal(inspectedRoot, sessionRoot);
-    assert.equal(response.root, sessionRoot);
+    assert.equal(inspectedRoot, sessionSourceRoot);
+    assert.equal(response.root, sessionSourceRoot);
   });
 });
 

@@ -18,10 +18,7 @@ function executionEnvFingerprint(env = {}) {
 async function loadProjectExecutionEnvRecords({
   projectService = {},
   session = {},
-  sourcePath = "",
-  target = "",
-  targetRoot = "",
-  worktreePath = ""
+  target = ""
 } = {}) {
   if (typeof projectService.projectExecutionEnvironment !== "function") {
     return {
@@ -31,9 +28,7 @@ async function loadProjectExecutionEnvRecords({
   const sessionId = String(session?.sessionId || session?.id || "").trim();
   const env = await projectService.projectExecutionEnvironment({
     ...(sessionId ? { sessionId } : {}),
-    sourcePath: String(sourcePath || worktreePath || "").trim(),
-    target: String(target || "").trim(),
-    targetRoot: String(targetRoot || "").trim()
+    target: String(target || "").trim()
   });
   return {
     runtimeConfigEnv: normalizeExecutionEnvRecord(env)

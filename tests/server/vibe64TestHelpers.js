@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
-  resolveVibe64ProjectLocalRoot
+  resolveVibe64ProjectRuntimeRoot
 } from "@local/vibe64-core/server/studioRoots";
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
@@ -61,7 +61,6 @@ function sourcePath(targetRoot, sessionId = "session") {
 
 function sourceMetadata(targetRoot, sessionId = "session") {
   return {
-    main_checkout_root: targetRoot,
     source_kind: "session_clone",
     source_path: sourcePath(targetRoot, sessionId),
     source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
@@ -69,7 +68,7 @@ function sourceMetadata(targetRoot, sessionId = "session") {
 }
 
 function projectRuntimeRoot(targetRoot) {
-  return resolveVibe64ProjectLocalRoot(targetRoot);
+  return resolveVibe64ProjectRuntimeRoot(targetRoot);
 }
 
 function renderTestGenesisPrompt({ action = {} } = {}) {

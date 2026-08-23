@@ -35,7 +35,6 @@ import {
   normalizeDevelopmentDatabaseScope
 } from "@local/vibe64-core/server/studioProjectContext";
 import {
-  currentProjectLocalRoot,
   currentProjectRequestContext,
   currentProjectRuntimeRoot,
   currentProjectSessionSourceRoot,
@@ -45,7 +44,6 @@ import {
   runWithResolvedProjectRequestContext
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
-  resolveProjectRuntimeRoot,
   resolveSourceConfigRoot
 } from "@local/vibe64-core/server/projectState";
 import {
@@ -111,10 +109,9 @@ function publicProject(project = {}, {
     ...(project.githubRepository ? { githubRepository: project.githubRepository } : {}),
     name: slug,
     path: projectRoot,
-    projectLocalRoot: context?.projectLocalRoot || project.projectLocalRoot || project.projectRuntimeRoot || "",
     projectRecordPath: context?.projectRecordPath || project.projectRecordPath || "",
     projectRoot,
-    projectRuntimeRoot: context?.projectRuntimeRoot || project.projectRuntimeRoot || project.projectLocalRoot || "",
+    projectRuntimeRoot: context?.projectRuntimeRoot || project.projectRuntimeRoot || "",
     projectSessionSourceRoot: context?.projectSessionSourceRoot || project.projectSessionSourceRoot || "",
     ...(project.repository ? { repository: project.repository } : {}),
     repositoryMode: project.repositoryMode || project.repository?.mode || "",
@@ -258,7 +255,7 @@ function createService({
     }
     return typeof studioProjectContext.sourceRootForTarget === "function"
       ? studioProjectContext.sourceRootForTarget(target)
-      : target;
+      : "";
   }
 
   function selectedSourceConfigRoot() {
@@ -270,15 +267,13 @@ function createService({
     if (!sourceRoot) {
       return "";
     }
-    return typeof studioProjectContext.sourceConfigRootForTarget === "function" && sourceRoot === selectedTargetRoot()
-      ? studioProjectContext.sourceConfigRootForTarget(sourceRoot)
-      : resolveSourceConfigRoot({
-          sourceRoot
-        });
+    return resolveSourceConfigRoot({
+      sourceRoot
+    });
   }
 
   function selectedProjectRuntimeRoot() {
-    const requestRoot = currentProjectRuntimeRoot() || currentProjectLocalRoot();
+    const requestRoot = currentProjectRuntimeRoot();
     if (requestRoot) {
       return requestRoot;
     }
@@ -289,9 +284,7 @@ function createService({
     if (typeof studioProjectContext.projectRuntimeRootForTarget === "function") {
       return studioProjectContext.projectRuntimeRootForTarget(target);
     }
-    return resolveProjectRuntimeRoot({
-      projectRoot: target
-    });
+    return "";
   }
 
   function selectedSessionSourceRoot() {
@@ -302,26 +295,27 @@ function createService({
     const target = selectedTargetRoot();
     return target && typeof studioProjectContext.projectSessionSourceRootForTarget === "function"
       ? studioProjectContext.projectSessionSourceRootForTarget(target)
-      : target;
+      : "";
   }
 
   function sessionStore() {
     const target = requireSelectedTargetRoot();
     return createVibe64SessionStore({
-      projectLocalRoot: selectedProjectRuntimeRoot(),
-      projectSessionSourceRoot: selectedSessionSourceRoot(),
-      targetRoot: selectedSourceRoot() || target
+      projectContextRoot: target,
+      projectRuntimeRoot: selectedProjectRuntimeRoot(),
+      projectSessionSourceRoot: selectedSessionSourceRoot()
     });
   }
 
   async function sourceForInput(input = {}) {
     const sessionId = String(input.sessionId || "").trim();
     if (!sessionId) {
+      const sourceRoot = selectedSourceRoot();
       return {
-        label: "Project baseline",
-        rootKind: "project-root",
+        label: sourceRoot ? "Standalone source" : "Project metadata",
+        rootKind: sourceRoot ? "standalone-source" : "metadata-only",
         sessionId: "",
-        sourceRoot: selectedSourceRoot()
+        sourceRoot
       };
     }
     const session = await sessionStore().readSession(sessionId);
@@ -335,18 +329,18 @@ function createService({
 
   async function userEnvRecords() {
     return (await readEnvUserValues({
-      projectLocalRoot: selectedProjectRuntimeRoot()
+      projectRuntimeRoot: selectedProjectRuntimeRoot()
     })).records;
   }
 
   async function resolvedProjectEnvironment(input = {}, userRecords = []) {
     const source = await sourceForInput(input);
-    const projectRoot = source.sourceRoot;
+    const sourceRoot = source.sourceRoot;
     const userEnvironment = runtimeConfigEnv(userRecords, {
       scope: input.environment || input.scope || RUNTIME_CONFIG_SCOPES.DEV,
       target: input.target
     });
-    if (!projectRoot) {
+    if (!sourceRoot) {
       return {
         effectiveEnvironment: {
           ...env,
@@ -366,7 +360,7 @@ function createService({
           ...env,
           ...userEnvironment
         },
-        projectRoot
+        projectRoot: sourceRoot
       });
     } catch (error) {
       return {
@@ -390,12 +384,12 @@ function createService({
       ? await resourceEnvironmentProvider.environmentForResources({
           components: declaration.components,
           ...developmentDatabase,
-          projectLocalRoot: selectedProjectRuntimeRoot(),
+          projectRuntimeRoot: selectedProjectRuntimeRoot(),
           resources: declaration.resources,
           serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
           sessionId: source.sessionId,
-          sourceRoot: projectRoot,
-          targetRoot: selectedTargetRoot()
+          projectContextRoot: selectedTargetRoot(),
+          sourceRoot
         })
       : {};
     const platformEnvironment = environmentRecord(provided?.environment || provided);
@@ -522,7 +516,7 @@ function createService({
     }
     await saveEnvUserValues({
       environment: input.environment || input.scope,
-      projectLocalRoot: selectedProjectRuntimeRoot(),
+      projectRuntimeRoot: selectedProjectRuntimeRoot(),
       values
     });
     const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
@@ -682,7 +676,6 @@ function createService({
       projectRuntimeRoot: selectedProjectRuntimeRoot(),
       runCommand,
       sourceRoot: selectedSourceRoot(),
-      targetRoot: selectedTargetRoot(),
       templates: projectTemplates
     };
   }
@@ -706,11 +699,11 @@ function createService({
     return new Vibe64SessionRuntime({
       createSessionSource: options.createSessionSource,
       inspectSourceByDefault: options.inspectSource !== false,
-      projectLocalRoot: selectedProjectRuntimeRoot(),
+      projectContextRoot: target,
+      projectRuntimeRoot: selectedProjectRuntimeRoot(),
       projectSessionSourceRoot: selectedSessionSourceRoot(),
       promptEnvironment: await promptEnvironment(),
-      store: sessionStore(),
-      targetRoot: selectedSourceRoot() || target
+      store: sessionStore()
     });
   }
 
@@ -761,12 +754,12 @@ function createService({
     },
 
     async readSelectedSessionSource(input = {}) {
-      const explicitTargetRoot = String(input.targetRoot || "").trim();
-      const store = explicitTargetRoot
+      const explicitProjectContextRoot = String(input.projectContextRoot || "").trim();
+      const store = explicitProjectContextRoot
         ? createVibe64SessionStore({
-            projectLocalRoot: String(input.projectRuntimeRoot || input.projectLocalRoot || "").trim(),
-            projectSessionSourceRoot: String(input.projectSessionSourceRoot || explicitTargetRoot).trim(),
-            targetRoot: explicitTargetRoot
+            projectContextRoot: explicitProjectContextRoot,
+            projectRuntimeRoot: String(input.projectRuntimeRoot || "").trim(),
+            projectSessionSourceRoot: String(input.projectSessionSourceRoot || "").trim()
           })
         : sessionStore();
       const session = await store.readCurrentSession();
@@ -786,7 +779,6 @@ function createService({
       };
     },
 
-    currentProjectLocalRoot: selectedProjectRuntimeRoot,
     currentProjectRuntimeRoot: selectedProjectRuntimeRoot,
     currentProjectSessionSourceRoot: selectedSessionSourceRoot,
     currentProjectSourceConfigRoot: selectedSourceConfigRoot,
@@ -844,11 +836,11 @@ function createService({
       const source = await sourceForInput({ sessionId });
       return resourceEnvironmentProvider.removeSessionResources({
         ...(await currentDevelopmentDatabaseConfiguration()),
-        projectLocalRoot: selectedProjectRuntimeRoot(),
+        projectRuntimeRoot: selectedProjectRuntimeRoot(),
+        projectContextRoot: selectedTargetRoot(),
         sessionId,
         serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
-        sourceRoot: source.sourceRoot,
-        targetRoot: selectedTargetRoot()
+        sourceRoot: source.sourceRoot
       });
     },
 

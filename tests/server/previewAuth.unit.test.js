@@ -26,9 +26,9 @@ function previewAuthFixture(overrides = {}) {
     kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
     projectScope: "project:preview-auth-test",
     secret: "b".repeat(64),
+    sessionSourceRoot: "/tmp/preview-auth-test",
     sessionId: "session-preview-auth-test",
     targetHref: "http://127.0.0.1:4102/home",
-    targetRoot: "/tmp/preview-auth-test",
     terminalSessionId: "terminal-preview-auth-test",
     ...overrides
   };
@@ -257,7 +257,7 @@ test("preview identity grants require every project, session, target, and termin
     "projectScope",
     "sessionId",
     "targetHref",
-    "targetRoot",
+    "sessionSourceRoot",
     "terminalSessionId"
   ]) {
     assert.throws(

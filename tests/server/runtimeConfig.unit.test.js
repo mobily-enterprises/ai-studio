@@ -288,10 +288,10 @@ test("runtime config Env view exposes only current record concepts", () => {
 });
 
 test("Env user value store writes 0600 state and preserves empty records", async () => {
-  await withTemporaryRoot(async (projectLocalRoot) => {
+  await withTemporaryRoot(async (projectRuntimeRoot) => {
     const saved = await saveEnvUserValues({
       environment: RUNTIME_CONFIG_SCOPES.DEV,
-      projectLocalRoot,
+      projectRuntimeRoot,
       values: {
         OPENAI_API_KEY: {
           secret: true,
@@ -330,7 +330,7 @@ test("Env user value store writes 0600 state and preserves empty records", async
     });
 
     await saveEnvUserValues({
-      projectLocalRoot,
+      projectRuntimeRoot,
       values: {
         PUBLIC_FLAG: {
           remove: true
@@ -339,7 +339,7 @@ test("Env user value store writes 0600 state and preserves empty records", async
     });
 
     const current = await readEnvUserValues({
-      projectLocalRoot
+      projectRuntimeRoot
     });
     assert.equal(current.records.some((record) => record.key === "PUBLIC_FLAG"), false);
     assert.equal(current.records.some((record) => record.key === "OPENAI_API_KEY"), true);

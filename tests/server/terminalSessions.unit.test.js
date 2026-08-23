@@ -732,6 +732,7 @@ test("terminal sessions report exited after close hooks finish", async () => {
 
 test("terminal sessions can stop a process without deleting its log", async () => {
   const namespace = `terminal-stop-test-${crypto.randomUUID()}`;
+  const closeReasons = [];
   const messages = [];
   const stopReasons = [];
 
@@ -743,6 +744,9 @@ test("terminal sessions can stop a process without deleting its log", async () =
     command: process.execPath,
     commandPreview: "node stoppable",
     namespace,
+    onClose: async ({ reason }) => {
+      closeReasons.push(reason);
+    },
     onStop: async ({ reason }) => {
       stopReasons.push(reason);
     }
@@ -767,6 +771,7 @@ test("terminal sessions can stop a process without deleting its log", async () =
     await waitFor(() => messages.some((message) =>
       message.type === "status" && message.status === "exited"
     ));
+    assert.deepEqual(closeReasons, ["stop"]);
 
     const snapshot = readTerminalSession(session.id, { namespace });
     assert.equal(snapshot.status, "exited");

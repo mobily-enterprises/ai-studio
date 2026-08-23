@@ -39,7 +39,7 @@ test("session Git actor changes only when a new turn explicitly replaces it", as
     env: environment,
     runtime,
     session: githubSession(),
-    targetRoot: "/project",
+    sourceRoot: "/project",
     vibe64User: { username: "merc" }
   });
   assert.equal(first.session.metadata.session_git_command_actor_user_key, "merc");
@@ -52,7 +52,7 @@ test("session Git actor changes only when a new turn explicitly replaces it", as
     env: environment,
     runtime,
     session: currentSession,
-    targetRoot: "/project",
+    sourceRoot: "/project",
     vibe64User: { username: "geoff" }
   });
   assert.equal(preserved.session.metadata.session_git_command_actor_user_key, "merc");
@@ -62,7 +62,7 @@ test("session Git actor changes only when a new turn explicitly replaces it", as
     overwrite: true,
     runtime,
     session: currentSession,
-    targetRoot: "/project",
+    sourceRoot: "/project",
     vibe64User: { username: "geoff" }
   });
   assert.equal(replaced.session.metadata.session_git_command_actor_user_key, "geoff");

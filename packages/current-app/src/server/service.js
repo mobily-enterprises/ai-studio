@@ -8,7 +8,7 @@ import {
   resolveStudioTargetRoot
 } from "@local/vibe64-core/server/studioRoots";
 import {
-  projectServiceTargetRoot
+  projectServiceSourceRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
   inspectVibe64Launch
@@ -77,10 +77,7 @@ function createService({
     if (String(appRoot || "").trim()) {
       return resolveCurrentAppRoot(appRoot);
     }
-    if (typeof projectService.currentProjectSourceRoot === "function") {
-      return String(projectService.currentProjectSourceRoot() || "").trim();
-    }
-    return projectServiceTargetRoot(projectService);
+    return projectServiceSourceRoot(projectService);
   }
 
   async function rootForInput(input = {}) {

@@ -18,7 +18,6 @@ describe("Vibe64 session info", () => {
         base_branch: "main",
         base_commit: "1234567890abcdef",
         branch: "vibe64/2026-08-17_01-02-03",
-        main_checkout_root: "/var/lib/vibe64/sas/projects/dogandgroom",
         source_remote_url: "https://secret@example.test/company/dogandgroom.git?token=hidden"
       },
       sessionId: "2026-08-17_01-02-03",

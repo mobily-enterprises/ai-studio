@@ -6,9 +6,6 @@ import {
   normalizePlainObject
 } from "@local/vibe64-core/server/serverResponses";
 import {
-  projectServiceTargetRoot
-} from "@local/vibe64-core/server/projectServiceSelection";
-import {
   sessionSourcePath as sharedSessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
@@ -96,12 +93,12 @@ function pathInsideOrEqual(rootPath = "", candidatePath = "") {
   return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
-function sessionTerminalCwd(session = {}, projectService = {}) {
-  return String(sharedSessionSourcePath(session) || session.targetRoot || projectServiceTargetRoot(projectService)).trim();
+function sessionTerminalCwd(session = {}) {
+  return String(sharedSessionSourcePath(session)).trim();
 }
 
-function terminalTargetRoot(session = {}, projectService = {}) {
-  return normalizedTerminalPath(sharedSessionSourcePath(session) || session.targetRoot || projectServiceTargetRoot(projectService));
+function terminalSessionSourceRoot(session = {}) {
+  return normalizedTerminalPath(sharedSessionSourcePath(session));
 }
 
 function terminalWorktreePath(session = {}) {
@@ -134,7 +131,7 @@ export {
   sessionTerminalCwd,
   ensureTerminalSessionSourceGitSelfContained,
   terminalNamespace,
-  terminalTargetRoot,
+  terminalSessionSourceRoot,
   terminalWorktreePath,
   terminalProjectScopeKey,
   normalizePlainObject,

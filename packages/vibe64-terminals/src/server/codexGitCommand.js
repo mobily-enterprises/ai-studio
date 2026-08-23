@@ -343,8 +343,8 @@ function noGithubGitCommandActorFromSession(session = {}, {
     );
   }
   const sessionId = normalizeText(session.sessionId || session.id);
-  const targetRoot = sessionSourcePath(session);
-  if (!sessionId || !targetRoot) {
+  const sourceRoot = sessionSourcePath(session);
+  if (!sessionId || !sourceRoot) {
     return responseError(
       "Codex git commands for non-GitHub sessions require a session source path.",
       "vibe64_codex_git_command_source_missing"
@@ -357,9 +357,9 @@ function noGithubGitCommandActorFromSession(session = {}, {
     actorUserKey: "",
     githubRequired: false,
     sessionId,
-    targetRoot,
+    sourceRoot,
     threadId: normalizeText(session.metadata?.agent_identity_conversation_id),
-    workdir: targetRoot,
+    workdir: sourceRoot,
     ok: true
   };
 }
@@ -420,21 +420,21 @@ async function readGitCommandSession(projectService = {}, sessionId = "") {
 function normalizeHostCwd(cwd = "", actor = {}) {
   const normalizedCwd = normalizeText(cwd);
   if (!normalizedCwd) {
-    return actor.workdir || actor.targetRoot;
+    return actor.workdir || actor.sourceRoot;
   }
   return normalizedCwd;
 }
 
 function validateCommandCwd(cwd = "", actor = {}) {
   const resolvedCwd = path.resolve(normalizeHostCwd(cwd, actor));
-  const targetRoot = path.resolve(actor.targetRoot);
-  if (!pathInsideOrEqual(targetRoot, resolvedCwd)) {
+  const sourceRoot = path.resolve(actor.sourceRoot);
+  if (!pathInsideOrEqual(sourceRoot, resolvedCwd)) {
     return responseError(
       "Codex git commands must run inside the active project.",
       "vibe64_codex_git_command_cwd_invalid",
       {
         cwd: resolvedCwd,
-        targetRoot
+        sourceRoot
       }
     );
   }
@@ -595,7 +595,6 @@ function logGitCommandResult(logger, result = {}, fields = {}) {
     sourceRoot: normalizeText(fields.workdir || fields.cwd),
     stderrTail,
     stdoutTail,
-    targetRoot: normalizeText(fields.targetRoot),
     timedOut: result?.timedOut === true,
     userKey: normalizeText(fields.actorUserKey)
   }, "Vibe64 Codex git command finished.");
@@ -637,7 +636,7 @@ function createCodexGitCommandService({
       const access = await authorize({
         actor,
         session,
-        targetRoot: actor.targetRoot,
+        sourceRoot: actor.sourceRoot,
         workdir: actor.workdir
       });
       if (access === false || access?.ok === false) {
@@ -752,7 +751,7 @@ function createCodexGitCommandService({
       const access = await authorize({
         actor,
         session,
-        targetRoot: actor.targetRoot,
+        sourceRoot: actor.sourceRoot,
         workdir: cwd.cwd
       });
       if (access === false || access?.ok === false) {
@@ -797,7 +796,7 @@ function createCodexGitCommandService({
     const result = await gatewayCommandRunner({
       actor: "app",
       allowedRoots: [
-        actor.targetRoot
+        actor.sourceRoot
       ],
       args,
       command,
@@ -807,7 +806,7 @@ function createCodexGitCommandService({
         : {},
       envPolicy: "auth",
       gitSafeDirectories: [
-        actor.targetRoot,
+        actor.sourceRoot,
         cwd.cwd
       ],
       gitAuthToken: command === "git" ? githubToken.token : "",
@@ -825,7 +824,7 @@ function createCodexGitCommandService({
       session: {
         metadata: session.metadata || {},
         sessionId,
-        targetRoot: actor.targetRoot
+        sourcePath: actor.sourceRoot
       },
       timeout: CODEX_GIT_COMMAND_TIMEOUT_MS,
       userKey: gatewayUserKey

@@ -21,22 +21,12 @@ function pathInsideOrEqual(parentPath = "", childPath = "") {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function targetSessionSourcePath(targetRoot = "", sessionId = "") {
-  const normalizedTargetRoot = normalizedSessionPath(targetRoot);
+function managedSessionSourcePath(managedSessionSourceRoot = "", sessionId = "") {
+  const normalizedManagedSessionSourceRoot = normalizedSessionPath(managedSessionSourceRoot);
   const normalizedSessionId = normalizeText(sessionId);
-  return normalizedTargetRoot && normalizedSessionId
-    ? path.join(normalizedTargetRoot, "sessions", "active", normalizedSessionId, "source")
+  return normalizedManagedSessionSourceRoot && normalizedSessionId
+    ? path.join(normalizedManagedSessionSourceRoot, "sessions", "active", normalizedSessionId, "source")
     : "";
-}
-
-function explicitPathIsLocalSourceRoot(session = {}, explicitPath = "") {
-  const targetRoot = normalizedSessionPath(session.targetRoot);
-  if (!targetRoot || explicitPath !== targetRoot) {
-    return false;
-  }
-  const sessionRoot = normalizedSessionPath(session.sessionRoot);
-  return !sessionRoot ||
-    (!pathInsideOrEqual(targetRoot, sessionRoot) && !pathInsideOrEqual(sessionRoot, targetRoot));
 }
 
 function explicitPathIsManagedSessionSource(session = {}, explicitPath = "") {
@@ -74,13 +64,7 @@ function explicitSessionSourcePath(session = {}) {
   if (!explicitPath) {
     return "";
   }
-  if (explicitPathIsLocalSourceRoot(session, explicitPath)) {
-    return explicitPath;
-  }
-  if (explicitPathIsManagedSessionSource(session, explicitPath)) {
-    return explicitPath;
-  }
-  return "";
+  return explicitPathIsManagedSessionSource(session, explicitPath) ? explicitPath : "";
 }
 
 function sessionSourcePath(session = {}) {
@@ -92,12 +76,11 @@ function sessionHasSource(session = {}) {
 }
 
 export {
-  explicitPathIsLocalSourceRoot,
   explicitPathIsManagedSessionSource,
   explicitSessionSourcePath,
+  managedSessionSourcePath,
   pathInsideOrEqual,
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
   sessionHasSource,
-  sessionSourcePath,
-  targetSessionSourcePath
+  sessionSourcePath
 };

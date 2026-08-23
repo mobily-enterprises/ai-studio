@@ -17,10 +17,16 @@ import {
 } from "@local/studio-terminal-core/server/studioRuntimeIdentity";
 import {
   createLaunchRestartBaseline,
+  createLaunchTargetTerminalController,
   launchRestartState,
   previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch
 } from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
+import {
+  addGenesisStack,
+  initializeGenesisProject,
+  inspectVibe64WorkspaceSetup
+} from "../../packages/vibe64-genesis/src/server/index.js";
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
@@ -82,6 +88,135 @@ async function runGit(cwd, args) {
     cwd
   });
 }
+
+test("launch start reruns and awaits a changed workspace recipe", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-launch-workspace-"));
+  const sessionId = "session-workspace";
+  const projectContextRoot = path.join(root, "project-namespace");
+  const sourceRoot = path.join(root, "sessions", "active", sessionId, "source");
+  const sessionRoot = path.join(root, "state", sessionId);
+  await mkdir(sourceRoot, {
+    recursive: true
+  });
+
+  let controller;
+  try {
+    await runGit(sourceRoot, ["init", "--initial-branch=main"]);
+    await writeFile(path.join(sourceRoot, "package.json"), JSON.stringify({
+      scripts: {
+        develop: "node server.js"
+      }
+    }, null, 2));
+    await initializeGenesisProject({
+      projectRoot: sourceRoot
+    });
+    await addGenesisStack({
+      pieces: ["jskit"],
+      projectRoot: sourceRoot
+    });
+    const currentSetup = await inspectVibe64WorkspaceSetup({
+      environment: {},
+      projectRoot: sourceRoot
+    });
+    assert.equal(currentSetup.status, "ready");
+
+    const session = {
+      metadata: {
+        source_kind: "session_clone",
+        source_path: sourceRoot,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      sessionId,
+      sessionRoot,
+      sourceInspection: null,
+      targetRoot: sourceRoot,
+      workspaceSetup: {
+        recipeHash: "sha256:retired-contract",
+        status: "succeeded"
+      }
+    };
+    const events = [];
+    let previewIdentityInput = null;
+    const runtime = {
+      async getSession() {
+        return session;
+      },
+      store: {}
+    };
+    const projectService = {
+      async createRuntime() {
+        return runtime;
+      },
+      currentServiceDataRoot() {
+        return path.join(root, "service");
+      },
+      currentTargetRoot() {
+        return projectContextRoot;
+      },
+      async projectExecutionEnvironment() {
+        return {};
+      },
+      async readPreviewApplicationIdentities(input) {
+        previewIdentityInput = input;
+        return {
+          identities: [],
+          ok: true
+        };
+      },
+      selectedProject: {},
+      targetRoot: projectContextRoot
+    };
+    controller = createLaunchTargetTerminalController({
+      async ensureWorkspacePrepared() {
+        events.push("prepare-started");
+        return {
+          completion: Promise.resolve().then(() => {
+            session.workspaceSetup = {
+              recipeHash: currentSetup.recipeHash,
+              status: "succeeded"
+            };
+            events.push("prepare-completed");
+            return session.workspaceSetup;
+          })
+        };
+      },
+      projectService,
+      async runCommand(input) {
+        events.push("launch-started");
+        assert.equal(session.workspaceSetup.recipeHash, currentSetup.recipeHash);
+        return {
+          id: "terminal-workspace",
+          metadata: {
+            ...input.terminal.metadata
+          },
+          ok: true,
+          running: true,
+          status: "running"
+        };
+      }
+    });
+
+    const terminal = await controller.startTerminal(sessionId, {
+      launchTargetId: "app"
+    });
+
+    assert.equal(terminal.ok, true);
+    assert.deepEqual(previewIdentityInput, {
+      sessionId
+    });
+    assert.deepEqual(events, [
+      "prepare-started",
+      "prepare-completed",
+      "launch-started"
+    ]);
+  } finally {
+    await controller?.close();
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
 
 async function createLaunchSpecFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-launch-spec-"));
@@ -237,7 +372,7 @@ test("preview identity exchange does not reload or provision the project environ
     let invocation;
     const runner = previewIdentityCommandRunnerForLaunchTerminal({
       context: {
-        runtimeTargetRoot: fixture.targetRoot,
+        projectContextRoot: fixture.targetRoot,
         session: fixture.session,
         targetRoot: fixture.targetRoot
       },

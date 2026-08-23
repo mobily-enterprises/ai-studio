@@ -1761,9 +1761,9 @@ function commandPreviewAuth(targetOrigin = "", suffix = "identity") {
     kind: APPLICATION_COMMAND_PREVIEW_AUTH_KIND,
     projectScope: `project:${suffix}`,
     secret: TEST_PREVIEW_IDENTITY_SECRET,
+    sessionSourceRoot: `/tmp/vibe64-preview-${suffix}`,
     sessionId: `session-${suffix}`,
     targetHref: `${targetOrigin}/home`,
-    targetRoot: `/tmp/vibe64-preview-${suffix}`,
     terminalSessionId: `terminal-${suffix}`
   };
 }

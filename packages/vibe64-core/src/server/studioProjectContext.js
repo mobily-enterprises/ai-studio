@@ -39,7 +39,6 @@ import {
 } from "./projectDeletion.js";
 import {
   PROJECT_REPOSITORY_MODE_GITHUB,
-  PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
   PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   normalizeProjectGithubRepository,
@@ -51,6 +50,7 @@ import {
 const PROJECT_SLUG_MAX_LENGTH = 48;
 const PROJECT_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
 const EXTERNAL_PROJECT_LOCAL_ROOTS_DIR = "projects";
+const DEFAULT_HOSTED_REPOSITORY_BRANCH = "main";
 
 let configuredContext = null;
 
@@ -109,6 +109,18 @@ function projectStateMissingError(slug = "") {
   return error;
 }
 
+function assertHostedRepositoryMetadata(metadata = {}) {
+  if (projectRepositoryView(metadata).repositoryMode !== PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
+    return metadata;
+  }
+  const error = new Error(
+    "Hosted projects cannot use a project namespace as local source. Correct this project record explicitly before opening it."
+  );
+  error.code = "vibe64_hosted_local_source_unsupported";
+  error.statusCode = 409;
+  throw error;
+}
+
 function pathInsideOrEqual(parentPath = "", childPath = "") {
   const parent = normalizeRoot(parentPath);
   const child = normalizeRoot(childPath, parent);
@@ -147,19 +159,19 @@ function projectSlugFromInput(input = {}) {
   return normalizeProjectSlug(projectSlugFromName(input?.name));
 }
 
-function resolveProjectRoot({
+function resolveProjectContextRoot({
   projectsRoot = "",
   slug = ""
 } = {}) {
   const normalizedProjectsRoot = normalizeRoot(projectsRoot || resolveStudioProjectsRoot());
   const normalizedSlug = normalizeProjectSlug(slug);
-  const projectRoot = path.resolve(normalizedProjectsRoot, normalizedSlug);
-  if (!pathInsideOrEqual(normalizedProjectsRoot, projectRoot)) {
+  const projectContextRoot = path.resolve(normalizedProjectsRoot, normalizedSlug);
+  if (!pathInsideOrEqual(normalizedProjectsRoot, projectContextRoot)) {
     const error = new Error("Project root must be inside the Vibe64 projects root.");
     error.code = "vibe64_project_outside_root";
     throw error;
   }
-  return projectRoot;
+  return projectContextRoot;
 }
 
 function resolveCatalogProjectRuntimeRoot({
@@ -250,7 +262,7 @@ async function selectedProjectRecord({
     writeDerivedMetadata: false
   });
   const runtime = publicProjectRuntimeOpenState(await readProjectRuntimeOpenState({
-    projectLocalRoot: projectRuntimeRoot || resolvedPath
+    projectRuntimeRoot
   }));
   const repositoryFields = projectRepositoryView(metadata, {
     fallbackMode: sourceRoot ? PROJECT_REPOSITORY_MODE_LOCAL_SOURCE : ""
@@ -262,7 +274,6 @@ async function selectedProjectRecord({
     ...repositoryFields,
     ...(githubRepository ? { githubRepository } : {}),
     projectRecordPath,
-    projectLocalRoot: projectRuntimeRoot,
     projectRuntimeRoot,
     projectSessionSourceRoot,
     runtime,
@@ -296,10 +307,10 @@ function workspaceProjectRecord({
 } = {}) {
   const resolvedPath = normalizeRoot(projectPath);
   const repositoryFields = projectRepositoryView(metadata);
-  const repositoryStorage = resolvedPath
+  const repositoryStorage = projectRuntimeRoot
     ? projectRepositoryStorageRole({
         mode: repositoryFields.repositoryMode,
-        projectRoot: projectRuntimeRoot || resolvedPath
+        projectRuntimeRoot
       })
     : null;
   const deletion = normalizeProjectDeletion(metadata.deletion);
@@ -320,7 +331,6 @@ function workspaceProjectRecord({
       metadata.developmentDatabaseName
     ),
     path: resolvedPath,
-    projectLocalRoot: projectRuntimeRoot,
     projectRoot: resolvedPath,
     projectRootRelative: path.relative(normalizeRoot(projectsRoot), resolvedPath),
     projectRecordPath,
@@ -456,18 +466,18 @@ async function workspaceProjectRecordForPath({
   projectsRoot = ""
 } = {}) {
   const resolvedPath = normalizeRoot(projectPath);
-  const metadata = await readProjectMetadata({
+  const metadata = assertHostedRepositoryMetadata(await readProjectMetadata({
     projectRecordPath
-  });
+  }));
   const runtime = await readProjectRuntimeOpenState({
-    projectLocalRoot: projectRuntimeRoot || resolvedPath
+    projectRuntimeRoot
   });
   return workspaceProjectRecord({
     metadata,
     projectRecordPath,
     path: resolvedPath,
-    projectRuntimeRoot: projectRuntimeRoot || resolvedPath,
-    projectSessionSourceRoot: projectSessionSourceRoot || resolvedPath,
+    projectRuntimeRoot,
+    projectSessionSourceRoot,
     projectsRoot,
     runtime
   });
@@ -581,58 +591,6 @@ async function runGit(cwd = "", args = []) {
   }
 }
 
-async function runRequiredGit(cwd = "", args = [], options = {}) {
-  const result = await runGitCommand(cwd, args, options);
-  if (result.ok) {
-    return gitCommandOutput(result);
-  }
-  const error = new Error(String(result.stderr || result.stdout || result.output || result.error || "Git command failed.").trim());
-  error.code = result.code || "vibe64_project_git_command_failed";
-  throw error;
-}
-
-async function gitCommandSucceeds(cwd = "", args = []) {
-  const result = await runGitCommand(cwd, args);
-  return result.ok === true;
-}
-
-async function ensureLocalSourceMainBranch(projectPath = "") {
-  const targetRoot = normalizeRoot(projectPath);
-  const mainBranch = PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH;
-  const insideWorkTree = (await runGit(targetRoot, ["rev-parse", "--is-inside-work-tree"])) === "true";
-  if (!insideWorkTree) {
-    await runRequiredGit(targetRoot, ["init", `--initial-branch=${mainBranch}`], {
-      timeout: 30_000
-    });
-    await runRequiredGit(targetRoot, ["add", "-A"], {
-      timeout: 30_000
-    });
-    await runRequiredGit(targetRoot, ["commit", "--allow-empty", "-m", "Initial commit"], {
-      timeout: 30_000
-    });
-    return;
-  }
-
-  if (await gitCommandSucceeds(targetRoot, ["rev-parse", "--verify", `refs/heads/${mainBranch}^{commit}`])) {
-    return;
-  }
-
-  if (!await gitCommandSucceeds(targetRoot, ["rev-parse", "--verify", "HEAD^{commit}"])) {
-    await runRequiredGit(targetRoot, ["symbolic-ref", "HEAD", `refs/heads/${mainBranch}`]);
-    await runRequiredGit(targetRoot, ["add", "-A"], {
-      timeout: 30_000
-    });
-    await runRequiredGit(targetRoot, ["commit", "--allow-empty", "-m", "Initial commit"], {
-      timeout: 30_000
-    });
-    return;
-  }
-
-  await runRequiredGit(targetRoot, ["checkout", "-B", mainBranch, "HEAD"], {
-    timeout: 30_000
-  });
-}
-
 function parseGithubRemote(value = "") {
   const rawValue = String(value || "").trim();
   if (!rawValue) {
@@ -740,8 +698,8 @@ function createStudioProjectContext({
     );
   }
 
-  function projectRootForSlug(slug = "") {
-    return resolveProjectRoot({
+  function projectContextRootForSlug(slug = "") {
+    return resolveProjectContextRoot({
       projectsRoot,
       slug: normalizeProjectSlug(slug)
     });
@@ -749,14 +707,14 @@ function createStudioProjectContext({
 
   function projectRecordPathForSlug(slug = "") {
     return resolveProjectRecordPath({
-      projectRoot: projectRuntimeRootForSlug(slug)
+      projectRuntimeRoot: projectRuntimeRootForSlug(slug)
     });
   }
 
   function projectRecordPathForTarget(targetRoot = "") {
     return targetIsCatalogProjectHome(targetRoot)
       ? resolveProjectRecordPath({
-          projectRoot: projectRuntimeRootForTarget(targetRoot)
+          projectRuntimeRoot: projectRuntimeRootForTarget(targetRoot)
         })
       : "";
   }
@@ -764,7 +722,7 @@ function createStudioProjectContext({
   function projectRuntimeRootForSlug(slug = "") {
     if (!projectCatalogEnabled) {
       return resolveProjectRuntimeRoot({
-        projectRoot: projectRootForSlug(slug)
+        projectRuntimeRoot: projectContextRootForSlug(slug)
       });
     }
     return resolveCatalogProjectRuntimeRoot({
@@ -783,12 +741,12 @@ function createStudioProjectContext({
   }
 
   function projectSessionSourceRootForSlug(slug = "") {
-    return projectRootForSlug(slug);
+    return projectContextRootForSlug(slug);
   }
 
   function projectSessionSourceRootForTarget(targetRoot = "") {
     return targetIsCatalogProjectHome(targetRoot)
-      ? projectRootForSlug(path.basename(normalizeRoot(targetRoot)))
+      ? projectContextRootForSlug(path.basename(normalizeRoot(targetRoot)))
       : externalProjectSessionSourceRootForTarget(targetRoot);
   }
 
@@ -812,14 +770,6 @@ function createStudioProjectContext({
           sourceRoot
         })
       : "";
-  }
-
-  function projectLocalRootForSlug(slug = "") {
-    return projectRuntimeRootForSlug(slug);
-  }
-
-  function projectLocalRootForTarget(targetRoot = "") {
-    return projectRuntimeRootForTarget(targetRoot);
   }
 
   function selectedProject() {
@@ -956,18 +906,18 @@ function createStudioProjectContext({
     }
 
     const slug = projectSlugFromInput(input);
-    const targetRoot = resolveProjectRoot({
+    const projectContextRoot = resolveProjectContextRoot({
       projectsRoot,
       slug
     });
     const projectRuntimeRoot = projectRuntimeRootForSlug(slug);
-    if (await pathExists(targetRoot) || await pathExists(projectRuntimeRoot)) {
+    if (await pathExists(projectContextRoot) || await pathExists(projectRuntimeRoot)) {
       throw projectSlugExistsError();
     }
-    const metadata = projectMetadataFromInput(input, {
-      defaultRepositoryBranch: PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
+    const metadata = assertHostedRepositoryMetadata(projectMetadataFromInput(input, {
+      defaultRepositoryBranch: DEFAULT_HOSTED_REPOSITORY_BRANCH,
       defaultRepositoryMode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
-    });
+    }));
     let project = null;
     let sourceCreated = false;
     let runtimeCreated = false;
@@ -982,30 +932,27 @@ function createStudioProjectContext({
       ]);
       await mkdir(projectRuntimeRoot);
       runtimeCreated = true;
-      await mkdir(targetRoot);
+      await mkdir(projectContextRoot);
       sourceCreated = true;
       if (typeof prepare === "function") {
         await prepare({
           metadata,
+          projectContextRoot,
           projectRuntimeRoot,
-          slug,
-          targetRoot
+          slug
         });
       }
       await writeProjectMetadata(projectRecordPathForSlug(slug), metadata);
-      if (projectRepositoryView(metadata).repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
-        await ensureLocalSourceMainBranch(targetRoot);
-      }
       project = await workspaceProjectRecordForPath({
         projectRecordPath: projectRecordPathForSlug(slug),
-        path: targetRoot,
+        path: projectContextRoot,
         projectRuntimeRoot: projectRuntimeRootForSlug(slug),
         projectSessionSourceRoot: projectSessionSourceRootForSlug(slug),
         projectsRoot
       });
     } catch (error) {
       await Promise.all([
-        ...(sourceCreated ? [rm(targetRoot, {
+        ...(sourceCreated ? [rm(projectContextRoot, {
           force: true,
           recursive: true
         })] : []),
@@ -1029,14 +976,14 @@ function createStudioProjectContext({
   async function assertWorkspaceProjectAvailable(input = {}) {
     const slug = projectSlugFromInput(input);
     if (
-      await pathExists(projectRootForSlug(slug)) ||
+      await pathExists(projectContextRootForSlug(slug)) ||
       await pathExists(projectRuntimeRootForSlug(slug))
     ) {
       throw projectSlugExistsError();
     }
     return {
+      projectContextRoot: projectContextRootForSlug(slug),
       slug,
-      targetRoot: projectRootForSlug(slug)
     };
   }
 
@@ -1046,14 +993,14 @@ function createStudioProjectContext({
     }
 
     const slug = projectSlugFromInput(input);
-    const targetRoot = resolveProjectRoot({
+    const projectContextRoot = resolveProjectContextRoot({
       projectsRoot,
       slug
     });
-    await assertDirectoryUsable(targetRoot);
+    await assertDirectoryUsable(projectContextRoot);
     const project = await workspaceProjectRecordForPath({
       projectRecordPath: projectRecordPathForSlug(slug),
-      path: targetRoot,
+      path: projectContextRoot,
       projectRuntimeRoot: projectRuntimeRootForSlug(slug),
       projectSessionSourceRoot: projectSessionSourceRootForSlug(slug),
       projectsRoot
@@ -1079,27 +1026,24 @@ function createStudioProjectContext({
     }
 
     const slug = projectSlugFromInput(input);
-    const targetRoot = resolveProjectRoot({
+    const projectContextRoot = resolveProjectContextRoot({
       projectsRoot,
       slug
     });
-    await assertDirectoryUsable(targetRoot);
+    await assertDirectoryUsable(projectContextRoot);
     await updateWorkspaceProjectState({ slug }, async (currentMetadata) => {
-      const metadata = {
+      const metadata = assertHostedRepositoryMetadata({
         ...currentMetadata,
         ...projectMetadataFromInput({
           ...input,
           repository: input.repository || currentMetadata.repository
         })
-      };
-      if (projectRepositoryView(metadata).repositoryMode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE) {
-        await ensureLocalSourceMainBranch(targetRoot);
-      }
+      });
       return metadata;
     });
     const project = await workspaceProjectRecordForPath({
       projectRecordPath: projectRecordPathForSlug(slug),
-      path: targetRoot,
+      path: projectContextRoot,
       projectRuntimeRoot: projectRuntimeRootForSlug(slug),
       projectSessionSourceRoot: projectSessionSourceRootForSlug(slug),
       projectsRoot
@@ -1117,14 +1061,13 @@ function createStudioProjectContext({
     }
     const slug = projectSlugFromInput(input);
     return {
-      metadata: await readProjectMetadata({
+      metadata: assertHostedRepositoryMetadata(await readProjectMetadata({
         projectRecordPath: projectRecordPathForSlug(slug)
-      }),
+      })),
+      projectContextRoot: projectContextRootForSlug(slug),
       projectRecordPath: projectRecordPathForSlug(slug),
       projectRuntimeRoot: projectRuntimeRootForSlug(slug),
-      projectStateRoot: projectRuntimeRootForSlug(slug),
-      slug,
-      targetRoot: projectRootForSlug(slug)
+      slug
     };
   }
 
@@ -1139,24 +1082,23 @@ function createStudioProjectContext({
     }
     const slug = projectSlugFromInput(input);
     const state = {
+      projectContextRoot: projectContextRootForSlug(slug),
       projectRecordPath: projectRecordPathForSlug(slug),
       projectRuntimeRoot: projectRuntimeRootForSlug(slug),
-      projectStateRoot: projectRuntimeRootForSlug(slug),
-      slug,
-      targetRoot: projectRootForSlug(slug)
+      slug
     };
     const metadata = await updateProjectRecordMetadata(state.projectRecordPath, async (current) => {
-      const currentMetadata = normalizeProjectMetadata(current);
+      const currentMetadata = assertHostedRepositoryMetadata(normalizeProjectMetadata(current));
       if (!Object.keys(currentMetadata).length) {
         throw projectStateMissingError(state.slug);
       }
       if (currentMetadata.deletion && !allowDeleting) {
         throw projectDeletingError();
       }
-      return normalizeProjectMetadata(await update(currentMetadata, {
+      return assertHostedRepositoryMetadata(normalizeProjectMetadata(await update(currentMetadata, {
         ...state,
         metadata: currentMetadata
-      }));
+      })));
     });
     return {
       ...state,
@@ -1208,11 +1150,11 @@ function createStudioProjectContext({
       throw error;
     }
     await Promise.all([
-      rm(state.targetRoot, {
+      rm(state.projectContextRoot, {
         force: true,
         recursive: true
       }),
-      rm(state.projectStateRoot, {
+      rm(state.projectRuntimeRoot, {
         force: true,
         recursive: true
       })
@@ -1225,17 +1167,17 @@ function createStudioProjectContext({
     }
 
     const slug = normalizeProjectSlug(input?.slug || input?.projectSlug || input?.name);
-    const targetRoot = resolveProjectRoot({
+    const projectContextRoot = resolveProjectContextRoot({
       projectsRoot,
       slug
     });
-    if (!pathInsideOrEqual(projectsRoot, targetRoot)) {
+    if (!pathInsideOrEqual(projectsRoot, projectContextRoot)) {
       const error = new Error("Project folder must be inside the Studio projects root.");
       error.code = "vibe64_project_outside_projects_root";
       throw error;
     }
-    await assertDirectoryUsable(targetRoot);
-    selectedTargetRoot = targetRoot;
+    await assertDirectoryUsable(projectContextRoot);
+    selectedTargetRoot = projectContextRoot;
     selectionSource = "workspace";
     return listProjects();
   }
@@ -1307,8 +1249,6 @@ function createStudioProjectContext({
     updateWorkspaceProjectMetadata,
     projectRecordPathForSlug,
     projectRecordPathForTarget,
-    projectLocalRootForSlug,
-    projectLocalRootForTarget,
     projectRuntimeRootForSlug,
     projectRuntimeRootForTarget,
     projectSessionSourceRootForSlug,
@@ -1343,6 +1283,6 @@ export {
   pathInsideOrEqual,
   projectSlugFromName,
   resolveStudioProjectsRoot,
-  resolveProjectRoot,
+  resolveProjectContextRoot,
   assertProjectDirectoryUsable
 };

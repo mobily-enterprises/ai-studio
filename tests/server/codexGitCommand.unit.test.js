@@ -71,8 +71,7 @@ function sessionSource(root = "", sessionId = "session-1", metadata = {}) {
       source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
       ...metadata
     },
-    sessionId,
-    targetRoot: path.join(root, "project")
+    sessionId
   };
 }
 
@@ -86,7 +85,7 @@ function githubSession(root = "", sessionId = "github-session") {
     session_git_command_actor_reason: "unit-test",
     session_git_command_actor_scope: "user",
     session_git_command_actor_session_id: sessionId,
-    session_git_command_actor_target_root: session.metadata.source_path,
+    session_git_command_actor_source_root: session.metadata.source_path,
     session_git_command_actor_thread_id: "thread-1",
     session_git_command_actor_user_key: user.username,
     session_git_command_actor_workdir: session.metadata.source_path
@@ -118,8 +117,7 @@ function serviceForSession(session = {}, {
                   session.metadata?.[name] || ""
                 ])
               ),
-              sessionId,
-              targetRoot: session.targetRoot
+              sessionId
             };
           }
         };
@@ -381,12 +379,13 @@ test("Codex separates GitHub authorization from the Git filesystem identity", as
     assert.deepEqual(gatewayCalls[0].args, ["auth", "token"]);
     assert.equal(gatewayCalls[0].cwd, user.home);
     assert.equal(gatewayCalls[0].purpose, "github-api");
-    assert.equal(gatewayCalls[0].session.targetRoot, undefined);
+    assert.equal(gatewayCalls[0].session.sourcePath, undefined);
     assert.equal(gatewayCalls[1].actor, "app");
     assert.equal(gatewayCalls[1].command, "git");
     assert.equal(gatewayCalls[1].gitTransport, "github-token");
     assert.equal(gatewayCalls[1].gitAuthToken, "secret-github-token");
     assert.equal(gatewayCalls[1].input.toString("utf8"), "stdin");
+    assert.equal(gatewayCalls[1].session.sourcePath, session.metadata.source_path);
     assert.equal(gatewayCalls[1].userKey, user.username);
     assert.equal(gatewayCalls[1].project.ownerUserKey, user.username);
     assert.equal(gatewayCalls[1].session.metadata.session_git_command_actor_user_key, user.username);

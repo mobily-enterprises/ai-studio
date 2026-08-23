@@ -56,22 +56,18 @@ describe("Vibe64 launch controls", () => {
       .not.toBe(launchControlScopeKey("vibe64", "session-2"));
   });
 
-  it("builds a stable browser target name from the project root", () => {
+  it("builds a stable browser target name from the explicit project slug", () => {
     const firstSession = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/customer-app"
+      sessionId: "session-1"
     };
     const secondSessionForSameProject = {
-      sessionId: "session-2",
-      targetRoot: "/workspace/customer-app"
-    };
-    const differentProject = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/admin-app"
+      sessionId: "session-2"
     };
 
-    expect(launchBrowserTargetName(firstSession)).toBe(launchBrowserTargetName(secondSessionForSameProject));
-    expect(launchBrowserTargetName(firstSession)).not.toBe(launchBrowserTargetName(differentProject));
+    expect(launchBrowserTargetName(firstSession, "customer-app"))
+      .toBe(launchBrowserTargetName(secondSessionForSameProject, "customer-app"));
+    expect(launchBrowserTargetName(firstSession, "customer-app"))
+      .not.toBe(launchBrowserTargetName(firstSession, "admin-app"));
     expect(launchBrowserTargetName(firstSession, "alpha_1"))
       .not.toBe(launchBrowserTargetName(firstSession, "beta_2"));
   });
@@ -452,68 +448,50 @@ describe("Vibe64 launch controls", () => {
     expect(nextLaunchPreviewToolbarPosition("right", -1)).toBe("center");
   });
 
-  it("stores embedded preview toolbar position by project target", () => {
+  it("stores embedded preview toolbar position by project slug", () => {
     const firstSession = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/customer-app"
+      sessionId: "session-1"
     };
     const secondSessionForSameProject = {
-      sessionId: "session-2",
-      targetRoot: "/workspace/customer-app"
-    };
-    const differentProject = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/admin-app"
+      sessionId: "session-2"
     };
 
-    expect(launchPreviewToolbarStorageKey(firstSession))
-      .toBe(launchPreviewToolbarStorageKey(secondSessionForSameProject));
-    expect(launchPreviewToolbarStorageKey(firstSession))
-      .not.toBe(launchPreviewToolbarStorageKey(differentProject));
+    expect(launchPreviewToolbarStorageKey(firstSession, "customer-app"))
+      .toBe(launchPreviewToolbarStorageKey(secondSessionForSameProject, "customer-app"));
+    expect(launchPreviewToolbarStorageKey(firstSession, "customer-app"))
+      .not.toBe(launchPreviewToolbarStorageKey(firstSession, "admin-app"));
     expect(launchPreviewToolbarStorageKey(firstSession, "alpha_1"))
       .not.toBe(launchPreviewToolbarStorageKey(firstSession, "beta_2"));
   });
 
-  it("stores embedded preview location by project target", () => {
+  it("stores embedded preview location by project slug", () => {
     const firstSession = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/customer-app"
+      sessionId: "session-1"
     };
     const secondSessionForSameProject = {
-      sessionId: "session-2",
-      targetRoot: "/workspace/customer-app"
-    };
-    const differentProject = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/admin-app"
+      sessionId: "session-2"
     };
 
-    expect(launchPreviewLocationStorageKey(firstSession))
-      .toBe(launchPreviewLocationStorageKey(secondSessionForSameProject));
-    expect(launchPreviewLocationStorageKey(firstSession))
-      .not.toBe(launchPreviewLocationStorageKey(differentProject));
+    expect(launchPreviewLocationStorageKey(firstSession, "customer-app"))
+      .toBe(launchPreviewLocationStorageKey(secondSessionForSameProject, "customer-app"));
+    expect(launchPreviewLocationStorageKey(firstSession, "customer-app"))
+      .not.toBe(launchPreviewLocationStorageKey(firstSession, "admin-app"));
     expect(launchPreviewLocationStorageKey(firstSession, "alpha_1"))
       .not.toBe(launchPreviewLocationStorageKey(firstSession, "beta_2"));
   });
 
-  it("stores preview options by project target and launch target", () => {
+  it("stores preview options by project slug and launch target", () => {
     const firstSession = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/customer-app"
+      sessionId: "session-1"
     };
     const secondSessionForSameProject = {
-      sessionId: "session-2",
-      targetRoot: "/workspace/customer-app"
-    };
-    const differentProject = {
-      sessionId: "session-1",
-      targetRoot: "/workspace/admin-app"
+      sessionId: "session-2"
     };
 
-    expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))
-      .toBe(launchPreviewOptionsStorageKey(secondSessionForSameProject, "alpha_1", "dev"));
-    expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))
-      .not.toBe(launchPreviewOptionsStorageKey(differentProject, "alpha_1", "dev"));
+    expect(launchPreviewOptionsStorageKey(firstSession, "customer-app", "dev"))
+      .toBe(launchPreviewOptionsStorageKey(secondSessionForSameProject, "customer-app", "dev"));
+    expect(launchPreviewOptionsStorageKey(firstSession, "customer-app", "dev"))
+      .not.toBe(launchPreviewOptionsStorageKey(firstSession, "admin-app", "dev"));
     expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))
       .not.toBe(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "built"));
     expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))

@@ -42,9 +42,9 @@ const PREVIEW_IDENTITY_COMMAND_RESERVED_ENV_NAMES = new Set([
 ]);
 const PREVIEW_IDENTITY_GRANT_SCOPE_KEYS = Object.freeze([
   "projectScope",
+  "sessionSourceRoot",
   "sessionId",
   "targetHref",
-  "targetRoot",
   "terminalSessionId"
 ]);
 const COOKIE_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
@@ -76,18 +76,18 @@ function previewAuthEnvironment({
   previewIdentity = null,
   projectScope = "",
   secret = "",
+  sessionSourceRoot = "",
   sessionId = "",
   targetHref = "",
-  targetRoot = "",
   terminalSessionId = ""
 } = {}) {
   return previewAuthProvider(kind)?.environment({
     previewIdentity,
     projectScope,
     secret,
+    sessionSourceRoot,
     sessionId,
     targetHref,
-    targetRoot,
     terminalSessionId
   }) || {};
 }
@@ -105,17 +105,17 @@ function previewAuthCookieHeader({
   kind = "",
   profilePath = "",
   projectScope = "",
+  sessionSourceRoot = "",
   sessionId = "",
   targetHref = "",
-  targetRoot = "",
   terminalSessionId = ""
 } = {}) {
   return previewAuthProvider(kind)?.cookieHeader({
     profilePath,
     projectScope,
+    sessionSourceRoot,
     sessionId,
     targetHref,
-    targetRoot,
     terminalSessionId
   }) || "";
 }
@@ -496,9 +496,9 @@ function normalizePreviewIdentitySelection(value = {}) {
 function previewIdentityGrantScope(previewAuth = {}) {
   const scope = {
     projectScope: String(previewAuth.projectScope || "").trim(),
+    sessionSourceRoot: String(previewAuth.sessionSourceRoot || "").trim(),
     sessionId: String(previewAuth.sessionId || "").trim(),
     targetHref: String(previewAuth.targetHref || "").trim(),
-    targetRoot: String(previewAuth.targetRoot || "").trim(),
     terminalSessionId: String(previewAuth.terminalSessionId || "").trim()
   };
   if (PREVIEW_IDENTITY_GRANT_SCOPE_KEYS.some((key) => !scope[key])) {

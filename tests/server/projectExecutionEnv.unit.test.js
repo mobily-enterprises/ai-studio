@@ -25,16 +25,12 @@ test("project execution environment comes from the project service", async () =>
     session: {
       sessionId: "session-1"
     },
-    sourcePath: "/tmp/session-source",
-    target: "codex",
-    targetRoot: "/tmp/project"
+    target: "codex"
   });
 
   assert.deepEqual(request, {
     sessionId: "session-1",
-    sourcePath: "/tmp/session-source",
-    target: "codex",
-    targetRoot: "/tmp/project"
+    target: "codex"
   });
   assert.deepEqual(env, {
     DB_PORT: "3306",

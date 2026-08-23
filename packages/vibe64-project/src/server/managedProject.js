@@ -110,11 +110,11 @@ async function installCanonicalCommit(repositoryPath, sourceRoot, branch, {
 async function initializeManagedGenesisProject({
   defaultBranch = "main",
   initializeProject = initializeGenesisProject,
+  projectContextRoot = "",
   projectRuntimeRoot = "",
-  runCommand = runVibe64Command,
-  targetRoot = ""
+  runCommand = runVibe64Command
 } = {}) {
-  const namespaceInput = normalizeText(targetRoot);
+  const namespaceInput = normalizeText(projectContextRoot);
   const runtimeInput = normalizeText(projectRuntimeRoot);
   if (!namespaceInput || !runtimeInput || !path.isAbsolute(namespaceInput) || !path.isAbsolute(runtimeInput)) {
     throw vibe64Error(
@@ -133,7 +133,7 @@ async function initializeManagedGenesisProject({
 
   const branch = normalizeText(defaultBranch) || "main";
   const repositoryPath = resolveProjectCanonicalRepositoryPath({
-    projectRoot: runtimeRoot
+    projectRuntimeRoot: runtimeRoot
   });
   const repositoryRoot = path.dirname(repositoryPath);
   const temporaryRoot = path.join(runtimeRoot, "tmp");

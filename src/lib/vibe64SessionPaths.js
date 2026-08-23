@@ -10,16 +10,6 @@ function pathInsideOrEqual(parentPath = "", childPath = "") {
   return Boolean(parent && child && (child === parent || child.startsWith(`${parent}/`)));
 }
 
-function explicitPathIsLocalSourceRoot(session = {}, explicitPath = "") {
-  const targetRoot = normalizePath(session?.targetRoot);
-  if (!targetRoot || normalizePath(explicitPath) !== targetRoot) {
-    return false;
-  }
-  const sessionRoot = normalizePath(session?.sessionRoot);
-  return !sessionRoot ||
-    (!pathInsideOrEqual(targetRoot, sessionRoot) && !pathInsideOrEqual(sessionRoot, targetRoot));
-}
-
 function explicitPathIsManagedSessionSource(session = {}, explicitPath = "") {
   const metadata = session?.metadata || {};
   if (String(metadata.source_path_authority || "").trim() !== MANAGED_SESSION_SOURCE_AUTHORITY) {
@@ -51,9 +41,6 @@ function explicitSessionSourcePath(session = {}) {
   if (!explicitPath) {
     return "";
   }
-  if (explicitPathIsLocalSourceRoot(session, explicitPath)) {
-    return explicitPath;
-  }
   return explicitPathIsManagedSessionSource(session, explicitPath) ? explicitPath : "";
 }
 
@@ -62,7 +49,6 @@ function vibe64SessionSourcePath(session = {}) {
 }
 
 export {
-  explicitPathIsLocalSourceRoot,
   explicitPathIsManagedSessionSource,
   explicitSessionSourcePath,
   vibe64SessionSourcePath

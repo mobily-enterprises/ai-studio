@@ -4,7 +4,6 @@ import test from "node:test";
 
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
-  explicitPathIsLocalSourceRoot,
   explicitPathIsManagedSessionSource,
   explicitSessionSourcePath,
   sessionHasSource,
@@ -42,52 +41,67 @@ test("session source path does not synthesize private-state source paths from cr
   assert.equal(sessionHasSource(session), false);
 });
 
-test("session source path accepts local direct source metadata outside the session runtime bucket", () => {
+test("session source path rejects a standalone authority folder presented as session source", () => {
   const sourceRoot = "/workspace/app";
   const sessionRoot = "/home/user/.local/share/vibe64-local-editor/state/projects/app-test/sessions/active/session-1";
   const session = {
     metadata: {
+      repository_mode: "local_source",
       source_path: sourceRoot
     },
+    projectContextRoot: sourceRoot,
     sessionRoot,
-    targetRoot: sourceRoot
   };
 
-  assert.equal(explicitPathIsLocalSourceRoot(session, sourceRoot), true);
-  assert.equal(explicitSessionSourcePath(session), sourceRoot);
-  assert.equal(sessionSourcePath(session), sourceRoot);
-  assert.equal(sessionHasSource(session), true);
+  assert.equal(explicitSessionSourcePath(session), "");
+  assert.equal(sessionSourcePath(session), "");
+  assert.equal(sessionHasSource(session), false);
 });
 
-test("session source path rejects targetRoot metadata when the session root is inside it", () => {
-  const targetRoot = "/var/lib/vibe64/merc/projects/app";
+test("session source path rejects a hosted namespace presented as direct source", () => {
+  const hostedNamespace = "/var/lib/vibe64/merc/projects/app";
+  const session = {
+    metadata: {
+      repository_mode: "github",
+      source_path: hostedNamespace
+    },
+    projectContextRoot: hostedNamespace,
+    sessionId: "session-1",
+    sessionRoot: "/home/v64d_merc/.local/state/vibe64/projects/app/sessions/active/session-1"
+  };
+
+  assert.equal(explicitSessionSourcePath(session), "");
+});
+
+test("session source path rejects a standalone root when the session state is inside it", () => {
+  const projectContextRoot = "/var/lib/vibe64/merc/projects/app";
   const session = {
     completedSteps: ["session_created", "source_created"],
     metadata: {
-      source_path: targetRoot
+      repository_mode: "local_source",
+      source_path: projectContextRoot
     },
-    sessionRoot: path.join(targetRoot, "sessions", "active", "session-1"),
-    targetRoot
+    projectContextRoot,
+    sessionRoot: path.join(projectContextRoot, "sessions", "active", "session-1")
   };
 
-  assert.equal(explicitPathIsLocalSourceRoot(session, targetRoot), false);
   assert.equal(explicitSessionSourcePath(session), "");
   assert.equal(sessionSourcePath(session), "");
 });
 
-test("session source path rejects targetRoot metadata when the target root is inside private session state", () => {
+test("session source path rejects a standalone root inside private session state", () => {
   const sessionRoot = "/home/user/.local/state/vibe64/projects/app-test/sessions/active/session-1";
-  const targetRoot = path.join(sessionRoot, "source");
+  const projectContextRoot = path.join(sessionRoot, "source");
   const session = {
     completedSteps: ["session_created", "source_created"],
     metadata: {
-      source_path: targetRoot
+      repository_mode: "local_source",
+      source_path: projectContextRoot
     },
+    projectContextRoot,
     sessionRoot,
-    targetRoot
   };
 
-  assert.equal(explicitPathIsLocalSourceRoot(session, targetRoot), false);
   assert.equal(explicitSessionSourcePath(session), "");
   assert.equal(sessionSourcePath(session), "");
 });
@@ -103,8 +117,8 @@ test("session source path accepts marked managed session source metadata outside
       source_kind: "session_clone",
       source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
     },
+    projectContextRoot: "/home/user/code/app",
     sessionRoot,
-    targetRoot: "/home/user/code/app"
   };
 
   assert.equal(explicitPathIsManagedSessionSource(session, sourcePath), true);
@@ -122,8 +136,8 @@ test("session source path rejects unmarked managed-looking source metadata outsi
     metadata: {
       source_path: sourcePath
     },
+    projectContextRoot: "/home/user/code/app",
     sessionRoot,
-    targetRoot: "/home/user/code/app"
   };
 
   assert.equal(explicitPathIsManagedSessionSource(session, sourcePath), false);

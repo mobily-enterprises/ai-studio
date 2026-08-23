@@ -105,7 +105,7 @@ async function vibe64WorkspaceSetupInspection({ projectRoot, section = {} } = {}
   if (section.status === "ready") steps = parseVibe64WorkspaceSetupLines(section.lines);
   const applicableSteps = [];
   const waitingFor = [];
-  const root = path.resolve(projectRoot || process.cwd());
+  const root = path.resolve(projectRoot);
   if (diagnostics.length === 0) {
     for (const step of steps) {
       if (!step.condition || await pathExists(root, step.condition.pathExists)) {

@@ -14,6 +14,7 @@ import {
   WORKSPACE_SETUP_COMMAND_TIMEOUT_MS
 } from "../../packages/vibe64-terminals/src/server/workspaceSetup.js";
 import {
+  projectRuntimeRoot,
   sourceMetadata,
   sourcePath,
   withTemporaryRoot
@@ -28,7 +29,8 @@ async function workspaceSession(targetRoot, sessionId = "workspace-session") {
     promptEnvironment: {
       VIBE64_RUNTIME_PACK_ROOT: "/managed/runtime-packs"
     },
-    targetRoot
+    projectContextRoot: targetRoot,
+    projectRuntimeRoot: projectRuntimeRoot(targetRoot)
   });
   await runtime.store.createSession({
     metadata: sourceMetadata(targetRoot, sessionId),

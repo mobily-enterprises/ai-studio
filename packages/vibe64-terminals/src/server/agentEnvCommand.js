@@ -46,7 +46,7 @@ const ENV_SCOPE_ALL = "all";
 
 const commandServers = new Map();
 
-function normalizedProjectRoot(project = {}) {
+function normalizedProjectContextRoot(project = {}) {
   const root = normalizeText(project?.projectRoot || project?.path);
   return root ? path.resolve(root) : "";
 }
@@ -500,13 +500,13 @@ function createAgentEnvCommandService({
       );
     }
     const binding = {
-      projectRoot: normalizedProjectRoot(project),
+      projectContextRoot: normalizedProjectContextRoot(project),
       projectSlug
     };
     sessionProjects.set(normalizedSessionId, binding);
     return {
       ok: true,
-      projectRoot: binding.projectRoot,
+      projectContextRoot: binding.projectContextRoot,
       projectSlug,
       sessionId: normalizedSessionId
     };
@@ -523,10 +523,10 @@ function createAgentEnvCommandService({
     return projectService.runInProjectContext(binding.projectSlug, async () => {
       const currentProject = await projectService.readCurrentProject();
       const currentSlug = normalizeText(currentProject?.slug || currentProject?.name);
-      const currentRoot = normalizedProjectRoot(currentProject);
+      const currentProjectContextRoot = normalizedProjectContextRoot(currentProject);
       if (
         currentSlug !== binding.projectSlug ||
-        binding.projectRoot && currentRoot !== binding.projectRoot
+        binding.projectContextRoot && currentProjectContextRoot !== binding.projectContextRoot
       ) {
         throw vibe64Error(
           "Vibe64 Env command session project no longer matches its bound project.",

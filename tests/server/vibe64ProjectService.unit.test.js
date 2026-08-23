@@ -13,6 +13,8 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
+  sourceMetadata,
+  sourcePath,
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
 
@@ -88,6 +90,11 @@ test("a catalog project without a baseline checkout does not inspect its metadat
       projectContext
     });
     await service.createProject({ name: "Remote catalogue" });
+    const hostedNamespace = path.join(projectsRoot, "remote-catalogue");
+    await mkdir(path.join(hostedNamespace, ".git"), {
+      recursive: true
+    });
+    await writeFile(path.join(hostedNamespace, ".git", "config"), "must-not-be-inspected\n", "utf8");
 
     const response = await service.readEnv();
 
@@ -376,9 +383,16 @@ test("Genesis Stack resources define expected Env names without technology check
 
 test("a host resource provider satisfies Genesis resources and projects the resolved Env", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    await mkdir(path.join(targetRoot, ".git", "info"), {
-      recursive: true
-    });
+    const sessionId = "session-1";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await Promise.all([
+      mkdir(path.join(targetRoot, ".git", "info"), {
+        recursive: true
+      }),
+      mkdir(path.join(sessionSource, ".git", "info"), {
+        recursive: true
+      })
+    ]);
     const providerCalls = [];
     const service = projectService(targetRoot, {
       inspectEnvironment() {
@@ -463,12 +477,12 @@ test("a host resource provider satisfies Genesis resources and projects the reso
 
     const store = await service.createSessionStore();
     await store.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
       runtimeKind: "genesis",
-      sessionId: "session-1"
+      sessionId
     });
-    await store.writeMetadataValue("session-1", "source_path", targetRoot);
 
-    const sessionRead = await service.readEnv({ sessionId: "session-1" });
+    const sessionRead = await service.readEnv({ sessionId });
     assert.deepEqual(sessionRead.env.records.map((record) => ({
       editable: record.editable,
       key: record.key,
@@ -501,31 +515,31 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.equal(JSON.stringify(sessionRead).includes("managed-secret"), false);
     assert.deepEqual(await service.revealEnvSecret({
       key: "DB_PASSWORD",
-      sessionId: "session-1"
+      sessionId
     }), {
       key: "DB_PASSWORD",
       ok: true,
       value: "managed-secret"
     });
 
-    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId: "session-1" }), {
+    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId }), {
       DB_CLIENT: "mysql2",
       DB_HOST: "127.0.0.1",
       DB_PASSWORD: "managed-secret"
     });
-    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
-    assert.match(await readFile(path.join(targetRoot, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
-    assert.match(await readFile(path.join(targetRoot, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
+    assert.match(await readFile(path.join(sessionSource, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
+    assert.match(await readFile(path.join(sessionSource, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
+    assert.match(await readFile(path.join(sessionSource, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
     assert.equal(providerCalls.length, 3);
-    assert.equal(providerCalls.every((call) => call.sessionId === "session-1"), true);
+    assert.equal(providerCalls.every((call) => call.sessionId === sessionId), true);
     assert.equal(providerCalls.every((call) => call.developmentDatabaseScope === "session"), true);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);
     assert.equal(Object.hasOwn(providerCalls[0], "environment"), false);
 
-    assert.deepEqual(await service.releaseSessionResources({ sessionId: "session-1" }), { ok: true });
+    assert.deepEqual(await service.releaseSessionResources({ sessionId }), { ok: true });
     assert.equal(released.length, 1);
-    assert.equal(released[0].sessionId, "session-1");
+    assert.equal(released[0].sessionId, sessionId);
     assert.equal(released[0].developmentDatabaseScope, "session");
   });
 });
@@ -571,7 +585,7 @@ test("managed app identities live only in dedicated project-local state", async 
     });
     assert.deepEqual(await service.readPreviewApplicationIdentities(), saved);
 
-    const projectLocalRoot = service.currentProjectLocalRoot();
+    const projectLocalRoot = service.currentProjectRuntimeRoot();
     assert.notEqual(projectLocalRoot, targetRoot);
     const storedPath = path.join(
       projectLocalRoot,
@@ -614,7 +628,7 @@ test("managed app identity validation rejects ambiguous names", async () => {
 test("managed app identities migrate once from the exact legacy local record", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);
-    const projectLocalRoot = service.currentProjectLocalRoot();
+    const projectLocalRoot = service.currentProjectRuntimeRoot();
     const legacyPath = path.join(
       projectLocalRoot,
       "runtime-config",

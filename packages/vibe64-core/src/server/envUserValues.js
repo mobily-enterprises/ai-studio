@@ -19,11 +19,11 @@ const ENV_USER_VALUES_FILE = "user-values.json";
 const ENV_USER_VALUES_VERSION = 1;
 const ENV_USER_VALUE_SOURCE = "user";
 
-function envUserValuesPath(projectLocalRoot = "") {
-  const root = normalizeText(projectLocalRoot);
+function envUserValuesPath(projectRuntimeRoot = "") {
+  const root = normalizeText(projectRuntimeRoot);
   if (!root) {
     throw vibe64Error(
-      "Env user values require projectLocalRoot.",
+      "Env user values require projectRuntimeRoot.",
       "vibe64_env_user_values_root_required"
     );
   }
@@ -103,9 +103,9 @@ function envUserRecordsFromState(state = {}) {
 }
 
 async function readEnvUserValues({
-  projectLocalRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
-  const filePath = envUserValuesPath(projectLocalRoot);
+  const filePath = envUserValuesPath(projectRuntimeRoot);
   const state = normalizeEnvUserValuesState(await readEnvUserValuesFile(filePath));
   return {
     filePath,
@@ -115,7 +115,7 @@ async function readEnvUserValues({
 }
 
 async function saveEnvUserValues({
-  projectLocalRoot = "",
+  projectRuntimeRoot = "",
   environment = "dev",
   values = {}
 } = {}) {
@@ -125,7 +125,7 @@ async function saveEnvUserValues({
       "vibe64_env_user_values_invalid"
     );
   }
-  const filePath = envUserValuesPath(projectLocalRoot);
+  const filePath = envUserValuesPath(projectRuntimeRoot);
   const state = normalizeEnvUserValuesState(await readEnvUserValuesFile(filePath));
   const normalizedEnvironment = normalizeRuntimeConfigScope(environment);
   const scopeValues = {
@@ -156,7 +156,7 @@ async function saveEnvUserValues({
     .sort(([left], [right]) => left.localeCompare(right)));
   await writeEnvUserValuesFile(filePath, state);
   return readEnvUserValues({
-    projectLocalRoot
+    projectRuntimeRoot
   });
 }
 

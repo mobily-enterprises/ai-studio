@@ -11,11 +11,10 @@ import {
   createStudioProjectContext,
   normalizeProjectSlug,
   projectSlugFromName,
-  resolveProjectRoot,
+  resolveProjectContextRoot,
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
   PROJECT_REPOSITORY_MODE_GITHUB,
-  PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH,
   PROJECT_REPOSITORY_MODE_LOCAL_SOURCE,
   PROJECT_REPOSITORY_MODE_MANAGED_GIT,
   projectRepositoryView
@@ -226,7 +225,6 @@ test("Studio project context creates and selects workspace project folders under
     assert.equal(created.currentProject.slug, "example-app");
     assert.equal(created.currentProject.external, false);
     assert.equal(context.sourceConfigRootForSlug("example-app"), "");
-    assert.equal(context.projectLocalRootForSlug("example-app"), expectedRuntimeRoot);
     assert.equal(context.projectRuntimeRootForSlug("example-app"), expectedRuntimeRoot);
     assert.equal(context.projectRecordPathForSlug("example-app"), expectedRecordPath);
     assert.deepEqual(created.projects.map((project) => project.slug), ["example-app"]);
@@ -260,7 +258,7 @@ test("Studio project context creates and selects workspace project folders under
   });
 });
 
-test("Studio project context creates local-source projects with a real main branch", async () => {
+test("hosted project creation rejects local-source metadata without creating state", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const context = createStudioProjectContext({
@@ -269,21 +267,21 @@ test("Studio project context creates local-source projects with a real main bran
       home: root
     });
 
-    await context.createWorkspaceProjectRecord({
+    await assert.rejects(() => context.createWorkspaceProjectRecord({
       repository: {
         mode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
       },
       slug: "whs"
+    }), {
+      code: "vibe64_hosted_local_source_unsupported"
     });
 
-    const projectRoot = path.join(projectsRoot, "whs");
-    assert.equal(await gitOutput(projectRoot, ["branch", "--show-current"]), PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH);
-    assert.match(
-      await gitOutput(projectRoot, ["rev-parse", "--verify", `refs/heads/${PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH}^{commit}`]),
-      /^[0-9a-f]{40}$/u
-    );
-    assert.equal(await gitOutput(projectRoot, ["log", "-1", "--format=%s"]), "Initial commit");
-    assert.equal(await gitOutput(projectRoot, ["status", "--short"]), "");
+    await assert.rejects(() => access(path.join(projectsRoot, "whs")), {
+      code: "ENOENT"
+    });
+    await assert.rejects(() => access(context.projectRuntimeRootForSlug("whs")), {
+      code: "ENOENT"
+    });
   });
 });
 
@@ -377,7 +375,7 @@ test("Studio project context reserves a project slug atomically", async () => {
   });
 });
 
-test("Studio project context normalizes projects updated to local-source", async () => {
+test("hosted project updates reject local-source metadata without changing the namespace", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
     const context = createStudioProjectContext({
@@ -389,18 +387,65 @@ test("Studio project context normalizes projects updated to local-source", async
       slug: "converted-app"
     });
 
-    await context.updateWorkspaceProjectMetadata({
+    await assert.rejects(() => context.updateWorkspaceProjectMetadata({
       repository: {
         mode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
       },
       slug: "converted-app"
+    }), {
+      code: "vibe64_hosted_local_source_unsupported"
     });
 
-    const projectRoot = path.join(projectsRoot, "converted-app");
-    assert.equal(await gitOutput(projectRoot, ["branch", "--show-current"]), PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH);
-    assert.match(
-      await gitOutput(projectRoot, ["rev-parse", "--verify", `refs/heads/${PROJECT_REPOSITORY_LOCAL_SOURCE_BRANCH}^{commit}`]),
-      /^[0-9a-f]{40}$/u
+    const projectContextRoot = path.join(projectsRoot, "converted-app");
+    const unchanged = await context.readWorkspaceProject({
+      slug: "converted-app"
+    });
+    assert.equal(unchanged.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
+    await assert.rejects(() => access(path.join(projectContextRoot, ".git")), {
+      code: "ENOENT"
+    });
+  });
+});
+
+test("hosted project readers reject stored local-source metadata without repairing it", async () => {
+  await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
+    const context = createStudioProjectContext({
+      explicitProjectsRoot: projectsRoot,
+      env: {},
+      home: root
+    });
+    await context.createWorkspaceProjectRecord({
+      slug: "retired-local-source"
+    });
+    const projectContextRoot = path.join(projectsRoot, "retired-local-source");
+    const recordPath = context.projectRecordPathForSlug("retired-local-source");
+    const current = JSON.parse(await readFile(recordPath, "utf8"));
+    const retired = `${JSON.stringify({
+      ...current,
+      repository: {
+        defaultBranch: "main",
+        mode: PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+      }
+    }, null, 2)}\n`;
+    await writeFile(recordPath, retired, "utf8");
+    await mkdir(path.join(projectContextRoot, ".git"));
+    await writeFile(path.join(projectContextRoot, ".git", "namespace-marker"), "do not inspect\n", "utf8");
+
+    for (const operation of [
+      () => context.readWorkspaceProject({ slug: "retired-local-source" }),
+      () => context.readWorkspaceProjectState({ slug: "retired-local-source" }),
+      () => context.listWorkspaceProjects(),
+      () => context.beginWorkspaceProjectDeletion({ slug: "retired-local-source" })
+    ]) {
+      await assert.rejects(operation, {
+        code: "vibe64_hosted_local_source_unsupported"
+      });
+    }
+    assert.equal(await readFile(recordPath, "utf8"), retired);
+    assert.equal(
+      await readFile(path.join(projectContextRoot, ".git", "namespace-marker"), "utf8"),
+      "do not inspect\n"
     );
   });
 });
@@ -412,7 +457,7 @@ test("project slug contract resolves only canonical Vibe64 project roots", async
     assert.equal(normalizeProjectSlug("app_1-alpha"), "app_1-alpha");
     assert.equal(projectSlugFromName("Example App"), "example-app");
     assert.equal(projectSlugFromName("Example.App"), "example-app");
-    assert.equal(resolveProjectRoot({
+    assert.equal(resolveProjectContextRoot({
       projectsRoot,
       slug: "app_1-alpha"
     }), path.join(projectsRoot, "app_1-alpha"));
@@ -519,7 +564,7 @@ test("Studio project context accepts explicit targets without treating them as w
     assert.equal(context.sourceConfigRootForTarget(externalTarget), externalTarget);
     assert.equal(requestContext.sourceRoot, externalTarget);
     assert.equal(requestContext.sourceConfigRoot, externalTarget);
-    assert.ok(context.projectLocalRootForTarget(externalTarget).startsWith(path.join(context.systemRoot, "projects", "external-app-")));
+    assert.ok(context.projectRuntimeRootForTarget(externalTarget).startsWith(path.join(context.systemRoot, "projects", "external-app-")));
     assert.ok(context.projectSessionSourceRootForTarget(externalTarget).startsWith(path.join(managedSourceRoot, "external-app-")));
     assert.equal(requestContext.projectSessionSourceRoot, context.projectSessionSourceRootForTarget(externalTarget));
     await access(requestContext.projectRuntimeRoot);
@@ -527,7 +572,7 @@ test("Studio project context accepts explicit targets without treating them as w
 
     const nestedSourceTarget = path.join(projectsRoot, "catalog-app", "sessions", "active", "session-1", "source");
     assert.equal(context.sourceConfigRootForTarget(nestedSourceTarget), nestedSourceTarget);
-    assert.notEqual(context.projectLocalRootForTarget(nestedSourceTarget), path.join(projectsRoot, "catalog-app"));
+    assert.notEqual(context.projectRuntimeRootForTarget(nestedSourceTarget), path.join(projectsRoot, "catalog-app"));
     assert.ok(context.projectSessionSourceRootForTarget(nestedSourceTarget).startsWith(path.join(managedSourceRoot, "source-")));
   });
 });
@@ -799,9 +844,8 @@ test("Studio project context reads project records and ignores source config as 
         }
       }, null, 2)}\n`),
       writeProjectRuntimeOpenState({
-        projectLocalRoot: runtimeRoot,
-        projectSlug: "canonical-app",
-        targetRoot: projectRoot
+        projectRuntimeRoot: runtimeRoot,
+        projectSlug: "canonical-app"
       })
     ]);
 
@@ -1000,7 +1044,6 @@ test("project request context uses registered catalog runtime state", async () =
 
     assert.equal(context.sourceConfigRoot, "");
     assert.equal(context.sourceRoot, "");
-    assert.equal(context.projectLocalRoot, projectContext.projectLocalRootForSlug("direct-app"));
     assert.equal(context.projectRuntimeRoot, projectContext.projectRuntimeRootForSlug("direct-app"));
     assert.equal(context.vibe64User, vibe64User);
     await access(context.projectRuntimeRoot);

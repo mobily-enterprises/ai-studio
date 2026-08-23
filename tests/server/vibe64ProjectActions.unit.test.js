@@ -83,7 +83,6 @@ test("project mutations publish first-class action events", async () => {
   assert.equal(event.realtime.event, "vibe64.project.changed");
   assert.equal(event.realtime.audience, "all_clients");
   assert.deepEqual(event.realtime.payload, {
-    projectRoot: "/srv/projects/catalogue",
     projectSlug: "catalogue"
   });
 });

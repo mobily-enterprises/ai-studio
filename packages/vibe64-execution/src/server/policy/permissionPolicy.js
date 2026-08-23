@@ -38,7 +38,9 @@ function assertManagedSourceFilesystemActor(actor = {}, request = {}, cwd = "") 
   if (!actor.requiresRealUser) {
     return;
   }
-  const sourceRoot = normalizeAbsolutePath(request.session?.targetRoot);
+  const sourceRoot = normalizeAbsolutePath(
+    request.session?.sourceRoot || request.session?.sourcePath
+  );
   const commandCwd = normalizeAbsolutePath(cwd);
   if (!sourceRoot || !commandCwd) {
     return;

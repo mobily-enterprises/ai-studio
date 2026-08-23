@@ -27,44 +27,6 @@ function normalizeProjectStateSlug(value = "") {
   return slug;
 }
 
-function projectStateSlugFromTargetRoot(targetRoot = process.cwd()) {
-  return normalizeProjectStateSlug(path.basename(normalizeTargetRoot(targetRoot)));
-}
-
-function resolveProjectContractRoot({
-  targetRoot = process.cwd()
-} = {}) {
-  return resolveSourceConfigRoot({
-    sourceRoot: targetRoot
-  });
-}
-
-function resolveProjectHomeStateRoot({
-  projectHome = "",
-  targetRoot = process.cwd()
-} = {}) {
-  return resolveProjectRuntimeRoot({
-    projectRoot: projectHome || targetRoot
-  });
-}
-
-function resolveProjectLocalRoot({
-  targetRoot = process.cwd()
-} = {}) {
-  return resolveProjectRuntimeRoot({
-    projectRoot: targetRoot
-  });
-}
-
-function resolveProjectHomeLocalRoot({
-  projectHome = "",
-  targetRoot = process.cwd()
-} = {}) {
-  return resolveProjectRuntimeRoot({
-    projectRoot: projectHome || targetRoot
-  });
-}
-
 function resolveSourceConfigRoot({
   sourceRoot = process.cwd()
 } = {}) {
@@ -72,80 +34,86 @@ function resolveSourceConfigRoot({
 }
 
 function resolveProjectRuntimeRoot({
-  projectRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
-  return normalizeTargetRoot(projectRoot);
+  const normalizedProjectRuntimeRoot = normalizeText(projectRuntimeRoot);
+  if (!normalizedProjectRuntimeRoot || !path.isAbsolute(normalizedProjectRuntimeRoot)) {
+    const error = new Error("Project state requires an absolute project runtime root.");
+    error.code = "vibe64_project_runtime_root_invalid";
+    throw error;
+  }
+  return normalizeTargetRoot(normalizedProjectRuntimeRoot);
 }
 
 function resolveProjectRecordPath({
-  projectRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot
+    projectRuntimeRoot
   }), PROJECT_RECORD_FILE);
 }
 
 function resolveProjectSessionsRoot({
-  projectRuntimeRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
+    projectRuntimeRoot
   }), PROJECT_SESSIONS_DIR);
 }
 
 function resolveProjectDeploymentsRoot({
-  projectRuntimeRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
+    projectRuntimeRoot
   }), PROJECT_DEPLOYMENTS_DIR);
 }
 
-function resolveProjectRepositoryStoragePath(projectRoot = "", storageDirectory = "") {
-  const normalizedProjectRoot = normalizeText(projectRoot);
-  if (!normalizedProjectRoot || !path.isAbsolute(normalizedProjectRoot)) {
-    const error = new Error("Repository storage requires an absolute project root.");
-    error.code = "vibe64_repository_storage_project_root_invalid";
+function resolveProjectRepositoryStoragePath(projectRuntimeRoot = "", storageDirectory = "") {
+  const normalizedProjectRuntimeRoot = normalizeText(projectRuntimeRoot);
+  if (!normalizedProjectRuntimeRoot || !path.isAbsolute(normalizedProjectRuntimeRoot)) {
+    const error = new Error("Repository storage requires an absolute project runtime root.");
+    error.code = "vibe64_repository_storage_project_runtime_root_invalid";
     throw error;
   }
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: normalizedProjectRoot
+    projectRuntimeRoot: normalizedProjectRuntimeRoot
   }), storageDirectory, PROJECT_REPOSITORY_DIR);
 }
 
 function resolveProjectCanonicalRepositoryPath({
-  projectRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
-  return resolveProjectRepositoryStoragePath(projectRoot, PROJECT_CANONICAL_REPOSITORY_DIR);
+  return resolveProjectRepositoryStoragePath(projectRuntimeRoot, PROJECT_CANONICAL_REPOSITORY_DIR);
 }
 
 function resolveProjectGithubMirrorPath({
-  projectRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
-  return resolveProjectRepositoryStoragePath(projectRoot, PROJECT_GITHUB_MIRROR_DIR);
+  return resolveProjectRepositoryStoragePath(projectRuntimeRoot, PROJECT_GITHUB_MIRROR_DIR);
 }
 
 function resolveProjectRuntimeFilesRoot({
-  projectRuntimeRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
+    projectRuntimeRoot
   }), PROJECT_RUNTIME_DIR);
 }
 
 function resolveProjectRuntimeConfigRoot({
-  projectRuntimeRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
+    projectRuntimeRoot
   }), PROJECT_RUNTIME_CONFIG_DIR);
 }
 
 function resolveProjectInfoCachePath({
-  projectRuntimeRoot = process.cwd()
+  projectRuntimeRoot = ""
 } = {}) {
   return path.join(resolveProjectRuntimeRoot({
-    projectRoot: projectRuntimeRoot
+    projectRuntimeRoot
   }), PROJECT_INFO_CACHE_FILE);
 }
 
@@ -160,16 +128,11 @@ export {
   PROJECT_RUNTIME_DIR,
   PROJECT_SESSIONS_DIR,
   normalizeProjectStateSlug,
-  projectStateSlugFromTargetRoot,
-  resolveProjectContractRoot,
   resolveProjectRecordPath,
   resolveProjectDeploymentsRoot,
   resolveProjectCanonicalRepositoryPath,
   resolveProjectGithubMirrorPath,
-  resolveProjectHomeLocalRoot,
-  resolveProjectHomeStateRoot,
   resolveProjectInfoCachePath,
-  resolveProjectLocalRoot,
   resolveProjectRuntimeConfigRoot,
   resolveProjectRuntimeFilesRoot,
   resolveProjectRuntimeRoot,

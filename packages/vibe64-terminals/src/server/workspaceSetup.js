@@ -158,10 +158,7 @@ function createWorkspaceSetupRunner({
     const projectEnv = await loadProjectExecutionEnv({
       projectService,
       session,
-      sourcePath,
-      target: "workspace-setup",
-      targetRoot: session.targetRoot,
-      worktreePath: sourcePath
+      target: "workspace-setup"
     });
     let currentLabel = recipe.steps[0].label;
     for (const step of recipe.steps) {

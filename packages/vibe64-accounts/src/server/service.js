@@ -39,7 +39,7 @@ import {
   readCodexAuthStatus
 } from "@local/vibe64-core/server/codexAuthState";
 import {
-  projectServiceTargetRoot
+  projectServiceNamespaceRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
   resolveStudioTargetRoot,
@@ -1217,7 +1217,7 @@ function createAccountsRuntime({
   const codexAuthModes = normalizeCodexAuthModes(allowedCodexAuthModes);
 
   function currentTargetRoot() {
-    const selectedTargetRoot = String(targetRoot || projectServiceTargetRoot(projectService)).trim();
+    const selectedTargetRoot = String(targetRoot || projectServiceNamespaceRoot(projectService)).trim();
     return selectedTargetRoot ? resolveVibe64AccountsRoot(selectedTargetRoot) : "";
   }
 

@@ -61,7 +61,6 @@ import {
 } from "@local/vibe64-runtime/server/sessionLifecycle";
 import {
   currentProjectRequestContext,
-  currentProjectTargetRoot,
   runWithProjectRequestContext
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
@@ -81,7 +80,7 @@ import {
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
   globalCodexTerminalNamespace,
-  terminalTargetRoot,
+  terminalSessionSourceRoot,
   terminalWorktreePath
 } from "./terminalShared.js";
 import {
@@ -397,32 +396,26 @@ function codexAppServerPromptDeliveryEnabledByDefault({
 
 const CODEX_APP_SERVER_PROMPT_DELIVERY_ENABLED = codexAppServerPromptDeliveryEnabledByDefault();
 
-async function terminalTargetRootForSession(projectService, sessionId) {
+async function terminalSessionSourceRootForSession(projectService, sessionId) {
   try {
     const runtime = await projectService.createRuntime({
       inspectSource: false
     });
     const session = await runtime.getSession(sessionId);
-    return terminalTargetRoot(session, projectService) ||
-      await globalCodexTargetRoot(projectService, runtime);
+    return terminalSessionSourceRoot(session);
   } catch {
-    return globalCodexTargetRoot(projectService);
+    return "";
   }
 }
 
-async function globalCodexTargetRoot(projectService = {}, runtime = null) {
-  const serviceRoot = terminalTargetRoot({}, projectService);
+async function globalCodexRuntimeRoot(projectService = {}, runtime = null) {
+  const serviceRoot = typeof projectService.currentProjectRuntimeRoot === "function"
+    ? normalizeText(projectService.currentProjectRuntimeRoot())
+    : "";
   if (serviceRoot) {
     return serviceRoot;
   }
-
-  const runtimeRoot = terminalTargetRoot({
-    targetRoot: runtime?.targetRoot
-  });
-  if (runtimeRoot) {
-    return runtimeRoot;
-  }
-  return "";
+  return normalizeText(runtime?.stateRoot);
 }
 
 function codexSessionWorkdirAllowed({
@@ -496,12 +489,12 @@ function activeCodexTerminal(session = {}) {
   return codexTerminalStatus(terminal);
 }
 
-function activeGlobalCodexTerminal(targetRoot = "") {
+function activeGlobalCodexTerminal(executionRoot = "") {
   const terminals = listTerminalSessions({
     namespace: globalCodexTerminalNamespace()
   })
     .filter((terminal) => terminal.status !== "exited")
-    .filter((terminal) => !targetRoot || terminal.metadata?.targetRoot === targetRoot)
+    .filter((terminal) => !executionRoot || terminal.metadata?.executionRoot === executionRoot)
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
   return codexTerminalStatus(terminals[0] || null);
 }
@@ -1129,13 +1122,13 @@ function createCodexTerminalController({
     onClose = async () => null,
     reuseRunning = false,
     session = {},
-    targetRoot = "",
+    executionRoot = "",
     workdir = ""
   } = {}) {
     return runCommand({
       actor: "app",
       allowedRoots: [
-        targetRoot,
+        executionRoot,
         cwd,
         workdir
       ].filter(Boolean),
@@ -1151,7 +1144,7 @@ function createCodexTerminalController({
       envPolicy: "auth",
       mode: "pty",
       project: {
-        targetRoot
+        sourceRoot: executionRoot
       },
       purpose: "codex",
       session,
@@ -1303,8 +1296,7 @@ function createCodexTerminalController({
     runtime,
     session = {},
     sessionId = "",
-    target = "codex",
-    targetRoot = ""
+    target = "codex"
   } = {}) {
     const terminalEnvForSession = async (currentSession = session) => ({
       ...await loadProjectExecutionEnv({
@@ -1312,8 +1304,7 @@ function createCodexTerminalController({
         runCommand,
         runtime,
         session: currentSession,
-        target,
-        targetRoot
+        target
       }),
       ...await codexManagedCommandEnv({
         runtime,
@@ -1391,7 +1382,7 @@ function createCodexTerminalController({
     const runtimeIdsHash = stableHash(JSON.stringify(Array.isArray(options.runtimes) ? options.runtimes : []));
     return [
       normalizedSessionId,
-      normalizeText(options.targetRoot),
+      normalizeText(options.executionRoot),
       normalizeText(options.runtimeInstanceId),
       runtimeIdsHash,
       executionEnvFingerprint(codexAppServerProviderIdentityEnv(options.terminalEnv)),
@@ -1403,7 +1394,7 @@ function createCodexTerminalController({
   function codexAppServerProviderKeyFields(providerKey = "") {
     const [
       sessionId = "",
-      targetRoot = "",
+      executionRoot = "",
       runtimeInstanceId = "",
       runtimesHash = "",
       envHash = "",
@@ -1415,7 +1406,7 @@ function createCodexTerminalController({
       runtimeInstanceId: normalizeText(runtimeInstanceId),
       runtimesHash: normalizeText(runtimesHash),
       sessionId: normalizeText(sessionId),
-      targetRoot: normalizeText(targetRoot),
+      executionRoot: normalizeText(executionRoot),
       toolHomeSource: normalizeText(toolHomeSource),
       workdir: normalizeText(workdir)
     };
@@ -1440,7 +1431,7 @@ function createCodexTerminalController({
       const currentFields = codexAppServerProviderKeyFields(currentKey);
       if (
         currentFields.sessionId === nextFields.sessionId &&
-        currentFields.targetRoot === nextFields.targetRoot &&
+        currentFields.executionRoot === nextFields.executionRoot &&
         currentFields.runtimeInstanceId === nextFields.runtimeInstanceId &&
         currentFields.workdir === nextFields.workdir
       ) {
@@ -1460,17 +1451,17 @@ function createCodexTerminalController({
   }
 
   function availableManagedCodexAppServerProvider(sessionId = "", {
-    targetRoot = "",
+    executionRoot = "",
     workdir = ""
   } = {}) {
     const normalizedSessionId = normalizeText(sessionId);
-    const normalizedTargetRoot = normalizeText(targetRoot);
+    const normalizedExecutionRoot = normalizeText(executionRoot);
     const normalizedWorkdir = normalizeText(workdir);
     for (const [providerKey, managed] of codexAppServerManagedSessions.entries()) {
       const fields = codexAppServerProviderKeyFields(providerKey);
       if (
         fields.sessionId !== normalizedSessionId ||
-        (normalizedTargetRoot && fields.targetRoot !== normalizedTargetRoot) ||
+        (normalizedExecutionRoot && fields.executionRoot !== normalizedExecutionRoot) ||
         (normalizedWorkdir && fields.workdir !== normalizedWorkdir) ||
         normalizeText(managed?.sessionId) !== normalizedSessionId
       ) {
@@ -1558,7 +1549,7 @@ function createCodexTerminalController({
     runtimeDir = "",
     runtimeInstanceId = "",
     session = {},
-    targetRoot = "",
+    executionRoot = "",
     terminalEnv = {},
     toolHomeSource = "",
     userKey = "",
@@ -1574,7 +1565,7 @@ function createCodexTerminalController({
       runtimeDir: normalizeText(runtimeDir),
       runtimeInstanceId: normalizeText(runtimeInstanceId),
       session,
-      targetRoot: normalizeText(targetRoot),
+      executionRoot: normalizeText(executionRoot),
       terminalEnv: runtimeContext.terminalEnv,
       toolHomeSource: runtimeContext.toolHomeSource,
       userKey: normalizeText(userKey),
@@ -1590,12 +1581,12 @@ function createCodexTerminalController({
   }
 
   function codexAppServerSessionRequestContext(session = {}, {
-    targetRoot = ""
+    executionRoot = ""
   } = {}) {
     return {
       metadata: isRecord(session.metadata) ? session.metadata : {},
       sessionId: normalizeText(session.sessionId || session.id),
-      targetRoot: normalizeText(targetRoot || session.targetRoot)
+      sourcePath: normalizeText(executionRoot)
     };
   }
 
@@ -1606,14 +1597,14 @@ function createCodexTerminalController({
   async function codexAppServerRuntimeOptionsForSession(session = {}, {
     runtime = null,
     runtimeDir = "",
-    targetRoot = "",
+    executionRoot = "",
     terminalEnv,
     toolHomeSource = "",
     workdir = ""
   } = {}) {
     const metadata = session.metadata || {};
     const effectiveRuntimeInstanceId = normalizeText(session.sessionId || session.id);
-    const effectiveTargetRoot = normalizeText(targetRoot) || terminalTargetRoot(session, projectService);
+    const effectiveExecutionRoot = normalizeText(executionRoot) || terminalSessionSourceRoot(session);
     const effectiveWorkdir = normalizeText(workdir) || terminalWorktreePath(session);
     const effectiveRuntime = runtime || await createRuntimeForSession();
     const baseTerminalEnv = isRecord(terminalEnv)
@@ -1623,8 +1614,7 @@ function createCodexTerminalController({
           runCommand,
           runtime: effectiveRuntime,
           session,
-          target: "codex",
-          targetRoot: effectiveTargetRoot
+          target: "codex"
         });
     const effectiveTerminalEnv = {
       ...baseTerminalEnv,
@@ -1636,7 +1626,7 @@ function createCodexTerminalController({
     const expectedRuntimeDir = codexAppServerRuntimeDir({
       ...codexAppServerProviderOptions,
       runtimeInstanceId: effectiveRuntimeInstanceId,
-      targetRoot: effectiveTargetRoot,
+      executionRoot: effectiveExecutionRoot,
       workdir: effectiveWorkdir
     });
     const metadataRuntimeDir = normalizeText(metadata.agent_transport_runtime_dir);
@@ -1648,9 +1638,9 @@ function createCodexTerminalController({
       runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir,
       runtimeInstanceId: effectiveRuntimeInstanceId,
       session: codexAppServerSessionRequestContext(session, {
-        targetRoot: effectiveTargetRoot
+        executionRoot: effectiveExecutionRoot
       }),
-      targetRoot: effectiveTargetRoot,
+      executionRoot: effectiveExecutionRoot,
       terminalEnv: effectiveTerminalEnv,
       toolHomeSource,
       userKey: codexAppServerUserKey(session),
@@ -2474,15 +2464,15 @@ function createCodexTerminalController({
     const metadataSourcePath = normalizeText(metadata.source_path);
     const metadataWorkdir = normalizeText(metadata.agent_identity_workdir) || metadataSourcePath ||
       normalizeText(fallbackOptions.workdir);
-    const metadataTargetRoot = normalizeText(fallbackOptions.targetRoot) ||
-      terminalTargetRoot(session, projectService) ||
+    const metadataExecutionRoot = normalizeText(fallbackOptions.executionRoot) ||
+      terminalSessionSourceRoot(session) ||
       metadataSourcePath;
     return codexAppServerRuntimeOptions({
       ...fallbackOptions,
       runtimeDir,
       runtimeInstanceId: normalizeText(session.sessionId || session.id) ||
         normalizeText(fallbackOptions.runtimeInstanceId),
-      targetRoot: metadataTargetRoot,
+      executionRoot: metadataExecutionRoot,
       workdir: metadataWorkdir
     });
   }
@@ -2536,29 +2526,26 @@ function createCodexTerminalController({
     };
   }
 
-  async function stopCodexAppServerProvidersForTargetRoot({
+  async function stopCodexAppServerProvidersForProjectContext({
+    projectContextRoot = "",
     reason = "",
-    targetRoot = ""
   } = {}) {
-    const normalizedTargetRoot = normalizeText(targetRoot);
-    if (!normalizedTargetRoot) {
+    const normalizedProjectContextRoot = normalizeText(projectContextRoot);
+    if (!normalizedProjectContextRoot) {
       return {
         failed: [],
         ok: true,
+        projectContextRoot: normalizedProjectContextRoot,
         providerCount: 0,
         reason: normalizeText(reason),
         results: [],
-        stopped: 0,
-        targetRoot: normalizedTargetRoot
+        stopped: 0
       };
     }
     const providerKeys = [...codexAppServerProviders.keys()]
       .filter((providerKey) => {
         const managed = codexAppServerManagedSessions.get(providerKey);
-        const keyTargetRoot = codexAppServerProviderKeyFields(providerKey).targetRoot;
-        return keyTargetRoot === normalizedTargetRoot ||
-          normalizeText(managed?.targetRoot) === normalizedTargetRoot ||
-          normalizeText(managed?.projectContext?.targetRoot) === normalizedTargetRoot;
+        return normalizeText(managed?.projectContext?.targetRoot) === normalizedProjectContextRoot;
       });
     const failed = [];
     const results = [];
@@ -2576,18 +2563,18 @@ function createCodexTerminalController({
     vibe64SessionDebugLog("server.codexTerminal.appServerRuntime.closeProject.done", {
       failedCount: failed.length,
       providerCount: providerKeys.length,
+      projectContextRoot: normalizedProjectContextRoot,
       reason: normalizeText(reason),
-      stopped,
-      targetRoot: normalizedTargetRoot
+      stopped
     });
     return {
       failed,
       ok: failed.length === 0,
+      projectContextRoot: normalizedProjectContextRoot,
       providerCount: providerKeys.length,
       reason: normalizeText(reason),
       results,
-      stopped,
-      targetRoot: normalizedTargetRoot
+      stopped
     };
   }
 
@@ -2679,7 +2666,7 @@ function createCodexTerminalController({
   function rememberCodexAppServerManagedSession(providerKey = "", {
     providerOptions = {},
     sessionId = "",
-    targetRoot = "",
+    executionRoot = "",
     threadId = "",
     workdir = ""
   } = {}) {
@@ -2691,7 +2678,7 @@ function createCodexTerminalController({
       projectContext: currentProjectRequestContext(),
       providerOptions,
       sessionId: normalizeText(sessionId),
-      targetRoot: normalizeText(targetRoot),
+      executionRoot: normalizeText(executionRoot),
       threadId: normalizeText(threadId),
       workdir: normalizeText(workdir)
     });
@@ -2770,19 +2757,18 @@ function createCodexTerminalController({
   }
 
   function pruneCodexAppServerManagedSessions({
-    closeOtherTargets = false,
     keepProviderKeys = new Set(),
-    targetRoot = ""
+    projectContextRoot = ""
   } = {}) {
-    const normalizedTargetRoot = normalizeText(targetRoot);
-    if (!normalizedTargetRoot && !closeOtherTargets) {
+    const normalizedProjectContextRoot = normalizeText(projectContextRoot);
+    if (!normalizedProjectContextRoot) {
       return;
     }
     for (const [providerKey, managed] of [...codexAppServerManagedSessions.entries()]) {
       if (keepProviderKeys.has(providerKey)) {
         continue;
       }
-      if (closeOtherTargets || normalizeText(managed.targetRoot) === normalizedTargetRoot) {
+      if (normalizeText(managed.projectContext?.targetRoot) === normalizedProjectContextRoot) {
         closeCodexAppServerProvider(providerKey);
       }
     }
@@ -2790,7 +2776,7 @@ function createCodexTerminalController({
 
   async function waitForOtherCodexAppServerThreadReconciliations({
     keepProviderKeys = new Set(),
-    targetRoot = ""
+    projectContextRoot = ""
   } = {}) {
     const pending = [...codexAppServerThreadReconciliations.entries()]
       .filter(([providerKey]) => !keepProviderKeys.has(providerKey));
@@ -2799,12 +2785,12 @@ function createCodexTerminalController({
     }
     vibe64SessionDebugLog("server.codexTerminal.appServerThread.reconcile.pruneWait.start", {
       pendingCount: pending.length,
-      targetRoot: normalizeText(targetRoot)
+      projectContextRoot: normalizeText(projectContextRoot)
     });
     await Promise.allSettled(pending.map(([, reconciliation]) => reconciliation));
     vibe64SessionDebugLog("server.codexTerminal.appServerThread.reconcile.pruneWait.done", {
       pendingCount: pending.length,
-      targetRoot: normalizeText(targetRoot)
+      projectContextRoot: normalizeText(projectContextRoot)
     });
   }
 
@@ -5878,11 +5864,11 @@ function createCodexTerminalController({
   async function startCodexTerminalSession(sessionId) {
     const runtime = await createRuntimeForSession();
     const session = await runtime.getSession(sessionId);
-    const targetRoot = terminalTargetRoot(session, projectService);
-    if (!targetRoot) {
+    const executionRoot = terminalSessionSourceRoot(session);
+    if (!executionRoot) {
       return retryableTerminalFailure({
         ok: false,
-        error: "Vibe64 Codex target root is not available."
+        error: "Vibe64 Codex execution root is not available."
       });
     }
     const workdir = terminalWorktreePath(session);
@@ -5898,13 +5884,13 @@ function createCodexTerminalController({
     }
     if (!codexSessionWorkdirAllowed({
       session,
-      targetRoot,
+      executionRoot,
       workdir
     })) {
       return retryableTerminalFailure({
         ok: false,
         error: workdir
-          ? "Vibe64 Codex workdir is outside the target root."
+          ? "Vibe64 Codex workdir is outside the execution root."
           : "Create the session clone before starting Codex."
       });
     }
@@ -5937,8 +5923,7 @@ function createCodexTerminalController({
           const baseTerminalEnv = await codexProjectTerminalEnv({
             runtime,
             session: currentSession,
-            sessionId,
-            targetRoot
+            sessionId
           });
           const codexThreadId = codexConversationIdForWorkdir(currentSession, currentWorkdir);
           let appServerRuntime = null;
@@ -5948,7 +5933,7 @@ function createCodexTerminalController({
                 runtime,
                 session: currentSession,
                 terminalEnv: baseTerminalEnv,
-                targetRoot,
+                executionRoot,
                 toolHomeSource: toolHome.toolHomeSource,
                 workdir: currentWorkdir
               });
@@ -5982,28 +5967,28 @@ function createCodexTerminalController({
               codexThreadId
             }),
             codexRuntime,
-            cwd: targetRoot,
+            cwd: executionRoot,
             detachedIdleTimeoutMs: CODEX_VISIBLE_TERMINAL_DETACHED_IDLE_TIMEOUT_MS,
             maxRunning: MAX_OPEN_CODEX_TERMINALS,
             metadata: {
               envHash: terminalEnvHash,
               sessionId,
-              targetRoot,
+              executionRoot,
               terminalExecution: "host",
               workdir: currentWorkdir,
               ...codexAppTerminalOwnerMetadata(toolHome)
             },
             namespace,
             onClose: async () => {
-              await cleanupCodexAttachments(targetRoot, sessionId);
+              await cleanupCodexAttachments(executionRoot, sessionId);
             },
             reuseRunning: (terminalSession) => {
-              return terminalSession.metadata?.targetRoot === targetRoot &&
+              return terminalSession.metadata?.executionRoot === executionRoot &&
                 terminalSession.metadata?.envHash === terminalEnvHash &&
                 terminalSession.metadata?.workdir === currentWorkdir;
             },
             session: currentSession,
-            targetRoot,
+            executionRoot,
             workdir: currentWorkdir
           });
           return withCodexState(terminalResponse, currentSession);
@@ -6028,21 +6013,21 @@ function createCodexTerminalController({
     const runtime = await projectService.createRuntime({
       inspectSource: false
     });
-    const targetRoot = await globalCodexTargetRoot(projectService, runtime);
-    if (!targetRoot) {
+    const executionRoot = await globalCodexRuntimeRoot(projectService, runtime);
+    if (!executionRoot) {
       return retryableTerminalFailure({
         ok: false,
-        error: "Global Codex target root is not available."
+        error: "Global Codex runtime root is not available."
       });
     }
-    if (!await directoryExists(targetRoot)) {
+    if (!await directoryExists(executionRoot)) {
       return retryableTerminalFailure({
         ok: false,
-        error: `Main repo directory does not exist: ${targetRoot}`
+        error: `Main repo directory does not exist: ${executionRoot}`
       });
     }
     const session = {
-      targetRoot
+      executionRoot
     };
     const toolHome = await codexToolHomeResult();
     if (toolHome.ok === false) {
@@ -6057,8 +6042,7 @@ function createCodexTerminalController({
       runCommand,
       runtime,
       session,
-      target: "codex",
-      targetRoot
+      target: "codex"
     });
     const preflightFailure = await codexAuthPreflightFailure({
       reason: "codex-global-terminal",
@@ -6079,32 +6063,32 @@ function createCodexTerminalController({
         codexThreadId: ""
       }),
       codexRuntime,
-      cwd: targetRoot,
+      cwd: executionRoot,
       detachedIdleTimeoutMs: CODEX_VISIBLE_TERMINAL_DETACHED_IDLE_TIMEOUT_MS,
       maxRunning: MAX_OPEN_CODEX_TERMINALS,
       metadata: {
         envHash: terminalEnvHash,
         scope: GLOBAL_CODEX_TERMINAL_SCOPE,
-        targetRoot,
+        executionRoot,
         terminalExecution: "host",
-        workdir: targetRoot,
+        workdir: executionRoot,
         ...codexAppTerminalOwnerMetadata(toolHome)
       },
       namespace,
       onClose: async () => {
-        await cleanupCodexAttachments(targetRoot, GLOBAL_CODEX_TERMINAL_SCOPE);
+        await cleanupCodexAttachments(executionRoot, GLOBAL_CODEX_TERMINAL_SCOPE);
       },
       reuseRunning: (terminalSession) => {
         return terminalSession.metadata?.scope === GLOBAL_CODEX_TERMINAL_SCOPE &&
-          terminalSession.metadata?.targetRoot === targetRoot &&
+          terminalSession.metadata?.executionRoot === executionRoot &&
           terminalSession.metadata?.envHash === terminalEnvHash &&
-          terminalSession.metadata?.workdir === targetRoot;
+          terminalSession.metadata?.workdir === executionRoot;
       },
       session,
-      targetRoot,
-      workdir: targetRoot
+      executionRoot,
+      workdir: executionRoot
     });
-    const codexTerminal = activeGlobalCodexTerminal(targetRoot);
+    const codexTerminal = activeGlobalCodexTerminal(executionRoot);
     return {
       ...terminalResponse,
       codexTerminal,
@@ -6368,11 +6352,11 @@ function createCodexTerminalController({
     const session = providedSession?.sessionId === sessionId
       ? providedSession
       : await runtime.getSession(sessionId);
-    const targetRoot = terminalTargetRoot(session, projectService);
-    if (!targetRoot) {
+    const executionRoot = terminalSessionSourceRoot(session);
+    if (!executionRoot) {
       return retryableTerminalFailure({
         ok: false,
-        error: "Vibe64 Codex target root is not available."
+        error: "Vibe64 Codex execution root is not available."
       });
     }
     const workdir = terminalWorktreePath(session);
@@ -6388,13 +6372,13 @@ function createCodexTerminalController({
     }
     if (!codexSessionWorkdirAllowed({
       session,
-      targetRoot,
+      executionRoot,
       workdir
     })) {
       return retryableTerminalFailure({
         ok: false,
         error: workdir
-          ? "Vibe64 Codex workdir is outside the target root."
+          ? "Vibe64 Codex workdir is outside the execution root."
           : "Create the session clone before starting Codex."
       });
     }
@@ -6416,7 +6400,7 @@ function createCodexTerminalController({
       ok: true,
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource: toolHome.toolHomeSource,
       workdir
     };
@@ -6468,7 +6452,7 @@ function createCodexTerminalController({
     const {
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -6483,7 +6467,7 @@ function createCodexTerminalController({
     }
     const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
       runtime,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     });
@@ -6512,7 +6496,7 @@ function createCodexTerminalController({
           rememberCodexAppServerManagedSession(providerKey, {
             providerOptions,
             sessionId: normalizedSessionId,
-            targetRoot,
+            executionRoot,
             threadId,
             workdir
           });
@@ -6572,7 +6556,7 @@ function createCodexTerminalController({
   async function reconcileCodexAppServerThreads(sessions = [], {
     agentSettings = {}
   } = {}) {
-    const selectedTargetRoot = currentProjectTargetRoot();
+    const projectContextRoot = normalizeText(currentProjectRequestContext()?.targetRoot);
     const reconcileGeneration = ++codexAppServerThreadReconcileGeneration;
     const sessionIds = [...new Set((Array.isArray(sessions) ? sessions : [])
       .map((session) => codexAppServerReconcileSessionId(session))
@@ -6601,20 +6585,19 @@ function createCodexTerminalController({
     if (reconcileGeneration === codexAppServerThreadReconcileGeneration) {
       await waitForOtherCodexAppServerThreadReconciliations({
         keepProviderKeys,
-        targetRoot: selectedTargetRoot
+        projectContextRoot
       });
     }
     if (reconcileGeneration === codexAppServerThreadReconcileGeneration) {
       pruneCodexAppServerManagedSessions({
-        closeOtherTargets: Boolean(selectedTargetRoot),
         keepProviderKeys,
-        targetRoot: selectedTargetRoot
+        projectContextRoot
       });
     } else {
       vibe64SessionDebugLog("server.codexTerminal.appServerThread.reconcile.pruneSkipped", {
         reason: "stale_reconcile",
         sessionCount: sessionIds.length,
-        targetRoot: normalizeText(selectedTargetRoot)
+        projectContextRoot
       });
     }
     vibe64SessionDebugLog("server.codexTerminal.appServerThread.reconcile.done", {
@@ -6639,7 +6622,7 @@ function createCodexTerminalController({
     const {
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -6651,13 +6634,12 @@ function createCodexTerminalController({
           const terminalEnv = await codexProjectTerminalEnv({
             runtime,
             session: currentSession,
-            sessionId,
-            targetRoot
+            sessionId
           });
           const providerOptions = await codexAppServerRuntimeOptionsForSession(currentSession, {
             terminalEnv,
             runtime,
-            targetRoot,
+            executionRoot,
             toolHomeSource,
             workdir
           });
@@ -6698,7 +6680,7 @@ function createCodexTerminalController({
       rememberCodexAppServerManagedSession(codexAppServerProviderKey(sessionId, providerOptions), {
         providerOptions,
         sessionId,
-        targetRoot,
+        executionRoot,
         threadId: thread.threadId,
         workdir
       });
@@ -6784,7 +6766,7 @@ function createCodexTerminalController({
     const {
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -6820,13 +6802,12 @@ function createCodexTerminalController({
           const terminalEnv = await codexProjectTerminalEnv({
             runtime,
             session: currentSession,
-            sessionId,
-            targetRoot
+            sessionId
           });
           const providerOptions = await codexAppServerRuntimeOptionsForSession(currentSession, {
             terminalEnv,
             runtime,
-            targetRoot,
+            executionRoot,
             toolHomeSource,
             workdir
           });
@@ -6876,7 +6857,7 @@ function createCodexTerminalController({
       rememberCodexAppServerManagedSession(codexAppServerProviderKey(sessionId, providerOptions), {
         providerOptions,
         sessionId,
-        targetRoot,
+        executionRoot,
         threadId: thread.threadId,
         workdir
       });
@@ -6893,7 +6874,7 @@ function createCodexTerminalController({
         reason: "codex-prompt",
         runtime,
         session: preparedSession,
-        targetRoot,
+        sourceRoot: executionRoot,
         threadId: thread.threadId,
         vibe64User,
         workdir
@@ -7084,7 +7065,7 @@ function createCodexTerminalController({
     const {
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -7092,7 +7073,7 @@ function createCodexTerminalController({
       sessionId,
       await codexAppServerRuntimeOptionsForSession(session, {
         runtime,
-        targetRoot,
+        executionRoot,
         toolHomeSource,
         workdir
       })
@@ -8033,7 +8014,7 @@ function createCodexTerminalController({
     }
     const {
       runtime,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -8049,7 +8030,7 @@ function createCodexTerminalController({
         sessionId,
         await codexAppServerRuntimeOptionsForSession(currentSession, {
           runtime,
-          targetRoot,
+          executionRoot,
           toolHomeSource,
           workdir
         })
@@ -8160,7 +8141,7 @@ function createCodexTerminalController({
           sessionId,
           await codexAppServerRuntimeOptionsForSession(currentSession, {
             runtime,
-            targetRoot,
+            executionRoot,
             toolHomeSource,
             workdir
           })
@@ -8348,22 +8329,22 @@ function createCodexTerminalController({
         ok: false
       };
     }
-    const targetRoot = terminalTargetRoot(session, projectService);
-    if (!targetRoot) {
+    const executionRoot = terminalSessionSourceRoot(session);
+    if (!executionRoot) {
       return {
-        code: "vibe64_codex_terminal_target_root_missing",
-        error: "Vibe64 Codex target root is not available for GitHub actor tracking.",
+        code: "vibe64_codex_terminal_source_root_missing",
+        error: "Vibe64 Codex session source root is not available for GitHub actor tracking.",
         ok: false
       };
     }
-    const workdir = terminalWorktreePath(session) || targetRoot;
+    const workdir = terminalWorktreePath(session);
     const vibe64User = input?.vibe64User || input?.request?.vibe64User || null;
     const actorMetadata = await recordSessionGitCommandActor({
       env,
       reason: "codex-terminal-input",
       runtime,
       session,
-      targetRoot,
+      sourceRoot: executionRoot,
       threadId: codexThreadIdForWorkdir(session, workdir),
       vibe64User,
       workdir
@@ -8398,7 +8379,7 @@ function createCodexTerminalController({
     const {
       runtime,
       session,
-      targetRoot,
+      executionRoot,
       toolHomeSource,
       workdir
     } = context;
@@ -8437,7 +8418,7 @@ function createCodexTerminalController({
     );
     let provider = ownershipMatchesTrackedTurn
       ? availableManagedCodexAppServerProvider(sessionId, {
-          targetRoot,
+          executionRoot,
           workdir
         })
       : null;
@@ -8453,7 +8434,7 @@ function createCodexTerminalController({
         sessionId,
         await codexAppServerRuntimeOptionsForSession(currentSession, {
           runtime,
-          targetRoot,
+          executionRoot,
           toolHomeSource,
           workdir
         })
@@ -8519,7 +8500,7 @@ function createCodexTerminalController({
         reason: "agent-message",
         runtime,
         session: currentSession,
-        targetRoot,
+        sourceRoot: executionRoot,
         threadId,
         vibe64User,
         workdir
@@ -8716,9 +8697,9 @@ function createCodexTerminalController({
         }
       }
       await closeTerminalSessionsForNamespace(codexTerminalNamespace(sessionId));
-      const targetRoot = await terminalTargetRootForSession(projectService, sessionId);
-      if (targetRoot) {
-        await cleanupCodexAttachments(targetRoot, sessionId);
+      const executionRoot = await terminalSessionSourceRootForSession(projectService, sessionId);
+      if (executionRoot) {
+        await cleanupCodexAttachments(executionRoot, sessionId);
       }
     },
 
@@ -8738,11 +8719,11 @@ function createCodexTerminalController({
 
     readGlobalTerminal(terminalSessionId) {
       return vibe64Result(async () => {
-        const targetRoot = await globalCodexTargetRoot(projectService);
+        const executionRoot = await globalCodexRuntimeRoot(projectService);
         const snapshot = readTerminalSession(terminalSessionId, {
           namespace: globalCodexTerminalNamespace()
         });
-        const codexTerminal = activeGlobalCodexTerminal(targetRoot);
+        const codexTerminal = activeGlobalCodexTerminal(executionRoot);
         return {
           ...snapshot,
           codexTerminal,
@@ -8820,7 +8801,7 @@ function createCodexTerminalController({
         for (const sessionId of [...codexAppServerEphemeralConversations.keys()]) {
           await cleanupCodexAppServerEphemeralConversations(sessionId);
         }
-        return stopCodexAppServerProvidersForTargetRoot(input);
+        return stopCodexAppServerProvidersForProjectContext(input);
       });
     },
 
@@ -8947,8 +8928,8 @@ function createCodexTerminalController({
 
     async globalTerminalState() {
       return vibe64Result(async () => {
-        const targetRoot = await globalCodexTargetRoot(projectService);
-        const codexTerminal = activeGlobalCodexTerminal(targetRoot);
+        const executionRoot = await globalCodexRuntimeRoot(projectService);
+        const codexTerminal = activeGlobalCodexTerminal(executionRoot);
         return {
           codexTerminal,
           globalCodexTerminal: codexTerminal,
@@ -8959,11 +8940,11 @@ function createCodexTerminalController({
 
     subscribeGlobalTerminal(terminalSessionId, subscriber) {
       return vibe64Result(async () => {
-        const targetRoot = await globalCodexTargetRoot(projectService);
+        const executionRoot = await globalCodexRuntimeRoot(projectService);
         const subscribed = subscribeTerminalSession(terminalSessionId, subscriber, {
           namespace: globalCodexTerminalNamespace()
         });
-        const codexTerminal = activeGlobalCodexTerminal(targetRoot);
+        const codexTerminal = activeGlobalCodexTerminal(executionRoot);
         return {
           ...subscribed,
           codexTerminal,
@@ -8987,17 +8968,17 @@ function createCodexTerminalController({
       return vibe64Result(async () => {
         const runtime = await createRuntimeForSession();
         const session = await runtime.getSession(sessionId);
-        const targetRoot = terminalTargetRoot(session, projectService);
-        if (!targetRoot) {
+        const executionRoot = terminalSessionSourceRoot(session);
+        if (!executionRoot) {
           return {
             ok: false,
-            error: "Vibe64 Codex target root is not available."
+            error: "Vibe64 Codex session source root is not available."
           };
         }
         return storeCodexAttachment({
           input,
           sessionId,
-          targetRoot
+          executionRoot
         });
       });
     },
@@ -9014,14 +8995,14 @@ function createCodexTerminalController({
         }
         const runtime = await createRuntimeForSession();
         const session = await runtime.getSession(sessionId);
-        const targetRoot = terminalTargetRoot(session, projectService);
-        if (!targetRoot) {
+        const executionRoot = terminalSessionSourceRoot(session);
+        if (!executionRoot) {
           return {
             ok: false,
-            error: "Vibe64 Codex target root is not available."
+            error: "Vibe64 Codex session source root is not available."
           };
         }
-        await cleanupCodexAttachments(targetRoot, sessionId, attachmentId);
+        await cleanupCodexAttachments(executionRoot, sessionId, attachmentId);
         return {
           attachmentId,
           ok: true

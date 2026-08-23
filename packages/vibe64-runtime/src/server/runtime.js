@@ -7,12 +7,9 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
-  resolveVibe64ProjectLocalRoot
-} from "@local/vibe64-core/server/studioRoots";
-import {
+  managedSessionSourcePath,
   sessionHasSource,
-  sessionSourcePath,
-  targetSessionSourcePath
+  sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
   assertGenesisPromptTask,
@@ -64,6 +61,18 @@ function assertSupportedSession(session = {}) {
   return session;
 }
 
+function requireSessionSourceRoot(session = {}) {
+  const sourceRoot = sessionSourcePath(session);
+  if (!sourceRoot) {
+    const sessionId = normalizeText(session.sessionId || session.id) || "(unknown)";
+    throw vibe64Error(
+      `Session ${sessionId} has no usable source checkout. Create or select a session with source before using this operation.`,
+      "vibe64_session_source_required"
+    );
+  }
+  return sourceRoot;
+}
+
 function plainManifest(manifest = {}) {
   return {
     createdAt: normalizeText(manifest.createdAt),
@@ -107,7 +116,6 @@ function plainSessionView(session = {}, {
     sourceReady: Boolean(sourcePath),
     stateRoot: normalizeText(session.stateRoot),
     status: normalizeText(session.status) || VIBE64_SESSION_STATUS.ACTIVE,
-    targetRoot: normalizeText(session.targetRoot),
     updatedAt: normalizeText(session.updatedAt),
     workspaceSetup
   };
@@ -140,15 +148,14 @@ class Vibe64SessionRuntime {
     clock = undefined,
     createSessionSource = null,
     inspectSourceByDefault = true,
-    projectLocalRoot = "",
+    projectContextRoot = process.cwd(),
+    projectRuntimeRoot = "",
     projectSessionSourceRoot = "",
     promptEnvironment = process.env,
     promptRenderer = renderGenesisPrompt,
     sourceInspectionAvailable = true,
     sourceInspectionError = null,
-    stateRoot = "",
-    store = undefined,
-    targetRoot = process.cwd()
+    store = undefined
   } = {}) {
     this.inspectSourceByDefault = inspectSourceByDefault !== false;
     this.createSessionSource = typeof createSessionSource === "function"
@@ -163,13 +170,19 @@ class Vibe64SessionRuntime {
       : renderGenesisPrompt;
     this.sourceInspectionAvailable = sourceInspectionAvailable !== false;
     this.sourceInspectionError = sourceInspectionError || null;
-    this.stateRoot = projectLocalRoot || stateRoot || resolveVibe64ProjectLocalRoot(targetRoot);
-    this.targetRoot = targetRoot;
+    this.projectContextRoot = projectContextRoot;
+    this.stateRoot = normalizeText(projectRuntimeRoot);
+    if (!this.stateRoot && !store) {
+      throw vibe64Error(
+        "Vibe64 session runtime requires projectRuntimeRoot.",
+        "vibe64_project_runtime_root_required"
+      );
+    }
     this.store = store || createVibe64SessionStore({
       clock,
-      projectLocalRoot: this.stateRoot,
-      projectSessionSourceRoot: this.projectSessionSourceRoot,
-      targetRoot
+      projectContextRoot,
+      projectRuntimeRoot: this.stateRoot,
+      projectSessionSourceRoot: this.projectSessionSourceRoot
     });
   }
 
@@ -309,6 +322,7 @@ class Vibe64SessionRuntime {
     task = "work"
   } = {}) {
     const session = assertSupportedSession(await this.store.readSession(sessionId));
+    const sourceRoot = requireSessionSourceRoot(session);
     let genesisTask = assertGenesisPromptTask(task, {
       required: true
     });
@@ -330,7 +344,7 @@ class Vibe64SessionRuntime {
         ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
         ...(normalizeText(request) ? { request: normalizeText(request) } : {})
       },
-      projectRoot: sessionSourcePath(session) || session.targetRoot || this.targetRoot
+      projectRoot: sourceRoot
     });
   }
 
@@ -391,7 +405,7 @@ class Vibe64SessionRuntime {
           reason
         });
       } else if (sessionSourceCreationFailed(session)) {
-        const failedSourcePath = targetSessionSourcePath(this.projectSessionSourceRoot, sessionId);
+        const failedSourcePath = managedSessionSourcePath(this.projectSessionSourceRoot, sessionId);
         if (failedSourcePath) {
           await rm(failedSourcePath, {
             force: true,

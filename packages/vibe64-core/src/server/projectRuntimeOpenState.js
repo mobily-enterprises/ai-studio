@@ -10,15 +10,15 @@ import {
 const PROJECT_RUNTIME_STATE_DIR = "runtime";
 const PROJECT_RUNTIME_OPEN_STATE_FILE = "open.json";
 
-function projectRuntimeOpenStatePath(projectLocalRoot = "") {
-  const root = normalizeText(projectLocalRoot);
+function projectRuntimeOpenStatePath(projectRuntimeRoot = "") {
+  const root = normalizeText(projectRuntimeRoot);
   return root ? path.join(path.resolve(root), PROJECT_RUNTIME_STATE_DIR, PROJECT_RUNTIME_OPEN_STATE_FILE) : "";
 }
 
 async function readProjectRuntimeOpenState({
-  projectLocalRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
-  const filePath = projectRuntimeOpenStatePath(projectLocalRoot);
+  const filePath = projectRuntimeOpenStatePath(projectRuntimeRoot);
   if (!filePath) {
     return closedProjectRuntimeOpenState("");
   }
@@ -41,14 +41,13 @@ async function readProjectRuntimeOpenState({
 }
 
 async function writeProjectRuntimeOpenState({
-  projectLocalRoot = "",
+  projectRuntimeRoot = "",
   projectSlug = "",
-  reason = "project-open",
-  targetRoot = ""
+  reason = "project-open"
 } = {}) {
-  const filePath = projectRuntimeOpenStatePath(projectLocalRoot);
+  const filePath = projectRuntimeOpenStatePath(projectRuntimeRoot);
   if (!filePath) {
-    throw new Error("writeProjectRuntimeOpenState requires projectLocalRoot.");
+    throw new Error("writeProjectRuntimeOpenState requires projectRuntimeRoot.");
   }
   const now = new Date().toISOString();
   const state = {
@@ -56,7 +55,6 @@ async function writeProjectRuntimeOpenState({
     openedAt: now,
     projectSlug: normalizeText(projectSlug),
     reason: normalizeText(reason) || "project-open",
-    targetRoot: normalizeText(targetRoot),
     updatedAt: now
   };
   await mkdir(path.dirname(filePath), {
@@ -70,9 +68,9 @@ async function writeProjectRuntimeOpenState({
 }
 
 async function clearProjectRuntimeOpenState({
-  projectLocalRoot = ""
+  projectRuntimeRoot = ""
 } = {}) {
-  const filePath = projectRuntimeOpenStatePath(projectLocalRoot);
+  const filePath = projectRuntimeOpenStatePath(projectRuntimeRoot);
   if (filePath) {
     await rm(filePath, {
       force: true
@@ -88,7 +86,6 @@ function publicProjectRuntimeOpenState(state = {}) {
     ...(open && normalizeText(state.openedAt) ? { openedAt: normalizeText(state.openedAt) } : {}),
     ...(open && normalizeText(state.projectSlug) ? { projectSlug: normalizeText(state.projectSlug) } : {}),
     ...(open && normalizeText(state.reason) ? { reason: normalizeText(state.reason) } : {}),
-    ...(open && normalizeText(state.targetRoot) ? { targetRoot: normalizeText(state.targetRoot) } : {}),
     ...(open && normalizeText(state.updatedAt) ? { updatedAt: normalizeText(state.updatedAt) } : {})
   };
 }

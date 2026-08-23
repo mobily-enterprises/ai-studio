@@ -15,6 +15,9 @@ import {
   listVibe64LaunchTargets
 } from "../../packages/vibe64-terminals/src/server/vibe64LaunchTargets.js";
 import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
   listLaunchTargets,
   workspaceSetupLaunchDisabledReason
 } from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
@@ -59,12 +62,19 @@ function launchTarget(overrides = {}) {
 }
 
 async function launchContext(t) {
-  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-launch-"));
-  t.after(() => rm(projectRoot, {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-launch-"));
+  t.after(() => rm(temporaryRoot, {
     force: true,
     recursive: true
   }));
-  const sourceRoot = path.join(projectRoot, "source");
+  const projectContextRoot = path.join(temporaryRoot, "namespace");
+  const sourceRoot = path.join(
+    projectContextRoot,
+    "sessions",
+    "active",
+    "session-unit",
+    "source"
+  );
   await mkdir(sourceRoot, {
     recursive: true
   });
@@ -80,13 +90,16 @@ async function launchContext(t) {
     },
     session: {
       metadata: {
-        source_path: sourceRoot
+        repository_mode: "local_source",
+        source_kind: "session_clone",
+        source_path: sourceRoot,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
       },
+      projectContextRoot,
       sessionId: "session-unit",
-      sessionRoot: path.join(projectRoot, "state", "session-unit"),
-      targetRoot: sourceRoot
+      sessionRoot: path.join(temporaryRoot, "state", "session-unit")
     },
-    targetRoot: sourceRoot
+    targetRoot: projectContextRoot
   };
 }
 
@@ -167,7 +180,7 @@ test("neutral sessions list explicit Vibe64 targets without exposing resource va
     }
   });
 
-  assert.equal(received.projectRoot, context.session.targetRoot);
+  assert.equal(received.projectRoot, context.session.metadata.source_path);
   assert.equal(received.environment.DB_PASSWORD, "managed-project-value");
   assert.deepEqual(targets, [{
     available: true,
@@ -217,13 +230,13 @@ test("missing Genesis Stack leaves workspace preparation unconfigured", async (t
   });
 });
 
-test("managed preview waits for declared workspace preparation", () => {
+test("managed preview blocks only workspace preparation that cannot run", () => {
   assert.equal(workspaceSetupLaunchDisabledReason({
     workspaceSetup: {
       currentLabel: "Install dependencies",
       status: "running"
     }
-  }), "Workspace preparation is running: Install dependencies");
+  }), "");
   assert.equal(workspaceSetupLaunchDisabledReason({
     workspaceSetup: {
       diagnostic: "npm install failed",
@@ -244,13 +257,13 @@ test("managed preview waits for declared workspace preparation", () => {
     workspaceSetup: {
       status: "unconfigured"
     }
-  }, declaredSetup), "Workspace preparation is pending.");
+  }, declaredSetup), "");
   assert.equal(workspaceSetupLaunchDisabledReason({
     workspaceSetup: {
       recipeHash: "sha256:old-recipe",
       status: "succeeded"
     }
-  }, declaredSetup), "Workspace preparation is pending.");
+  }, declaredSetup), "");
   assert.equal(workspaceSetupLaunchDisabledReason({
     workspaceSetup: {
       recipeHash: "sha256:recipe",
@@ -268,7 +281,7 @@ test("managed preview waits for declared workspace preparation", () => {
   }), "");
 });
 
-test("declaring a Stack cannot auto-start preview before its setup recipe succeeds", async (t) => {
+test("a pending workspace recipe remains launchable so the start request can prepare it", async (t) => {
   const context = await launchContext(t);
   context.session.workspaceSetup = {
     status: "unconfigured"
@@ -287,9 +300,66 @@ test("declaring a Stack cannot auto-start preview before its setup recipe succee
       }]
     })
   }), [{
+    available: true,
+    defaultPreview: true,
+    disabledReason: "",
+    id: "app",
+    label: "Run app"
+  }]);
+});
+
+test("an upgraded workspace recipe can be prepared without trusting its old identity", async (t) => {
+  const context = await launchContext(t);
+  context.session.workspaceSetup = {
+    recipeHash: "sha256:retired-contract",
+    status: "succeeded"
+  };
+
+  assert.deepEqual(await listLaunchTargets(context, {
+    inspectLaunch: () => launchInspection([launchTarget()]),
+    inspectWorkspaceSetup: () => ({
+      recipeHash: "sha256:current-contract",
+      status: "ready",
+      steps: [{
+        argv: ["npm", "install"],
+        label: "Install dependencies",
+        runtimeRequirements: ["nodejs"],
+        workdir: "."
+      }]
+    })
+  }), [{
+    available: true,
+    defaultPreview: true,
+    disabledReason: "",
+    id: "app",
+    label: "Run app"
+  }]);
+});
+
+test("a failed current workspace recipe disables launch until it is retried", async (t) => {
+  const context = await launchContext(t);
+  context.session.workspaceSetup = {
+    diagnostic: "npm install failed",
+    recipeHash: "sha256:current-contract",
+    status: "failed"
+  };
+
+  assert.deepEqual(await listLaunchTargets(context, {
+    inspectLaunch: () => launchInspection([launchTarget()]),
+    inspectWorkspaceSetup: () => ({
+      recipeHash: "sha256:current-contract",
+      status: "ready",
+      steps: [{
+        argv: ["npm", "install"],
+        label: "Install dependencies",
+        runtimeRequirements: ["nodejs"],
+        workdir: "."
+      }]
+    })
+  }), [{
     available: false,
     defaultPreview: true,
-    disabledReason: "Workspace preparation is pending.",
+    disabledReason: "npm install failed",
     id: "app",
     label: "Run app"
   }]);
@@ -297,7 +367,7 @@ test("declaring a Stack cannot auto-start preview before its setup recipe succee
 
 test("neutral sessions translate Vibe64 targets through the existing Vibe64 preview terminal", async (t) => {
   const context = await launchContext(t);
-  const sourceSubdirectory = path.join(context.session.targetRoot, "web");
+  const sourceSubdirectory = path.join(context.session.metadata.source_path, "web");
   await mkdir(sourceSubdirectory);
   const target = launchTarget({
     steps: [{

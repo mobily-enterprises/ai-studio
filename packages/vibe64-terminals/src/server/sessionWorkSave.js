@@ -71,10 +71,19 @@ function repositoryContext(session = {}, project = {}) {
   const sessionId = text(session.sessionId || session.id);
   const baseCommit = text(sessionMetadata.base_commit);
   const lastCanonicalCommit = text(sessionMetadata.canonical_commit) || baseCommit;
-  const projectRoot = text(project.path || project.projectRoot);
-  if (!mode || !branch || !worktreePath || !sessionId || !baseCommit || !projectRoot) {
+  const standaloneSourceRoot = mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+    ? text(project.sourceRoot)
+    : "";
+  if (
+    !mode ||
+    !branch ||
+    !worktreePath ||
+    !sessionId ||
+    !baseCommit ||
+    (mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE && !standaloneSourceRoot)
+  ) {
     throw saveError(
-      "Session Save requires a complete repository mode, branch, source, base commit, and project root.",
+      "Session Save requires a complete repository mode, branch, session source, base commit, and authority.",
       "vibe64_session_save_context_incomplete"
     );
   }
@@ -82,7 +91,7 @@ function repositoryContext(session = {}, project = {}) {
     ? text(project.githubRepository?.cloneUrl || project.repository?.github?.cloneUrl || sessionMetadata.source_remote_url)
     : mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT
       ? text(project.canonicalRepositoryPath || sessionMetadata.source_remote_url)
-      : projectRoot;
+      : standaloneSourceRoot;
   if (!remoteUrl) {
     throw saveError(
       "Session Save cannot find the canonical repository authority.",
@@ -94,9 +103,9 @@ function repositoryContext(session = {}, project = {}) {
     branch,
     lastCanonicalCommit,
     mode,
-    projectRoot,
     remoteUrl,
     sessionId,
+    standaloneSourceRoot,
     worktreePath
   };
 }
@@ -104,7 +113,7 @@ function repositoryContext(session = {}, project = {}) {
 function commandProject(context = {}, project = {}) {
   return {
     ownerUserKey: text(project.ownerUserKey || project.githubRepository?.owner),
-    projectRoot: context.projectRoot,
+    projectRoot: context.worktreePath,
     repositoryMode: context.mode,
     sessionId: context.sessionId
   };
@@ -120,8 +129,10 @@ async function saveCommand(runCommand, context, command, args, {
 } = {}) {
   const allowedRoots = [
     context.worktreePath,
-    context.projectRoot,
     path.dirname(context.worktreePath),
+    ...(context.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+      ? [context.standaloneSourceRoot, path.dirname(context.standaloneSourceRoot)]
+      : []),
     ...(path.isAbsolute(context.remoteUrl) ? [context.remoteUrl, path.dirname(context.remoteUrl)] : []),
     ...additionalAllowedRoots.flatMap((root) => {
       const normalized = text(root);
@@ -670,7 +681,7 @@ async function readRemoteCanonical(runCommand, context, operationId, options) {
 async function assertLocalAuthority(runCommand, context, options) {
   const branch = await gitOutput(runCommand, context, ["branch", "--show-current"], {
     ...options,
-    cwd: context.projectRoot
+    cwd: context.standaloneSourceRoot
   });
   if (branch !== context.branch) {
     throw saveError(
@@ -680,7 +691,7 @@ async function assertLocalAuthority(runCommand, context, options) {
   }
   const status = await gitOutput(runCommand, context, ["status", "--porcelain", "--untracked-files=all"], {
     ...options,
-    cwd: context.projectRoot
+    cwd: context.standaloneSourceRoot
   });
   if (status) {
     throw saveError(
@@ -691,7 +702,7 @@ async function assertLocalAuthority(runCommand, context, options) {
   for (const marker of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"]) {
     const markerResult = await git(runCommand, context, ["rev-parse", "--verify", "-q", marker], {
       ...options,
-      cwd: context.projectRoot,
+      cwd: context.standaloneSourceRoot,
       required: false
     });
     if (markerResult?.ok === true) {
@@ -703,7 +714,7 @@ async function assertLocalAuthority(runCommand, context, options) {
   }
   return gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD"], {
     ...options,
-    cwd: context.projectRoot
+    cwd: context.standaloneSourceRoot
   });
 }
 
@@ -717,7 +728,7 @@ async function readCanonical(runCommand, context, operationId, options) {
     await git(runCommand, context, [
       "fetch",
       "--no-tags",
-      context.projectRoot,
+      context.standaloneSourceRoot,
       `+refs/heads/${context.branch}:${operationRef}`
     ], options);
     const importedCommit = await gitOutput(runCommand, context, [
@@ -1096,15 +1107,15 @@ async function publishSaveCommit(runCommand, context, saveCommit, canonicalCommi
     }
     await git(runCommand, context, ["fetch", context.worktreePath, saveCommit], {
       ...options,
-      cwd: context.projectRoot
+      cwd: context.standaloneSourceRoot
     });
     await git(runCommand, context, ["merge", "--ff-only", saveCommit], {
       ...options,
-      cwd: context.projectRoot
+      cwd: context.standaloneSourceRoot
     });
     const verified = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
       ...options,
-      cwd: context.projectRoot
+      cwd: context.standaloneSourceRoot
     });
     await rememberCanonicalCommit(runCommand, context, verified, options);
     return verified;

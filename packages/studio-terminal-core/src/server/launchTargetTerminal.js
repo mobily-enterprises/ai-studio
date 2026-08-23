@@ -1,7 +1,6 @@
 import { chmodSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
-import process from "node:process";
 
 import {
   shellQuote,
@@ -500,8 +499,7 @@ async function createVibe64WebLaunchTargetTerminalSpec({
   launchTarget = {},
   preferredPort = DEFAULT_WEB_LAUNCH_TARGET_PORT,
   resolveLaunch = async () => ({}),
-  session = {},
-  targetRoot = ""
+  session = {}
 } = {}) {
   const worktreePath = sessionSourcePath(session);
   if (!worktreePath) {
@@ -512,7 +510,6 @@ async function createVibe64WebLaunchTargetTerminalSpec({
   }
 
   const resolvedWorktreeRoot = path.resolve(worktreePath);
-  const resolvedTargetRoot = path.resolve(targetRoot || session.targetRoot || process.cwd());
   const portReservation = await reserveAvailableWebLaunchTargetPort(preferredPort);
   const releasePortReservation = portReservation.release;
   try {
@@ -527,7 +524,7 @@ async function createVibe64WebLaunchTargetTerminalSpec({
       port,
       readinessMarker: generatedReadinessMarker,
       session,
-      targetRoot: resolvedTargetRoot,
+      sessionSourceRoot: resolvedWorktreeRoot,
       worktreePath: resolvedWorktreeRoot
     });
     const urlPath = normalizeUrlPath(launch.urlPath || "/");
@@ -632,7 +629,7 @@ async function createVibe64WebLaunchTargetTerminalSpec({
       scope: "session",
       sessionId: session.sessionId || "",
       sessionRoot: String(session.sessionRoot || ""),
-      targetRoot: resolvedTargetRoot,
+      sessionSourceRoot: resolvedWorktreeRoot,
       targetUrl,
       urlPath,
       ...terminalNoGithubActorMetadata({
@@ -684,9 +681,9 @@ async function createVibe64WebLaunchTargetTerminalSpec({
             previewIdentity,
             projectScope,
             secret: previewAuthSecret,
+            sessionSourceRoot: resolvedWorktreeRoot,
             sessionId: session.sessionId || "",
             targetHref: targetUrl,
-            targetRoot: resolvedTargetRoot,
             terminalSessionId: id || ""
           }),
           ...(profilePath ? { VIBE64_PREVIEW_AUTH_PROFILE_FILE: profilePath } : {})

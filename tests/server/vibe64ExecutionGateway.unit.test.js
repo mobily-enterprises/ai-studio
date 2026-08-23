@@ -369,7 +369,7 @@ test("execution gateway forbids a human filesystem actor inside managed session 
       args: ["-e", "console.log('must-not-run')"],
       session: {
         sessionId: "session-1",
-        targetRoot: sourceRoot
+        sourceRoot
       },
       userKey: currentUser.username
     });
@@ -390,12 +390,12 @@ test("managed source actor policy permits the daemon and rejects a real user", (
   assert.doesNotThrow(() => assertManagedSourceFilesystemActor({
     requiresRealUser: false
   }, {
-    session: { targetRoot: sourceRoot }
+    session: { sourceRoot }
   }, sourceRoot));
   assert.throws(() => assertManagedSourceFilesystemActor({
     requiresRealUser: true
   }, {
-    session: { targetRoot: sourceRoot }
+    session: { sourceRoot }
   }, path.join(sourceRoot, "nested")), {
     code: "vibe64_command_managed_source_real_user_forbidden"
   });
