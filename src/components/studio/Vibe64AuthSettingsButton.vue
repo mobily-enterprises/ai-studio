@@ -8,10 +8,10 @@
       density="comfortable"
       :icon="mdiAccountCogOutline"
       size="large"
-      title="Account connections"
+      title="Account settings"
       type="button"
       variant="tonal"
-      aria-label="Account connections"
+      aria-label="Account settings"
       @click="openDialog"
     />
 
@@ -23,16 +23,16 @@
       <v-card class="vibe64-auth-settings__dialog" rounded="lg">
         <v-card-title class="vibe64-auth-settings__dialog-title">
           <div>
-            <h2>Account connections</h2>
-            <p>Connect the tools Vibe64 uses for coding and source control.</p>
+            <h2>Account settings</h2>
+            <p>Choose how the assistant addresses you and connect its coding tools.</p>
           </div>
           <v-btn
             density="comfortable"
             :icon="mdiClose"
-            title="Close account connections"
+            title="Close account settings"
             type="button"
             variant="text"
-            aria-label="Close account connections"
+            aria-label="Close account settings"
             @click="dialogOpen = false"
           />
         </v-card-title>
@@ -60,7 +60,44 @@
         </v-tabs>
         <v-divider />
         <v-card-text class="vibe64-auth-settings__dialog-body">
+          <section
+            v-if="selectedProviderId === 'profile'"
+            class="vibe64-personal-profile"
+            aria-labelledby="vibe64-personal-profile-title"
+          >
+            <div class="vibe64-personal-profile__heading">
+              <h3 id="vibe64-personal-profile-title">Your profile</h3>
+              <p>You — all projects</p>
+            </div>
+            <v-text-field
+              ref="preferredNameField"
+              v-model="preferredNameDraft"
+              data-vibe64-personal-profile
+              density="comfortable"
+              :error-messages="preferredNameValidation.error ? [preferredNameValidation.error] : []"
+              hide-details="auto"
+              label="What should the assistant call you?"
+              variant="outlined"
+              @keydown.enter.prevent="savePreferredName"
+            />
+            <p class="vibe64-personal-profile__supporting-text">
+              This name is used for future messages across this Vibe64 installation. Leave it blank to use your computer account name.
+            </p>
+            <div class="vibe64-personal-profile__actions">
+              <v-btn
+                class="vibe64-personal-profile__save"
+                color="primary"
+                :disabled="preferredNameSaving || !preferredNameChanged || !preferredNameValidation.valid"
+                type="button"
+                variant="flat"
+                @click="savePreferredName"
+              >
+                {{ preferredNameSaving ? "Saving…" : "Save name" }}
+              </v-btn>
+            </div>
+          </section>
           <ProviderAccountsSetup
+            v-else
             :accounts="accounts"
             :account-rows="selectedAccountRows"
             :status-loaded="statusLoaded"
@@ -77,8 +114,9 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  mdiAccountOutline,
   mdiAccountCogOutline,
   mdiClose,
   mdiGithub,
@@ -92,8 +130,11 @@ import {
 import {
   onVibe64AccountConnectionsDialogRequested
 } from "@/lib/vibe64AccountConnectionsDialog.js";
+import {
+  preferredNameDraftState
+} from "@/lib/vibe64PersonalAiProfile.js";
 
-const providerOptions = Object.freeze([
+const accountProviderOptions = Object.freeze([
   {
     icon: mdiRobotOutline,
     id: "codex",
@@ -105,9 +146,26 @@ const providerOptions = Object.freeze([
     label: "GitHub"
   }
 ]);
+const providerOptions = computed(() => [
+  ...(personalProfileAvailable.value ? [{
+    icon: mdiAccountOutline,
+    id: "profile",
+    label: "You"
+  }] : []),
+  ...accountProviderOptions
+]);
 const dialogOpen = ref(false);
 const selectedProviderId = ref("codex");
 const accounts = useVibe64Accounts();
+const preferredNameField = ref(null);
+const preferredNameDraft = ref("");
+const preferredNameSaving = computed(() => accounts.savePersonalAiProfileCommand.isRunning === true);
+const personalProfile = computed(() => accounts.status.value?.personalProfile || null);
+const personalProfileAvailable = computed(() => personalProfile.value?.available === true);
+const preferredNameValidation = computed(() => preferredNameDraftState(preferredNameDraft.value));
+const preferredNameChanged = computed(() => (
+  preferredNameValidation.value.preferredName !== String(personalProfile.value?.preferredName || "")
+));
 const statusLoaded = computed(() => {
   return Boolean(accounts.status.value && Array.isArray(accounts.status.value.accounts));
 });
@@ -122,7 +180,7 @@ const selectedAccountRows = computed(() => {
   });
 });
 const selectedProvider = computed(() => {
-  return providerOptions.find((provider) => provider.id === selectedProviderId.value) || providerOptions[0];
+  return providerOptions.value.find((provider) => provider.id === selectedProviderId.value) || providerOptions.value[0];
 });
 const selectedProviderTitle = computed(() => {
   return `${selectedProvider.value.label} Connection`;
@@ -142,19 +200,27 @@ const credentialsNeedAttention = computed(() => {
 
 function normalizeProviderId(providerId = "") {
   const normalized = String(providerId || "").trim();
-  return providerOptions.some((provider) => provider.id === normalized) ? normalized : "";
+  return providerOptions.value.some((provider) => provider.id === normalized) ? normalized : "";
 }
 
 async function openDialog(options = {}) {
+  const profileRequested = String(options.section || "").trim() === "profile";
   const requestedProviderId = normalizeProviderId(options.providerId);
   if (requestedProviderId) {
     selectedProviderId.value = requestedProviderId;
   }
   dialogOpen.value = true;
-  if (options.codexReconnectRequired === true) {
+  if (profileRequested) {
+    await accounts.reloadLocalStatus();
+  } else if (options.codexReconnectRequired === true) {
     await accounts.reloadLocalStatus();
   } else if (options.refresh !== false) {
     await accounts.refresh();
+  }
+  if (profileRequested && personalProfileAvailable.value) {
+    selectedProviderId.value = "profile";
+    await focusPreferredName();
+    return;
   }
   if (requestedProviderId) {
     selectedProviderId.value = requestedProviderId;
@@ -164,6 +230,24 @@ async function openDialog(options = {}) {
   if (accountProviderId) {
     selectedProviderId.value = accountProviderId;
   }
+}
+
+async function focusPreferredName() {
+  await nextTick();
+  preferredNameField.value?.focus?.();
+}
+
+async function savePreferredName() {
+  if (
+    preferredNameSaving.value ||
+    !preferredNameChanged.value ||
+    !preferredNameValidation.value.valid
+  ) {
+    return;
+  }
+  await accounts.savePersonalAiProfile({
+    preferredName: preferredNameValidation.value.preferredName
+  });
 }
 
 function firstAccountProviderNeedingAttention() {
@@ -187,6 +271,14 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposeAccountConnectionsDialogRequest();
 });
+
+watch(
+  () => personalProfile.value?.preferredName,
+  (preferredName) => {
+    preferredNameDraft.value = String(preferredName || "");
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
@@ -289,6 +381,44 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   overflow: auto;
   padding: 1rem;
+}
+
+.vibe64-personal-profile {
+  display: grid;
+  gap: 1rem;
+  max-width: 38rem;
+}
+
+.vibe64-personal-profile__heading h3 {
+  font-size: 1rem;
+  font-weight: 720;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.vibe64-personal-profile__heading p,
+.vibe64-personal-profile__supporting-text {
+  color: rgba(var(--v-theme-on-surface), 0.66);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin: 0.2rem 0 0;
+}
+
+.vibe64-personal-profile__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.vibe64-personal-profile__save {
+  min-height: 3rem;
+  min-width: 7.5rem;
+}
+
+@media (pointer: coarse) {
+  .vibe64-auth-settings__button,
+  .vibe64-auth-settings__provider-tab {
+    min-height: 3rem;
+  }
 }
 
 @keyframes vibe64-auth-settings-pulse {

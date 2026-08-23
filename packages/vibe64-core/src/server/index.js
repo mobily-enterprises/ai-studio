@@ -8,6 +8,7 @@ export * from "./launchPreviewProxyEnv.js";
 export * from "./localStudioRequest.js";
 export * from "./logging.js";
 export * from "./osUserIdentity.js";
+export * from "./personalAiProfile.js";
 export * from "./projectServiceSelection.js";
 export * from "./serverResponses.js";
 export * from "./sessionRealtimeEvents.js";

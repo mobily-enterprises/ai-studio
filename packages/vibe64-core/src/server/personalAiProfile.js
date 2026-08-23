@@ -1,0 +1,131 @@
+import { randomUUID } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile
+} from "node:fs/promises";
+import path from "node:path";
+
+import {
+  isMissingPathError,
+  isPlainObject,
+  normalizeText,
+  vibe64Error
+} from "./core.js";
+import {
+  normalizePreferredName
+} from "./vibe64MembershipStore.js";
+
+const PERSONAL_AI_PROFILE_DIRECTORY = "profile";
+const PERSONAL_AI_PROFILE_FILE = "personal.json";
+const PERSONAL_AI_PROFILE_VERSION = 1;
+
+function personalAiProfilePath(systemRoot = "") {
+  const root = normalizeText(systemRoot);
+  if (!root) {
+    throw vibe64Error(
+      "Personal AI profile requires the Vibe64 system root.",
+      "vibe64_personal_ai_profile_root_required"
+    );
+  }
+  return path.join(path.resolve(root), PERSONAL_AI_PROFILE_DIRECTORY, PERSONAL_AI_PROFILE_FILE);
+}
+
+function emptyPersonalAiProfile() {
+  return {
+    preferredName: "",
+    version: PERSONAL_AI_PROFILE_VERSION
+  };
+}
+
+function normalizePersonalAiProfile(value = {}) {
+  if (!isPlainObject(value)) {
+    throw vibe64Error(
+      "Personal AI profile must be an object.",
+      "vibe64_personal_ai_profile_invalid"
+    );
+  }
+  if (value.version !== undefined && value.version !== PERSONAL_AI_PROFILE_VERSION) {
+    throw vibe64Error(
+      `Personal AI profile version ${String(value.version)} is not supported.`,
+      "vibe64_personal_ai_profile_version_unsupported"
+    );
+  }
+  return {
+    preferredName: normalizePreferredName(value.preferredName),
+    version: PERSONAL_AI_PROFILE_VERSION
+  };
+}
+
+function createPersonalAiProfileStore({
+  systemRoot = ""
+} = {}) {
+  const filePath = personalAiProfilePath(systemRoot);
+  let pendingWrite = Promise.resolve();
+
+  async function read() {
+    try {
+      return normalizePersonalAiProfile(JSON.parse(await readFile(filePath, "utf8")));
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return emptyPersonalAiProfile();
+      }
+      if (error instanceof SyntaxError) {
+        throw vibe64Error(
+          "Stored personal AI profile is not valid JSON.",
+          "vibe64_personal_ai_profile_invalid"
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function write(profile = {}) {
+    const normalized = normalizePersonalAiProfile(profile);
+    const operation = pendingWrite.catch(() => {}).then(async () => {
+      const directory = path.dirname(filePath);
+      const temporaryPath = path.join(
+        directory,
+        `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`
+      );
+      await mkdir(directory, {
+        mode: 0o700,
+        recursive: true
+      });
+      try {
+        await writeFile(temporaryPath, `${JSON.stringify(normalized, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o600
+        });
+        await rename(temporaryPath, filePath);
+        await chmod(filePath, 0o600);
+      } finally {
+        await rm(temporaryPath, {
+          force: true
+        });
+      }
+      return normalized;
+    });
+    pendingWrite = operation;
+    return operation;
+  }
+
+  return Object.freeze({
+    filePath,
+    read,
+    write
+  });
+}
+
+export {
+  PERSONAL_AI_PROFILE_FILE,
+  PERSONAL_AI_PROFILE_VERSION,
+  createPersonalAiProfileStore,
+  emptyPersonalAiProfile,
+  normalizePersonalAiProfile,
+  personalAiProfilePath
+};

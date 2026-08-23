@@ -155,7 +155,7 @@ function registerRoutes(
 
   routes.actionRoute("POST", "/sessions/:sessionId/temporary-conversations", {
     actionId: ACTION_CREATE_TEMPORARY_CONVERSATION,
-    buildInput: bodyWithSessionId(routes),
+    buildInput: (request) => withVibe64User(request, bodyWithSessionId(routes)(request)),
     summary: "Create an ephemeral Vibe64 assistant conversation."
   });
 
@@ -167,7 +167,7 @@ function registerRoutes(
 
   routes.actionRoute("POST", "/sessions/:sessionId/temporary-conversations/:conversationId/turns", {
     actionId: ACTION_START_TEMPORARY_CONVERSATION_TURN,
-    buildInput: (request) => ({
+    buildInput: (request) => withVibe64User(request, {
       ...routes.requestBody(request),
       ...temporaryConversationInput(request)
     }),

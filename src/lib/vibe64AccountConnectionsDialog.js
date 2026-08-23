@@ -3,7 +3,8 @@ const VIBE64_ACCOUNT_CONNECTIONS_OPEN_EVENT = "vibe64:account-connections:open";
 function requestVibe64AccountConnectionsDialog({
   codexReconnectRequired = false,
   providerId = "",
-  refresh = true
+  refresh = true,
+  section = ""
 } = {}) {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
     return false;
@@ -12,7 +13,8 @@ function requestVibe64AccountConnectionsDialog({
     detail: {
       codexReconnectRequired: codexReconnectRequired === true,
       providerId: String(providerId || ""),
-      refresh: refresh !== false
+      refresh: refresh !== false,
+      section: String(section || "")
     }
   }));
   return true;

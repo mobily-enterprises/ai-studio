@@ -85,6 +85,7 @@ const CONVERSATION_MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const CONVERSATION_MESSAGE_FILE_PATTERN =
   /^(user|assistant|commentary|system|thinking)\.(\d{8}T\d{9}Z)(?:\.([A-Za-z0-9][A-Za-z0-9_-]{0,127}))?\.md$/u;
 const CONVERSATION_TURN_ID_PATTERN = /^\d{6}$/u;
+const CONVERSATION_TURN_METADATA_FILE = "metadata.json";
 const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "base_commit",
   "canonical_commit",
@@ -1598,14 +1599,63 @@ function createVibe64SessionStore({
     const thinking = messages.filter((message) => message.role === "thinking");
     const activity = [...thinking, ...commentary]
       .sort((left, right) => left.at.localeCompare(right.at));
+    const metadata = await readConversationTurnMetadata(sessionPaths, turnId);
     return {
       assistant,
       commentary,
       messages: [system, user, ...activity, assistant].filter(Boolean),
+      ...(metadata ? { metadata } : {}),
       ...(system ? { system } : {}),
       thinking,
       turnId,
       user
+    };
+  }
+
+  async function readConversationTurnMetadata(sessionPaths, turnId) {
+    const text = await readTextIfExists(path.join(
+      conversationTurnRoot(sessionPaths, turnId),
+      CONVERSATION_TURN_METADATA_FILE
+    ));
+    if (!text) {
+      return null;
+    }
+    try {
+      return normalizeConversationTurnMetadata(JSON.parse(text));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw vibe64Error(
+          `Conversation turn ${turnId} metadata is not valid JSON.`,
+          "vibe64_invalid_conversation_turn_metadata"
+        );
+      }
+      throw error;
+    }
+  }
+
+  function normalizeConversationTurnMetadata(value = null) {
+    if (!isPlainObject(value)) {
+      throw vibe64Error(
+        "Conversation turn metadata must be an object.",
+        "vibe64_invalid_conversation_turn_metadata"
+      );
+    }
+    const policyRevision = Number(value.policyRevision);
+    const policyVersion = Number(value.policyVersion);
+    if (
+      !Number.isSafeInteger(policyRevision) || policyRevision < 0 ||
+      !Number.isSafeInteger(policyVersion) || policyVersion < 1
+    ) {
+      throw vibe64Error(
+        "Conversation turn AI policy attribution is invalid.",
+        "vibe64_invalid_conversation_turn_metadata"
+      );
+    }
+    return {
+      actorDisplayName: normalizeText(value.actorDisplayName),
+      actorId: normalizeText(value.actorId),
+      policyRevision,
+      policyVersion
     };
   }
 
@@ -1741,7 +1791,8 @@ function createVibe64SessionStore({
 
   async function writeConversationUserMessage(sessionId, {
     messageId = "",
-    text = ""
+    text = "",
+    turnMetadata = null
   } = {}) {
     const messageText = normalizeText(text);
     const normalizedMessageId = normalizeText(messageId);
@@ -1757,6 +1808,12 @@ function createVibe64SessionStore({
       }
       const turnId = nextConversationTurnId(await conversationTurnIds(sessionPaths));
       const createdAt = now();
+      if (turnMetadata) {
+        await writeJsonFile(
+          path.join(conversationTurnRoot(sessionPaths, turnId), CONVERSATION_TURN_METADATA_FILE),
+          normalizeConversationTurnMetadata(turnMetadata)
+        );
+      }
       await writeTextFile(
         path.join(
           conversationTurnRoot(sessionPaths, turnId),

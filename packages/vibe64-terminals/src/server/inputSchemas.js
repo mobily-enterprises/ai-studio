@@ -13,6 +13,11 @@ const requiredText = {
 };
 
 const sessionIdField = requiredText;
+const vibe64UserField = {
+  type: "object",
+  additionalProperties: true,
+  required: false
+};
 
 const agentAttachmentFields = {
   contentType: optionalText,
@@ -66,7 +71,8 @@ const temporaryConversationCreateActionInputValidator = validator({
     required: false
   },
   policy: optionalText,
-  sessionId: sessionIdField
+  sessionId: sessionIdField,
+  vibe64User: vibe64UserField
 });
 const temporaryConversationInputValidator = validator({
   conversationId: requiredText,
@@ -83,7 +89,8 @@ const temporaryConversationTurnActionInputValidator = validator({
   message: requiredText,
   policy: optionalText,
   promptLabel: optionalText,
-  sessionId: sessionIdField
+  sessionId: sessionIdField,
+  vibe64User: vibe64UserField
 });
 const temporaryConversationStopActionInputValidator = validator({
   conversationId: requiredText,

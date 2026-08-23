@@ -1,0 +1,69 @@
+import { readFile } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  onVibe64AccountConnectionsDialogRequested,
+  requestVibe64AccountConnectionsDialog
+} from "../../src/lib/vibe64AccountConnectionsDialog.js";
+import {
+  preferredNameDraftState
+} from "../../src/lib/vibe64PersonalAiProfile.js";
+
+describe("standalone personal AI profile settings", () => {
+  it("opens the account settings dialog directly on the personal profile section", () => {
+    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("CustomEvent", class extends Event {
+      constructor(type, options = {}) {
+        super(type);
+        this.detail = options.detail;
+      }
+    });
+    const handler = vi.fn();
+    const dispose = onVibe64AccountConnectionsDialogRequested(handler);
+
+    expect(requestVibe64AccountConnectionsDialog({
+      refresh: false,
+      section: "profile"
+    })).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].detail).toEqual({
+      codexReconnectRequired: false,
+      providerId: "",
+      refresh: false,
+      section: "profile"
+    });
+    dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the profile form Material-sized, compact, and explicit about scope", async () => {
+    const component = await readFile(
+      new URL("../../src/components/studio/Vibe64AuthSettingsButton.vue", import.meta.url),
+      "utf8"
+    );
+
+    expect(component).toContain("What should the assistant call you?");
+    expect(component).toContain("You — all projects");
+    expect(component).toContain("min-height: 3rem");
+    expect(component).toContain("profileRequested");
+    expect(component).toContain("await accounts.reloadLocalStatus()");
+    expect(component).not.toContain(":loading=\"preferredNameSaving\"");
+    expect(component).not.toContain("maxlength=\"80\"");
+  });
+
+  it("counts preferred-name limits by Unicode characters rather than UTF-16 units", () => {
+    const eightyEmoji = "😀".repeat(80);
+
+    expect(preferredNameDraftState(eightyEmoji)).toMatchObject({
+      error: "",
+      length: 80,
+      preferredName: eightyEmoji,
+      valid: true
+    });
+    expect(preferredNameDraftState(`${eightyEmoji}😀`)).toMatchObject({
+      error: "Name cannot exceed 80 characters.",
+      length: 81,
+      valid: false
+    });
+  });
+});

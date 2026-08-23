@@ -433,11 +433,19 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(steered.ok, true, JSON.stringify(steered));
     assert.equal(providers.length, 1);
     assert.equal(providers[0].closed, 0);
-    assert.deepEqual(providers[0].steeredMessages, [{
-      message: "Use this additional detail.",
-      threadId: providers[0].threadId,
-      turnId: "turn-1"
-    }]);
+    assert.equal(providers[0].steeredMessages.length, 1);
+    assert.equal(providers[0].steeredMessages[0].threadId, providers[0].threadId);
+    assert.equal(providers[0].steeredMessages[0].turnId, "turn-1");
+    assert.match(providers[0].steeredMessages[0].message, /<vibe64-hidden-turn-context>/u);
+    assert.match(providers[0].steeredMessages[0].message, /Current actor id: "[^"]+"/u);
+    assert.match(providers[0].steeredMessages[0].message, /Use this additional detail\.$/u);
+    const attributedTurns = await store.readConversationLog("session-1");
+    assert.equal(attributedTurns.slice(0, 2).every((turn) => (
+      turn.metadata?.actorId &&
+      turn.metadata.actorDisplayName &&
+      turn.metadata.policyRevision === 0 &&
+      turn.metadata.policyVersion === 1
+    )), true);
 
     const activeReconciliation = await controller.reconcileThreads([{
       sessionId: "session-1"

@@ -84,7 +84,8 @@ function createTerminalActions({ terminals } = {}) {
       execute: (input) => terminals.createAgentConversation(input.sessionId, {
         agentSettings: input.agentSettings || {},
         ephemeral: true,
-        policy: input.policy || ""
+        policy: input.policy || "",
+        vibe64User: input.vibe64User || null
       })
     }),
     action({

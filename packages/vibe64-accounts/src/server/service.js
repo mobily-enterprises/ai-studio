@@ -1272,6 +1272,7 @@ function createService({
   env = process.env,
   githubAccountMode = GITHUB_ACCOUNT_MODE_LOCAL,
   invalidateAgentRuntimes = async () => null,
+  personalProfileStore = null,
   previousGithub = null,
   projectService = null,
   requireExplicitRoots = true,
@@ -1304,6 +1305,11 @@ function createService({
   const resolvedSystemRoot = resolvedAccountRuntime.systemRoot;
   const cancelledAuthSessions = new Set();
   const finalizedCodexAuthSessions = new Set();
+  const resolvedPersonalProfileStore = personalProfileStore &&
+    typeof personalProfileStore.read === "function" &&
+    typeof personalProfileStore.write === "function"
+    ? personalProfileStore
+    : null;
   const accountRunHostCommand = typeof resolvedAccountRuntime.runHostToolCommand === "function"
     ? (commandArgs, options = {}) => resolvedAccountRuntime.runHostToolCommand(commandArgs, options, {
         fallback: runHostToolCommand
@@ -1630,6 +1636,13 @@ function createService({
         github: USER_CREDENTIAL_SCOPE
       },
       ready,
+      ...(resolvedPersonalProfileStore ? {
+        personalProfile: {
+          ...(await resolvedPersonalProfileStore.read()),
+          available: true,
+          scope: "installation"
+        }
+      } : {}),
       targetRoot: currentTargetRoot(),
       updatedAt: new Date().toISOString()
     };
@@ -2094,6 +2107,27 @@ function createService({
           account,
           ok: account?.ok !== false,
           output: result.output || ""
+        };
+      });
+    },
+
+    async savePersonalAiProfile(input = {}) {
+      return accountsResult(async () => {
+        if (!resolvedPersonalProfileStore) {
+          return authError(
+            "personal_profile_unavailable",
+            "Personal profile settings are not available in this Vibe64 runtime."
+          );
+        }
+        return {
+          ok: true,
+          personalProfile: {
+            ...(await resolvedPersonalProfileStore.write({
+              preferredName: input.preferredName
+            })),
+            available: true,
+            scope: "installation"
+          }
         };
       });
     },

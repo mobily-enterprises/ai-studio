@@ -240,6 +240,54 @@ test("plain session store gives one durable user turn to one message id", async 
   });
 });
 
+test("plain session store keeps immutable actor and AI policy attribution on each user turn", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: "conversation-attribution"
+    });
+    const first = await store.writeConversationUserMessage("conversation-attribution", {
+      messageId: "message_attribution_1",
+      text: "Build the first screen.",
+      turnMetadata: {
+        actorDisplayName: "Ada",
+        actorId: "ada",
+        policyRevision: 2,
+        policyVersion: 1
+      }
+    });
+    await store.writeConversationAssistantMessage("conversation-attribution", {
+      text: "Done."
+    });
+    const second = await store.writeConversationUserMessage("conversation-attribution", {
+      messageId: "message_attribution_2",
+      text: "Now add search.",
+      turnMetadata: {
+        actorDisplayName: "Grace",
+        actorId: "grace",
+        policyRevision: 3,
+        policyVersion: 1
+      }
+    });
+
+    assert.deepEqual(first.metadata, {
+      actorDisplayName: "Ada",
+      actorId: "ada",
+      policyRevision: 2,
+      policyVersion: 1
+    });
+    assert.deepEqual(second.metadata, {
+      actorDisplayName: "Grace",
+      actorId: "grace",
+      policyRevision: 3,
+      policyVersion: 1
+    });
+    const reloaded = await createStore(targetRoot).readConversationLog("conversation-attribution");
+    assert.deepEqual(reloaded.map((turn) => turn.metadata), [first.metadata, second.metadata]);
+  });
+});
+
 test("plain session store archives closed sessions", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);

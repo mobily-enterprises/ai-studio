@@ -16,6 +16,7 @@ import {
   VIBE64_ACCOUNTS_CHANGED_EVENT,
   VIBE64_ACCOUNTS_AUTH_API_SUFFIX,
   VIBE64_ACCOUNTS_GIT_IDENTITY_API_SUFFIX,
+  VIBE64_ACCOUNTS_PERSONAL_AI_PROFILE_API_SUFFIX,
   accountsQueryKey
 } from "../lib/accountsGateApi.js";
 
@@ -185,6 +186,24 @@ function useVibe64Accounts({
     writeMethod: "POST"
   });
 
+  const savePersonalAiProfileCommand = useCommand({
+    access: "never",
+    apiSuffix: VIBE64_ACCOUNTS_PERSONAL_AI_PROFILE_API_SUFFIX,
+    buildRawPayload: (_model, { context }) => ({
+      preferredName: String(context.preferredName || "")
+    }),
+    client,
+    fallbackRunError: "Your name could not be saved.",
+    messages: {
+      error: "Your name could not be saved.",
+      success: "Your name is saved."
+    },
+    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+    placementSource: "vibe64.accounts.personal-ai-profile.save",
+    surfaceId: VIBE64_SURFACE_ID,
+    writeMethod: "PATCH"
+  });
+
   async function startAuth(accountId, mode = "browser", options = {}) {
     return startAuthCommand.run({
       accountId,
@@ -223,6 +242,14 @@ function useVibe64Accounts({
     });
   }
 
+  async function savePersonalAiProfile(options = {}) {
+    const result = await savePersonalAiProfileCommand.run({
+      preferredName: options.preferredName || ""
+    });
+    await reloadLocalStatus();
+    return result;
+  }
+
   async function refresh() {
     forceRefresh.value = true;
     try {
@@ -249,6 +276,8 @@ function useVibe64Accounts({
     markCodexReconnectRequired,
     saveGitIdentity,
     saveGitIdentityCommand,
+    savePersonalAiProfile,
+    savePersonalAiProfileCommand,
     readAuthSession,
     reloadLocalStatus,
     refresh,

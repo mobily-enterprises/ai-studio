@@ -36,6 +36,13 @@ vi.mock("@/lib/vibe64AsyncComponent.js", () => ({
     name: label.replaceAll(" ", "")
   })
 }));
+vi.mock("@local/vibe64-accounts/client", () => ({
+  useVibe64Accounts: () => ({
+    status: {
+      value: null
+    }
+  })
+}));
 
 function viewProps(overrides = {}) {
   return reactive({
@@ -91,10 +98,11 @@ describe("useVibe64AutopilotView direct chat", () => {
     router.push.mockReset();
   });
 
-  it("welcomes the person before the first message without creating an agent turn", async () => {
+  it("uses the new-build welcome for a blank, workspace-unconfigured project", async () => {
     const view = await createView();
 
     expect(view.chatTurns.value).toEqual([]);
+    expect(view.workspaceSetupStatus.value).toBe("unconfigured");
     expect(view.emptyConversationWelcome.value).toBe(
       "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together."
     );
@@ -123,6 +131,36 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(existingView.chatTurns.value).toHaveLength(1);
     expect(existingView.chatTurns.value[0].turnId).toBe("turn-1");
     expect(existingView.emptyConversationWelcome.value).toBe("");
+  });
+
+  it("recognises an existing configured project in the empty-conversation welcome", async () => {
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          status: "succeeded"
+        }
+      }
+    });
+
+    expect(view.chatTurns.value).toEqual([]);
+    expect(view.emptyConversationWelcome.value).toBe(
+      "Hi! 👋 This is an existing project. Tell me what you’d like to change, check, or improve, and we’ll work through it together."
+    );
+  });
+
+  it("uses a saved preferred name naturally in both project welcomes", async () => {
+    const { emptyConversationWelcomeText } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+
+    expect(emptyConversationWelcomeText({ preferredName: "Ada" })).toMatch(/^Hi Ada! 👋/u);
+    expect(emptyConversationWelcomeText({
+      existingProject: true,
+      preferredName: "Ada"
+    })).toBe(
+      "Hi Ada! 👋 This is an existing project. Tell me what you’d like to change, check, or improve, and we’ll work through it together."
+    );
   });
 
   it("keeps chat available for steering while Codex is working", async () => {

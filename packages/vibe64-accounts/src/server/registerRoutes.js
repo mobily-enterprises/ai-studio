@@ -4,6 +4,7 @@ import {
   ACTION_READ_ACCOUNTS,
   ACTION_READ_ACCOUNT_AUTH_SESSION,
   ACTION_SAVE_GIT_IDENTITY,
+  ACTION_SAVE_PERSONAL_AI_PROFILE,
   ACTION_START_ACCOUNT_AUTH
 } from "./actions.js";
 import {
@@ -11,7 +12,8 @@ import {
   accountAuthSessionParamsValidator,
   accountAuthStartInputValidator,
   accountsReadInputValidator,
-  gitIdentityInputValidator
+  gitIdentityInputValidator,
+  personalAiProfileInputValidator
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 import { registerTerminalWebSocketRoute } from "@local/vibe64-core/server/terminalWebSocketRoutes";
@@ -66,6 +68,13 @@ function registerRoutes(
     body: gitIdentityInputValidator,
     buildInput: (request) => withVibe64User(request, routes.requestBody(request)),
     summary: "Save the Git identity used for Vibe64 GitHub operations."
+  });
+
+  routes.actionRoute("PATCH", "/personal-ai-profile", {
+    actionId: ACTION_SAVE_PERSONAL_AI_PROFILE,
+    body: personalAiProfileInputValidator,
+    buildInput: (request) => withVibe64User(request, routes.requestBody(request)),
+    summary: "Save the standalone Vibe64 personal AI profile."
   });
 
   routes.actionRoute("GET", "/auth/:sessionId", {

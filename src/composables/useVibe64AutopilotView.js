@@ -46,6 +46,9 @@ import {
 import {
   defineVibe64AsyncComponent
 } from "@/lib/vibe64AsyncComponent.js";
+import {
+  useVibe64Accounts
+} from "@local/vibe64-accounts/client";
 
 const DIRECT_SESSION_TOOL_IDS = new Set([
   "info",
@@ -60,6 +63,7 @@ const STANDALONE_SESSION_TOOL_IDS = new Set([
   "system"
 ]);
 const EMPTY_CONVERSATION_WELCOME = "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together.";
+const EXISTING_PROJECT_CONVERSATION_WELCOME = "Hi! 👋 This is an existing project. Tell me what you’d like to change, check, or improve, and we’ll work through it together.";
 const NUMBERED_QUESTION_UNSURE_VALUE = "I am not sure";
 const NUMBERED_QUESTION_UNSURE_CHOICE = Object.freeze({
   label: NUMBERED_QUESTION_UNSURE_VALUE,
@@ -163,6 +167,17 @@ const vibe64AutopilotViewProps = {
   }
 };
 
+function emptyConversationWelcomeText({
+  existingProject = false,
+  preferredName = ""
+} = {}) {
+  const message = existingProject
+    ? EXISTING_PROJECT_CONVERSATION_WELCOME
+    : EMPTY_CONVERSATION_WELCOME;
+  const name = normalizedAgentTurnText(preferredName);
+  return name ? message.replace("Hi!", `Hi ${name}!`) : message;
+}
+
 function normalizedAgentTurnText(value = "") {
   return String(value || "").trim();
 }
@@ -257,6 +272,10 @@ function useVibe64AutopilotView(props, emit, {
     minHeight: "10rem"
   });
   const agentSettings = useVibe64AgentSettings();
+  const accounts = useVibe64Accounts();
+  const preferredName = computed(() => normalizedAgentTurnText(
+    accounts.status.value?.personalProfile?.preferredName
+  ));
   const currentAgentSettings = computed(() => agentSettings.settings.value);
   const requestAgentSettings = computed(() => {
     const settings = currentAgentSettings.value || {};
@@ -1006,7 +1025,10 @@ function useVibe64AutopilotView(props, emit, {
     !props.conversationLog?.loading &&
     !props.conversationLog?.error &&
     !chatTurns.value.length
-      ? EMPTY_CONVERSATION_WELCOME
+      ? emptyConversationWelcomeText({
+          existingProject: workspaceSetupStatus.value !== "unconfigured",
+          preferredName: preferredName.value
+        })
       : ""
   ));
   const conversationLogVisible = computed(() => Boolean(props.active));
@@ -1396,6 +1418,7 @@ function useVibe64AutopilotView(props, emit, {
 }
 
 export {
+  emptyConversationWelcomeText,
   agentConnectionThinkingLabel,
   previewIdentityFixPrompt,
   useVibe64AutopilotView,

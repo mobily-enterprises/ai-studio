@@ -19,6 +19,9 @@ import {
   projectRequiresGithubConnection
 } from "@local/vibe64-core/server/projectRepository";
 import {
+  createPersonalAiProfileStore
+} from "@local/vibe64-core/server/personalAiProfile";
+import {
   getStudioProjectContext
 } from "@local/vibe64-core/server/studioProjectContext";
 
@@ -113,6 +116,13 @@ const Vibe64AccountsFeature = defineFeature({
   setup({ accountRuntime, env, events, fastify, http, project, terminals }) {
     const systemRoot = String(env[VIBE64_SYSTEM_ROOT_ENV] || "");
     const targetRoot = String(env[VIBE64_TARGET_ROOT_ENV] || "");
+    const projectContext = getStudioProjectContext();
+    const runtimeProfile = projectContext.runtimeProfile || {};
+    const localRuntime = runtimeProfile.local === true ||
+      ["local", "local-editor"].includes(String(runtimeProfile.mode || "").trim().toLowerCase());
+    const personalProfileStore = localRuntime && systemRoot
+      ? createPersonalAiProfileStore({ systemRoot })
+      : null;
     const accounts = createService({
       accountRuntime: createDefaultAccountRuntime({
         accountRuntime,
@@ -120,6 +130,7 @@ const Vibe64AccountsFeature = defineFeature({
         systemRoot,
         targetRoot
       }),
+      personalProfileStore,
       invalidateAgentRuntimes: async (input = {}) => {
         if (typeof terminals?.invalidateAgentRuntimes === "function") {
           return terminals.invalidateAgentRuntimes(input);
@@ -131,7 +142,6 @@ const Vibe64AccountsFeature = defineFeature({
       publishAuthSessionChanged: createVibe64AccountAuthSessionChangedPublisher({ events })
     });
     const connections = createConnections({ accounts, project });
-    const projectContext = getStudioProjectContext();
 
     registerRoutes(http, {
       accounts,

@@ -73,6 +73,12 @@ import {
 import {
   VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD
 } from "@local/vibe64-core/server/sessionRealtimeEvents";
+import {
+  createPersonalAiProfileStore
+} from "@local/vibe64-core/server/personalAiProfile";
+import {
+  getStudioProjectContext
+} from "@local/vibe64-core/server/studioProjectContext";
 import { vibe64SessionBriefing } from "@local/vibe64-runtime/server/vibeSessionBriefing";
 import {
   vibe64Result,
@@ -118,6 +124,12 @@ import {
   agentTerminalIdentityForWorkdir,
   agentTerminalIdentityState
 } from "./agentTerminalIdentity.js";
+import {
+  aiTurnMetadata,
+  projectAiPolicyInstructions,
+  promptWithHiddenAiTurnContext,
+  resolveAiTurnContext
+} from "./aiTurnContext.js";
 import {
   classifyCodexAppServerEvent,
   codexAppServerAutomaticHookNoOutput,
@@ -877,7 +889,7 @@ function codexSessionBriefingNeedsRefresh(session = {}, developerInstructions = 
       codexSessionBriefingFingerprint(developerInstructions);
 }
 
-function codexAppServerDeveloperInstructions(session = {}) {
+function codexAppServerDeveloperInstructions(session = {}, policy = {}) {
   const briefing = vibe64SessionBriefing({ session });
   return [
     briefing,
@@ -894,7 +906,9 @@ function codexAppServerDeveloperInstructions(session = {}) {
     "`git` and `gh` are available in this session.",
     "They run as the GitHub account recorded as this session's Git command actor.",
     "Use normal `git` and `gh` commands for status, commits, pushes, issues, pull requests, and merges.",
-    "If GitHub authentication is unavailable, report the command error clearly instead of trying to log in or inspect credentials."
+    "If GitHub authentication is unavailable, report the command error clearly instead of trying to log in or inspect credentials.",
+    "",
+    projectAiPolicyInstructions(policy)
   ].join("\n").trim();
 }
 
@@ -1005,6 +1019,14 @@ function createCodexTerminalController({
   }
   codexAppServerProviderOptions = initialCodexRuntime.providerOptions;
   codexToolHomeSource = initialCodexRuntime.toolHomeSource;
+  const studioRuntimeProfile = getStudioProjectContext().runtimeProfile || {};
+  const localRuntime = studioRuntimeProfile.local === true ||
+    ["local", "local-editor"].includes(normalizeText(studioRuntimeProfile.mode).toLowerCase());
+  const personalProfileStore = localRuntime && normalizeText(codexAppServerProviderOptions.systemRoot)
+    ? createPersonalAiProfileStore({
+        systemRoot: codexAppServerProviderOptions.systemRoot
+      })
+    : null;
 
   const codexAppServerProviders = new Map();
   const codexAppServerEphemeralConversations = new Map();
@@ -1030,6 +1052,14 @@ function createCodexTerminalController({
   const codexAppServerAutomaticHookThreads = new Set();
   const codexAppServerMirroredTerminalItems = new Set();
   const codexAppServerNotificationTasks = new Map();
+
+  function currentAiTurnContext(vibe64User = null) {
+    return resolveAiTurnContext({
+      personalProfileStore,
+      projectService,
+      vibe64User
+    });
+  }
 
   function codexAppServerTurnResultWasProcessed(session = {}, threadId = "", turnId = "") {
     const normalizedThreadId = normalizeText(threadId);
@@ -6692,7 +6722,11 @@ function createCodexTerminalController({
             sessionId,
             providerOptions
           );
-          const developerInstructions = codexAppServerDeveloperInstructions(currentSession);
+          const aiContext = await currentAiTurnContext();
+          const developerInstructions = codexAppServerDeveloperInstructions(
+            currentSession,
+            aiContext.policy
+          );
           const thread = await ensureCodexAppServerThreadForSession({
             agentSettings,
             developerInstructions,
@@ -6813,6 +6847,7 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
+    const aiContext = await currentAiTurnContext(vibe64User);
     vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.start", {
       messageId,
       sessionId
@@ -6866,7 +6901,10 @@ function createCodexTerminalController({
             healthAttempt = health.healthAttempt;
           }
           const provider = await ensureCodexAppServerDaemonForSession(sessionId, providerOptions);
-          const developerInstructions = codexAppServerDeveloperInstructions(currentSession);
+          const developerInstructions = codexAppServerDeveloperInstructions(
+            currentSession,
+            aiContext.policy
+          );
           const thread = await ensureCodexAppServerThreadForSession({
             agentSettings,
             developerInstructions,
@@ -6938,10 +6976,11 @@ function createCodexTerminalController({
         request: userRequest,
         task: sessionBriefingIsDelivered(preparedSession) ? "work" : "start"
       });
-      const terminalInput = normalizeText(rendered?.prompt);
-      if (!terminalInput) {
+      const renderedPrompt = normalizeText(rendered?.prompt);
+      if (!renderedPrompt) {
         throw new Error("Genesis returned an empty work prompt.");
       }
+      const terminalInput = promptWithHiddenAiTurnContext(renderedPrompt, aiContext);
       vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.prepared", {
         messageCount: 1,
         messageId,
@@ -7045,6 +7084,7 @@ function createCodexTerminalController({
           ok: !providerFailure
         }, currentSession),
         connectionReused: providerAlreadyAvailable,
+        turnMetadata: aiTurnMetadata(aiContext),
         turnId: delivery.turn?.id || ""
       };
     } catch (error) {
@@ -7071,9 +7111,9 @@ function createCodexTerminalController({
     }
   }
 
-  function codexAppServerDetachedChatInstructions(session = {}) {
+  function codexAppServerDetachedChatInstructions(session = {}, policy = {}) {
     return [
-      codexAppServerDeveloperInstructions(session),
+      codexAppServerDeveloperInstructions(session, policy),
       "",
       "Detached Vibe64 chat instruction:",
       "This is not the main Vibe64 conversation.",
@@ -7083,9 +7123,9 @@ function createCodexTerminalController({
     ].join("\n").trim();
   }
 
-  function codexAppServerTaskConversationInstructions(session = {}) {
+  function codexAppServerTaskConversationInstructions(session = {}, policy = {}) {
     return [
-      codexAppServerDeveloperInstructions(session),
+      codexAppServerDeveloperInstructions(session, policy),
       "",
       "Focused Vibe64 task instruction:",
       "This is a temporary task conversation, separate from the main Vibe64 conversation.",
@@ -7129,6 +7169,7 @@ function createCodexTerminalController({
     return {
       ...context,
       agentSettings,
+      aiContext: await currentAiTurnContext(input.vibe64User || null),
       provider
     };
   }
@@ -7139,8 +7180,8 @@ function createCodexTerminalController({
       agentSettings: context.agentSettings,
       cwd: context.workdir,
       developerInstructions: input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
-        ? codexAppServerTaskConversationInstructions(promptSession)
-        : codexAppServerDetachedChatInstructions(promptSession)
+        ? codexAppServerTaskConversationInstructions(promptSession, context.aiContext?.policy)
+        : codexAppServerDetachedChatInstructions(promptSession, context.aiContext?.policy)
     });
   }
 
@@ -7178,7 +7219,8 @@ function createCodexTerminalController({
       rawText: normalizeText(state.rawText),
       messageId: normalizeText(state.messageId),
       runId: normalizeText(state.runId),
-      status: normalizeText(state.status) || "ready"
+      status: normalizeText(state.status) || "ready",
+      turnMetadata: state.turnMetadata || null
     };
   }
 
@@ -7464,6 +7506,7 @@ function createCodexTerminalController({
           rawText: "",
           runId: "",
           status: "ready",
+          turnMetadata: null,
           watcher: null
         });
         codexAppServerEphemeralConversations.set(sessionId, conversations);
@@ -7533,7 +7576,8 @@ function createCodexTerminalController({
           progressUpdates: [],
           rawText: "",
           runId: "",
-          status: "starting"
+          status: "starting",
+          turnMetadata: aiTurnMetadata(context.aiContext)
         });
         watcher = createCodexAppServerDetachedTurnWatcher(context.provider, conversationId, {
           includeThreadHistory: false,
@@ -7556,7 +7600,7 @@ function createCodexTerminalController({
         delivery = await sendCodexAppServerPromptForSession({
           agentSettings: context.agentSettings,
           outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
-          prompt,
+          prompt: promptWithHiddenAiTurnContext(prompt, context.aiContext),
           promptLabel: normalizeText(input.promptLabel) || "Focused Vibe64 task",
           provider: context.provider,
           threadId: conversationId,
@@ -8339,7 +8383,13 @@ function createCodexTerminalController({
     });
   }
 
-  async function writeCodexAppServerDeliveredUserMessage(runtime, sessionId = "", text = "", messageId = "") {
+  async function writeCodexAppServerDeliveredUserMessage(
+    runtime,
+    sessionId = "",
+    text = "",
+    messageId = "",
+    turnMetadata = null
+  ) {
     const normalizedSessionId = normalizeText(sessionId);
     const message = normalizeText(text);
     if (
@@ -8351,7 +8401,8 @@ function createCodexTerminalController({
     }
     const written = await runtime.store.writeConversationUserMessage(normalizedSessionId, {
       messageId: normalizeText(messageId),
-      text: message
+      text: message,
+      turnMetadata
     });
     if (!written) {
       return null;
@@ -8451,6 +8502,7 @@ function createCodexTerminalController({
       }, session);
     }
     const vibe64User = input?.vibe64User || null;
+    const aiContext = await currentAiTurnContext(vibe64User);
     let currentSession = session;
     let turn = codexAppServerTurnState(currentSession);
     const threadId = normalizeText(turn.threadId) || codexThreadIdForWorkdir(currentSession, workdir);
@@ -8622,9 +8674,14 @@ function createCodexTerminalController({
     }
     let result;
     try {
-      result = await provider.steerTurn(threadId, turnId, message, {
+      result = await provider.steerTurn(
+        threadId,
+        turnId,
+        promptWithHiddenAiTurnContext(message, aiContext),
+        {
         clientUserMessageId
-      });
+        }
+      );
     } catch (error) {
       const recovered = await recoverAfterSteerFailure(error);
       if (recovered) {
@@ -8664,7 +8721,8 @@ function createCodexTerminalController({
       runtime,
       sessionId,
       displayMessage || message,
-      messageId
+      messageId,
+      aiTurnMetadata(aiContext)
     );
     splitCodexAppServerReasoningTurn(threadId, turnId);
     currentSession = await runtime.getSession(sessionId);
@@ -8919,7 +8977,8 @@ function createCodexTerminalController({
           runtime,
           sessionId,
           displayMessage || message,
-          messageId
+          messageId,
+          started.turnMetadata || null
         );
         return {
           ...started,

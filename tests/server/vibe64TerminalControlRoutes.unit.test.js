@@ -5,6 +5,10 @@ import {
   registerRoutes
 } from "../../packages/vibe64-terminals/src/server/registerRoutes.js";
 import {
+  ACTION_CREATE_TEMPORARY_CONVERSATION,
+  ACTION_START_TEMPORARY_CONVERSATION_TURN
+} from "../../packages/vibe64-terminals/src/server/actions.js";
+import {
   findRegisteredRoute,
   routeProjectParams,
   testReply,
@@ -238,6 +242,81 @@ test("assistant terminal control text uses the server Vibe64 user instead of bod
           },
           sessionId: "session-1",
           terminalSessionId: "terminal-1"
+        }
+      ]);
+    });
+  });
+});
+
+test("temporary AI creation and turns use the authenticated Vibe64 actor", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const app = terminalControlRouteApp({});
+      registerRoutes(app.http, {
+        fastify: app.fastify,
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app",
+        terminals: app.service
+      });
+      const vibe64User = {
+        displayName: "Ada Account",
+        preferredName: "Ada",
+        username: "ada"
+      };
+      const calls = [];
+      const executeAction = async (action) => {
+        calls.push(action);
+        return { ok: true };
+      };
+      const createRoute = findRegisteredRoute(app, {
+        method: "POST",
+        path: `${apiRouteBase}/vibe64/sessions/:sessionId/temporary-conversations`
+      });
+      const turnRoute = findRegisteredRoute(app, {
+        method: "POST",
+        path: `${apiRouteBase}/vibe64/sessions/:sessionId/temporary-conversations/:conversationId/turns`
+      });
+      assert.ok(createRoute);
+      assert.ok(turnRoute);
+
+      await createRoute.handler({
+        body: {
+          vibe64User: { username: "spoofed" }
+        },
+        executeAction,
+        params: routeProjectParams({ sessionId: "session-1" }),
+        vibe64User
+      }, testReply());
+      await turnRoute.handler({
+        body: {
+          message: "Explain the failure.",
+          vibe64User: { username: "spoofed" }
+        },
+        executeAction,
+        params: routeProjectParams({
+          conversationId: "conversation-1",
+          sessionId: "session-1"
+        }),
+        vibe64User
+      }, testReply());
+
+      assert.deepEqual(calls, [
+        {
+          actionId: ACTION_CREATE_TEMPORARY_CONVERSATION,
+          input: {
+            sessionId: "session-1",
+            vibe64User
+          }
+        },
+        {
+          actionId: ACTION_START_TEMPORARY_CONVERSATION_TURN,
+          input: {
+            conversationId: "conversation-1",
+            message: "Explain the failure.",
+            sessionId: "session-1",
+            vibe64User
+          }
         }
       ]);
     });

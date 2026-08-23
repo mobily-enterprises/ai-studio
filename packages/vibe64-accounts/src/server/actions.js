@@ -3,7 +3,8 @@ import {
   accountAuthSessionInputValidator,
   accountAuthStartInputValidator,
   accountsReadInputValidator,
-  gitIdentityInputValidator
+  gitIdentityInputValidator,
+  personalAiProfileInputValidator
 } from "./inputSchemas.js";
 import {
   vibe64AccountAuthSessionChangedActionEvent,
@@ -17,6 +18,7 @@ const ACTION_LOGOUT_ACCOUNT = "vibe64.accounts.logout";
 const ACTION_READ_ACCOUNT_AUTH_SESSION = "vibe64.accounts.auth-session.read";
 const ACTION_CANCEL_ACCOUNT_AUTH_SESSION = "vibe64.accounts.auth-session.cancel";
 const ACTION_SAVE_GIT_IDENTITY = "vibe64.accounts.git-identity.save";
+const ACTION_SAVE_PERSONAL_AI_PROFILE = "vibe64.accounts.personal-ai-profile.save";
 
 function createActions({ accounts } = {}) {
   if (!accounts || typeof accounts.getStatus !== "function") {
@@ -78,6 +80,24 @@ function createActions({ accounts } = {}) {
       }
     },
     {
+      id: ACTION_SAVE_PERSONAL_AI_PROFILE,
+      version: 1,
+      kind: "command",
+      input: personalAiProfileInputValidator,
+      output: null,
+      idempotency: "optional",
+      audit: {
+        actionName: ACTION_SAVE_PERSONAL_AI_PROFILE
+      },
+      observability: {},
+      events: [
+        vibe64AccountsChangedActionEvent()
+      ],
+      async execute(input) {
+        return accounts.savePersonalAiProfile(input);
+      }
+    },
+    {
       id: ACTION_START_ACCOUNT_AUTH,
       version: 1,
       kind: "command",
@@ -136,6 +156,7 @@ export {
   ACTION_READ_ACCOUNTS,
   ACTION_READ_ACCOUNT_AUTH_SESSION,
   ACTION_SAVE_GIT_IDENTITY,
+  ACTION_SAVE_PERSONAL_AI_PROFILE,
   ACTION_START_ACCOUNT_AUTH,
   createActions
 };

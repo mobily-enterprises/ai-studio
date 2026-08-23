@@ -36,6 +36,13 @@ vi.mock("@/lib/vibe64AsyncComponent.js", () => ({
     name: label.replaceAll(" ", "")
   })
 }));
+vi.mock("@local/vibe64-accounts/client", () => ({
+  useVibe64Accounts: () => ({
+    status: {
+      value: null
+    }
+  })
+}));
 
 function viewProps() {
   return reactive({

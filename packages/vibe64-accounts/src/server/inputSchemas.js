@@ -112,11 +112,23 @@ const accountAuthSessionParamsValidator = deepFreeze({
   mode: "patch"
 });
 
+const personalAiProfileInputValidator = deepFreeze({
+  schema: createSchema({
+    ...vibe64UserInputSchema,
+    preferredName: {
+      type: "string",
+      required: false
+    }
+  }),
+  mode: "patch"
+});
+
 export {
   accountIdInputValidator,
   accountAuthSessionParamsValidator,
   accountAuthSessionInputValidator,
   accountAuthStartInputValidator,
   accountsReadInputValidator,
-  gitIdentityInputValidator
+  gitIdentityInputValidator,
+  personalAiProfileInputValidator
 };

@@ -15,6 +15,9 @@ import {
   VIBE64_TARGET_ROOT_ENV
 } from "@local/vibe64-core/server/studioRoots";
 import {
+  createPersonalAiProfileStore
+} from "@local/vibe64-core/server/personalAiProfile";
+import {
   CODEX_RECONNECT_REQUIRED_CODE,
   codexAuthMarkerPath,
   markCodexReconnectRequired,
@@ -86,6 +89,37 @@ function startGatewayAuthTestTerminal(input = {}, overrides = {}) {
     ...overrides
   });
 }
+
+test("standalone accounts service saves and exposes the installation personal profile", async () => {
+  await withTempDir(async (root) => {
+    const systemRoot = path.join(root, "system");
+    const personalProfileStore = createPersonalAiProfileStore({ systemRoot });
+    const service = createService({
+      accountRuntime: createAccountsRuntime({
+        requireExplicitRoots: true,
+        systemRoot
+      }),
+      personalProfileStore
+    });
+
+    const saved = await service.savePersonalAiProfile({
+      preferredName: "  Ada   Lovelace "
+    });
+    assert.equal(saved.ok, true);
+    assert.deepEqual(saved.personalProfile, {
+      available: true,
+      preferredName: "Ada Lovelace",
+      scope: "installation",
+      version: 1
+    });
+
+    const status = await service.getStatus({
+      providerIds: ["codex"]
+    });
+    assert.equal(status.ok, true);
+    assert.deepEqual(status.personalProfile, saved.personalProfile);
+  });
+});
 
 async function writeReadyCodexMarker(systemRoot) {
   const markerPath = codexAuthMarkerPath(systemRoot);
