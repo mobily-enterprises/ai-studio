@@ -200,7 +200,6 @@ function canonicalProjectSource(project = {}, targetRoot = "") {
     }
     return {
       branch,
-      cacheRoot: targetRoot,
       mode,
       remoteUrl: repositoryPath,
       source: repositoryPath

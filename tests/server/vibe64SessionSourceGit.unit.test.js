@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  writeFile
+} from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -128,6 +133,43 @@ test("Vibe64 creates a GitHub session from the canonical remote instead of the s
     assert.equal(context.metadata.canonical_commit, canonicalCommit);
     assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "canonical");
     assert.equal(await git(context.runtime.targetRoot, ["rev-parse", "HEAD"]), staleCommit);
+  });
+});
+
+test("Vibe64-only sessions clone the canonical bare repository without a namespace cache", async () => {
+  await withTemporaryRoot(async (root) => {
+    const canonicalRoot = path.join(root, "canonical-repository", "repository.git");
+    const publisherRoot = path.join(root, "publisher");
+    const first = sourceContext(root, "managed-session-one");
+    const second = sourceContext(root, "managed-session-two");
+    await mkdir(path.dirname(canonicalRoot), { recursive: true });
+    await git(root, ["init", "--bare", "--initial-branch=main", canonicalRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", canonicalRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    const canonicalCommit = await git(publisherRoot, ["rev-parse", "HEAD"]);
+    await mkdir(first.runtime.targetRoot, { recursive: true });
+
+    for (const context of [first, second]) {
+      context.project = {
+        canonicalRepositoryPath: canonicalRoot,
+        repository: {
+          defaultBranch: "main",
+          mode: "managed_git"
+        },
+        repositoryMode: "managed_git"
+      };
+      const result = await createSessionSource(context);
+
+      assert.equal(result.commit, canonicalCommit);
+      assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD"]), canonicalCommit);
+      assert.equal(await git(result.sourcePath, ["remote", "get-url", "origin"]), canonicalRoot);
+      await assert.rejects(
+        () => access(path.join(result.sourcePath, ".git", "objects", "info", "alternates")),
+        { code: "ENOENT" }
+      );
+    }
+    assert.deepEqual(await readdir(first.runtime.targetRoot), []);
   });
 });
 

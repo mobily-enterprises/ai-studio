@@ -43,7 +43,7 @@
           },
           {
             "subpath": "./server/managedProject",
-            "summary": "Atomically prepares a blank Genesis working tree and its Vibe64-managed canonical Git repository."
+            "summary": "Builds a blank Genesis commit in temporary storage and installs it in Vibe64-managed canonical Git."
           },
           {
             "subpath": "./server/projectTemplates",

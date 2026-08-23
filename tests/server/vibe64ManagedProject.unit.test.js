@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -36,33 +36,102 @@ async function directCommand({ args = [], command = "", cwd = "" } = {}) {
   }
 }
 
-test("managed blank projects begin as one Genesis commit with private Git state outside source", async (t) => {
+test("managed blank projects begin as one canonical Genesis commit without a namespace checkout", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-"));
   t.after(() => rm(root, {
     force: true,
     recursive: true
   }));
-  const sourceRoot = path.join(root, "source");
+  const namespaceRoot = path.join(root, "namespace");
   const projectRuntimeRoot = path.join(root, "runtime");
   await Promise.all([
-    mkdir(sourceRoot),
+    mkdir(namespaceRoot),
     mkdir(projectRuntimeRoot)
   ]);
 
   const initialized = await initializeManagedGenesisProject({
     projectRuntimeRoot,
     runCommand: directCommand,
-    targetRoot: sourceRoot
+    targetRoot: namespaceRoot
   });
-  const sourceCommit = (await execFileAsync("git", ["-C", sourceRoot, "rev-parse", "HEAD"])).stdout.trim();
   const canonicalCommit = (await execFileAsync("git", [
     "--git-dir", initialized.repositoryPath, "rev-parse", "refs/heads/main"
   ])).stdout.trim();
 
-  assert.equal(sourceCommit, initialized.commit);
   assert.equal(canonicalCommit, initialized.commit);
-  assert.equal((await execFileAsync("git", ["-C", sourceRoot, "rev-list", "--count", "HEAD"])).stdout.trim(), "1");
-  assert.equal((await readdir(sourceRoot)).includes("canonical-repository"), false);
-  assert.match(await readFile(path.join(sourceRoot, "genesis", "blueprint.md"), "utf8"), /# Blueprint/u);
-  assert.equal(await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8"), "# Stack\n\n## Components\n");
+  assert.equal((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "rev-list", "--count", "main"
+  ])).stdout.trim(), "1");
+  assert.match((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:genesis/blueprint.md"
+  ])).stdout, /# Blueprint/u);
+  assert.equal((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:genesis/stack.md"
+  ])).stdout, "# Stack\n\n## Components\n");
+  assert.deepEqual(await readdir(namespaceRoot), []);
+  assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
+  assert.equal(initialized.sourceRoot, undefined);
+});
+
+test("managed Genesis initialization removes its temporary checkout after every failure stage", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-failures-"));
+  t.after(() => rm(root, {
+    force: true,
+    recursive: true
+  }));
+
+  for (const stage of ["genesis", "commit", "canonical-init", "canonical-install", "verification"]) {
+    const caseRoot = path.join(root, stage);
+    const namespaceRoot = path.join(caseRoot, "namespace");
+    const projectRuntimeRoot = path.join(caseRoot, "runtime");
+    await Promise.all([
+      mkdir(namespaceRoot, { recursive: true }),
+      mkdir(projectRuntimeRoot, { recursive: true })
+    ]);
+    const runCommand = async (request) => {
+      const script = String(request.args?.at(-1) || "");
+      const shouldFail = (
+        stage === "commit" &&
+        request.command === "git" &&
+        request.args?.includes("commit")
+      ) || (
+        stage === "canonical-init" &&
+        request.command === "bash" &&
+        script.includes("Canonical repository is ready at")
+      ) || (
+        stage === "canonical-install" &&
+        request.command === "bash" &&
+        script.includes("CANONICAL_INCOMING_REF")
+      ) || (
+        stage === "verification" &&
+        request.command === "git" &&
+        request.args?.includes("refs/heads/main^{commit}")
+      );
+      return shouldFail
+        ? {
+            code: `vibe64_test_${stage}_failed`,
+            ok: false,
+            stderr: `simulated ${stage} failure`
+          }
+        : directCommand(request);
+    };
+
+    await assert.rejects(
+      () => initializeManagedGenesisProject({
+        ...(stage === "genesis" ? {
+          initializeProject: async () => {
+            throw new Error("simulated Genesis failure");
+          }
+        } : {}),
+        projectRuntimeRoot,
+        runCommand,
+        targetRoot: namespaceRoot
+      }),
+      undefined,
+      stage
+    );
+
+    assert.deepEqual(await readdir(namespaceRoot), [], stage);
+    assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), [], stage);
+  }
 });
