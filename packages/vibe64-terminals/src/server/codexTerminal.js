@@ -1623,19 +1623,22 @@ function createCodexTerminalController({
           sessionId: effectiveRuntimeInstanceId
         })
     };
-    const expectedRuntimeDir = codexAppServerRuntimeDir({
-      ...codexAppServerProviderOptions,
-      runtimeInstanceId: effectiveRuntimeInstanceId,
-      executionRoot: effectiveExecutionRoot,
-      workdir: effectiveWorkdir
-    });
+    const expectedRuntimeDir = effectiveRuntimeInstanceId && (effectiveExecutionRoot || effectiveWorkdir)
+      ? codexAppServerRuntimeDir({
+          ...codexAppServerProviderOptions,
+          runtimeInstanceId: effectiveRuntimeInstanceId,
+          executionRoot: effectiveExecutionRoot,
+          workdir: effectiveWorkdir
+        })
+      : "";
     const metadataRuntimeDir = normalizeText(metadata.agent_transport_runtime_dir);
-    const reusableMetadataRuntimeDir = metadataRuntimeDir && path.resolve(metadataRuntimeDir) === path.resolve(expectedRuntimeDir)
+    const reusableMetadataRuntimeDir = metadataRuntimeDir && expectedRuntimeDir &&
+      path.resolve(metadataRuntimeDir) === path.resolve(expectedRuntimeDir)
       ? metadataRuntimeDir
       : "";
     return codexAppServerRuntimeOptions({
       project: codexAppServerProjectContext(effectiveTerminalEnv),
-      runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir,
+      runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir || expectedRuntimeDir,
       runtimeInstanceId: effectiveRuntimeInstanceId,
       session: codexAppServerSessionRequestContext(session, {
         executionRoot: effectiveExecutionRoot

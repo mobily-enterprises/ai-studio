@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,9 @@ import test from "node:test";
 import {
   createCodexTerminalController
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
+import {
+  codexAppServerRuntimeDir
+} from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
@@ -225,6 +228,92 @@ test("a changed session environment retires the previous provider for the same r
     assert.equal(providers[1].closed, 0);
   } finally {
     await controller.closeAllForSession("session-1");
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("closing a session stops its deterministic runtime before transport metadata is persisted", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-unrecorded-runtime-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = "test";
+  const { projectRuntimeRoot, session } = await managedSessionFixture(temporaryRoot);
+  const agentRuntimeRoot = path.join(temporaryRoot, "agent-runtimes");
+  const providerEnv = {
+    VIBE64_AGENT_RUNTIME_DIR: agentRuntimeRoot,
+    VIBE64_RUNTIME_NAMESPACE: "test",
+    VIBE64_WORKSPACE: "test"
+  };
+  const runtimeDir = codexAppServerRuntimeDir({
+    env: providerEnv,
+    executionRoot: session.metadata.source_path,
+    runtimeInstanceId: session.sessionId,
+    workdir: session.metadata.source_path
+  });
+  const unscopedRuntimeDir = codexAppServerRuntimeDir({
+    env: providerEnv
+  });
+  await mkdir(runtimeDir, {
+    recursive: true
+  });
+  await mkdir(unscopedRuntimeDir, {
+    recursive: true
+  });
+  await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
+    pid: 99999999,
+    runtimeDir,
+    transport: "unix"
+  }));
+  await writeFile(path.join(unscopedRuntimeDir, "runtime.json"), JSON.stringify({
+    pid: 99999999,
+    runtimeDir: unscopedRuntimeDir,
+    transport: "unix"
+  }));
+  let currentSession = session;
+  const controller = createCodexTerminalController({
+    codexAppServerProviderOptions: {
+      env: providerEnv
+    },
+    env: providerEnv,
+    projectService: {
+      createRuntime() {
+        return {
+          async getSession() {
+            return currentSession;
+          },
+          stateRoot: projectRuntimeRoot
+        };
+      },
+      async projectExecutionEnvironment() {
+        return providerEnv;
+      }
+    }
+  });
+  try {
+    await controller.closeAllForSession("session-1");
+    await assert.rejects(
+      () => readFile(path.join(runtimeDir, "runtime.json"), "utf8"),
+      {
+        code: "ENOENT"
+      }
+    );
+
+    currentSession = {
+      metadata: {},
+      projectContextRoot: session.projectContextRoot,
+      sessionId: "session-without-source",
+      sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-without-source")
+    };
+    await controller.closeAllForSession("session-without-source");
+    assert.equal(
+      JSON.parse(await readFile(path.join(unscopedRuntimeDir, "runtime.json"), "utf8")).runtimeDir,
+      unscopedRuntimeDir
+    );
+  } finally {
     if (previousRuntimeNamespace === undefined) {
       delete process.env.VIBE64_RUNTIME_NAMESPACE;
     } else {
