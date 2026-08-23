@@ -216,6 +216,39 @@ test("workspace preparation starts when a later Stack declaration supplies a rec
   });
 });
 
+test("workspace preparation reruns a successful recipe after its identity changes", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot);
+    let recipeHash = "sha256:retired-contract";
+    let commandCount = 0;
+    const runner = createWorkspaceSetupRunner({
+      inspect: () => readySetup({ recipeHash }),
+      projectService: {},
+      async runCommand() {
+        commandCount += 1;
+        return {
+          exitCode: 0,
+          ok: true
+        };
+      }
+    });
+
+    const initial = await runner.start({ runtime, session });
+    assert.equal((await initial.completion).recipeHash, "sha256:retired-contract");
+
+    recipeHash = "sha256:current-contract";
+    const migrated = await runner.start({
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    assert.equal(migrated.state.status, "running");
+    assert.equal((await migrated.completion).recipeHash, "sha256:current-contract");
+    assert.equal(commandCount, 2);
+  });
+});
+
 test("workspace preparation treats a missing Genesis Stack as unconfigured", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const { runtime, session } = await workspaceSession(targetRoot);
