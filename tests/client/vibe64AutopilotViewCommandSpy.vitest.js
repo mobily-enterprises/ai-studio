@@ -49,8 +49,8 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline");
     expect(component).toContain("@click=\"confirmSaveWork\"");
     expect(component).toContain("<Vibe64TerminalSurface");
-    expect(component.indexOf("<Vibe64ConversationLog")).toBeLessThan(
-      component.indexOf("<Vibe64TerminalSurface")
+    expect(component.indexOf("<Vibe64TerminalSurface")).toBeLessThan(
+      component.indexOf("<Vibe64ConversationLog")
     );
     expect(component).toContain(':open-error-details="true"');
     expect(component).toContain('#error-actions');
@@ -59,7 +59,7 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("await props.updateSessionWork();");
     expect(composable).toContain("const saveWorkUnsaved = computed");
     expect(composable).toContain("const saveWorkOperationActive = computed");
-    expect(component).toContain("saveWorkOperationActive || saveWorkSending || saveWorkError");
+    expect(component).toContain("saveWorkActivityVisible || workspaceSetupVisible");
     expect(composable).toContain("Vibe64—not Temporary AI—owns every repository operation");
     expect(composable).toContain("Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase");
     expect(composable).toContain("leave both byte-for-byte unchanged");
@@ -197,12 +197,15 @@ describe("Vibe64 direct session view", () => {
 
     const chatStart = component.indexOf("class=\"studio-autopilot__chat-panel\"");
     const projectStart = component.indexOf("class=\"studio-autopilot__project-panel\"");
-    const statusStart = component.indexOf("class=\"studio-autopilot__workspace-setup\"");
+    const activityStart = component.indexOf('aria-label="Session activity"');
+    const conversationStart = component.indexOf("<Vibe64ConversationLog");
 
-    expect(statusStart).toBeGreaterThan(chatStart);
-    expect(statusStart).toBeLessThan(projectStart);
+    expect(activityStart).toBeGreaterThan(chatStart);
+    expect(activityStart).toBeLessThan(conversationStart);
+    expect(conversationStart).toBeLessThan(projectStart);
+    expect(component).toContain(':title="workspaceSetupTitle"');
     expect(component).toContain("Fix with temporary AI");
-    expect(component).toContain("Retry setup");
+    expect(component).toContain('@retry="retryWorkspaceSetup"');
     expect(composable).toContain("requestTemporaryAi({");
     expect(composable).toContain('policy: "workspace_write"');
     expect(composable).not.toContain("sendChatPayload(chatMessagePayload(workspaceSetupFixPrompt");

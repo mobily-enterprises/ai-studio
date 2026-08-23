@@ -181,8 +181,27 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
 
     expect(view.workspaceSetupVisible.value).toBe(false);
-    expect(view.workspaceSetupTitle.value).toBe("");
+    expect(view.workspaceSetupTitle.value).toBe("Workspace prepared");
     expect(view.composerHint.value).toBe("");
+  });
+
+  it("keeps bounded workspace preparation output available after reload", async () => {
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          status: "succeeded",
+          transcript: "Installing dependencies\nWorkspace ready"
+        }
+      }
+    });
+
+    expect(view.workspaceSetupVisible.value).toBe(true);
+    expect(view.workspaceSetupTitle.value).toBe("Workspace prepared");
+    expect(view.workspaceSetupOutput.value).toBe(
+      "Installing dependencies\nWorkspace ready"
+    );
+    expect(view.workspaceSetupExpanded.value).toBe(false);
   });
 
   it("retries failed workspace preparation without blocking chat", async () => {
@@ -738,6 +757,35 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkActivityIsUpdate.value).toBe(true);
     expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
     expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
+  });
+
+  it("keeps the newest completed repository activity available and collapsed", async () => {
+    const saveOperation = {
+      events: [{ at: "2026-08-23T01:00:00.000Z", message: "Saved older work" }],
+      status: "succeeded",
+      updatedAt: "2026-08-23T01:00:00.000Z"
+    };
+    const updateOperation = {
+      events: [{ at: "2026-08-23T02:00:00.000Z", message: "Session updated" }],
+      status: "succeeded",
+      updatedAt: "2026-08-23T02:00:00.000Z"
+    };
+    const view = await createView({
+      workState: {
+        operation: saveOperation,
+        unsaved: false,
+        updateAvailable: false,
+        updateOperation,
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkActivityVisible.value).toBe(true);
+    expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
+    expect(view.saveWorkActivityIsUpdate.value).toBe(true);
+    expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
+    expect(view.saveWorkOutput.value).toContain("Session updated");
+    expect(view.saveWorkExpanded.value).toBe(false);
   });
 
   it("turns the toolbar Save action into Update when the panel monitor finds an incoming version", async () => {

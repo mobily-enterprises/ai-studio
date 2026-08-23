@@ -301,6 +301,7 @@ function useVibe64AutopilotView(props, emit, {
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
   const workspaceSetupFixSending = ref(false);
+  const workspaceSetupExpanded = ref(false);
   const repositoryRecoverySending = ref(false);
   const previewAttachmentState = ref({
     attachDiagnostics: null,
@@ -404,13 +405,19 @@ function useVibe64AutopilotView(props, emit, {
   const workspaceSetupNeedsAttention = computed(() => (
     workspaceSetupStatus.value === "failed" || workspaceSetupStatus.value === "ambiguous"
   ));
+  const workspaceSetupOutput = computed(() => (
+    normalizedAgentTurnText(workspaceSetup.value?.transcript) || workspaceSetupDiagnostic.value
+  ));
   const workspaceSetupVisible = computed(() => (
-    workspaceSetupRunning.value || workspaceSetupNeedsAttention.value
+    workspaceSetupRunning.value ||
+    workspaceSetupNeedsAttention.value ||
+    Boolean(workspaceSetupOutput.value)
   ));
   const workspaceSetupTitle = computed(() => ({
     ambiguous: "Workspace setup needs a choice",
     failed: "Workspace preparation failed",
-    running: "Preparing workspace…"
+    running: "Preparing workspace…",
+    succeeded: "Workspace prepared"
   })[workspaceSetupStatus.value] || "");
   const workspaceSetupCurrentLabel = computed(() => (
     workspaceSetupRunning.value
@@ -794,7 +801,12 @@ function useVibe64AutopilotView(props, emit, {
     String(props.workState?.updateOperation?.code || "").startsWith("vibe64_session_update_")
   ));
   const saveWorkActivityIsUpdate = computed(() => (
-    saveWorkRequiresUpdate.value || saveWorkFailureIsUpdate.value
+    saveWorkRequiresUpdate.value ||
+    saveWorkFailureIsUpdate.value ||
+    Boolean(
+      props.workState?.updateOperation &&
+      saveWorkOperation.value === props.workState.updateOperation
+    )
   ));
   const saveWorkActivityLabel = computed(() => (
     saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
@@ -823,13 +835,16 @@ function useVibe64AutopilotView(props, emit, {
     return "Save this session's work to the project repository";
   });
   const saveWorkOperation = computed(() => {
+    const saveOperation = props.workState?.operation || null;
     const updateOperation = props.workState?.updateOperation || null;
     const updateActive = ["queued", "running", "starting"].includes(
       String(updateOperation?.status || "").trim().toLowerCase()
     );
-    return updateActive || saveWorkActivityIsUpdate.value
+    const updateIsNewest = String(updateOperation?.updatedAt || "") >
+      String(saveOperation?.updatedAt || "");
+    return updateActive || saveWorkFailureIsUpdate.value || updateIsNewest
       ? updateOperation
-      : props.workState?.operation || null;
+      : saveOperation;
   });
   const saveWorkOperationActive = computed(() => ["queued", "running", "starting"].includes(
     String(saveWorkOperation.value?.status || "").trim().toLowerCase()
@@ -841,6 +856,10 @@ function useVibe64AutopilotView(props, emit, {
       .join("\n")
     : ""));
   const saveWorkStatus = computed(() => String(saveWorkOperation.value?.status || ""));
+  const saveWorkStage = computed(() => String(saveWorkOperation.value?.stage || ""));
+  const saveWorkActivityVisible = computed(() => Boolean(
+    saveWorkOperation.value || saveWorkSending.value || saveWorkError.value
+  ));
 
   watch(() => ({
     code: String(saveWorkOperation.value?.code || ""),
@@ -881,7 +900,6 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkSending.value = true;
     saveWorkError.value = "";
     saveWorkFailure.value = null;
-    saveWorkExpanded.value = true;
     try {
       return await props.updateSessionWork();
     } catch (error) {
@@ -898,7 +916,6 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     } finally {
       saveWorkSending.value = false;
-      saveWorkExpanded.value = false;
     }
   }
 
@@ -928,7 +945,6 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkSending.value = true;
     saveWorkError.value = "";
     saveWorkFailure.value = null;
-    saveWorkExpanded.value = true;
     saveWorkConfirmOpen.value = false;
     try {
       const result = await props.saveSessionWork();
@@ -947,7 +963,6 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     } finally {
       saveWorkSending.value = false;
-      saveWorkExpanded.value = false;
     }
   }
 
@@ -1237,6 +1252,8 @@ function useVibe64AutopilotView(props, emit, {
     dismissedNumberedQuestionText.value = "";
     selectedAnswerChoice.value = "";
     workspaceSetupRetryError.value = "";
+    workspaceSetupExpanded.value = false;
+    saveWorkExpanded.value = false;
     systemReturnContext.value = null;
     systemRestoreRequest.value = null;
   });
@@ -1326,6 +1343,7 @@ function useVibe64AutopilotView(props, emit, {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
+    saveWorkActivityVisible,
     saveWorkActivityIsUpdate,
     saveWorkActivityLabel,
     saveWorkActionLabel,
@@ -1338,6 +1356,7 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkOutput,
     saveWorkRetryable,
     saveWorkSending,
+    saveWorkStage,
     saveWorkStatus,
     saveWorkTitle,
     saveWorkRequiresUpdate,
@@ -1363,8 +1382,10 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupAskDisabled,
     workspaceSetupCurrentLabel,
     workspaceSetupDiagnostic,
+    workspaceSetupExpanded,
     workspaceSetupFixSending,
     workspaceSetupNeedsAttention,
+    workspaceSetupOutput,
     workspaceSetupRetryDisabled,
     workspaceSetupRetrying,
     workspaceSetupRunning,

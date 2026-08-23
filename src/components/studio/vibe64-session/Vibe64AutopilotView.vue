@@ -59,6 +59,91 @@
         </div>
       </header>
 
+      <div
+        v-if="saveWorkActivityVisible || workspaceSetupVisible"
+        class="studio-autopilot__activity"
+        aria-label="Session activity"
+      >
+        <Vibe64TerminalSurface
+          v-if="saveWorkActivityVisible"
+          body-mode="log"
+          :collapsible="true"
+          :error="saveWorkError"
+          :error-title="`${saveWorkActivityLabel} needs attention`"
+          :expanded="saveWorkExpanded"
+          height="clamp(8rem, 22vh, 14rem)"
+          mobile-takeover
+          :open-error-details="true"
+          :output="saveWorkOutput"
+          :retryable="saveWorkRetryable"
+          :show-close="false"
+          :show-copy="Boolean(saveWorkOutput)"
+          :show-interrupt="false"
+          :stage="saveWorkStage"
+          :starting="saveWorkSending"
+          :status="saveWorkStatus"
+          :subtitle="saveWorkActivityIsUpdate ? 'Replay current work on the latest saved version' : 'Canonical project Save'"
+          :title="saveWorkActivityLabel"
+          @copy="copyActivityOutput(saveWorkOutput)"
+          @retry="retrySaveWork"
+          @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
+        >
+          <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
+            <v-btn
+              :aria-busy="repositoryRecoverySending ? 'true' : undefined"
+              class="studio-autopilot__recovery-action"
+              :disabled="repositoryRecoverySending"
+              :prepend-icon="mdiRobotOutline"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="fixRepositoryActionError"
+            >
+              {{ repositoryRecoverySending ? "Opening temporary AI…" : "Fix with temporary AI" }}
+            </v-btn>
+          </template>
+        </Vibe64TerminalSurface>
+
+        <Vibe64TerminalSurface
+          v-if="workspaceSetupVisible"
+          body-mode="log"
+          :collapsible="true"
+          :error="workspaceSetupNeedsAttention ? workspaceSetupDiagnostic : ''"
+          error-title="Workspace preparation needs attention"
+          :expanded="workspaceSetupExpanded"
+          height="clamp(8rem, 22vh, 14rem)"
+          mobile-takeover
+          :open-error-details="workspaceSetupNeedsAttention"
+          :output="workspaceSetupOutput"
+          :retryable="workspaceSetupNeedsAttention && !workspaceSetupRetryDisabled"
+          :show-close="false"
+          :show-copy="Boolean(workspaceSetupOutput)"
+          :show-interrupt="false"
+          :stage="workspaceSetupCurrentLabel"
+          :starting="workspaceSetupRunning || workspaceSetupRetrying"
+          :status="workspaceSetupStatus"
+          subtitle="Project dependency preparation"
+          :title="workspaceSetupTitle"
+          @copy="copyActivityOutput(workspaceSetupOutput)"
+          @retry="retryWorkspaceSetup"
+          @toggle-expanded="workspaceSetupExpanded = !workspaceSetupExpanded"
+        >
+          <template v-if="workspaceSetupNeedsAttention" #error-actions>
+            <v-btn
+              :aria-busy="workspaceSetupFixSending ? 'true' : undefined"
+              class="studio-autopilot__recovery-action"
+              :disabled="workspaceSetupAskDisabled"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="askCodexToFixWorkspaceSetup"
+            >
+              {{ workspaceSetupFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
+            </v-btn>
+          </template>
+        </Vibe64TerminalSurface>
+      </div>
+
       <Vibe64ConversationLog
         class="studio-autopilot__conversation"
         :error="props.conversationLog?.error"
@@ -82,106 +167,13 @@
       />
 
       <div
-        v-if="saveWorkOperationActive || saveWorkSending || saveWorkError || workspaceSetupVisible || thinkingVisible"
-        class="studio-autopilot__activity"
+        v-if="thinkingVisible"
+        class="studio-autopilot__thinking"
+        aria-live="polite"
+        role="status"
       >
-        <Vibe64TerminalSurface
-          v-if="saveWorkOperationActive || saveWorkSending || saveWorkError"
-          body-mode="log"
-          :collapsible="true"
-          :error="saveWorkError"
-          :error-title="`${saveWorkActivityLabel} needs attention`"
-          :expanded="saveWorkExpanded"
-          height="clamp(8rem, 22vh, 14rem)"
-          mobile-takeover
-          :open-error-details="true"
-          :output="saveWorkOutput"
-          :retryable="saveWorkRetryable"
-          :show-close="false"
-          :show-interrupt="false"
-          :starting="saveWorkSending"
-          :status="saveWorkStatus"
-          :subtitle="saveWorkActivityIsUpdate ? 'Replay current work on the latest saved version' : 'Canonical project Save'"
-          :title="saveWorkActivityLabel"
-          @retry="retrySaveWork"
-          @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
-        >
-          <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
-            <v-btn
-              :aria-busy="repositoryRecoverySending ? 'true' : undefined"
-              class="studio-autopilot__recovery-action"
-              :disabled="repositoryRecoverySending"
-              :prepend-icon="mdiRobotOutline"
-              size="x-small"
-              type="button"
-              variant="tonal"
-              @click="fixRepositoryActionError"
-            >
-              {{ repositoryRecoverySending ? "Opening temporary AI…" : "Fix with temporary AI" }}
-            </v-btn>
-          </template>
-        </Vibe64TerminalSurface>
-
-        <div
-          v-if="workspaceSetupVisible"
-          class="studio-autopilot__workspace-setup"
-          :class="`studio-autopilot__workspace-setup--${workspaceSetupStatus}`"
-          aria-live="polite"
-          :role="workspaceSetupNeedsAttention ? 'alert' : 'status'"
-        >
-          <div class="studio-autopilot__workspace-setup-summary">
-            <span class="studio-autopilot__workspace-setup-mark" aria-hidden="true" />
-            <strong>{{ workspaceSetupTitle }}</strong>
-            <span
-              v-if="workspaceSetupCurrentLabel"
-              class="studio-autopilot__workspace-setup-current"
-            >
-              {{ workspaceSetupCurrentLabel }}
-            </span>
-          </div>
-          <p
-            v-if="workspaceSetupNeedsAttention && workspaceSetupDiagnostic"
-            class="studio-autopilot__workspace-setup-diagnostic"
-          >
-            {{ workspaceSetupDiagnostic }}
-          </p>
-          <div
-            v-if="workspaceSetupNeedsAttention"
-            class="studio-autopilot__workspace-setup-actions"
-          >
-            <v-btn
-              :disabled="workspaceSetupRetryDisabled"
-              :loading="workspaceSetupRetrying"
-              size="x-small"
-              type="button"
-              variant="tonal"
-              @click="retryWorkspaceSetup"
-            >
-              Retry setup
-            </v-btn>
-            <v-btn
-              :aria-busy="workspaceSetupFixSending ? 'true' : undefined"
-              class="studio-autopilot__recovery-action"
-              :disabled="workspaceSetupAskDisabled"
-              size="x-small"
-              type="button"
-              variant="text"
-              @click="askCodexToFixWorkspaceSetup"
-            >
-              {{ workspaceSetupFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
-            </v-btn>
-          </div>
-        </div>
-
-        <div
-          v-if="thinkingVisible"
-          class="studio-autopilot__thinking"
-          aria-live="polite"
-          role="status"
-        >
-          <span class="studio-autopilot__thinking-mark" />
-          <span>{{ thinkingLabel }}</span>
-        </div>
+        <span class="studio-autopilot__thinking-mark" />
+        <span>{{ thinkingLabel }}</span>
       </div>
 
       <div class="studio-autopilot__composer">
@@ -550,6 +542,7 @@ import Vibe64SessionSourceEditor from "@/components/studio/vibe64-session/Vibe64
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 import Vibe64TemporaryAiWorkspace from "@/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
 import Vibe64DashboardShell from "@/components/studio/Vibe64DashboardShell.vue";
+import { writeClipboardText } from "@/lib/clipboard.js";
 import { resolveStudioRequestUrl } from "@/lib/studioUrls.js";
 import {
   useVibe64AutopilotView,
@@ -622,6 +615,7 @@ const {
   rightPaneTab,
   rightPaneTabMounted,
   saveWorkConfirmOpen,
+  saveWorkActivityVisible,
   saveWorkActivityIsUpdate,
   saveWorkActivityLabel,
   saveWorkActionLabel,
@@ -629,10 +623,10 @@ const {
   saveWorkError,
   saveWorkExpanded,
   saveWorkCanResolveWithTemporaryAi,
-  saveWorkOperationActive,
   saveWorkOutput,
   saveWorkRetryable,
   saveWorkSending,
+  saveWorkStage,
   saveWorkStatus,
   saveWorkTitle,
   saveWorkRequiresUpdate,
@@ -656,8 +650,10 @@ const {
   workspaceSetupAskDisabled,
   workspaceSetupCurrentLabel,
   workspaceSetupDiagnostic,
+  workspaceSetupExpanded,
   workspaceSetupFixSending,
   workspaceSetupNeedsAttention,
+  workspaceSetupOutput,
   workspaceSetupRetryDisabled,
   workspaceSetupRetrying,
   workspaceSetupRunning,
@@ -692,6 +688,10 @@ async function sendComposerMessage() {
 function focusComposerSendButton() {
   const button = composerSendButton.value?.$el || composerSendButton.value;
   button?.focus?.();
+}
+
+function copyActivityOutput(output = "") {
+  return writeClipboardText(output);
 }
 
 function openTemporaryAi() {
@@ -771,7 +771,7 @@ async function attachPreviewFile(file) {
   container-name: studio-chat-pane;
   container-type: inline-size;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -788,6 +788,7 @@ async function attachPreviewFile(file) {
   box-sizing: border-box;
   display: flex;
   gap: 0.45rem;
+  grid-row: 1;
   justify-content: space-between;
   min-height: 3rem;
   min-width: 0;
@@ -820,13 +821,19 @@ async function attachPreviewFile(file) {
 }
 
 .studio-autopilot__conversation {
+  grid-row: 3;
   min-height: 0;
   min-width: 0;
 }
 
 .studio-autopilot__activity {
-  min-height: 1.8rem;
+  display: grid;
+  gap: 0.3rem;
+  grid-row: 2;
+  max-height: min(44vh, 24rem);
   min-width: 0;
+  overflow: auto;
+  padding: 0.35rem 0.5rem;
 }
 
 .studio-autopilot__thinking {
@@ -835,6 +842,7 @@ async function attachPreviewFile(file) {
   display: flex;
   font-size: 0.78rem;
   gap: 0.45rem;
+  grid-row: 4;
   min-height: 1.8rem;
   padding: 0.15rem 0.85rem;
 }
@@ -847,89 +855,15 @@ async function attachPreviewFile(file) {
   width: 0.42rem;
 }
 
-.studio-autopilot__workspace-setup {
-  border-top: 1px solid rgba(var(--v-theme-outline), 0.1);
-  color: rgba(var(--v-theme-on-surface), 0.72);
-  display: grid;
-  font-size: 0.78rem;
-  gap: 0.35rem;
-  max-width: 100%;
-  min-width: 0;
-  padding: 0.38rem 0.8rem;
-}
-
-.studio-autopilot__workspace-setup--failed {
-  background: rgba(var(--v-theme-error), 0.055);
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.studio-autopilot__workspace-setup--ambiguous {
-  background: rgba(var(--v-theme-warning), 0.08);
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.studio-autopilot__workspace-setup-summary,
-.studio-autopilot__workspace-setup-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.42rem;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.studio-autopilot__workspace-setup-summary strong {
-  flex: 0 0 auto;
-  font-size: inherit;
-}
-
-.studio-autopilot__workspace-setup-mark {
-  background: rgb(var(--v-theme-success));
-  border-radius: 50%;
-  flex: 0 0 auto;
-  height: 0.46rem;
-  width: 0.46rem;
-}
-
-.studio-autopilot__workspace-setup--running .studio-autopilot__workspace-setup-mark {
-  animation: studio-autopilot-pulse 1.2s ease-in-out infinite;
-  background: rgb(var(--v-theme-primary));
-}
-
-.studio-autopilot__workspace-setup--failed .studio-autopilot__workspace-setup-mark {
-  background: rgb(var(--v-theme-error));
-}
-
-.studio-autopilot__workspace-setup--ambiguous .studio-autopilot__workspace-setup-mark {
-  background: rgb(var(--v-theme-warning));
-}
-
-.studio-autopilot__workspace-setup-current {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.studio-autopilot__workspace-setup-diagnostic {
-  line-height: 1.35;
-  margin: 0;
-  max-height: 4.25rem;
-  overflow: auto;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.studio-autopilot__workspace-setup-actions {
-  flex-wrap: wrap;
-}
-
 .studio-autopilot__recovery-action {
+  min-block-size: 3rem;
   min-inline-size: 11.75rem;
 }
 
 .studio-autopilot__composer {
   border-top: 1px solid rgba(var(--v-theme-outline), 0.1);
   box-sizing: border-box;
+  grid-row: 5;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
