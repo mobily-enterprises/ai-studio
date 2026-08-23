@@ -33,6 +33,24 @@ describe("Env panel", () => {
     expect(settingsSource).not.toContain("NO_WORKTREE_DB");
   });
 
+  it("keeps personal identity and owner-managed project AI behaviour in their correct scopes", () => {
+    const source = componentSource("src/components/studio/ProjectSettingsPanel.vue");
+
+    expect(source).toContain("This project — owner managed");
+    expect(source).toContain("Set what the assistant calls you");
+    expect(source).toContain('section: "profile"');
+    expect(source).toContain('label="Tone"');
+    expect(source).toContain('label="Response length"');
+    expect(source).toContain('label="Experience level"');
+    expect(source).toContain('label="Explanation style"');
+    expect(source).toContain('label="Suggest useful next prompts"');
+    expect(source).toContain("Only its owner can change them");
+    expect(source).toContain("Existing conversation history stays unchanged");
+    expect(source).toMatch(/watch\(aiPolicy,[\s\S]*?immediate:\s*true/u);
+    expect(source).toContain('{{ aiPolicySaving ? "Saving…" : "Save AI behaviour" }}');
+    expect(source).not.toContain(':loading="aiPolicySaving"');
+  });
+
   it("uses a compact table without redundant source and status columns", () => {
     const source = componentSource("src/components/studio/RuntimeConfigRecordsTable.vue");
 
