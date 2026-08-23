@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
+  MAX_PREFERRED_NAME_LENGTH,
+  MEMBERSHIP_RECORD_VERSION,
   createVibe64MembershipStore,
   membershipRootFromDaemonStateRoot
 } from "../../packages/vibe64-core/src/server/vibe64MembershipStore.js";
@@ -88,4 +90,56 @@ test("membership persists sanitized GitHub identity metadata", async () => {
   });
   assert.equal(Object.hasOwn(record.github, "token"), false);
   assert.equal((await store.readMembership("ada")).github.login, "ada-lovelace");
+});
+
+test("membership reads version 1 records with an empty preferred name and upgrades them on update", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-membership-preferred-name-migration-"));
+  const createdAt = "2026-01-02T03:04:05.000Z";
+  await writeFile(path.join(root, "ada.json"), `${JSON.stringify({
+    createdAt,
+    role: "owner",
+    status: "active",
+    updatedAt: createdAt,
+    username: "ada",
+    version: 1
+  })}\n`);
+  const store = createVibe64MembershipStore({
+    membershipRoot: root
+  });
+
+  const legacy = await store.readMembership("ada");
+  assert.equal(legacy.preferredName, "");
+  assert.equal(legacy.version, MEMBERSHIP_RECORD_VERSION);
+
+  const updated = await store.updatePreferredName("ada", "  Ada   Lovelace  ");
+  const persisted = JSON.parse(await readFile(path.join(root, "ada.json"), "utf8"));
+  assert.equal(updated.preferredName, "Ada Lovelace");
+  assert.equal(persisted.preferredName, "Ada Lovelace");
+  assert.equal(persisted.createdAt, createdAt);
+  assert.equal(persisted.version, MEMBERSHIP_RECORD_VERSION);
+});
+
+test("membership preferred name accepts Unicode, can be cleared, and is bounded", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-membership-preferred-name-"));
+  const store = createVibe64MembershipStore({
+    membershipRoot: root
+  });
+  await store.enableUser("ada", {
+    role: "owner"
+  });
+
+  assert.equal((await store.updatePreferredName("ada", "  Ada 👩🏽‍💻  ")).preferredName, "Ada 👩🏽‍💻");
+  assert.equal((await store.updatePreferredName("ada", "")).preferredName, "");
+  await assert.rejects(
+    () => store.updatePreferredName("ada", "a".repeat(MAX_PREFERRED_NAME_LENGTH + 1)),
+    {
+      code: "vibe64_preferred_name_too_long"
+    }
+  );
+  await assert.rejects(
+    () => store.updatePreferredName("ada", "Ada\u0000Lovelace"),
+    {
+      code: "vibe64_preferred_name_invalid"
+    }
+  );
 });

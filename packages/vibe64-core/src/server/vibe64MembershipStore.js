@@ -6,7 +6,8 @@ import {
   normalizeOsUsername
 } from "./osUserIdentity.js";
 
-const MEMBERSHIP_RECORD_VERSION = 1;
+const MEMBERSHIP_RECORD_VERSION = 2;
+const MAX_PREFERRED_NAME_LENGTH = 80;
 const ACTIVE_MEMBERSHIP_STATUSES = new Set(["active"]);
 
 function membershipRootFromDaemonStateRoot(daemonStateRoot = "") {
@@ -24,6 +25,24 @@ function normalizeMembershipStatus(value = "") {
   return ACTIVE_MEMBERSHIP_STATUSES.has(String(value || "").trim()) ? "active" : "disabled";
 }
 
+function normalizePreferredName(value = "") {
+  const preferredName = String(value || "")
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (/\p{Cc}/u.test(preferredName)) {
+    const error = new Error("Preferred name cannot contain control characters.");
+    error.code = "vibe64_preferred_name_invalid";
+    throw error;
+  }
+  if ([...preferredName].length > MAX_PREFERRED_NAME_LENGTH) {
+    const error = new Error(`Preferred name cannot exceed ${MAX_PREFERRED_NAME_LENGTH} characters.`);
+    error.code = "vibe64_preferred_name_too_long";
+    throw error;
+  }
+  return preferredName;
+}
+
 function normalizeMembershipRecord(record = {}, {
   username = ""
 } = {}) {
@@ -33,6 +52,7 @@ function normalizeMembershipRecord(record = {}, {
   return {
     createdAt: String(record.createdAt || now),
     ...(github ? { github } : {}),
+    preferredName: normalizePreferredName(record.preferredName),
     role: normalizeMembershipRole(record.role),
     status: normalizeMembershipStatus(record.status || "active"),
     updatedAt: String(record.updatedAt || record.createdAt || now),
@@ -45,6 +65,7 @@ function publicMembership(record = {}) {
   const normalized = normalizeMembershipRecord(record);
   return {
     createdAt: normalized.createdAt,
+    preferredName: normalized.preferredName,
     role: normalized.role,
     status: normalized.status,
     updatedAt: normalized.updatedAt,
@@ -203,6 +224,19 @@ function createVibe64MembershipStore({
     });
   }
 
+  async function updatePreferredName(username = "", preferredName = "") {
+    const normalizedUsername = assertSafeOsUsername(username);
+    const existing = await readMembership(normalizedUsername);
+    if (!existing) {
+      return null;
+    }
+    return writeMembership({
+      ...existing,
+      preferredName: normalizePreferredName(preferredName),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
   async function removeUser(username = "") {
     await rm(userPath(username), {
       force: true
@@ -229,15 +263,18 @@ function createVibe64MembershipStore({
     removeUser,
     requireActiveUser,
     updateGithubIdentity,
+    updatePreferredName,
     root
   });
 }
 
 export {
   ACTIVE_MEMBERSHIP_STATUSES,
+  MAX_PREFERRED_NAME_LENGTH,
   MEMBERSHIP_RECORD_VERSION,
   createVibe64MembershipStore,
   membershipRootFromDaemonStateRoot,
   normalizeMembershipRecord,
+  normalizePreferredName,
   publicMembership
 };
