@@ -1,5 +1,9 @@
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  rm
+} from "node:fs/promises";
 
 import {
   normalizeText,
@@ -19,6 +23,7 @@ import {
 import {
   GITHUB_ACCOUNT_MODE_LOCAL,
   VIBE64_GITHUB_ACCOUNT_MODE_ENV,
+  githubMirrorRefreshInvocation,
   githubCredentialContext,
   normalizeGithubAccountMode,
   runVibe64Command
@@ -30,19 +35,22 @@ function sourceError(message = "", code = "vibe64_session_source_failed") {
   return vibe64Error(message || "Vibe64 could not create the session source.", code);
 }
 
-async function runGit(cwd = "", args = [], allowedRoots = [], {
+async function runSourceCommand(command = "", args = [], {
   actor = "daemon",
+  allowedRoots = [],
   credentialHome = null,
+  cwd = "",
   gitAuthToken = "",
   gitTransport = "none",
+  runCommand = runVibe64Command,
   userKey = ""
 } = {}) {
   const githubTransport = gitTransport === "github-https" || gitTransport === "github-token";
-  const result = await runVibe64Command({
+  const result = await runCommand({
     actor,
     allowedRoots,
     args,
-    command: "git",
+    command,
     ...(credentialHome ? { credentialHome } : {}),
     cwd,
     envPolicy: "project",
@@ -57,11 +65,19 @@ async function runGit(cwd = "", args = [], allowedRoots = [], {
   });
   if (result?.ok !== true) {
     throw sourceError(
-      normalizeText(result?.stderr || result?.output || result?.error) || "Git command failed while creating the session source.",
+      normalizeText(result?.stderr || result?.output || result?.error) || "A source command failed while creating the session source.",
       normalizeText(result?.code) || "vibe64_session_source_git_failed"
     );
   }
   return normalizeText(result.stdout || result.output);
+}
+
+function runGit(cwd = "", args = [], allowedRoots = [], options = {}) {
+  return runSourceCommand("git", args, {
+    ...options,
+    allowedRoots,
+    cwd
+  });
 }
 
 async function githubSourceCommandOptions(vibe64User = null, env = process.env, {
@@ -127,33 +143,33 @@ async function githubSourceCommandOptions(vibe64User = null, env = process.env, 
   };
 }
 
-async function optionalGitOutput(cwd = "", args = [], allowedRoots = []) {
+async function optionalGitOutput(cwd = "", args = [], allowedRoots = [], options = {}) {
   try {
-    return await runGit(cwd, args, allowedRoots);
+    return await runGit(cwd, args, allowedRoots, options);
   } catch {
     return "";
   }
 }
 
-async function ensureLocalProjectBaseline(targetRoot = "") {
+async function ensureLocalProjectBaseline(targetRoot = "", commandOptions = {}) {
   const roots = [targetRoot];
-  const gitDirectory = await optionalGitOutput(targetRoot, ["rev-parse", "--git-dir"], roots);
+  const gitDirectory = await optionalGitOutput(targetRoot, ["rev-parse", "--git-dir"], roots, commandOptions);
   if (!gitDirectory) {
-    await runGit(targetRoot, ["init", "--initial-branch=main"], roots);
+    await runGit(targetRoot, ["init", "--initial-branch=main"], roots, commandOptions);
   }
-  let branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots) || "main";
-  let commit = await optionalGitOutput(targetRoot, ["rev-parse", "--verify", "HEAD"], roots);
+  let branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots, commandOptions) || "main";
+  let commit = await optionalGitOutput(targetRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
   if (!commit) {
-    await runGit(targetRoot, ["add", "-A"], roots);
+    await runGit(targetRoot, ["add", "-A"], roots, commandOptions);
     await runGit(targetRoot, [
       "-c", "user.name=Vibe64",
       "-c", "user.email=vibe64@localhost",
       "commit", "--allow-empty", "-m", "Initial commit"
-    ], roots);
-    commit = await runGit(targetRoot, ["rev-parse", "--verify", "HEAD"], roots);
-    branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots) || branch;
+    ], roots, commandOptions);
+    commit = await runGit(targetRoot, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
+    branch = await optionalGitOutput(targetRoot, ["branch", "--show-current"], roots, commandOptions) || branch;
   }
-  const dirty = await runGit(targetRoot, ["status", "--porcelain"], roots);
+  const dirty = await runGit(targetRoot, ["status", "--porcelain"], roots, commandOptions);
   if (dirty) {
     throw sourceError(
       "The project source has uncommitted changes. Save or discard them before starting a session so its source has an exact Git baseline.",
@@ -163,7 +179,7 @@ async function ensureLocalProjectBaseline(targetRoot = "") {
   return {
     branch,
     commit,
-    remoteUrl: await optionalGitOutput(targetRoot, ["remote", "get-url", "origin"], roots)
+    remoteUrl: await optionalGitOutput(targetRoot, ["remote", "get-url", "origin"], roots, commandOptions)
   };
 }
 
@@ -184,7 +200,7 @@ function canonicalProjectSource(project = {}, targetRoot = "") {
     }
     return {
       branch,
-      cacheRoot: targetRoot,
+      mirrorPath: normalizeText(project.githubMirrorPath),
       mode,
       remoteUrl,
       source: remoteUrl
@@ -217,32 +233,161 @@ function canonicalProjectSource(project = {}, targetRoot = "") {
   );
 }
 
+async function prepareGithubMirrorReference({
+  commandOptions = {},
+  mirrorPath = "",
+  remoteUrl = ""
+} = {}) {
+  const resolvedMirrorPath = normalizeText(mirrorPath);
+  const outcome = {
+    attempted: Boolean(resolvedMirrorPath),
+    referenceRoot: "",
+    refresh: resolvedMirrorPath ? "failed" : "unavailable"
+  };
+  if (!resolvedMirrorPath || !path.isAbsolute(resolvedMirrorPath)) {
+    return outcome;
+  }
+  const mirrorParent = path.dirname(resolvedMirrorPath);
+  const runtimeRoot = path.dirname(mirrorParent);
+  if (
+    path.basename(resolvedMirrorPath) !== "repository.git" ||
+    path.basename(mirrorParent) !== "github-mirror"
+  ) {
+    return outcome;
+  }
+
+  try {
+    await mkdir(runtimeRoot, {
+      recursive: true
+    });
+    const [command, ...args] = githubMirrorRefreshInvocation({
+      mirrorPath: resolvedMirrorPath,
+      remoteUrl
+    });
+    await runSourceCommand(command, args, {
+      ...commandOptions,
+      allowedRoots: [runtimeRoot, mirrorParent, resolvedMirrorPath],
+      cwd: runtimeRoot
+    });
+    outcome.refresh = "refreshed";
+  } catch {
+    // The mirror is disposable acceleration. Authority remains the remote URL.
+  }
+
+  if (await githubMirrorCanReference({
+    mirrorPath: resolvedMirrorPath,
+    remoteUrl,
+    runCommand: commandOptions.runCommand
+  })) {
+    outcome.referenceRoot = resolvedMirrorPath;
+  }
+  return outcome;
+}
+
+async function githubMirrorCanReference({
+  mirrorPath = "",
+  remoteUrl = "",
+  runCommand = runVibe64Command
+} = {}) {
+  try {
+    const mirrorParent = path.dirname(mirrorPath);
+    const [mirrorStat, parentStat] = await Promise.all([
+      lstat(mirrorPath),
+      lstat(mirrorParent)
+    ]);
+    if (mirrorStat.isSymbolicLink() || parentStat.isSymbolicLink()) {
+      return false;
+    }
+    const roots = [path.dirname(mirrorParent), mirrorParent, mirrorPath];
+    const [bare, origin] = await Promise.all([
+      optionalGitOutput(path.dirname(mirrorParent), [
+        "--git-dir", mirrorPath,
+        "rev-parse", "--is-bare-repository"
+      ], roots, { runCommand }),
+      optionalGitOutput(path.dirname(mirrorParent), [
+        "--git-dir", mirrorPath,
+        "remote", "get-url", "origin"
+      ], roots, { runCommand })
+    ]);
+    return bare === "true" && origin === remoteUrl;
+  } catch {
+    return false;
+  }
+}
+
 async function cloneCanonicalSource({
   branch = "",
-  cacheRoot = "",
   commandOptions = {},
+  referenceRoot = "",
   source = "",
   sourceParent = "",
   sourcePath = ""
 } = {}) {
-  const roots = [cacheRoot, source, sourceParent, sourcePath]
+  const roots = [referenceRoot, source, sourceParent, sourcePath]
     .map(normalizeText)
     .filter((value) => path.isAbsolute(value));
-  const referenceArgs = cacheRoot && await pathExists(path.join(cacheRoot, ".git"))
-    ? ["--reference-if-able", cacheRoot, "--dissociate"]
-    : [];
-  await runGit(sourceParent, [
-    "clone",
-    "--no-hardlinks",
-    ...referenceArgs,
-    "--single-branch",
-    "--branch", branch,
-    source,
-    sourcePath
-  ], roots, commandOptions);
-  const commit = await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], roots);
+  let cacheReferenceUsed = Boolean(referenceRoot);
+  const clone = (referenceRoot = "") => runGit(sourceParent, [
+      "clone",
+      "--no-hardlinks",
+      ...(referenceRoot ? ["--reference", referenceRoot, "--dissociate"] : []),
+      "--single-branch",
+      "--branch", branch,
+      source,
+      sourcePath
+    ], roots, commandOptions);
+  try {
+    await clone(referenceRoot);
+  } catch (error) {
+    await rm(sourcePath, {
+      force: true,
+      recursive: true
+    });
+    if (!referenceRoot) {
+      throw error;
+    }
+    cacheReferenceUsed = false;
+    try {
+      await clone();
+    } catch (retryError) {
+      await rm(sourcePath, {
+        force: true,
+        recursive: true
+      });
+      throw retryError;
+    }
+  }
+  const alternatesPath = path.join(sourcePath, ".git", "objects", "info", "alternates");
+  if (await pathExists(alternatesPath)) {
+    await rm(sourcePath, {
+      force: true,
+      recursive: true
+    });
+    cacheReferenceUsed = false;
+    try {
+      await clone();
+    } catch (retryError) {
+      await rm(sourcePath, {
+        force: true,
+        recursive: true
+      });
+      throw retryError;
+    }
+    if (await pathExists(alternatesPath)) {
+      await rm(sourcePath, {
+        force: true,
+        recursive: true
+      });
+      throw sourceError(
+        "The session checkout retained a dependency on disposable Git object storage.",
+        "vibe64_session_source_cache_not_dissociated"
+      );
+    }
+  }
+  const commit = await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
   return {
     branch,
+    cacheReferenceUsed,
     commit,
     remoteUrl: source
   };
@@ -262,6 +407,7 @@ async function attachSessionSource(store, sessionId = "", metadata = {}) {
 async function createSessionSource({
   env = process.env,
   project = {},
+  runCommand = runVibe64Command,
   runtime,
   session = {},
   store,
@@ -293,8 +439,31 @@ async function createSessionSource({
   const sourceParent = path.dirname(sourcePath);
   const branch = `${SESSION_BRANCH_PREFIX}${sessionId}`;
   const canonical = canonicalProjectSource(project, targetRoot);
+  const githubCommandOptions = canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
+    ? {
+        ...await githubSourceCommandOptions(vibe64User, env, {
+          runCommand
+        }),
+        runCommand
+      }
+    : {
+        runCommand
+      };
+  const cache = canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
+    ? await prepareGithubMirrorReference({
+        commandOptions: githubCommandOptions,
+        mirrorPath: canonical.mirrorPath,
+        remoteUrl: canonical.source
+      })
+    : {
+        attempted: false,
+        referenceRoot: "",
+        refresh: "not_applicable"
+      };
   let baseline = canonical.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
-    ? await ensureLocalProjectBaseline(targetRoot)
+    ? await ensureLocalProjectBaseline(targetRoot, {
+        runCommand
+      })
     : null;
   await mkdir(sourceParent, {
     recursive: true
@@ -303,7 +472,9 @@ async function createSessionSource({
   const sourceRoots = [targetRoot, canonical.source, sourceParent, sourcePath]
     .map(normalizeText)
     .filter((value) => path.isAbsolute(value));
-  const existingTopLevel = await optionalGitOutput(sourcePath, ["rev-parse", "--show-toplevel"], sourceRoots);
+  const existingTopLevel = await optionalGitOutput(sourcePath, ["rev-parse", "--show-toplevel"], sourceRoots, {
+    runCommand
+  });
   if (existingTopLevel && path.resolve(existingTopLevel) !== path.resolve(sourcePath)) {
     throw sourceError(
       `Session source path is already owned by another Git repository: ${sourcePath}`,
@@ -319,14 +490,14 @@ async function createSessionSource({
         "--branch", baseline.branch,
         targetRoot,
         sourcePath
-      ], sourceRoots);
+      ], sourceRoots, {
+        runCommand
+      });
     } else {
       baseline = await cloneCanonicalSource({
         branch: canonical.branch,
-        cacheRoot: canonical.cacheRoot,
-        commandOptions: canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB
-          ? await githubSourceCommandOptions(vibe64User, env)
-          : {},
+        commandOptions: githubCommandOptions,
+        referenceRoot: cache.referenceRoot,
         source: canonical.source,
         sourceParent,
         sourcePath
@@ -335,12 +506,19 @@ async function createSessionSource({
   }
   const resolvedBaseline = baseline || {
     branch: canonical.branch,
-    commit: await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], sourceRoots),
+    cacheReferenceUsed: false,
+    commit: await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], sourceRoots, {
+      runCommand
+    }),
     remoteUrl: canonical.remoteUrl
   };
-  await runGit(sourcePath, ["checkout", "-B", branch, resolvedBaseline.commit], sourceRoots);
+  await runGit(sourcePath, ["checkout", "-B", branch, resolvedBaseline.commit], sourceRoots, {
+    runCommand
+  });
   if (resolvedBaseline.remoteUrl) {
-    await runGit(sourcePath, ["remote", "set-url", "origin", resolvedBaseline.remoteUrl], sourceRoots);
+    await runGit(sourcePath, ["remote", "set-url", "origin", resolvedBaseline.remoteUrl], sourceRoots, {
+      runCommand
+    });
   }
   await attachSessionSource(store, sessionId, {
     base_branch: resolvedBaseline.branch,
@@ -350,6 +528,10 @@ async function createSessionSource({
     main_checkout_root: targetRoot,
     source_default_branch: resolvedBaseline.branch,
     source_kind: "session_clone",
+    source_cache_attempted: cache.attempted ? "yes" : "no",
+    source_cache_kind: canonical.mode === PROJECT_REPOSITORY_MODE_GITHUB ? "github_mirror" : "none",
+    source_cache_reference: resolvedBaseline.cacheReferenceUsed ? "used" : "not_used",
+    source_cache_refresh: cache.refresh,
     source_path: sourcePath,
     source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
     source_remote_url: resolvedBaseline.remoteUrl
