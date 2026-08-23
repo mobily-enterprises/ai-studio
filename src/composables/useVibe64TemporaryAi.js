@@ -110,6 +110,7 @@ function useVibe64TemporaryAi({
   }
 
   function openTask({
+    dedupeKey = "",
     draft = "",
     policy = "read",
     title = ""
@@ -121,6 +122,7 @@ function useVibe64TemporaryAi({
       attachments: [],
       busy: false,
       conversationId: "",
+      dedupeKey: temporaryAiText(dedupeKey),
       draft: temporaryAiText(draft),
       error: "",
       id: temporaryAiId("temporary-ai"),
@@ -138,6 +140,55 @@ function useVibe64TemporaryAi({
     activeTaskId.value = task.id;
     open.value = true;
     return task;
+  }
+
+  async function startTask(options = {}) {
+    const input = options && typeof options === "object" && !Array.isArray(options)
+      ? options
+      : {};
+    const message = temporaryAiText(input.message || input.draft);
+    if (!message || !currentSessionId() || !currentSessionsApiPath()) {
+      return Object.freeze({
+        ok: false,
+        reused: false,
+        started: false,
+        taskId: ""
+      });
+    }
+    const dedupeKey = temporaryAiText(input.dedupeKey);
+    const existingTask = dedupeKey
+      ? [...tasks.value].reverse().find((task) => (
+          task.dedupeKey === dedupeKey && (
+            task.busy || (
+              task.status === "failed" &&
+              temporaryAiText(task.draft) &&
+              temporaryAiText(task.pendingMessageId)
+            )
+          )
+        ))
+      : null;
+    if (existingTask) {
+      selectTask(existingTask.id);
+      const started = existingTask.busy ? false : await send(existingTask.id);
+      return Object.freeze({
+        ok: existingTask.busy || started,
+        reused: true,
+        started,
+        taskId: existingTask.id
+      });
+    }
+    const task = openTask({
+      ...input,
+      dedupeKey,
+      draft: message
+    });
+    const started = await send(task.id);
+    return Object.freeze({
+      ok: started,
+      reused: false,
+      started,
+      taskId: task.id
+    });
   }
 
   function selectTask(taskId = "") {
@@ -301,8 +352,9 @@ function useVibe64TemporaryAi({
       pendingMessageId: messageId,
       status: "starting"
     });
+    let conversationId = task.conversationId;
     try {
-      const conversationId = await ensureConversation(task);
+      conversationId = await ensureConversation(task);
       const response = await request(
         vibe64TemporaryConversationTurnsPath(
           currentSessionsApiPath(),
@@ -351,7 +403,7 @@ function useVibe64TemporaryAi({
     } catch (error) {
       updateTask(taskId, {
         busy: false,
-        conversationId: error?.conversationExpired === true ? "" : task.conversationId,
+        conversationId: error?.conversationExpired === true ? "" : conversationId,
         draft: task.draft,
         error: temporaryAiText(error?.message || error) || "Temporary AI message could not be sent.",
         pendingMessageId: messageId,
@@ -492,6 +544,7 @@ function useVibe64TemporaryAi({
     selectTask,
     send,
     showWorkspace,
+    startTask,
     stopTask,
     tasks,
     updateAgentSetting,

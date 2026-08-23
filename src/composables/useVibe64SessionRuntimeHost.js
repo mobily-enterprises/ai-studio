@@ -508,6 +508,10 @@ function useVibe64SessionRuntimeHost(props, emit) {
     emit("project-attention");
   }
 
+  function emitChatAttention() {
+    emit("chat-attention");
+  }
+
   const agentTerminal = {
     sessionUpdate: () => refreshSessionData()
   };
@@ -572,6 +576,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     )),
     conversationLog,
     dialogs,
+    emitChatAttention,
     emitProjectAttention,
     guardedPage,
     interruptAgentTurn,

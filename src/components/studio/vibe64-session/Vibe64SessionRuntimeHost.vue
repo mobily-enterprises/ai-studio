@@ -28,6 +28,7 @@
       :work-state="workState"
       :project-pane="props.projectPane"
       @busy-change="setAutopilotBusy"
+      @chat-attention="emitChatAttention"
       @project-attention="emitProjectAttention"
     >
       <template #ai-terminal="{ active: tabActive }">
@@ -106,6 +107,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "busy-change",
+  "chat-attention",
   "page-error-change",
   "work-state-change",
   "toolbar-controls-ready",
@@ -121,6 +123,7 @@ const {
   codexTerminalCanStart,
   conversationLog,
   dialogs,
+  emitChatAttention,
   emitProjectAttention,
   guardedPage,
   interruptAgentTurn,

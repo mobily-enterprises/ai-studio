@@ -227,12 +227,15 @@
                   class="vibe64-launch-controls__identity-recovery"
                 >
                   <v-btn
+                    :aria-busy="previewIdentityFixSending ? 'true' : undefined"
+                    class="vibe64-launch-controls__recovery-action"
+                    :disabled="previewIdentityFixSending"
                     size="small"
                     type="button"
                     variant="text"
                     @click="requestCodexPreviewIdentityFix"
                   >
-                    Ask Codex to fix
+                    {{ previewIdentityFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
                   </v-btn>
                 </div>
               </v-card>
@@ -994,6 +997,7 @@ const {
 
 const previewDiagnosticsAttachmentBusy = ref(false);
 const previewIdentityFailedSelection = ref(null);
+const previewIdentityFixSending = ref(false);
 const previewIdentityFixAvailable = computed(() => Boolean(
   previewIdentityError.value &&
   previewIdentityFailedSelection.value &&
@@ -1014,14 +1018,19 @@ async function selectPreviewIdentityFromMenu(identity = {}) {
   return selected;
 }
 
-function requestCodexPreviewIdentityFix() {
-  if (!previewIdentityFixAvailable.value) {
+async function requestCodexPreviewIdentityFix() {
+  if (!previewIdentityFixAvailable.value || previewIdentityFixSending.value) {
     return false;
   }
-  return props.askCodexToFixPreviewIdentity({
-    error: previewIdentityError.value,
-    identity: previewIdentityFailedSelection.value
-  });
+  previewIdentityFixSending.value = true;
+  try {
+    return await props.askCodexToFixPreviewIdentity({
+      error: previewIdentityError.value,
+      identity: previewIdentityFailedSelection.value
+    });
+  } finally {
+    previewIdentityFixSending.value = false;
+  }
 }
 
 watch(previewIdentityError, (error) => {
@@ -1369,6 +1378,10 @@ onBeforeUnmount(() => {
   padding: 0 0.5rem 0.5rem;
 }
 
+.vibe64-launch-controls__recovery-action {
+  min-inline-size: 11.75rem;
+}
+
 .vibe64-launch-controls__attention-button {
   color: rgb(var(--v-theme-warning));
 }
@@ -1674,6 +1687,12 @@ onBeforeUnmount(() => {
   50% {
     opacity: 1;
     transform: scale(1) translateZ(0);
+  }
+}
+
+@media (pointer: coarse) {
+  .vibe64-launch-controls__recovery-action {
+    min-height: 3rem;
   }
 }
 

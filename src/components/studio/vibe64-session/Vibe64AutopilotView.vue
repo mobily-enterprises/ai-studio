@@ -108,13 +108,16 @@
         >
           <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
             <v-btn
+              :aria-busy="repositoryRecoverySending ? 'true' : undefined"
+              class="studio-autopilot__recovery-action"
+              :disabled="repositoryRecoverySending"
               :prepend-icon="mdiRobotOutline"
               size="x-small"
               type="button"
               variant="tonal"
-              @click="openTemporaryAiForRepositoryActionError"
+              @click="fixRepositoryActionError"
             >
-              Resolve with temporary AI
+              {{ repositoryRecoverySending ? "Opening temporary AI…" : "Fix with temporary AI" }}
             </v-btn>
           </template>
         </Vibe64TerminalSurface>
@@ -157,13 +160,15 @@
               Retry setup
             </v-btn>
             <v-btn
+              :aria-busy="workspaceSetupFixSending ? 'true' : undefined"
+              class="studio-autopilot__recovery-action"
               :disabled="workspaceSetupAskDisabled"
               size="x-small"
               type="button"
               variant="text"
               @click="askCodexToFixWorkspaceSetup"
             >
-              Ask Codex to fix
+              {{ workspaceSetupFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
             </v-btn>
           </div>
         </div>
@@ -597,6 +602,8 @@ const {
   confirmSaveWork,
   editOptimisticMessage,
   emptyConversationWelcome,
+  fixRepositoryActionError,
+  fixRepositoryError,
   interrupting,
   loadMoreChatTurns,
   numberedQuestionSelectItems,
@@ -606,6 +613,7 @@ const {
   projectSlug,
   questionAnswers,
   reloadChatPane,
+  repositoryRecoverySending,
   retrySaveWork,
   retryWorkspaceSetup,
   requestSaveWork,
@@ -648,6 +656,7 @@ const {
   workspaceSetupAskDisabled,
   workspaceSetupCurrentLabel,
   workspaceSetupDiagnostic,
+  workspaceSetupFixSending,
   workspaceSetupNeedsAttention,
   workspaceSetupRetryDisabled,
   workspaceSetupRetrying,
@@ -655,12 +664,14 @@ const {
   workspaceSetupStatus,
   workspaceSetupTitle,
   workspaceSetupVisible
-} = useVibe64AutopilotView(props, emit);
+} = useVibe64AutopilotView(props, emit, {
+  requestTemporaryAi: startTemporaryAiTask
+});
 
 const dashboardContext = computed(() => ({
   ...(dashboardSessionContext.value || {}),
   requestUpdateWork: props.updateSessionWork,
-  requestTemporaryAi: openTemporaryAiForRepositoryError
+  requestTemporaryAi: fixRepositoryError
 }));
 
 const sessionAbandonDisabled = computed(() => Boolean(
@@ -687,41 +698,17 @@ function openTemporaryAi() {
   temporaryAiWorkspace.value?.showWorkspace?.();
 }
 
+async function startTemporaryAiTask(options = {}) {
+  emit("chat-attention");
+  const workspace = temporaryAiWorkspace.value;
+  if (typeof workspace?.startTask !== "function") {
+    return false;
+  }
+  return workspace.startTask(options);
+}
+
 function activateRealSession() {
   temporaryAiWorkspace.value?.closeWorkspace?.();
-}
-
-const repositoryTemporaryAiGitBoundary = [
-  "Vibe64—not Temporary AI—owns every repository operation. The failed operation has already been rolled back.",
-  "You may inspect Git read-only and edit ordinary working-tree files in this session. Do not change HEAD, branches, refs, the index, stashes, remotes, commits, checkpoints, or repository configuration.",
-  "Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase, cherry-pick, revert, pull, push, fetch, or update-ref. Do not create a recovery ref or stash; Vibe64 already owns durable recovery.",
-  "Record the initial HEAD and index with read-only commands, leave both byte-for-byte unchanged, and do not publish. Resolve only by editing the conflicting working-tree files so the user can retry the Vibe64 operation.",
-  "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
-].join("\n");
-
-function openTemporaryAiForRepositoryActionError() {
-  const action = saveWorkActivityIsUpdate.value ? "Update" : "Save";
-  temporaryAiWorkspace.value?.openTask?.({
-    draft: [
-      `Help resolve this Vibe64 ${action} problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:`,
-      repositoryTemporaryAiGitBoundary,
-      saveWorkError.value
-    ].filter(Boolean).join("\n\n"),
-    policy: "workspace_write",
-    title: `Resolve ${action}`
-  });
-}
-
-function openTemporaryAiForRepositoryError({ error = "", title = "Resolve repository problem" } = {}) {
-  temporaryAiWorkspace.value?.openTask?.({
-    draft: [
-      "Help resolve this Vibe64 repository problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
-      repositoryTemporaryAiGitBoundary,
-      String(error || "").trim()
-    ].filter(Boolean).join("\n\n"),
-    policy: "workspace_write",
-    title
-  });
 }
 
 watch(() => props.active, (active, wasActive) => {
@@ -936,6 +923,10 @@ async function attachPreviewFile(file) {
   flex-wrap: wrap;
 }
 
+.studio-autopilot__recovery-action {
+  min-inline-size: 11.75rem;
+}
+
 .studio-autopilot__composer {
   border-top: 1px solid rgba(var(--v-theme-outline), 0.1);
   box-sizing: border-box;
@@ -1085,6 +1076,12 @@ async function attachPreviewFile(file) {
 
   .studio-autopilot:not(.studio-autopilot--chat-collapsed) .studio-autopilot__project-panel {
     visibility: hidden;
+  }
+}
+
+@media (pointer: coarse) {
+  .studio-autopilot__recovery-action {
+    min-height: 3rem;
   }
 }
 </style>

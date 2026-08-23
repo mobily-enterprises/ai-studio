@@ -111,13 +111,16 @@
         <template #actions>
           <v-btn
             v-if="canResolveUpdateWithTemporaryAi && typeof dashboard.requestTemporaryAi === 'function'"
+            :aria-busy="resolvingUpdateProblem ? 'true' : undefined"
+            class="vibe64-repository-workspace__recovery-action"
+            :disabled="resolvingUpdateProblem"
             :prepend-icon="mdiRobotOutline"
             size="small"
             type="button"
             variant="tonal"
             @click="resolveUpdateProblem"
           >
-            Resolve with temporary AI
+            {{ resolvingUpdateProblem ? "Opening temporary AI…" : "Fix with temporary AI" }}
           </v-btn>
         </template>
       </StudioErrorNotice>
@@ -562,6 +565,7 @@ const canResolveUpdateWithTemporaryAi = computed(() => [
   "vibe64_session_update_conflict",
   "vibe64_session_update_history_diverged"
 ].includes(String(updates.errorCode || "").trim()));
+const resolvingUpdateProblem = ref(false);
 
 function formatVersionDate(value = "") {
   const parsed = new Date(value);
@@ -587,11 +591,20 @@ function versionButtonLabel(version = {}, index = -1) {
   return parts.filter(Boolean).join(", ");
 }
 
-function resolveUpdateProblem() {
-  dashboard.value.requestTemporaryAi?.({
-    error: updates.error,
-    title: "Resolve repository update"
-  });
+async function resolveUpdateProblem() {
+  if (resolvingUpdateProblem.value || typeof dashboard.value.requestTemporaryAi !== "function") {
+    return false;
+  }
+  resolvingUpdateProblem.value = true;
+  try {
+    return await dashboard.value.requestTemporaryAi({
+      code: updates.errorCode,
+      error: updates.error,
+      title: "Resolve repository update"
+    });
+  } finally {
+    resolvingUpdateProblem.value = false;
+  }
 }
 
 async function openVersion(version) {
@@ -642,6 +655,10 @@ function closeVersion() {
 .vibe64-repository-workspace__header h1 {
   font-size: clamp(1.35rem, 2vw, 1.8rem);
   font-weight: 720;
+}
+
+.vibe64-repository-workspace__recovery-action {
+  min-inline-size: 11.75rem;
 }
 
 .vibe64-repository-workspace__header p,
@@ -991,6 +1008,12 @@ function closeVersion() {
   .vibe64-repository-workspace__summary {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (pointer: coarse) {
+  .vibe64-repository-workspace__recovery-action {
+    min-height: 3rem;
   }
 }
 </style>

@@ -185,6 +185,7 @@ const {
               :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
               :project-pane="projectPane"
               @title-change="emitPageTitle"
+              @chat-attention="setChatCollapsed(false)"
               @project-attention="showProjectPane"
             >
               <template #dashboard="dashboardSlotProps">

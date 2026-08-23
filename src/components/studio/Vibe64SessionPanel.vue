@@ -173,6 +173,7 @@
         :project-pane="projectPane"
         :toolbar-sessions="toolbar.sessions"
         @busy-change="setRuntimeBusy"
+        @chat-attention="emitChatAttention"
         @page-error-change="setRuntimePageError"
         @work-state-change="setRuntimeWorkState"
         @toolbar-controls-ready="setRuntimeToolbarControls"
@@ -211,6 +212,7 @@ const {
   chatCollapsed,
   dashboardProjectActive,
   dismissPageError,
+  emitChatAttention,
   emitProjectAttention,
   emptyChatHintText,
   emptyCreateAttention,

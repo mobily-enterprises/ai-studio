@@ -72,15 +72,17 @@ function viewProps(overrides = {}) {
     sessionSelectionClosed: false,
     sessionsApiPath: "/api/sessions",
     sessionToolbar: {},
+    updateSessionWork: vi.fn(async () => ({ ok: true, status: "updated" })),
+    workState: {},
     ...overrides
   });
 }
 
-async function createView(overrides = {}) {
+async function createView(overrides = {}, options = {}) {
   const { useVibe64AutopilotView } = await import(
     "../../src/composables/useVibe64AutopilotView.js"
   );
-  return useVibe64AutopilotView(viewProps(overrides), vi.fn());
+  return useVibe64AutopilotView(viewProps(overrides), vi.fn(), options);
 }
 
 describe("useVibe64AutopilotView direct chat", () => {
@@ -204,32 +206,185 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(retryWorkspaceSetup).toHaveBeenCalledTimes(1);
   });
 
-  it("sends workspace setup diagnostics through ordinary direct chat", async () => {
+  it.each([
+    ["failed", "Workspace preparation failed", "Dependency installation exited with code 1."],
+    ["ambiguous", "Workspace setup needs a choice", "Two Stack components declare different setup recipes."]
+  ])("routes %s workspace recovery through Temporary AI", async (status, title, diagnostic) => {
     const sendAgentMessage = vi.fn(async () => true);
+    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
     const view = await createView({
       sendAgentMessage,
       session: {
         ...viewProps().session,
         workspaceSetup: {
-          diagnostic: "Two Stack components declare different setup recipes.",
-          status: "ambiguous"
+          diagnostic,
+          status,
+          updatedAt: "2026-08-23T12:00:00.000Z"
         }
       }
+    }, {
+      requestTemporaryAi
     });
+    const originalTurns = [...view.chatTurns.value];
 
-    expect(view.workspaceSetupTitle.value).toBe("Workspace setup needs a choice");
+    expect(view.workspaceSetupTitle.value).toBe(title);
     await expect(view.askCodexToFixWorkspaceSetup()).resolves.toBe(true);
 
-    expect(sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
-      displayMessage: expect.stringContaining(
-        "Two Stack components declare different setup recipes."
-      ),
-      message: expect.stringContaining("preserving the existing work"),
-      messageId: expect.stringMatching(/^message_tab_/u)
+    expect(requestTemporaryAi).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: expect.stringContaining(`workspace-setup|session-1|${status}|`),
+      message: expect.stringContaining(diagnostic),
+      policy: "workspace_write",
+      title: "Fix workspace preparation"
     }));
-    expect(view.chatTurns.value.at(-1)?.user?.text).toContain(
-      "Workspace preparation needs attention"
+    expect(requestTemporaryAi.mock.calls[0][0].message).toContain("preserving the existing work");
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(view.chatTurns.value).toEqual(originalTurns);
+  });
+
+  it("keeps a workspace recovery action pending and ignores a rapid duplicate activation", async () => {
+    let resolveRecovery;
+    const requestTemporaryAi = vi.fn(() => new Promise((resolve) => {
+      resolveRecovery = resolve;
+    }));
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          diagnostic: "Dependency installation exited with code 1.",
+          status: "failed"
+        }
+      }
+    }, { requestTemporaryAi });
+
+    const firstRequest = view.askCodexToFixWorkspaceSetup();
+    expect(view.workspaceSetupFixSending.value).toBe(true);
+    expect(view.workspaceSetupAskDisabled.value).toBe(true);
+    await expect(view.askCodexToFixWorkspaceSetup()).resolves.toBe(false);
+    expect(requestTemporaryAi).toHaveBeenCalledTimes(1);
+
+    resolveRecovery({ ok: true });
+    await expect(firstRequest).resolves.toBe(true);
+    expect(view.workspaceSetupFixSending.value).toBe(false);
+  });
+
+  it("routes a rejected preview identity through Temporary AI without touching direct chat", async () => {
+    const sendAgentMessage = vi.fn(async () => true);
+    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
+    const view = await createView({ sendAgentMessage }, { requestTemporaryAi });
+    const originalTurns = [...view.chatTurns.value];
+
+    await expect(view.askCodexToFixPreviewIdentity({
+      error: "User not found.",
+      identity: {
+        name: "Admin",
+        type: "email",
+        value: "ada@example.test"
+      }
+    })).resolves.toBe(true);
+
+    expect(requestTemporaryAi).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: expect.stringContaining("preview-identity|session-1|email|ada@example.test|User not found."),
+      message: expect.stringContaining("app-owned, idempotent development seed"),
+      policy: "workspace_write",
+      title: "Fix preview identity"
+    }));
+    expect(requestTemporaryAi.mock.calls[0][0].message).toContain("User not found.");
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(view.chatTurns.value).toEqual(originalTurns);
+  });
+
+  it.each([
+    ["vibe64_session_save_history_diverged", "Save", "operation"],
+    ["vibe64_session_update_conflict", "Update", "updateOperation"],
+    ["vibe64_session_update_history_diverged", "Update", "updateOperation"]
+  ])("routes %s chat recovery through Temporary AI", async (code, action, operationKey) => {
+    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
+    const sendAgentMessage = vi.fn(async () => true);
+    const diagnostic = `${action} could not preserve the changed history.`;
+    const view = await createView({
+      sendAgentMessage,
+      workState: {
+        [operationKey]: {
+          code,
+          error: diagnostic,
+          operationId: `operation-${code}`,
+          status: "failed"
+        }
+      }
+    }, { requestTemporaryAi });
+    const originalTurns = [...view.chatTurns.value];
+
+    expect(view.saveWorkCanResolveWithTemporaryAi.value).toBe(true);
+    await expect(view.fixRepositoryActionError()).resolves.toBe(true);
+
+    expect(requestTemporaryAi).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: `repository-recovery|session-1|${code}|${diagnostic}`,
+      message: expect.stringContaining(diagnostic),
+      policy: "workspace_write",
+      title: `Resolve ${action}`
+    }));
+    const prompt = requestTemporaryAi.mock.calls[0][0].message;
+    expect(prompt).toContain("Vibe64—not Temporary AI—owns every repository operation");
+    expect(prompt).toContain("Do not run git add, commit, checkout");
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(view.chatTurns.value).toEqual(originalTurns);
+  });
+
+  it.each([
+    "vibe64_session_update_conflict",
+    "vibe64_session_update_history_diverged"
+  ])("routes %s Dashboard recovery through Temporary AI", async (code) => {
+    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
+    const sendAgentMessage = vi.fn(async () => true);
+    const diagnostic = `Repository update failed with ${code}.`;
+    const view = await createView({ sendAgentMessage }, { requestTemporaryAi });
+    const originalTurns = [...view.chatTurns.value];
+
+    await expect(view.fixRepositoryError({
+      code,
+      error: diagnostic,
+      title: "Resolve repository update"
+    })).resolves.toBe(true);
+
+    expect(requestTemporaryAi).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: `repository-recovery|session-1|${code}|${diagnostic}`,
+      message: expect.stringContaining(diagnostic),
+      policy: "workspace_write",
+      title: "Resolve repository update"
+    }));
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    expect(view.chatTurns.value).toEqual(originalTurns);
+  });
+
+  it("shares one recovery identity between chat and Dashboard for the same update failure", async () => {
+    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
+    const code = "vibe64_session_update_conflict";
+    const diagnostic = "One file needs review.";
+    const view = await createView({
+      workState: {
+        updateOperation: {
+          code,
+          error: diagnostic,
+          operationId: "update-1",
+          status: "failed"
+        }
+      }
+    }, { requestTemporaryAi });
+
+    await expect(view.fixRepositoryActionError()).resolves.toBe(true);
+    await expect(view.fixRepositoryError({
+      code,
+      error: `  ${diagnostic}  `,
+      title: "Resolve repository update"
+    })).resolves.toBe(true);
+
+    const [chatRecovery, dashboardRecovery] = requestTemporaryAi.mock.calls.map(([request]) => request);
+    expect(chatRecovery.dedupeKey).toBe(
+      `repository-recovery|session-1|${code}|${diagnostic}`
     );
+    expect(dashboardRecovery.dedupeKey).toBe(chatRecovery.dedupeKey);
+    expect(chatRecovery.title).toBe("Resolve Update");
+    expect(dashboardRecovery.title).toBe("Resolve repository update");
   });
 
   it("sends a normal chat message and shows it optimistically", async () => {

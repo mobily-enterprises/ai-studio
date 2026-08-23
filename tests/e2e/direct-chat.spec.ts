@@ -13,6 +13,13 @@ import {
 } from "./support/base-shell/http";
 
 const SESSION_ID = "direct-chat-session";
+const REPOSITORY_RECOVERY_GIT_BOUNDARY = [
+  "Vibe64—not Temporary AI—owns every repository operation. The failed operation has already been rolled back.",
+  "You may inspect Git read-only and edit ordinary working-tree files in this session. Do not change HEAD, branches, refs, the index, stashes, remotes, commits, checkpoints, or repository configuration.",
+  "Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase, cherry-pick, revert, pull, push, fetch, or update-ref. Do not create a recovery ref or stash; Vibe64 already owns durable recovery.",
+  "Record the initial HEAD and index with read-only commands, leave both byte-for-byte unchanged, and do not publish. Resolve only by editing the conflicting working-tree files so the user can retry the Vibe64 operation.",
+  "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
+].join("\n");
 test.describe("direct chat", () => {
   test("sends an ordinary chat message without orchestration metadata or a prompts section", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
@@ -35,7 +42,7 @@ test.describe("direct chat", () => {
       displayMessage: "Make the smallest safe change.",
       message: "Make the smallest safe change."
     }));
-    expect(messages[0].messageId).toMatch(/^message:tab:/u);
+    expect(messages[0].messageId).toMatch(/^message_tab_/u);
     expect(messages[0]).not.toHaveProperty("actionId");
     expect(messages[0]).not.toHaveProperty("intentId");
     await expect(page.getByText("Make the smallest safe change.", { exact: true })).toBeVisible();
@@ -72,7 +79,7 @@ test.describe("direct chat", () => {
     await confirmButton.click();
 
     await expect.poll(() => saves).toHaveLength(1);
-    expect(saves[0]).toEqual({ message: "Save Vibe64 work" });
+    expect(saves[0]).toEqual({});
     expect(messages).toHaveLength(0);
     await expect(dialog).not.toBeVisible();
   });
@@ -108,10 +115,13 @@ test.describe("direct chat", () => {
 
     const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
     await expect(workspace).toBeVisible();
-    await expect(workspace.getByText("Not saved to session history", { exact: true })).toBeVisible();
+    await expect(workspace.getByText(
+      "Ask a focused question or investigate a problem without adding it to the main conversation.",
+      { exact: true }
+    )).toBeVisible();
     await expect(workspace.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
 
-    await workspace.getByRole("button", { name: "New", exact: true }).click();
+    await workspace.getByRole("button", { name: "New temporary AI task", exact: true }).click();
     await expect(workspace.getByRole("button", { name: "Temporary 2", exact: true })).toBeVisible();
     await expect(workspace.getByRole("button", { name: "Close Temporary 1" })).toBeVisible();
     await expect(workspace.getByRole("button", { name: "Close Temporary 2" })).toBeVisible();
@@ -134,6 +144,95 @@ test.describe("direct chat", () => {
     await workspace.getByRole("button", { name: "Close Temporary 1" }).click();
     await expect(workspace).not.toBeVisible();
   });
+
+  for (const recovery of [
+    {
+      diagnostic: "Dependency installation exited with code 1.",
+      expectedPrompt: [
+        "Workspace preparation needs attention:",
+        "Dependency installation exited with code 1.",
+        "Please diagnose and fix this in the current workspace, preserving the existing work. When it is fixed, tell me to retry workspace preparation."
+      ].join("\n\n"),
+      status: "failed"
+    },
+    {
+      diagnostic: "Two Stack components declare different setup recipes.",
+      expectedPrompt: [
+        "Workspace preparation needs attention:",
+        "Two Stack components declare different setup recipes.",
+        "Please diagnose and fix this in the current workspace, preserving the existing work. When it is fixed, tell me to retry workspace preparation."
+      ].join("\n\n"),
+      status: "ambiguous"
+    }
+  ]) {
+    test(`routes ${recovery.status} workspace preparation through Temporary AI`, async ({ page }) => {
+      const captured = await mockTemporaryRecovery(page, {
+        workspaceSetup: {
+          diagnostic: recovery.diagnostic,
+          status: recovery.status,
+          updatedAt: "2026-08-23T12:00:00.000Z"
+        }
+      });
+
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+      await page.getByRole("button", { name: "Fix with temporary AI", exact: true }).click();
+
+      await expectTemporaryRecovery(page, captured, {
+        expectedPrompt: recovery.expectedPrompt,
+        promptLabel: "Fix workspace preparation"
+      });
+    });
+  }
+
+  for (const recovery of [
+    {
+      action: "Save",
+      code: "vibe64_session_save_history_diverged",
+      operationKey: "operation",
+      promptLead: "Help resolve this Vibe64 Save problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:"
+    },
+    {
+      action: "Update",
+      code: "vibe64_session_update_conflict",
+      operationKey: "updateOperation",
+      promptLead: "Help resolve this Vibe64 Update problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:"
+    },
+    {
+      action: "Update",
+      code: "vibe64_session_update_history_diverged",
+      operationKey: "updateOperation",
+      promptLead: "Help resolve this Vibe64 Update problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:"
+    }
+  ]) {
+    test(`routes chat ${recovery.code} recovery through Temporary AI`, async ({ page }) => {
+      const diagnostic = `${recovery.action} could not preserve the changed history.`;
+      const captured = await mockTemporaryRecovery(page, {
+        workState: {
+          operation: null,
+          updateOperation: null,
+          unsaved: true,
+          [recovery.operationKey]: {
+            code: recovery.code,
+            error: diagnostic,
+            operationId: `operation-${recovery.code}`,
+            status: "failed"
+          }
+        }
+      });
+
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+      await page.getByRole("button", { name: "Fix with temporary AI", exact: true }).click();
+
+      await expectTemporaryRecovery(page, captured, {
+        expectedPrompt: [
+          recovery.promptLead,
+          REPOSITORY_RECOVERY_GIT_BOUNDARY,
+          diagnostic
+        ].join("\n\n"),
+        promptLabel: `Resolve ${recovery.action}`
+      });
+    });
+  }
 
   test("submits assistant numbered questions through the same chat endpoint", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
@@ -176,7 +275,13 @@ async function mockDirectChat(page: Page, {
   onMessage = () => undefined,
   onSave = () => undefined,
   onTemporaryConversation = () => undefined,
-  onTemporaryTurn = () => undefined
+  onTemporaryTurn = () => undefined,
+  workspaceSetup = null,
+  workState = {
+    operation: null,
+    unsaved: true,
+    updateOperation: null
+  }
 }: {
   agentActive?: boolean;
   conversationLog?: Record<string, unknown>[];
@@ -184,9 +289,11 @@ async function mockDirectChat(page: Page, {
   onSave?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onTemporaryConversation?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onTemporaryTurn?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  workspaceSetup?: Record<string, unknown> | null;
+  workState?: Record<string, unknown>;
 } = {}) {
   await mockProjectGateReady(page);
-  const session = directSession({ agentActive });
+  const session = directSession({ agentActive, workspaceSetup });
 
   await routeApiEndpoint(page, "/vibe64/sessions", async (route) => {
     const request = route.request();
@@ -261,6 +368,13 @@ async function mockDirectChat(page: Page, {
       await fulfillJson(route, { ok: true });
       return;
     }
+    if (method === "GET" && url.pathname.endsWith("/work")) {
+      await fulfillJson(route, {
+        ...workState,
+        ok: true
+      });
+      return;
+    }
     if (method === "GET" && url.pathname.endsWith("/conversation-log")) {
       await fulfillJson(route, {
         conversationLog,
@@ -297,9 +411,11 @@ async function mockDirectChat(page: Page, {
 }
 
 function directSession({
-  agentActive = false
+  agentActive = false,
+  workspaceSetup = null
 }: {
   agentActive?: boolean;
+  workspaceSetup?: Record<string, unknown> | null;
 } = {}) {
   const createdAt = "2026-08-14T00:00:00.000Z";
   const sessionRoot = sessionRuntimeRoot(SESSION_ID);
@@ -343,8 +459,72 @@ function directSession({
     stateRoot: `${sessionRoot}/state`,
     status: "active",
     targetRoot: "/workspace/example-target-app",
-    updatedAt: createdAt
+    updatedAt: createdAt,
+    ...(workspaceSetup ? { workspaceSetup } : {})
   };
+}
+
+async function mockTemporaryRecovery(page: Page, options: {
+  workspaceSetup?: Record<string, unknown> | null;
+  workState?: Record<string, unknown>;
+}) {
+  const messages: Record<string, unknown>[] = [];
+  const temporaryStarts: Record<string, unknown>[] = [];
+  const temporaryTurns: Record<string, unknown>[] = [];
+  await mockDirectChat(page, {
+    ...options,
+    onMessage(body) {
+      messages.push(body);
+    },
+    onTemporaryConversation(body) {
+      temporaryStarts.push(body);
+    },
+    onTemporaryTurn(body) {
+      temporaryTurns.push(body);
+    }
+  });
+  return {
+    messages,
+    temporaryStarts,
+    temporaryTurns
+  };
+}
+
+async function expectTemporaryRecovery(page: Page, captured: {
+  messages: Record<string, unknown>[];
+  temporaryStarts: Record<string, unknown>[];
+  temporaryTurns: Record<string, unknown>[];
+}, {
+  expectedPrompt,
+  promptLabel
+}: {
+  expectedPrompt: string;
+  promptLabel: string;
+}) {
+  const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+  await expect(workspace).toBeVisible();
+  await expect.poll(() => captured.temporaryStarts).toHaveLength(1);
+  expect(captured.temporaryStarts[0]).toEqual(expect.objectContaining({
+    policy: "workspace_write"
+  }));
+  await expect.poll(() => captured.temporaryTurns).toHaveLength(1);
+  expect(captured.temporaryTurns[0]).toEqual(expect.objectContaining({
+    message: expectedPrompt,
+    policy: "workspace_write",
+    promptLabel
+  }));
+  await expect(workspace.getByText("Temporary answer", { exact: true })).toBeVisible();
+  await expect(workspace.getByRole("button", {
+    name: promptLabel,
+    exact: true
+  })).toBeVisible();
+  await expect(workspace.getByRole("button", {
+    name: "Read/write: temporary AI may edit this session",
+    exact: true
+  })).toBeVisible();
+  expect(captured.temporaryStarts).toHaveLength(1);
+  expect(captured.temporaryTurns).toHaveLength(1);
+  expect(captured.messages).toHaveLength(0);
 }
 
 function requestBodyWithoutOrigin(request: Request) {

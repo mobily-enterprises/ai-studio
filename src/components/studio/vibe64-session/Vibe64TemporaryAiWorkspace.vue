@@ -1,10 +1,15 @@
 <template>
   <section
     v-if="temporary.open.value"
+    ref="workspace"
     class="vibe64-temporary-ai"
     aria-label="Temporary AI workspace"
+    tabindex="-1"
   >
-    <nav class="vibe64-temporary-ai__tabs" aria-label="Temporary AI tasks">
+    <nav
+      class="vibe64-temporary-ai__tabs"
+      aria-label="Temporary AI tasks"
+    >
       <div
         v-for="task in temporary.tasks.value"
         :key="task.id"
@@ -12,7 +17,10 @@
         :class="{ 'vibe64-temporary-ai__tab--active': task.id === temporary.activeTaskId.value }"
       >
         <button
+          :ref="(element) => setTaskTabButton(task.id, element)"
+          :aria-current="task.id === temporary.activeTaskId.value ? 'page' : undefined"
           class="vibe64-temporary-ai__tab-select"
+          :data-temporary-ai-task-id="task.id"
           type="button"
           @click="temporary.selectTask(task.id)"
         >
@@ -21,6 +29,7 @@
         </button>
         <v-btn
           :aria-label="`Close ${task.title}`"
+          class="vibe64-temporary-ai__tab-close"
           height="32"
           :icon="mdiClose"
           min-width="32"
@@ -185,7 +194,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiArrowUp,
@@ -220,6 +229,8 @@ const props = defineProps({
 
 const prompt = ref(null);
 const sendButton = ref(null);
+const workspace = ref(null);
+const taskTabButtons = new Map();
 const resolvedSessionsApiPath = computed(() => readRefOrGetterValue(props.sessionsApiPath));
 const temporaryAiFeedback = useUiFeedback({
   source: "vibe64.temporary-ai.feedback"
@@ -254,6 +265,63 @@ async function sendActiveTask() {
   }
 }
 
+async function startTask(options = {}) {
+  const started = temporary.startTask(options);
+  const taskId = temporary.activeTaskId.value;
+  await revealTaskTab(taskId, { focus: true });
+  const result = await started;
+  if (result?.started) {
+    prompt.value?.clearAttachments?.();
+  }
+  return result;
+}
+
+function showWorkspace() {
+  const task = temporary.showWorkspace();
+  void revealTaskTab(temporary.activeTaskId.value);
+  return task;
+}
+
+function setTaskTabButton(taskId = "", element = null) {
+  const normalizedTaskId = String(taskId || "");
+  if (!normalizedTaskId) {
+    return;
+  }
+  if (element) {
+    taskTabButtons.set(normalizedTaskId, element);
+    return;
+  }
+  taskTabButtons.delete(normalizedTaskId);
+}
+
+function afterBrowserPaint() {
+  if (typeof globalThis.requestAnimationFrame !== "function") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    globalThis.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function revealTaskTab(taskId = "", { focus = false } = {}) {
+  const normalizedTaskId = String(taskId || "");
+  if (!normalizedTaskId) {
+    return false;
+  }
+  await nextTick();
+  await afterBrowserPaint();
+  const button = taskTabButtons.get(normalizedTaskId);
+  button?.scrollIntoView?.({
+    block: "nearest",
+    inline: "nearest"
+  });
+  if (focus) {
+    const target = button || workspace.value;
+    target?.focus?.({ preventScroll: true });
+  }
+  return Boolean(button);
+}
+
 function focusSendButton() {
   const button = sendButton.value?.$el || sendButton.value;
   button?.focus?.();
@@ -270,10 +338,15 @@ function updateActiveAgentSetting(parameterId = "", value = "") {
   }
 }
 
+watch(() => temporary.activeTaskId.value, (taskId) => {
+  void revealTaskTab(taskId);
+}, { flush: "post" });
+
 defineExpose({
   closeWorkspace: temporary.closeWorkspace,
   openTask: temporary.openTask,
-  showWorkspace: temporary.showWorkspace
+  startTask,
+  showWorkspace
 });
 </script>
 
@@ -332,6 +405,12 @@ defineExpose({
   display: inline-flex;
   gap: 0.35rem;
   padding: 0.2rem 0.35rem 0.2rem 0.55rem;
+}
+
+.vibe64-temporary-ai:focus-visible,
+.vibe64-temporary-ai__tab-select:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
 }
 
 .vibe64-temporary-ai__tab--active {
@@ -476,6 +555,17 @@ defineExpose({
     border-radius: 0;
     inset: 0;
     z-index: 30;
+  }
+}
+
+@media (pointer: coarse) {
+  .vibe64-temporary-ai__tab-select,
+  .vibe64-temporary-ai__new-task,
+  .vibe64-temporary-ai__policy,
+  .vibe64-temporary-ai__tab-close,
+  .vibe64-temporary-ai__composer-actions .v-btn {
+    min-height: 3rem !important;
+    min-width: 3rem !important;
   }
 }
 </style>

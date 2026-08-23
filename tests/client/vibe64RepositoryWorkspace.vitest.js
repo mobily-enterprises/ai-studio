@@ -51,10 +51,11 @@ describe("Vibe64 Repository workspace", () => {
       source("src/components/studio/vibe64-session/Vibe64AutopilotView.vue")
     ]);
 
-    expect(repositoryWorkspace).toContain("Resolve with temporary AI");
+    expect(repositoryWorkspace).toContain("Fix with temporary AI");
     expect(repositoryWorkspace).not.toMatch(/resolve conflict manually|accept incoming|accept current/iu);
-    expect(autopilotView).toContain("requestTemporaryAi: openTemporaryAiForRepositoryError");
-    expect(autopilotView).toContain("temporaryAiWorkspace.value?.openTask?.");
+    expect(autopilotView).toContain("requestTemporaryAi: fixRepositoryError");
+    expect(autopilotView).toContain("workspace.startTask(options)");
+    expect(autopilotView).toContain('emit("chat-attention")');
   });
 
   it("renders current changes and version history as separate session destinations", async () => {

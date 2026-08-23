@@ -60,11 +60,11 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("const saveWorkUnsaved = computed");
     expect(composable).toContain("const saveWorkOperationActive = computed");
     expect(component).toContain("saveWorkOperationActive || saveWorkSending || saveWorkError");
-    expect(component).toContain("Vibe64—not Temporary AI—owns every repository operation");
-    expect(component).toContain("Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase");
-    expect(component).toContain("leave both byte-for-byte unchanged");
-    expect(component).toContain("Resolve only by editing the conflicting working-tree files");
-    expect(component).toContain("keep the latest saved version's overlapping lines byte-for-byte");
+    expect(composable).toContain("Vibe64—not Temporary AI—owns every repository operation");
+    expect(composable).toContain("Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase");
+    expect(composable).toContain("leave both byte-for-byte unchanged");
+    expect(composable).toContain("Resolve only by editing the conflicting working-tree files");
+    expect(composable).toContain("keep the latest saved version's overlapping lines byte-for-byte");
     expect(composable).toContain("saveWorkExpanded.value = false;");
     expect(composable).not.toContain("SAVE_WORK_PROMPT");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
@@ -80,13 +80,14 @@ describe("Vibe64 direct session view", () => {
     const temporaryAiComposable = fs.readFileSync(temporaryAiComposablePath, "utf8");
 
     expect(component).toContain("Open temporary AI");
-    expect(component).toContain("Resolve with temporary AI");
+    expect(component).toContain("Fix with temporary AI");
     expect(component).toContain("<Vibe64TemporaryAiWorkspace");
     expect(component).toContain("temporaryAiWorkspace.value?.showWorkspace?.()");
     expect(component).toContain("@select-session=\"activateRealSession\"");
     expect(component).toContain("temporaryAiWorkspace.value?.closeWorkspace?.()");
     expect(temporaryAi).toContain('aria-label="New temporary AI task"');
-    expect(temporaryAi).toContain("showWorkspace: temporary.showWorkspace");
+    expect(temporaryAi).toContain("function showWorkspace()");
+    expect(temporaryAi).toContain("startTask");
     expect(temporaryAi).not.toContain("Not saved to session history");
     expect(temporaryAi).not.toContain("vibe64-temporary-ai__header");
     expect(temporaryAi).toContain('"R/W" : "R/O"');
@@ -108,6 +109,7 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAiComposable).toContain("keepalive: true");
     expect(temporaryAiComposable).toContain("vibe64AgentAttachmentDeletePath");
     expect(temporaryAiComposable).toContain("function showWorkspace()");
+    expect(temporaryAiComposable).toContain("async function startTask(options = {})");
     expect(temporaryAiComposable).toContain("if (tasks.value.length === 0)");
     expect(temporaryAiComposable).toContain("progressUpdates: temporaryAiProgressUpdates(response.progressUpdates)");
     expect(temporaryAiComposable).toContain('status: "failed"');
@@ -189,7 +191,7 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).not.toContain(":actions=");
   });
 
-  it("keeps workspace preparation status and recovery inside direct chat", () => {
+  it("keeps workspace preparation status in chat while routing recovery to Temporary AI", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
 
@@ -199,13 +201,15 @@ describe("Vibe64 direct session view", () => {
 
     expect(statusStart).toBeGreaterThan(chatStart);
     expect(statusStart).toBeLessThan(projectStart);
-    expect(component).toContain("Ask Codex to fix");
+    expect(component).toContain("Fix with temporary AI");
     expect(component).toContain("Retry setup");
-    expect(composable).toContain("sendChatPayload(chatMessagePayload(workspaceSetupFixPrompt");
+    expect(composable).toContain("requestTemporaryAi({");
+    expect(composable).toContain('policy: "workspace_write"');
+    expect(composable).not.toContain("sendChatPayload(chatMessagePayload(workspaceSetupFixPrompt");
     expect(component).not.toMatch(/workspace.*(?:dialog|stepper)|(?:dialog|stepper).*workspace/iu);
   });
 
-  it("turns a rejected managed preview identity into an ordinary Codex repair request", () => {
+  it("turns a rejected managed preview identity into a Temporary AI repair request", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
     const launchControls = fs.readFileSync(
@@ -215,8 +219,9 @@ describe("Vibe64 direct session view", () => {
 
     expect(component).toContain(":ask-codex-to-fix-preview-identity=\"askCodexToFixPreviewIdentity\"");
     expect(launchControls).toContain("previewIdentityFixAvailable");
-    expect(launchControls).toContain("Ask Codex to fix");
-    expect(composable).toContain("sendChatPayload(chatMessagePayload(previewIdentityFixPrompt(input)))");
+    expect(launchControls).toContain("Fix with temporary AI");
+    expect(launchControls).toContain("previewIdentityFixSending");
+    expect(composable).not.toContain("sendChatPayload(chatMessagePayload(previewIdentityFixPrompt(input)))");
     expect(composable).toContain("app-owned, idempotent development seed");
     expect(composable).toContain("Keep preview authentication material host-managed");
   });

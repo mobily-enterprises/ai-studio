@@ -42,6 +42,11 @@ type PreviewIdentityExchangeResult = {
   signedOut?: boolean;
   status?: number;
 };
+type TemporaryAiRecoveryRequests = {
+  mainMessages: Record<string, unknown>[];
+  temporaryStarts: Record<string, unknown>[];
+  temporaryTurns: Record<string, unknown>[];
+};
 
 async function openSessionDashboardTool(page: Page, label: string) {
   await page.getByRole("tab", {
@@ -184,6 +189,11 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
     width: 390
   });
   await mockLaunchTerminalSocket(page);
+  const recoveryRequests: TemporaryAiRecoveryRequests = {
+    mainMessages: [],
+    temporaryStarts: [],
+    temporaryTurns: []
+  };
   const launchSession = await mockLaunchSession(page, {
     previewIdentity: previewIdentityCapability(),
     previewIdentityExchange: (selection) => {
@@ -205,7 +215,8 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
         },
         ok: true
       };
-    }
+    },
+    temporaryAiRecoveryRequests: recoveryRequests
   });
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
@@ -222,9 +233,58 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
     .click();
 
   await expect(page.getByText("User not found.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", {
+  const failedIdentityButton = page.getByRole("button", {
     name: "Preview identity failed: User not found."
+  });
+  await expect(failedIdentityButton).toBeVisible();
+  await failedIdentityButton.click();
+
+  await page.locator(".vibe64-launch-controls__identity-menu")
+    .getByRole("button", {
+      name: "Fix with temporary AI",
+      exact: true
+    })
+    .click();
+
+  const chat = page.getByRole("region", { name: "Session chat", exact: true });
+  const project = page.getByRole("region", { name: "Project", exact: true });
+  const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+  await expect(chat).toBeVisible();
+  await expect(project).toBeHidden();
+  await expect(workspace).toBeVisible();
+  await expect.poll(async () => Math.round((await chat.boundingBox())?.width || 0)).toBe(390);
+  await expect(workspace.getByRole("button", {
+    name: "Fix preview identity",
+    exact: true
   })).toBeVisible();
+  await expect(workspace.getByRole("button", {
+    name: "Read/write: temporary AI may edit this session",
+    exact: true
+  })).toBeVisible();
+
+  const expectedRecoveryPrompt = [
+    "The managed preview could not sign in as `missing` (email: `missing@example.com`):",
+    "User not found.",
+    "Please diagnose and fix this in the current application. Ensure its app-owned, idempotent development seed creates this user profile and any workspace membership the app requires in every fresh database, then run the normal database preparation command and verify the identity exchange. Keep preview authentication material host-managed; do not add, reveal, or hardcode Vibe64 secrets."
+  ].join("\n\n");
+  await expect.poll(() => recoveryRequests.temporaryStarts).toHaveLength(1);
+  expect(recoveryRequests.temporaryStarts[0]).toEqual(expect.objectContaining({
+    policy: "workspace_write"
+  }));
+  await expect.poll(() => recoveryRequests.temporaryTurns).toHaveLength(1);
+  expect(recoveryRequests.temporaryTurns[0]).toEqual(expect.objectContaining({
+    message: expectedRecoveryPrompt,
+    policy: "workspace_write",
+    promptLabel: "Fix preview identity"
+  }));
+  await expect(workspace.getByText("Temporary identity recovery complete.", {
+    exact: true
+  })).toBeVisible();
+  expect(recoveryRequests.temporaryStarts).toHaveLength(1);
+  expect(recoveryRequests.temporaryTurns).toHaveLength(1);
+  expect(recoveryRequests.mainMessages).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Show project" }).click();
   await page.getByRole("button", {
     name: "Preview identity failed: User not found."
   }).click();
@@ -1463,7 +1523,8 @@ async function mockLaunchSession(page: Page, {
   sessionList = null,
   sourceEditorFiles = null,
   sourceExplanationResponses = [],
-  sessionListDelayMs = 0
+  sessionListDelayMs = 0,
+  temporaryAiRecoveryRequests = null
 }: {
   conversationLog?: unknown[];
   initialLaunchStatus?: ReturnType<typeof launchStatusPayload> | null;
@@ -1482,6 +1543,7 @@ async function mockLaunchSession(page: Page, {
   sourceEditorFiles?: Record<string, string> | null;
   sourceExplanationResponses?: SourceExplanationResponse[];
   sessionListDelayMs?: number;
+  temporaryAiRecoveryRequests?: TemporaryAiRecoveryRequests | null;
 } = {}) {
   const listedSessions = Array.isArray(sessionList) ? sessionList : [session];
   const sourceEditor = sourceEditorFiles ? createSourceEditorMock(sourceEditorFiles) : null;
@@ -1601,6 +1663,59 @@ async function mockLaunchSession(page: Page, {
         conversationLog,
         ok: true,
         sessionId: decodeURIComponent(url.pathname.split("/").at(-2) || "")
+      });
+      return;
+    }
+    if (temporaryAiRecoveryRequests && method === "POST" && url.pathname.endsWith("/agent-message")) {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      temporaryAiRecoveryRequests.mainMessages.push(payload);
+      await fulfillJson(route, {
+        delivered: true,
+        messageId: String(payload.messageId || ""),
+        ok: true,
+        sessionId: SESSION_ID
+      });
+      return;
+    }
+    if (
+      temporaryAiRecoveryRequests &&
+      method === "POST" &&
+      url.pathname.endsWith("/temporary-conversations")
+    ) {
+      temporaryAiRecoveryRequests.temporaryStarts.push(
+        request.postDataJSON() as Record<string, unknown>
+      );
+      await fulfillJson(route, {
+        conversationId: "temporary-preview-identity",
+        ok: true
+      });
+      return;
+    }
+    if (
+      temporaryAiRecoveryRequests &&
+      method === "POST" &&
+      url.pathname.endsWith("/temporary-conversations/temporary-preview-identity/turns")
+    ) {
+      temporaryAiRecoveryRequests.temporaryTurns.push(
+        request.postDataJSON() as Record<string, unknown>
+      );
+      await fulfillJson(route, {
+        ok: true,
+        runId: "temporary-preview-identity-run",
+        status: "inProgress"
+      });
+      return;
+    }
+    if (
+      temporaryAiRecoveryRequests &&
+      method === "GET" &&
+      url.pathname.endsWith("/temporary-conversations/temporary-preview-identity")
+    ) {
+      await fulfillJson(route, {
+        message: "Temporary identity recovery complete.",
+        ok: true,
+        runId: "temporary-preview-identity-run",
+        status: "completed"
       });
       return;
     }

@@ -16,7 +16,7 @@ import {
   sessionRecordHasActiveAgentWork
 } from "@/lib/vibe64MountedSessionState.js";
 
-const vibe64SessionPanelEmits = ["title-change", "project-attention"];
+const vibe64SessionPanelEmits = ["chat-attention", "title-change", "project-attention"];
 const vibe64SessionPanelProps = {
   chatCollapsed: {
     default: false,
@@ -221,6 +221,7 @@ function useVibe64SessionPanel(props, emit) {
     chatCollapsed,
     dashboardProjectActive,
     dismissPageError,
+    emitChatAttention,
     emitProjectAttention,
     emptyChatHintText,
     emptyCreateAttention,
@@ -247,6 +248,10 @@ function useVibe64SessionPanel(props, emit) {
 
   function emitProjectAttention() {
     emit("project-attention");
+  }
+
+  function emitChatAttention() {
+    emit("chat-attention");
   }
 
   function dismissPageError() {

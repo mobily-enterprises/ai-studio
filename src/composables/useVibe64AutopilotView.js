@@ -67,7 +67,7 @@ const NUMBERED_QUESTION_UNSURE_CHOICE = Object.freeze({
   selectLabel: NUMBERED_QUESTION_UNSURE_VALUE,
   value: NUMBERED_QUESTION_UNSURE_VALUE
 });
-const vibe64AutopilotViewEmits = ["busy-change", "project-attention"];
+const vibe64AutopilotViewEmits = ["busy-change", "chat-attention", "project-attention"];
 const vibe64AutopilotViewProps = {
   active: {
     default: true,
@@ -224,7 +224,30 @@ function previewIdentityFixPrompt({
   ].join("\n\n");
 }
 
-function useVibe64AutopilotView(props, emit) {
+const REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY = [
+  "Vibe64—not Temporary AI—owns every repository operation. The failed operation has already been rolled back.",
+  "You may inspect Git read-only and edit ordinary working-tree files in this session. Do not change HEAD, branches, refs, the index, stashes, remotes, commits, checkpoints, or repository configuration.",
+  "Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase, cherry-pick, revert, pull, push, fetch, or update-ref. Do not create a recovery ref or stash; Vibe64 already owns durable recovery.",
+  "Record the initial HEAD and index with read-only commands, leave both byte-for-byte unchanged, and do not publish. Resolve only by editing the conflicting working-tree files so the user can retry the Vibe64 operation.",
+  "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
+].join("\n");
+
+function repositoryTemporaryAiDedupeKey({
+  code = "",
+  diagnostic = "",
+  sessionId = ""
+} = {}) {
+  return [
+    "repository-recovery",
+    normalizedAgentTurnText(sessionId),
+    normalizedAgentTurnText(code),
+    normalizedAgentTurnText(diagnostic)
+  ].join("|");
+}
+
+function useVibe64AutopilotView(props, emit, {
+  requestTemporaryAi = null
+} = {}) {
   const route = useRoute();
   const router = useRouter();
   const projectSlug = useVibe64ProjectSlug();
@@ -277,6 +300,8 @@ function useVibe64AutopilotView(props, emit) {
   const selectedAnswerChoice = ref("");
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
+  const workspaceSetupFixSending = ref(false);
+  const repositoryRecoverySending = ref(false);
   const previewAttachmentState = ref({
     attachDiagnostics: null,
     capture: null,
@@ -402,7 +427,12 @@ function useVibe64AutopilotView(props, emit) {
     props.sessionSelectionClosed
   ));
   const workspaceSetupAskDisabled = computed(() => Boolean(
-    !workspaceSetupNeedsAttention.value || composerDisabled.value
+    !workspaceSetupNeedsAttention.value ||
+    workspaceSetupFixSending.value ||
+    !props.active ||
+    !sessionId.value ||
+    props.sessionSelectionClosed ||
+    repositoryOperationActive.value
   ));
 
   async function retryWorkspaceSetup() {
@@ -422,21 +452,128 @@ function useVibe64AutopilotView(props, emit) {
     }
   }
 
-  function askCodexToFixWorkspaceSetup() {
-    if (workspaceSetupAskDisabled.value) {
+  async function askCodexToFixWorkspaceSetup() {
+    if (workspaceSetupAskDisabled.value || typeof requestTemporaryAi !== "function") {
       return false;
     }
-    return sendChatPayload(chatMessagePayload(workspaceSetupFixPrompt({
+    const setup = {
       ...workspaceSetup.value,
       diagnostic: workspaceSetupDiagnostic.value
-    })));
+    };
+    workspaceSetupFixSending.value = true;
+    try {
+      const result = await requestTemporaryAi({
+        dedupeKey: [
+          "workspace-setup",
+          sessionId.value,
+          workspaceSetupStatus.value,
+          normalizedAgentTurnText(setup.updatedAt),
+          normalizedAgentTurnText(setup.diagnostic)
+        ].join("|"),
+        message: workspaceSetupFixPrompt(setup),
+        policy: "workspace_write",
+        title: "Fix workspace preparation"
+      });
+      return result !== false && result?.ok !== false;
+    } finally {
+      workspaceSetupFixSending.value = false;
+    }
   }
 
-  function askCodexToFixPreviewIdentity(input = {}) {
-    if (composerDisabled.value) {
+  async function askCodexToFixPreviewIdentity(input = {}) {
+    if (
+      typeof requestTemporaryAi !== "function" ||
+      !props.active ||
+      !sessionId.value ||
+      props.sessionSelectionClosed ||
+      repositoryOperationActive.value
+    ) {
       return false;
     }
-    return sendChatPayload(chatMessagePayload(previewIdentityFixPrompt(input)));
+    const identity = input?.identity || {};
+    const error = normalizedAgentTurnText(input?.error);
+    const result = await requestTemporaryAi({
+      dedupeKey: [
+        "preview-identity",
+        sessionId.value,
+        normalizedAgentTurnText(identity.type),
+        normalizedAgentTurnText(identity.value),
+        error
+      ].join("|"),
+      message: previewIdentityFixPrompt(input),
+      policy: "workspace_write",
+      title: "Fix preview identity"
+    });
+    return result !== false && result?.ok !== false;
+  }
+
+  function temporaryAiRecoveryUnavailable() {
+    return Boolean(
+      repositoryRecoverySending.value ||
+      typeof requestTemporaryAi !== "function" ||
+      !props.active ||
+      !sessionId.value ||
+      props.sessionSelectionClosed ||
+      repositoryOperationActive.value
+    );
+  }
+
+  async function fixRepositoryActionError() {
+    if (temporaryAiRecoveryUnavailable() || !saveWorkCanResolveWithTemporaryAi.value) {
+      return false;
+    }
+    const action = saveWorkActivityIsUpdate.value ? "Update" : "Save";
+    repositoryRecoverySending.value = true;
+    try {
+      const result = await requestTemporaryAi({
+        dedupeKey: repositoryTemporaryAiDedupeKey({
+          code: saveWorkFailure.value?.code,
+          diagnostic: saveWorkError.value,
+          sessionId: sessionId.value
+        }),
+        message: [
+          `Help resolve this Vibe64 ${action} problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:`,
+          REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
+          saveWorkError.value
+        ].filter(Boolean).join("\n\n"),
+        policy: "workspace_write",
+        title: `Resolve ${action}`
+      });
+      return result !== false && result?.ok !== false;
+    } finally {
+      repositoryRecoverySending.value = false;
+    }
+  }
+
+  async function fixRepositoryError({
+    code = "",
+    error = "",
+    title = "Resolve repository problem"
+  } = {}) {
+    const diagnostic = normalizedAgentTurnText(error);
+    if (temporaryAiRecoveryUnavailable() || !diagnostic) {
+      return false;
+    }
+    repositoryRecoverySending.value = true;
+    try {
+      const result = await requestTemporaryAi({
+        dedupeKey: repositoryTemporaryAiDedupeKey({
+          code,
+          diagnostic,
+          sessionId: sessionId.value
+        }),
+        message: [
+          "Help resolve this Vibe64 repository problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
+          REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
+          diagnostic
+        ].join("\n\n"),
+        policy: "workspace_write",
+        title
+      });
+      return result !== false && result?.ok !== false;
+    } finally {
+      repositoryRecoverySending.value = false;
+    }
   }
 
   function updateComposerAttachments(attachments = []) {
@@ -1168,6 +1305,8 @@ function useVibe64AutopilotView(props, emit) {
     confirmSaveWork,
     editOptimisticMessage,
     emptyConversationWelcome,
+    fixRepositoryActionError,
+    fixRepositoryError,
     interrupting,
     loadMoreChatTurns,
     numberedQuestionSelectItems,
@@ -1177,6 +1316,7 @@ function useVibe64AutopilotView(props, emit) {
     projectSlug,
     questionAnswers,
     reloadChatPane,
+    repositoryRecoverySending,
     retrySaveWork,
     retryWorkspaceSetup,
     requestSaveWork,
@@ -1223,6 +1363,7 @@ function useVibe64AutopilotView(props, emit) {
     workspaceSetupAskDisabled,
     workspaceSetupCurrentLabel,
     workspaceSetupDiagnostic,
+    workspaceSetupFixSending,
     workspaceSetupNeedsAttention,
     workspaceSetupRetryDisabled,
     workspaceSetupRetrying,

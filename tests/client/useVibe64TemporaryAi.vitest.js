@@ -32,6 +32,24 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
+function deferredPromise() {
+  let resolve;
+  const promise = new Promise((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+async function temporaryAi() {
+  const { useVibe64TemporaryAi } = await import(
+    "../../src/composables/useVibe64TemporaryAi.js"
+  );
+  return useVibe64TemporaryAi({
+    sessionId: () => "session-1",
+    sessionsApiPath: () => "/api/vibe64/sessions"
+  });
+}
+
 async function temporaryAiWithDraft() {
   const { useVibe64TemporaryAi } = await import(
     "../../src/composables/useVibe64TemporaryAi.js"
@@ -64,6 +82,475 @@ describe("useVibe64TemporaryAi", () => {
     mocks.requests.length = 0;
     mocks.responses.length = 0;
     vi.useFakeTimers();
+  });
+
+  it("opens and selects a recovery task synchronously before automatically sending it", async () => {
+    const conversationRequest = deferredPromise();
+    mocks.responses.push(
+      () => conversationRequest.promise,
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The recovery is complete.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const temporary = await temporaryAi();
+    const previousTask = temporary.openTask({ title: "Earlier task" });
+    temporary.closeWorkspace();
+
+    const sending = temporary.startTask({
+      dedupeKey: "workspace-preparation:session-1",
+      draft: "Fix workspace preparation.",
+      policy: "workspace_write",
+      title: "Fix workspace preparation"
+    });
+
+    expect(temporary.open.value).toBe(true);
+    expect(temporary.tasks.value).toHaveLength(2);
+    expect(temporary.activeTask.value).toMatchObject({
+      busy: true,
+      dedupeKey: "workspace-preparation:session-1",
+      draft: "",
+      policy: "workspace_write",
+      status: "starting",
+      title: "Fix workspace preparation"
+    });
+    expect(temporary.activeTask.value.id).not.toBe(previousTask.id);
+    expect(mocks.requests).toHaveLength(1);
+
+    conversationRequest.resolve({ conversationId: "conversation-1", ok: true });
+    await expect(sending).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true,
+      taskId: temporary.activeTask.value.id
+    });
+    await flushPromises();
+
+    const turnRequests = mocks.requests.filter(([path]) => path.endsWith("/turns"));
+    expect(turnRequests).toHaveLength(1);
+    expect(turnRequests[0][1]).toMatchObject({
+      body: {
+        message: "Fix workspace preparation.",
+        policy: "workspace_write",
+        promptLabel: "Fix workspace preparation"
+      },
+      method: "POST"
+    });
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      role: "user",
+      text: "Fix workspace preparation."
+    });
+  });
+
+  it("coalesces rapid recovery starts with the same dedupe key", async () => {
+    const conversationRequest = deferredPromise();
+    mocks.responses.push(
+      () => conversationRequest.promise,
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The recovery is complete.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const temporary = await temporaryAi();
+    const task = {
+      dedupeKey: "preview-identity:session-1",
+      draft: "Fix preview identity.",
+      policy: "workspace_write",
+      title: "Fix preview identity"
+    };
+
+    const firstStart = temporary.startTask(task);
+    const firstTaskId = temporary.activeTask.value.id;
+    const duplicateStart = temporary.startTask(task);
+
+    expect(temporary.open.value).toBe(true);
+    expect(temporary.tasks.value).toHaveLength(1);
+    expect(temporary.activeTask.value.id).toBe(firstTaskId);
+    expect(mocks.requests).toHaveLength(1);
+    await expect(duplicateStart).resolves.toEqual({
+      ok: true,
+      reused: true,
+      started: false,
+      taskId: firstTaskId
+    });
+
+    conversationRequest.resolve({ conversationId: "conversation-1", ok: true });
+    await expect(firstStart).resolves.toEqual({
+      ok: true,
+      reused: false,
+      started: true,
+      taskId: firstTaskId
+    });
+    await flushPromises();
+
+    expect(mocks.requests.filter(([path]) => path.endsWith("/temporary-conversations"))).toHaveLength(1);
+    expect(mocks.requests.filter(([path]) => path.endsWith("/turns"))).toHaveLength(1);
+    expect(temporary.tasks.value).toHaveLength(1);
+    expect(temporary.activeTask.value.messages.filter((message) => message.role === "user")).toHaveLength(1);
+  });
+
+  it("coalesces one busy repository recovery opened from chat and Dashboard", async () => {
+    const conversationRequest = deferredPromise();
+    mocks.responses.push(
+      () => conversationRequest.promise,
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The recovery is complete.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const temporary = await temporaryAi();
+    const dedupeKey = [
+      "repository-recovery",
+      "session-1",
+      "vibe64_session_update_conflict",
+      "One file needs review."
+    ].join("|");
+
+    const chatStart = temporary.startTask({
+      dedupeKey,
+      message: "Resolve this update from chat.",
+      policy: "workspace_write",
+      title: "Resolve Update"
+    });
+    const firstTaskId = temporary.activeTask.value.id;
+    const dashboardStart = temporary.startTask({
+      dedupeKey,
+      message: "Resolve this update from Dashboard.",
+      policy: "workspace_write",
+      title: "Resolve repository update"
+    });
+
+    await expect(dashboardStart).resolves.toEqual({
+      ok: true,
+      reused: true,
+      started: false,
+      taskId: firstTaskId
+    });
+    expect(temporary.tasks.value).toHaveLength(1);
+    expect(temporary.activeTask.value).toMatchObject({
+      id: firstTaskId,
+      title: "Resolve Update"
+    });
+    expect(mocks.requests).toHaveLength(1);
+
+    conversationRequest.resolve({ conversationId: "conversation-1", ok: true });
+    await expect(chatStart).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true,
+      taskId: firstTaskId
+    });
+    await flushPromises();
+
+    expect(mocks.requests.filter(([path]) => path.endsWith("/temporary-conversations"))).toHaveLength(1);
+    expect(mocks.requests.filter(([path]) => path.endsWith("/turns"))).toHaveLength(1);
+    expect(temporary.activeTask.value.messages.filter((message) => message.role === "user")).toEqual([
+      expect.objectContaining({ text: "Resolve this update from chat." })
+    ]);
+  });
+
+  it("starts a fresh recovery task after the matching task completed", async () => {
+    const recovery = {
+      dedupeKey: "workspace-preparation:session-1",
+      message: "Fix workspace preparation.",
+      policy: "workspace_write",
+      title: "Fix workspace preparation"
+    };
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The first recovery is complete.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const temporary = await temporaryAi();
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true
+    });
+    await flushPromises();
+    const completedTaskId = temporary.activeTask.value.id;
+    expect(temporary.activeTask.value.status).toBe("completed");
+
+    mocks.responses.push(
+      { conversationId: "conversation-2", ok: true },
+      { conversationId: "conversation-2", ok: true, runId: "turn-2", status: "inProgress" },
+      {
+        conversationId: "conversation-2",
+        message: "The second recovery is complete.",
+        ok: true,
+        runId: "turn-2",
+        status: "completed"
+      }
+    );
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true
+    });
+    await flushPromises();
+
+    expect(temporary.tasks.value).toHaveLength(2);
+    expect(temporary.activeTask.value.id).not.toBe(completedTaskId);
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      role: "user",
+      text: recovery.message
+    });
+    expect(mocks.requests.filter(([path]) => path.endsWith("/temporary-conversations"))).toHaveLength(2);
+    expect(mocks.requests.filter(([path]) => path.endsWith("/turns"))).toHaveLength(2);
+  });
+
+  it("starts a fresh recovery task after the matching task was interrupted", async () => {
+    const firstPoll = deferredPromise();
+    const recovery = {
+      dedupeKey: "save-conflict:session-1",
+      message: "Resolve the Save conflict safely.",
+      policy: "workspace_write",
+      title: "Resolve Save conflict"
+    };
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      () => firstPoll.promise,
+      { ok: true }
+    );
+    const temporary = await temporaryAi();
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      started: true
+    });
+    const interruptedTaskId = temporary.activeTask.value.id;
+    await expect(temporary.stopTask(interruptedTaskId)).resolves.toBe(true);
+    expect(temporary.activeTask.value.status).toBe("interrupted");
+
+    mocks.responses.push(
+      { conversationId: "conversation-2", ok: true },
+      { conversationId: "conversation-2", ok: true, runId: "turn-2", status: "inProgress" },
+      {
+        conversationId: "conversation-2",
+        message: "The new recovery is complete.",
+        ok: true,
+        runId: "turn-2",
+        status: "completed"
+      }
+    );
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true
+    });
+    await flushPromises();
+
+    expect(temporary.tasks.value).toHaveLength(2);
+    expect(temporary.activeTask.value.id).not.toBe(interruptedTaskId);
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      role: "user",
+      text: recovery.message
+    });
+    expect(mocks.requests.filter(([path]) => path.endsWith("/temporary-conversations"))).toHaveLength(2);
+    expect(mocks.requests.filter(([path]) => path.endsWith("/turns"))).toHaveLength(2);
+
+    firstPoll.resolve({
+      conversationId: "conversation-1",
+      ok: true,
+      runId: "turn-1",
+      status: "interrupted"
+    });
+    await flushPromises();
+  });
+
+  it("starts a fresh recovery task after polling the matching task failed", async () => {
+    const recovery = {
+      dedupeKey: "update-conflict:session-1",
+      message: "Resolve the Update conflict safely.",
+      policy: "workspace_write",
+      title: "Resolve Update"
+    };
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        code: "vibe64_temporary_conversation_expired",
+        conversationExpired: true,
+        error: "This Temporary AI task ended when Vibe64 restarted.",
+        ok: false
+      }
+    );
+    const temporary = await temporaryAi();
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      started: true
+    });
+    await flushPromises();
+    const failedTaskId = temporary.activeTask.value.id;
+    expect(temporary.activeTask.value).toMatchObject({
+      draft: "",
+      pendingMessageId: "",
+      status: "failed"
+    });
+
+    mocks.responses.push(
+      { conversationId: "conversation-2", ok: true },
+      { conversationId: "conversation-2", ok: true, runId: "turn-2", status: "inProgress" },
+      {
+        conversationId: "conversation-2",
+        message: "The replacement recovery is complete.",
+        ok: true,
+        runId: "turn-2",
+        status: "completed"
+      }
+    );
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: true,
+      reused: false,
+      started: true
+    });
+    await flushPromises();
+
+    expect(temporary.tasks.value).toHaveLength(2);
+    expect(temporary.activeTask.value.id).not.toBe(failedTaskId);
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      role: "user",
+      text: recovery.message
+    });
+    expect(mocks.requests.filter(([path]) => path.endsWith("/temporary-conversations"))).toHaveLength(2);
+    expect(mocks.requests.filter(([path]) => path.endsWith("/turns"))).toHaveLength(2);
+  });
+
+  it("keeps a failed recovery task visible with its draft and error so it can be retried", async () => {
+    mocks.responses.push({
+      error: "Temporary AI could not be started.",
+      ok: false
+    });
+    const temporary = await temporaryAi();
+
+    const result = await temporary.startTask({
+      dedupeKey: "save-conflict:session-1",
+      draft: "Resolve the Save conflict safely.",
+      policy: "workspace_write",
+      title: "Resolve Save conflict"
+    });
+
+    const failedTask = temporary.activeTask.value;
+    expect(result).toEqual({
+      ok: false,
+      reused: false,
+      started: false,
+      taskId: failedTask.id
+    });
+    expect(temporary.open.value).toBe(true);
+    expect(temporary.tasks.value).toHaveLength(1);
+    expect(failedTask).toMatchObject({
+      busy: false,
+      draft: "Resolve the Save conflict safely.",
+      error: "Temporary AI could not be started.",
+      status: "failed"
+    });
+    expect(failedTask.pendingMessageId).toMatch(/^message_/u);
+
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The Save conflict is resolved.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+
+    await expect(temporary.send(failedTask.id)).resolves.toBe(true);
+    await flushPromises();
+
+    expect(temporary.open.value).toBe(true);
+    expect(temporary.activeTask.value).toMatchObject({
+      busy: false,
+      error: "",
+      status: "completed"
+    });
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      role: "user",
+      text: "Resolve the Save conflict safely."
+    });
+  });
+
+  it("reuses the created conversation and message identity after an ambiguous turn failure", async () => {
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { error: "The turn request could not be confirmed.", ok: false }
+    );
+    const temporary = await temporaryAi();
+    const recovery = {
+      dedupeKey: "update-conflict:session-1",
+      message: "Resolve the Update conflict safely.",
+      policy: "workspace_write",
+      title: "Resolve Update"
+    };
+
+    await expect(temporary.startTask(recovery)).resolves.toMatchObject({
+      ok: false,
+      reused: false,
+      started: false
+    });
+    const failedTask = temporary.activeTask.value;
+    const originalMessageId = failedTask.pendingMessageId;
+    expect(failedTask).toMatchObject({
+      conversationId: "conversation-1",
+      draft: "Resolve the Update conflict safely.",
+      status: "failed"
+    });
+
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        message: "The Update conflict is resolved.",
+        ok: true,
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    await expect(temporary.startTask(recovery)).resolves.toEqual({
+      ok: true,
+      reused: true,
+      started: true,
+      taskId: failedTask.id
+    });
+    await flushPromises();
+
+    const conversationRequests = mocks.requests.filter(([path]) => (
+      path.endsWith("/temporary-conversations")
+    ));
+    const turnRequests = mocks.requests.filter(([path]) => path.endsWith("/turns"));
+    expect(conversationRequests).toHaveLength(1);
+    expect(turnRequests).toHaveLength(2);
+    expect(turnRequests[0][1].body.messageId).toBe(originalMessageId);
+    expect(turnRequests[1][1].body.messageId).toBe(originalMessageId);
+    expect(temporary.tasks.value).toHaveLength(1);
   });
 
   it("shows live progress and settles with the final answer", async () => {
