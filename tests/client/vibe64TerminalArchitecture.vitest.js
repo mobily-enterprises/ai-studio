@@ -80,13 +80,45 @@ describe("Vibe64 terminal architecture", () => {
     expect(source).toContain('v-if="bodyMode === \'terminal\'"');
     expect(source).toContain('class="vibe64-terminal-surface__log"');
     expect(source).toContain('role="log"');
-    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('aria-live="off"');
     expect(source).toContain('<slot name="output" :output="output">');
-    expect(source).toContain('v-if="bodyMode === \'log\' && status"');
+    expect(source).toContain("v-if=\"status && (!surfaceExpanded || bodyMode === 'log')\"");
     expect(source).toContain('v-if="bodyMode === \'terminal\' || $slots.footer"');
     expect(source).toContain('validator: (value) => ["log", "terminal"].includes(value)');
     expect(source).toContain("vibe64-terminal-surface--mobile-takeover");
-    expect(source).toContain("height: 100dvh");
+    expect(source).toContain("height: 100dvh !important");
     expect(source.match(/vibe64-terminal-surface__mount/gu)).toHaveLength(3);
   });
+
+  it("keeps compact output and terminal controls in the shared presentation seam", () => {
+    const element = readFileSync(terminalElementPath, "utf8");
+    const surface = readFileSync(terminalSurfacePath, "utf8");
+
+    expect(surface).toContain('class="vibe64-terminal-surface__summary"');
+    expect(surface).toContain('terminalLastMeaningfulLine(props.output)');
+    expect(surface).toContain(':aria-controls="bodyId"');
+    expect(surface).toContain(':aria-expanded="String(surfaceExpanded)"');
+    expect(surface).toContain('v-show="surfaceExpanded"');
+    expect(surface).toContain("const surfaceExpanded = computed(() => !props.collapsible || props.expanded);");
+    expect(surface).toContain('<Teleport :disabled="!mobileTakeoverActive" to="body">');
+    expect(surface).toContain(":aria-modal=\"mobileTakeoverActive ? 'true' : undefined\"");
+    expect(surface).toContain(":role=\"mobileTakeoverActive ? 'dialog' : 'region'\"");
+    expect(surface).toContain("document.body.style.overflow = \"hidden\";");
+    expect(surface).toContain("record.element.inert = true;");
+    expect(surface).toContain("takeoverPendingRestoreTarget = document.activeElement !== document.body");
+    expect(surface).toContain("takeoverRestoreTarget = takeoverPendingRestoreTarget || document.activeElement;");
+    expect(surface).toContain('event.key === "Escape"');
+    expect(surface).toContain('default: false');
+    expect(surface).toContain('@media (pointer: coarse)');
+    expect(surface).not.toContain(':loading="starting"');
+
+    expect(element).toContain('mobileTakeover: props.mobileTakeover');
+    expect(element).toContain('openErrorDetails: props.openErrorDetails');
+    expect(element).toContain('stage: props.stage');
+    expect(element).toContain("fill: expanded.value && (props.fill || floatingPresentation.value || dialogPresentation.value)");
+    expect(element).toContain('terminalValue("terminalSummaryLine", "")');
+    expect(element).toContain('starting ? "Opening…" : launcherLabel');
+    expect(element).not.toContain(':loading="starting"');
+  });
+
 });

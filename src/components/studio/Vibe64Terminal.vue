@@ -2,13 +2,14 @@
   <div v-if="launcherVisible" class="vibe64-terminal__launcher">
     <slot name="launcher" :launch="launch" :running="running">
       <v-btn
+        :aria-busy="starting ? 'true' : undefined"
+        class="vibe64-terminal__launcher-action"
         color="primary"
-        :disabled="launcherDisabled"
-        :loading="starting"
+        :disabled="launcherDisabled || starting"
         variant="flat"
         @click="launch"
       >
-        {{ launcherLabel }}
+        {{ starting ? "Opening…" : launcherLabel }}
       </v-btn>
     </slot>
   </div>
@@ -156,6 +157,14 @@ const props = defineProps({
     default: "Open terminal",
     type: String
   },
+  mobileTakeover: {
+    default: true,
+    type: Boolean
+  },
+  openErrorDetails: {
+    default: false,
+    type: Boolean
+  },
   output: {
     default: undefined,
     type: null
@@ -204,6 +213,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  stage: {
+    default: "",
+    type: String
+  },
   surfaceClass: {
     default: "",
     type: [String, Array, Object]
@@ -217,6 +230,10 @@ const props = defineProps({
     type: String
   },
   subtitle: {
+    default: "",
+    type: String
+  },
+  summaryLine: {
     default: "",
     type: String
   },
@@ -263,9 +280,14 @@ function terminalValue(name, fallback = null) {
 const visible = computed(() => typeof props.visible === "undefined"
   ? Boolean(terminalValue("terminalVisible", true))
   : Boolean(props.visible));
-const expanded = computed(() => typeof props.expanded === "undefined"
-  ? Boolean(terminalValue("terminalExpanded", true))
-  : Boolean(props.expanded));
+const expanded = computed(() => {
+  if (!props.collapsible) {
+    return true;
+  }
+  return typeof props.expanded === "undefined"
+    ? Boolean(terminalValue("terminalExpanded", false))
+    : Boolean(props.expanded);
+});
 const minimized = computed(() => props.presentation === "minimized");
 const floatingPresentation = computed(() => ["floating", "minimized"].includes(props.presentation));
 const dialogPresentation = computed(() => ["dialog", "fullscreen"].includes(props.presentation));
@@ -285,9 +307,11 @@ const surfaceProps = computed(() => ({
   errorTitle: props.errorTitle,
   exited: Boolean(terminalValue("terminalExited", false)),
   expanded: expanded.value,
-  fill: props.fill || floatingPresentation.value || dialogPresentation.value,
+  fill: expanded.value && (props.fill || floatingPresentation.value || dialogPresentation.value),
   focused: Boolean(terminalValue("terminalFocused", false)),
   height: props.height,
+  mobileTakeover: props.mobileTakeover,
+  openErrorDetails: props.openErrorDetails,
   output: typeof props.output === "undefined"
     ? String(terminalValue("terminalOutput", ""))
     : String(props.output || ""),
@@ -297,9 +321,11 @@ const surfaceProps = computed(() => ({
   showClose: props.showClose,
   showCopy: props.showCopy,
   showInterrupt: props.showInterrupt,
+  stage: props.stage,
   starting: starting.value,
   status: props.status || String(terminalValue("terminalStatus", "")),
   subtitle: props.subtitle,
+  summaryLine: props.summaryLine || String(terminalValue("terminalSummaryLine", "")),
   title: props.title
 }));
 
@@ -470,6 +496,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .vibe64-terminal__launcher {
   display: inline-flex;
+}
+
+.vibe64-terminal__launcher-action {
+  min-inline-size: 7rem;
 }
 
 .vibe64-terminal__floating-layer {

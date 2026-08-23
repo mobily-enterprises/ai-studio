@@ -9,7 +9,10 @@ import {
   terminalTranscriptTail,
   terminalResizeErrorMessage
 } from "@/lib/studioTerminalSize.js";
-import { stripTerminalControlSequences } from "@/lib/codexOutput.js";
+import {
+  stripTerminalControlSequences,
+  terminalLastMeaningfulLine
+} from "@/lib/codexOutput.js";
 import { validateTerminalDriver } from "@/lib/vibe64TerminalDriver.js";
 import { createTerminalMatcherEngine } from "@/lib/vibe64TerminalMatchers.js";
 import { createTerminalPolicyEngine } from "@/lib/vibe64TerminalPolicies.js";
@@ -25,7 +28,7 @@ function resolveCallback(callback, fallback) {
 function useVibe64Terminal({
   driver,
   fitOnResize = null,
-  initiallyExpanded = true,
+  initiallyExpanded = false,
   initiallyVisible = true,
   liveResize = true,
   matchers = [],
@@ -105,6 +108,7 @@ function useVibe64Terminal({
   const asyncModuleRecoveryRuntime = useShellAsyncModuleRecoveryRuntime();
   const terminalExited = computed(() => terminalStatus.value === "exited");
   const terminalPlainOutput = computed(() => stripTerminalControlSequences(terminalOutput.value));
+  const terminalSummaryLine = computed(() => terminalLastMeaningfulLine(terminalOutput.value));
   const terminalReconnectDelay = Math.max(0, Number(reconnectDelayMs) || 0);
   const terminalReconnectMaxDelay = Math.max(
     terminalReconnectDelay,
@@ -1364,6 +1368,7 @@ function useVibe64Terminal({
     terminalSessionId,
     terminalStarting,
     terminalStatus,
+    terminalSummaryLine,
     terminalVisible,
     terminalSnapshot,
     waitForExit,

@@ -143,6 +143,43 @@ describe("useVibe64Terminal", () => {
     expect(STUDIO_TERMINAL_SCROLLBACK_ROWS).toBe(300);
   });
 
+  it("starts collapsed and exposes the current meaningful output line", () => {
+    const terminal = useVibe64Terminal({
+      driver: testTerminalDriver()
+    });
+
+    terminal.setTerminalOutput("Preparing\n\u001B[33mDownloaded 10%\u001B[0m\rDownloaded 90%\r");
+
+    expect(terminal.terminalExpanded.value).toBe(false);
+    expect(terminal.terminalSummaryLine.value).toBe("Downloaded 90%");
+  });
+
+  it("keeps one terminal display and socket while collapsing and expanding", async () => {
+    const terminal = useVibe64Terminal({
+      driver: testTerminalDriver()
+    });
+    terminal.terminalHost.value = fakeTerminalHost();
+    await terminal.setupTerminalUi();
+    terminal.applyTerminalSession({
+      id: "terminal-1",
+      status: "running"
+    });
+    const connected = terminal.connectTerminalSocket();
+    const socket = FakeWebSocket.instances[0];
+    socket.dispatch("open");
+    await connected;
+
+    terminal.expandTerminal();
+    terminal.collapseTerminal();
+    terminal.expandTerminal();
+    await terminal.setupTerminalUi();
+
+    expect(xtermMock.FakeTerminal.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(terminal.terminalConnectionStatus.value).toBe("connected");
+    terminal.disposeTerminalUi();
+  });
+
   it("retains only the shared 300-row transcript tail", () => {
     const transcript = Array.from({
       length: STUDIO_TERMINAL_SCROLLBACK_ROWS + 20
