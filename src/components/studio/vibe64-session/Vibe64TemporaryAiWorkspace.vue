@@ -8,8 +8,18 @@
   >
     <nav
       class="vibe64-temporary-ai__tabs"
-      aria-label="Temporary AI tasks"
+      aria-label="Main and temporary conversations"
     >
+      <div class="vibe64-temporary-ai__tab vibe64-temporary-ai__tab--main">
+        <button
+          class="vibe64-temporary-ai__tab-select"
+          data-temporary-ai-main-chat
+          type="button"
+          @click="emit('select-main-chat')"
+        >
+          Main chat
+        </button>
+      </div>
       <div
         v-for="task in temporary.tasks.value"
         :key="task.id"
@@ -212,6 +222,7 @@ import {
 } from "@/composables/useVibe64TemporaryAi.js";
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 
+const emit = defineEmits(["select-main-chat"]);
 const props = defineProps({
   agentSettings: {
     default: () => ({}),
@@ -417,6 +428,14 @@ defineExpose({
   background: rgb(var(--v-theme-surface));
   border-color: rgba(var(--v-theme-tertiary), 0.35);
   font-weight: 650;
+}
+
+.vibe64-temporary-ai__tab--main {
+  background: rgb(var(--v-theme-surface));
+  border-color: rgba(var(--v-theme-tertiary), 0.22);
+  inset-inline-start: 0;
+  position: sticky;
+  z-index: 1;
 }
 
 .vibe64-temporary-ai__new-task {

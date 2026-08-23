@@ -17,7 +17,12 @@
         <span>{{ sessionGithubActor.displayLabel }}</span>
       </div>
     </Teleport>
-    <section class="studio-autopilot__chat-panel" aria-label="Session chat">
+    <section
+      ref="mainChat"
+      class="studio-autopilot__chat-panel"
+      aria-label="Session chat"
+      tabindex="-1"
+    >
       <header class="studio-autopilot__session-header">
         <Vibe64SessionToolbar
           v-if="sessionToolbarVisible"
@@ -360,6 +365,7 @@
         :agent-settings="currentAgentSettings"
         :session-id="sessionId"
         :sessions-api-path="props.sessionsApiPath"
+        @select-main-chat="showMainChat"
       />
     </section>
 
@@ -518,7 +524,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import {
   mdiArrowLeft,
   mdiArrowTopRight,
@@ -557,6 +563,7 @@ const Vibe64SystemWorldView = defineAsyncComponent(() => (
 ));
 const composerInput = ref(null);
 const composerSendButton = ref(null);
+const mainChat = ref(null);
 const temporaryAiWorkspace = ref(null);
 
 const {
@@ -709,6 +716,12 @@ async function startTemporaryAiTask(options = {}) {
 
 function activateRealSession() {
   temporaryAiWorkspace.value?.closeWorkspace?.();
+}
+
+async function showMainChat() {
+  activateRealSession();
+  await nextTick();
+  mainChat.value?.focus?.({ preventScroll: true });
 }
 
 watch(() => props.active, (active, wasActive) => {

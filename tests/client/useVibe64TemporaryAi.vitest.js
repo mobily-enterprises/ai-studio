@@ -594,6 +594,63 @@ describe("useVibe64TemporaryAi", () => {
     });
   });
 
+  it("keeps a hidden task polling and restores the same result", async () => {
+    mocks.responses.push(
+      { conversationId: "conversation-1", ok: true },
+      { conversationId: "conversation-1", ok: true, runId: "turn-1", status: "inProgress" },
+      {
+        conversationId: "conversation-1",
+        ok: true,
+        progressUpdates: [{ id: "progress:1", text: "Still checking." }],
+        runId: "turn-1",
+        status: "inProgress"
+      },
+      {
+        conversationId: "conversation-1",
+        message: "Finished while Main chat was visible.",
+        ok: true,
+        progressUpdates: [{ id: "progress:1", text: "Still checking." }],
+        runId: "turn-1",
+        status: "completed"
+      }
+    );
+    const { task, temporary } = await temporaryAiWithDraft();
+
+    await temporary.send(task.id);
+    await flushPromises();
+    const hiddenTaskId = temporary.activeTaskId.value;
+    temporary.closeWorkspace();
+
+    expect(temporary.open.value).toBe(false);
+    expect(temporary.tasks.value).toHaveLength(1);
+    expect(temporary.activeTask.value).toMatchObject({
+      busy: true,
+      conversationId: "conversation-1",
+      id: hiddenTaskId,
+      runId: "turn-1"
+    });
+    expect(mocks.requests.some(([path, options]) => (
+      path.includes("temporary-conversations") && options?.method === "DELETE"
+    ))).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(650);
+    await flushPromises();
+    expect(temporary.open.value).toBe(false);
+    expect(temporary.activeTask.value).toMatchObject({
+      busy: false,
+      id: hiddenTaskId,
+      status: "completed"
+    });
+
+    const restoredTask = temporary.showWorkspace();
+    expect(restoredTask.id).toBe(hiddenTaskId);
+    expect(temporary.open.value).toBe(true);
+    expect(temporary.activeTask.value.messages.at(-1)).toMatchObject({
+      status: "completed",
+      text: "Finished while Main chat was visible."
+    });
+  });
+
   it("reports a completed task exactly once for global user feedback", async () => {
     const onTaskFinished = vi.fn();
     mocks.responses.push(

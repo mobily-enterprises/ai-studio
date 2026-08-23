@@ -94,56 +94,173 @@ test.describe("direct chat", () => {
     await expect(page.getByRole("button", { name: "Save work", exact: true })).toBeDisabled();
   });
 
-  test("keeps multiple temporary AI tasks visibly separate from the main conversation", async ({ page }) => {
-    const messages: Record<string, unknown>[] = [];
-    const temporaryStarts: Record<string, unknown>[] = [];
-    const temporaryTurns: Record<string, unknown>[] = [];
-    await mockDirectChat(page, {
-      onMessage(body) {
-        messages.push(body);
-      },
-      onTemporaryConversation(body) {
-        temporaryStarts.push(body);
-      },
-      onTemporaryTurn(body) {
-        temporaryTurns.push(body);
-      }
+  test.describe("temporary AI mobile navigation", () => {
+    test.use({
+      hasTouch: true,
+      viewport: { height: 844, width: 390 }
     });
 
-    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
-    await page.getByRole("button", { name: "Open temporary AI" }).click();
+    test("switches between Main chat and temporary AI without stopping hidden work", async ({ page }) => {
+      const messages: Record<string, unknown>[] = [];
+      const temporaryDeletes: string[] = [];
+      const temporaryStarts: Record<string, unknown>[] = [];
+      const temporaryTurns: Record<string, unknown>[] = [];
+      let mainChatVisible = false;
+      let pollsWhileMainChatVisible = 0;
+      await mockDirectChat(page, {
+        onMessage(body) {
+          messages.push(body);
+        },
+        onTemporaryConversation(body) {
+          temporaryStarts.push(body);
+        },
+        onTemporaryDelete(conversationId) {
+          temporaryDeletes.push(conversationId);
+        },
+        onTemporaryPoll() {
+          if (mainChatVisible) {
+            pollsWhileMainChatVisible += 1;
+            return {
+              message: "Finished while Main chat was visible.",
+              ok: true,
+              progressUpdates: [{
+                id: "progress:hidden",
+                text: "Continued while Main chat was visible."
+              }],
+              runId: "temporary-run-1",
+              status: "completed"
+            };
+          }
+          return {
+            message: "",
+            ok: true,
+            progressUpdates: [{ id: "progress:initial", text: "Inspecting the project." }],
+            runId: "temporary-run-1",
+            status: "inProgress"
+          };
+        },
+        onTemporaryTurn(body) {
+          temporaryTurns.push(body);
+        }
+      });
 
-    const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
-    await expect(workspace).toBeVisible();
-    await expect(workspace.getByText(
-      "Ask a focused question or investigate a problem without adding it to the main conversation.",
-      { exact: true }
-    )).toBeVisible();
-    await expect(workspace.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+      await page.getByRole("button", { name: "Open temporary AI" }).click();
 
-    await workspace.getByRole("button", { name: "New temporary AI task", exact: true }).click();
-    await expect(workspace.getByRole("button", { name: "Temporary 2", exact: true })).toBeVisible();
-    await expect(workspace.getByRole("button", { name: "Close Temporary 1" })).toBeVisible();
-    await expect(workspace.getByRole("button", { name: "Close Temporary 2" })).toBeVisible();
+      const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+      const navigation = workspace.getByRole("navigation", {
+        name: "Main and temporary conversations"
+      });
+      await expect(workspace).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Main chat", exact: true })).toBeVisible();
+      await workspace.getByLabel("Message temporary AI").fill("Inspect this without changing it.");
+      await workspace.getByRole("button", { name: "Send to temporary AI" }).click();
+      await expect(workspace.getByLabel("Temporary AI progress").getByText(
+        "Inspecting the project.",
+        { exact: true }
+      )).toBeVisible();
 
-    await workspace.getByLabel("Message temporary AI").fill("Inspect this without changing it.");
-    await workspace.getByRole("button", { name: "Send to temporary AI" }).click();
+      await navigation.getByRole("button", { name: "New temporary AI task", exact: true }).click();
+      await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
 
-    await expect.poll(() => temporaryStarts).toHaveLength(1);
-    expect(temporaryStarts[0]).toEqual(expect.objectContaining({ policy: "read" }));
-    await expect.poll(() => temporaryTurns).toHaveLength(1);
-    expect(temporaryTurns[0]).toEqual(expect.objectContaining({
-      message: "Inspect this without changing it.",
-      policy: "read",
-      promptLabel: "Temporary 2"
-    }));
-    expect(messages).toHaveLength(0);
-    await expect(workspace.getByText("Temporary answer", { exact: true })).toBeVisible();
+      const coarseControls = [
+        navigation.getByRole("button", { name: "Main chat", exact: true }),
+        navigation.locator('[data-temporary-ai-task-id]').filter({ hasText: "Temporary 1" }),
+        navigation.locator('[data-temporary-ai-task-id]').filter({ hasText: "Temporary 2" }),
+        navigation.getByRole("button", { name: "Close Temporary 1", exact: true }),
+        navigation.getByRole("button", { name: "Close Temporary 2", exact: true }),
+        navigation.getByRole("button", { name: "New temporary AI task", exact: true }),
+        navigation.getByRole("button", { name: /Read-only: temporary AI cannot edit/iu })
+      ];
+      for (const control of coarseControls) {
+        const bounds = await control.boundingBox();
+        expect(bounds?.height).toBeGreaterThanOrEqual(48);
+        expect(bounds?.width).toBeGreaterThanOrEqual(48);
+      }
 
-    await workspace.getByRole("button", { name: "Close Temporary 2" }).click();
-    await workspace.getByRole("button", { name: "Close Temporary 1" }).click();
-    await expect(workspace).not.toBeVisible();
+      await navigation.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+      });
+      const navigationBounds = await navigation.boundingBox();
+      const mainChatBounds = await navigation.getByRole("button", {
+        name: "Main chat",
+        exact: true
+      }).boundingBox();
+      expect(mainChatBounds?.x).toBeGreaterThanOrEqual(navigationBounds?.x || 0);
+      expect((mainChatBounds?.x || 0) - (navigationBounds?.x || 0)).toBeLessThan(12);
+
+      await navigation.getByRole("button", { name: "Main chat", exact: true }).click();
+      mainChatVisible = true;
+      await expect(workspace).not.toBeVisible();
+      await expect(page.getByRole("region", { name: "Session chat" })).toBeFocused();
+      await page.getByLabel("Message Codex").fill("Continue in the main conversation.");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await expect.poll(() => messages).toHaveLength(1);
+      await expect.poll(() => pollsWhileMainChatVisible).toBeGreaterThan(0);
+
+      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await expect(workspace).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+      await navigation.getByRole("button", { name: "Temporary 1", exact: true }).click();
+      await expect(workspace.getByText("Continued while Main chat was visible.", { exact: true })).toBeVisible();
+      await expect(workspace.getByText("Finished while Main chat was visible.", { exact: true })).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+
+      await navigation.getByRole("button", { name: "Close Temporary 1", exact: true }).click();
+      await expect.poll(() => temporaryDeletes).toEqual(["temporary-conversation-1"]);
+      await expect(workspace).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toHaveCount(0);
+      await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toBeVisible();
+      expect(temporaryStarts).toHaveLength(1);
+      expect(temporaryTurns).toHaveLength(1);
+      expect(temporaryTurns[0]).toEqual(expect.objectContaining({
+        message: "Inspect this without changing it.",
+        policy: "read",
+        promptLabel: "Temporary 1"
+      }));
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    });
   });
+
+  for (const width of [960, 1600]) {
+    test(`keeps Main chat navigation stable at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ height: 900, width });
+      await mockDirectChat(page);
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+      await page.getByRole("button", { name: "Open temporary AI" }).click();
+
+      const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+      const navigation = workspace.getByRole("navigation", {
+        name: "Main and temporary conversations"
+      });
+      await navigation.getByRole("button", { name: "New temporary AI task", exact: true }).click();
+      await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+      await navigation.getByRole("button", { name: "Main chat", exact: true }).click();
+      await expect(workspace).not.toBeVisible();
+      await expect(page.getByRole("region", { name: "Session chat" })).toBeFocused();
+
+      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
+      await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    });
+  }
 
   for (const recovery of [
     {
@@ -275,6 +392,8 @@ async function mockDirectChat(page: Page, {
   onMessage = () => undefined,
   onSave = () => undefined,
   onTemporaryConversation = () => undefined,
+  onTemporaryDelete = () => undefined,
+  onTemporaryPoll = () => null,
   onTemporaryTurn = () => undefined,
   workspaceSetup = null,
   workState = {
@@ -288,6 +407,8 @@ async function mockDirectChat(page: Page, {
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onSave?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onTemporaryConversation?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onTemporaryDelete?: (conversationId: string) => unknown | Promise<unknown>;
+  onTemporaryPoll?: () => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
   onTemporaryTurn?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   workspaceSetup?: Record<string, unknown> | null;
   workState?: Record<string, unknown>;
@@ -356,7 +477,8 @@ async function mockDirectChat(page: Page, {
       return;
     }
     if (method === "GET" && url.pathname.endsWith("/temporary-conversations/temporary-conversation-1")) {
-      await fulfillJson(route, {
+      const temporaryPoll = await onTemporaryPoll();
+      await fulfillJson(route, temporaryPoll || {
         message: "Temporary answer",
         ok: true,
         runId: "temporary-run-1",
@@ -365,6 +487,7 @@ async function mockDirectChat(page: Page, {
       return;
     }
     if (method === "DELETE" && url.pathname.endsWith("/temporary-conversations/temporary-conversation-1")) {
+      await onTemporaryDelete("temporary-conversation-1");
       await fulfillJson(route, { ok: true });
       return;
     }

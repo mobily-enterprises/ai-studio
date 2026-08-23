@@ -274,4 +274,52 @@ describe("Temporary AI recovery workspace accessibility", () => {
     expect(secondTaskButton.focus).not.toHaveBeenCalled();
     app.unmount();
   });
+
+  it("offers Main chat first without closing or changing temporary tasks", async () => {
+    const startResult = deferred();
+    const temporary = temporaryAiTestState(startResult);
+    temporary.tasks.value = [
+      {
+        agentSettings: {}, busy: true, draft: "", error: "", id: "first",
+        messages: [], policy: "read", title: "First"
+      },
+      {
+        agentSettings: {}, busy: false, draft: "", error: "", id: "second",
+        messages: [], policy: "read", title: "Second"
+      }
+    ];
+    temporary.activeTaskId.value = "first";
+    temporary.open.value = true;
+    temporaryProvider.value = temporary;
+    const selectMainChat = vi.fn();
+    const container = { children: [], parent: null, type: "root" };
+    const { app } = mountWorkspace(container, {
+      onSelectMainChat: selectMainChat,
+      sessionId: "session-1",
+      sessionsApiPath: "/api/vibe64/sessions"
+    });
+    await flushWorkspaceReveal();
+
+    const conversationNavigation = findNode(container, (node) => (
+      node.props?.["aria-label"] === "Main and temporary conversations"
+    ));
+    const mainChatButton = findNode(container, (node) => (
+      node.props?.["data-temporary-ai-main-chat"] === ""
+    ));
+    const currentTaskButton = findNode(container, (node) => (
+      node.props?.["data-temporary-ai-task-id"] === "first"
+    ));
+
+    expect(conversationNavigation).toBeTruthy();
+    expect(mainChatButton).toBeTruthy();
+    expect(currentTaskButton.props["aria-current"]).toBe("page");
+    mainChatButton.props.onClick();
+
+    expect(selectMainChat).toHaveBeenCalledTimes(1);
+    expect(temporary.closeTask).not.toHaveBeenCalled();
+    expect(temporary.tasks.value).toHaveLength(2);
+    expect(temporary.activeTaskId.value).toBe("first");
+    expect(workspaceComponentSource).toContain("position: sticky");
+    app.unmount();
+  });
 });

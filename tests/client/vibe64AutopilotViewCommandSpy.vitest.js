@@ -84,7 +84,12 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("<Vibe64TemporaryAiWorkspace");
     expect(component).toContain("temporaryAiWorkspace.value?.showWorkspace?.()");
     expect(component).toContain("@select-session=\"activateRealSession\"");
+    expect(component).toContain("@select-main-chat=\"showMainChat\"");
     expect(component).toContain("temporaryAiWorkspace.value?.closeWorkspace?.()");
+    expect(component).toContain("mainChat.value?.focus?.({ preventScroll: true })");
+    expect(temporaryAi).toContain("Main chat");
+    expect(temporaryAi).toContain("data-temporary-ai-main-chat");
+    expect(temporaryAi).toContain("Main and temporary conversations");
     expect(temporaryAi).toContain('aria-label="New temporary AI task"');
     expect(temporaryAi).toContain("function showWorkspace()");
     expect(temporaryAi).toContain("startTask");
