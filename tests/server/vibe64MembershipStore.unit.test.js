@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -119,6 +119,47 @@ test("membership reads version 1 records with an empty preferred name and upgrad
   assert.equal(persisted.version, MEMBERSHIP_RECORD_VERSION);
 });
 
+test("membership accepts only the exact stored versions it understands", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-membership-version-"));
+  const store = createVibe64MembershipStore({
+    membershipRoot: root
+  });
+  const recordPath = path.join(root, "ada.json");
+  const baseRecord = {
+    createdAt: "2026-01-02T03:04:05.000Z",
+    preferredName: "Ada",
+    role: "owner",
+    status: "active",
+    updatedAt: "2026-01-02T03:04:05.000Z",
+    username: "ada"
+  };
+
+  await writeFile(recordPath, `${JSON.stringify({
+    ...baseRecord,
+    version: MEMBERSHIP_RECORD_VERSION
+  })}\n`);
+  assert.equal((await store.readMembership("ada")).preferredName, "Ada");
+
+  const { version: _ignored, ...missingVersion } = {
+    ...baseRecord,
+    version: MEMBERSHIP_RECORD_VERSION
+  };
+  await writeFile(recordPath, `${JSON.stringify(missingVersion)}\n`);
+  await assert.rejects(
+    store.readMembership("ada"),
+    { code: "vibe64_membership_record_version_unsupported" }
+  );
+
+  await writeFile(recordPath, `${JSON.stringify({
+    ...baseRecord,
+    version: 999
+  })}\n`);
+  await assert.rejects(
+    store.readMembership("ada"),
+    { code: "vibe64_membership_record_version_unsupported" }
+  );
+});
+
 test("membership preferred name accepts Unicode, can be cleared, and is bounded", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-membership-preferred-name-"));
   const store = createVibe64MembershipStore({
@@ -141,5 +182,35 @@ test("membership preferred name accepts Unicode, can be cleared, and is bounded"
     {
       code: "vibe64_preferred_name_invalid"
     }
+  );
+});
+
+test("concurrent membership updates preserve every field and leave no temporary files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-membership-concurrent-update-"));
+  const firstStore = createVibe64MembershipStore({
+    membershipRoot: root
+  });
+  const secondStore = createVibe64MembershipStore({
+    membershipRoot: root
+  });
+  await firstStore.enableUser("ada", {
+    role: "owner"
+  });
+
+  const updates = [];
+  for (let index = 0; index < 20; index += 1) {
+    updates.push(firstStore.updatePreferredName("ada", `Ada ${index}`));
+    updates.push(secondStore.updateGithubIdentity("ada", {
+      login: `ada-${index}`
+    }));
+  }
+  await Promise.all(updates);
+
+  const record = await firstStore.readMembership("ada");
+  assert.equal(record.preferredName, "Ada 19");
+  assert.equal(record.github.login, "ada-19");
+  assert.deepEqual(
+    (await readdir(root)).filter((name) => name.endsWith(".tmp")),
+    []
   );
 });
