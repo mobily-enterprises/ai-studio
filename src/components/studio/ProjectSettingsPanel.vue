@@ -101,7 +101,7 @@
           <v-select
             v-model="aiPolicyDraft.tone"
             :disabled="!aiPolicyCanEdit || aiPolicySaving"
-            density="compact"
+            density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
@@ -112,7 +112,7 @@
           <v-select
             v-model="aiPolicyDraft.responseLength"
             :disabled="!aiPolicyCanEdit || aiPolicySaving"
-            density="compact"
+            density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
@@ -123,7 +123,7 @@
           <v-select
             v-model="aiPolicyDraft.expertise"
             :disabled="!aiPolicyCanEdit || aiPolicySaving"
-            density="compact"
+            density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
@@ -134,7 +134,7 @@
           <v-select
             v-model="aiPolicyDraft.rationale"
             :disabled="!aiPolicyCanEdit || aiPolicySaving"
-            density="compact"
+            density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
