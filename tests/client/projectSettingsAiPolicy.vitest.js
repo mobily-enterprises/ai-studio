@@ -265,9 +265,13 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     const { app, container } = mountPanel();
 
     expect(findField(container, "Tone").props.modelValue).toBe("military");
+    expect(findField(container, "Tone").props.density).toBe("comfortable");
     expect(findField(container, "Response length").props.modelValue).toBe("detailed");
+    expect(findField(container, "Response length").props.density).toBe("comfortable");
     expect(findField(container, "Experience level").props.modelValue).toBe("expert");
+    expect(findField(container, "Experience level").props.density).toBe("comfortable");
     expect(findField(container, "Explanation style").props.modelValue).toBe("teaching");
+    expect(findField(container, "Explanation style").props.density).toBe("comfortable");
     expect(findField(container, "Anything else (optional)").props.modelValue)
       .toBe("Use Australian English.");
     expect(findField(container, "Suggest useful next prompts").props.modelValue).toBe(false);
