@@ -165,6 +165,92 @@ test("terminals feature creates the direct API from runtime env", async () => {
   });
 });
 
+test("session source creation holds the project source mutation lock while it reads repository authority", async () => {
+  await withTemporaryRoot(async (root) => {
+    const targetRoot = path.join(root, "project");
+    const runtimeRoot = path.join(root, "runtime");
+    await Promise.all([
+      mkdir(targetRoot, { recursive: true }),
+      mkdir(runtimeRoot, { recursive: true })
+    ]);
+    let lockHeld = false;
+    let lockOptions = null;
+    const feature = createVibe64TerminalsFeature({
+      codexTerminalController: {
+        codexAuthPreflight: failingCodexAuthPreflight
+      }
+    });
+    const project = {
+      async createRuntime() {
+        return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
+      },
+      currentProjectRuntimeRoot() {
+        return runtimeRoot;
+      },
+      currentTargetRoot() {
+        return targetRoot;
+      },
+      async readCurrentProject() {
+        assert.equal(lockHeld, true);
+        return {
+          repository: {
+            defaultBranch: "main",
+            mode: "managed_git"
+          },
+          repositoryMode: "managed_git",
+          slug: "project"
+        };
+      },
+      async readEnv() {
+        return {
+          env: {
+            records: []
+          },
+          ok: true
+        };
+      },
+      runInProjectContext(_slug, operation) {
+        return operation();
+      },
+      async runProjectSourceExclusive(operation, options = {}) {
+        lockHeld = true;
+        lockOptions = options;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      },
+      async saveEnvUserValues() {
+        return {
+          ok: true
+        };
+      }
+    };
+    const outputs = await feature.setup(featureDependencies({
+      env: {
+        [VIBE64_SERVICE_DATA_ROOT_ENV]: path.join(root, "services")
+      },
+      project
+    }), { profile: "test" });
+
+    await assert.rejects(
+      () => outputs.terminals.createSessionSource(),
+      {
+        code: "vibe64_session_source_context_missing"
+      }
+    );
+    assert.deepEqual(lockOptions, {
+      operation: "session-source-create"
+    });
+    assert.equal(lockHeld, false);
+    await feature.shutdown(featureDependencies({ project }), {
+      outputs,
+      profile: "test"
+    });
+  });
+});
+
 test("terminal events publish direct session and project events without service receipts", async () => {
   const published = [];
   const events = {

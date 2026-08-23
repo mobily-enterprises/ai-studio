@@ -845,10 +845,17 @@ function createService({
 
   const service = {
     async createSessionSource(input = {}) {
-      return createManagedSessionSource({
+      if (typeof projectService.runProjectSourceExclusive !== "function") {
+        const error = new Error("Session source creation requires the project source mutation lock.");
+        error.code = "vibe64_project_source_lock_unavailable";
+        throw error;
+      }
+      return projectService.runProjectSourceExclusive(async () => createManagedSessionSource({
         ...input,
         env,
         project: await projectService.readCurrentProject()
+      }), {
+        operation: "session-source-create"
       });
     },
 
