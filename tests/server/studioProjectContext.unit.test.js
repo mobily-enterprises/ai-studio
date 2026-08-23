@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -61,6 +62,43 @@ async function gitOutput(cwd, args = []) {
     cwd
   });
   return String(result.stdout || "").trim();
+}
+
+async function fileDigest(filePath) {
+  try {
+    return createHash("sha256").update(await readFile(filePath)).digest("hex");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function legacyCheckoutSnapshot(projectRoot) {
+  const snapshotPaths = [
+    ".git/HEAD",
+    ".git/MERGE_HEAD",
+    ".git/config",
+    ".git/index",
+    ".gitmodules",
+    "app.txt",
+    "draft.txt",
+    "sessions/active/open-session/source/session.txt",
+    "sessions/blocked/blocked-session/metadata/status",
+    "sessions/closed/closed-session/archive.json"
+  ];
+  return {
+    branch: await gitOutput(projectRoot, ["branch", "--show-current"]),
+    files: Object.fromEntries(await Promise.all(snapshotPaths.map(async (relativePath) => [
+      relativePath,
+      await fileDigest(path.join(projectRoot, relativePath))
+    ]))),
+    head: await gitOutput(projectRoot, ["rev-parse", "HEAD"]),
+    rootEntries: (await readdir(projectRoot)).sort(),
+    status: await gitOutput(projectRoot, ["status", "--porcelain=v2", "--branch", "--untracked-files=all"]),
+    worktrees: await gitOutput(projectRoot, ["worktree", "list", "--porcelain"])
+  };
 }
 
 async function createGitProject(projectRoot, remotes = {}) {
@@ -447,6 +485,197 @@ test("hosted project readers reject stored local-source metadata without repairi
       await readFile(path.join(projectContextRoot, ".git", "namespace-marker"), "utf8"),
       "do not inspect\n"
     );
+  });
+});
+
+test("hosted project access leaves every legacy root-checkout state inert", async (t) => {
+  await withTemporaryRoot(async (root) => {
+    const authorityRoot = path.join(root, "authority.git");
+    const seedRoot = path.join(root, "authority-seed");
+    const projectsRoot = path.join(root, "projects");
+    await runGit(root, ["init", "--bare", "--initial-branch=main", authorityRoot]);
+    await createGitProject(seedRoot);
+    await runGit(seedRoot, ["config", "user.email", "vibe64-test@example.invalid"]);
+    await runGit(seedRoot, ["config", "user.name", "Vibe64 Test"]);
+    await runGit(seedRoot, ["branch", "-M", "main"]);
+    await writeTestFile(path.join(seedRoot, "app.txt"), "base\n");
+    await runGit(seedRoot, ["add", "app.txt"]);
+    await runGit(seedRoot, ["commit", "-m", "base"]);
+    const baseCommit = await gitOutput(seedRoot, ["rev-parse", "HEAD"]);
+    await writeTestFile(path.join(seedRoot, "app.txt"), "authority current\n");
+    await runGit(seedRoot, ["add", "app.txt"]);
+    await runGit(seedRoot, ["commit", "-m", "authority current"]);
+    const authorityCommit = await gitOutput(seedRoot, ["rev-parse", "HEAD"]);
+    await runGit(seedRoot, ["remote", "add", "origin", authorityRoot]);
+    await runGit(seedRoot, ["push", "-u", "origin", "main"]);
+
+    const scenarios = [
+      {
+        name: "clean and equal",
+        verify(snapshot) {
+          assert.match(snapshot.status, /# branch\.ab \+0 -0/u);
+        }
+      },
+      {
+        name: "clean and behind",
+        async prepare(projectRoot) {
+          await runGit(projectRoot, ["reset", "--hard", baseCommit]);
+        },
+        verify(snapshot) {
+          assert.match(snapshot.status, /# branch\.ab \+0 -1/u);
+        }
+      },
+      {
+        name: "clean and ahead",
+        async prepare(projectRoot) {
+          await writeTestFile(path.join(projectRoot, "ahead.txt"), "local ahead\n");
+          await runGit(projectRoot, ["add", "ahead.txt"]);
+          await runGit(projectRoot, ["commit", "-m", "local ahead"]);
+        },
+        verify(snapshot) {
+          assert.match(snapshot.status, /# branch\.ab \+1 -0/u);
+        }
+      },
+      {
+        name: "clean and diverged",
+        async prepare(projectRoot) {
+          await runGit(projectRoot, ["reset", "--hard", baseCommit]);
+          await writeTestFile(path.join(projectRoot, "diverged.txt"), "local divergence\n");
+          await runGit(projectRoot, ["add", "diverged.txt"]);
+          await runGit(projectRoot, ["commit", "-m", "local divergence"]);
+        },
+        verify(snapshot) {
+          assert.match(snapshot.status, /# branch\.ab \+1 -1/u);
+        }
+      },
+      {
+        name: "dirty tracked and untracked files",
+        async prepare(projectRoot) {
+          await writeTestFile(path.join(projectRoot, "app.txt"), "dirty tracked\n");
+          await writeTestFile(path.join(projectRoot, "draft.txt"), "dirty untracked\n");
+        },
+        verify(snapshot) {
+          assert.match(snapshot.status, /1 \.M/u);
+          assert.match(snapshot.status, /\? draft\.txt/u);
+        }
+      },
+      {
+        name: "detached unfinished checkout with a submodule and linked worktree",
+        async prepare(projectRoot) {
+          await writeTestFile(path.join(projectRoot, ".gitmodules"), [
+            "[submodule \"vendor/example\"]",
+            "\tpath = vendor/example",
+            `\turl = ${authorityRoot}`,
+            ""
+          ].join("\n"));
+          await runGit(projectRoot, ["add", ".gitmodules"]);
+          await runGit(projectRoot, ["update-index", "--add", "--cacheinfo", `160000,${baseCommit},vendor/example`]);
+          await runGit(projectRoot, ["commit", "-m", "record submodule"]);
+          await runGit(projectRoot, ["worktree", "add", "--detach", path.join(root, "linked-worktrees", "legacy"), "HEAD"]);
+          await runGit(projectRoot, ["checkout", "--detach", "HEAD"]);
+          await writeTestFile(path.join(projectRoot, ".git", "MERGE_HEAD"), `${baseCommit}\n`);
+        },
+        verify(snapshot) {
+          assert.equal(snapshot.branch, "");
+          assert.match(snapshot.status, /# branch\.head \(detached\)/u);
+          assert.notEqual(snapshot.files[".git/MERGE_HEAD"], null);
+          assert.notEqual(snapshot.files[".gitmodules"], null);
+          assert.match(snapshot.worktrees, /linked-worktrees\/legacy/u);
+        }
+      }
+    ];
+
+    for (const [index, scenario] of scenarios.entries()) {
+      await t.test(scenario.name, async () => {
+        const slug = `legacy-${index + 1}`;
+        const firstContext = createStudioProjectContext({
+          explicitProjectsRoot: projectsRoot,
+          env: {},
+          home: root
+        });
+        await firstContext.createWorkspaceProjectRecord({
+          repository: {
+            defaultBranch: "main",
+            mode: PROJECT_REPOSITORY_MODE_MANAGED_GIT
+          },
+          slug
+        });
+        const projectRoot = path.join(projectsRoot, slug);
+        await runGit(root, ["clone", authorityRoot, projectRoot]);
+        await runGit(projectRoot, ["config", "user.email", "vibe64-test@example.invalid"]);
+        await runGit(projectRoot, ["config", "user.name", "Vibe64 Test"]);
+        await writeTestFile(path.join(projectRoot, ".git", "info", "exclude"), "sessions/\n");
+        await writeTestFile(path.join(projectRoot, "sessions", "active", "open-session", "source", "session.txt"), "active\n");
+        await writeTestFile(path.join(projectRoot, "sessions", "blocked", "blocked-session", "metadata", "status"), "blocked\n");
+        await writeTestFile(path.join(projectRoot, "sessions", "closed", "closed-session", "archive.json"), "{}\n");
+        await scenario.prepare?.(projectRoot);
+
+        const before = await legacyCheckoutSnapshot(projectRoot);
+        scenario.verify(before);
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const context = createStudioProjectContext({
+            explicitProjectsRoot: projectsRoot,
+            env: {},
+            home: root
+          });
+          const listed = await context.listWorkspaceProjects();
+          const read = await context.readWorkspaceProject({ slug });
+          const state = await context.readWorkspaceProjectState({ slug });
+          const selected = await context.selectWorkspaceProject({ slug });
+          const requestContext = await resolveProjectRequestContext({
+            projectContext: context,
+            request: { params: { slug } }
+          });
+
+          assert.equal(listed.projects.some((project) => project.slug === slug), true);
+          assert.equal(read.project.repositoryMode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
+          assert.equal(state.metadata.repository.mode, PROJECT_REPOSITORY_MODE_MANAGED_GIT);
+          assert.equal(selected.currentProject.slug, slug);
+          assert.equal(requestContext.targetRoot, projectRoot);
+        }
+
+        assert.deepEqual(await legacyCheckoutSnapshot(projectRoot), before);
+        assert.equal(authorityCommit, await gitOutput(authorityRoot, ["rev-parse", "refs/heads/main"]));
+      });
+    }
+  });
+});
+
+test("normal hosted access does not recreate an explicitly retired root checkout", async () => {
+  await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
+    const firstContext = createStudioProjectContext({
+      explicitProjectsRoot: projectsRoot,
+      env: {},
+      home: root
+    });
+    await firstContext.createWorkspaceProjectRecord({ slug: "retired-checkout" });
+    const projectRoot = path.join(projectsRoot, "retired-checkout");
+    await writeTestFile(path.join(projectRoot, ".git", "legacy-marker"), "legacy\n");
+    await writeTestFile(path.join(projectRoot, "application.txt"), "retired application\n");
+    const sessionMarker = path.join(projectRoot, "sessions", "active", "kept-session", "source", "session.txt");
+    await writeTestFile(sessionMarker, "preserved session\n");
+
+    await rm(path.join(projectRoot, ".git"), { recursive: true });
+    await rm(path.join(projectRoot, "application.txt"));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const context = createStudioProjectContext({
+        explicitProjectsRoot: projectsRoot,
+        env: {},
+        home: root
+      });
+      await context.listWorkspaceProjects();
+      await context.readWorkspaceProject({ slug: "retired-checkout" });
+      await context.readWorkspaceProjectState({ slug: "retired-checkout" });
+      await context.selectWorkspaceProject({ slug: "retired-checkout" });
+    }
+
+    await assert.rejects(() => access(path.join(projectRoot, ".git")), { code: "ENOENT" });
+    await assert.rejects(() => access(path.join(projectRoot, "application.txt")), { code: "ENOENT" });
+    assert.equal(await readFile(sessionMarker, "utf8"), "preserved session\n");
+    assert.deepEqual((await readdir(projectRoot)).sort(), ["sessions"]);
   });
 });
 
