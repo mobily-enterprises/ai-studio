@@ -12,6 +12,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  managedSessionSourcePath,
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
@@ -121,6 +122,13 @@ function githubSourceContext(root, sessionId, {
   return context;
 }
 
+function assertPreparedCloneTarget(request = {}, finalSourcePath = "") {
+  const preparedSourcePath = String(request.args?.at(-1) || "");
+  assert.equal(path.basename(preparedSourcePath), "source");
+  assert.match(path.basename(path.dirname(preparedSourcePath)), /^\.vibe64-source-preparing-/u);
+  assert.equal(path.dirname(path.dirname(preparedSourcePath)), path.dirname(finalSourcePath));
+}
+
 test("Vibe64 creates an isolated Git source for a session", async () => {
   await withTemporaryRoot(async (root) => {
     const context = sourceContext(root);
@@ -216,14 +224,33 @@ test("Vibe64 ignores a stale hosted namespace checkout and clones the GitHub aut
     const cloneRequest = requests.find((request) => (
       request.command === "git" && request.args?.[0] === "clone"
     ));
-    assert.deepEqual(cloneRequest.args.slice(-2), [remoteRoot, result.sourcePath]);
+    assert.equal(cloneRequest.args.at(-2), remoteRoot);
+    assertPreparedCloneTarget(cloneRequest, result.sourcePath);
     assert.deepEqual(
       cloneRequest.args.slice(
         cloneRequest.args.indexOf("--reference"),
         cloneRequest.args.indexOf("--single-branch")
       ),
-      ["--reference", context.project.githubMirrorPath, "--dissociate"]
+      ["--reference", context.project.githubMirrorPath]
     );
+    assert.equal(cloneRequest.args.includes("--dissociate"), false);
+    const repackIndex = requests.findIndex((request) => (
+      request.command === "git" && request.args?.[0] === "repack"
+    ));
+    const connectivityIndex = requests.findIndex((request) => (
+      request.command === "git" && request.args?.[0] === "fsck"
+    ));
+    assert.ok(repackIndex > requests.indexOf(cloneRequest));
+    assert.ok(connectivityIndex > repackIndex);
+    assert.deepEqual(requests[repackIndex].args, ["repack", "-a", "-d"]);
+    assert.deepEqual(requests[connectivityIndex].args, [
+      "fsck",
+      "--connectivity-only",
+      "--no-dangling",
+      "--no-progress"
+    ]);
+    assert.equal(requests[repackIndex].gitTransport, "none");
+    assert.equal(requests[connectivityIndex].gitTransport, "none");
     assert.ok(requests.some((request) => (
       request.command === "bash" &&
       request.args?.includes("vibe64-github-mirror-refresh") &&
@@ -388,6 +415,7 @@ test("GitHub session cloning treats denied or interrupted mirror refresh as non-
       );
       const cloneRequest = requests.find((request) => request.command === "git" && request.args?.[0] === "clone");
       assert.equal(cloneRequest.args.at(-2), remoteRoot, condition);
+      assertPreparedCloneTarget(cloneRequest, result.sourcePath);
       assert.equal(cloneRequest.args.includes("--reference"), warmMirror, condition);
       assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD"]), canonicalCommit, condition);
     }
@@ -433,8 +461,138 @@ test("GitHub session cloning retries the authoritative remote without a rejected
     assert.equal(cloneRequests[0].args.includes("--reference"), true);
     assert.equal(cloneRequests[1].args.includes("--reference"), false);
     assert.ok(cloneRequests.every((request) => request.args.at(-2) === remoteRoot));
+    assert.ok(cloneRequests.every((request) => {
+      assertPreparedCloneTarget(request, result.sourcePath);
+      return true;
+    }));
     assert.equal(context.metadata.source_cache_reference, "not_used");
     assert.equal(result.commit, await git(publisherRoot, ["rev-parse", "HEAD"]));
+  });
+});
+
+test("GitHub session cloning falls back when reference dissociation cannot be proven", async () => {
+  await withTemporaryRoot(async (root) => {
+    for (const failedStep of ["repack", "alternates-removal", "fsck"]) {
+      const caseRoot = path.join(root, failedStep);
+      const remoteRoot = path.join(caseRoot, "remote.git");
+      const publisherRoot = path.join(caseRoot, "publisher");
+      const context = githubSourceContext(caseRoot, `${failedStep}-fallback`, { remoteRoot });
+      const requests = [];
+      let rejected = false;
+      await mkdir(caseRoot, { recursive: true });
+      await git(caseRoot, ["init", "--bare", "--initial-branch=main", remoteRoot]);
+      await createProject(publisherRoot);
+      await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+      await git(publisherRoot, ["push", "-u", "origin", "main"]);
+      await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+      const result = await createSessionSource({
+        ...context,
+        runCommand: async (request) => {
+          requests.push(request);
+          if (!rejected && request.command === "git" && request.args?.[0] === failedStep) {
+            rejected = true;
+            return {
+              code: `vibe64_test_${failedStep}_failed`,
+              ok: false,
+              stderr: `simulated ${failedStep} failure`
+            };
+          }
+          const result = await directCommand(request);
+          if (
+            !rejected &&
+            failedStep === "alternates-removal" &&
+            request.command === "git" &&
+            request.args?.[0] === "repack"
+          ) {
+            const alternatesPath = path.join(
+              request.cwd,
+              ".git",
+              "objects",
+              "info",
+              "alternates"
+            );
+            await rename(alternatesPath, `${alternatesPath}.reference`);
+            await mkdir(alternatesPath);
+            await writeFile(path.join(alternatesPath, "refuse-removal"), "intentional\n", "utf8");
+            rejected = true;
+          }
+          return result;
+        }
+      });
+
+      assert.equal(rejected, true, failedStep);
+      const cloneRequests = requests.filter((request) => (
+        request.command === "git" && request.args?.[0] === "clone"
+      ));
+      assert.equal(cloneRequests.length, 2, failedStep);
+      assert.equal(cloneRequests[0].args.includes("--reference"), true, failedStep);
+      assert.equal(cloneRequests[1].args.includes("--reference"), false, failedStep);
+      assert.ok(cloneRequests.every((request) => request.args.at(-2) === remoteRoot), failedStep);
+      assert.ok(cloneRequests.every((request) => {
+        assertPreparedCloneTarget(request, result.sourcePath);
+        return true;
+      }), failedStep);
+      assert.equal(context.metadata.source_cache_reference, "not_used", failedStep);
+      assert.equal(result.commit, await git(publisherRoot, ["rev-parse", "HEAD"]), failedStep);
+      await assert.rejects(
+        () => access(path.join(result.sourcePath, ".git", "objects", "info", "alternates")),
+        { code: "ENOENT" }
+      );
+      assert.deepEqual(await readdir(path.dirname(result.sourcePath)), ["source"]);
+    }
+  });
+});
+
+test("GitHub reference preparation never exposes a cache-dependent checkout", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remoteRoot = path.join(root, "remote.git");
+    const publisherRoot = path.join(root, "publisher");
+    const context = githubSourceContext(root, "atomic-reference", { remoteRoot });
+    let releaseRepack;
+    const repackReleased = new Promise((resolve) => {
+      releaseRepack = resolve;
+    });
+    let announceRepack;
+    const repackStarted = new Promise((resolve) => {
+      announceRepack = resolve;
+    });
+    await git(root, ["init", "--bare", "--initial-branch=main", remoteRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+    const sourceCreation = createSessionSource({
+      ...context,
+      runCommand: async (request) => {
+        if (request.command === "git" && request.args?.[0] === "repack") {
+          announceRepack();
+          await repackReleased;
+        }
+        return directCommand(request);
+      }
+    });
+    await repackStarted;
+
+    const finalSourcePath = managedSessionSourcePath(
+      context.runtime.projectSessionSourceRoot,
+      context.session.sessionId
+    );
+    await assert.rejects(() => access(finalSourcePath), { code: "ENOENT" });
+    const sourceParentEntries = await readdir(path.dirname(finalSourcePath));
+    assert.equal(sourceParentEntries.length, 1);
+    assert.match(sourceParentEntries[0], /^\.vibe64-source-preparing-/u);
+
+    releaseRepack();
+    const result = await sourceCreation;
+    assert.equal(result.sourcePath, finalSourcePath);
+    assert.equal(context.metadata.source_cache_reference, "used");
+    assert.deepEqual(await readdir(path.dirname(finalSourcePath)), ["source"]);
+    await assert.rejects(
+      () => access(path.join(finalSourcePath, ".git", "objects", "info", "alternates")),
+      { code: "ENOENT" }
+    );
   });
 });
 
@@ -452,6 +610,10 @@ test("GitHub unavailability fails session creation even when the complete mirror
     await mkdir(path.dirname(context.project.githubMirrorPath), { recursive: true });
     await git(root, ["clone", "--bare", remoteRoot, context.project.githubMirrorPath]);
     await rename(remoteRoot, unavailableRoot);
+    const finalSourcePath = managedSessionSourcePath(
+      context.runtime.projectSessionSourceRoot,
+      context.session.sessionId
+    );
 
     await assert.rejects(
       () => createSessionSource({
@@ -461,9 +623,10 @@ test("GitHub unavailability fails session creation even when the complete mirror
       (error) => error?.code === "vibe64_test_command_failed"
     );
     await assert.rejects(
-      () => access(path.join(context.runtime.projectSessionSourceRoot, "unavailable-authority", "source")),
+      () => access(finalSourcePath),
       { code: "ENOENT" }
     );
+    assert.deepEqual(await readdir(path.dirname(finalSourcePath)), []);
     assert.equal(
       await git(root, ["--git-dir", context.project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
       await git(publisherRoot, ["rev-parse", "HEAD"])
@@ -511,7 +674,8 @@ test("Vibe64-only sessions clone the canonical bare repository without a namespa
       assert.equal(context.metadata.source_cache_reference, "not_used");
       assert.equal(context.metadata.source_cache_refresh, "not_applicable");
       const cloneRequest = requests.find((request) => request.command === "git" && request.args?.[0] === "clone");
-      assert.deepEqual(cloneRequest.args.slice(-2), [canonicalRoot, result.sourcePath]);
+      assert.equal(cloneRequest.args.at(-2), canonicalRoot);
+      assertPreparedCloneTarget(cloneRequest, result.sourcePath);
       assert.equal(cloneRequest.args.includes("--reference"), false);
       assert.equal(requests.some((request) => request.command === "bash"), false);
       await assert.rejects(
@@ -614,6 +778,15 @@ test("private GitHub credentials remain attached to mirror refresh and authorita
       assert.equal(JSON.stringify(request.args).includes(token), false);
     }
     assert.ok(remoteRequests.every((request) => request.args.includes(remoteRoot)));
+    const localReferenceRequests = requests.filter((request) => (
+      request.command === "git" && ["repack", "fsck"].includes(request.args?.[0])
+    ));
+    assert.deepEqual(localReferenceRequests.map((request) => request.args?.[0]), ["repack", "fsck"]);
+    for (const request of localReferenceRequests) {
+      assert.equal(request.actor, "daemon");
+      assert.equal(Boolean(request.gitAuthToken), false);
+      assert.equal(request.gitTransport, "none");
+    }
     assert.equal(result.commit, await git(publisherRoot, ["rev-parse", "HEAD"]));
     assert.equal(context.metadata.source_cache_refresh, "refreshed");
     assert.equal(context.metadata.source_cache_reference, "used");
@@ -635,15 +808,20 @@ test("Vibe64 never falls back to a stale cache when the canonical remote is unav
       },
       repositoryMode: "github"
     };
+    const finalSourcePath = managedSessionSourcePath(
+      context.runtime.projectSessionSourceRoot,
+      context.session.sessionId
+    );
 
     await assert.rejects(
       createSessionSource(context),
       (error) => error?.code === "vibe64_session_source_git_failed"
     );
     await assert.rejects(
-      () => access(path.join(context.runtime.projectSessionSourceRoot, "unavailable-canonical-session", "source")),
+      () => access(finalSourcePath),
       { code: "ENOENT" }
     );
+    assert.deepEqual(await readdir(path.dirname(finalSourcePath)), []);
     assert.deepEqual(context.metadata, {});
   });
 });

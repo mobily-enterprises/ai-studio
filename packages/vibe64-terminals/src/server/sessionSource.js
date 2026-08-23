@@ -2,6 +2,8 @@ import path from "node:path";
 import {
   lstat,
   mkdir,
+  mkdtemp,
+  rename,
   rm
 } from "node:fs/promises";
 
@@ -329,74 +331,75 @@ async function cloneCanonicalSource({
   sourceParent = "",
   sourcePath = ""
 } = {}) {
-  const roots = [referenceRoot, source, sourceParent, sourcePath]
+  const preparationRoot = await mkdtemp(path.join(sourceParent, ".vibe64-source-preparing-"));
+  const preparedSourcePath = path.join(preparationRoot, "source");
+  const roots = [referenceRoot, source, sourceParent, sourcePath, preparationRoot, preparedSourcePath]
     .map(normalizeText)
     .filter((value) => path.isAbsolute(value));
+  const localCommandOptions = {
+    runCommand: commandOptions.runCommand
+  };
   let cacheReferenceUsed = Boolean(referenceRoot);
-  const clone = (referenceRoot = "") => runGit(sourceParent, [
+  const clone = (cloneReferenceRoot = "") => runGit(preparationRoot, [
       "clone",
       "--no-hardlinks",
-      ...(referenceRoot ? ["--reference", referenceRoot, "--dissociate"] : []),
+      ...(cloneReferenceRoot ? ["--reference", cloneReferenceRoot] : []),
       "--single-branch",
       "--branch", branch,
       source,
-      sourcePath
+      preparedSourcePath
     ], roots, commandOptions);
   try {
-    await clone(referenceRoot);
-  } catch (error) {
-    await rm(sourcePath, {
-      force: true,
-      recursive: true
-    });
-    if (!referenceRoot) {
-      throw error;
-    }
-    cacheReferenceUsed = false;
     try {
-      await clone();
-    } catch (retryError) {
-      await rm(sourcePath, {
+      await clone(referenceRoot);
+      if (referenceRoot) {
+        const alternatesPath = path.join(preparedSourcePath, ".git", "objects", "info", "alternates");
+        if (!await pathExists(alternatesPath)) {
+          cacheReferenceUsed = false;
+        } else {
+          await runGit(preparedSourcePath, ["repack", "-a", "-d"], roots, localCommandOptions);
+          await rm(alternatesPath);
+          await runGit(preparedSourcePath, [
+            "fsck",
+            "--connectivity-only",
+            "--no-dangling",
+            "--no-progress"
+          ], roots, localCommandOptions);
+        }
+      }
+    } catch (error) {
+      await rm(preparedSourcePath, {
         force: true,
         recursive: true
       });
-      throw retryError;
-    }
-  }
-  const alternatesPath = path.join(sourcePath, ".git", "objects", "info", "alternates");
-  if (await pathExists(alternatesPath)) {
-    await rm(sourcePath, {
-      force: true,
-      recursive: true
-    });
-    cacheReferenceUsed = false;
-    try {
+      if (!referenceRoot) {
+        throw error;
+      }
+      cacheReferenceUsed = false;
       await clone();
-    } catch (retryError) {
-      await rm(sourcePath, {
-        force: true,
-        recursive: true
-      });
-      throw retryError;
     }
+
+    const alternatesPath = path.join(preparedSourcePath, ".git", "objects", "info", "alternates");
     if (await pathExists(alternatesPath)) {
-      await rm(sourcePath, {
-        force: true,
-        recursive: true
-      });
       throw sourceError(
         "The session checkout retained a dependency on disposable Git object storage.",
         "vibe64_session_source_cache_not_dissociated"
       );
     }
+    const commit = await runGit(preparedSourcePath, ["rev-parse", "--verify", "HEAD"], roots, localCommandOptions);
+    await rename(preparedSourcePath, sourcePath);
+    return {
+      branch,
+      cacheReferenceUsed,
+      commit,
+      remoteUrl: source
+    };
+  } finally {
+    await rm(preparationRoot, {
+      force: true,
+      recursive: true
+    });
   }
-  const commit = await runGit(sourcePath, ["rev-parse", "--verify", "HEAD"], roots, commandOptions);
-  return {
-    branch,
-    cacheReferenceUsed,
-    commit,
-    remoteUrl: source
-  };
 }
 
 async function attachSessionSource(store, sessionId = "", metadata = {}) {
