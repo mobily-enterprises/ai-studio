@@ -1,7 +1,6 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 import {
-  PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH,
   PROJECT_AI_POLICY_EXPERTISE_LEVELS,
   PROJECT_AI_POLICY_RATIONALE_LEVELS,
   PROJECT_AI_POLICY_RESPONSE_LENGTHS,
@@ -48,7 +47,6 @@ const projectSettingsReadInputValidator = patchSchema({
 const projectAiPolicyInputValidator = patchSchema({
   ...optionalUser,
   customNote: {
-    maxLength: PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH,
     noTrim: false,
     required: true,
     type: "string"

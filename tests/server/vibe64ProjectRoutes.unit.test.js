@@ -121,6 +121,19 @@ test("project AI policy route validates the policy and preserves owner authoriza
         errors: {},
         validatedObject: policy
       });
+      for (const length of [500, 501]) {
+        const customNote = "🌱".repeat(length);
+        assert.deepEqual(route.options.body.schema.patch({
+          ...policy,
+          customNote
+        }), {
+          errors: {},
+          validatedObject: {
+            ...policy,
+            customNote
+          }
+        });
+      }
       assert.notDeepEqual(route.options.body.schema.patch({
         ...policy,
         tone: "sarcastic"

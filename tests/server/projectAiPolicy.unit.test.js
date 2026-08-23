@@ -46,6 +46,12 @@ test("project AI policy normalizes bounded text and rejects invalid fields", () 
     responseLength: "concise",
     tone: "encouraging"
   });
+  assert.equal(
+    normalizeProjectAiPolicy({
+      customNote: "🌱".repeat(PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH)
+    }).customNote,
+    "🌱".repeat(PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH)
+  );
 
   assert.throws(
     () => normalizeProjectAiPolicy({ tone: "sarcastic" }),
@@ -61,7 +67,7 @@ test("project AI policy normalizes bounded text and rejects invalid fields", () 
   );
   assert.throws(
     () => normalizeProjectAiPolicy({
-      customNote: "x".repeat(PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH + 1)
+      customNote: "🌱".repeat(PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH + 1)
     }),
     { code: "vibe64_project_ai_policy_invalid" }
   );

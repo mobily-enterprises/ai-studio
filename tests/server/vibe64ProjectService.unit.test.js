@@ -269,6 +269,34 @@ test("project AI policy is owner-managed and members read the same revision", as
   });
 });
 
+test("project AI policy service enforces its Unicode character boundary", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const service = projectService(targetRoot);
+    const input = {
+      expertise: "comfortable",
+      promptHints: true,
+      rationale: "concise",
+      responseLength: "concise",
+      tone: "encouraging",
+      vibe64User: { role: "owner" }
+    };
+    const accepted = await service.saveProjectAiPolicy({
+      ...input,
+      customNote: "🌱".repeat(500)
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.aiPolicy.revision, 1);
+
+    const rejected = await service.saveProjectAiPolicy({
+      ...input,
+      customNote: "🌱".repeat(501)
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_project_ai_policy_invalid");
+    assert.equal((await service.readProjectAiPolicy()).aiPolicy.revision, 1);
+  });
+});
+
 test("hosted project AI policies stay isolated by project namespace state", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
     const projectsRoot = path.join(temporaryRoot, "projects");
