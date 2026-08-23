@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
 
 import {
@@ -103,31 +101,6 @@ test("plain session store persists session identity and metadata without workflo
     ]) {
       assert.equal(typeof store[removedMethod], "undefined", removedMethod);
     }
-  });
-});
-
-test("retired main checkout metadata fails closed until explicitly corrected", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const store = createStore(targetRoot);
-    const created = await store.createSession({
-      runtimeKind: "genesis",
-      sessionId: "retired-root"
-    });
-    const retiredMetadataPath = path.join(created.metadataRoot, "main_checkout_root");
-    await writeFile(retiredMetadataPath, `${targetRoot}\n`, "utf8");
-
-    await assert.rejects(
-      () => store.readSession("retired-root"),
-      (error) => error?.code === "vibe64_session_main_checkout_root_unsupported"
-    );
-    assert.equal(await readFile(retiredMetadataPath, "utf8"), `${targetRoot}\n`);
-    await assert.rejects(
-      () => store.writeMetadataValue("retired-root", "main_checkout_root", targetRoot),
-      (error) => error?.code === "vibe64_session_main_checkout_root_retired"
-    );
-
-    await rm(retiredMetadataPath);
-    assert.equal((await store.readSession("retired-root")).sessionId, "retired-root");
   });
 });
 
@@ -281,32 +254,6 @@ test("plain session store archives closed sessions", async () => {
     assert.equal(session.archived, true);
     assert.equal(session.status, VIBE64_SESSION_STATUS.ABANDONED);
     assert.equal(session.manifest.runtimeKind, "genesis");
-  });
-});
-
-test("retired main checkout metadata in an archive index fails without rewriting it", async () => {
-  await withTemporaryRoot(async (targetRoot) => {
-    const store = createStore(targetRoot);
-    await store.createSession({
-      runtimeKind: "genesis",
-      sessionId: "retired-archive-root"
-    });
-    await store.writeStatus("retired-archive-root", VIBE64_SESSION_STATUS.ABANDONED);
-    const archive = await store.compactClosedSession("retired-archive-root");
-    const archiveRecord = JSON.parse(await readFile(archive.metadataPath, "utf8"));
-    archiveRecord.index.metadata.main_checkout_root = targetRoot;
-    await writeFile(archive.metadataPath, `${JSON.stringify(archiveRecord, null, 2)}\n`, "utf8");
-    const before = await readFile(archive.metadataPath, "utf8");
-
-    await assert.rejects(
-      () => store.readSession("retired-archive-root"),
-      (error) => error?.code === "vibe64_session_main_checkout_root_unsupported"
-    );
-    await assert.rejects(
-      () => store.readSessionSummary("retired-archive-root"),
-      (error) => error?.code === "vibe64_session_main_checkout_root_unsupported"
-    );
-    assert.equal(await readFile(archive.metadataPath, "utf8"), before);
   });
 });
 

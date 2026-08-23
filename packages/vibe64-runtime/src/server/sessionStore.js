@@ -96,7 +96,6 @@ const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "source_removed"
 ]);
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
-const RETIRED_MAIN_CHECKOUT_ROOT_METADATA = "main_checkout_root";
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const BACKGROUND_TASK_STATUS = Object.freeze({
   FAILED: "failed",
@@ -123,24 +122,6 @@ const TERMINAL_AGENT_RUN_STATES = new Set([
   VIBE64_AGENT_RUN_STATE.TIMED_OUT
 ]);
 
-function assertSessionMetadataSupported(metadata = {}, sessionId = "") {
-  if (isPlainObject(metadata) && Object.hasOwn(metadata, RETIRED_MAIN_CHECKOUT_ROOT_METADATA)) {
-    throw vibe64Error(
-      `Session ${normalizeText(sessionId) || "(unknown)"} contains retired main_checkout_root metadata. Correct this stored record explicitly before opening it.`,
-      "vibe64_session_main_checkout_root_unsupported"
-    );
-  }
-  return metadata;
-}
-
-function assertSessionMetadataNameWritable(name = "") {
-  if (normalizeText(name) === RETIRED_MAIN_CHECKOUT_ROOT_METADATA) {
-    throw vibe64Error(
-      "main_checkout_root is retired session metadata and cannot be written.",
-      "vibe64_session_main_checkout_root_retired"
-    );
-  }
-}
 const ACTIVE_AGENT_RUN_STATES = new Set([
   VIBE64_AGENT_RUN_STATE.ACTIVE,
   VIBE64_AGENT_RUN_STATE.FINALIZING,
@@ -1024,7 +1005,6 @@ function createVibe64SessionStore({
 
   function closedArchiveSummary(record = {}) {
     const index = isPlainObject(record.index) ? record.index : {};
-    assertSessionMetadataSupported(index.metadata, record.sessionId);
     return {
       createdAt: normalizeText(index.createdAt),
       manifest: isPlainObject(index.manifest) ? index.manifest : {},
@@ -1077,7 +1057,6 @@ function createVibe64SessionStore({
   }
 
   async function withExtractedClosedArchive(record, operation) {
-    assertSessionMetadataSupported(record?.index?.metadata, record?.sessionId);
     const extractionRoot = path.join(paths().sessionsRoot, ".archive-read", `${record.sessionId}-${randomUUID()}`);
     const extractedSessionRoot = path.join(extractionRoot, record.sessionId);
     try {
@@ -1292,7 +1271,6 @@ function createVibe64SessionStore({
   }
 
   async function writeMetadataValue(sessionId, name, value) {
-    assertSessionMetadataNameWritable(name);
     return mutateSession(sessionId, async (sessionPaths) => {
       await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
     });
@@ -1964,7 +1942,6 @@ function createVibe64SessionStore({
       readAgentRunsFromPaths(sessionPaths),
       readBackgroundTasksFromPaths(sessionPaths)
     ]);
-    assertSessionMetadataSupported(metadata, sessionPaths.sessionId);
     const archived = Boolean(archiveRecord);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
     return {
@@ -2023,7 +2000,6 @@ function createVibe64SessionStore({
       readStatusFromPaths(sessionPaths),
       readMetadataFromPaths(sessionPaths)
     ]);
-    assertSessionMetadataSupported(metadata, sessionPaths.sessionId);
     const sessionName = await sessionNameForSession(sessionPaths, metadata);
     return {
       createdAt: normalizeText(manifest.createdAt),
