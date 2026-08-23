@@ -58,10 +58,15 @@ function viewProps(overrides = {}) {
       agentSession: {
         turn: {}
       },
+      metadata: {
+        repository_mode: "github",
+        source_kind: "session_clone",
+        source_path: "/tmp/sessions/active/session-1/source",
+        source_path_authority: "managed_session_source"
+      },
       sessionId: "session-1",
-      sessionRoot: "/tmp/session-1",
-      source: "/tmp/source",
-      targetRoot: "/tmp/source"
+      sessionRoot: "/tmp/state/session-1",
+      source: "/tmp/sessions/active/session-1/source"
     },
     sessionAbandon: {},
     sessionSelectionClosed: false,
@@ -91,6 +96,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.emptyConversationWelcome.value).toBe(
       "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together."
     );
+    expect(view.composerPlaceholder.value).toBe("");
 
     const loadingView = await createView({
       conversationLog: {
@@ -375,8 +381,11 @@ describe("useVibe64AutopilotView direct chat", () => {
       "Which file?",
       "Which existing helper?"
     ]);
+    expect(view.composerCanSubmit.value).toBe(false);
     view.questionAnswers.value.__ui_question_1 = "src/main.js";
+    expect(view.composerCanSubmit.value).toBe(false);
     view.questionAnswers.value.__ui_question_2 = "parseInput";
+    expect(view.composerCanSubmit.value).toBe(true);
 
     await view.submitComposerMessage();
 
@@ -419,6 +428,18 @@ describe("useVibe64AutopilotView direct chat", () => {
         ]
       }
     ]);
+    expect(view.numberedQuestionSelectItems.value).toMatchObject({
+      __ui_question_1: [
+        { value: "Complete lifecycle" },
+        { value: "Sending first" },
+        { selectLabel: "I am not sure", value: "I am not sure" }
+      ],
+      __ui_question_2: [
+        { value: "No existing files" },
+        { value: "Migration required" },
+        { selectLabel: "I am not sure", value: "I am not sure" }
+      ]
+    });
   });
 
   it("lets the user leave structured questions and answer normally", async () => {

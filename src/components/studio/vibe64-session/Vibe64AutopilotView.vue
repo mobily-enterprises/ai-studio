@@ -190,7 +190,7 @@
           :hint="composerHint"
           persistent-hint
           :placeholder="composerPlaceholder"
-          :rows="2"
+          :rows="numberedQuestions.length ? 1 : 2"
           :session-id="sessionId"
           tab-to-submit
           @attachments-change="updateComposerAttachments"
@@ -206,11 +206,13 @@
               <div class="studio-autopilot__question-fields-header">
                 <v-btn
                   aria-label="Answer normally instead"
+                  color="primary"
+                  :prepend-icon="mdiPencilOutline"
                   size="small"
-                  variant="text"
+                  variant="tonal"
                   @click="dismissNumberedQuestions"
                 >
-                  Answer normally
+                  Answer normally instead
                 </v-btn>
               </div>
               <div
@@ -218,32 +220,29 @@
                 :key="question.name"
                 class="studio-autopilot__question-field"
               >
+                <v-select
+                  v-if="question.choices.length"
+                  v-model="questionAnswers[question.name]"
+                  class="studio-autopilot__question-select"
+                  density="compact"
+                  hide-details="auto"
+                  item-title="selectLabel"
+                  item-value="value"
+                  :items="numberedQuestionSelectItems[question.name]"
+                  :label="`[${question.number}] ${question.label}`"
+                  :title="question.label"
+                  variant="outlined"
+                />
                 <v-text-field
+                  v-else
                   v-model="questionAnswers[question.name]"
                   autocomplete="off"
                   density="compact"
                   hide-details="auto"
                   :label="`[${question.number}] ${question.label}`"
+                  :title="question.label"
                   variant="outlined"
                 />
-                <v-chip-group
-                  v-if="question.choices.length"
-                  v-model="questionAnswers[question.name]"
-                  class="studio-autopilot__question-choices"
-                  column
-                  selected-class="text-primary"
-                >
-                  <v-chip
-                    v-for="choice in question.choices"
-                    :key="choice.value"
-                    filter
-                    size="small"
-                    :value="choice.value"
-                    variant="outlined"
-                  >
-                    {{ choice.label }}<span v-if="choice.recommended"> · Recommended</span>
-                  </v-chip>
-                </v-chip-group>
               </div>
             </div>
             <div
@@ -327,11 +326,9 @@
                 v-if="agentStopVisible"
                 ref="composerSendButton"
                 aria-label="Steer assistant"
-                :aria-disabled="!composerCanSubmit"
                 class="studio-autopilot__send--steer"
-                :class="{ 'studio-autopilot__send--inactive': !composerCanSubmit }"
                 color="primary"
-                :disabled="composerDisabled"
+                :disabled="!composerCanSubmit"
                 :loading="composerSending"
                 :prepend-icon="mdiArrowTopRight"
                 size="small"
@@ -346,10 +343,8 @@
                 v-else
                 ref="composerSendButton"
                 aria-label="Send message"
-                :aria-disabled="!composerCanSubmit"
-                :class="{ 'studio-autopilot__send--inactive': !composerCanSubmit }"
                 color="primary"
-                :disabled="composerDisabled"
+                :disabled="!composerCanSubmit"
                 :icon="mdiSend"
                 :loading="composerSending"
                 size="small"
@@ -536,6 +531,7 @@ import {
   mdiGithub,
   mdiIncognito,
   mdiPaperclip,
+  mdiPencilOutline,
   mdiRobotOutline,
   mdiSend,
   mdiSourcePull,
@@ -603,6 +599,7 @@ const {
   emptyConversationWelcome,
   interrupting,
   loadMoreChatTurns,
+  numberedQuestionSelectItems,
   numberedQuestions,
   openSourceEditorFile,
   previewAttachmentState,
@@ -953,10 +950,6 @@ async function attachPreviewFile(file) {
   width: 100%;
 }
 
-.studio-autopilot__send--inactive {
-  opacity: var(--v-disabled-opacity);
-}
-
 .studio-autopilot__send--steer {
   min-width: 4.25rem;
   padding-inline: 0.55rem;
@@ -964,8 +957,8 @@ async function attachPreviewFile(file) {
 
 .studio-autopilot__question-fields {
   display: grid;
-  gap: 0.45rem;
-  padding: 0.55rem 0.6rem 0;
+  gap: 0.3rem;
+  padding: 0.3rem 0.45rem 0;
 }
 
 .studio-autopilot__question-fields-header {
@@ -989,26 +982,12 @@ async function attachPreviewFile(file) {
 }
 
 .studio-autopilot__question-field {
-  display: grid;
-  gap: 0.2rem;
   min-width: 0;
 }
 
-.studio-autopilot__question-choices {
+.studio-autopilot__question-select {
   max-width: 100%;
   min-width: 0;
-}
-
-.studio-autopilot__question-choices :deep(.v-chip) {
-  height: auto;
-  max-width: 100%;
-  min-width: 0;
-  white-space: normal;
-}
-
-.studio-autopilot__question-choices :deep(.v-chip__content) {
-  overflow-wrap: anywhere;
-  white-space: normal;
 }
 
 .studio-autopilot__answer-choices {

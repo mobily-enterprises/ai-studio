@@ -174,6 +174,48 @@ describe("vibe64NumberedQuestionSugar", () => {
     ]);
   });
 
+  it("preserves trailing prose after a complete structured question", () => {
+    const sugar = sugarForPrompt([
+      "The product direction is now captured.",
+      "",
+      "[1] Which database should hold the shared tasks?",
+      "",
+      "Possible answers:",
+      "- PostgreSQL — recommended for connected team data",
+      "- MySQL — use it if preferred",
+      "",
+      "The project setup command remains unavailable."
+    ].join("\n"));
+
+    expect(sugar).toMatchObject({
+      intro: "The product direction is now captured.",
+      outro: "The project setup command remains unavailable.",
+      questions: [
+        {
+          choices: [
+            {
+              label: "PostgreSQL — recommended for connected team data",
+              selectLabel: "PostgreSQL",
+              value: "PostgreSQL — recommended for connected team data"
+            },
+            {
+              label: "MySQL — use it if preferred",
+              selectLabel: "MySQL",
+              value: "MySQL — use it if preferred"
+            }
+          ],
+          label: "Which database should hold the shared tasks?",
+          number: 1
+        }
+      ]
+    });
+    expect(numberedQuestionSubmissionFields(sugar.questions, {
+      __ui_question_1: sugar.questions[0].choices[0].value
+    })).toEqual({
+      response: "[1] PostgreSQL — recommended for connected team data"
+    });
+  });
+
   it("submits generated answers as one response field", () => {
     const sugar = sugarForPrompt([
       "[1] Which file should change?",

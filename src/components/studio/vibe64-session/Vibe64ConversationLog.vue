@@ -244,6 +244,11 @@
                   </div>
                 </li>
               </ol>
+              <LongTextPreviewBlocks
+                v-if="entry.message.outroBlocks.length"
+                :blocks="entry.message.outroBlocks"
+                @link-click="handleLongTextLinkClick"
+              />
             </div>
             <div
               v-if="entry.message.displayAt"
@@ -397,12 +402,16 @@ function displayMessage(message = null, {
     ? parseNumberedQuestionPrompt(message.text)
     : {
         intro: "",
+        outro: "",
         questions: []
       };
   const hasQuestions = questionInput.questions.length > 0;
   const value = {
     ...message,
     blocks: parseLongTextReviewBlocks(hasQuestions ? questionInput.intro : message.text, {
+      preserveParagraphLineBreaks
+    }),
+    outroBlocks: parseLongTextReviewBlocks(hasQuestions ? questionInput.outro : "", {
       preserveParagraphLineBreaks
     }),
     questions: hasQuestions ? questionInput.questions : [],
@@ -1192,7 +1201,7 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
 .studio-conversation-log__questions {
   box-sizing: border-box;
   display: grid;
-  gap: 0.28rem;
+  gap: 0.2rem;
   list-style: none;
   margin: 0;
   max-width: 100%;
@@ -1207,11 +1216,11 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
   border-radius: 8px;
   box-sizing: border-box;
   display: grid;
-  gap: 0.42rem;
+  gap: 0.32rem;
   grid-template-columns: auto minmax(0, 1fr);
   max-width: 100%;
   min-width: 0;
-  padding: 0.36rem 0.5rem;
+  padding: 0.28rem 0.42rem;
 }
 
 .studio-conversation-log__question-number {
@@ -1239,23 +1248,29 @@ watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) 
 }
 
 .studio-conversation-log__question-content {
-  display: grid;
-  gap: 0.28rem;
+  display: block;
   min-width: 0;
 }
 
 .studio-conversation-log__question-choices {
   color: rgba(var(--v-theme-on-surface), 0.72);
-  display: grid;
+  display: inline;
   font-size: 0.8rem;
-  gap: 0.12rem;
-  list-style: disc;
   margin: 0;
-  padding-left: 1.1rem;
+  padding: 0;
+}
+
+.studio-conversation-log__question-choices::before {
+  content: " · ";
 }
 
 .studio-conversation-log__question-choices li {
+  display: inline;
   overflow-wrap: anywhere;
+}
+
+.studio-conversation-log__question-choices li + li::before {
+  content: " · ";
 }
 
 .studio-conversation-log__bottom {

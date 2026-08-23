@@ -60,6 +60,13 @@ const STANDALONE_SESSION_TOOL_IDS = new Set([
   "system"
 ]);
 const EMPTY_CONVERSATION_WELCOME = "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together.";
+const NUMBERED_QUESTION_UNSURE_VALUE = "I am not sure";
+const NUMBERED_QUESTION_UNSURE_CHOICE = Object.freeze({
+  label: NUMBERED_QUESTION_UNSURE_VALUE,
+  recommended: false,
+  selectLabel: NUMBERED_QUESTION_UNSURE_VALUE,
+  value: NUMBERED_QUESTION_UNSURE_VALUE
+});
 const vibe64AutopilotViewEmits = ["busy-change", "project-attention"];
 const vibe64AutopilotViewProps = {
   active: {
@@ -291,6 +298,18 @@ function useVibe64AutopilotView(props, emit) {
       ? []
       : numberedQuestionInput.value.questions || []
   ));
+  const numberedQuestionSelectItems = computed(() => Object.fromEntries(
+    numberedQuestions.value.map((question) => {
+      const choices = Array.isArray(question.choices) ? question.choices : [];
+      const includesUnsureChoice = choices.some((choice) => (
+        String(choice?.value || "").trim().toLowerCase() === NUMBERED_QUESTION_UNSURE_VALUE.toLowerCase()
+      ));
+      return [
+        question.name,
+        includesUnsureChoice ? choices : [...choices, NUMBERED_QUESTION_UNSURE_CHOICE]
+      ];
+    })
+  ));
   const answerChoices = computed(() => (
     numberedQuestions.value.length
       ? []
@@ -344,7 +363,7 @@ function useVibe64AutopilotView(props, emit) {
       ? "Optional additional context…"
       : answerChoices.value.length
         ? "Choose an answer above, or type another answer…"
-        : "What would you like to work on? A rough idea is enough…"
+        : ""
   ));
   const workspaceSetup = computed(() => {
     const value = props.session?.workspaceSetup;
@@ -1151,6 +1170,7 @@ function useVibe64AutopilotView(props, emit) {
     emptyConversationWelcome,
     interrupting,
     loadMoreChatTurns,
+    numberedQuestionSelectItems,
     numberedQuestions,
     openSourceEditorFile,
     previewAttachmentState,

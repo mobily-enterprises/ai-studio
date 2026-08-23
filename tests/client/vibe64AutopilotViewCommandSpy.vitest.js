@@ -157,6 +157,21 @@ describe("Vibe64 direct session view", () => {
     expect(composable).not.toContain("Send guidance while the assistant is working.");
   });
 
+  it("requires complete compact structured answers while preserving free-form escape", () => {
+    const component = fs.readFileSync(componentPath, "utf8");
+    const composable = fs.readFileSync(composablePath, "utf8");
+
+    expect(component).toContain("<v-select");
+    expect(component).toContain('item-title="selectLabel"');
+    expect(component).toContain(':items="numberedQuestionSelectItems[question.name]"');
+    expect(component).not.toContain("#selection=");
+    expect(component).toContain("Answer normally instead");
+    expect(component).toContain(':prepend-icon="mdiPencilOutline"');
+    expect(component.match(/:disabled="!composerCanSubmit"/gu)).toHaveLength(2);
+    expect(composable).toContain('const NUMBERED_QUESTION_UNSURE_VALUE = "I am not sure";');
+    expect(composable).toContain("numberedQuestions.value.every");
+  });
+
   it("passes only direct chat and tool state through the runtime host", () => {
     const runtimeHost = fs.readFileSync(runtimeHostPath, "utf8");
 

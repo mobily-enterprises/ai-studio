@@ -5,6 +5,7 @@ const UI_QUESTION_FIELD_PREFIX = "__ui_question_";
 function inactiveNumberedQuestionSugar() {
   return {
     intro: "",
+    outro: "",
     questions: []
   };
 }
@@ -51,9 +52,12 @@ function numberedQuestionChoice(line = "") {
   if (!choice) {
     return null;
   }
+  const label = String(choice.label || "").trim();
+  const selectLabel = label.split(/(?:\s*[—–]\s*|\s+-\s+)/u, 1)[0].trim() || label;
   return {
     ...choice,
-    recommended: choice.recommended === true
+    recommended: choice.recommended === true,
+    selectLabel
   };
 }
 
@@ -111,6 +115,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
   }
 
   const intro = [];
+  const outro = [];
   const questions = [];
   for (let index = 0; index < lines.length;) {
     const line = lines[index];
@@ -131,7 +136,15 @@ function parseLineNumberedQuestionPrompt(value = "") {
         index = choiceBlock.nextIndex;
         continue;
       }
-      return inactiveNumberedQuestionSugar();
+      const trailingLines = lines.slice(index);
+      if (
+        trailingAnswerChoiceHeadingLine(line) ||
+        trailingLines.some((trailingLine) => numberedQuestionMarkerMatch(trailingLine))
+      ) {
+        return inactiveNumberedQuestionSugar();
+      }
+      outro.push(...trailingLines);
+      break;
     }
 
     const question = questionForMarkerMatch(match, questions.length);
@@ -147,6 +160,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
   }
   return {
     intro: intro.join("\n"),
+    outro: outro.join("\n"),
     questions
   };
 }
@@ -188,6 +202,7 @@ function parseInlineNumberedQuestionPrompt(value = "") {
 
   return {
     intro,
+    outro: "",
     questions
   };
 }
