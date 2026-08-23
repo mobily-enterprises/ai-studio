@@ -73,7 +73,8 @@ test("temporary conversation actions reuse the terminal lifecycle and always sta
   assert.deepEqual(calls[0][2], {
     agentSettings: { model: "gpt-test" },
     ephemeral: true,
-    policy: "workspace_write"
+    policy: "workspace_write",
+    vibe64User: null
   });
   assert.deepEqual(calls.slice(1).map((entry) => entry[0]), ["read", "start", "stop", "delete"]);
   for (const call of calls.slice(1)) {
