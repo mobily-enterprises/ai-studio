@@ -237,6 +237,7 @@ function createSignalShutdownHandler({
   app,
   beforeClose = null,
   clearTimeoutFn = clearTimeout,
+  closeRuntimeTerminals = () => closeTerminalSessionsForNamespacePrefix(""),
   exitProcess = process.exit.bind(process),
   setTimeoutFn = setTimeout,
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS
@@ -284,6 +285,7 @@ function createSignalShutdownHandler({
       if (typeof beforeClose === "function") {
         await beforeClose(signal);
       }
+      await closeRuntimeTerminals();
       await app.close();
       clearTimeoutFn(timeout);
       logOperationalEvent(app.log, "info", {
