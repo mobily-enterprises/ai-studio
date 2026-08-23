@@ -345,6 +345,26 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     app.unmount();
   });
 
+  it("counts custom-note characters by Unicode code point at the shared 500-character boundary", async () => {
+    const { app, container } = mountPanel();
+    const note = findField(container, "Anything else (optional)");
+
+    note.props["onUpdate:modelValue"]("🌱".repeat(500));
+    await nextTick();
+    expect(findField(container, "Anything else (optional)").props.errorMessages).toBeFalsy();
+    expect(findField(container, "Anything else (optional)").props.hint)
+      .toBe("500 of 500 characters");
+    expect(findButton(container, "Save AI behaviour").props.disabled).toBe(false);
+
+    note.props["onUpdate:modelValue"]("🌱".repeat(501));
+    await nextTick();
+    expect(findField(container, "Anything else (optional)").props.hint)
+      .toBe("501 of 500 characters");
+    expect(findButton(container, "Save AI behaviour").props.disabled).toBe(true);
+
+    app.unmount();
+  });
+
   it("refreshes manually and through both declared realtime paths", async () => {
     const { app, container } = mountPanel();
 

@@ -147,10 +147,12 @@
             class="project-settings__ai-note"
             :disabled="!aiPolicyCanEdit || aiPolicySaving"
             density="compact"
-            hide-details
+            :error-messages="aiPolicyCustomNoteError ? [aiPolicyCustomNoteError] : []"
+            :hint="`${aiPolicyCustomNoteLength} of ${AI_POLICY_CUSTOM_NOTE_MAX_LENGTH} characters`"
+            hide-details="auto"
             label="Anything else (optional)"
-            maxlength="500"
             placeholder="For example: use Australian English."
+            persistent-hint
             rows="2"
             variant="outlined"
           />
@@ -172,7 +174,7 @@
             These choices apply to main and Temporary AI conversations from the next turn.
           </p>
           <v-btn
-            :disabled="!aiPolicyChanged || !aiPolicyCanEdit || aiPolicySaving"
+            :disabled="!aiPolicyChanged || !aiPolicyCanEdit || aiPolicySaving || Boolean(aiPolicyCustomNoteError)"
             color="primary"
             size="small"
             type="button"
@@ -220,6 +222,7 @@ import {
 } from "@/lib/vibe64SessionRequestConfig.js";
 
 const projectSlug = useVibe64ProjectSlug();
+const AI_POLICY_CUSTOM_NOTE_MAX_LENGTH = 500;
 const scopeDraft = ref("session");
 const aiPolicyDraft = ref(normalizeAiPolicyDraft());
 const savedAiPolicy = ref(normalizeAiPolicyDraft());
@@ -320,6 +323,14 @@ const databaseChanged = computed(() => (
 const aiPolicyChanged = computed(() => (
   JSON.stringify(aiPolicyDraft.value) !== JSON.stringify(savedAiPolicy.value)
 ));
+const aiPolicyCustomNoteLength = computed(() => (
+  Array.from(String(aiPolicyDraft.value.customNote || "")).length
+));
+const aiPolicyCustomNoteError = computed(() => (
+  aiPolicyCustomNoteLength.value > AI_POLICY_CUSTOM_NOTE_MAX_LENGTH
+    ? `Use ${AI_POLICY_CUSTOM_NOTE_MAX_LENGTH} characters or fewer.`
+    : ""
+));
 
 watch(() => developmentDatabase.value.scope, (scope) => {
   if (["project", "session"].includes(scope)) {
@@ -371,7 +382,12 @@ async function saveDatabase() {
 }
 
 async function saveAiPolicy() {
-  if (!aiPolicyChanged.value || !aiPolicyCanEdit.value || aiPolicySaving.value) {
+  if (
+    !aiPolicyChanged.value ||
+    !aiPolicyCanEdit.value ||
+    aiPolicySaving.value ||
+    aiPolicyCustomNoteError.value
+  ) {
     return;
   }
   await aiPolicySaveCommand.run({
