@@ -8,6 +8,10 @@ import {
   normalizeText
 } from "@local/vibe64-core/server/core";
 import {
+  createStreamingLogSanitizer,
+  sanitizeOperationText
+} from "@local/vibe64-core/server/logging";
+import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
@@ -15,6 +19,7 @@ import {
 } from "@local/vibe64-genesis/server";
 import {
   workspaceSetupState,
+  workspaceSetupTranscript,
   writeWorkspaceSetupState
 } from "@local/vibe64-runtime/server/workspaceSetupState";
 import {
@@ -90,15 +95,55 @@ function preparedRecipe(setup = {}, sourcePath = "") {
   };
 }
 
-function commandDiagnostic(result = {}, label = "") {
-  const output = normalizeText(result.stderr || result.error || result.output);
+function operationRedactionSecrets(env = {}) {
+  return [...new Set(Object.values(
+    env && typeof env === "object" && !Array.isArray(env) ? env : {}
+  ).map((value) => String(value ?? "")).filter((value) => value.length >= 4))];
+}
+
+function safeSetupLabel(value = "", secrets = []) {
+  return sanitizeOperationText(normalizeText(value), secrets)
+    .replace(/\s+/gu, " ")
+    .slice(0, 160);
+}
+
+function capturedCommandOutput(result = {}, secrets = []) {
+  const combined = String(result.output ?? "");
+  const raw = combined || [result.stdout, result.stderr, result.error]
+    .map((value) => String(value ?? ""))
+    .filter(Boolean)
+    .join("\n");
+  if (!raw) {
+    return "";
+  }
+  const sanitizer = createStreamingLogSanitizer({ secrets });
+  return workspaceSetupTranscript(`${sanitizer.push(raw)}${sanitizer.flush()}`);
+}
+
+function appendWorkspaceSetupTranscript(transcript = "", ...entries) {
+  return workspaceSetupTranscript([
+    transcript,
+    ...entries
+  ].map((entry) => String(entry ?? "").trim()).filter(Boolean).join("\n"));
+}
+
+function stepStatus(label = "", status = "", secrets = []) {
+  return `[${safeSetupLabel(label, secrets) || "Workspace preparation"}] ${status}.`;
+}
+
+function commandDiagnostic(result = {}, label = "", secrets = []) {
+  const output = normalizeText(sanitizeOperationText(
+    result.stderr || result.error || result.output,
+    secrets
+  ));
   if (output) {
     return output.slice(-1600);
   }
+  const safeLabel = safeSetupLabel(label, secrets) || "Workspace preparation";
   if (result.timedOut === true) {
-    return `${label} timed out after 15 minutes.`;
+    return `${safeLabel} timed out after 15 minutes.`;
   }
-  return `${label} exited with code ${Number(result.exitCode) || 1}.`;
+  return `${safeLabel} exited with code ${Number(result.exitCode) || 1}.`;
 }
 
 function createWorkspaceSetupRunner({
@@ -120,35 +165,48 @@ function createWorkspaceSetupRunner({
   }
 
   async function persistInspectedState(runtime, sessionId, previous, value) {
-    const next = workspaceSetupState(value);
+    const next = workspaceSetupState({
+      transcript: previous.transcript,
+      ...value
+    });
     const unchanged = [
       "currentLabel",
       "diagnostic",
       "recipeHash",
-      "status"
+      "status",
+      "transcript"
     ].every((name) => previous[name] === next[name]);
     return unchanged && previous.status !== "running"
       ? previous
-      : persist(runtime, sessionId, value);
+      : persist(runtime, sessionId, next);
   }
 
   async function failed(runtime, sessionId, {
     currentLabel = "",
     diagnostic = "Workspace preparation failed.",
     recipeHash = "",
-    startedAt = ""
+    redactionSecrets = [],
+    startedAt = "",
+    transcript = ""
   } = {}) {
+    const safeLabel = safeSetupLabel(currentLabel, redactionSecrets);
+    const safeDiagnostic = sanitizeOperationText(diagnostic, redactionSecrets);
     return persist(runtime, sessionId, {
-      currentLabel,
-      diagnostic,
+      currentLabel: safeLabel,
+      diagnostic: safeDiagnostic,
       finishedAt: stateTimestamp(clock),
       recipeHash,
       startedAt,
-      status: "failed"
+      status: "failed",
+      transcript: appendWorkspaceSetupTranscript(
+        sanitizeOperationText(transcript, redactionSecrets),
+        stepStatus(safeLabel, "Failed", redactionSecrets)
+      )
     });
   }
 
   async function execute({
+    context,
     recipe,
     runtime,
     session,
@@ -160,16 +218,29 @@ function createWorkspaceSetupRunner({
       session,
       target: "workspace-setup"
     });
-    let currentLabel = recipe.steps[0].label;
-    for (const step of recipe.steps) {
-      currentLabel = step.label;
+    const redactionSecrets = operationRedactionSecrets(projectEnv);
+    context.redactionSecrets = redactionSecrets;
+    context.transcript = workspaceSetupTranscript(sanitizeOperationText(
+      context.transcript,
+      redactionSecrets
+    ));
+    for (const [index, step] of recipe.steps.entries()) {
+      const currentLabel = safeSetupLabel(step.label, redactionSecrets);
+      context.currentLabel = currentLabel;
+      if (index > 0) {
+        context.transcript = appendWorkspaceSetupTranscript(
+          context.transcript,
+          stepStatus(currentLabel, "Running", redactionSecrets)
+        );
+      }
       await persist(runtime, session.sessionId, {
         currentLabel,
         diagnostic: "",
         finishedAt: "",
         recipeHash: recipe.recipeHash,
         startedAt,
-        status: "running"
+        status: "running",
+        transcript: context.transcript
       });
       const result = await runCommand({
         actor: "app",
@@ -187,22 +258,36 @@ function createWorkspaceSetupRunner({
         runtimes: recipe.runtimes,
         timeout: WORKSPACE_SETUP_COMMAND_TIMEOUT_MS
       });
+      context.transcript = appendWorkspaceSetupTranscript(
+        context.transcript,
+        capturedCommandOutput(result, redactionSecrets)
+      );
       if (result?.ok !== true) {
         return failed(runtime, session.sessionId, {
           currentLabel,
-          diagnostic: commandDiagnostic(result, currentLabel),
+          diagnostic: commandDiagnostic(result, currentLabel, redactionSecrets),
           recipeHash: recipe.recipeHash,
-          startedAt
+          redactionSecrets,
+          startedAt,
+          transcript: context.transcript
         });
       }
+      context.transcript = appendWorkspaceSetupTranscript(
+        context.transcript,
+        stepStatus(currentLabel, "Succeeded", redactionSecrets)
+      );
     }
     return persist(runtime, session.sessionId, {
-      currentLabel,
+      currentLabel: context.currentLabel,
       diagnostic: "",
       finishedAt: stateTimestamp(clock),
       recipeHash: recipe.recipeHash,
       startedAt,
-      status: "succeeded"
+      status: "succeeded",
+      transcript: appendWorkspaceSetupTranscript(
+        context.transcript,
+        "Workspace preparation succeeded."
+      )
     });
   }
 
@@ -212,14 +297,23 @@ function createWorkspaceSetupRunner({
         currentLabel: context.currentLabel,
         diagnostic: normalizeText(error?.message) || "Workspace preparation failed.",
         recipeHash: context.recipeHash,
-        startedAt: context.startedAt
+        redactionSecrets: context.redactionSecrets,
+        startedAt: context.startedAt,
+        transcript: context.transcript
       }).catch(() => workspaceSetupState({
-        currentLabel: context.currentLabel,
-        diagnostic: normalizeText(error?.message) || "Workspace preparation failed.",
+        currentLabel: safeSetupLabel(context.currentLabel, context.redactionSecrets),
+        diagnostic: sanitizeOperationText(
+          normalizeText(error?.message) || "Workspace preparation failed.",
+          context.redactionSecrets
+        ),
         finishedAt: stateTimestamp(clock),
         recipeHash: context.recipeHash,
         startedAt: context.startedAt,
         status: "failed",
+        transcript: appendWorkspaceSetupTranscript(
+          sanitizeOperationText(context.transcript, context.redactionSecrets),
+          stepStatus(context.currentLabel, "Failed", context.redactionSecrets)
+        ),
         updatedAt: stateTimestamp(clock)
       })))
       .finally(() => {
@@ -329,26 +423,42 @@ function createWorkspaceSetupRunner({
       };
     }
     const startedAt = stateTimestamp(clock);
+    const currentLabel = safeSetupLabel(recipe.steps[0].label);
+    const attemptLabel = previous.transcript
+      ? (retry === true
+          ? "Workspace preparation retry started."
+          : "Workspace preparation started for updated configuration.")
+      : "Workspace preparation started.";
+    const transcript = appendWorkspaceSetupTranscript(
+      previous.transcript,
+      attemptLabel,
+      stepStatus(currentLabel, "Running")
+    );
     const state = await persist(runtime, sessionId, {
-      currentLabel: recipe.steps[0].label,
+      currentLabel,
       diagnostic: "",
       finishedAt: "",
       recipeHash: recipe.recipeHash,
       startedAt,
-      status: "running"
+      status: "running",
+      transcript
     });
+    const context = {
+      currentLabel,
+      recipeHash: recipe.recipeHash,
+      redactionSecrets: [],
+      runtime,
+      startedAt,
+      transcript
+    };
     const completion = observe(sessionId, execute({
+      context,
       recipe,
       runtime,
       session,
       sourcePath,
       startedAt
-    }), {
-      currentLabel: recipe.steps[0].label,
-      recipeHash: recipe.recipeHash,
-      runtime,
-      startedAt
-    });
+    }), context);
     return { completion, state };
   }
 

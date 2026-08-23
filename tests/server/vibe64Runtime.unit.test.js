@@ -76,6 +76,7 @@ test("plain runtime creates a Genesis session and awaits source materialization"
       recipeHash: "",
       startedAt: "",
       status: "unconfigured",
+      transcript: "",
       updatedAt: ""
     });
     assert.equal(Object.hasOwn(created, "actions"), false);

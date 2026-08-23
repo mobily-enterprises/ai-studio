@@ -7,6 +7,9 @@ import {
   Vibe64SessionRuntime
 } from "@local/vibe64-runtime/server";
 import {
+  WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH,
+  WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER,
+  workspaceSetupState,
   workspaceSetupStateFromMetadata
 } from "@local/vibe64-runtime/server/workspaceSetupState";
 import {
@@ -84,7 +87,7 @@ test("workspace preparation executes declared argv in order through the managed 
       projectService: {
         async projectExecutionEnvironment() {
           return {
-            PROJECT_SETTING: "configured"
+            PROJECT_SETTING: "configured-secret-value"
           };
         }
       },
@@ -92,13 +95,17 @@ test("workspace preparation executes declared argv in order through the managed 
         calls.push(request);
         return {
           exitCode: 0,
-          ok: true
+          ok: true,
+          output: request.command === "composer"
+            ? "Downloading PHP packages\nconfigured-secret-value\n"
+            : "Installing JavaScript packages\nAPI_TOKEN=raw-token\n"
         };
       }
     });
 
     const started = await runner.start({ runtime, session });
     assert.equal(started.state.status, "running");
+    assert.match(started.state.transcript, /\[Install PHP dependencies\] Running\./u);
     assert.equal(runner.isRunning(session.sessionId), true);
     assert.equal(await runner.wait(session.sessionId), await started.completion);
     assert.equal(runner.isRunning(session.sessionId), false);
@@ -117,7 +124,7 @@ test("workspace preparation executes declared argv in order through the managed 
       assert.equal(call.envPolicy, "project");
       assert.deepEqual(call.allowedRoots, [sourceRoot]);
       assert.deepEqual(call.project.runtimeConfigEnv, {
-        PROJECT_SETTING: "configured"
+        PROJECT_SETTING: "configured-secret-value"
       });
       assert.equal(Object.hasOwn(call.project, "databaseEnv"), false);
       assert.deepEqual(call.runtimes, ["node26", "composer", "php"]);
@@ -131,6 +138,70 @@ test("workspace preparation executes declared argv in order through the managed 
     assert.equal(stored.currentLabel, "Install JavaScript dependencies");
     assert.equal(stored.recipeHash, "sha256:recipe");
     assert.equal(stored.diagnostic, "");
+    assert.match(stored.transcript, /\[Install PHP dependencies\] Running\./u);
+    assert.match(stored.transcript, /Downloading PHP packages/u);
+    assert.match(stored.transcript, /\[Install JavaScript dependencies\] Succeeded\./u);
+    assert.match(stored.transcript, /Workspace preparation succeeded\./u);
+    assert.doesNotMatch(stored.transcript, /configured-secret-value|raw-token|--no-interaction/u);
+    assert.match(stored.transcript, /\[redacted\]/u);
+  });
+});
+
+test("workspace preparation state bounds and normalizes durable transcripts", () => {
+  const oldState = workspaceSetupStateFromMetadata({
+    workspace_setup: JSON.stringify({
+      currentLabel: "Install dependencies",
+      recipeHash: "sha256:old-shape",
+      status: "succeeded"
+    })
+  });
+  assert.equal(oldState.transcript, "");
+
+  const bounded = workspaceSetupState({
+    status: "running",
+    transcript: `\u001b[31m${"x".repeat(WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH * 2)}tail\u001b[0m`
+  });
+  assert.equal(bounded.transcript.length, WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH);
+  assert.equal(bounded.transcript.startsWith(WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER), true);
+  assert.equal(bounded.transcript.endsWith("tail"), true);
+  assert.equal(bounded.transcript.includes("\u001b"), false);
+});
+
+test("workspace preparation transcript remains visible after a runtime restart", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot, "restart-session");
+    const runner = createWorkspaceSetupRunner({
+      inspect: () => readySetup(),
+      projectService: {},
+      async runCommand() {
+        return {
+          exitCode: 0,
+          ok: true,
+          output: `${"x".repeat(WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH * 2)}Restorable workspace output.`
+        };
+      }
+    });
+
+    const started = await runner.start({ runtime, session });
+    await started.completion;
+    const restartedRuntime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    const restored = await restartedRuntime.getSession(session.sessionId, {
+      inspectSource: false
+    });
+    assert.equal(restored.workspaceSetup.status, "succeeded");
+    assert.equal(
+      restored.workspaceSetup.transcript.length <= WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH,
+      true
+    );
+    assert.equal(
+      restored.workspaceSetup.transcript.startsWith(WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER),
+      true
+    );
+    assert.match(restored.workspaceSetup.transcript, /Restorable workspace output\./u);
+    assert.match(restored.workspaceSetup.transcript, /Workspace preparation succeeded\./u);
   });
 });
 
@@ -306,15 +377,28 @@ test("ambiguous setup remains an actionable session state without executing eith
 test("command failure records a short diagnostic and leaves the session active", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const { runtime, session } = await workspaceSession(targetRoot);
+    let shouldFail = true;
     const runner = createWorkspaceSetupRunner({
       inspect: () => readySetup(),
-      projectService: {},
+      projectService: {
+        async projectExecutionEnvironment() {
+          return {
+            REGISTRY_TOKEN: "retry-secret"
+          };
+        }
+      },
       async runCommand() {
-        return {
-          exitCode: 1,
-          ok: false,
-          stderr: "npm could not reach the registry"
-        };
+        return shouldFail
+          ? {
+              exitCode: 1,
+              ok: false,
+              stderr: "npm could not reach the registry using retry-secret"
+            }
+          : {
+              exitCode: 0,
+              ok: true,
+              output: "Dependencies are current."
+            };
       }
     });
 
@@ -322,8 +406,32 @@ test("command failure records a short diagnostic and leaves the session active",
     const finished = await started.completion;
     assert.equal(finished.status, "failed");
     assert.equal(finished.currentLabel, "Install JavaScript dependencies");
-    assert.equal(finished.diagnostic, "npm could not reach the registry");
+    assert.equal(finished.diagnostic, "npm could not reach the registry using [redacted]");
+    assert.match(finished.transcript, /npm could not reach the registry using \[redacted\]/u);
+    assert.doesNotMatch(finished.transcript, /retry-secret/u);
+    assert.match(finished.transcript, /\[Install JavaScript dependencies\] Failed\./u);
     assert.equal((await runtime.store.readSession(session.sessionId)).status, "active");
+
+    shouldFail = false;
+    const retried = await runner.start({
+      retry: true,
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    const succeeded = await retried.completion;
+    assert.equal(succeeded.status, "succeeded");
+    assert.match(succeeded.transcript, /Workspace preparation retry started\./u);
+    assert.match(succeeded.transcript, /Dependencies are current\./u);
+    assert.equal(
+      succeeded.transcript.match(/\[Install JavaScript dependencies\] Failed\./gu)?.length,
+      1
+    );
+    assert.equal(
+      succeeded.transcript.match(/\[Install JavaScript dependencies\] Succeeded\./gu)?.length,
+      1
+    );
   });
 });
 

@@ -1,9 +1,12 @@
 import {
   normalizeText
 } from "@local/vibe64-core/server/core";
+import stripAnsi from "strip-ansi";
 
 const WORKSPACE_SETUP_METADATA_NAME = "workspace_setup";
 const WORKSPACE_SETUP_DIAGNOSTIC_MAX_LENGTH = 1600;
+const WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH = 32 * 1024;
+const WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER = "[Earlier workspace preparation output was truncated.]\n";
 const WORKSPACE_SETUP_STATUSES = new Set([
   "ambiguous",
   "failed",
@@ -19,6 +22,22 @@ function boundedText(value = "", maxLength = undefined) {
     : normalized;
 }
 
+function workspaceSetupTranscript(value = "") {
+  const normalized = [...stripAnsi(String(value ?? ""))
+    .replace(/\r\n?/gu, "\n")
+  ].filter((character) => {
+    const code = character.codePointAt(0);
+    return character === "\n" || character === "\t" || (code >= 32 && code !== 127);
+  }).join("")
+    .trim();
+  if (normalized.length <= WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH) {
+    return normalized;
+  }
+  return `${WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER}${normalized.slice(
+    -(WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH - WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER.length)
+  )}`;
+}
+
 function workspaceSetupState(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value)
     ? value
@@ -31,6 +50,7 @@ function workspaceSetupState(value = {}) {
     recipeHash: boundedText(source.recipeHash, 128),
     startedAt: normalizeText(source.startedAt),
     status: WORKSPACE_SETUP_STATUSES.has(status) ? status : "unconfigured",
+    transcript: workspaceSetupTranscript(source.transcript),
     updatedAt: normalizeText(source.updatedAt)
   };
 }
@@ -68,8 +88,11 @@ async function writeWorkspaceSetupState(store, sessionId = "", value = {}) {
 
 export {
   WORKSPACE_SETUP_METADATA_NAME,
+  WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH,
+  WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER,
   publicSessionMetadata,
   workspaceSetupState,
   workspaceSetupStateFromMetadata,
+  workspaceSetupTranscript,
   writeWorkspaceSetupState
 };
