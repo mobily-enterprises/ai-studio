@@ -12,26 +12,24 @@ import {
   normalizePreviewApplicationIdentities
 } from "@local/vibe64-core/server/previewAuth";
 
-const PREVIEW_APPLICATION_IDENTITIES_DIR = "preview";
-const PREVIEW_APPLICATION_IDENTITIES_FILE = "application-identities.json";
+const PREVIEW_APPLICATION_IDENTITIES_DIR = ".vibe64";
+const PREVIEW_APPLICATION_IDENTITIES_FILE = "preview-identities.json";
 const PREVIEW_APPLICATION_IDENTITIES_VERSION = 1;
-const LEGACY_PREVIEW_APPLICATION_IDENTITIES_DIR = "runtime-config";
-const LEGACY_PREVIEW_APPLICATION_IDENTITIES_FILE = "preview_application_identities";
 
-function resolvePreviewIdentityProjectRoot(projectLocalRoot = "") {
-  const root = normalizeText(projectLocalRoot);
+function resolvePreviewIdentitySourceRoot(sourceRoot = "") {
+  const root = normalizeText(sourceRoot);
   if (!root) {
     throw vibe64Error(
-      "Managed app identities require projectLocalRoot.",
+      "Managed app identities require an available project source.",
       "vibe64_preview_application_identities_root_required"
     );
   }
   return path.resolve(root);
 }
 
-function previewApplicationIdentitiesPath(projectLocalRoot = "") {
+function previewApplicationIdentitiesPath(sourceRoot = "") {
   return path.join(
-    resolvePreviewIdentityProjectRoot(projectLocalRoot),
+    resolvePreviewIdentitySourceRoot(sourceRoot),
     PREVIEW_APPLICATION_IDENTITIES_DIR,
     PREVIEW_APPLICATION_IDENTITIES_FILE
   );
@@ -54,14 +52,6 @@ function normalizeStoredPreviewApplicationIdentities(state = {}) {
   };
 }
 
-function legacyPreviewApplicationIdentitiesPath(projectLocalRoot = "") {
-  return path.join(
-    resolvePreviewIdentityProjectRoot(projectLocalRoot),
-    LEGACY_PREVIEW_APPLICATION_IDENTITIES_DIR,
-    LEGACY_PREVIEW_APPLICATION_IDENTITIES_FILE
-  );
-}
-
 async function readStoredPreviewApplicationIdentities(filePath = "") {
   try {
     return normalizeStoredPreviewApplicationIdentities(
@@ -81,68 +71,37 @@ async function readStoredPreviewApplicationIdentities(filePath = "") {
   }
 }
 
-async function migrateLegacyPreviewApplicationIdentities({
-  projectLocalRoot = ""
-} = {}) {
-  const legacyPath = legacyPreviewApplicationIdentitiesPath(projectLocalRoot);
-  let legacyText;
-  try {
-    legacyText = await readFile(legacyPath, "utf8");
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return null;
-    }
-    throw error;
-  }
-  const migrated = await savePreviewApplicationIdentities({
-    identities: normalizePreviewApplicationIdentities(legacyText),
-    projectLocalRoot
-  });
-  await rm(legacyPath, {
-    force: true
-  });
-  return migrated;
-}
-
 async function readPreviewApplicationIdentities({
-  projectLocalRoot = ""
+  sourceRoot = ""
 } = {}) {
-  const filePath = previewApplicationIdentitiesPath(projectLocalRoot);
+  const filePath = previewApplicationIdentitiesPath(sourceRoot);
   const state = await readStoredPreviewApplicationIdentities(filePath);
-  if (state) {
-    return {
-      filePath,
-      identities: state.identities
-    };
-  }
-  const migrated = await migrateLegacyPreviewApplicationIdentities({
-    projectLocalRoot
-  });
-  return migrated || {
+  return {
     filePath,
-    identities: []
+    identities: state?.identities || []
   };
 }
 
 async function savePreviewApplicationIdentities({
   identities = [],
-  projectLocalRoot = ""
+  sourceRoot = ""
 } = {}) {
-  const filePath = previewApplicationIdentitiesPath(projectLocalRoot);
+  const filePath = previewApplicationIdentitiesPath(sourceRoot);
   const state = normalizeStoredPreviewApplicationIdentities({
     identities,
     version: PREVIEW_APPLICATION_IDENTITIES_VERSION
   });
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
   await mkdir(path.dirname(filePath), {
+    mode: 0o2770,
     recursive: true
   });
   try {
     await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, {
-      mode: 0o600
+      mode: 0o660
     });
     await rename(temporaryPath, filePath);
-    await chmod(filePath, 0o600);
+    await chmod(filePath, 0o660);
   } finally {
     await rm(temporaryPath, {
       force: true

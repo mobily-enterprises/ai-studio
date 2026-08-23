@@ -28,7 +28,12 @@ const projectTemplateApplyInputValidator = patchSchema({
     required: true
   }
 });
-const previewApplicationIdentitiesReadInputValidator = patchSchema({});
+const previewApplicationIdentitiesReadInputValidator = patchSchema({
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
+});
 const projectSettingsReadInputValidator = patchSchema({});
 
 const projectTemplateParamsValidator = patchSchema({
@@ -126,6 +131,10 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
       additionalProperties: true
     },
     required: true
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
   }
 });
 

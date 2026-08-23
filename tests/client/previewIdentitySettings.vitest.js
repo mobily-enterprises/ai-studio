@@ -21,7 +21,7 @@ describe("managed app identity settings", () => {
     ]);
   });
 
-  it("preserves add, default, and removal controls on its own App access page", () => {
+  it("stores identities in the selected repository source through compact shared feedback", () => {
     const component = readFileSync(new URL(
       "../../src/components/studio/PreviewIdentitySettings.vue",
       import.meta.url
@@ -38,6 +38,17 @@ describe("managed app identity settings", () => {
     expect(component).toContain("label=\"App identifier\"");
     expect(component).toContain("label=\"Application value\"");
     expect(component).toContain("PREVIEW_IDENTITIES_ENDPOINT");
+    expect(component).toContain("useVibe64SessionSelection");
+    expect(component).toContain("selectedSessionId.value || \"baseline\"");
+    expect(component).toContain("{ sessionId: selectedSessionId.value }");
+    expect(component).toContain(".vibe64/preview-identities.json");
+    expect(component).toContain("not passwords or authentication secrets");
+    expect(component).toContain("saving ? \"Saving…\" : \"Save\"");
+    for (const button of component.matchAll(/<v-btn[\s\S]*?<\/v-btn>/gu)) {
+      expect(button[0]).not.toContain(":loading=");
+    }
+    expect(component).not.toContain("v-if=\"saveError\"");
+    expect(component).not.toContain("only in Vibe64 project state");
     expect(component).not.toContain("ENV_");
     expect(component).not.toContain("genesis");
     expect(page).toContain("<PreviewIdentitySettings />");

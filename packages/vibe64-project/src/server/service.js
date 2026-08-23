@@ -29,6 +29,7 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
+  assertProjectDirectoryUsable,
   createStudioProjectContext,
   getStudioProjectContext,
   normalizeDevelopmentDatabaseName,
@@ -684,9 +685,22 @@ function createService({
     return (await resolvedProjectEnvironment({}, await userEnvRecords())).effectiveEnvironment;
   }
 
-  async function previewApplicationIdentitiesState() {
+  async function previewApplicationIdentitySource(input = {}) {
+    const source = await sourceForInput(input);
+    if (!source.sourceRoot) {
+      throw vibe64Error(
+        "Preview identities require an available project source. Create or select a session first.",
+        "vibe64_preview_application_identities_source_required"
+      );
+    }
+    await assertProjectDirectoryUsable(source.sourceRoot);
+    return source;
+  }
+
+  async function previewApplicationIdentitiesState(input = {}) {
+    const source = await previewApplicationIdentitySource(input);
     const { identities } = await readStoredPreviewApplicationIdentities({
-      projectLocalRoot: selectedProjectRuntimeRoot()
+      sourceRoot: source.sourceRoot
     });
     return {
       identities,
@@ -814,8 +828,8 @@ function createService({
       return projectResult(() => revealEnvSecretState(input));
     },
 
-    async readPreviewApplicationIdentities() {
-      return projectResult(() => previewApplicationIdentitiesState());
+    async readPreviewApplicationIdentities(input = {}) {
+      return projectResult(() => previewApplicationIdentitiesState(input));
     },
 
     async readProjectTemplates(input = {}) {
@@ -875,14 +889,23 @@ function createService({
 
     async savePreviewApplicationIdentities(input = {}) {
       return projectResult(async () => {
-        const { identities } = await saveStoredPreviewApplicationIdentities({
-          identities: input.identities,
-          projectLocalRoot: selectedProjectRuntimeRoot()
-        });
-        return {
-          identities,
-          ok: true
-        };
+        const source = await previewApplicationIdentitySource(input);
+        return runProjectSourceMutationExclusive(
+          selectedProjectRuntimeRoot(),
+          async () => {
+            const { identities } = await saveStoredPreviewApplicationIdentities({
+              identities: input.identities,
+              sourceRoot: source.sourceRoot
+            });
+            return {
+              identities,
+              ok: true
+            };
+          },
+          {
+            operation: "save-preview-application-identities"
+          }
+        );
       });
     },
 

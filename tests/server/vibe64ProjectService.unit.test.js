@@ -105,6 +105,30 @@ test("a catalog project without a baseline checkout does not inspect its metadat
   });
 });
 
+test("repository identities require a real project source", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: path.join(temporaryRoot, "projects"),
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const service = createService({
+      env: {},
+      projectContext
+    });
+    await service.createProject({ name: "Remote catalogue" });
+
+    const response = await service.readPreviewApplicationIdentities();
+
+    assert.equal(response.ok, false);
+    assert.equal(
+      response.errors[0].code,
+      "vibe64_preview_application_identities_source_required"
+    );
+  });
+});
+
 test("managed development database scope is project state and changes only without open sessions", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
     const projectsRoot = path.join(temporaryRoot, "projects");
@@ -544,7 +568,7 @@ test("a host resource provider satisfies Genesis resources and projects the reso
   });
 });
 
-test("managed app identities live only in dedicated project-local state", async () => {
+test("managed app identities are stored in the repository source", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);
 
@@ -585,19 +609,79 @@ test("managed app identities live only in dedicated project-local state", async 
     });
     assert.deepEqual(await service.readPreviewApplicationIdentities(), saved);
 
-    const projectLocalRoot = service.currentProjectRuntimeRoot();
-    assert.notEqual(projectLocalRoot, targetRoot);
     const storedPath = path.join(
-      projectLocalRoot,
-      "preview",
-      "application-identities.json"
+      targetRoot,
+      ".vibe64",
+      "preview-identities.json"
     );
     const stored = JSON.parse(await readFile(storedPath, "utf8"));
     assert.deepEqual(stored, {
       identities: saved.identities,
       version: 1
     });
-    assert.equal((await stat(storedPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(storedPath)).mode & 0o777, 0o660);
+    await assert.rejects(() => readFile(path.join(
+      service.currentProjectRuntimeRoot(),
+      "preview",
+      "application-identities.json"
+    ), "utf8"), {
+      code: "ENOENT"
+    });
+  });
+});
+
+test("managed app identities use the exact selected session source", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const service = projectService(targetRoot);
+    const store = await service.createSessionStore();
+    const sessionSource = path.join(
+      path.dirname(targetRoot),
+      "managed-source",
+      "sessions",
+      "active",
+      "identity-session",
+      "source"
+    );
+    await mkdir(sessionSource, {
+      recursive: true
+    });
+    await store.createSession({
+      metadata: {
+        source_kind: "session_clone",
+        source_path: sessionSource,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      runtimeKind: "genesis",
+      sessionId: "identity-session"
+    });
+
+    const saved = await service.savePreviewApplicationIdentities({
+      identities: [{
+        name: "admin",
+        type: "email",
+        value: "admin@example.test"
+      }],
+      sessionId: "identity-session"
+    });
+
+    assert.deepEqual(
+      await service.readPreviewApplicationIdentities({
+        sessionId: "identity-session"
+      }),
+      saved
+    );
+    assert.deepEqual(JSON.parse(await readFile(path.join(
+      sessionSource,
+      ".vibe64",
+      "preview-identities.json"
+    ), "utf8")), {
+      identities: saved.identities,
+      version: 1
+    });
+    assert.deepEqual(await service.readPreviewApplicationIdentities(), {
+      identities: [],
+      ok: true
+    });
   });
 });
 
@@ -625,17 +709,12 @@ test("managed app identity validation rejects ambiguous names", async () => {
   });
 });
 
-test("managed app identities migrate once from the exact legacy local record", async () => {
+test("managed app identities ignore retired machine-local state", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);
-    const projectLocalRoot = service.currentProjectRuntimeRoot();
-    const legacyPath = path.join(
-      projectLocalRoot,
-      "runtime-config",
-      "preview_application_identities"
-    );
-    const newPath = path.join(
-      projectLocalRoot,
+    const runtimeRoot = service.currentProjectRuntimeRoot();
+    const retiredPath = path.join(
+      runtimeRoot,
       "preview",
       "application-identities.json"
     );
@@ -651,31 +730,28 @@ test("managed app identities migrate once from the exact legacy local record", a
         value: "catalogue-user"
       }
     ];
-    await mkdir(path.dirname(legacyPath), {
+    await mkdir(path.dirname(retiredPath), {
       recursive: true
     });
-    await writeFile(legacyPath, `${JSON.stringify(identities)}\n`, "utf8");
-
-    const migrated = await service.readPreviewApplicationIdentities();
-    assert.deepEqual(migrated, {
+    await writeFile(retiredPath, `${JSON.stringify({
       identities,
+      version: 1
+    })}\n`, "utf8");
+
+    assert.deepEqual(await service.readPreviewApplicationIdentities(), {
+      identities: [],
       ok: true
     });
-    assert.equal("filePath" in migrated, false);
-    assert.equal("source" in migrated, false);
-    assert.deepEqual(JSON.parse(await readFile(newPath, "utf8")), {
+    assert.deepEqual(JSON.parse(await readFile(retiredPath, "utf8")), {
       identities,
       version: 1
     });
-    await assert.rejects(() => readFile(legacyPath, "utf8"), {
+    await assert.rejects(() => readFile(path.join(
+      targetRoot,
+      ".vibe64",
+      "preview-identities.json"
+    ), "utf8"), {
       code: "ENOENT"
     });
-
-    await writeFile(legacyPath, `${JSON.stringify([{
-      name: "ignored",
-      type: "user-id",
-      value: "999"
-    }])}\n`, "utf8");
-    assert.deepEqual(await service.readPreviewApplicationIdentities(), migrated);
   });
 });

@@ -160,7 +160,7 @@ function createProjectActions({ project } = {}) {
       id: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
       kind: "query",
       input: previewApplicationIdentitiesReadInputValidator,
-      execute: () => project.readPreviewApplicationIdentities()
+      execute: (input) => project.readPreviewApplicationIdentities(input)
     }),
     action({
       id: ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,

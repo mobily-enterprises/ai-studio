@@ -19,7 +19,8 @@ import {
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
   projectTemplateParamsValidator,
-  previewApplicationIdentitiesInputValidator
+  previewApplicationIdentitiesInputValidator,
+  previewApplicationIdentitiesReadInputValidator
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
@@ -107,13 +108,15 @@ function registerRoutes(http, {
   });
   routes.actionRoute("GET", "/preview-identities", {
     actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
-    summary: "Read project-local managed app identities."
+    buildInput: routes.requestQuery,
+    query: previewApplicationIdentitiesReadInputValidator,
+    summary: "Read repository-managed app identities from project source."
   });
   routes.actionRoute("PUT", "/preview-identities", {
     actionId: ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
     body: previewApplicationIdentitiesInputValidator,
     buildInput: routes.requestBody,
-    summary: "Save project-local managed app identities."
+    summary: "Save repository-managed app identities to project source."
   });
 }
 

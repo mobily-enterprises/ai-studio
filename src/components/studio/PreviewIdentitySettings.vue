@@ -10,24 +10,23 @@
       </div>
       <div class="preview-identity-settings__header-actions">
         <v-btn
-          :loading="loading"
+          :disabled="loading || saving"
           size="small"
           type="button"
           variant="tonal"
           @click="refresh"
         >
-          Refresh
+          {{ loading ? "Refreshing…" : "Refresh" }}
         </v-btn>
         <v-btn
           color="primary"
-          :disabled="!changed"
-          :loading="saving"
+          :disabled="!changed || loading || saving"
           size="small"
           type="button"
           variant="flat"
           @click="save"
         >
-          Save
+          {{ saving ? "Saving…" : "Save" }}
         </v-btn>
       </div>
     </header>
@@ -43,21 +42,13 @@
     />
 
     <template v-else>
-      <v-alert
-        v-if="saveError"
-        density="compact"
-        type="error"
-        variant="tonal"
-      >
-        {{ saveError }}
-      </v-alert>
-
       <section class="preview-identity-settings__section">
         <div class="preview-identity-settings__section-copy">
           <h2>Managed app identities</h2>
           <p>
-            Each entry uses an identifier understood by the app. These values are stored
-            only in Vibe64 project state; they are not credentials or environment variables.
+            Saved in <code>.vibe64/preview-identities.json</code> in the active project
+            source, so they follow the repository. These are application identifiers,
+            not passwords or authentication secrets.
           </p>
         </div>
 
@@ -155,6 +146,9 @@ import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
 import {
+  useVibe64SessionSelection
+} from "@/composables/useVibe64SessionSelection.js";
+import {
   PREVIEW_IDENTITIES_ENDPOINT,
   VIBE64_PREVIEW_IDENTITIES_API_SUFFIX,
   VIBE64_PROJECT_CHANGED_EVENT,
@@ -180,16 +174,26 @@ const identityTypes = Object.freeze([
 ]);
 
 const projectSlug = useVibe64ProjectSlug();
+const sessionSelection = useVibe64SessionSelection({
+  projectSlug
+});
+const selectedSessionId = sessionSelection.selectedId;
 const identities = ref([]);
 const savedIdentities = ref([]);
 
 const resource = useEndpointResource({
   fallbackLoadError: "Managed app identities could not load.",
   path: PREVIEW_IDENTITIES_ENDPOINT,
-  queryKey: computed(() => previewIdentitiesQueryKey(
-    VIBE64_SURFACE_ID,
-    ROUTE_VISIBILITY_PUBLIC,
-    projectSlug.value
+  queryKey: computed(() => [
+    ...previewIdentitiesQueryKey(
+      VIBE64_SURFACE_ID,
+      ROUTE_VISIBILITY_PUBLIC,
+      projectSlug.value
+    ),
+    selectedSessionId.value || "baseline"
+  ]),
+  readQuery: computed(() => (
+    selectedSessionId.value ? { sessionId: selectedSessionId.value } : {}
   )),
   realtime: {
     event: VIBE64_PROJECT_CHANGED_EVENT
@@ -206,7 +210,8 @@ const saveCommand = useCommand({
     path: PREVIEW_IDENTITIES_ENDPOINT
   }),
   buildRawPayload: (_model, { context }) => ({
-    identities: context.identities
+    identities: context.identities,
+    ...(selectedSessionId.value ? { sessionId: selectedSessionId.value } : {})
   }),
   fallbackRunError: "Managed app identities could not be saved.",
   messages: {
@@ -222,9 +227,6 @@ const saveCommand = useCommand({
 const loading = computed(() => resource.isLoading.value === true);
 const loadError = computed(() => String(resource.loadError.value || ""));
 const saving = computed(() => saveCommand.isRunning === true);
-const saveError = computed(() => (
-  saveCommand.messageType === "error" ? String(saveCommand.message || "") : ""
-));
 const changed = computed(() => (
   JSON.stringify(identities.value) !== JSON.stringify(savedIdentities.value)
 ));

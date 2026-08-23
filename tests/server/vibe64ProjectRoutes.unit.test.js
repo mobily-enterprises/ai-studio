@@ -328,7 +328,7 @@ test("project template routes preserve Vibe64 user context", async () => {
   });
 });
 
-test("managed app identity routes expose direct project-local GET and PUT operations", async () => {
+test("managed app identity routes preserve the selected project source", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const calls = [];
@@ -354,16 +354,33 @@ test("managed app identity routes expose direct project-local GET and PUT operat
       });
       assert.ok(readRoute);
       assert.ok(saveRoute);
-      assert.deepEqual(saveRoute.options.body.schema.patch({ identities }), {
+      assert.deepEqual(readRoute.options.query.schema.patch({
+        sessionId: "session-1"
+      }), {
         errors: {},
         validatedObject: {
-          identities
+          sessionId: "session-1"
+        }
+      });
+      assert.deepEqual(saveRoute.options.body.schema.patch({
+        identities,
+        sessionId: "session-1"
+      }), {
+        errors: {},
+        validatedObject: {
+          identities,
+          sessionId: "session-1"
         }
       });
 
       const readReply = testReply();
       const saveReply = testReply();
       await readRoute.handler({
+        input: {
+          query: {
+            sessionId: "session-1"
+          }
+        },
         params: routeProjectParams(),
         async executeAction(action) {
           calls.push(action);
@@ -376,7 +393,8 @@ test("managed app identity routes expose direct project-local GET and PUT operat
       await saveRoute.handler({
         input: {
           body: {
-            identities
+            identities,
+            sessionId: "session-1"
           }
         },
         params: routeProjectParams(),
@@ -394,12 +412,15 @@ test("managed app identity routes expose direct project-local GET and PUT operat
       assert.deepEqual(calls, [
         {
           actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
-          input: {}
+          input: {
+            sessionId: "session-1"
+          }
         },
         {
           actionId: ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
           input: {
-            identities
+            identities,
+            sessionId: "session-1"
           }
         }
       ]);
