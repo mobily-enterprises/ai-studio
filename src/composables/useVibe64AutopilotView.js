@@ -1054,7 +1054,12 @@ function useVibe64AutopilotView(props, emit) {
     });
   }
 
-  watch(() => [projectPaneValue.value, route.path, routeSessionToolId.value].join("|"), () => {
+  watch(() => [
+    projectPaneValue.value,
+    route.path,
+    routeSessionToolId.value,
+    sessionSourceRoot.value
+  ].join("|"), () => {
     if (projectPaneValue.value === "preview") {
       rightPaneTab.value = "preview";
       return;
