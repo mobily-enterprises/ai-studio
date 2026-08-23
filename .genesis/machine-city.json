@@ -7662,7 +7662,7 @@
       "title": "sessionSaveCommitMessage.js"
     },
     {
-      "bytes": 17667,
+      "bytes": 18277,
       "districtId": "directory:packages/vibe64-terminals/src/server",
       "extractors": [
         "javascript"
@@ -7679,15 +7679,15 @@
         "function:packages/vibe64-terminals/src/server/sessionSource.js:githubMirrorCanReference:function:293:1",
         "function:packages/vibe64-terminals/src/server/sessionSource.js:cloneCanonicalSource:function:324:1",
         "function:packages/vibe64-terminals/src/server/sessionSource.js:cloneCanonicalSource.clone:function:336:17",
-        "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource:function:402:1",
-        "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource.write:function:403:17",
-        "function:packages/vibe64-terminals/src/server/sessionSource.js:createSessionSource:function:413:1"
+        "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource:function:420:1",
+        "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource.write:function:421:17",
+        "function:packages/vibe64-terminals/src/server/sessionSource.js:createSessionSource:function:431:1"
       ],
-      "hash": "sha256:1bc508aff5bd035bd836545655fa5d8b9f90c50d3445de83415408c11aa8a4fc",
+      "hash": "sha256:6201da51ce0f7f55a809faa694585937c26ad13152fecd72d4d5c4d108e1ab4b",
       "id": "file:packages/vibe64-terminals/src/server/sessionSource.js",
       "internalFunctionCount": 12,
       "language": "javascript",
-      "lines": 566,
+      "lines": 584,
       "mode": 33188,
       "path": "packages/vibe64-terminals/src/server/sessionSource.js",
       "presentationCampusId": "presentation-campus:packages:packages/vibe64-terminals",
@@ -13138,7 +13138,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:d548d53e6551ed529ed1b443abe1ad1a6bdc2eeac4754c5d02de3a31f7c59be3",
+  "codeHash": "sha256:52c99790e4fffdfe952e654643d1181b04cbaa151a7c58e3956c8eb6a8b1c203",
   "diagnostics": [],
   "districts": [
     {
@@ -83751,10 +83751,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/sessionSource.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource:function:402:1",
+      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource:function:420:1",
       "kind": "function",
       "language": "javascript",
-      "line": 402,
+      "line": 420,
       "name": "attachSessionSource",
       "parameters": [
         "store",
@@ -83774,10 +83774,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/sessionSource.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource.write:function:403:17",
+      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:attachSessionSource.write:function:421:17",
       "kind": "function",
       "language": "javascript",
-      "line": 403,
+      "line": 421,
       "name": "write",
       "parameters": [],
       "path": "packages/vibe64-terminals/src/server/sessionSource.js",
@@ -83793,10 +83793,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/sessionSource.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:createSessionSource:function:413:1",
+      "id": "function:packages/vibe64-terminals/src/server/sessionSource.js:createSessionSource:function:431:1",
       "kind": "function",
       "language": "javascript",
-      "line": 413,
+      "line": 431,
       "name": "createSessionSource",
       "parameters": [
         "{\n  env = process.env,\n  project = {},\n  runCommand = runVibe64Command,\n  runtime,\n  session = {},\n  store,\n  vibe64User = null\n} = {}"
