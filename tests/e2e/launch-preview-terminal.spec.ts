@@ -1429,35 +1429,176 @@ test("conversation messages render pipe tables", async ({ page }) => {
   expect(numericCellAlign).toBe("right");
 });
 
-test("embedded launch terminal can be shown and hidden again", async ({ page }) => {
+test("embedded launch terminal stays collapsed until expanded and takes over mobile", async ({ page }) => {
+  await page.setViewportSize({
+    height: 844,
+    width: 390
+  });
   await mockLaunchTerminalSocket(page);
   await mockLaunchSession(page);
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await page.getByRole("button", { name: "Show project" }).click();
 
-  await expect(page.getByRole("button", {
-    name: "Show launch terminal"
-  })).toBeVisible();
-  await expect(page.locator(".vibe64-launch-controls__terminal--embedded")).toHaveCount(0);
+  const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
+  const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
+  await expect(terminal).toBeVisible();
+  await expect(terminal).toContainText("ready");
+  await expect(terminalHost).toBeHidden();
 
-  await page.getByRole("button", {
-    name: "Show launch terminal"
-  }).click();
+  const bodyOverflowBefore = await page.locator("body").evaluate((element) => element.style.overflow);
+  await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(false);
 
-  await expect(page.locator(".vibe64-launch-controls__terminal--embedded")).toBeVisible();
-  await expect(page.getByRole("button", {
-    name: "Hide launch terminal"
-  })).toBeVisible();
-  await page.getByRole("button", {
-    name: "Hide launch terminal"
-  }).click();
+  await terminal.getByRole("button", { name: "Expand" }).click();
 
-  await expect(page.locator(".vibe64-launch-controls__terminal--embedded")).toHaveCount(0);
-  await expect(page.getByRole("button", {
-    name: "Show launch terminal"
-  })).toBeVisible();
-  await expect(page.getByText("Hide terminal")).toHaveCount(0);
+  const takeover = page.getByRole("dialog");
+  await expect(takeover).toBeVisible();
+  await expect(takeover).toHaveAttribute("aria-modal", "true");
+  await expect(terminalHost).toBeVisible();
+  await expect(terminal.getByRole("button", { name: "Copy" })).toBeVisible();
+  await expect.poll(() => page.locator("body").evaluate((element) => element.style.overflow)).toBe("hidden");
+  await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(true);
+  await expect.poll(() => takeover.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+
+  const takeoverFocusable = takeover.locator(
+    "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+  );
+  await takeoverFocusable.last().focus();
+  await page.keyboard.press("Tab");
+  await expect.poll(() => takeover.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await takeoverFocusable.first().focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => takeover.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+
+  const terminalInput = terminal.locator(".xterm-helper-textarea");
+  await terminalInput.focus();
+  await terminalInput.pressSequentially("status");
+  await terminalInput.press("Enter");
+  await expect.poll(() => page.evaluate(() => {
+    const payloads = (window as typeof window & { __vibe64LaunchTerminalMessages?: string[] })
+      .__vibe64LaunchTerminalMessages || [];
+    return payloads.flatMap((payload) => {
+      try {
+        const parsed = JSON.parse(payload) as { data?: string; type?: string };
+        return parsed.type === "input" ? [String(parsed.data || "")] : [];
+      } catch {
+        return [];
+      }
+    }).join("");
+  })).toContain("status\r");
+  const expandedBox = await terminal.boundingBox();
+  expect(expandedBox?.x).toBe(0);
+  expect(expandedBox?.y).toBe(0);
+  expect(expandedBox?.width).toBe(390);
+  expect(expandedBox?.height).toBe(844);
+
+  await terminal.getByRole("button", { name: "Collapse" }).focus();
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(terminalHost).toBeHidden();
+  await expect(terminal.getByRole("button", { name: "Expand" })).toBeFocused();
+  await expect(terminal).toContainText("ready");
+  await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(false);
+  await expect.poll(() => page.locator("body").evaluate((element) => element.style.overflow)).toBe(bodyOverflowBefore);
 });
+
+for (const desktopWidth of [960, 1600]) {
+  test(`embedded launch terminal remains an owner-local desktop dock at ${desktopWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: 900,
+      width: desktopWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page);
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    if (desktopWidth === 960) {
+      const showProject = page.getByRole("button", { name: "Show project" });
+      await expect(showProject).toBeVisible();
+      await showProject.click();
+    }
+
+    const preview = page.locator(".vibe64-launch-controls__preview");
+    const previewFrame = page.locator(".vibe64-launch-controls__preview-frame");
+    const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
+    const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
+    const readPreviewGeometry = () => preview.evaluate((element) => {
+      const frame = element.querySelector(".vibe64-launch-controls__preview-frame");
+      const previewBox = element.getBoundingClientRect();
+      const frameBox = frame?.getBoundingClientRect();
+      return {
+        frame: frameBox ? {
+          height: frameBox.height,
+          width: frameBox.width,
+          x: frameBox.x,
+          y: frameBox.y
+        } : null,
+        preview: {
+          height: previewBox.height,
+          width: previewBox.width,
+          x: previewBox.x,
+          y: previewBox.y
+        }
+      };
+    });
+    const previewReceivesPointerAtCenter = () => previewFrame.evaluate((frame) => {
+      const box = frame.getBoundingClientRect();
+      return document.elementFromPoint(
+        box.left + (box.width / 2),
+        box.top + (box.height / 2)
+      ) === frame;
+    });
+
+    await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app"))
+      .toBeVisible();
+    await expect(terminal).toHaveCount(1);
+    await expect(terminal).toBeVisible();
+    await expect(terminal).toContainText("ready");
+    await expect(terminalHost).toBeHidden();
+    await expect(terminal.locator(".xterm")).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await terminal.evaluate((element) => element.parentElement?.classList.contains(
+      "vibe64-launch-controls__preview"
+    ))).toBe(true);
+
+    const previewGeometry = await readPreviewGeometry();
+    const collapsedBox = await terminal.boundingBox();
+    expect(collapsedBox).not.toBeNull();
+    expect(collapsedBox!.height).toBeLessThan(160);
+    expect(collapsedBox!.height).toBeLessThan(previewGeometry.preview.height * 0.3);
+    expect(collapsedBox!.x).toBeGreaterThan(previewGeometry.preview.x);
+    expect(collapsedBox!.width).toBeGreaterThan(previewGeometry.preview.width * 0.7);
+    expect(collapsedBox!.x + collapsedBox!.width).toBeLessThan(
+      previewGeometry.preview.x + previewGeometry.preview.width
+    );
+    expect(await previewReceivesPointerAtCenter()).toBe(true);
+
+    await terminal.getByRole("button", { name: "Expand" }).click();
+
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(terminalHost).toBeVisible();
+    await expect(terminal.locator(".xterm")).toHaveCount(1);
+    await expect(terminal).toHaveCount(1);
+    const expandedBox = await terminal.boundingBox();
+    expect(expandedBox).not.toBeNull();
+    expect(expandedBox!.height).toBeGreaterThan(collapsedBox!.height + 200);
+    expect(expandedBox!.height).toBeLessThanOrEqual(previewGeometry.preview.height);
+    expect(expandedBox!.x).toBeGreaterThan(previewGeometry.preview.x);
+    expect(await readPreviewGeometry()).toEqual(previewGeometry);
+
+    await terminal.getByRole("button", { name: "Collapse" }).click();
+
+    await expect(terminalHost).toBeHidden();
+    await expect(terminal.locator(".xterm")).toHaveCount(1);
+    await expect(terminal).toHaveCount(1);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect.poll(async () => Math.round((await terminal.boundingBox())?.height || 0))
+      .toBe(Math.round(collapsedBox!.height));
+    expect(await readPreviewGeometry()).toEqual(previewGeometry);
+    expect(await previewReceivesPointerAtCenter()).toBe(true);
+  });
+}
 
 test("embedded launch terminal errors do not push the terminal host down", async ({ page }) => {
   await mockLaunchTerminalSocket(page, {
@@ -1466,11 +1607,10 @@ test("embedded launch terminal errors do not push the terminal host down", async
   await mockLaunchSession(page);
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  await page.getByRole("button", {
-    name: "Show launch terminal"
-  }).click();
+  const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
+  await terminal.getByRole("button", { name: "Expand" }).click();
 
-  const terminalHost = page.locator(".vibe64-launch-controls__terminal--embedded .vibe64-terminal-surface__host");
+  const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
   await expect(terminalHost).toBeVisible();
   const hostTopBefore = await terminalHost.evaluate((element) => element.getBoundingClientRect().top);
 
@@ -1488,11 +1628,9 @@ test("embedded launch terminal stays expanded after the launch exits", async ({ 
   await mockLaunchSession(page);
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  await page.getByRole("button", {
-    name: "Show launch terminal"
-  }).click();
 
   const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
+  await terminal.getByRole("button", { name: "Expand" }).click();
   const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
   await expect(terminalHost).toBeVisible();
   const hostHeightBefore = await terminalHost.evaluate((element) => element.getBoundingClientRect().height);
@@ -2598,6 +2736,8 @@ async function mockLaunchTerminalSocket(page: Page, {
     terminalSocketNeverSettles: neverSettles
   }) => {
     const OriginalWebSocket = window.WebSocket;
+    (window as typeof window & { __vibe64LaunchTerminalMessages?: string[] })
+      .__vibe64LaunchTerminalMessages = [];
 
     class MockWebSocket extends EventTarget {
       static CONNECTING = 0;
@@ -2669,7 +2809,10 @@ async function mockLaunchTerminalSocket(page: Page, {
         }, 0);
       }
 
-      send() {}
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        (window as typeof window & { __vibe64LaunchTerminalMessages?: string[] })
+          .__vibe64LaunchTerminalMessages?.push(String(data));
+      }
 
       close() {
         this.readyState = MockWebSocket.CLOSED;

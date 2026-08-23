@@ -54,8 +54,10 @@ function useProviderAccountsSetup(props) {
       : "";
   });
   const codexAuthStepsBySessionId = reactive({});
-  const authTerminalAttentionOpenedSessionIds = new Set();
+  const authStartAccountId = ref("");
+  const authStartBusy = computed(() => Boolean(authStartAccountId.value));
   const authTerminalSessionId = ref("");
+  const authTerminalExpanded = ref(false);
   const authTerminal = useVibe64Terminal({
     driver: createWebSocketTerminalDriver({
       webSocketUrl: accountAuthTerminalWebSocketUrl
@@ -73,6 +75,26 @@ function useProviderAccountsSetup(props) {
       }
     }
     return null;
+  });
+  const authTerminalStage = computed(() => {
+    const status = String(authTerminal.terminalStatus.value || authTerminalSession.value?.status || "").trim();
+    if (authTerminal.terminalStarting.value) {
+      return "Starting login";
+    }
+    if (status === "running") {
+      return "Waiting for login";
+    }
+    if (status === "connected") {
+      return "Connected";
+    }
+    if (status === "failed" || status === "exited") {
+      return "Login stopped";
+    }
+    return "Login terminal";
+  });
+  const authTerminalTitle = computed(() => {
+    const label = String(authTerminalSession.value?.account?.label || "Account").trim();
+    return `${label} login terminal`;
   });
 
   function accountStatusMessage(account = {}) {
@@ -135,6 +157,9 @@ function useProviderAccountsSetup(props) {
   }
 
   function accountLoginDisabled(account = {}) {
+    if (authStartBusy.value) {
+      return true;
+    }
     if (requiresGitIdentity(account) && account.connected === true) {
       return gitIdentitySaveDisabled(account);
     }
@@ -159,7 +184,7 @@ function useProviderAccountsSetup(props) {
   }
 
   async function startAccountAuth(account = {}) {
-    if (!accountsReadyForActions.value) {
+    if (!accountsReadyForActions.value || accountLoginDisabled(account)) {
       return;
     }
     if (requiresGitIdentity(account) && account.connected === true) {
@@ -168,11 +193,19 @@ function useProviderAccountsSetup(props) {
     }
     const mode = primaryAuthMode(account);
     const options = requiresGitIdentity(account) ? gitIdentityAuthOptions(account) : {};
-    if (mode === "device") {
-      void startDeviceAuth(account.id);
-      return;
+    const accountId = String(account.id || "");
+    authStartAccountId.value = accountId;
+    try {
+      if (mode === "device") {
+        await startDeviceAuth(accountId);
+      } else {
+        await startBrowserAuth(accountId, options);
+      }
+    } finally {
+      if (authStartAccountId.value === accountId) {
+        authStartAccountId.value = "";
+      }
     }
-    void startBrowserAuth(account.id, options);
   }
 
   async function saveGitIdentity(account = {}) {
@@ -189,10 +222,26 @@ function useProviderAccountsSetup(props) {
   }
 
   function primaryAuthLabel(account = {}) {
+    if (primaryAuthPending(account)) {
+      if (requiresGitIdentity(account) && account.connected === true) {
+        return "Saving identity…";
+      }
+      return authStartAccountId.value === String(account.id || "")
+        ? "Starting login…"
+        : "Login in progress";
+    }
     if (requiresGitIdentity(account) && account.connected === true) {
       return "Save Git identity";
     }
     return account.authLabel || `Auth ${account.label}`;
+  }
+
+  function primaryAuthPending(account = {}) {
+    if (requiresGitIdentity(account) && account.connected === true) {
+      return gitIdentitySaveBusy.value;
+    }
+    return authStartAccountId.value === String(account.id || "") ||
+      accountActiveSession(account)?.status === "authenticating";
   }
 
   function accountSupportsApiKeyAuth(account = {}) {
@@ -230,11 +279,11 @@ function useProviderAccountsSetup(props) {
   }
 
   function apiKeyLoginDisabled(account = {}) {
-    return authBusy.value || !apiKeyInput(account).value.trim();
+    return authStartBusy.value || authBusy.value || !apiKeyInput(account).value.trim();
   }
 
   async function startAccountApiKeyAuth(account = {}) {
-    if (!accountsReadyForActions.value) {
+    if (!accountsReadyForActions.value || apiKeyLoginDisabled(account)) {
       return;
     }
     const input = apiKeyInput(account);
@@ -242,10 +291,15 @@ function useProviderAccountsSetup(props) {
     if (!apiKey) {
       return;
     }
+    const accountId = String(account.id || "");
+    authStartAccountId.value = accountId;
     try {
-      await startApiKeyAuth(account.id, apiKey);
+      await startApiKeyAuth(accountId, apiKey);
     } finally {
       input.value = "";
+      if (authStartAccountId.value === accountId) {
+        authStartAccountId.value = "";
+      }
     }
   }
 
@@ -276,39 +330,20 @@ function useProviderAccountsSetup(props) {
     return isCodexDeviceSession(session) && codexAuthStep(session) === "authorize";
   }
 
-  function loginOutputVisible(session = {}) {
-    return Boolean(session?.output) && (
-      session.status === "failed" ||
-      (session.mode === "device" && !authSessionUserCode(session))
-    );
-  }
-
   function authSessionNeedsTerminalAttention(session = {}) {
     return sessionNeedsTerminalAttention(session);
-  }
-
-  function authTerminalAvailable(session = {}) {
-    return Boolean(session?.id);
   }
 
   function authTerminalVisible(session = {}) {
     return Boolean(session?.id && authTerminalSessionId.value === session.id);
   }
 
-  async function toggleAuthTerminal(session = {}) {
-    if (!session?.id) {
-      return;
-    }
-    if (authTerminalVisible(session)) {
-      closeAuthTerminal();
-      return;
-    }
-    await openAuthTerminal(session);
-  }
-
   async function openAuthTerminal(session = {}) {
     if (!session?.id) {
       return;
+    }
+    if (authTerminalSessionId.value !== session.id) {
+      authTerminalExpanded.value = false;
     }
     authTerminalSessionId.value = session.id;
     await authTerminal.attachTerminal(session, {
@@ -317,22 +352,14 @@ function useProviderAccountsSetup(props) {
     });
   }
 
-  async function openAuthTerminalForAttention(session = {}) {
-    if (
-      !authSessionNeedsTerminalAttention(session) ||
-      authTerminalVisible(session) ||
-      authTerminalAttentionOpenedSessionIds.has(session.id)
-    ) {
-      return;
-    }
-    authTerminalAttentionOpenedSessionIds.add(session.id);
-    await openAuthTerminal(session);
-  }
-
   function closeAuthTerminal() {
     authTerminalSessionId.value = "";
     authTerminal.hideTerminal({ manual: true });
     authTerminal.disposeTerminalDisplay();
+  }
+
+  function updateAuthTerminalExpanded(value) {
+    authTerminalExpanded.value = Boolean(value);
   }
 
   function cleanAuthOutput(output = "") {
@@ -458,14 +485,14 @@ function useProviderAccountsSetup(props) {
       String(session.closeError || session.error || session.terminalError || "")
     ].join(":")),
     () => {
-      const activeSessionIdSet = new Set(activeAuthSessions().map((session) => session.id).filter(Boolean));
-      for (const sessionId of Array.from(authTerminalAttentionOpenedSessionIds)) {
-        if (!activeSessionIdSet.has(sessionId)) {
-          authTerminalAttentionOpenedSessionIds.delete(sessionId);
-        }
+      const sessions = activeAuthSessions();
+      const selectedSession = sessions.find((session) => session.id === authTerminalSessionId.value) || sessions[0];
+      if (!selectedSession) {
+        closeAuthTerminal();
+        return;
       }
-      for (const session of activeAuthSessions()) {
-        void openAuthTerminalForAttention(session);
+      if (!authTerminalVisible(selectedSession)) {
+        void openAuthTerminal(selectedSession);
       }
     },
     {
@@ -487,23 +514,25 @@ function useProviderAccountsSetup(props) {
     apiKeyLoginDisabled,
     authSessionUserCode,
     authBusy,
+    authStartBusy,
     authCopyStatus,
     authTerminal,
-    authTerminalAvailable,
+    authTerminalExpanded,
     authTerminalError,
+    authTerminalStage,
+    authTerminalTitle,
     authTerminalVisible,
     cancelSession,
-    closeAuthTerminal,
     codexAuthorizeStepVisible,
     codexSettingsStepVisible,
     copyAuthCode,
     errorMessage,
     gitIdentityInput,
-    loginOutputVisible,
     logoutAccount,
     logoutAccountId,
     openAuthUrl,
     primaryAuthLabel,
+    primaryAuthPending,
     requiresGitIdentity,
     refreshStatus,
     sessionStatusMessage,
@@ -512,7 +541,7 @@ function useProviderAccountsSetup(props) {
     startAccountAuth,
     statusReady,
     toggleApiKeyForm,
-    toggleAuthTerminal
+    updateAuthTerminalExpanded
   };
 }
 

@@ -20,11 +20,13 @@
       :expanded="expanded"
       fill
       height="100%"
+      mobile-takeover
       :presentation="terminalPresentation"
       show-copy
       :show-interrupt="!readOnly"
+      :stage="terminalSubtitle"
       :status="terminalStatus"
-      :subtitle="terminalSubtitle"
+      :subtitle="expanded ? terminalSubtitle : ''"
       :terminal="terminalController"
       title="Codex terminal"
       :visible="terminalStreamActive"
@@ -36,8 +38,10 @@
       <template #error-actions>
         <v-btn
           v-if="terminalCanStart"
+          :aria-busy="terminalStarting ? 'true' : undefined"
+          class="vibe64-codex-session__start-action"
           color="primary"
-          :loading="terminalStarting"
+          :disabled="terminalStarting"
           :prepend-icon="mdiRestart"
           size="small"
           variant="flat"
@@ -76,8 +80,10 @@
             </div>
             <v-btn
               v-if="terminalStartActionVisible"
+              :aria-busy="terminalStarting ? 'true' : undefined"
+              class="vibe64-codex-session__start-action"
               color="primary"
-              :loading="terminalStarting"
+              :disabled="terminalStarting"
               :prepend-icon="terminalStartButtonIcon"
               size="default"
               variant="flat"
@@ -192,7 +198,7 @@ const emit = defineEmits([
 const codexCommands = useVibe64CodexCommands();
 
 const copyStatus = ref("");
-const expanded = ref(true);
+const expanded = ref(false);
 const componentMounted = ref(false);
 const staleTerminalSessionIds = ref(new Set());
 let terminalStartPromise = null;
@@ -331,15 +337,20 @@ const terminalErrorTitle = computed(() => {
     ? "Codex app-server is not available"
     : "Codex terminal needs attention";
 });
-const terminalErrorActionText = computed(() => (
-  terminalError.value === CODEX_RECONNECT_REQUIRED_MESSAGE ? "Reconnect Codex" : "Restart Codex"
-));
+const terminalErrorActionText = computed(() => {
+  if (terminalStarting.value) {
+    return "Starting Codex…";
+  }
+  return terminalError.value === CODEX_RECONNECT_REQUIRED_MESSAGE
+    ? "Reconnect Codex"
+    : "Restart Codex";
+});
 const terminalSubtitle = computed(() => {
   if (terminalStarting.value) {
     return "Starting Codex";
   }
   if (terminalExited.value) {
-    return "Codex exited";
+    return "";
   }
   if (terminalConnectionStatus.value === "reconnecting") {
     return "Reconnecting Codex";
@@ -347,7 +358,7 @@ const terminalSubtitle = computed(() => {
   if (terminalConnectionStatus.value === "connecting") {
     return "Connecting Codex";
   }
-  return terminalStatus.value === "running" ? "Codex is running" : "Codex agent session";
+  return terminalStatus.value === "running" ? "" : "Codex agent session";
 });
 const {
   attachmentDragActive,
@@ -417,7 +428,7 @@ const terminalStartPanelMessage = computed(() => {
 });
 const terminalStartButtonText = computed(() => {
   if (terminalStarting.value) {
-    return "Starting";
+    return "Starting Codex…";
   }
   if (terminalReconnectRequired.value) {
     return "Reconnect Codex";
@@ -438,10 +449,7 @@ const showTerminalStartPanel = computed(() => (
 ));
 
 function defaultExpanded() {
-  if (typeof window === "undefined" || !window.matchMedia) {
-    return true;
-  }
-  return !window.matchMedia("(max-width: 700px)").matches;
+  return false;
 }
 
 function handleTerminalCopy() {
@@ -926,6 +934,7 @@ watch(terminalDisplayActive, (visible, previousVisible) => {
 onMounted(() => {
   componentMounted.value = true;
   expanded.value = defaultExpanded();
+  connectTerminalWhenReady();
 });
 
 onBeforeUnmount(() => {
@@ -1031,6 +1040,10 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vibe64-codex-session__start-action {
+  min-inline-size: 10rem;
 }
 
 @media (max-width: 700px) {

@@ -23,13 +23,14 @@
           {{ backLabel }}
         </v-btn>
         <v-btn
+          :aria-busy="accountsLoading ? 'true' : undefined"
           color="primary"
+          :disabled="accountsLoading"
           variant="tonal"
-          :loading="accountsLoading"
           :prepend-icon="mdiRefresh"
           @click="refreshStatus"
         >
-          Refresh
+          {{ accountsLoading ? "Refreshing…" : "Refresh" }}
         </v-btn>
         <v-btn
           v-if="statusReady && showContinue"
@@ -112,15 +113,6 @@
             class="accounts-setup__session-header-actions"
           >
             <v-btn
-              color="primary"
-              :disabled="!accountsReadyForActions || !authTerminalAvailable(accountActiveSession(account))"
-              variant="tonal"
-              :prepend-icon="mdiConsoleLine"
-              @click="toggleAuthTerminal(accountActiveSession(account))"
-            >
-              {{ authTerminalVisible(accountActiveSession(account)) ? 'Hide terminal' : 'View terminal' }}
-            </v-btn>
-            <v-btn
               color="warning"
               variant="tonal"
               :disabled="!accountsReadyForActions || !accountActiveSession(account)?.id"
@@ -162,28 +154,30 @@
             />
           </div>
           <v-btn
+            :aria-busy="primaryAuthPending(account) ? 'true' : undefined"
+            class="accounts-setup__pending-action"
             color="primary"
             variant="flat"
             :disabled="!accountsReadyForActions || accountLoginDisabled(account)"
-            :loading="accountActiveSession(account)?.status === 'authenticating'"
             @click="startAccountAuth(account)"
           >
             {{ primaryAuthLabel(account) }}
           </v-btn>
           <v-btn
+            :aria-busy="logoutAccountId === account.id ? 'true' : undefined"
+            class="accounts-setup__pending-action"
             color="warning"
             variant="tonal"
-            :disabled="!accountsReadyForActions || authBusy || !account.connected"
-            :loading="logoutAccountId === account.id"
+            :disabled="!accountsReadyForActions || authBusy || authStartBusy || logoutAccountId === account.id || !account.connected"
             @click="logoutAccount(account.id)"
           >
-            Logout
+            {{ logoutAccountId === account.id ? "Logging out…" : "Logout" }}
           </v-btn>
           <v-btn
             v-if="accountSupportsApiKeyAuth(account)"
             color="primary"
             variant="tonal"
-            :disabled="!accountsReadyForActions || authBusy"
+            :disabled="!accountsReadyForActions || authBusy || authStartBusy"
             @click="toggleApiKeyForm(account)"
           >
             Use OpenAI API key
@@ -200,16 +194,18 @@
               label="OpenAI API key"
               required
               type="password"
-              :disabled="!accountsReadyForActions"
+              :disabled="!accountsReadyForActions || authStartBusy"
               variant="outlined"
             />
             <v-btn
+              :aria-busy="primaryAuthPending(account) ? 'true' : undefined"
+              class="accounts-setup__pending-action"
               color="primary"
               variant="flat"
               :disabled="!accountsReadyForActions || apiKeyLoginDisabled(account)"
               @click="startAccountApiKeyAuth(account)"
             >
-              Login with API key
+              {{ primaryAuthPending(account) ? "Starting login…" : "Login with API key" }}
             </v-btn>
           </div>
         </div>
@@ -340,15 +336,6 @@
                 </div>
                 <span aria-hidden="true" />
               </div>
-
-              <details
-                v-if="loginOutputVisible(accountActiveSession(account))"
-                class="accounts-setup__logs"
-                :open="accountActiveSession(account)?.status === 'failed'"
-              >
-                <summary>Show login output</summary>
-                <pre>{{ accountActiveSession(account).output }}</pre>
-              </details>
             </div>
 
             <img
@@ -364,17 +351,21 @@
             class="accounts-setup__terminal"
           >
             <Vibe64Terminal
-              close-label="Hide"
-              :collapsible="false"
+              :collapsible="true"
               :command-preview="authTerminal.terminalCommandPreview"
               :error="authTerminalError(accountActiveSession(account))"
+              :expanded="authTerminalExpanded"
+              mobile-takeover
               presentation="inline"
+              :show-close="false"
+              show-copy
+              :stage="authTerminalStage"
               :status="authTerminal.terminalStatus"
-              subtitle="Use this only if Codex asks for terminal input."
+              subtitle="Use this only if the login asks for terminal input."
               :terminal="authTerminal"
-              title="Codex login terminal"
+              :title="authTerminalTitle"
               :visible="true"
-              @close="closeAuthTerminal"
+              @update:expanded="updateAuthTerminalExpanded"
             />
           </div>
         </div>
@@ -387,7 +378,6 @@
 import {
   mdiAlertCircleOutline,
   mdiCheckCircle,
-  mdiConsoleLine,
   mdiContentCopy,
   mdiOpenInNew,
   mdiRefresh
@@ -466,23 +456,25 @@ const {
   apiKeyLoginDisabled,
   authSessionUserCode,
   authBusy,
+  authStartBusy,
   authCopyStatus,
   authTerminal,
-  authTerminalAvailable,
+  authTerminalExpanded,
   authTerminalError,
+  authTerminalStage,
+  authTerminalTitle,
   authTerminalVisible,
   cancelSession,
-  closeAuthTerminal,
   codexAuthorizeStepVisible,
   codexSettingsStepVisible,
   copyAuthCode,
   errorMessage,
   gitIdentityInput,
-  loginOutputVisible,
   logoutAccount,
   logoutAccountId,
   openAuthUrl,
   primaryAuthLabel,
+  primaryAuthPending,
   requiresGitIdentity,
   refreshStatus,
   sessionStatusMessage,
@@ -491,7 +483,7 @@ const {
   startAccountAuth,
   statusReady,
   toggleApiKeyForm,
-  toggleAuthTerminal
+  updateAuthTerminalExpanded
 } = useProviderAccountsSetup(props);
 </script>
 
@@ -748,23 +740,12 @@ const {
   align-items: stretch;
 }
 
-.accounts-setup__logs pre {
-  background: #111318;
-  border-radius: 6px;
-  color: #f4f6fb;
-  margin: 0.5rem 0 0;
-  max-height: 22rem;
-  overflow: auto;
-  padding: 0.75rem;
-  white-space: pre-wrap;
-}
-
 .accounts-setup__terminal {
   min-width: 0;
 }
 
-.accounts-setup__terminal :deep(.vibe64-terminal-frame__host) {
-  height: clamp(16rem, 42vh, 30rem);
+.accounts-setup__pending-action {
+  min-inline-size: 9rem;
 }
 
 @media (max-width: 760px) {

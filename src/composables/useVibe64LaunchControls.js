@@ -1001,7 +1001,7 @@ function useVibe64LaunchControls({
   const terminalTitle = computed(() => activeLaunchTarget.value?.label || "Run target");
   const terminalSubtitle = computed(() => {
     if (terminalIsRunning.value) {
-      return "Running";
+      return "";
     }
     if (terminalStatus.value === "exited" || activeTerminal.value?.status === "exited") {
       const exitCode = terminalExitCode.value ?? activeTerminal.value?.exitCode;
@@ -1100,7 +1100,7 @@ function useVibe64LaunchControls({
       return false;
     }
     if (applyDefaultDisplay) {
-      terminalExpanded.value = launchTarget.defaultDisplay !== "minimized";
+      terminalExpanded.value = false;
     }
     launchStarting.value = true;
     launchError.value = "";

@@ -690,6 +690,12 @@ function useVibe64LaunchControlsSurface(props) {
     terminalDisplayed.value &&
     terminalExpanded.value
   ));
+  const terminalSurfaceVisible = computed(() => Boolean(
+    terminalDisplayed.value && terminalVisible.value
+  ));
+  const embeddedTerminalSurfaceVisible = computed(() => Boolean(
+    props.embeddedPreview && terminalSurfaceVisible.value
+  ));
   const requestedAutoStartTargetId = computed(() => String(props.autoStartTargetId || "").trim());
   const embeddedAutoStartTarget = computed(() => {
     if (!props.embeddedPreview || !requestedAutoStartTargetId.value) {
@@ -1639,14 +1645,13 @@ function useVibe64LaunchControlsSurface(props) {
     return true;
   }
   
-  function toggleTerminal() {
-    if (embeddedTerminalFrameVisible.value) {
-      previewLogVisible.value = false;
-      minimizeTerminal();
+  function setTerminalExpanded(expanded) {
+    previewLogVisible.value = Boolean(expanded);
+    if (expanded) {
+      void expandTerminal();
       return;
     }
-    previewLogVisible.value = true;
-    void expandTerminal();
+    minimizeTerminal();
   }
 
   function showLaunchLog() {
@@ -1925,6 +1930,7 @@ function useVibe64LaunchControlsSurface(props) {
     embeddedManualStartButtonVisible,
     embeddedStartTarget,
     embeddedTerminalFrameVisible,
+    embeddedTerminalSurfaceVisible,
     embeddedTerminalVisible,
     collapsePreviewToolbar,
     forceStartEmbeddedPreview,
@@ -2029,11 +2035,13 @@ function useVibe64LaunchControlsSurface(props) {
     run,
     runMenuDisabled,
     showLaunchLog,
+    setTerminalExpanded,
     terminal,
     terminalCanRestart,
     terminalCanRetry,
     terminalCommandPreview,
     terminalDisplayed,
+    terminalExpanded,
     terminalError,
     terminalIndicatorLabel,
     terminalIndicatorState,
@@ -2042,8 +2050,8 @@ function useVibe64LaunchControlsSurface(props) {
     terminalTitle,
     terminalWindowStorageKey,
     terminalWindowVisible,
+    terminalSurfaceVisible,
     toolbarTeleportTarget,
-    toggleTerminal,
     visible
   };
 }

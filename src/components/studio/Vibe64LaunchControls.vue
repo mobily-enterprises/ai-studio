@@ -292,30 +292,6 @@
                 variant="text"
                 @click="restartTerminal"
               />
-
-              <v-btn
-                v-if="embeddedTerminalFrameVisible"
-                aria-label="Show preview and hide launch terminal"
-                class="vibe64-launch-controls__terminal-toggle--hide"
-                color="primary"
-                :prepend-icon="mdiEyeOutline"
-                size="small"
-                title="Show preview and hide launch terminal"
-                variant="flat"
-                @click="toggleTerminal"
-              >
-                Preview
-              </v-btn>
-
-              <v-btn
-                v-else
-                aria-label="Show launch terminal"
-                :icon="mdiConsoleLine"
-                size="small"
-                title="Show launch terminal"
-                variant="text"
-                @click="toggleTerminal"
-              />
             </div>
 
             <div
@@ -579,21 +555,25 @@
         </code>
       </div>
       <Vibe64Terminal
-        v-if="embeddedTerminalFrameVisible"
-        close-label="Show preview"
-        :collapsible="false"
+        v-if="embeddedTerminalSurfaceVisible"
+        :collapsible="true"
         :command-preview="terminalCommandPreview"
         :error="terminalError"
+        :expanded="terminalExpanded"
         fill
+        mobile-takeover
         presentation="inline"
+        :show-close="false"
+        show-copy
+        :stage="terminalSubtitle"
         :status="terminalStatus"
-        :subtitle="terminalSubtitle"
+        :subtitle="terminalExpanded ? terminalSubtitle : ''"
         surface-class="vibe64-launch-controls__terminal vibe64-launch-controls__terminal--embedded"
         :surface-style="embeddedTerminalStyle"
         :terminal="terminal"
         :title="terminalTitle"
         :visible="true"
-        @close="toggleTerminal"
+        @update:expanded="setTerminalExpanded"
       >
         <template #actions-before>
           <v-btn
@@ -612,20 +592,24 @@
     </div>
 
     <Vibe64Terminal
-      v-if="!embeddedPreview && terminalDisplayed"
-      close-label="Minimize"
-      :collapsible="false"
+      v-if="!embeddedPreview && terminalSurfaceVisible"
+      :collapsible="true"
       :command-preview="terminalCommandPreview"
       :error="terminalError"
+      :expanded="terminalExpanded"
       :floating-storage-key="terminalWindowStorageKey"
-      presentation="floating"
+      mobile-takeover
+      :presentation="terminalWindowVisible ? 'floating' : 'minimized'"
+      :show-close="false"
+      show-copy
+      :stage="terminalSubtitle"
       :status="terminalStatus"
-      :subtitle="terminalSubtitle"
+      :subtitle="terminalExpanded ? terminalSubtitle : ''"
       surface-class="vibe64-launch-controls__terminal"
       :terminal="terminal"
       :title="terminalTitle"
-      :visible="terminalWindowVisible"
-      @close="toggleTerminal"
+      :visible="true"
+      @update:expanded="setTerminalExpanded"
     />
 
     <v-dialog
@@ -770,7 +754,6 @@ import {
   mdiConsoleLine,
   mdiContentCopy,
   mdiDotsHorizontal,
-  mdiEyeOutline,
   mdiOpenInNew,
   mdiPlayCircleOutline,
   mdiPowerCycle,
@@ -792,18 +775,6 @@ import {
 const emit = defineEmits([
   "preview-attachment-state"
 ]);
-
-const embeddedTerminalStyle = Object.freeze({
-  alignSelf: "start",
-  boxShadow: "none",
-  height: "clamp(24rem, 72vh, 56rem)",
-  justifySelf: "stretch",
-  margin: "0.65rem",
-  maxHeight: "calc(100% - 1.3rem)",
-  minHeight: "20rem",
-  overflow: "hidden",
-  zIndex: 2
-});
 
 const props = defineProps({
   askCodexToFixPreviewIdentity: {
@@ -868,7 +839,7 @@ const {
   embeddedManualStartButtonDisabled,
   embeddedManualStartButtonVisible,
   embeddedStartTarget,
-  embeddedTerminalFrameVisible,
+  embeddedTerminalSurfaceVisible,
   collapsePreviewToolbar,
   copyPreviewUrl,
   expandPreviewToolbar,
@@ -962,11 +933,12 @@ const {
   run,
   runMenuDisabled,
   showLaunchLog,
+  setTerminalExpanded,
   terminal,
   terminalCanRestart,
   terminalCanRetry,
   terminalCommandPreview,
-  terminalDisplayed,
+  terminalExpanded,
   terminalError,
   terminalIndicatorLabel,
   terminalIndicatorState,
@@ -975,10 +947,26 @@ const {
   terminalTitle,
   terminalWindowStorageKey,
   terminalWindowVisible,
+  terminalSurfaceVisible,
   toolbarTeleportTarget,
-  toggleTerminal,
   visible
 } = useVibe64LaunchControlsSurface(props);
+
+const embeddedTerminalStyle = computed(() => ({
+  alignSelf: terminalExpanded.value ? "start" : "end",
+  boxShadow: terminalExpanded.value ? "none" : "0 0.45rem 1.3rem rgba(15, 23, 42, 0.18)",
+  ...(terminalExpanded.value
+    ? {
+        height: "clamp(24rem, 72vh, 56rem)",
+        maxHeight: "calc(100% - 1.3rem)",
+        minHeight: "20rem"
+      }
+    : {}),
+  justifySelf: "stretch",
+  margin: "0.65rem",
+  overflow: "hidden",
+  zIndex: 3
+}));
 
 const {
   busy: previewCaptureBusy,
@@ -1267,19 +1255,6 @@ onBeforeUnmount(() => {
   align-items: center;
   display: flex;
   gap: 0.04rem;
-}
-
-.vibe64-launch-controls__terminal-toggle--hide {
-  font-weight: 720;
-  height: 1.9rem;
-  letter-spacing: 0;
-  min-height: 1.9rem;
-  padding-inline: 0.62rem 0.78rem;
-  text-transform: none;
-}
-
-.vibe64-launch-controls__terminal-toggle--hide :deep(.v-btn__prepend) {
-  margin-inline-end: 0.28rem;
 }
 
 .vibe64-launch-controls__status-dot {
@@ -1693,6 +1668,14 @@ onBeforeUnmount(() => {
 @media (pointer: coarse) {
   .vibe64-launch-controls__recovery-action {
     min-height: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe64-launch-controls__preview-pulse--active,
+  .vibe64-launch-controls__status-dot--checking,
+  .vibe64-launch-controls__status-dot--starting {
+    animation: none;
   }
 }
 
