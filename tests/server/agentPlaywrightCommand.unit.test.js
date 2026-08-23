@@ -215,6 +215,8 @@ test("managed Playwright test command uses the exact versioned browser runtime w
       }
     )).stdout);
     assert.equal(status.version, "1.61.1");
+    assert.equal(status.applicationRoot, fixture.projectRoot);
+    assert.equal(Object.hasOwn(status, "projectRoot"), false);
     assert.equal(
       status.browsersPath,
       path.join(fixture.runtimeRoot, "playwright-versions", "1.61.1", "browsers")

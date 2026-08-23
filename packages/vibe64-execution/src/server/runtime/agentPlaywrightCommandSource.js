@@ -28,7 +28,7 @@ function readJson(filePath = "") {
   }
 }
 
-function findProjectRoot(start = process.cwd()) {
+function findApplicationRoot(start = process.cwd()) {
   let current = path.resolve(start);
   while (true) {
     if (existsSync(path.join(current, "package.json"))) {
@@ -42,10 +42,10 @@ function findProjectRoot(start = process.cwd()) {
   }
 }
 
-function projectPlaywright(projectRoot = "") {
+function projectPlaywright(applicationRoot = "") {
   const candidates = [
-    path.join(projectRoot, "node_modules", "@playwright", "test", "package.json"),
-    path.join(projectRoot, "node_modules", "playwright", "package.json")
+    path.join(applicationRoot, "node_modules", "@playwright", "test", "package.json"),
+    path.join(applicationRoot, "node_modules", "playwright", "package.json")
   ];
   for (const packagePath of candidates) {
     const packageRecord = readJson(packagePath);
@@ -53,8 +53,8 @@ function projectPlaywright(projectRoot = "") {
     if (!version) {
       continue;
     }
-    const cliPath = path.join(projectRoot, "node_modules", "playwright", "cli.js");
-    const testCliPath = path.join(projectRoot, "node_modules", "@playwright", "test", "cli.js");
+    const cliPath = path.join(applicationRoot, "node_modules", "playwright", "cli.js");
+    const testCliPath = path.join(applicationRoot, "node_modules", "@playwright", "test", "cli.js");
     return {
       cliPath: existsSync(testCliPath) ? testCliPath : cliPath,
       packagePath,
@@ -102,7 +102,7 @@ function managedRuntime(version = "") {
   return null;
 }
 
-function managedPreview(projectRoot = "", {
+function managedPreview(applicationRoot = "", {
   identityExplicit = false
 } = {}) {
   const explicitBaseUrl = String(process.env.PLAYWRIGHT_BASE_URL || "").trim();
@@ -132,7 +132,7 @@ function managedPreview(projectRoot = "", {
     "--wait",
     "--json"
   ], {
-    cwd: projectRoot,
+    cwd: applicationRoot,
     encoding: "utf8",
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
@@ -181,7 +181,7 @@ function managedPreview(projectRoot = "", {
   }
 }
 
-function managedPlaywrightStorageState(projectRoot = "", identity = "default") {
+function managedPlaywrightStorageState(applicationRoot = "", identity = "default") {
   const directory = mkdtempSync(path.join(
     path.resolve(process.env.TMPDIR || "/tmp"),
     "vibe64-playwright-auth-"
@@ -195,7 +195,7 @@ function managedPlaywrightStorageState(projectRoot = "", identity = "default") {
     "--output",
     storageStatePath
   ], {
-    cwd: projectRoot,
+    cwd: applicationRoot,
     encoding: "utf8",
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
@@ -264,11 +264,11 @@ function run(command = "", args = [], options = {}) {
   });
 }
 
-function managedExecution(runtime = {}, projectRoot = "", {
+function managedExecution(runtime = {}, applicationRoot = "", {
   identity = "default",
   identityExplicit = false
 } = {}) {
-  const preview = managedPreview(projectRoot, {
+  const preview = managedPreview(applicationRoot, {
     identityExplicit
   });
   if (preview.managed && identityExplicit && !preview.identityRequired) {
@@ -278,7 +278,7 @@ function managedExecution(runtime = {}, projectRoot = "", {
     );
   }
   const authentication = preview.managed && preview.identityRequired
-    ? managedPlaywrightStorageState(projectRoot, identity)
+    ? managedPlaywrightStorageState(applicationRoot, identity)
     : null;
   return {
     cleanupRoot: authentication?.directory || "",
@@ -315,11 +315,11 @@ function parseInvocation(values = []) {
   };
 }
 
-const projectRoot = findProjectRoot();
-if (!projectRoot) {
+const applicationRoot = findApplicationRoot();
+if (!applicationRoot) {
   fail("No package.json was found for this Playwright test command.");
 }
-const project = projectPlaywright(projectRoot);
+const project = projectPlaywright(applicationRoot);
 if (!project || !existsSync(project.cliPath)) {
   fail("This project does not have a declared and installed @playwright/test dependency.");
 }
@@ -357,19 +357,19 @@ if (command === "status") {
   process.stdout.write(JSON.stringify({
     browsersPath: runtime.browsersPath,
     managed: true,
-    projectRoot,
+    applicationRoot,
     version: project.version
   }, null, 2) + "\\n");
   process.exit(0);
 }
 if (command === "test") {
-  const execution = managedExecution(runtime, projectRoot, {
+  const execution = managedExecution(runtime, applicationRoot, {
     identity,
     identityExplicit
   });
   run(managedNodePath, [project.cliPath, "test", ...args], {
     cleanupRoot: execution.cleanupRoot,
-    cwd: projectRoot,
+    cwd: applicationRoot,
     env: execution.env
   });
 } else if (command === "npm-run") {
@@ -377,13 +377,13 @@ if (command === "test") {
   if (!script) {
     fail("A package script name is required.", 64);
   }
-  const execution = managedExecution(runtime, projectRoot, {
+  const execution = managedExecution(runtime, applicationRoot, {
     identity,
     identityExplicit
   });
   run(managedNpmPath, ["run", script, ...args], {
     cleanupRoot: execution.cleanupRoot,
-    cwd: projectRoot,
+    cwd: applicationRoot,
     env: execution.env
   });
 } else {
