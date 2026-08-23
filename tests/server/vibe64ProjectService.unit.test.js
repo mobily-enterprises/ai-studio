@@ -216,6 +216,140 @@ test("managed development database scope is project state and changes only witho
   });
 });
 
+test("project AI policy is owner-managed and members read the same revision", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const service = projectService(targetRoot);
+    const initial = await service.readProjectAiPolicy({
+      vibe64User: { role: "member" }
+    });
+    assert.equal(initial.ok, true);
+    assert.equal(initial.canEdit, false);
+    assert.deepEqual(initial.aiPolicy, {
+      customNote: "",
+      expertise: "comfortable",
+      promptHints: true,
+      rationale: "concise",
+      responseLength: "concise",
+      revision: 0,
+      tone: "encouraging",
+      version: 1
+    });
+
+    const denied = await service.saveProjectAiPolicy({
+      customNote: "Keep it practical.",
+      expertise: "expert",
+      promptHints: false,
+      rationale: "conclusions",
+      responseLength: "very_short",
+      tone: "direct",
+      vibe64User: { role: "member" }
+    });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.code, "vibe64_owner_required");
+    assert.equal((await service.readProjectAiPolicy()).aiPolicy.revision, 0);
+
+    const saved = await service.saveProjectAiPolicy({
+      customNote: "Keep it practical.",
+      expertise: "expert",
+      promptHints: false,
+      rationale: "conclusions",
+      responseLength: "very_short",
+      tone: "direct",
+      vibe64User: { role: "owner" }
+    });
+    assert.equal(saved.ok, true);
+    assert.equal(saved.canEdit, true);
+    assert.equal(saved.aiPolicy.revision, 1);
+
+    const memberRead = await service.readSettings({
+      vibe64User: { role: "member" }
+    });
+    assert.equal(memberRead.aiPolicyCanEdit, false);
+    assert.deepEqual(memberRead.aiPolicy, saved.aiPolicy);
+  });
+});
+
+test("hosted project AI policies stay isolated by project namespace state", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectsRoot = path.join(temporaryRoot, "projects");
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: projectsRoot,
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const service = createService({ env: {}, projectContext });
+    await service.createProject({ name: "First project" });
+    await service.saveProjectAiPolicy({
+      customNote: "First only",
+      expertise: "beginner",
+      promptHints: true,
+      rationale: "teaching",
+      responseLength: "detailed",
+      tone: "encouraging",
+      vibe64User: { role: "owner" }
+    });
+
+    await service.createProject({ name: "Second project" });
+    assert.equal((await service.readProjectAiPolicy()).aiPolicy.revision, 0);
+    await service.saveProjectAiPolicy({
+      customNote: "Second only",
+      expertise: "expert",
+      promptHints: false,
+      rationale: "conclusions",
+      responseLength: "very_short",
+      tone: "military",
+      vibe64User: { role: "owner" }
+    });
+
+    await service.selectProject({ slug: "first-project" });
+    assert.equal((await service.readProjectAiPolicy()).aiPolicy.customNote, "First only");
+    await service.selectProject({ slug: "second-project" });
+    assert.equal((await service.readProjectAiPolicy()).aiPolicy.customNote, "Second only");
+  });
+});
+
+test("standalone project AI policy state is keyed to the explicit local folder", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const systemRoot = path.join(temporaryRoot, "system");
+    const firstRoot = path.join(temporaryRoot, "first", "same-name");
+    const secondRoot = path.join(temporaryRoot, "second", "same-name");
+    await Promise.all([
+      mkdir(firstRoot, { recursive: true }),
+      mkdir(secondRoot, { recursive: true })
+    ]);
+    const standaloneService = (targetRoot) => createService({
+      env: {},
+      projectContext: createStudioProjectContext({
+        explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+        explicitSystemRoot: systemRoot,
+        explicitTargetRoot: targetRoot,
+        home: temporaryRoot,
+        runtimeProfile: {
+          local: true,
+          mode: "local"
+        }
+      })
+    });
+    const firstService = standaloneService(firstRoot);
+    const secondService = standaloneService(secondRoot);
+    await firstService.saveProjectAiPolicy({
+      customNote: "First folder",
+      expertise: "comfortable",
+      promptHints: true,
+      rationale: "concise",
+      responseLength: "concise",
+      tone: "playful"
+    });
+
+    assert.equal((await firstService.readProjectAiPolicy()).aiPolicy.customNote, "First folder");
+    assert.equal((await secondService.readProjectAiPolicy()).aiPolicy.revision, 0);
+    await assert.rejects(stat(path.join(firstRoot, "settings", "ai-policy.json")), {
+      code: "ENOENT"
+    });
+  });
+});
+
 test("the project service exposes the selected session source without leaking its storage layout", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);

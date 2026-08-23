@@ -8,12 +8,14 @@ import {
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT
 } from "./actions.js";
 import {
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
+  projectAiPolicyInputValidator,
   projectEnvReadInputValidator,
   projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
@@ -98,7 +100,15 @@ function registerRoutes(http, {
   });
   routes.actionRoute("GET", "/settings", {
     actionId: ACTION_READ_PROJECT_SETTINGS,
+    buildInput: (request) => withUser(request),
     summary: "Read Vibe64-owned project settings."
+  });
+  routes.actionRoute("PUT", "/settings/ai-policy", {
+    actionId: ACTION_SAVE_PROJECT_AI_POLICY,
+    body: projectAiPolicyInputValidator,
+    buildInput: (request) => withUser(request, routes.requestBody(request)),
+    statusCode: projectAiPolicyStatusCode,
+    summary: "Save the owner-managed project AI behaviour policy."
   });
   routes.actionRoute("PUT", "/settings/development-database", {
     actionId: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
@@ -129,6 +139,16 @@ function envSecretRevealStatusCode(response = {}) {
   }
   if (response?.code === "vibe64_env_variable_not_found") {
     return 404;
+  }
+  return 400;
+}
+
+function projectAiPolicyStatusCode(response = {}) {
+  if (response?.ok === true) {
+    return 200;
+  }
+  if (response?.code === "vibe64_owner_required") {
+    return 403;
   }
   return 400;
 }

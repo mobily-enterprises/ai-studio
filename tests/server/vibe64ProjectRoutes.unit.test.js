@@ -8,6 +8,7 @@ import {
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES
 } from "../../packages/vibe64-project/src/server/actions.js";
 import { registerRoutes } from "../../packages/vibe64-project/src/server/registerRoutes.js";
@@ -90,6 +91,95 @@ test("project settings routes own the development database choice outside Env", 
           }
         }
       ]);
+    });
+  });
+});
+
+test("project AI policy route validates the policy and preserves owner authorization", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const app = testRouteApp();
+      registerRoutes(routeHttp(app), {
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+      const route = findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/settings/ai-policy`
+      });
+      assert.ok(route);
+      const policy = {
+        customNote: "Keep answers practical.",
+        expertise: "comfortable",
+        promptHints: true,
+        rationale: "concise",
+        responseLength: "concise",
+        tone: "encouraging"
+      };
+      assert.deepEqual(route.options.body.schema.patch(policy), {
+        errors: {},
+        validatedObject: policy
+      });
+      assert.notDeepEqual(route.options.body.schema.patch({
+        ...policy,
+        tone: "sarcastic"
+      }).errors, {});
+
+      const vibe64User = {
+        role: "owner",
+        username: "ada"
+      };
+      let executedAction = null;
+      const reply = testReply();
+      await route.handler({
+        body: policy,
+        input: { body: policy },
+        params: routeProjectParams(),
+        vibe64User,
+        async executeAction(action) {
+          executedAction = action;
+          return {
+            aiPolicy: {
+              ...policy,
+              revision: 1,
+              version: 1
+            },
+            ok: true
+          };
+        }
+      }, reply);
+
+      assert.deepEqual(executedAction, {
+        actionId: ACTION_SAVE_PROJECT_AI_POLICY,
+        input: {
+          ...policy,
+          vibe64User
+        }
+      });
+      assert.equal(reply.statusCode, 200);
+
+      const deniedReply = testReply();
+      await route.handler({
+        body: policy,
+        input: { body: policy },
+        params: routeProjectParams(),
+        vibe64User: {
+          role: "member",
+          username: "grace"
+        },
+        async executeAction() {
+          return {
+            code: "vibe64_owner_required",
+            errors: [{
+              code: "vibe64_owner_required",
+              message: "Only the owner can change AI behaviour."
+            }],
+            ok: false
+          };
+        }
+      }, deniedReply);
+      assert.equal(deniedReply.statusCode, 403);
     });
   });
 });

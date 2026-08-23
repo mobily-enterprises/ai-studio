@@ -48,6 +48,10 @@ import {
   resolveSourceConfigRoot
 } from "@local/vibe64-core/server/projectState";
 import {
+  readProjectAiPolicy as readStoredProjectAiPolicy,
+  saveProjectAiPolicy as saveStoredProjectAiPolicy
+} from "@local/vibe64-core/server/projectAiPolicy";
+import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
@@ -579,6 +583,47 @@ function createService({
     return (await currentDevelopmentDatabaseConfiguration()).developmentDatabaseScope;
   }
 
+  function canEditProjectAiPolicy(input = {}) {
+    return !input.vibe64User || input.vibe64User.role === "owner";
+  }
+
+  async function readProjectAiPolicyState(input = {}) {
+    const { policy } = await readStoredProjectAiPolicy({
+      projectRuntimeRoot: selectedProjectRuntimeRoot()
+    });
+    return {
+      aiPolicy: policy,
+      canEdit: canEditProjectAiPolicy(input),
+      ok: true
+    };
+  }
+
+  async function saveProjectAiPolicyState(input = {}) {
+    if (!canEditProjectAiPolicy(input)) {
+      throw vibe64Error(
+        "Only the Vibe64 project owner can change AI behaviour.",
+        "vibe64_owner_required"
+      );
+    }
+    const { policy } = await saveStoredProjectAiPolicy({
+      policy: {
+        customNote: input.customNote,
+        expertise: input.expertise,
+        promptHints: input.promptHints,
+        rationale: input.rationale,
+        responseLength: input.responseLength,
+        tone: input.tone
+      },
+      projectRuntimeRoot: selectedProjectRuntimeRoot()
+    });
+    return {
+      aiPolicy: policy,
+      canEdit: true,
+      ok: true,
+      projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim()
+    };
+  }
+
   async function currentDevelopmentDatabaseConfiguration() {
     const project = await currentProjectState();
     return {
@@ -836,10 +881,20 @@ function createService({
       return projectResult(async () => readAvailableProjectTemplates(await templateContext(input)));
     },
 
-    async readSettings() {
-      return projectResult(async () => ({
-        developmentDatabase: await developmentDatabaseState()
-      }));
+    async readProjectAiPolicy(input = {}) {
+      return projectResult(() => readProjectAiPolicyState(input));
+    },
+
+    async readSettings(input = {}) {
+      return projectResult(async () => {
+        const aiPolicyState = await readProjectAiPolicyState(input);
+        return {
+          aiPolicy: aiPolicyState.aiPolicy,
+          aiPolicyCanEdit: aiPolicyState.canEdit,
+          developmentDatabase: await developmentDatabaseState(),
+          ok: true
+        };
+      });
     },
 
     async releaseSessionResources(input = {}) {
@@ -885,6 +940,10 @@ function createService({
 
     async saveDevelopmentDatabaseScope(input = {}) {
       return projectResult(() => saveDevelopmentDatabaseScopeState(input));
+    },
+
+    async saveProjectAiPolicy(input = {}) {
+      return projectResult(() => saveProjectAiPolicyState(input));
     },
 
     async savePreviewApplicationIdentities(input = {}) {

@@ -1,5 +1,12 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
+import {
+  PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH,
+  PROJECT_AI_POLICY_EXPERTISE_LEVELS,
+  PROJECT_AI_POLICY_RATIONALE_LEVELS,
+  PROJECT_AI_POLICY_RESPONSE_LENGTHS,
+  PROJECT_AI_POLICY_TONES
+} from "@local/vibe64-core/server/projectAiPolicy";
 
 function patchSchema(fields) {
   return deepFreeze({
@@ -34,7 +41,47 @@ const previewApplicationIdentitiesReadInputValidator = patchSchema({
     noTrim: false
   }
 });
-const projectSettingsReadInputValidator = patchSchema({});
+const projectSettingsReadInputValidator = patchSchema({
+  ...optionalUser
+});
+
+const projectAiPolicyInputValidator = patchSchema({
+  ...optionalUser,
+  customNote: {
+    maxLength: PROJECT_AI_POLICY_CUSTOM_NOTE_MAX_LENGTH,
+    noTrim: false,
+    required: true,
+    type: "string"
+  },
+  expertise: {
+    enum: PROJECT_AI_POLICY_EXPERTISE_LEVELS,
+    noTrim: false,
+    required: true,
+    type: "string"
+  },
+  promptHints: {
+    required: true,
+    type: "boolean"
+  },
+  rationale: {
+    enum: PROJECT_AI_POLICY_RATIONALE_LEVELS,
+    noTrim: false,
+    required: true,
+    type: "string"
+  },
+  responseLength: {
+    enum: PROJECT_AI_POLICY_RESPONSE_LENGTHS,
+    noTrim: false,
+    required: true,
+    type: "string"
+  },
+  tone: {
+    enum: PROJECT_AI_POLICY_TONES,
+    noTrim: false,
+    required: true,
+    type: "string"
+  }
+});
 
 const projectTemplateParamsValidator = patchSchema({
   slug: {
@@ -139,6 +186,7 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
 });
 
 export {
+  projectAiPolicyInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectCreateInputValidator,
   projectEnvReadInputValidator,

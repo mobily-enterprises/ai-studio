@@ -1,6 +1,7 @@
 import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions";
 
 import {
+  projectAiPolicyInputValidator,
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEnvReadInputValidator,
@@ -22,6 +23,7 @@ const ACTION_APPLY_PROJECT_TEMPLATE = "vibe64.project.templates.apply";
 const ACTION_READ_ENV = "vibe64.project.env.read";
 const ACTION_SAVE_ENV_USER_VALUES = "vibe64.project.env.user-values.save";
 const ACTION_READ_PROJECT_SETTINGS = "vibe64.project.settings.read";
+const ACTION_SAVE_PROJECT_AI_POLICY = "vibe64.project.ai-policy.save";
 const ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE = "vibe64.project.development-database.scope.save";
 const ACTION_READ_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.read";
 const ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.save";
@@ -147,7 +149,14 @@ function createProjectActions({ project } = {}) {
       id: ACTION_READ_PROJECT_SETTINGS,
       kind: "query",
       input: projectSettingsReadInputValidator,
-      execute: () => project.readSettings()
+      execute: (input) => project.readSettings(input)
+    }),
+    action({
+      id: ACTION_SAVE_PROJECT_AI_POLICY,
+      kind: "command",
+      input: projectAiPolicyInputValidator,
+      events: [projectChangedEvent()],
+      execute: (input) => project.saveProjectAiPolicy(input)
     }),
     action({
       id: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
@@ -181,6 +190,7 @@ export {
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT,

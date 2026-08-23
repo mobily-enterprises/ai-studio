@@ -6,6 +6,7 @@ import {
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_PROJECT_AI_POLICY,
   createProjectActions
 } from "../../packages/vibe64-project/src/server/actions.js";
 
@@ -82,6 +83,35 @@ test("project mutations publish first-class action events", async () => {
   assert.equal(event.entityId, "catalogue");
   assert.equal(event.realtime.event, "vibe64.project.changed");
   assert.equal(event.realtime.audience, "all_clients");
+  assert.deepEqual(event.realtime.payload, {
+    projectSlug: "catalogue"
+  });
+});
+
+test("project AI policy mutation publishes project realtime invalidation", async () => {
+  const action = featureAction({
+    async saveProjectAiPolicy() {
+      return {
+        aiPolicy: {
+          revision: 4,
+          version: 1
+        },
+        ok: true,
+        projectSlug: "catalogue"
+      };
+    }
+  }, ACTION_SAVE_PROJECT_AI_POLICY);
+  const result = await action.execute({ tone: "direct" }, {});
+  const event = await action.events[0]({
+    context: {},
+    input: { tone: "direct" },
+    result
+  });
+
+  assert.equal(event.type, "entity.changed");
+  assert.equal(event.entity, "project");
+  assert.equal(event.entityId, "catalogue");
+  assert.equal(event.realtime.event, "vibe64.project.changed");
   assert.deepEqual(event.realtime.payload, {
     projectSlug: "catalogue"
   });
