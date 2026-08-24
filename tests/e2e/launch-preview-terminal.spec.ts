@@ -13,6 +13,7 @@ import {
   BASE_URL,
   DASHBOARD_PATH,
   DEVELOPMENT_PATH,
+  SCOPED_API_PREFIX,
   sessionRuntimeRoot
 } from "./support/base-shell-data";
 import {
@@ -1099,7 +1100,7 @@ for (const viewportWidth of [390, 960, 1600]) {
 
     await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
 
-    const toolbarCreate = page.locator("button.studio-ai-sessions__create-button");
+    const toolbarCreate = page.locator("button.studio-ai-sessions__create-button:visible");
     const previewCreate = page.locator("button.studio-ai-sessions__preview-create-button");
     await expect(toolbarCreate).toBeVisible();
     if (viewportWidth >= 1600) {
@@ -1129,7 +1130,7 @@ for (const viewportWidth of [390, 960, 1600]) {
     }
     const pendingBox = await firstTrigger.boundingBox();
     expect(Math.abs((pendingBox?.width || 0) - (idleBox?.width || 0))).toBeLessThan(1);
-    expect(pendingBox?.height || 0).toBeGreaterThanOrEqual(39);
+    expect(pendingBox?.height || 0).toBeGreaterThanOrEqual(47);
     await expect(page.locator(".v-progress-circular")).toHaveCount(0);
 
     creation.releaseNextSessionCreation();
@@ -1164,6 +1165,261 @@ for (const viewportWidth of [390, 960, 1600]) {
       "Created 3"
     ]);
     expect(creation.getSessionCreationRequestCount()).toBe(3);
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+  });
+}
+
+for (const viewportWidth of [390, 960, 1600]) {
+  test(`@preview-lifecycle an occupied shared database exposes no session creation action at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    const creation = await mockLaunchSession(page, {
+      sessionList: [],
+      sharedDevelopmentDatabase: true
+    });
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+    const toolbarCreate = page.locator("button.studio-ai-sessions__create-button");
+    const previewCreate = page.locator("button.studio-ai-sessions__preview-create-button");
+    await expect(toolbarCreate).toBeVisible();
+    if (viewportWidth >= 1600) {
+      await expect(previewCreate).toBeVisible();
+    } else {
+      await expect(previewCreate).toBeHidden();
+    }
+
+    await toolbarCreate.click();
+    await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(1);
+    await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(1);
+    await expect(page.locator(
+      ".studio-ai-sessions__tab:visible[data-vibe64-session-id='session-created-1']"
+    )).toBeFocused();
+    await expect(toolbarCreate).toHaveCount(0);
+    await expect(previewCreate).toHaveCount(0);
+
+    const rejected = await page.evaluate(async ({ apiPrefix }) => {
+      const response = await fetch(`${apiPrefix}/vibe64/sessions`, {
+        body: "{}",
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      });
+      return {
+        body: await response.json(),
+        status: response.status
+      };
+    }, {
+      apiPrefix: SCOPED_API_PREFIX
+    });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body).toMatchObject({
+      code: "vibe64_session_creation_limit",
+      ok: false
+    });
+
+    await page.evaluate(async ({ apiPrefix }) => {
+      await fetch(`${apiPrefix}/vibe64/sessions/session-created-1/abandon`, {
+        body: "{}",
+        headers: {
+          "content-type": "application/json"
+        },
+        method: "POST"
+      });
+    }, {
+      apiPrefix: SCOPED_API_PREFIX
+    });
+    await page.reload();
+    await expect(toolbarCreate).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+  });
+}
+
+for (const viewportWidth of [390, 960, 1600]) {
+  test(`@preview-lifecycle shared database choice is unavailable with multiple sessions at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    await mockProjectGateReady(page);
+    await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/settings(?:\?.*)?$/u, async (route) => {
+      await fulfillJson(route, {
+        aiPolicy: {
+          customNote: "",
+          expertise: "comfortable",
+          promptHints: true,
+          rationale: "concise",
+          responseLength: "concise",
+          tone: "encouraging"
+        },
+        aiPolicyCanEdit: true,
+        developmentDatabase: {
+          canChange: false,
+          disabledReason: "Close all 2 open sessions (First task, Second task) before changing the development database.",
+          managed: true,
+          openSessionCount: 2,
+          options: {
+            project: {
+              available: false,
+              disabledReason: "A shared database allows one open session, but this project has 2. Close all 2 open sessions (First task, Second task) before choosing it."
+            },
+            session: {
+              available: true
+            }
+          },
+          scope: "session"
+        },
+        ok: true
+      });
+    });
+
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/settings`);
+    const showProject = page.getByRole("button", {
+      name: "Show project"
+    });
+    if (viewportWidth <= 980) {
+      await expect(showProject).toBeVisible();
+      await showProject.click();
+    }
+
+    await expect(page.getByRole("heading", {
+      name: "Project settings"
+    })).toBeVisible();
+    const sessionDatabase = page.getByRole("radio", {
+      name: "A separate database for each session"
+    });
+    const sharedDatabase = page.getByRole("radio", {
+      name: "One database shared by this project"
+    });
+    await expect(sessionDatabase).toBeEnabled();
+    await expect(sessionDatabase).toBeChecked();
+    await expect(sharedDatabase).toBeDisabled();
+    await expect(sharedDatabase).toHaveAttribute(
+      "aria-describedby",
+      "development-database-project-reason"
+    );
+    await expect(page.locator("#development-database-project-reason")).toContainText(
+      "this project has 2"
+    );
+    await expect(page.getByRole("button", {
+      name: "Save database choice"
+    })).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+  });
+}
+
+for (const viewportWidth of [390, 960, 1600]) {
+  test(`@preview-lifecycle switching to per-session databases restores the ordinary session limit at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    const creation = await mockLaunchSession(page, {
+      sessionList: [],
+      sharedDevelopmentDatabase: true
+    });
+    let databaseScope = "project";
+    const developmentDatabase = () => ({
+      canChange: true,
+      managed: true,
+      openSessionCount: 0,
+      options: {
+        project: {
+          available: true
+        },
+        session: {
+          available: true
+        }
+      },
+      scope: databaseScope
+    });
+    await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/settings(?:\/development-database)?(?:\?.*)?$/u, async (route) => {
+      const request = route.request();
+      if (new URL(request.url()).pathname.endsWith("/development-database")) {
+        expect(request.method()).toBe("PUT");
+        expect(request.postDataJSON()).toEqual({
+          scope: "session"
+        });
+        databaseScope = "session";
+        creation.setSharedDevelopmentDatabase(false);
+        await fulfillJson(route, {
+          ...developmentDatabase(),
+          ok: true
+        });
+        return;
+      }
+      await fulfillJson(route, {
+        aiPolicy: {
+          customNote: "",
+          expertise: "comfortable",
+          promptHints: true,
+          rationale: "concise",
+          responseLength: "concise",
+          tone: "encouraging"
+        },
+        aiPolicyCanEdit: true,
+        developmentDatabase: developmentDatabase(),
+        ok: true
+      });
+    });
+
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/settings`);
+    if (viewportWidth <= 980) {
+      const showProject = page.getByRole("button", {
+        name: "Show project"
+      });
+      await expect(showProject).toBeVisible();
+      await showProject.click();
+    }
+
+    const perSessionDatabase = page.getByRole("radio", {
+      name: "A separate database for each session"
+    });
+    await expect(perSessionDatabase).toBeEnabled();
+    await perSessionDatabase.focus();
+    await perSessionDatabase.press("Space");
+    await expect(perSessionDatabase).toBeChecked();
+    const saveDatabase = page.getByRole("button", {
+      name: "Save database choice"
+    });
+    await expect(saveDatabase).toBeEnabled();
+    await saveDatabase.focus();
+    await saveDatabase.press("Enter");
+    await expect.poll(() => databaseScope).toBe("session");
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    const toolbarCreate = page.locator("button.studio-ai-sessions__create-button:visible");
+    for (let expectedCount = 1; expectedCount <= 3; expectedCount += 1) {
+      await expect(toolbarCreate).toBeEnabled();
+      await toolbarCreate.click();
+      await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(expectedCount);
+      await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(expectedCount);
+    }
+    await expect(toolbarCreate).toBeVisible();
+    await expect(toolbarCreate).toBeDisabled();
+    await toolbarCreate.focus();
+    await expect(toolbarCreate).toBeFocused();
+    await expect(toolbarCreate).toHaveAttribute("aria-disabled", "true");
+    await expect(toolbarCreate).toHaveAttribute(
+      "aria-label",
+      "New session. Studio allows up to 3 open sessions. Close one before creating another."
+    );
+    await expect(toolbarCreate).toHaveAttribute(
+      "title",
+      "Studio allows up to 3 open sessions. Close one before creating another."
+    );
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= window.innerWidth
     ))).toBe(true);
@@ -1750,6 +2006,7 @@ async function mockLaunchSession(page: Page, {
   sessionCreationDeferred = false,
   sessionCreationOutcomes = [],
   sessionListDelayMs = 0,
+  sharedDevelopmentDatabase = false,
   temporaryAiRecoveryRequests = null
 }: {
   conversationLog?: unknown[];
@@ -1771,6 +2028,7 @@ async function mockLaunchSession(page: Page, {
   sessionCreationDeferred?: boolean;
   sessionCreationOutcomes?: Array<"failure" | "success">;
   sessionListDelayMs?: number;
+  sharedDevelopmentDatabase?: boolean;
   temporaryAiRecoveryRequests?: TemporaryAiRecoveryRequests | null;
 } = {}) {
   let listedSessions = Array.isArray(sessionList) ? [...sessionList] : [session];
@@ -1842,6 +2100,30 @@ async function mockLaunchSession(page: Page, {
       sessionCreationReleases.push(resolve);
     });
   }
+  let sharedDevelopmentDatabaseActive = sharedDevelopmentDatabase;
+  function currentSessionCreationPolicy() {
+    const openSessionCount = listedSessions.filter((item) => item.status !== "abandoned").length;
+    const maxOpenSessions = sharedDevelopmentDatabaseActive ? 1 : 3;
+    const canCreate = openSessionCount < maxOpenSessions;
+    return {
+      creation: {
+        canCreate,
+        mode: "direct",
+        showCreateAction: sharedDevelopmentDatabaseActive ? canCreate : true,
+        ...(!canCreate
+          ? {
+              disabledReason: sharedDevelopmentDatabaseActive
+                ? "This project shares one development database. Close its open session before creating another."
+                : "Studio allows up to 3 open sessions. Close one before creating another."
+            }
+          : {})
+      },
+      limits: {
+        maxOpenSessions,
+        openSessionCount
+      }
+    };
+  }
   await mockProjectGateReady(page);
   await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/sessions(?:\/.*)?(?:\?.*)?$/u, async (route) => {
     const request = route.request();
@@ -1849,6 +2131,17 @@ async function mockLaunchSession(page: Page, {
     const method = request.method();
     if (method === "POST" && url.pathname.endsWith("/vibe64/sessions")) {
       sessionCreationRequestCount += 1;
+      const policy = currentSessionCreationPolicy();
+      if (policy.creation.canCreate !== true) {
+        await fulfillJson(route, {
+          code: "vibe64_session_creation_limit",
+          error: policy.creation.disabledReason,
+          ok: false
+        }, {
+          status: 409
+        });
+        return;
+      }
       await waitForSessionCreationRelease();
       const outcome = queuedSessionCreationOutcomes.shift() || "success";
       if (outcome === "failure") {
@@ -1867,8 +2160,26 @@ async function mockLaunchSession(page: Page, {
       });
       listedSessions = [...listedSessions, createdSession];
       await fulfillJson(route, {
+        ...currentSessionCreationPolicy(),
         ok: true,
         ...createdSession
+      });
+      return;
+    }
+    if (method === "POST" && /\/sessions\/[^/]+\/abandon$/u.test(url.pathname)) {
+      const abandonedSessionId = decodeURIComponent(url.pathname.split("/").at(-2) || "");
+      listedSessions = listedSessions.map((item) => (
+        item.sessionId === abandonedSessionId
+          ? {
+              ...item,
+              status: "abandoned"
+            }
+          : item
+      ));
+      await fulfillJson(route, {
+        ok: true,
+        sessionId: abandonedSessionId,
+        status: "abandoned"
       });
       return;
     }
@@ -2075,15 +2386,9 @@ async function mockLaunchSession(page: Page, {
       });
     }
     await fulfillJson(route, {
-      creation: {
-        canCreate: true,
-        mode: "direct"
-      },
-      limits: {
-        openSessionCount: listedSessions.length
-      },
+      ...currentSessionCreationPolicy(),
       ok: true,
-      sessions: listedSessions
+      sessions: listedSessions.filter((item) => item.status !== "abandoned")
     });
   });
   if (!previewServer) {
@@ -2168,6 +2473,9 @@ async function mockLaunchSession(page: Page, {
     },
     getSessionCreationRequestCount() {
       return sessionCreationRequestCount;
+    },
+    setSharedDevelopmentDatabase(value: boolean) {
+      sharedDevelopmentDatabaseActive = value;
     },
     releaseNextSessionCreation() {
       sessionCreationReleases.shift()?.();

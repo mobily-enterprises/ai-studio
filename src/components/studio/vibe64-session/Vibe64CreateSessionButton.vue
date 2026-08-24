@@ -2,10 +2,14 @@
   <v-btn
     ref="button"
     :aria-busy="createSessionRunning ? 'true' : undefined"
+    :aria-disabled="creationUnavailable ? 'true' : undefined"
     :aria-label="buttonAriaLabel"
     :block="block"
-    :class="buttonClass"
-    :disabled="!toolbar.canCreateSession || createSessionRunning"
+    :class="[
+      buttonClass,
+      { 'studio-ai-sessions__create-button--unavailable': creationUnavailable }
+    ]"
+    :disabled="createSessionRunning"
     :icon="iconOnly ? true : undefined"
     :prepend-icon="iconOnly ? undefined : mdiPlus"
     :size="size"
@@ -59,10 +63,17 @@ const props = defineProps({
 
 const button = ref(null);
 const createSessionRunning = computed(() => props.toolbar.createSessionRunning === true);
+const creationUnavailable = computed(() => (
+  !createSessionRunning.value && props.toolbar.canCreateSession !== true
+));
 const buttonAriaLabel = computed(() => {
-  return createSessionRunning.value
-    ? "Creating session…"
-    : String(props.ariaLabel || props.label || "New session").trim();
+  if (createSessionRunning.value) {
+    return "Creating session…";
+  }
+  const label = String(props.ariaLabel || props.label || "New session").trim();
+  return creationUnavailable.value && buttonTitle.value
+    ? `${label}. ${buttonTitle.value}`
+    : label;
 });
 const buttonLabel = computed(() => (
   createSessionRunning.value ? "Creating session…" : props.label
@@ -75,11 +86,37 @@ const buttonTitle = computed(() => (
 let restoreFocusAfterCreation = false;
 
 function requestCreateSession() {
+  if (creationUnavailable.value || createSessionRunning.value) {
+    return;
+  }
   restoreFocusAfterCreation = true;
-  void Promise.resolve(props.toolbar.createSession?.()).catch(() => {
-    // useCommand owns transient action feedback; do not also surface the
-    // rejected click-handler promise through Vue's global error boundary.
-  });
+  void Promise.resolve(props.toolbar.createSession?.())
+    .then((response) => {
+      if (
+        response?.creation?.showCreateAction === false &&
+        response?.sessionId
+      ) {
+        void focusCreatedSession(response.sessionId);
+      }
+    })
+    .catch(() => {
+      // useCommand owns transient action feedback; do not also surface the
+      // rejected click-handler promise through Vue's global error boundary.
+    });
+}
+
+async function focusCreatedSession(sessionId = "") {
+  if (typeof document === "undefined") {
+    return;
+  }
+  await nextTick();
+  await nextTick();
+  const target = [...document.querySelectorAll("[data-vibe64-session-id]")]
+    .find((element) => (
+      element.getAttribute("data-vibe64-session-id") === String(sessionId) &&
+      element.getClientRects().length > 0
+    ));
+  target?.focus?.({ preventScroll: true });
 }
 
 watch(createSessionRunning, (running, wasRunning) => {
@@ -101,12 +138,12 @@ watch(createSessionRunning, (running, wasRunning) => {
   border-radius: 999px;
   box-shadow: none !important;
   color: #1a73e8 !important;
-  height: 2.5rem;
-  min-height: 2.5rem;
-  min-width: 2.5rem;
+  height: 3rem;
+  min-height: 3rem;
+  min-width: 3rem;
   overflow: visible;
   position: relative;
-  width: 2.5rem;
+  width: 3rem;
 }
 
 .studio-ai-sessions__create-button:hover {
@@ -144,7 +181,7 @@ watch(createSessionRunning, (running, wasRunning) => {
   color: var(--studio-control-text, #202124) !important;
   font-weight: 500;
   letter-spacing: 0;
-  min-height: 2.5rem;
+  min-height: 3rem;
   min-width: 9.5rem;
 }
 
@@ -152,17 +189,13 @@ watch(createSessionRunning, (running, wasRunning) => {
   background: var(--studio-control-rest-bg, #f7f7f8) !important;
 }
 
-@media (pointer: coarse) {
-  .studio-ai-sessions__create-button {
-    height: 3rem;
-    min-height: 3rem;
-    min-width: 3rem;
-    width: 3rem;
-  }
+.studio-ai-sessions__create-button--unavailable {
+  cursor: not-allowed;
+  opacity: var(--v-disabled-opacity, 0.38);
+}
 
-  .studio-ai-sessions__preview-create-button {
-    min-height: 3rem;
-  }
+.studio-ai-sessions__create-button--unavailable:hover {
+  background: var(--studio-control-rest-bg, #f7f7f8) !important;
 }
 
 @keyframes studio-ai-session-create-pulse {
@@ -179,6 +212,12 @@ watch(createSessionRunning, (running, wasRunning) => {
   100% {
     opacity: 0;
     transform: scale(1.34) translateZ(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-ai-sessions__create-button--attention:not(.v-btn--disabled)::after {
+    animation: none;
   }
 }
 

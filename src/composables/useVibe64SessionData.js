@@ -1,4 +1,5 @@
 import { computed, onScopeDispose, proxyRefs, ref, watch } from "vue";
+import { useQueryClient } from "@tanstack/vue-query";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
@@ -20,7 +21,6 @@ import {
   createVibe64CurrentSessionPublisher
 } from "@/lib/vibe64CurrentSessionPublisher.js";
 import {
-  vibe64SessionLimits,
   enrichVibe64SessionForDisplay,
   shortVibe64SessionId as shortSessionId,
   visibleVibe64Sessions
@@ -151,6 +151,7 @@ function useVibe64SessionData({
   onTitleChange = null
 } = {}) {
   const notifyTitleChange = typeof onTitleChange === "function" ? onTitleChange : () => null;
+  const queryClient = useQueryClient();
   const projectSlug = useVibe64ProjectSlug();
   const paths = usePaths();
   const sessionSelection = useVibe64SessionSelection({
@@ -164,14 +165,15 @@ function useVibe64SessionData({
   const currentSessionApiPath = computed(() => paths.api(VIBE64_CURRENT_SESSION_API_SUFFIX, {
     surface: VIBE64_SURFACE_ID
   }));
+  const sessionListQueryKey = computed(() => vibe64SessionsQueryKey(
+    VIBE64_SURFACE_ID,
+    ROUTE_VISIBILITY_PUBLIC,
+    projectSlug.value
+  ));
   const sessionListResource = useEndpointResource({
     fallbackLoadError: "Vibe64 sessions could not be loaded.",
     path: sessionsApiPath,
-    queryKey: computed(() => vibe64SessionsQueryKey(
-      VIBE64_SURFACE_ID,
-      ROUTE_VISIBILITY_PUBLIC,
-      projectSlug.value
-    )),
+    queryKey: sessionListQueryKey,
     readQuery: {
       limit: 20
     },
@@ -271,22 +273,18 @@ function useVibe64SessionData({
   const selectedSession = computed(() => enrichVibe64SessionForDisplay(selectedListSession.value));
   const isSelectedSessionClosed = computed(() => isClosedVibe64Session(selectedSession.value || {}));
   const pageLoading = computed(() => Boolean(sessionList.isLoading));
-  const limits = computed(() => vibe64SessionLimits({
-    payloadLimits: sessionList.pages?.[0]?.limits || {},
-    sessions: sessions.value
-  }));
   const canCreateSession = computed(() => {
-    if (typeof creationOptions.value.canCreate === "boolean") {
-      return creationOptions.value.canCreate;
-    }
-    return limits.value.openSessionCount < limits.value.maxOpenSessions;
+    return creationOptions.value.canCreate === true;
   });
+  const createSessionVisible = computed(() => (
+    creationOptions.value.showCreateAction === true
+  ));
   const createSessionTitle = computed(() => {
     if (creationOptions.value.disabledReason) {
       return String(creationOptions.value.disabledReason);
     }
-    if (limits.value.openSessionCount >= limits.value.maxOpenSessions) {
-      return `Studio allows up to ${limits.value.maxOpenSessions} active sessions.`;
+    if (creationOptions.value.canCreate !== true) {
+      return "Session creation is unavailable.";
     }
     return "Create a new Vibe64 session";
   });
@@ -373,6 +371,42 @@ function useVibe64SessionData({
           !sessionDataDisposed &&
           creationProjectSlug === String(projectSlug.value || "").trim()
         ) {
+          if (
+            response?.creation &&
+            response?.limits
+          ) {
+            queryClient.setQueryData(sessionListQueryKey.value, (currentPayload) => {
+              if (
+                !currentPayload ||
+                typeof currentPayload !== "object" ||
+                Array.isArray(currentPayload)
+              ) {
+                return currentPayload;
+              }
+              const currentSessions = Array.isArray(currentPayload.sessions)
+                ? currentPayload.sessions
+                : [];
+              const createdSession = response.sessionId
+                ? Object.fromEntries(Object.entries(response).filter(([key]) => ![
+                    "creation",
+                    "limits",
+                    "ok"
+                  ].includes(key)))
+                : null;
+              return {
+                ...currentPayload,
+                creation: response.creation,
+                limits: response.limits,
+                ...(createdSession && !currentSessions.some((item) => (
+                  item?.sessionId === createdSession.sessionId
+                ))
+                  ? {
+                      sessions: [...currentSessions, createdSession]
+                    }
+                  : {})
+              };
+            });
+          }
           if (response?.sessionId) {
             selectSessionId(response.sessionId);
           }
@@ -476,6 +510,7 @@ function useVibe64SessionData({
     createSession,
     createSessionCommand,
     createSessionRunning,
+    createSessionVisible,
     createSessionTitle,
     isSelectedSessionClosed,
     pageLoading,

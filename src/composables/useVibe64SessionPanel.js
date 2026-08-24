@@ -82,6 +82,7 @@ function useVibe64SessionPanel(props, emit) {
     createSession: sessionData.createSession,
     createSessionCommand: sessionData.createSessionCommand,
     createSessionRunning: sessionData.createSessionRunning,
+    createSessionVisible: sessionData.createSessionVisible,
     createSessionTitle: sessionData.createSessionTitle,
     selectSession: sessionData.selectSessionId,
     sessions: toolbarSessions,

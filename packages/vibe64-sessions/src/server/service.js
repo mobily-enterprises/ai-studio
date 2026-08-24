@@ -146,6 +146,19 @@ function publicSession(session = {}, extra = {}) {
   };
 }
 
+function sessionCreationLimitError(policy = {}) {
+  const error = new Error(
+    text(policy?.creation?.disabledReason) || "No more sessions can be created for this project."
+  );
+  error.code = "vibe64_session_creation_limit";
+  error.details = {
+    maxOpenSessions: Number(policy?.limits?.maxOpenSessions || 0),
+    openSessionCount: Number(policy?.limits?.openSessionCount || 0)
+  };
+  error.statusCode = 409;
+  return error;
+}
+
 const SESSION_SAVE_TASK_ID = "save-work";
 const SESSION_UPDATE_TASK_ID = "update-session";
 
@@ -493,32 +506,84 @@ function createService({
     async createSession(input = {}) {
       return sessionResult(async () => {
         const runtime = await project.createRuntime(sessionRuntimeOptions(terminals));
-        const session = await runtime.createSession({
-          metadata: {
-            created_by: text(input.vibe64User?.username || input.vibe64User?.name)
-          },
-          sourceContext: {
-            vibe64User: input.vibe64User || null
+        if (
+          typeof project.developmentDatabasePolicy !== "function" ||
+          typeof project.runProjectSessionPolicyExclusive !== "function"
+        ) {
+          throw new TypeError("Session creation requires the project session policy boundary.");
+        }
+        const created = await project.runProjectSessionPolicyExclusive(async () => {
+          const openSessions = await runtime.listSessionSummaries({
+            statusGroup: "open"
+          });
+          const policy = await project.developmentDatabasePolicy({ openSessions });
+          if (policy?.creation?.canCreate !== true) {
+            throw sessionCreationLimitError(policy);
           }
+          const session = await runtime.createSession({
+            metadata: {
+              created_by: text(input.vibe64User?.username || input.vibe64User?.name)
+            },
+            sourceContext: {
+              vibe64User: input.vibe64User || null
+            }
+          });
+          const updatedPolicy = await project.developmentDatabasePolicy({
+            openSessions: [...openSessions, session]
+          });
+          return {
+            session,
+            updatedPolicy
+          };
+        }, {
+          operation: "create-session"
         });
-        const setup = await setupRunner.start({
-          retry: true,
-          runtime,
-          session
+        let setup = null;
+        try {
+          setup = await setupRunner.start({
+            retry: true,
+            runtime,
+            session: created.session
+          });
+        } catch (error) {
+          vibe64SessionDebugLog("server.sessions.workspaceSetup.start.error", {
+            error: vibe64SessionDebugError(error),
+            sessionId: created.session.sessionId
+          });
+        }
+        let currentSession = created.session;
+        try {
+          currentSession = await runtime.getSession(created.session.sessionId, {
+            inspectSource: false
+          }) || created.session;
+        } catch (error) {
+          vibe64SessionDebugLog("server.sessions.createSession.inspect.error", {
+            error: vibe64SessionDebugError(error),
+            sessionId: created.session.sessionId
+          });
+        }
+        try {
+          await publishSessionChanged(created.session.sessionId, {
+            operation: "created",
+            originId: text(input.originId),
+            reason: "session-created",
+            session: currentSession
+          });
+        } catch (error) {
+          vibe64SessionDebugLog("server.sessions.createSession.publish.error", {
+            error: vibe64SessionDebugError(error),
+            sessionId: created.session.sessionId
+          });
+        }
+        if (setup) {
+          observeWorkspaceSetup(created.session.sessionId, setup.completion, {
+            originId: input.originId
+          });
+        }
+        return publicSession(currentSession, {
+          creation: created.updatedPolicy.creation,
+          limits: created.updatedPolicy.limits
         });
-        const currentSession = await runtime.getSession(session.sessionId, {
-          inspectSource: false
-        });
-        await publishSessionChanged(session.sessionId, {
-          operation: "created",
-          originId: text(input.originId),
-          reason: "session-created",
-          session: currentSession
-        });
-        observeWorkspaceSetup(session.sessionId, setup.completion, {
-          originId: input.originId
-        });
-        return publicSession(currentSession);
       }, "Vibe64 could not create a chat session.");
     },
 
@@ -911,15 +976,18 @@ function createService({
         const runtime = await project.createRuntime({
           inspectSource: false
         });
+        const viewingAbandoned = text(input.archive) === "abandoned";
         const sessions = await runtime.listSessionSummaries(archiveListOptions(input.archive));
+        if (typeof project.developmentDatabasePolicy !== "function") {
+          throw new TypeError("Session listing requires the project session policy.");
+        }
+        const openSessions = viewingAbandoned
+          ? await runtime.listSessionSummaries({ statusGroup: "open" })
+          : sessions;
+        const policy = await project.developmentDatabasePolicy({ openSessions });
         return {
-          creation: {
-            canCreate: true,
-            mode: "direct"
-          },
-          limits: {
-            openSessionCount: sessions.filter((session) => session.status !== "abandoned").length
-          },
+          creation: policy.creation,
+          limits: policy.limits,
           ok: true,
           sessions
         };

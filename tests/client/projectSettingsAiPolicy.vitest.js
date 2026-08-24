@@ -89,7 +89,8 @@ vi.mock("vuetify/components/VTextarea", () => ({
 import ProjectSettingsPanel from "../../src/components/studio/ProjectSettingsPanel.vue";
 
 const componentPath = path.resolve("src/components/studio/ProjectSettingsPanel.vue");
-const { descriptor } = parse(fs.readFileSync(componentPath, "utf8"), {
+const componentSource = fs.readFileSync(componentPath, "utf8");
+const { descriptor } = parse(componentSource, {
   filename: componentPath
 });
 const componentScript = compileScript(descriptor, {
@@ -139,7 +140,12 @@ function createDeferred() {
   return { promise, resolve };
 }
 
-function createResource({ canEdit = true, policy = {} } = {}) {
+function createResource({
+  canEdit = true,
+  developmentDatabase = {},
+  policy = {}
+} = {}) {
+  const databaseOptions = developmentDatabase.options || {};
   const data = ref({
     aiPolicy: {
       customNote: "Use Australian English.",
@@ -154,7 +160,19 @@ function createResource({ canEdit = true, policy = {} } = {}) {
     developmentDatabase: {
       canChange: true,
       managed: true,
-      scope: "session"
+      openSessionCount: 0,
+      scope: "session",
+      ...developmentDatabase,
+      options: {
+        project: {
+          available: true,
+          ...databaseOptions.project
+        },
+        session: {
+          available: true,
+          ...databaseOptions.session
+        }
+      }
     }
   });
   return {
@@ -240,6 +258,14 @@ function findField(root, label) {
   return findNode(root, (node) => node.props?.label === label);
 }
 
+function findNodeById(root, id) {
+  return findNode(root, (node) => node.props?.id === id);
+}
+
+function findRadioGroup(root) {
+  return findNode(root, (node) => node.type === "fieldset");
+}
+
 function findButton(root, label) {
   return findNode(root, (node) => (
     node.type === "button" && nodeText(node).includes(label)
@@ -264,6 +290,13 @@ describe("ProjectSettingsPanel AI behaviour", () => {
   it("hydrates every writable field synchronously from warm cached project data", () => {
     const { app, container } = mountPanel();
 
+    expect(findRadioGroup(container).props.modelValue).toBe("session");
+    expect(findRadioGroup(container).props["aria-labelledby"])
+      .toBe("development-database-title");
+    expect(findField(container, "A separate database for each session").props.disabled)
+      .toBe(false);
+    expect(findField(container, "One database shared by this project").props.disabled)
+      .toBe(false);
     expect(findField(container, "Tone").props.modelValue).toBe("military");
     expect(findField(container, "Tone").props.density).toBe("comfortable");
     expect(findField(container, "Response length").props.modelValue).toBe("detailed");
@@ -278,6 +311,127 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(findButton(container, "Save AI behaviour").props.disabled).toBe(true);
 
     app.unmount();
+  });
+
+  it("keeps warm settings visible during refresh and preserves an unsaved database draft", async () => {
+    projectSettingsMocks.resource = createResource({
+      developmentDatabase: {
+        scope: "project"
+      }
+    });
+    projectSettingsMocks.resource.isLoading.value = true;
+    const { app, container } = mountPanel();
+
+    const group = findRadioGroup(container);
+    expect(group.props.modelValue).toBe("project");
+    expect(findField(container, "Tone")).toBeTruthy();
+    expect(findNode(container, (node) => node.type === "aside")).toBeNull();
+
+    group.props["onUpdate:modelValue"]("session");
+    await nextTick();
+    projectSettingsMocks.resource.data.value = {
+      ...projectSettingsMocks.resource.data.value,
+      developmentDatabase: {
+        canChange: false,
+        disabledReason: "Close both open sessions before changing the development database.",
+        managed: true,
+        openSessionCount: 2,
+        options: {
+          project: {
+            available: false,
+            disabledReason: "A shared database allows one open session, but this project has 2."
+          },
+          session: {
+            available: true
+          }
+        },
+        scope: "project"
+      }
+    };
+    projectSettingsMocks.realtimeOptions[0].onEvent();
+    await nextTick();
+
+    expect(findRadioGroup(container).props.modelValue).toBe("session");
+    expect(findField(container, "One database shared by this project").props.disabled)
+      .toBe(true);
+    expect(projectSettingsMocks.resource.reload).toHaveBeenCalledOnce();
+
+    app.unmount();
+  });
+
+  it("disables and describes only the unavailable shared-database choice", () => {
+    const projectReason = "A shared database allows one open session, but this project has 2.";
+    projectSettingsMocks.resource = createResource({
+      developmentDatabase: {
+        canChange: false,
+        disabledReason: "Close both open sessions before changing the development database.",
+        openSessionCount: 2,
+        options: {
+          project: {
+            available: false,
+            disabledReason: projectReason
+          },
+          session: {
+            available: true
+          }
+        },
+        scope: "project"
+      }
+    });
+    const { app, container } = mountPanel();
+
+    const sessionChoice = findField(container, "A separate database for each session");
+    const projectChoice = findField(container, "One database shared by this project");
+    expect(findRadioGroup(container).props.modelValue).toBe("project");
+    expect(sessionChoice.props.disabled).toBe(false);
+    expect(sessionChoice.props["aria-describedby"]).toBeUndefined();
+    expect(projectChoice.props.disabled).toBe(true);
+    expect(projectChoice.props["aria-describedby"])
+      .toBe("development-database-project-reason");
+    expect(nodeText(findNodeById(container, "development-database-project-reason")))
+      .toContain(projectReason);
+    expect(findButton(container, "Save database choice").props.disabled).toBe(true);
+
+    app.unmount();
+  });
+
+  it("guards the database command when the selected scope is unavailable", async () => {
+    projectSettingsMocks.resource = createResource({
+      developmentDatabase: {
+        options: {
+          project: {
+            available: false,
+            disabledReason: "A shared database is unavailable."
+          },
+          session: {
+            available: true
+          }
+        }
+      }
+    });
+    const { app, container } = mountPanel();
+
+    findRadioGroup(container).props["onUpdate:modelValue"]("project");
+    await nextTick();
+    const save = findButton(container, "Save database choice");
+    expect(save.props.disabled).toBe(true);
+    await save.props.onClick();
+    expect(projectSettingsMocks.commands[0].run).not.toHaveBeenCalled();
+    expect(projectSettingsMocks.resource.reload).not.toHaveBeenCalled();
+
+    app.unmount();
+  });
+
+  it("keeps the database controls compact, adaptive, and touch accessible", () => {
+    expect(componentSource).toContain('aria-labelledby="development-database-title"');
+    expect(componentSource).toContain("development-database-project-reason");
+    expect(componentSource).toContain(
+      "grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));"
+    );
+    expect(componentSource).toContain("@media (max-width: 900px)");
+    expect(componentSource).toContain("@media (max-width: 540px)");
+    expect(componentSource).not.toContain("@media (pointer: coarse)");
+    expect(componentSource).toContain("min-height: 3rem;");
   });
 
   it("lets an owner edit but keeps a member read-only even if an event is invoked", async () => {

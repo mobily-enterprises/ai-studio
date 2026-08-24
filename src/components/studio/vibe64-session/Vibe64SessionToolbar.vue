@@ -14,6 +14,7 @@
         }"
         :size="compact ? 'small' : 'large'"
         :aria-label="sessionTabAriaLabel(sessionItem)"
+        :data-vibe64-session-id="sessionItem.sessionId"
         variant="flat"
         @click="selectSession(sessionItem.sessionId)"
       >

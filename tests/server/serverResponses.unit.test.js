@@ -18,4 +18,16 @@ test("requests that conflict with current operational state return conflict", ()
     code: "vibe64_workspace_setup_retry_not_available",
     ok: false
   }), 409);
+  assert.equal(vibe64StatusCode({
+    code: "vibe64_development_database_scope_busy",
+    ok: false
+  }), 409);
+  assert.equal(vibe64StatusCode({
+    code: "vibe64_project_session_policy_lock_timeout",
+    ok: false
+  }), 409);
+  assert.equal(vibe64StatusCode({
+    code: "vibe64_session_creation_limit",
+    ok: false
+  }), 409);
 });

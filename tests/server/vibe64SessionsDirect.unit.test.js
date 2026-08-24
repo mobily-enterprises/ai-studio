@@ -28,6 +28,15 @@ import {
   createService
 } from "../../packages/vibe64-sessions/src/server/service.js";
 import {
+  developmentDatabasePolicy
+} from "../../packages/vibe64-project/src/server/developmentDatabasePolicy.js";
+import {
+  runProjectSessionPolicyExclusive
+} from "../../packages/vibe64-project/src/server/projectSourceMutationLock.js";
+import {
+  vibe64StatusCode
+} from "../../packages/vibe64-core/src/server/serverResponses.js";
+import {
   createSessionChangedPublisher
 } from "../../packages/vibe64-sessions/src/server/events.js";
 import {
@@ -78,6 +87,77 @@ async function requireAgentWrite(runtime, sessionId, operation) {
     throw error;
   }
   return exclusive.value;
+}
+
+function sessionCreationPolicyHarness({
+  beforeCreate = async () => {},
+  initialSessions = [],
+  managed = true,
+  publishSessionChanged = async () => {},
+  projectRuntimeRoot: runtimeRoot,
+  scope = "session",
+  startWorkspaceSetup = () => ({ completion: null })
+} = {}) {
+  const openSessions = initialSessions.map((session) => ({
+    status: "active",
+    ...session
+  }));
+  const creationInputs = [];
+  let nextSession = openSessions.length + 1;
+  const runtime = {
+    async createSession(input) {
+      creationInputs.push(input);
+      await beforeCreate();
+      const session = {
+        sessionId: `session-${nextSession}`,
+        status: "active",
+        workspaceSetup: {
+          status: "unconfigured"
+        }
+      };
+      nextSession += 1;
+      openSessions.push(session);
+      return session;
+    },
+    async getSession(sessionId) {
+      return openSessions.find((session) => session.sessionId === sessionId) || null;
+    },
+    async listSessionSummaries() {
+      return openSessions.map((session) => ({ ...session }));
+    }
+  };
+  const project = {
+    async createRuntime() {
+      return runtime;
+    },
+    async developmentDatabasePolicy({ openSessions: currentSessions = [] } = {}) {
+      return developmentDatabasePolicy({
+        managed,
+        openSessions: currentSessions,
+        scope
+      });
+    },
+    runProjectSessionPolicyExclusive(operation, options = {}) {
+      return runProjectSessionPolicyExclusive(runtimeRoot, operation, options);
+    }
+  };
+  const service = createService({
+    project,
+    publishSessionChanged,
+    terminals: {},
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      start: startWorkspaceSetup,
+      wait: () => null
+    }
+  });
+  return {
+    creationInputs,
+    openSessions,
+    project,
+    runtime,
+    service
+  };
 }
 
 test("sessions expose only direct chat and source actions", () => {
@@ -1813,6 +1893,214 @@ test("closing a source-creation failure does not release resources that were nev
   assert.deepEqual(calls, ["closing", "terminals", "abandon"]);
 });
 
+test("session responses enforce the ordinary three-session policy on the server", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const harness = sessionCreationPolicyHarness({
+      initialSessions: [
+        { sessionId: "session-1" },
+        { sessionId: "session-2" }
+      ],
+      managed: true,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      scope: "session"
+    });
+
+    const available = await harness.service.listSessions();
+    assert.deepEqual(available.creation, {
+      canCreate: true,
+      mode: "direct",
+      showCreateAction: true
+    });
+    assert.deepEqual(available.limits, {
+      maxOpenSessions: 3,
+      openSessionCount: 2
+    });
+
+    const third = await harness.service.createSession();
+    assert.equal(third.ok, true);
+    assert.equal(third.sessionId, "session-3");
+    assert.equal(third.creation.canCreate, false);
+    assert.equal(third.creation.showCreateAction, true);
+    assert.deepEqual(third.limits, {
+      maxOpenSessions: 3,
+      openSessionCount: 3
+    });
+
+    const rejected = await harness.service.createSession();
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_session_creation_limit");
+    assert.deepEqual(rejected.details, {
+      code: "vibe64_session_creation_limit",
+      maxOpenSessions: 3,
+      openSessionCount: 3
+    });
+    assert.equal(vibe64StatusCode(rejected), 409);
+    assert.equal(harness.creationInputs.length, 1);
+    assert.equal(harness.openSessions.length, 3);
+  });
+});
+
+test("concurrent shared-database creation admits one request and leaves no rejected record", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let releaseFirstCreation;
+    let reportFirstCreation;
+    const firstCreationStarted = new Promise((resolve) => {
+      reportFirstCreation = resolve;
+    });
+    const firstCreationCanFinish = new Promise((resolve) => {
+      releaseFirstCreation = resolve;
+    });
+    const harness = sessionCreationPolicyHarness({
+      async beforeCreate() {
+        reportFirstCreation();
+        await firstCreationCanFinish;
+      },
+      managed: true,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      scope: "project"
+    });
+
+    const first = harness.service.createSession({
+      vibe64User: { username: "ada" }
+    });
+    await firstCreationStarted;
+    const second = harness.service.createSession({
+      vibe64User: { username: "grace" }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(harness.creationInputs.length, 1);
+
+    releaseFirstCreation();
+    const responses = await Promise.all([first, second]);
+    const accepted = responses.find((response) => response.ok === true);
+    const rejected = responses.find((response) => response.ok === false);
+
+    assert.equal(accepted.sessionId, "session-1");
+    assert.deepEqual(accepted.creation, {
+      canCreate: false,
+      disabledReason: "This project shares one development database. Close its open session before creating another.",
+      mode: "direct",
+      showCreateAction: false
+    });
+    assert.deepEqual(accepted.limits, {
+      maxOpenSessions: 1,
+      openSessionCount: 1
+    });
+    assert.equal(rejected.code, "vibe64_session_creation_limit");
+    assert.equal(vibe64StatusCode(rejected), 409);
+    assert.deepEqual(rejected.details, {
+      code: "vibe64_session_creation_limit",
+      maxOpenSessions: 1,
+      openSessionCount: 1
+    });
+    assert.equal(harness.creationInputs.length, 1);
+    assert.deepEqual(harness.creationInputs[0].metadata, {
+      created_by: "ada"
+    });
+    assert.deepEqual(harness.openSessions.map(({ sessionId, status }) => ({ sessionId, status })), [{
+      sessionId: "session-1",
+      status: "active"
+    }]);
+  });
+});
+
+test("shared-session admission releases its lock before workspace setup starts", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let releaseSetup;
+    let reportSetupStarted;
+    const setupStarted = new Promise((resolve) => {
+      reportSetupStarted = resolve;
+    });
+    const setupCanFinish = new Promise((resolve) => {
+      releaseSetup = resolve;
+    });
+    const harness = sessionCreationPolicyHarness({
+      managed: true,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      scope: "project",
+      async startWorkspaceSetup() {
+        reportSetupStarted();
+        await setupCanFinish;
+        return { completion: null };
+      }
+    });
+
+    const acceptedRequest = harness.service.createSession();
+    await setupStarted;
+    const rejected = await harness.service.createSession();
+
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_session_creation_limit");
+    assert.equal(vibe64StatusCode(rejected), 409);
+    releaseSetup();
+    const accepted = await acceptedRequest;
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.sessionId, "session-1");
+  });
+});
+
+test("shared-session admission releases its lock before realtime publication", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let releasePublication;
+    let reportPublicationStarted;
+    const publicationStarted = new Promise((resolve) => {
+      reportPublicationStarted = resolve;
+    });
+    const publicationCanFinish = new Promise((resolve) => {
+      releasePublication = resolve;
+    });
+    const harness = sessionCreationPolicyHarness({
+      managed: true,
+      async publishSessionChanged() {
+        reportPublicationStarted();
+        await publicationCanFinish;
+      },
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      scope: "project"
+    });
+
+    const acceptedRequest = harness.service.createSession();
+    await publicationStarted;
+    const rejected = await harness.service.createSession();
+
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_session_creation_limit");
+    releasePublication();
+    const accepted = await acceptedRequest;
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.sessionId, "session-1");
+  });
+});
+
+test("post-creation setup and publication failures do not falsify a durable session", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let publicationCalls = 0;
+    const harness = sessionCreationPolicyHarness({
+      managed: true,
+      async publishSessionChanged() {
+        publicationCalls += 1;
+        throw new Error("simulated realtime failure");
+      },
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      scope: "project",
+      async startWorkspaceSetup() {
+        throw new Error("simulated setup start failure");
+      }
+    });
+
+    const accepted = await harness.service.createSession();
+
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.sessionId, "session-1");
+    assert.equal(accepted.creation.canCreate, false);
+    assert.equal(publicationCalls, 1);
+    assert.equal(harness.openSessions.length, 1);
+    const rejected = await harness.service.createSession();
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_session_creation_limit");
+  });
+});
+
 test("new sessions publish running workspace preparation and its eventual result", async () => {
   const publications = [];
   const sessionCreationInputs = [];
@@ -1831,6 +2119,9 @@ test("new sessions publish running workspace preparation and its eventual result
     },
     async getSession() {
       return { ...session };
+    },
+    async listSessionSummaries() {
+      return sessionCreationInputs.length > 0 ? [{ ...session }] : [];
     }
   };
   const setupFinished = new Promise((resolve) => {
@@ -1846,6 +2137,15 @@ test("new sessions publish running workspace preparation and its eventual result
     project: {
       async createRuntime() {
         return runtime;
+      },
+      async developmentDatabasePolicy({ openSessions = [] } = {}) {
+        return developmentDatabasePolicy({
+          managed: false,
+          openSessions
+        });
+      },
+      async runProjectSessionPolicyExclusive(operation) {
+        return operation();
       }
     },
     async publishSessionChanged(...args) {

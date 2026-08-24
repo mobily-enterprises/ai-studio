@@ -1,15 +1,24 @@
-import { effectScope, nextTick, ref } from "vue";
+import { computed, effectScope, nextTick, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const creationHarness = vi.hoisted(() => ({
   createRun: null,
   endpointResource: null,
   projectSlug: null,
+  queryData: null,
+  querySetData: null,
   refetch: null,
   selectedId: null,
   select: null,
   selectAvailableId: null,
   updateRun: null
+}));
+
+vi.mock("@tanstack/vue-query", () => ({
+  useQueryClient: () => ({
+    getQueryData: () => creationHarness.queryData.value,
+    setQueryData: creationHarness.querySetData
+  })
 }));
 
 vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
@@ -75,16 +84,22 @@ beforeEach(() => {
   creationHarness.createRun = vi.fn();
   creationHarness.updateRun = vi.fn(async () => ({ ok: true }));
   creationHarness.refetch = vi.fn(async () => ({ data: { sessions: [] } }));
+  creationHarness.queryData = ref({
+    creation: { canCreate: true, showCreateAction: true },
+    limits: { maxOpenSessions: 3, openSessionCount: 0 },
+    sessions: []
+  });
+  creationHarness.querySetData = vi.fn((_key, update) => {
+    creationHarness.queryData.value = typeof update === "function"
+      ? update(creationHarness.queryData.value)
+      : update;
+  });
   creationHarness.select = vi.fn((sessionId = "") => {
     creationHarness.selectedId.value = sessionId;
   });
   creationHarness.selectAvailableId = vi.fn();
   creationHarness.endpointResource = {
-    data: ref({
-      creation: { canCreate: true },
-      limits: { maxOpenSessions: 3, openSessionCount: 0 },
-      sessions: []
-    }),
+    data: computed(() => creationHarness.queryData.value),
     isInitialLoading: ref(false),
     isLoading: ref(false),
     loadError: ref(""),
@@ -96,6 +111,93 @@ beforeEach(() => {
 });
 
 describe("Vibe64 session creation", () => {
+  it("fails closed until the server projects both creation permissions", () => {
+    creationHarness.queryData.value = {
+      limits: { maxOpenSessions: 3, openSessionCount: 0 },
+      sessions: []
+    };
+    const { scope, sessionData } = mountSessionData();
+
+    expect(sessionData.canCreateSession.value).toBe(false);
+    expect(sessionData.createSessionVisible.value).toBe(false);
+    expect(sessionData.createSessionTitle.value).toBe("Session creation is unavailable.");
+
+    scope.stop();
+  });
+
+  it("keeps a regular cap visible but hides creation for an occupied shared database", async () => {
+    creationHarness.queryData.value = {
+      creation: {
+        canCreate: false,
+        disabledReason: "Studio allows up to 3 open sessions. Close one before creating another.",
+        showCreateAction: true
+      },
+      limits: { maxOpenSessions: 3, openSessionCount: 3 },
+      sessions: []
+    };
+    const { scope, sessionData } = mountSessionData();
+
+    expect(sessionData.canCreateSession.value).toBe(false);
+    expect(sessionData.createSessionVisible.value).toBe(true);
+    expect(sessionData.createSessionTitle.value).toContain("up to 3 open sessions");
+
+    creationHarness.queryData.value = {
+      creation: {
+        canCreate: false,
+        disabledReason: "This project shares one development database.",
+        showCreateAction: false
+      },
+      limits: { maxOpenSessions: 1, openSessionCount: 1 },
+      sessions: []
+    };
+    await nextTick();
+
+    expect(sessionData.canCreateSession.value).toBe(false);
+    expect(sessionData.createSessionVisible.value).toBe(false);
+    expect(sessionData.createSessionTitle.value).toContain("shares one development database");
+
+    scope.stop();
+  });
+
+  it("applies the successful creation projection before its background refresh completes", async () => {
+    const refreshPending = deferred();
+    const backgroundRefetch = vi.fn(() => refreshPending.promise);
+    creationHarness.endpointResource.query.refetch = backgroundRefetch;
+    creationHarness.endpointResource.reload = backgroundRefetch;
+    creationHarness.createRun.mockResolvedValue({
+      creation: {
+        canCreate: false,
+        disabledReason: "This project shares one development database.",
+        showCreateAction: false
+      },
+      limits: { maxOpenSessions: 1, openSessionCount: 1 },
+      ok: true,
+      sessionId: "session-created"
+    });
+    const { scope, sessionData } = mountSessionData();
+
+    await expect(sessionData.createSession()).resolves.toMatchObject({
+      sessionId: "session-created"
+    });
+    await nextTick();
+
+    expect(backgroundRefetch).toHaveBeenCalledOnce();
+    expect(creationHarness.querySetData).toHaveBeenCalledOnce();
+    expect(sessionData.canCreateSession.value).toBe(false);
+    expect(sessionData.createSessionVisible.value).toBe(false);
+    expect(creationHarness.endpointResource.data.value).toMatchObject({
+      creation: { canCreate: false, showCreateAction: false },
+      limits: { maxOpenSessions: 1, openSessionCount: 1 },
+      sessions: [
+        { sessionId: "session-created" }
+      ]
+    });
+
+    refreshPending.resolve({ data: creationHarness.endpointResource.data.value });
+    await nextTick();
+    scope.stop();
+  });
+
   it("sets pending synchronously and coalesces rapid requests into one command", async () => {
     const pending = deferred();
     creationHarness.createRun.mockImplementation(() => pending.promise);

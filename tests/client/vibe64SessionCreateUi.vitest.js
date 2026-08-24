@@ -15,7 +15,12 @@ vi.mock("vuetify/components/VIcon", () => ({
   VIcon: passthroughComponent("span")
 }));
 
+vi.mock("vuetify/components/VChip", () => ({
+  VChip: passthroughComponent("button")
+}));
+
 import Vibe64CreateSessionButton from "../../src/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
+import Vibe64SessionToolbar from "../../src/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 
 const buttonPath = path.resolve(
   "src/components/studio/vibe64-session/Vibe64CreateSessionButton.vue"
@@ -35,6 +40,26 @@ Vibe64CreateSessionButton.render = new Function(
   componentTemplate.code
 )(VueRuntime);
 
+const toolbarPath = path.resolve(
+  "src/components/studio/vibe64-session/Vibe64SessionToolbar.vue"
+);
+const { descriptor: toolbarDescriptor } = parse(
+  fs.readFileSync(toolbarPath, "utf8"),
+  { filename: toolbarPath }
+);
+const toolbarScript = compileScript(toolbarDescriptor, {
+  id: "vibe64-session-toolbar-create-ui-test"
+});
+const toolbarTemplate = compile(toolbarDescriptor.template.content, {
+  bindingMetadata: toolbarScript.bindings,
+  mode: "function",
+  prefixIdentifiers: true
+});
+Vibe64SessionToolbar.render = new Function(
+  "Vue",
+  toolbarTemplate.code
+)(VueRuntime);
+
 function passthroughComponent(element) {
   return defineComponent({
     inheritAttrs: false,
@@ -45,8 +70,10 @@ function passthroughComponent(element) {
 }
 
 async function renderCreateButton({
+  canCreate = true,
   iconOnly = false,
-  running = false
+  running = false,
+  title = "Create a new Vibe64 session"
 } = {}) {
   const createSession = vi.fn();
   const app = createSSRApp(Vibe64CreateSessionButton, {
@@ -57,10 +84,10 @@ async function renderCreateButton({
     iconOnly,
     label: "Create session",
     toolbar: {
-      canCreateSession: true,
+      canCreateSession: canCreate,
       createSession,
       createSessionRunning: running,
-      createSessionTitle: "Create a new Vibe64 session"
+      createSessionTitle: title
     }
   });
   app.component("VBtn", passthroughComponent("button"));
@@ -69,6 +96,28 @@ async function renderCreateButton({
     createSession,
     html: await renderToString(app)
   };
+}
+
+async function renderToolbar({
+  canCreate = true,
+  createVisible = true,
+  title = "Create a new Vibe64 session"
+} = {}) {
+  const app = createSSRApp(Vibe64SessionToolbar, {
+    abandon: { command: { isRunning: false } },
+    createVisible,
+    toolbar: {
+      canCreateSession: canCreate,
+      createSession: vi.fn(),
+      createSessionRunning: false,
+      createSessionTitle: title,
+      sessions: []
+    }
+  });
+  app.component("VBtn", passthroughComponent("button"));
+  app.component("VChip", passthroughComponent("button"));
+  app.component("VIcon", passthroughComponent("span"));
+  return renderToString(app);
 }
 
 describe("session creation controls", () => {
@@ -100,20 +149,66 @@ describe("session creation controls", () => {
     expect(preview.html).toContain("Create session");
   });
 
-  it("keeps every entry point mounted and connected to the same pending state", () => {
+  it("keeps a regular session cap visible with its authoritative disabled reason", async () => {
+    const reason = "Studio allows up to 3 open sessions. Close one before creating another.";
+    const button = await renderCreateButton({
+      canCreate: false,
+      iconOnly: true,
+      title: reason
+    });
+    const toolbar = await renderToolbar({
+      canCreate: false,
+      createVisible: true,
+      title: reason
+    });
+
+    expect(button.html).toContain('aria-disabled="true"');
+    expect(button.html).toContain(`aria-label="New session. ${reason}"`);
+    expect(button.html).not.toContain(" disabled");
+    expect(button.html).toContain(`title="${reason}"`);
+    expect(button.html).not.toContain("aria-busy");
+    expect(toolbar).toContain(`aria-label="New session. ${reason}"`);
+    expect(toolbar).toContain('aria-disabled="true"');
+  });
+
+  it("omits the toolbar action when the server marks creation invisible", async () => {
+    const toolbar = await renderToolbar({
+      canCreate: false,
+      createVisible: false,
+      title: "This project shares one development database."
+    });
+
+    expect(toolbar).not.toContain('aria-label="New session"');
+    expect(toolbar).not.toContain("This project shares one development database.");
+  });
+
+  it("uses the authoritative visibility projection at every create-session entry point", () => {
     const panelSource = fs.readFileSync(path.resolve(
       "src/components/studio/Vibe64SessionPanel.vue"
+    ), "utf8");
+    const autopilotSource = fs.readFileSync(path.resolve(
+      "src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
     ), "utf8");
     const runtimeHostSource = fs.readFileSync(path.resolve(
       "src/composables/useVibe64SessionRuntimeHost.js"
     ), "utf8");
 
-    expect(panelSource).toContain(':create-visible="!emptyStateInitialLoading"');
+    expect(panelSource).toContain(
+      ':create-visible="!emptyStateInitialLoading && toolbar.createSessionVisible"'
+    );
+    expect(panelSource).toContain('v-else-if="toolbar.createSessionVisible"');
     expect(panelSource).toContain('v-if="emptyStateInitialLoading"');
+    expect(autopilotSource).toContain(
+      ':create-visible="props.sessionToolbar.createSessionVisible === true"'
+    );
     expect(runtimeHostSource).toContain(
       "createSessionRunning: props.sessionData.createSessionRunning"
     );
+    expect(runtimeHostSource).toContain(
+      "createSessionVisible: props.sessionData.createSessionVisible"
+    );
     expect(buttonSource).toContain("min-height: 3rem");
     expect(buttonSource).toContain("min-width: 3rem");
+    expect(buttonSource).toContain("prefers-reduced-motion: reduce");
   });
 });

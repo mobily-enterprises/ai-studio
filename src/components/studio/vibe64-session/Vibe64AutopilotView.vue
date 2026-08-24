@@ -28,6 +28,7 @@
           v-if="sessionToolbarVisible"
           :abandon="props.sessionAbandon"
           compact
+          :create-visible="props.sessionToolbar.createSessionVisible === true"
           :max-visible-sessions="3"
           :selected-session-id="sessionId"
           :selection-closed="sessionAbandonDisabled"

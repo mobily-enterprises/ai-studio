@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 
 const DEFAULT_LOCK_TIMEOUT_MS = 30_000;
+const SESSION_POLICY_LOCK_TIMEOUT_MS = 300_000;
 const LOCK_POLL_MS = 40;
 
 function text(value = "") {
@@ -65,19 +66,23 @@ function sleep(durationMs) {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
-async function acquireProjectSourceMutationLock(projectRuntimeRoot, {
+async function acquireProjectOperationLock(projectRuntimeRoot, lockName, {
   operation = "project-source-mutation",
+  rootErrorCode = "vibe64_project_source_lock_root_invalid",
+  rootErrorLabel = "Project source mutation locking",
+  timeoutErrorCode = "vibe64_project_source_lock_timeout",
+  timeoutErrorMessage = "Another project source operation is still running.",
   timeoutMs = DEFAULT_LOCK_TIMEOUT_MS
 } = {}) {
   const root = text(projectRuntimeRoot);
   if (!path.isAbsolute(root)) {
     throw lockError(
-      "Project source mutation locking requires an absolute project runtime root.",
-      "vibe64_project_source_lock_root_invalid"
+      `${rootErrorLabel} requires an absolute project runtime root.`,
+      rootErrorCode
     );
   }
   const lockRoot = path.join(root, "locks");
-  const lockPath = path.join(lockRoot, "source-mutation.lock");
+  const lockPath = path.join(lockRoot, lockName);
   await mkdir(lockRoot, { recursive: true, mode: 0o2770 });
   const token = crypto.randomUUID();
   const deadline = Date.now() + Math.max(1, Number(timeoutMs) || DEFAULT_LOCK_TIMEOUT_MS);
@@ -106,18 +111,42 @@ async function acquireProjectSourceMutationLock(projectRuntimeRoot, {
     }
   }
   throw lockError(
-    "Another project source operation is still running.",
-    "vibe64_project_source_lock_timeout"
+    timeoutErrorMessage,
+    timeoutErrorCode
   );
 }
 
-async function releaseProjectSourceMutationLock(lock = {}) {
+async function acquireProjectSourceMutationLock(projectRuntimeRoot, options = {}) {
+  return acquireProjectOperationLock(projectRuntimeRoot, "source-mutation.lock", options);
+}
+
+async function acquireProjectSessionPolicyLock(projectRuntimeRoot, options = {}) {
+  return acquireProjectOperationLock(projectRuntimeRoot, "session-policy.lock", {
+    operation: "session-policy",
+    rootErrorCode: "vibe64_project_session_policy_lock_root_invalid",
+    rootErrorLabel: "Project session policy locking",
+    timeoutErrorCode: "vibe64_project_session_policy_lock_timeout",
+    timeoutErrorMessage: "Another project session operation is still running.",
+    timeoutMs: SESSION_POLICY_LOCK_TIMEOUT_MS,
+    ...options
+  });
+}
+
+async function releaseProjectOperationLock(lock = {}) {
   const owner = await lockOwner(lock.lockPath);
   if (owner?.token === lock.token && owner?.pid === process.pid) {
     await rm(lock.lockPath, { force: true });
     return true;
   }
   return false;
+}
+
+async function releaseProjectSourceMutationLock(lock = {}) {
+  return releaseProjectOperationLock(lock);
+}
+
+async function releaseProjectSessionPolicyLock(lock = {}) {
+  return releaseProjectOperationLock(lock);
 }
 
 async function runProjectSourceExclusive(projectRuntimeRoot, operation, options = {}) {
@@ -132,8 +161,23 @@ async function runProjectSourceExclusive(projectRuntimeRoot, operation, options 
   }
 }
 
+async function runProjectSessionPolicyExclusive(projectRuntimeRoot, operation, options = {}) {
+  if (typeof operation !== "function") {
+    throw new TypeError("runProjectSessionPolicyExclusive requires an operation.");
+  }
+  const lock = await acquireProjectSessionPolicyLock(projectRuntimeRoot, options);
+  try {
+    return await operation();
+  } finally {
+    await releaseProjectSessionPolicyLock(lock);
+  }
+}
+
 export {
+  acquireProjectSessionPolicyLock,
   acquireProjectSourceMutationLock,
+  releaseProjectSessionPolicyLock,
   releaseProjectSourceMutationLock,
+  runProjectSessionPolicyExclusive,
   runProjectSourceExclusive
 };

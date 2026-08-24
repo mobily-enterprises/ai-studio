@@ -18,7 +18,7 @@
     </header>
 
     <Vibe64AsyncModuleState
-      v-if="loading || loadError"
+      v-if="initialLoading || loadError"
       label="Project settings"
       :loading="loading"
       :message="loadError || 'Loading project settings.'"
@@ -44,18 +44,41 @@
         <template v-if="managed">
           <v-radio-group
             v-model="scopeDraft"
+            aria-labelledby="development-database-title"
             class="project-settings__options"
-            :disabled="!canChange || databaseSaving"
+            :disabled="databaseSaving"
             hide-details
           >
-            <v-radio
-              label="A separate database for each session"
-              value="session"
-            />
-            <v-radio
-              label="One database shared by this project"
-              value="project"
-            />
+            <div class="project-settings__option">
+              <v-radio
+                :aria-describedby="sessionScopeReason ? 'development-database-session-reason' : undefined"
+                :disabled="!sessionScopeAvailable"
+                label="A separate database for each session"
+                value="session"
+              />
+              <p
+                v-if="sessionScopeReason"
+                id="development-database-session-reason"
+                class="project-settings__option-support"
+              >
+                {{ sessionScopeReason }}
+              </p>
+            </div>
+            <div class="project-settings__option">
+              <v-radio
+                :aria-describedby="projectScopeReason ? 'development-database-project-reason' : undefined"
+                :disabled="!projectScopeAvailable"
+                label="One database shared by this project"
+                value="project"
+              />
+              <p
+                v-if="projectScopeReason"
+                id="development-database-project-reason"
+                class="project-settings__option-support"
+              >
+                {{ projectScopeReason }}
+              </p>
+            </div>
           </v-radio-group>
 
           <div class="project-settings__action">
@@ -65,7 +88,7 @@
               after a session is closed.
             </p>
             <v-btn
-              :disabled="!databaseChanged || !canChange || databaseSaving"
+              :disabled="!databaseChanged || !canChange || !scopeDraftAvailable || databaseSaving"
               color="primary"
               size="small"
               type="button"
@@ -311,9 +334,19 @@ const developmentDatabase = computed(() => resource.data.value?.developmentDatab
 const managed = computed(() => developmentDatabase.value.managed === true);
 const canChange = computed(() => developmentDatabase.value.canChange === true);
 const disabledReason = computed(() => String(developmentDatabase.value.disabledReason || ""));
+const sessionScopeOption = computed(() => developmentDatabase.value.options?.session || {});
+const projectScopeOption = computed(() => developmentDatabase.value.options?.project || {});
+const sessionScopeAvailable = computed(() => sessionScopeOption.value.available === true);
+const projectScopeAvailable = computed(() => projectScopeOption.value.available === true);
+const sessionScopeReason = computed(() => String(sessionScopeOption.value.disabledReason || ""));
+const projectScopeReason = computed(() => String(projectScopeOption.value.disabledReason || ""));
+const scopeDraftAvailable = computed(() => (
+  scopeDraft.value === "project" ? projectScopeAvailable.value : sessionScopeAvailable.value
+));
 const aiPolicy = computed(() => resource.data.value?.aiPolicy || {});
 const aiPolicyCanEdit = computed(() => resource.data.value?.aiPolicyCanEdit === true);
 const loading = computed(() => resource.isLoading.value === true);
+const initialLoading = computed(() => loading.value && !resource.data.value);
 const loadError = computed(() => String(resource.loadError.value || ""));
 const databaseSaving = computed(() => databaseSaveCommand.isRunning === true);
 const aiPolicySaving = computed(() => aiPolicySaveCommand.isRunning === true);
@@ -372,7 +405,12 @@ function normalizeAiPolicyDraft(value = {}) {
 }
 
 async function saveDatabase() {
-  if (!databaseChanged.value || !canChange.value || databaseSaving.value) {
+  if (
+    !databaseChanged.value ||
+    !canChange.value ||
+    !scopeDraftAvailable.value ||
+    databaseSaving.value
+  ) {
     return;
   }
   await databaseSaveCommand.run({
@@ -454,7 +492,7 @@ function reloadPage() {
   border-radius: 8px;
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(13rem, 1fr) minmax(17rem, 1.25fr) minmax(14rem, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
   padding: 1rem;
 }
 
@@ -478,8 +516,24 @@ function reloadPage() {
   min-width: 6.5rem;
 }
 
+.project-settings :deep(.v-btn),
+.project-settings__options :deep(.v-selection-control) {
+  min-height: 3rem;
+}
+
 .project-settings__options {
   margin: -0.35rem 0;
+}
+
+.project-settings__option {
+  min-width: 0;
+}
+
+.project-settings__option-support {
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  margin: -0.2rem 0 0 2.5rem;
 }
 
 .project-settings__scope {
@@ -538,9 +592,4 @@ function reloadPage() {
   }
 }
 
-@media (pointer: coarse) {
-  .project-settings :deep(.v-btn) {
-    min-height: 3rem;
-  }
-}
 </style>

@@ -3,9 +3,6 @@ import {
   shortVibe64SessionId
 } from "@/lib/vibe64SessionViewModel.js";
 import {
-  DEFAULT_MAX_OPEN_SESSIONS
-} from "@/lib/vibe64SessionRequestConfig.js";
-import {
   vibe64SessionSourcePath
 } from "@/lib/vibe64SessionPaths.js";
 
@@ -20,11 +17,15 @@ function visibleVibe64Sessions(sessions = []) {
 }
 
 function vibe64SessionLimits({ payloadLimits = {}, sessions = [] } = {}) {
+  const maxOpenSessions = Number(payloadLimits.maxOpenSessions);
+  const openSessionCount = Number(payloadLimits.openSessionCount);
   return {
-    maxOpenSessions: Number(payloadLimits.maxOpenSessions || DEFAULT_MAX_OPEN_SESSIONS),
-    openSessionCount: Number(
-      payloadLimits.openSessionCount || sessions.filter(isOpenVibe64Session).length
-    )
+    maxOpenSessions: Number.isFinite(maxOpenSessions) && maxOpenSessions > 0
+      ? maxOpenSessions
+      : 0,
+    openSessionCount: Number.isFinite(openSessionCount) && openSessionCount >= 0
+      ? openSessionCount
+      : sessions.filter(isOpenVibe64Session).length
   };
 }
 

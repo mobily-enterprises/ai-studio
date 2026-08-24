@@ -70,6 +70,10 @@ import {
   materializeProjectEnvironmentFiles
 } from "./projectEnvironmentFiles.js";
 import {
+  developmentDatabasePolicy as resolveDevelopmentDatabasePolicy
+} from "./developmentDatabasePolicy.js";
+import {
+  runProjectSessionPolicyExclusive as runProjectSessionPolicyMutationExclusive,
   runProjectSourceExclusive as runProjectSourceMutationExclusive
 } from "./projectSourceMutationLock.js";
 
@@ -636,26 +640,59 @@ function createService({
     return resourceEnvironmentProvider?.managedDevelopmentDatabase === true;
   }
 
-  async function developmentDatabaseState() {
+  async function managedDevelopmentDatabaseDefaults(input = {}) {
     if (!managedDevelopmentDatabaseAvailable()) {
-      return {
-        managed: false,
-        scope: "external"
-      };
+      return {};
     }
-    const openSessions = await (await createRuntime({
-      inspectSource: false
-    })).listSessionSummaries({
-      statusGroup: "open"
-    });
+    if (typeof resourceEnvironmentProvider?.developmentDatabaseNameForProject !== "function") {
+      throw vibe64Error(
+        "This Vibe64 installation cannot name a managed project database.",
+        "vibe64_managed_development_database_name_unavailable"
+      );
+    }
+    const projectContextRoot = String(input.projectContextRoot || "").trim();
+    if (!path.isAbsolute(projectContextRoot)) {
+      throw vibe64Error(
+        "Managed project database defaults require an absolute project context root.",
+        "vibe64_managed_development_database_project_root_invalid"
+      );
+    }
+    const developmentDatabaseName = normalizeDevelopmentDatabaseName(
+      await resourceEnvironmentProvider.developmentDatabaseNameForProject({
+        projectContextRoot,
+        serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
+        slug: String(input.slug || path.basename(projectContextRoot)).trim()
+      })
+    );
+    if (!developmentDatabaseName) {
+      throw vibe64Error(
+        "The managed project database name is empty.",
+        "vibe64_managed_development_database_name_unavailable"
+      );
+    }
     return {
-      canChange: openSessions.length === 0,
-      ...(openSessions.length > 0
-        ? { disabledReason: "Close all project sessions before changing the development database." }
-        : {}),
-      managed: true,
-      scope: await currentDevelopmentDatabaseScope()
+      developmentDatabaseName,
+      developmentDatabaseScope: "project"
     };
+  }
+
+  async function currentDevelopmentDatabasePolicy(input = {}) {
+    const openSessions = Array.isArray(input.openSessions)
+      ? input.openSessions
+      : await (await createRuntime({
+          inspectSource: false
+        })).listSessionSummaries({
+          statusGroup: "open"
+        });
+    return resolveDevelopmentDatabasePolicy({
+      managed: managedDevelopmentDatabaseAvailable(),
+      openSessions,
+      scope: await currentDevelopmentDatabaseScope()
+    });
+  }
+
+  async function developmentDatabaseState() {
+    return (await currentDevelopmentDatabasePolicy()).developmentDatabase;
   }
 
   async function saveDevelopmentDatabaseScopeState(input = {}) {
@@ -665,53 +702,57 @@ function createService({
         "vibe64_managed_development_database_unavailable"
       );
     }
-    const openSessions = await (await createRuntime({
-      inspectSource: false
-    })).listSessionSummaries({
-      statusGroup: "open"
-    });
-    if (openSessions.length > 0) {
-      throw vibe64Error(
-        "Close all project sessions before changing the development database.",
-        "vibe64_development_database_scope_busy"
-      );
-    }
-    const slug = path.basename(requireSelectedTargetRoot());
-    const scope = normalizeDevelopmentDatabaseScope(input.scope);
-    const currentProject = await currentProjectState();
-    let developmentDatabaseName = normalizeDevelopmentDatabaseName(
-      currentProject?.developmentDatabaseName
+    return runProjectSessionPolicyMutationExclusive(
+      selectedProjectRuntimeRoot(),
+      async () => {
+        const policy = await currentDevelopmentDatabasePolicy();
+        if (!policy.developmentDatabase.canChange) {
+          throw vibe64Error(
+            policy.developmentDatabase.disabledReason,
+            "vibe64_development_database_scope_busy"
+          );
+        }
+        const slug = path.basename(requireSelectedTargetRoot());
+        const scope = normalizeDevelopmentDatabaseScope(input.scope);
+        const currentProject = await currentProjectState();
+        let developmentDatabaseName = normalizeDevelopmentDatabaseName(
+          currentProject?.developmentDatabaseName
+        );
+        if (scope === "project" && !developmentDatabaseName) {
+          if (typeof resourceEnvironmentProvider?.developmentDatabaseNameForProject !== "function") {
+            throw vibe64Error(
+              "This Vibe64 installation cannot name a managed project database.",
+              "vibe64_managed_development_database_name_unavailable"
+            );
+          }
+          developmentDatabaseName = normalizeDevelopmentDatabaseName(
+            await resourceEnvironmentProvider.developmentDatabaseNameForProject({
+              projectContextRoot: requireSelectedTargetRoot(),
+              serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
+              slug
+            })
+          );
+          if (!developmentDatabaseName) {
+            throw vibe64Error(
+              "The managed project database name is empty.",
+              "vibe64_managed_development_database_name_unavailable"
+            );
+          }
+        }
+        await studioProjectContext.updateWorkspaceProjectMetadata({
+          ...(developmentDatabaseName ? { developmentDatabaseName } : {}),
+          developmentDatabaseScope: scope,
+          slug
+        });
+        return {
+          ...(await currentDevelopmentDatabasePolicy({ openSessions: [] })).developmentDatabase,
+          ok: true
+        };
+      },
+      {
+        operation: "save-development-database-scope"
+      }
     );
-    if (scope === "project" && !developmentDatabaseName) {
-      if (typeof resourceEnvironmentProvider?.developmentDatabaseNameForProject !== "function") {
-        throw vibe64Error(
-          "This Vibe64 installation cannot name a managed project database.",
-          "vibe64_managed_development_database_name_unavailable"
-        );
-      }
-      developmentDatabaseName = normalizeDevelopmentDatabaseName(
-        await resourceEnvironmentProvider.developmentDatabaseNameForProject({
-          serviceDataRoot: String(studioProjectContext.serviceDataRoot || "").trim(),
-          slug,
-          targetRoot: requireSelectedTargetRoot()
-        })
-      );
-      if (!developmentDatabaseName) {
-        throw vibe64Error(
-          "The managed project database name is empty.",
-          "vibe64_managed_development_database_name_unavailable"
-        );
-      }
-    }
-    await studioProjectContext.updateWorkspaceProjectMetadata({
-      ...(developmentDatabaseName ? { developmentDatabaseName } : {}),
-      developmentDatabaseScope: scope,
-      slug
-    });
-    return {
-      ...(await developmentDatabaseState()),
-      ok: true
-    };
   }
 
   async function templateContext(input = {}) {
@@ -847,8 +888,16 @@ function createService({
     },
     currentTargetRoot: selectedTargetRoot,
 
+    async developmentDatabasePolicy(input = {}) {
+      return currentDevelopmentDatabasePolicy(input);
+    },
+
     async listProjects() {
       return projectResult(() => listProjectsState());
+    },
+
+    async managedDevelopmentDatabaseDefaults(input = {}) {
+      return managedDevelopmentDatabaseDefaults(input);
     },
 
     async projectExecutionEnvironment(input = {}) {
@@ -918,6 +967,14 @@ function createService({
 
     runProjectSourceExclusive(operation, options = {}) {
       return runProjectSourceMutationExclusive(
+        selectedProjectRuntimeRoot(),
+        operation,
+        options
+      );
+    },
+
+    runProjectSessionPolicyExclusive(operation, options = {}) {
+      return runProjectSessionPolicyMutationExclusive(
         selectedProjectRuntimeRoot(),
         operation,
         options

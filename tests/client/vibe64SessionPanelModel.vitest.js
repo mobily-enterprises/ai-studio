@@ -45,4 +45,20 @@ describe("plain Vibe64 session presentation", () => {
       selectedSessionLoadError: "Temporary refresh error"
     })).toBe("");
   });
+
+  it("does not invent a creation allowance when server limits are absent", () => {
+    expect(vibe64SessionLimits({
+      sessions: [{ status: "active" }]
+    })).toEqual({
+      maxOpenSessions: 0,
+      openSessionCount: 1
+    });
+    expect(vibe64SessionLimits({
+      payloadLimits: { maxOpenSessions: 0, openSessionCount: 0 },
+      sessions: [{ status: "active" }]
+    })).toEqual({
+      maxOpenSessions: 0,
+      openSessionCount: 0
+    });
+  });
 });

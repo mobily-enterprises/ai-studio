@@ -77,7 +77,7 @@
             :abandon="selectedAbandon"
             compact
             :create-attention="emptyCreateAttention"
-            :create-visible="!emptyStateInitialLoading"
+            :create-visible="!emptyStateInitialLoading && toolbar.createSessionVisible"
             :max-visible-sessions="3"
             :selected-session-id="selection.selectedSessionId"
             :selection-closed="selection.isClosed"
@@ -140,7 +140,7 @@
               />
             </div>
             <Vibe64CreateSessionButton
-              v-else
+              v-else-if="toolbar.createSessionVisible"
               aria-label="Create session"
               button-class="studio-ai-sessions__preview-create-button"
               :icon-only="false"

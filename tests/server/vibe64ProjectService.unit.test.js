@@ -7,6 +7,9 @@ import {
   createService
 } from "../../packages/vibe64-project/src/server/service.js";
 import {
+  createService as createSessionsService
+} from "../../packages/vibe64-sessions/src/server/service.js";
+import {
   createStudioProjectContext
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
@@ -129,6 +132,77 @@ test("repository identities require a real project source", async () => {
   });
 });
 
+test("managed database defaults persist an explicit shared scope and provider-owned name", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectsRoot = path.join(temporaryRoot, "projects");
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: projectsRoot,
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const service = createService({
+      env: {},
+      projectContext
+    });
+    const projectContextRoot = path.join(projectsRoot, "shared-default");
+    const providerCalls = [];
+
+    assert.deepEqual(await service.managedDevelopmentDatabaseDefaults({
+      projectContextRoot,
+      slug: "shared-default"
+    }), {});
+
+    service.setResourceEnvironmentProvider({
+      developmentDatabaseNameForProject(input) {
+        providerCalls.push(input);
+        return "unit_shared_default";
+      },
+      async environmentForResources() {
+        return { environment: {} };
+      },
+      managedDevelopmentDatabase: true
+    });
+    await assert.rejects(
+      () => service.managedDevelopmentDatabaseDefaults({
+        projectContextRoot: "relative-project",
+        slug: "shared-default"
+      }),
+      {
+        code: "vibe64_managed_development_database_project_root_invalid"
+      }
+    );
+    assert.deepEqual(providerCalls, []);
+    const defaults = await service.managedDevelopmentDatabaseDefaults({
+      projectContextRoot,
+      slug: "shared-default"
+    });
+    assert.deepEqual(defaults, {
+      developmentDatabaseName: "unit_shared_default",
+      developmentDatabaseScope: "project"
+    });
+    assert.deepEqual(providerCalls, [{
+      projectContextRoot,
+      serviceDataRoot: projectContext.serviceDataRoot,
+      slug: "shared-default"
+    }]);
+
+    const created = await service.createProject({
+      ...defaults,
+      name: "Shared default"
+    });
+    assert.equal(created.ok, true);
+    assert.equal(created.currentProject.developmentDatabaseName, "unit_shared_default");
+    assert.equal(created.currentProject.developmentDatabaseScope, "project");
+
+    const persisted = await projectContext.readWorkspaceProject({
+      slug: "shared-default"
+    });
+    assert.equal(persisted.project.developmentDatabaseName, "unit_shared_default");
+    assert.equal(persisted.project.developmentDatabaseScope, "project");
+  });
+});
+
 test("managed development database scope is project state and changes only without open sessions", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
     const projectsRoot = path.join(temporaryRoot, "projects");
@@ -144,10 +218,11 @@ test("managed development database scope is project state and changes only witho
     });
     await service.createProject({ name: "Shared catalogue" });
     let nameRequests = 0;
+    const nameRequestInputs = [];
     service.setResourceEnvironmentProvider({
-      developmentDatabaseNameForProject({ slug }) {
+      developmentDatabaseNameForProject(input) {
         nameRequests += 1;
-        assert.equal(slug, "shared-catalogue");
+        nameRequestInputs.push(input);
         return "merc_shared_catalogue";
       },
       async environmentForResources() {
@@ -160,6 +235,11 @@ test("managed development database scope is project state and changes only witho
     assert.deepEqual(initial.developmentDatabase, {
       canChange: true,
       managed: true,
+      openSessionCount: 0,
+      options: {
+        project: { available: true },
+        session: { available: true }
+      },
       scope: "session"
     });
     const saved = await service.saveDevelopmentDatabaseScope({
@@ -168,6 +248,11 @@ test("managed development database scope is project state and changes only witho
     assert.equal(saved.ok, true);
     assert.equal(saved.scope, "project");
     assert.equal(nameRequests, 1);
+    assert.deepEqual(nameRequestInputs, [{
+      projectContextRoot: path.join(projectsRoot, "shared-catalogue"),
+      serviceDataRoot: projectContext.serviceDataRoot,
+      slug: "shared-catalogue"
+    }]);
     assert.equal(
       (await service.listProjects()).currentProject.developmentDatabaseName,
       "merc_shared_catalogue"
@@ -181,6 +266,11 @@ test("managed development database scope is project state and changes only witho
     assert.deepEqual((await service.readSettings()).developmentDatabase, {
       canChange: true,
       managed: true,
+      openSessionCount: 0,
+      options: {
+        project: { available: true },
+        session: { available: true }
+      },
       scope: "project"
     });
 
@@ -195,6 +285,39 @@ test("managed development database scope is project state and changes only witho
       runtimeKind: "genesis",
       sessionId: "open-session"
     });
+    const oneOpen = (await service.readSettings()).developmentDatabase;
+    assert.equal(oneOpen.canChange, false);
+    assert.equal(oneOpen.openSessionCount, 1);
+    assert.equal(oneOpen.options.project.available, true);
+    assert.equal(oneOpen.options.session.available, true);
+    assert.match(oneOpen.disabledReason, /open-session/u);
+
+    const secondSessionSource = path.join(
+      temporaryRoot,
+      "managed-source",
+      "sessions",
+      "active",
+      "second-open-session",
+      "source"
+    );
+    await mkdir(secondSessionSource, { recursive: true });
+    await store.createSession({
+      metadata: {
+        label: "Second task",
+        source_kind: "session_clone",
+        source_path: secondSessionSource,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      runtimeKind: "genesis",
+      sessionId: "second-open-session"
+    });
+    const twoOpen = (await service.readSettings()).developmentDatabase;
+    assert.equal(twoOpen.canChange, false);
+    assert.equal(twoOpen.openSessionCount, 2);
+    assert.equal(twoOpen.options.project.available, false);
+    assert.equal(twoOpen.options.session.available, true);
+    assert.match(twoOpen.options.project.disabledReason, /open-session, Second task/u);
+
     const blocked = await service.saveDevelopmentDatabaseScope({
       scope: "session"
     });
@@ -203,9 +326,16 @@ test("managed development database scope is project state and changes only witho
 
     await store.writeStatus("open-session", "abandoned");
     await store.compactClosedSession("open-session");
+    await store.writeStatus("second-open-session", "abandoned");
+    await store.compactClosedSession("second-open-session");
     assert.deepEqual((await service.readSettings()).developmentDatabase, {
       canChange: true,
       managed: true,
+      openSessionCount: 0,
+      options: {
+        project: { available: true },
+        session: { available: true }
+      },
       scope: "project"
     });
     const savedAgain = await service.saveDevelopmentDatabaseScope({
@@ -213,6 +343,107 @@ test("managed development database scope is project state and changes only witho
     });
     assert.equal(savedAgain.ok, true);
     assert.equal(nameRequests, 1);
+  });
+});
+
+test("scope saving and session creation share one project policy boundary", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: path.join(temporaryRoot, "projects"),
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const projectService = createService({
+      env: {},
+      projectContext
+    });
+    await projectService.createProject({ name: "Serialized database" });
+
+    let reportNamingStarted;
+    let releaseNaming;
+    const namingStarted = new Promise((resolve) => {
+      reportNamingStarted = resolve;
+    });
+    const namingCanFinish = new Promise((resolve) => {
+      releaseNaming = resolve;
+    });
+    projectService.setResourceEnvironmentProvider({
+      async developmentDatabaseNameForProject() {
+        reportNamingStarted();
+        await namingCanFinish;
+        return "unit_serialized_database";
+      },
+      async environmentForResources() {
+        return { environment: {} };
+      },
+      managedDevelopmentDatabase: true
+    });
+
+    const openSessions = [];
+    let createCalls = 0;
+    const runtime = {
+      async createSession() {
+        createCalls += 1;
+        const session = {
+          sessionId: "serialized-session",
+          status: "active",
+          workspaceSetup: { status: "unconfigured" }
+        };
+        openSessions.push(session);
+        return session;
+      },
+      async getSession() {
+        return { ...openSessions[0] };
+      },
+      async listSessionSummaries() {
+        return openSessions.map((session) => ({ ...session }));
+      }
+    };
+    const sessionsService = createSessionsService({
+      project: {
+        async createRuntime() {
+          return runtime;
+        },
+        developmentDatabasePolicy(input) {
+          return projectService.developmentDatabasePolicy(input);
+        },
+        runProjectSessionPolicyExclusive(operation, options) {
+          return projectService.runProjectSessionPolicyExclusive(operation, options);
+        }
+      },
+      terminals: {},
+      workspaceSetupRunner: {
+        isRunning: () => false,
+        start: () => ({ completion: null }),
+        wait: () => null
+      }
+    });
+
+    const saving = projectService.saveDevelopmentDatabaseScope({
+      scope: "project"
+    });
+    await namingStarted;
+    const creating = sessionsService.createSession();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(createCalls, 0);
+
+    releaseNaming();
+    const [saved, created] = await Promise.all([saving, creating]);
+    assert.equal(saved.ok, true);
+    assert.equal(saved.scope, "project");
+    assert.equal(created.ok, true);
+    assert.equal(created.sessionId, "serialized-session");
+    assert.equal(created.creation.canCreate, false);
+    assert.deepEqual(created.limits, {
+      maxOpenSessions: 1,
+      openSessionCount: 1
+    });
+    assert.equal(createCalls, 1);
+    assert.equal(
+      (await projectService.listProjects()).currentProject.developmentDatabaseScope,
+      "project"
+    );
   });
 });
 
