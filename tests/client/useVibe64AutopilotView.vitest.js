@@ -17,12 +17,14 @@ describe("direct chat messages", () => {
 
   it("adds attachment references without exposing paths in visible chat", () => {
     const payload = chatMessagePayload("Please inspect this.", [{
+      attachmentId: "attachment-1",
       fileName: "screenshot.png",
       path: "/tmp/vibe64-attachments/session/screenshot.png",
       size: 2048
     }]);
 
     expect(payload.displayMessage).toBe("Please inspect this.\n\nscreenshot.png");
+    expect(payload.attachmentIds).toEqual(["attachment-1"]);
     expect(payload.message).toContain(
       "- screenshot.png (2.0 KB): /tmp/vibe64-attachments/session/screenshot.png"
     );

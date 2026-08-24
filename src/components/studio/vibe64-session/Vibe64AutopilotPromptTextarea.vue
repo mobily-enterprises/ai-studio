@@ -3,7 +3,7 @@
     class="studio-autopilot-prompt-textarea"
     :class="{
       'studio-autopilot-prompt-textarea--dragging': dragActive,
-      'studio-autopilot-prompt-textarea--has-attachments': uploadedAttachments.length,
+      'studio-autopilot-prompt-textarea--has-attachments': queueItems.length,
       'studio-autopilot-prompt-textarea--has-footer': $slots.footer,
       'studio-autopilot-prompt-textarea--has-input-start': $slots['input-start']
     }"
@@ -21,29 +21,12 @@
       @change="handleFileInputChange"
     >
 
-    <div
-      v-if="uploadedAttachments.length"
-      class="studio-autopilot-prompt-textarea__attachments"
-      aria-label="Attached files"
-    >
-      <v-chip
-        v-for="attachment in uploadedAttachments"
-        :key="attachment.attachmentId"
-        class="studio-autopilot-prompt-textarea__attachment"
-        closable
-        :close-icon="mdiClose"
-        :disabled="attachmentUploading"
-        density="comfortable"
-        :prepend-icon="mdiFileOutline"
-        size="small"
-        variant="outlined"
-        @click:close="removeUploadedAttachment(attachment)"
-      >
-        <span class="studio-autopilot-prompt-textarea__attachment-name">
-          {{ attachment.fileName }}
-        </span>
-      </v-chip>
-    </div>
+    <Vibe64AttachmentQueue
+      :items="queueItems"
+      @cancel="attachments.cancelAttachment"
+      @remove="removeUploadedAttachment"
+      @retry="attachments.retryAttachment"
+    />
 
     <div
       class="studio-autopilot-prompt-textarea__field"
@@ -82,7 +65,7 @@
         v-if="$slots.footer"
         class="studio-autopilot-prompt-textarea__footer"
       >
-        <slot name="footer" />
+        <slot name="footer" :attachment-state="attachmentState" />
       </div>
     </div>
 
@@ -110,16 +93,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import {
-  mdiClose,
-  mdiFileOutline
-} from "@mdi/js";
-import {
   useVibe64CodexCommands
 } from "@/composables/useVibe64CodexCommands.js";
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   useCodexAttachments
 } from "@/composables/useCodexAttachments.js";
+import Vibe64AttachmentQueue from "@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
 
 const emit = defineEmits([
   "attachments-change",
@@ -201,9 +181,10 @@ const attachmentFeedback = useUiFeedback({
 });
 const attachments = useCodexAttachments({
   canUpload: () => props.attachmentsEnabled && !props.disabled,
+  deleteAttachment: codexCommands.deleteAttachment,
   onError: attachmentFeedback.error,
   onUploaded: async () => {
-    emitAttachmentsChanged();
+    emit("attachments-change", [...uploadedAttachments.value]);
   },
   sessionId: computed(() => props.sessionId),
   uploadAttachment
@@ -211,14 +192,21 @@ const attachments = useCodexAttachments({
 const dragActive = attachments.dragActive;
 const uploadedAttachments = attachments.attachments;
 const attachmentUploading = attachments.uploading;
+const queueItems = attachments.queueItems;
+const attachmentState = computed(() => Object.freeze({
+  atCapacity: attachments.atCapacity.value,
+  canAddFiles: attachments.canAddFiles.value,
+  canSubmit: attachments.canSubmit.value,
+  count: queueItems.value.length,
+  hasUnresolved: attachments.hasUnresolved.value,
+  uploading: attachmentUploading.value
+}));
 const fileInput = ref(null);
 const textareaRef = ref(null);
 const textareaId = `studio-autopilot-prompt-${useId()}`;
 let resizeFrame = 0;
 const canUseFilePicker = computed(() => Boolean(
-  props.attachmentsEnabled &&
-  !props.disabled &&
-  !attachmentUploading.value
+  attachments.canAddFiles.value
 ));
 const combinedErrorMessages = computed(() => {
   return Array.isArray(props.errorMessages)
@@ -282,6 +270,8 @@ function handleTextareaInput(event = {}) {
 function handleTextareaKeydown(event = {}) {
   if (
     props.tabToSubmit &&
+    String(props.modelValue || "").trim() &&
+    attachments.canSubmit.value &&
     event.key === "Tab" &&
     !event.shiftKey &&
     !event.altKey &&
@@ -303,7 +293,8 @@ function handleTextareaKeydown(event = {}) {
     event.altKey ||
     event.ctrlKey ||
     event.metaKey ||
-    event.isComposing
+    event.isComposing ||
+    !attachments.canSubmit.value
   ) {
     return;
   }
@@ -320,23 +311,33 @@ function removeUploadedAttachment(attachment = {}) {
 }
 
 function clearAttachments() {
-  if (!uploadedAttachments.value.length) {
+  if (!queueItems.value.length) {
     return false;
   }
-  attachments.clearAttachments();
+  attachments.clearAttachments({ accepted: true });
   emitAttachmentsChanged();
   return true;
+}
+
+function attachmentsCanSubmit() {
+  return attachments.canSubmit.value;
 }
 
 async function attachFiles(files = []) {
   return attachments.uploadFiles(files);
 }
 
+async function attachFileProducer(options = {}) {
+  const uploaded = await attachments.uploadFileProducer(options);
+  return uploaded ? [uploaded] : [];
+}
+
 async function handleFileInputChange(event = {}) {
-  await attachments.uploadFiles(event?.target?.files);
+  const files = Array.from(event?.target?.files || []);
   if (event?.target) {
     event.target.value = "";
   }
+  await attachments.uploadFiles(files);
 }
 
 function handleDrop(event) {
@@ -372,9 +373,14 @@ watch(() => [
 ], queueResizeTextarea);
 
 defineExpose({
+  attachmentState,
+  attachmentsCanSubmit,
+  attachFileProducer,
   attachFiles,
+  canSubmit: attachments.canSubmit,
   clearAttachments,
-  openFilePicker
+  openFilePicker,
+  queueItems
 });
 </script>
 
@@ -506,57 +512,10 @@ defineExpose({
   display: none;
 }
 
-.studio-autopilot-prompt-textarea__attachments {
-  align-items: center;
-  background: rgba(var(--v-theme-surface), 0.96);
-  border: 1px solid rgba(var(--v-theme-outline), 0.18);
-  border-bottom: 0;
-  border-radius: 10px 10px 0 0;
-  box-shadow: inset 0 -1px 0 rgba(var(--v-theme-outline), 0.06);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.38rem;
-  max-width: 100%;
-  min-width: 0;
-  padding: 0.58rem 0.62rem 0.34rem;
-  position: relative;
-  z-index: 1;
-}
-
 .studio-autopilot-prompt-textarea--has-attachments .studio-autopilot-prompt-textarea__field {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   margin-top: -1px;
 }
 
-.studio-autopilot-prompt-textarea__attachment {
-  background: rgba(var(--v-theme-primary), 0.05) !important;
-  border-color: rgba(var(--v-theme-primary), 0.24) !important;
-  border-radius: 999px !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-  color: rgb(var(--v-theme-on-surface)) !important;
-  max-width: min(19rem, 100%);
-  min-width: 0;
-}
-
-.studio-autopilot-prompt-textarea__attachment :deep(.v-chip__prepend) {
-  color: rgb(var(--v-theme-primary));
-  opacity: 0.88;
-}
-
-.studio-autopilot-prompt-textarea__attachment :deep(.v-chip__close) {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-}
-
-.studio-autopilot-prompt-textarea__attachment:hover {
-  background: rgba(var(--v-theme-primary), 0.08) !important;
-  border-color: rgba(var(--v-theme-primary), 0.34) !important;
-}
-
-.studio-autopilot-prompt-textarea__attachment-name {
-  display: inline-block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 </style>

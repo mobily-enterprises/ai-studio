@@ -174,7 +174,7 @@ describe("Vibe64 direct session view", () => {
     expect(component).not.toContain("#selection=");
     expect(component).toContain("Answer normally instead");
     expect(component).toContain(':prepend-icon="mdiPencilOutline"');
-    expect(component.match(/:disabled="!composerCanSubmit"/gu)).toHaveLength(2);
+    expect(component.match(/:disabled="!composerCanSubmit \|\| !attachmentState\.canSubmit"/gu)).toHaveLength(2);
     expect(composable).toContain('const NUMBERED_QUESTION_UNSURE_VALUE = "I am not sure";');
     expect(composable).toContain("numberedQuestions.value.every");
   });

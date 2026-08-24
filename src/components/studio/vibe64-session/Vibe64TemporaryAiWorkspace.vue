@@ -139,62 +139,64 @@
       </div>
 
       <Vibe64AutopilotPromptTextarea
-        :key="activeTask.id"
-        ref="prompt"
-        :model-value="activeTask.draft"
+        v-for="task in temporary.tasks.value"
+        v-show="task.id === activeTask.id"
+        :key="task.id"
+        :ref="(element) => setTaskPrompt(task.id, element)"
+        :model-value="task.draft"
         aria-label="Message temporary AI"
         :attachments-enabled="Boolean(props.sessionId)"
-        :disabled="activeTask.busy"
+        :disabled="task.busy"
         placeholder="Ask temporary AI…"
         :rows="2"
         :session-id="props.sessionId"
         tab-to-submit
-        @attachments-change="temporary.updateAttachments(activeTask.id, $event)"
-        @submit="sendActiveTask"
+        @attachments-change="temporary.updateAttachments(task.id, $event)"
+        @submit="sendTask(task.id)"
         @tab-to-submit="focusSendButton"
-        @update:model-value="temporary.updateDraft(activeTask.id, $event)"
+        @update:model-value="temporary.updateDraft(task.id, $event)"
       >
-        <template #footer>
+        <template #footer="{ attachmentState }">
           <div class="vibe64-temporary-ai__composer-actions">
             <Vibe64AgentSettingsMenu
-              :agent-settings="activeTask.agentSettings"
-              :disabled="activeTask.busy"
+              :agent-settings="task.agentSettings"
+              :disabled="task.busy"
               @update-setting="updateActiveAgentSetting"
             />
             <v-btn
               aria-label="Attach files"
-              :disabled="activeTask.busy"
+              :disabled="task.busy || !attachmentState.canAddFiles"
               :icon="mdiPaperclip"
               size="small"
               title="Attach files"
               type="button"
               variant="text"
-              @click="prompt?.openFilePicker?.()"
+              @click="taskPrompt(task.id)?.openFilePicker?.()"
             />
             <span class="vibe64-temporary-ai__spacer" />
             <v-btn
-              v-if="activeTask.busy"
+              v-if="task.busy"
               color="error"
               :prepend-icon="mdiStopCircleOutline"
               size="small"
               type="button"
               variant="tonal"
-              @click="temporary.stopTask(activeTask.id)"
+              @click="temporary.stopTask(task.id)"
             >
               Stop
             </v-btn>
             <v-btn
               v-else
-              ref="sendButton"
+              :ref="(element) => setTaskSendButton(task.id, element)"
               aria-label="Send to temporary AI"
               color="primary"
-              :disabled="!activeTask.draft.trim()"
+              :disabled="!task.draft.trim() || !attachmentState.canSubmit"
               :icon="mdiArrowUp"
               size="small"
               title="Send to temporary AI"
               type="button"
               variant="flat"
-              @click="sendActiveTask"
+              @click="sendTask(task.id)"
             />
           </div>
         </template>
@@ -238,10 +240,10 @@ const props = defineProps({
   }
 });
 
-const prompt = ref(null);
-const sendButton = ref(null);
 const workspace = ref(null);
 const taskTabButtons = new Map();
+const taskPrompts = new Map();
+const taskSendButtons = new Map();
 const resolvedSessionsApiPath = computed(() => readRefOrGetterValue(props.sessionsApiPath));
 const temporaryAiFeedback = useUiFeedback({
   source: "vibe64.temporary-ai.feedback"
@@ -265,15 +267,44 @@ const activeTaskActivityLabel = computed(() => {
 });
 const workspaceWritePolicy = TEMPORARY_AI_WORKSPACE_WRITE_POLICY;
 
-async function sendActiveTask() {
-  const taskId = activeTask.value?.id;
-  if (!taskId) {
+function taskPrompt(taskId = "") {
+  return taskPrompts.get(String(taskId || "")) || null;
+}
+
+function setTaskPrompt(taskId = "", element = null) {
+  const normalizedTaskId = String(taskId || "");
+  if (!normalizedTaskId) {
+    return;
+  }
+  if (element) {
+    taskPrompts.set(normalizedTaskId, element);
+    return;
+  }
+  taskPrompts.delete(normalizedTaskId);
+}
+
+function setTaskSendButton(taskId = "", element = null) {
+  const normalizedTaskId = String(taskId || "");
+  if (!normalizedTaskId) {
+    return;
+  }
+  if (element) {
+    taskSendButtons.set(normalizedTaskId, element);
+    return;
+  }
+  taskSendButtons.delete(normalizedTaskId);
+}
+
+async function sendTask(taskId = "") {
+  const currentPrompt = taskPrompt(taskId);
+  if (!taskId || currentPrompt?.attachmentsCanSubmit?.() === false) {
     return;
   }
   const sent = await temporary.send(taskId);
   if (sent) {
-    prompt.value?.clearAttachments?.();
+    currentPrompt?.clearAttachments?.();
   }
+  return sent;
 }
 
 async function startTask(options = {}) {
@@ -282,7 +313,7 @@ async function startTask(options = {}) {
   await revealTaskTab(taskId, { focus: true });
   const result = await started;
   if (result?.started) {
-    prompt.value?.clearAttachments?.();
+    taskPrompt(taskId)?.clearAttachments?.();
   }
   return result;
 }
@@ -334,7 +365,8 @@ async function revealTaskTab(taskId = "", { focus = false } = {}) {
 }
 
 function focusSendButton() {
-  const button = sendButton.value?.$el || sendButton.value;
+  const sendButton = taskSendButtons.get(activeTask.value?.id);
+  const button = sendButton?.$el || sendButton;
   button?.focus?.();
 }
 

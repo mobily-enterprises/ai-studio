@@ -109,6 +109,10 @@
         </div>
       </header>
 
+      <div v-if="$slots['before-terminal']" class="vibe64-terminal-surface__before-terminal">
+        <slot name="before-terminal" />
+      </div>
+
       <div
         v-if="!surfaceExpanded"
         class="vibe64-terminal-surface__summary"
@@ -147,9 +151,6 @@
       </div>
 
       <div :id="bodyId" v-show="surfaceExpanded" class="vibe64-terminal-surface__body">
-        <div v-if="$slots['before-terminal']" class="vibe64-terminal-surface__before-terminal">
-          <slot name="before-terminal" />
-        </div>
         <div class="vibe64-terminal-surface__stage">
           <div class="vibe64-terminal-surface__overlay">
             <slot name="overlay" />
@@ -627,6 +628,11 @@ watch(() => props.starting, (starting) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vibe64-terminal-surface__before-terminal {
+  margin-bottom: 0.5rem;
+  min-width: 0;
 }
 
 .vibe64-terminal-surface__body {

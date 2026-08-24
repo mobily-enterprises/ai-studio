@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page, type Request as PlaywrightRequest, type Route } from "@playwright/test";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -48,6 +48,80 @@ type TemporaryAiRecoveryRequests = {
   temporaryStarts: Record<string, unknown>[];
   temporaryTurns: Record<string, unknown>[];
 };
+type AttachmentUpload = {
+  bytes: Buffer;
+  contentType: string;
+  fileName: string;
+};
+
+async function readMultipartAttachment(request: PlaywrightRequest): Promise<AttachmentUpload> {
+  const contentType = String(request.headers()["content-type"] || "");
+  const body = request.postDataBuffer();
+  if (!/^multipart\/form-data;\s*boundary=/iu.test(contentType) || !body) {
+    throw new Error("Expected one multipart attachment upload.");
+  }
+  const multipartRequest = new globalThis.Request("http://vibe64.test/attachment", {
+    body,
+    headers: {
+      "content-type": contentType
+    },
+    method: "POST"
+  });
+  const formData = await multipartRequest.formData();
+  const fieldNames = [...formData.keys()];
+  const file = formData.get("file");
+  if (
+    fieldNames.length !== 1 ||
+    fieldNames[0] !== "file" ||
+    !file ||
+    typeof file === "string"
+  ) {
+    throw new Error("Expected multipart upload field named file.");
+  }
+  return {
+    bytes: Buffer.from(await file.arrayBuffer()),
+    contentType: String(file.type || "application/octet-stream"),
+    fileName: String(file.name || "attachment")
+  };
+}
+
+async function observeBrowserUploadProgress(page: Page) {
+  await page.addInitScript(() => {
+    const state = window as typeof window & {
+      __vibe64AttachmentProgressSamples?: number[];
+    };
+    state.__vibe64AttachmentProgressSamples = [];
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function sendWithObservedProgress(body) {
+      this.upload.addEventListener("progress", (event) => {
+        if (!event.lengthComputable || event.total <= 0) {
+          return;
+        }
+        const percent = Math.round((event.loaded / event.total) * 100);
+        const samples = state.__vibe64AttachmentProgressSamples || [];
+        if (samples.at(-1) !== percent) {
+          samples.push(percent);
+        }
+        state.__vibe64AttachmentProgressSamples = samples;
+      });
+      return originalSend.call(this, body);
+    };
+  });
+}
+
+async function browserUploadProgressSamples(page: Page) {
+  return await page.evaluate(() => {
+    const state = window as typeof window & {
+      __vibe64AttachmentProgressSamples?: number[];
+    };
+    return [...(state.__vibe64AttachmentProgressSamples || [])];
+  });
+}
+
+function expectMonotonicNonzeroProgress(samples: number[]) {
+  expect(samples.some((value) => value > 0)).toBe(true);
+  expect(samples.every((value, index) => index === 0 || value >= samples[index - 1])).toBe(true);
+}
 
 async function openSessionDashboardTool(page: Page, label: string) {
   await page.getByRole("tab", {
@@ -335,6 +409,7 @@ test("@preview-lifecycle attaches multiple visible preview frames and stops each
   });
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
+    attachmentUploadResponseDelayMs: 800,
     previewResponseDelayMs: 800
   });
 
@@ -359,14 +434,18 @@ test("@preview-lifecycle attaches multiple visible preview frames and stops each
   await expect(captureButton).toBeVisible();
 
   await captureButton.click();
-  await expect(page.locator(".studio-autopilot-prompt-textarea__attachment")).toHaveCount(1);
+  await expect(page.locator(".vibe64-attachment-queue__item")).toHaveCount(1);
+  await expect(page.getByRole("progressbar", {
+    name: /Upload progress for vibe64-preview-/u
+  })).toHaveCount(1);
   await captureButton.click();
-  await expect(page.locator(".studio-autopilot-prompt-textarea__attachment")).toHaveCount(2);
+  await expect(page.locator(".vibe64-attachment-queue__item")).toHaveCount(2);
+  await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(2);
   expect(launchSession.getAttachmentUploads()).toHaveLength(2);
   expect(launchSession.getAttachmentUploads().every((upload) => (
     upload.contentType === "image/png" &&
     /^vibe64-preview-.*\.png$/u.test(upload.fileName) &&
-    upload.dataBase64.length > 0
+    upload.bytes.length > 0
   ))).toBe(true);
   expect(await page.evaluate(() => ({
     calls: Number((window as typeof window & { __vibe64PreviewCaptureCalls?: number }).__vibe64PreviewCaptureCalls || 0),
@@ -398,7 +477,9 @@ test("@preview-lifecycle attaches multiple visible preview frames and stops each
 
 test("@preview-lifecycle attaches isolated proxied-app console and network diagnostics", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
-  const launchSession = await mockLaunchSession(page);
+  const launchSession = await mockLaunchSession(page, {
+    attachmentUploadResponseDelayMs: 800
+  });
   await page.route("http://127.0.0.1:49000/api/diagnostics", async (route) => {
     await route.fulfill({
       body: JSON.stringify({
@@ -475,11 +556,19 @@ test("@preview-lifecycle attaches isolated proxied-app console and network diagn
     });
   await expect(attachDiagnostics).toBeVisible();
   await attachDiagnostics.click();
-  await expect(page.locator(".studio-autopilot-prompt-textarea__attachment")).toHaveCount(1);
+  await expect(page.locator(".vibe64-attachment-queue__item")).toHaveCount(1);
+  const diagnosticsRow = page.locator(".vibe64-attachment-queue__item", {
+    hasText: "vibe64-preview-diagnostics-"
+  });
+  await expect(diagnosticsRow).toContainText("Uploading");
+  await expect(diagnosticsRow.getByRole("progressbar", {
+    name: /Upload progress for vibe64-preview-diagnostics-/u
+  })).toBeVisible();
+  await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(1);
   await expect.poll(() => launchSession.getAttachmentUploads().length).toBe(1);
 
   const [upload] = launchSession.getAttachmentUploads();
-  const diagnostics = Buffer.from(upload.dataBase64, "base64").toString("utf8");
+  const diagnostics = upload.bytes.toString("utf8");
   expect(upload.contentType).toBe("text/plain");
   expect(upload.fileName).toMatch(/^vibe64-preview-diagnostics-.*\.log$/u);
   expect(diagnostics).toContain("## Console");
@@ -498,6 +587,429 @@ test("@preview-lifecycle attaches isolated proxied-app console and network diagn
   expect(diagnostics).not.toContain("studio-console-must-not-be-attached");
   expect(diagnostics).not.toContain("VIBE64_SESSION_DEBUG");
   expect(diagnostics).not.toContain("vibe64_preview_token");
+});
+
+for (const viewportWidth of [390, 960, 1600]) {
+  test(`@preview-lifecycle attachment queue exposes progress and retries one failed multipart upload at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    const launchSession = await mockLaunchSession(page, {
+      attachmentUploadOutcomes: ["failure", "success"],
+      attachmentUploadResponseDelayMs: 800
+    });
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+    const fileName = `retry-note-${viewportWidth}.txt`;
+    const fileContents = `retry this multipart upload at ${viewportWidth}px`;
+    await page.getByLabel("Message Codex").fill("Use the attached note.");
+    const sendMessage = page.getByRole("button", {
+      name: "Send message"
+    });
+    const attachFiles = page.getByRole("button", {
+      name: "Attach files"
+    });
+    await expect(attachFiles).toBeEnabled();
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await attachFiles.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      buffer: Buffer.from(fileContents, "utf8"),
+      mimeType: "text/plain",
+      name: fileName
+    });
+
+    const queue = page.getByRole("region", {
+      name: "Message attachments"
+    });
+    const row = queue.locator(".vibe64-attachment-queue__item", {
+      hasText: fileName
+    });
+    await expect(row).toContainText("Uploading");
+    await expect(row.getByRole("progressbar", {
+      name: `Upload progress for ${fileName}`
+    })).toBeVisible();
+    await expect(row.getByRole("button", {
+      name: `Cancel ${fileName}`
+    })).toBeVisible();
+    await expect(sendMessage).toBeDisabled();
+
+    await expect(row).toContainText("Upload failed");
+    await expect(queue).not.toHaveAttribute("aria-busy", "true");
+    await expect(sendMessage).toBeDisabled();
+    await row.getByRole("button", {
+      name: `Retry ${fileName}`
+    }).click();
+
+    await expect(row).toContainText("Uploading");
+    await expect(row).toContainText("Ready");
+    await expect(sendMessage).toBeEnabled();
+    await expect.poll(() => launchSession.getAttachmentUploads().length).toBe(2);
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+    const rowBounds = await row.boundingBox();
+    expect(rowBounds).not.toBeNull();
+    expect(Number(rowBounds?.x || 0)).toBeGreaterThanOrEqual(0);
+    expect(Number(rowBounds?.x || 0) + Number(rowBounds?.width || 0)).toBeLessThanOrEqual(viewportWidth + 1);
+    expect(launchSession.getAttachmentUploads().map((upload) => ({
+      content: upload.bytes.toString("utf8"),
+      contentType: upload.contentType,
+      fileName: upload.fileName
+    }))).toEqual([
+      {
+        content: fileContents,
+        contentType: "text/plain",
+        fileName
+      },
+      {
+        content: fileContents,
+        contentType: "text/plain",
+        fileName
+      }
+    ]);
+  });
+}
+
+test("@preview-lifecycle multipart upload exposes genuine nonzero monotonic browser progress", async ({ page }) => {
+  await observeBrowserUploadProgress(page);
+  await mockLaunchTerminalSocket(page);
+  const launchSession = await mockLaunchSession(page, {
+    attachmentUploadResponseDelayMs: 1000
+  });
+  const fileName = "observed-browser-progress.bin";
+  const fileContents = Buffer.alloc(512 * 1024, 0x61);
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  const fileChooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Attach files" }).click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles({
+    buffer: fileContents,
+    mimeType: "application/octet-stream",
+    name: fileName
+  });
+
+  const row = page.locator(".vibe64-attachment-queue__item", {
+    hasText: fileName
+  });
+  await expect(row).toContainText("Uploading");
+  await expect(row.getByRole("progressbar", {
+    name: `Upload progress for ${fileName}`
+  })).toBeVisible();
+  await expect(row).toContainText("Ready", { timeout: 15_000 });
+  expectMonotonicNonzeroProgress(await browserUploadProgressSamples(page));
+  expect(launchSession.getAttachmentUploads()).toHaveLength(1);
+  expect(launchSession.getAttachmentUploads()[0].bytes.equals(fileContents)).toBe(true);
+});
+
+test("@preview-lifecycle reduced motion keeps unknown upload progress stationary", async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    const originalAddEventListener = XMLHttpRequestUpload.prototype.addEventListener;
+    XMLHttpRequestUpload.prototype.addEventListener = function addEventListenerWithoutUploadProgress(
+      type,
+      listener,
+      options
+    ) {
+      if (type === "progress") {
+        return;
+      }
+      return originalAddEventListener.call(this, type, listener, options);
+    };
+  });
+  await mockLaunchTerminalSocket(page);
+  await mockLaunchSession(page, {
+    attachmentUploadResponseDelayMs: 1000
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+  const fileName = "reduced-motion-upload.bin";
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Attach files" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    buffer: Buffer.alloc(128 * 1024, 0x63),
+    mimeType: "application/octet-stream",
+    name: fileName
+  });
+
+  const row = page.locator(".vibe64-attachment-queue__item", {
+    hasText: fileName
+  });
+  const progress = row.getByRole("progressbar", {
+    name: `Upload progress for ${fileName}`
+  });
+  await expect(row).toContainText("Uploading");
+  await expect(row).toContainText("0 B / 128.0 KB");
+  await expect(progress).toHaveCount(0);
+  await expect(row.locator(".vibe64-attachment-queue__progress--stationary")).toBeVisible();
+  const activeHeight = Number((await row.boundingBox())?.height || 0);
+
+  await expect(row).toContainText("Ready", { timeout: 12_000 });
+  const readyHeight = Number((await row.boundingBox())?.height || 0);
+  expect(Math.abs(activeHeight - readyHeight)).toBeLessThanOrEqual(6);
+});
+
+test("@preview-lifecycle Temporary AI keeps its shared upload queue across task switches on mobile", async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await mockLaunchTerminalSocket(page);
+  const launchSession = await mockLaunchSession(page, {
+    attachmentUploadResponseDelayMs: 1000
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await page.getByRole("button", { name: "Open temporary AI" }).click();
+
+  const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+  const navigation = workspace.getByRole("navigation", {
+    name: "Main and temporary conversations"
+  });
+  await workspace.getByLabel("Message temporary AI").fill("Inspect the attached file.");
+  const send = workspace.getByRole("button", {
+    name: "Send to temporary AI"
+  });
+  const fileName = "temporary-ai-progress.bin";
+  const fileContents = Buffer.alloc(256 * 1024, 0x62);
+  const chooserPromise = page.waitForEvent("filechooser");
+  await workspace.getByRole("button", { name: "Attach files" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    buffer: fileContents,
+    mimeType: "application/octet-stream",
+    name: fileName
+  });
+
+  const queue = workspace.getByRole("region", { name: "Message attachments" });
+  const row = queue.locator(".vibe64-attachment-queue__item", { hasText: fileName });
+  await expect(row).toContainText("Uploading");
+  await expect(send).toBeDisabled();
+
+  await navigation.getByRole("button", {
+    name: "New temporary AI task",
+    exact: true
+  }).click();
+  await navigation.getByRole("button", { name: "Temporary 1", exact: true }).click();
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("Ready", { timeout: 12_000 });
+  await expect(send).toBeEnabled();
+
+  const rowBounds = await row.boundingBox();
+  expect(rowBounds).not.toBeNull();
+  expect(Number(rowBounds?.x || 0) + Number(rowBounds?.width || 0)).toBeLessThanOrEqual(391);
+  await navigation.getByRole("button", { name: "Close Temporary 1", exact: true }).click();
+  await expect.poll(() => launchSession.getAttachmentDeletes()).toEqual(["attachment-1"]);
+});
+
+test("@preview-lifecycle Codex terminal picker keeps one queue while collapsed and expanded and retries handoff", async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 960 });
+  await mockLaunchTerminalSocket(page);
+  const launchSession = await mockLaunchSession(page, {
+    agentTerminalControlOutcomes: ["failure", "success"],
+    attachmentUploadOutcomes: ["success", "failure"],
+    attachmentUploadResponseDelayMs: 800,
+    session: sessionPayload({
+      agentTerminal: {
+        commandPreview: "codex",
+        id: "server-agent-terminal",
+        status: "running"
+      }
+    })
+  });
+  await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
+
+  const terminalRoot = page.locator(".vibe64-codex-session");
+  const terminal = page.getByRole("region", { name: "Codex terminal" });
+  const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
+  await expect(terminal).toBeVisible();
+  await expect(terminalHost).toBeHidden();
+
+  const firstFileName = "terminal-handoff.bin";
+  const firstFileContents = "terminal attachment handoff";
+  const attachFiles = terminal.getByRole("button", {
+    name: "Attach files to Codex terminal"
+  });
+  await attachFiles.focus();
+  await expect(attachFiles).toBeFocused();
+  const chooserPromise = page.waitForEvent("filechooser");
+  await attachFiles.press("Enter");
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    buffer: Buffer.from(firstFileContents, "utf8"),
+    mimeType: "application/octet-stream",
+    name: firstFileName
+  });
+
+  const queue = terminal.getByRole("region", { name: "Message attachments" });
+  const row = queue.locator(".vibe64-attachment-queue__item", {
+    hasText: firstFileName
+  });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("progressbar", {
+    name: `Upload progress for ${firstFileName}`
+  })).toBeVisible();
+  await expect(terminalHost).toBeHidden();
+  await expect(row).toBeVisible();
+  await terminal.getByRole("button", { name: "Expand" }).click();
+  await expect(terminalHost).toBeVisible();
+  await expect(attachFiles).toBeVisible();
+  await expect(row).toBeVisible();
+  await terminal.getByRole("button", { name: "Collapse" }).click();
+  await expect(terminalHost).toBeHidden();
+  await expect(attachFiles).toBeVisible();
+  await expect(row).toBeVisible();
+
+  await expect(row).toContainText("Sending failed");
+  await expect(row).toContainText("The test terminal rejected the attachment path.");
+  await row.getByRole("button", { name: `Retry ${firstFileName}` }).click();
+  await expect(queue).toHaveCount(0);
+  expect(launchSession.getAttachmentUploads()).toHaveLength(1);
+  expect(launchSession.getAgentTerminalControlPayloads()).toEqual([
+    {
+      attachmentIds: ["attachment-1"],
+      text: `[/tmp/vibe64-attachments/${firstFileName}] `
+    },
+    {
+      attachmentIds: ["attachment-1"],
+      text: `[/tmp/vibe64-attachments/${firstFileName}] `
+    }
+  ]);
+
+  const secondFileName = "terminal-upload-failure.txt";
+  await terminalRoot.evaluate((element) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["pending drop"], "pending-drop.txt", {
+      type: "text/plain"
+    }));
+    element.dispatchEvent(new DragEvent("dragenter", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer
+    }));
+  });
+  const dropOverlay = terminal.locator(".vibe64-codex-session__drop-overlay");
+  await expect(dropOverlay).toBeVisible();
+  await expect(dropOverlay).toContainText("Drop temporary files for Codex");
+  await expect(dropOverlay.locator(".vibe64-codex-session__drop-card"))
+    .toHaveClass(/elevation-4/u);
+  await terminalRoot.evaluate((element, fileName) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["fail this upload"], fileName, {
+      type: "text/plain"
+    }));
+    element.dispatchEvent(new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer
+    }));
+  }, secondFileName);
+  const failedRow = terminal.getByRole("region", { name: "Message attachments" })
+    .locator(".vibe64-attachment-queue__item", { hasText: secondFileName });
+  await expect(terminalHost).toBeVisible();
+  await expect(failedRow).toContainText("Upload failed");
+  await terminal.getByRole("button", { name: "Collapse" }).click();
+  await expect(terminalHost).toBeHidden();
+  await failedRow.getByRole("button", { name: `Remove ${secondFileName}` }).click();
+  await expect(terminal.getByRole("region", { name: "Message attachments" })).toHaveCount(0);
+  await expect(terminal.getByRole("button", { name: "Expand" })).toBeFocused();
+});
+
+for (const viewportWidth of [390, 1600]) {
+  test(`@preview-lifecycle Codex terminal picker stays accessible at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    const launchSession = await mockLaunchSession(page, {
+      attachmentUploadResponseDelayMs: 800,
+      session: sessionPayload({
+        agentTerminal: {
+          commandPreview: "codex",
+          id: "server-agent-terminal",
+          status: "running"
+        }
+      })
+    });
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
+
+    const terminal = page.getByRole("region", { name: "Codex terminal" });
+    const attachFiles = terminal.getByRole("button", {
+      name: "Attach files to Codex terminal"
+    });
+    const fileName = `terminal-picker-${viewportWidth}.txt`;
+    await expect(attachFiles).toBeVisible();
+    await attachFiles.focus();
+    await expect(attachFiles).toBeFocused();
+    const chooserPromise = page.waitForEvent("filechooser");
+    await attachFiles.press("Enter");
+    const chooser = await chooserPromise;
+    await chooser.setFiles({
+      buffer: Buffer.from(`terminal picker ${viewportWidth}`, "utf8"),
+      mimeType: "text/plain",
+      name: fileName
+    });
+
+    const row = terminal.locator(".vibe64-attachment-queue__item", {
+      hasText: fileName
+    });
+    await expect(row).toBeVisible();
+    const attachBounds = await attachFiles.boundingBox();
+    expect(attachBounds).not.toBeNull();
+    expect(Number(attachBounds?.height || 0)).toBeGreaterThanOrEqual(40);
+    await terminal.getByRole("button", { name: "Expand" }).click();
+    if (viewportWidth === 390) {
+      const expandedTerminal = page.getByRole("dialog", { name: "Codex terminal" });
+      await expect(expandedTerminal.getByRole("button", {
+        name: "Attach files to Codex terminal"
+      })).toBeVisible();
+      await expandedTerminal.getByRole("button", { name: "Collapse" }).click();
+      await expect(page.getByRole("region", { name: "Codex terminal" })
+        .getByRole("button", { name: "Attach files to Codex terminal" })).toBeVisible();
+    } else {
+      await expect(attachFiles).toBeVisible();
+      await terminal.getByRole("button", { name: "Collapse" }).click();
+      await expect(attachFiles).toBeVisible();
+    }
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+    await expect.poll(() => launchSession.getAttachmentUploads().length).toBe(1);
+    await expect(terminal.getByRole("region", { name: "Message attachments" })).toHaveCount(0);
+  });
+}
+
+test("@preview-lifecycle Codex terminal picker keeps a 48px coarse touch target", async ({ browser }) => {
+  const context = await browser.newContext({
+    hasTouch: true,
+    viewport: { height: 844, width: 390 }
+  });
+  const page = await context.newPage();
+  try {
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page, {
+      session: sessionPayload({
+        agentTerminal: {
+          commandPreview: "codex",
+          id: "server-agent-terminal",
+          status: "running"
+        }
+      })
+    });
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
+
+    expect(await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)).toBe(true);
+    const attachFiles = page.getByRole("region", { name: "Codex terminal" })
+      .getByRole("button", { name: "Attach files to Codex terminal" });
+    await expect(attachFiles).toBeVisible();
+    const bounds = await attachFiles.boundingBox();
+    expect(Number(bounds?.height || 0)).toBeGreaterThanOrEqual(48);
+    expect(Number(bounds?.width || 0)).toBeGreaterThanOrEqual(48);
+  } finally {
+    await context.close();
+  }
 });
 
 test("@preview-lifecycle address bar navigates within the preview and goes back", async ({ page }) => {
@@ -1987,6 +2499,9 @@ test("embedded launch terminal stays expanded after the launch exits", async ({ 
 });
 
 async function mockLaunchSession(page: Page, {
+  agentTerminalControlOutcomes = [],
+  attachmentUploadOutcomes = [],
+  attachmentUploadResponseDelayMs = 0,
   conversationLog = [],
   initialLaunchStatus = null,
   launchTargetPreviewOptions = [],
@@ -2009,6 +2524,9 @@ async function mockLaunchSession(page: Page, {
   sharedDevelopmentDatabase = false,
   temporaryAiRecoveryRequests = null
 }: {
+  agentTerminalControlOutcomes?: Array<"failure" | "success">;
+  attachmentUploadOutcomes?: Array<"failure" | "success">;
+  attachmentUploadResponseDelayMs?: number;
   conversationLog?: unknown[];
   initialLaunchStatus?: ReturnType<typeof launchStatusPayload> | null;
   launchTargetPreviewOptions?: unknown[];
@@ -2037,11 +2555,11 @@ async function mockLaunchSession(page: Page, {
   const launchStartPayloads: unknown[] = [];
   const previewIdentityGrants = new Map<string, PreviewIdentitySelection>();
   const previewIdentitySelections: PreviewIdentitySelection[] = [];
-  const attachmentUploads: Array<{
-    contentType: string;
-    dataBase64: string;
-    fileName: string;
-  }> = [];
+  const agentTerminalControlPayloads: Record<string, unknown>[] = [];
+  const attachmentDeletes: string[] = [];
+  const attachmentUploads: AttachmentUpload[] = [];
+  const queuedAgentTerminalControlOutcomes = [...agentTerminalControlOutcomes];
+  const queuedAttachmentUploadOutcomes = [...attachmentUploadOutcomes];
   const sequencedLaunchStatuses = Array.isArray(launchStatusSequence) ? launchStatusSequence : [];
   const queuedSessionCreationOutcomes = [...sessionCreationOutcomes];
   const sessionCreationReleases: Array<() => void> = [];
@@ -2294,18 +2812,53 @@ async function mockLaunchSession(page: Page, {
       });
       return;
     }
+    if (
+      method === "POST" &&
+      /\/agent-terminal\/[^/]+\/control\/text$/u.test(url.pathname)
+    ) {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      agentTerminalControlPayloads.push(payload);
+      if (queuedAgentTerminalControlOutcomes.shift() === "failure") {
+        await fulfillJson(route, {
+          error: "The test terminal rejected the attachment path.",
+          ok: false
+        }, {
+          status: 503
+        });
+        return;
+      }
+      await fulfillJson(route, {
+        ok: true
+      });
+      return;
+    }
+    if (method === "DELETE" && /\/agent-attachments\/[^/]+$/u.test(url.pathname)) {
+      attachmentDeletes.push(decodeURIComponent(url.pathname.split("/").at(-1) || ""));
+      await fulfillJson(route, {
+        ok: true
+      });
+      return;
+    }
     if (method === "POST" && url.pathname.endsWith("/agent-attachments")) {
-      const payload = request.postDataJSON() as {
-        contentType?: string;
-        dataBase64?: string;
-        fileName?: string;
-      };
-      const attachment = {
-        contentType: String(payload.contentType || ""),
-        dataBase64: String(payload.dataBase64 || ""),
-        fileName: String(payload.fileName || "attachment")
-      };
+      const attachment = await readMultipartAttachment(request);
       attachmentUploads.push(attachment);
+      if (attachmentUploadResponseDelayMs > 0) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, attachmentUploadResponseDelayMs);
+        });
+      }
+      if (queuedAttachmentUploadOutcomes.shift() === "failure") {
+        await fulfillJson(route, {
+          errors: [{
+            code: "vibe64_agent_attachment_upload_failed",
+            message: "The test upload failed before retry."
+          }],
+          ok: false
+        }, {
+          status: 503
+        });
+        return;
+      }
       await fulfillJson(route, {
         attachmentId: `attachment-${attachmentUploads.length}`,
         contentType: attachment.contentType,
@@ -2313,7 +2866,7 @@ async function mockLaunchSession(page: Page, {
         fileName: attachment.fileName,
         ok: true,
         path: `/tmp/vibe64-attachments/${attachment.fileName}`,
-        size: Buffer.from(attachment.dataBase64, "base64").length
+        size: attachment.bytes.length
       });
       return;
     }
@@ -2482,6 +3035,12 @@ async function mockLaunchSession(page: Page, {
     },
     getAttachmentUploads() {
       return [...attachmentUploads];
+    },
+    getAttachmentDeletes() {
+      return [...attachmentDeletes];
+    },
+    getAgentTerminalControlPayloads() {
+      return [...agentTerminalControlPayloads];
     },
     getLaunchStatusRequestCount() {
       return launchStatusReadCount;
@@ -3178,6 +3737,8 @@ async function mockLaunchTerminalSocket(page: Page, {
     const OriginalWebSocket = window.WebSocket;
     (window as typeof window & { __vibe64LaunchTerminalMessages?: string[] })
       .__vibe64LaunchTerminalMessages = [];
+    (window as typeof window & { __vibe64AgentTerminalMessages?: string[] })
+      .__vibe64AgentTerminalMessages = [];
 
     class MockWebSocket extends EventTarget {
       static CONNECTING = 0;
@@ -3191,7 +3752,9 @@ async function mockLaunchTerminalSocket(page: Page, {
         super();
         this.url = String(url || "");
         const pathname = new URL(this.url, window.location.href).pathname;
-        if (!pathname.includes("/launch-terminal/")) {
+        const agentTerminal = pathname.includes("/agent-terminal/");
+        const launchTerminal = pathname.includes("/launch-terminal/");
+        if (!agentTerminal && !launchTerminal) {
           return new OriginalWebSocket(url);
         }
         if (neverSettles) {
@@ -3203,9 +3766,9 @@ async function mockLaunchTerminalSocket(page: Page, {
           this.dispatchEvent(new MessageEvent("message", {
             data: JSON.stringify({
               session: {
-                commandPreview: "npm run dev",
-                id: "server-launch-terminal",
-                metadata: {
+                commandPreview: agentTerminal ? "codex" : "npm run dev",
+                id: agentTerminal ? "server-agent-terminal" : "server-launch-terminal",
+                metadata: agentTerminal ? {} : {
                   actions: [
                     {
                       href: targetAppUrl,
@@ -3219,7 +3782,7 @@ async function mockLaunchTerminalSocket(page: Page, {
                   launchTargetLabel: "Run app"
                 },
                 ok: true,
-                output: `action:url:${targetAppUrl}\nready`,
+                output: agentTerminal ? "Codex ready" : `action:url:${targetAppUrl}\nready`,
                 status: "running"
               },
               type: "snapshot"
@@ -3250,6 +3813,12 @@ async function mockLaunchTerminalSocket(page: Page, {
       }
 
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        const pathname = new URL(this.url, window.location.href).pathname;
+        if (pathname.includes("/agent-terminal/")) {
+          (window as typeof window & { __vibe64AgentTerminalMessages?: string[] })
+            .__vibe64AgentTerminalMessages?.push(String(data));
+          return;
+        }
         (window as typeof window & { __vibe64LaunchTerminalMessages?: string[] })
           .__vibe64LaunchTerminalMessages?.push(String(data));
       }
@@ -3379,10 +3948,12 @@ function previewAvailabilitySequence() {
 }
 
 function sessionPayload({
+  agentTerminal = null,
   includeWorktreePaths = true,
   sessionId = SESSION_ID,
   sessionName = "Renderer session"
 }: {
+  agentTerminal?: Record<string, unknown> | null;
   includeWorktreePaths?: boolean;
   sessionId?: string;
   sessionName?: string;
@@ -3395,7 +3966,7 @@ function sessionPayload({
     agentSession: {
       identity: null,
       providerId: "codex",
-      terminal: null,
+      terminal: agentTerminal,
       thread: {
         id: `thread-${sessionId}`
       },

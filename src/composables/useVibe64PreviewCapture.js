@@ -341,6 +341,7 @@ function createVibe64PreviewCaptureSession({
 function useVibe64PreviewCapture({
   attachFile,
   captureSession = null,
+  prepareFile = null,
   previewDisplayed,
   previewFrame,
   previewLoaded,
@@ -406,7 +407,7 @@ function useVibe64PreviewCapture({
 
   const supported = computed(() => session.supported());
   const buttonVisible = computed(() => previewCaptureAvailable({
-    canAttach: typeof attachFile === "function",
+    canAttach: typeof prepareFile === "function" || typeof attachFile === "function",
     displayed: readRefOrGetterValue(previewDisplayed) === true,
     loaded: readRefOrGetterValue(previewLoaded) === true,
     supported: supported.value,
@@ -414,16 +415,33 @@ function useVibe64PreviewCapture({
   }));
 
   async function capturePreview() {
-    if (busy.value || !currentVisibleRect() || typeof attachFile !== "function") {
+    if (
+      busy.value ||
+      !currentVisibleRect() ||
+      (typeof prepareFile !== "function" && typeof attachFile !== "function")
+    ) {
       return false;
     }
     busy.value = true;
     noticeVisible.value = false;
     try {
-      const file = await session.capture(currentVisibleRect);
-      const result = await attachFile(file);
+      const result = typeof prepareFile === "function"
+        ? await prepareFile({
+            fileName: "Preview screenshot",
+            produce: ({ signal } = {}) => {
+              const stopCapture = () => session.stop();
+              signal?.addEventListener?.("abort", stopCapture, { once: true });
+              return session.capture(currentVisibleRect).finally(() => {
+                signal?.removeEventListener?.("abort", stopCapture);
+              });
+            }
+          })
+        : await session.capture(currentVisibleRect).then(attachFile);
       const attached = Array.isArray(result) ? result.length > 0 : Boolean(result);
       if (!attached) {
+        if (typeof prepareFile === "function") {
+          return false;
+        }
         throw previewCaptureError("The preview image could not be attached to the current message.", "attach_failed");
       }
       noticeText.value = "";

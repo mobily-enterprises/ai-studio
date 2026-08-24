@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
 const commandMocks = vi.hoisted(() => ({
+  runs: [],
   runError: null,
   useCommand: vi.fn()
 }));
@@ -21,12 +22,14 @@ import {
 
 describe("useVibe64TerminalCommands", () => {
   beforeEach(() => {
+    commandMocks.runs = [];
     commandMocks.runError = null;
     commandMocks.useCommand.mockReset();
     commandMocks.useCommand.mockImplementation((options = {}) => ({
       isRunning: false,
       message: "",
       run: vi.fn(async (context = {}) => {
+        commandMocks.runs.push({ context, options });
         if (options.placementSource === "vibe64.terminal.start" && commandMocks.runError) {
           await options.onRunError?.(commandMocks.runError, {
             context
@@ -38,6 +41,32 @@ describe("useVibe64TerminalCommands", () => {
         };
       })
     }));
+  });
+
+  it("sends terminal attachment paths and ids through the atomic control-text route", async () => {
+    const commands = useVibe64TerminalCommands({
+      sessionsApiPath: "/api/app/example/vibe64/sessions"
+    });
+
+    await expect(commands.sendAgentTerminalText(
+      "session-1",
+      "terminal-1",
+      "[/tmp/example.png] ",
+      { attachmentIds: ["attachment-1"] }
+    )).resolves.toEqual({ ok: true });
+
+    const run = commandMocks.runs.find(({ options }) => (
+      options.placementSource === "vibe64.terminal.write"
+    ));
+    expect(run.context).toEqual({
+      attachmentIds: ["attachment-1"],
+      path: "/api/app/example/vibe64/sessions/session-1/agent-terminal/terminal-1/control/text",
+      text: "[/tmp/example.png] "
+    });
+    expect(run.options.buildRawPayload(null, { context: run.context })).toEqual({
+      attachmentIds: ["attachment-1"],
+      text: "[/tmp/example.png] "
+    });
   });
 
   it("turns stale AI terminal starts into refreshable results instead of generic failures", async () => {

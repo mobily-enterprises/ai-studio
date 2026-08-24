@@ -410,6 +410,7 @@ function createPreviewBridgeRequestRegistry() {
       return null;
     }
     clearTimeout(pending.timeout);
+    pending.signal?.removeEventListener?.("abort", pending.abortHandler);
     pendingRequests.delete(requestId);
     return pending;
   }
@@ -429,6 +430,7 @@ function createPreviewBridgeRequestRegistry() {
   function request({
     frameRequestId = 0,
     message = {},
+    signal = null,
     targetWindow = null,
     timeoutMessage = "The application preview did not respond in time.",
     timeoutMs = 3000
@@ -436,17 +438,32 @@ function createPreviewBridgeRequestRegistry() {
     if (!targetWindow || typeof targetWindow.postMessage !== "function") {
       return Promise.reject(new Error("The application preview is not ready."));
     }
+    if (signal?.aborted) {
+      const error = new Error("Preview diagnostics collection was cancelled.");
+      error.name = "AbortError";
+      return Promise.reject(error);
+    }
     const requestId = [frameRequestId, Date.now(), ++sequence].join(":");
     const response = new Promise((resolve, rejectRequest) => {
+      const abortHandler = () => {
+        const error = new Error("Preview diagnostics collection was cancelled.");
+        error.name = "AbortError";
+        reject(requestId, error);
+      };
       const timeout = setTimeout(() => {
-        pendingRequests.delete(requestId);
-        rejectRequest(new Error(timeoutMessage));
+        reject(requestId, new Error(timeoutMessage));
       }, timeoutMs);
       pendingRequests.set(requestId, {
+        abortHandler,
         reject: rejectRequest,
         resolve,
+        signal,
         timeout
       });
+      signal?.addEventListener?.("abort", abortHandler, { once: true });
+      if (signal?.aborted) {
+        abortHandler();
+      }
     });
     try {
       targetWindow.postMessage({
@@ -1373,7 +1390,7 @@ function useVibe64LaunchControlsSurface(props) {
     }, "*");
   }
 
-  async function requestPreviewDiagnostics() {
+  async function requestPreviewDiagnostics({ signal = null } = {}) {
     if (previewDiagnosticsBusy.value) {
       throw new Error("Preview diagnostics are already being collected.");
     }
@@ -1387,6 +1404,7 @@ function useVibe64LaunchControlsSurface(props) {
         message: {
           type: PREVIEW_DIAGNOSTICS_REQUEST_MESSAGE_TYPE
         },
+        signal,
         targetWindow: previewFrame.value?.contentWindow,
         timeoutMessage: "The proxied app did not return its diagnostics in time.",
         timeoutMs: PREVIEW_DIAGNOSTICS_TIMEOUT_MS

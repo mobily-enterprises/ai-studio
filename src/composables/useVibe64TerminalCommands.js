@@ -6,6 +6,7 @@ import {
   VIBE64_API_SUFFIX,
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
+  vibe64AgentTerminalControlTextPath,
   vibe64AgentTerminalPath,
   vibe64GlobalCodexTerminalPath
 } from "@/lib/vibe64SessionRequestConfig.js";
@@ -93,6 +94,28 @@ function useVibe64TerminalCommands({
     writeMethod: "DELETE"
   });
 
+  const writeTerminalCommand = useCommand({
+    access: "never",
+    apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
+    buildCommandOptions: (_payload, { context }) => ({
+      method: "POST",
+      path: String(context.path || "")
+    }),
+    buildRawPayload: (_model, { context }) => ({
+      attachmentIds: Array.isArray(context.attachmentIds) ? context.attachmentIds : [],
+      text: String(context.text || "")
+    }),
+    fallbackRunError: "Terminal input could not be sent.",
+    messages: {
+      error: "Terminal input could not be sent."
+    },
+    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+    placementSource: "vibe64.terminal.write",
+    suppressSuccessMessage: true,
+    surfaceId: VIBE64_SURFACE_ID,
+    writeMethod: "POST"
+  });
+
   async function runStart(path, payload = {}) {
     return await startTerminalCommand.run({
       path,
@@ -134,6 +157,31 @@ function useVibe64TerminalCommands({
     ));
   }
 
+  async function sendAgentTerminalText(
+    sessionId = "",
+    terminalSessionId = "",
+    text = "",
+    { attachmentIds = [] } = {}
+  ) {
+    const normalizedSessionId = normalizedId(sessionId);
+    const normalizedTerminalSessionId = normalizedId(terminalSessionId);
+    const normalizedText = String(text || "");
+    if (!normalizedSessionId || !normalizedTerminalSessionId || !normalizedText) {
+      return commandMissingResponse("AI terminal id and input are required.");
+    }
+    return await writeTerminalCommand.run({
+      attachmentIds: Array.isArray(attachmentIds)
+        ? attachmentIds.map(normalizedId).filter(Boolean)
+        : [],
+      text: normalizedText,
+      path: vibe64AgentTerminalControlTextPath(
+        sessionsApiPath.value,
+        normalizedSessionId,
+        normalizedTerminalSessionId
+      )
+    });
+  }
+
   async function closeGlobalCodexTerminal(scopeIdOrTerminalSessionId = "", terminalSessionId = "") {
     const normalizedTerminalSessionId = normalizedId(terminalSessionId || scopeIdOrTerminalSessionId);
     if (!normalizedTerminalSessionId) {
@@ -146,9 +194,11 @@ function useVibe64TerminalCommands({
     closeAgentTerminal,
     closeGlobalCodexTerminal,
     closeTerminalCommand,
+    sendAgentTerminalText,
     startAgentTerminal,
     startGlobalCodexTerminal,
-    startTerminalCommand
+    startTerminalCommand,
+    writeTerminalCommand
   };
 }
 

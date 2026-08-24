@@ -270,7 +270,7 @@
               </v-chip-group>
             </div>
           </template>
-          <template #footer>
+          <template #footer="{ attachmentState }">
             <div class="studio-autopilot__composer-actions">
               <Vibe64AgentSettingsMenu
                 :agent-settings="currentAgentSettings"
@@ -279,7 +279,8 @@
               />
               <v-btn
                 aria-label="Attach files"
-                :disabled="composerDisabled"
+                class="studio-autopilot__composer-action"
+                :disabled="composerDisabled || !attachmentState.canAddFiles"
                 :icon="mdiPaperclip"
                 size="small"
                 title="Attach files"
@@ -290,9 +291,10 @@
               <v-btn
                 v-if="previewAttachmentState.captureAvailable"
                 aria-label="Attach visible preview"
-                :disabled="composerDisabled || previewAttachmentState.captureBusy"
+                class="studio-autopilot__composer-action"
+                :aria-busy="previewAttachmentState.captureBusy ? 'true' : undefined"
+                :disabled="composerDisabled || !attachmentState.canAddFiles || previewAttachmentState.captureBusy"
                 :icon="mdiEyePlusOutline"
-                :loading="previewAttachmentState.captureBusy"
                 size="small"
                 title="Attach visible preview"
                 type="button"
@@ -302,9 +304,10 @@
               <v-btn
                 v-if="previewAttachmentState.diagnosticsAvailable"
                 aria-label="Attach console & network"
-                :disabled="composerDisabled || previewAttachmentState.diagnosticsBusy"
+                class="studio-autopilot__composer-action"
+                :aria-busy="previewAttachmentState.diagnosticsBusy ? 'true' : undefined"
+                :disabled="composerDisabled || !attachmentState.canAddFiles || previewAttachmentState.diagnosticsBusy"
                 :icon="mdiConsoleNetworkOutline"
-                :loading="previewAttachmentState.diagnosticsBusy"
                 size="small"
                 title="Attach console and network diagnostics"
                 type="button"
@@ -314,6 +317,7 @@
               <span class="studio-autopilot__composer-spacer" />
               <v-btn
                 v-if="agentStopVisible"
+                class="studio-autopilot__composer-action"
                 color="error"
                 :disabled="!agentStopEnabled"
                 :loading="interrupting"
@@ -329,9 +333,9 @@
                 v-if="agentStopVisible"
                 ref="composerSendButton"
                 aria-label="Steer assistant"
-                class="studio-autopilot__send--steer"
+                class="studio-autopilot__composer-action studio-autopilot__send--steer"
                 color="primary"
-                :disabled="!composerCanSubmit"
+                :disabled="!composerCanSubmit || !attachmentState.canSubmit"
                 :loading="composerSending"
                 :prepend-icon="mdiArrowTopRight"
                 size="small"
@@ -346,8 +350,9 @@
                 v-else
                 ref="composerSendButton"
                 aria-label="Send message"
+                class="studio-autopilot__composer-action"
                 color="primary"
-                :disabled="!composerCanSubmit"
+                :disabled="!composerCanSubmit || !attachmentState.canSubmit"
                 :icon="mdiSend"
                 :loading="composerSending"
                 size="small"
@@ -481,6 +486,7 @@
         <Vibe64LaunchControls
           :ask-codex-to-fix-preview-identity="askCodexToFixPreviewIdentity"
           :attach-preview-file="attachPreviewFile"
+          :prepare-preview-file="attachPreviewFileProducer"
           :auto-start-managed-preview="!props.sessionSelectionClosed"
           button-label="Run"
           button-size="small"
@@ -686,6 +692,9 @@ const sessionAbandonDisabled = computed(() => Boolean(
 ));
 
 async function sendComposerMessage() {
+  if (composerInput.value?.attachmentsCanSubmit?.() === false) {
+    return false;
+  }
   const accepted = await submitComposerMessage();
   if (accepted) {
     composerInput.value?.clearAttachments?.();
@@ -737,6 +746,11 @@ async function attachPreviewFile(file) {
     throw new Error("Open the chat composer before attaching a preview file.");
   }
   return uploaded[0];
+}
+
+async function attachPreviewFileProducer(options = {}) {
+  const uploaded = await composerInput.value?.attachFileProducer?.(options);
+  return Array.isArray(uploaded) && uploaded.length > 0 ? uploaded[0] : null;
 }
 </script>
 
@@ -1028,6 +1042,11 @@ async function attachPreviewFile(file) {
 }
 
 @media (pointer: coarse) {
+  .studio-autopilot__composer-action {
+    min-height: 3rem;
+    min-width: 3rem;
+  }
+
   .studio-autopilot__recovery-action {
     min-height: 3rem;
   }

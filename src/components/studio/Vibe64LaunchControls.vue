@@ -785,6 +785,10 @@ const props = defineProps({
     default: null,
     type: Function
   },
+  preparePreviewFile: {
+    default: null,
+    type: Function
+  },
   buttonLabel: {
     default: "Run",
     type: String
@@ -977,6 +981,7 @@ const {
   noticeVisible: previewAttachmentNoticeVisible
 } = useVibe64PreviewCapture({
   attachFile: props.attachPreviewFile,
+  prepareFile: props.preparePreviewFile,
   previewDisplayed: () => props.previewDisplayed,
   previewFrame,
   previewLoaded: previewFrameLoaded,
@@ -993,7 +998,10 @@ const previewIdentityFixAvailable = computed(() => Boolean(
 ));
 const previewDiagnosticsAttachmentAvailable = computed(() => Boolean(
   previewDiagnosticsAvailable.value &&
-  typeof props.attachPreviewFile === "function"
+  (
+    typeof props.preparePreviewFile === "function" ||
+    typeof props.attachPreviewFile === "function"
+  )
 ));
 let previewDiagnosticsAttachmentSequence = 0;
 
@@ -1037,16 +1045,34 @@ async function attachPreviewDiagnostics() {
   previewDiagnosticsAttachmentBusy.value = true;
   previewAttachmentNoticeVisible.value = false;
   try {
-    const snapshot = await requestPreviewDiagnostics();
-    previewDiagnosticsAttachmentSequence += 1;
-    const attached = await props.attachPreviewFile(previewDiagnosticsFile(snapshot, {
-      sequence: previewDiagnosticsAttachmentSequence
-    }));
+    const attached = typeof props.preparePreviewFile === "function"
+      ? await props.preparePreviewFile({
+          fileName: "Preview diagnostics",
+          produce: async ({ signal } = {}) => {
+            const snapshot = await requestPreviewDiagnostics({ signal });
+            previewDiagnosticsAttachmentSequence += 1;
+            return previewDiagnosticsFile(snapshot, {
+              sequence: previewDiagnosticsAttachmentSequence
+            });
+          }
+        })
+      : await requestPreviewDiagnostics().then((snapshot) => {
+          previewDiagnosticsAttachmentSequence += 1;
+          return props.attachPreviewFile(previewDiagnosticsFile(snapshot, {
+            sequence: previewDiagnosticsAttachmentSequence
+          }));
+        });
     if (!attached) {
+      if (typeof props.preparePreviewFile === "function") {
+        return false;
+      }
       throw new Error("The preview diagnostics file could not be attached to the current message.");
     }
     return true;
   } catch (error) {
+    if (error?.name === "AbortError") {
+      return false;
+    }
     previewAttachmentNoticeColor.value = "error";
     previewAttachmentNoticeText.value = String(error?.message || error || "Preview diagnostics could not be attached.");
     previewAttachmentNoticeVisible.value = true;

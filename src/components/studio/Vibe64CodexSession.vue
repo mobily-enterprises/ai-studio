@@ -7,11 +7,20 @@
       'vibe64-codex-session--headless': displayMode === 'headless'
     }"
     :aria-hidden="displayMode === 'headless' ? 'true' : undefined"
-    @dragenter.prevent="handleAttachmentDragEnter"
-    @dragover.prevent="handleAttachmentDragOver"
-    @dragleave.prevent="handleAttachmentDragLeave"
-    @drop.prevent="handleAttachmentDrop"
+    @dragenter="handleTerminalAttachmentDragEnter"
+    @dragover="handleTerminalAttachmentDragOver"
+    @dragleave="handleTerminalAttachmentDragLeave"
+    @drop="handleTerminalAttachmentDrop"
   >
+    <input
+      v-if="terminalAttachmentsEnabled"
+      ref="terminalAttachmentFileInput"
+      :disabled="!attachmentCanAddFiles"
+      hidden
+      multiple
+      type="file"
+      @change="handleTerminalAttachmentFileSelection"
+    >
     <Vibe64Terminal
       :collapsible="displayMode !== 'headless'"
       :command-preview="terminalCommandPreview"
@@ -58,14 +67,31 @@
         </v-btn>
       </template>
 
+      <template #actions-before>
+        <v-btn
+          v-if="terminalAttachmentsEnabled"
+          :aria-label="terminalAttachmentActionLabel"
+          class="vibe64-codex-session__attachment-action"
+          :disabled="!attachmentCanAddFiles"
+          :icon="mdiPaperclip"
+          size="small"
+          :title="terminalAttachmentActionLabel"
+          type="button"
+          variant="text"
+          @click="openTerminalAttachmentPicker"
+        />
+      </template>
+
       <template #overlay>
         <div
-          v-if="attachmentDragActive || attachmentUploading"
+          v-if="attachmentDragActive"
           class="vibe64-codex-session__drop-overlay"
+          aria-live="polite"
+          role="status"
         >
-          <v-sheet class="vibe64-codex-session__drop-card" rounded="lg" elevation="10">
+          <v-sheet class="vibe64-codex-session__drop-card" rounded="lg" elevation="4">
             <v-icon :icon="mdiPaperclip" size="28" />
-            <span>{{ attachmentUploading ? "Uploading temporary file..." : "Drop temporary files for Codex" }}</span>
+            <span>Drop temporary files for Codex</span>
           </v-sheet>
         </div>
 
@@ -93,6 +119,16 @@
             </v-btn>
           </v-sheet>
         </div>
+      </template>
+
+      <template #before-terminal>
+        <Vibe64AttachmentQueue
+          :items="attachmentQueueItems"
+          :joined="false"
+          @cancel="cancelAttachment"
+          @remove="removeAttachment"
+          @retry="retryAttachment"
+        />
       </template>
 
       <template #footer="{ commandPreview, status }">
@@ -128,6 +164,7 @@ import {
   VIBE64_ACCOUNTS_CHANGED_EVENT
 } from "@local/vibe64-accounts/client";
 import Vibe64Terminal from "@/components/studio/Vibe64Terminal.vue";
+import Vibe64AttachmentQueue from "@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
 import { useVibe64Terminal } from "@/composables/useVibe64Terminal.js";
 import {
   vibe64AgentTerminalWebSocketUrl,
@@ -200,12 +237,18 @@ const codexCommands = useVibe64CodexCommands();
 const copyStatus = ref("");
 const expanded = ref(false);
 const componentMounted = ref(false);
+const terminalAttachmentFileInput = ref(null);
 const staleTerminalSessionIds = ref(new Set());
 let terminalStartPromise = null;
 
 const globalScope = computed(() => props.scope === "global");
 const sessionId = computed(() => props.session?.sessionId || "");
 const terminalScopeId = computed(() => (globalScope.value ? "global" : sessionId.value));
+const terminalAttachmentsEnabled = computed(() => Boolean(
+  !globalScope.value &&
+  !props.readOnly &&
+  sessionId.value
+));
 const sessionSource = computed(() => vibe64SessionSourcePath(props.session || {}));
 const terminalDisplayActive = computed(() => props.visible && props.displayMode !== "headless");
 const rawServerCodexTerminal = computed(() => {
@@ -361,22 +404,92 @@ const terminalSubtitle = computed(() => {
   return terminalStatus.value === "running" ? "" : "Codex agent session";
 });
 const {
+  abandonAttachments: abandonTerminalAttachments,
+  attachmentCanAddFiles,
   attachmentDragActive,
+  attachmentQueueItems,
   attachmentStatus,
-  attachmentUploading,
+  cancelAttachment,
   clearAttachmentStatus,
   handleAttachmentDragEnter,
   handleAttachmentDragLeave,
   handleAttachmentDragOver,
   handleAttachmentDrop,
-  resetAttachmentDragState
+  removeAttachment,
+  retryAttachment,
+  resetAttachmentDragState,
+  uploadAttachmentFiles
 } = useCodexTerminalAttachments({
+  canUpload: terminalAttachmentsEnabled,
+  deleteAttachment: codexCommands.deleteAttachment,
   ensureTerminalReady,
   focusTerminal,
-  sendTerminalData,
+  sendAttachmentPath: sendAttachmentPathForScope,
   sessionId: terminalScopeId,
   uploadAttachment: uploadAttachmentForScope
 });
+const terminalAttachmentActionLabel = computed(() => (
+  attachmentCanAddFiles.value
+    ? "Attach files to Codex terminal"
+    : "Codex terminal attachment limit reached"
+));
+
+function openTerminalAttachmentPicker() {
+  if (!terminalAttachmentsEnabled.value || !attachmentCanAddFiles.value) {
+    return false;
+  }
+  terminalAttachmentFileInput.value?.click?.();
+  return true;
+}
+
+function handleTerminalAttachmentFileSelection(event) {
+  const input = event?.currentTarget || event?.target || null;
+  const files = Array.from(input?.files || []);
+  if (input) {
+    input.value = "";
+  }
+  if (
+    files.length < 1 ||
+    !terminalAttachmentsEnabled.value ||
+    !attachmentCanAddFiles.value
+  ) {
+    return;
+  }
+  void uploadAttachmentFiles(files);
+}
+
+function handleTerminalAttachmentDragEnter(event) {
+  event?.preventDefault?.();
+  if (!terminalAttachmentsEnabled.value) {
+    return;
+  }
+  handleAttachmentDragEnter(event);
+}
+
+function handleTerminalAttachmentDragOver(event) {
+  event?.preventDefault?.();
+  if (!terminalAttachmentsEnabled.value) {
+    return;
+  }
+  handleAttachmentDragOver(event);
+}
+
+function handleTerminalAttachmentDragLeave(event) {
+  event?.preventDefault?.();
+  if (!terminalAttachmentsEnabled.value) {
+    return;
+  }
+  handleAttachmentDragLeave(event);
+}
+
+function handleTerminalAttachmentDrop(event) {
+  event?.preventDefault?.();
+  if (!terminalAttachmentsEnabled.value) {
+    return;
+  }
+  expanded.value = true;
+  void handleAttachmentDrop(event);
+}
 const terminalCanStart = computed(() => Boolean(canStartTerminal.value));
 const sessionSourcePending = computed(() => Boolean(
   !globalScope.value &&
@@ -649,11 +762,27 @@ useRealtimeEvent({
   }
 });
 
-async function uploadAttachmentForScope(currentScopeId, file) {
+async function uploadAttachmentForScope(currentScopeId, file, options = {}) {
   if (globalScope.value) {
     throw new Error("Temporary attachments are available in session Codex terminals.");
   }
-  return codexCommands.uploadAttachment(currentScopeId, file);
+  return codexCommands.uploadAttachment(currentScopeId, file, options);
+}
+
+async function sendAttachmentPathForScope(text, attachmentIds = []) {
+  if (globalScope.value || !sessionId.value || !terminalSessionId.value) {
+    throw new Error("Codex terminal is not ready for attachments.");
+  }
+  const response = await codexCommands.sendAgentTerminalText(
+    sessionId.value,
+    terminalSessionId.value,
+    text,
+    { attachmentIds }
+  );
+  if (response?.ok === false) {
+    throw new Error(response.error || "Attachment path could not be sent to Codex.");
+  }
+  return true;
 }
 
 async function sendTerminalData(data, {
@@ -838,6 +967,7 @@ function markTerminalSessionStale(terminalId = "", message = "") {
   resetTerminalSessionState();
   resetTerminalDisplay();
   resetTerminalOutput();
+  void abandonTerminalAttachments();
   terminalError.value = String(message || "");
   emitTerminalSessionState({
     agentTerminalSessionId: normalizedTerminalId,
@@ -847,6 +977,7 @@ function markTerminalSessionStale(terminalId = "", message = "") {
 
 function detachTerminal() {
   terminalStartPromise = null;
+  void abandonTerminalAttachments();
   closeTerminalSocket();
   resetTerminalSessionState();
   resetTerminalDisplay();
@@ -856,6 +987,7 @@ function detachTerminal() {
 }
 
 async function closeTerminal() {
+  await abandonTerminalAttachments();
   if (!terminalSessionId.value) {
     detachTerminal();
     return true;
@@ -981,7 +1113,7 @@ defineExpose({
 }
 
 .vibe64-codex-session__drop-overlay {
-  background: rgba(12, 18, 28, 0.72);
+  background: rgba(var(--v-theme-scrim, var(--v-theme-on-surface)), 0.68);
   pointer-events: none;
   z-index: 5;
 }
@@ -1044,6 +1176,18 @@ defineExpose({
 
 .vibe64-codex-session__start-action {
   min-inline-size: 10rem;
+}
+
+.vibe64-codex-session__attachment-action {
+  min-height: 2.5rem;
+  min-width: 2.5rem;
+}
+
+@media (pointer: coarse) {
+  .vibe64-codex-session__attachment-action {
+    min-height: 3rem;
+    min-width: 3rem;
+  }
 }
 
 @media (max-width: 700px) {

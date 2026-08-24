@@ -149,6 +149,16 @@ function updateParameter(parameterId = "", value = "") {
   background: var(--studio-control-rest-bg, #f7f7f8) !important;
 }
 
+@media (pointer: coarse) {
+  .vibe64-agent-settings-menu__button {
+    flex-basis: 3rem;
+    height: 3rem;
+    min-height: 3rem;
+    min-width: 3rem;
+    width: 3rem;
+  }
+}
+
 .vibe64-agent-settings-menu {
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-outline), 0.18);

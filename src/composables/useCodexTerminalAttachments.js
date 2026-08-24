@@ -9,15 +9,17 @@ function attachmentPathForTerminal(attachmentPath = "") {
 }
 
 function useCodexTerminalAttachments({
+  canUpload = () => true,
+  deleteAttachment,
   ensureTerminalReady,
   focusTerminal,
-  sendTerminalData,
+  sendAttachmentPath,
   sessionId,
   uploadAttachment
 } = {}) {
-  async function injectAttachmentPath(attachmentPath = "") {
+  async function injectAttachmentPath(attachmentPath = "", attachmentIds = []) {
     const terminalText = attachmentPathForTerminal(attachmentPath);
-    return terminalText ? sendTerminalData(terminalText) : false;
+    return terminalText ? sendAttachmentPath(terminalText, attachmentIds) : false;
   }
 
   async function injectUploadedAttachments(uploaded = []) {
@@ -27,14 +29,19 @@ function useCodexTerminalAttachments({
       if (!attachmentPath) {
         throw new Error(`${fileName} uploaded, but no Codex path was returned.`);
       }
-      if (!(await injectAttachmentPath(attachmentPath))) {
+      if (!(await injectAttachmentPath(attachmentPath, [attachment.attachmentId]))) {
         throw new Error(`${fileName} uploaded, but its path could not be sent to Codex.`);
       }
     }
   }
 
   const attachments = useCodexAttachments({
-    canUpload: () => Boolean(unref(sessionId)),
+    canUpload: () => Boolean(unref(sessionId)) && (
+      typeof canUpload === "function"
+        ? canUpload() !== false
+        : unref(canUpload) !== false
+    ),
+    deleteAttachment,
     onUploaded: async (uploaded = []) => {
       await injectUploadedAttachments(uploaded);
       const label = uploaded.length === 1
@@ -42,26 +49,34 @@ function useCodexTerminalAttachments({
         : `${uploaded.length} files`;
       attachments.status.value = `${label} attached. Press Enter in Codex when ready.`;
       focusTerminal();
+      return { accepted: true };
     },
     sessionId,
-    uploadAttachment: async (currentSessionId, file) => {
+    uploadAttachment: async (currentSessionId, file, options = {}) => {
       if (!(await ensureTerminalReady())) {
         throw new Error("Codex terminal is not ready for attachments.");
       }
-      return uploadAttachment(currentSessionId, file);
+      return uploadAttachment(currentSessionId, file, options);
     }
   });
 
   return {
     attachmentDragActive: attachments.dragActive,
+    attachmentCanAddFiles: attachments.canAddFiles,
+    attachmentQueueItems: attachments.queueItems,
     attachmentStatus: attachments.status,
     attachmentUploading: attachments.uploading,
+    abandonAttachments: attachments.abandonAttachments,
+    cancelAttachment: attachments.cancelAttachment,
     clearAttachmentStatus: attachments.clearStatus,
     handleAttachmentDragEnter: attachments.handleDragEnter,
     handleAttachmentDragLeave: attachments.handleDragLeave,
     handleAttachmentDragOver: attachments.handleDragOver,
     handleAttachmentDrop: attachments.handleDrop,
-    resetAttachmentDragState: attachments.resetDragState
+    removeAttachment: attachments.removeAttachment,
+    resetAttachmentDragState: attachments.resetDragState,
+    retryAttachment: attachments.retryAttachment,
+    uploadAttachmentFiles: attachments.uploadFiles
   };
 }
 

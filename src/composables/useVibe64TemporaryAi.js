@@ -248,7 +248,7 @@ function useVibe64TemporaryAi({
       .filter(Boolean);
     updateTask(taskId, {
       attachments: current,
-      ownedAttachmentIds: [...new Set([...task.ownedAttachmentIds, ...ids])]
+      ownedAttachmentIds: [...new Set(ids)]
     });
   }
 
@@ -364,6 +364,7 @@ function useVibe64TemporaryAi({
         {
           body: {
             agentSettings: task.agentSettings,
+            ...(payload.attachmentIds?.length ? { attachmentIds: payload.attachmentIds } : {}),
             messageId,
             message: payload.message,
             policy: task.policy,
@@ -394,6 +395,7 @@ function useVibe64TemporaryAi({
         busy: true,
         conversationId,
         messages,
+        ownedAttachmentIds: [],
         pendingMessageId: "",
         runId: response.runId,
         status: response.status || "inProgress"
@@ -442,20 +444,6 @@ function useVibe64TemporaryAi({
     return true;
   }
 
-  async function deleteAttachment(attachmentId = "") {
-    if (!attachmentId) {
-      return;
-    }
-    await request(
-      vibe64AgentAttachmentDeletePath(
-        currentSessionsApiPath(),
-        currentSessionId(),
-        attachmentId
-      ),
-      { method: "DELETE" }
-    );
-  }
-
   async function closeTask(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
     if (!task || closingTaskIds.has(taskId)) {
@@ -477,9 +465,6 @@ function useVibe64TemporaryAi({
           { method: "DELETE" }
         ).catch(() => null);
       }
-      await Promise.all(task.ownedAttachmentIds.map((attachmentId) => (
-        deleteAttachment(attachmentId).catch(() => null)
-      )));
     } finally {
       closingTaskIds.delete(taskId);
       tasks.value = tasks.value.filter((candidate) => candidate.id !== taskId);

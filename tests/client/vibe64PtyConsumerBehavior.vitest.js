@@ -64,10 +64,12 @@ const terminalMocks = vi.hoisted(() => {
 
   return {
     accountAuthSessions: null,
+    attachmentCanAddFiles: null,
     FakeFitAddon,
     FakeTerminal,
     loadXtermModules: vi.fn(),
-    mountedApps: []
+    mountedApps: [],
+    uploadAttachmentFiles: vi.fn()
   };
 });
 
@@ -96,10 +98,16 @@ vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
   useRealtimeEvent: () => ({ active: ref(false) })
 }));
 
+vi.mock("@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue", () => ({
+  default: defineComponent({ render: () => null })
+}));
+
 vi.mock("@/composables/useVibe64CodexCommands.js", () => ({
   useVibe64CodexCommands: () => ({
     closeAgentTerminal: vi.fn().mockResolvedValue({ ok: true }),
     closeGlobalCodexTerminal: vi.fn().mockResolvedValue({ ok: true }),
+    deleteAttachment: vi.fn(),
+    sendAgentTerminalText: vi.fn().mockResolvedValue({ ok: true }),
     startAgentTerminal: vi.fn(),
     startGlobalCodexTerminal: vi.fn(),
     uploadAttachment: vi.fn()
@@ -108,15 +116,21 @@ vi.mock("@/composables/useVibe64CodexCommands.js", () => ({
 
 vi.mock("@/composables/useCodexTerminalAttachments.js", () => ({
   useCodexTerminalAttachments: () => ({
+    abandonAttachments: vi.fn().mockResolvedValue([]),
+    attachmentCanAddFiles: terminalMocks.attachmentCanAddFiles || ref(true),
     attachmentDragActive: ref(false),
+    attachmentQueueItems: ref([]),
     attachmentStatus: ref(""),
-    attachmentUploading: ref(false),
+    cancelAttachment: vi.fn(),
     clearAttachmentStatus: vi.fn(),
     handleAttachmentDragEnter: vi.fn(),
     handleAttachmentDragLeave: vi.fn(),
     handleAttachmentDragOver: vi.fn(),
     handleAttachmentDrop: vi.fn(),
-    resetAttachmentDragState: vi.fn()
+    removeAttachment: vi.fn(),
+    retryAttachment: vi.fn(),
+    resetAttachmentDragState: vi.fn(),
+    uploadAttachmentFiles: terminalMocks.uploadAttachmentFiles
   })
 }));
 
@@ -273,11 +287,13 @@ describe("visible PTY consumer behavior", () => {
     originalWindow = globalThis.window;
     FakeWebSocket.instances.length = 0;
     terminalMocks.FakeTerminal.instances.length = 0;
+    terminalMocks.attachmentCanAddFiles = ref(true);
     terminalMocks.loadXtermModules.mockReset();
     terminalMocks.loadXtermModules.mockResolvedValue({
       FitAddon: terminalMocks.FakeFitAddon,
       Terminal: terminalMocks.FakeTerminal
     });
+    terminalMocks.uploadAttachmentFiles.mockReset();
     globalThis.WebSocket = FakeWebSocket;
     globalThis.document = {
       activeElement: null
@@ -306,6 +322,7 @@ describe("visible PTY consumer behavior", () => {
       app.unmount();
     }
     terminalMocks.accountAuthSessions = null;
+    terminalMocks.attachmentCanAddFiles = null;
     globalThis.document = originalDocument;
     globalThis.WebSocket = originalWebSocket;
     globalThis.window = originalWindow;
@@ -349,9 +366,32 @@ describe("visible PTY consumer behavior", () => {
     const surface = findNode(container, hasClass("vibe64-terminal-surface"));
     const summary = findNode(container, hasClass("vibe64-terminal-surface__summary"));
     const expand = findNode(container, (node) => node.type === "button" && nodeText(node) === "Expand");
+    const attachFiles = findNode(container, (node) => (
+      node.type === "button" &&
+      node.props?.["aria-label"] === "Attach files to Codex terminal"
+    ));
 
     expect(surface).toBeTruthy();
     expect(summary).toBeTruthy();
+    expect(attachFiles).toBeTruthy();
+    expect(attachFiles.props.disabled).toBe(false);
+    expect(attachFiles.props.type).toBe("button");
+    const fileInput = findNode(container, (node) => (
+      node.type === "input" && node.props?.type === "file"
+    ));
+    const selectedFile = { name: "keyboard.txt", size: 8 };
+    const inputTarget = {
+      files: [selectedFile],
+      value: "C:\\fakepath\\keyboard.txt"
+    };
+    fileInput.props.onChange({ currentTarget: inputTarget });
+    expect(inputTarget.value).toBe("");
+    expect(terminalMocks.uploadAttachmentFiles).toHaveBeenCalledWith([selectedFile]);
+
+    terminalMocks.attachmentCanAddFiles.value = false;
+    await nextTick();
+    expect(attachFiles.props.disabled).toBe(true);
+    expect(attachFiles.props["aria-label"]).toBe("Codex terminal attachment limit reached");
     expect(nodeText(surface)).toContain("running");
     expect(nodeText(summary)).toContain("Ready for work");
     expect(terminalMocks.FakeTerminal.instances).toHaveLength(0);
@@ -368,6 +408,37 @@ describe("visible PTY consumer behavior", () => {
       data: "status\r",
       type: "input"
     });
+  });
+
+  it("does not render attachment actions for global or read-only terminals", async () => {
+    for (const terminalProps of [
+      {
+        readOnly: true,
+        session: { sessionId: "read-only-session" }
+      },
+      {
+        scope: "global"
+      }
+    ]) {
+      const container = terminalHostNode("root");
+      const app = testRenderer.createApp({
+        render: () => h(Vibe64CodexSession, {
+          allowStart: false,
+          visible: true,
+          ...terminalProps
+        })
+      });
+      registerTestComponents(app);
+      app.provide(ssrContextKey, { modules: new Set() });
+      app.mount(container);
+      await flushAsyncWork();
+
+      expect(findNode(container, (node) => (
+        node.type === "button" &&
+        String(node.props?.["aria-label"] || "").includes("Codex terminal")
+      ))).toBeNull();
+      app.unmount();
+    }
   });
 
   it("keeps one provider login PTY while switching active auth sessions", async () => {

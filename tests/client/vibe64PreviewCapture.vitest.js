@@ -375,6 +375,53 @@ describe("Vibe64 visible preview capture", () => {
     expect(observerInstances.every((observer) => observer.disconnect.mock.calls.length > 0)).toBe(true);
   });
 
+  it("shows capture preparation through the shared attachment producer before the file exists", async () => {
+    const captureSession = {
+      capture: vi.fn(async () => ({ name: "preview.png", size: 512 })),
+      stop: vi.fn(),
+      supported: vi.fn(() => true)
+    };
+    const prepareFile = vi.fn(async ({ fileName, produce }) => {
+      expect(fileName).toBe("Preview screenshot");
+      return produce({ signal: new AbortController().signal });
+    });
+    let previewCapture = null;
+    const app = testRenderer().createApp({
+      setup() {
+        previewCapture = useVibe64PreviewCapture({
+          captureSession,
+          prepareFile,
+          previewDisplayed: ref(true),
+          previewFrame: ref({
+            getBoundingClientRect: () => ({
+              bottom: 550,
+              left: 100,
+              right: 900,
+              top: 50
+            })
+          }),
+          previewLoaded: ref(true),
+          scopeKey: ref("session-1"),
+          windowObject: {
+            innerHeight: 600,
+            innerWidth: 1000
+          }
+        });
+        return () => h("div");
+      }
+    });
+
+    app.mount({ children: [] });
+    await nextTick();
+
+    expect(previewCapture.buttonVisible.value).toBe(true);
+    expect(await previewCapture.capturePreview()).toBe(true);
+    expect(prepareFile).toHaveBeenCalledTimes(1);
+    expect(captureSession.capture).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
   it("recovers when the user ends sharing while a frame is being captured", async () => {
     const firstTrack = testCaptureTrack();
     const secondTrack = testCaptureTrack();
