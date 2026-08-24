@@ -30,6 +30,48 @@ import {
 import {
   createSessionChangedPublisher
 } from "../../packages/vibe64-sessions/src/server/events.js";
+import {
+  runVibe64AgentWriteExclusive
+} from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
+
+function agentWriteLockHarness() {
+  let active = false;
+  const attempts = [];
+  return {
+    attempts,
+    store: {
+      async runSessionExclusive(sessionId, operationName, operation) {
+        attempts.push({ operationName, sessionId });
+        if (active) {
+          return {
+            acquired: false,
+            value: null
+          };
+        }
+        active = true;
+        try {
+          return {
+            acquired: true,
+            value: await operation()
+          };
+        } finally {
+          active = false;
+        }
+      }
+    }
+  };
+}
+
+async function requireAgentWrite(runtime, sessionId, operation) {
+  const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, operation);
+  if (!exclusive.acquired) {
+    const error = new Error(exclusive.value.error);
+    error.code = exclusive.value.code;
+    error.retryable = exclusive.value.retryable;
+    throw error;
+  }
+  return exclusive.value;
+}
 
 test("sessions expose only direct chat and source actions", () => {
   assert.deepEqual(createSessionActions({ sessions: {} }).map((action) => action.id), [
@@ -1315,6 +1357,273 @@ test("live workspace preparation prevents retry and close races", async () => {
   const retried = await service.retryWorkspaceSetup("session-1");
   assert.equal(retried.ok, false);
   assert.equal(retried.code, "vibe64_workspace_setup_running");
+});
+
+test("an active Save keeps abandonment out of its agent-write window", async () => {
+  const lock = agentWriteLockHarness();
+  let finishSave;
+  let saveStarted;
+  const saveStartedPromise = new Promise((resolve) => {
+    saveStarted = resolve;
+  });
+  const saveFinishedPromise = new Promise((resolve) => {
+    finishSave = resolve;
+  });
+  const calls = [];
+  const session = {
+    sessionId: "session-1",
+    sourceReady: true,
+    status: "active"
+  };
+  const runtime = {
+    async abandonSession() {
+      calls.push("abandon");
+      session.status = "abandoned";
+      return { ...session };
+    },
+    async clearSessionClosing() {
+      calls.push("clear-closing");
+    },
+    async getSession() {
+      return { ...session };
+    },
+    async markSessionClosing() {
+      calls.push("closing");
+    },
+    store: lock.store
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async closeSessionTerminals() {
+        calls.push("terminals");
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const saving = requireAgentWrite(runtime, "session-1", async () => {
+    calls.push("save-started");
+    saveStarted();
+    await saveFinishedPromise;
+    calls.push("save-finished");
+  });
+  await saveStartedPromise;
+
+  const blocked = await service.abandonSession("session-1");
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, "vibe64_agent_write_mode_busy");
+  assert.equal(blocked.retryable, true);
+  assert.deepEqual(calls, ["save-started"]);
+
+  finishSave();
+  await saving;
+  const closed = await service.abandonSession("session-1");
+  assert.equal(closed.ok, true);
+  assert.deepEqual(calls, [
+    "save-started",
+    "save-finished",
+    "closing",
+    "terminals",
+    "abandon"
+  ]);
+  assert.deepEqual(lock.attempts.map((attempt) => attempt.operationName), [
+    "agent-write-mode",
+    "agent-write-mode",
+    "agent-write-mode"
+  ]);
+});
+
+test("active abandonment keeps Save out of its agent-write window", async () => {
+  const lock = agentWriteLockHarness();
+  let finishCleanup;
+  let cleanupStarted;
+  const cleanupStartedPromise = new Promise((resolve) => {
+    cleanupStarted = resolve;
+  });
+  const cleanupFinishedPromise = new Promise((resolve) => {
+    finishCleanup = resolve;
+  });
+  const calls = [];
+  const runtime = {
+    async abandonSession() {
+      calls.push("abandon");
+      return { sessionId: "session-1", status: "abandoned" };
+    },
+    async clearSessionClosing() {},
+    async getSession() {
+      return { sessionId: "session-1", sourceReady: true, status: "active" };
+    },
+    async markSessionClosing() {
+      calls.push("closing");
+    },
+    store: lock.store
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async closeSessionTerminals() {
+        calls.push("terminals-started");
+        cleanupStarted();
+        await cleanupFinishedPromise;
+        calls.push("terminals-finished");
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const closing = service.abandonSession("session-1");
+  await cleanupStartedPromise;
+  let saveRan = false;
+  const save = await runVibe64AgentWriteExclusive(runtime, "session-1", async () => {
+    saveRan = true;
+  });
+  assert.equal(save.acquired, false);
+  assert.equal(save.value.code, "vibe64_agent_write_mode_busy");
+  assert.equal(save.value.retryable, true);
+  assert.equal(saveRan, false);
+
+  finishCleanup();
+  const closed = await closing;
+  assert.equal(closed.ok, true);
+  assert.deepEqual(calls, [
+    "closing",
+    "terminals-started",
+    "terminals-finished",
+    "abandon"
+  ]);
+});
+
+test("failed abandonment cleanup releases the agent-write lock for retry", async () => {
+  const lock = agentWriteLockHarness();
+  const calls = [];
+  let cleanupAttempt = 0;
+  const runtime = {
+    async abandonSession() {
+      calls.push("abandon");
+      return { sessionId: "session-1", status: "abandoned" };
+    },
+    async clearSessionClosing() {
+      calls.push("clear-closing");
+    },
+    async getSession() {
+      return { sessionId: "session-1", sourceReady: true, status: "active" };
+    },
+    async markSessionClosing() {
+      calls.push("closing");
+    },
+    store: lock.store
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async closeSessionTerminals() {
+        cleanupAttempt += 1;
+        calls.push(`terminals:${cleanupAttempt}`);
+        if (cleanupAttempt === 1) {
+          const error = new Error("Temporary assistant cleanup failed.");
+          error.code = "vibe64_test_cleanup_failed";
+          throw error;
+        }
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const failed = await service.abandonSession("session-1");
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, "vibe64_test_cleanup_failed");
+  assert.deepEqual(calls, ["closing", "terminals:1", "clear-closing"]);
+
+  const retried = await service.abandonSession("session-1");
+  assert.equal(retried.ok, true);
+  assert.deepEqual(calls, [
+    "closing",
+    "terminals:1",
+    "clear-closing",
+    "closing",
+    "terminals:2",
+    "abandon"
+  ]);
+});
+
+test("concurrent abandonment has one cleanup owner", async () => {
+  const lock = agentWriteLockHarness();
+  let finishCleanup;
+  let cleanupStarted;
+  const cleanupStartedPromise = new Promise((resolve) => {
+    cleanupStarted = resolve;
+  });
+  const cleanupFinishedPromise = new Promise((resolve) => {
+    finishCleanup = resolve;
+  });
+  let abandonCount = 0;
+  let cleanupCount = 0;
+  const runtime = {
+    async abandonSession() {
+      abandonCount += 1;
+      return { sessionId: "session-1", status: "abandoned" };
+    },
+    async clearSessionClosing() {},
+    async getSession() {
+      return { sessionId: "session-1", sourceReady: true, status: "active" };
+    },
+    async markSessionClosing() {},
+    store: lock.store
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async closeSessionTerminals() {
+        cleanupCount += 1;
+        cleanupStarted();
+        await cleanupFinishedPromise;
+      }
+    },
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const first = service.abandonSession("session-1");
+  await cleanupStartedPromise;
+  const second = await service.abandonSession("session-1");
+  assert.equal(second.ok, false);
+  assert.equal(second.code, "vibe64_agent_write_mode_busy");
+  assert.equal(cleanupCount, 1);
+  assert.equal(abandonCount, 0);
+
+  finishCleanup();
+  const closed = await first;
+  assert.equal(closed.ok, true);
+  assert.equal(cleanupCount, 1);
+  assert.equal(abandonCount, 1);
 });
 
 test("closing a session releases its managed resources after terminals stop", async () => {

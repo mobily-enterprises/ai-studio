@@ -11,6 +11,9 @@ import {
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 import {
+  runVibe64AgentWriteExclusive
+} from "@local/vibe64-runtime/server/agentWriteLock";
+import {
   REPOSITORY_UPDATE_RELATIONSHIPS,
   normalizeRepositoryUpdateCheck
 } from "@local/vibe64-core/shared";
@@ -407,33 +410,39 @@ function createService({
           throw error;
         }
         const runtime = await project.createRuntime();
-        const currentSession = await runtime.getSession(sessionId, {
-          inspectSource: false
-        });
-        const sourceCreationFailed = currentSession.sourceReady !== true &&
-          text(currentSession.metadata?.source_creation_failed).toLowerCase() === "yes";
-        await runtime.markSessionClosing(sessionId, {
-          reason: "abandoned"
-        });
-        try {
-          await terminals.closeSessionTerminals(sessionId);
-          if (!sourceCreationFailed && typeof project.releaseSessionResources === "function") {
-            await project.releaseSessionResources({
-              sessionId
-            });
-          }
-          const session = await runtime.abandonSession(sessionId);
-          await publishSessionChanged(sessionId, {
-            operation: "updated",
-            originId: text(input.originId),
-            reason: "session-abandoned",
-            session
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const currentSession = await runtime.getSession(sessionId, {
+            inspectSource: false
           });
-          return publicSession(session);
-        } catch (error) {
-          await runtime.clearSessionClosing(sessionId).catch(() => null);
-          throw error;
+          const sourceCreationFailed = currentSession.sourceReady !== true &&
+            text(currentSession.metadata?.source_creation_failed).toLowerCase() === "yes";
+          await runtime.markSessionClosing(sessionId, {
+            reason: "abandoned"
+          });
+          try {
+            await terminals.closeSessionTerminals(sessionId);
+            if (!sourceCreationFailed && typeof project.releaseSessionResources === "function") {
+              await project.releaseSessionResources({
+                sessionId
+              });
+            }
+            return runtime.abandonSession(sessionId);
+          } catch (error) {
+            await runtime.clearSessionClosing(sessionId).catch(() => null);
+            throw error;
+          }
+        });
+        if (!exclusive.acquired) {
+          return exclusive.value;
         }
+        const session = exclusive.value;
+        await publishSessionChanged(sessionId, {
+          operation: "updated",
+          originId: text(input.originId),
+          reason: "session-abandoned",
+          session
+        });
+        return publicSession(session);
       }, "Vibe64 could not close this session.");
     },
 
