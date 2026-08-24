@@ -8,7 +8,10 @@
   >
     <slot name="top-left" />
     <v-spacer />
-    <slot name="top-right" />
+    <div class="studio-app-shell-layout__top-right">
+      <ShellOutlet target="shell-layout:top-right" />
+      <slot name="top-right" />
+    </div>
   </v-app-bar>
 
   <v-main class="bg-background">
@@ -20,6 +23,10 @@
     </v-container>
   </v-main>
 </template>
+
+<script setup>
+import ShellOutlet from "@jskit-ai/shell-web/client/components/ShellOutlet";
+</script>
 
 <style scoped>
 :global(body.studio-home-shell-active) {
@@ -63,5 +70,13 @@
 
 .studio-app-shell-layout__content {
   padding: 0.75rem 0.75rem 0;
+}
+
+.studio-app-shell-layout__top-right {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.25rem;
+  min-width: 0;
 }
 </style>

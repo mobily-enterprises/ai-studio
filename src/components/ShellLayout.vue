@@ -1,6 +1,7 @@
 <script>
 import { h } from "vue";
 import PackageShellLayout from "@jskit-ai/shell-web/client/components/ShellLayout";
+import ShellOutlet from "@jskit-ai/shell-web/client/components/ShellOutlet";
 
 export default {
   name: "ShellLayout",
@@ -8,7 +9,11 @@ export default {
   setup(_, { attrs, slots }) {
     return () => h(PackageShellLayout, attrs, {
       ...slots,
-      "top-left": slots["top-left"] || (() => null)
+      "top-left": slots["top-left"] || (() => null),
+      "top-right": (slotProps) => [
+        h(ShellOutlet, { target: "shell-layout:top-right" }),
+        slots["top-right"]?.(slotProps)
+      ]
     });
   }
 };
