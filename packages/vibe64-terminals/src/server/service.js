@@ -1025,30 +1025,39 @@ function createService({
           runCommand: execution.runCommand,
           session
         });
-        const message = await generateSessionSaveCommitMessage({
+        const agentContext = {
+          runtime,
+          session,
+          vibe64User: input.vibe64User || null
+        };
+        const providerDescription = await sessionAgent.describeProvider(agentContext);
+        const commitTitle = await generateSessionSaveCommitMessage({
+          agentContext,
           changes,
-          deleteThread: (threadInput) => sessionAgent.deleteDetachedChatThread(
+          deleteThread: (threadInput, options) => sessionAgent.deleteDetachedChatThread(
             normalizedSessionId,
             threadInput,
-            { runtime, session }
+            options
           ),
           runAgentTurn: (turnInput, options) => sessionAgent.streamDetachedChatTurn(
             normalizedSessionId,
             turnInput,
-            { ...options, runtime, session }
-          )
+            options
+          ),
+          expectedAccountIdentitySignature: providerDescription.accountIdentitySignature
         });
         await input.onProgress?.({
+          executionProfile: commitTitle.executionProfile,
           kind: "message",
           message: "Version name ready.",
           stage: "message-ready"
         });
-        return saveManagedSessionWork({
+        const saved = await saveManagedSessionWork({
           commandOptions: execution.commandOptions,
           derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
           expectedMessageTree: changes.worktreeTree,
           identity: execution.identity,
-          message,
+          message: commitTitle.subject,
           onProgress: input.onProgress,
           operationId: input.operationId,
           project,
@@ -1075,6 +1084,10 @@ function createService({
           },
           session
         });
+        return {
+          ...saved,
+          commitTitleExecutionProfile: commitTitle.executionProfile
+        };
       });
     },
 
@@ -1393,6 +1406,10 @@ function createService({
 
     describeAgentProvider(options = {}) {
       return sessionAgent.describeProvider(options);
+    },
+
+    resolveAgentExecutionProfile(sessionId, input = {}, options = {}) {
+      return sessionAgent.resolveExecutionProfile(sessionId, input, options);
     },
 
     interruptDetachedAgentChatTurn(sessionId, input = {}, options = {}) {

@@ -1,3 +1,7 @@
+import {
+  VIBE64_AGENT_EXECUTION_PROFILE_IDS
+} from "./agentExecutionProfiles.js";
+
 const VIBE64_AGENT_PROVIDER_IDS = Object.freeze({
   CLAUDE: "claude",
   CODEX: "codex",
@@ -18,8 +22,6 @@ const VIBE64_CODEX_GPT_5_5_MODEL = "gpt-5.5";
 const VIBE64_CODEX_DEFAULT_MODEL = VIBE64_CODEX_SOL_MODEL;
 const VIBE64_CODEX_DEFAULT_THINKING = "xhigh";
 const VIBE64_CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
-const VIBE64_CODEX_SOURCE_EXPLANATION_MODEL = VIBE64_CODEX_SPARK_MODEL;
-const VIBE64_CODEX_SOURCE_EXPLANATION_THINKING = "medium";
 const VIBE64_CODEX_STANDARD_THINKING_VALUES = Object.freeze([
   "low",
   "medium",
@@ -33,6 +35,9 @@ const VIBE64_CODEX_SOL_THINKING_VALUES = Object.freeze([
 
 const VIBE64_AGENT_PROVIDERS = Object.freeze([
   Object.freeze({
+    executionProfiles: Object.freeze([
+      VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY
+    ]),
     id: VIBE64_AGENT_PROVIDER_IDS.CODEX,
     implemented: true,
     label: "Codex",
@@ -100,12 +105,14 @@ const VIBE64_AGENT_PROVIDERS = Object.freeze([
     ])
   }),
   Object.freeze({
+    executionProfiles: Object.freeze([]),
     id: VIBE64_AGENT_PROVIDER_IDS.CLAUDE,
     implemented: false,
     label: "Claude",
     parameters: Object.freeze([])
   }),
   Object.freeze({
+    executionProfiles: Object.freeze([]),
     id: VIBE64_AGENT_PROVIDER_IDS.OPENCODE,
     implemented: false,
     label: "OpenCode",
@@ -165,18 +172,6 @@ function normalizeVibe64AgentSettings(value = {}) {
 function defaultVibe64AgentSettings(providerId = VIBE64_DEFAULT_AGENT_PROVIDER_ID) {
   return normalizeVibe64AgentSettings({
     providerId
-  });
-}
-
-function defaultVibe64SourceExplanationAgentSettings(providerId = VIBE64_DEFAULT_AGENT_PROVIDER_ID) {
-  const provider = agentProviderDefinition(providerId);
-  if (provider.id !== VIBE64_AGENT_PROVIDER_IDS.CODEX) {
-    return defaultVibe64AgentSettings(provider.id);
-  }
-  return normalizeVibe64AgentSettings({
-    model: VIBE64_CODEX_SOURCE_EXPLANATION_MODEL,
-    providerId: provider.id,
-    thinking: VIBE64_CODEX_SOURCE_EXPLANATION_THINKING
   });
 }
 
@@ -313,12 +308,9 @@ export {
   VIBE64_CODEX_DEFAULT_THINKING,
   VIBE64_CODEX_GPT_5_5_MODEL,
   VIBE64_CODEX_SOL_MODEL,
-  VIBE64_CODEX_SOURCE_EXPLANATION_MODEL,
-  VIBE64_CODEX_SOURCE_EXPLANATION_THINKING,
   VIBE64_CODEX_SPARK_MODEL,
   VIBE64_DEFAULT_AGENT_PROVIDER_ID,
   defaultVibe64AgentSettings,
-  defaultVibe64SourceExplanationAgentSettings,
   displayVibe64AgentSetting,
   effectiveVibe64AgentExecutionSettings,
   effectiveVibe64AgentSettings,

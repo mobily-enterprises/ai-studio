@@ -33,6 +33,13 @@ import {
 import {
   runVibe64AgentWriteExclusive
 } from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
+import {
+  createVibe64SessionStore
+} from "../../packages/vibe64-runtime/src/server/sessionStore.js";
+import {
+  projectRuntimeRoot,
+  withTemporaryRoot
+} from "./vibe64TestHelpers.js";
 
 function agentWriteLockHarness() {
   let active = false;
@@ -669,6 +676,91 @@ test("native Save persists bounded progress and advances the session base only a
   assert.deepEqual(publications[3][1].payload, {
     canonicalCommit: "def456",
     sourceSessionId: "session-1"
+  });
+});
+
+test("native Save persists its semantic commit-title profile across a durable task reload", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "save-profile-audit";
+    const store = createVibe64SessionStore({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId
+    });
+    const executionProfile = {
+      limits: {
+        maxInputCharacters: 12_000,
+        maxOutputCharacters: 1_000,
+        timeoutMs: 45_000
+      },
+      model: "provider-owned-economy-model",
+      policy: {
+        environmentAccess: false,
+        networkAccess: false,
+        repositoryWrite: false,
+        tools: "none"
+      },
+      profileId: "economy",
+      providerId: "codex",
+      request: {
+        allowProviderModelFallback: false,
+        reasoning: true,
+        summary: false
+      },
+      revision: "codex-economy-v2",
+      thinking: "low",
+      workloadId: "commit_title"
+    };
+    const runtime = {
+      getSession(id) {
+        return store.readSession(id);
+      },
+      async listSessionSummaries() {
+        return [await store.readSession(sessionId)];
+      },
+      store
+    };
+    const service = createService({
+      project: {
+        async createRuntime() {
+          return runtime;
+        }
+      },
+      terminals: {
+        async saveSessionWork(_sessionId, input) {
+          await input.onRepositoryWriteAcquired();
+          await input.onProgress({
+            executionProfile,
+            kind: "message",
+            message: "Version name ready.",
+            stage: "message-ready"
+          });
+          return {
+            commitTitleExecutionProfile: executionProfile,
+            reconciled: true,
+            saveCommit: "saved-profile-commit",
+            status: "saved"
+          };
+        }
+      }
+    });
+
+    const saved = await service.saveSessionWork(sessionId);
+    assert.equal(saved.ok, true);
+
+    const reloadedStore = createVibe64SessionStore({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    const reloadedTask = await reloadedStore.readBackgroundTask(sessionId, "save-work");
+    assert.deepEqual(reloadedTask.executionProfile, executionProfile);
+    assert.deepEqual(reloadedTask.commitTitleExecutionProfile, executionProfile);
+    assert.equal(reloadedTask.commitTitleExecutionProfile.profileId, "economy");
+    assert.equal(reloadedTask.commitTitleExecutionProfile.revision, "codex-economy-v2");
+    assert.equal(reloadedTask.commitTitleExecutionProfile.workloadId, "commit_title");
   });
 });
 

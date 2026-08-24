@@ -1,22 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
+  VIBE64_AGENT_PROVIDERS,
   VIBE64_CODEX_DEFAULT_MODEL,
   VIBE64_CODEX_DEFAULT_THINKING,
   VIBE64_CODEX_GPT_5_5_MODEL,
   VIBE64_CODEX_SOL_MODEL,
-  VIBE64_CODEX_SOURCE_EXPLANATION_MODEL,
-  VIBE64_CODEX_SOURCE_EXPLANATION_THINKING,
   VIBE64_CODEX_SPARK_MODEL,
   VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE,
   VIBE64_AGENT_PROVIDER_UNKNOWN_CODE,
   defaultVibe64AgentSettings,
-  defaultVibe64SourceExplanationAgentSettings,
   displayVibe64AgentSetting,
   effectiveVibe64AgentExecutionSettings,
   effectiveVibe64AgentSettings,
   normalizeVibe64AgentSettings,
   vibe64AgentSettingParameters
 } from "../../packages/vibe64-runtime/src/shared/agentSettings.js";
+import {
+  VIBE64_AGENT_EXECUTION_PROFILE_IDS,
+  vibe64AgentProviderSupportsExecutionProfile
+} from "../../packages/vibe64-runtime/src/shared/agentExecutionProfiles.js";
 import {
   agentSettingsStorageKey
 } from "../../src/composables/useVibe64AgentSettings.js";
@@ -55,27 +57,24 @@ describe("vibe64AgentSettings", () => {
     });
   });
 
-  it("exposes Codex Spark and uses the configured source explanation effort", () => {
+  it("keeps Spark explicitly selectable without making it a source-specific default", () => {
     expect(displayVibe64AgentSetting("codex", "model", VIBE64_CODEX_SPARK_MODEL)).toBe("Codex Spark");
-    expect(defaultVibe64SourceExplanationAgentSettings()).toEqual({
-      model: VIBE64_CODEX_SOURCE_EXPLANATION_MODEL,
+    expect(effectiveVibe64AgentSettings(defaultVibe64AgentSettings())).toEqual({
+      model: VIBE64_CODEX_DEFAULT_MODEL,
       providerId: "codex",
-      thinking: VIBE64_CODEX_SOURCE_EXPLANATION_THINKING
+      thinking: VIBE64_CODEX_DEFAULT_THINKING
     });
-    expect(effectiveVibe64AgentSettings(defaultVibe64SourceExplanationAgentSettings())).toEqual({
-      model: VIBE64_CODEX_SPARK_MODEL,
-      providerId: "codex",
-      thinking: "medium"
-    });
-    expect(effectiveVibe64AgentExecutionSettings(defaultVibe64SourceExplanationAgentSettings())).toEqual({
-      model: VIBE64_CODEX_SPARK_MODEL,
-      providerId: "codex",
-      request: {
-        reasoning: true,
-        summary: false
-      },
-      thinking: "medium"
-    });
+  });
+
+  it("advertises immutable economy support only for implemented providers", () => {
+    for (const provider of VIBE64_AGENT_PROVIDERS) {
+      expect(Object.isFrozen(provider)).toBe(true);
+      expect(Object.isFrozen(provider.executionProfiles)).toBe(true);
+      expect(vibe64AgentProviderSupportsExecutionProfile(
+        provider,
+        VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY
+      )).toBe(provider.implemented);
+    }
   });
 
   it("shows and accepts only the thinking levels supported by the selected Codex model", () => {

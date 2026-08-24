@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-08-24T00:00:00.000Z",
+  "appServer": {
+    "userAgent": "vibe64/0.149.0",
+    "transport": "codex_app_server"
+  },
+  "profile": {
+    "profileId": "economy",
+    "revision": "codex-economy-luna-low-v2",
+    "model": "gpt-5.6-luna",
+    "thinking": "low"
+  },
+  "cases": [
+    {
+      "id": "source-explanation-clamp",
+      "workloadId": "source_explanation",
+      "prompt": "Explain this JavaScript function for a developer who is new to the codebase.\nState what it returns, what each argument controls, and one important edge case.\nUse two to four concise sentences and return only the required JSON object.\n\n```js\nfunction clamp(value, minimum, maximum) {\n  return Math.min(maximum, Math.max(minimum, value));\n}\n```",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "maxLength": 1200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["answer"],
+        "type": "object"
+      },
+      "rawOutput": "{\"answer\":\"`clamp` returns `value` constrained to the inclusive range from `minimum` to `maximum`: values below `minimum` become `minimum`, and values above `maximum` become `maximum`. The arguments are the value to constrain, the lower bound, and the upper bound, respectively. If `minimum` is greater than `maximum`, the result is determined by the nested `Math.min`/`Math.max` calls and may not behave as an expected range clamp.\"}",
+      "observation": {
+        "durationMs": 5339,
+        "forbiddenEventCount": 0,
+        "usage": {
+          "inputTokens": 2456,
+          "outputTokens": 110,
+          "reasoningOutputTokens": 0,
+          "totalTokens": 2566
+        }
+      }
+    },
+    {
+      "id": "prompt-hints-team-task-tracker",
+      "workloadId": "prompt_hint",
+      "prompt": "Suggest exactly three useful next prompts for the person in this product-building chat.\nEach suggestion must be concrete, friendly, under 120 characters, and must not assume work is already complete.\nReturn only the required JSON object.\n\nProject state:\n- The person wants a small team task tracker.\n- The assistant asked which database to use.\n- The person chose MySQL.\n- No application screens have been implemented yet.",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "suggestions": {
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": ["suggestions"],
+        "type": "object"
+      },
+      "rawOutput": "{\"suggestions\":[\"Please design the MySQL schema for teams, tasks, users, statuses, and due dates.\",\"Can you outline the first task tracker screen and its key user interactions?\",\"Please propose a simple MVP plan for building the tracker with MySQL.\"]}",
+      "observation": {
+        "durationMs": 6542,
+        "forbiddenEventCount": 0,
+        "usage": {
+          "inputTokens": 2481,
+          "outputTokens": 102,
+          "reasoningOutputTokens": 28,
+          "totalTokens": 2583
+        }
+      }
+    }
+  ]
+}

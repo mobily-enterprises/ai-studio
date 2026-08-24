@@ -1,5 +1,6 @@
 <template>
   <section
+    ref="sourceEditorElement"
     class="vibe64-source-editor"
     :class="{ 'vibe64-source-editor--code-focus': codeFocusMode }"
     aria-label="Session source editor"
@@ -54,17 +55,17 @@
         />
         <v-btn
           class="vibe64-source-editor__explain-button"
+          :aria-busy="editor.explanationBusy.value ? 'true' : 'false'"
           color="primary"
           :disabled="!editor.selectedPath.value || editor.explanationBusy.value"
-          :loading="editor.explanationBusy.value"
           :prepend-icon="mdiRobotOutline"
           size="small"
-          title="Explain file or selection"
+          :title="editor.explanationBusy.value ? 'Explanation in progress' : 'Explain file or selection'"
           type="button"
           variant="tonal"
           @click="explainCurrentSelection"
         >
-          Explain
+          {{ editor.explanationBusy.value ? "Working…" : "Explain" }}
         </v-btn>
         <v-btn
           :disabled="editor.loadingTree.value"
@@ -355,19 +356,17 @@
           >
             <Vibe64SourceExplanationPanel
               v-show="!explanationCollapsed"
-              :agent-settings="editor.explanationAgentSettings.value"
               :busy="editor.explanationBusy.value"
               :explanation="editor.activeExplanation.value"
               :followup="editor.explanationFollowup.value"
               :selected-path="editor.selectedPath.value"
-              @close="editor.closeExplanation"
+              @close="closeExplanationPanel"
               @collapse="collapseExplanation"
               @open-range="openExplanationRange"
               @open-source-link="openExplanationSourceLink"
               @retry="editor.retryExplanation"
               @send-followup="editor.sendExplanationFollowup"
               @stop="editor.stopExplanation"
-              @update-agent-setting="editor.updateExplanationAgentSetting"
               @update:followup="editor.updateExplanationFollowup"
             />
             <button
@@ -562,8 +561,10 @@ const emit = defineEmits(["ask-codex-about-file"]);
 
 const editorElement = ref(null);
 let editorView = null;
+let explanationFocusTimer = null;
 let renderedEditorPath = "";
 let resettingEditor = false;
+let sourceEditorUnmounted = false;
 const editor = useVibe64SourceEditor({
   active: () => props.active,
   navigateReferencedSource: (navigation) => props.navigateReferencedSource?.(navigation),
@@ -629,6 +630,7 @@ const expandedDirectoryPaths = ref([]);
 const explanationCollapsed = ref(false);
 const fileListCollapsed = ref(false);
 const newFileDialogOpen = ref(false);
+const sourceEditorElement = ref(null);
 const newFileDirectory = ref("");
 const newFileError = ref("");
 const newFileName = ref("");
@@ -687,12 +689,36 @@ function searchResultTitle(result = {}) {
   return `${result.path || ""}:${result.line || 1}:${result.column || 1}`;
 }
 
-function collapseExplanation() {
-  explanationCollapsed.value = true;
+async function focusAfterLayout(rootElement = null, selector = "") {
+  await nextTick();
+  if (sourceEditorUnmounted) {
+    return;
+  }
+  if (explanationFocusTimer) {
+    clearTimeout(explanationFocusTimer);
+  }
+  explanationFocusTimer = setTimeout(() => {
+    explanationFocusTimer = null;
+    rootElement?.querySelector?.(selector)?.focus?.();
+  }, 0);
 }
 
-function expandExplanation() {
+function collapseExplanation(event = {}) {
+  const rootElement = event?.currentTarget?.closest?.(".vibe64-source-editor") || sourceEditorElement.value;
+  explanationCollapsed.value = true;
+  void focusAfterLayout(rootElement, ".vibe64-source-editor__side-rail--right");
+}
+
+function expandExplanation(event = {}) {
+  const rootElement = event?.currentTarget?.closest?.(".vibe64-source-editor") || sourceEditorElement.value;
   explanationCollapsed.value = false;
+  void focusAfterLayout(rootElement, ".vibe64-source-explanation__range");
+}
+
+function closeExplanationPanel(event = {}) {
+  const rootElement = event?.currentTarget?.closest?.(".vibe64-source-editor") || sourceEditorElement.value;
+  editor.closeExplanation();
+  void focusAfterLayout(rootElement, ".vibe64-source-editor__explain-button");
 }
 
 function collapseFileList() {
@@ -1231,6 +1257,11 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  sourceEditorUnmounted = true;
+  if (explanationFocusTimer) {
+    clearTimeout(explanationFocusTimer);
+    explanationFocusTimer = null;
+  }
   editorView?.destroy();
   editorView = null;
   renderedEditorPath = "";
@@ -1304,6 +1335,7 @@ onBeforeUnmount(() => {
 
 .vibe64-source-editor__explain-button {
   font-weight: 680;
+  min-inline-size: 6.25rem;
   text-transform: none;
 }
 

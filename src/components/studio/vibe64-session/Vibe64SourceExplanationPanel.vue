@@ -1,5 +1,6 @@
 <template>
   <aside
+    :aria-busy="busy ? 'true' : 'false'"
     class="vibe64-source-explanation"
     aria-label="Source explanation"
   >
@@ -31,22 +32,24 @@
         </v-chip>
       </div>
       <v-btn
-        class="vibe64-source-explanation__collapse-button"
+        class="vibe64-source-explanation__action-target"
         aria-label="Collapse explanation"
         :icon="mdiChevronRight"
         size="small"
         title="Collapse explanation"
         type="button"
         variant="text"
-        @click="emit('collapse')"
+        @click="emit('collapse', $event)"
       />
       <v-btn
+        class="vibe64-source-explanation__action-target"
+        aria-label="Close explanation"
         :icon="mdiClose"
         size="x-small"
         title="Close explanation"
         type="button"
         variant="text"
-        @click="emit('close')"
+        @click="emit('close', $event)"
       />
     </header>
 
@@ -64,6 +67,7 @@
       ref="threadElement"
       class="vibe64-source-explanation__thread"
       aria-label="Explanation chat"
+      tabindex="0"
       @scroll="updateThreadFollowState"
     >
       <article
@@ -98,7 +102,7 @@
               aria-hidden="true"
               class="vibe64-source-explanation__status-mark"
             />
-            <span>Thinking...</span>
+            <span>Thinking…</span>
           </div>
         </div>
         <LongTextPreviewBlocks
@@ -131,16 +135,13 @@
       aria-label="Explanation controls"
     >
       <p>
-        {{ busy ? "Waiting for the explanation…" : "No explanation was produced. Adjust the settings if needed, then retry." }}
+        {{ busy ? "Waiting for the explanation…" : "No explanation was produced. Check the assistant provider, then retry." }}
       </p>
       <div class="vibe64-source-explanation__recovery-actions">
-        <Vibe64AgentSettingsMenu
-          :agent-settings="agentSettings"
-          :disabled="busy"
-          @update-setting="updateAgentSetting"
-        />
         <v-btn
           v-if="busy"
+          class="vibe64-source-explanation__action-target"
+          aria-label="Stop explanation"
           color="error"
           :icon="mdiStop"
           size="small"
@@ -151,6 +152,7 @@
         />
         <v-btn
           v-else
+          class="vibe64-source-explanation__action-target"
           color="primary"
           :prepend-icon="mdiRefresh"
           size="small"
@@ -181,15 +183,11 @@
       >
         <template #footer>
           <div class="vibe64-source-explanation__followup-footer">
-            <Vibe64AgentSettingsMenu
-              :agent-settings="agentSettings"
-              :disabled="busy"
-              @update-setting="updateAgentSetting"
-            />
             <v-btn
-              v-if="thinking"
+              v-if="busy"
+              class="vibe64-source-explanation__action-target"
+              aria-label="Stop explanation"
               color="error"
-              :disabled="!busy"
               :icon="mdiStop"
               size="small"
               title="Stop explanation"
@@ -198,6 +196,8 @@
               @click="emit('stop')"
             />
             <v-btn
+              class="vibe64-source-explanation__action-target"
+              aria-label="Send follow-up"
               color="primary"
               :disabled="!followup.trim() || busy"
               :icon="mdiSend"
@@ -225,17 +225,12 @@ import {
 
 import { useScrollToBottom } from "@/composables/useScrollToBottom.js";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
-import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import LongTextPreviewBlocks from "@/components/studio/LongTextPreviewBlocks.vue";
 import { scrollElementNearBottom } from "@/lib/scrollFollowState.js";
 import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 import { sourceEditorLinkTarget } from "@/lib/vibe64SourceEditorLinks.js";
 
 const props = defineProps({
-  agentSettings: {
-    default: () => ({}),
-    type: Object
-  },
   busy: {
     default: false,
     type: Boolean
@@ -269,7 +264,6 @@ const emit = defineEmits([
   "retry",
   "send-followup",
   "stop",
-  "update-agent-setting",
   "update:followup"
 ]);
 
@@ -303,7 +297,6 @@ const followupAvailable = computed(() => Boolean(
     ))
   )
 ));
-const thinking = computed(() => chatMessages.value.some((message) => message.status === "thinking"));
 const sourceRange = computed(() => props.explanation?.sourceRange || {});
 const sourceRangeFullLabel = computed(() => sourceRangeDisplayLabel(sourceRange.value, {
   compact: false
@@ -381,10 +374,6 @@ function submitFollowup() {
     return;
   }
   emit("send-followup");
-}
-
-function updateAgentSetting(parameterId = "", value = "") {
-  emit("update-agent-setting", parameterId, value);
 }
 
 function queueThreadBottomScroll({
@@ -487,11 +476,18 @@ watch(threadScrollKey, (value, previous) => {
   inline-size: auto;
   line-height: 1.2;
   max-inline-size: 100%;
+  min-block-size: 3rem;
   min-width: 0;
   overflow: hidden;
   padding: 0;
   text-align: left;
   white-space: nowrap;
+}
+
+.vibe64-source-explanation__range:focus-visible,
+.vibe64-source-explanation__thread:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
 }
 
 .vibe64-source-explanation__range-path {
@@ -692,13 +688,14 @@ watch(threadScrollKey, (value, previous) => {
 }
 
 .vibe64-source-explanation__followup-footer :deep(.v-btn) {
-  block-size: 2.25rem;
-  inline-size: 2.25rem;
-  min-inline-size: 2.25rem;
+  block-size: 3rem;
+  inline-size: 3rem;
+  min-inline-size: 3rem;
 }
 
-.vibe64-source-explanation__collapse-button {
-  min-inline-size: 2.2rem;
+.vibe64-source-explanation__action-target {
+  min-block-size: 3rem;
+  min-inline-size: 3rem;
 }
 
 .vibe64-source-explanation__thread-bottom {
@@ -714,6 +711,12 @@ watch(threadScrollKey, (value, previous) => {
 
   50% {
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe64-source-explanation__status-mark {
+    animation: none;
   }
 }
 </style>

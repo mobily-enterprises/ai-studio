@@ -287,6 +287,94 @@ test("Codex Git command preparation preserves unchanged wrappers", async () => {
   });
 });
 
+test("Codex Git command preparation coalesces concurrent socket startup and replacement", async () => {
+  await withTemporaryRoot(async (root) => {
+    const env = {
+      VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(root, "attachments")
+    };
+    const sessionId = "concurrent-wrapper-session";
+    const stateRoot = path.join(root, "state");
+    const sourcePath = path.join(root, "source");
+    await mkdir(sourcePath, { recursive: true });
+    let firstServiceCalls = 0;
+    const firstService = {
+      async run() {
+        firstServiceCalls += 1;
+        return {
+          exitCode: 0,
+          ok: true,
+          stdout: "first-service\n"
+        };
+      }
+    };
+    const prepareMany = (commandService) => Promise.all(Array.from({ length: 8 }, () => (
+      prepareCodexGitCommand({
+        commandService,
+        env,
+        sessionId,
+        stateRoot
+      })
+    )));
+
+    const initial = await prepareMany(firstService);
+    assert.equal(initial.every(({ ok }) => ok === true), true);
+    assert.equal(new Set(initial.map(({ hostSocketPath }) => hostSocketPath)).size, 1);
+    assert.deepEqual(
+      initial.map(({ env: commandEnv }) => commandEnv),
+      Array.from({ length: initial.length }, () => initial[0].env)
+    );
+
+    const firstRun = await runProcessWithInput(
+      path.join(initial[0].hostWrapperDir, "git"),
+      ["status", "--short"],
+      {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...initial[0].env
+        }
+      }
+    );
+    assert.equal(firstRun.exitCode, 0, firstRun.stderr);
+    assert.equal(firstRun.stdout, "first-service\n");
+    assert.equal(firstServiceCalls, 1);
+
+    let replacementServiceCalls = 0;
+    const replacementService = {
+      async run() {
+        replacementServiceCalls += 1;
+        return {
+          exitCode: 0,
+          ok: true,
+          stdout: "replacement-service\n"
+        };
+      }
+    };
+    const replacements = await prepareMany(replacementService);
+    assert.equal(replacements.every(({ ok }) => ok === true), true);
+    assert.deepEqual(
+      replacements.map(({ env: commandEnv }) => commandEnv),
+      Array.from({ length: replacements.length }, () => replacements[0].env)
+    );
+
+    const replacementRun = await runProcessWithInput(
+      path.join(replacements[0].hostWrapperDir, "git"),
+      ["status", "--short"],
+      {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...replacements[0].env
+        }
+      }
+    );
+    assert.equal(replacementRun.exitCode, 0, replacementRun.stderr);
+    assert.equal(replacementRun.stdout, "replacement-service\n");
+    assert.equal(firstServiceCalls, 1);
+    assert.equal(replacementServiceCalls, 1);
+  });
+});
+
 test("Codex rejects gh for a non-GitHub session", async () => {
   await withTemporaryRoot(async (root) => {
     const session = sessionSource(root);

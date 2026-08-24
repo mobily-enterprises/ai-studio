@@ -1,11 +1,40 @@
 import {
-  VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE
+  VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
+  VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE,
+  Vibe64AgentExecutionProfileError,
+  defineVibe64AgentExecutionProfileRequest,
+  vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
   normalizeText
 } from "@local/vibe64-core/server/core";
 
 const SESSION_AGENT_PROVIDER_BINDING_CONFLICT_CODE = "vibe64_agent_provider_binding_conflict";
+const EXECUTION_PROFILE_RESOLUTION_METHODS = new Set([
+  "runDetachedChatTurn",
+  "streamDetachedChatTurn"
+]);
+const EXECUTION_PROFILE_RESOLUTION_FIELDS = new Set([
+  "limits",
+  "policy",
+  "providerId",
+  "request",
+  "revision",
+  "thinking"
+]);
+
+function hasOwn(value, key) {
+  return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function looksLikeExecutionProfileResolution(value = null) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).some((field) => EXECUTION_PROFILE_RESOLUTION_FIELDS.has(field))
+  );
+}
 
 function sessionAgentProviderId(options = {}, fallbackProviderId = "") {
   return normalizeText(
@@ -61,13 +90,54 @@ function agentOperationResult(provider = {}, sessionId = "", result = {}) {
   };
 }
 
+function verifiedExecutionProfileResolution(provider = {}, request = {}, value = null) {
+  const resolution = vibe64AgentExecutionProfileAuditSnapshot(value);
+  const expectedIdentity = {
+    profileId: request.profileId,
+    providerId: provider.id,
+    workloadId: request.workloadId
+  };
+  for (const [field, expected] of Object.entries(expectedIdentity)) {
+    if (resolution[field] !== expected) {
+      throw new Vibe64AgentExecutionProfileError(
+        VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.INVALID,
+        `Assistant provider ${provider.id} returned an execution profile with the wrong ${field}.`,
+        {
+          actual: resolution[field],
+          expected,
+          field: `resolution.${field}`
+        }
+      );
+    }
+  }
+  return resolution;
+}
+
+function untrustedExecutionProfileResolutionError(provider = {}, sessionId = "", details = {}) {
+  return new Vibe64AgentExecutionProfileError(
+    VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.INVALID,
+    "The pre-resolved assistant execution profile was not issued for this provider session.",
+    {
+      field: "executionProfile",
+      providerId: normalizeText(provider.id),
+      sessionId: normalizeText(sessionId),
+      ...details
+    }
+  );
+}
+
 function createSessionAgentManager({
   defaultProviderId = "codex",
   providers = []
 } = {}) {
   const providerById = new Map();
   const bindings = new Map();
+  const bindingTokens = new Map();
   const operations = new Map();
+  // A full profile selects provider-owned execution details. Only the exact
+  // in-process object issued by this manager may carry those details into a
+  // turn; clones and durable snapshots are audit records, not capabilities.
+  const verifiedExecutionProfiles = new WeakMap();
 
   for (const candidate of providers) {
     const provider = normalizeProvider(candidate);
@@ -101,6 +171,9 @@ function createSessionAgentManager({
       providerId: requestedProviderId || currentProviderId || defaultProviderId
     });
     bindings.set(id, provider.id);
+    if (!bindingTokens.has(id)) {
+      bindingTokens.set(id, Object.freeze({}));
+    }
     return provider;
   }
 
@@ -124,6 +197,44 @@ function createSessionAgentManager({
     }
   }
 
+  function rememberVerifiedExecutionProfile(provider = {}, sessionId = "", resolution = null) {
+    const snapshot = vibe64AgentExecutionProfileAuditSnapshot(resolution);
+    const attributed = Object.freeze(agentOperationResult(provider, sessionId, snapshot));
+    verifiedExecutionProfiles.set(attributed, Object.freeze({
+      providerId: provider.id,
+      sessionBinding: bindingTokens.get(normalizeText(sessionId)),
+      sessionId: normalizeText(sessionId),
+      snapshot,
+      transportId: provider.transportId
+    }));
+    return attributed;
+  }
+
+  function trustedExecutionProfile(provider = {}, sessionId = "", value = null) {
+    const snapshot = vibe64AgentExecutionProfileAuditSnapshot(value);
+    const provenance = verifiedExecutionProfiles.get(value);
+    const normalizedSessionId = normalizeText(sessionId);
+    if (
+      !provenance ||
+      provenance.providerId !== provider.id ||
+      provenance.sessionBinding !== bindingTokens.get(normalizedSessionId) ||
+      provenance.sessionId !== normalizedSessionId ||
+      provenance.transportId !== provider.transportId
+    ) {
+      throw untrustedExecutionProfileResolutionError(provider, normalizedSessionId);
+    }
+    const expected = provenance.snapshot;
+    if (JSON.stringify(snapshot) !== JSON.stringify(expected)) {
+      throw untrustedExecutionProfileResolutionError(provider, normalizedSessionId, {
+        reason: "changed"
+      });
+    }
+    return verifiedExecutionProfileResolution(provider, {
+      profileId: expected.profileId,
+      workloadId: expected.workloadId
+    }, expected);
+  }
+
   async function callSessionProvider(method = "", sessionId = "", input = {}, options = {}, {
     coalesceIdentity = ""
   } = {}) {
@@ -142,15 +253,73 @@ function createSessionAgentManager({
       runtime: operationOptions.runtime || null,
       session: operationOptions.session || null,
       sessionId: normalizeText(sessionId),
+      signal: operationOptions.signal || null,
       transportId: provider.transportId,
       turnOwnership: operationOptions.turnOwnership || null,
       vibe64User: operationOptions.vibe64User || null
     };
-    const run = async () => agentOperationResult(
-      provider,
-      sessionId,
-      await provider[method](context, input)
-    );
+    const run = async () => {
+      const executionProfileRequest = method === "resolveExecutionProfile"
+        ? defineVibe64AgentExecutionProfileRequest(input)
+        : null;
+      let providerInput = executionProfileRequest || input;
+      if (method !== "resolveExecutionProfile" && hasOwn(input, "executionProfile")) {
+        if (EXECUTION_PROFILE_RESOLUTION_METHODS.has(method)) {
+          if (looksLikeExecutionProfileResolution(input.executionProfile)) {
+            providerInput = {
+              ...input,
+              executionProfile: trustedExecutionProfile(
+                provider,
+                sessionId,
+                input.executionProfile
+              )
+            };
+          } else {
+            if (typeof provider.resolveExecutionProfile !== "function") {
+              throw new TypeError(
+                `Assistant provider ${provider.id} does not implement resolveExecutionProfile().`
+              );
+            }
+            const requestedExecutionProfile = defineVibe64AgentExecutionProfileRequest(
+              input.executionProfile
+            );
+            providerInput = {
+              ...input,
+              executionProfile: verifiedExecutionProfileResolution(
+                provider,
+                requestedExecutionProfile,
+                await provider.resolveExecutionProfile(
+                  context,
+                  requestedExecutionProfile
+                )
+              )
+            };
+          }
+        } else {
+          if (
+            !input.executionProfile ||
+            typeof input.executionProfile !== "object" ||
+            Array.isArray(input.executionProfile)
+          ) {
+            defineVibe64AgentExecutionProfileRequest(input.executionProfile);
+          }
+          providerInput = {
+            ...input,
+            executionProfile: Object.keys(input.executionProfile).length === 2
+              ? defineVibe64AgentExecutionProfileRequest(input.executionProfile)
+              : vibe64AgentExecutionProfileAuditSnapshot(input.executionProfile)
+          };
+        }
+      }
+      const result = await provider[method](context, providerInput);
+      return executionProfileRequest
+        ? rememberVerifiedExecutionProfile(
+            provider,
+            sessionId,
+            verifiedExecutionProfileResolution(provider, executionProfileRequest, result)
+          )
+        : agentOperationResult(provider, sessionId, result);
+    };
     const identity = normalizeText(coalesceIdentity);
     return identity
       ? coalescedOperation(operationKey(sessionId, provider.id, method, identity), run)
@@ -186,6 +355,7 @@ function createSessionAgentManager({
         }));
     if (result.ok !== false) {
       bindings.delete(id);
+      bindingTokens.delete(id);
     }
     return result;
   }
@@ -203,11 +373,44 @@ function createSessionAgentManager({
     deleteConversation: sessionMethod("deleteConversation"),
     deleteAttachment: sessionMethod("deleteAttachment"),
     deleteDetachedChatThread: sessionMethod("deleteDetachedChatThread"),
-    describeProvider(options = {}) {
-      const provider = providerFor(options);
-      return Object.freeze({
+    async describeProvider(options = {}) {
+      const sessionId = normalizeText(options?.session?.sessionId || options?.session?.id);
+      const provider = sessionId
+        ? bindSession(sessionId, options)
+        : providerFor(options);
+      const fallback = {
         providerId: provider.id,
         transportId: provider.transportId
+      };
+      if (typeof provider.describeProvider !== "function") {
+        return Object.freeze(fallback);
+      }
+      const described = await provider.describeProvider({
+        providerId: provider.id,
+        runtime: options.runtime || null,
+        session: options.session || null,
+        sessionId,
+        transportId: provider.transportId,
+        vibe64User: options.vibe64User || null
+      });
+      const providerId = normalizeText(described?.providerId);
+      const transportId = normalizeText(described?.transportId);
+      if (providerId !== provider.id || transportId !== provider.transportId) {
+        throw providerBindingConflictError(
+          sessionId,
+          provider.id,
+          providerId || "unknown"
+        );
+      }
+      const accountIdentitySignature = normalizeText(described?.accountIdentitySignature);
+      if (!/^sha256:[a-f0-9]{64}$/u.test(accountIdentitySignature)) {
+        throw new TypeError(
+          `Assistant provider ${provider.id} did not return a stable account identity.`
+        );
+      }
+      return Object.freeze({
+        ...fallback,
+        accountIdentitySignature
       });
     },
     ensureSession(sessionId = "", options = {}) {
@@ -231,6 +434,7 @@ function createSessionAgentManager({
       }, sessions, options));
     },
     readConversation: sessionMethod("readConversation"),
+    resolveExecutionProfile: sessionMethod("resolveExecutionProfile"),
     readTerminal(sessionId = "", terminalSessionId = "", options = {}) {
       return callSessionProvider("readTerminal", sessionId, { terminalSessionId }, options);
     },

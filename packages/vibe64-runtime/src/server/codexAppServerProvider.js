@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 import {
   chmod,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -44,7 +45,7 @@ import {
   prepareCodexAttachmentRoot
 } from "./codexAttachmentPaths.js";
 
-const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 15;
+const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 16;
 const CODEX_APP_SERVER_PROVIDER_ID = AGENT_PROVIDER_IDS.CODEX_APP_SERVER;
 const CODEX_APP_SERVER_TRANSPORT = Object.freeze({
   UNIX: "unix"
@@ -60,14 +61,49 @@ const CODEX_APP_SERVER_LOCK_TIMEOUT_MS = 10000;
 const CODEX_APP_SERVER_LOCK_STALE_MS = 120000;
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const CODEX_APP_SERVER_INVALID_REQUEST_CODE = -32600;
+const CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE = "vibe64_codex_model_catalog_invalid";
+const CODEX_APP_SERVER_MODEL_CATALOG_PAGE_LIMIT = 100;
+const CODEX_APP_SERVER_MODEL_CATALOG_MAX_PAGES = 100;
+const CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRIES = 1000;
+const CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRY_BYTES = 32 * 1024;
+const CODEX_APP_SERVER_MODEL_CATALOG_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
+const CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH = 512;
+const CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT = 100;
+const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_PAGES = 100;
+const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_COUNT = 1000;
+const CODEX_APP_SERVER_ECONOMY_THREAD_ID_MAX_LENGTH = 512;
+const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES = 64 * 1024;
+const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
+const CODEX_APP_SERVER_SELECTED_AUTH_MAX_BYTES = 1024 * 1024;
+const CODEX_APP_SERVER_CHATGPT_ACCESS_TOKEN_MAX_LENGTH = 256 * 1024;
+const CODEX_APP_SERVER_ACCOUNT_ID_MAX_LENGTH = 512;
+const CODEX_APP_SERVER_PLAN_TYPE_MAX_LENGTH = 128;
+const CODEX_APP_SERVER_API_KEY_MAX_LENGTH = 16 * 1024;
+const CODEX_APP_SERVER_ECONOMY_MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
+const CODEX_APP_SERVER_SERVER_INFO_USER_AGENT_MAX_LENGTH = 512;
 const CODEX_AUTH_PREFLIGHT_TIMEOUT_MS = 15000;
 const CODEX_AUTH_PREFLIGHT_OUTPUT_TAIL_BYTES = 4096;
 const CODEX_APP_SERVER_CLIENT_VERSION = "0.1.0";
+const CODEX_APP_SERVER_EXECUTION_MODES = Object.freeze({
+  ECONOMY: "economy",
+  INTERACTIVE: "interactive"
+});
+const CODEX_APP_SERVER_ECONOMY_HOME_DIR = "codex-home";
+const CODEX_APP_SERVER_ECONOMY_WORKSPACE_DIR = "workspace";
+const CODEX_APP_SERVER_CHATGPT_REFRESH_METHOD = "account/chatgptAuthTokens/refresh";
 const CODEX_APP_SERVER_MANAGED_UMASK = "0007";
 const CODEX_APP_SERVER_MANAGED_SHELL = "/bin/sh";
 const CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT = [
   `umask ${CODEX_APP_SERVER_MANAGED_UMASK}`,
   'exec "$@"'
+].join("\n");
+const CODEX_APP_SERVER_ECONOMY_STARTUP_SCRIPT = [
+  `umask ${CODEX_APP_SERVER_MANAGED_UMASK}`,
+  "exec /usr/bin/env -i \\",
+  '  HOME="$HOME" LOGNAME="$LOGNAME" USER="$USER" PATH="$PATH" \\',
+  '  CODEX_HOME="$CODEX_HOME" LANG="$LANG" LC_ALL="$LC_ALL" LC_CTYPE="$LC_CTYPE" \\',
+  '  SSL_CERT_DIR="$SSL_CERT_DIR" SSL_CERT_FILE="$SSL_CERT_FILE" TERM="$TERM" TMPDIR="$TMPDIR" TZ="$TZ" \\',
+  '  "$@"'
 ].join("\n");
 const CODEX_APP_SERVER_UNIX_SOCKET_PATH_MAX_BYTES = process.platform === "linux" ? 107 : 103;
 const VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV = "VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR";
@@ -100,6 +136,169 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isSafeInteger(number) && number > 0 ? number : fallback;
 }
 
+function codexAppServerTextHasControlCharacters(value = "") {
+  return Array.from(String(value)).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint === 127;
+  });
+}
+
+function codexAppServerExecutionMode(options = {}) {
+  return normalizeAgentText(options.executionMode) === CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+    ? CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+    : CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE;
+}
+
+function codexAppServerIsEconomy(options = {}) {
+  return codexAppServerExecutionMode(options) === CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY;
+}
+
+function codexAppServerEconomyAuthError(code = "", message = "") {
+  const error = new Error(
+    normalizeAgentText(message) || "Codex economy authentication is unavailable. Reconnect Codex and retry."
+  );
+  error.code = normalizeAgentText(code) || "vibe64_codex_economy_auth_unavailable";
+  return error;
+}
+
+function boundedCodexAuthText(value, {
+  label = "Codex authentication value",
+  maxLength = 0
+} = {}) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+    throw codexAppServerEconomyAuthError(
+      "vibe64_codex_economy_auth_invalid",
+      `${label} is missing or invalid. Reconnect Codex and retry.`
+    );
+  }
+  return value;
+}
+
+function codexAccountIdentitySignature(authMode = "", identity = "") {
+  return `sha256:${createHash("sha256")
+    .update("vibe64-codex-account-v1\0", "utf8")
+    .update(normalizeAgentText(authMode), "utf8")
+    .update("\0", "utf8")
+    .update(String(identity || ""), "utf8")
+    .digest("hex")}`;
+}
+
+function codexAuthSecretSignature(secret = "") {
+  return createHash("sha256")
+    .update("vibe64-codex-auth-secret-v1\0", "utf8")
+    .update(String(secret || ""), "utf8")
+    .digest("hex");
+}
+
+async function readBoundedCodexAuthJson(filePath = "") {
+  let handle = null;
+  try {
+    handle = await open(filePath, "r");
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile() || fileStat.size > CODEX_APP_SERVER_SELECTED_AUTH_MAX_BYTES) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_invalid",
+        "The selected Codex authentication record is invalid. Reconnect Codex and retry."
+      );
+    }
+    const buffer = Buffer.alloc(CODEX_APP_SERVER_SELECTED_AUTH_MAX_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+    if (offset > CODEX_APP_SERVER_SELECTED_AUTH_MAX_BYTES) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_invalid",
+        "The selected Codex authentication record is too large. Reconnect Codex and retry."
+      );
+    }
+    const parsed = JSON.parse(buffer.subarray(0, offset).toString("utf8"));
+    if (!isPlainObject(parsed)) {
+      throw new Error("invalid authentication record");
+    }
+    return parsed;
+  } catch (error) {
+    if (error?.code?.startsWith?.("vibe64_codex_economy_auth_")) {
+      throw error;
+    }
+    throw codexAppServerEconomyAuthError(
+      "vibe64_codex_economy_auth_unavailable",
+      "The selected Codex authentication record could not be read. Reconnect Codex and retry."
+    );
+  } finally {
+    await handle?.close?.().catch(() => null);
+  }
+}
+
+async function readCodexSelectedAccountAuth(options = {}) {
+  const toolHomeSource = normalizeAgentText(options.toolHomeSource);
+  if (!toolHomeSource || !path.isAbsolute(toolHomeSource)) {
+    throw codexAppServerEconomyAuthError(
+      "vibe64_codex_economy_auth_unavailable",
+      "The selected Codex account is unavailable. Reconnect Codex and retry."
+    );
+  }
+  const auth = await readBoundedCodexAuthJson(path.join(toolHomeSource, ".codex", "auth.json"));
+  const storedMode = normalizeAgentText(auth.auth_mode).toLowerCase();
+  if (storedMode === "chatgpt") {
+    const tokens = isPlainObject(auth.tokens) ? auth.tokens : {};
+    const accountId = boundedCodexAuthText(tokens.account_id, {
+      label: "Codex account identity",
+      maxLength: CODEX_APP_SERVER_ACCOUNT_ID_MAX_LENGTH
+    });
+    const accessToken = boundedCodexAuthText(tokens.access_token, {
+      label: "Codex access token",
+      maxLength: CODEX_APP_SERVER_CHATGPT_ACCESS_TOKEN_MAX_LENGTH
+    });
+    const planTypeValue = tokens.chatgpt_plan_type ?? tokens.plan_type;
+    const planType = planTypeValue === undefined || planTypeValue === null || planTypeValue === ""
+      ? ""
+      : boundedCodexAuthText(planTypeValue, {
+          label: "Codex plan type",
+          maxLength: CODEX_APP_SERVER_PLAN_TYPE_MAX_LENGTH
+        });
+    return Object.freeze({
+      accessToken,
+      accountId,
+      authMode: "chatgpt",
+      identitySignature: codexAccountIdentitySignature("chatgpt", accountId),
+      planType,
+      secretSignature: codexAuthSecretSignature(accessToken)
+    });
+  }
+  if (["apikey", "api_key"].includes(storedMode)) {
+    const apiKey = boundedCodexAuthText(auth.OPENAI_API_KEY, {
+      label: "Codex API key",
+      maxLength: CODEX_APP_SERVER_API_KEY_MAX_LENGTH
+    });
+    return Object.freeze({
+      apiKey,
+      authMode: "apiKey",
+      identitySignature: codexAccountIdentitySignature("apiKey", apiKey),
+      secretSignature: codexAuthSecretSignature(apiKey)
+    });
+  }
+  throw codexAppServerEconomyAuthError(
+    "vibe64_codex_economy_auth_invalid",
+    "The selected Codex authentication mode is unsupported. Reconnect Codex and retry."
+  );
+}
+
+async function currentCodexAccountIdentitySignature(options = {}) {
+  const explicit = normalizeAgentText(options.accountIdentitySignature);
+  if (explicit) {
+    return explicit;
+  }
+  if (!codexAppServerIsEconomy(options)) {
+    return "";
+  }
+  return (await readCodexSelectedAccountAuth(options)).identitySignature;
+}
+
 function hasOwn(object = {}, property = "") {
   return Object.prototype.hasOwnProperty.call(object, property);
 }
@@ -109,6 +308,89 @@ function codexAppServerRequestIsInvalid(error = null, method = "") {
   const actualMethod = normalizeAgentText(error?.method);
   return Number(error?.code) === CODEX_APP_SERVER_INVALID_REQUEST_CODE &&
     (!expectedMethod || !actualMethod || actualMethod === expectedMethod);
+}
+
+function codexAppServerModelCatalogError(message = "") {
+  const error = new Error(normalizeAgentText(message) || "Codex returned an invalid model catalog.");
+  error.code = CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE;
+  return error;
+}
+
+function codexAppServerEconomyLoginParams(auth = {}) {
+  if (auth.authMode === "chatgpt") {
+    return {
+      accessToken: auth.accessToken,
+      chatgptAccountId: auth.accountId,
+      chatgptPlanType: auth.planType || null,
+      type: "chatgptAuthTokens"
+    };
+  }
+  if (auth.authMode === "apiKey") {
+    return {
+      apiKey: auth.apiKey,
+      type: "apiKey"
+    };
+  }
+  throw codexAppServerEconomyAuthError(
+    "vibe64_codex_economy_auth_invalid",
+    "The selected Codex authentication mode is unsupported. Reconnect Codex and retry."
+  );
+}
+
+function codexAppServerEconomyLoginResponseType(auth = {}) {
+  return auth.authMode === "chatgpt" ? "chatgptAuthTokens" : "apiKey";
+}
+
+function codexAppServerEconomyAccountType(auth = {}) {
+  return auth.authMode === "chatgpt" ? "chatgpt" : "apiKey";
+}
+
+function codexAppServerRequestAbortedError(method = "") {
+  const error = new Error(`Codex app-server request was cancelled: ${normalizeAgentText(method)}`);
+  error.name = "AbortError";
+  error.code = "ABORT_ERR";
+  error.method = normalizeAgentText(method);
+  return error;
+}
+
+function codexAppServerEconomyRequestError(error = null, reason = "") {
+  if (
+    error?.name === "AbortError" ||
+    error?.code === "ABORT_ERR" ||
+    (typeof error?.code === "string" && error.code.startsWith("vibe64_codex_economy_")) ||
+    error?.code === CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE
+  ) {
+    return error;
+  }
+  const failure = new Error("Codex isolated economy execution failed. Retry the task.");
+  failure.code = "vibe64_codex_economy_provider_request_failed";
+  const providerCode = Number(error?.code);
+  if (Number.isSafeInteger(providerCode)) {
+    failure.providerCode = providerCode;
+  }
+  const normalizedReason = normalizeAgentText(reason);
+  if (normalizedReason && normalizedReason.length <= 128) {
+    failure.operation = normalizedReason;
+  }
+  return failure;
+}
+
+function normalizeCodexAppServerInfo(initializeResult = null) {
+  if (!isPlainObject(initializeResult)) {
+    return null;
+  }
+  const rawUserAgent = initializeResult.userAgent;
+  if (
+    typeof rawUserAgent !== "string" ||
+    rawUserAgent.length === 0 ||
+    rawUserAgent.length > CODEX_APP_SERVER_SERVER_INFO_USER_AGENT_MAX_LENGTH ||
+    codexAppServerTextHasControlCharacters(rawUserAgent)
+  ) {
+    return Object.freeze({ userAgent: "" });
+  }
+  return Object.freeze({
+    userAgent: rawUserAgent.trim()
+  });
 }
 
 function runtimeEnvValue(env = {}, hostEnv = process.env, name = "") {
@@ -328,10 +610,14 @@ function codexAppServerRuntimeIdentityScope(options = {}) {
   }
   const namespace = runtimeNamespace();
   const runtimeInstanceId = normalizeAgentText(options.runtimeInstanceId);
+  const executionMode = codexAppServerExecutionMode(options);
   return [
     namespace ? `namespace:${namespace}` : "",
     `scope:${scope}`,
-    runtimeInstanceId ? `instance:${runtimeInstanceId}` : ""
+    runtimeInstanceId ? `instance:${runtimeInstanceId}` : "",
+    executionMode === CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+      ? `mode:${executionMode}`
+      : ""
   ].filter(Boolean).join("\n");
 }
 
@@ -341,6 +627,40 @@ function codexAppServerRuntimeDir(options = {}) {
     ? `${CODEX_APP_SERVER_RUNTIME_DIR_NAME}-${stableHash(scope)}`
     : CODEX_APP_SERVER_RUNTIME_DIR_NAME;
   return path.join(codexAppServerRuntimeBaseDir(options), dirName);
+}
+
+function codexAppServerEconomyHomeDir(runtimeDir = "") {
+  return path.join(runtimeDir, CODEX_APP_SERVER_ECONOMY_HOME_DIR);
+}
+
+function codexAppServerEconomyWorkspaceDir(runtimeDir = "") {
+  return path.join(runtimeDir, CODEX_APP_SERVER_ECONOMY_WORKSPACE_DIR);
+}
+
+function codexAppServerEconomyCommandBaseEnv(env = process.env, codexHome = "") {
+  const source = isPlainObject(env) ? env : {};
+  const cleared = Object.fromEntries(Object.keys({
+    ...process.env,
+    ...source
+  }).map((name) => [name, ""]));
+  const allowedNames = [
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TERM",
+    "TMPDIR",
+    "TZ"
+  ];
+  return {
+    ...cleared,
+    ...Object.fromEntries(allowedNames
+      .filter((name) => typeof source[name] === "string" && source[name])
+      .map((name) => [name, source[name]])),
+    CODEX_HOME: codexHome
+  };
 }
 
 function codexAppServerMetadataPath(runtimeDir = "") {
@@ -563,6 +883,31 @@ async function removeCodexAppServerRuntimeDir(runtimeDir = "") {
   return true;
 }
 
+async function stopCodexAppServerProcessGroup(pid) {
+  const normalizedPid = Number(pid);
+  if (!Number.isSafeInteger(normalizedPid) || normalizedPid <= 0 || !processGroupIsAlive(normalizedPid)) {
+    return {
+      stopped: false
+    };
+  }
+  let descendantGroups = await signalCodexProcessTree(normalizedPid, "SIGTERM");
+  let stopped = await waitForProcessGroupsExit([normalizedPid, ...descendantGroups], 3000);
+  if (!stopped) {
+    descendantGroups = [
+      ...new Set([
+        ...descendantGroups,
+        ...await signalCodexProcessTree(normalizedPid, "SIGKILL")
+      ])
+    ];
+    stopped = await waitForProcessGroupsExit([normalizedPid, ...descendantGroups], 1000);
+  }
+  return {
+    descendantProcessGroups: descendantGroups,
+    pid: normalizedPid,
+    stopped
+  };
+}
+
 async function stopCodexAppServerProcess(runtimeDir = "") {
   const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
   if (!codexAppServerRuntimeDirIsManaged(normalizedRuntimeDir)) {
@@ -571,27 +916,44 @@ async function stopCodexAppServerProcess(runtimeDir = "") {
     };
   }
   const metadata = await readCodexAppServerMetadata(normalizedRuntimeDir);
-  const pid = Number(metadata?.pid);
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !processGroupIsAlive(pid)) {
-    return {
-      stopped: false
-    };
+  return stopCodexAppServerProcessGroup(metadata?.pid);
+}
+
+async function removeCodexAppServerMetadataTemps(runtimeDir = "") {
+  let names = [];
+  try {
+    names = await readdir(runtimeDir);
+  } catch {
+    return;
   }
-  let descendantGroups = await signalCodexProcessTree(pid, "SIGTERM");
-  let stopped = await waitForProcessGroupsExit([pid, ...descendantGroups], 3000);
-  if (!stopped) {
-    descendantGroups = [
-      ...new Set([
-        ...descendantGroups,
-        ...await signalCodexProcessTree(pid, "SIGKILL")
-      ])
-    ];
-    stopped = await waitForProcessGroupsExit([pid, ...descendantGroups], 1000);
+  await Promise.all(names
+    .filter((name) => name.startsWith(`${CODEX_APP_SERVER_METADATA_FILE}.`) && name.endsWith(".tmp"))
+    .map((name) => rm(path.join(runtimeDir, name), { force: true })));
+}
+
+async function cleanupFailedCodexEconomyRuntimeStart(runtimeDir = "", pid = null) {
+  let processStop = { stopped: false };
+  let processCleanupFailed = false;
+  try {
+    processStop = await stopCodexAppServerProcessGroup(pid);
+  } catch {
+    processCleanupFailed = true;
   }
+  const removals = await Promise.allSettled([
+    rm(codexAppServerEconomyHomeDir(runtimeDir), { force: true, recursive: true }),
+    rm(codexAppServerEconomyWorkspaceDir(runtimeDir), { force: true, recursive: true }),
+    rm(codexAppServerSocketPath(runtimeDir), { force: true }),
+    rm(codexAppServerLogPath(runtimeDir), { force: true }),
+    rm(codexAppServerMetadataPath(runtimeDir), { force: true }),
+    removeCodexAppServerMetadataTemps(runtimeDir)
+  ]);
+  const normalizedPid = Number(pid);
+  const processAlive = Number.isSafeInteger(normalizedPid) && normalizedPid > 0
+    ? processGroupIsAlive(normalizedPid)
+    : false;
   return {
-    descendantProcessGroups: descendantGroups,
-    pid,
-    stopped
+    ...processStop,
+    cleanupFailed: processCleanupFailed || processAlive || removals.some(({ status }) => status === "rejected")
   };
 }
 
@@ -658,14 +1020,37 @@ function codexAppServerEndpointForTarget(endpoint = "") {
 
 function codexAppServerRuntimeIdentity(runtime = {}) {
   return [
+    normalizeAgentText(runtime.accountIdentitySignature),
     normalizeAgentText(runtime.authStateSignature),
     normalizeAgentText(runtime.endpoint),
+    normalizeAgentText(runtime.executionMode),
     normalizeAgentText(runtime.runtimesHash),
     normalizeAgentText(runtime.terminalEnvHash),
     normalizeAgentText(runtime.socketPath),
     normalizeAgentText(runtime.startedAt),
     normalizeAgentText(runtime.pid)
   ].join("\0");
+}
+
+function codexAppServerEffectiveRuntimeInput(options = {}) {
+  if (!codexAppServerIsEconomy(options)) {
+    return {
+      project: options.project,
+      runtimes: options.runtimes,
+      session: options.session,
+      terminalEnv: options.terminalEnv,
+      toolHomeSource: options.toolHomeSource,
+      userKey: options.userKey
+    };
+  }
+  return {
+    project: {},
+    runtimes: [],
+    session: {},
+    terminalEnv: {},
+    toolHomeSource: "",
+    userKey: ""
+  };
 }
 
 function normalizeCodexAppServerTerminalEnv(terminalEnv = {}) {
@@ -731,6 +1116,13 @@ function codexAppServerRuntimesHash(runtimes = []) {
   return stableHash(JSON.stringify(codexAppServerRuntimes(runtimes)));
 }
 
+function codexAppServerEffectiveRuntimesHash(options = {}) {
+  if (codexAppServerIsEconomy(options)) {
+    return stableHash(JSON.stringify([]));
+  }
+  return codexAppServerRuntimesHash(options.runtimes);
+}
+
 function codexAppServerTerminalEnvHash(terminalEnv = {}) {
   return stableHash(JSON.stringify(Object.entries(normalizeCodexAppServerTerminalEnv(terminalEnv))
     .sort(([left], [right]) => left.localeCompare(right))));
@@ -756,9 +1148,11 @@ function normalizeCodexAppServerMetadata(metadata = {}) {
   const normalized = isPlainObject(metadata) ? metadata : {};
   const endpoint = normalizeAgentText(normalized.endpoint);
   return {
+    accountIdentitySignature: normalizeAgentText(normalized.accountIdentitySignature),
     attachmentHostRoot: normalizeAgentText(normalized.attachmentHostRoot),
     authStateSignature: normalizeAgentText(normalized.authStateSignature),
     endpoint,
+    executionMode: normalizeAgentText(normalized.executionMode) || CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
     executionContextHash: normalizeAgentText(normalized.executionContextHash),
     healthz: normalizeAgentText(normalized.healthz),
     logPath: normalizeAgentText(normalized.logPath),
@@ -778,19 +1172,28 @@ function normalizeCodexAppServerMetadata(metadata = {}) {
 }
 
 function codexAppServerMetadataIsWellFormed(metadata = {}, options = {}) {
+  const effective = codexAppServerEffectiveRuntimeInput(options);
   const expectedAttachmentHostRoot = codexAttachmentHostRoot({
     env: options.env
   });
-  const expectedToolHomeSource = normalizeAgentText(options.toolHomeSource);
-  const expectedTerminalEnvHash = codexAppServerTerminalEnvHash(options.terminalEnv);
-  const expectedRuntimesHash = codexAppServerRuntimesHash(options.runtimes);
-  const expectedExecutionContextHash = codexAppServerExecutionContextHash(options);
+  const expectedAccountIdentitySignature = normalizeAgentText(options.accountIdentitySignature);
+  const expectedExecutionMode = codexAppServerExecutionMode(options);
+  const expectedToolHomeSource = normalizeAgentText(effective.toolHomeSource);
+  const expectedTerminalEnvHash = codexAppServerTerminalEnvHash(effective.terminalEnv);
+  const expectedRuntimesHash = codexAppServerEffectiveRuntimesHash(options);
+  const expectedExecutionContextHash = codexAppServerExecutionContextHash(effective);
+  const expectedEconomyProcessCwd = expectedExecutionMode === CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+    ? codexAppServerEconomyWorkspaceDir(metadata.runtimeDir)
+    : "";
   return Boolean(
     metadata.schemaVersion === CODEX_APP_SERVER_METADATA_SCHEMA_VERSION &&
+    metadata.accountIdentitySignature === expectedAccountIdentitySignature &&
     metadata.attachmentHostRoot === expectedAttachmentHostRoot &&
     metadata.authStateSignature &&
     metadata.executionContextHash === expectedExecutionContextHash &&
+    metadata.executionMode === expectedExecutionMode &&
     metadata.processCwd &&
+    (!expectedEconomyProcessCwd || metadata.processCwd === expectedEconomyProcessCwd) &&
     metadata.provider === CODEX_APP_SERVER_PROVIDER_ID &&
     metadata.runtimesHash === expectedRuntimesHash &&
     metadata.terminalEnvHash === expectedTerminalEnvHash &&
@@ -1056,11 +1459,13 @@ async function waitForCodexAppServer(endpoint = "", {
 }
 
 async function startCodexAppServerProcess({
+  accountIdentitySignature = "",
   authStateSignature = "",
   codexCommand = STUDIO_MANAGED_CODEX_COMMAND,
   commandRunner = defaultCommandRunner,
   env = process.env,
   executionRoot = "",
+  executionMode = CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
   readyTimeoutMs = CODEX_APP_SERVER_READY_TIMEOUT_MS,
   systemRoot = "",
   project = {},
@@ -1080,6 +1485,8 @@ async function startCodexAppServerProcess({
   })
 } = {}) {
   await ensureWritablePrivateDirectory(runtimeDir);
+  const economy = codexAppServerExecutionMode({ executionMode }) ===
+    CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY;
   const normalizedToolHomeSource = normalizeAgentText(toolHomeSource);
   if (normalizedToolHomeSource) {
     await assertExistingDirectory(normalizedToolHomeSource, "Codex credential home");
@@ -1093,22 +1500,38 @@ async function startCodexAppServerProcess({
   assertCodexAppServerSocketPathSupported(socketPath);
   const endpoint = codexAppServerUnixEndpoint(socketPath);
   const logPath = codexAppServerLogPath(runtimeDir);
-  const processCwd = codexAppServerProcessCwd({
-    executionRoot,
-    workdir
-  });
-  const projectTrustOverride = codexAppServerProjectTrustOverride(workdir);
-  const normalizedTerminalEnv = normalizeCodexAppServerTerminalEnv(terminalEnv);
-  const normalizedRuntimes = codexAppServerRuntimes(runtimes);
-  const baseEnv = codexAppServerCommandBaseEnv({
-    env,
-    terminalEnv: normalizedTerminalEnv
-  });
+  const economyHome = economy ? codexAppServerEconomyHomeDir(runtimeDir) : "";
+  const economyWorkspace = economy ? codexAppServerEconomyWorkspaceDir(runtimeDir) : "";
+  if (economy) {
+    await Promise.all([
+      rm(economyHome, { force: true, recursive: true }),
+      rm(economyWorkspace, { force: true, recursive: true })
+    ]);
+    await Promise.all([
+      ensureWritablePrivateDirectory(economyHome),
+      ensureWritablePrivateDirectory(economyWorkspace)
+    ]);
+  }
+  const processCwd = economy
+    ? economyWorkspace
+    : codexAppServerProcessCwd({
+        executionRoot,
+        workdir
+      });
+  const projectTrustOverride = economy ? "" : codexAppServerProjectTrustOverride(workdir);
+  const normalizedTerminalEnv = normalizeCodexAppServerTerminalEnv(economy ? {} : terminalEnv);
+  const normalizedRuntimes = codexAppServerRuntimes(economy ? [] : runtimes);
+  const baseEnv = economy
+    ? codexAppServerEconomyCommandBaseEnv(env, economyHome)
+    : codexAppServerCommandBaseEnv({
+        env,
+        terminalEnv: normalizedTerminalEnv
+      });
   await rm(socketPath, {
     force: true
   });
   const codexArgs = [
-    "--dangerously-bypass-approvals-and-sandbox",
+    ...(economy ? [] : ["--dangerously-bypass-approvals-and-sandbox"]),
     "-c",
     STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
     ...(projectTrustOverride
@@ -1126,27 +1549,39 @@ async function startCodexAppServerProcess({
     allowedRoots: processCwd ? [processCwd] : [],
     args: [
       "-c",
-      CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT,
+      economy ? CODEX_APP_SERVER_ECONOMY_STARTUP_SCRIPT : CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT,
       "vibe64-codex-app-server",
       codexCommand,
       ...codexArgs
     ],
     baseEnv,
     command: CODEX_APP_SERVER_MANAGED_SHELL,
-    credentialHome: codexAppServerCredentialHome(normalizedToolHomeSource, baseEnv),
+    credentialHome: codexAppServerCredentialHome(
+      economy ? economyHome : normalizedToolHomeSource,
+      baseEnv
+    ),
     cwd: processCwd || process.cwd(),
     envPolicy: "auth",
     logPath,
     mode: "detached",
-    project,
+    project: economy ? {} : project,
     purpose: "codex",
     runtimes: normalizedRuntimes,
-    session,
-    shimDirs: codexAppServerShimDirs(normalizedTerminalEnv),
+    session: economy ? {} : session,
+    shimDirs: economy ? [] : codexAppServerShimDirs(normalizedTerminalEnv),
     timeout: readyTimeoutMs,
-    userKey: normalizeAgentText(userKey)
+    userKey: economy ? "" : normalizeAgentText(userKey)
   });
   if (!startResult.ok) {
+    if (economy) {
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, startResult.pid);
+      const error = new Error("Codex isolated economy runtime failed to start.");
+      error.code = cleanup.cleanupFailed
+        ? "vibe64_codex_economy_runtime_cleanup_required"
+        : "vibe64_codex_economy_runtime_start_failed";
+      error.cleanupRequired = cleanup.cleanupFailed;
+      throw error;
+    }
     throw new Error(startResult.output || startResult.error || "Codex app-server failed to start.");
   }
 
@@ -1156,7 +1591,7 @@ async function startCodexAppServerProcess({
   });
   if (!ready) {
     const logTail = await tailTextFile(logPath);
-    if (codexAuthOutputRequiresReconnect(logTail)) {
+    if (!economy && codexAuthOutputRequiresReconnect(logTail)) {
       await markCodexAppServerReconnectRequired({
         env,
         systemRoot,
@@ -1166,6 +1601,15 @@ async function startCodexAppServerProcess({
         reason: "codex-app-server-start"
       });
     }
+    if (economy) {
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, startResult.pid);
+      const error = new Error("Codex isolated economy runtime did not become ready.");
+      error.code = cleanup.cleanupFailed
+        ? "vibe64_codex_economy_runtime_cleanup_required"
+        : "vibe64_codex_economy_runtime_start_failed";
+      error.cleanupRequired = cleanup.cleanupFailed;
+      throw error;
+    }
     throw new Error([
       `Codex app-server did not become ready at ${endpoint}.`,
       logTail ? `Recent log output:\n${logTail}` : ""
@@ -1173,15 +1617,19 @@ async function startCodexAppServerProcess({
   }
 
   return {
+    accountIdentitySignature: normalizeAgentText(accountIdentitySignature),
     attachmentHostRoot: codexAttachmentHostRoot({
       env
     }),
     authStateSignature: resolvedAuthStateSignature,
     endpoint,
+    executionMode: economy
+      ? CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+      : CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
     executionContextHash: codexAppServerExecutionContextHash({
-      project,
-      session,
-      userKey
+      project: economy ? {} : project,
+      session: economy ? {} : session,
+      userKey: economy ? "" : userKey
     }),
     healthz: "",
     logPath,
@@ -1190,23 +1638,32 @@ async function startCodexAppServerProcess({
     provider: CODEX_APP_SERVER_PROVIDER_ID,
     readyz: "",
     runtimeDir,
-    runtimesHash: codexAppServerRuntimesHash(normalizedRuntimes),
+    runtimesHash: economy
+      ? codexAppServerEffectiveRuntimesHash({ executionMode })
+      : codexAppServerRuntimesHash(normalizedRuntimes),
     schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
     socketPath,
     startedAt: new Date().toISOString(),
     terminalEnvHash: codexAppServerTerminalEnvHash(normalizedTerminalEnv),
-    toolHomeSource: normalizedToolHomeSource,
+    toolHomeSource: economy ? "" : normalizedToolHomeSource,
     transport: CODEX_APP_SERVER_TRANSPORT.UNIX
   };
 }
 
 async function ensureCodexAppServerRuntime(options = {}) {
   const runtimeDir = options.runtimeDir || codexAppServerRuntimeDir(options);
-  const authStateSignature = await currentCodexAuthStateSignature(options);
+  const [accountIdentitySignature, authStateSignature] = await Promise.all([
+    currentCodexAccountIdentitySignature(options),
+    currentCodexAuthStateSignature(options)
+  ]);
   const runtimeOptions = {
     ...options,
+    accountIdentitySignature,
     authStateSignature
   };
+  const runtimeMetadataWriter = typeof options.runtimeMetadataWriter === "function"
+    ? options.runtimeMetadataWriter
+    : writeCodexAppServerMetadata;
   await ensureWritablePrivateDirectory(runtimeDir);
 
   const existing = await readCodexAppServerMetadata(runtimeDir);
@@ -1239,7 +1696,20 @@ async function ensureCodexAppServerRuntime(options = {}) {
       ...runtimeOptions,
       runtimeDir
     });
-    await writeCodexAppServerMetadata(runtimeDir, started);
+    try {
+      await runtimeMetadataWriter(runtimeDir, started);
+    } catch (error) {
+      if (!codexAppServerIsEconomy(runtimeOptions)) {
+        throw error;
+      }
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, started.pid);
+      const failure = new Error("Codex isolated economy runtime metadata could not be recorded.");
+      failure.code = cleanup.cleanupFailed
+        ? "vibe64_codex_economy_runtime_cleanup_required"
+        : "vibe64_codex_economy_runtime_metadata_failed";
+      failure.cleanupRequired = cleanup.cleanupFailed;
+      throw failure;
+    }
     return {
       ...started,
       reused: false
@@ -1261,24 +1731,29 @@ function addSocketListener(socket, eventName, handler) {
   throw new Error("Unsupported WebSocket implementation.");
 }
 
-function socketMessageText(event) {
+function socketMessageText(event, maxBytes = Number.POSITIVE_INFINITY) {
   const data = event?.data ?? event;
   if (typeof data === "string") {
-    return data;
+    return Buffer.byteLength(data, "utf8") <= maxBytes ? data : null;
   }
   if (data instanceof Buffer) {
-    return data.toString("utf8");
+    return data.byteLength <= maxBytes ? data.toString("utf8") : null;
   }
-  return String(data || "");
+  const text = String(data || "");
+  return Buffer.byteLength(text, "utf8") <= maxBytes ? text : null;
 }
 
 class CodexAppServerJsonRpcClient {
   constructor({
     endpoint = "",
+    maxMessageBytes = Number.POSITIVE_INFINITY,
     requestTimeoutMs = CODEX_APP_SERVER_REQUEST_TIMEOUT_MS,
     WebSocketImpl = WebSocket
   } = {}) {
     this.endpoint = normalizeAgentText(endpoint);
+    this.maxMessageBytes = Number.isSafeInteger(maxMessageBytes) && maxMessageBytes > 0
+      ? maxMessageBytes
+      : Number.POSITIVE_INFINITY;
     this.requestTimeoutMs = normalizePositiveInteger(requestTimeoutMs, CODEX_APP_SERVER_REQUEST_TIMEOUT_MS);
     this.WebSocketImpl = WebSocketImpl;
     this.nextRequestId = 1;
@@ -1308,9 +1783,11 @@ class CodexAppServerJsonRpcClient {
     const socketOptions = unixSocketPath
       ? {
           createConnection: () => createConnection(unixSocketPath),
+          ...(Number.isFinite(this.maxMessageBytes) ? { maxPayload: this.maxMessageBytes } : {}),
           perMessageDeflate: false
         }
       : {
+          ...(Number.isFinite(this.maxMessageBytes) ? { maxPayload: this.maxMessageBytes } : {}),
           perMessageDeflate: false
         };
     const socket = new this.WebSocketImpl(unixSocketPath ? "ws://localhost/" : this.endpoint, socketOptions);
@@ -1388,25 +1865,54 @@ class CodexAppServerJsonRpcClient {
     });
   }
 
-  request(method, params = {}) {
+  request(method, params = {}, {
+    signal = null
+  } = {}) {
     const id = this.nextRequestId;
     this.nextRequestId += 1;
-    this.send({
-      id,
-      method,
-      params
-    });
     return new Promise((resolve, reject) => {
+      if (signal?.aborted === true) {
+        reject(codexAppServerRequestAbortedError(method));
+        return;
+      }
+      const removeAbortListener = () => {
+        signal?.removeEventListener?.("abort", abort);
+      };
+      const abort = () => {
+        const pending = this.pendingRequests.get(id);
+        if (!pending) {
+          return;
+        }
+        clearTimeout(pending.timeout);
+        removeAbortListener();
+        this.pendingRequests.delete(id);
+        reject(codexAppServerRequestAbortedError(method));
+      };
       const timeout = setTimeout(() => {
+        removeAbortListener();
         this.pendingRequests.delete(id);
         reject(new Error(`Codex app-server request timed out: ${method}`));
       }, this.requestTimeoutMs);
       this.pendingRequests.set(id, {
         method,
+        removeAbortListener,
         reject,
         resolve,
         timeout
       });
+      signal?.addEventListener?.("abort", abort, { once: true });
+      try {
+        this.send({
+          id,
+          method,
+          params
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        removeAbortListener();
+        this.pendingRequests.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -1414,13 +1920,27 @@ class CodexAppServerJsonRpcClient {
     if (!this.isOpen() || typeof this.socket.send !== "function") {
       throw new Error("Codex app-server connection is not open.");
     }
-    this.socket.send(JSON.stringify(payload));
+    const serialized = JSON.stringify(payload);
+    if (Buffer.byteLength(serialized, "utf8") > this.maxMessageBytes) {
+      const error = new Error("Codex app-server message exceeded the configured transport limit.");
+      error.code = "vibe64_codex_app_server_message_too_large";
+      throw error;
+    }
+    this.socket.send(serialized);
   }
 
   handleMessage(event) {
     let message = null;
     try {
-      message = JSON.parse(socketMessageText(event));
+      const text = socketMessageText(event, this.maxMessageBytes);
+      if (text === null) {
+        const error = new Error("Codex app-server message exceeded the configured transport limit.");
+        error.code = "vibe64_codex_app_server_message_too_large";
+        this.rejectPendingRequests(error);
+        this.close();
+        return;
+      }
+      message = JSON.parse(text);
     } catch {
       return;
     }
@@ -1434,6 +1954,7 @@ class CodexAppServerJsonRpcClient {
         return;
       }
       clearTimeout(pending.timeout);
+      pending.removeAbortListener?.();
       this.pendingRequests.delete(message.id);
       if (message.error) {
         const error = new Error(message.error.message || `Codex app-server request failed: ${pending.method}`);
@@ -1485,6 +2006,7 @@ class CodexAppServerJsonRpcClient {
   rejectPendingRequests(error) {
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
+      pending.removeAbortListener?.();
       pending.reject(error);
     }
     this.pendingRequests.clear();
@@ -1561,9 +2083,151 @@ class CodexAppServerAgentProvider {
     this.client = null;
     this.connectPromise = null;
     this.connectionGeneration = 0;
+    this.economyAuth = null;
+    this.economyAuthBlocked = false;
+    this.initializeResult = null;
     this.runtime = null;
     this.runtimePromise = null;
     this.serverRequestHandler = null;
+  }
+
+  isEconomyProvider() {
+    return codexAppServerIsEconomy(this.options);
+  }
+
+  async selectedEconomyAuth() {
+    if (!this.isEconomyProvider()) {
+      return null;
+    }
+    return readCodexSelectedAccountAuth(this.options);
+  }
+
+  async assertEconomyAccountIdentityCurrent() {
+    if (!this.isEconomyProvider() || !this.economyAuth) {
+      return;
+    }
+    if (this.economyAuthBlocked) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_changed",
+        "The selected Codex account changed during economy work. Retry the task with the current account."
+      );
+    }
+    const current = await this.selectedEconomyAuth();
+    if (current.identitySignature !== this.economyAuth.identitySignature) {
+      this.economyAuthBlocked = true;
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_changed",
+        "The selected Codex account changed during economy work. Retry the task with the current account."
+      );
+    }
+  }
+
+  async authenticateEconomyClient(client, runtime = {}) {
+    if (!this.isEconomyProvider()) {
+      return null;
+    }
+    const auth = await this.selectedEconomyAuth();
+    if (
+      !runtime.accountIdentitySignature ||
+      auth.identitySignature !== runtime.accountIdentitySignature
+    ) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_changed",
+        "The selected Codex account changed while economy execution was starting. Retry the task."
+      );
+    }
+    this.economyAuth = auth;
+    this.economyAuthBlocked = false;
+    try {
+      const login = await client.request(
+        "account/login/start",
+        codexAppServerEconomyLoginParams(auth)
+      );
+      if (normalizeAgentText(login?.type) !== codexAppServerEconomyLoginResponseType(auth)) {
+        throw new Error("invalid login response");
+      }
+      const account = await client.request("account/read", {
+        refreshToken: false
+      });
+      if (
+        account?.requiresOpenaiAuth !== true ||
+        normalizeAgentText(account?.account?.type) !== codexAppServerEconomyAccountType(auth)
+      ) {
+        throw new Error("invalid account response");
+      }
+      return auth;
+    } catch {
+      this.economyAuth = null;
+      this.economyAuthBlocked = true;
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_unavailable",
+        "Codex could not activate the selected account for isolated economy work. Reconnect Codex and retry."
+      );
+    }
+  }
+
+  async refreshEconomyChatgptAuth(params = {}) {
+    const currentAuth = this.economyAuth;
+    const previousAccountId = params.previousAccountId;
+    if (
+      !this.isEconomyProvider() ||
+      currentAuth?.authMode !== "chatgpt" ||
+      params.reason !== "unauthorized" ||
+      typeof previousAccountId !== "string" ||
+      previousAccountId.length === 0 ||
+      previousAccountId.length > CODEX_APP_SERVER_ACCOUNT_ID_MAX_LENGTH ||
+      previousAccountId !== currentAuth.accountId
+    ) {
+      this.economyAuthBlocked = true;
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_refresh_rejected",
+        "Codex economy authentication refresh was rejected. Reconnect Codex and retry."
+      );
+    }
+    const refreshed = await this.selectedEconomyAuth();
+    if (
+      refreshed.authMode !== "chatgpt" ||
+      refreshed.identitySignature !== currentAuth.identitySignature
+    ) {
+      this.economyAuthBlocked = true;
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_changed",
+        "The selected Codex account changed during economy work. Retry the task with the current account."
+      );
+    }
+    if (refreshed.secretSignature === currentAuth.secretSignature) {
+      this.economyAuthBlocked = true;
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_auth_refresh_pending",
+        "The selected Codex account has not produced a newer access token yet. Reconnect Codex and retry."
+      );
+    }
+    this.economyAuth = refreshed;
+    return {
+      accessToken: refreshed.accessToken,
+      chatgptAccountId: refreshed.accountId,
+      chatgptPlanType: refreshed.planType || null
+    };
+  }
+
+  async handleServerRequest(request = {}) {
+    if (
+      this.isEconomyProvider() &&
+      request.method === CODEX_APP_SERVER_CHATGPT_REFRESH_METHOD
+    ) {
+      return this.refreshEconomyChatgptAuth(request.params);
+    }
+    if (this.isEconomyProvider()) {
+      const error = new Error("Codex isolated economy execution does not accept server requests.");
+      error.code = -32601;
+      throw error;
+    }
+    if (typeof this.serverRequestHandler === "function") {
+      return this.serverRequestHandler(request);
+    }
+    const error = new Error("Codex app-server request is not supported by this client.");
+    error.code = -32601;
+    throw error;
   }
 
   async ensureRuntime() {
@@ -1591,6 +2255,7 @@ class CodexAppServerAgentProvider {
     ) {
       this.client.close();
       this.client = null;
+      this.initializeResult = null;
     }
     this.runtime = nextRuntime;
     await this.assertRuntimeAuthReady("codex-app-server-runtime");
@@ -1612,6 +2277,9 @@ class CodexAppServerAgentProvider {
   }
 
   async assertRuntimeAuthReady(reason = "codex-app-server") {
+    if (this.isEconomyProvider()) {
+      return;
+    }
     const runtime = this.runtime || {};
     const logTail = await tailTextFile(runtime.logPath || "");
     if (!codexAuthOutputRequiresReconnect(logTail)) {
@@ -1629,10 +2297,15 @@ class CodexAppServerAgentProvider {
 
   async runRequest(operation, reason = "codex-app-server-request") {
     try {
+      await this.assertEconomyAccountIdentityCurrent();
       const result = await operation();
+      await this.assertEconomyAccountIdentityCurrent();
       await this.assertRuntimeAuthReady(reason);
       return result;
     } catch (error) {
+      if (this.isEconomyProvider()) {
+        throw codexAppServerEconomyRequestError(error, reason);
+      }
       const observed = [
         error?.message || "",
         error?.observed || "",
@@ -1693,12 +2366,16 @@ class CodexAppServerAgentProvider {
     }
     this.client?.close?.();
     this.client = null;
+    this.initializeResult = null;
     const client = new CodexAppServerJsonRpcClient({
       endpoint: runtime.endpoint,
+      ...(this.isEconomyProvider()
+        ? { maxMessageBytes: CODEX_APP_SERVER_ECONOMY_MAX_MESSAGE_BYTES }
+        : {}),
       requestTimeoutMs: this.options.requestTimeoutMs,
       WebSocketImpl: this.options.WebSocketImpl
     });
-    client.setRequestHandler(this.serverRequestHandler);
+    client.setRequestHandler((request) => this.handleServerRequest(request));
     let initializeResult = null;
     try {
       await client.connect();
@@ -1706,20 +2383,92 @@ class CodexAppServerAgentProvider {
         () => client.initialize(this.options.initialize),
         "codex-app-server-initialize"
       );
+      await this.authenticateEconomyClient(client, runtime);
     } catch (error) {
       client.close();
+      if (this.isEconomyProvider()) {
+        const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
+          runtime.runtimeDir,
+          runtime.pid
+        );
+        this.runtime = null;
+        this.economyAuth = null;
+        this.economyAuthBlocked = true;
+        if (cleanup.cleanupFailed) {
+          const failure = new Error("Codex isolated economy runtime could not be retired after startup failed.");
+          failure.code = "vibe64_codex_economy_runtime_cleanup_required";
+          failure.cleanupRequired = true;
+          throw failure;
+        }
+      }
       throw error;
     }
     this.client = client;
+    this.initializeResult = normalizeCodexAppServerInfo(initializeResult);
     this.connectionGeneration += 1;
     return {
-      initializeResult,
+      initializeResult: this.isEconomyProvider() ? this.initializeResult : initializeResult,
       runtime
     };
   }
 
   currentConnectionGeneration() {
     return this.connectionGeneration;
+  }
+
+  currentServerInfo() {
+    return this.initializeResult;
+  }
+
+  async currentRuntimeInfo() {
+    const runtime = this.runtime || {};
+    const executionMode = codexAppServerExecutionMode(this.options);
+    const effective = codexAppServerEffectiveRuntimeInput(this.options);
+    return Object.freeze({
+      accountIdentitySignature: await currentCodexAccountIdentitySignature(this.options),
+      authStateSignature: await currentCodexAuthStateSignature(this.options),
+      endpoint: normalizeAgentText(runtime.endpoint),
+      executionMode,
+      executionContextHash: normalizeAgentText(runtime.executionContextHash) ||
+        codexAppServerExecutionContextHash(effective),
+      provider: CODEX_APP_SERVER_PROVIDER_ID,
+      runtimeDir: normalizeAgentText(
+        runtime.runtimeDir || this.options.runtimeDir || codexAppServerRuntimeDir(this.options)
+      ),
+      runtimesHash: normalizeAgentText(runtime.runtimesHash) ||
+        codexAppServerEffectiveRuntimesHash(this.options),
+      terminalEnvHash: normalizeAgentText(runtime.terminalEnvHash) ||
+        codexAppServerTerminalEnvHash(effective.terminalEnv),
+      toolHomeSource: executionMode === CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+        ? ""
+        : normalizeAgentText(this.options.toolHomeSource),
+      transport: normalizeAgentText(runtime.transport) || CODEX_APP_SERVER_TRANSPORT.UNIX
+    });
+  }
+
+  async currentEconomyExecutionContext() {
+    if (!this.isEconomyProvider()) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_provider_required",
+        "Codex economy work requires its dedicated isolated provider."
+      );
+    }
+    const runtime = await this.ensureRuntime();
+    const cwd = codexAppServerEconomyWorkspaceDir(runtime.runtimeDir);
+    if (
+      runtime.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY ||
+      runtime.processCwd !== cwd
+    ) {
+      throw codexAppServerEconomyAuthError(
+        "vibe64_codex_economy_runtime_invalid",
+        "Codex economy runtime isolation could not be verified."
+      );
+    }
+    return Object.freeze({
+      accountIdentitySignature: await currentCodexAccountIdentitySignature(this.options),
+      cwd,
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+    });
   }
 
   isAvailable() {
@@ -1747,7 +2496,9 @@ class CodexAppServerAgentProvider {
       return this.availabilityPromise;
     }
     const operation = (async () => {
-      await this.preflightAuth("codex-app-server-ensure-available");
+      if (!this.isEconomyProvider()) {
+        await this.preflightAuth("codex-app-server-ensure-available");
+      }
       const client = await this.activeClient();
       return {
         client,
@@ -1775,11 +2526,11 @@ class CodexAppServerAgentProvider {
   setServerRequestHandler(callback) {
     const handler = typeof callback === "function" ? callback : null;
     this.serverRequestHandler = handler;
-    this.client?.setRequestHandler?.(handler);
+    this.client?.setRequestHandler?.((request) => this.handleServerRequest(request));
     return () => {
       if (this.serverRequestHandler === handler) {
         this.serverRequestHandler = null;
-        this.client?.setRequestHandler?.(null);
+        this.client?.setRequestHandler?.((request) => this.handleServerRequest(request));
       }
     };
   }
@@ -1874,6 +2625,207 @@ class CodexAppServerAgentProvider {
     return this.runRequest(
       () => client.request("thread/loaded/list", params),
       "codex-app-server-thread-loaded-list"
+    );
+  }
+
+  async listEconomyThreads({
+    signal = null
+  } = {}) {
+    if (!this.isEconomyProvider()) {
+      const error = new Error("Codex economy thread inventory requires its dedicated provider.");
+      error.code = "vibe64_codex_economy_provider_required";
+      throw error;
+    }
+    const client = await this.activeClient();
+    const execution = await this.currentEconomyExecutionContext();
+    const threadIds = new Set();
+    let totalBytes = 0;
+    for (const archived of [false, true]) {
+      const seenCursors = new Set();
+      let cursor = "";
+      let completed = false;
+      for (let page = 0; page < CODEX_APP_SERVER_ECONOMY_THREAD_MAX_PAGES; page += 1) {
+        if (cursor && seenCursors.has(cursor)) {
+          const error = new Error("Codex economy thread inventory repeated a pagination cursor.");
+          error.code = "vibe64_codex_economy_thread_inventory_invalid";
+          throw error;
+        }
+        if (cursor) {
+          seenCursors.add(cursor);
+        }
+        const response = await this.runRequest(
+          () => client.request("thread/list", {
+            archived,
+            ...(cursor ? { cursor } : {}),
+            cwd: execution.cwd,
+            limit: CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT,
+            sourceKinds: ["appServer"],
+            useStateDbOnly: false
+          }, { signal }),
+          "codex-app-server-economy-thread-list"
+        );
+        if (
+          !Array.isArray(response?.data) ||
+          response.data.length > CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT ||
+          threadIds.size + response.data.length > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_COUNT
+        ) {
+          const error = new Error("Codex economy thread inventory exceeded its entry limit.");
+          error.code = "vibe64_codex_economy_thread_inventory_invalid";
+          throw error;
+        }
+        for (const entry of response.data) {
+          const threadId = normalizeAgentText(entry?.id);
+          let entryBytes = 0;
+          try {
+            entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+          } catch {
+            entryBytes = CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES + 1;
+          }
+          if (
+            !isPlainObject(entry) ||
+            !threadId ||
+            threadId.length > CODEX_APP_SERVER_ECONOMY_THREAD_ID_MAX_LENGTH ||
+            codexAppServerTextHasControlCharacters(threadId) ||
+            entryBytes > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES ||
+            totalBytes + entryBytes > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_TOTAL_BYTES
+          ) {
+            const error = new Error("Codex economy thread inventory contained an invalid entry.");
+            error.code = "vibe64_codex_economy_thread_inventory_invalid";
+            throw error;
+          }
+          totalBytes += entryBytes;
+          threadIds.add(threadId);
+        }
+        const nextCursor = response.nextCursor === undefined || response.nextCursor === null || response.nextCursor === ""
+          ? ""
+          : typeof response.nextCursor === "string"
+            ? response.nextCursor.trim()
+            : null;
+        if (
+          nextCursor === null ||
+          nextCursor.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH ||
+          (nextCursor && seenCursors.has(nextCursor))
+        ) {
+          const error = new Error("Codex economy thread inventory returned an invalid pagination cursor.");
+          error.code = "vibe64_codex_economy_thread_inventory_invalid";
+          throw error;
+        }
+        if (!nextCursor) {
+          completed = true;
+          break;
+        }
+        cursor = nextCursor;
+      }
+      if (!completed) {
+        const error = new Error("Codex economy thread inventory exceeded its page limit.");
+        error.code = "vibe64_codex_economy_thread_inventory_invalid";
+        throw error;
+      }
+    }
+    return Object.freeze({
+      threadIds: Object.freeze([...threadIds].sort())
+    });
+  }
+
+  async listModels(params = {}, {
+    signal = null
+  } = {}) {
+    const client = await this.activeClient();
+    const data = [];
+    const seenCursors = new Set();
+    const includeHidden = params.includeHidden === true;
+    const limit = normalizePositiveInteger(
+      params.limit,
+      CODEX_APP_SERVER_MODEL_CATALOG_PAGE_LIMIT
+    );
+    const boundedLimit = Math.min(limit, CODEX_APP_SERVER_MODEL_CATALOG_PAGE_LIMIT);
+    let totalBytes = 0;
+    let cursor = params.cursor === undefined || params.cursor === null || params.cursor === ""
+      ? ""
+      : typeof params.cursor === "string"
+        ? params.cursor.trim()
+        : null;
+    if (cursor === null || cursor.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH) {
+      throw codexAppServerModelCatalogError("Codex model catalog cursor is invalid.");
+    }
+    for (let page = 0; page < CODEX_APP_SERVER_MODEL_CATALOG_MAX_PAGES; page += 1) {
+      if (cursor && seenCursors.has(cursor)) {
+        throw codexAppServerModelCatalogError("Codex model catalog repeated a pagination cursor.");
+      }
+      if (cursor) {
+        seenCursors.add(cursor);
+      }
+      const response = await this.runRequest(
+        () => client.request("model/list", {
+          ...(cursor ? { cursor } : {}),
+          includeHidden,
+          limit: boundedLimit
+        }, { signal }),
+        "codex-app-server-model-list"
+      );
+      if (!Array.isArray(response?.data)) {
+        throw codexAppServerModelCatalogError(
+          "Codex model catalog response did not contain a data array."
+        );
+      }
+      if (
+        response.data.length > boundedLimit ||
+        data.length + response.data.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRIES
+      ) {
+        throw codexAppServerModelCatalogError("Codex model catalog exceeded its entry limit.");
+      }
+      for (const entry of response.data) {
+        if (!isPlainObject(entry)) {
+          throw codexAppServerModelCatalogError("Codex model catalog contained an invalid entry.");
+        }
+        let entryBytes = 0;
+        try {
+          entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+        } catch {
+          throw codexAppServerModelCatalogError("Codex model catalog contained an invalid entry.");
+        }
+        if (
+          entryBytes > CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRY_BYTES ||
+          totalBytes + entryBytes > CODEX_APP_SERVER_MODEL_CATALOG_MAX_TOTAL_BYTES
+        ) {
+          throw codexAppServerModelCatalogError("Codex model catalog exceeded its response limit.");
+        }
+        totalBytes += entryBytes;
+        data.push(entry);
+      }
+      const nextCursor = response.nextCursor === undefined || response.nextCursor === null || response.nextCursor === ""
+        ? ""
+        : typeof response.nextCursor === "string"
+          ? response.nextCursor.trim()
+          : null;
+      if (nextCursor === null || nextCursor.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH) {
+        throw codexAppServerModelCatalogError("Codex model catalog cursor is invalid.");
+      }
+      if (!nextCursor) {
+        return {
+          data,
+          nextCursor: null
+        };
+      }
+      if (seenCursors.has(nextCursor)) {
+        throw codexAppServerModelCatalogError("Codex model catalog repeated a pagination cursor.");
+      }
+      cursor = nextCursor;
+    }
+    throw codexAppServerModelCatalogError(
+      `Codex model catalog exceeded ${CODEX_APP_SERVER_MODEL_CATALOG_MAX_PAGES} pages.`
+    );
+  }
+
+  async readConfig(params = {}) {
+    const client = await this.activeClient();
+    const cwd = normalizeAgentText(params.cwd);
+    return this.runRequest(
+      () => client.request("config/read", {
+        ...(cwd ? { cwd } : {}),
+        includeLayers: params.includeLayers === true
+      }),
+      "codex-app-server-config-read"
     );
   }
 
@@ -1973,6 +2925,9 @@ class CodexAppServerAgentProvider {
   close() {
     this.client?.close();
     this.client = null;
+    this.initializeResult = null;
+    this.economyAuth = null;
+    this.economyAuthBlocked = false;
   }
 
   async stopRuntime() {
@@ -1992,18 +2947,23 @@ function createCodexAppServerAgentProvider(options = {}) {
 }
 
 export {
+  CODEX_APP_SERVER_EXECUTION_MODES,
   CODEX_APP_SERVER_INVALID_REQUEST_CODE,
   CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+  CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE,
   CODEX_APP_SERVER_PROVIDER_ID,
   CODEX_APP_SERVER_TRANSPORT,
   CodexAppServerAgentProvider,
   CodexAppServerJsonRpcClient,
   assertCodexAuthPreflightReady,
   codexAppServerEndpointForTarget,
+  codexAppServerEconomyHomeDir,
+  codexAppServerEconomyWorkspaceDir,
   codexAppServerMetadataIsLive,
   codexAppServerRequestIsInvalid,
   codexAppServerRuntimeBaseDir,
   codexAppServerRuntimeDir,
+  currentCodexAccountIdentitySignature,
   codexCliResumeCommand,
   codexTextInput,
   codexTurnInput,

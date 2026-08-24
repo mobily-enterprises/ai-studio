@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   fileSyncOptions: [],
   realtimeOptions: [],
   requestCalls: [],
-  requestResults: []
+  requestResults: [],
+  streamCalls: [],
+  streamEvents: []
 }));
 
 vi.mock("vue", async (importOriginal) => {
@@ -37,6 +39,12 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
       async request(...args) {
         mocks.requestCalls.push(args);
         return mocks.requestResults.shift() || {};
+      },
+      async requestStream(...args) {
+        mocks.streamCalls.push(args.slice(0, 2));
+        for (const event of mocks.streamEvents.shift() || []) {
+          args[2]?.onEvent?.(event);
+        }
       }
     };
   }
@@ -143,6 +151,8 @@ describe("useVibe64SourceEditor", () => {
     mocks.realtimeOptions.length = 0;
     mocks.requestCalls.length = 0;
     mocks.requestResults.length = 0;
+    mocks.streamCalls.length = 0;
+    mocks.streamEvents.length = 0;
     vi.useFakeTimers();
   });
 
@@ -356,6 +366,81 @@ describe("useVibe64SourceEditor", () => {
         method: "POST"
       }
     ]);
+  });
+
+  it("requests source explanations without exposing raw model settings", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    const executionProfile = {
+      limits: {
+        maxInputCharacters: 100_000,
+        maxOutputCharacters: 32_000,
+        timeoutMs: 180_000
+      },
+      model: "gpt-5.6-luna",
+      policy: {
+        environmentAccess: false,
+        networkAccess: false,
+        repositoryWrite: false,
+        tools: "none"
+      },
+      profileId: "economy",
+      providerId: "codex",
+      request: {
+        allowProviderModelFallback: false,
+        reasoning: true,
+        summary: false
+      },
+      revision: "codex-economy-v1",
+      thinking: "low",
+      workloadId: "source_explanation"
+    };
+    mocks.streamEvents.push([{
+      explanation: {
+        agentSettings: {
+          model: "legacy-source-explainer",
+          providerId: "codex",
+          thinking: "high"
+        },
+        agentThreadId: "thread-1",
+        executionProfile,
+        id: "exp-1",
+        messages: [{
+          id: "assistant-1",
+          role: "assistant",
+          status: "complete",
+          text: "This handles startup."
+        }],
+        model: "gpt-5.6-luna",
+        sourceRange: {
+          endColumn: 12,
+          endLine: 1,
+          path: "src/app.js",
+          scope: "selection",
+          startColumn: 1,
+          startLine: 1
+        },
+        status: "ready"
+      },
+      type: "source-explanation.finished"
+    }]);
+
+    await editor.explainSelection({
+      endColumn: 12,
+      endLine: 1,
+      scope: "selection",
+      startColumn: 1,
+      startLine: 1
+    });
+
+    expect(mocks.streamCalls).toHaveLength(1);
+    const [url, options] = mocks.streamCalls[0];
+    expect(url).toBe("/api/app/vibe64/sessions/session-1/source-editor/explanations/stream");
+    expect(options.body).not.toHaveProperty("agentSettings");
+    expect(editor).not.toHaveProperty("explanationAgentSettings");
+    expect(editor).not.toHaveProperty("updateExplanationAgentSetting");
+    expect(editor.activeExplanation.value.agentSettings).toBeNull();
+    expect(editor.activeExplanation.value.executionProfile).toEqual(expect.objectContaining(executionProfile));
   });
 
   it("reloads a clean open file after a matching remote save", async () => {

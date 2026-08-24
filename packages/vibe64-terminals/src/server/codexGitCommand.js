@@ -143,6 +143,7 @@ const CODEX_GIT_COMMAND_METADATA_NAMES = Object.freeze([
 ]);
 
 const commandServers = new Map();
+const commandServerPreparations = new Map();
 
 function attachmentRuntimeKey({
   sessionId = "",
@@ -867,17 +868,12 @@ function commandServerToken({
   ].join("\n"));
 }
 
-async function ensureCodexGitCommandServer({
+async function replaceCodexGitCommandServer({
   commandService,
-  env = process.env,
   sessionId = "",
+  socketPath = "",
   stateRoot = ""
 } = {}) {
-  const socketPath = commandSocketHostPath({
-    env,
-    sessionId,
-    stateRoot
-  });
   const existing = commandServers.get(socketPath);
   if (existing?.commandService === commandService) {
     return existing;
@@ -934,6 +930,49 @@ async function ensureCodexGitCommandServer({
   };
   commandServers.set(socketPath, stored);
   return stored;
+}
+
+async function ensureCodexGitCommandServer({
+  commandService,
+  env = process.env,
+  sessionId = "",
+  stateRoot = ""
+} = {}) {
+  const socketPath = commandSocketHostPath({
+    env,
+    sessionId,
+    stateRoot
+  });
+  const pending = commandServerPreparations.get(socketPath);
+  if (pending?.commandService === commandService) {
+    return pending.promise;
+  }
+  const existing = commandServers.get(socketPath);
+  if (!pending && existing?.commandService === commandService) {
+    return existing;
+  }
+
+  const waitForPrevious = pending?.promise
+    ? pending.promise.catch(() => null)
+    : Promise.resolve();
+  const preparation = {
+    commandService,
+    promise: null
+  };
+  preparation.promise = waitForPrevious.then(() => replaceCodexGitCommandServer({
+    commandService,
+    sessionId,
+    socketPath,
+    stateRoot
+  }));
+  commandServerPreparations.set(socketPath, preparation);
+  try {
+    return await preparation.promise;
+  } finally {
+    if (commandServerPreparations.get(socketPath) === preparation) {
+      commandServerPreparations.delete(socketPath);
+    }
+  }
 }
 
 function commandEnvironment({

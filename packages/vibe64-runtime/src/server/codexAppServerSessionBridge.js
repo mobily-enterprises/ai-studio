@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import {
   CODEX_APP_SERVER_PROVIDER_ID,
   codexAppServerRequestIsInvalid,
@@ -7,11 +9,18 @@ import {
   normalizeAgentText
 } from "./agentProviders.js";
 import {
+  VIBE64_AGENT_PROVIDER_IDS,
   VIBE64_CODEX_DEFAULT_MODEL,
   VIBE64_CODEX_DEFAULT_THINKING,
   effectiveVibe64AgentExecutionSettings,
   effectiveVibe64AgentSettings
 } from "../shared/agentSettings.js";
+import {
+  VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
+  VIBE64_AGENT_EXECUTION_PROFILE_IDS,
+  Vibe64AgentExecutionProfileError,
+  defineVibe64AgentExecutionProfileResolution
+} from "../shared/agentExecutionProfiles.js";
 
 const CODEX_SESSION_AGENT_PROVIDER = "codex";
 const CODEX_SESSION_MODEL = VIBE64_CODEX_DEFAULT_MODEL;
@@ -20,6 +29,60 @@ const CODEX_SESSION_REASONING_SUMMARY = "concise";
 const CODEX_SESSION_APPROVAL_POLICY = "never";
 const CODEX_SESSION_SANDBOX = "danger-full-access";
 const CODEX_APP_SERVER_CONTEXT_TURN_TIMEOUT_MS = 60000;
+const CODEX_APP_SERVER_ECONOMY_SANDBOX = "read-only";
+const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION = "0.149.0";
+const CODEX_APP_SERVER_ECONOMY_USER_AGENT_MAX_LENGTH = 512;
+const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_MAX_COUNT = 128;
+const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_NAME_MAX_LENGTH = 256;
+const CODEX_APP_SERVER_ECONOMY_CONFIG_RESPONSE_MAX_BYTES = 256 * 1024;
+const CODEX_APP_SERVER_ECONOMY_HOOK_MAX_COUNT = 256;
+const CODEX_APP_SERVER_ECONOMY_HOOK_ERROR_MAX_COUNT = 256;
+const CODEX_APP_SERVER_ECONOMY_HOOK_FIELD_MAX_LENGTH = 2048;
+const CODEX_APP_SERVER_ECONOMY_HOOK_FINGERPRINT_MAX_LENGTH = 256 * 1024;
+const CODEX_APP_SERVER_ECONOMY_HOOK_RESPONSE_MAX_BYTES = 512 * 1024;
+const CODEX_APP_SERVER_ECONOMY_DEVELOPER_INSTRUCTIONS_MAX_LENGTH = 8192;
+const CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_BYTES = 64 * 1024;
+const CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_DEPTH = 8;
+const CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_PROPERTIES = 64;
+const CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_ENUM_VALUES = 64;
+const CODEX_APP_SERVER_ECONOMY_THREAD_SOURCE = "vibe64-economy";
+const CODEX_APP_SERVER_ECONOMY_BASE_INSTRUCTIONS = [
+  "Complete only the bounded structured task in the user input.",
+  "Return one response matching the supplied JSON schema.",
+  "Do not use tools, environments, network access, or repository writes."
+].join(" ");
+const CODEX_APP_SERVER_ECONOMY_TOOL_FEATURES = Object.freeze([
+  "apps",
+  "artifact",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "code_mode",
+  "code_mode_host",
+  "computer_use",
+  "default_mode_request_user_input",
+  "deferred_executor",
+  "goals",
+  "hooks",
+  "image_generation",
+  "in_app_browser",
+  "memories",
+  "multi_agent",
+  "multi_agent_v2",
+  "plugins",
+  "psp",
+  "recommended_plugins",
+  "request_permissions_tool",
+  "shell_tool",
+  "skill_mcp_dependency_install",
+  "skill_search",
+  "tool_call_mcp_elicitation",
+  "tool_suggest",
+  "unified_exec",
+  "unified_exec_zsh_fork",
+  "view_image"
+]);
+const codexAppServerEconomyIsolationConfigs = new WeakSet();
 const CODEX_CONTEXT_RECOVERY_TEMPLATE = `VIBE64_CONTEXT_RECOVERY: Codex provider thread recovery for Vibe64.
 
 Vibe64 tried to resume the previous Codex provider thread, but Codex app-server reported that it is not available anymore.
@@ -53,6 +116,570 @@ Persisted Vibe64 UI conversation:
 
 function normalizeWorkdir(value = "") {
   return normalizeAgentText(value);
+}
+
+function isPlainRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function codexAppServerTextHasControlCharacters(value = "") {
+  return Array.from(String(value)).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint === 127;
+  });
+}
+
+function deepFreezeCodexAppServerEconomyConfig(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const nested of Object.values(value)) {
+    deepFreezeCodexAppServerEconomyConfig(nested);
+  }
+  return Object.freeze(value);
+}
+
+function codexAppServerEconomyPolicyError(message = "", details = {}) {
+  return new Vibe64AgentExecutionProfileError(
+    VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.POLICY_UNENFORCEABLE,
+    normalizeAgentText(message) || "Codex cannot prove the economy execution policy.",
+    details
+  );
+}
+
+function assertCodexAppServerEconomyResponseBounded(value, maxBytes, label) {
+  let bytes = 0;
+  try {
+    bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    throw codexAppServerEconomyPolicyError(
+      `Codex economy execution received an invalid ${label}.`
+    );
+  }
+  if (bytes > maxBytes) {
+    throw codexAppServerEconomyPolicyError(
+      `Codex economy execution received an oversized ${label}.`
+    );
+  }
+}
+
+function codexAppServerEconomyProfile(executionProfile = null) {
+  const profile = defineVibe64AgentExecutionProfileResolution(executionProfile);
+  if (
+    profile.profileId !== VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY ||
+    profile.providerId !== VIBE64_AGENT_PROVIDER_IDS.CODEX
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution requires a server-resolved Codex economy profile.",
+      {
+        profileId: profile.profileId,
+        providerId: profile.providerId
+      }
+    );
+  }
+  return profile;
+}
+
+function assertCodexAppServerOutputSchemaKeys(schema = {}, allowed = [], schemaPath = "$") {
+  const allowedKeys = new Set(["description", "title", "type", ...allowed]);
+  if (Object.keys(schema).some((key) => !allowedKeys.has(key))) {
+    throw codexAppServerEconomyPolicyError(
+      `Economy output schema ${schemaPath} contains an unsupported keyword.`,
+      { field: "outputSchema" }
+    );
+  }
+}
+
+function strictOutputSchemaMaximumCharacters(schema = null, schemaPath = "$", depth = 0) {
+  if (!isPlainRecord(schema)) {
+    throw codexAppServerEconomyPolicyError(
+      `Economy output schema ${schemaPath} must be an object.`,
+      { field: "outputSchema" }
+    );
+  }
+  if (depth > CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_DEPTH) {
+    throw codexAppServerEconomyPolicyError(
+      "Economy output schema is nested too deeply.",
+      { field: "outputSchema" }
+    );
+  }
+  if (typeof schema.type !== "string") {
+    throw codexAppServerEconomyPolicyError(
+      `Economy output schema ${schemaPath} must declare one type.`,
+      { field: "outputSchema" }
+    );
+  }
+  if (schema.type === "object") {
+    assertCodexAppServerOutputSchemaKeys(
+      schema,
+      ["additionalProperties", "properties", "required"],
+      schemaPath
+    );
+    if (schema.additionalProperties !== false || !isPlainRecord(schema.properties)) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy object schema ${schemaPath} must declare properties and reject additional properties.`,
+        { field: "outputSchema" }
+      );
+    }
+    const propertyNames = Object.keys(schema.properties);
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    if (
+      propertyNames.length === 0 ||
+      propertyNames.length > CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_PROPERTIES ||
+      propertyNames.some((name) => !name || name.length > 128) ||
+      required.length !== propertyNames.length ||
+      new Set(required).size !== required.length ||
+      propertyNames.some((name) => !required.includes(name))
+    ) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy object schema ${schemaPath} must require every declared property.`,
+        { field: "outputSchema" }
+      );
+    }
+    return propertyNames.reduce((total, name, index) => (
+      total +
+      (index === 0 ? 0 : 1) +
+      JSON.stringify(name).length +
+      1 +
+      strictOutputSchemaMaximumCharacters(schema.properties[name], `${schemaPath}.${name}`, depth + 1)
+    ), 2);
+  }
+  if (schema.type === "array") {
+    assertCodexAppServerOutputSchemaKeys(schema, ["items", "maxItems", "minItems"], schemaPath);
+    if (!Number.isSafeInteger(schema.maxItems) || schema.maxItems < 0) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy array schema ${schemaPath} must have a finite maxItems value.`,
+        { field: "outputSchema" }
+      );
+    }
+    if (
+      schema.minItems !== undefined &&
+      (!Number.isSafeInteger(schema.minItems) || schema.minItems < 0 || schema.minItems > schema.maxItems)
+    ) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy array schema ${schemaPath} has an invalid minItems value.`,
+        { field: "outputSchema" }
+      );
+    }
+    const itemMaximum = strictOutputSchemaMaximumCharacters(schema.items, `${schemaPath}[]`, depth + 1);
+    const maximum = 2 + (schema.maxItems * itemMaximum) + Math.max(0, schema.maxItems - 1);
+    if (!Number.isSafeInteger(maximum)) {
+      throw codexAppServerEconomyPolicyError(
+        "Economy output schema exceeds its finite bound.",
+        { field: "outputSchema" }
+      );
+    }
+    return maximum;
+  }
+  if (schema.type === "string") {
+    assertCodexAppServerOutputSchemaKeys(schema, ["enum", "maxLength", "minLength"], schemaPath);
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+      if (
+        schema.enum.length > CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_ENUM_VALUES ||
+        schema.enum.some((value) => typeof value !== "string")
+      ) {
+        throw codexAppServerEconomyPolicyError(
+          `Economy string schema ${schemaPath} has an invalid enum.`,
+          { field: "outputSchema" }
+        );
+      }
+      return Math.max(...schema.enum.map((value) => JSON.stringify(value).length));
+    }
+    if (!Number.isSafeInteger(schema.maxLength) || schema.maxLength <= 0) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy string schema ${schemaPath} must have a finite positive maxLength.`,
+        { field: "outputSchema" }
+      );
+    }
+    if (
+      schema.minLength !== undefined &&
+      (!Number.isSafeInteger(schema.minLength) || schema.minLength < 0 || schema.minLength > schema.maxLength)
+    ) {
+      throw codexAppServerEconomyPolicyError(
+        `Economy string schema ${schemaPath} has an invalid minLength value.`,
+        { field: "outputSchema" }
+      );
+    }
+    // JSON may encode each UTF-16 code unit as a six-character `\uXXXX` escape.
+    // Count that worst case so the schema can never admit raw JSON beyond the
+    // resolved response limit even when every string character needs escaping.
+    const maximum = (schema.maxLength * 6) + 2;
+    if (!Number.isSafeInteger(maximum)) {
+      throw codexAppServerEconomyPolicyError(
+        "Economy output schema exceeds its finite bound.",
+        { field: "outputSchema" }
+      );
+    }
+    return maximum;
+  }
+  if (schema.type === "boolean" || schema.type === "null") {
+    assertCodexAppServerOutputSchemaKeys(schema, [], schemaPath);
+    return 5;
+  }
+  throw codexAppServerEconomyPolicyError(
+    `Economy output schema ${schemaPath} uses an unsupported type.`,
+    { field: "outputSchema" }
+  );
+}
+
+function codexAppServerEconomyOutputSchema(outputSchema, profile) {
+  let schemaBytes = 0;
+  try {
+    schemaBytes = Buffer.byteLength(JSON.stringify(outputSchema), "utf8");
+  } catch {
+    throw codexAppServerEconomyPolicyError(
+      "Economy output schema is not serializable.",
+      { field: "outputSchema" }
+    );
+  }
+  if (schemaBytes > CODEX_APP_SERVER_ECONOMY_OUTPUT_SCHEMA_MAX_BYTES) {
+    throw codexAppServerEconomyPolicyError(
+      "Economy output schema exceeds its request limit.",
+      { field: "outputSchema" }
+    );
+  }
+  const maximumCharacters = strictOutputSchemaMaximumCharacters(outputSchema);
+  if (maximumCharacters > profile.limits.maxOutputCharacters) {
+    throw codexAppServerEconomyPolicyError(
+      "Economy output schema can exceed the resolved output limit.",
+      {
+        maximumCharacters,
+        maxOutputCharacters: profile.limits.maxOutputCharacters
+      }
+    );
+  }
+  return outputSchema;
+}
+
+function assertCodexAppServerEconomyOutputWithinLimit({
+  executionProfile = null,
+  rawOutput = ""
+} = {}) {
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const output = String(rawOutput ?? "");
+  if (output.length > profile.limits.maxOutputCharacters) {
+    throw new Vibe64AgentExecutionProfileError(
+      VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.UNBOUNDED,
+      "Codex economy output exceeds the resolved output limit.",
+      {
+        maxOutputCharacters: profile.limits.maxOutputCharacters,
+        outputCharacters: output.length
+      }
+    );
+  }
+  return output;
+}
+
+function codexAppServerEconomyConnectionGeneration(provider) {
+  if (typeof provider?.currentConnectionGeneration !== "function") {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot verify the app-server connection generation."
+    );
+  }
+  const generation = provider.currentConnectionGeneration();
+  if (!Number.isSafeInteger(generation) || generation <= 0) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution found no active app-server connection."
+    );
+  }
+  return generation;
+}
+
+async function codexAppServerEconomyExecutionContext(provider) {
+  if (typeof provider?.currentEconomyExecutionContext !== "function") {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution requires its dedicated isolated provider."
+    );
+  }
+  const context = await provider.currentEconomyExecutionContext();
+  const cwd = normalizeWorkdir(context?.cwd);
+  const accountIdentitySignature = normalizeAgentText(context?.accountIdentitySignature);
+  if (
+    context?.executionMode !== "economy" ||
+    !cwd ||
+    !path.isAbsolute(cwd) ||
+    !/^sha256:[a-f0-9]{64}$/u.test(accountIdentitySignature)
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy runtime isolation could not be verified."
+    );
+  }
+  return Object.freeze({
+    accountIdentitySignature,
+    cwd,
+    executionMode: "economy"
+  });
+}
+
+function codexAppServerSemanticVersionParts(value = "") {
+  const match = normalizeAgentText(value).match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u);
+  if (!match) {
+    return null;
+  }
+  const parts = match.slice(1).map((part) => Number.parseInt(part, 10));
+  return parts.every(Number.isSafeInteger) ? parts : null;
+}
+
+function codexAppServerUserAgentVersionParts(value = "") {
+  const userAgent = normalizeAgentText(value);
+  if (
+    !userAgent ||
+    userAgent.length > CODEX_APP_SERVER_ECONOMY_USER_AGENT_MAX_LENGTH ||
+    codexAppServerTextHasControlCharacters(userAgent)
+  ) {
+    return null;
+  }
+  const match = userAgent.match(/^vibe64\/((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?:$|[ \t].*$)/u);
+  return match ? codexAppServerSemanticVersionParts(match[1]) : null;
+}
+
+function assertCodexAppServerEconomyCompatibility(provider) {
+  if (typeof provider?.currentServerInfo !== "function") {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot verify the app-server version. Update managed Codex and retry.",
+      { auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION }
+    );
+  }
+  const userAgent = normalizeAgentText(provider.currentServerInfo()?.userAgent);
+  const actualParts = codexAppServerUserAgentVersionParts(userAgent);
+  if (!actualParts) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an unrecognised app-server version. Update managed Codex and retry.",
+      {
+        auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION
+      }
+    );
+  }
+  const actualVersion = actualParts.join(".");
+  if (actualVersion !== CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION) {
+    throw codexAppServerEconomyPolicyError(
+      `Codex economy execution requires audited app-server ${CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION}; current version is ${actualVersion}. Update managed Codex and retry.`,
+      {
+        actualVersion,
+        auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION
+      }
+    );
+  }
+  return Object.freeze({
+    auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION,
+    version: actualVersion
+  });
+}
+
+function codexAppServerEconomyMcpServerNames(configResult = null) {
+  assertCodexAppServerEconomyResponseBounded(
+    configResult,
+    CODEX_APP_SERVER_ECONOMY_CONFIG_RESPONSE_MAX_BYTES,
+    "configuration response"
+  );
+  if (!isPlainRecord(configResult?.config)) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution could not read the effective app-server configuration."
+    );
+  }
+  const servers = configResult.config.mcp_servers;
+  if (servers === undefined || servers === null) {
+    return [];
+  }
+  if (!isPlainRecord(servers)) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an invalid MCP server configuration."
+    );
+  }
+  const names = Object.keys(servers);
+  if (
+    names.length > CODEX_APP_SERVER_ECONOMY_MCP_SERVER_MAX_COUNT ||
+    names.some((name) => (
+      !name ||
+      name.length > CODEX_APP_SERVER_ECONOMY_MCP_SERVER_NAME_MAX_LENGTH ||
+      codexAppServerTextHasControlCharacters(name)
+    ))
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an oversized or invalid MCP server inventory."
+    );
+  }
+  return names.sort();
+}
+
+function codexAppServerEconomyHookState(result = null, cwd = "") {
+  assertCodexAppServerEconomyResponseBounded(
+    result,
+    CODEX_APP_SERVER_ECONOMY_HOOK_RESPONSE_MAX_BYTES,
+    "hook inventory"
+  );
+  if (!Array.isArray(result?.data)) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution could not enumerate app-server hooks."
+    );
+  }
+  if (result.data.length !== 1) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an unexpected hook inventory."
+    );
+  }
+  const record = result.data[0];
+  if (
+    normalizeWorkdir(record?.cwd) !== cwd ||
+    normalizeWorkdir(record?.cwd).length > CODEX_APP_SERVER_ECONOMY_HOOK_FIELD_MAX_LENGTH ||
+    !Array.isArray(record.hooks) ||
+    !Array.isArray(record.errors) ||
+    record.hooks.length > CODEX_APP_SERVER_ECONOMY_HOOK_MAX_COUNT ||
+    record.errors.length > CODEX_APP_SERVER_ECONOMY_HOOK_ERROR_MAX_COUNT
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an incomplete hook inventory."
+    );
+  }
+  if (record.errors.length > 0) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot continue while hook discovery has errors.",
+      { hookErrorCount: record.errors.length }
+    );
+  }
+  const hooks = record.hooks.map((hook) => {
+    const key = normalizeAgentText(hook?.key);
+    const currentHash = normalizeAgentText(hook?.currentHash);
+    const handlerType = normalizeAgentText(hook?.handlerType);
+    const sourcePath = normalizeAgentText(hook?.sourcePath);
+    if (
+      !key ||
+      [key, currentHash, handlerType, sourcePath].some((field) => (
+        field.length > CODEX_APP_SERVER_ECONOMY_HOOK_FIELD_MAX_LENGTH ||
+        codexAppServerTextHasControlCharacters(field)
+      ))
+    ) {
+      throw codexAppServerEconomyPolicyError(
+        "Codex economy execution found an invalid hook inventory entry."
+      );
+    }
+    if (hook?.isManaged === true && hook?.enabled === true) {
+      throw codexAppServerEconomyPolicyError(
+        "Codex economy execution cannot disable a managed hook."
+      );
+    }
+    return {
+      currentHash,
+      enabled: hook?.enabled === true,
+      handlerType,
+      isManaged: hook?.isManaged === true,
+      key,
+      sourcePath
+    };
+  }).sort((left, right) => left.key.localeCompare(right.key));
+  const fingerprint = JSON.stringify(hooks);
+  if (fingerprint.length > CODEX_APP_SERVER_ECONOMY_HOOK_FINGERPRINT_MAX_LENGTH) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution received an oversized hook inventory."
+    );
+  }
+  return {
+    fingerprint,
+    hookKeys: hooks.filter((hook) => !hook.isManaged).map((hook) => hook.key)
+  };
+}
+
+function codexAppServerEconomyIsolationConfig({
+  executionProfile = null,
+  hookKeys = [],
+  mcpServerNames = []
+} = {}) {
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const config = {
+    features: Object.fromEntries(
+      CODEX_APP_SERVER_ECONOMY_TOOL_FEATURES.map((feature) => [feature, false])
+    ),
+    hooks: {
+      state: Object.fromEntries(hookKeys.map((key) => [key, { enabled: false }]))
+    },
+    include_apps_instructions: false,
+    include_collaboration_mode_instructions: false,
+    include_environment_context: false,
+    include_permissions_instructions: false,
+    model_reasoning_effort: profile.thinking,
+    model_reasoning_summary: "none",
+    mcp_servers: Object.fromEntries(
+      mcpServerNames.map((name) => [name, { enabled: false }])
+    ),
+    memories: {
+      dedicated_tools: false,
+      generate_memories: false,
+      use_memories: false
+    },
+    notify: [],
+    orchestrator: {
+      mcp: {
+        enabled: false
+      },
+      skills: {
+        enabled: false
+      }
+    },
+    project_doc_max_bytes: 0,
+    skills: {
+      include_instructions: false
+    },
+    tools: {
+      experimental_request_user_input: {
+        enabled: false
+      },
+      update_plan: {
+        enabled: false
+      }
+    },
+    web_search: "disabled"
+  };
+  const frozenConfig = deepFreezeCodexAppServerEconomyConfig(config);
+  codexAppServerEconomyIsolationConfigs.add(frozenConfig);
+  return frozenConfig;
+}
+
+async function codexAppServerEconomyIsolationState(provider, executionProfile = null) {
+  assertCodexAppServerEconomyCompatibility(provider);
+  if (
+    typeof provider?.readConfig !== "function" ||
+    typeof provider?.listHooks !== "function"
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot inventory configuration and hooks."
+    );
+  }
+  const executionContext = await codexAppServerEconomyExecutionContext(provider);
+  const generation = codexAppServerEconomyConnectionGeneration(provider);
+  const configResult = await provider.readConfig({
+    cwd: executionContext.cwd,
+    includeLayers: false
+  });
+  if (codexAppServerEconomyConnectionGeneration(provider) !== generation) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex app-server reconnected during economy policy verification."
+    );
+  }
+  const hookResult = await provider.listHooks([executionContext.cwd]);
+  if (codexAppServerEconomyConnectionGeneration(provider) !== generation) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex app-server reconnected during economy policy verification."
+    );
+  }
+  const mcpServerNames = codexAppServerEconomyMcpServerNames(configResult);
+  const hookState = codexAppServerEconomyHookState(hookResult, executionContext.cwd);
+  return Object.freeze({
+    accountIdentitySignature: executionContext.accountIdentitySignature,
+    config: codexAppServerEconomyIsolationConfig({
+      executionProfile,
+      hookKeys: hookState.hookKeys,
+      mcpServerNames
+    }),
+    connectionGeneration: generation,
+    executionCwd: executionContext.cwd,
+    hookFingerprint: hookState.fingerprint,
+    hookKeys: Object.freeze([...hookState.hookKeys]),
+    mcpServerNames: Object.freeze([...mcpServerNames])
+  });
 }
 
 function codexEffectiveAgentSettings(agentSettings = {}) {
@@ -152,6 +779,317 @@ function codexAppServerTurnSettings({
     settings.summary = CODEX_SESSION_REASONING_SUMMARY;
   }
   return settings;
+}
+
+function codexAppServerEconomyThreadSettings({
+  config = null,
+  cwd = "",
+  developerInstructions = "",
+  executionProfile = null
+} = {}) {
+  const normalizedCwd = normalizeWorkdir(cwd);
+  if (!normalizedCwd) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy thread requires a working directory."
+    );
+  }
+  if (!isPlainRecord(config) || !codexAppServerEconomyIsolationConfigs.has(config)) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy thread requires verified tool-isolation configuration."
+    );
+  }
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const normalizedDeveloperInstructions = normalizeAgentText(developerInstructions);
+  if (normalizedDeveloperInstructions.length > CODEX_APP_SERVER_ECONOMY_DEVELOPER_INSTRUCTIONS_MAX_LENGTH) {
+    throw new Vibe64AgentExecutionProfileError(
+      VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.UNBOUNDED,
+      "Codex economy developer instructions exceed their request limit.",
+      {
+        maxDeveloperInstructionCharacters: CODEX_APP_SERVER_ECONOMY_DEVELOPER_INSTRUCTIONS_MAX_LENGTH
+      }
+    );
+  }
+  return {
+    allowProviderModelFallback: false,
+    approvalPolicy: CODEX_SESSION_APPROVAL_POLICY,
+    baseInstructions: CODEX_APP_SERVER_ECONOMY_BASE_INSTRUCTIONS,
+    config,
+    cwd: normalizedCwd,
+    developerInstructions: normalizedDeveloperInstructions || null,
+    dynamicTools: [],
+    environments: [],
+    model: profile.model,
+    runtimeWorkspaceRoots: [],
+    sandbox: CODEX_APP_SERVER_ECONOMY_SANDBOX,
+    selectedCapabilityRoots: []
+  };
+}
+
+function codexAppServerEconomyThreadStartSettings(options = {}) {
+  return {
+    ...codexAppServerEconomyThreadSettings(options),
+    sessionStartSource: "startup",
+    threadSource: CODEX_APP_SERVER_ECONOMY_THREAD_SOURCE
+  };
+}
+
+function codexAppServerEconomyThreadResumeSettings(options = {}) {
+  const settings = codexAppServerEconomyThreadSettings(options);
+  return {
+    approvalPolicy: settings.approvalPolicy,
+    baseInstructions: settings.baseInstructions,
+    config: settings.config,
+    cwd: settings.cwd,
+    developerInstructions: settings.developerInstructions,
+    model: settings.model,
+    runtimeWorkspaceRoots: settings.runtimeWorkspaceRoots,
+    sandbox: settings.sandbox
+  };
+}
+
+function codexAppServerEconomyTurnSettings({
+  cwd = "",
+  executionProfile = null,
+  outputSchema = null
+} = {}) {
+  const normalizedCwd = normalizeWorkdir(cwd);
+  if (!normalizedCwd) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy turn requires a working directory."
+    );
+  }
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const settings = {
+    approvalPolicy: CODEX_SESSION_APPROVAL_POLICY,
+    cwd: normalizedCwd,
+    environments: [],
+    model: profile.model,
+    outputSchema: codexAppServerEconomyOutputSchema(outputSchema, profile),
+    runtimeWorkspaceRoots: [],
+    sandboxPolicy: {
+      networkAccess: false,
+      type: "readOnly"
+    },
+    summary: "none"
+  };
+  if (profile.request.reasoning) {
+    settings.effort = profile.thinking;
+  }
+  return settings;
+}
+
+async function prepareCodexAppServerEconomyThreadStartSettings({
+  developerInstructions = "",
+  executionProfile = null,
+  provider = null
+} = {}) {
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const enforcement = await codexAppServerEconomyIsolationState(
+    provider,
+    profile
+  );
+  return Object.freeze({
+    enforcement,
+    executionProfile: profile,
+    settings: codexAppServerEconomyThreadStartSettings({
+      config: enforcement.config,
+      cwd: enforcement.executionCwd,
+      developerInstructions,
+      executionProfile: profile
+    })
+  });
+}
+
+function codexAppServerEconomyIsolationMatches(left = null, right = null) {
+  return left?.accountIdentitySignature === right?.accountIdentitySignature &&
+    left?.connectionGeneration === right?.connectionGeneration &&
+    left?.executionCwd === right?.executionCwd &&
+    left?.hookFingerprint === right?.hookFingerprint &&
+    JSON.stringify(left?.mcpServerNames || []) === JSON.stringify(right?.mcpServerNames || []);
+}
+
+function codexAppServerEconomyVerificationFailure(error, cleanupError, threadId = "") {
+  const normalizedThreadId = normalizeAgentText(threadId);
+  if (!cleanupError) {
+    error.codexAppServerEconomyThreadId = normalizedThreadId;
+    error.codexAppServerEconomyThreadRetired = true;
+    return error;
+  }
+  const failure = codexAppServerEconomyPolicyError(
+    "Codex could not retire an economy thread after policy verification failed.",
+    {
+      cleanupFailed: true,
+      threadId: normalizedThreadId
+    }
+  );
+  failure.codexAppServerEconomyThreadCleanupRequired = true;
+  failure.codexAppServerEconomyThreadId = normalizedThreadId;
+  return failure;
+}
+
+async function throwAfterCodexAppServerEconomyVerificationFailure({
+  error = null,
+  provider = null,
+  threadId = ""
+} = {}) {
+  let cleanupError = null;
+  try {
+    await provider.deleteThread(threadId);
+  } catch (caught) {
+    cleanupError = caught;
+  }
+  throw codexAppServerEconomyVerificationFailure(error, cleanupError, threadId);
+}
+
+async function startCodexAppServerEconomyThread(options = {}) {
+  const provider = options.provider;
+  if (
+    typeof provider?.startThread !== "function" ||
+    typeof provider?.deleteThread !== "function"
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot own and clean up its app-server thread."
+    );
+  }
+  const prepared = await prepareCodexAppServerEconomyThreadStartSettings(options);
+  const thread = await provider.startThread(prepared.settings);
+  const threadId = normalizeAgentText(thread?.id);
+  if (!threadId) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex app-server did not return an economy thread id."
+    );
+  }
+  try {
+    const verified = await codexAppServerEconomyIsolationState(
+      provider,
+      prepared.executionProfile
+    );
+    if (!codexAppServerEconomyIsolationMatches(prepared.enforcement, verified)) {
+      throw codexAppServerEconomyPolicyError(
+        "Codex execution surfaces changed while the economy thread was starting."
+      );
+    }
+    return Object.freeze({
+      enforcement: verified,
+      executionProfile: prepared.executionProfile,
+      thread,
+      threadId
+    });
+  } catch (error) {
+    await throwAfterCodexAppServerEconomyVerificationFailure({
+      error,
+      provider,
+      threadId
+    });
+  }
+}
+
+async function resumeCodexAppServerEconomyThread({
+  developerInstructions = "",
+  executionProfile = null,
+  provider = null,
+  threadId = ""
+} = {}) {
+  if (
+    typeof provider?.resumeThread !== "function" ||
+    typeof provider?.deleteThread !== "function"
+  ) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot safely resume and clean up its app-server thread."
+    );
+  }
+  const normalizedThreadId = normalizeAgentText(threadId);
+  if (!normalizedThreadId) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy resume requires a controller-owned thread id."
+    );
+  }
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const enforcement = await codexAppServerEconomyIsolationState(
+    provider,
+    profile
+  );
+  const thread = await provider.resumeThread(
+    normalizedThreadId,
+    codexAppServerEconomyThreadResumeSettings({
+      config: enforcement.config,
+      cwd: enforcement.executionCwd,
+      developerInstructions,
+      executionProfile: profile
+    })
+  );
+  try {
+    const verified = await codexAppServerEconomyIsolationState(
+      provider,
+      profile
+    );
+    if (!codexAppServerEconomyIsolationMatches(enforcement, verified)) {
+      throw codexAppServerEconomyPolicyError(
+        "Codex execution surfaces changed while the economy thread was resuming."
+      );
+    }
+    return Object.freeze({
+      enforcement: verified,
+      executionProfile: profile,
+      thread,
+      threadId: normalizedThreadId
+    });
+  } catch (error) {
+    await throwAfterCodexAppServerEconomyVerificationFailure({
+      error,
+      provider,
+      threadId: normalizedThreadId
+    });
+  }
+}
+
+async function sendCodexAppServerEconomyTurn({
+  executionProfile = null,
+  outputSchema = null,
+  prompt = "",
+  provider = null,
+  threadId = ""
+} = {}) {
+  if (typeof provider?.sendTurn !== "function") {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy execution cannot send an app-server turn."
+    );
+  }
+  const profile = codexAppServerEconomyProfile(executionProfile);
+  const input = String(prompt ?? "").trim();
+  if (!input) {
+    throw codexAppServerEconomyPolicyError("Codex economy prompt is empty.");
+  }
+  if (input.length > profile.limits.maxInputCharacters) {
+    throw new Vibe64AgentExecutionProfileError(
+      VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.UNBOUNDED,
+      "Codex economy prompt exceeds the resolved input limit.",
+      {
+        inputCharacters: input.length,
+        maxInputCharacters: profile.limits.maxInputCharacters
+      }
+    );
+  }
+  const normalizedThreadId = normalizeAgentText(threadId);
+  if (!normalizedThreadId) {
+    throw codexAppServerEconomyPolicyError(
+      "Codex economy turn requires an app-server thread id."
+    );
+  }
+  const turn = await provider.sendTurn(
+    normalizedThreadId,
+    input,
+    codexAppServerEconomyTurnSettings({
+      cwd: (await codexAppServerEconomyExecutionContext(provider)).cwd,
+      executionProfile: profile,
+      outputSchema
+    })
+  );
+  return Object.freeze({
+    executionProfile: profile,
+    input,
+    turn
+  });
 }
 
 function codexAppServerContextRefreshInstruction({
@@ -698,12 +1636,19 @@ async function sendCodexAppServerPromptForSession({
 }
 
 export {
+  CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION,
   CODEX_SESSION_AGENT_PROVIDER,
   CODEX_SESSION_APPROVAL_POLICY,
   CODEX_SESSION_MODEL,
   CODEX_SESSION_REASONING_EFFORT,
   CODEX_SESSION_REASONING_SUMMARY,
   CODEX_SESSION_SANDBOX,
+  assertCodexAppServerEconomyOutputWithinLimit,
+  assertCodexAppServerEconomyCompatibility,
+  codexAppServerEconomyThreadResumeSettings,
+  codexAppServerEconomyThreadSettings,
+  codexAppServerEconomyThreadStartSettings,
+  codexAppServerEconomyTurnSettings,
   codexAppServerIdentityMetadata,
   codexAppServerPromptWithContextRefresh,
   codexAppServerThreadHasReadableHistory,
@@ -713,6 +1658,10 @@ export {
   codexAppServerTurnPrompt,
   codexAppServerTurnSettings,
   ensureCodexAppServerThreadForSession,
+  prepareCodexAppServerEconomyThreadStartSettings,
+  resumeCodexAppServerEconomyThread,
+  sendCodexAppServerEconomyTurn,
   sendCodexAppServerPromptForSession,
+  startCodexAppServerEconomyThread,
   writeCodexAppServerIdentityMetadata
 };

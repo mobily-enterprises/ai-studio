@@ -11,6 +11,20 @@ function writeSourceEditorStreamEvent(rawReply, payload = {}) {
   })}\n`);
 }
 
+function withVibe64User(request, input = {}) {
+  const {
+    vibe64User: _ignoredVibe64User,
+    ...safeInput
+  } = input || {};
+  void _ignoredVibe64User;
+  return request.vibe64User
+    ? {
+        ...safeInput,
+        vibe64User: request.vibe64User
+      }
+    : safeInput;
+}
+
 async function sendSourceEditorNdjsonStream(reply, run) {
   if (!reply?.raw) {
     throw new Error("Source editor streams require a Fastify reply with raw stream access.");
@@ -156,8 +170,7 @@ function registerRoutes(
     summary: "Explain a selected source range in a Vibe64 session."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditor.explainSelection({
-      agentSettings: body.agentSettings,
+    return sourceEditor.explainSelection(withVibe64User(request, {
       endColumn: body.endColumn,
       endLine: body.endLine,
       force: body.force === true,
@@ -166,7 +179,7 @@ function registerRoutes(
       sessionId: request.params.sessionId,
       startColumn: body.startColumn,
       startLine: body.startLine
-    });
+    }));
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/explanations/stream", {
@@ -175,8 +188,7 @@ function registerRoutes(
   }, async (request, reply) => {
     const body = routes.requestBody(request);
     await sendSourceEditorNdjsonStream(reply, ({ emit, isClosed }) => {
-      return sourceEditor.streamExplanation({
-        agentSettings: body.agentSettings,
+      return sourceEditor.streamExplanation(withVibe64User(request, {
         assistantMessageId: body.assistantMessageId,
         endColumn: body.endColumn,
         endLine: body.endLine,
@@ -189,7 +201,7 @@ function registerRoutes(
         startColumn: body.startColumn,
         startLine: body.startLine,
         userMessageId: body.userMessageId
-      }, {
+      }), {
         emit,
         isClosed
       });
@@ -201,29 +213,29 @@ function registerRoutes(
     summary: "Clean abandoned temporary source explanation chats in a Vibe64 session."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditor.cleanupExplanations({
+    return sourceEditor.cleanupExplanations(withVibe64User(request, {
       activeExplanationIds: body.activeExplanationIds,
       originId: body.originId,
       sessionId: request.params.sessionId
-    });
+    }));
   });
 
   routes.serviceRoute("DELETE", "/sessions/:sessionId/source-editor/explanations/:explanationId", {
     summary: "Dispose a temporary source explanation chat in a Vibe64 session."
   }, (request) => {
-    return sourceEditor.deleteExplanation({
+    return sourceEditor.deleteExplanation(withVibe64User(request, {
       explanationId: request.params.explanationId,
       sessionId: request.params.sessionId
-    });
+    }));
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/explanations/:explanationId/stop", {
     summary: "Stop a running temporary source explanation chat."
   }, (request) => {
-    return sourceEditor.stopExplanation({
+    return sourceEditor.stopExplanation(withVibe64User(request, {
       explanationId: request.params.explanationId,
       sessionId: request.params.sessionId
-    });
+    }));
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/explanations/:explanationId/followups", {
@@ -231,12 +243,11 @@ function registerRoutes(
     summary: "Add a follow-up question to a temporary source explanation chat."
   }, (request) => {
     const body = routes.requestBody(request);
-    return sourceEditor.addExplanationFollowup({
-      agentSettings: body.agentSettings,
+    return sourceEditor.addExplanationFollowup(withVibe64User(request, {
       explanationId: request.params.explanationId,
       message: body.message,
       sessionId: request.params.sessionId
-    });
+    }));
   });
 
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/explanations/:explanationId/followups/stream", {
@@ -245,14 +256,13 @@ function registerRoutes(
   }, async (request, reply) => {
     const body = routes.requestBody(request);
     await sendSourceEditorNdjsonStream(reply, ({ emit, isClosed }) => {
-      return sourceEditor.streamExplanationFollowup({
-        agentSettings: body.agentSettings,
+      return sourceEditor.streamExplanationFollowup(withVibe64User(request, {
         assistantMessageId: body.assistantMessageId,
         explanationId: request.params.explanationId,
         message: body.message,
         sessionId: request.params.sessionId,
         userMessageId: body.userMessageId
-      }, {
+      }), {
         emit,
         isClosed
       });

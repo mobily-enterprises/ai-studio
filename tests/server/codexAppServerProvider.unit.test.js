@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,17 +14,22 @@ import {
   readCodexAuthStatus
 } from "@local/vibe64-core/server/codexAuthState";
 import {
+  CODEX_APP_SERVER_EXECUTION_MODES,
   CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+  CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE,
   CODEX_APP_SERVER_PROVIDER_ID,
   CODEX_APP_SERVER_TRANSPORT,
   CodexAppServerAgentProvider,
   CodexAppServerJsonRpcClient,
   codexAppServerEndpointForTarget,
+  codexAppServerEconomyHomeDir,
+  codexAppServerEconomyWorkspaceDir,
   codexAppServerRequestIsInvalid,
   codexAppServerRuntimeBaseDir,
   codexAppServerRuntimeDir,
   codexCliResumeCommand,
   codexTurnInput,
+  currentCodexAccountIdentitySignature,
   ensureCodexAppServerRuntime,
   startCodexAppServerProcess,
   stopCodexAppServerRuntime
@@ -117,6 +122,34 @@ async function writeCodexAuthMarker(systemRoot, {
   }, null, 2)}\n`, {
     mode: 0o600
   });
+}
+
+async function writeChatgptAuth(toolHomeSource, {
+  accessToken = "access-token-one",
+  accountId = "account-one",
+  refreshToken = "refresh-token-must-never-be-used"
+} = {}) {
+  const codexHome = path.join(toolHomeSource, ".codex");
+  await mkdir(codexHome, { mode: 0o700, recursive: true });
+  await writeFile(path.join(codexHome, "auth.json"), `${JSON.stringify({
+    OPENAI_API_KEY: null,
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: accessToken,
+      account_id: accountId,
+      refresh_token: refreshToken
+    }
+  }, null, 2)}\n`, { mode: 0o600 });
+}
+
+async function writeApiKeyAuth(toolHomeSource, apiKey = "sk-test-economy-key") {
+  const codexHome = path.join(toolHomeSource, ".codex");
+  await mkdir(codexHome, { mode: 0o700, recursive: true });
+  await writeFile(path.join(codexHome, "auth.json"), `${JSON.stringify({
+    OPENAI_API_KEY: apiKey,
+    auth_mode: "apikey",
+    tokens: null
+  }, null, 2)}\n`, { mode: 0o600 });
 }
 
 function socketPathForRuntime(runtimeDir) {
@@ -327,8 +360,87 @@ class ResponsiveFakeWebSocket extends FakeWebSocket {
         data: JSON.stringify({
           id: message.id,
           result: {
-            platformOs: "linux"
+            platformOs: "linux",
+            userAgent: "  vibe64/0.149.0 (unit test)  "
           }
+        })
+      }));
+    }
+  }
+}
+
+class EconomyResponsiveFakeWebSocket extends ResponsiveFakeWebSocket {
+  send(payload) {
+    super.send(payload);
+    const message = this.sent.at(-1);
+    if (message?.id && message.method === "account/login/start") {
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({
+          id: message.id,
+          result: {
+            type: message.params?.type
+          }
+        })
+      }));
+    }
+    if (message?.id && message.method === "account/read") {
+      const login = this.sent.find((entry) => entry.method === "account/login/start");
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({
+          id: message.id,
+          result: {
+            account: {
+              type: login?.params?.type === "apiKey" ? "apiKey" : "chatgpt"
+            },
+            requiresOpenaiAuth: true
+          }
+        })
+      }));
+    }
+  }
+}
+
+class OversizedServerInfoFakeWebSocket extends FakeWebSocket {
+  constructor(...args) {
+    super(...args);
+    queueMicrotask(() => this.emit("open"));
+  }
+
+  send(payload) {
+    super.send(payload);
+    const message = this.sent.at(-1);
+    if (message?.id && message.method === "initialize") {
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({
+          id: message.id,
+          result: {
+            userAgent: `vibe64/0.149.0 ${"x".repeat(1024)}`
+          }
+        })
+      }));
+    }
+  }
+}
+
+class UnresponsiveFakeWebSocket extends FakeWebSocket {
+  constructor(...args) {
+    super(...args);
+    queueMicrotask(() => this.emit("error", new Error("unresponsive")));
+  }
+}
+
+class EconomyLoginErrorFakeWebSocket extends ResponsiveFakeWebSocket {
+  send(payload) {
+    super.send(payload);
+    const message = this.sent.at(-1);
+    if (message?.id && message.method === "account/login/start") {
+      queueMicrotask(() => this.emit("message", {
+        data: JSON.stringify({
+          error: {
+            code: -32000,
+            message: "login rejected with secret-token"
+          },
+          id: message.id
         })
       }));
     }
@@ -532,23 +644,25 @@ test("codex provider fallback runtime base stays outside the target root when XD
 });
 
 test("codex provider reports Unix socket paths that are too long for the OS", async () => {
-  await assert.rejects(
-    () => startCodexAppServerProcess({
-      authStateSignature: "test-auth-state-signature",
-      readyTimeoutMs: 10,
-      runtimeDir: path.join(
-        os.tmpdir(),
-        "vibe64-codex-provider-socket-path-that-is-far-too-long-for-a-unix-domain-socket",
-        "nested-runtime-dir-that-keeps-going",
-        "codex-app-server-123456789abc"
-      ),
-      commandRunner() {
-        throw new Error("command runner must not be called for an unsupported socket path");
-      },
-      WebSocketImpl: ResponsiveFakeWebSocket
-    }),
-    /Unix socket path is too long/u
-  );
+  await withTemporaryDirectory(async (root) => {
+    await assert.rejects(
+      () => startCodexAppServerProcess({
+        authStateSignature: "test-auth-state-signature",
+        readyTimeoutMs: 10,
+        runtimeDir: path.join(
+          root,
+          "socket-path-that-is-far-too-long-for-a-unix-domain-socket",
+          "nested-runtime-dir-that-keeps-going",
+          "codex-app-server-123456789abc"
+        ),
+        commandRunner() {
+          throw new Error("command runner must not be called for an unsupported socket path");
+        },
+        WebSocketImpl: ResponsiveFakeWebSocket
+      }),
+      /Unix socket path is too long/u
+    );
+  });
 });
 
 test("codex provider reuses a live app-server runtime from Vibe64 metadata", async () => {
@@ -934,8 +1048,10 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
 });
 
 test("codex app-server process and every descendant start with the managed workspace umask", async () => {
+  let temporaryRoot = "";
   await withTemporaryDirectory(async (root) => {
-    const runtimeDir = path.join(root, "runtime");
+    temporaryRoot = root;
+    const runtimeDir = path.join(root, "codex-app-server-umask-test");
     const workdir = path.join(root, "source");
     const probePath = path.join(root, "umask.txt");
     const fakeCodexPath = path.join(root, "fake-codex.cjs");
@@ -952,8 +1068,9 @@ test("codex app-server process and every descendant start with the managed works
     ].join("\n") + "\n", "utf8");
     await chmod(fakeCodexPath, 0o755);
 
+    let runtime = null;
     try {
-      await startCodexAppServerProcess({
+      runtime = await startCodexAppServerProcess({
         authStateSignature: "test-auth-state-signature",
         codexCommand: fakeCodexPath,
         env: {
@@ -965,6 +1082,7 @@ test("codex app-server process and every descendant start with the managed works
         WebSocketImpl: ResponsiveFakeWebSocket,
         workdir
       });
+      await writeMetadata(runtimeDir, runtime);
       let observed = "";
       for (let attempt = 0; attempt < 100 && !observed; attempt += 1) {
         observed = await readFile(probePath, "utf8").catch(() => "");
@@ -974,10 +1092,20 @@ test("codex app-server process and every descendant start with the managed works
       }
       assert.equal(observed, "7");
     } finally {
-      await stopCodexAppServerRuntime({
+      const stopped = await stopCodexAppServerRuntime({
         runtimeDir
       });
+      if (runtime?.pid) {
+        assert.equal(stopped.stopped, true);
+        assert.equal(stopped.runtimeDirRemoved, true);
+        assert.throws(() => process.kill(-runtime.pid, 0), {
+          code: "ESRCH"
+        });
+      }
     }
+  });
+  await assert.rejects(() => access(temporaryRoot), {
+    code: "ENOENT"
   });
 });
 
@@ -1464,6 +1592,312 @@ test("codex provider starts a host-native app-server", async () => {
   });
 });
 
+test("codex economy provider starts from a private empty home and strips project execution inputs", async () => {
+  await withTemporaryDirectory(async (runtimeDir) => {
+    const toolHomeSource = path.join(runtimeDir, "canonical-account-home");
+    const projectWorkdir = path.join(runtimeDir, "project", "source");
+    await Promise.all([
+      mkdir(projectWorkdir, { recursive: true }),
+      writeChatgptAuth(toolHomeSource)
+    ]);
+    const commandCalls = [];
+    const runtime = await ensureCodexAppServerRuntime({
+      authStateSignature: "economy-auth-state",
+      env: {
+        DB_PASSWORD: "host-db-secret",
+        LANG: "en_AU.UTF-8",
+        OPENAI_API_KEY: "host-api-secret",
+        PATH: process.env.PATH,
+        PROJECT_HOST_SECRET: "host-project-secret"
+      },
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      executionRoot: projectWorkdir,
+      project: {
+        runtimeConfigEnv: {
+          PROJECT_CONFIG_SECRET: "project-config-secret"
+        },
+        workspace: "secret-project"
+      },
+      readyTimeoutMs: 2000,
+      runtimeDir,
+      runtimeInstanceId: "session-1:economy",
+      runtimes: ["project-secret-runtime"],
+      session: {
+        databaseEnv: {
+          SESSION_DB_SECRET: "session-db-secret"
+        },
+        sessionId: "secret-session"
+      },
+      terminalEnv: {
+        DB_PASSWORD: "project-db-secret",
+        VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR: "/project/secret/shims",
+        VIBE64_PROJECT_SECRET: "project-secret"
+      },
+      toolHomeSource,
+      userKey: "secret-user-key",
+      WebSocketImpl: ResponsiveFakeWebSocket,
+      workdir: projectWorkdir,
+      commandRunner: codexAppServerCommandRunner(runtimeDir, commandCalls)
+    });
+
+    const economyHome = codexAppServerEconomyHomeDir(runtimeDir);
+    const economyWorkspace = codexAppServerEconomyWorkspaceDir(runtimeDir);
+    const runCall = commandCalls[0];
+    const serializedCall = JSON.stringify(runCall);
+    assert.equal(runtime.executionMode, CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY);
+    assert.equal(runtime.processCwd, economyWorkspace);
+    assert.equal(runtime.toolHomeSource, "");
+    assert.equal(runtime.accountIdentitySignature, await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource
+    }));
+    assert.equal(runCall.cwd, economyWorkspace);
+    assert.deepEqual(runCall.allowedRoots, [economyWorkspace]);
+    assert.equal(runCall.credentialHome.home, economyHome);
+    assert.deepEqual(runCall.project, {});
+    assert.deepEqual(runCall.session, {});
+    assert.equal(runCall.userKey, "");
+    assert.deepEqual(runCall.shimDirs, []);
+    assert.equal(runCall.baseEnv.CODEX_HOME, economyHome);
+    assert.equal(runCall.baseEnv.DB_PASSWORD, "");
+    assert.equal(runCall.baseEnv.OPENAI_API_KEY, "");
+    assert.equal(runCall.baseEnv.PROJECT_HOST_SECRET, "");
+    assert.doesNotMatch(serializedCall, /project-secret|session-db-secret|project-db-secret/u);
+    assert.doesNotMatch(serializedCall, /canonical-account-home|access-token-one|refresh-token/u);
+    assert.doesNotMatch(runCall.args.join("\n"), /dangerously-bypass|trust_level/u);
+    assert.match(runCall.args[1], /exec \/usr\/bin\/env -i/u);
+    assert.deepEqual(runCall.runtimes, VIBE64_INTERACTIVE_RUNTIME_PACKS);
+
+    const envProbe = await runVibe64Command({
+      ...runCall,
+      args: [
+        "-c",
+        runCall.args[1],
+        "vibe64-economy-env-probe",
+        process.execPath,
+        "-e",
+        "console.log(JSON.stringify(process.env));"
+      ],
+      command: "/bin/sh",
+      logPath: "",
+      mode: "capture"
+    });
+    assert.equal(envProbe.ok, true, envProbe.output);
+    const childEnv = JSON.parse(envProbe.stdout);
+    assert.equal(childEnv.CODEX_HOME, economyHome);
+    assert.equal(childEnv.HOME, economyHome);
+    for (const secretName of [
+      "DB_PASSWORD",
+      "OPENAI_API_KEY",
+      "PROJECT_CONFIG_SECRET",
+      "PROJECT_HOST_SECRET",
+      "SESSION_DB_SECRET",
+      "VIBE64_PROJECT_SECRET"
+    ]) {
+      assert.equal(Object.hasOwn(childEnv, secretName), false, secretName);
+    }
+    assert.deepEqual(Object.keys(childEnv).sort(), [
+      "CODEX_HOME",
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+      "LOGNAME",
+      "PATH",
+      "SSL_CERT_DIR",
+      "SSL_CERT_FILE",
+      "TERM",
+      "TMPDIR",
+      "TZ",
+      "USER"
+    ]);
+
+    const stored = await readFile(path.join(runtimeDir, "runtime.json"), "utf8");
+    assert.doesNotMatch(stored, /canonical-account-home|access-token|refresh-token|api-key/u);
+  });
+});
+
+test("codex economy provider retires a detached child when startup never becomes ready", async () => {
+  await withTemporaryDirectory(async (root) => {
+    const runtimeDir = path.join(root, "codex-app-server-economy-unready");
+    let child = null;
+    try {
+      await assert.rejects(startCodexAppServerProcess({
+        accountIdentitySignature: `sha256:${"e".repeat(64)}`,
+        authStateSignature: "test-auth-state",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        readyTimeoutMs: 50,
+        runtimeDir,
+        WebSocketImpl: UnresponsiveFakeWebSocket,
+        async commandRunner() {
+          await writeFile(socketPathForRuntime(runtimeDir), "");
+          child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
+            detached: true,
+            stdio: "ignore"
+          });
+          child.unref();
+          return {
+            exitCode: 0,
+            ok: true,
+            output: "",
+            pid: child.pid,
+            signal: "",
+            stderr: "",
+            stdout: "",
+            timedOut: false
+          };
+        }
+      }), (error) => {
+        assert.equal(error.code, "vibe64_codex_economy_runtime_start_failed");
+        assert.equal(error.cleanupRequired, false);
+        return true;
+      });
+      assert.throws(() => process.kill(-child.pid, 0), { code: "ESRCH" });
+      for (const artifact of [
+        codexAppServerEconomyHomeDir(runtimeDir),
+        codexAppServerEconomyWorkspaceDir(runtimeDir),
+        socketPathForRuntime(runtimeDir),
+        path.join(runtimeDir, "app-server.log")
+      ]) {
+        await assert.rejects(access(artifact), { code: "ENOENT" });
+      }
+      assert.deepEqual(await readdir(runtimeDir), []);
+    } finally {
+      if (child?.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // The assertion path retires the complete process group first.
+        }
+      }
+    }
+  });
+});
+
+test("codex economy provider retires a started child when metadata persistence fails", async () => {
+  await withTemporaryDirectory(async (root) => {
+    const runtimeDir = path.join(root, "codex-app-server-economy-metadata");
+    let child = null;
+    try {
+      await assert.rejects(ensureCodexAppServerRuntime({
+        accountIdentitySignature: `sha256:${"f".repeat(64)}`,
+        authStateSignature: "test-auth-state",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        readyTimeoutMs: 1000,
+        runtimeDir,
+        WebSocketImpl: ResponsiveFakeWebSocket,
+        async commandRunner() {
+          await writeFile(socketPathForRuntime(runtimeDir), "");
+          child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
+            detached: true,
+            stdio: "ignore"
+          });
+          child.unref();
+          return {
+            exitCode: 0,
+            ok: true,
+            output: "",
+            pid: child.pid,
+            signal: "",
+            stderr: "",
+            stdout: "",
+            timedOut: false
+          };
+        },
+        async runtimeMetadataWriter() {
+          throw new Error("metadata-secret-must-not-escape");
+        }
+      }), (error) => {
+        assert.equal(error.code, "vibe64_codex_economy_runtime_metadata_failed");
+        assert.equal(error.cleanupRequired, false);
+        assert.doesNotMatch(error.message, /metadata-secret/u);
+        return true;
+      });
+      assert.throws(() => process.kill(-child.pid, 0), { code: "ESRCH" });
+      for (const artifact of [
+        codexAppServerEconomyHomeDir(runtimeDir),
+        codexAppServerEconomyWorkspaceDir(runtimeDir),
+        socketPathForRuntime(runtimeDir),
+        path.join(runtimeDir, "app-server.log"),
+        path.join(runtimeDir, "runtime.json")
+      ]) {
+        await assert.rejects(access(artifact), { code: "ENOENT" });
+      }
+      assert.deepEqual(await readdir(runtimeDir), []);
+
+      const retry = await ensureCodexAppServerRuntime({
+        accountIdentitySignature: `sha256:${"f".repeat(64)}`,
+        authStateSignature: "test-auth-state",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        readyTimeoutMs: 1000,
+        runtimeDir,
+        WebSocketImpl: ResponsiveFakeWebSocket,
+        commandRunner: codexAppServerCommandRunner(runtimeDir)
+      });
+      assert.equal(retry.reused, false);
+      assert.equal(retry.executionMode, CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY);
+      assert.equal((await readdir(runtimeDir)).includes("runtime.json"), true);
+      const stoppedRetry = await stopCodexAppServerRuntime({ runtimeDir });
+      assert.equal(stoppedRetry.runtimeDirRemoved, true);
+    } finally {
+      if (child?.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // The assertion path retires the complete process group first.
+        }
+      }
+    }
+  });
+});
+
+test("Codex account identity signatures survive token refresh and change on account selection", async () => {
+  await withTemporaryDirectory(async (root) => {
+    const chatgptHome = path.join(root, "chatgpt-home");
+    await writeChatgptAuth(chatgptHome, {
+      accessToken: "first-access-token",
+      accountId: "account-one"
+    });
+    const first = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource: chatgptHome
+    });
+    await writeChatgptAuth(chatgptHome, {
+      accessToken: "second-access-token",
+      accountId: "account-one"
+    });
+    const refreshed = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource: chatgptHome
+    });
+    assert.equal(refreshed, first);
+    assert.match(first, /^sha256:[a-f0-9]{64}$/u);
+
+    await writeChatgptAuth(chatgptHome, {
+      accessToken: "third-access-token",
+      accountId: "account-two"
+    });
+    const switched = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource: chatgptHome
+    });
+    assert.notEqual(switched, first);
+
+    const apiKeyHome = path.join(root, "api-key-home");
+    await writeApiKeyAuth(apiKeyHome, "sk-first-selected-key");
+    const firstApiKey = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource: apiKeyHome
+    });
+    await writeApiKeyAuth(apiKeyHome, "sk-second-selected-key");
+    const secondApiKey = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource: apiKeyHome
+    });
+    assert.notEqual(secondApiKey, firstApiKey);
+  });
+});
+
 test("codex provider closes a connected client when Codex auth state changes", async () => {
   await withTemporaryDirectory(async (runtimeDir) => {
     FakeWebSocket.instances = [];
@@ -1797,6 +2231,322 @@ test("codex provider reuses an available connection without another auth preflig
   assert.equal(preflightCalls, 0);
 });
 
+test("codex provider reads every model catalog page with native pagination fields", async () => {
+  const calls = [];
+  const responses = [{
+    data: [{ model: "gpt-5.6-luna" }],
+    nextCursor: "page-2"
+  }, {
+    data: [{ model: "gpt-5.6-sol" }],
+    nextCursor: null
+  }];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      calls.push({ method, params });
+      return responses.shift();
+    }
+  });
+
+  const result = await provider.listModels({
+    includeHidden: true,
+    limit: 25
+  });
+
+  assert.deepEqual(result, {
+    data: [
+      { model: "gpt-5.6-luna" },
+      { model: "gpt-5.6-sol" }
+    ],
+    nextCursor: null
+  });
+  assert.deepEqual(calls, [{
+    method: "model/list",
+    params: {
+      includeHidden: true,
+      limit: 25
+    }
+  }, {
+    method: "model/list",
+    params: {
+      cursor: "page-2",
+      includeHidden: true,
+      limit: 25
+    }
+  }]);
+});
+
+test("codex provider fails closed when model catalog pagination repeats a cursor", async () => {
+  const calls = [];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      calls.push({ method, params });
+      return {
+        data: [],
+        nextCursor: "repeated-page"
+      };
+    }
+  });
+
+  await assert.rejects(provider.listModels(), (error) => {
+    assert.equal(error.code, CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE);
+    assert.match(error.message, /repeated a pagination cursor/u);
+    assert.doesNotMatch(error.message, /repeated-page/u);
+    return true;
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("codex provider fails closed when model catalog data is malformed", async () => {
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        models: [{ model: "gpt-5.6-luna" }]
+      };
+    }
+  });
+
+  await assert.rejects(provider.listModels(), (error) => {
+    assert.equal(error.code, CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE);
+    assert.match(error.message, /did not contain a data array/u);
+    return true;
+  });
+});
+
+test("codex provider clamps model pages and rejects oversized entries and cursors", async () => {
+  const calls = [];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      calls.push({ method, params });
+      return {
+        data: [{
+          description: "x".repeat(40 * 1024),
+          model: "oversized-model"
+        }],
+        nextCursor: null
+      };
+    }
+  });
+
+  await assert.rejects(provider.listModels({ limit: 10_000 }), (error) => {
+    assert.equal(error.code, CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE);
+    assert.match(error.message, /response limit/u);
+    return true;
+  });
+  assert.equal(calls[0].params.limit, 100);
+
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        data: [],
+        nextCursor: "x".repeat(513)
+      };
+    }
+  });
+  await assert.rejects(provider.listModels(), (error) => {
+    assert.equal(error.code, CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE);
+    assert.match(error.message, /cursor is invalid/u);
+    assert.doesNotMatch(error.message, /x{20}/u);
+    return true;
+  });
+});
+
+test("codex provider forwards cancellation through every model catalog page", async () => {
+  const abortController = new AbortController();
+  const provider = new CodexAppServerAgentProvider({});
+  let capturedSignal = null;
+  provider.activeClient = async () => ({
+    async request(_method, _params, options = {}) {
+      capturedSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        void resolve;
+        const abort = () => {
+          const error = new Error("catalog request aborted");
+          error.code = "ABORT_ERR";
+          error.name = "AbortError";
+          reject(error);
+        };
+        if (options.signal?.aborted) {
+          abort();
+          return;
+        }
+        options.signal?.addEventListener?.("abort", abort, { once: true });
+      });
+    }
+  });
+
+  const pending = provider.listModels({}, {
+    signal: abortController.signal
+  });
+  await delay(0);
+  abortController.abort();
+
+  await assert.rejects(pending, (error) => error.code === "ABORT_ERR");
+  assert.equal(capturedSignal, abortController.signal);
+  assert.equal(capturedSignal.aborted, true);
+});
+
+test("codex economy provider authoritatively inventories active and archived threads with bounded pagination", async () => {
+  const calls = [];
+  const runtimeDir = "/tmp/vibe64-economy-thread-inventory";
+  const accountIdentitySignature = `sha256:${"b".repeat(64)}`;
+  const responses = [{
+    data: [{ id: "thread-two" }],
+    nextCursor: "next-active"
+  }, {
+    data: [{ id: "thread-one" }],
+    nextCursor: null
+  }, {
+    data: [{ id: "thread-archived" }],
+    nextCursor: null
+  }];
+  const provider = new CodexAppServerAgentProvider({
+    accountIdentitySignature,
+    executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+    runtimeDir
+  });
+  provider.ensureRuntime = async () => {
+    provider.runtime = {
+      accountIdentitySignature,
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+      runtimeDir
+    };
+    return provider.runtime;
+  };
+  provider.activeClient = async () => ({
+    async request(method, params, options) {
+      calls.push({ method, options, params });
+      return responses.shift();
+    }
+  });
+
+  const result = await provider.listEconomyThreads();
+
+  assert.deepEqual(result.threadIds, [
+    "thread-archived",
+    "thread-one",
+    "thread-two"
+  ]);
+  assert.equal(Object.isFrozen(result.threadIds), true);
+  assert.deepEqual(calls.map(({ method, params }) => ({ method, params })), [{
+    method: "thread/list",
+    params: {
+      archived: false,
+      cwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+      limit: 100,
+      sourceKinds: ["appServer"],
+      useStateDbOnly: false
+    }
+  }, {
+    method: "thread/list",
+    params: {
+      archived: false,
+      cursor: "next-active",
+      cwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+      limit: 100,
+      sourceKinds: ["appServer"],
+      useStateDbOnly: false
+    }
+  }, {
+    method: "thread/list",
+    params: {
+      archived: true,
+      cwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+      limit: 100,
+      sourceKinds: ["appServer"],
+      useStateDbOnly: false
+    }
+  }]);
+});
+
+test("codex economy thread inventory fails closed on repeated or oversized provider data", async () => {
+  const runtimeDir = "/tmp/vibe64-economy-thread-inventory-invalid";
+  const accountIdentitySignature = `sha256:${"c".repeat(64)}`;
+  const provider = new CodexAppServerAgentProvider({
+    accountIdentitySignature,
+    executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+    runtimeDir
+  });
+  provider.ensureRuntime = async () => {
+    provider.runtime = {
+      accountIdentitySignature,
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+      runtimeDir
+    };
+    return provider.runtime;
+  };
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        data: [{ id: "thread-one" }],
+        nextCursor: "same-cursor"
+      };
+    }
+  });
+  await assert.rejects(provider.listEconomyThreads(), (error) => {
+    assert.equal(error.code, "vibe64_codex_economy_thread_inventory_invalid");
+    assert.doesNotMatch(error.message, /same-cursor/u);
+    return true;
+  });
+
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        data: [{
+          id: "oversized-thread",
+          title: "x".repeat(70 * 1024)
+        }],
+        nextCursor: null
+      };
+    }
+  });
+  await assert.rejects(provider.listEconomyThreads(), (error) => {
+    assert.equal(error.code, "vibe64_codex_economy_thread_inventory_invalid");
+    return true;
+  });
+});
+
+test("codex provider reads effective config for one project cwd", async () => {
+  const calls = [];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      calls.push({ method, params });
+      return {
+        config: {
+          mcp_servers: {
+            filesystem: {
+              command: "unsafe-fixture"
+            }
+          }
+        }
+      };
+    }
+  });
+
+  const result = await provider.readConfig({
+    cwd: "/runtime/project/session/source"
+  });
+
+  assert.deepEqual(result.config.mcp_servers, {
+    filesystem: {
+      command: "unsafe-fixture"
+    }
+  });
+  assert.deepEqual(calls, [{
+    method: "config/read",
+    params: {
+      cwd: "/runtime/project/session/source",
+      includeLayers: false
+    }
+  }]);
+});
+
 test("codex provider discards a client that fails initialization", async () => {
   FakeWebSocket.instances = [];
   const provider = new CodexAppServerAgentProvider({
@@ -1814,6 +2564,303 @@ test("codex provider discards a client that fails initialization", async () => {
 
   assert.equal(provider.client, null);
   assert.equal(FakeWebSocket.instances.at(-1)?.closed, true);
+});
+
+test("codex provider exposes only the normalized connected app-server identity", async () => {
+  FakeWebSocket.instances = [];
+  const provider = new CodexAppServerAgentProvider({
+    requestTimeoutMs: 1000,
+    WebSocketImpl: ResponsiveFakeWebSocket
+  });
+  provider.ensureRuntime = async () => {
+    provider.runtime = {
+      endpoint: "ws://127.0.0.1:48123"
+    };
+    return provider.runtime;
+  };
+
+  await provider.connect();
+  assert.deepEqual(provider.currentServerInfo(), {
+    userAgent: "vibe64/0.149.0 (unit test)"
+  });
+  assert.equal(Object.isFrozen(provider.currentServerInfo()), true);
+
+  provider.close();
+  assert.equal(provider.currentServerInfo(), null);
+});
+
+test("codex provider drops oversized app-server identity fields", async () => {
+  FakeWebSocket.instances = [];
+  const provider = new CodexAppServerAgentProvider({
+    requestTimeoutMs: 1000,
+    WebSocketImpl: OversizedServerInfoFakeWebSocket
+  });
+  provider.ensureRuntime = async () => {
+    provider.runtime = {
+      endpoint: "ws://127.0.0.1:48123"
+    };
+    return provider.runtime;
+  };
+
+  await provider.connect();
+  assert.deepEqual(provider.currentServerInfo(), {
+    userAgent: ""
+  });
+  provider.close();
+});
+
+test("codex economy provider redacts app-server request failures and refuses external server requests", async () => {
+  const provider = new CodexAppServerAgentProvider({
+    accountIdentitySignature: `sha256:${"d".repeat(64)}`,
+    authStateSignature: "test-auth-state",
+    executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+  });
+  let externalHandlerCalls = 0;
+  provider.setServerRequestHandler(async () => {
+    externalHandlerCalls += 1;
+    return { secret: "must-not-run" };
+  });
+  provider.activeClient = async () => ({
+    async request() {
+      const error = new Error("provider leaked selected-api-key and project-secret");
+      error.code = -32600;
+      error.data = {
+        token: "selected-api-key"
+      };
+      throw error;
+    }
+  });
+
+  await assert.rejects(provider.startThread({}), (error) => {
+    assert.equal(error.code, "vibe64_codex_economy_provider_request_failed");
+    assert.equal(error.providerCode, -32600);
+    assert.equal(error.operation, "codex-app-server-thread-start");
+    assert.doesNotMatch(JSON.stringify(error), /selected-api-key|project-secret/u);
+    assert.doesNotMatch(error.message, /selected-api-key|project-secret/u);
+    return true;
+  });
+  await assert.rejects(provider.handleServerRequest({
+    method: "mcp/call",
+    params: {
+      secret: "project-secret"
+    }
+  }), (error) => {
+    assert.equal(error.code, -32601);
+    assert.doesNotMatch(error.message, /project-secret/u);
+    return true;
+  });
+  assert.equal(externalHandlerCalls, 0);
+});
+
+test("codex economy provider retires its runtime when in-memory account activation fails", async () => {
+  await withTemporaryDirectory(async (root) => {
+    FakeWebSocket.instances = [];
+    const runtimeDir = path.join(root, "codex-app-server-economy-login");
+    const toolHomeSource = path.join(root, "selected-home");
+    await writeChatgptAuth(toolHomeSource);
+    await Promise.all([
+      mkdir(codexAppServerEconomyHomeDir(runtimeDir), { recursive: true }),
+      mkdir(codexAppServerEconomyWorkspaceDir(runtimeDir), { recursive: true })
+    ]);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    try {
+      const accountIdentitySignature = await currentCodexAccountIdentitySignature({
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        toolHomeSource
+      });
+      const provider = new CodexAppServerAgentProvider({
+        authStateSignature: "test-auth-state",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        requestTimeoutMs: 1000,
+        runtimeDir,
+        toolHomeSource,
+        WebSocketImpl: EconomyLoginErrorFakeWebSocket
+      });
+      provider.ensureRuntime = async () => {
+        provider.runtime = {
+          accountIdentitySignature,
+          endpoint: "ws://127.0.0.1:48123",
+          executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+          pid: child.pid,
+          processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+          runtimeDir
+        };
+        return provider.runtime;
+      };
+
+      await assert.rejects(provider.connect(), (error) => {
+        assert.equal(error.code, "vibe64_codex_economy_auth_unavailable");
+        assert.doesNotMatch(error.message, /secret-token/u);
+        return true;
+      });
+      assert.throws(() => process.kill(-child.pid, 0), { code: "ESRCH" });
+      assert.equal(provider.runtime, null);
+      assert.equal(provider.client, null);
+      await assert.rejects(access(codexAppServerEconomyHomeDir(runtimeDir)), { code: "ENOENT" });
+      await assert.rejects(access(codexAppServerEconomyWorkspaceDir(runtimeDir)), { code: "ENOENT" });
+    } finally {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The assertion path retires the complete process group first.
+      }
+    }
+  });
+});
+
+test("codex economy provider injects only the selected ChatGPT account and refreshes from an advanced canonical token", async () => {
+  await withTemporaryDirectory(async (root) => {
+    FakeWebSocket.instances = [];
+    const toolHomeSource = path.join(root, "selected-home");
+    const runtimeDir = path.join(root, "runtime");
+    await writeChatgptAuth(toolHomeSource, {
+      accessToken: "first-access-token",
+      accountId: "account-one",
+      refreshToken: "refresh-token-never-forward"
+    });
+    const accountIdentitySignature = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource
+    });
+    const provider = new CodexAppServerAgentProvider({
+      authStateSignature: "test-auth-state",
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      project: {
+        secretProjectIdentity: "project-identity-must-be-stripped"
+      },
+      requestTimeoutMs: 1000,
+      runtimes: ["project-runtime-must-be-stripped"],
+      runtimeDir,
+      session: {
+        secretSessionIdentity: "session-identity-must-be-stripped"
+      },
+      terminalEnv: {
+        PROJECT_ENV_SECRET: "terminal-env-must-be-stripped"
+      },
+      toolHomeSource,
+      userKey: "user-key-must-be-stripped",
+      WebSocketImpl: EconomyResponsiveFakeWebSocket
+    });
+    provider.ensureRuntime = async () => {
+      provider.runtime = {
+        accountIdentitySignature,
+        endpoint: "ws://127.0.0.1:48123",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+        runtimeDir,
+        transport: "unix"
+      };
+      return provider.runtime;
+    };
+
+    await provider.connect();
+    const socket = FakeWebSocket.instances.at(-1);
+    const login = socket.sent.find((entry) => entry.method === "account/login/start");
+    assert.deepEqual(login.params, {
+      accessToken: "first-access-token",
+      chatgptAccountId: "account-one",
+      chatgptPlanType: null,
+      type: "chatgptAuthTokens"
+    });
+    assert.doesNotMatch(JSON.stringify(socket.sent), /refresh-token-never-forward/u);
+    assert.deepEqual(socket.sent.find((entry) => entry.method === "account/read")?.params, {
+      refreshToken: false
+    });
+    const runtimeInfo = await provider.currentRuntimeInfo();
+    assert.equal(runtimeInfo.accountIdentitySignature, accountIdentitySignature);
+    assert.equal(runtimeInfo.executionMode, CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY);
+    assert.equal(runtimeInfo.executionContextHash, executionContextHash({
+      project: {},
+      session: {},
+      userKey: ""
+    }));
+    assert.equal(runtimeInfo.runtimesHash, runtimesHash([]));
+    assert.equal(runtimeInfo.terminalEnvHash, terminalEnvHash({}));
+    assert.equal(runtimeInfo.toolHomeSource, "");
+    assert.doesNotMatch(
+      JSON.stringify(runtimeInfo),
+      /project-identity|project-runtime|session-identity|terminal-env|user-key/u
+    );
+
+    await writeChatgptAuth(toolHomeSource, {
+      accessToken: "second-access-token",
+      accountId: "account-one",
+      refreshToken: "second-refresh-token-never-forward"
+    });
+    assert.deepEqual(await provider.handleServerRequest({
+      method: "account/chatgptAuthTokens/refresh",
+      params: {
+        previousAccountId: "account-one",
+        reason: "unauthorized"
+      }
+    }), {
+      accessToken: "second-access-token",
+      chatgptAccountId: "account-one",
+      chatgptPlanType: null
+    });
+    await assert.rejects(provider.handleServerRequest({
+      method: "account/chatgptAuthTokens/refresh",
+      params: {
+        previousAccountId: "account-one",
+        reason: "unauthorized"
+      }
+    }), (error) => error.code === "vibe64_codex_economy_auth_refresh_pending");
+    provider.close();
+  });
+});
+
+test("codex economy provider injects API-key auth without persisting or exposing the key", async () => {
+  await withTemporaryDirectory(async (root) => {
+    FakeWebSocket.instances = [];
+    const toolHomeSource = path.join(root, "selected-api-home");
+    const runtimeDir = path.join(root, "runtime");
+    await writeApiKeyAuth(toolHomeSource, "sk-selected-economy-key");
+    const accountIdentitySignature = await currentCodexAccountIdentitySignature({
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      toolHomeSource
+    });
+    const provider = new CodexAppServerAgentProvider({
+      authStateSignature: "test-auth-state",
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      requestTimeoutMs: 1000,
+      runtimeDir,
+      toolHomeSource,
+      WebSocketImpl: EconomyResponsiveFakeWebSocket
+    });
+    provider.ensureRuntime = async () => {
+      provider.runtime = {
+        accountIdentitySignature,
+        endpoint: "ws://127.0.0.1:48123",
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+        processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+        runtimeDir
+      };
+      return provider.runtime;
+    };
+
+    await provider.connect();
+    const login = FakeWebSocket.instances.at(-1).sent
+      .find((entry) => entry.method === "account/login/start");
+    assert.deepEqual(login.params, {
+      apiKey: "sk-selected-economy-key",
+      type: "apiKey"
+    });
+    const runtimeInfo = await provider.currentRuntimeInfo();
+    assert.equal(runtimeInfo.accountIdentitySignature, accountIdentitySignature);
+    assert.equal(runtimeInfo.executionContextHash, executionContextHash({
+      project: {},
+      session: {},
+      userKey: ""
+    }));
+    assert.equal(runtimeInfo.runtimesHash, runtimesHash([]));
+    assert.equal(runtimeInfo.terminalEnvHash, terminalEnvHash({}));
+    assert.doesNotMatch(JSON.stringify(runtimeInfo), /sk-selected-economy-key|selected-api-home/u);
+    provider.close();
+  });
 });
 
 test("codex JSON-RPC client sends initialize and turn/start over WebSocket", async () => {
@@ -1974,6 +3021,82 @@ test("codex JSON-RPC client sends initialize and turn/start over WebSocket", asy
   });
 
   client.close();
+});
+
+test("codex JSON-RPC client cancels and removes an in-flight request", async () => {
+  FakeWebSocket.instances = [];
+  const client = new CodexAppServerJsonRpcClient({
+    endpoint: "ws://127.0.0.1:48123",
+    requestTimeoutMs: 1000,
+    WebSocketImpl: FakeWebSocket
+  });
+  const connect = client.connect();
+  const socket = FakeWebSocket.instances[0];
+  socket.emit("open");
+  await connect;
+
+  const abortController = new AbortController();
+  const pending = client.request("model/list", {
+    includeHidden: false,
+    limit: 100
+  }, {
+    signal: abortController.signal
+  });
+  assert.equal(client.pendingRequests.size, 1);
+  abortController.abort();
+
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.name, "AbortError");
+    assert.equal(error.code, "ABORT_ERR");
+    assert.equal(error.method, "model/list");
+    return true;
+  });
+  assert.equal(client.pendingRequests.size, 0);
+
+  socket.emit("message", {
+    data: JSON.stringify({
+      id: 1,
+      result: {
+        data: [],
+        nextCursor: null
+      }
+    })
+  });
+  assert.equal(client.pendingRequests.size, 0);
+  client.close();
+});
+
+test("codex JSON-RPC client enforces its transport payload limit", async () => {
+  FakeWebSocket.instances = [];
+  const client = new CodexAppServerJsonRpcClient({
+    endpoint: "ws://127.0.0.1:48123",
+    maxMessageBytes: 256,
+    requestTimeoutMs: 1000,
+    WebSocketImpl: FakeWebSocket
+  });
+  const connection = client.connect();
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.emit("open");
+  await connection;
+  assert.equal(socket.options.maxPayload, 256);
+
+  const pending = client.request("model/list", {});
+  const request = socket.sent.at(-1);
+  socket.emit("message", {
+    data: JSON.stringify({
+      id: request.id,
+      result: {
+        data: "x".repeat(1024)
+      }
+    })
+  });
+
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.code, "vibe64_codex_app_server_message_too_large");
+    return true;
+  });
+  assert.equal(socket.closed, true);
+  assert.equal(client.isOpen(), false);
 });
 
 test("codex JSON-RPC client connects to Unix socket endpoints without WebSocket compression", async () => {

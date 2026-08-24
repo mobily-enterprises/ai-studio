@@ -40,6 +40,10 @@ export {
   runHelperCommand
 } from "./engines/helperClient.js";
 export {
+  FILE_LOCK_ERROR_CODE,
+  tryAcquireExclusiveFileLock
+} from "./engines/fileLock.js";
+export {
   runVibe64Command
 } from "./runVibe64Command.js";
 export {

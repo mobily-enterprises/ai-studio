@@ -34,9 +34,10 @@ import {
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 import {
-  defaultVibe64SourceExplanationAgentSettings,
-  effectiveVibe64AgentSettings,
-  normalizeVibe64AgentSettings
+  VIBE64_AGENT_EXECUTION_PROFILE_IDS,
+  VIBE64_AGENT_EXECUTION_WORKLOAD_IDS,
+  defineVibe64AgentExecutionProfileRequest,
+  vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
   createSourceEditorFileObserver
@@ -65,35 +66,499 @@ const SOURCE_EDITOR_RESOLVE_EXTENSIONS = [
   ".md"
 ];
 const SOURCE_EDITOR_EXPLANATION_CONTEXT_LINES = 6;
+const SOURCE_EDITOR_EXPLANATION_CONTEXT_MAX_CHARS = 12_000;
+const SOURCE_EDITOR_EXPLANATION_CODE_MAX_CHARS = 60_000;
 const SOURCE_EDITOR_EXPLANATION_MAX_LINES = 240;
+const SOURCE_EDITOR_EXPLANATION_ANSWER_MAX_CHARS = 5_000;
+const SOURCE_EDITOR_FOLLOWUP_ANSWER_MAX_CHARS = 4_000;
+const SOURCE_EDITOR_FOLLOWUP_CONTEXT_MAX_CHARS = 8_000;
 const SOURCE_EDITOR_FOLLOWUP_MAX_LENGTH = 2000;
 const SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS = 180_000;
-const SOURCE_EDITOR_EXPLANATION_PROMPT_VERSION = "source-explanation-chat-v2";
+const SOURCE_EDITOR_EXPLANATION_PROMPT_VERSION = "source-explanation-chat-v3";
 const SOURCE_EDITOR_EXPLANATION_CLEANUP_FILE = "source-editor-explanation-cleanup.json";
 const SOURCE_EDITOR_EXPLANATION_CLEANUP_MAX_AGE_MS = 30 * 60 * 1000;
+const SOURCE_EDITOR_EXPLANATION_CACHE_MAX_ENTRIES = 64;
+const SOURCE_EDITOR_EXPLANATION_CACHE_TTL_MS = 5 * 60 * 1000;
+const SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE = defineVibe64AgentExecutionProfileRequest({
+  profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
+  workloadId: VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SOURCE_EXPLANATION
+});
+const SOURCE_EDITOR_EXPLANATION_OUTPUT_SCHEMA = Object.freeze({
+  additionalProperties: false,
+  properties: {
+    answer: {
+      maxLength: SOURCE_EDITOR_EXPLANATION_ANSWER_MAX_CHARS,
+      minLength: 1,
+      type: "string"
+    }
+  },
+  required: ["answer"],
+  type: "object"
+});
+const SOURCE_EDITOR_FOLLOWUP_OUTPUT_SCHEMA = Object.freeze({
+  additionalProperties: false,
+  properties: {
+    answer: {
+      maxLength: SOURCE_EDITOR_FOLLOWUP_ANSWER_MAX_CHARS,
+      minLength: 1,
+      type: "string"
+    }
+  },
+  required: ["answer"],
+  type: "object"
+});
 const sourceEditorExplanationCleanupQueues = new Map();
 
 function isPlainObject(value = null) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
-function sourceEditorExplanationAgentSettings(input = {}, fallback = null) {
-  const explicitSettings = isPlainObject(input?.agentSettings) && Object.keys(input.agentSettings).length > 0
-    ? input.agentSettings
-    : null;
-  const source = explicitSettings
-    ? input.agentSettings
-    : (isPlainObject(fallback) ? fallback : null);
-  return source
-    ? normalizeVibe64AgentSettings(source)
-    : defaultVibe64SourceExplanationAgentSettings();
+function sourceEditorExecutionProfileSnapshot(value = null) {
+  try {
+    return vibe64AgentExecutionProfileAuditSnapshot(value);
+  } catch {
+    return null;
+  }
 }
 
-function sourceEditorExplanationEffectiveAgentSettings(agentSettings = {}) {
-  return effectiveVibe64AgentSettings(agentSettings);
+function sourceEditorExecutionProfileFromFailure(value = null) {
+  return sourceEditorExecutionProfileSnapshot(value?.executionProfile) ||
+    sourceEditorExecutionProfileSnapshot(value?.sourceEditorRejectedThread?.executionProfile) ||
+    sourceEditorExecutionProfileSnapshot(value?.details?.executionProfile) ||
+    sourceEditorExecutionProfileSnapshot(value?.details?.details?.executionProfile);
+}
+
+function requiredSourceEditorExecutionProfile(value = null) {
+  const snapshot = sourceEditorExecutionProfileSnapshot(value);
+  if (
+    !snapshot ||
+    snapshot.profileId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.profileId ||
+    snapshot.workloadId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.workloadId ||
+    !snapshot.providerId ||
+    !snapshot.revision ||
+    !snapshot.model
+  ) {
+    throw sourceEditorError(
+      "The low-cost assistant required for source explanations did not provide a verified execution profile. Check the selected assistant provider and retry.",
+      "vibe64_source_explanation_execution_profile_missing",
+      {},
+      503
+    );
+  }
+  return snapshot;
+}
+
+function resolvedSourceEditorExecutionProfile(value = null) {
+  requiredSourceEditorExecutionProfile(value);
+  // Keep the manager's in-memory provenance object intact until execution.
+  // Persistence, cache identity, events, and responses use sanitized snapshots.
+  return value;
+}
+
+function sourceEditorExecutionProfileRequest() {
+  return { ...SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE };
+}
+
+function sourceEditorExecutionProfileIdentity(value = null) {
+  const snapshot = sourceEditorExecutionProfileSnapshot(value);
+  if (
+    !snapshot ||
+    snapshot.profileId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.profileId ||
+    snapshot.workloadId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.workloadId
+  ) {
+    return "";
+  }
+  return JSON.stringify([
+    snapshot.providerId,
+    snapshot.profileId,
+    snapshot.workloadId,
+    snapshot.revision,
+    snapshot.model,
+    snapshot.thinking
+  ]);
+}
+
+function sourceEditorVibe64UserIdentity(vibe64User = null) {
+  if (!isPlainObject(vibe64User)) {
+    return "";
+  }
+  const identity = normalizeText(
+    vibe64User.username ||
+    vibe64User.osUsername ||
+    vibe64User.email ||
+    vibe64User.id
+  ).toLowerCase();
+  return identity
+    ? crypto.createHash("sha256").update(identity).digest("hex")
+    : "";
+}
+
+function sourceEditorAgentOperationOptions(context = {}, options = {}, {
+  providerId = ""
+} = {}) {
+  return {
+    ...options,
+    providerId: normalizeText(providerId || context.agentProviderId),
+    runtime: context.runtime || null,
+    session: context.session || null,
+    vibe64User: context.vibe64User || null
+  };
+}
+
+async function describeSourceEditorAgentProvider(terminalService = null, context = {}) {
+  if (typeof terminalService?.describeAgentProvider !== "function") {
+    return null;
+  }
+  return terminalService.describeAgentProvider({
+    runtime: context.runtime || null,
+    session: context.session || null,
+    vibe64User: context.vibe64User || null
+  });
+}
+
+async function resolveSourceEditorAgentExecutionProfile(terminalService = null, context = {}) {
+  if (typeof terminalService?.resolveAgentExecutionProfile !== "function") {
+    throw sourceEditorError(
+      "The selected assistant provider cannot resolve the low-cost profile required for source explanations.",
+      "vibe64_source_explanation_execution_profile_missing",
+      {},
+      503
+    );
+  }
+  const resolved = await terminalService.resolveAgentExecutionProfile(
+    context.sessionId || context.session?.sessionId || context.session?.id,
+    sourceEditorExecutionProfileRequest(),
+    sourceEditorAgentOperationOptions(context)
+  );
+  const executionProfile = requiredSourceEditorExecutionProfile(resolved);
+  if (executionProfile.providerId !== normalizeText(context.agentProviderId)) {
+    throw sourceEditorError(
+      "The selected assistant provider returned a low-cost profile for a different provider.",
+      "vibe64_source_explanation_execution_profile_missing",
+      {},
+      503
+    );
+  }
+  return resolved;
+}
+
+async function sourceEditorCompletedCacheIdentityUnchanged(
+  terminalService = null,
+  context = {},
+  template = null
+) {
+  const expectedProviderId = normalizeText(context.agentProviderId);
+  const expectedAccountIdentitySignature = normalizeText(context.agentAccountIdentitySignature);
+  const expectedExecutionProfileIdentity = sourceEditorExecutionProfileIdentity(
+    context.agentExecutionProfile
+  );
+  if (
+    !expectedProviderId ||
+    !expectedAccountIdentitySignature ||
+    !expectedExecutionProfileIdentity ||
+    sourceEditorExecutionProfileIdentity(template?.executionProfile) !== expectedExecutionProfileIdentity
+  ) {
+    return false;
+  }
+  try {
+    const current = await describeSourceEditorAgentProvider(terminalService, context);
+    return normalizeText(current?.providerId) === expectedProviderId &&
+      normalizeText(current?.accountIdentitySignature) === expectedAccountIdentitySignature &&
+      sourceEditorExecutionProfileIdentity(
+        await resolveSourceEditorAgentExecutionProfile(terminalService, context)
+      ) === expectedExecutionProfileIdentity;
+  } catch {
+    return false;
+  }
+}
+
+function sourceEditorFollowupThreadError(error = null) {
+  const message = normalizeText(error?.message || error?.error);
+  if (!/thread/iu.test(message) || /regenerate this explanation/iu.test(message)) {
+    return error;
+  }
+  return sourceEditorError(
+    `${message} Regenerate this explanation before asking another follow-up.`,
+    normalizeText(error?.code) || "vibe64_source_explanation_agent_thread_unavailable",
+    isPlainObject(error?.details) ? error.details : {},
+    Number(error?.statusCode) || 409
+  );
+}
+
+function sourceEditorFailureWithFollowupThreadRetirement(error = null, retirement = {}) {
+  let failure = error;
+  if (!failure || typeof failure !== "object" || !Object.isExtensible(failure)) {
+    const response = sourceEditorErrorResponse(error);
+    failure = sourceEditorError(
+      response.error || "The agent could not answer this source explanation follow-up.",
+      response.code || "vibe64_source_explanation_agent_failed",
+      isPlainObject(response.details) ? response.details : {},
+      response.statusCode || 502
+    );
+  }
+  failure.sourceEditorFollowupThreadRetirement = Object.freeze({
+    cleanupSucceeded: retirement.cleanupSucceeded === true,
+    executionProfile: sourceEditorExecutionProfileSnapshot(retirement.executionProfile),
+    threadId: normalizeText(retirement.threadId),
+    turnId: normalizeText(retirement.turnId)
+  });
+  return failure;
+}
+
+function sourceEditorFailureWithRejectedThread(error = null, rejectedThread = null) {
+  if (!normalizeText(rejectedThread?.threadId)) {
+    return error;
+  }
+  let failure = error;
+  if (!failure || typeof failure !== "object" || !Object.isExtensible(failure)) {
+    const response = sourceEditorErrorResponse(error);
+    failure = sourceEditorError(
+      response.error || "The agent could not answer this source explanation chat.",
+      response.code || "vibe64_source_explanation_agent_failed",
+      isPlainObject(response.details) ? response.details : {},
+      response.statusCode || 502
+    );
+  }
+  failure.sourceEditorRejectedThread = Object.freeze({
+    executionProfile: sourceEditorExecutionProfileSnapshot(rejectedThread.executionProfile),
+    threadId: normalizeText(rejectedThread.threadId),
+    turnId: normalizeText(rejectedThread.turnId)
+  });
+  return failure;
+}
+
+function sourceEditorStructuredAnswer(value = "", {
+  code = "vibe64_source_explanation_agent_invalid",
+  maxChars = SOURCE_EDITOR_EXPLANATION_ANSWER_MAX_CHARS
+} = {}) {
+  let envelope = value;
+  if (typeof value === "string") {
+    try {
+      envelope = JSON.parse(value);
+    } catch {
+      throw sourceEditorError(
+        "The assistant returned an invalid structured explanation.",
+        code,
+        {},
+        502
+      );
+    }
+  }
+  const keys = isPlainObject(envelope) ? Object.keys(envelope) : [];
+  const answer = keys.length === 1 && keys[0] === "answer" && typeof envelope.answer === "string"
+    ? envelope.answer.trim()
+    : "";
+  if (!answer || answer.length > maxChars) {
+    throw sourceEditorError(
+      "The assistant returned an invalid structured explanation.",
+      code,
+      { maxChars },
+      502
+    );
+  }
+  return answer;
+}
+
+function sourceEditorExplanationCacheKey(context = {}, explanationInput = {}) {
+  const range = explanationInput.range || {};
+  const executionProfile = requiredSourceEditorExecutionProfile(context.agentExecutionProfile);
+  return JSON.stringify([
+    normalizeText(context.sessionId),
+    normalizeText(context.agentProviderId),
+    normalizeText(context.agentAccountIdentitySignature),
+    normalizeText(context.agentAccountIdentity),
+    sourceEditorExecutionProfileIdentity(executionProfile),
+    normalizeText(range.path),
+    normalizeText(range.scope),
+    positiveInteger(range.startLine, 1),
+    positiveInteger(range.startColumn, 1),
+    positiveInteger(range.endLine, 1),
+    positiveInteger(range.endColumn, 1),
+    normalizeText(range.fileHash),
+    normalizeText(range.selectedTextHash),
+    normalizeText(explanationInput.promptVersion)
+  ]);
+}
+
+function sourceEditorExplanationCacheTemplate(explanation = {}) {
+  const source = normalizeSourceEditorExplanation(explanation);
+  const executionProfile = sourceEditorExecutionProfileSnapshot(source.executionProfile);
+  if (
+    source.status !== "ready" ||
+    !source.body.trim() ||
+    executionProfile?.profileId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.profileId ||
+    executionProfile?.workloadId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.workloadId
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    body: source.body,
+    executionProfile,
+    model: executionProfile.model,
+    summary: source.summary || sourceEditorExplanationSummary(source.body),
+    title: source.title
+  });
+}
+
+function createSourceEditorExplanationCache({
+  now = Date.now
+} = {}) {
+  const completed = new Map();
+  const generations = new Map();
+  const inFlight = new Map();
+  const currentTime = typeof now === "function" ? now : Date.now;
+  let closed = false;
+
+  const forgetGenerationWhenUnused = (key) => {
+    if (!completed.has(key) && !inFlight.has(key)) {
+      generations.delete(key);
+    }
+  };
+  const deleteCompleted = (key) => {
+    completed.delete(key);
+    forgetGenerationWhenUnused(key);
+  };
+  const prune = (nowMs = currentTime()) => {
+    for (const [key, record] of completed.entries()) {
+      if (record.expiresAt <= nowMs) {
+        deleteCompleted(key);
+      }
+    }
+  };
+  const remember = (key, token, template) => {
+    if (closed || !template || generations.get(key) !== token) {
+      return;
+    }
+    completed.delete(key);
+    completed.set(key, {
+      expiresAt: currentTime() + SOURCE_EDITOR_EXPLANATION_CACHE_TTL_MS,
+      template,
+      token
+    });
+    while (completed.size > SOURCE_EDITOR_EXPLANATION_CACHE_MAX_ENTRIES) {
+      deleteCompleted(completed.keys().next().value);
+    }
+  };
+  const read = (key) => {
+    prune();
+    const record = completed.get(key);
+    if (!record || generations.get(key) !== record.token) {
+      return null;
+    }
+    completed.delete(key);
+    completed.set(key, record);
+    return record.template;
+  };
+
+  const run = async (key = "", {
+    completedCache = true,
+    force = false,
+    generate,
+    reuse,
+    validateCompleted = null
+  } = {}) => {
+    if (closed) {
+      throw sourceEditorError(
+        "Source explanation cache is closed.",
+        "vibe64_source_explanation_cache_closed",
+        {},
+        503
+      );
+    }
+    if (typeof generate !== "function" || typeof reuse !== "function") {
+      throw new TypeError("Source explanation caching requires generate() and reuse().");
+    }
+
+    prune();
+    let token = generations.get(key);
+    if (force || !token) {
+      token = Object.freeze({});
+      generations.set(key, token);
+    }
+    if (force) {
+      completed.delete(key);
+    } else if (completedCache) {
+      const template = read(key);
+      if (template) {
+        const completedIdentityValid = typeof validateCompleted !== "function" ||
+          await validateCompleted(template) === true;
+        if (completedIdentityValid) {
+          return reuse(template, {
+            cacheHit: true,
+            coalesced: false
+          });
+        }
+        deleteCompleted(key);
+        token = Object.freeze({});
+        generations.set(key, token);
+      }
+    }
+    if (!force) {
+      const active = inFlight.get(key);
+      if (active?.token === token) {
+        const template = await active.promise;
+        if (template) {
+          const completedIdentityValid = !completedCache || typeof validateCompleted !== "function" ||
+            await validateCompleted(template) === true;
+          if (completedIdentityValid) {
+            return reuse(template, {
+              cacheHit: true,
+              coalesced: true
+            });
+          }
+        }
+        return run(key, {
+          completedCache,
+          force: true,
+          generate,
+          reuse,
+          validateCompleted
+        });
+      }
+    }
+
+    let generated = null;
+    const promise = Promise.resolve()
+      .then(async () => {
+        generated = await generate();
+        const template = sourceEditorExplanationCacheTemplate(generated);
+        const completedIdentityValid = completedCache && (
+          typeof validateCompleted !== "function" || await validateCompleted(generated) === true
+        );
+        if (completedIdentityValid) {
+          remember(key, token, template);
+        }
+        return template;
+      });
+    const pending = {
+      promise,
+      token
+    };
+    inFlight.set(key, pending);
+    try {
+      await promise;
+      return generated;
+    } finally {
+      if (inFlight.get(key) === pending) {
+        inFlight.delete(key);
+        forgetGenerationWhenUnused(key);
+      }
+    }
+  };
+
+  return Object.freeze({
+    close() {
+      closed = true;
+      completed.clear();
+      generations.clear();
+      inFlight.clear();
+    },
+    run
+  });
 }
 
 function createService({
+  explanationCacheNow = Date.now,
   explanationFollowupGenerator = null,
   explanationGenerator = null,
   logger = console,
@@ -118,11 +583,17 @@ function createService({
       terminalService
     });
   const explanationChats = new Map();
+  const explanationCache = createSourceEditorExplanationCache({
+    now: explanationCacheNow
+  });
   const fileObserver = sourceFileObserver || createSourceEditorFileObserver({
     logger
   });
 
-  async function sourceEditorContext(sessionId = "") {
+  async function sourceEditorContext(sessionId = "", {
+    agentOperation = false,
+    vibe64User = null
+  } = {}) {
     const normalizedSessionId = normalizeText(sessionId);
     if (!normalizedSessionId) {
       throw sourceEditorError("Missing Vibe64 session id.", "vibe64_invalid_session_id");
@@ -142,12 +613,65 @@ function createService({
       );
     }
 
+    let agentAccountIdentitySignature = "";
+    let agentExecutionProfile = null;
+    let agentProviderId = "";
+    if (agentOperation) {
+      let provider;
+      try {
+        provider = await describeSourceEditorAgentProvider(terminalService, {
+          runtime,
+          session,
+          vibe64User
+        });
+      } catch (error) {
+        const causeCode = normalizeText(error?.code);
+        const providerError = normalizeText(error?.message);
+        const authenticationRequired = /auth|credential|sign.?in|unauthor/iu.test(
+          `${causeCode} ${providerError}`
+        );
+        throw sourceEditorError(
+          authenticationRequired
+            ? "Source explanations need a verified assistant account. Sign in to or reconnect the selected assistant provider, then retry."
+            : "The selected assistant provider could not be verified for source explanations. Check its availability and selected account, then retry.",
+          authenticationRequired
+            ? "vibe64_source_explanation_agent_auth_required"
+            : "vibe64_source_explanation_provider_identity_unavailable",
+          {
+            causeCode,
+            providerError
+          },
+          503
+        );
+      }
+      agentProviderId = normalizeText(
+        provider?.providerId ||
+        session?.agentSession?.providerId ||
+        session?.metadata?.agent_identity_provider
+      );
+      agentAccountIdentitySignature = normalizeText(provider?.accountIdentitySignature);
+      agentExecutionProfile = await resolveSourceEditorAgentExecutionProfile(terminalService, {
+        agentAccountIdentitySignature,
+        agentProviderId,
+        runtime,
+        session,
+        sessionId: normalizedSessionId,
+        vibe64User
+      });
+    }
+
     return {
+      agentAccountIdentity: sourceEditorVibe64UserIdentity(vibe64User),
+      agentAccountIdentitySignature,
+      agentExecutionProfile,
+      agentProviderId,
       policy: sourceEditorFilePolicy(),
+      runtime,
       session,
       sessionId: normalizedSessionId,
       sourceEditorTempRoot: sourceEditorTempRoot(temporaryRoot, normalizedSessionId),
-      sourceRoot
+      sourceRoot,
+      vibe64User
     };
   }
 
@@ -254,11 +778,36 @@ function createService({
 
     async explainSelection(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
+        const explanationInput = await sourceEditorExplanationInput(context, input);
+        const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
         return {
-          explanation: await createSourceEditorExplanation(context, input, {
-            explanationChats,
-            explanationGenerator: sourceExplanationGenerator
+          explanation: await explanationCache.run(cacheKey, {
+            completedCache: Boolean(context.agentAccountIdentitySignature),
+            force: input.force === true,
+            generate: () => createSourceEditorExplanation(context, input, {
+              explanationChats,
+              explanationGenerator: sourceExplanationGenerator,
+              explanationInput
+            }),
+            reuse: (template, cacheState) => createCachedSourceEditorExplanation(
+              context,
+              input,
+              explanationInput,
+              template,
+              {
+                cacheState,
+                explanationChats
+              }
+            ),
+            validateCompleted: (template) => sourceEditorCompletedCacheIdentityUnchanged(
+              terminalService,
+              context,
+              template
+            )
           }),
           ok: true
         };
@@ -267,19 +816,49 @@ function createService({
 
     async streamExplanation(input = {}, stream = {}) {
       await streamSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
-        await streamSourceEditorExplanation(context, input, {
-          emit: stream.emit,
-          explanationChats,
-          isClosed: stream.isClosed,
-          terminalService
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
+        const explanationInput = await sourceEditorExplanationInput(context, input);
+        const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
+        await explanationCache.run(cacheKey, {
+          completedCache: Boolean(context.agentAccountIdentitySignature),
+          force: input.force === true,
+          generate: () => streamSourceEditorExplanation(context, input, {
+            emit: stream.emit,
+            explanationChats,
+            explanationInput,
+            isClosed: stream.isClosed,
+            terminalService
+          }),
+          reuse: (template, cacheState) => createCachedSourceEditorExplanation(
+            context,
+            input,
+            explanationInput,
+            template,
+            {
+              cacheState,
+              emit: stream.emit,
+              explanationChats,
+              isClosed: stream.isClosed
+            }
+          ),
+          validateCompleted: (template) => sourceEditorCompletedCacheIdentityUnchanged(
+            terminalService,
+            context,
+            template
+          )
         });
       }, stream);
     },
 
     async addExplanationFollowup(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
         return {
           explanation: await addSourceEditorExplanationFollowup(context, input, {
             explanationChats,
@@ -292,7 +871,10 @@ function createService({
 
     async streamExplanationFollowup(input = {}, stream = {}) {
       await streamSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
         await streamSourceEditorExplanationFollowup(context, input, {
           emit: stream.emit,
           explanationChats,
@@ -304,7 +886,10 @@ function createService({
 
     async stopExplanation(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
         return {
           explanation: await stopSourceEditorExplanation(context, input.explanationId, {
             explanationChats,
@@ -317,7 +902,10 @@ function createService({
 
     async deleteExplanation(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
         return {
           ...await deleteSourceEditorExplanation(context, input.explanationId, {
             explanationChats,
@@ -330,7 +918,10 @@ function createService({
 
     async cleanupExplanations(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
+        const context = await sourceEditorContext(input.sessionId, {
+          agentOperation: true,
+          vibe64User: input.vibe64User
+        });
         return {
           ...await cleanupSourceEditorExplanations(context, input, {
             explanationChats,
@@ -342,6 +933,7 @@ function createService({
     },
 
     close() {
+      explanationCache.close();
       fileObserver.close();
     }
   });
@@ -1688,21 +2280,21 @@ async function deleteSourceEditorExplanationAgentThread(context = {}, record = {
     );
   }
   const agentCleanup = await terminalService.deleteDetachedAgentChatThread(context.sessionId, {
+    executionProfile: sourceEditorExecutionProfileSnapshot(record.executionProfile) ||
+      sourceEditorExecutionProfileRequest(),
     threadId
-  });
-  if (agentCleanup?.ok === false) {
+  }, sourceEditorAgentOperationOptions(context, {}, {
+    providerId: record.executionProfile?.providerId
+  }));
+  if (agentCleanup?.ok !== true) {
     throw sourceEditorError(
-      agentCleanup.error || "The agent service could not delete the temporary source explanation chat.",
-      agentCleanup.code || "vibe64_source_explanation_agent_cleanup_failed",
-      agentCleanup,
-      agentCleanup.statusCode || 502
+      agentCleanup?.error || "The agent service did not confirm that the temporary source explanation chat was deleted.",
+      agentCleanup?.code || "vibe64_source_explanation_agent_cleanup_unconfirmed",
+      isPlainObject(agentCleanup) ? agentCleanup : { cleanupResult: agentCleanup ?? null },
+      agentCleanup?.statusCode || 502
     );
   }
-  return agentCleanup || {
-    ok: true,
-    status: "deleted",
-    threadId
-  };
+  return agentCleanup;
 }
 
 async function readSourceEditorExplanationRecord(context = {}, explanationId = "", {
@@ -1751,14 +2343,13 @@ function normalizeSourceEditorExplanation(value = {}) {
     : {};
   return {
     agentThreadId: normalizeText(source.agentThreadId),
-    agentSettings: sourceEditorExplanationAgentSettings({
-      agentSettings: source.agentSettings
-    }),
+    agentSettings: null,
     agentTurnId: normalizeText(source.agentTurnId),
     body: String(source.body || ""),
     createdAt: normalizeText(source.createdAt),
     engine: normalizeText(source.engine || (source.agentThreadId ? "agent-chat" : "")),
     error: String(source.error || ""),
+    executionProfile: sourceEditorExecutionProfileSnapshot(source.executionProfile),
     followups: normalizeSourceEditorFollowups(source.followups),
     id: normalizeSourceEditorExplanationId(source.id),
     messages: normalizeSourceEditorMessages(source.messages),
@@ -1898,10 +2489,23 @@ function sourceEditorContextWindow(text = "", range = {}) {
   const lines = sourceEditorLines(text);
   const startLine = Math.max(1, range.startLine - SOURCE_EDITOR_EXPLANATION_CONTEXT_LINES);
   const endLine = Math.min(lines.length, range.endLine + SOURCE_EDITOR_EXPLANATION_CONTEXT_LINES);
-  return lines
+  return boundedSourceEditorPromptText(lines
     .slice(startLine - 1, endLine)
     .map((line, index) => `${startLine + index}: ${line}`)
-    .join("\n");
+    .join("\n"), SOURCE_EDITOR_EXPLANATION_CONTEXT_MAX_CHARS);
+}
+
+function boundedSourceEditorPromptText(value = "", maxChars = 0) {
+  const text = String(value || "");
+  const limit = Math.max(1, Number(maxChars || 0));
+  if (text.length <= limit) {
+    return text;
+  }
+  const marker = `\n\n... ${text.length - limit} characters omitted ...\n\n`;
+  const available = Math.max(2, limit - marker.length);
+  const headLength = Math.ceil(available * 0.6);
+  const tailLength = available - headLength;
+  return `${text.slice(0, headLength)}${marker}${text.slice(-tailLength)}`;
 }
 
 function sourceEditorExplanationPromptCode({
@@ -1910,7 +2514,10 @@ function sourceEditorExplanationPromptCode({
 } = {}) {
   const text = String(selectedText || "");
   const lines = sourceEditorLines(text);
-  if (range.scope !== "file" || lines.length <= SOURCE_EDITOR_EXPLANATION_MAX_LINES) {
+  if (
+    (range.scope !== "file" || lines.length <= SOURCE_EDITOR_EXPLANATION_MAX_LINES) &&
+    text.length <= SOURCE_EDITOR_EXPLANATION_CODE_MAX_CHARS
+  ) {
     return {
       label: range.scope === "file" ? "File contents" : "Selected code",
       note: "",
@@ -1918,19 +2525,27 @@ function sourceEditorExplanationPromptCode({
     };
   }
 
-  const headLineCount = Math.ceil(SOURCE_EDITOR_EXPLANATION_MAX_LINES * 0.6);
-  const tailLineCount = SOURCE_EDITOR_EXPLANATION_MAX_LINES - headLineCount;
+  const excerptedByLines = lines.length > SOURCE_EDITOR_EXPLANATION_MAX_LINES;
+  const headLineCount = excerptedByLines
+    ? Math.ceil(SOURCE_EDITOR_EXPLANATION_MAX_LINES * 0.6)
+    : lines.length;
+  const tailLineCount = excerptedByLines
+    ? SOURCE_EDITOR_EXPLANATION_MAX_LINES - headLineCount
+    : 0;
   const omittedLineCount = Math.max(0, lines.length - headLineCount - tailLineCount);
+  const excerpt = excerptedByLines
+    ? [
+        ...lines.slice(0, headLineCount),
+        "",
+        `... ${omittedLineCount} lines omitted from the middle ...`,
+        "",
+        ...lines.slice(-tailLineCount)
+      ].join("\n")
+    : text;
   return {
     label: "File excerpt",
-    note: `The whole file has ${lines.length} lines, so only an excerpt is inlined here. Inspect the repository file path above for the complete file before explaining its system role.`,
-    text: [
-      ...lines.slice(0, headLineCount),
-      "",
-      `... ${omittedLineCount} lines omitted from the middle ...`,
-      "",
-      ...lines.slice(-tailLineCount)
-    ].join("\n")
+    note: `The whole file has ${lines.length} lines and ${text.length} characters, so this bounded excerpt may omit content. Explain only what the supplied excerpt supports and state any resulting uncertainty.`,
+    text: boundedSourceEditorPromptText(excerpt, SOURCE_EDITOR_EXPLANATION_CODE_MAX_CHARS)
   };
 }
 
@@ -1952,6 +2567,12 @@ async function sourceEditorExplanationInput(context = {}, input = {}) {
     throw sourceEditorError("Select a smaller code range before asking for an explanation.", "vibe64_source_explanation_selection_too_large", {
       maxLines: SOURCE_EDITOR_EXPLANATION_MAX_LINES,
       selectedLineCount
+    }, 413);
+  }
+  if (scope !== "file" && selectedText.length > SOURCE_EDITOR_EXPLANATION_CODE_MAX_CHARS) {
+    throw sourceEditorError("Select a smaller code range before asking for an explanation.", "vibe64_source_explanation_selection_too_large", {
+      maxChars: SOURCE_EDITOR_EXPLANATION_CODE_MAX_CHARS,
+      selectedChars: selectedText.length
     }, 413);
   }
   const selectedTextHash = sourceEditorTextHash(selectedText);
@@ -1980,33 +2601,148 @@ async function sourceEditorExplanationInput(context = {}, input = {}) {
   };
 }
 
-async function createSourceEditorExplanation(context = {}, input = {}, {
-  explanationChats = null,
-  explanationGenerator = generateSourceEditorExplanationWithAgentService
-} = {}) {
-  const explanationInput = await sourceEditorExplanationInput(context, input);
-  const agentSettings = sourceEditorExplanationAgentSettings(input);
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
-  const generated = normalizeGeneratedSourceEditorExplanation(
-    await explanationGenerator(explanationInput, {
-      agentSettings,
-      context
+async function createCachedSourceEditorExplanation(
+  context = {},
+  input = {},
+  explanationInput = {},
+  template = {},
+  {
+    cacheState = {},
+    emit = null,
+    explanationChats = null,
+    isClosed = null
+  } = {}
+) {
+  const createdAt = new Date().toISOString();
+  const explanationId = sourceEditorClientExplanationId(input.explanationId) || sourceEditorExplanationId();
+  const userMessageId = sourceEditorClientMessageId(input.userMessageId) || sourceEditorExplanationMessageId();
+  const assistantMessageId = sourceEditorClientMessageId(input.assistantMessageId) || sourceEditorExplanationMessageId();
+  const executionProfile = requiredSourceEditorExecutionProfile(template.executionProfile);
+  const explanation = await withSourceEditorExplanationFreshness(
+    context,
+    await writeSourceEditorExplanation(context, {
+      agentThreadId: "",
+      agentSettings: null,
+      agentTurnId: "",
+      body: String(template.body || ""),
+      createdAt,
+      engine: "agent-cache",
+      error: "",
+      executionProfile,
+      followups: [],
+      id: explanationId,
+      messages: [
+        sourceEditorExplanationMessage(
+          "user",
+          sourceEditorExplanationDisplayPrompt(explanationInput),
+          createdAt,
+          { id: userMessageId }
+        ),
+        sourceEditorExplanationMessage("assistant", String(template.body || ""), createdAt, {
+          id: assistantMessageId
+        })
+      ],
+      model: executionProfile.model,
+      ownerOriginId: input.originId,
+      promptVersion: explanationInput.promptVersion,
+      sourceRange: explanationInput.range,
+      status: "ready",
+      summary: String(template.summary || sourceEditorExplanationSummary(template.body)),
+      title: normalizeText(template.title) || sourceEditorExplanationTitle(explanationInput)
+    }, {
+      explanationChats
     })
   );
+  const eventContext = {
+    cacheHit: cacheState.cacheHit === true,
+    coalesced: cacheState.coalesced === true,
+    explanation
+  };
+  emitSourceEditorExplanationEvent(emit, isClosed, "source-explanation.started", {
+    ...eventContext,
+    assistantMessageId,
+    userMessageId
+  });
+  emitSourceEditorExplanationEvent(emit, isClosed, "source-explanation.execution-profile", {
+    ...eventContext,
+    executionProfile
+  });
+  emitSourceEditorExplanationEvent(emit, isClosed, "source-explanation.finished", eventContext);
+  return explanation;
+}
+
+async function createSourceEditorExplanation(context = {}, input = {}, {
+  explanationChats = null,
+  explanationGenerator = generateSourceEditorExplanationWithAgentService,
+  explanationInput = null
+} = {}) {
+  const preparedInput = explanationInput || await sourceEditorExplanationInput(context, input);
+  const explanationId = sourceEditorClientExplanationId(input.explanationId) || sourceEditorExplanationId();
+  let generated;
+  try {
+    generated = normalizeGeneratedSourceEditorExplanation(
+      await explanationGenerator(preparedInput, {
+        context
+      })
+    );
+  } catch (error) {
+    const ownership = isPlainObject(error?.sourceEditorCleanupOwnership)
+      ? error.sourceEditorCleanupOwnership
+      : null;
+    if (normalizeText(ownership?.threadId)) {
+      const createdAt = new Date().toISOString();
+      const message = normalizeText(error?.message) || "Source explanation failed.";
+      const executionProfile = sourceEditorExecutionProfileSnapshot(ownership.executionProfile);
+      await writeSourceEditorExplanation(context, {
+        agentThreadId: ownership.threadId,
+        agentSettings: null,
+        agentTurnId: ownership.turnId,
+        body: "",
+        createdAt,
+        engine: "agent-chat",
+        error: message,
+        executionProfile,
+        followups: [],
+        id: explanationId,
+        messages: [
+          sourceEditorExplanationMessage("user", sourceEditorExplanationDisplayPrompt(preparedInput), createdAt),
+          sourceEditorExplanationMessage("assistant", message, createdAt, {
+            status: "failed"
+          })
+        ],
+        model: executionProfile?.model || "",
+        ownerOriginId: input.originId,
+        promptVersion: preparedInput.promptVersion,
+        sourceRange: preparedInput.range,
+        status: "failed",
+        title: sourceEditorExplanationTitle(preparedInput)
+      }, {
+        explanationChats
+      });
+      error.details = {
+        ...(isPlainObject(error.details) ? error.details : {}),
+        cleanupExplanationId: explanationId,
+        cleanupRequired: true,
+        cleanupThreadId: ownership.threadId
+      };
+    }
+    throw error;
+  }
   return withSourceEditorExplanationFreshness(context, await writeSourceEditorExplanation(context, {
     ...generated,
-    agentSettings,
+    agentSettings: null,
     agentThreadId: generated.agentThreadId,
     agentTurnId: generated.agentTurnId,
     createdAt: new Date().toISOString(),
     engine: generated.engine,
+    executionProfile: generated.executionProfile,
     followups: [],
-    id: sourceEditorExplanationId(),
+    id: explanationId,
     messages: generated.messages,
-    model: generated.model || effectiveAgentSettings.model,
+    model: generated.executionProfile?.model || generated.model,
     ownerOriginId: input.originId,
-    promptVersion: explanationInput.promptVersion,
-    sourceRange: explanationInput.range,
+    promptVersion: preparedInput.promptVersion,
+    sourceRange: preparedInput.range,
     status: "ready"
   }, {
     explanationChats
@@ -2020,6 +2756,7 @@ function normalizeGeneratedSourceEditorExplanation(value = {}) {
     agentTurnId: normalizeText(source.agentTurnId),
     body: String(source.body || ""),
     engine: normalizeText(source.engine),
+    executionProfile: sourceEditorExecutionProfileSnapshot(source.executionProfile),
     messages: normalizeSourceEditorMessages(source.messages),
     model: normalizeText(source.model),
     summary: String(source.summary || ""),
@@ -2063,7 +2800,6 @@ async function withSourceEditorExplanationFreshness(context = {}, explanation = 
 }
 
 async function generateSourceEditorExplanationWithAgentService(explanationInput = {}, {
-  agentSettings = defaultVibe64SourceExplanationAgentSettings(),
   context = {},
   terminalService = null
 } = {}) {
@@ -2071,24 +2807,69 @@ async function generateSourceEditorExplanationWithAgentService(explanationInput 
     throw sourceEditorError("Agent chat is not available for source explanations.", "vibe64_source_explanation_agent_unavailable", {}, 409);
   }
   const displayPrompt = sourceEditorExplanationDisplayPrompt(explanationInput);
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
-  const result = await terminalService.runDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
-    agentSettings,
-    prompt: sourceEditorExplanationPrompt(explanationInput),
-    promptLabel: "Source code explanation",
-    timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
-  });
-  if (result?.ok === false) {
-    throw sourceEditorError(
-      result.error || "The agent could not explain this code.",
-      result.code || "vibe64_source_explanation_agent_failed",
-      result,
-      result.statusCode || 502
-    );
-  }
-  const body = String(result?.text || "").trim();
-  if (!body) {
-    throw sourceEditorError("The agent returned an empty source explanation.", "vibe64_source_explanation_agent_empty", {}, 502);
+  let observedExecutionProfile = null;
+  let observedThreadId = "";
+  let observedTurnId = "";
+  let result;
+  let body;
+  let executionProfile;
+  try {
+    result = await terminalService.runDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
+      executionProfile: resolvedSourceEditorExecutionProfile(context.agentExecutionProfile),
+      expectedAccountIdentitySignature: normalizeText(context.agentAccountIdentitySignature),
+      outputSchema: SOURCE_EDITOR_EXPLANATION_OUTPUT_SCHEMA,
+      prompt: sourceEditorExplanationPrompt(explanationInput),
+      promptLabel: "Source code explanation",
+      timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
+    }, sourceEditorAgentOperationOptions(context, {
+      onEvent(event = {}) {
+        observedExecutionProfile ||= sourceEditorExecutionProfileSnapshot(event.executionProfile);
+        observedThreadId = normalizeText(event.threadId) || observedThreadId;
+        observedTurnId = normalizeText(event.turnId) || observedTurnId;
+      }
+    }));
+    observedExecutionProfile ||= sourceEditorExecutionProfileSnapshot(result?.executionProfile);
+    observedThreadId = normalizeText(result?.threadId) || observedThreadId;
+    observedTurnId = normalizeText(result?.turnId) || observedTurnId;
+    if (result?.ok === false) {
+      throw sourceEditorError(
+        result.error || "The agent could not explain this code.",
+        result.code || "vibe64_source_explanation_agent_failed",
+        result,
+        result.statusCode || 502
+      );
+    }
+    body = sourceEditorStructuredAnswer(result?.text);
+    executionProfile = requiredSourceEditorExecutionProfile(result?.executionProfile);
+  } catch (error) {
+    let failure = error;
+    if (observedThreadId) {
+      const cleanup = await cleanupRejectedSourceEditorExplanationThread(
+        context,
+        observedThreadId,
+        terminalService,
+        observedExecutionProfile
+      );
+      if (cleanup.ok === false) {
+        failure = sourceEditorFailureWithRejectedThread(error, {
+          executionProfile: observedExecutionProfile,
+          threadId: observedThreadId,
+          turnId: observedTurnId
+        });
+        failure.sourceEditorCleanupOwnership = Object.freeze({
+          executionProfile: observedExecutionProfile,
+          threadId: observedThreadId,
+          turnId: observedTurnId
+        });
+        failure.details = {
+          ...(isPlainObject(failure.details) ? failure.details : {}),
+          cleanupError: normalizeText(cleanup.error),
+          cleanupRequired: true,
+          cleanupThreadId: observedThreadId
+        };
+      }
+    }
+    throw failure;
   }
   const createdAt = new Date().toISOString();
   return {
@@ -2096,14 +2877,52 @@ async function generateSourceEditorExplanationWithAgentService(explanationInput 
     agentTurnId: normalizeText(result.turnId),
     body,
     engine: "agent-chat",
+    executionProfile,
     messages: [
       sourceEditorExplanationMessage("user", displayPrompt, createdAt),
       sourceEditorExplanationMessage("assistant", body)
     ],
-    model: effectiveAgentSettings.model,
+    model: executionProfile.model,
     summary: sourceEditorExplanationSummary(body),
     title: sourceEditorExplanationTitle(explanationInput)
   };
+}
+
+async function cleanupRejectedSourceEditorExplanationThread(
+  context = {},
+  threadId = "",
+  terminalService = null,
+  executionProfile = null
+) {
+  if (typeof terminalService?.deleteDetachedAgentChatThread !== "function") {
+    return {
+      error: "Agent chat cleanup is not available.",
+      ok: false
+    };
+  }
+  try {
+    const cleanup = await terminalService.deleteDetachedAgentChatThread(
+      context.sessionId || context.session?.sessionId || context.session?.id,
+      {
+        executionProfile: sourceEditorExecutionProfileSnapshot(executionProfile) ||
+          sourceEditorExecutionProfileRequest(),
+        threadId
+      },
+      sourceEditorAgentOperationOptions(context)
+    );
+    return cleanup?.ok === true
+      ? cleanup
+      : {
+          ...(isPlainObject(cleanup) ? cleanup : {}),
+          error: normalizeText(cleanup?.error) || "Agent chat cleanup did not confirm that the thread was deleted.",
+          ok: false
+        };
+  } catch (error) {
+    return {
+      error: normalizeText(error?.message) || "Agent chat cleanup failed.",
+      ok: false
+    };
+  }
 }
 
 function sourceEditorExplanationTitle({
@@ -2210,78 +3029,118 @@ function emitSourceEditorExplanationEvent(emit = null, isClosed = null, type = "
 }
 
 async function streamSourceEditorAgentTurn(context = {}, {
-  agentSettings = defaultVibe64SourceExplanationAgentSettings(),
   onText = null,
+  onExecutionProfile = null,
   onThread = null,
   onTurn = null,
   prompt = "",
   promptLabel = "",
   terminalService = null,
-  threadId = ""
+  threadId = "",
+  outputSchema = SOURCE_EDITOR_EXPLANATION_OUTPUT_SCHEMA,
+  answerMaxChars = SOURCE_EDITOR_EXPLANATION_ANSWER_MAX_CHARS
 } = {}) {
   if (!terminalService || typeof terminalService.streamDetachedAgentChatTurn !== "function") {
     throw sourceEditorError("Agent chat streaming is not available for source explanations.", "vibe64_source_explanation_agent_stream_unavailable", {}, 409);
   }
   let latestText = "";
+  let latestExecutionProfile = null;
   let latestThreadId = normalizeText(threadId);
   let latestTurnId = "";
-  const result = await terminalService.streamDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
-    agentSettings,
-    prompt,
-    promptLabel,
-    threadId,
-    timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
-  }, {
-    onEvent(event = {}) {
-      if (event.type === "thread") {
-        latestThreadId = normalizeText(event.threadId) || latestThreadId;
-        onThread?.({
-          replacedThreadId: normalizeText(event.replacedThreadId),
-          threadId: latestThreadId
-        });
-        return;
+  let result = null;
+  try {
+    result = await terminalService.streamDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
+      executionProfile: resolvedSourceEditorExecutionProfile(context.agentExecutionProfile),
+      expectedAccountIdentitySignature: normalizeText(context.agentAccountIdentitySignature),
+      outputSchema,
+      prompt,
+      promptLabel,
+      threadId,
+      timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
+    }, sourceEditorAgentOperationOptions(context, {
+      onEvent(event = {}) {
+        const eventExecutionProfile = sourceEditorExecutionProfileSnapshot(event.executionProfile);
+        if (eventExecutionProfile && !latestExecutionProfile) {
+          latestExecutionProfile = eventExecutionProfile;
+          onExecutionProfile?.(eventExecutionProfile);
+        }
+        if (event.type === "thread") {
+          latestThreadId = normalizeText(event.threadId) || latestThreadId;
+          onThread?.({
+            replacedThreadId: normalizeText(event.replacedThreadId),
+            threadId: latestThreadId
+          });
+          return;
+        }
+        if (event.type === "turn") {
+          latestThreadId = normalizeText(event.threadId) || latestThreadId;
+          latestTurnId = normalizeText(event.turnId) || latestTurnId;
+          onTurn?.({
+            status: normalizeText(event.status),
+            threadId: latestThreadId,
+            turnId: latestTurnId
+          });
+          return;
+        }
+        const classification = isPlainObject(event.classification) ? event.classification : {};
+        if (!["final_assistant_result", "live_progress"].includes(classification.kind) || !classification.text) {
+          return;
+        }
+        latestText = String(classification.text || "");
       }
-      if (event.type === "turn") {
-        latestThreadId = normalizeText(event.threadId) || latestThreadId;
-        latestTurnId = normalizeText(event.turnId) || latestTurnId;
-        onTurn?.({
-          status: normalizeText(event.status),
-          threadId: latestThreadId,
-          turnId: latestTurnId
-        });
-        return;
-      }
-      const classification = isPlainObject(event.classification) ? event.classification : {};
-      if (!["final_assistant_result", "live_progress"].includes(classification.kind) || !classification.text) {
-        return;
-      }
-      latestText = String(classification.text || "");
-      onText?.({
-        kind: classification.kind,
-        text: latestText,
-        threadId: normalizeText(event.threadId) || latestThreadId,
-        turnId: normalizeText(event.turnId) || latestTurnId
-      });
+    }));
+    latestThreadId = normalizeText(result?.threadId) || latestThreadId;
+    latestTurnId = normalizeText(result?.turnId) || latestTurnId;
+    if (result?.ok === false) {
+      const failure = threadId ? sourceEditorFollowupThreadError(result) : result;
+      throw sourceEditorError(
+        failure.error || failure.message || "The agent could not answer this source explanation chat.",
+        failure.code || "vibe64_source_explanation_agent_failed",
+        failure,
+        failure.statusCode || 502
+      );
     }
-  });
-  if (result?.ok === false) {
-    throw sourceEditorError(
-      result.error || "The agent could not answer this source explanation chat.",
-      result.code || "vibe64_source_explanation_agent_failed",
-      result,
-      result.statusCode || 502
+    const executionProfile = requiredSourceEditorExecutionProfile(result?.executionProfile);
+    if (!latestExecutionProfile) {
+      latestExecutionProfile = executionProfile;
+      onExecutionProfile?.(executionProfile);
+    }
+    const text = sourceEditorStructuredAnswer(result?.text || latestText, {
+      maxChars: answerMaxChars
+    });
+    onText?.({
+      kind: "final_assistant_result",
+      text,
+      threadId: latestThreadId,
+      turnId: latestTurnId
+    });
+    return {
+      executionProfile,
+      replacedThreadId: normalizeText(result.replacedThreadId),
+      text,
+      threadId: latestThreadId,
+      turnId: latestTurnId
+    };
+  } catch (error) {
+    const failureProfile = sourceEditorExecutionProfileFromFailure(error) ||
+      sourceEditorExecutionProfileSnapshot(result?.executionProfile) ||
+      latestExecutionProfile;
+    if (failureProfile && !latestExecutionProfile) {
+      latestExecutionProfile = failureProfile;
+      onExecutionProfile?.(failureProfile);
+    }
+    const failure = sourceEditorFailureWithRejectedThread(
+      threadId ? sourceEditorFollowupThreadError(error) : error,
+      latestThreadId
+        ? {
+            executionProfile: latestExecutionProfile,
+            threadId: latestThreadId,
+            turnId: latestTurnId
+          }
+        : null
     );
+    throw failure;
   }
-  const text = String(result?.text || latestText || "").trim();
-  if (!text) {
-    throw sourceEditorError("The agent returned an empty source explanation answer.", "vibe64_source_explanation_agent_empty", {}, 502);
-  }
-  return {
-    replacedThreadId: normalizeText(result.replacedThreadId),
-    text,
-    threadId: normalizeText(result.threadId) || latestThreadId,
-    turnId: normalizeText(result.turnId) || latestTurnId
-  };
 }
 
 function sourceEditorAgentStreamHandlers({
@@ -2302,6 +3161,15 @@ function sourceEditorAgentStreamHandlers({
   };
 
   return {
+    onExecutionProfile(executionProfile) {
+      updateExplanation({
+        executionProfile,
+        model: executionProfile.model
+      });
+      emitEvent("source-explanation.execution-profile", {
+        executionProfile
+      });
+    },
     onThread({ threadId }) {
       updateExplanation({
         agentThreadId: threadId
@@ -2352,6 +3220,21 @@ function createSourceEditorExplanationStreamState(context = {}, initialExplanati
     explanation = value;
   };
   const remember = (patch = {}) => {
+    const store = sourceEditorExplanationStore(explanationChats);
+    const stored = store.get(sourceEditorExplanationMemoryKey(context, explanation.id));
+    if (stored?.status === "stopped") {
+      explanation = stored;
+      return Promise.resolve(explanation);
+    }
+    explanation = normalizeSourceEditorExplanation({
+      ...explanation,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+    store.set(
+      sourceEditorExplanationMemoryKey(context, explanation.id),
+      explanation
+    );
     const write = async () => {
       const stopped = await readStoppedSourceEditorExplanation(context, explanation.id, {
         explanationChats
@@ -2419,14 +3302,26 @@ async function runTrackedSourceEditorAgentTurn(context = {}, {
   explanationChats = null,
   fallbackError = "Source explanation failed.",
   remember = async () => ({}),
-  run = async () => ({})
+  run = async () => ({}),
+  terminalService = null
 } = {}) {
-  const finishStoppedExplanation = async () => {
-    const stopped = await readStoppedSourceEditorExplanation(context, currentExplanation().id, {
+  const finishStoppedExplanation = async (executionProfile = null) => {
+    let stopped = await readStoppedSourceEditorExplanation(context, currentExplanation().id, {
       explanationChats
     });
     if (!stopped) {
       return null;
+    }
+    const profile = sourceEditorExecutionProfileSnapshot(executionProfile);
+    if (profile && !stopped.executionProfile) {
+      stopped = await writeSourceEditorExplanation(context, {
+        ...stopped,
+        executionProfile: profile,
+        model: profile.model,
+        status: "stopped"
+      }, {
+        explanationChats
+      });
     }
     const explanation = await withSourceEditorExplanationFreshness(context, stopped);
     emitEvent("source-explanation.finished", {
@@ -2437,18 +3332,33 @@ async function runTrackedSourceEditorAgentTurn(context = {}, {
 
   try {
     const result = await run();
-    const stoppedExplanation = await finishStoppedExplanation();
+    const stoppedExplanation = await finishStoppedExplanation(result.executionProfile);
     return stoppedExplanation
       ? { explanation: stoppedExplanation, stopped: true }
       : { result, stopped: false };
   } catch (error) {
-    const stoppedExplanation = await finishStoppedExplanation();
+    const executionProfile = sourceEditorExecutionProfileFromFailure(error) ||
+      sourceEditorExecutionProfileSnapshot(currentExplanation().executionProfile);
+    const stoppedExplanation = await finishStoppedExplanation(executionProfile);
     if (stoppedExplanation) {
       return {
         explanation: stoppedExplanation,
         stopped: true
       };
     }
+    const rejectedThread = isPlainObject(error?.sourceEditorRejectedThread)
+      ? error.sourceEditorRejectedThread
+      : null;
+    const rejectedThreadId = normalizeText(rejectedThread?.threadId);
+    const cleanup = rejectedThreadId
+      ? await cleanupRejectedSourceEditorExplanationThread(
+          context,
+          rejectedThreadId,
+          terminalService,
+          rejectedThread.executionProfile
+        )
+      : null;
+    const cleanupSucceeded = cleanup?.ok === true;
     const failure = sourceEditorErrorResponse(error);
     const message = normalizeText(failure.error) || fallbackError;
     const failedExplanation = sourceEditorExplanationWithMessage(
@@ -2460,10 +3370,28 @@ async function runTrackedSourceEditorAgentTurn(context = {}, {
       }
     );
     await remember({
+      ...(rejectedThreadId
+        ? {
+            agentThreadId: cleanupSucceeded ? "" : rejectedThreadId,
+            agentTurnId: cleanupSucceeded ? "" : normalizeText(rejectedThread?.turnId)
+          }
+        : {}),
       error: message,
+      ...(executionProfile
+        ? {
+            executionProfile,
+            model: executionProfile.model
+          }
+        : {}),
       messages: failedExplanation.messages,
       status: "failed"
     });
+    if (cleanupSucceeded) {
+      await removeSourceEditorExplanationCleanupRecord(
+        context,
+        currentExplanation().id
+      );
+    }
     emitEvent("source-explanation.failed", {
       code: failure.code,
       error: message,
@@ -2476,24 +3404,24 @@ async function runTrackedSourceEditorAgentTurn(context = {}, {
 async function streamSourceEditorExplanation(context = {}, input = {}, {
   emit = null,
   explanationChats = null,
+  explanationInput = null,
   isClosed = null,
   terminalService = null
 } = {}) {
-  const explanationInput = await sourceEditorExplanationInput(context, input);
-  const agentSettings = sourceEditorExplanationAgentSettings(input);
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
+  const preparedInput = explanationInput || await sourceEditorExplanationInput(context, input);
   const createdAt = new Date().toISOString();
   const explanationId = sourceEditorClientExplanationId(input.explanationId) || sourceEditorExplanationId();
   const userMessageId = sourceEditorClientMessageId(input.userMessageId) || sourceEditorExplanationMessageId();
   const assistantMessageId = sourceEditorClientMessageId(input.assistantMessageId) || sourceEditorExplanationMessageId();
-  const displayPrompt = sourceEditorExplanationDisplayPrompt(explanationInput);
+  const displayPrompt = sourceEditorExplanationDisplayPrompt(preparedInput);
   const explanation = await writeSourceEditorExplanation(context, {
     agentThreadId: "",
-    agentSettings,
+    agentSettings: null,
     agentTurnId: "",
     body: "",
     createdAt,
     engine: "agent-chat",
+    executionProfile: null,
     followups: [],
     id: explanationId,
     messages: [
@@ -2505,12 +3433,12 @@ async function streamSourceEditorExplanation(context = {}, input = {}, {
         status: "thinking"
       })
     ],
-    model: effectiveAgentSettings.model,
+    model: "",
     ownerOriginId: input.originId,
-    promptVersion: explanationInput.promptVersion,
-    sourceRange: explanationInput.range,
+    promptVersion: preparedInput.promptVersion,
+    sourceRange: preparedInput.range,
     status: "running",
-    title: sourceEditorExplanationTitle(explanationInput)
+    title: sourceEditorExplanationTitle(preparedInput)
   }, {
     explanationChats
   });
@@ -2533,9 +3461,9 @@ async function streamSourceEditorExplanation(context = {}, input = {}, {
     emitEvent: stream.emitEvent,
     explanationChats,
     remember: stream.remember,
+    terminalService,
     run: () => streamSourceEditorAgentTurn(context, {
-      agentSettings,
-      prompt: sourceEditorExplanationPrompt(explanationInput),
+      prompt: sourceEditorExplanationPrompt(preparedInput),
       promptLabel: "Source code explanation",
       terminalService,
       ...stream.streamHandlers
@@ -2549,6 +3477,8 @@ async function streamSourceEditorExplanation(context = {}, input = {}, {
   return stream.finish(result.text, {
     agentThreadId: result.threadId || stream.currentExplanation().agentThreadId,
     agentTurnId: result.turnId || stream.currentExplanation().agentTurnId,
+    executionProfile: result.executionProfile,
+    model: result.executionProfile.model,
     summary: sourceEditorExplanationSummary(result.text)
   });
 }
@@ -2566,15 +3496,15 @@ function sourceEditorExplanationPrompt({
   const codeNote = normalizeText(inlineCode.note);
   const codeText = String(inlineCode.text ?? selectedText ?? "");
   return [
-    "You are Vibe64's senior source-code explainer for this exact repository.",
+    "You are Vibe64's senior source-code explainer.",
     "Explain what this code is responsible for in the system. Do not teach language basics and do not explain obvious syntax such as `const`, imports, braces, or function declarations unless they are architecturally relevant.",
     wholeFile
       ? "The user asked about the whole file. Explain the file's role, its major sections, and how other parts of the project are likely to interact with it."
       : "The user selected a specific range. Explain that range first, then explain how it fits into the surrounding file and wider project.",
-    "Use the selected code, nearby context, file path, naming, imports, exports, and repository inspection when useful. Be explicit when you infer something from context.",
+    "Use only the bounded source context supplied below. Do not inspect the repository, use tools, access the network, or edit files. Be explicit when you infer something from context.",
     "Prefer this shape: brief summary; role in the system; how it works; important data/control flow; key dependencies or callers/callees; risks, edge cases, or things to know.",
     "Be concrete and project-aware. Avoid generic rewrite advice unless there is a direct behavioral risk. Do not edit files.",
-    "Return concise user-facing Markdown.",
+    `Return concise user-facing Markdown no longer than ${SOURCE_EDITOR_EXPLANATION_ANSWER_MAX_CHARS.toLocaleString("en-US")} characters.`,
     "",
     `File: ${file.path}`,
     `Target: ${wholeFile ? "whole file" : `lines ${range.startLine}-${range.endLine}, columns ${range.startColumn}-${range.endColumn}`}`,
@@ -2611,13 +3541,54 @@ async function addSourceEditorExplanationFollowup(context = {}, input = {}, {
   const explanation = await readSourceEditorExplanation(context, input.explanationId, {
     explanationChats
   });
-  const agentSettings = sourceEditorExplanationAgentSettings(input, explanation.agentSettings);
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
   const createdAt = new Date().toISOString();
-  const generated = await explanationFollowupGenerator(explanation, message, {
-    agentSettings,
-    context
-  });
+  let generated;
+  try {
+    generated = await explanationFollowupGenerator(explanation, message, {
+      context
+    });
+  } catch (error) {
+    const retirement = isPlainObject(error?.sourceEditorFollowupThreadRetirement)
+      ? error.sourceEditorFollowupThreadRetirement
+      : null;
+    if (retirement) {
+      const cleanupSucceeded = retirement.cleanupSucceeded === true;
+      const executionProfile = sourceEditorExecutionProfileSnapshot(retirement.executionProfile) ||
+        sourceEditorExecutionProfileSnapshot(explanation.executionProfile);
+      const failure = sourceEditorErrorResponse(error);
+      const failureMessage = normalizeText(failure.error) || "Source explanation follow-up failed.";
+      await writeSourceEditorExplanation(context, {
+        ...explanation,
+        agentThreadId: cleanupSucceeded ? "" : retirement.threadId,
+        agentTurnId: cleanupSucceeded ? "" : retirement.turnId,
+        error: failureMessage,
+        executionProfile,
+        messages: [
+          ...sourceEditorExplanationMessagesForAppend(explanation),
+          sourceEditorExplanationMessage("user", message, createdAt),
+          sourceEditorExplanationMessage("assistant", failureMessage, new Date().toISOString(), {
+            status: "failed"
+          })
+        ],
+        model: executionProfile?.model || explanation.model,
+        status: "failed"
+      }, {
+        explanationChats
+      });
+      if (cleanupSucceeded) {
+        await removeSourceEditorExplanationCleanupRecord(context, explanation.id);
+      }
+      if (error && typeof error === "object" && Object.isExtensible(error)) {
+        error.details = {
+          ...(isPlainObject(error.details) ? error.details : {}),
+          cleanupExplanationId: explanation.id,
+          cleanupRequired: !cleanupSucceeded,
+          cleanupThreadId: retirement.threadId
+        };
+      }
+    }
+    throw error;
+  }
   const followupAnswer = normalizeGeneratedSourceEditorFollowup(generated);
   const answer = followupAnswer.answer;
   if (!answer) {
@@ -2645,12 +3616,13 @@ async function addSourceEditorExplanationFollowup(context = {}, input = {}, {
   ];
   return withSourceEditorExplanationFreshness(context, await writeSourceEditorExplanation(context, {
     ...explanation,
-    agentSettings,
+    agentSettings: null,
     agentThreadId: followupAnswer.agentThreadId || explanation.agentThreadId,
     agentTurnId: followupAnswer.agentTurnId || explanation.agentTurnId,
     body: answer,
     engine: followupAnswer.engine || explanation.engine,
-    model: followupAnswer.model || effectiveAgentSettings.model || explanation.model,
+    executionProfile: followupAnswer.executionProfile || explanation.executionProfile,
+    model: followupAnswer.executionProfile?.model || followupAnswer.model || explanation.model,
     followups: nextFollowups,
     messages: nextMessages,
     summary: sourceEditorExplanationSummary(answer)
@@ -2672,6 +3644,43 @@ function sourceEditorExplanationFollowupMessage(value = "") {
   return message;
 }
 
+function sourceEditorEconomyFollowupThread(explanation = {}) {
+  const agentThreadId = normalizeText(explanation.agentThreadId);
+  const executionProfile = sourceEditorExecutionProfileSnapshot(explanation.executionProfile);
+  if (
+    !executionProfile ||
+    executionProfile.profileId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.profileId ||
+    executionProfile.workloadId !== SOURCE_EDITOR_EXPLANATION_EXECUTION_PROFILE.workloadId
+  ) {
+    throw sourceEditorError(
+      "Regenerate this explanation before asking follow-up questions. Only a verified low-cost source-explanation conversation can be continued.",
+      "vibe64_source_explanation_execution_profile_missing",
+      {},
+      409
+    );
+  }
+  if (normalizeText(explanation.status) === "failed") {
+    throw sourceEditorError(
+      "Regenerate this explanation before asking another follow-up. Its previous assistant turn failed, so Vibe64 will not reuse that conversation.",
+      "vibe64_source_explanation_agent_thread_failed",
+      {},
+      409
+    );
+  }
+  if (!agentThreadId && normalizeText(explanation.engine) === "agent-cache") {
+    return "";
+  }
+  if (!agentThreadId) {
+    throw sourceEditorError(
+      "Regenerate this explanation before asking follow-up questions. It was created before source explanation chat was available.",
+      "vibe64_source_explanation_agent_thread_missing",
+      {},
+      409
+    );
+  }
+  return agentThreadId;
+}
+
 async function streamSourceEditorExplanationFollowup(context = {}, input = {}, {
   emit = null,
   explanationChats = null,
@@ -2682,23 +3691,13 @@ async function streamSourceEditorExplanationFollowup(context = {}, input = {}, {
   const baseExplanation = await readSourceEditorExplanation(context, input.explanationId, {
     explanationChats
   });
-  const agentSettings = sourceEditorExplanationAgentSettings(input, baseExplanation.agentSettings);
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
-  const agentThreadId = normalizeText(baseExplanation.agentThreadId);
-  if (!agentThreadId) {
-    throw sourceEditorError(
-      "Regenerate this explanation before asking follow-up questions. It was created before source explanation chat was available.",
-      "vibe64_source_explanation_agent_thread_missing",
-      {},
-      409
-    );
-  }
+  const agentThreadId = sourceEditorEconomyFollowupThread(baseExplanation);
   const createdAt = new Date().toISOString();
   const userMessageId = sourceEditorClientMessageId(input.userMessageId) || sourceEditorExplanationMessageId();
   const assistantMessageId = sourceEditorClientMessageId(input.assistantMessageId) || sourceEditorExplanationMessageId();
   const explanation = await writeSourceEditorExplanation(context, {
     ...baseExplanation,
-    agentSettings,
+    agentSettings: null,
     messages: [
       ...sourceEditorExplanationMessagesForAppend(baseExplanation),
       sourceEditorExplanationMessage("user", message, createdAt, {
@@ -2735,8 +3734,10 @@ async function streamSourceEditorExplanationFollowup(context = {}, input = {}, {
     explanationChats,
     fallbackError: "Source explanation follow-up failed.",
     remember: stream.remember,
+    terminalService,
     run: () => streamSourceEditorAgentTurn(context, {
-      agentSettings,
+      answerMaxChars: SOURCE_EDITOR_FOLLOWUP_ANSWER_MAX_CHARS,
+      outputSchema: SOURCE_EDITOR_FOLLOWUP_OUTPUT_SCHEMA,
       prompt: sourceEditorExplanationFollowupPrompt(baseExplanation, message),
       promptLabel: "Source code explanation follow-up",
       terminalService,
@@ -2767,8 +3768,9 @@ async function streamSourceEditorExplanationFollowup(context = {}, input = {}, {
   return stream.finish(result.text, {
     agentThreadId: result.threadId || stream.currentExplanation().agentThreadId,
     agentTurnId: result.turnId || stream.currentExplanation().agentTurnId,
+    executionProfile: result.executionProfile,
     followups: nextFollowups,
-    model: effectiveAgentSettings.model || stream.currentExplanation().model,
+    model: result.executionProfile.model,
     summary: sourceEditorExplanationSummary(result.text)
   });
 }
@@ -2787,15 +3789,19 @@ async function stopSourceEditorExplanation(context = {}, explanationId = "", {
       throw sourceEditorError("Agent chat interrupt is not available for source explanations.", "vibe64_source_explanation_agent_interrupt_unavailable", {}, 409);
     }
     const result = await terminalService.interruptDetachedAgentChatTurn(context.sessionId, {
+      executionProfile: sourceEditorExecutionProfileSnapshot(explanation.executionProfile) ||
+        sourceEditorExecutionProfileRequest(),
       threadId,
       turnId
-    });
-    if (result?.ok === false) {
+    }, sourceEditorAgentOperationOptions(context, {}, {
+      providerId: explanation.executionProfile?.providerId
+    }));
+    if (result?.ok !== true) {
       throw sourceEditorError(
-        result.error || "The agent could not stop this source explanation.",
-        result.code || "vibe64_source_explanation_agent_interrupt_failed",
-        result,
-        result.statusCode || 502
+        result?.error || "The agent service did not confirm that this source explanation was stopped.",
+        result?.code || "vibe64_source_explanation_agent_interrupt_unconfirmed",
+        isPlainObject(result) ? result : { interruptResult: result ?? null },
+        result?.statusCode || 502
       );
     }
   }
@@ -2943,54 +3949,92 @@ function normalizeGeneratedSourceEditorFollowup(value = "") {
     agentThreadId: normalizeText(source.agentThreadId),
     agentTurnId: normalizeText(source.agentTurnId),
     engine: normalizeText(source.engine),
+    executionProfile: sourceEditorExecutionProfileSnapshot(source.executionProfile),
     model: normalizeText(source.model)
   };
 }
 
 async function generateSourceEditorExplanationFollowupWithAgentService(explanation = {}, message = "", {
-  agentSettings = defaultVibe64SourceExplanationAgentSettings(),
   context = {},
   terminalService = null
 } = {}) {
   if (!terminalService || typeof terminalService.runDetachedAgentChatTurn !== "function") {
     throw sourceEditorError("Agent chat is not available for source explanations.", "vibe64_source_explanation_agent_unavailable", {}, 409);
   }
-  const agentThreadId = normalizeText(explanation.agentThreadId);
-  if (!agentThreadId) {
-    throw sourceEditorError(
-      "Regenerate this explanation before asking follow-up questions. It was created before source explanation chat was available.",
-      "vibe64_source_explanation_agent_thread_missing",
-      {},
-      409
+  const agentThreadId = sourceEditorEconomyFollowupThread(explanation);
+  let observedExecutionProfile = sourceEditorExecutionProfileSnapshot(explanation.executionProfile);
+  let observedThreadId = agentThreadId;
+  let observedTurnId = "";
+  let result;
+  try {
+    result = await terminalService.runDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
+      executionProfile: sourceEditorExecutionProfileRequest(),
+      expectedAccountIdentitySignature: normalizeText(context.agentAccountIdentitySignature),
+      outputSchema: SOURCE_EDITOR_FOLLOWUP_OUTPUT_SCHEMA,
+      prompt: sourceEditorExplanationFollowupPrompt(explanation, message),
+      promptLabel: "Source code explanation follow-up",
+      threadId: agentThreadId,
+      timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
+    }, sourceEditorAgentOperationOptions(context, {
+      onEvent(event = {}) {
+        observedExecutionProfile ||= sourceEditorExecutionProfileSnapshot(event.executionProfile);
+        observedThreadId = normalizeText(event.threadId) || observedThreadId;
+        observedTurnId = normalizeText(event.turnId) || observedTurnId;
+      }
+    }));
+    observedExecutionProfile ||= sourceEditorExecutionProfileSnapshot(result?.executionProfile);
+    observedThreadId = normalizeText(result?.threadId) || observedThreadId;
+    observedTurnId = normalizeText(result?.turnId) || observedTurnId;
+    if (result?.ok === false) {
+      const failure = sourceEditorFollowupThreadError(result);
+      throw sourceEditorError(
+        failure.error || failure.message || "The agent could not answer this source explanation follow-up.",
+        failure.code || "vibe64_source_explanation_agent_failed",
+        failure,
+        failure.statusCode || 502
+      );
+    }
+    const answer = sourceEditorStructuredAnswer(result?.text, {
+      maxChars: SOURCE_EDITOR_FOLLOWUP_ANSWER_MAX_CHARS
+    });
+    const executionProfile = requiredSourceEditorExecutionProfile(result?.executionProfile);
+    return {
+      agentThreadId: observedThreadId,
+      agentTurnId: observedTurnId,
+      answer,
+      engine: "agent-chat",
+      executionProfile,
+      model: executionProfile.model
+    };
+  } catch (error) {
+    if (!observedThreadId) {
+      throw sourceEditorFollowupThreadError(error);
+    }
+    const cleanup = await cleanupRejectedSourceEditorExplanationThread(
+      context,
+      observedThreadId,
+      terminalService,
+      observedExecutionProfile
     );
-  }
-  const effectiveAgentSettings = sourceEditorExplanationEffectiveAgentSettings(agentSettings);
-  const result = await terminalService.runDetachedAgentChatTurn(context.sessionId || context.session?.sessionId || context.session?.id, {
-    agentSettings,
-    prompt: sourceEditorExplanationFollowupPrompt(explanation, message),
-    promptLabel: "Source code explanation follow-up",
-    threadId: agentThreadId,
-    timeoutMs: SOURCE_EDITOR_EXPLANATION_CHAT_TIMEOUT_MS
-  });
-  if (result?.ok === false) {
-    throw sourceEditorError(
-      result.error || "The agent could not answer this source explanation follow-up.",
-      result.code || "vibe64_source_explanation_agent_failed",
-      result,
-      result.statusCode || 502
+    const failure = sourceEditorFailureWithFollowupThreadRetirement(
+      sourceEditorFollowupThreadError(error),
+      {
+        cleanupSucceeded: cleanup.ok === true,
+        executionProfile: observedExecutionProfile,
+        threadId: observedThreadId,
+        turnId: observedTurnId
+      }
     );
+    if (cleanup.ok !== true) {
+      failure.details = {
+        ...(isPlainObject(failure.details) ? failure.details : {}),
+        cleanupError: normalizeText(cleanup.error),
+        cleanupRequired: true,
+        cleanupThreadId: observedThreadId
+      };
+    }
+    throw failure;
   }
-  const answer = String(result?.text || "").trim();
-  if (!answer) {
-    throw sourceEditorError("The agent returned an empty source explanation answer.", "vibe64_source_explanation_agent_empty", {}, 502);
-  }
-  return {
-    agentThreadId: normalizeText(result.threadId) || agentThreadId,
-    agentTurnId: normalizeText(result.turnId),
-    answer,
-    engine: "agent-chat",
-    model: effectiveAgentSettings.model
-  };
 }
 
 function sourceEditorExplanationFollowupPrompt(explanation = {}, message = "") {
@@ -3001,9 +4045,9 @@ function sourceEditorExplanationFollowupPrompt(explanation = {}, message = "") {
     wholeFile
       ? "Answer the user's follow-up about the same whole-file explanation and its role in the project."
       : "Answer the user's follow-up about the same selected source range and its role in the project.",
-    "Assume the user knows the programming language; focus on project behavior, relationships, data/control flow, risks, and intent. You may inspect the repository read-only if needed.",
-    "Do not edit files. If the current explanation is stale, say so plainly before answering.",
-    "Return concise user-facing Markdown.",
+    "Assume the user knows the programming language; focus on project behavior, relationships, data/control flow, risks, and intent.",
+    "Use only the bounded context below. Do not inspect the repository, use tools, access the network, or edit files. If the current explanation is stale, say so plainly before answering.",
+    `Return concise user-facing Markdown no longer than ${SOURCE_EDITOR_FOLLOWUP_ANSWER_MAX_CHARS.toLocaleString("en-US")} characters.`,
     "",
     `File: ${range.path}`,
     `Target: ${wholeFile ? "whole file" : `lines ${range.startLine}-${range.endLine}, columns ${range.startColumn}-${range.endColumn}`}`,
@@ -3013,7 +4057,7 @@ function sourceEditorExplanationFollowupPrompt(explanation = {}, message = "") {
     explanation.summary || "(none)",
     "",
     "Current explanation body:",
-    explanation.body || "(none)",
+    boundedSourceEditorPromptText(explanation.body || "(none)", SOURCE_EDITOR_FOLLOWUP_CONTEXT_MAX_CHARS),
     "",
     "User follow-up:",
     message
