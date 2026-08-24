@@ -23,7 +23,7 @@ export default defineConfig({
   },
   ...(useRunningServer ? {} : {
     webServer: {
-      command: "npm run build && node ./bin/server.js",
+      command: "npm run build && node ./tests/e2e/support/start-web-server.mjs",
       env: {
         PORT: "4173"
       },

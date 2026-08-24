@@ -23,9 +23,9 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await page.goto(DEVELOPMENT_PATH);
   await expect(page).toHaveURL(developmentUrlPattern());
   await expect(page.getByRole("button", { name: "New Session" })).toBeVisible();
-  await page.getByRole("button", { name: "Account connections" }).click();
+  await page.getByRole("button", { name: "Account settings" }).click();
   const accountConnectionsDialog = page.getByRole("dialog");
-  await expect(accountConnectionsDialog.getByRole("heading", { level: 2, name: "Account connections" })).toBeVisible();
+  await expect(accountConnectionsDialog.getByRole("heading", { level: 2, name: "Account settings" })).toBeVisible();
   await expect(accountConnectionsDialog.getByRole("heading", { level: 1, name: "Codex Connection" })).toBeVisible();
   const refreshAccountsButton = accountConnectionsDialog.getByRole("button", { name: "Refresh" });
   await expect(refreshAccountsButton).toBeEnabled();
@@ -34,7 +34,7 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await expect(accountConnectionsDialog.getByRole("button", { name: "Login with ChatGPT" })).toBeEnabled();
   await accountConnectionsDialog.getByRole("tab", { name: "GitHub" }).click();
   await expect(accountConnectionsDialog.getByRole("heading", { level: 1, name: "GitHub Connection" })).toBeVisible();
-  await accountConnectionsDialog.getByRole("button", { name: "Close account connections" }).click();
+  await accountConnectionsDialog.getByRole("button", { name: "Close account settings" }).click();
   await expect(accountConnectionsDialog).toBeHidden();
   await expect(page.getByText("Session type", { exact: true })).toHaveCount(0);
   await expect(page).toHaveURL(developmentUrlPattern());
@@ -175,7 +175,8 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
       {
         creation: {
           canCreate: true,
-          mode: "direct"
+          mode: "direct",
+          showCreateAction: true
         },
         limits: {
           openSessionCount: 0
