@@ -236,6 +236,41 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps scroll identity stable and follows only an accepted local submission", async () => {
+    const delivery = deferredResult();
+    const sendAgentMessage = vi.fn()
+      .mockImplementationOnce(() => delivery.promise)
+      .mockResolvedValueOnce(false);
+    const { props, view } = await createViewWithProps({ sendAgentMessage });
+
+    expect(view.conversationScrollKey.value).toBe("session-1");
+    expect(view.conversationFollowLatestKey.value).toBe(0);
+
+    props.conversationLog.turns.push({
+      turnId: "remote-turn",
+      user: {
+        role: "user",
+        text: "A collaborator sent this."
+      }
+    });
+    await nextTick();
+    expect(view.conversationScrollKey.value).toBe("session-1");
+    expect(view.conversationFollowLatestKey.value).toBe(0);
+
+    view.composerDraft.value = "Follow my accepted message.";
+    const accepted = view.submitComposerMessage();
+    await nextTick();
+    expect(view.conversationFollowLatestKey.value).toBe(0);
+
+    delivery.resolve(true);
+    await expect(accepted).resolves.toBe(true);
+    expect(view.conversationFollowLatestKey.value).toBe(1);
+
+    view.composerDraft.value = "Do not follow a rejected message.";
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    expect(view.conversationFollowLatestKey.value).toBe(1);
+  });
+
   it("waits for authoritative connected turn readiness before offering Steer", async () => {
     const { props, view } = await createViewWithProps();
     view.composerDraft.value = "Use the existing helper.";

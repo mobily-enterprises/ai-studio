@@ -113,6 +113,66 @@ describe("useScrollToBottom", () => {
     expect(anchor.scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
+  it("cancels an in-flight layout frame before it can drag the viewport", async () => {
+    let frameCallback = null;
+    installWindow({
+      requestAnimationFrame(callback) {
+        frameCallback = callback;
+        return 1;
+      }
+    });
+
+    const target = createScrollableElement(300);
+    const { useScrollToBottom } = await import("../../src/composables/useScrollToBottom.js");
+    const {
+      clearScheduledScrolls,
+      scrollAfterLayout
+    } = useScrollToBottom({
+      target: ref(target)
+    });
+
+    const scrollPromise = scrollAfterLayout();
+    await nextTick();
+    await Promise.resolve();
+    expect(target.scrollWrites).toEqual([300, 300]);
+
+    clearScheduledScrolls();
+    frameCallback();
+    await scrollPromise;
+    vi.runAllTimers();
+
+    expect(target.scrollWrites).toEqual([300, 300]);
+  });
+
+  it("cancels before the first layout pass when user intent arrives in the same tick", async () => {
+    let frameCallback = null;
+    installWindow({
+      requestAnimationFrame(callback) {
+        frameCallback = callback;
+        return 1;
+      }
+    });
+
+    const target = createScrollableElement(360);
+    const { useScrollToBottom } = await import("../../src/composables/useScrollToBottom.js");
+    const {
+      clearScheduledScrolls,
+      scrollAfterLayout
+    } = useScrollToBottom({
+      target: ref(target)
+    });
+
+    const scrollPromise = scrollAfterLayout();
+    clearScheduledScrolls();
+    await nextTick();
+    await Promise.resolve();
+    frameCallback?.();
+    await scrollPromise;
+    vi.runAllTimers();
+
+    expect(target.scrollWrites).toEqual([]);
+  });
+
   it("does not scroll while disabled", async () => {
     installWindow({
       requestAnimationFrame(callback) {

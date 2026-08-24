@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request, type Route } from "@playwright/test";
 
 import {
   BASE_URL,
@@ -14,6 +14,7 @@ import {
 } from "./support/base-shell/http";
 
 const SESSION_ID = "direct-chat-session";
+const SCROLL_TEST_COPY = "A deliberately detailed update keeps the conversation tall enough to exercise the real overflow container.";
 const REPOSITORY_RECOVERY_GIT_BOUNDARY = [
   "Vibe64—not Temporary AI—owns every repository operation. The failed operation has already been rolled back.",
   "You may inspect Git read-only and edit ordinary working-tree files in this session. Do not change HEAD, branches, refs, the index, stashes, remotes, commits, checkpoints, or repository configuration.",
@@ -554,12 +555,162 @@ test.describe("direct chat", () => {
       message: "[1] Tighten the layout.\n[2] Keep the current copy."
     }));
   });
+
+  for (const width of [390, 960, 1600]) {
+    test(`preserves manual conversation reading and resumes follow deliberately at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ height: 844, width });
+      const conversationLog = Array.from({ length: 24 }, (_value, index) => scrollTestTurn(index + 1));
+      await mockDirectChat(page, { conversationLog });
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+      const body = page.locator(".studio-conversation-log__body");
+      const reload = page.getByRole("button", { name: "Reload chat" });
+      await expect(body).toBeVisible();
+      await expect(body).toHaveAttribute("tabindex", "0");
+      await expect(body).toHaveAttribute("aria-label", "Conversation messages");
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeLessThanOrEqual(48);
+
+      await detachConversation(body, 480, width === 390 ? "touch" : "wheel");
+      conversationLog.push(scrollTestTurn(25, {
+        role: "user",
+        text: "A collaborator added a remote message while this reader was reviewing history."
+      }));
+      await reload.click();
+      await expect(page.getByText(/collaborator added a remote message/iu)).toBeVisible();
+      await page.waitForTimeout(180);
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeGreaterThan(200);
+
+      await body.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      conversationLog.push({
+        system: {
+          at: "2026-08-24T10:30:00.000Z",
+          messageId: "system-follow",
+          role: "system",
+          text: "The session is ready for its next instruction."
+        },
+        turnId: "turn-system-follow"
+      });
+      await reload.click();
+      await expect(page.getByText("The session is ready for its next instruction.", { exact: true })).toBeVisible();
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeLessThanOrEqual(48);
+
+      const streamingTurn = scrollTestTurn(26, {
+        role: "assistant",
+        text: "The first streamed commentary update is visible."
+      });
+      delete streamingTurn.assistant;
+      streamingTurn.commentary = [{
+        at: "2026-08-24T10:31:00.000Z",
+        messageId: "stream-commentary-1",
+        role: "commentary",
+        text: "The first streamed commentary update is visible."
+      }];
+      conversationLog.push(streamingTurn);
+      await reload.click();
+      await expect(page.getByText("The first streamed commentary update is visible.", { exact: true })).toBeVisible();
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeLessThanOrEqual(48);
+
+      await body.focus();
+      const keyboardStart = await body.evaluate((element) => element.scrollTop);
+      await page.keyboard.press("PageUp");
+      await page.keyboard.press("PageUp");
+      await expect.poll(() => body.evaluate((element) => element.scrollTop))
+        .toBeLessThan(keyboardStart - 20);
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeGreaterThan(100);
+      await body.evaluate((element) => {
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      streamingTurn.commentary.push({
+        at: "2026-08-24T10:31:10.000Z",
+        messageId: "stream-commentary-2",
+        role: "commentary",
+        text: "A second progress update arrived after keyboard navigation."
+      });
+      streamingTurn.assistant = {
+        at: "2026-08-24T10:31:20.000Z",
+        messageId: "stream-final",
+        role: "assistant",
+        text: "This final assistant update arrived after keyboard navigation."
+      };
+      await reload.click();
+      await expect(page.getByText("This final assistant update arrived after keyboard navigation.", { exact: true })).toBeVisible();
+      await page.waitForTimeout(180);
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeGreaterThan(100);
+
+      await page.getByLabel("Message Codex").fill("Resume following after my accepted message.");
+      await page.getByRole("button", { name: "Send message" }).click();
+      await expect(page.getByText("Resume following after my accepted message.", { exact: true })).toBeVisible();
+      await expect.poll(() => conversationDistanceFromBottom(body)).toBeLessThanOrEqual(48);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    });
+  }
+
+  test("keeps the visible history anchor through a slow older-page response", async ({ page }) => {
+    const latestTurns = Array.from({ length: 20 }, (_value, index) => scrollTestTurn(index + 21));
+    const olderTurns = Array.from({ length: 20 }, (_value, index) => scrollTestTurn(index + 1));
+    await mockDirectChat(page, {
+      async conversationPage({ beforeTurnId }) {
+        if (beforeTurnId) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          return {
+            conversationLog: olderTurns,
+            pagination: {
+              count: olderTurns.length,
+              hasMoreBefore: false,
+              limit: 20,
+              newestTurnId: "turn-20",
+              oldestTurnId: "turn-1",
+              totalTurnCount: 40
+            }
+          };
+        }
+        return {
+          conversationLog: latestTurns,
+          pagination: {
+            count: latestTurns.length,
+            hasMoreBefore: true,
+            limit: 20,
+            newestTurnId: "turn-40",
+            nextBeforeTurnId: "turn-21",
+            oldestTurnId: "turn-21",
+            totalTurnCount: 40
+          }
+        };
+      }
+    });
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+    const body = page.locator(".studio-conversation-log__body");
+    await body.evaluate((element) => {
+      element.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        deltaY: -1_000
+      }));
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const visibleAnchor = page.getByText("User message 21. A deliberately detailed update", {
+      exact: false
+    });
+    await expect(visibleAnchor).toBeVisible();
+    const anchorBefore = await visibleAnchor.boundingBox();
+    await page.getByRole("button", { name: "Load older messages" }).click();
+    await expect(page.getByText("User message 1. A deliberately detailed update", {
+      exact: false
+    })).toBeVisible();
+    const anchorAfter = await visibleAnchor.boundingBox();
+    expect(Math.abs((anchorAfter?.y || 0) - (anchorBefore?.y || 0))).toBeLessThanOrEqual(2);
+  });
 });
 
 async function mockDirectChat(page: Page, {
   additionalSessionIds = [],
   agentActive = false,
   agentTurn = null,
+  conversationPage = null,
   conversationLog = [],
   onMessage = () => undefined,
   onSave = () => undefined,
@@ -577,6 +728,10 @@ async function mockDirectChat(page: Page, {
   additionalSessionIds?: string[];
   agentActive?: boolean;
   agentTurn?: Record<string, unknown> | null;
+  conversationPage?: ((context: {
+    beforeTurnId: string;
+    limit: number;
+  }) => Record<string, unknown> | Promise<Record<string, unknown>>) | null;
   conversationLog?: Record<string, unknown>[];
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onSave?: (body: Record<string, unknown>, sessionId: string) => unknown | Promise<unknown>;
@@ -686,6 +841,22 @@ async function mockDirectChat(page: Page, {
       return;
     }
     if (method === "GET" && url.pathname.endsWith("/conversation-log")) {
+      const beforeTurnId = String(url.searchParams.get("beforeTurnId") || "");
+      const requestedLimit = Number.parseInt(String(url.searchParams.get("limit") || "20"), 10);
+      const customPage = conversationPage
+        ? await conversationPage({
+            beforeTurnId,
+            limit: Number.isFinite(requestedLimit) ? requestedLimit : 20
+          })
+        : null;
+      if (customPage) {
+        await fulfillJson(route, {
+          ...customPage,
+          ok: true,
+          sessionId: SESSION_ID
+        });
+        return;
+      }
       await fulfillJson(route, {
         conversationLog,
         ok: true,
@@ -720,6 +891,68 @@ async function mockDirectChat(page: Page, {
       sessions
     });
   }, { prefix: true });
+}
+
+function scrollTestTurn(index: number, {
+  role = "assistant",
+  text = ""
+}: {
+  role?: "assistant" | "user";
+  text?: string;
+} = {}) {
+  const id = `turn-${index}`;
+  const user = {
+    at: `2026-08-24T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
+    messageId: `${id}-user`,
+    role: "user",
+    text: role === "user" && text
+      ? text
+      : `User message ${index}. ${SCROLL_TEST_COPY}`
+  };
+  return {
+    ...(role === "assistant"
+      ? {
+          assistant: {
+            at: `2026-08-24T10:${String(index % 60).padStart(2, "0")}:30.000Z`,
+            messageId: `${id}-assistant`,
+            role: "assistant",
+            text: text || `Assistant message ${index}. ${SCROLL_TEST_COPY}`
+          }
+        }
+      : {}),
+    turnId: id,
+    user
+  };
+}
+
+async function conversationDistanceFromBottom(locator: Locator) {
+  return locator.evaluate((element) => Math.max(
+    0,
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ));
+}
+
+async function detachConversation(
+  locator: Locator,
+  distanceFromBottom: number,
+  method: "touch" | "wheel" = "wheel"
+) {
+  await locator.evaluate((element, { distance, method: inputMethod }) => {
+    element.dispatchEvent(inputMethod === "touch"
+      ? new Event("touchmove", { bubbles: true })
+      : new WheelEvent("wheel", {
+          bubbles: true,
+          deltaY: -distance
+        }));
+    element.scrollTop = Math.max(
+      0,
+      element.scrollHeight - element.clientHeight - distance
+    );
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  }, {
+    distance: distanceFromBottom,
+    method
+  });
 }
 
 function directSession({

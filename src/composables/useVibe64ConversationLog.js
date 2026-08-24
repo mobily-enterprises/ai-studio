@@ -516,10 +516,16 @@ function useVibe64ConversationLog({
     turns.value.length
   ));
 
-  async function loadMoreConversationLog() {
+  async function loadMoreConversationLog({ complete } = {}) {
+    const finish = (result) => {
+      if (typeof complete === "function") {
+        complete(result);
+      }
+    };
     const beforeTurnId = normalizeConversationLogPagination(oldestLoadedPage.value?.pagination).oldestTurnId ||
       String(turns.value[0]?.turnId || "").trim();
     if (!enabled.value || !conversationLogPath.value || !hasMoreBefore.value || loadingMore.value || !beforeTurnId) {
+      finish({ changed: false, loaded: false });
       return false;
     }
     loadingMore.value = true;
@@ -536,15 +542,22 @@ function useVibe64ConversationLog({
           limit: CONVERSATION_LOG_PAGE_LIMIT
         })
       });
+      const previousOldestTurnId = String(turns.value[0]?.turnId || "").trim();
       olderPages.value = [
         normalizeConversationLogPage(page),
         ...olderPages.value
       ];
+      const nextOldestTurnId = String(turns.value[0]?.turnId || "").trim();
+      const changed = Boolean(
+        nextOldestTurnId &&
+        nextOldestTurnId !== previousOldestTurnId
+      );
       vibe64SessionDebugLog("client.conversationLog.loadMore.done", {
         beforeTurnId,
         sessionId: sessionId.value,
         turnCount: Array.isArray(page?.conversationLog) ? page.conversationLog.length : 0
       });
+      finish({ changed, loaded: true });
       return true;
     } catch (error) {
       loadMoreError.value = String(error?.message || error || "Older conversation history could not be loaded.");
@@ -553,6 +566,7 @@ function useVibe64ConversationLog({
         error: vibe64SessionDebugError(error),
         sessionId: sessionId.value
       });
+      finish({ changed: false, loaded: false });
       return false;
     } finally {
       loadingMore.value = false;

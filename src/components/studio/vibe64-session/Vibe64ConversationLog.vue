@@ -50,9 +50,12 @@
     <div
       v-else
       ref="bodyElement"
+      aria-label="Conversation messages"
       class="studio-conversation-log__body"
       :class="{ 'studio-conversation-log__body--settling': initialScrollPending }"
-      @pointerdown="markUserScrollIntent"
+      tabindex="0"
+      @keydown.capture="markKeyboardScrollIntent"
+      @pointerdown.self="markUserScrollIntent"
       @scroll.passive="updateLatestFollowFromScroll"
       @touchmove.passive="markUserScrollIntent"
       @wheel.passive="markUserScrollIntent"
@@ -298,6 +301,10 @@ const props = defineProps({
     default: "",
     type: String
   },
+  followLatestKey: {
+    default: 0,
+    type: [Number, String]
+  },
   hasMoreBefore: {
     default: false,
     type: Boolean
@@ -364,7 +371,19 @@ let liveScrollFrame = 0;
 let userScrollIntentTimer = null;
 let initialScrollVersion = 0;
 let loadMoreScrollSnapshot = null;
+let loadMoreRequestVersion = 0;
+let pendingTailFollow = false;
 const USER_SCROLL_INTENT_RESET_MS = 600;
+const KEYBOARD_SCROLL_KEYS = new Set([
+  " ",
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  "Spacebar"
+]);
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
   minute: "2-digit"
@@ -599,52 +618,47 @@ function messageScrollKey(message = null) {
     return "empty";
   }
   return [
+    message.messageId || "",
+    message.role || "",
     message.at || "",
     String(message.text || "")
   ].join("/");
 }
 
-function latestUserScrollKey(turns = []) {
-  const entries = Array.isArray(turns) ? turns : [];
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const turn = entries[index];
-    if (turn?.user) {
-      return [
-        turn.turnId,
-        messageScrollKey(turn.user)
-      ].join(":");
-    }
-  }
-  return "";
+function agentTimelineScrollKey(timeline = []) {
+  return (Array.isArray(timeline) ? timeline : []).map((entry) => (
+    entry?.role === "thinking"
+      ? (entry.messages || []).map(messageScrollKey).join("+")
+      : messageScrollKey(entry?.message)
+  )).join("|");
 }
 
-function latestAgentScrollKey(turns = []) {
-  const entries = Array.isArray(turns) ? turns : [];
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const turn = entries[index];
-    const timeline = Array.isArray(turn?.agentTimeline) ? turn.agentTimeline : [];
-    const latest = timeline.at(-1);
-    const message = latest?.role === "thinking"
-      ? latest.messages?.at(-1)
-      : latest?.message;
-    if (message) {
-      return [
-        turn.turnId,
-        messageScrollKey(message)
-      ].join(":");
-    }
+function latestRenderedTailScrollKey(turns = []) {
+  const turn = Array.isArray(turns) ? turns.at(-1) : null;
+  if (!turn) {
+    return "";
   }
-  return "";
+  const timeline = Array.isArray(turn.agentTimeline) ? turn.agentTimeline : [];
+  return [
+    turn.turnId,
+    messageScrollKey(turn.system),
+    messageScrollKey(turn.user),
+    turn.optimistic?.id || "",
+    turn.optimistic?.status || "",
+    turn.optimistic?.error || "",
+    turn.pending ? "pending" : "settled",
+    agentTimelineScrollKey(timeline)
+  ].join(":");
 }
 
 const timelineScrollTrigger = computed(() => [
   props.visible ? "visible" : "hidden",
+  props.error ? "error" : "body",
   loadingIndicatorVisible.value ? "loading" : "ready",
   displayTurns.value.length ? "has-turns" : "empty",
   props.scrollKey
 ].join(":"));
-const latestUserTurnScrollKey = computed(() => latestUserScrollKey(displayTurns.value));
-const latestAgentTurnScrollKey = computed(() => latestAgentScrollKey(displayTurns.value));
+const latestRenderedTailKey = computed(() => latestRenderedTailScrollKey(displayTurns.value));
 const autoScrollEnabled = computed(() => Boolean(
   props.visible &&
   followingLatest.value
@@ -669,8 +683,18 @@ function clearUserScrollIntent() {
   userScrollIntent.value = false;
 }
 
+function resumePendingTailFollow() {
+  const shouldResume = pendingTailFollow && followingLatest.value;
+  pendingTailFollow = false;
+  if (shouldResume) {
+    queueLiveBottomScroll();
+  }
+}
+
 function markUserScrollIntent() {
   userScrollIntent.value = true;
+  clearLiveBottomScroll();
+  clearScheduledScrolls();
   if (userScrollIntentTimer && typeof window !== "undefined" && typeof window.clearTimeout === "function") {
     window.clearTimeout(userScrollIntentTimer);
   }
@@ -680,7 +704,24 @@ function markUserScrollIntent() {
   userScrollIntentTimer = window.setTimeout(() => {
     userScrollIntentTimer = null;
     userScrollIntent.value = false;
+    resumePendingTailFollow();
   }, USER_SCROLL_INTENT_RESET_MS);
+}
+
+function markKeyboardScrollIntent(event = {}) {
+  if (!KEYBOARD_SCROLL_KEYS.has(String(event.key || "")) || event.defaultPrevented) {
+    return;
+  }
+  const target = event.target;
+  const tagName = String(target?.tagName || "").toLowerCase();
+  if (
+    target?.isContentEditable ||
+    ["input", "select", "textarea"].includes(tagName) ||
+    ([" ", "Spacebar"].includes(event.key) && ["a", "button"].includes(tagName))
+  ) {
+    return;
+  }
+  markUserScrollIntent();
 }
 
 function scrollToLatestMessageAfterLayout({
@@ -713,7 +754,12 @@ function queueInitialBottomScroll() {
 function queueLiveBottomScroll({
   force = false
 } = {}) {
+  if (userScrollIntent.value && !force) {
+    pendingTailFollow = true;
+    return;
+  }
   if (force) {
+    pendingTailFollow = false;
     followingLatest.value = true;
     clearUserScrollIntent();
   }
@@ -750,6 +796,7 @@ function updateLatestFollowFromScroll(event = {}) {
   followingLatest.value = shouldFollow;
   if (shouldFollow) {
     clearUserScrollIntent();
+    resumePendingTailFollow();
     return;
   }
   if (!shouldFollow) {
@@ -762,29 +809,80 @@ function requestLoadMore() {
   if (!props.hasMoreBefore || props.loadingMore) {
     return;
   }
+  followingLatest.value = false;
+  pendingTailFollow = false;
+  markUserScrollIntent();
   const element = bodyElement.value;
+  const version = loadMoreRequestVersion + 1;
+  loadMoreRequestVersion = version;
   loadMoreScrollSnapshot = element
     ? {
         scrollHeight: element.scrollHeight,
-        scrollTop: element.scrollTop
+        scrollKey: props.scrollKey,
+        scrollTop: element.scrollTop,
+        version
       }
     : null;
-  emit("load-more");
+  emit("load-more", {
+    complete: ({ changed = false } = {}) => {
+      void completeLoadMoreRequest(version, changed);
+    }
+  });
+}
+
+function clearLoadMoreScrollSnapshot() {
+  loadMoreRequestVersion += 1;
+  loadMoreScrollSnapshot = null;
+}
+
+async function completeLoadMoreRequest(version, changed) {
+  const snapshot = loadMoreScrollSnapshot;
+  if (!snapshot || snapshot.version !== version) {
+    return;
+  }
+  if (!changed || snapshot.scrollKey !== props.scrollKey) {
+    clearLoadMoreScrollSnapshot();
+    return;
+  }
+  await nextTick();
+  if (loadMoreScrollSnapshot?.version !== version) {
+    return;
+  }
+  const element = bodyElement.value;
+  if (element) {
+    element.scrollTop = snapshot.scrollTop + (element.scrollHeight - snapshot.scrollHeight);
+  }
+  clearLoadMoreScrollSnapshot();
 }
 
 onBeforeUnmount(() => {
   clearLiveBottomScroll();
   clearUserScrollIntent();
+  clearLoadMoreScrollSnapshot();
 });
 
 watch(() => [
   timelineScrollTrigger.value,
-  latestUserTurnScrollKey.value
+  latestRenderedTailKey.value
 ], ([timelineKey, value], [previousTimelineKey, previous] = []) => {
   if (timelineKey !== previousTimelineKey) {
     return;
   }
   if (!value || value === previous) {
+    return;
+  }
+  queueLiveBottomScroll({
+    force: false
+  });
+}, {
+  flush: "post"
+});
+
+watch(() => [
+  props.scrollKey,
+  props.followLatestKey
+], ([scrollKey, value], [previousScrollKey, previous] = []) => {
+  if (scrollKey !== previousScrollKey || value === previous) {
     return;
   }
   queueLiveBottomScroll({
@@ -794,40 +892,12 @@ watch(() => [
   flush: "post"
 });
 
-watch(() => [
-  timelineScrollTrigger.value,
-  latestAgentTurnScrollKey.value
-], ([timelineKey, value], [previousTimelineKey, previous] = []) => {
-  if (timelineKey !== previousTimelineKey) {
-    return;
-  }
-  if (!value || value === previous) {
-    return;
-  }
-  queueLiveBottomScroll();
-}, {
-  flush: "post"
-});
-
 watch(timelineScrollTrigger, () => {
+  clearLoadMoreScrollSnapshot();
   queueInitialBottomScroll();
 }, {
   flush: "post",
   immediate: true
-});
-
-watch(() => displayTurns.value[0]?.turnId || "", async (turnId, previousTurnId) => {
-  if (!loadMoreScrollSnapshot || !turnId || !previousTurnId || turnId === previousTurnId) {
-    return;
-  }
-  await nextTick();
-  const element = bodyElement.value;
-  if (element) {
-    element.scrollTop = loadMoreScrollSnapshot.scrollTop + (element.scrollHeight - loadMoreScrollSnapshot.scrollHeight);
-  }
-  loadMoreScrollSnapshot = null;
-}, {
-  flush: "post"
 });
 </script>
 

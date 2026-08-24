@@ -44,18 +44,24 @@ function useScrollToBottom({
 } = {}) {
   const scheduledTimers = new Set();
   let disposed = false;
+  let scheduleVersion = 0;
 
   function isEnabled() {
     return unref(enabled) !== false;
   }
 
-  function clearScheduledScrolls() {
+  function clearScheduledTimers() {
     if (hasWindowTimer("clearTimeout")) {
       scheduledTimers.forEach((timer) => {
         window.clearTimeout(timer);
       });
     }
     scheduledTimers.clear();
+  }
+
+  function clearScheduledScrolls() {
+    scheduleVersion += 1;
+    clearScheduledTimers();
   }
 
   function scrollNow(options = {}) {
@@ -82,13 +88,21 @@ function useScrollToBottom({
     scrollElementToBottom(targetElement, behavior);
   }
 
-  function scheduleScroll(delayMs, options = {}) {
-    if (disposed || !isEnabled() || !hasWindowTimer("setTimeout")) {
+  function scheduleScroll(delayMs, options = {}, version = scheduleVersion) {
+    if (
+      disposed ||
+      version !== scheduleVersion ||
+      !isEnabled() ||
+      !hasWindowTimer("setTimeout")
+    ) {
       return;
     }
 
     const timer = window.setTimeout(() => {
       scheduledTimers.delete(timer);
+      if (version !== scheduleVersion) {
+        return;
+      }
       scrollNow(options);
     }, delayMs);
     scheduledTimers.add(timer);
@@ -98,16 +112,25 @@ function useScrollToBottom({
     if (disposed || !isEnabled()) {
       return;
     }
+    const version = scheduleVersion + 1;
+    scheduleVersion = version;
+    clearScheduledTimers();
 
     await nextTick();
+    if (version !== scheduleVersion) {
+      return;
+    }
     scrollNow(options);
 
     await waitForLayoutFrame();
+    if (version !== scheduleVersion) {
+      return;
+    }
     scrollNow(options);
 
-    clearScheduledScrolls();
+    clearScheduledTimers();
     settleDelaysMs.forEach((delayMs) => {
-      scheduleScroll(delayMs, options);
+      scheduleScroll(delayMs, options, version);
     });
   }
 

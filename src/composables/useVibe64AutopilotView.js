@@ -331,6 +331,7 @@ function useVibe64AutopilotView(props, emit, {
   const composerRetrySubmission = ref(null);
   const composerSending = ref(false);
   const composerSubmissionKind = ref("");
+  const conversationFollowLatestKey = ref(0);
   const interrupting = ref(false);
   const optimisticMessages = ref([]);
   const questionAnswers = ref({});
@@ -776,6 +777,9 @@ function useVibe64AutopilotView(props, emit, {
           status: "failed"
         });
       }
+      if (accepted) {
+        conversationFollowLatestKey.value += 1;
+      }
       return accepted;
     } catch (error) {
       const message = normalizedAgentTurnText(error?.message || error) || "Message could not be sent.";
@@ -1215,7 +1219,7 @@ function useVibe64AutopilotView(props, emit, {
       : ""
   ));
   const conversationLogVisible = computed(() => Boolean(props.active));
-  const conversationScrollKey = computed(() => `${sessionId.value}:${chatTurns.value.length}`);
+  const conversationScrollKey = computed(() => sessionId.value);
   const chatReloading = ref(false);
   const chatReloadAvailable = computed(() => Boolean(
     props.active && props.session && (
@@ -1240,9 +1244,9 @@ function useVibe64AutopilotView(props, emit, {
     }
   }
 
-  async function loadMoreChatTurns() {
+  async function loadMoreChatTurns(request = {}) {
     return typeof props.conversationLog?.loadMore === "function"
-      ? props.conversationLog.loadMore()
+      ? props.conversationLog.loadMore(request)
       : false;
   }
 
@@ -1534,6 +1538,7 @@ function useVibe64AutopilotView(props, emit, {
     composerSubmitMode,
     composerSubmitTitle,
     conversationLogVisible,
+    conversationFollowLatestKey,
     conversationScrollKey,
     currentAgentSettings,
     dashboardSessionContext,

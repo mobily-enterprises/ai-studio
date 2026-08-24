@@ -158,6 +158,7 @@
       <Vibe64ConversationLog
         class="studio-autopilot__conversation"
         :error="props.conversationLog?.error"
+        :follow-latest-key="conversationFollowLatestKey"
         :has-more-before="props.conversationLog?.hasMoreBefore"
         :loading="props.conversationLog?.loading"
         :loading-more="props.conversationLog?.loadingMore"
@@ -604,6 +605,7 @@ const {
   composerSubmitMode,
   composerSubmitTitle,
   conversationLogVisible,
+  conversationFollowLatestKey,
   conversationScrollKey,
   currentAgentSettings,
   dashboardSessionContext,
