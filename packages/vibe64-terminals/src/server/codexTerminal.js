@@ -171,6 +171,10 @@ import {
   CODEX_TURN_OUTCOME,
   writeCodexTurnOutcomeNotice
 } from "./codexTurnOutcomeNotice.js";
+import {
+  recordCodexContextRenewalSignal,
+  recordCodexContextUsageSignal
+} from "./codexContextRenewalSignals.js";
 
 const CODEX_AGENT_PROVIDER = "codex";
 const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -3972,6 +3976,15 @@ function createCodexTerminalController({
 
     const turn = codexAppServerTurnStateFromAgentRun(run || {});
     const turnId = normalizeText(codexAppServerNotificationTurnId(notification) || turn.turnId);
+    await recordCodexContextRenewalSignal(store, normalizedSessionId, {
+      eventId: normalizeText(
+        codexAppServerNotificationItemId(notification) ||
+        codexAppServerNotificationEvent(notification)?.id
+      ),
+      reason,
+      threadId: normalizedThreadId,
+      turnId
+    });
     const pending = await writeCodexAppServerContextRefreshPending(store, normalizedSessionId, {
       reason,
       threadId: normalizedThreadId,
@@ -5897,6 +5910,17 @@ function createCodexTerminalController({
         threadId: normalizedThreadId,
         turnId: codexAppServerNotificationTurnId(notification)
       };
+      if (method === "thread/tokenUsage/updated") {
+        runCodexAppServerNotificationTask(notificationContext, async () => {
+          const store = await createStoreForSession(normalizedSessionId);
+          return recordCodexContextUsageSignal(
+            store,
+            normalizedSessionId,
+            notification,
+            { expectedThreadId: normalizedThreadId }
+          );
+        });
+      }
       const classification = classifyCodexAppServerEvent(notification);
       if (classification.kind === "hook_prompt") {
         codexAppServerAutomaticHookThreads.add(normalizedThreadId);

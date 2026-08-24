@@ -5,10 +5,13 @@ import {
 import { VIBE64_AUTOMATIC_HOOK_NO_OUTPUT } from "@local/vibe64-genesis/server";
 
 const CODEX_APP_SERVER_CONTEXT_COMPACTION_SIGNALS = new Set(
-  ["context", "thread", "conversation"].flatMap((subject) => (
-    ["compact", "compacted", "compaction", "truncate", "truncated", "truncation"]
-      .flatMap((state) => [`${subject}_${state}`, `${state}_${subject}`])
-  ))
+  [
+    "contextcompaction",
+    ...["context", "thread", "conversation"].flatMap((subject) => (
+      ["compact", "compacted", "compaction", "truncate", "truncated", "truncation"]
+        .flatMap((state) => [`${subject}_${state}`, `${state}_${subject}`])
+    ))
+  ]
 );
 const CODEX_APP_SERVER_CONTEXT_REFRESH_SIGNALS = new Set([
   "context_refresh_required",
@@ -481,14 +484,17 @@ function codexAppServerSignalNames(value = null) {
 
 function codexAppServerContextRefreshReason(notification = {}) {
   const method = normalizeText(notification.method);
+  const item = codexAppServerNotificationItem(notification);
   const event = codexAppServerNotificationEvent(notification);
   const payload = codexAppServerNotificationEventPayload(notification, event);
   const eventType = codexAppServerNotificationEventType(notification, event);
   const payloadType = normalizeText(payload.type);
   const signals = [
     method,
+    item?.type,
     eventType,
     payloadType,
+    ...codexAppServerSignalNames(item),
     ...codexAppServerSignalNames(payload),
     ...codexAppServerSignalNames(event)
   ].map((signal) => codexAppServerSignalName(signal)).filter(Boolean);

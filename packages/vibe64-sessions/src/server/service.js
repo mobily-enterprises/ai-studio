@@ -17,6 +17,10 @@ import {
   REPOSITORY_UPDATE_RELATIONSHIPS,
   normalizeRepositoryUpdateCheck
 } from "@local/vibe64-core/shared";
+import {
+  sessionContextUsageFromMetadata,
+  sessionRenewalAdvisory
+} from "./sessionRenewalAdvisory.js";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -591,18 +595,28 @@ function createService({
       return sessionResult(async () => {
         const runtime = await project.createRuntime();
         const session = await runtime.getSession(sessionId);
-        const agentSession = typeof terminals.agentSessionState === "function"
-          ? await terminals.agentSessionState(sessionId, {
+        const [agentSession, conversation] = await Promise.all([
+          typeof terminals.agentSessionState === "function"
+            ? terminals.agentSessionState(sessionId, {
               runtime,
               session
             })
-          : null;
+            : null,
+          runtime.readConversationLogPage(sessionId, { limit: 1 })
+        ]);
         const uiSync = readSessionUiSyncState({
           projectSlug: input.projectSlug,
           sessionId
         });
         return publicSession(session, {
           ...(agentSession?.ok === false ? {} : { agentSession }),
+          renewalAdvisory: sessionRenewalAdvisory({
+            contextUsage: sessionContextUsageFromMetadata(session.metadata, {
+              expectedThreadId: session.metadata?.agent_identity_conversation_id
+            }),
+            conversationTurnCount: conversation?.pagination?.totalTurnCount,
+            session
+          }),
           ...(uiSync ? { uiSync } : {})
         });
       });

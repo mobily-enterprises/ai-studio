@@ -266,6 +266,18 @@ test("Codex app-server context refresh classification uses structured protocol s
   }), "context_compacted");
 
   assert.equal(codexAppServerContextRefreshReason({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "compaction-1",
+        type: "contextCompaction"
+      },
+      threadId: "thread-1",
+      turnId: "turn-1"
+    }
+  }), "context_compacted");
+
+  assert.equal(codexAppServerContextRefreshReason({
     method: "codex/event",
     params: {
       event: {

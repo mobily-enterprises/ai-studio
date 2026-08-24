@@ -246,6 +246,50 @@ test("deferred session changes publish modern top-level realtime events", async 
   assert.equal(Object.hasOwn(events[0], "meta"), false);
 });
 
+test("session detail exposes renewal advice from the current thread and durable history", async () => {
+  const session = {
+    manifest: { createdAt: "2026-08-23T00:00:00.000Z" },
+    metadata: {
+      agent_context_usage_provider: "codex",
+      agent_context_usage_thread_id: "thread-current",
+      agent_context_usage_updated_at: "2026-08-24T01:00:00.000Z",
+      agent_context_used_tokens: "232560",
+      agent_context_window_tokens: "258400",
+      agent_identity_conversation_id: "thread-current"
+    },
+    sessionId: "session-1",
+    status: "active"
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession() {
+            return session;
+          },
+          async readConversationLogPage() {
+            return { pagination: { totalTurnCount: 57 }, turns: [] };
+          }
+        };
+      }
+    },
+    terminals: {
+      async agentSessionState() {
+        return { ok: true, status: "idle" };
+      }
+    }
+  });
+
+  const result = await service.inspectSession("session-1");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.renewalAdvisory.available, true);
+  assert.equal(result.renewalAdvisory.primarySignal, "provider-context");
+  assert.equal(result.renewalAdvisory.severity, "soon");
+  assert.equal(result.renewalAdvisory.signals.contextUsage.usedTokens, 232560);
+  assert.equal(result.renewalAdvisory.signals.conversationTurnCount, 57);
+});
+
 test("assistant messages use the plain message contract", async () => {
   const calls = [];
   const publications = [];
