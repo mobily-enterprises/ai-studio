@@ -31,7 +31,11 @@ function chatMessagePayload(message = "", attachments = []) {
     return null;
   }
   const files = Array.isArray(attachments) ? attachments : [];
+  const attachmentIds = files
+    .map((attachment) => chatText(attachment?.attachmentId))
+    .filter(Boolean);
   return {
+    ...(attachmentIds.length ? { attachmentIds } : {}),
     displayMessage: files.length
       ? appendPromptAttachmentFileNames(text, files)
       : text,

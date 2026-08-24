@@ -176,6 +176,18 @@ function vibe64AgentTerminalPath(sessionsApiPath = "", sessionId = "", terminalS
   );
 }
 
+function vibe64AgentTerminalControlTextPath(
+  sessionsApiPath = "",
+  sessionId = "",
+  terminalSessionId = ""
+) {
+  return `${vibe64AgentTerminalPath(
+    sessionsApiPath,
+    sessionId,
+    terminalSessionId
+  )}/control/text`;
+}
+
 function vibe64GlobalCodexTerminalPath(vibe64ApiPath = "", terminalSessionId = "") {
   return terminalSessionId
     ? `${vibe64ApiPath}/codex-terminal/${encodePathSegment(terminalSessionId)}`
@@ -352,6 +364,7 @@ export {
   SELECTED_SESSION_STORAGE_KEY,
   vibe64AgentAttachmentDeletePath,
   vibe64AgentAttachmentPath,
+  vibe64AgentTerminalControlTextPath,
   vibe64AgentSessionsReconcilePath,
   vibe64AgentTerminalPath,
   vibe64ConversationLogPath,

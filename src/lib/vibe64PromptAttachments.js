@@ -102,6 +102,7 @@ export {
   ATTACHMENT_SECTION_HEADING,
   appendPromptAttachmentFileNames,
   appendPromptAttachmentReferences,
+  attachmentSizeLabel,
   promptAttachmentFileNames,
   promptAttachmentReference,
   promptAttachmentReferences,
