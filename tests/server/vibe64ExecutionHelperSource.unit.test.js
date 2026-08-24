@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
@@ -7,6 +8,27 @@ const HELPER_SOURCE_URL = new URL("../../packages/vibe64-execution/src/host/exec
 async function helperSource() {
   return readFile(HELPER_SOURCE_URL, "utf8");
 }
+
+test("execution helper waits for a delayed nonblocking stdin payload", async () => {
+  const child = spawn(process.execPath, [
+    new URL(HELPER_SOURCE_URL).pathname,
+    "execute"
+  ], {
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk || "");
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  child.stdin.end("{}\n");
+  const exitCode = await new Promise((resolve) => child.once("close", resolve));
+
+  assert.equal(exitCode, 2);
+  assert.match(stderr, /rejected a non-normalized execution payload/u);
+  assert.doesNotMatch(stderr, /EAGAIN|resource temporarily unavailable/u);
+});
 
 test("execution helper source is the real host helper, not the package stub", async () => {
   const source = await helperSource();

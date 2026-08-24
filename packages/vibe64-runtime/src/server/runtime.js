@@ -129,6 +129,10 @@ function sessionSourceCreationFailed(session = {}) {
   return normalizeText(session?.metadata?.source_creation_failed).toLowerCase() === "yes";
 }
 
+function sessionSourceRecoveryWasSaved(session = {}) {
+  return normalizeText(session?.metadata?.source_recovery_saved).toLowerCase() === "yes";
+}
+
 async function sessionIsListable(session = {}) {
   if (!sessionIsSupported(session)) {
     return false;
@@ -356,7 +360,9 @@ class Vibe64SessionRuntime {
       : sessionOrId.sessionId || sessionOrId.id);
     return this.store.mutateSession(sessionId, async () => {
       const session = assertSupportedSession(await this.store.readSession(sessionId));
-      await this.assertSourceHealthy(session);
+      if (!sessionSourceRecoveryWasSaved(session)) {
+        await this.assertSourceHealthy(session);
+      }
       return archiveStoredSessionSource({
         reason,
         session,
@@ -380,7 +386,10 @@ class Vibe64SessionRuntime {
 
   async clearSessionClosing(sessionId = "") {
     return this.store.mutateSession(sessionId, async () => {
-      assertSupportedSession(await this.store.readSession(sessionId));
+      const session = assertSupportedSession(await this.store.readSession(sessionId));
+      if (sessionSourceRecoveryWasSaved(session)) {
+        return this.getSession(sessionId);
+      }
       await this.store.deleteMetadataValues(sessionId, [
         VIBE64_SESSION_CLOSING_AT_METADATA,
         VIBE64_SESSION_CLOSING_REASON_METADATA

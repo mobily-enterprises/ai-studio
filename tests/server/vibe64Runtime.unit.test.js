@@ -260,6 +260,36 @@ test("a blocked session whose source creation failed can be closed and archived"
   });
 });
 
+test("a close failure after source recovery stays closing for a safe retry", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "recoverable-close";
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    await runtime.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
+      sessionId
+    });
+    runtime.archiveSessionSource = async () => {
+      await runtime.store.writeMetadataValue(sessionId, "source_recovery_saved", "yes");
+      throw new Error("Worktree removal raced a preview writer.");
+    };
+
+    await assert.rejects(
+      () => runtime.abandonSession(sessionId),
+      /Worktree removal raced a preview writer/u
+    );
+
+    const session = await runtime.getSession(sessionId, {
+      inspectSource: false
+    });
+    assert.equal(session.status, "active");
+    assert.equal(session.metadata.session_closing_reason, "abandoned");
+    assert.equal(session.metadata.source_recovery_saved, "yes");
+  });
+});
+
 test("plain runtime hides sessions using an unsupported runtime record", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({

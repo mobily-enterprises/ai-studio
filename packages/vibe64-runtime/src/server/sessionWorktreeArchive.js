@@ -136,7 +136,9 @@ async function removeSessionOwnedWorktreeDirectory({
   }
   await rm(worktreePath, {
     force: true,
-    recursive: true
+    maxRetries: 20,
+    recursive: true,
+    retryDelay: 100
   });
   return {
     ok: true,

@@ -136,6 +136,14 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
       }
     };
     const events = [];
+    let finishPreparation;
+    let preparationStarted;
+    const preparationStartedPromise = new Promise((resolve) => {
+      preparationStarted = resolve;
+    });
+    const preparationCompletion = new Promise((resolve) => {
+      finishPreparation = resolve;
+    });
     let previewIdentityInput = null;
     const runtime = {
       async getSession() {
@@ -169,8 +177,9 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
     controller = createLaunchTargetTerminalController({
       async ensureWorkspacePrepared() {
         events.push("prepare-started");
+        preparationStarted();
         return {
-          completion: Promise.resolve().then(() => {
+          completion: preparationCompletion.then(() => {
             session.workspaceSetup = {
               recipeHash: currentSetup.recipeHash,
               status: "succeeded"
@@ -196,9 +205,21 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
       }
     });
 
-    const terminal = await controller.startTerminal(sessionId, {
+    const starting = controller.startTerminal(sessionId, {
       launchTargetId: "app"
     });
+    await preparationStartedPromise;
+    let closeFinished = false;
+    const closing = controller.closeAllForSession(sessionId).then((result) => {
+      closeFinished = true;
+      return result;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(closeFinished, false);
+    finishPreparation();
+
+    const terminal = await starting;
+    await closing;
 
     assert.equal(terminal.ok, true);
     assert.deepEqual(previewIdentityInput, {

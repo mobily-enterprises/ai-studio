@@ -1,10 +1,13 @@
 #!/opt/vibe64/runtime-packs/node26/bin/node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 const INPUT_LIMIT_BYTES = 1024 * 1024;
+const STDIN_READ_BUFFER_BYTES = 64 * 1024;
+const STDIN_READ_RETRY_DELAY_MS = 10;
+const STDIN_READ_TIMEOUT_MS = 15_000;
 const EXEC_HELPER_PAYLOAD_SCHEMA = "vibe64.exec-helper.payload";
 const EXEC_HELPER_PAYLOAD_SCHEMA_VERSION = 1;
 const ALLOWED_OPERATIONS = new Set([
@@ -450,7 +453,42 @@ function readPayload(payloadPath = "") {
 }
 
 function readStdin() {
-  return readFileSync(0, "utf8");
+  const chunks = [];
+  const buffer = Buffer.allocUnsafe(STDIN_READ_BUFFER_BYTES);
+  const retrySignal = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + STDIN_READ_TIMEOUT_MS;
+  let totalBytes = 0;
+
+  while (true) {
+    try {
+      const bytesRead = readSync(0, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      totalBytes += bytesRead;
+      if (totalBytes > INPUT_LIMIT_BYTES) {
+        throw new Error("Vibe64 exec helper payload is too large.");
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    } catch (error) {
+      if (error?.code === "EINTR") {
+        continue;
+      }
+      if (
+        (error?.code === "EAGAIN" || error?.code === "EWOULDBLOCK") &&
+        Date.now() < deadline
+      ) {
+        Atomics.wait(retrySignal, 0, 0, STDIN_READ_RETRY_DELAY_MS);
+        continue;
+      }
+      if (error?.code === "EAGAIN" || error?.code === "EWOULDBLOCK") {
+        throw new Error("Vibe64 exec helper timed out waiting for its payload.");
+      }
+      throw error;
+    }
+  }
+
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
 }
 
 function safeUsername(value = "") {

@@ -1958,11 +1958,12 @@ function createLaunchTargetTerminalController({
     },
 
     async closeAllForSession(sessionId) {
-      await launchPreviewProxies.close({
-        sessionId
+      return withLaunchStartLock(sessionId, async () => {
+        await launchPreviewProxies.close({
+          sessionId
+        });
+        return closeTerminalSessionsForNamespace(launchTargetTerminalNamespace(sessionId));
       });
-      const result = await closeTerminalSessionsForNamespace(launchTargetTerminalNamespace(sessionId));
-      return result;
     },
 
     async closeTerminal(sessionId, terminalSessionId) {
