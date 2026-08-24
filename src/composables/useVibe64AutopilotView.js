@@ -182,6 +182,17 @@ function normalizedAgentTurnText(value = "") {
   return String(value || "").trim();
 }
 
+function composerDraftAfterAcceptedSubmission(currentDraft = "", submittedDraft = "") {
+  const current = String(currentDraft || "");
+  const submitted = String(submittedDraft || "");
+  if (current === submitted) {
+    return "";
+  }
+  return submitted && current.startsWith(submitted)
+    ? current.slice(submitted.length)
+    : current;
+}
+
 function agentConnectionThinkingLabel({
   active = false,
   status = "connected"
@@ -298,6 +309,12 @@ function useVibe64AutopilotView(props, emit, {
     return turn && typeof turn === "object" && !Array.isArray(turn) ? turn : {};
   });
   const agentActive = computed(() => activeAgentTurn.value.active === true);
+  const agentSteerable = computed(() => Boolean(
+    agentActive.value &&
+    normalizedAgentTurnText(activeAgentTurn.value.id) &&
+    normalizedAgentTurnText(activeAgentTurn.value.state) === "active" &&
+    props.agentConnectionStatus === "connected"
+  ));
   const chatCollapsed = computed(() => Boolean(props.chatCollapsed));
   const sessionToolbarVisible = computed(() => Boolean(
     Array.isArray(props.sessionToolbar?.sessions) && props.sessionToolbar.sessions.length
@@ -306,11 +323,15 @@ function useVibe64AutopilotView(props, emit, {
   const composerDraft = ref("");
   const composerAttachments = ref([]);
   const composerError = ref("");
+  const composerAcceptedAttachments = ref(false);
+  const composerRetrySubmission = ref(null);
   const composerSending = ref(false);
+  const composerSubmissionKind = ref("");
   const interrupting = ref(false);
   const optimisticMessages = ref([]);
   const questionAnswers = ref({});
   const dismissedNumberedQuestionText = ref("");
+  const submittedQuestionText = ref("");
   const saveWorkConfirmOpen = ref(false);
   const saveWorkError = ref("");
   const saveWorkFailure = ref(null);
@@ -339,7 +360,10 @@ function useVibe64AutopilotView(props, emit, {
     parseNumberedQuestionPrompt(latestAssistantQuestionText.value)
   ));
   const numberedQuestions = computed(() => (
-    dismissedNumberedQuestionText.value === latestAssistantQuestionText.value
+    [
+      dismissedNumberedQuestionText.value,
+      submittedQuestionText.value
+    ].includes(latestAssistantQuestionText.value)
       ? []
       : numberedQuestionInput.value.questions || []
   ));
@@ -356,7 +380,7 @@ function useVibe64AutopilotView(props, emit, {
     })
   ));
   const answerChoices = computed(() => (
-    numberedQuestions.value.length
+    numberedQuestions.value.length || submittedQuestionText.value === latestAssistantQuestionText.value
       ? []
       : parseAnswerChoicePrompt(latestAssistantQuestionText.value).choices || []
   ));
@@ -374,12 +398,63 @@ function useVibe64AutopilotView(props, emit, {
   const composerDisabled = computed(() => Boolean(
     !props.active ||
     !sessionId.value ||
-    props.sessionSelectionClosed ||
-    composerSending.value ||
-    repositoryOperationActive.value
+    props.sessionSelectionClosed
   ));
+  const composerAttachmentsEnabled = computed(() => Boolean(
+    !composerDisabled.value &&
+    !composerSending.value &&
+    !interrupting.value &&
+    !agentActive.value &&
+    !repositoryOperationActive.value
+  ));
+  const composerRetryMatchesDraft = computed(() => {
+    const retry = composerRetrySubmission.value;
+    const draft = String(composerDraft.value || "");
+    const submitted = String(retry?.draftSnapshot || "");
+    return Boolean(retry && submitted && (
+      draft === submitted || draft.startsWith(submitted)
+    ));
+  });
+  const composerSubmitMode = computed(() => {
+    if (composerSending.value) {
+      return composerSubmissionKind.value === "steer" ? "steering" : "sending";
+    }
+    if (agentActive.value) {
+      if (!agentSteerable.value) {
+        return "waiting";
+      }
+      return composerRetryMatchesDraft.value ? "retry" : "steer";
+    }
+    return composerRetryMatchesDraft.value ? "retry" : "send";
+  });
+  const composerSubmitLabel = computed(() => ({
+    retry: "Retry",
+    sending: "Sending…",
+    steer: "Steer",
+    steering: "Steering…",
+    waiting: "Waiting…"
+  })[composerSubmitMode.value] || "");
+  const composerSubmitAriaLabel = computed(() => ({
+    retry: "Retry guidance to assistant",
+    sending: "Sending message",
+    steer: "Steer assistant",
+    steering: "Sending guidance to assistant",
+    waiting: "Waiting for the assistant to accept guidance"
+  })[composerSubmitMode.value] || "Send message");
+  const composerSubmitTitle = computed(() => ({
+    retry: "Retry the same guidance without duplicating it",
+    sending: "Keep typing while this message is sent",
+    steer: "Send this guidance to the active assistant turn",
+    steering: "Keep typing while this guidance is sent",
+    waiting: "Keep typing while the assistant becomes ready"
+  })[composerSubmitMode.value] || "Send message");
   const composerCanSubmit = computed(() => Boolean(
-    !composerDisabled.value && (
+    !composerDisabled.value &&
+    !composerSending.value &&
+    !interrupting.value &&
+    !repositoryOperationActive.value &&
+    (!agentActive.value || agentSteerable.value) &&
+    (!agentActive.value || composerAttachments.value.length === 0) && (
       numberedQuestions.value.length
         ? numberedQuestions.value.every((question) => String(questionAnswers.value[question.name] || "").trim())
         : answerChoices.value.length
@@ -388,7 +463,9 @@ function useVibe64AutopilotView(props, emit, {
     )
   ));
   const agentStopVisible = computed(() => agentActive.value);
-  const agentStopEnabled = computed(() => agentStopVisible.value && !interrupting.value);
+  const agentStopEnabled = computed(() => Boolean(
+    agentStopVisible.value && !interrupting.value && !composerSending.value
+  ));
   const thinkingVisible = computed(() => Boolean(agentActive.value || composerSending.value));
   const thinkingLabel = computed(() => (
     agentConnectionThinkingLabel({
@@ -655,17 +732,33 @@ function useVibe64AutopilotView(props, emit, {
     ));
   }
 
-  async function sendChatPayload(payload = {}, { messageId: existingMessageId = "" } = {}) {
+  function settleComposerRetry(retry = composerRetrySubmission.value) {
+    if (!retry || retry.messageId !== composerRetrySubmission.value?.messageId) {
+      return false;
+    }
+    composerDraft.value = composerDraftAfterAcceptedSubmission(
+      composerDraft.value,
+      retry.draftSnapshot
+    );
+    composerRetrySubmission.value = null;
+    return true;
+  }
+
+  async function sendChatPayload(payload = {}, {
+    messageId: existingMessageId = "",
+    submissionKind = "send"
+  } = {}) {
     if (composerSending.value || !normalizedAgentTurnText(payload?.message)) {
       return false;
     }
     const messageId = String(existingMessageId || "").trim() || nextMessageId();
     const optimistic = optimisticMessage(payload, messageId);
     optimisticMessages.value = [
-      ...optimisticMessages.value,
+      ...optimisticMessages.value.filter((message) => message.id !== messageId),
       optimistic
     ];
     composerError.value = "";
+    composerSubmissionKind.value = submissionKind === "steer" ? "steer" : "send";
     composerSending.value = true;
     try {
       const accepted = await props.sendAgentMessage({
@@ -690,6 +783,7 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     } finally {
       composerSending.value = false;
+      composerSubmissionKind.value = "";
     }
   }
 
@@ -697,21 +791,73 @@ function useVibe64AutopilotView(props, emit, {
     if (!composerCanSubmit.value) {
       return false;
     }
-    const additionalContext = composerDraft.value.trim();
+    const retry = composerRetryMatchesDraft.value
+      ? composerRetrySubmission.value
+      : null;
+    if (!retry) {
+      composerRetrySubmission.value = null;
+    }
+    const draftSnapshot = retry?.draftSnapshot || composerDraft.value;
+    const additionalContext = draftSnapshot.trim();
     const message = numberedQuestions.value.length
       ? [
           numberedQuestionSubmissionText(numberedQuestions.value, questionAnswers.value),
           additionalContext
         ].filter(Boolean).join("\n\n")
       : selectedAnswerChoice.value || additionalContext;
-    const payload = chatMessagePayload(message, composerAttachments.value);
+    const payload = retry?.payload || chatMessagePayload(message, composerAttachments.value);
     if (!payload) {
       return false;
     }
-    composerDraft.value = "";
-    questionAnswers.value = {};
-    selectedAnswerChoice.value = "";
-    return sendChatPayload(payload);
+    const submissionKind = retry?.submissionKind || (agentSteerable.value ? "steer" : "send");
+    const questionTextSnapshot = retry?.questionTextSnapshot || (structuredQuestionActive.value
+      ? latestAssistantQuestionText.value
+      : "");
+    const messageId = retry?.messageId || nextMessageId();
+    const includedAttachments = !retry && composerAttachments.value.length > 0;
+    composerAcceptedAttachments.value = false;
+    if (submissionKind === "send" && !retry) {
+      submittedQuestionText.value = questionTextSnapshot;
+      composerDraft.value = "";
+      questionAnswers.value = {};
+      selectedAnswerChoice.value = "";
+    }
+    const accepted = await sendChatPayload(payload, { messageId, submissionKind });
+    if (accepted) {
+      composerAcceptedAttachments.value = includedAttachments;
+    }
+    if (accepted && (submissionKind === "steer" || retry)) {
+      submittedQuestionText.value = questionTextSnapshot;
+      if (!settleComposerRetry(retry)) {
+        composerDraft.value = composerDraftAfterAcceptedSubmission(
+          composerDraft.value,
+          draftSnapshot
+        );
+      }
+      questionAnswers.value = {};
+      selectedAnswerChoice.value = "";
+    } else if (!accepted && submissionKind === "steer") {
+      const optimistic = optimisticMessageById(messageId) || {
+        createdAtMs: Date.now(),
+        id: messageId,
+        text: normalizedAgentTurnText(payload.displayMessage || payload.message)
+      };
+      composerRetrySubmission.value = {
+        draftSnapshot,
+        messageId,
+        optimistic,
+        payload,
+        questionTextSnapshot,
+        submissionKind
+      };
+      if (!unmatchedOptimisticMessages(
+        props.conversationLog?.turns,
+        [optimistic]
+      ).length) {
+        settleComposerRetry(composerRetrySubmission.value);
+      }
+    }
+    return accepted;
   }
 
   function dismissNumberedQuestions() {
@@ -735,6 +881,9 @@ function useVibe64AutopilotView(props, emit, {
     if (message.status === "pending" && await props.cancelAgentMessage(messageId) === false) {
       return false;
     }
+    if (composerRetrySubmission.value?.messageId === messageId) {
+      settleComposerRetry(composerRetrySubmission.value);
+    }
     optimisticMessages.value = optimisticMessages.value.filter((item) => item.id !== messageId);
     return true;
   }
@@ -744,7 +893,12 @@ function useVibe64AutopilotView(props, emit, {
     if (!message || message.status !== "failed") {
       return false;
     }
-    composerDraft.value = message.text;
+    const currentDraft = String(composerDraft.value || "");
+    composerDraft.value = !currentDraft
+      ? message.text
+      : currentDraft.startsWith(message.text)
+        ? currentDraft
+        : [message.text, currentDraft].filter(Boolean).join("\n\n");
     optimisticMessages.value = optimisticMessages.value.filter((item) => item.id !== messageId);
     return true;
   }
@@ -754,8 +908,18 @@ function useVibe64AutopilotView(props, emit, {
     if (!message || message.status !== "failed") {
       return false;
     }
+    const retry = composerRetrySubmission.value?.messageId === messageId
+      ? composerRetrySubmission.value
+      : null;
     optimisticMessages.value = optimisticMessages.value.filter((item) => item.id !== messageId);
-    return sendChatPayload(message.payload, { messageId });
+    const accepted = await sendChatPayload(message.payload, {
+      messageId,
+      submissionKind: retry?.submissionKind || (agentSteerable.value ? "steer" : "send")
+    });
+    if (accepted) {
+      settleComposerRetry(retry);
+    }
+    return accepted;
   }
 
   const toolbarRepositoryWorkState = computed(() => {
@@ -806,6 +970,7 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkDisabled = computed(() => Boolean(
     composerDisabled.value ||
     agentActive.value ||
+    composerSending.value ||
     saveWorkSending.value ||
     saveWorkRepositoryBusy.value ||
     saveWorkRepositoryState.value?.loading ||
@@ -1268,10 +1433,13 @@ function useVibe64AutopilotView(props, emit, {
   watch(sessionId, () => {
     composerDraft.value = "";
     composerAttachments.value = [];
+    composerAcceptedAttachments.value = false;
     composerError.value = "";
+    composerRetrySubmission.value = null;
     optimisticMessages.value = [];
     questionAnswers.value = {};
     dismissedNumberedQuestionText.value = "";
+    submittedQuestionText.value = "";
     selectedAnswerChoice.value = "";
     workspaceSetupRetryError.value = "";
     workspaceSetupExpanded.value = false;
@@ -1289,6 +1457,9 @@ function useVibe64AutopilotView(props, emit, {
     if (questionText !== dismissedNumberedQuestionText.value) {
       dismissedNumberedQuestionText.value = "";
     }
+    if (questionText !== submittedQuestionText.value) {
+      submittedQuestionText.value = "";
+    }
     selectedAnswerChoice.value = "";
   });
 
@@ -1297,6 +1468,10 @@ function useVibe64AutopilotView(props, emit, {
       return;
     }
     const remaining = unmatchedOptimisticMessages(turns, optimisticMessages.value);
+    const retry = composerRetrySubmission.value;
+    if (retry && !unmatchedOptimisticMessages(turns, [retry.optimistic]).length) {
+      settleComposerRetry(retry);
+    }
     if (remaining.length !== optimisticMessages.value.length) {
       optimisticMessages.value = remaining;
     }
@@ -1327,6 +1502,8 @@ function useVibe64AutopilotView(props, emit, {
     chatReloading,
     chatTurns,
     composerAttachments,
+    composerAcceptedAttachments,
+    composerAttachmentsEnabled,
     composerCanSubmit,
     composerDisabled,
     composerDraft,
@@ -1334,6 +1511,10 @@ function useVibe64AutopilotView(props, emit, {
     composerHint,
     composerPlaceholder,
     composerSending,
+    composerSubmitAriaLabel,
+    composerSubmitLabel,
+    composerSubmitMode,
+    composerSubmitTitle,
     conversationLogVisible,
     conversationScrollKey,
     currentAgentSettings,

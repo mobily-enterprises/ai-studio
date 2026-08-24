@@ -17,6 +17,7 @@ import {
   codexAppServerRuntimeDir
 } from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
+  VIBE64_AGENT_RUN_STATE,
   VIBE64_SESSION_STATUS,
   createVibe64SessionStore
 } from "../../packages/vibe64-runtime/src/server/sessionStore.js";
@@ -816,6 +817,356 @@ function createRestartedController({
     projectService
   });
 }
+
+async function withAgentMessageController(operation) {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-agent-message-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = "test";
+  const {
+    projectContextRoot,
+    projectRuntimeRoot,
+    session
+  } = await managedSessionFixture(temporaryRoot);
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot: path.join(temporaryRoot, "managed", "sessions")
+  });
+  await store.createSession({
+    metadata: session.metadata,
+    runtimeKind: "genesis",
+    sessionId: session.sessionId
+  });
+
+  const captures = {
+    onSendTurn: null,
+    onSteerTurn: null,
+    provider: null,
+    sendTurnWait: null,
+    steers: [],
+    threadStarts: [],
+    turns: []
+  };
+  const runtime = {
+    async getSession(sessionId) {
+      return store.readSession(sessionId);
+    },
+    async renderPrompt(_sessionId, { request } = {}) {
+      return {
+        prompt: String(request || "Continue.")
+      };
+    },
+    projectContextRoot,
+    stateRoot: projectRuntimeRoot,
+    store
+  };
+  const controller = createCodexTerminalController({
+    codexAppServerActiveReconcileMs: 60_000,
+    codexAppServerDaemonWellbeingMs: 60_000,
+    codexAppServerProviderFactory() {
+      const subscribers = new Set();
+      const provider = {
+        closed: 0,
+        status: "idle",
+        threadId: "11111111-1111-4111-8111-111111111111",
+        turnId: "",
+        close() {
+          provider.closed += 1;
+        },
+        async ensureAvailable() {},
+        async ensureRuntime() {
+          const runtimeDir = path.join(temporaryRoot, "provider-runtime");
+          return {
+            endpoint: `unix://${path.join(runtimeDir, "codex.sock")}`,
+            runtimeDir,
+            socketPath: path.join(runtimeDir, "codex.sock"),
+            transport: "unix"
+          };
+        },
+        isAvailable() {
+          return provider.closed === 0;
+        },
+        async listLoadedThreads() {
+          return {
+            data: [provider.threadId]
+          };
+        },
+        async readThread() {
+          return {
+            turns: provider.turnId ? [{
+              id: provider.turnId,
+              items: [{
+                id: `answer-${provider.turnId}`,
+                phase: "final_answer",
+                text: `Completed ${provider.turnId}.`,
+                type: "agentMessage"
+              }],
+              status: provider.status
+            }] : []
+          };
+        },
+        async readThreadStatus() {
+          return {
+            status: provider.status,
+            turnId: provider.turnId
+          };
+        },
+        async resumeThread(threadId) {
+          provider.threadId = threadId;
+          return {
+            id: threadId
+          };
+        },
+        async sendTurn(threadId, input, settings) {
+          const turnId = `turn-${captures.turns.length + 1}`;
+          provider.status = "inProgress";
+          provider.turnId = turnId;
+          captures.turns.push({
+            input,
+            settings,
+            threadId,
+            turnId
+          });
+          captures.onSendTurn?.({ provider, turnId });
+          if (captures.sendTurnWait) {
+            await captures.sendTurnWait;
+          }
+          return {
+            id: turnId,
+            raw: {
+              status: provider.status
+            }
+          };
+        },
+        async startThread(settings) {
+          captures.threadStarts.push(settings);
+          return {
+            id: provider.threadId
+          };
+        },
+        async steerTurn(threadId, turnId, message, options) {
+          captures.steers.push({
+            message,
+            options,
+            threadId,
+            turnId
+          });
+          if (captures.onSteerTurn) {
+            return captures.onSteerTurn({
+              message,
+              options,
+              provider,
+              threadId,
+              turnId
+            });
+          }
+          return {
+            id: turnId
+          };
+        },
+        async stopRuntime() {},
+        subscribe(callback) {
+          subscribers.add(callback);
+          return () => subscribers.delete(callback);
+        }
+      };
+      captures.provider = provider;
+      return provider;
+    },
+    env: {
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return runtime;
+      },
+      createSessionStore() {
+        return store;
+      },
+      async projectExecutionEnvironment() {
+        return {
+          VIBE64_RUNTIME_NAMESPACE: "test",
+          VIBE64_WORKSPACE: "test"
+        };
+      },
+      async readProjectAiPolicy() {
+        return {
+          ok: true
+        };
+      }
+    }
+  });
+
+  try {
+    await operation({
+      captures,
+      controller,
+      sessionId: session.sessionId,
+      store
+    });
+  } finally {
+    await controller.closeAllForSession(session.sessionId);
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
+test("duplicate agent messages with the same message id call the provider once", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId }) => {
+    let releaseSendTurn;
+    captures.sendTurnWait = new Promise((resolve) => {
+      releaseSendTurn = resolve;
+    });
+    let observeSendTurn;
+    const sendTurnObserved = new Promise((resolve) => {
+      observeSendTurn = resolve;
+    });
+    captures.onSendTurn = observeSendTurn;
+
+    const input = {
+      message: "Start atomic delivery.",
+      messageId: "message-atomic-duplicate"
+    };
+    const firstDelivery = controller.sendMessage(sessionId, input);
+    await sendTurnObserved;
+    const concurrentDuplicate = controller.sendMessage(sessionId, input);
+    releaseSendTurn();
+    captures.sendTurnWait = null;
+
+    const [first, duplicate] = await Promise.all([
+      firstDelivery,
+      concurrentDuplicate
+    ]);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.deepEqual(duplicate, first);
+
+    const durableDuplicate = await controller.sendMessage(sessionId, input);
+    assert.equal(durableDuplicate.ok, true, JSON.stringify(durableDuplicate));
+    assert.equal(durableDuplicate.duplicate, true);
+    assert.equal(durableDuplicate.operationOutcome, "message_already_delivered");
+    assert.equal(captures.turns.length, 1);
+    assert.equal(captures.steers.length, 0);
+    assert.equal(captures.turns[0].settings.clientUserMessageId, input.messageId);
+  });
+});
+
+test("agent messages reject while a STARTING turn has no provider turn id", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const started = await controller.sendMessage(sessionId, {
+      message: "Start before the provider identity arrives.",
+      messageId: "message-starting-original"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    captures.provider.status = "inProgress";
+    captures.provider.turnId = "";
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "test-starting-without-provider-turn",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      },
+      patch: {
+        outerTurnId: "message-starting-original",
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "starting",
+        providerThreadId: captures.provider.threadId,
+        providerTurnId: "",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      }
+    });
+
+    const result = await controller.sendMessage(sessionId, {
+      message: "Do not race this starting turn.",
+      messageId: "message-starting-rejected"
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.operationOutcome, "active_turn_not_ready");
+    assert.equal(result.retryable, true);
+    assert.equal(captures.turns.length, 1);
+    assert.equal(captures.steers.length, 0);
+  });
+});
+
+test("agent messages reject while a FINALIZING turn retains its provider turn id", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const started = await controller.sendMessage(sessionId, {
+      message: "Start before finalization.",
+      messageId: "message-finalizing-original"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    captures.provider.status = "finalizing";
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "test-finalizing-with-provider-turn",
+        state: VIBE64_AGENT_RUN_STATE.FINALIZING
+      },
+      patch: {
+        outerTurnId: "message-finalizing-original",
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "completed",
+        providerThreadId: captures.provider.threadId,
+        providerTurnId: captures.provider.turnId,
+        state: VIBE64_AGENT_RUN_STATE.FINALIZING
+      }
+    });
+
+    const result = await controller.sendMessage(sessionId, {
+      message: "Do not race final response persistence.",
+      messageId: "message-finalizing-rejected"
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.operationOutcome, "active_turn_not_ready");
+    assert.equal(result.retryable, true);
+    assert.equal(captures.turns.length, 1);
+    assert.equal(captures.steers.length, 0);
+  });
+});
+
+test("completion during steer starts one ordinary turn with the same message id", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const started = await controller.sendMessage(sessionId, {
+      message: "Start the original turn.",
+      messageId: "message-steer-original"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    captures.onSteerTurn = ({ provider }) => {
+      provider.status = "completed";
+      const error = new Error("The original turn completed before steering.");
+      error.code = -32602;
+      error.method = "turn/steer";
+      throw error;
+    };
+    const messageId = "message-steer-completed-race";
+    const result = await controller.sendMessage(sessionId, {
+      message: "Continue as an ordinary turn.",
+      messageId
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.deliveryMode, "new_turn");
+    assert.equal(result.turnId, "turn-2");
+    assert.equal(captures.steers.length, 1);
+    assert.equal(captures.turns.length, 2);
+    assert.equal(captures.turns[1].settings.clientUserMessageId, messageId);
+    const session = await store.readSession(sessionId);
+    const agentRun = session.agentRuns.find(({ id }) => id === "codex_app_server");
+    assert.equal(agentRun?.outerTurnId, messageId);
+    assert.equal(agentRun?.providerTurnId, "turn-2");
+    const conversationLog = await store.readConversationLog(sessionId);
+    assert.equal(conversationLog.filter((turn) => (
+      turn.user?.text === "Continue as an ordinary turn."
+    )).length, 1);
+  });
+});
 
 test("a changed session environment retires the previous provider for the same runtime", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-provider-ownership-"));

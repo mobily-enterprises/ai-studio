@@ -173,8 +173,10 @@
       />
 
       <div
-        v-if="thinkingVisible"
+        :id="thinkingStatusId"
         class="studio-autopilot__thinking"
+        :class="{ 'studio-autopilot__thinking--hidden': !thinkingVisible }"
+        :aria-hidden="thinkingVisible ? undefined : 'true'"
         aria-live="polite"
         role="status"
       >
@@ -187,7 +189,8 @@
           ref="composerInput"
           v-model="composerDraft"
           aria-label="Message Codex"
-          :attachments-enabled="Boolean(sessionId)"
+          :attachments-enabled="composerAttachmentsEnabled"
+          :described-by="thinkingVisible ? thinkingStatusId : ''"
           :disabled="composerDisabled"
           :error-messages="composerError"
           :hint="composerHint"
@@ -195,6 +198,7 @@
           :placeholder="composerPlaceholder"
           :rows="numberedQuestions.length ? 1 : 2"
           :session-id="sessionId"
+          :submit-enabled="composerCanSubmit"
           tab-to-submit
           @attachments-change="updateComposerAttachments"
           @submit="sendComposerMessage"
@@ -280,7 +284,7 @@
               <v-btn
                 aria-label="Attach files"
                 class="studio-autopilot__composer-action"
-                :disabled="composerDisabled || !attachmentState.canAddFiles"
+                :disabled="!composerAttachmentsEnabled || !attachmentState.canAddFiles"
                 :icon="mdiPaperclip"
                 size="small"
                 title="Attach files"
@@ -293,7 +297,7 @@
                 aria-label="Attach visible preview"
                 class="studio-autopilot__composer-action"
                 :aria-busy="previewAttachmentState.captureBusy ? 'true' : undefined"
-                :disabled="composerDisabled || !attachmentState.canAddFiles || previewAttachmentState.captureBusy"
+                :disabled="!composerAttachmentsEnabled || !attachmentState.canAddFiles || previewAttachmentState.captureBusy"
                 :icon="mdiEyePlusOutline"
                 size="small"
                 title="Attach visible preview"
@@ -306,7 +310,7 @@
                 aria-label="Attach console & network"
                 class="studio-autopilot__composer-action"
                 :aria-busy="previewAttachmentState.diagnosticsBusy ? 'true' : undefined"
-                :disabled="composerDisabled || !attachmentState.canAddFiles || previewAttachmentState.diagnosticsBusy"
+                :disabled="!composerAttachmentsEnabled || !attachmentState.canAddFiles || previewAttachmentState.diagnosticsBusy"
                 :icon="mdiConsoleNetworkOutline"
                 size="small"
                 title="Attach console and network diagnostics"
@@ -317,50 +321,37 @@
               <span class="studio-autopilot__composer-spacer" />
               <v-btn
                 v-if="agentStopVisible"
+                :aria-busy="interrupting ? 'true' : undefined"
                 class="studio-autopilot__composer-action"
                 color="error"
                 :disabled="!agentStopEnabled"
-                :loading="interrupting"
                 :prepend-icon="mdiStopCircleOutline"
                 size="small"
                 type="button"
                 variant="tonal"
                 @click="requestAgentInterrupt"
               >
-                Stop
+                {{ interrupting ? "Stopping…" : "Stop" }}
               </v-btn>
               <v-btn
-                v-if="agentStopVisible"
                 ref="composerSendButton"
-                aria-label="Steer assistant"
-                class="studio-autopilot__composer-action studio-autopilot__send--steer"
+                :aria-busy="composerSending ? 'true' : undefined"
+                :aria-label="composerSubmitAriaLabel"
+                class="studio-autopilot__composer-action studio-autopilot__send-action"
                 color="primary"
                 :disabled="!composerCanSubmit || !attachmentState.canSubmit"
-                :loading="composerSending"
-                :prepend-icon="mdiArrowTopRight"
+                :icon="composerSubmitMode === 'send' ? mdiSend : undefined"
+                :prepend-icon="['steer', 'steering'].includes(composerSubmitMode) ? mdiArrowTopRight : undefined"
                 size="small"
-                title="Steer assistant"
+                :title="composerSubmitTitle"
                 type="button"
                 variant="flat"
                 @click="sendComposerMessage"
               >
-                Steer
+                <template v-if="composerSubmitMode !== 'send'">
+                  {{ composerSubmitLabel }}
+                </template>
               </v-btn>
-              <v-btn
-                v-else
-                ref="composerSendButton"
-                aria-label="Send message"
-                class="studio-autopilot__composer-action"
-                color="primary"
-                :disabled="!composerCanSubmit || !attachmentState.canSubmit"
-                :icon="mdiSend"
-                :loading="composerSending"
-                size="small"
-                title="Send message"
-                type="button"
-                variant="flat"
-                @click="sendComposerMessage"
-              />
             </div>
           </template>
         </Vibe64AutopilotPromptTextarea>
@@ -531,7 +522,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from "vue";
 import {
   mdiArrowLeft,
   mdiArrowTopRight,
@@ -572,6 +563,7 @@ const composerInput = ref(null);
 const composerSendButton = ref(null);
 const mainChat = ref(null);
 const temporaryAiWorkspace = ref(null);
+const thinkingStatusId = `studio-autopilot-thinking-${useId()}`;
 
 const {
   Vibe64LaunchControls,
@@ -592,6 +584,8 @@ const {
   chatReloadAvailable,
   chatReloading,
   chatTurns,
+  composerAcceptedAttachments,
+  composerAttachmentsEnabled,
   composerCanSubmit,
   composerDisabled,
   composerDraft,
@@ -599,6 +593,10 @@ const {
   composerHint,
   composerPlaceholder,
   composerSending,
+  composerSubmitAriaLabel,
+  composerSubmitLabel,
+  composerSubmitMode,
+  composerSubmitTitle,
   conversationLogVisible,
   conversationScrollKey,
   currentAgentSettings,
@@ -696,7 +694,7 @@ async function sendComposerMessage() {
     return false;
   }
   const accepted = await submitComposerMessage();
-  if (accepted) {
+  if (accepted && composerAcceptedAttachments.value) {
     composerInput.value?.clearAttachments?.();
   }
   return accepted;
@@ -883,6 +881,10 @@ async function attachPreviewFileProducer(options = {}) {
   width: 0.42rem;
 }
 
+.studio-autopilot__thinking--hidden {
+  visibility: hidden;
+}
+
 .studio-autopilot__recovery-action {
   min-block-size: 3rem;
   min-inline-size: 11.75rem;
@@ -900,11 +902,12 @@ async function attachPreviewFileProducer(options = {}) {
 }
 
 .studio-autopilot__composer-actions {
+  flex-wrap: wrap;
   width: 100%;
 }
 
-.studio-autopilot__send--steer {
-  min-width: 4.25rem;
+.studio-autopilot__send-action {
+  min-width: 5.25rem;
   padding-inline: 0.55rem;
 }
 
@@ -1047,8 +1050,20 @@ async function attachPreviewFileProducer(options = {}) {
     min-width: 3rem;
   }
 
+  .studio-autopilot__composer-action.studio-autopilot__send-action {
+    min-width: 5.25rem;
+  }
+
   .studio-autopilot__recovery-action {
     min-height: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-autopilot__thinking-mark {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }
 </style>

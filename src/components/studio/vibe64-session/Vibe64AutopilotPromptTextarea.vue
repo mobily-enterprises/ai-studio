@@ -50,6 +50,7 @@
       <textarea
         :id="textareaId"
         ref="textareaRef"
+        :aria-describedby="describedBy || undefined"
         :aria-label="textareaAriaLabel"
         class="studio-autopilot-prompt-textarea__input"
         :disabled="disabled"
@@ -128,6 +129,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  describedBy: {
+    default: "",
+    type: String
+  },
   errorMessages: {
     default: () => [],
     type: [Array, String]
@@ -158,6 +163,10 @@ const props = defineProps({
   },
   submitOnEnter: {
     default: false,
+    type: Boolean
+  },
+  submitEnabled: {
+    default: true,
     type: Boolean
   },
   tabToSubmit: {
@@ -270,6 +279,7 @@ function handleTextareaInput(event = {}) {
 function handleTextareaKeydown(event = {}) {
   if (
     props.tabToSubmit &&
+    props.submitEnabled &&
     String(props.modelValue || "").trim() &&
     attachments.canSubmit.value &&
     event.key === "Tab" &&
@@ -294,6 +304,7 @@ function handleTextareaKeydown(event = {}) {
     event.ctrlKey ||
     event.metaKey ||
     event.isComposing ||
+    !props.submitEnabled ||
     !attachments.canSubmit.value
   ) {
     return;

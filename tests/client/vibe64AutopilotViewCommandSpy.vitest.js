@@ -155,12 +155,20 @@ describe("Vibe64 direct session view", () => {
     const composable = fs.readFileSync(composablePath, "utf8");
 
     expect(component).toContain('v-if="agentStopVisible"');
-    expect(component).toContain('aria-label="Steer assistant"');
-    expect(component).toContain(':prepend-icon="mdiArrowTopRight"');
-    expect(component).toContain('v-else');
-    expect(component).toContain('aria-label="Send message"');
-    expect(component).toContain(':icon="mdiSend"');
-    expect(component).not.toContain(":icon=\"agentStopVisible ? undefined : mdiSend\"");
+    expect(component).toContain(':aria-label="composerSubmitAriaLabel"');
+    expect(component).toContain("['steer', 'steering'].includes(composerSubmitMode)");
+    expect(component).toContain("composerSubmitMode === 'send' ? mdiSend : undefined");
+    expect(component).toContain(':aria-busy="composerSending ? \'true\' : undefined"');
+    expect(component).not.toContain(':loading="composerSending"');
+    expect(component).not.toContain(':loading="interrupting"');
+    expect(component).toContain('{{ interrupting ? "Stopping…" : "Stop" }}');
+    expect(component).toContain(':described-by="thinkingVisible ? thinkingStatusId : \'\'"');
+    expect(component).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(composable).toContain('waiting: "Waiting…"');
+    expect(composable).toContain('steering: "Steering…"');
+    expect(composable).toContain('retry: "Retry"');
+    expect(composable).toContain('state) === "active"');
+    expect(composable).toContain('props.agentConnectionStatus === "connected"');
     expect(composable).not.toContain("Send guidance while the assistant is working.");
   });
 
@@ -174,13 +182,17 @@ describe("Vibe64 direct session view", () => {
     expect(component).not.toContain("#selection=");
     expect(component).toContain("Answer normally instead");
     expect(component).toContain(':prepend-icon="mdiPencilOutline"');
-    expect(component.match(/:disabled="!composerCanSubmit \|\| !attachmentState\.canSubmit"/gu)).toHaveLength(2);
+    expect(component.match(/:disabled="!composerCanSubmit \|\| !attachmentState\.canSubmit"/gu)).toHaveLength(1);
     expect(composable).toContain('const NUMBERED_QUESTION_UNSURE_VALUE = "I am not sure";');
     expect(composable).toContain("numberedQuestions.value.every");
   });
 
   it("passes only direct chat and tool state through the runtime host", () => {
     const runtimeHost = fs.readFileSync(runtimeHostPath, "utf8");
+    const runtimeHostComposable = fs.readFileSync(
+      path.resolve("src/composables/useVibe64SessionRuntimeHost.js"),
+      "utf8"
+    );
 
     expect(runtimeHost).toContain(":send-agent-message=\"sendAgentMessage\"");
     expect(runtimeHost).toContain(":conversation-log=\"conversationLog\"");
@@ -194,6 +206,9 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).not.toContain(":report-preview=");
     expect(runtimeHost).not.toContain(":rewind-to-step=");
     expect(runtimeHost).not.toContain(":actions=");
+    expect(runtimeHostComposable).toContain(
+      'await refreshSessionData({ reason: "agent-message-accepted" }).catch(() => null);'
+    );
   });
 
   it("keeps workspace preparation status in chat while routing recovery to Temporary AI", () => {
@@ -240,10 +255,12 @@ describe("Vibe64 direct session view", () => {
     const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");
 
     expect(component).toContain("tab-to-submit");
+    expect(component).toContain(':submit-enabled="composerCanSubmit"');
     expect(component).toContain("@tab-to-submit=\"focusComposerSendButton\"");
     expect(component).not.toContain("submit-on-enter");
     expect(composable).not.toContain("Enter sends. Shift+Enter adds a line.");
     expect(promptTextarea).toContain('event.key === "Enter" && !props.submitOnEnter');
+    expect(promptTextarea).toContain("props.submitEnabled");
     expect(promptTextarea).toContain("event.stopPropagation()");
   });
 

@@ -86,10 +86,28 @@ function viewProps(overrides = {}) {
 }
 
 async function createView(overrides = {}, options = {}) {
+  return (await createViewWithProps(overrides, options)).view;
+}
+
+async function createViewWithProps(overrides = {}, options = {}) {
   const { useVibe64AutopilotView } = await import(
     "../../src/composables/useVibe64AutopilotView.js"
   );
-  return useVibe64AutopilotView(viewProps(overrides), vi.fn(), options);
+  const props = viewProps(overrides);
+  return {
+    props,
+    view: useVibe64AutopilotView(props, vi.fn(), options)
+  };
+}
+
+function deferredResult() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }
 
 describe("useVibe64AutopilotView direct chat", () => {
@@ -170,7 +188,8 @@ describe("useVibe64AutopilotView direct chat", () => {
         agentSession: {
           turn: {
             active: true,
-            id: "turn-1"
+            id: "turn-1",
+            state: "active"
           }
         }
       }
@@ -182,6 +201,366 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.composerDisabled.value).toBe(false);
     expect(view.composerCanSubmit.value).toBe(true);
     expect(view.composerHint.value).toBe("");
+  });
+
+  it("keeps the editor writable while initial delivery is unresolved", async () => {
+    const delivery = deferredResult();
+    const sendAgentMessage = vi.fn(() => delivery.promise);
+    const { props, view } = await createViewWithProps({ sendAgentMessage });
+    view.composerDraft.value = "Start with the parser.";
+
+    const submission = view.submitComposerMessage();
+    await nextTick();
+
+    expect(view.composerSending.value).toBe(true);
+    expect(view.composerSubmitMode.value).toBe("sending");
+    expect(view.composerDisabled.value).toBe(false);
+    expect(view.composerCanSubmit.value).toBe(false);
+    expect(view.composerDraft.value).toBe("");
+
+    view.composerDraft.value = "Then cover the completion race.";
+    props.session.agentSession.turn = {
+      active: true,
+      id: "",
+      state: "starting"
+    };
+    await nextTick();
+
+    expect(view.composerDraft.value).toBe("Then cover the completion race.");
+    expect(view.composerDisabled.value).toBe(false);
+    expect(view.composerCanSubmit.value).toBe(false);
+
+    delivery.resolve(true);
+    await expect(submission).resolves.toBe(true);
+    expect(view.composerDraft.value).toBe("Then cover the completion race.");
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for authoritative connected turn readiness before offering Steer", async () => {
+    const { props, view } = await createViewWithProps();
+    view.composerDraft.value = "Use the existing helper.";
+
+    props.session.agentSession.turn = {
+      active: true,
+      id: "",
+      state: "starting"
+    };
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("waiting");
+    expect(view.composerCanSubmit.value).toBe(false);
+
+    props.session.agentSession.turn = {
+      active: true,
+      id: "turn-1",
+      state: "finalizing"
+    };
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("waiting");
+    expect(view.composerCanSubmit.value).toBe(false);
+
+    props.session.agentSession.turn = {
+      active: true,
+      id: "turn-1",
+      state: "active"
+    };
+    props.agentConnectionStatus = "disconnected";
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("waiting");
+    expect(view.composerCanSubmit.value).toBe(false);
+
+    props.agentConnectionStatus = "connected";
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("steer");
+    expect(view.composerCanSubmit.value).toBe(true);
+  });
+
+  it("preserves a session draft through hidden, reconnecting, and warm-route states", async () => {
+    const { props, view } = await createViewWithProps();
+    view.composerDraft.value = "Keep this session-specific draft.";
+
+    props.active = false;
+    props.agentConnectionStatus = "reconciling";
+    route.path = "/app/project/chat-test/dashboard/files";
+    await nextTick();
+
+    expect(view.composerDraft.value).toBe("Keep this session-specific draft.");
+    expect(view.composerDisabled.value).toBe(true);
+
+    props.active = true;
+    props.agentConnectionStatus = "connected";
+    route.path = "/app/project/chat-test/dashboard/env";
+    await nextTick();
+    expect(view.composerDraft.value).toBe("Keep this session-specific draft.");
+
+    props.session = {
+      ...props.session,
+      sessionId: "session-2"
+    };
+    await nextTick();
+    expect(view.composerDraft.value).toBe("");
+  });
+
+  it("sends one text-only Steer and preserves text typed before acceptance", async () => {
+    const delivery = deferredResult();
+    const sendAgentMessage = vi.fn(() => delivery.promise);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Keep the parser.";
+
+    const submission = view.submitComposerMessage();
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("steering");
+    expect(view.composerDraft.value).toBe("Keep the parser.");
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage.mock.calls[0][0]).toMatchObject({
+      displayMessage: "Keep the parser.",
+      message: "Keep the parser."
+    });
+
+    view.composerDraft.value += " Add the race test.";
+    delivery.resolve(true);
+    await expect(submission).resolves.toBe(true);
+
+    expect(view.composerDraft.value).toBe(" Add the race test.");
+    expect(view.composerSubmitMode.value).toBe("steer");
+  });
+
+  it("retains a rejected Steer draft and excludes queued attachments", async () => {
+    const sendAgentMessage = vi.fn(async () => false);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Do not lose this.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    expect(view.composerDraft.value).toBe("Do not lose this.");
+
+    view.updateComposerAttachments([{
+      fileName: "later.txt",
+      path: "/tmp/later.txt",
+      size: 5
+    }]);
+    expect(view.composerAttachmentsEnabled.value).toBe(false);
+    expect(view.composerCanSubmit.value).toBe(false);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a rejected Steer message id so a lost response cannot duplicate it", async () => {
+    const sendAgentMessage = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Keep this idempotent.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    const firstMessageId = sendAgentMessage.mock.calls[0][0].messageId;
+    expect(view.composerSubmitMode.value).toBe("retry");
+    expect(view.composerDraft.value).toBe("Keep this idempotent.");
+
+    await expect(view.submitComposerMessage()).resolves.toBe(true);
+    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+    expect(sendAgentMessage.mock.calls[1][0].messageId).toBe(firstMessageId);
+    expect(view.composerDraft.value).toBe("");
+  });
+
+  it("retries only the original Steer and retains text appended after submission", async () => {
+    const sendAgentMessage = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Original steer.";
+
+    const first = view.submitComposerMessage();
+    view.composerDraft.value += " New thought.";
+    await expect(first).resolves.toBe(false);
+    const messageId = sendAgentMessage.mock.calls[0][0].messageId;
+
+    await expect(view.submitComposerMessage()).resolves.toBe(true);
+    expect(sendAgentMessage.mock.calls[1][0]).toMatchObject({
+      message: "Original steer.",
+      messageId
+    });
+    expect(view.composerDraft.value).toBe(" New thought.");
+  });
+
+  it("settles an ambiguous Steer when the canonical message id arrives", async () => {
+    const sendAgentMessage = vi.fn(async () => false);
+    const { props, view } = await createViewWithProps({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "The server may already have this.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    const messageId = sendAgentMessage.mock.calls[0][0].messageId;
+    expect(view.composerSubmitMode.value).toBe("retry");
+
+    props.conversationLog.turns = [{
+      turnId: "turn-1",
+      user: {
+        at: new Date().toISOString(),
+        messageId,
+        role: "user",
+        text: "The server may already have this."
+      }
+    }];
+    await nextTick();
+
+    expect(view.composerDraft.value).toBe("");
+    expect(view.composerSubmitMode.value).toBe("steer");
+    expect(view.chatTurns.value).toHaveLength(1);
+  });
+
+  it("settles the retained Steer draft when the failed bubble is resent", async () => {
+    const sendAgentMessage = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Retry from the bubble.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    const failedMessageId = view.chatTurns.value.at(-1).optimistic.id;
+    await expect(view.resendOptimisticMessage(failedMessageId)).resolves.toBe(true);
+
+    expect(sendAgentMessage.mock.calls[1][0].messageId).toBe(failedMessageId);
+    expect(view.composerDraft.value).toBe("");
+  });
+
+  it("turns the same unsent draft into a normal message if the turn finishes", async () => {
+    const sendAgentMessage = vi.fn(async () => true);
+    const { props, view } = await createViewWithProps({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "This can be the next turn.";
+
+    props.session.agentSession.turn = {
+      active: false,
+      id: "turn-1",
+      state: "idle"
+    };
+    await nextTick();
+
+    expect(view.composerSubmitMode.value).toBe("send");
+    await expect(view.submitComposerMessage()).resolves.toBe(true);
+    expect(sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: "This can be the next turn."
+    }));
+  });
+
+  it("keeps Stop and Steer mutually exclusive without locking the editor", async () => {
+    const interrupt = deferredResult();
+    const steer = deferredResult();
+    const interruptAgentTurn = vi.fn(() => interrupt.promise);
+    const sendAgentMessage = vi.fn(() => steer.promise);
+    const view = await createView({
+      interruptAgentTurn,
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Keep this draft safe.";
+
+    const stopping = view.requestAgentInterrupt();
+    await nextTick();
+    expect(view.composerDisabled.value).toBe(false);
+    expect(view.composerCanSubmit.value).toBe(false);
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+    interrupt.resolve(true);
+    await expect(stopping).resolves.toBe(true);
+
+    const steering = view.submitComposerMessage();
+    await nextTick();
+    expect(view.agentStopEnabled.value).toBe(false);
+    await expect(view.requestAgentInterrupt()).resolves.toBe(false);
+    expect(interruptAgentTurn).toHaveBeenCalledTimes(1);
+    steer.resolve(true);
+    await expect(steering).resolves.toBe(true);
   });
 
   it("keeps chat usable while workspace preparation runs", async () => {
@@ -526,6 +905,47 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.chatTurns.value.at(-1)?.user?.text).toBe("Try this change.");
   });
 
+  it("does not overwrite a newer draft when editing a failed message", async () => {
+    const sendAgentMessage = vi.fn(async () => false);
+    const view = await createView({ sendAgentMessage });
+    view.composerDraft.value = "First message.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+    const failedMessageId = view.chatTurns.value.at(-1).optimistic.id;
+    view.composerDraft.value = "New thought typed while delivery was pending.";
+
+    expect(view.editOptimisticMessage(failedMessageId)).toBe(true);
+    expect(view.composerDraft.value).toBe(
+      "First message.\n\nNew thought typed while delivery was pending."
+    );
+  });
+
+  it("does not truncate text appended to a failed Steer when editing it", async () => {
+    const sendAgentMessage = vi.fn(async () => false);
+    const view = await createView({
+      sendAgentMessage,
+      session: {
+        ...viewProps().session,
+        agentSession: {
+          turn: {
+            active: true,
+            id: "turn-1",
+            state: "active"
+          }
+        }
+      }
+    });
+    view.composerDraft.value = "Failed steer.";
+
+    const submission = view.submitComposerMessage();
+    view.composerDraft.value += " New suffix.";
+    await expect(submission).resolves.toBe(false);
+    const failedMessageId = view.chatTurns.value.at(-1).optimistic.id;
+
+    expect(view.editOptimisticMessage(failedMessageId)).toBe(true);
+    expect(view.composerDraft.value).toBe("Failed steer. New suffix.");
+  });
+
   it("shows the server's delivery failure instead of a generic send error", async () => {
     const sendAgentMessage = vi.fn(async () => {
       throw new Error("Codex app-server connection closed during thread reconciliation.");
@@ -604,6 +1024,34 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(sendAgentMessage.mock.calls[0][0].message).toBe(
       "[1] src/main.js\n[2] parseInput"
     );
+  });
+
+  it("hides a submitted structured form while delivery is pending", async () => {
+    const delivery = deferredResult();
+    const sendAgentMessage = vi.fn(() => delivery.promise);
+    const view = await createView({
+      conversationLog: {
+        turns: [{
+          assistant: {
+            text: "Please answer.\n[1] Which file?\n[2] Which helper?"
+          }
+        }]
+      },
+      sendAgentMessage
+    });
+    view.questionAnswers.value.__ui_question_1 = "src/main.js";
+    view.questionAnswers.value.__ui_question_2 = "parseInput";
+
+    const submission = view.submitComposerMessage();
+    await nextTick();
+
+    expect(view.numberedQuestions.value).toEqual([]);
+    expect(view.composerDisabled.value).toBe(false);
+    view.composerDraft.value = "My next thought stays editable.";
+    expect(view.composerDraft.value).toBe("My next thought stays editable.");
+
+    delivery.resolve(true);
+    await expect(submission).resolves.toBe(true);
   });
 
   it("keeps per-question choices from an ordinary assistant message", async () => {

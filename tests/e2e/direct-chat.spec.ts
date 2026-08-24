@@ -49,6 +49,82 @@ test.describe("direct chat", () => {
     await expect(composer).toHaveValue("");
   });
 
+  test.describe("composer delivery on a phone", () => {
+    test.use({
+      hasTouch: true,
+      viewport: { height: 844, width: 390 }
+    });
+
+    test("keeps typing available until one explicit text-only Steer is accepted", async ({ page }) => {
+      const messages: Record<string, unknown>[] = [];
+      const agentTurn: Record<string, unknown> = {
+        active: false,
+        id: "",
+        state: "idle"
+      };
+      let acceptInitialDelivery!: () => void;
+      const initialDelivery = new Promise<void>((resolve) => {
+        acceptInitialDelivery = resolve;
+      });
+      await mockDirectChat(page, {
+        agentTurn,
+        async onMessage(body) {
+          messages.push(body);
+          if (messages.length === 1) {
+            Object.assign(agentTurn, {
+              active: true,
+              id: "",
+              state: "starting"
+            });
+            await initialDelivery;
+          }
+        }
+      });
+
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+      const composer = page.getByLabel("Message Codex");
+      await composer.fill("Start the careful implementation.");
+      await page.getByRole("button", { name: "Send message" }).click();
+      await expect.poll(() => messages).toHaveLength(1);
+
+      await expect(composer).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Sending message" })).toBeDisabled();
+      await composer.fill("Keep the completion-race test focused.");
+
+      await page.getByRole("button", { name: "Reload chat" }).click();
+      acceptInitialDelivery();
+      await expect(page.getByRole("button", {
+        name: "Waiting for the assistant to accept guidance"
+      })).toBeDisabled();
+      await expect(composer).toHaveValue("Keep the completion-race test focused.");
+
+      Object.assign(agentTurn, {
+        active: true,
+        id: "turn-direct-chat-active",
+        state: "active"
+      });
+      await page.getByRole("button", { name: "Reload chat" }).click();
+      const steer = page.getByRole("button", { name: "Steer assistant" });
+      await expect(steer).toBeEnabled();
+      const steerBounds = await steer.boundingBox();
+      expect(steerBounds?.height).toBeGreaterThanOrEqual(48);
+      expect(steerBounds?.width).toBeGreaterThanOrEqual(48);
+      expect(await page.evaluate(() => (
+        document.documentElement.scrollWidth <= window.innerWidth
+      ))).toBe(true);
+      await steer.click();
+
+      await expect.poll(() => messages).toHaveLength(2);
+      expect(messages[1]).toEqual(expect.objectContaining({
+        displayMessage: "Keep the completion-race test focused.",
+        message: "Keep the completion-race test focused."
+      }));
+      expect(messages[1]).not.toHaveProperty("attachmentIds");
+      await expect(composer).toHaveValue("");
+    });
+  });
+
   test("saves through the native project operation without sending a chat message", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
     const saves: Record<string, unknown>[] = [];
@@ -388,6 +464,7 @@ test.describe("direct chat", () => {
 
 async function mockDirectChat(page: Page, {
   agentActive = false,
+  agentTurn = null,
   conversationLog = [],
   onMessage = () => undefined,
   onSave = () => undefined,
@@ -403,6 +480,7 @@ async function mockDirectChat(page: Page, {
   }
 }: {
   agentActive?: boolean;
+  agentTurn?: Record<string, unknown> | null;
   conversationLog?: Record<string, unknown>[];
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onSave?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -414,7 +492,7 @@ async function mockDirectChat(page: Page, {
   workState?: Record<string, unknown>;
 } = {}) {
   await mockProjectGateReady(page);
-  const session = directSession({ agentActive, workspaceSetup });
+  const session = directSession({ agentActive, agentTurn, workspaceSetup });
 
   await routeApiEndpoint(page, "/vibe64/sessions", async (route) => {
     const request = route.request();
@@ -535,9 +613,11 @@ async function mockDirectChat(page: Page, {
 
 function directSession({
   agentActive = false,
+  agentTurn = null,
   workspaceSetup = null
 }: {
   agentActive?: boolean;
+  agentTurn?: Record<string, unknown> | null;
   workspaceSetup?: Record<string, unknown> | null;
 } = {}) {
   const createdAt = "2026-08-14T00:00:00.000Z";
@@ -553,9 +633,7 @@ function directSession({
         id: "thread-direct-chat"
       },
       transportId: "codex_app_server",
-      turn: {
-        active: agentActive
-      },
+      turn: agentTurn || { active: agentActive },
       workdir: sourcePath
     },
     backgroundTasks: [],
