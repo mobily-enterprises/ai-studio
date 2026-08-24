@@ -76,6 +76,8 @@ test("Vibe64 keeps structured questions as a direct-chat presentation contract",
   assert.match(prompt, /`\[1\] Question`/u);
   assert.match(prompt, /`Possible answers:`/u);
   assert.match(prompt, /Do not send commentary, progress announcements/u);
+  assert.match(prompt, /final automatic user-facing summary/u);
+  assert.match(prompt, /Do not use `VIBE64_AUTOMATIC_HOOK_NO_OUTPUT`/u);
   assert.match(prompt, new RegExp(VIBE64_AUTOMATIC_HOOK_NO_OUTPUT, "u"));
   assert.doesNotMatch(prompt, /VIBE64 NEW-PROJECT OPENING/u);
 });

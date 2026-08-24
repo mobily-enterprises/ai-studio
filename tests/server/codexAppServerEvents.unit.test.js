@@ -227,12 +227,14 @@ test("Codex app-server identifies native hook prompts and omits their no-output 
         { id: "main-answer", phase: "final_answer", text: "Here is the answer.", type: "agentMessage" },
         hookPrompt,
         { id: "no-output", phase: "final_answer", text: "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT", type: "agentMessage" },
-        { id: "cleanup", phase: "final_answer", text: "Cleanup corrected one helper.", type: "agentMessage" }
+        { id: "cleanup", phase: "final_answer", text: "Cleanup corrected one helper.", type: "agentMessage" },
+        { id: "summary", phase: "final_answer", text: "The requested change is complete and verified.", type: "agentMessage" }
       ]
     }]
   }, "turn-1"), [
     { itemId: "main-answer", text: "Here is the answer." },
-    { itemId: "cleanup", text: "Cleanup corrected one helper." }
+    { itemId: "cleanup", text: "Cleanup corrected one helper." },
+    { itemId: "summary", text: "The requested change is complete and verified." }
   ]);
 });
 

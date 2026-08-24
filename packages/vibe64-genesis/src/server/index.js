@@ -246,7 +246,9 @@ function withVibe64ConversationContract(prompt = "", {
     "AUTOMATIC HOOK FOLLOW-UPS",
     "",
     "A hook prompt is internal follow-up work, not a new human message. Do not send commentary, progress announcements, or routine review summaries during it.",
+    "Exception: when a hook explicitly requests the final automatic user-facing summary, provide that summary exactly as requested even though it changes no files.",
     `If an automatic hook follow-up changes no project files and finds no new blocker or failure, make its final answer exactly \`${VIBE64_AUTOMATIC_HOOK_NO_OUTPUT}\`.`,
+    `Do not use \`${VIBE64_AUTOMATIC_HOOK_NO_OUTPUT}\` for the explicitly requested final user-facing summary.`,
     "If it changes files or finds a new blocker or failure, give only the concise result the person needs."
   ].join("\n");
 }

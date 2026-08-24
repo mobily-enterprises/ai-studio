@@ -273,7 +273,7 @@
       "implementationMap": "",
       "name": "genesis-context",
       "path": "genesis/program/understanding/genesis-context.md",
-      "publicContract": "New projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance. People can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Vibe64 displays only Genesis documents and\ndoes not infer a parallel architecture.",
+      "publicContract": "New projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance. People can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Routine automatic follow-ups that produce no\nresult remain hidden, but an explicitly requested final user-facing summary is\npreserved even though it changes no files. Vibe64 displays only Genesis\ndocuments and does not infer a parallel architecture.",
       "sourceFileIds": [
         "file:packages/vibe64-genesis/src/server/index.js",
         "file:packages/vibe64-system-graph/src/server/service.js",
@@ -577,7 +577,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:145a06135b50789e095f1f64237af484e4a964c1d9209b28cac37b6a6394dec7",
+  "programHash": "sha256:40f301179e09c5e4f0b1e5efcba724b97dfa1932392ffdca0a54220beb3fe639",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

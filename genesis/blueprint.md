@@ -7,6 +7,8 @@ People can open or create a project, work in isolated sessions, and have a
 direct conversation with the agent while seeing the source, changes, running
 application, environment, and the system's explained structure in one place.
 Each session keeps valuable work recoverable and separate from unrelated work.
+Internal no-op follow-up chatter stays hidden, while completed code-changing
+work ends with one concise, useful account of what happened.
 
 Every project has exactly one source authority. For a GitHub-connected project,
 the configured GitHub branch is authoritative. For a hosted Vibe64-only
