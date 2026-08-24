@@ -23,17 +23,6 @@ const optionalUser = {
 };
 
 const projectsReadInputValidator = patchSchema({});
-const projectTemplatesReadInputValidator = patchSchema({
-  ...optionalUser
-});
-const projectTemplateApplyInputValidator = patchSchema({
-  ...optionalUser,
-  templateId: {
-    type: "string",
-    noTrim: false,
-    required: true
-  }
-});
 const previewApplicationIdentitiesReadInputValidator = patchSchema({
   sessionId: {
     type: "string",
@@ -78,18 +67,6 @@ const projectAiPolicyInputValidator = patchSchema({
     noTrim: false,
     required: true,
     type: "string"
-  }
-});
-
-const projectTemplateParamsValidator = patchSchema({
-  slug: {
-    type: "string",
-    required: false
-  },
-  templateId: {
-    type: "string",
-    noTrim: false,
-    required: true
   }
 });
 
@@ -193,9 +170,6 @@ export {
   projectsReadInputValidator,
   projectSelectInputValidator,
   projectSettingsReadInputValidator,
-  projectTemplateApplyInputValidator,
-  projectTemplateParamsValidator,
-  projectTemplatesReadInputValidator,
   previewApplicationIdentitiesInputValidator,
   previewApplicationIdentitiesReadInputValidator
 };

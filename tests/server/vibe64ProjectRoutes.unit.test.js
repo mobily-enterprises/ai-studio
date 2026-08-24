@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ACTION_APPLY_PROJECT_TEMPLATE,
-  ACTION_LIST_PROJECT_TEMPLATES,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
@@ -339,94 +337,6 @@ test("Env reveal returns one uncached secret through the project service", async
       });
       assert.equal(reply.statusCode, 200);
       assert.equal(reply.payload.value, "private");
-    });
-  });
-});
-
-test("project template routes preserve Vibe64 user context", async () => {
-  await withLocalRequestBypass(async () => {
-    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
-      const calls = [];
-      const app = testRouteApp();
-      registerRoutes(routeHttp(app), {
-        projectContext,
-        routeRelativePath: "vibe64",
-        routeSurface: "app"
-      });
-
-      const vibe64User = {
-        login: "ada",
-        username: "ada"
-      };
-      const listRoute = findRegisteredRoute(app, {
-        method: "GET",
-        path: `${apiRouteBase}/vibe64/project-templates`
-      });
-      const applyRoute = findRegisteredRoute(app, {
-        method: "POST",
-        path: `${apiRouteBase}/vibe64/project-templates/:templateId/apply`
-      });
-      assert.ok(listRoute);
-      assert.ok(applyRoute);
-      assert.deepEqual(
-        applyRoute.options.params.schema.patch(routeProjectParams({
-          templateId: "jskit-database"
-        })),
-        {
-          errors: {},
-          validatedObject: {
-            slug: "unit_project",
-            templateId: "jskit-database"
-          }
-        }
-      );
-
-      await listRoute.handler({
-        input: {
-          query: {}
-        },
-        params: routeProjectParams(),
-        vibe64User,
-        async executeAction(action) {
-          calls.push(action);
-          return {
-            ok: true,
-            templates: []
-          };
-        }
-      }, testReply());
-      await applyRoute.handler({
-        body: {},
-        input: {
-          body: {}
-        },
-        params: routeProjectParams({
-          templateId: "jskit-database"
-        }),
-        vibe64User,
-        async executeAction(action) {
-          calls.push(action);
-          return {
-            ok: true
-          };
-        }
-      }, testReply());
-
-      assert.deepEqual(calls, [
-        {
-          actionId: ACTION_LIST_PROJECT_TEMPLATES,
-          input: {
-            vibe64User
-          }
-        },
-        {
-          actionId: ACTION_APPLY_PROJECT_TEMPLATE,
-          input: {
-            templateId: "jskit-database",
-            vibe64User
-          }
-        }
-      ]);
     });
   });
 });

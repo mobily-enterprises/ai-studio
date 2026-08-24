@@ -1,8 +1,6 @@
 import {
-  ACTION_APPLY_PROJECT_TEMPLATE,
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
-  ACTION_LIST_PROJECT_TEMPLATES,
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
@@ -20,7 +18,6 @@ import {
   projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
   projectSelectInputValidator,
-  projectTemplateParamsValidator,
   previewApplicationIdentitiesInputValidator,
   previewApplicationIdentitiesReadInputValidator
 } from "./inputSchemas.js";
@@ -55,20 +52,6 @@ function registerRoutes(http, {
     body: projectSelectInputValidator,
     buildInput: routes.requestBody,
     summary: "Select an existing Vibe64 project."
-  });
-  routes.actionRoute("GET", "/project-templates", {
-    actionId: ACTION_LIST_PROJECT_TEMPLATES,
-    buildInput: (request) => withUser(request),
-    summary: "List trusted starter projects."
-  });
-  routes.actionRoute("POST", "/project-templates/:templateId/apply", {
-    actionId: ACTION_APPLY_PROJECT_TEMPLATE,
-    params: projectTemplateParamsValidator,
-    buildInput: (request) => withUser(request, {
-      ...routes.requestBody(request),
-      templateId: request.params?.templateId
-    }),
-    summary: "Apply a trusted starter project."
   });
   routes.actionRoute("GET", "/env", {
     actionId: ACTION_READ_ENV,

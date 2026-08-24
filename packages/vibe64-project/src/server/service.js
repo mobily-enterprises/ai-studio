@@ -58,11 +58,6 @@ import {
   inspectGenesisEnvironment
 } from "@local/vibe64-genesis/server";
 import {
-  PROJECT_TEMPLATES,
-  applyProjectTemplate as materializeProjectTemplate,
-  readProjectTemplates as readAvailableProjectTemplates
-} from "./projectTemplates.js";
-import {
   readPreviewApplicationIdentities as readStoredPreviewApplicationIdentities,
   savePreviewApplicationIdentities as saveStoredPreviewApplicationIdentities
 } from "./previewApplicationIdentities.js";
@@ -230,8 +225,6 @@ function createService({
   env = process.env,
   inspectEnvironment = inspectGenesisEnvironment,
   projectContext = null,
-  projectTemplates = PROJECT_TEMPLATES,
-  runCommand = undefined,
   targetRoot = ""
 } = {}) {
   let resourceEnvironmentProvider = null;
@@ -755,18 +748,6 @@ function createService({
     );
   }
 
-  async function templateContext(input = {}) {
-    return {
-      env,
-      input,
-      project: await currentProjectState(),
-      projectRuntimeRoot: selectedProjectRuntimeRoot(),
-      runCommand,
-      sourceRoot: selectedSourceRoot(),
-      templates: projectTemplates
-    };
-  }
-
   async function promptEnvironment() {
     return (await resolvedProjectEnvironment({}, await userEnvRecords())).effectiveEnvironment;
   }
@@ -828,13 +809,6 @@ function createService({
 
     get targetRoot() {
       return selectedTargetRoot();
-    },
-
-    async applyProjectTemplate(templateId = "", input = {}) {
-      return projectResult(async () => materializeProjectTemplate({
-        ...await templateContext(input),
-        templateId
-      }));
     },
 
     async createProject(input = {}) {
@@ -924,10 +898,6 @@ function createService({
 
     async readPreviewApplicationIdentities(input = {}) {
       return projectResult(() => previewApplicationIdentitiesState(input));
-    },
-
-    async readProjectTemplates(input = {}) {
-      return projectResult(async () => readAvailableProjectTemplates(await templateContext(input)));
     },
 
     async readProjectAiPolicy(input = {}) {

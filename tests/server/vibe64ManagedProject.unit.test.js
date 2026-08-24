@@ -7,7 +7,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  initializeManagedGenesisProject
+  initializeManagedGenesisProject,
+  materializeInitialGenesisProject
 } from "@local/vibe64-project/server/managedProject";
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +36,49 @@ async function directCommand({ args = [], command = "", cwd = "" } = {}) {
     };
   }
 }
+
+test("initial Genesis materialization publishes one authoritative commit through explicit callbacks", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-initial-project-"));
+  t.after(() => rm(root, {
+    force: true,
+    recursive: true
+  }));
+  const projectRuntimeRoot = path.join(root, "runtime");
+  await mkdir(projectRuntimeRoot);
+  const calls = [];
+
+  const result = await materializeInitialGenesisProject({
+    afterAuthorityVerification: ({ commit }) => {
+      calls.push(["after", commit]);
+    },
+    beforeAuthorityMutation: ({ commit }) => {
+      calls.push(["before", commit]);
+    },
+    projectRuntimeRoot,
+    publish: async ({ branch, commit, sourceRoot }) => {
+      calls.push(["publish", commit]);
+      assert.equal(branch, "main");
+      assert.equal((await execFileAsync("git", [
+        "-C", sourceRoot, "rev-list", "--count", "HEAD"
+      ])).stdout.trim(), "1");
+      return {
+        branch: "untrusted-branch",
+        commit: "untrusted-commit",
+        published: true
+      };
+    },
+    runCommand: directCommand
+  });
+
+  assert.match(result.materialization.commit, /^[0-9a-f]{40}$/u);
+  assert.equal(result.materialization.branch, "main");
+  assert.equal(result.materialization.published, true);
+  assert.deepEqual(calls.map(([stage]) => stage), ["before", "publish", "after"]);
+  assert.deepEqual(new Set(calls.map(([, commit]) => commit)), new Set([
+    result.materialization.commit
+  ]));
+  assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
+});
 
 test("managed blank projects begin as one canonical Genesis commit without a namespace checkout", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-"));

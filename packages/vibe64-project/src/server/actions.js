@@ -9,8 +9,6 @@ import {
   projectsReadInputValidator,
   projectSelectInputValidator,
   projectSettingsReadInputValidator,
-  projectTemplateApplyInputValidator,
-  projectTemplatesReadInputValidator,
   previewApplicationIdentitiesInputValidator,
   previewApplicationIdentitiesReadInputValidator
 } from "./inputSchemas.js";
@@ -18,8 +16,6 @@ import {
 const ACTION_CREATE_PROJECT = "vibe64.project.projects.create";
 const ACTION_LIST_PROJECTS = "vibe64.project.projects.list";
 const ACTION_SELECT_PROJECT = "vibe64.project.projects.select";
-const ACTION_LIST_PROJECT_TEMPLATES = "vibe64.project.templates.list";
-const ACTION_APPLY_PROJECT_TEMPLATE = "vibe64.project.templates.apply";
 const ACTION_READ_ENV = "vibe64.project.env.read";
 const ACTION_SAVE_ENV_USER_VALUES = "vibe64.project.env.user-values.save";
 const ACTION_READ_PROJECT_SETTINGS = "vibe64.project.settings.read";
@@ -121,19 +117,6 @@ function createProjectActions({ project } = {}) {
       execute: (input) => project.selectProject(input)
     }),
     action({
-      id: ACTION_LIST_PROJECT_TEMPLATES,
-      kind: "query",
-      input: projectTemplatesReadInputValidator,
-      execute: (input) => project.readProjectTemplates(input)
-    }),
-    action({
-      id: ACTION_APPLY_PROJECT_TEMPLATE,
-      kind: "command",
-      input: projectTemplateApplyInputValidator,
-      events: [projectChangedEvent()],
-      execute: ({ templateId, ...input }) => project.applyProjectTemplate(templateId, input)
-    }),
-    action({
       id: ACTION_READ_ENV,
       kind: "query",
       input: projectEnvReadInputValidator,
@@ -182,10 +165,8 @@ function createProjectActions({ project } = {}) {
 }
 
 export {
-  ACTION_APPLY_PROJECT_TEMPLATE,
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
-  ACTION_LIST_PROJECT_TEMPLATES,
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,

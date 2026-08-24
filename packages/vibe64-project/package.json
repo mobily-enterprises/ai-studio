@@ -1,13 +1,12 @@
 {
   "name": "@local/vibe64-project",
   "version": "0.1.0",
-  "description": "Owns project selection, trusted starters, Env values, and session runtime creation.",
+  "description": "Owns project selection, initial Genesis materialization, Env values, and session runtime creation.",
   "private": true,
   "type": "module",
   "exports": {
     "./server/actions": "./src/server/actions.js",
-    "./server/managedProject": "./src/server/managedProject.js",
-    "./server/projectTemplates": "./src/server/projectTemplates.js"
+    "./server/managedProject": "./src/server/managedProject.js"
   },
   "jskit": {
     "kind": "runtime",
@@ -43,11 +42,7 @@
           },
           {
             "subpath": "./server/managedProject",
-            "summary": "Builds a blank Genesis commit in temporary storage and installs it in Vibe64-managed canonical Git."
-          },
-          {
-            "subpath": "./server/projectTemplates",
-            "summary": "Materializes trusted project starters into explicit repository authorities."
+            "summary": "Builds one blank Genesis commit and publishes it through an explicit repository authority."
           }
         ],
         "capabilities": [

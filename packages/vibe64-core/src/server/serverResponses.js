@@ -67,9 +67,6 @@ function vibe64StatusCode(response, { missingStatus = 404 } = {}) {
     code === "vibe64_development_database_scope_busy" ||
     code === "vibe64_project_session_policy_lock_timeout" ||
     code === "vibe64_session_creation_limit" ||
-    code === "vibe64_project_template_active_sessions" ||
-    code === "vibe64_project_template_destination_not_empty" ||
-    code === "vibe64_project_template_unavailable" ||
     code === "vibe64_workspace_setup_retry_not_available" ||
     code === "vibe64_workspace_setup_running"
   ) {

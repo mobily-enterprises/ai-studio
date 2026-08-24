@@ -14,7 +14,6 @@ const VIBE64_AI_POLICY_API_SUFFIX = "/vibe64/settings/ai-policy";
 const VIBE64_ENV_USER_VALUES_API_SUFFIX = "/vibe64/env/user-values";
 const VIBE64_PREVIEW_IDENTITIES_API_SUFFIX = "/vibe64/preview-identities";
 const VIBE64_PROJECT_SELECT_API_SUFFIX = "/vibe64/projects/select";
-const VIBE64_PROJECT_TEMPLATES_API_SUFFIX = "/vibe64/project-templates";
 const VIBE64_CONNECTIONS_CHANGED_EVENT = "vibe64.connections.changed";
 const VIBE64_PROJECT_CHANGED_EVENT = "vibe64.project.changed";
 
@@ -22,7 +21,6 @@ const TARGET_PROJECT_ENDPOINT = studioApiPath("studio/current-app");
 const STUDIO_HEALTH_ENDPOINT = studioApiPath("studio/health");
 const VIBE64_ENDPOINT = studioApiPath("vibe64");
 const PROJECT_SELECTION_ENDPOINT = `${VIBE64_ENDPOINT}/projects`;
-const PROJECT_TEMPLATES_ENDPOINT = `${VIBE64_ENDPOINT}/project-templates`;
 const ENV_ENDPOINT = `${VIBE64_ENDPOINT}/env`;
 const ENV_SECRET_REVEAL_ENDPOINT = `${ENV_ENDPOINT}/reveal`;
 const PROJECT_SETTINGS_ENDPOINT = `${VIBE64_ENDPOINT}/settings`;
@@ -30,10 +28,6 @@ const DEVELOPMENT_DATABASE_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/development-
 const AI_POLICY_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/ai-policy`;
 const ENV_USER_VALUES_ENDPOINT = `${ENV_ENDPOINT}/user-values`;
 const PREVIEW_IDENTITIES_ENDPOINT = `${VIBE64_ENDPOINT}/preview-identities`;
-
-function projectTemplatesQueryKey(surfaceId, ownershipFilter, projectSlug) {
-  return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "project-templates"];
-}
 
 function projectSelectionQueryKey(surfaceId, ownershipFilter, projectSlug) {
   return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "projects"];
@@ -66,13 +60,11 @@ export {
   VIBE64_PROJECT_CREATE_API_SUFFIX,
   VIBE64_PROJECT_CHANGED_EVENT,
   VIBE64_PROJECT_SELECT_API_SUFFIX,
-  VIBE64_PROJECT_TEMPLATES_API_SUFFIX,
   VIBE64_ENV_API_SUFFIX,
   VIBE64_ENV_SECRET_REVEAL_API_SUFFIX,
   VIBE64_ENV_USER_VALUES_API_SUFFIX,
   VIBE64_PREVIEW_IDENTITIES_API_SUFFIX,
   PROJECT_SELECTION_ENDPOINT,
-  PROJECT_TEMPLATES_ENDPOINT,
   ENV_ENDPOINT,
   ENV_SECRET_REVEAL_ENDPOINT,
   DEVELOPMENT_DATABASE_ENDPOINT,
@@ -84,7 +76,6 @@ export {
   TARGET_PROJECT_ENDPOINT,
   STUDIO_HEALTH_ENDPOINT,
   projectSelectionQueryKey,
-  projectTemplatesQueryKey,
   envQueryKey,
   projectSettingsQueryKey,
   previewIdentitiesQueryKey,
