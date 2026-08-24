@@ -3,6 +3,7 @@ import { expect, test, type Page, type Request, type Route } from "@playwright/t
 import {
   BASE_URL,
   DASHBOARD_PATH,
+  DEVELOPMENT_PATH,
   sessionRuntimeRoot
 } from "./support/base-shell-data";
 import {
@@ -139,7 +140,14 @@ test.describe("direct chat", () => {
 
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-    await page.getByRole("button", { name: "Save work", exact: true }).click();
+    const saveHost = page.locator(".studio-home-shell-save-work-host");
+    const saveButton = saveHost.getByRole("button", { name: "Save selected session work", exact: true });
+    await expect(saveButton).toBeVisible();
+    await expect(page.locator(".studio-autopilot__session-header").getByRole("button", {
+      name: "Save work",
+      exact: true
+    })).toHaveCount(0);
+    await saveButton.click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("Save current work?", { exact: true })).toBeVisible();
@@ -150,7 +158,7 @@ test.describe("direct chat", () => {
     await expect(dialog).not.toBeVisible();
     expect(messages).toHaveLength(0);
 
-    await page.getByRole("button", { name: "Save work", exact: true }).click();
+    await saveButton.click();
     const confirmButton = dialog.getByRole("button", { name: "Save", exact: true });
     await confirmButton.click();
 
@@ -167,7 +175,93 @@ test.describe("direct chat", () => {
 
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-    await expect(page.getByRole("button", { name: "Save work", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save selected session work", exact: true })).toBeDisabled();
+  });
+
+  test.describe("app-bar Save on a phone", () => {
+    test.use({
+      hasTouch: true,
+      viewport: { height: 844, width: 390 }
+    });
+
+    test("keeps one icon-only selected-session action before Account settings", async ({ page }) => {
+      await mockDirectChat(page);
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+      const saveHost = page.locator(".studio-home-shell-save-work-host");
+      const saveButton = saveHost.getByRole("button", { name: "Save selected session work", exact: true });
+      await expect(saveButton).toBeVisible();
+      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toBeHidden();
+      const bounds = await saveButton.boundingBox();
+      expect(bounds?.height).toBeGreaterThanOrEqual(48);
+      expect(bounds?.width).toBeGreaterThanOrEqual(48);
+      expect(await page.evaluate(() => (
+        document.documentElement.scrollWidth <= window.innerWidth
+      ))).toBe(true);
+      expect(await page.evaluate(() => {
+        const save = document.querySelector(".studio-home-shell-save-work-host");
+        const account = document.querySelector(".vibe64-auth-settings");
+        return Boolean(save && account && (
+          save.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING
+        ));
+      })).toBe(true);
+    });
+  });
+
+  for (const width of [960, 1600]) {
+    test(`keeps the short Save label and session-strip space at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ height: 900, width });
+      await mockDirectChat(page);
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+      const saveButton = page.locator(".studio-home-shell-save-work-host").getByRole("button", {
+        name: "Save selected session work",
+        exact: true
+      });
+      await expect(saveButton).toBeVisible();
+      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toHaveText("Save");
+      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toBeVisible();
+      await expect(page.locator(".studio-autopilot__session-header").getByRole("button", {
+        name: "Save work",
+        exact: true
+      })).toHaveCount(0);
+      expect(await page.evaluate(() => (
+        document.documentElement.scrollWidth <= window.innerWidth
+      ))).toBe(true);
+    });
+  }
+
+  test("keeps exactly one selected-session Save through switching and warm navigation", async ({ page }) => {
+    const saves: string[] = [];
+    await mockDirectChat(page, {
+      additionalSessionIds: ["direct-chat-session-b"],
+      onSave(_body, sessionId) {
+        saves.push(sessionId);
+      }
+    });
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+
+    const saveHost = page.locator(".studio-home-shell-save-work-host");
+    const visibleChat = page.getByRole("region", { name: "Session chat" });
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await visibleChat.locator('[aria-label^="Direct chat."]').click();
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await visibleChat.locator('[aria-label^="Second session."]').click();
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+
+    await saveHost.getByRole("button", { name: "Save selected session work" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => saves).toEqual(["direct-chat-session-b"]);
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await page.goBack();
+    await expect(page).toHaveURL(`${BASE_URL}${DASHBOARD_PATH}/env`);
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await page.goForward();
+    await expect(page).toHaveURL(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
   });
 
   test.describe("temporary AI mobile navigation", () => {
@@ -463,6 +557,7 @@ test.describe("direct chat", () => {
 });
 
 async function mockDirectChat(page: Page, {
+  additionalSessionIds = [],
   agentActive = false,
   agentTurn = null,
   conversationLog = [],
@@ -479,11 +574,12 @@ async function mockDirectChat(page: Page, {
     updateOperation: null
   }
 }: {
+  additionalSessionIds?: string[];
   agentActive?: boolean;
   agentTurn?: Record<string, unknown> | null;
   conversationLog?: Record<string, unknown>[];
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
-  onSave?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
+  onSave?: (body: Record<string, unknown>, sessionId: string) => unknown | Promise<unknown>;
   onTemporaryConversation?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onTemporaryDelete?: (conversationId: string) => unknown | Promise<unknown>;
   onTemporaryPoll?: () => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
@@ -493,6 +589,16 @@ async function mockDirectChat(page: Page, {
 } = {}) {
   await mockProjectGateReady(page);
   const session = directSession({ agentActive, agentTurn, workspaceSetup });
+  const sessions = [
+    session,
+    ...additionalSessionIds.map((sessionId, index) => directSession({
+      agentActive: false,
+      sessionId,
+      sessionName: index === 0 ? "Second session" : `Session ${index + 2}`,
+      workspaceSetup
+    }))
+  ];
+  let selectedSessionId = SESSION_ID;
 
   await routeApiEndpoint(page, "/vibe64/sessions", async (route) => {
     const request = route.request();
@@ -500,9 +606,11 @@ async function mockDirectChat(page: Page, {
     const method = request.method();
 
     if (method === "PUT" && url.pathname.endsWith("/current")) {
+      const body = requestBodyWithoutOrigin(request);
+      selectedSessionId = String(body.sessionId || SESSION_ID);
       await fulfillJson(route, {
         ok: true,
-        sessionId: SESSION_ID
+        sessionId: selectedSessionId
       });
       return;
     }
@@ -523,14 +631,15 @@ async function mockDirectChat(page: Page, {
     }
     if (method === "POST" && url.pathname.endsWith("/save")) {
       const body = requestBodyWithoutOrigin(request);
-      await onSave(body);
+      const requestSessionId = sessionIdFromApiPath(url.pathname) || selectedSessionId;
+      await onSave(body, requestSessionId);
       await fulfillJson(route, {
         ok: true,
         operation: {
           events: [{ message: "Saved to the canonical project repository." }],
           status: "succeeded"
         },
-        sessionId: SESSION_ID,
+        sessionId: requestSessionId,
         status: "saved"
       });
       return;
@@ -591,8 +700,10 @@ async function mockDirectChat(page: Page, {
       return;
     }
     if (method === "GET" && /\/sessions\/[^/]+$/u.test(url.pathname)) {
+      const requestSessionId = sessionIdFromApiPath(url.pathname) || selectedSessionId;
+      const requestedSession = sessions.find(({ sessionId }) => sessionId === requestSessionId) || session;
       await fulfillJson(route, {
-        ...session,
+        ...requestedSession,
         ok: true
       });
       return;
@@ -606,7 +717,7 @@ async function mockDirectChat(page: Page, {
         openSessionCount: 1
       },
       ok: true,
-      sessions: [session]
+      sessions
     });
   }, { prefix: true });
 }
@@ -614,14 +725,18 @@ async function mockDirectChat(page: Page, {
 function directSession({
   agentActive = false,
   agentTurn = null,
+  sessionId = SESSION_ID,
+  sessionName = "Direct chat",
   workspaceSetup = null
 }: {
   agentActive?: boolean;
   agentTurn?: Record<string, unknown> | null;
+  sessionId?: string;
+  sessionName?: string;
   workspaceSetup?: Record<string, unknown> | null;
 } = {}) {
   const createdAt = "2026-08-14T00:00:00.000Z";
-  const sessionRoot = sessionRuntimeRoot(SESSION_ID);
+  const sessionRoot = sessionRuntimeRoot(sessionId);
   const sourcePath = `${sessionRoot}/source`;
   return {
     agentRuns: [],
@@ -652,8 +767,8 @@ function directSession({
     },
     metadata: {},
     revision: 1,
-    sessionId: SESSION_ID,
-    sessionName: "Direct chat",
+    sessionId,
+    sessionName,
     sessionRoot,
     sourcePath,
     sourceReady: true,
@@ -663,6 +778,10 @@ function directSession({
     updatedAt: createdAt,
     ...(workspaceSetup ? { workspaceSetup } : {})
   };
+}
+
+function sessionIdFromApiPath(pathname: string) {
+  return decodeURIComponent(pathname.match(/\/sessions\/([^/]+)/u)?.[1] || "");
 }
 
 async function mockTemporaryRecovery(page: Page, options: {

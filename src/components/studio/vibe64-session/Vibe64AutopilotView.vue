@@ -17,6 +17,26 @@
         <span>{{ sessionGithubActor.displayLabel }}</span>
       </div>
     </Teleport>
+    <Teleport
+      v-if="saveWorkHeaderVisible"
+      :to="props.saveWorkTeleportTarget"
+    >
+      <v-btn
+        :aria-busy="saveWorkSending ? 'true' : undefined"
+        :aria-label="saveWorkHeaderAriaLabel"
+        class="studio-autopilot__save-work"
+        :color="saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'primary' : undefined)"
+        :disabled="saveWorkDisabled"
+        :prepend-icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"
+        size="small"
+        :title="saveWorkTitle"
+        type="button"
+        variant="tonal"
+        @click="requestSaveWork"
+      >
+        <span class="studio-autopilot__save-work-label">{{ saveWorkHeaderLabel }}</span>
+      </v-btn>
+    </Teleport>
     <section
       ref="mainChat"
       class="studio-autopilot__chat-panel"
@@ -47,21 +67,6 @@
             variant="text"
             @click="openTemporaryAi"
           />
-          <v-btn
-            :aria-label="saveWorkActionLabel"
-            class="studio-autopilot__save-work"
-            :color="saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'error' : undefined)"
-            :disabled="saveWorkDisabled"
-            :loading="saveWorkSending"
-            :prepend-icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"
-            size="small"
-            :title="saveWorkTitle"
-            type="button"
-            variant="tonal"
-            @click="requestSaveWork"
-          >
-            {{ saveWorkActionLabel }}
-          </v-btn>
         </div>
       </header>
 
@@ -507,13 +512,14 @@
             Cancel
           </v-btn>
           <v-btn
+            :aria-busy="saveWorkSending ? 'true' : undefined"
             color="primary"
-            :loading="saveWorkSending"
+            :disabled="saveWorkSending"
             type="button"
             variant="flat"
             @click="confirmSaveWork"
           >
-            Save
+            {{ saveWorkSending ? "Saving…" : "Save" }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -630,10 +636,12 @@ const {
   saveWorkActivityVisible,
   saveWorkActivityIsUpdate,
   saveWorkActivityLabel,
-  saveWorkActionLabel,
   saveWorkDisabled,
   saveWorkError,
   saveWorkExpanded,
+  saveWorkHeaderAriaLabel,
+  saveWorkHeaderLabel,
+  saveWorkHeaderVisible,
   saveWorkCanResolveWithTemporaryAi,
   saveWorkOutput,
   saveWorkRetryable,
@@ -954,14 +962,19 @@ async function attachPreviewFileProducer(options = {}) {
   flex: 1 1 auto;
 }
 
-@container studio-chat-pane (max-width: 30rem) {
+.studio-autopilot__save-work {
+  flex: 0 0 auto;
+  min-width: 5rem;
+}
+
+@media (max-width: 600px) {
   .studio-autopilot__save-work {
     min-width: 2.5rem;
     padding-inline: 0.5rem;
     width: 2.5rem;
   }
 
-  .studio-autopilot__save-work :deep(.v-btn__content) {
+  .studio-autopilot__save-work-label {
     display: none;
   }
 }
@@ -1045,6 +1058,11 @@ async function attachPreviewFileProducer(options = {}) {
 }
 
 @media (pointer: coarse) {
+  .studio-autopilot__save-work {
+    min-height: 3rem;
+    min-width: 3rem;
+  }
+
   .studio-autopilot__composer-action {
     min-height: 3rem;
     min-width: 3rem;

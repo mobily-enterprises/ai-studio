@@ -119,7 +119,7 @@ describe("useVibe64ChatColumnResize", () => {
     );
   });
 
-  it("contains toolbar and composer chrome at the narrowest desktop chat width", () => {
+  it("contains chat chrome while app-bar Save follows the viewport", () => {
     const filename = "src/components/studio/vibe64-session/Vibe64AutopilotView.vue";
     const source = readFileSync(filename, "utf8");
     const descriptor = parse(source, { filename }).descriptor;
@@ -136,8 +136,8 @@ describe("useVibe64ChatColumnResize", () => {
     expect(result.code).toMatch(/studio-autopilot__session-header[^}]*box-sizing:\s*border-box/u);
     expect(result.code).toMatch(/studio-autopilot__composer[^}]*box-sizing:\s*border-box/u);
     expect(result.code).toMatch(/studio-autopilot__project-panel[^}]*contain:\s*strict/u);
-    expect(result.code).toMatch(/@container studio-chat-pane \(max-width: 30rem\)/u);
-    expect(result.code).toMatch(/studio-autopilot__save-work[^}]*width:\s*2\.5rem/u);
+    expect(result.code).toMatch(/@media \(max-width: 600px\)[\s\S]*studio-autopilot__save-work[^}]*width:\s*2\.5rem/u);
+    expect(result.code).toMatch(/@media \(pointer: coarse\)[\s\S]*studio-autopilot__save-work[^}]*min-height:\s*3rem;[^}]*min-width:\s*3rem/u);
     expect(source).not.toContain("Answer the assistant's questions");
   });
 

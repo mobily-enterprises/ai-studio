@@ -18,6 +18,8 @@ import { useVibe64AppPage } from "@/composables/useVibe64AppPage.js";
 
 const githubActorHostId = "studio-home-shell-github-actor";
 const githubActorTeleportTarget = `#${githubActorHostId}`;
+const saveWorkHostId = "studio-home-shell-save-work";
+const saveWorkTeleportTarget = `#${saveWorkHostId}`;
 
 const {
   chatCollapsed,
@@ -156,7 +158,13 @@ const {
       </div>
     </template>
     <template #top-right>
-      <Vibe64AuthSettingsButton />
+      <div class="studio-home-shell-actions">
+        <div
+          :id="saveWorkHostId"
+          class="studio-home-shell-save-work-host"
+        />
+        <Vibe64AuthSettingsButton />
+      </div>
     </template>
     <section class="generated-ui-screen generated-ui-screen--studio studio-screen d-flex flex-column ga-3">
       <v-alert
@@ -184,6 +192,7 @@ const {
               :project-context="projectSelectionSlotProps?.projectSelection?.currentProject || {}"
               :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
               :project-pane="projectPane"
+              :save-work-teleport-target="saveWorkTeleportTarget"
               @title-change="emitPageTitle"
               @chat-attention="setChatCollapsed(false)"
               @project-attention="showProjectPane"
@@ -470,6 +479,17 @@ const {
   max-width: min(48rem, 72vw);
   min-width: 0;
   white-space: nowrap;
+}
+
+.studio-home-shell-save-work-host {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.studio-home-shell-save-work-host:empty {
+  display: none;
 }
 
 @media (min-width: 981px) {

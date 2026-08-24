@@ -18,6 +18,7 @@
       :refresh-session-work="refreshWorkState"
       :retry-workspace-setup="retryWorkspaceSetup"
       :save-session-work="saveSessionWork"
+      :save-work-teleport-target="props.saveWorkTeleportTarget"
       :session-abandon="dialogs.abandon"
       :session="selection.selectedSession"
       :sessions-api-path="sessionData.sessionsApiPath"
@@ -96,6 +97,10 @@ const props = defineProps({
     type: String
   },
   previewToolbarTeleportTarget: {
+    default: "",
+    type: String
+  },
+  saveWorkTeleportTarget: {
     default: "",
     type: String
   },

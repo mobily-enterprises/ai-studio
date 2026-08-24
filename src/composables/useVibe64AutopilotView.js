@@ -133,6 +133,10 @@ const vibe64AutopilotViewProps = {
     default: async () => false,
     type: Function
   },
+  saveWorkTeleportTarget: {
+    default: "",
+    type: String
+  },
   updateSessionWork: {
     default: async () => false,
     type: Function
@@ -980,6 +984,20 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkActionLabel = computed(() => (
     saveWorkRequiresUpdate.value ? "Update this session (rebase)" : "Save work"
   ));
+  const saveWorkHeaderLabel = computed(() => {
+    if (saveWorkSending.value) {
+      return saveWorkRequiresUpdate.value ? "Updating…" : "Saving…";
+    }
+    return saveWorkRequiresUpdate.value ? "Update" : "Save";
+  });
+  const saveWorkHeaderAriaLabel = computed(() => (
+    saveWorkRequiresUpdate.value
+      ? "Update selected session (rebase)"
+      : "Save selected session work"
+  ));
+  const saveWorkHeaderVisible = computed(() => Boolean(
+    props.active && sessionId.value && String(props.saveWorkTeleportTarget || "").trim()
+  ));
   const saveWorkFailureIsUpdate = computed(() => (
     String(saveWorkFailure.value?.code || "").startsWith("vibe64_session_update_") ||
     String(props.workState?.updateOperation?.code || "").startsWith("vibe64_session_update_")
@@ -1553,6 +1571,9 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkError,
     saveWorkExpanded,
     saveWorkFailure,
+    saveWorkHeaderAriaLabel,
+    saveWorkHeaderLabel,
+    saveWorkHeaderVisible,
     saveWorkCanResolveWithTemporaryAi,
     saveWorkOperation,
     saveWorkOperationActive,
