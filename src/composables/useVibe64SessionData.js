@@ -209,15 +209,6 @@ function useVibe64SessionData({
       error: "Vibe64 session could not be created.",
       success: "Vibe64 session created."
     },
-    onRunSuccess: (response) => {
-      if (response?.sessionId) {
-        selectSessionId(response.sessionId);
-      }
-      refreshSessionDataInBackground({
-        includeList: true,
-        reason: "create-session"
-      });
-    },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
     placementSource: "vibe64.sessions.create",
     surfaceId: VIBE64_SURFACE_ID,
@@ -267,7 +258,9 @@ function useVibe64SessionData({
       });
     }
   });
+  let sessionDataDisposed = false;
   onScopeDispose(() => {
+    sessionDataDisposed = true;
     currentSessionPublisher.stop();
   });
   const sessions = computed(() => visibleVibe64Sessions(sessionList.items || []));
@@ -370,11 +363,24 @@ function useVibe64SessionData({
       return createSessionInFlight;
     }
     const startedAtMs = Date.now();
+    const creationProjectSlug = String(projectSlug.value || "").trim();
     vibe64SessionDebugLog("client.sessionData.createSession.start");
     createSessionPending.value = true;
     createSessionInFlight = (async () => {
       try {
         const response = await createSessionCommand.run();
+        if (
+          !sessionDataDisposed &&
+          creationProjectSlug === String(projectSlug.value || "").trim()
+        ) {
+          if (response?.sessionId) {
+            selectSessionId(response.sessionId);
+          }
+          refreshSessionDataInBackground({
+            includeList: true,
+            reason: "create-session"
+          });
+        }
         vibe64SessionDebugLog("client.sessionData.createSession.done", {
           ...vibe64SessionDebugSummary(response || {}),
           code: String(response?.code || response?.errors?.[0]?.code || ""),

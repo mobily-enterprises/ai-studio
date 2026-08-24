@@ -118,6 +118,7 @@ function useVibe64SessionPanel(props, emit) {
     sessionListInitialLoading: sessionData.sessionList.isInitialLoading
   }));
   const emptyStateLoading = computed(() => Boolean(emptyStateActivity.value));
+  const emptyStateInitialLoading = computed(() => emptyStateActivity.value === "loading");
   const emptyStateStatusText = computed(() => (
     emptyStateActivity.value === "creating" ? "Creating session." : "Loading sessions."
   ));
@@ -229,6 +230,7 @@ function useVibe64SessionPanel(props, emit) {
     emptyLayoutVisible,
     emptyPreviewDetailText,
     emptyPreviewTitleText,
+    emptyStateInitialLoading,
     emptyStateLoading,
     emptyStateStatusText,
     pageError,

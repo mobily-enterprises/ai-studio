@@ -1,24 +1,25 @@
 <template>
   <v-btn
+    ref="button"
+    :aria-busy="createSessionRunning ? 'true' : undefined"
     :aria-label="buttonAriaLabel"
     :block="block"
     :class="buttonClass"
-    :disabled="!toolbar.canCreateSession || toolbar.createSessionRunning"
+    :disabled="!toolbar.canCreateSession || createSessionRunning"
     :icon="iconOnly ? true : undefined"
-    :loading="toolbar.createSessionRunning"
     :prepend-icon="iconOnly ? undefined : mdiPlus"
     :size="size"
-    :title="toolbar.createSessionTitle"
+    :title="buttonTitle"
     :variant="variant"
-    @click="toolbar.createSession()"
+    @click="requestCreateSession"
   >
     <v-icon v-if="iconOnly" :icon="mdiPlus" />
-    <template v-if="!iconOnly">{{ label }}</template>
+    <template v-if="!iconOnly">{{ buttonLabel }}</template>
   </v-btn>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { mdiPlus } from "@mdi/js";
 
 const props = defineProps({
@@ -56,8 +57,40 @@ const props = defineProps({
   }
 });
 
+const button = ref(null);
+const createSessionRunning = computed(() => props.toolbar.createSessionRunning === true);
 const buttonAriaLabel = computed(() => {
-  return String(props.ariaLabel || props.label || "New session").trim();
+  return createSessionRunning.value
+    ? "Creating session…"
+    : String(props.ariaLabel || props.label || "New session").trim();
+});
+const buttonLabel = computed(() => (
+  createSessionRunning.value ? "Creating session…" : props.label
+));
+const buttonTitle = computed(() => (
+  createSessionRunning.value
+    ? "Creating session…"
+    : String(props.toolbar.createSessionTitle || props.ariaLabel || props.label || "New session").trim()
+));
+let restoreFocusAfterCreation = false;
+
+function requestCreateSession() {
+  restoreFocusAfterCreation = true;
+  void Promise.resolve(props.toolbar.createSession?.()).catch(() => {
+    // useCommand owns transient action feedback; do not also surface the
+    // rejected click-handler promise through Vue's global error boundary.
+  });
+}
+
+watch(createSessionRunning, (running, wasRunning) => {
+  if (running || !wasRunning || !restoreFocusAfterCreation) {
+    return;
+  }
+  restoreFocusAfterCreation = false;
+  void nextTick(() => {
+    const target = button.value?.$el || button.value;
+    target?.focus?.({ preventScroll: true });
+  });
 });
 </script>
 
@@ -68,12 +101,12 @@ const buttonAriaLabel = computed(() => {
   border-radius: 999px;
   box-shadow: none !important;
   color: #1a73e8 !important;
-  height: 2rem;
-  min-height: 2rem;
-  min-width: 2rem;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  min-width: 2.5rem;
   overflow: visible;
   position: relative;
-  width: 2rem;
+  width: 2.5rem;
 }
 
 .studio-ai-sessions__create-button:hover {
@@ -111,11 +144,25 @@ const buttonAriaLabel = computed(() => {
   color: var(--studio-control-text, #202124) !important;
   font-weight: 500;
   letter-spacing: 0;
-  min-height: 2rem;
+  min-height: 2.5rem;
+  min-width: 9.5rem;
 }
 
 .studio-ai-sessions__preview-create-button:hover {
   background: var(--studio-control-rest-bg, #f7f7f8) !important;
+}
+
+@media (pointer: coarse) {
+  .studio-ai-sessions__create-button {
+    height: 3rem;
+    min-height: 3rem;
+    min-width: 3rem;
+    width: 3rem;
+  }
+
+  .studio-ai-sessions__preview-create-button {
+    min-height: 3rem;
+  }
 }
 
 @keyframes studio-ai-session-create-pulse {

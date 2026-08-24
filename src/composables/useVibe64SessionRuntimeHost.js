@@ -286,6 +286,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     canCreateSession: props.sessionData.canCreateSession,
     createSession: props.sessionData.createSession,
     createSessionCommand: props.sessionData.createSessionCommand,
+    createSessionRunning: props.sessionData.createSessionRunning,
     createSessionTitle: props.sessionData.createSessionTitle,
     selectSession: props.sessionData.selectSessionId,
     sessions: computed(() => runtimeHostToolbarSessions({

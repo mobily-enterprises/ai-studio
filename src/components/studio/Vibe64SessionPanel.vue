@@ -77,7 +77,7 @@
             :abandon="selectedAbandon"
             compact
             :create-attention="emptyCreateAttention"
-            :create-visible="!emptyStateLoading"
+            :create-visible="!emptyStateInitialLoading"
             :max-visible-sessions="3"
             :selected-session-id="selection.selectedSessionId"
             :selection-closed="selection.isClosed"
@@ -129,7 +129,7 @@
               {{ emptyPreviewDetailText }}
             </p>
             <div
-              v-if="emptyStateLoading"
+              v-if="emptyStateInitialLoading"
               class="studio-ai-sessions__preview-empty-loading"
               role="status"
             >
@@ -220,7 +220,7 @@ const {
   emptyLayoutVisible,
   emptyPreviewDetailText,
   emptyPreviewTitleText,
-  emptyStateLoading,
+  emptyStateInitialLoading,
   emptyStateStatusText,
   pageError,
   projectPane,

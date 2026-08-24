@@ -1084,6 +1084,92 @@ test("mobile dashboard section links keep the active project slug", async ({ pag
   expect(page.url()).not.toContain("[slug]");
 });
 
+for (const viewportWidth of [390, 960, 1600]) {
+  test(`@preview-lifecycle session creation is single-flight and visibly pending at ${viewportWidth}px`, async ({ page }) => {
+    await page.setViewportSize({
+      height: viewportWidth === 390 ? 844 : 900,
+      width: viewportWidth
+    });
+    await mockLaunchTerminalSocket(page);
+    const creation = await mockLaunchSession(page, {
+      sessionCreationDeferred: true,
+      sessionCreationOutcomes: ["failure", "success", "success"],
+      sessionList: []
+    });
+
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+    const toolbarCreate = page.locator("button.studio-ai-sessions__create-button");
+    const previewCreate = page.locator("button.studio-ai-sessions__preview-create-button");
+    await expect(toolbarCreate).toBeVisible();
+    if (viewportWidth >= 1600) {
+      await expect(previewCreate).toBeVisible();
+    } else {
+      await expect(previewCreate).toBeHidden();
+    }
+    const firstTrigger = viewportWidth >= 1600 ? previewCreate : toolbarCreate;
+    const idleBox = await firstTrigger.boundingBox();
+
+    await firstTrigger.evaluate((element) => {
+      const button = element as HTMLButtonElement;
+      button.focus();
+      button.click();
+      button.click();
+    });
+
+    await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(1);
+    await expect(toolbarCreate).toBeDisabled();
+    await expect(toolbarCreate).toHaveAttribute("aria-busy", "true");
+    await expect(toolbarCreate).toHaveAttribute("aria-label", "Creating session…");
+    await expect(toolbarCreate).toHaveAttribute("title", "Creating session…");
+    if (viewportWidth >= 1600) {
+      await expect(previewCreate).toBeDisabled();
+      await expect(previewCreate).toHaveText("Creating session…");
+      await expect(previewCreate).toHaveAttribute("aria-busy", "true");
+    }
+    const pendingBox = await firstTrigger.boundingBox();
+    expect(Math.abs((pendingBox?.width || 0) - (idleBox?.width || 0))).toBeLessThan(1);
+    expect(pendingBox?.height || 0).toBeGreaterThanOrEqual(39);
+    await expect(page.locator(".v-progress-circular")).toHaveCount(0);
+
+    creation.releaseNextSessionCreation();
+    await expect(toolbarCreate).toBeEnabled();
+    await expect(toolbarCreate).not.toHaveAttribute("aria-busy", "true");
+    await expect(toolbarCreate).toHaveAttribute("aria-label", "New session");
+    await expect(page.getByText("Session creation failed for this test.", {
+      exact: true
+    })).toBeVisible();
+    await expect(firstTrigger).toBeFocused();
+    expect(creation.getSessionCreationRequestCount()).toBe(1);
+
+    await toolbarCreate.focus();
+    await toolbarCreate.press("Enter");
+    await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(2);
+    await expect(toolbarCreate).toBeDisabled();
+    creation.releaseNextSessionCreation();
+
+    await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(1);
+    await expect(page.locator(".studio-ai-sessions__tab-label:visible")).toHaveText("Created 2");
+    expect(creation.getSessionCreationRequestCount()).toBe(2);
+
+    const activeToolbarCreate = page.locator("button.studio-ai-sessions__create-button");
+    await activeToolbarCreate.click();
+    await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(3);
+    await expect(activeToolbarCreate).toBeDisabled();
+    await expect(activeToolbarCreate).toHaveAttribute("aria-busy", "true");
+    creation.releaseNextSessionCreation();
+    await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(2);
+    await expect(page.locator(".studio-ai-sessions__tab-label:visible")).toHaveText([
+      "Created 2",
+      "Created 3"
+    ]);
+    expect(creation.getSessionCreationRequestCount()).toBe(3);
+    await expect.poll(() => page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+    ))).toBe(true);
+  });
+}
+
 test("session panel shows loading feedback instead of empty create state while sessions load", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   await mockLaunchSession(page, {
@@ -1661,6 +1747,8 @@ async function mockLaunchSession(page: Page, {
   sessionList = null,
   sourceEditorFiles = null,
   sourceExplanationResponses = [],
+  sessionCreationDeferred = false,
+  sessionCreationOutcomes = [],
   sessionListDelayMs = 0,
   temporaryAiRecoveryRequests = null
 }: {
@@ -1680,10 +1768,12 @@ async function mockLaunchSession(page: Page, {
   sessionList?: ReturnType<typeof sessionPayload>[] | null;
   sourceEditorFiles?: Record<string, string> | null;
   sourceExplanationResponses?: SourceExplanationResponse[];
+  sessionCreationDeferred?: boolean;
+  sessionCreationOutcomes?: Array<"failure" | "success">;
   sessionListDelayMs?: number;
   temporaryAiRecoveryRequests?: TemporaryAiRecoveryRequests | null;
 } = {}) {
-  const listedSessions = Array.isArray(sessionList) ? sessionList : [session];
+  let listedSessions = Array.isArray(sessionList) ? [...sessionList] : [session];
   const sourceEditor = sourceEditorFiles ? createSourceEditorMock(sourceEditorFiles) : null;
   const queuedSourceExplanationResponses = [...sourceExplanationResponses];
   const launchStartPayloads: unknown[] = [];
@@ -1695,6 +1785,8 @@ async function mockLaunchSession(page: Page, {
     fileName: string;
   }> = [];
   const sequencedLaunchStatuses = Array.isArray(launchStatusSequence) ? launchStatusSequence : [];
+  const queuedSessionCreationOutcomes = [...sessionCreationOutcomes];
+  const sessionCreationReleases: Array<() => void> = [];
   let launchStarted = sequencedLaunchStatuses.length > 0
     ? Boolean((sequencedLaunchStatuses[0] as { activeTerminal?: unknown })?.activeTerminal)
     : !initialLaunchStatus || Boolean(initialLaunchStatus.activeTerminal);
@@ -1705,6 +1797,7 @@ async function mockLaunchSession(page: Page, {
   let previewModuleCompleted = false;
   let previewModuleRequestCount = 0;
   let previewIdentityGrantSequence = 0;
+  let sessionCreationRequestCount = 0;
   const previewServer = previewBootstrapToken
     ? await startPreviewAppServer({
         bootstrapToken: previewBootstrapToken,
@@ -1741,11 +1834,44 @@ async function mockLaunchSession(page: Page, {
     }
     return listedSessions.find((item) => item.sessionId === requestedSessionId) || session;
   }
+  async function waitForSessionCreationRelease() {
+    if (!sessionCreationDeferred) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      sessionCreationReleases.push(resolve);
+    });
+  }
   await mockProjectGateReady(page);
   await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/sessions(?:\/.*)?(?:\?.*)?$/u, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
+    if (method === "POST" && url.pathname.endsWith("/vibe64/sessions")) {
+      sessionCreationRequestCount += 1;
+      await waitForSessionCreationRelease();
+      const outcome = queuedSessionCreationOutcomes.shift() || "success";
+      if (outcome === "failure") {
+        await fulfillJson(route, {
+          code: "vibe64_session_create_test_failure",
+          error: "Session creation failed for this test.",
+          ok: false
+        }, {
+          status: 500
+        });
+        return;
+      }
+      const createdSession = sessionPayload({
+        sessionId: `session-created-${sessionCreationRequestCount}`,
+        sessionName: `Created ${sessionCreationRequestCount}`
+      });
+      listedSessions = [...listedSessions, createdSession];
+      await fulfillJson(route, {
+        ok: true,
+        ...createdSession
+      });
+      return;
+    }
     if (method === "GET" && url.pathname.endsWith("/launch-targets")) {
       launchStatusReadCount += 1;
       await fulfillJson(route, currentLaunchStatus());
@@ -1954,7 +2080,7 @@ async function mockLaunchSession(page: Page, {
         mode: "direct"
       },
       limits: {
-        openSessionCount: 1
+        openSessionCount: listedSessions.length
       },
       ok: true,
       sessions: listedSessions
@@ -2039,6 +2165,12 @@ async function mockLaunchSession(page: Page, {
     },
     getLaunchStartPayloads() {
       return launchStartPayloads;
+    },
+    getSessionCreationRequestCount() {
+      return sessionCreationRequestCount;
+    },
+    releaseNextSessionCreation() {
+      sessionCreationReleases.shift()?.();
     },
     getAttachmentUploads() {
       return [...attachmentUploads];
