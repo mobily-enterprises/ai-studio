@@ -2,6 +2,10 @@ import {
   normalizeText
 } from "@local/vibe64-core/server/core";
 import {
+  vibe64SessionDebugError,
+  vibe64SessionDebugLog
+} from "@local/vibe64-runtime/server/sessionDebugLog";
+import {
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_TOOL_POLICIES,
@@ -14,6 +18,8 @@ import {
 
 const CODEX_PRODUCT_PROVIDER_ID = "codex";
 const CODEX_APP_SERVER_TRANSPORT_ID = "codex_app_server";
+const CODEX_ATTACHMENT_MAX_ITEMS = 10;
+const CODEX_ATTACHMENT_RENEW_RETRY_DELAYS_MS = Object.freeze([500, 1_000, 2_000, 5_000]);
 const CODEX_ECONOMY_PROFILE_REVISION = "codex-economy-luna-low-v2";
 const CODEX_ECONOMY_MODEL_CANDIDATES = Object.freeze([
   Object.freeze({
@@ -48,6 +54,7 @@ const CODEX_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
     timeoutMs: 180_000
   })
 });
+const acceptedAttachmentRenewalTimers = new WeakMap();
 
 function codexExecutionProfileError(code, message, details = {}) {
   return new Vibe64AgentExecutionProfileError(code, message, details);
@@ -205,6 +212,219 @@ function normalizeCodexSessionResult(result = {}) {
   };
 }
 
+function codexAttachmentIds(input = {}) {
+  return Array.isArray(input?.attachmentIds)
+    ? input.attachmentIds.map(normalizeText).filter(Boolean)
+    : [];
+}
+
+function codexAttachmentDeliveryFailure(code, error, retryable) {
+  return {
+    code,
+    error,
+    ok: false,
+    retryable
+  };
+}
+
+async function validateCodexAttachmentsBeforeDelivery(controller, sessionId = "", input = {}) {
+  const attachmentIds = codexAttachmentIds(input);
+  if (attachmentIds.length < 1) {
+    return null;
+  }
+  if (typeof controller.renewAttachments !== "function") {
+    return codexAttachmentDeliveryFailure(
+      "vibe64_agent_attachment_unavailable",
+      "Attachments are temporarily unavailable. Try sending again.",
+      true
+    );
+  }
+  let renewal;
+  try {
+    renewal = await controller.renewAttachments(sessionId, attachmentIds);
+  } catch (error) {
+    vibe64SessionDebugLog("server.codexAttachments.deliveryValidation.error", {
+      attachmentCount: attachmentIds.length,
+      error: vibe64SessionDebugError(error),
+      sessionId
+    });
+    return codexAttachmentDeliveryFailure(
+      "vibe64_agent_attachment_unavailable",
+      "Attachments are temporarily unavailable. Try sending again.",
+      true
+    );
+  }
+  if (renewal?.ok === false) {
+    return codexAttachmentDeliveryFailure(
+      normalizeText(renewal?.code) || "vibe64_agent_attachment_unavailable",
+      normalizeText(renewal?.error) || "Attachments are temporarily unavailable. Try sending again.",
+      renewal?.retryable !== false
+    );
+  }
+
+  const expectedIds = new Set(attachmentIds);
+  const busyIds = new Set((Array.isArray(renewal?.busy) ? renewal.busy : [])
+    .map(normalizeText)
+    .filter((attachmentId) => expectedIds.has(attachmentId)));
+  const missingIds = new Set((Array.isArray(renewal?.missing) ? renewal.missing : [])
+    .map(normalizeText)
+    .filter((attachmentId) => expectedIds.has(attachmentId)));
+  const retainedIds = new Set((Array.isArray(renewal?.retained) ? renewal.retained : [])
+    .map(normalizeText)
+    .filter((attachmentId) => expectedIds.has(attachmentId)));
+  if (missingIds.size > 0) {
+    return codexAttachmentDeliveryFailure(
+      "vibe64_agent_attachment_missing",
+      "One or more attachments are no longer available. Remove and upload them again.",
+      false
+    );
+  }
+  if (busyIds.size > 0) {
+    return codexAttachmentDeliveryFailure(
+      "vibe64_agent_attachment_busy",
+      "One or more attachments are still being prepared. Try sending again.",
+      true
+    );
+  }
+  if ([...expectedIds].some((attachmentId) => !retainedIds.has(attachmentId))) {
+    return codexAttachmentDeliveryFailure(
+      "vibe64_agent_attachment_unavailable",
+      "Attachments could not be verified. Try sending again.",
+      true
+    );
+  }
+  return null;
+}
+
+async function renewAcceptedCodexAttachments(controller, sessionId = "", input = {}, accepted = false) {
+  const attachmentIds = codexAttachmentIds(input);
+  if (!accepted || attachmentIds.length < 1 || typeof controller.renewAttachments !== "function") {
+    return;
+  }
+  // Delivery cannot be rolled back after the provider or PTY has accepted it.
+  // Retrying only the lease operation cannot submit the human turn twice.
+  let pendingIds = attachmentIds;
+  let lastRenewal = null;
+  for (const retryDelayMs of [0, 100, 250]) {
+    if (retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+    let renewal;
+    try {
+      renewal = await controller.renewAttachments(sessionId, pendingIds);
+    } catch (error) {
+      vibe64SessionDebugLog("server.codexAttachments.acceptedRenewal.error", {
+        attachmentCount: pendingIds.length,
+        error: vibe64SessionDebugError(error),
+        sessionId
+      });
+      scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, pendingIds);
+      return lastRenewal;
+    }
+    lastRenewal = renewal;
+    if (renewal?.ok === false) {
+      scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, pendingIds);
+      return renewal;
+    }
+    const busy = Array.isArray(renewal?.busy)
+      ? renewal.busy.map(normalizeText).filter(Boolean)
+      : [];
+    if (busy.length < 1) {
+      return renewal;
+    }
+    pendingIds = busy;
+  }
+  scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, pendingIds);
+  return lastRenewal;
+}
+
+function acceptedCodexAttachmentRenewalTimerMap(controller) {
+  let timers = acceptedAttachmentRenewalTimers.get(controller);
+  if (!timers) {
+    timers = new Map();
+    acceptedAttachmentRenewalTimers.set(controller, timers);
+  }
+  return timers;
+}
+
+function scheduleAcceptedCodexAttachmentRenewal(
+  controller,
+  sessionId,
+  attachmentIds,
+  attempt = 0
+) {
+  const pendingIds = [...new Set((Array.isArray(attachmentIds) ? attachmentIds : [])
+    .map(normalizeText)
+    .filter(Boolean))];
+  if (pendingIds.length < 1) {
+    return;
+  }
+  if (attempt >= CODEX_ATTACHMENT_RENEW_RETRY_DELAYS_MS.length) {
+    vibe64SessionDebugLog("server.codexAttachments.acceptedRenewal.exhausted", {
+      attachmentCount: pendingIds.length,
+      sessionId
+    });
+    return;
+  }
+  const timerKey = `${normalizeText(sessionId)}:${[...pendingIds].sort().join(",")}`;
+  const timers = acceptedCodexAttachmentRenewalTimerMap(controller);
+  const existingTimer = timers.get(timerKey);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timer = setTimeout(() => {
+    if (timers.get(timerKey) !== timer) {
+      return;
+    }
+    timers.delete(timerKey);
+    void Promise.resolve().then(() => (
+      controller.renewAttachments(sessionId, pendingIds)
+    )).then((renewal) => {
+      const busy = Array.isArray(renewal?.busy)
+        ? renewal.busy.map(normalizeText).filter(Boolean)
+        : [];
+      if (renewal?.ok === false) {
+        scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, pendingIds, attempt + 1);
+        return;
+      }
+      if (busy.length > 0) {
+        scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, busy, attempt + 1);
+        return;
+      }
+      const missing = Array.isArray(renewal?.missing)
+        ? renewal.missing.map(normalizeText).filter(Boolean)
+        : [];
+      if (missing.length > 0) {
+        vibe64SessionDebugLog("server.codexAttachments.acceptedRenewal.missing", {
+          attachmentCount: missing.length,
+          sessionId
+        });
+      }
+    }).catch((error) => {
+      vibe64SessionDebugLog("server.codexAttachments.acceptedRenewal.error", {
+        attachmentCount: pendingIds.length,
+        error: vibe64SessionDebugError(error),
+        sessionId
+      });
+      scheduleAcceptedCodexAttachmentRenewal(controller, sessionId, pendingIds, attempt + 1);
+    });
+  }, CODEX_ATTACHMENT_RENEW_RETRY_DELAYS_MS[attempt]);
+  timer.unref?.();
+  timers.set(timerKey, timer);
+}
+
+function codexAttachmentLimitResult(input = {}) {
+  const attachmentIds = codexAttachmentIds(input);
+  if (attachmentIds.length <= CODEX_ATTACHMENT_MAX_ITEMS) {
+    return null;
+  }
+  return {
+    code: "vibe64_agent_attachment_limit_exceeded",
+    error: `A message can include at most ${CODEX_ATTACHMENT_MAX_ITEMS} attachments.`,
+    ok: false
+  };
+}
+
 function emitCodexExecutionProfile(context = {}, executionProfile = null) {
   if (!executionProfile) {
     return null;
@@ -343,9 +563,27 @@ function createCodexSessionAgentProvider({
             message: input,
             vibe64User: context.vibe64User || null
           };
-      return normalizeCodexSessionResult(await controller.sendMessage(context.sessionId, message, {
+      const attachmentLimit = codexAttachmentLimitResult(message);
+      if (attachmentLimit) {
+        return normalizeCodexSessionResult(attachmentLimit);
+      }
+      const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
+        controller,
+        context.sessionId,
+        message
+      );
+      if (attachmentValidation) {
+        return normalizeCodexSessionResult(attachmentValidation);
+      }
+      const result = normalizeCodexSessionResult(await controller.sendMessage(context.sessionId, message, {
         turnOwnership: context.turnOwnership
       }));
+      await renewAcceptedCodexAttachments(controller, context.sessionId, message, (
+        result.ok &&
+        result.newTurnRequired !== true &&
+        (result.delivered === true || Boolean(result.turn?.id))
+      ));
+      return result;
     },
     async sessionState(context) {
       return normalizeCodexSessionResult(await controller.terminalState(context.sessionId, {
@@ -353,7 +591,26 @@ function createCodexSessionAgentProvider({
       }));
     },
     async startConversationTurn(context, input = {}) {
-      return controller.startConversationTurn(context.sessionId, input);
+      const attachmentLimit = codexAttachmentLimitResult(input);
+      if (attachmentLimit) {
+        return attachmentLimit;
+      }
+      const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
+        controller,
+        context.sessionId,
+        input
+      );
+      if (attachmentValidation) {
+        return attachmentValidation;
+      }
+      const result = await controller.startConversationTurn(context.sessionId, input);
+      await renewAcceptedCodexAttachments(
+        controller,
+        context.sessionId,
+        input,
+        result?.ok !== false && Boolean(normalizeText(result?.runId))
+      );
+      return result;
     },
     async startTerminal(context, input = {}) {
       return controller.startTerminal(context.sessionId, input);
@@ -390,18 +647,38 @@ function createCodexSessionAgentProvider({
       });
     },
     async writeTerminal(context, input = {}) {
-      return controller.writeTerminal(
+      const attachmentLimit = codexAttachmentLimitResult(input.input);
+      if (attachmentLimit) {
+        return attachmentLimit;
+      }
+      const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
+        controller,
+        context.sessionId,
+        input.input
+      );
+      if (attachmentValidation) {
+        return attachmentValidation;
+      }
+      const result = await controller.writeTerminal(
         context.sessionId,
         input.terminalSessionId,
         input.data,
         input.input
       );
+      await renewAcceptedCodexAttachments(
+        controller,
+        context.sessionId,
+        input.input,
+        result?.ok === true
+      );
+      return result;
     }
   });
 }
 
 export {
   CODEX_APP_SERVER_TRANSPORT_ID,
+  CODEX_ATTACHMENT_MAX_ITEMS,
   CODEX_ECONOMY_MODEL_CANDIDATES,
   CODEX_ECONOMY_PROFILE_REVISION,
   CODEX_ECONOMY_WORKLOAD_LIMITS,

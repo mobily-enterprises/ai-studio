@@ -10,6 +10,7 @@ import {
   getStudioProjectContext
 } from "@local/vibe64-core/server/studioProjectContext";
 import { createTerminalActions } from "./actions.js";
+import { prepareCodexAttachmentStorage } from "./codexAttachments.js";
 import {
   createProjectRuntimeChangedPublisher,
   createTerminalSessionChangedPublisher
@@ -51,6 +52,7 @@ function createVibe64TerminalsFeature({ codexTerminalController = {} } = {}) {
       fastify: "runtime.fastify",
       http: "runtime.http",
       logger: "runtime.logger",
+      uploads: "runtime.uploads",
       project: "vibe64.project"
     },
     provides: {
@@ -60,7 +62,7 @@ function createVibe64TerminalsFeature({ codexTerminalController = {} } = {}) {
       channels: ["api", "automation", "internal"],
       surfaces: ["app"]
     },
-    setup({ env, events, fastify, http, logger, project }) {
+    setup({ env, events, fastify, http, logger, project, uploads }) {
       const sessionChanged = createTerminalSessionChangedPublisher(events);
       const terminals = createService({
         codexTerminalController,
@@ -81,12 +83,14 @@ function createVibe64TerminalsFeature({ codexTerminalController = {} } = {}) {
         projectContext: getStudioProjectContext(),
         routeRelativePath: "vibe64",
         routeSurface: "app",
-        terminals
+        terminals,
+        uploads
       });
       return { terminals };
     },
     actions: ({ terminals }) => createTerminalActions({ terminals }),
-    async boot({ logger }, { outputs }) {
+    async boot({ env, logger }, { outputs }) {
+      await prepareCodexAttachmentStorage({ env });
       const schedule = startProjectRuntimeDormancyCleanupSchedule({
         logger,
         serviceFactory: () => outputs.terminals

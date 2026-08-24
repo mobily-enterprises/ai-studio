@@ -12,6 +12,15 @@ const requiredText = {
   required: true
 };
 
+const attachmentIdsField = {
+  type: "array",
+  items: {
+    type: "string",
+    noTrim: false
+  },
+  required: false
+};
+
 const sessionIdField = requiredText;
 const vibe64UserField = {
   type: "object",
@@ -21,12 +30,11 @@ const vibe64UserField = {
 
 const agentAttachmentFields = {
   contentType: optionalText,
-  dataBase64: {
-    type: "string",
-    noTrim: true,
+  fileName: requiredText,
+  stream: {
+    type: "none",
     required: true
-  },
-  fileName: requiredText
+  }
 };
 
 const launchTargetFields = {
@@ -55,7 +63,6 @@ function validator(fields) {
   });
 }
 
-const agentAttachmentInputValidator = validator(agentAttachmentFields);
 const agentAttachmentActionInputValidator = validator({
   ...agentAttachmentFields,
   sessionId: sessionIdField
@@ -84,6 +91,7 @@ const temporaryConversationTurnActionInputValidator = validator({
     additionalProperties: true,
     required: false
   },
+  attachmentIds: attachmentIdsField,
   conversationId: requiredText,
   messageId: optionalText,
   message: requiredText,
@@ -127,6 +135,7 @@ const previewIdentityActionInputValidator = validator({
   sessionId: sessionIdField
 });
 const terminalControlTextInputValidator = validator({
+  attachmentIds: attachmentIdsField,
   originId: optionalText,
   text: {
     type: "string",
@@ -135,6 +144,7 @@ const terminalControlTextInputValidator = validator({
   }
 });
 const terminalControlKeyInputValidator = validator({
+  attachmentIds: attachmentIdsField,
   key: {
     type: "string",
     enum: ["ctrl-c", "enter", "escape", "tab"],
@@ -147,7 +157,6 @@ const terminalControlKeyInputValidator = validator({
 export {
   agentAttachmentActionInputValidator,
   agentAttachmentDeleteActionInputValidator,
-  agentAttachmentInputValidator,
   launchTargetActionInputValidator,
   launchTargetInputValidator,
   openLaunchTargetActionInputValidator,

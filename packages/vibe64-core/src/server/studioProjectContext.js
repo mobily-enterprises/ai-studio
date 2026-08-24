@@ -1277,6 +1277,7 @@ export {
   configureStudioProjectContext,
   createStudioProjectContext,
   getStudioProjectContext,
+  localProjectKeyFromTargetRoot,
   normalizeDevelopmentDatabaseName,
   normalizeDevelopmentDatabaseScope,
   normalizeProjectSlug,

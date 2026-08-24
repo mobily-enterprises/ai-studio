@@ -61,7 +61,10 @@ function featureDependencies({ env = {}, project, published = [] } = {}) {
       info() {},
       warn() {}
     },
-    project
+    project,
+    uploads: {
+      readSingleMultipartFile() {}
+    }
   };
 }
 
@@ -77,6 +80,7 @@ test("terminals feature declares only named AI-first capabilities", () => {
     http: "runtime.http",
     logger: "runtime.logger",
     project: "vibe64.project",
+    uploads: "runtime.uploads",
     actionCatalogue: "runtime.actions"
   });
   assert.equal(Object.hasOwn(Vibe64TerminalsProvider, "register"), false);
@@ -279,7 +283,8 @@ test("terminal events publish direct session and project events without service 
   assert.equal(Object.hasOwn(published[1], "meta"), false);
 });
 
-test("terminals feature owns dormancy startup and shutdown", async () => {
+test("terminals feature owns attachment and dormancy startup and shutdown", async () => {
+  const attachmentRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-terminals-provider-attachments-"));
   let closeCalls = 0;
   let cleanupCalls = 0;
   const terminals = {
@@ -293,14 +298,21 @@ test("terminals feature owns dormancy startup and shutdown", async () => {
   };
   const feature = createVibe64TerminalsFeature();
   const dependencies = {
+    env: {
+      VIBE64_CODEX_ATTACHMENTS_ROOT: attachmentRoot
+    },
     logger: {
       error() {},
       info() {},
       warn() {}
     }
   };
-  await feature.boot(dependencies, { outputs: { terminals }, profile: "test" });
-  await feature.shutdown(dependencies, { outputs: { terminals }, profile: "test" });
+  try {
+    await feature.boot(dependencies, { outputs: { terminals }, profile: "test" });
+    await feature.shutdown(dependencies, { outputs: { terminals }, profile: "test" });
+  } finally {
+    await rm(attachmentRoot, { force: true, recursive: true });
+  }
 
   assert.equal(cleanupCalls, 1);
   assert.equal(closeCalls, 1);

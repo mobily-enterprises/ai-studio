@@ -5,11 +5,14 @@ import {
   currentProjectRequestContext
 } from "./projectRequestContext.js";
 import {
+  localProjectKeyFromTargetRoot,
   normalizeProjectSlug,
   pathInsideOrEqual,
   projectSlugFromName,
   resolveStudioProjectsRoot
 } from "./studioProjectContext.js";
+
+const LOCAL_PROJECT_KEY_PATTERN = /^([a-z0-9][a-z0-9_-]*)-([a-f0-9]{12})$/u;
 
 function projectRuntimeIdentity(slug = "") {
   return `project:${normalizeProjectSlug(slug)}`;
@@ -36,8 +39,59 @@ function catalogProjectSlugFromTargetRoot(targetRoot = "", {
   }
 }
 
+function localProjectKeyFromSessionExecutionRoot(targetRoot = "") {
+  const sourceRoot = path.resolve(String(targetRoot || "").trim() || process.cwd());
+  const sessionRoot = path.dirname(sourceRoot);
+  const activeRoot = path.dirname(sessionRoot);
+  const sessionsRoot = path.dirname(activeRoot);
+  if (
+    path.basename(sourceRoot) !== "source" ||
+    !path.basename(sessionRoot) ||
+    path.basename(activeRoot) !== "active" ||
+    path.basename(sessionsRoot) !== "sessions"
+  ) {
+    return "";
+  }
+
+  const candidate = path.basename(path.dirname(sessionsRoot));
+  const match = candidate.match(LOCAL_PROJECT_KEY_PATTERN);
+  if (!match) {
+    return "";
+  }
+  try {
+    return normalizeProjectSlug(match[1]) === match[1] ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
 function targetRuntimeIdentity(targetRoot = "") {
-  return projectRuntimeIdentity(targetRuntimeProjectSlug(targetRoot));
+  const resolvedTargetRoot = path.resolve(String(targetRoot || "").trim() || process.cwd());
+  const projectContext = currentProjectRequestContext();
+  const contextSlug = String(projectContext?.slug || "").trim();
+  const contextRoots = [
+    projectContext?.targetRoot,
+    projectContext?.sourceRoot,
+    projectContext?.projectSessionSourceRoot
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const contextMatchesTarget = contextSlug && (
+    contextRoots.length < 1 ||
+    contextRoots.some((root) => pathInsideOrEqual(root, resolvedTargetRoot))
+  );
+  if (contextMatchesTarget) {
+    const sourceRoot = String(projectContext?.sourceRoot || "").trim();
+    return sourceRoot
+      ? `local-project:${localProjectKeyFromTargetRoot(sourceRoot)}`
+      : projectRuntimeIdentity(contextSlug);
+  }
+
+  const catalogSlug = catalogProjectSlugFromTargetRoot(resolvedTargetRoot);
+  if (catalogSlug) {
+    return projectRuntimeIdentity(catalogSlug);
+  }
+
+  const localProjectKey = localProjectKeyFromSessionExecutionRoot(resolvedTargetRoot);
+  return `local-project:${localProjectKey || localProjectKeyFromTargetRoot(resolvedTargetRoot)}`;
 }
 
 function targetRuntimeProjectSlug(targetRoot = "") {

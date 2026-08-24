@@ -70,6 +70,7 @@ function createTerminalActions({ terminals } = {}) {
     }),
     action({
       id: ACTION_UPLOAD_AGENT_ATTACHMENT,
+      idempotency: "none",
       input: agentAttachmentActionInputValidator,
       execute: (input) => terminals.uploadAgentAttachment(input.sessionId, input)
     }),

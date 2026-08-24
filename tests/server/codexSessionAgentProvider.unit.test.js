@@ -38,6 +38,36 @@ function economyRequest(workloadId = VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SOURCE_
   };
 }
 
+async function flushPromiseQueue(iterations = 8) {
+  for (let index = 0; index < iterations; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function waitForArrayLength(values, expected) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (values.length >= expected) {
+      return;
+    }
+    await flushPromiseQueue();
+  }
+  assert.fail(`Timed out waiting for ${expected} calls; received ${values.length}.`);
+}
+
+async function advanceMockTimers(t, milliseconds, values, expected) {
+  t.mock.timers.tick(milliseconds);
+  await waitForArrayLength(values, expected);
+}
+
+function retainedAttachmentLease(ids = []) {
+  return {
+    busy: [],
+    missing: [],
+    ok: true,
+    retained: [...new Set(ids)]
+  };
+}
+
 test("Codex economy resolves Luna-low from the live catalog with bounded tool-free policy", () => {
   const result = resolveCodexEconomyExecutionProfile(economyRequest(), {
     data: [catalogModel()]
@@ -208,6 +238,555 @@ test("Codex adapter publishes the resolved audit profile before a streamed detac
   assert.equal(events[0].executionProfile.model, "gpt-5.6-luna");
   assert.equal(events[0].executionProfile.revision, CODEX_ECONOMY_PROFILE_REVISION);
   assert.deepEqual(result.executionProfile, events[0].executionProfile);
+});
+
+test("Codex adapter validates attachment leases before delivery and renews accepted deliveries again", async () => {
+  const attachmentIds = {
+    main: "11111111-1111-4111-8111-111111111111",
+    temporary: "22222222-2222-4222-8222-222222222222",
+    terminal: "33333333-3333-4333-8333-333333333333"
+  };
+  const renewals = [];
+  const controller = {
+    async renewAttachments(sessionId, ids) {
+      renewals.push({ ids, sessionId });
+      return retainedAttachmentLease(ids);
+    },
+    async sendMessage(_sessionId, input) {
+      if (input.message === "steered") {
+        return {
+          delivered: true,
+          ok: true
+        };
+      }
+      if (input.message === "not accepted") {
+        return {
+          delivered: false,
+          newTurnRequired: true,
+          ok: true
+        };
+      }
+      if (input.message === "failed") {
+        return { ok: false };
+      }
+      return {
+        deliveryMode: "new_turn",
+        ok: true,
+        turnId: "main-turn"
+      };
+    },
+    async startConversationTurn(_sessionId, input) {
+      return input.message === "accepted"
+        ? { ok: true, runId: "temporary-turn" }
+        : { ok: false };
+    },
+    async writeTerminal(_sessionId, _terminalSessionId, _data, input) {
+      return input.accepted ? { ok: true } : { ok: false };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+  const context = { sessionId: "session-a" };
+
+  const main = await provider.sendMessage(context, {
+    attachmentIds: [attachmentIds.main],
+    message: "accepted"
+  });
+  const mainSteered = await provider.sendMessage(context, {
+    attachmentIds: [attachmentIds.main],
+    message: "steered"
+  });
+  const mainNotAccepted = await provider.sendMessage(context, {
+    attachmentIds: [attachmentIds.main],
+    message: "not accepted"
+  });
+  const mainFailed = await provider.sendMessage(context, {
+    attachmentIds: [attachmentIds.main],
+    message: "failed"
+  });
+  const temporary = await provider.startConversationTurn(context, {
+    attachmentIds: [attachmentIds.temporary],
+    message: "accepted"
+  });
+  const temporaryFailed = await provider.startConversationTurn(context, {
+    attachmentIds: [attachmentIds.temporary],
+    message: "failed"
+  });
+  const terminal = await provider.writeTerminal(context, {
+    data: "[/tmp/file] ",
+    input: {
+      accepted: true,
+      attachmentIds: [attachmentIds.terminal]
+    },
+    terminalSessionId: "terminal-a"
+  });
+  const terminalFailed = await provider.writeTerminal(context, {
+    data: "[/tmp/file] ",
+    input: {
+      accepted: false,
+      attachmentIds: [attachmentIds.terminal]
+    },
+    terminalSessionId: "terminal-a"
+  });
+
+  assert.equal(main.ok, true);
+  assert.equal(mainSteered.delivered, true);
+  assert.equal(mainNotAccepted.newTurnRequired, true);
+  assert.equal(mainFailed.ok, false);
+  assert.equal(temporary.ok, true);
+  assert.equal(temporaryFailed.ok, false);
+  assert.equal(terminal.ok, true);
+  assert.equal(terminalFailed.ok, false);
+  assert.deepEqual(renewals, [
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.main], sessionId: "session-a" },
+    { ids: [attachmentIds.temporary], sessionId: "session-a" },
+    { ids: [attachmentIds.temporary], sessionId: "session-a" },
+    { ids: [attachmentIds.temporary], sessionId: "session-a" },
+    { ids: [attachmentIds.terminal], sessionId: "session-a" },
+    { ids: [attachmentIds.terminal], sessionId: "session-a" },
+    { ids: [attachmentIds.terminal], sessionId: "session-a" }
+  ]);
+});
+
+test("Codex adapter rejects missing, busy, and unavailable attachments before every delivery seam", async () => {
+  const attachmentId = "11111111-1111-4111-8111-111111111111";
+  const deliveries = [];
+  const scenarios = [
+    {
+      code: "vibe64_agent_attachment_missing",
+      renewal: {
+        busy: [],
+        missing: [attachmentId],
+        ok: true,
+        retained: []
+      },
+      retryable: false
+    },
+    {
+      code: "vibe64_agent_attachment_busy",
+      renewal: {
+        busy: [attachmentId],
+        missing: [],
+        ok: true,
+        retained: []
+      },
+      retryable: true
+    },
+    {
+      code: "vibe64_agent_attachment_unavailable",
+      renewal: {
+        busy: [],
+        missing: [],
+        ok: true,
+        retained: []
+      },
+      retryable: true
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const controller = {
+      async renewAttachments() {
+        return scenario.renewal;
+      },
+      async sendMessage() {
+        deliveries.push("main");
+        return { ok: true, turnId: "main-turn" };
+      },
+      async startConversationTurn() {
+        deliveries.push("temporary");
+        return { ok: true, runId: "temporary-turn" };
+      },
+      async writeTerminal() {
+        deliveries.push("terminal");
+        return { ok: true };
+      }
+    };
+    const provider = createCodexSessionAgentProvider({ controller });
+    const context = { sessionId: "session-a" };
+    const input = { attachmentIds: [attachmentId] };
+    const results = [
+      await provider.sendMessage(context, input),
+      await provider.startConversationTurn(context, input),
+      await provider.writeTerminal(context, {
+        data: "[/tmp/file] ",
+        input,
+        terminalSessionId: "terminal-a"
+      })
+    ];
+    for (const result of results) {
+      assert.equal(result.ok, false);
+      assert.equal(result.code, scenario.code);
+      assert.equal(result.retryable, scenario.retryable);
+    }
+  }
+
+  assert.deepEqual(deliveries, []);
+});
+
+test("Codex adapter fails closed before delivery when attachment validation cannot run", async () => {
+  const attachmentId = "11111111-1111-4111-8111-111111111111";
+  const deliveries = [];
+  for (const failure of ["missing-controller", "result", "throw"]) {
+    const controller = {
+      async sendMessage() {
+        deliveries.push(failure);
+        return { ok: true, turnId: "must-not-run" };
+      },
+      ...(failure === "missing-controller"
+        ? {}
+        : {
+            async renewAttachments() {
+              if (failure === "throw") {
+                throw new Error("lease service unavailable");
+              }
+              return {
+                code: "vibe64_agent_attachment_unavailable",
+                error: "lease service unavailable",
+                ok: false
+              };
+            }
+          })
+    };
+    const provider = createCodexSessionAgentProvider({ controller });
+    const result = await provider.sendMessage({ sessionId: "session-a" }, {
+      attachmentIds: [attachmentId],
+      message: "must not be delivered"
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_agent_attachment_unavailable");
+    assert.equal(result.retryable, true);
+  }
+  assert.deepEqual(deliveries, []);
+});
+
+test("Codex adapter retries only busy attachment leases after accepted delivery", async () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const busyId = "22222222-2222-4222-8222-222222222222";
+  const renewals = [];
+  const controller = {
+    async renewAttachments(sessionId, ids) {
+      renewals.push({ ids, sessionId });
+      if (renewals.length === 1) {
+        return retainedAttachmentLease(ids);
+      }
+      if (renewals.length < 4) {
+        return {
+          busy: [busyId],
+          missing: [],
+          ok: true,
+          retained: renewals.length === 2 ? [firstId] : []
+        };
+      }
+      return {
+        missing: [],
+        ok: true,
+        retained: [busyId]
+      };
+    },
+    async sendMessage() {
+      return {
+        ok: true,
+        turnId: "accepted-turn"
+      };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+
+  const result = await provider.sendMessage({ sessionId: "session-a" }, {
+    attachmentIds: [firstId, busyId],
+    message: "accepted"
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(renewals, [
+    { ids: [firstId, busyId], sessionId: "session-a" },
+    { ids: [firstId, busyId], sessionId: "session-a" },
+    { ids: [busyId], sessionId: "session-a" },
+    { ids: [busyId], sessionId: "session-a" }
+  ]);
+});
+
+test("accepted delivery schedules lease-only recovery after foreground contention and transient failures", {
+  concurrency: false
+}, async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout"]
+  });
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const busyId = "22222222-2222-4222-8222-222222222222";
+  const deliveries = [];
+  const renewals = [];
+  const controller = {
+    async renewAttachments(sessionId, ids) {
+      renewals.push({ ids, sessionId });
+      if (renewals.length === 1) {
+        return retainedAttachmentLease(ids);
+      }
+      if (renewals.length <= 4) {
+        return {
+          busy: [busyId],
+          missing: [],
+          ok: true,
+          retained: renewals.length === 2 ? [firstId] : []
+        };
+      }
+      if (renewals.length === 5) {
+        return {
+          code: "temporary-renewal-failure",
+          ok: false
+        };
+      }
+      if (renewals.length === 6) {
+        throw new Error("temporary renewal transport failure");
+      }
+      return {
+        missing: [],
+        ok: true,
+        retained: [busyId]
+      };
+    },
+    async sendMessage(sessionId, input) {
+      deliveries.push({ input, sessionId });
+      return {
+        ok: true,
+        turnId: "accepted-turn"
+      };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+
+  try {
+    const pending = provider.sendMessage({ sessionId: "session-a" }, {
+      attachmentIds: [firstId, busyId],
+      message: "accepted once"
+    });
+    await waitForArrayLength(renewals, 1);
+    await waitForArrayLength(renewals, 2);
+    await advanceMockTimers(t, 100, renewals, 3);
+    await advanceMockTimers(t, 250, renewals, 4);
+
+    const result = await pending;
+    assert.equal(result.ok, true);
+    assert.equal(result.turn?.id, "accepted-turn");
+    assert.equal(deliveries.length, 1);
+
+    await advanceMockTimers(t, 500, renewals, 5);
+    await advanceMockTimers(t, 1_000, renewals, 6);
+    await advanceMockTimers(t, 2_000, renewals, 7);
+    t.mock.timers.tick(10_000);
+    await flushPromiseQueue();
+
+    assert.equal(deliveries.length, 1);
+    assert.deepEqual(renewals.map(({ ids }) => ids), [
+      [firstId, busyId],
+      [firstId, busyId],
+      [busyId],
+      [busyId],
+      [busyId],
+      [busyId],
+      [busyId]
+    ]);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("accepted delivery survives foreground lease errors and retries only the lease", {
+  concurrency: false
+}, async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout"]
+  });
+  const attachmentId = "33333333-3333-4333-8333-333333333333";
+
+  try {
+    for (const failure of ["result", "throw"]) {
+      const deliveries = [];
+      const renewals = [];
+      const controller = {
+        async renewAttachments(sessionId, ids) {
+          renewals.push({ ids, sessionId });
+          if (renewals.length === 1) {
+            return retainedAttachmentLease(ids);
+          }
+          if (renewals.length === 2) {
+            if (failure === "throw") {
+              throw new Error("temporary renewal transport failure");
+            }
+            return {
+              code: "temporary-renewal-failure",
+              ok: false
+            };
+          }
+          return {
+            missing: [],
+            ok: true,
+            retained: [attachmentId]
+          };
+        },
+        async sendMessage(sessionId, input) {
+          deliveries.push({ input, sessionId });
+          return {
+            ok: true,
+            turnId: `accepted-${failure}`
+          };
+        }
+      };
+      const provider = createCodexSessionAgentProvider({ controller });
+
+      const result = await provider.sendMessage({ sessionId: "session-a" }, {
+        attachmentIds: [attachmentId],
+        message: `accepted despite ${failure}`
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.turn?.id, `accepted-${failure}`);
+      assert.equal(deliveries.length, 1);
+      assert.equal(renewals.length, 2);
+
+      await advanceMockTimers(t, 500, renewals, 3);
+      assert.equal(deliveries.length, 1);
+      assert.deepEqual(renewals, [
+        { ids: [attachmentId], sessionId: "session-a" },
+        { ids: [attachmentId], sessionId: "session-a" },
+        { ids: [attachmentId], sessionId: "session-a" }
+      ]);
+    }
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("exhausted accepted-delivery lease recovery emits the established diagnostic", {
+  concurrency: false
+}, async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout"]
+  });
+  const previousDebug = process.env.VIBE64_SESSION_DEBUG;
+  process.env.VIBE64_SESSION_DEBUG = "1";
+  const info = t.mock.method(console, "info", () => {});
+  const attachmentId = "44444444-4444-4444-8444-444444444444";
+  const deliveries = [];
+  const renewals = [];
+  const controller = {
+    async renewAttachments(sessionId, ids) {
+      renewals.push({ ids, sessionId });
+      if (renewals.length === 1) {
+        return retainedAttachmentLease(ids);
+      }
+      return {
+        busy: [attachmentId],
+        missing: [],
+        ok: true,
+        retained: []
+      };
+    },
+    async sendMessage(sessionId, input) {
+      deliveries.push({ input, sessionId });
+      return {
+        ok: true,
+        turnId: "accepted-exhausted"
+      };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+
+  try {
+    const pending = provider.sendMessage({ sessionId: "session-a" }, {
+      attachmentIds: [attachmentId],
+      message: "accepted once despite lease contention"
+    });
+    await waitForArrayLength(renewals, 1);
+    await waitForArrayLength(renewals, 2);
+    await advanceMockTimers(t, 100, renewals, 3);
+    await advanceMockTimers(t, 250, renewals, 4);
+    const result = await pending;
+    assert.equal(result.ok, true);
+
+    await advanceMockTimers(t, 500, renewals, 5);
+    await advanceMockTimers(t, 1_000, renewals, 6);
+    await advanceMockTimers(t, 2_000, renewals, 7);
+    await advanceMockTimers(t, 5_000, renewals, 8);
+    await flushPromiseQueue();
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(renewals.length, 8);
+    assert.equal(info.mock.calls.some((call) => (
+      call.arguments.some((argument) => String(argument).includes(
+        "server.codexAttachments.acceptedRenewal.exhausted"
+      ))
+    )), true);
+  } finally {
+    if (previousDebug == null) {
+      delete process.env.VIBE64_SESSION_DEBUG;
+    } else {
+      process.env.VIBE64_SESSION_DEBUG = previousDebug;
+    }
+    t.mock.timers.reset();
+  }
+});
+
+test("Codex adapter accepts ten attachments and rejects eleven before every delivery seam", async () => {
+  const calls = [];
+  const controller = {
+    async renewAttachments(_sessionId, ids) {
+      return retainedAttachmentLease(ids);
+    },
+    async sendMessage(_sessionId, input) {
+      calls.push(["main", input.attachmentIds.length]);
+      return { ok: true, turnId: "main-turn" };
+    },
+    async startConversationTurn(_sessionId, input) {
+      calls.push(["temporary", input.attachmentIds.length]);
+      return { ok: true, runId: "temporary-turn" };
+    },
+    async writeTerminal(_sessionId, _terminalSessionId, _data, input) {
+      calls.push(["terminal", input.attachmentIds.length]);
+      return { ok: true };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+  const context = { sessionId: "session-a" };
+  const ten = Array.from({ length: 10 }, (_value, index) => `attachment-${index}`);
+  const eleven = [...ten, "attachment-10"];
+
+  assert.equal((await provider.sendMessage(context, {
+    attachmentIds: ten,
+    message: "ten"
+  })).ok, true);
+  assert.equal((await provider.startConversationTurn(context, {
+    attachmentIds: ten,
+    message: "ten"
+  })).ok, true);
+  assert.equal((await provider.writeTerminal(context, {
+    data: "ten",
+    input: { attachmentIds: ten },
+    terminalSessionId: "terminal-a"
+  })).ok, true);
+
+  for (const result of [
+    await provider.sendMessage(context, { attachmentIds: eleven, message: "eleven" }),
+    await provider.startConversationTurn(context, { attachmentIds: eleven, message: "eleven" }),
+    await provider.writeTerminal(context, {
+      data: "eleven",
+      input: { attachmentIds: eleven },
+      terminalSessionId: "terminal-a"
+    })
+  ]) {
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_agent_attachment_limit_exceeded");
+    assert.equal(result.error, "A message can include at most 10 attachments.");
+  }
+  assert.deepEqual(calls, [
+    ["main", 10],
+    ["temporary", 10],
+    ["terminal", 10]
+  ]);
 });
 
 test("Codex adapter rejects consumer-supplied model knobs", async () => {

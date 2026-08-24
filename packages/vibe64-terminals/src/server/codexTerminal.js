@@ -101,6 +101,7 @@ import {
   VIBE64_CODEX_ATTACHMENTS_ROOT_ENV,
   cleanupCodexAttachments,
   prepareCodexAttachmentRoot,
+  renewCodexAttachments,
   storeCodexAttachment
 } from "./codexAttachments.js";
 import {
@@ -198,6 +199,7 @@ const CODEX_STATE_METADATA_NAMES = Object.freeze([
 ]);
 const CODEX_APP_SERVER_AGENT_RUN_ID = CODEX_APP_SERVER_TASK_ID;
 const CODEX_SESSION_WORKTREE_UNAVAILABLE_CODE = "vibe64_session_worktree_unavailable";
+const CODEX_ATTACHMENT_SESSION_UNAVAILABLE_CODE = "vibe64_agent_attachment_session_unavailable";
 const CODEX_AGENT_TURN_ALREADY_RUNNING_CODE = "vibe64_agent_turn_already_running";
 const CODEX_AGENT_TURN_INTERRUPT_FAILED_CODE = "vibe64_codex_turn_interrupt_failed";
 const CODEX_AGENT_TURN_STEER_FAILED_CODE = "vibe64_codex_turn_steer_failed";
@@ -402,6 +404,16 @@ function codexSessionWorktreeUnavailableFailure({
       : `Session clone directory does not exist: ${workdir}`,
     workdir: normalizeText(workdir)
   });
+}
+
+function codexAttachmentSessionUnavailableError(session = {}) {
+  const closingReason = sessionClosingReason(session);
+  const error = new Error(closingReason
+    ? `Session is ${closingReason}. Attachments cannot be added while it is closing.`
+    : "This session is closing. Attachments cannot be added now.");
+  error.code = CODEX_ATTACHMENT_SESSION_UNAVAILABLE_CODE;
+  error.statusCode = 409;
+  return error;
 }
 
 function codexAppServerAgentRun(session = {}) {
@@ -6189,9 +6201,6 @@ function createCodexTerminalController({
               ...codexAppTerminalOwnerMetadata(toolHome)
             },
             namespace,
-            onClose: async () => {
-              await cleanupCodexAttachments(executionRoot, sessionId);
-            },
             reuseRunning: (terminalSession) => {
               return terminalSession.metadata?.executionRoot === executionRoot &&
                 terminalSession.metadata?.envHash === terminalEnvHash &&
@@ -6286,7 +6295,9 @@ function createCodexTerminalController({
       },
       namespace,
       onClose: async () => {
-        await cleanupCodexAttachments(executionRoot, GLOBAL_CODEX_TERMINAL_SCOPE);
+        await cleanupCodexAttachments(executionRoot, GLOBAL_CODEX_TERMINAL_SCOPE, "", {
+          env: codexAttachmentEnv()
+        });
       },
       reuseRunning: (terminalSession) => {
         return terminalSession.metadata?.scope === GLOBAL_CODEX_TERMINAL_SCOPE &&
@@ -10440,7 +10451,9 @@ function createCodexTerminalController({
           normalizedSessionId
         );
         if (executionRoot) {
-          await cleanupCodexAttachments(executionRoot, normalizedSessionId);
+          await cleanupCodexAttachments(executionRoot, normalizedSessionId, "", {
+            env: codexAttachmentEnv()
+          });
         }
       })();
       codexAppServerSessionClosures.set(normalizedSessionId, closing);
@@ -10740,8 +10753,21 @@ function createCodexTerminalController({
 
     async uploadAttachment(sessionId, input = {}) {
       return vibe64Result(async () => {
+        const normalizedSessionId = normalizeText(sessionId);
         const runtime = await createRuntimeForSession();
-        const session = await runtime.getSession(sessionId);
+        const session = await runtime.getSession(normalizedSessionId);
+        if (
+          codexAppServerSessionClosures.has(normalizedSessionId) ||
+          codexSessionWorktreeIsUnavailable(session)
+        ) {
+          const error = codexAttachmentSessionUnavailableError(session);
+          return {
+            code: error.code,
+            error: error.message,
+            ok: false,
+            statusCode: error.statusCode
+          };
+        }
         const executionRoot = terminalSessionSourceRoot(session);
         if (!executionRoot) {
           return {
@@ -10750,8 +10776,18 @@ function createCodexTerminalController({
           };
         }
         return storeCodexAttachment({
+          beforeCreate: async () => {
+            const currentSession = await runtime.getSession(normalizedSessionId);
+            if (
+              codexAppServerSessionClosures.has(normalizedSessionId) ||
+              codexSessionWorktreeIsUnavailable(currentSession)
+            ) {
+              throw codexAttachmentSessionUnavailableError(currentSession);
+            }
+          },
+          env: codexAttachmentEnv(),
           input,
-          sessionId,
+          sessionId: normalizedSessionId,
           executionRoot
         });
       });
@@ -10776,9 +10812,39 @@ function createCodexTerminalController({
             error: "Vibe64 Codex session source root is not available."
           };
         }
-        await cleanupCodexAttachments(executionRoot, sessionId, attachmentId);
+        await cleanupCodexAttachments(executionRoot, sessionId, attachmentId, {
+          env: codexAttachmentEnv()
+        });
         return {
           attachmentId,
+          ok: true
+        };
+      });
+    },
+
+    async renewAttachments(sessionId, attachmentIds = []) {
+      return vibe64Result(async () => {
+        if (!Array.isArray(attachmentIds) || attachmentIds.length < 1) {
+          return {
+            missing: [],
+            ok: true,
+            retained: []
+          };
+        }
+        const runtime = await createRuntimeForSession();
+        const session = await runtime.getSession(sessionId);
+        const executionRoot = terminalSessionSourceRoot(session);
+        if (!executionRoot) {
+          return {
+            code: "vibe64_agent_attachment_source_root_missing",
+            error: "Vibe64 Codex session source root is not available.",
+            ok: false
+          };
+        }
+        return {
+          ...await renewCodexAttachments(executionRoot, sessionId, attachmentIds, {
+            env: codexAttachmentEnv()
+          }),
           ok: true
         };
       });

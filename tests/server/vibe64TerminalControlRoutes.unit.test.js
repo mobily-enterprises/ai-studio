@@ -110,7 +110,8 @@ test("terminal control routes expose snapshot, text checks, exact text, and narr
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app",
-        terminals: app.service
+        terminals: app.service,
+        uploads: { readSingleMultipartFile() {} }
       });
       assert.equal(findRegisteredRoute(app, {
         method: "POST",
@@ -199,7 +200,8 @@ test("assistant terminal control text uses the server Vibe64 user instead of bod
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app",
-        terminals: app.service
+        terminals: app.service,
+        uploads: { readSingleMultipartFile() {} }
       });
 
       const serverUser = {
@@ -215,6 +217,7 @@ test("assistant terminal control text uses the server Vibe64 user instead of bod
       await route.handler({
         input: {
           body: {
+            attachmentIds: ["11111111-1111-4111-8111-111111111111"],
             originId: "tab:owner",
             text: "Please push.\r",
             vibe64User: {
@@ -234,6 +237,7 @@ test("assistant terminal control text uses the server Vibe64 user instead of bod
         {
           data: "Please push.\r",
           input: {
+            attachmentIds: ["11111111-1111-4111-8111-111111111111"],
             originId: "tab:owner",
             sessionId: "session-1",
             terminalSessionId: "terminal-1",
@@ -257,7 +261,8 @@ test("temporary AI creation and turns use the authenticated Vibe64 actor", async
         projectContext,
         routeRelativePath: "vibe64",
         routeSurface: "app",
-        terminals: app.service
+        terminals: app.service,
+        uploads: { readSingleMultipartFile() {} }
       });
       const vibe64User = {
         displayName: "Ada Account",
@@ -290,6 +295,7 @@ test("temporary AI creation and turns use the authenticated Vibe64 actor", async
       }, testReply());
       await turnRoute.handler({
         body: {
+          attachmentIds: ["22222222-2222-4222-8222-222222222222"],
           message: "Explain the failure.",
           vibe64User: { username: "spoofed" }
         },
@@ -312,6 +318,7 @@ test("temporary AI creation and turns use the authenticated Vibe64 actor", async
         {
           actionId: ACTION_START_TEMPORARY_CONVERSATION_TURN,
           input: {
+            attachmentIds: ["22222222-2222-4222-8222-222222222222"],
             conversationId: "conversation-1",
             message: "Explain the failure.",
             sessionId: "session-1",

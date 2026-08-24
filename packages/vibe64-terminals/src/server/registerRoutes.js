@@ -1,5 +1,4 @@
 import {
-  agentAttachmentInputValidator,
   launchTargetInputValidator,
   previewIdentityInputValidator,
   terminalControlKeyInputValidator,
@@ -18,8 +17,12 @@ import {
   ACTION_UPLOAD_AGENT_ATTACHMENT
 } from "./actions.js";
 import {
-  CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES
+  CODEX_ATTACHMENT_MAX_BYTES,
+  CODEX_ATTACHMENT_REQUEST_BODY_LIMIT_BYTES
 } from "./codexAttachments.js";
+import {
+  createUploadFieldError
+} from "@jskit-ai/uploads-runtime/server/policy/uploadPolicy";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 import { registerTerminalWebSocketRoute } from "@local/vibe64-core/server/terminalWebSocketRoutes";
 import {
@@ -30,6 +33,145 @@ import {
 
 const VIBE64_TERMINALS_UNAVAILABLE = "Vibe64 terminal service is unavailable.";
 
+function isMultipartError(error, code) {
+  return String(error?.code || "").trim().toUpperCase() === String(code || "").trim().toUpperCase();
+}
+
+function attachmentMultipartError(message) {
+  return createUploadFieldError("file", message);
+}
+
+function normalizeMultipartFilePart(part = {}) {
+  const fieldName = String(part.fieldname || "").trim();
+  if (part.type !== "file" || !part.file || typeof part.file.pipe !== "function") {
+    throw attachmentMultipartError("Attachment upload accepts exactly one file and no other fields.");
+  }
+  if (fieldName !== "file") {
+    part.file.resume?.();
+    throw attachmentMultipartError(`Attachment field "${fieldName}" is not allowed.`);
+  }
+  return Object.freeze({
+    contentType: String(part.mimetype || "").trim().toLowerCase(),
+    fileName: String(part.filename || "").trim(),
+    stream: part.file
+  });
+}
+
+function multipartIterator(request) {
+  if (typeof request?.parts !== "function") {
+    throw new TypeError("Attachment uploads require strict multipart iteration support.");
+  }
+  return request.parts({
+    throwFileSizeLimit: true,
+    limits: {
+      fileSize: CODEX_ATTACHMENT_MAX_BYTES,
+      files: 2,
+      parts: 2
+    }
+  });
+}
+
+async function nextMultipartPart(parts) {
+  try {
+    return await parts.next();
+  } catch (error) {
+    throw normalizeAttachmentMultipartError(error);
+  }
+}
+
+async function drainMultipartFileStream(stream) {
+  if (!stream || stream.readableEnded || stream.destroyed) {
+    return;
+  }
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      stream.off("end", onEnd);
+      stream.off("close", onEnd);
+      stream.off("error", onError);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+    const onEnd = () => finish();
+    const onError = (error) => finish(error);
+    stream.once("end", onEnd);
+    stream.once("close", onEnd);
+    stream.once("error", onError);
+    stream.resume();
+    if (stream.readableEnded || stream.destroyed) {
+      finish();
+    }
+  });
+}
+
+async function drainMultipartParts(parts, firstPart = null) {
+  let part = firstPart;
+  while (part && !part.done) {
+    await drainMultipartFileStream(part.value?.file);
+    part = await parts.next();
+  }
+}
+
+async function withExactlyOneAttachment(request, consume) {
+  const parts = multipartIterator(request);
+  const firstPart = await nextMultipartPart(parts);
+  if (firstPart.done) {
+    throw attachmentMultipartError("Attachment file is required.");
+  }
+
+  let file;
+  try {
+    file = normalizeMultipartFilePart(firstPart.value);
+  } catch (error) {
+    await drainMultipartParts(parts, firstPart).catch(() => null);
+    throw error;
+  }
+
+  let result;
+  let consumeError = null;
+  try {
+    result = await consume(file);
+  } catch (error) {
+    consumeError = error;
+  }
+
+  let streamError = null;
+  try {
+    await drainMultipartFileStream(file.stream);
+  } catch (error) {
+    streamError = normalizeAttachmentMultipartError(error);
+  }
+
+  if (consumeError || streamError) {
+    await drainMultipartParts(parts).catch(() => null);
+    throw consumeError || streamError;
+  }
+
+  const nextPart = await nextMultipartPart(parts);
+  if (!nextPart.done) {
+    await drainMultipartParts(parts, nextPart).catch(() => null);
+    throw attachmentMultipartError("Attachment upload allows exactly one file and no other fields.");
+  }
+  return result;
+}
+
+function normalizeAttachmentMultipartError(error) {
+  if (isMultipartError(error, "FST_REQ_FILE_TOO_LARGE")) {
+    return attachmentMultipartError("Attachment file is too large. Maximum allowed size is 100 MB.");
+  }
+  if (isMultipartError(error, "FST_FILES_LIMIT") || isMultipartError(error, "FST_PARTS_LIMIT")) {
+    return attachmentMultipartError("Attachment upload allows exactly one file and no other fields.");
+  }
+  return error;
+}
+
 function registerRoutes(
   http,
   {
@@ -37,11 +179,15 @@ function registerRoutes(
     projectContext = null,
     routeSurface = "",
     routeRelativePath = "",
-    terminals
+    terminals,
+    uploads
   } = {}
 ) {
   if (!terminals || typeof terminals !== "object") {
     throw new TypeError(VIBE64_TERMINALS_UNAVAILABLE);
+  }
+  if (!uploads || typeof uploads.readSingleMultipartFile !== "function") {
+    throw new TypeError("Vibe64 terminal routes require runtime.uploads.");
   }
   const routes = createVibe64FeatureRoutes(http, {
     localRequestMessage: "Vibe64 terminal routes only accept loopback Studio requests.",
@@ -136,12 +282,36 @@ function registerRoutes(
     );
   });
 
-  routes.actionRoute("POST", "/sessions/:sessionId/agent-attachments", {
-    actionId: ACTION_UPLOAD_AGENT_ATTACHMENT,
-    body: agentAttachmentInputValidator,
-    bodyLimit: CODEX_ATTACHMENT_UPLOAD_BODY_LIMIT_BYTES,
-    buildInput: bodyWithSessionId(routes),
+  routes.serviceRoute("POST", "/sessions/:sessionId/agent-attachments", {
+    bodyLimit: CODEX_ATTACHMENT_REQUEST_BODY_LIMIT_BYTES,
     summary: "Upload a temporary assistant attachment for a Vibe64 session."
+  }, async (request) => {
+    let result = null;
+    try {
+      return await withExactlyOneAttachment(request, async (file) => {
+        result = await request.executeAction({
+          actionId: ACTION_UPLOAD_AGENT_ATTACHMENT,
+          input: {
+            contentType: file.contentType,
+            fileName: file.fileName,
+            sessionId: request.params.sessionId,
+            stream: file.stream
+          }
+        });
+        return result;
+      });
+    } catch (error) {
+      if (result?.attachmentId) {
+        await request.executeAction({
+          actionId: ACTION_DELETE_AGENT_ATTACHMENT,
+          input: {
+            attachmentId: result.attachmentId,
+            sessionId: request.params.sessionId
+          }
+        }).catch(() => null);
+      }
+      throw error;
+    }
   });
 
   routes.actionRoute("DELETE", "/sessions/:sessionId/agent-attachments/:attachmentId", {
@@ -293,6 +463,7 @@ function requestQueryValue(request, key) {
 function terminalControlInputFields(body = {}) {
   const originId = firstRequestValue(body?.originId);
   return {
+    ...(Array.isArray(body?.attachmentIds) ? { attachmentIds: body.attachmentIds } : {}),
     ...(originId ? { originId } : {}),
     trackGitActor: true
   };

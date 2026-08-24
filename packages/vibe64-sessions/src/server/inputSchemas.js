@@ -30,6 +30,14 @@ const agentMessageFields = {
     additionalProperties: true,
     required: false
   },
+  attachmentIds: {
+    type: "array",
+    items: {
+      type: "string",
+      noTrim: false
+    },
+    required: false
+  },
   displayMessage: {
     type: "string",
     noTrim: false,

@@ -61,6 +61,7 @@ function vibe64StatusCode(response, { missingStatus = 404 } = {}) {
   }
   if (
     code === "vibe64_command_requires_terminal" ||
+    code === "vibe64_agent_attachment_session_unavailable" ||
     code === "vibe64_project_not_selected" ||
     code === "vibe64_project_not_ready" ||
     code === "vibe64_development_database_scope_busy" ||

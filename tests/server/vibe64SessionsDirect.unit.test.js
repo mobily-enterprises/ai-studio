@@ -185,6 +185,25 @@ test("sessions expose only direct chat and source actions", () => {
   ]);
 });
 
+test("assistant message action accepts attachment lease ids", () => {
+  const action = createSessionActions({ sessions: {} })
+    .find((candidate) => candidate.id === ACTION_SEND_AGENT_MESSAGE);
+  const attachmentId = "33333333-3333-4333-8333-333333333333";
+
+  assert.deepEqual(action.input.schema.patch({
+    attachmentIds: [attachmentId],
+    message: "Inspect this file.",
+    sessionId: "session-1"
+  }), {
+    errors: {},
+    validatedObject: {
+      attachmentIds: [attachmentId],
+      message: "Inspect this file.",
+      sessionId: "session-1"
+    }
+  });
+});
+
 test("deferred session changes publish modern top-level realtime events", async () => {
   const events = [];
   const publish = createSessionChangedPublisher({
@@ -260,6 +279,7 @@ test("assistant messages use the plain message contract", async () => {
   });
 
   const result = await service.sendAgentMessage("session-1", {
+    attachmentIds: ["33333333-3333-4333-8333-333333333333"],
     displayMessage: "Inspect screenshot.png",
     message: "Inspect /tmp/screenshot.png",
     messageId: "message:test",
@@ -268,6 +288,7 @@ test("assistant messages use the plain message contract", async () => {
 
   assert.deepEqual(calls[0][0], "session-1");
   assert.deepEqual(calls[0][1], {
+    attachmentIds: ["33333333-3333-4333-8333-333333333333"],
     displayMessage: "Inspect screenshot.png",
     message: "Inspect /tmp/screenshot.png",
     messageId: "message:test",
