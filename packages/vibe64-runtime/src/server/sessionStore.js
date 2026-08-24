@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
@@ -28,19 +28,55 @@ const SESSION_LABEL_MAX_LENGTH = 120;
 const VIBE64_SESSION_STATUS = deepFreeze({
   ABANDONED: "abandoned",
   ACTIVE: "active",
-  BLOCKED: "blocked"
+  BLOCKED: "blocked",
+  RENEWAL_ACTIVATING: "renewal_activating",
+  RENEWAL_PENDING: "renewal_pending",
+  RENEWAL_QUIESCED: "renewal_quiesced"
 });
 const VIBE64_SESSION_STATUSES = new Set(Object.values(VIBE64_SESSION_STATUS));
+const OPEN_VIBE64_SESSION_STATUSES = new Set([
+  VIBE64_SESSION_STATUS.ACTIVE,
+  VIBE64_SESSION_STATUS.BLOCKED,
+  VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+]);
+const HIDDEN_VIBE64_SESSION_STATUSES = new Set([
+  VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING,
+  VIBE64_SESSION_STATUS.RENEWAL_PENDING
+]);
+const RENEWAL_TRANSITION_VIBE64_SESSION_STATUSES = new Set([
+  ...HIDDEN_VIBE64_SESSION_STATUSES,
+  VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+]);
 const CLOSED_VIBE64_SESSION_STATUS_LIST = [
   VIBE64_SESSION_STATUS.ABANDONED
 ];
 const CLOSED_VIBE64_SESSION_STATUSES = new Set(CLOSED_VIBE64_SESSION_STATUS_LIST);
 const CLOSED_SESSION_ARCHIVE_KIND = "vibe64.closed_session_archive";
+const RENEWAL_ARCHIVE_SELECTION_METADATA = "renewal_selected_before_archive";
+const RENEWAL_ARCHIVE_SELECTION_NONE = "none";
 const CLOSED_SESSION_INDEX_METADATA_NAMES = Object.freeze([
   "base_branch",
   "base_commit",
   "canonical_commit",
   "branch",
+  "renewal_acknowledged_at",
+  "renewal_activated_at",
+  "renewal_actor_display_name",
+  "renewal_actor_id",
+  "renewal_archived_at",
+  "renewal_confirmed_at",
+  "renewal_finalized_at",
+  "renewal_id",
+  "renewal_quiesced_at",
+  "renewal_quiesced_id",
+  "renewal_restored_at",
+  "renewal_restored_id",
+  "renewal_rolled_back_at",
+  "renewal_started_at",
+  "renewal_successor_created_at",
+  "renewed_at",
+  "renewed_from",
+  "renewed_to",
   "source_default_branch",
   "source_kind",
   "source_path",
@@ -70,6 +106,8 @@ const BACKGROUND_TASK_EVENT_LIMIT = 200;
 const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
 const ARTIFACT_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const BACKGROUND_TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$/u;
+const SESSION_RENEWAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+const SESSION_RENEWAL_STATE_FILE_PATTERN = /^([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.json$/u;
 const CONVERSATION_ACTIVITY_ROLES = new Set([
   "commentary",
   "thinking"
@@ -130,7 +168,10 @@ const ACTIVE_AGENT_RUN_STATES = new Set([
 ]);
 const SESSION_LOCK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const SESSION_LOCK_OWNER_GRACE_MS = 2_000;
+const SESSION_LOCK_OWNER_SCHEMA_VERSION = 1;
 const SESSION_LOCK_POLL_MS = 20;
+const SESSION_LOCK_PROCESS_IDENTITY_PLATFORM = "linux-proc";
+const SESSION_LOCK_PROCESS_IDENTITY_PID_ONLY_PLATFORM = "pid-only";
 const SESSION_MUTATION_LOCK_WAIT_MS = 60_000;
 const sessionMutationChains = new Map();
 const sessionMutationContext = new AsyncLocalStorage();
@@ -187,6 +228,48 @@ function assertSafeBackgroundTaskId(taskId) {
   return normalizedTaskId;
 }
 
+function assertRenewalId(renewalId) {
+  const normalizedRenewalId = normalizeText(renewalId);
+  if (!SESSION_RENEWAL_ID_PATTERN.test(normalizedRenewalId)) {
+    throw vibe64Error(
+      `Invalid Vibe64 session renewal id: ${normalizedRenewalId || "(empty)"}`,
+      "vibe64_invalid_session_renewal_id"
+    );
+  }
+  return normalizedRenewalId;
+}
+
+function sessionIsUnfinishedRenewalRecord(session = {}) {
+  const metadata = isPlainObject(session.metadata) ? session.metadata : {};
+  const renewalId = session.status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+    ? normalizeText(metadata.renewal_quiesced_id)
+    : normalizeText(metadata.renewal_id);
+  if (
+    !SESSION_RENEWAL_ID_PATTERN.test(renewalId) ||
+    (
+      session.status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED &&
+      normalizeText(metadata.renewal_finalized_at)
+    )
+  ) {
+    return false;
+  }
+  if ([
+    VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING,
+    VIBE64_SESSION_STATUS.RENEWAL_PENDING
+  ].includes(session.status)) {
+    return isValidVibe64SessionId(metadata.renewed_from);
+  }
+  if (session.status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED) {
+    return Boolean(normalizeText(metadata.renewal_quiesced_at));
+  }
+  if (session.status === VIBE64_SESSION_STATUS.ABANDONED) {
+    return isValidVibe64SessionId(metadata.renewed_to);
+  }
+  return session.status === VIBE64_SESSION_STATUS.ACTIVE &&
+    isValidVibe64SessionId(metadata.renewed_from) &&
+    !normalizeText(metadata.renewed_to);
+}
+
 function normalizeVibe64AgentRunState(state) {
   const normalizedState = normalizeText(state) || VIBE64_AGENT_RUN_STATE.STARTING;
   if (!AGENT_RUN_STATES.has(normalizedState)) {
@@ -225,6 +308,36 @@ function assertVibe64SessionStatus(status) {
   return normalizedStatus;
 }
 
+function vibe64SessionStatusIsOpen(status) {
+  return OPEN_VIBE64_SESSION_STATUSES.has(assertVibe64SessionStatus(status));
+}
+
+function vibe64SessionStatusIsHidden(status) {
+  return HIDDEN_VIBE64_SESSION_STATUSES.has(assertVibe64SessionStatus(status));
+}
+
+function assertNormalSessionIsReadable(session = {}) {
+  const status = assertVibe64SessionStatus(session.status);
+  if (HIDDEN_VIBE64_SESSION_STATUSES.has(status)) {
+    throw vibe64Error(
+      `Vibe64 session is reserved for an in-progress renewal: ${normalizeText(session.sessionId) || "(unknown)"}`,
+      "vibe64_session_renewal_private"
+    );
+  }
+  return session;
+}
+
+function assertNormalSessionIsMutable(session = {}) {
+  const readable = assertNormalSessionIsReadable(session);
+  if (readable.status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED) {
+    throw vibe64Error(
+      `Vibe64 session is read-only while its renewal is in progress: ${normalizeText(session.sessionId) || "(unknown)"}`,
+      "vibe64_session_renewal_quiesced"
+    );
+  }
+  return readable;
+}
+
 function normalizeSessionListStatusGroup(statusGroup = "") {
   const normalizedStatusGroup = normalizeText(statusGroup);
   if (!normalizedStatusGroup) {
@@ -255,16 +368,20 @@ function sessionStatusMatchesListOptions(status, {
   statuses = new Set()
 } = {}) {
   const normalizedStatus = normalizeText(status) || VIBE64_SESSION_STATUS.ACTIVE;
+  if (HIDDEN_VIBE64_SESSION_STATUSES.has(normalizedStatus)) {
+    return false;
+  }
   if (statuses.size > 0 && !statuses.has(normalizedStatus)) {
     return false;
   }
   if (statusGroup === "open") {
-    return !CLOSED_VIBE64_SESSION_STATUSES.has(normalizedStatus);
+    return OPEN_VIBE64_SESSION_STATUSES.has(normalizedStatus);
   }
   if (statusGroup === "closed") {
     return CLOSED_VIBE64_SESSION_STATUSES.has(normalizedStatus);
   }
-  return true;
+  return OPEN_VIBE64_SESSION_STATUSES.has(normalizedStatus) ||
+    CLOSED_VIBE64_SESSION_STATUSES.has(normalizedStatus);
 }
 
 function sessionListMayIncludeClosed({
@@ -432,6 +549,91 @@ function processIsAlive(pid) {
   }
 }
 
+function linuxProcessStartTimeTicks(statText = "") {
+  const text = String(statText || "").trim();
+  const commandEnd = text.lastIndexOf(")");
+  if (commandEnd < 0) {
+    return "";
+  }
+  const fields = text.slice(commandEnd + 1).trim().split(/\s+/u);
+  const state = String(fields[0] || "");
+  const startTimeTicks = String(fields[19] || "");
+  return /^[A-Z]$/u.test(state) && /^\d+$/u.test(startTimeTicks)
+    ? startTimeTicks
+    : "";
+}
+
+async function readLinuxProcessStartTimeTicks(pid) {
+  const normalizedPid = Number(pid);
+  if (
+    process.platform !== "linux" ||
+    !Number.isSafeInteger(normalizedPid) ||
+    normalizedPid <= 0
+  ) {
+    return {
+      status: "ambiguous",
+      startTimeTicks: ""
+    };
+  }
+  try {
+    const startTimeTicks = linuxProcessStartTimeTicks(
+      await readFile(`/proc/${normalizedPid}/stat`, "utf8")
+    );
+    return startTimeTicks
+      ? { status: "exact", startTimeTicks }
+      : { status: "ambiguous", startTimeTicks: "" };
+  } catch (error) {
+    return isMissingPathError(error)
+      ? { status: "absent", startTimeTicks: "" }
+      : { status: "ambiguous", startTimeTicks: "" };
+  }
+}
+
+async function currentSessionLockProcessIdentity(processPlatform = process.platform) {
+  if (processPlatform !== "linux") {
+    return {
+      platform: SESSION_LOCK_PROCESS_IDENTITY_PID_ONLY_PLATFORM,
+      startTimeTicks: ""
+    };
+  }
+  const observed = await readLinuxProcessStartTimeTicks(process.pid);
+  if (observed.status !== "exact") {
+    throw vibe64Error(
+      "Vibe64 could not establish the session-lock owner process identity.",
+      "vibe64_session_lock_process_identity_unavailable"
+    );
+  }
+  return {
+    platform: SESSION_LOCK_PROCESS_IDENTITY_PLATFORM,
+    startTimeTicks: observed.startTimeTicks
+  };
+}
+
+async function sessionLockOwnerProcessStatus(owner = {}) {
+  const pid = Number(owner?.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return "ambiguous";
+  }
+  const observed = await readLinuxProcessStartTimeTicks(pid);
+  if (observed.status === "absent") {
+    return "absent";
+  }
+  const identity = isPlainObject(owner?.processIdentity)
+    ? owner.processIdentity
+    : {};
+  if (
+    Number(owner?.schemaVersion) !== SESSION_LOCK_OWNER_SCHEMA_VERSION ||
+    normalizeText(identity.platform) !== SESSION_LOCK_PROCESS_IDENTITY_PLATFORM ||
+    !/^\d+$/u.test(normalizeText(identity.startTimeTicks)) ||
+    observed.status !== "exact"
+  ) {
+    return processIsAlive(pid) ? "ambiguous" : "absent";
+  }
+  return observed.startTimeTicks === normalizeText(identity.startTimeTicks)
+    ? "exact"
+    : "reused";
+}
+
 function sessionLockPath(sessionPaths, lockName = "") {
   const normalizedLockName = normalizeText(lockName);
   if (!SESSION_LOCK_NAME_PATTERN.test(normalizedLockName)) {
@@ -456,7 +658,9 @@ async function readSessionLockOwner(lockPath = "") {
 async function sessionLockIsAbandoned(lockPath = "") {
   const owner = await readSessionLockOwner(lockPath);
   if (owner?.pid) {
-    return !processIsAlive(owner.pid);
+    return ["absent", "reused"].includes(
+      await sessionLockOwnerProcessStatus(owner)
+    );
   }
   try {
     const lockStat = await stat(lockPath);
@@ -487,10 +691,12 @@ async function quarantineAbandonedSessionLock(lockPath = "") {
 }
 
 async function acquireSessionLock(sessionPaths, lockName = "", {
+  processPlatform = process.platform,
   waitMs = 0
 } = {}) {
   const lockPath = sessionLockPath(sessionPaths, lockName);
   const lockRoot = path.dirname(lockPath);
+  const processIdentity = await currentSessionLockProcessIdentity(processPlatform);
   const token = randomUUID();
   const startedAtMs = Date.now();
   await mkdir(lockRoot, {
@@ -505,6 +711,8 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
         await writeJsonFile(path.join(lockPath, "owner.json"), {
           createdAt: new Date().toISOString(),
           pid: process.pid,
+          processIdentity,
+          schemaVersion: SESSION_LOCK_OWNER_SCHEMA_VERSION,
           token
         });
       } catch (error) {
@@ -714,8 +922,67 @@ function closedSessionStagingRoot(rootPaths = {}) {
   return path.join(rootPaths.closedSessionsRoot, ".staging");
 }
 
+function renewalArchiveStagingRoot(rootPaths = {}) {
+  return path.join(rootPaths.closedSessionsRoot, ".renewals");
+}
+
+function preparedRenewalArchiveRoot(rootPaths = {}, sessionId = "") {
+  return path.join(
+    renewalArchiveStagingRoot(rootPaths),
+    assertValidVibe64SessionId(sessionId)
+  );
+}
+
+function buildingRenewalArchiveRoot(rootPaths = {}, sessionId = "") {
+  return path.join(
+    renewalArchiveStagingRoot(rootPaths),
+    ".building",
+    assertValidVibe64SessionId(sessionId)
+  );
+}
+
+function publishingRenewalArchiveRoot(rootPaths = {}, sessionId = "") {
+  return path.join(
+    renewalArchiveStagingRoot(rootPaths),
+    ".publishing",
+    assertValidVibe64SessionId(sessionId)
+  );
+}
+
+function preparedRenewalArchivePath(rootPaths = {}, sessionId = "") {
+  const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+  return path.join(
+    preparedRenewalArchiveRoot(rootPaths, normalizedSessionId),
+    `${normalizedSessionId}.tar.gz`
+  );
+}
+
+function preparedRenewalMetadataPath(rootPaths = {}, sessionId = "") {
+  const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+  return path.join(
+    preparedRenewalArchiveRoot(rootPaths, normalizedSessionId),
+    `${normalizedSessionId}.json`
+  );
+}
+
 function closingSessionRoot(rootPaths = {}, sessionId = "") {
   return path.join(rootPaths.closingSessionsRoot, assertValidVibe64SessionId(sessionId));
+}
+
+function sessionCreationStagingRoot(rootPaths = {}) {
+  return path.join(rootPaths.activeSessionsRoot, ".creating");
+}
+
+async function removeStaleSessionCreationStages(rootPaths = {}, sessionId = "") {
+  const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+  const stagingRoot = sessionCreationStagingRoot(rootPaths);
+  const entries = await readDirectoryEntries(stagingRoot);
+  await Promise.all(entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${normalizedSessionId}.`))
+    .map((entry) => rm(path.join(stagingRoot, entry.name), {
+      force: true,
+      recursive: true
+    })));
 }
 
 async function closedSessionRecordExists(rootPaths = {}, sessionId = "") {
@@ -819,9 +1086,12 @@ function conversationTurnHasMessages(turn = {}) {
 
 function createVibe64SessionStore({
   clock = undefined,
+  onRenewalArchiveCommitStep = null,
+  onRenewalQuiesceStep = null,
   projectContextRoot = process.cwd(),
   projectRuntimeRoot = "",
-  projectSessionSourceRoot = ""
+  projectSessionSourceRoot = "",
+  sessionLockProcessPlatform = process.platform
 } = {}) {
   const normalizedProjectContextRoot = normalizeTargetRoot(projectContextRoot);
   const resolvedProjectRuntimeRoot = String(projectRuntimeRoot || "").trim();
@@ -830,6 +1100,19 @@ function createVibe64SessionStore({
   }
   const normalizedStateRoot = path.resolve(resolvedProjectRuntimeRoot);
   const now = createClockNow(clock);
+  const renewalArchiveCommitStep = typeof onRenewalArchiveCommitStep === "function"
+    ? onRenewalArchiveCommitStep
+    : async () => undefined;
+  const renewalQuiesceStep = typeof onRenewalQuiesceStep === "function"
+    ? onRenewalQuiesceStep
+    : async () => undefined;
+
+  function acquireStoreSessionLock(sessionPaths, lockName = "", options = {}) {
+    return acquireSessionLock(sessionPaths, lockName, {
+      ...options,
+      processPlatform: sessionLockProcessPlatform
+    });
+  }
 
   function paths(sessionId = "") {
     return resolveVibe64SessionPaths({
@@ -838,6 +1121,115 @@ function createVibe64SessionStore({
       projectSessionSourceRoot,
       sessionId
     });
+  }
+
+  function renewalStateRoot() {
+    return path.join(normalizedStateRoot, "session-renewals");
+  }
+
+  function renewalStatePath(sessionId = "") {
+    return path.join(
+      renewalStateRoot(),
+      `${assertValidVibe64SessionId(sessionId)}.json`
+    );
+  }
+
+  async function readSessionRenewalStateRecord(sessionId = "") {
+    return readTextIfExists(renewalStatePath(sessionId));
+  }
+
+  async function writeSessionRenewalStateRecord(sessionId = "", value = {}) {
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    await writeJsonFile(renewalStatePath(normalizedSessionId), value);
+    return value;
+  }
+
+  async function listSessionRenewalStateSessionIds() {
+    return sortedFileNames(
+      await readDirectoryEntries(renewalStateRoot()),
+      (name) => SESSION_RENEWAL_STATE_FILE_PATTERN.test(name)
+    ).map((name) => name.match(SESSION_RENEWAL_STATE_FILE_PATTERN)?.[1] || "")
+      .filter(Boolean);
+  }
+
+  async function runSessionRenewalStateExclusive(sessionId = "", operation) {
+    if (typeof operation !== "function") {
+      throw new TypeError("Session renewal state mutation requires an operation.");
+    }
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const statePath = renewalStatePath(normalizedSessionId);
+    const lockPaths = pathsForSessionRoot(normalizedSessionId, "");
+    return enqueueSessionMutation(statePath, async () => {
+      const release = await acquireStoreSessionLock(lockPaths, "renewal-state", {
+        waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+      });
+      if (!release) {
+        throw vibe64Error(
+          `Timed out waiting to update Vibe64 session renewal: ${normalizedSessionId}`,
+          "vibe64_session_renewal_state_lock_timeout"
+        );
+      }
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  async function runSessionRenewalWorkflowExclusive(sessionId = "", operation, {
+    waitMs = 0
+  } = {}) {
+    if (typeof operation !== "function") {
+      throw new TypeError("Session renewal workflow requires an operation.");
+    }
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const lockPaths = pathsForSessionRoot(normalizedSessionId, "");
+    const lockPath = sessionLockPath(lockPaths, "renewal-workflow");
+    const activeLocks = sessionExclusiveContext.getStore();
+    const inheritedContext = activeLocks?.get(lockPath);
+    if (inheritedContext?.participant?.active === true) {
+      const participant = beginSessionOperation(inheritedContext.lease);
+      const nestedLocks = new Map(activeLocks);
+      nestedLocks.set(lockPath, {
+        lease: inheritedContext.lease,
+        participant
+      });
+      try {
+        return {
+          acquired: true,
+          value: await sessionExclusiveContext.run(nestedLocks, operation)
+        };
+      } finally {
+        finishSessionOperation(inheritedContext.lease, participant);
+      }
+    }
+    const release = await acquireStoreSessionLock(lockPaths, "renewal-workflow", {
+      waitMs
+    });
+    if (!release) {
+      return {
+        acquired: false,
+        value: null
+      };
+    }
+    const lease = createSessionOperationLease();
+    const participant = beginSessionOperation(lease);
+    const nextLocks = new Map(activeLocks || []);
+    nextLocks.set(lockPath, {
+      lease,
+      participant
+    });
+    try {
+      return await sessionExclusiveContext.run(nextLocks, async () => ({
+        acquired: true,
+        value: await operation()
+      }));
+    } finally {
+      finishSessionOperation(lease, participant);
+      await lease.idle;
+      await release();
+    }
   }
 
   function pathsForSessionRoot(sessionId = "", sessionRoot = "") {
@@ -950,6 +1342,43 @@ function createVibe64SessionStore({
       }
     }
     return null;
+  }
+
+  async function readPreparedRenewalArchive(sessionId) {
+    const rootPaths = paths();
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const archivePath = preparedRenewalArchivePath(rootPaths, normalizedSessionId);
+    const metadataPath = preparedRenewalMetadataPath(rootPaths, normalizedSessionId);
+    const [archiveExists, metadataExists] = await Promise.all([
+      pathExists(archivePath),
+      pathExists(metadataPath)
+    ]);
+    if (!archiveExists && !metadataExists) {
+      return null;
+    }
+    if (!archiveExists || !metadataExists) {
+      throw vibe64Error(
+        `Prepared renewal archive is incomplete for ${normalizedSessionId}.`,
+        "vibe64_session_renewal_archive_incomplete"
+      );
+    }
+    let value;
+    try {
+      value = JSON.parse(await readFile(metadataPath, "utf8"));
+    } catch (error) {
+      if (error?.code?.startsWith?.("vibe64_")) {
+        throw error;
+      }
+      throw vibe64Error(
+        `Invalid prepared renewal archive metadata: ${metadataPath}`,
+        "vibe64_invalid_closed_session_archive_metadata"
+      );
+    }
+    return closedArchiveRecordFromJson(value, {
+      archivePath,
+      metadataPath,
+      status: VIBE64_SESSION_STATUS.ABANDONED
+    });
   }
 
   async function readClosedArchiveRecords() {
@@ -1126,7 +1555,7 @@ function createVibe64SessionStore({
     };
   }
 
-  async function withReadableSessionPaths(sessionId, operation) {
+  async function withReadableSessionPathsForRenewal(sessionId, operation) {
     const activePaths = paths(sessionId);
     const unarchivedRead = await readUnarchivedSessionIfPresent(sessionId, operation);
     if (unarchivedRead.found) {
@@ -1137,6 +1566,61 @@ function createVibe64SessionStore({
       return withExtractedClosedArchive(publishedArchive, operation);
     }
     throw vibe64Error(`Unknown vibe64 session: ${activePaths.sessionId}`, "vibe64_session_not_found");
+  }
+
+  async function withPublishedRenewalSession(sessionId, operation) {
+    if (typeof operation !== "function") {
+      throw new TypeError("Published renewal session work requires an operation.");
+    }
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const archiveRecord = await readClosedArchiveRecord(normalizedSessionId);
+    if (!archiveRecord) {
+      throw vibe64Error(
+        `Renewal predecessor has no published archive: ${normalizedSessionId}`,
+        "vibe64_session_renewal_archive_required"
+      );
+    }
+    return withExtractedClosedArchive(archiveRecord, async (sessionPaths, record) => {
+      const session = await readSessionFromPaths(sessionPaths, record);
+      return operation({
+        ...session,
+        artifactsRoot: sessionPaths.artifactsRoot,
+        sessionRoot: sessionPaths.sessionRoot
+      });
+    });
+  }
+
+  async function withPreparedRenewalSession(sessionId, operation) {
+    if (typeof operation !== "function") {
+      throw new TypeError("Prepared renewal session work requires an operation.");
+    }
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const archiveRecord = await readPreparedRenewalArchive(normalizedSessionId);
+    if (!archiveRecord) {
+      throw vibe64Error(
+        `Renewal predecessor has no prepared archive: ${normalizedSessionId}`,
+        "vibe64_session_renewal_archive_required"
+      );
+    }
+    await validateClosedSessionArchive(archiveRecord.archivePath);
+    return withExtractedClosedArchive(archiveRecord, async (sessionPaths, record) => {
+      const session = await readSessionFromPaths(sessionPaths, record);
+      return operation({
+        ...session,
+        artifactsRoot: sessionPaths.artifactsRoot,
+        sessionRoot: sessionPaths.sessionRoot
+      });
+    });
+  }
+
+  async function withReadableSessionPaths(sessionId, operation) {
+    return withReadableSessionPathsForRenewal(sessionId, async (sessionPaths, archiveRecord) => {
+      assertNormalSessionIsReadable({
+        sessionId: sessionPaths.sessionId,
+        status: await readStatusFromPaths(sessionPaths)
+      });
+      return operation(sessionPaths, archiveRecord);
+    });
   }
 
   async function bumpSessionRevision(sessionPaths) {
@@ -1150,7 +1634,9 @@ function createVibe64SessionStore({
     return nextManifest;
   }
 
-  async function mutateSession(sessionId, operation) {
+  async function mutateSessionRecord(sessionId, operation, {
+    renewal = false
+  } = {}) {
     const requestedPaths = paths(sessionId);
     const key = requestedPaths.sessionRoot;
     const inheritedContext = sessionMutationContext.getStore();
@@ -1161,6 +1647,7 @@ function createVibe64SessionStore({
           key,
           lease: inheritedContext.lease,
           participant,
+          renewal: renewal || inheritedContext.renewal === true,
           sessionPaths: inheritedContext.sessionPaths
         }, () => operation(inheritedContext.sessionPaths));
       } finally {
@@ -1168,7 +1655,7 @@ function createVibe64SessionStore({
       }
     }
     return enqueueSessionMutation(key, async () => {
-      const release = await acquireSessionLock(requestedPaths, "mutation", {
+      const release = await acquireStoreSessionLock(requestedPaths, "mutation", {
         waitMs: SESSION_MUTATION_LOCK_WAIT_MS
       });
       if (!release) {
@@ -1189,6 +1676,7 @@ function createVibe64SessionStore({
             key,
             lease,
             participant,
+            renewal,
             sessionPaths
           }, () => operation(sessionPaths));
         } finally {
@@ -1203,7 +1691,35 @@ function createVibe64SessionStore({
     });
   }
 
-  async function runSessionExclusive(sessionId, operationName, operation, {
+  async function mutateSession(sessionId, operation) {
+    const requestedPaths = paths(sessionId);
+    const inheritedContext = sessionMutationContext.getStore();
+    if (
+      inheritedContext?.key === requestedPaths.sessionRoot &&
+      inheritedContext.participant?.active === true &&
+      inheritedContext.renewal === true
+    ) {
+      return mutateSessionRecord(sessionId, operation, {
+        renewal: true
+      });
+    }
+    return mutateSessionRecord(sessionId, async (sessionPaths) => {
+      assertNormalSessionIsMutable({
+        sessionId: sessionPaths.sessionId,
+        status: await readStatusFromPaths(sessionPaths)
+      });
+      return operation(sessionPaths);
+    });
+  }
+
+  async function mutateSessionForRenewal(sessionId, operation) {
+    return mutateSessionRecord(sessionId, operation, {
+      renewal: true
+    });
+  }
+
+  async function runSessionExclusiveRecord(sessionId, operationName, operation, {
+    renewal = false,
     waitMs = 0
   } = {}) {
     if (typeof operation !== "function") {
@@ -1229,7 +1745,7 @@ function createVibe64SessionStore({
         finishSessionOperation(inheritedContext.lease, participant);
       }
     }
-    const release = await acquireSessionLock(sessionPaths, operationName, {
+    const release = await acquireStoreSessionLock(sessionPaths, operationName, {
       waitMs
     });
     if (!release) {
@@ -1246,6 +1762,12 @@ function createVibe64SessionStore({
       participant
     });
     try {
+      if (!renewal) {
+        assertNormalSessionIsMutable({
+          sessionId: sessionPaths.sessionId,
+          status: await readStatusFromPaths(sessionPaths)
+        });
+      }
       return await sessionExclusiveContext.run(nextLocks, async () => ({
         acquired: true,
         value: await operation()
@@ -1257,14 +1779,50 @@ function createVibe64SessionStore({
     }
   }
 
+  async function runSessionExclusive(sessionId, operationName, operation, options = {}) {
+    return runSessionExclusiveRecord(sessionId, operationName, operation, options);
+  }
+
+  async function runSessionExclusiveForRenewal(sessionId, operationName, operation, options = {}) {
+    return runSessionExclusiveRecord(sessionId, operationName, operation, {
+      ...options,
+      renewal: true
+    });
+  }
+
   async function writeStatus(sessionId, status) {
+    const normalizedStatus = assertVibe64SessionStatus(status);
+    if (RENEWAL_TRANSITION_VIBE64_SESSION_STATUSES.has(normalizedStatus)) {
+      throw vibe64Error(
+        `Renewal session status requires a renewal transition: ${normalizedStatus}`,
+        "vibe64_session_renewal_transition_required"
+      );
+    }
     return mutateSession(sessionId, async (sessionPaths) => {
-      await writeTextFile(sessionPaths.statusPath, `${assertVibe64SessionStatus(status)}\n`);
+      const currentStatus = await readStatusFromPaths(sessionPaths);
+      if (RENEWAL_TRANSITION_VIBE64_SESSION_STATUSES.has(currentStatus)) {
+        throw vibe64Error(
+          `Renewal session status requires a renewal transition: ${currentStatus}`,
+          "vibe64_session_renewal_transition_required"
+        );
+      }
+      await writeTextFile(sessionPaths.statusPath, `${normalizedStatus}\n`);
     });
   }
 
   async function readStatus(sessionId) {
-    return withReadableSessionPaths(sessionId, readStatusFromPaths);
+    const status = await readStatusForRenewal(sessionId);
+    if (HIDDEN_VIBE64_SESSION_STATUSES.has(status)) {
+      throw vibe64Error(
+        `Vibe64 session is reserved for an in-progress renewal: ${assertValidVibe64SessionId(sessionId)}`,
+        "vibe64_session_renewal_private"
+      );
+    }
+    return status;
+  }
+
+  async function readStatusForRenewal(sessionId) {
+    return withReadableSessionPathsForRenewal(sessionId, readStatusFromPaths);
   }
 
   async function readStatusFromPaths(sessionPaths) {
@@ -1273,6 +1831,12 @@ function createVibe64SessionStore({
 
   async function writeMetadataValue(sessionId, name, value) {
     return mutateSession(sessionId, async (sessionPaths) => {
+      await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
+    });
+  }
+
+  async function writeMetadataValueForRenewal(sessionId, name, value) {
+    return mutateSessionForRenewal(sessionId, async (sessionPaths) => {
       await writeTextFile(metadataFilePath(sessionPaths, name), `${normalizeText(value)}\n`);
     });
   }
@@ -1361,6 +1925,20 @@ function createVibe64SessionStore({
   async function readArtifact(sessionId, relativePath) {
     return withReadableSessionPaths(sessionId, (sessionPaths) => {
       return readTextIfExists(artifactFilePath(sessionPaths, relativePath));
+    });
+  }
+
+  async function readArtifactForRenewal(sessionId, relativePath) {
+    return withReadableSessionPathsForRenewal(sessionId, (sessionPaths) => {
+      return readTextIfExists(artifactFilePath(sessionPaths, relativePath));
+    });
+  }
+
+  async function writeJsonArtifactForRenewal(sessionId, relativePath, value) {
+    return mutateSessionForRenewal(sessionId, async (sessionPaths) => {
+      const artifactPath = artifactFilePath(sessionPaths, relativePath);
+      await writeJsonFile(artifactPath, value);
+      return artifactPath;
     });
   }
 
@@ -1982,7 +2560,11 @@ function createVibe64SessionStore({
   }
 
   async function readSession(sessionId) {
-    return withReadableSessionPaths(sessionId, readSessionFromPaths);
+    return assertNormalSessionIsReadable(await readSessionForRenewal(sessionId));
+  }
+
+  async function readSessionForRenewal(sessionId) {
+    return withReadableSessionPathsForRenewal(sessionId, readSessionFromPaths);
   }
 
   async function readSessionFromPaths(sessionPaths, archiveRecord = null) {
@@ -2032,6 +2614,10 @@ function createVibe64SessionStore({
   }
 
   async function readSessionSummary(sessionId) {
+    return assertNormalSessionIsReadable(await readSessionSummaryForRenewal(sessionId));
+  }
+
+  async function readSessionSummaryForRenewal(sessionId) {
     const activePaths = paths(sessionId);
     const unarchivedRead = await readUnarchivedSessionIfPresent(
       sessionId,
@@ -2135,6 +2721,241 @@ function createVibe64SessionStore({
     ));
   }
 
+  function assertRenewalArchiveOwnership({
+    metadata = {},
+    renewalId = "",
+    selectionMarkerRequired = true,
+    sessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    if (
+      normalizeText(metadata.renewal_id) !== normalizedRenewalId ||
+      normalizeText(metadata.renewed_to) !== normalizedSuccessorSessionId
+    ) {
+      throw vibe64Error(
+        `Renewal predecessor does not belong to renewal ${normalizedRenewalId}: ${normalizedSessionId}`,
+        "vibe64_session_renewal_link_mismatch"
+      );
+    }
+    const selectedBeforeArchive = normalizeText(metadata[RENEWAL_ARCHIVE_SELECTION_METADATA]);
+    if (
+      (selectionMarkerRequired || selectedBeforeArchive) &&
+      ![normalizedSessionId, RENEWAL_ARCHIVE_SELECTION_NONE].includes(selectedBeforeArchive)
+    ) {
+      throw vibe64Error(
+        `Renewal predecessor has no exact archive-selection marker: ${normalizedSessionId}`,
+        "vibe64_session_renewal_archive_marker_invalid"
+      );
+    }
+    return {
+      renewalId: normalizedRenewalId,
+      selectedBeforeArchive,
+      sessionId: normalizedSessionId,
+      successorSessionId: normalizedSuccessorSessionId
+    };
+  }
+
+  async function readPublishedRenewalArchive({
+    renewalId = "",
+    sessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    if (!await closedSessionRecordExists(paths(), normalizedSessionId)) {
+      return null;
+    }
+    const archiveRecord = await readClosedArchiveRecord(normalizedSessionId);
+    if (!archiveRecord) {
+      throw vibe64Error(
+        `Renewal predecessor has a partially published closed archive: ${normalizedSessionId}`,
+        "vibe64_session_renewal_archive_published"
+      );
+    }
+    if (
+      normalizeText(archiveRecord.index?.metadata?.renewal_id) !== assertRenewalId(renewalId) ||
+      normalizeText(archiveRecord.index?.metadata?.renewed_to) !== assertValidVibe64SessionId(successorSessionId)
+    ) {
+      throw vibe64Error(
+        `Published predecessor archive belongs to another renewal: ${normalizedSessionId}`,
+        "vibe64_session_renewal_link_mismatch"
+      );
+    }
+    return archiveRecord;
+  }
+
+  async function requirePreparedRenewalArchive({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const archiveRecord = await readPreparedRenewalArchive(normalizedSourceSessionId);
+    if (!archiveRecord) {
+      throw vibe64Error(
+        `Renewal predecessor has no prepared archive: ${normalizedSourceSessionId}`,
+        "vibe64_session_renewal_archive_required"
+      );
+    }
+    await validateClosedSessionArchive(archiveRecord.archivePath);
+    if (
+      normalizeText(archiveRecord.index?.metadata?.renewal_id) !== normalizedRenewalId ||
+      normalizeText(archiveRecord.index?.metadata?.renewed_to) !== normalizedSuccessorSessionId
+    ) {
+      throw vibe64Error(
+        `Prepared predecessor archive belongs to another renewal: ${normalizedSourceSessionId}`,
+        "vibe64_session_renewal_link_mismatch"
+      );
+    }
+    return archiveRecord;
+  }
+
+  async function prepareRenewalArchiveExclusive({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const rootPaths = paths();
+    if (await closedSessionRecordExists(rootPaths, normalizedSourceSessionId)) {
+      throw vibe64Error(
+        `Renewal predecessor was published before its durable commit: ${normalizedSourceSessionId}`,
+        "vibe64_session_renewal_archive_published"
+      );
+    }
+    const buildRoot = buildingRenewalArchiveRoot(rootPaths, normalizedSourceSessionId);
+    await rm(buildRoot, { force: true, recursive: true });
+    const existing = await readPreparedRenewalArchive(normalizedSourceSessionId);
+    if (existing) {
+      return requirePreparedRenewalArchive({
+        renewalId: normalizedRenewalId,
+        sourceSessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      });
+    }
+
+    const sourcePaths = paths(normalizedSourceSessionId);
+    const successorPaths = paths(normalizedSuccessorSessionId);
+    const [sourceStatus, sourceMetadata, successorStatus, successorMetadata] = await Promise.all([
+      readStatusFromPaths(sourcePaths),
+      readMetadataFromPaths(sourcePaths),
+      readStatusFromPaths(successorPaths),
+      readMetadataFromPaths(successorPaths)
+    ]);
+    if (
+      sourceStatus !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+      normalizeText(sourceMetadata.renewal_quiesced_id) !== normalizedRenewalId ||
+      successorStatus !== VIBE64_SESSION_STATUS.RENEWAL_PENDING ||
+      normalizeText(successorMetadata.renewal_id) !== normalizedRenewalId ||
+      normalizeText(successorMetadata.renewed_from) !== normalizedSourceSessionId
+    ) {
+      throw vibe64Error(
+        `Renewal archive cannot be prepared from ${sourceStatus} -> ${successorStatus}.`,
+        "vibe64_session_renewal_transition_invalid"
+      );
+    }
+    const selectedSessionId = rootPaths.currentSessionAliasPath
+      ? await readVibe64CurrentSessionAlias({
+          aliasPath: rootPaths.currentSessionAliasPath
+        })
+      : "";
+    const selectedBeforeArchive = selectedSessionId === normalizedSourceSessionId
+      ? normalizedSourceSessionId
+      : RENEWAL_ARCHIVE_SELECTION_NONE;
+    const preparedRoot = preparedRenewalArchiveRoot(rootPaths, normalizedSourceSessionId);
+    const snapshotRoot = path.join(buildRoot, normalizedSourceSessionId);
+    const stagedArchivePath = path.join(buildRoot, `${normalizedSourceSessionId}.tar.gz`);
+    const stagedMetadataPath = path.join(buildRoot, `${normalizedSourceSessionId}.json`);
+    const finalArchivePath = closedSessionArchivePath(
+      rootPaths,
+      VIBE64_SESSION_STATUS.ABANDONED,
+      normalizedSourceSessionId
+    );
+    const finalMetadataPath = closedSessionMetadataPath(
+      rootPaths,
+      VIBE64_SESSION_STATUS.ABANDONED,
+      normalizedSourceSessionId
+    );
+    const archivedAt = now().toISOString();
+    try {
+      await mkdir(buildRoot, { recursive: true });
+      await cp(sourcePaths.sessionRoot, snapshotRoot, { recursive: true });
+      const snapshotPaths = pathsForSessionRoot(normalizedSourceSessionId, snapshotRoot);
+      await Promise.all([
+        "renewal_activated_at",
+        "renewal_archived_at",
+        "renewal_finalized_at",
+        "renewal_restored_at",
+        "renewal_restored_id",
+        "renewal_rolled_back_at"
+      ].map((name) => rm(metadataFilePath(snapshotPaths, name), { force: true })));
+      await Promise.all([
+        ...Object.entries({
+          renewal_acknowledged_at: normalizeText(successorMetadata.renewal_acknowledged_at),
+          renewal_actor_display_name: normalizeText(successorMetadata.renewal_actor_display_name),
+          renewal_actor_id: normalizeText(successorMetadata.renewal_actor_id),
+          renewal_archived_at: archivedAt,
+          renewal_confirmed_at: normalizeText(successorMetadata.renewal_confirmed_at),
+          renewal_id: normalizedRenewalId,
+          renewal_started_at: normalizeText(successorMetadata.renewal_started_at),
+          renewal_successor_created_at: normalizeText(successorMetadata.renewal_successor_created_at),
+          renewed_at: normalizeText(successorMetadata.renewed_at),
+          renewed_to: normalizedSuccessorSessionId,
+          [RENEWAL_ARCHIVE_SELECTION_METADATA]: selectedBeforeArchive
+        }).map(([name, value]) => (
+          writeTextFile(metadataFilePath(snapshotPaths, name), `${value}\n`)
+        )),
+        writeTextFile(
+          snapshotPaths.statusPath,
+          `${VIBE64_SESSION_STATUS.ABANDONED}\n`
+        )
+      ]);
+      const summary = await readSessionSummaryFromPaths(snapshotPaths);
+      const metadataRecord = closedArchiveMetadataRecord({
+        archivePath: finalArchivePath,
+        archivedAt,
+        metadataPath: finalMetadataPath,
+        sessionId: normalizedSourceSessionId,
+        status: VIBE64_SESSION_STATUS.ABANDONED,
+        summary
+      });
+      const tarResult = await runCommand("tar", [
+        "-czf",
+        stagedArchivePath,
+        "-C",
+        buildRoot,
+        normalizedSourceSessionId
+      ], {
+        allowedRoots: [buildRoot],
+        cwd: buildRoot
+      });
+      if (!tarResult.ok) {
+        throw vibe64Error(
+          `Cannot prepare renewal archive ${normalizedSourceSessionId}: ${tarResult.output}`,
+          "vibe64_closed_session_archive_write_failed"
+        );
+      }
+      await validateClosedSessionArchive(stagedArchivePath);
+      await writeJsonFile(stagedMetadataPath, metadataRecord);
+      await rm(snapshotRoot, { force: true, recursive: true });
+      await mkdir(path.dirname(preparedRoot), { recursive: true });
+      await rename(buildRoot, preparedRoot);
+      return requirePreparedRenewalArchive({
+        renewalId: normalizedRenewalId,
+        sourceSessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      });
+    } finally {
+      await rm(buildRoot, { force: true, recursive: true });
+    }
+  }
+
   async function detachClosedSessionForArchive(sessionId) {
     const activePaths = paths(sessionId);
     const closingPaths = closingSessionPaths(activePaths.sessionId);
@@ -2150,7 +2971,7 @@ function createVibe64SessionStore({
       );
     }
     return enqueueSessionMutation(mutationKey, async () => {
-      const release = await acquireSessionLock(activePaths, "mutation", {
+      const release = await acquireStoreSessionLock(activePaths, "mutation", {
         waitMs: SESSION_MUTATION_LOCK_WAIT_MS
       });
       if (!release) {
@@ -2171,6 +2992,23 @@ function createVibe64SessionStore({
           );
         }
         if (closingExists) {
+          const [closingStatus, closingMetadata] = await Promise.all([
+            readStatusFromPaths(closingPaths),
+            readMetadataFromPaths(closingPaths)
+          ]);
+          assertNormalSessionIsMutable({
+            sessionId: closingPaths.sessionId,
+            status: closingStatus
+          });
+          if (
+            normalizeText(closingMetadata.renewal_id) &&
+            normalizeText(closingMetadata.renewed_to)
+          ) {
+            throw vibe64Error(
+              `Renewal predecessor must use the renewal archive transaction: ${activePaths.sessionId}`,
+              "vibe64_session_renewal_archive_api_required"
+            );
+          }
           await clearClosingSessionAlias(closingPaths);
           return;
         }
@@ -2183,11 +3021,27 @@ function createVibe64SessionStore({
             "vibe64_session_not_found"
           );
         }
-        const status = await readStatusFromPaths(activePaths);
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(activePaths),
+          readMetadataFromPaths(activePaths)
+        ]);
+        assertNormalSessionIsMutable({
+          sessionId: activePaths.sessionId,
+          status
+        });
         if (!CLOSED_VIBE64_SESSION_STATUSES.has(status)) {
           throw vibe64Error(
             `Cannot compact open Vibe64 session ${activePaths.sessionId} with status ${status}.`,
             "vibe64_session_compact_open_status"
+          );
+        }
+        if (
+          normalizeText(metadata.renewal_id) &&
+          normalizeText(metadata.renewed_to)
+        ) {
+          throw vibe64Error(
+            `Renewal predecessor must use the renewal archive transaction: ${activePaths.sessionId}`,
+            "vibe64_session_renewal_archive_api_required"
           );
         }
 
@@ -2205,7 +3059,7 @@ function createVibe64SessionStore({
     const sessionPaths = paths(sessionId);
     const archiveLockPath = sessionLockPath(sessionPaths, "archive");
     return enqueueSessionMutation(archiveLockPath, async () => {
-      const release = await acquireSessionLock(sessionPaths, "archive", {
+      const release = await acquireStoreSessionLock(sessionPaths, "archive", {
         waitMs: SESSION_MUTATION_LOCK_WAIT_MS
       });
       if (!release) {
@@ -2233,7 +3087,393 @@ function createVibe64SessionStore({
     );
   }
 
-  async function compactClosedSessionExclusive(sessionId) {
+  async function detachRenewedSessionForArchive(options = {}) {
+    return runSessionArchiveExclusive(
+      options.sourceSessionId,
+      async () => {
+        const sourcePaths = paths(options.sourceSessionId);
+        const mutationKey = sourcePaths.sessionRoot;
+        const mutationContext = sessionMutationContext.getStore();
+        if (
+          mutationContext?.key === mutationKey &&
+          mutationContext.participant?.active === true
+        ) {
+          throw vibe64Error(
+            `Cannot prepare renewal archive during an active mutation: ${sourcePaths.sessionId}`,
+            "vibe64_session_compact_during_mutation"
+          );
+        }
+        return enqueueSessionMutation(mutationKey, async () => {
+          const release = await acquireStoreSessionLock(sourcePaths, "mutation", {
+            waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+          });
+          if (!release) {
+            throw vibe64Error(
+              `Timed out waiting to prepare renewed Vibe64 session: ${sourcePaths.sessionId}`,
+              "vibe64_session_mutation_lock_timeout"
+            );
+          }
+          try {
+            const archiveRecord = await prepareRenewalArchiveExclusive(options);
+            return {
+              archiveRecord,
+              detached: false,
+              prepared: true,
+              published: false,
+              renewalId: assertRenewalId(options.renewalId),
+              sessionId: sourcePaths.sessionId,
+              successorSessionId: assertValidVibe64SessionId(options.successorSessionId)
+            };
+          } finally {
+            await release();
+          }
+        });
+      }
+    );
+  }
+
+  async function compactRenewedSession(options = {}) {
+    const prepared = await detachRenewedSessionForArchive(options);
+    return prepared.archiveRecord;
+  }
+
+  async function restoreRenewalClosingSession({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    return runSessionArchiveExclusive(normalizedSourceSessionId, async () => {
+      const activePaths = paths(normalizedSourceSessionId);
+      const closingPaths = closingSessionPaths(normalizedSourceSessionId);
+      return enqueueSessionMutation(activePaths.sessionRoot, async () => {
+        const release = await acquireStoreSessionLock(activePaths, "mutation", {
+          waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+        });
+        if (!release) {
+          throw vibe64Error(
+            `Timed out waiting to restore renewed Vibe64 session: ${normalizedSourceSessionId}`,
+            "vibe64_session_mutation_lock_timeout"
+          );
+        }
+        try {
+          const [activeExists, closingExists] = await Promise.all([
+            pathExists(activePaths.manifestPath),
+            pathExists(closingPaths.manifestPath)
+          ]);
+          if (activeExists && closingExists) {
+            throw vibe64Error(
+              `Vibe64 session exists in both active and closing state: ${normalizedSourceSessionId}`,
+              "vibe64_session_close_state_conflict"
+            );
+          }
+          if (
+            closingExists ||
+            await closedSessionRecordExists(paths(), normalizedSourceSessionId)
+          ) {
+            throw vibe64Error(
+              `A committed predecessor archive cannot be restored: ${normalizedSourceSessionId}`,
+              "vibe64_session_renewal_archive_published"
+            );
+          }
+          if (!activeExists) {
+            throw vibe64Error(
+              `Unknown vibe64 session: ${normalizedSourceSessionId}`,
+              "vibe64_session_not_found"
+            );
+          }
+          const [status, metadata] = await Promise.all([
+            readStatusFromPaths(activePaths),
+            readMetadataFromPaths(activePaths)
+          ]);
+          if (
+            status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+            normalizeText(metadata.renewal_quiesced_id) !== normalizedRenewalId
+          ) {
+            throw vibe64Error(
+              `Renewal predecessor cannot be restored from status ${status}: ${normalizedSourceSessionId}`,
+              "vibe64_session_renewal_archive_status_invalid"
+            );
+          }
+          let selectedBeforeArchive = RENEWAL_ARCHIVE_SELECTION_NONE;
+          const prepared = await readPreparedRenewalArchive(normalizedSourceSessionId);
+          if (prepared) {
+            selectedBeforeArchive = await withPreparedRenewalSession(
+              normalizedSourceSessionId,
+              (preparedSession) => assertRenewalArchiveOwnership({
+                metadata: preparedSession.metadata,
+                renewalId: normalizedRenewalId,
+                sessionId: normalizedSourceSessionId,
+                successorSessionId: normalizedSuccessorSessionId
+              }).selectedBeforeArchive
+            );
+            await rm(
+              preparedRenewalArchiveRoot(paths(), normalizedSourceSessionId),
+              { force: true, recursive: true }
+            );
+          }
+          return {
+            renewalId: normalizedRenewalId,
+            restored: Boolean(prepared),
+            selectedBeforeArchive,
+            sessionId: normalizedSourceSessionId,
+            status,
+            successorSessionId: normalizedSuccessorSessionId
+          };
+        } finally {
+          await release();
+        }
+      });
+    });
+  }
+
+  async function commitRenewalArchive({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    return runSessionArchiveExclusive(normalizedSourceSessionId, async () => {
+      const rootPaths = paths();
+      const finalArchivePath = closedSessionArchivePath(
+        rootPaths,
+        VIBE64_SESSION_STATUS.ABANDONED,
+        normalizedSourceSessionId
+      );
+      const finalMetadataPath = closedSessionMetadataPath(
+        rootPaths,
+        VIBE64_SESSION_STATUS.ABANDONED,
+        normalizedSourceSessionId
+      );
+      const publishingRoot = publishingRenewalArchiveRoot(
+        rootPaths,
+        normalizedSourceSessionId
+      );
+      await rm(publishingRoot, { force: true, recursive: true });
+      const [initialArchiveExists, initialMetadataExists] = await Promise.all([
+        pathExists(finalArchivePath),
+        pathExists(finalMetadataPath)
+      ]);
+      const prepared = await requirePreparedRenewalArchive({
+        renewalId: normalizedRenewalId,
+        sourceSessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      });
+      const preparedSession = await withPreparedRenewalSession(
+        normalizedSourceSessionId,
+        (session) => session
+      );
+      const ownership = assertRenewalArchiveOwnership({
+        metadata: preparedSession.metadata,
+        renewalId: normalizedRenewalId,
+        sessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      });
+      const activePaths = paths(normalizedSourceSessionId);
+      const closingPaths = closingSessionPaths(normalizedSourceSessionId);
+      return enqueueSessionMutation(activePaths.sessionRoot, async () => {
+        const release = await acquireStoreSessionLock(activePaths, "mutation", {
+          waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+        });
+        if (!release) {
+          throw vibe64Error(
+            `Timed out waiting to commit renewed Vibe64 session: ${normalizedSourceSessionId}`,
+            "vibe64_session_mutation_lock_timeout"
+          );
+        }
+        try {
+          const [activeExists, closingExists] = await Promise.all([
+            pathExists(activePaths.manifestPath),
+            pathExists(closingPaths.manifestPath)
+          ]);
+          if (activeExists && closingExists) {
+            throw vibe64Error(
+              `Vibe64 session exists in both active and closing state: ${normalizedSourceSessionId}`,
+              "vibe64_session_close_state_conflict"
+            );
+          }
+          if (activeExists) {
+            const [status, metadata] = await Promise.all([
+              readStatusFromPaths(activePaths),
+              readMetadataFromPaths(activePaths)
+            ]);
+            if (
+              status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+              normalizeText(metadata.renewal_quiesced_id) !== normalizedRenewalId
+            ) {
+              throw vibe64Error(
+                `Renewal predecessor cannot be committed from status ${status}: ${normalizedSourceSessionId}`,
+                "vibe64_session_renewal_archive_status_invalid"
+              );
+            }
+            await moveActiveSessionToClosing(activePaths, closingPaths);
+            await renewalArchiveCommitStep({
+              renewalId: normalizedRenewalId,
+              sessionId: normalizedSourceSessionId,
+              step: "closing-renamed"
+            });
+          } else if (!closingExists) {
+            throw vibe64Error(
+              `Unknown vibe64 session: ${normalizedSourceSessionId}`,
+              "vibe64_session_not_found"
+            );
+          }
+
+          const [closingStatus, closingMetadata] = await Promise.all([
+            readStatusFromPaths(closingPaths),
+            readMetadataFromPaths(closingPaths)
+          ]);
+          if (closingStatus === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED) {
+            if (
+              normalizeText(closingMetadata.renewal_quiesced_id) !==
+                normalizedRenewalId
+            ) {
+              throw vibe64Error(
+                `Renewal predecessor closing ownership is invalid: ${normalizedSourceSessionId}`,
+                "vibe64_session_renewal_archive_status_invalid"
+              );
+            }
+            for (const name of [
+              "renewal_activated_at",
+              "renewal_archived_at",
+              "renewal_finalized_at",
+              "renewal_restored_at",
+              "renewal_restored_id",
+              "renewal_rolled_back_at"
+            ]) {
+              await rm(metadataFilePath(closingPaths, name), { force: true });
+            }
+            for (const [name, value] of Object.entries({
+              renewal_acknowledged_at: normalizeText(preparedSession.metadata.renewal_acknowledged_at),
+              renewal_actor_display_name: normalizeText(preparedSession.metadata.renewal_actor_display_name),
+              renewal_actor_id: normalizeText(preparedSession.metadata.renewal_actor_id),
+              renewal_archived_at: normalizeText(preparedSession.metadata.renewal_archived_at),
+              renewal_confirmed_at: normalizeText(preparedSession.metadata.renewal_confirmed_at),
+              renewal_id: normalizedRenewalId,
+              renewal_started_at: normalizeText(preparedSession.metadata.renewal_started_at),
+              renewal_successor_created_at: normalizeText(preparedSession.metadata.renewal_successor_created_at),
+              renewed_at: normalizeText(preparedSession.metadata.renewed_at),
+              renewed_to: normalizedSuccessorSessionId,
+              [RENEWAL_ARCHIVE_SELECTION_METADATA]: ownership.selectedBeforeArchive
+            })) {
+              await writeTextFile(metadataFilePath(closingPaths, name), `${value}\n`);
+              await renewalArchiveCommitStep({
+                metadataName: name,
+                renewalId: normalizedRenewalId,
+                sessionId: normalizedSourceSessionId,
+                step: "closing-metadata-written"
+              });
+            }
+            await writeTextFile(
+              closingPaths.statusPath,
+              `${VIBE64_SESSION_STATUS.ABANDONED}\n`
+            );
+            await renewalArchiveCommitStep({
+              renewalId: normalizedRenewalId,
+              sessionId: normalizedSourceSessionId,
+              step: "closing-status-written"
+            });
+          } else if (closingStatus === VIBE64_SESSION_STATUS.ABANDONED) {
+            assertRenewalArchiveOwnership({
+              metadata: closingMetadata,
+              renewalId: normalizedRenewalId,
+              sessionId: normalizedSourceSessionId,
+              successorSessionId: normalizedSuccessorSessionId
+            });
+          } else {
+            throw vibe64Error(
+              `Renewal predecessor closing status is invalid: ${normalizedSourceSessionId}`,
+              "vibe64_session_renewal_archive_status_invalid"
+            );
+          }
+
+          const archiveExists = initialArchiveExists || await pathExists(finalArchivePath);
+          const metadataExists = initialMetadataExists || await pathExists(finalMetadataPath);
+          if (archiveExists && metadataExists) {
+            const published = await readPublishedRenewalArchive({
+              renewalId: normalizedRenewalId,
+              sessionId: normalizedSourceSessionId,
+              successorSessionId: normalizedSuccessorSessionId
+            });
+            await validateClosedSessionArchive(published.archivePath);
+            return published;
+          }
+          if (archiveExists || metadataExists) {
+            await Promise.all([
+              rm(finalArchivePath, { force: true }),
+              rm(finalMetadataPath, { force: true })
+            ]);
+          }
+          await mkdir(path.dirname(finalArchivePath), { recursive: true });
+          const stagedArchivePath = path.join(
+            publishingRoot,
+            `${normalizedSourceSessionId}.tar.gz`
+          );
+          const stagedMetadataPath = path.join(
+            publishingRoot,
+            `${normalizedSourceSessionId}.json`
+          );
+          await mkdir(publishingRoot, { recursive: true });
+          try {
+            await copyFile(prepared.archivePath, stagedArchivePath);
+            await copyFile(prepared.metadataPath, stagedMetadataPath);
+            await validateClosedSessionArchive(stagedArchivePath);
+            await rename(stagedArchivePath, finalArchivePath);
+            await rename(stagedMetadataPath, finalMetadataPath);
+          } finally {
+            await rm(publishingRoot, { force: true, recursive: true });
+          }
+          const committed = await readPublishedRenewalArchive({
+            renewalId: normalizedRenewalId,
+            sessionId: normalizedSourceSessionId,
+            successorSessionId: normalizedSuccessorSessionId
+          });
+          await validateClosedSessionArchive(committed.archivePath);
+          return committed;
+        } finally {
+          await release();
+        }
+      });
+    });
+  }
+
+  async function finalizeRenewalArchiveCommit({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const published = await readPublishedRenewalArchive({
+      renewalId: normalizedRenewalId,
+      sessionId: normalizedSourceSessionId,
+      successorSessionId: normalizedSuccessorSessionId
+    });
+    if (!published) {
+      throw vibe64Error(
+        `Renewal predecessor has no published archive: ${normalizedSourceSessionId}`,
+        "vibe64_session_renewal_archive_required"
+      );
+    }
+    const finalized = await runSessionArchiveExclusive(
+      normalizedSourceSessionId,
+      () => compactClosedSessionExclusive(normalizedSourceSessionId)
+    );
+    await rm(
+      preparedRenewalArchiveRoot(paths(), normalizedSourceSessionId),
+      { force: true, recursive: true }
+    );
+    return finalized;
+  }
+
+  async function compactClosedSessionExclusive(sessionId, {
+    retainSessionRoot = false
+  } = {}) {
     const rootPaths = paths();
     const sessionPaths = closingSessionPaths(sessionId);
     if (!await pathExists(sessionPaths.manifestPath)) {
@@ -2266,10 +3506,12 @@ function createVibe64SessionStore({
         sessionPaths.sessionId
       );
       await validateClosedSessionArchive(archiveRecord.archivePath);
-      await rm(sessionPaths.sessionRoot, {
-        force: true,
-        recursive: true
-      });
+      if (!retainSessionRoot) {
+        await rm(sessionPaths.sessionRoot, {
+          force: true,
+          recursive: true
+        });
+      }
       return archiveRecord;
     }
     if (finalArchiveExists || finalMetadataExists) {
@@ -2337,10 +3579,12 @@ function createVibe64SessionStore({
         status,
         sessionPaths.sessionId
       );
-      await rm(sessionPaths.sessionRoot, {
-        force: true,
-        recursive: true
-      });
+      if (!retainSessionRoot) {
+        await rm(sessionPaths.sessionRoot, {
+          force: true,
+          recursive: true
+        });
+      }
       return archiveRecord;
     } catch (error) {
       if (!metadataFinalized) {
@@ -2378,7 +3622,15 @@ function createVibe64SessionStore({
     }
     return enqueueSessionMutation(rootPaths.currentSessionAliasPath, async () => {
       if (selectedSessionId) {
-        await ensureActiveSessionRoot(selectedSessionId);
+        const selectedSession = await readSessionForRenewal(selectedSessionId);
+        if (!OPEN_VIBE64_SESSION_STATUSES.has(selectedSession.status)) {
+          throw vibe64Error(
+            `Vibe64 session cannot be selected while it is ${selectedSession.status}: ${selectedSessionId}`,
+            HIDDEN_VIBE64_SESSION_STATUSES.has(selectedSession.status)
+              ? "vibe64_session_renewal_private"
+              : "vibe64_session_not_selectable"
+          );
+        }
       }
       await updateVibe64CurrentSessionAlias({
         aliasPath: rootPaths.currentSessionAliasPath,
@@ -2386,6 +3638,131 @@ function createVibe64SessionStore({
       });
       return {
         sessionId: selectedSessionId
+      };
+    });
+  }
+
+  async function finalizeRenewalCurrentSession({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const ownership = await withPreparedRenewalSession(
+      normalizedSourceSessionId,
+      async (publishedSession) => assertRenewalArchiveOwnership({
+        metadata: publishedSession.metadata,
+        renewalId: normalizedRenewalId,
+        sessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      })
+    );
+    const rootPaths = paths();
+    if (!rootPaths.currentSessionAliasPath) {
+      return {
+        changed: false,
+        selectedBeforeArchive: ownership.selectedBeforeArchive,
+        sessionId: ""
+      };
+    }
+    return enqueueSessionMutation(rootPaths.currentSessionAliasPath, async () => {
+      const successor = await readSessionForRenewal(normalizedSuccessorSessionId);
+      if (
+        successor.status !== VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING ||
+        normalizeText(successor.metadata.renewal_id) !== normalizedRenewalId ||
+        normalizeText(successor.metadata.renewed_from) !== normalizedSourceSessionId
+      ) {
+        throw vibe64Error(
+          `Renewal successor is not prepared for renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+          "vibe64_session_renewal_link_mismatch"
+        );
+      }
+      const selectedSessionId = await readVibe64CurrentSessionAlias({
+        aliasPath: rootPaths.currentSessionAliasPath
+      });
+      return {
+        changed: false,
+        selectedBeforeArchive: ownership.selectedBeforeArchive,
+        sessionId: selectedSessionId,
+        successorWillBeSelected:
+          ownership.selectedBeforeArchive === normalizedSourceSessionId &&
+          (!selectedSessionId || selectedSessionId === normalizedSourceSessionId)
+      };
+    });
+  }
+
+  async function commitRenewalCurrentSession({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const ownership = await withPublishedRenewalSession(
+      normalizedSourceSessionId,
+      async (publishedSession) => assertRenewalArchiveOwnership({
+        metadata: publishedSession.metadata,
+        renewalId: normalizedRenewalId,
+        sessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      })
+    );
+    const rootPaths = paths();
+    if (!rootPaths.currentSessionAliasPath) {
+      return {
+        changed: false,
+        selectedBeforeArchive: ownership.selectedBeforeArchive,
+        sessionId: ""
+      };
+    }
+    return enqueueSessionMutation(rootPaths.currentSessionAliasPath, async () => {
+      const successor = await readSessionForRenewal(normalizedSuccessorSessionId);
+      if (
+        successor.status !== VIBE64_SESSION_STATUS.ACTIVE ||
+        normalizeText(successor.metadata.renewal_id) !== normalizedRenewalId ||
+        normalizeText(successor.metadata.renewed_from) !== normalizedSourceSessionId ||
+        !normalizeText(successor.metadata.renewal_activated_at)
+      ) {
+        throw vibe64Error(
+          `Renewal successor is not committed for renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+          "vibe64_session_renewal_link_mismatch"
+        );
+      }
+      const selectedSessionId = await readVibe64CurrentSessionAlias({
+        aliasPath: rootPaths.currentSessionAliasPath
+      });
+      if (
+        ownership.selectedBeforeArchive !== normalizedSourceSessionId ||
+        (
+          selectedSessionId &&
+          selectedSessionId !== normalizedSourceSessionId &&
+          selectedSessionId !== normalizedSuccessorSessionId
+        )
+      ) {
+        return {
+          changed: false,
+          selectedBeforeArchive: ownership.selectedBeforeArchive,
+          sessionId: selectedSessionId
+        };
+      }
+      if (selectedSessionId === normalizedSuccessorSessionId) {
+        return {
+          changed: false,
+          selectedBeforeArchive: ownership.selectedBeforeArchive,
+          sessionId: selectedSessionId
+        };
+      }
+      await updateVibe64CurrentSessionAlias({
+        aliasPath: rootPaths.currentSessionAliasPath,
+        sessionId: normalizedSuccessorSessionId
+      });
+      return {
+        changed: true,
+        selectedBeforeArchive: ownership.selectedBeforeArchive,
+        sessionId: normalizedSuccessorSessionId
       };
     });
   }
@@ -2398,10 +3775,14 @@ function createVibe64SessionStore({
     const sessionId = await readVibe64CurrentSessionAlias({
       aliasPath: rootPaths.currentSessionAliasPath
     });
-    return sessionId ? readSession(assertValidVibe64SessionId(sessionId)) : null;
+    if (!sessionId) {
+      return null;
+    }
+    const session = await readSessionForRenewal(assertValidVibe64SessionId(sessionId));
+    return OPEN_VIBE64_SESSION_STATUSES.has(session.status) ? session : null;
   }
 
-  async function createSession({
+  async function createSessionRecord({
     metadata = {},
     runtimeKind = "",
     sessionId = "",
@@ -2420,49 +3801,719 @@ function createVibe64SessionStore({
       ? assertValidVibe64SessionId(sessionId)
       : await createAvailableSessionId(rootPaths, createdAt);
     const sessionPaths = paths(resolvedSessionId);
-    if (await sessionRecordExists(rootPaths, resolvedSessionId)) {
-      throw vibe64Error(`Vibe64 session already exists: ${resolvedSessionId}`, "vibe64_session_exists");
-    }
-    try {
-      await mkdir(sessionPaths.sessionRoot);
-    } catch (error) {
-      if (error?.code === "EEXIST") {
-        throw vibe64Error(`Vibe64 session already exists: ${resolvedSessionId}`, "vibe64_session_exists");
+    return enqueueSessionMutation(sessionPaths.sessionRoot, async () => {
+      const release = await acquireStoreSessionLock(sessionPaths, "create", {
+        waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+      });
+      if (!release) {
+        throw vibe64Error(
+          `Vibe64 session creation is already in progress: ${resolvedSessionId}`,
+          "vibe64_session_busy"
+        );
       }
-      throw error;
+      const stagingRoot = sessionCreationStagingRoot(rootPaths);
+      const stagedSessionRoot = path.join(
+        stagingRoot,
+        `${resolvedSessionId}.${process.pid}.${randomUUID()}`
+      );
+      const stagedPaths = pathsForSessionRoot(resolvedSessionId, stagedSessionRoot);
+      let published = false;
+      try {
+        if (await sessionRecordExists(rootPaths, resolvedSessionId)) {
+          throw vibe64Error(`Vibe64 session already exists: ${resolvedSessionId}`, "vibe64_session_exists");
+        }
+        await mkdir(stagedSessionRoot, { recursive: true });
+        await Promise.all([
+          mkdir(stagedPaths.agentRunsRoot, {
+            recursive: true
+          }),
+          mkdir(stagedPaths.artifactsRoot, {
+            recursive: true
+          }),
+          mkdir(stagedPaths.backgroundTasksRoot, {
+            recursive: true
+          }),
+          mkdir(stagedPaths.metadataRoot, {
+            recursive: true
+          })
+        ]);
+        const normalizedRuntimeKind = normalizeText(runtimeKind);
+        const manifest = {
+          ...(normalizedRuntimeKind ? { runtimeKind: normalizedRuntimeKind } : {}),
+          createdAt,
+          product: "vibe64",
+          revision: 1,
+          schemaVersion: VIBE64_SESSION_SCHEMA_VERSION,
+          sessionId: resolvedSessionId,
+          updatedAt: createdAt
+        };
+        await Promise.all([
+          writeJsonFile(stagedPaths.manifestPath, manifest),
+          writeTextFile(stagedPaths.statusPath, `${normalizedStatus}\n`),
+          ...Object.entries(normalizedMetadata).map(([name, value]) => {
+            return writeTextFile(metadataFilePath(stagedPaths, name), `${value}\n`);
+          })
+        ]);
+        if (await sessionRecordExists(rootPaths, resolvedSessionId)) {
+          throw vibe64Error(`Vibe64 session already exists: ${resolvedSessionId}`, "vibe64_session_exists");
+        }
+        await rename(stagedSessionRoot, sessionPaths.sessionRoot);
+        published = true;
+        await removeStaleSessionCreationStages(rootPaths, resolvedSessionId).catch(() => null);
+        return readSessionForRenewal(resolvedSessionId);
+      } catch (error) {
+        if (["EEXIST", "ENOTEMPTY"].includes(error?.code)) {
+          throw vibe64Error(`Vibe64 session already exists: ${resolvedSessionId}`, "vibe64_session_exists");
+        }
+        throw error;
+      } finally {
+        if (!published) {
+          await rm(stagedSessionRoot, {
+            force: true,
+            recursive: true
+          });
+        }
+        await release();
+      }
+    });
+  }
+
+  async function createSession(options = {}) {
+    const status = assertVibe64SessionStatus(options.status);
+    if (RENEWAL_TRANSITION_VIBE64_SESSION_STATUSES.has(status)) {
+      throw vibe64Error(
+        `Renewal session status requires createRenewalPendingSession: ${status}`,
+        "vibe64_session_renewal_transition_required"
+      );
     }
-    await Promise.all([
-      mkdir(sessionPaths.agentRunsRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.artifactsRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.backgroundTasksRoot, {
-        recursive: true
-      }),
-      mkdir(sessionPaths.metadataRoot, {
-        recursive: true
+    return createSessionRecord({
+      ...options,
+      status
+    });
+  }
+
+  async function quiesceSessionForRenewal({
+    quiescedAt = "",
+    renewalId = "",
+    sourceSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const requestedQuiescedAt = quiescedAt
+      ? toDate(quiescedAt).toISOString()
+      : now().toISOString();
+    return runRenewalTransitionExclusive(async () => {
+      return mutateSessionForRenewal(normalizedSourceSessionId, async (sourcePaths) => {
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(sourcePaths),
+          readMetadataFromPaths(sourcePaths)
+        ]);
+        const currentQuiescedId = normalizeText(metadata.renewal_quiesced_id);
+        if (status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED) {
+          if (currentQuiescedId && currentQuiescedId !== normalizedRenewalId) {
+            throw vibe64Error(
+              `Session is quiesced for another renewal: ${normalizedSourceSessionId}`,
+              "vibe64_session_renewal_conflict"
+            );
+          }
+          const normalizedQuiescedAt = normalizeText(metadata.renewal_quiesced_at) ||
+            requestedQuiescedAt;
+          await Promise.all([
+            writeTextFile(
+              metadataFilePath(sourcePaths, "renewal_quiesced_at"),
+              `${normalizedQuiescedAt}\n`
+            ),
+            writeTextFile(
+              metadataFilePath(sourcePaths, "renewal_quiesced_id"),
+              `${normalizedRenewalId}\n`
+            )
+          ]);
+          return readSessionFromPaths(sourcePaths);
+        }
+        const source = await readSessionFromPaths(sourcePaths);
+        if (
+          status !== VIBE64_SESSION_STATUS.ACTIVE ||
+          sessionIsUnfinishedRenewalRecord(source)
+        ) {
+          throw vibe64Error(
+            `A session can only be quiesced for renewal while it is active: ${normalizedSourceSessionId}`,
+            "vibe64_session_renewal_source_not_active"
+          );
+        }
+
+        // Status is the durable write barrier. Once it changes, every ordinary
+        // writer and exclusive operation rejects the session, even if this
+        // process stops before the provenance files finish writing.
+        await writeTextFile(
+          sourcePaths.statusPath,
+          `${VIBE64_SESSION_STATUS.RENEWAL_QUIESCED}\n`
+        );
+        await renewalQuiesceStep({
+          renewalId: normalizedRenewalId,
+          sessionId: normalizedSourceSessionId,
+          step: "status-written"
+        });
+        await Promise.all([
+          rm(metadataFilePath(sourcePaths, "renewal_restored_at"), { force: true }),
+          rm(metadataFilePath(sourcePaths, "renewal_restored_id"), { force: true }),
+          writeTextFile(
+            metadataFilePath(sourcePaths, "renewal_quiesced_at"),
+            `${requestedQuiescedAt}\n`
+          ),
+          writeTextFile(
+            metadataFilePath(sourcePaths, "renewal_quiesced_id"),
+            `${normalizedRenewalId}\n`
+          )
+        ]);
+        return readSessionFromPaths(sourcePaths);
+      });
+    });
+  }
+
+  async function restoreSessionAfterRenewalCancellation({
+    renewalId = "",
+    restoredAt = "",
+    sourceSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const requestedRestoredAt = restoredAt
+      ? toDate(restoredAt).toISOString()
+      : now().toISOString();
+    return runRenewalTransitionExclusive(async () => {
+      return mutateSessionForRenewal(normalizedSourceSessionId, async (sourcePaths) => {
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(sourcePaths),
+          readMetadataFromPaths(sourcePaths)
+        ]);
+        const currentQuiescedId = normalizeText(metadata.renewal_quiesced_id);
+        const currentRestoredId = normalizeText(metadata.renewal_restored_id);
+        if (
+          status === VIBE64_SESSION_STATUS.ACTIVE &&
+          currentRestoredId === normalizedRenewalId
+        ) {
+          await Promise.all([
+            rm(metadataFilePath(sourcePaths, "renewal_quiesced_at"), { force: true }),
+            rm(metadataFilePath(sourcePaths, "renewal_quiesced_id"), { force: true })
+          ]);
+          return readSessionFromPaths(sourcePaths);
+        }
+        if (
+          status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+          currentQuiescedId !== normalizedRenewalId ||
+          normalizeText(metadata.renewed_to)
+        ) {
+          throw vibe64Error(
+            `Session cannot be restored from renewal ${normalizedRenewalId}: ${normalizedSourceSessionId}`,
+            "vibe64_session_renewal_transition_invalid"
+          );
+        }
+        const normalizedRestoredAt = normalizeText(metadata.renewal_restored_at) ||
+          requestedRestoredAt;
+        await Promise.all([
+          writeTextFile(
+            metadataFilePath(sourcePaths, "renewal_restored_at"),
+            `${normalizedRestoredAt}\n`
+          ),
+          writeTextFile(
+            metadataFilePath(sourcePaths, "renewal_restored_id"),
+            `${normalizedRenewalId}\n`
+          )
+        ]);
+        await writeTextFile(sourcePaths.statusPath, `${VIBE64_SESSION_STATUS.ACTIVE}\n`);
+        await Promise.all([
+          rm(metadataFilePath(sourcePaths, "renewal_quiesced_at"), { force: true }),
+          rm(metadataFilePath(sourcePaths, "renewal_quiesced_id"), { force: true })
+        ]);
+        return readSessionFromPaths(sourcePaths);
+      });
+    });
+  }
+
+  async function createRenewalPendingSession({
+    actorDisplayName = "",
+    actorId = "",
+    confirmedAt = "",
+    metadata = {},
+    renewalId = "",
+    renewedFrom = "",
+    runtimeKind = "",
+    sessionId = "",
+    startedAt = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const sourceSessionId = assertValidVibe64SessionId(renewedFrom);
+    const successorSessionId = sessionId ? assertValidVibe64SessionId(sessionId) : "";
+    if (successorSessionId && successorSessionId === sourceSessionId) {
+      throw vibe64Error(
+        "A renewed session must have a different session id from its predecessor.",
+        "vibe64_session_renewal_same_session"
+      );
+    }
+    const normalizedActorId = normalizeText(actorId);
+    if (!normalizedActorId) {
+      throw vibe64Error(
+        "A renewed session requires actor attribution.",
+        "vibe64_session_renewal_actor_required"
+      );
+    }
+    if (!normalizeText(confirmedAt)) {
+      throw vibe64Error(
+        "A renewed session requires the confirmation timestamp.",
+        "vibe64_session_renewal_confirmation_required"
+      );
+    }
+    const normalizedConfirmedAt = toDate(confirmedAt).toISOString();
+    const normalizedStartedAt = startedAt ? toDate(startedAt).toISOString() : "";
+    return runRenewalTransitionExclusive(async () => {
+      const sourceSession = await readSessionForRenewal(sourceSessionId);
+      if (
+        sourceSession.status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+        normalizeText(sourceSession.metadata.renewal_quiesced_id) !== normalizedRenewalId
+      ) {
+        throw vibe64Error(
+          `A renewed session can only be prepared from its quiesced predecessor: ${sourceSessionId}`,
+          sourceSession.status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+            ? "vibe64_session_renewal_conflict"
+            : "vibe64_session_renewal_source_not_quiesced"
+        );
+      }
+      const renewalRecords = await listSessionsForRenewal();
+      const foreignOwner = renewalRecords.find((session) => (
+        session.sessionId !== sourceSessionId &&
+        normalizeText(session.metadata.renewal_quiesced_id) === normalizedRenewalId
+      ));
+      if (foreignOwner) {
+        throw vibe64Error(
+          `Renewal ${normalizedRenewalId} belongs to another predecessor.`,
+          "vibe64_session_renewal_conflict"
+        );
+      }
+      const existingSuccessor = renewalRecords.find((session) => (
+        session.sessionId !== sourceSessionId &&
+        (
+          normalizeText(session.metadata.renewal_id) === normalizedRenewalId ||
+          normalizeText(session.metadata.renewed_from) === sourceSessionId
+        )
+      ));
+      if (existingSuccessor) {
+        const exactRetry =
+          existingSuccessor.status === VIBE64_SESSION_STATUS.RENEWAL_PENDING &&
+          normalizeText(existingSuccessor.metadata.renewal_id) === normalizedRenewalId &&
+          normalizeText(existingSuccessor.metadata.renewed_from) === sourceSessionId &&
+          normalizeText(existingSuccessor.metadata.renewal_actor_id) === normalizedActorId &&
+          normalizeText(existingSuccessor.metadata.renewal_actor_display_name) === normalizeText(actorDisplayName) &&
+          normalizeText(existingSuccessor.metadata.renewal_confirmed_at) === normalizedConfirmedAt &&
+          (
+            !normalizedStartedAt ||
+            normalizeText(existingSuccessor.metadata.renewal_started_at) === normalizedStartedAt
+          ) &&
+          (!successorSessionId || existingSuccessor.sessionId === successorSessionId);
+        if (exactRetry) {
+          return existingSuccessor;
+        }
+        throw vibe64Error(
+          `Another renewal is already prepared for session ${sourceSessionId}.`,
+          "vibe64_session_renewal_conflict"
+        );
+      }
+      const successorCreatedAt = now().toISOString();
+      return createSessionRecord({
+        metadata: {
+          ...(isPlainObject(metadata) ? metadata : {}),
+          renewal_actor_display_name: normalizeText(actorDisplayName),
+          renewal_actor_id: normalizedActorId,
+          renewal_confirmed_at: normalizedConfirmedAt,
+          renewal_id: normalizedRenewalId,
+          renewal_started_at: normalizedStartedAt || successorCreatedAt,
+          renewal_successor_created_at: successorCreatedAt,
+          renewed_from: sourceSessionId
+        },
+        runtimeKind,
+        sessionId: successorSessionId,
+        status: VIBE64_SESSION_STATUS.RENEWAL_PENDING
+      });
+    });
+  }
+
+  async function runRenewalTransitionExclusive(operation) {
+    const rootPaths = paths();
+    const transitionPaths = pathsForSessionRoot("renewal-transitions", "");
+    const transitionKey = path.join(rootPaths.sessionsRoot, ".renewal-transition");
+    return enqueueSessionMutation(transitionKey, async () => {
+      const release = await acquireStoreSessionLock(transitionPaths, "transition", {
+        waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+      });
+      if (!release) {
+        throw vibe64Error(
+          "Timed out waiting to transition renewed Vibe64 sessions.",
+          "vibe64_session_renewal_transition_lock_timeout"
+        );
+      }
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  async function transitionRenewalSuccessor({
+    acknowledgedAt = "",
+    actorDisplayName = "",
+    actorId = "",
+    renewedAt = "",
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    if (normalizedSourceSessionId === normalizedSuccessorSessionId) {
+      throw vibe64Error(
+        "A renewed session must have a different session id from its predecessor.",
+        "vibe64_session_renewal_same_session"
+      );
+    }
+    if (!normalizeText(acknowledgedAt)) {
+      throw vibe64Error(
+        "A renewed session cannot become active before the fresh agent thread acknowledges its handover.",
+        "vibe64_session_renewal_acknowledgement_required"
+      );
+    }
+    const normalizedAcknowledgedAt = toDate(acknowledgedAt).toISOString();
+    const normalizedRenewedAt = renewedAt
+      ? toDate(renewedAt).toISOString()
+      : now().toISOString();
+
+    return runRenewalTransitionExclusive(async () => {
+      const transition = await mutateSessionForRenewal(normalizedSourceSessionId, async (sourcePaths) => {
+        return mutateSessionForRenewal(normalizedSuccessorSessionId, async (successorPaths) => {
+          const [sourceStatus, sourceMetadata, successorStatus, successorMetadata] = await Promise.all([
+            readStatusFromPaths(sourcePaths),
+            readMetadataFromPaths(sourcePaths),
+            readStatusFromPaths(successorPaths),
+            readMetadataFromPaths(successorPaths)
+          ]);
+          const successorRenewalId = normalizeText(successorMetadata.renewal_id);
+          const successorRenewedFrom = normalizeText(successorMetadata.renewed_from);
+          const sourceQuiescedId = normalizeText(sourceMetadata.renewal_quiesced_id);
+          if (
+            successorRenewalId !== normalizedRenewalId ||
+            successorRenewedFrom !== normalizedSourceSessionId ||
+            sourceQuiescedId !== normalizedRenewalId
+          ) {
+            throw vibe64Error(
+              `Renewal successor does not match renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+              "vibe64_session_renewal_link_mismatch"
+            );
+          }
+          if (!normalizeText(successorMetadata.renewal_actor_id)) {
+            throw vibe64Error(
+              "A renewed session requires actor attribution.",
+              "vibe64_session_renewal_actor_required"
+            );
+          }
+          const transitionActorId = normalizeText(actorId) ||
+            normalizeText(successorMetadata.renewal_actor_id);
+          const transitionActorDisplayName = normalizeText(actorDisplayName) ||
+            normalizeText(successorMetadata.renewal_actor_display_name);
+          if (!transitionActorId) {
+            throw vibe64Error(
+              "A renewed session requires actor attribution.",
+              "vibe64_session_renewal_actor_required"
+            );
+          }
+          const validTransition = sourceStatus === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED &&
+            successorStatus === VIBE64_SESSION_STATUS.RENEWAL_PENDING;
+          if (!validTransition) {
+            throw vibe64Error(
+              `Invalid renewal transition ${sourceStatus} -> ${successorStatus}.`,
+              "vibe64_session_renewal_transition_invalid"
+            );
+          }
+
+          const sharedMetadata = {
+            renewal_acknowledged_at: normalizeText(
+              successorMetadata.renewal_acknowledged_at
+            ) || normalizedAcknowledgedAt,
+            renewal_actor_display_name: transitionActorDisplayName,
+            renewal_actor_id: transitionActorId,
+            renewal_confirmed_at: normalizeText(successorMetadata.renewal_confirmed_at),
+            renewal_id: normalizedRenewalId,
+            renewal_started_at: normalizeText(successorMetadata.renewal_started_at),
+            renewal_successor_created_at: normalizeText(successorMetadata.renewal_successor_created_at),
+            renewed_at: normalizeText(
+              successorMetadata.renewed_at
+            ) || normalizedRenewedAt
+          };
+          await Promise.all([
+            ...Object.entries({
+              ...sharedMetadata,
+              renewed_from: normalizedSourceSessionId
+            }).map(([name, value]) => (
+              writeTextFile(metadataFilePath(successorPaths, name), `${value}\n`)
+            ))
+          ]);
+
+          // Pre-commit ownership is private: the ordinary predecessor remains
+          // quiesced, visible, and selected until its prepared archive proves
+          // the exact successor and the renewal state records the commit.
+          return {
+            renewalId: normalizedRenewalId,
+            sourceSessionId: normalizedSourceSessionId,
+            successorSessionId: normalizedSuccessorSessionId
+          };
+        });
+      });
+
+      return transition;
+    });
+  }
+
+  async function activateRenewalSuccessor({
+    preparedAt = "",
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const requestedPreparedAt = preparedAt
+      ? toDate(preparedAt).toISOString()
+      : now().toISOString();
+    await withPreparedRenewalSession(normalizedSourceSessionId, (preparedSession) => (
+      assertRenewalArchiveOwnership({
+        metadata: preparedSession.metadata,
+        renewalId: normalizedRenewalId,
+        sessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
       })
-    ]);
-    const normalizedRuntimeKind = normalizeText(runtimeKind);
-    const manifest = {
-      ...(normalizedRuntimeKind ? { runtimeKind: normalizedRuntimeKind } : {}),
-      createdAt,
-      product: "vibe64",
-      revision: 1,
-      schemaVersion: VIBE64_SESSION_SCHEMA_VERSION,
-      sessionId: resolvedSessionId,
-      updatedAt: createdAt
-    };
-    await Promise.all([
-      writeJsonFile(sessionPaths.manifestPath, manifest),
-      writeTextFile(sessionPaths.statusPath, `${normalizedStatus}\n`),
-      ...Object.entries(normalizedMetadata).map(([name, value]) => {
-        return writeTextFile(metadataFilePath(sessionPaths, name), `${value}\n`);
+    ));
+    return runRenewalTransitionExclusive(() => (
+      mutateSessionForRenewal(normalizedSuccessorSessionId, async (successorPaths) => {
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(successorPaths),
+          readMetadataFromPaths(successorPaths)
+        ]);
+        if (
+          normalizeText(metadata.renewal_id) !== normalizedRenewalId ||
+          normalizeText(metadata.renewed_from) !== normalizedSourceSessionId
+        ) {
+          throw vibe64Error(
+            `Renewal successor does not match renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_link_mismatch"
+          );
+        }
+        if (status === VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING) {
+          if (!normalizeText(metadata.renewal_activation_prepared_at)) {
+            throw vibe64Error(
+              `Prepared renewal successor has no activation proof: ${normalizedSuccessorSessionId}`,
+              "vibe64_session_renewal_transition_invalid"
+            );
+          }
+          return readSessionFromPaths(successorPaths);
+        }
+        if (status !== VIBE64_SESSION_STATUS.RENEWAL_PENDING) {
+          throw vibe64Error(
+            `Renewal successor cannot be activated from status ${status}: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_transition_invalid"
+          );
+        }
+        const normalizedPreparedAt = normalizeText(metadata.renewal_activation_prepared_at) ||
+          requestedPreparedAt;
+        await writeTextFile(
+          metadataFilePath(successorPaths, "renewal_activation_prepared_at"),
+          `${normalizedPreparedAt}\n`
+        );
+        await writeTextFile(
+          successorPaths.statusPath,
+          `${VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING}\n`
+        );
+        return readSessionFromPaths(successorPaths);
       })
-    ]);
-    return readSession(resolvedSessionId);
+    ));
+  }
+
+  async function rollbackRenewalSuccessorActivation({
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    return runRenewalTransitionExclusive(() => (
+      mutateSessionForRenewal(normalizedSuccessorSessionId, async (successorPaths) => {
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(successorPaths),
+          readMetadataFromPaths(successorPaths)
+        ]);
+        if (
+          normalizeText(metadata.renewal_id) !== normalizedRenewalId ||
+          normalizeText(metadata.renewed_from) !== normalizedSourceSessionId
+        ) {
+          throw vibe64Error(
+            `Renewal successor does not match renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_link_mismatch"
+          );
+        }
+        if (status === VIBE64_SESSION_STATUS.RENEWAL_PENDING) {
+          await rm(
+            metadataFilePath(successorPaths, "renewal_activation_prepared_at"),
+            { force: true }
+          );
+          return readSessionFromPaths(successorPaths);
+        }
+        if (status !== VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING) {
+          throw vibe64Error(
+            `Renewal successor activation cannot be rolled back from status ${status}: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_transition_invalid"
+          );
+        }
+        await writeTextFile(
+          successorPaths.statusPath,
+          `${VIBE64_SESSION_STATUS.RENEWAL_PENDING}\n`
+        );
+        await rm(
+          metadataFilePath(successorPaths, "renewal_activation_prepared_at"),
+          { force: true }
+        );
+        return readSessionFromPaths(successorPaths);
+      })
+    ));
+  }
+
+  async function commitRenewalSuccessor({
+    committedAt = "",
+    renewalId = "",
+    sourceSessionId = "",
+    successorSessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSourceSessionId = assertValidVibe64SessionId(sourceSessionId);
+    const normalizedSuccessorSessionId = assertValidVibe64SessionId(successorSessionId);
+    const normalizedCommittedAt = toDate(committedAt).toISOString();
+    await withPublishedRenewalSession(normalizedSourceSessionId, (publishedSession) => (
+      assertRenewalArchiveOwnership({
+        metadata: publishedSession.metadata,
+        renewalId: normalizedRenewalId,
+        sessionId: normalizedSourceSessionId,
+        successorSessionId: normalizedSuccessorSessionId
+      })
+    ));
+    return runRenewalTransitionExclusive(() => (
+      mutateSessionForRenewal(normalizedSuccessorSessionId, async (successorPaths) => {
+        const [status, metadata] = await Promise.all([
+          readStatusFromPaths(successorPaths),
+          readMetadataFromPaths(successorPaths)
+        ]);
+        if (
+          normalizeText(metadata.renewal_id) !== normalizedRenewalId ||
+          normalizeText(metadata.renewed_from) !== normalizedSourceSessionId
+        ) {
+          throw vibe64Error(
+            `Renewal successor does not match renewal ${normalizedRenewalId}: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_link_mismatch"
+          );
+        }
+        if (status === VIBE64_SESSION_STATUS.ACTIVE) {
+          if (normalizeText(metadata.renewal_activated_at) !== normalizedCommittedAt) {
+            throw vibe64Error(
+              `Active renewal successor has a different commit marker: ${normalizedSuccessorSessionId}`,
+              "vibe64_session_renewal_transition_invalid"
+            );
+          }
+          return readSessionFromPaths(successorPaths);
+        }
+        if (
+          status !== VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING ||
+          !normalizeText(metadata.renewal_activation_prepared_at)
+        ) {
+          throw vibe64Error(
+            `Renewal successor is not prepared for commit: ${normalizedSuccessorSessionId}`,
+            "vibe64_session_renewal_transition_invalid"
+          );
+        }
+        await writeTextFile(
+          metadataFilePath(successorPaths, "renewal_activated_at"),
+          `${normalizedCommittedAt}\n`
+        );
+        await writeTextFile(successorPaths.statusPath, `${VIBE64_SESSION_STATUS.ACTIVE}\n`);
+        return readSessionFromPaths(successorPaths);
+      })
+    ));
+  }
+
+  async function removeRenewalPendingSession({
+    renewalId = "",
+    sessionId = ""
+  } = {}) {
+    const normalizedRenewalId = assertRenewalId(renewalId);
+    const normalizedSessionId = assertValidVibe64SessionId(sessionId);
+    return runRenewalTransitionExclusive(async () => {
+      const sessionPaths = paths(normalizedSessionId);
+      const mutationKey = sessionPaths.sessionRoot;
+      return enqueueSessionMutation(mutationKey, async () => {
+        const release = await acquireStoreSessionLock(sessionPaths, "mutation", {
+          waitMs: SESSION_MUTATION_LOCK_WAIT_MS
+        });
+        if (!release) {
+          throw vibe64Error(
+            `Timed out waiting to remove renewal successor: ${normalizedSessionId}`,
+            "vibe64_session_mutation_lock_timeout"
+          );
+        }
+        try {
+          if (!await pathExists(sessionPaths.manifestPath)) {
+            if (await readClosedArchiveRecord(normalizedSessionId)) {
+              throw vibe64Error(
+                `A closed session cannot be removed as a pending renewal successor: ${normalizedSessionId}`,
+                "vibe64_session_renewal_transition_invalid"
+              );
+            }
+            return {
+              removed: false,
+              renewalId: normalizedRenewalId,
+              sessionId: normalizedSessionId
+            };
+          }
+          const [status, metadata] = await Promise.all([
+            readStatusFromPaths(sessionPaths),
+            readMetadataFromPaths(sessionPaths)
+          ]);
+          if (
+            status !== VIBE64_SESSION_STATUS.RENEWAL_PENDING ||
+            normalizeText(metadata.renewal_id) !== normalizedRenewalId
+          ) {
+            throw vibe64Error(
+              `Session is not the pending successor for renewal ${normalizedRenewalId}: ${normalizedSessionId}`,
+              "vibe64_session_renewal_transition_invalid"
+            );
+          }
+          const rootPaths = paths();
+          if (rootPaths.currentSessionAliasPath) {
+            await clearVibe64CurrentSessionAliasIfMatches({
+              aliasPath: rootPaths.currentSessionAliasPath,
+              sessionId: normalizedSessionId
+            });
+          }
+          await rm(sessionPaths.sessionRoot, {
+            force: true,
+            recursive: true
+          });
+          return {
+            removed: true,
+            renewalId: normalizedRenewalId,
+            sessionId: normalizedSessionId
+          };
+        } finally {
+          await release();
+        }
+      });
+    });
   }
 
   async function readUnarchivedSessionRecords() {
@@ -2479,7 +4530,7 @@ function createVibe64SessionStore({
     ])].sort((left, right) => left.localeCompare(right));
     return Promise.all(sessionIds.map(async (sessionId) => ({
       sessionId,
-      status: await readStatus(sessionId)
+      status: await readStatusForRenewal(sessionId)
     })));
   }
 
@@ -2491,6 +4542,15 @@ function createVibe64SessionStore({
       // publishing the archive. Closed-session reads are the recovery boundary.
       for (const record of unarchivedRecords) {
         if (CLOSED_VIBE64_SESSION_STATUSES.has(record.status)) {
+          const session = await readSessionForRenewal(record.sessionId);
+          if (
+            normalizeText(session.metadata.renewal_id) &&
+            normalizeText(session.metadata.renewed_to)
+          ) {
+            // Renewal owns a reversible close transaction. Ordinary history
+            // reads must neither publish it nor interfere with its rollback.
+            continue;
+          }
           await compactClosedSession(record.sessionId);
         }
       }
@@ -2537,17 +4597,51 @@ function createVibe64SessionStore({
     ].sort((left, right) => normalizeText(left.sessionId).localeCompare(normalizeText(right.sessionId)));
   }
 
+  async function listSessionsForRenewal() {
+    const sessions = await Promise.all(
+      (await readUnarchivedSessionRecords())
+        .filter(({ status }) => [
+          VIBE64_SESSION_STATUS.ABANDONED,
+          VIBE64_SESSION_STATUS.ACTIVE,
+          VIBE64_SESSION_STATUS.BLOCKED,
+          VIBE64_SESSION_STATUS.RENEWAL_ACTIVATING,
+          VIBE64_SESSION_STATUS.RENEWAL_PENDING,
+          VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+        ].includes(status))
+        .map(({ sessionId }) => readSessionForRenewal(sessionId))
+    );
+    return sessions.filter((session) => (
+      [
+        VIBE64_SESSION_STATUS.ACTIVE,
+        VIBE64_SESSION_STATUS.BLOCKED,
+        VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+      ].includes(session.status) ||
+      sessionIsUnfinishedRenewalRecord(session)
+    ));
+  }
+
   return {
     createSession,
+    createRenewalPendingSession,
+    commitRenewalArchive,
+    commitRenewalCurrentSession,
+    commitRenewalSuccessor,
     compactClosedSession,
+    compactRenewedSession,
     conversationMessageIdExists,
     deleteMetadataValue,
     deleteMetadataValues,
+    detachRenewedSessionForArchive,
+    finalizeRenewalArchiveCommit,
     listSessions,
+    listSessionsForRenewal,
+    listSessionRenewalStateSessionIds,
     listSessionSummaries,
     mutateSession,
+    mutateSessionForRenewal,
     paths,
     readArtifact,
+    readArtifactForRenewal,
     readAgentRun,
     readAgentRuns,
     readBackgroundTask,
@@ -2559,11 +4653,25 @@ function createVibe64SessionStore({
     readMetadata,
     readMetadataValue,
     readSession,
+    readSessionForRenewal,
+    readSessionRenewalStateRecord,
     readSessionSourceDescriptor,
     readSessionSummary,
     readStatus,
+    readStatusForRenewal,
+    quiesceSessionForRenewal,
+    removeRenewalPendingSession,
+    activateRenewalSuccessor,
+    rollbackRenewalSuccessorActivation,
+    restoreRenewalClosingSession,
+    restoreSessionAfterRenewalCancellation,
     runSessionExclusive,
+    runSessionExclusiveForRenewal,
+    runSessionRenewalStateExclusive,
+    runSessionRenewalWorkflowExclusive,
     updateCurrentSession,
+    transitionRenewalSuccessor,
+    finalizeRenewalCurrentSession,
     writeArtifact,
     writeAgentRunEvent,
     writeBackgroundTaskEvent,
@@ -2574,6 +4682,10 @@ function createVibe64SessionStore({
     writeConversationThinkingMessage,
     writeConversationUserMessage,
     writeMetadataValue,
+    writeMetadataValueForRenewal,
+    writeJsonArtifactForRenewal,
+    writeSessionRenewalStateRecord,
+    withPublishedRenewalSession,
     writeSessionLabel,
     writeStatus
   };
@@ -2590,5 +4702,7 @@ export {
   normalizeVibe64AgentRunState,
   resolveVibe64SessionPaths,
   vibe64AgentRunStateIsActive,
-  vibe64AgentRunStateIsTerminal
+  vibe64AgentRunStateIsTerminal,
+  vibe64SessionStatusIsHidden,
+  vibe64SessionStatusIsOpen
 };

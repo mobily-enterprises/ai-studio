@@ -12,6 +12,8 @@ const MIN_TERMINAL_ROWS = 5;
 const MAX_TERMINAL_COLS = 300;
 const MAX_TERMINAL_ROWS = 120;
 const DEFAULT_QUIET_THRESHOLD_MS = 3000;
+const DEFAULT_TERMINAL_CLOSE_TIMEOUT_MS = 5000;
+const DEFAULT_TERMINAL_STOP_HOOK_GRACE_MS = 1000;
 const MAX_QUIET_THRESHOLD_MS = 10 * 60 * 1000;
 const MAX_DETACHED_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const TERMINAL_KEY_INPUTS = Object.freeze({
@@ -21,6 +23,8 @@ const TERMINAL_KEY_INPUTS = Object.freeze({
   "tab": "\t"
 });
 const stores = new Map();
+const namespaceAdmissions = new Map();
+const namespaceOperationCounts = new Map();
 
 function terminalSessionNotFound() {
   return {
@@ -40,6 +44,124 @@ function sessionsForNamespace(namespace) {
     stores.set(normalizedNamespace, new Map());
   }
   return stores.get(normalizedNamespace);
+}
+
+function terminalNamespaceAdmission(namespace = "default") {
+  return namespaceAdmissions.get(normalizeNamespace(namespace)) || null;
+}
+
+function terminalNamespaceAdmissionFailure(namespace = "default") {
+  const admission = terminalNamespaceAdmission(namespace);
+  if (!admission) {
+    return null;
+  }
+  return {
+    code: admission.code,
+    error: admission.error,
+    ok: false
+  };
+}
+
+function freezeTerminalNamespaceAdmission(namespace = "default", {
+  code = "terminal_admission_frozen",
+  error = "Terminal input is temporarily unavailable.",
+  owner = ""
+} = {}) {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  const normalizedOwner = String(owner || "").trim();
+  if (!normalizedOwner) {
+    throw new TypeError("Terminal admission freeze requires an owner.");
+  }
+  const current = namespaceAdmissions.get(normalizedNamespace);
+  if (current && current.owner !== normalizedOwner) {
+    return {
+      code: "terminal_admission_conflict",
+      error: "Terminal input is already frozen by another operation.",
+      ok: false
+    };
+  }
+  if (!current && Number(namespaceOperationCounts.get(normalizedNamespace) || 0) > 0) {
+    return {
+      code: "terminal_admission_busy",
+      error: "A terminal operation is still finishing.",
+      ok: false
+    };
+  }
+  const admission = current || {
+    code: String(code || "terminal_admission_frozen").trim() || "terminal_admission_frozen",
+    error: String(error || "Terminal input is temporarily unavailable.").trim() ||
+      "Terminal input is temporarily unavailable.",
+    owner: normalizedOwner
+  };
+  namespaceAdmissions.set(normalizedNamespace, admission);
+  return {
+    frozen: true,
+    namespace: normalizedNamespace,
+    ok: true,
+    owner: normalizedOwner
+  };
+}
+
+function beginTerminalNamespaceOperation(namespace = "default") {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  const failure = terminalNamespaceAdmissionFailure(normalizedNamespace);
+  if (failure) {
+    return failure;
+  }
+  namespaceOperationCounts.set(
+    normalizedNamespace,
+    Number(namespaceOperationCounts.get(normalizedNamespace) || 0) + 1
+  );
+  let released = false;
+  return {
+    namespace: normalizedNamespace,
+    ok: true,
+    release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      const remaining = Number(namespaceOperationCounts.get(normalizedNamespace) || 0) - 1;
+      if (remaining > 0) {
+        namespaceOperationCounts.set(normalizedNamespace, remaining);
+      } else {
+        namespaceOperationCounts.delete(normalizedNamespace);
+      }
+    }
+  };
+}
+
+function thawTerminalNamespaceAdmission(namespace = "default", {
+  owner = ""
+} = {}) {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  const normalizedOwner = String(owner || "").trim();
+  if (!normalizedOwner) {
+    throw new TypeError("Terminal admission thaw requires an owner.");
+  }
+  const current = namespaceAdmissions.get(normalizedNamespace);
+  if (!current) {
+    return {
+      frozen: false,
+      namespace: normalizedNamespace,
+      ok: true,
+      owner: normalizedOwner
+    };
+  }
+  if (current.owner !== normalizedOwner) {
+    return {
+      code: "terminal_admission_conflict",
+      error: "Terminal input is frozen by another operation.",
+      ok: false
+    };
+  }
+  namespaceAdmissions.delete(normalizedNamespace);
+  return {
+    frozen: false,
+    namespace: normalizedNamespace,
+    ok: true,
+    owner: normalizedOwner
+  };
 }
 
 function namespacesForPrefix(namespacePrefix = "") {
@@ -492,7 +614,7 @@ async function runCloseHook(session, reason) {
   }
   session.closeHookStarted = true;
   if (typeof session.onClose !== "function") {
-    return;
+    return null;
   }
   try {
     await session.onClose({
@@ -502,8 +624,11 @@ async function runCloseHook(session, reason) {
       reason,
       status: session.status
     });
+    return null;
   } catch (error) {
     const message = String(error?.message || error || "Terminal finalization failed.");
+    const failure = error instanceof Error ? error : new Error(message);
+    failure.code ||= "terminal_close_hook_failed";
     const chunk = `\r\n[studio] Terminal finalization failed: ${message}\r\n`;
     session.closeError = message;
     session.output = trimBuffer(`${session.output}${chunk}`);
@@ -515,6 +640,7 @@ async function runCloseHook(session, reason) {
       error: message,
       type: "error"
     });
+    return failure;
   }
 }
 
@@ -524,7 +650,7 @@ async function runStopHook(session, reason) {
   }
   session.stopHookStarted = true;
   if (typeof session.onStop !== "function") {
-    return;
+    return null;
   }
   try {
     await session.onStop({
@@ -533,8 +659,11 @@ async function runStopHook(session, reason) {
       reason,
       status: session.status
     });
+    return null;
   } catch (error) {
     const message = String(error?.message || error || "Terminal stop failed.");
+    const failure = error instanceof Error ? error : new Error(message);
+    failure.code ||= "terminal_stop_hook_failed";
     const chunk = `\r\n[studio] Terminal stop failed: ${message}\r\n`;
     session.closeError = message;
     session.output = trimBuffer(`${session.output}${chunk}`);
@@ -546,7 +675,131 @@ async function runStopHook(session, reason) {
       error: message,
       type: "error"
     });
+    return failure;
   }
+}
+
+function normalizeTerminalCloseTimeoutMs(value = DEFAULT_TERMINAL_CLOSE_TIMEOUT_MS) {
+  const timeoutMs = Math.floor(Number(value));
+  return Number.isSafeInteger(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_TERMINAL_CLOSE_TIMEOUT_MS;
+}
+
+function terminalCloseDeadline(timeoutMs = DEFAULT_TERMINAL_CLOSE_TIMEOUT_MS) {
+  return Date.now() + normalizeTerminalCloseTimeoutMs(timeoutMs);
+}
+
+function terminalDeadlineRemainingMs(deadlineAt = 0) {
+  return Math.max(0, Math.floor(Number(deadlineAt) - Date.now()));
+}
+
+async function waitForTerminalLifecyclePromise(promise, deadlineAt, timeoutFailure) {
+  const remainingMs = terminalDeadlineRemainingMs(deadlineAt);
+  if (remainingMs < 1) {
+    throw timeoutFailure();
+  }
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(timeoutFailure()), remainingMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function terminalLifecycleTimeout(session, phase) {
+  const labels = {
+    close: "finalization",
+    exit: "process exit",
+    stop: "stop cleanup"
+  };
+  const error = new Error(
+    `Terminal ${labels[phase] || phase} did not finish before its close deadline: ${session.id}`
+  );
+  error.code = phase === "exit"
+    ? "terminal_exit_timeout"
+    : `terminal_${phase}_hook_timeout`;
+  error.phase = phase;
+  return error;
+}
+
+function reportTerminalLifecycleFailure(session, error) {
+  const key = `${String(error?.code || "terminal_lifecycle_timeout")}:${String(error?.message || "")}`;
+  session.reportedLifecycleFailures ||= new Set();
+  if (session.reportedLifecycleFailures.has(key)) {
+    return error;
+  }
+  session.reportedLifecycleFailures.add(key);
+  const message = String(error?.message || error || "Terminal cleanup timed out.");
+  const chunk = `\r\n[studio] ${message}\r\n`;
+  session.closeError = message;
+  session.output = trimBuffer(`${session.output}${chunk}`);
+  sendToSubscribers(session, {
+    chunk,
+    type: "output"
+  });
+  sendToSubscribers(session, {
+    error: message,
+    type: "error"
+  });
+  return error;
+}
+
+function terminalCloseAggregateFailure(session, failures = []) {
+  const error = new AggregateError(
+    failures,
+    `Terminal session could not close cleanly: ${session.id}`
+  );
+  error.code = failures.some((failure) => String(failure?.code || "").startsWith("terminal_exit_"))
+    ? "terminal_exit_unverified"
+    : "terminal_cleanup_failed";
+  error.terminalSessionId = session.id;
+  return error;
+}
+
+function beginTerminalStopHook(session, reason) {
+  if (!session.stopHookCompletion) {
+    session.stopHookCompletion = Promise.resolve().then(() => runStopHook(session, reason));
+  }
+  return session.stopHookCompletion;
+}
+
+function beginTerminalCloseHook(session, reason) {
+  if (!session.closeHookCompletion) {
+    session.closeHookCompletion = Promise.resolve().then(() => runCloseHook(session, reason));
+  }
+  return session.closeHookCompletion;
+}
+
+function markTerminalExited(session) {
+  if (session.status === "exited") {
+    return;
+  }
+  session.status = "exited";
+  sendToSubscribers(session, {
+    closeError: session.closeError || "",
+    exitCode: session.exitCode,
+    status: session.status,
+    type: "status"
+  });
+}
+
+async function settleTerminalExitStatus(session, deadlineAt) {
+  try {
+    await waitForTerminalLifecyclePromise(
+      beginTerminalCloseHook(session, session.stopReason || "exit"),
+      deadlineAt,
+      () => terminalLifecycleTimeout(session, "close")
+    );
+  } catch (error) {
+    reportTerminalLifecycleFailure(session, error);
+  }
+  markTerminalExited(session);
 }
 
 function startTerminalSession({
@@ -566,6 +819,10 @@ function startTerminalSession({
   reuseRunning = false,
   detachedIdleTimeoutMs = 0
 }) {
+  const admissionFailure = terminalNamespaceAdmissionFailure(namespace);
+  if (admissionFailure) {
+    return admissionFailure;
+  }
   const sessions = sessionsForNamespace(namespace);
   const id = crypto.randomUUID();
   const canReuseRunningSession = typeof reuseRunning === "function"
@@ -631,14 +888,22 @@ function startTerminalSession({
     rows: DEFAULT_TERMINAL_ROWS
   });
 
+  let resolveExitCompletion;
+  const exitCompletion = new Promise((resolve) => {
+    resolveExitCompletion = resolve;
+  });
   const session = {
     id,
+    closeDeadlineAt: 0,
+    closeHookCompletion: null,
+    closePromise: null,
     commandPreview: resolvedCommandPreview,
     cols: DEFAULT_TERMINAL_COLS,
     createdAt: new Date().toISOString(),
     cwd,
     detachedCleanupTimer: null,
     detachedIdleTimeoutMs: normalizeDetachedIdleTimeoutMs(detachedIdleTimeoutMs),
+    exitCompletion,
     exitCode: null,
     lastSubscriberAttachedAt: "",
     lastSubscriberDetachedAt: new Date().toISOString(),
@@ -657,8 +922,13 @@ function startTerminalSession({
     lastWriteErrorCode: "",
     output: "",
     outputVersion: 0,
+    processExited: false,
+    killStarted: false,
+    reportedLifecycleFailures: new Set(),
+    resolveExitCompletion,
     rows: DEFAULT_TERMINAL_ROWS,
     status: "running",
+    stopHookCompletion: null,
     namespace,
     subscribers: new Set(),
     terminal
@@ -696,6 +966,7 @@ function startTerminalSession({
   });
 
   terminal.onExit(({ exitCode }) => {
+    session.processExited = true;
     session.exitCode = exitCode;
     session.status = "closing";
     sendToSubscribers(session, {
@@ -703,16 +974,12 @@ function startTerminalSession({
       status: session.status,
       type: "status"
     });
-    void (async () => {
-      await runCloseHook(session, session.stopHookStarted ? "stop" : "exit");
-      session.status = "exited";
-      sendToSubscribers(session, {
-        closeError: session.closeError || "",
-        exitCode,
-        status: session.status,
-        type: "status"
-      });
-    })();
+    beginTerminalCloseHook(session, session.stopReason || "exit");
+    session.resolveExitCompletion();
+    const finalizationDeadlineAt = session.closeDeadlineAt > Date.now()
+      ? session.closeDeadlineAt
+      : terminalCloseDeadline();
+    void settleTerminalExitStatus(session, finalizationDeadlineAt);
   });
 
   sessions.set(id, session);
@@ -772,6 +1039,10 @@ function subscribeTerminalSession(id, subscriber, { namespace = "default", outpu
 }
 
 function writeTerminalSession(id, data, { namespace = "default" } = {}) {
+  const admissionFailure = terminalNamespaceAdmissionFailure(namespace);
+  if (admissionFailure) {
+    return admissionFailure;
+  }
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
   if (!session) {
@@ -829,6 +1100,75 @@ function resizeTerminalSession(id, size = {}, { namespace = "default" } = {}) {
   return terminalSessionResponse(session);
 }
 
+async function beginTerminalStop(session, reason = "stop", {
+  deadlineAt = terminalCloseDeadline()
+} = {}) {
+  if (!session || session.processExited) {
+    return {
+      failures: []
+    };
+  }
+  session.stopReason ||= String(reason || "stop");
+  if (session.status === "running") {
+    session.status = "closing";
+    sendToSubscribers(session, {
+      exitCode: session.exitCode,
+      status: session.status,
+      type: "status"
+    });
+  }
+  const failures = [];
+  const remainingMs = terminalDeadlineRemainingMs(deadlineAt);
+  const hookDeadlineAt = Math.min(
+    deadlineAt,
+    Date.now() + Math.min(
+      DEFAULT_TERMINAL_STOP_HOOK_GRACE_MS,
+      Math.max(1, Math.floor(remainingMs / 4))
+    )
+  );
+  try {
+    await waitForTerminalLifecyclePromise(
+      beginTerminalStopHook(session, session.stopReason),
+      hookDeadlineAt,
+      () => terminalLifecycleTimeout(session, "stop")
+    );
+  } catch {
+    // Stop cleanup may continue, but it cannot retain ownership of the PTY child.
+  }
+  if (!session.processExited && !session.killStarted) {
+    session.killStarted = true;
+    try {
+      session.terminal.kill();
+    } catch (error) {
+      session.killStarted = false;
+      const failure = error instanceof Error
+        ? error
+        : new Error(String(error || "Terminal process could not be killed."));
+      failure.code ||= "terminal_kill_failed";
+      failures.push(reportTerminalLifecycleFailure(session, failure));
+    }
+  }
+  return {
+    failures
+  };
+}
+
+async function waitForTerminalExit(session, deadlineAt) {
+  if (session?.processExited) {
+    return;
+  }
+  await waitForTerminalLifecyclePromise(
+    session.exitCompletion,
+    deadlineAt,
+    () => terminalLifecycleTimeout(session, "exit")
+  );
+  if (!session.processExited) {
+    const error = new Error(`Terminal process exit could not be verified: ${session.id}`);
+    error.code = "terminal_exit_unverified";
+    throw error;
+  }
+}
+
 function stopTerminalSession(id, { namespace = "default" } = {}) {
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
@@ -837,24 +1177,16 @@ function stopTerminalSession(id, { namespace = "default" } = {}) {
   }
 
   if (session.status === "running") {
-    session.status = "closing";
-    sendToSubscribers(session, {
-      exitCode: session.exitCode,
-      status: session.status,
-      type: "status"
-    });
-    void (async () => {
-      await runStopHook(session, "stop");
-      if (session.status === "closing") {
-        session.terminal.kill();
-      }
-    })();
+    void beginTerminalStop(session, "stop");
   }
 
   return terminalSessionResponse(session);
 }
 
-async function closeTerminalSession(id, { namespace = "default" } = {}) {
+async function closeTerminalSession(id, {
+  namespace = "default",
+  timeoutMs = DEFAULT_TERMINAL_CLOSE_TIMEOUT_MS
+} = {}) {
   const sessions = sessionsForNamespace(namespace);
   const session = sessions.get(id);
   if (!session) {
@@ -863,20 +1195,140 @@ async function closeTerminalSession(id, { namespace = "default" } = {}) {
       closed: false
     };
   }
-
-  clearDetachedCleanupTimer(session);
-  if (session.status === "running") {
-    session.status = "closing";
-    await runStopHook(session, "close");
-    session.terminal.kill();
+  if (session.closePromise) {
+    return session.closePromise;
   }
-  await runCloseHook(session, "close");
-  sessions.delete(id);
 
-  return {
-    ok: true,
-    closed: true
-  };
+  const deadlineAt = terminalCloseDeadline(timeoutMs);
+  session.closeDeadlineAt = deadlineAt;
+  const closing = (async () => {
+    const fatalFailures = [];
+    const cleanupWarnings = [];
+    clearDetachedCleanupTimer(session);
+    if (!session.processExited) {
+      const stopped = await beginTerminalStop(session, "close", {
+        deadlineAt
+      });
+      cleanupWarnings.push(...stopped.failures);
+    }
+    try {
+      await waitForTerminalExit(session, deadlineAt);
+    } catch (error) {
+      fatalFailures.push(reportTerminalLifecycleFailure(session, error));
+    }
+
+    const hooks = [
+      ...(session.stopHookCompletion ? [{
+        phase: "stop",
+        promise: session.stopHookCompletion
+      }] : []),
+      ...(session.closeHookCompletion ? [{
+        phase: "close",
+        promise: session.closeHookCompletion
+      }] : [])
+    ];
+    const hookResults = await Promise.all(hooks.map(async ({ phase, promise }) => {
+      try {
+        return {
+          failure: await waitForTerminalLifecyclePromise(
+            promise,
+            deadlineAt,
+            () => terminalLifecycleTimeout(session, phase)
+          ),
+          timedOut: false
+        };
+      } catch (error) {
+        return {
+          failure: reportTerminalLifecycleFailure(session, error),
+          timedOut: true
+        };
+      }
+    }));
+    for (const result of hookResults) {
+      if (!result.failure) {
+        continue;
+      }
+      (result.timedOut ? fatalFailures : cleanupWarnings).push(result.failure);
+    }
+
+    if (session.processExited) {
+      markTerminalExited(session);
+    }
+
+    if (fatalFailures.length > 0) {
+      throw terminalCloseAggregateFailure(session, [
+        ...fatalFailures,
+        ...cleanupWarnings
+      ]);
+    }
+    sessions.delete(id);
+
+    return {
+      ok: true,
+      closed: true,
+      ...(cleanupWarnings.length > 0 ? {
+        cleanupErrors: cleanupWarnings.map((error) => String(error?.message || error))
+      } : {})
+    };
+  })();
+  session.closePromise = closing;
+  try {
+    return await closing;
+  } finally {
+    if (session.closePromise === closing) {
+      session.closePromise = null;
+    }
+    if (session.closeDeadlineAt === deadlineAt) {
+      session.closeDeadlineAt = 0;
+    }
+  }
+}
+
+function terminalSessionCloseFailure(reason, { id, namespace }) {
+  const cause = reason instanceof Error
+    ? reason
+    : new Error(String(reason || "Terminal close failed."));
+  const error = new Error(
+    `Failed to close terminal session "${id}" in namespace "${namespace}": ${cause.message}`,
+    { cause }
+  );
+  error.code = String(cause.code || "terminal_close_failed");
+  error.namespace = namespace;
+  error.terminalSessionId = id;
+  return error;
+}
+
+async function closeTerminalSessionTargets(targets = []) {
+  const uniqueTargets = [...new Map(targets.map((target) => {
+    const normalizedTarget = {
+      id: String(target?.id || ""),
+      namespace: normalizeNamespace(target?.namespace)
+    };
+    return [`${normalizedTarget.namespace}\u0000${normalizedTarget.id}`, normalizedTarget];
+  })).values()].filter((target) => target.id);
+  const results = await Promise.allSettled(uniqueTargets.map((target) => (
+    closeTerminalSession(target.id, {
+      namespace: target.namespace
+    })
+  )));
+  let closed = 0;
+  const failures = [];
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") {
+      if (result.value.closed) {
+        closed += 1;
+      }
+      continue;
+    }
+    failures.push(terminalSessionCloseFailure(result.reason, uniqueTargets[index]));
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Failed to close ${failures.length} of ${uniqueTargets.length} terminal sessions.`
+    );
+  }
+  return closed;
 }
 
 async function closeDetachedTerminalSessions({
@@ -919,14 +1371,10 @@ async function closeDetachedTerminalSessions({
 
 async function closeTerminalSessionsForNamespace(namespace = "default") {
   const sessions = sessionsForNamespace(namespace);
-  let closed = 0;
-
-  for (const id of [...sessions.keys()]) {
-    const result = await closeTerminalSession(id, { namespace });
-    if (result.closed) {
-      closed += 1;
-    }
-  }
+  const closed = await closeTerminalSessionTargets([...sessions.keys()].map((id) => ({
+    id,
+    namespace
+  })));
 
   return {
     ok: true,
@@ -949,16 +1397,10 @@ async function closeTerminalSessionsForCwdRoot(cwdRoot = "") {
     runningOnly: true
   }).filter((entry) => pathIsWithinRoot(entry.session?.cwd, normalizedCwdRoot));
   const namespaces = [...new Set(targets.map((entry) => entry.namespace))].sort();
-  let closed = 0;
-
-  for (const entry of targets) {
-    const result = await closeTerminalSession(entry.session.id, {
-      namespace: entry.namespace
-    });
-    if (result.closed) {
-      closed += 1;
-    }
-  }
+  const closed = await closeTerminalSessionTargets(targets.map((entry) => ({
+    id: entry.session.id,
+    namespace: entry.namespace
+  })));
 
   return {
     closed,
@@ -970,11 +1412,12 @@ async function closeTerminalSessionsForCwdRoot(cwdRoot = "") {
 }
 
 async function closeTerminalSessionsForNamespacePrefix(namespacePrefix = "") {
-  let closed = 0;
-  for (const namespace of namespacesForPrefix(namespacePrefix)) {
-    const result = await closeTerminalSessionsForNamespace(namespace);
-    closed += Number(result.closed || 0);
-  }
+  const closed = await closeTerminalSessionTargets(listStoredSessions({
+    namespacePrefix
+  }).map((entry) => ({
+    id: entry.session.id,
+    namespace: entry.namespace
+  })));
   return {
     ok: true,
     closed
@@ -982,6 +1425,7 @@ async function closeTerminalSessionsForNamespacePrefix(namespacePrefix = "") {
 }
 
 export {
+  beginTerminalNamespaceOperation,
   MAX_TERMINAL_BUFFER_LENGTH,
   MAX_TERMINAL_BUFFER_ROWS,
   closeDetachedTerminalSessions,
@@ -992,6 +1436,7 @@ export {
   countRunningTerminalSessions,
   listTerminalSessions,
   readTerminalSession,
+  freezeTerminalNamespaceAdmission,
   resizeTerminalSession,
   startTerminalSession,
   stopTerminalSession,
@@ -1000,6 +1445,8 @@ export {
   terminalMovementState,
   terminalSessionContainsText,
   terminalSessionControlSnapshot,
+  terminalNamespaceAdmissionFailure,
+  thawTerminalNamespaceAdmission,
   updateTerminalSessionMetadata,
   readTerminalSessionControlState,
   writeTerminalSession,

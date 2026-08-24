@@ -20,6 +20,7 @@
       :save-session-work="saveSessionWork"
       :save-work-teleport-target="props.saveWorkTeleportTarget"
       :session-abandon="dialogs.abandon"
+      :session-renewal="sessionRenewal"
       :session="selection.selectedSession"
       :sessions-api-path="sessionData.sessionsApiPath"
       :session-selection-closed="selection.isClosed"
@@ -114,6 +115,7 @@ const emit = defineEmits([
   "busy-change",
   "chat-attention",
   "page-error-change",
+  "source-operations-suspension-change",
   "work-state-change",
   "toolbar-controls-ready",
   "project-attention"
@@ -136,6 +138,7 @@ const {
   refreshWorkState,
   retryWorkspaceSetup,
   saveSessionWork,
+  sessionRenewal,
   selectedAgentTerminalId,
   selection,
   setAutopilotBusy,

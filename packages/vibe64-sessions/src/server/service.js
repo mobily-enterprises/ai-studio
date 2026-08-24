@@ -21,6 +21,7 @@ import {
   sessionContextUsageFromMetadata,
   sessionRenewalAdvisory
 } from "./sessionRenewalAdvisory.js";
+import { createSessionRenewalController } from "./sessionRenewal.js";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -163,12 +164,30 @@ function sessionCreationLimitError(policy = {}) {
   return error;
 }
 
+function renewalActorResolverUnavailableError() {
+  const error = new Error(
+    "The current Vibe64 host cannot restore the user identity required to continue this session renewal."
+  );
+  error.code = "vibe64_session_renewal_actor_resolver_unavailable";
+  error.retryable = true;
+  error.statusCode = 409;
+  return error;
+}
+
+function assertRenewalActorResolver(resolver = null) {
+  if (resolver !== null && typeof resolver !== "function") {
+    throw new TypeError("Vibe64 session renewal actor resolver must be a function or null.");
+  }
+  return resolver;
+}
+
 const SESSION_SAVE_TASK_ID = "save-work";
 const SESSION_UPDATE_TASK_ID = "update-session";
 
 function createService({
   project,
   publishSessionChanged = async () => null,
+  renewalActorResolver = null,
   terminals,
   workspaceSetupRunner = null
 } = {}) {
@@ -178,10 +197,15 @@ function createService({
   if (!terminals) {
     throw new TypeError("createService requires vibe64.terminals.");
   }
+  assertRenewalActorResolver(renewalActorResolver);
   const setupRunner = workspaceSetupRunner || Object.freeze({
     isRunning: (sessionId) => typeof terminals.workspaceSetupIsRunning === "function" &&
       terminals.workspaceSetupIsRunning(sessionId),
     start: ({ retry = false, runtime, session }) => terminals.prepareWorkspaceSetup(
+      session.sessionId,
+      { retry, runtime, session }
+    ),
+    startRenewal: ({ retry = false, runtime, session }) => terminals.prepareRenewalWorkspaceSetup(
       session.sessionId,
       { retry, runtime, session }
     ),
@@ -191,6 +215,58 @@ function createService({
   });
   const activeSaveOperations = new Map();
   const activeUpdateOperations = new Map();
+  let configuredRenewalActorResolver = renewalActorResolver;
+  async function resolveRenewalActor(actor = {}, context = {}) {
+    if (typeof configuredRenewalActorResolver !== "function") {
+      throw renewalActorResolverUnavailableError();
+    }
+    return configuredRenewalActorResolver(actor, context);
+  }
+  const renewal = createSessionRenewalController({
+    project,
+    publishSessionChanged,
+    resolveRenewalActor,
+    setupRunner,
+    terminals
+  });
+
+  async function sessionsOccupyingPolicySlots(runtime, openSessions = null) {
+    const visible = Array.isArray(openSessions)
+      ? openSessions
+      : await runtime.listSessionSummaries({ statusGroup: "open" });
+    if (typeof runtime?.store?.listSessionsForRenewal !== "function") {
+      return visible;
+    }
+    const visibleIds = new Set(visible.map((session) => text(session?.sessionId)).filter(Boolean));
+    const reservations = [];
+    const reservedRenewalIds = new Set();
+    for (const session of await runtime.store.listSessionsForRenewal()) {
+      const status = text(session?.status);
+      if (!["renewal_pending", "renewal_quiesced"].includes(status)) {
+        continue;
+      }
+      const renewalId = text(
+        session.metadata?.renewal_id || session.metadata?.renewal_quiesced_id
+      );
+      const linkedSessionIds = [
+        text(session.sessionId),
+        text(session.metadata?.renewed_from),
+        text(session.metadata?.renewed_to)
+      ].filter(Boolean);
+      if (
+        !renewalId ||
+        reservedRenewalIds.has(renewalId)
+      ) {
+        continue;
+      }
+      reservedRenewalIds.add(renewalId);
+      if (linkedSessionIds.some((sessionId) => visibleIds.has(sessionId))) {
+        continue;
+      }
+      reservations.push(session);
+    }
+    return [...visible, ...reservations];
+  }
 
   async function publishCanonicalChanged(runtime, sourceSessionId, canonicalCommit, {
     originId = ""
@@ -387,6 +463,10 @@ function createService({
   }
 
   return Object.freeze({
+    ...renewal,
+    setRenewalActorResolver(resolver = null) {
+      configuredRenewalActorResolver = assertRenewalActorResolver(resolver);
+    },
     async inspectRepositoryHistory(input = {}) {
       return sessionResult(async () => {
         const sessionId = requiredRepositorySessionId(input.sessionId);
@@ -517,9 +597,10 @@ function createService({
           throw new TypeError("Session creation requires the project session policy boundary.");
         }
         const created = await project.runProjectSessionPolicyExclusive(async () => {
-          const openSessions = await runtime.listSessionSummaries({
+          const visibleOpenSessions = await runtime.listSessionSummaries({
             statusGroup: "open"
           });
+          const openSessions = await sessionsOccupyingPolicySlots(runtime, visibleOpenSessions);
           const policy = await project.developmentDatabasePolicy({ openSessions });
           if (policy?.creation?.canCreate !== true) {
             throw sessionCreationLimitError(policy);
@@ -995,9 +1076,10 @@ function createService({
         if (typeof project.developmentDatabasePolicy !== "function") {
           throw new TypeError("Session listing requires the project session policy.");
         }
-        const openSessions = viewingAbandoned
+        const visibleOpenSessions = viewingAbandoned
           ? await runtime.listSessionSummaries({ statusGroup: "open" })
           : sessions;
+        const openSessions = await sessionsOccupyingPolicySlots(runtime, visibleOpenSessions);
         const policy = await project.developmentDatabasePolicy({ openSessions });
         return {
           creation: policy.creation,
@@ -1046,6 +1128,9 @@ function createService({
           runtime,
           session
         });
+        if (setup?.ok === false) {
+          return setup;
+        }
         const currentSession = await runtime.getSession(sessionId, {
           inspectSource: false
         });

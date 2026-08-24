@@ -7,6 +7,9 @@ import {
   createService
 } from "../../packages/vibe64-project/src/server/service.js";
 import {
+  createService as createCurrentAppService
+} from "../../packages/current-app/src/server/service.js";
+import {
   createService as createSessionsService
 } from "../../packages/vibe64-sessions/src/server/service.js";
 import {
@@ -15,6 +18,9 @@ import {
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
+  runVibe64RenewalAgentWriteExclusive
+} from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
 import {
   sourceMetadata,
   sourcePath,
@@ -798,6 +804,304 @@ test("Genesis Stack resources define expected Env names without technology check
   });
 });
 
+test("project execution Env reuses an exact internally authorized session record", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sourceSessionId = "renewal-source";
+    const sessionId = "renewal-successor";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await mkdir(sessionSource, { recursive: true });
+    const inspectedRoots = [];
+    const service = projectService(targetRoot, {
+      inspectEnvironment({ projectRoot }) {
+        inspectedRoots.push(projectRoot);
+        return {
+          components: [],
+          environmentDefaults: [],
+          files: [],
+          resources: [],
+          status: "ready"
+        };
+      }
+    });
+    const runtime = await service.createRuntime({ inspectSource: false });
+    await runtime.store.createSession({
+      runtimeKind: "genesis",
+      sessionId: sourceSessionId
+    });
+    await runtime.store.quiesceSessionForRenewal({
+      renewalId: "renewal-env-projection",
+      sourceSessionId
+    });
+    await runtime.store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      metadata: sourceMetadata(targetRoot, sessionId),
+      renewalId: "renewal-env-projection",
+      renewedFrom: sourceSessionId,
+      runtimeKind: "genesis",
+      sessionId,
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+    const session = await runtime.store.readSessionForRenewal(sessionId);
+
+    const projected = await runVibe64RenewalAgentWriteExclusive(
+      runtime,
+      sessionId,
+      () => service.projectExecutionEnvironment({
+        session,
+        sessionId
+      })
+    );
+    assert.equal(projected.acquired, true);
+    assert.deepEqual(projected.value, {});
+    assert.equal(inspectedRoots.at(-1), sessionSource);
+    assert.equal(inspectedRoots.filter((root) => root === sessionSource).length, 1);
+    await assert.rejects(
+      () => service.projectExecutionEnvironment({ sessionId }),
+      { code: "vibe64_session_renewal_private" }
+    );
+  });
+});
+
+test("current-app Env projection cannot write after renewal quiesces its session source", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const activeSessionId = "current-app-active";
+    const quiescedSessionId = "current-app-quiesced";
+    const activeSource = sourcePath(targetRoot, activeSessionId);
+    const quiescedSource = sourcePath(targetRoot, quiescedSessionId);
+    for (const sourceRoot of [activeSource, quiescedSource]) {
+      await mkdir(path.join(sourceRoot, ".git", "info"), { recursive: true });
+    }
+    let blockNextTargetInspection = false;
+    let releaseTargetInspection = null;
+    let targetInspectionStarted = null;
+    const targetInspectionStart = new Promise((resolve) => {
+      targetInspectionStarted = resolve;
+    });
+    const environmentDeclaration = () => ({
+      components: ["example-stack"],
+      environmentDefaults: [],
+      files: [{ format: "dotenv", path: ".env" }],
+      resources: [],
+      status: "ready"
+    });
+    const service = projectService(targetRoot, {
+      inspectEnvironment({ projectRoot }) {
+        if (blockNextTargetInspection && projectRoot === targetRoot) {
+          blockNextTargetInspection = false;
+          targetInspectionStarted();
+          return new Promise((resolve) => {
+            releaseTargetInspection = () => resolve(environmentDeclaration());
+          });
+        }
+        return environmentDeclaration();
+      }
+    });
+    await service.saveEnvUserValues({
+      environment: "dev",
+      values: {
+        CURRENT_APP_VALUE: {
+          secret: false,
+          value: "active-value"
+        }
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, activeSessionId),
+      runtimeKind: "genesis",
+      sessionId: activeSessionId
+    });
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, quiescedSessionId),
+      runtimeKind: "genesis",
+      sessionId: quiescedSessionId
+    });
+    const inspected = [];
+    const currentApp = createCurrentAppService({
+      inspectLaunch(input) {
+        inspected.push(input.projectRoot);
+        return {
+          components: [],
+          diagnostics: [],
+          resources: [],
+          runtimeRequirements: [],
+          stackHash: "stack-hash",
+          status: "ready",
+          targets: []
+        };
+      },
+      projectService: service
+    });
+
+    const active = await currentApp.inspectCurrentApp({ sessionId: activeSessionId });
+    assert.equal(active.ok, true);
+    assert.match(await readFile(path.join(activeSource, ".env"), "utf8"), /CURRENT_APP_VALUE=active-value/u);
+    assert.deepEqual(inspected, [activeSource]);
+
+    const envPath = path.join(quiescedSource, ".env");
+    const excludePath = path.join(quiescedSource, ".git", "info", "exclude");
+    await writeFile(envPath, "preserved-env\n", "utf8");
+    await writeFile(excludePath, "preserved-exclude\n", "utf8");
+    blockNextTargetInspection = true;
+    const pendingInspection = currentApp.inspectCurrentApp({ sessionId: quiescedSessionId });
+    await targetInspectionStart;
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-current-app",
+      sourceSessionId: quiescedSessionId
+    });
+    releaseTargetInspection();
+
+    const blocked = await pendingInspection;
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.code, "vibe64_session_renewal_quiesced");
+    assert.equal(await readFile(envPath, "utf8"), "preserved-env\n");
+    assert.equal(await readFile(excludePath, "utf8"), "preserved-exclude\n");
+    assert.deepEqual(inspected, [activeSource]);
+  });
+});
+
+test("Env saving cannot update project state or source projection after renewal wins admission", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "env-save-renewal";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await mkdir(path.join(sessionSource, ".git", "info"), { recursive: true });
+    let blockNextTargetInspection = false;
+    let releaseTargetInspection = null;
+    let targetInspectionStarted = null;
+    const targetInspectionStart = new Promise((resolve) => {
+      targetInspectionStarted = resolve;
+    });
+    const declaration = {
+      components: ["example-stack"],
+      environmentDefaults: [],
+      files: [{ format: "dotenv", path: ".env" }],
+      resources: [],
+      status: "ready"
+    };
+    const service = projectService(targetRoot, {
+      inspectEnvironment({ projectRoot }) {
+        if (blockNextTargetInspection && projectRoot === targetRoot) {
+          blockNextTargetInspection = false;
+          targetInspectionStarted();
+          return new Promise((resolve) => {
+            releaseTargetInspection = () => resolve(declaration);
+          });
+        }
+        return declaration;
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
+      runtimeKind: "genesis",
+      sessionId
+    });
+    const initial = await service.saveEnvUserValues({
+      environment: "dev",
+      sessionId,
+      values: {
+        SESSION_VALUE: {
+          secret: false,
+          value: "preserved-value"
+        }
+      }
+    });
+    assert.equal(initial.ok, true);
+    const envPath = path.join(sessionSource, ".env");
+    const excludePath = path.join(sessionSource, ".git", "info", "exclude");
+    const userValuesPath = path.join(
+      service.currentProjectRuntimeRoot(),
+      "env",
+      "user-values.json"
+    );
+    const beforeRenewal = {
+      env: await readFile(envPath, "utf8"),
+      excludes: await readFile(excludePath, "utf8"),
+      userValues: await readFile(userValuesPath, "utf8")
+    };
+
+    blockNextTargetInspection = true;
+    const pendingSave = service.saveEnvUserValues({
+      environment: "dev",
+      sessionId,
+      values: {
+        SESSION_VALUE: {
+          secret: false,
+          value: "must-not-be-written"
+        }
+      }
+    });
+    await targetInspectionStart;
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-env-save",
+      sourceSessionId: sessionId
+    });
+    releaseTargetInspection();
+
+    const blocked = await pendingSave;
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.code, "vibe64_session_renewal_quiesced");
+    assert.equal(await readFile(envPath, "utf8"), beforeRenewal.env);
+    assert.equal(await readFile(excludePath, "utf8"), beforeRenewal.excludes);
+    assert.equal(await readFile(userValuesPath, "utf8"), beforeRenewal.userValues);
+  });
+});
+
+test("hidden renewal resource cleanup requires and reuses its exact internal session record", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sourceSessionId = "renewal-source";
+    const successorSessionId = "renewal-successor";
+    const successorSource = sourcePath(targetRoot, successorSessionId);
+    await mkdir(successorSource, { recursive: true });
+    const released = [];
+    const service = projectService(targetRoot);
+    service.setResourceEnvironmentProvider({
+      async environmentForResources() {
+        return { environment: {} };
+      },
+      async removeSessionResources(input) {
+        released.push(input);
+        return { ok: true };
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId: sourceSessionId
+    });
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-resource-cleanup",
+      sourceSessionId
+    });
+    await store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      metadata: sourceMetadata(targetRoot, successorSessionId),
+      renewalId: "renewal-resource-cleanup",
+      renewedFrom: sourceSessionId,
+      runtimeKind: "genesis",
+      sessionId: successorSessionId,
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+    const hiddenSuccessor = await store.readSessionForRenewal(successorSessionId);
+
+    await assert.rejects(
+      () => service.releaseSessionResources({ sessionId: successorSessionId }),
+      { code: "vibe64_session_renewal_private" }
+    );
+    assert.deepEqual(await service.releaseSessionResources({
+      session: hiddenSuccessor,
+      sessionId: successorSessionId
+    }), { ok: true });
+    assert.equal(released.length, 1);
+    assert.equal(released[0].sessionId, successorSessionId);
+    assert.equal(released[0].sourceRoot, successorSource);
+  });
+});
+
 test("a host resource provider satisfies Genesis resources and projects the resolved Env", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sessionId = "session-1";
@@ -1075,6 +1379,77 @@ test("managed app identities use the exact selected session source", async () =>
       identities: [],
       ok: true
     });
+  });
+});
+
+test("managed app identity writes cannot mutate a renewal-quiesced session source", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "identity-renewal";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await mkdir(sessionSource, { recursive: true });
+    let blockNextTargetInspection = false;
+    let releaseTargetInspection = null;
+    let targetInspectionStarted = null;
+    const targetInspectionStart = new Promise((resolve) => {
+      targetInspectionStarted = resolve;
+    });
+    const service = projectService(targetRoot, {
+      inspectEnvironment({ projectRoot }) {
+        const declaration = {
+          components: [],
+          environmentDefaults: [],
+          files: [],
+          resources: [],
+          status: "ready"
+        };
+        if (blockNextTargetInspection && projectRoot === targetRoot) {
+          blockNextTargetInspection = false;
+          targetInspectionStarted();
+          return new Promise((resolve) => {
+            releaseTargetInspection = () => resolve(declaration);
+          });
+        }
+        return declaration;
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
+      runtimeKind: "genesis",
+      sessionId
+    });
+    const active = await service.savePreviewApplicationIdentities({
+      identities: [{
+        name: "admin",
+        type: "email",
+        value: "admin@example.test"
+      }],
+      sessionId
+    });
+    assert.equal(active.ok, true);
+    const storedPath = path.join(sessionSource, ".vibe64", "preview-identities.json");
+    const storedBeforeRenewal = await readFile(storedPath, "utf8");
+    blockNextTargetInspection = true;
+    const pendingSave = service.savePreviewApplicationIdentities({
+      identities: [{
+        name: "member",
+        type: "email",
+        value: "member@example.test"
+      }],
+      sessionId
+    });
+    await targetInspectionStart;
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-preview-identities",
+      sourceSessionId: sessionId
+    });
+    releaseTargetInspection();
+
+    const blocked = await pendingSave;
+
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.code, "vibe64_session_renewal_quiesced");
+    assert.equal(await readFile(storedPath, "utf8"), storedBeforeRenewal);
   });
 });
 

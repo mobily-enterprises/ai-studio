@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { validateSchemaPayload } from "@jskit-ai/kernel/shared/validators";
 
 import { agentMessageInputValidator } from "../../packages/vibe64-sessions/src/server/inputSchemas.js";
@@ -6,6 +6,7 @@ import {
   agentMessageAcceptanceSignal,
   agentTurnControlPayloadFromContext,
   createVibe64SessionWorkRefreshQueue,
+  focusRuntimeSessionChat,
   proxySessionDialogs,
   runtimeHostAgentWorking,
   runtimeHostToolbarSessions,
@@ -13,6 +14,22 @@ import {
 } from "../../src/composables/useVibe64SessionRuntimeHost.js";
 
 describe("Vibe64 direct session runtime host", () => {
+  it("places focus in the newly selected renewed session after it mounts", async () => {
+    const focus = vi.fn();
+    const target = { focus };
+    const runtime = {
+      getAttribute: () => "session-fresh",
+      querySelector: vi.fn(() => target)
+    };
+    const root = {
+      querySelectorAll: vi.fn(() => [runtime])
+    };
+
+    await expect(focusRuntimeSessionChat("session-fresh", root)).resolves.toBe(true);
+    expect(runtime.querySelector).toHaveBeenCalledWith(".studio-autopilot__chat-panel");
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it("serializes work inspection and suppresses an invalidated response", async () => {
     let active = 0;
     let calls = 0;

@@ -58,6 +58,32 @@ test("renewal recommends conservative fallbacks from real durable history signal
   assert.equal(established.recommended, true);
 });
 
+test("a high-volume incident warns from compactions even while exact current context looks modest", () => {
+  // Aggregate evidence from the approved production inspection: the third
+  // compaction arrived after 18 user turns with 81,926 of 258,400 current
+  // context tokens. Cumulative spend was enormous, but it is deliberately not
+  // used as a context-pressure percentage.
+  const advisory = sessionRenewalAdvisory({
+    contextUsage: {
+      exact: true,
+      updatedAt: "2026-08-23T14:52:55.499Z",
+      usedTokens: 81_926,
+      windowTokens: 258_400
+    },
+    conversationTurnCount: 18,
+    now: new Date("2026-08-23T14:52:55.499Z"),
+    session: session({
+      compactions: 3,
+      createdAt: "2026-08-21T13:40:55.511Z"
+    })
+  });
+
+  assert.equal(advisory.signals.contextUsage.ratio < 0.75, true);
+  assert.equal(advisory.primarySignal, "context-compactions");
+  assert.equal(advisory.recommended, true);
+  assert.equal(advisory.severity, "soon");
+});
+
 test("only protocol-proven exact context usage may drive a percentage advisory", () => {
   assert.equal(contextUsageSignal({ usedTokens: 80, windowTokens: 100 })?.exact, false);
   assert.equal(contextUsageSignal({ usedTokens: 101, windowTokens: 100 }), null);

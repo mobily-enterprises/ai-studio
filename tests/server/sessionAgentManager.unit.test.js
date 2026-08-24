@@ -45,6 +45,97 @@ test("session agent manager sends a message through the selected provider", asyn
   assert.equal(result.transportId, "codex_app_server");
 });
 
+test("session agent manager exposes provider-owned renewal primitives with trusted context", async () => {
+  const calls = [];
+  const runtime = { stateRoot: "/runtime/project" };
+  const session = { sessionId: "session-1" };
+  const manager = createSessionAgentManager({
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
+      async generateSessionRenewalHandover(context, input) {
+        calls.push(["generate", context, input]);
+        return { ok: true, turnId: "turn-old" };
+      },
+      async releaseRenewalPredecessorProcessExitProof(context, input) {
+        calls.push(["release-proof", context, input]);
+        return { ok: true, released: true };
+      },
+      async releaseRenewalPredecessorAttachments(context, input) {
+        calls.push(["release-attachments", context, input]);
+        return { ok: true, released: true };
+      },
+      async releaseRenewalSuccessorProcessExitProof(context, input) {
+        calls.push(["release-successor-proof", context, input]);
+        return { ok: true, released: true };
+      },
+      async seedSessionRenewalHandover(context, input) {
+        calls.push(["seed", context, input]);
+        return { ok: true, turnId: "turn-new" };
+      }
+    }]
+  });
+  const options = { runtime, session };
+
+  const generated = await manager.generateSessionRenewalHandover(
+    session.sessionId,
+    { operationId: "renewal:generate" },
+    options
+  );
+  const seeded = await manager.seedSessionRenewalHandover(
+    session.sessionId,
+    { operationId: "renewal:seed" },
+    options
+  );
+  const attachmentsReleased = await manager.releaseRenewalPredecessorAttachments(
+    session.sessionId,
+    { renewalId: "renewal-1" },
+    options
+  );
+  const released = await manager.releaseRenewalPredecessorProcessExitProof(
+    session.sessionId,
+    { renewalId: "renewal-1" },
+    options
+  );
+  const successorAuthorization = { renewalId: "renewal-1", successorSessionId: session.sessionId };
+  const successorReleased = await manager.releaseRenewalSuccessorProcessExitProof(
+    session.sessionId,
+    {
+      authorization: successorAuthorization,
+      renewalId: "renewal-1"
+    },
+    options
+  );
+
+  assert.equal(generated.turnId, "turn-old");
+  assert.equal(seeded.turnId, "turn-new");
+  assert.equal(attachmentsReleased.released, true);
+  assert.equal(released.released, true);
+  assert.equal(successorReleased.released, true);
+  assert.deepEqual(calls.map(([name]) => name), [
+    "generate",
+    "seed",
+    "release-attachments",
+    "release-proof",
+    "release-successor-proof"
+  ]);
+  assert.equal(calls[0][1].runtime, runtime);
+  assert.equal(calls[0][1].session, session);
+  assert.equal(calls[1][1].runtime, runtime);
+  assert.equal(calls[1][1].session, session);
+  assert.equal(calls[2][1].runtime, runtime);
+  assert.equal(calls[2][1].session, session);
+  assert.equal(calls[2][2].renewalId, "renewal-1");
+  assert.equal(calls[3][1].runtime, runtime);
+  assert.equal(calls[3][1].session, session);
+  assert.equal(calls[3][2].renewalId, "renewal-1");
+  assert.equal(calls[4][1].runtime, runtime);
+  assert.equal(calls[4][1].session, session);
+  assert.equal(calls[4][2].authorization, successorAuthorization);
+  assert.equal(calls[4][2].renewalId, "renewal-1");
+  assert.equal(manager.binding(session.sessionId), "");
+});
+
 test("session agent manager exposes focused provider conversations", async () => {
   const calls = [];
   const onEvent = () => null;
@@ -92,6 +183,32 @@ test("session agent manager exposes focused provider conversations", async () =>
   assert.equal(result.message, "Done");
   assert.deepEqual(calls.map(([name]) => name), ["create", "start", "wait"]);
   assert.equal(calls[2][1].onEvent, onEvent);
+});
+
+test("session agent manager exposes active Temporary AI conversation state", async () => {
+  let receivedContext = null;
+  const manager = createSessionAgentManager({
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
+      async hasActiveTemporaryConversation(context) {
+        receivedContext = context;
+        return {
+          active: true,
+          ok: true
+        };
+      }
+    }]
+  });
+
+  const state = await manager.hasActiveTemporaryConversation("session-1", {}, {
+    runtime: { stateRoot: "/runtime" },
+    session: { sessionId: "session-1" }
+  });
+
+  assert.equal(state.active, true);
+  assert.equal(state.providerId, "codex");
+  assert.equal(receivedContext.session.sessionId, "session-1");
 });
 
 test("session agent manager rejects unavailable providers", async () => {
@@ -486,6 +603,50 @@ test("session agent manager rejects copied, forged, and cross-session pre-resolv
     )
   );
   assert.equal(detachedTurns, 0);
+});
+
+test("session agent manager forwards an exact renewal cleanup context only when explicitly supplied", async () => {
+  const closeContexts = [];
+  const manager = createSessionAgentManager({
+    providers: [{
+      async closeSession(context) {
+        closeContexts.push(context);
+        return { closed: true, ok: true };
+      },
+      id: "codex",
+      transportId: "codex_app_server"
+    }]
+  });
+  const runtime = { id: "runtime" };
+  const session = {
+    metadata: {
+      renewal_id: "renewal-1",
+      renewed_from: "source-session"
+    },
+    sessionId: "renewal-successor",
+    status: "renewal_pending"
+  };
+  const renewalCleanup = {
+    renewalId: "renewal-1",
+    sourceSessionId: "source-session"
+  };
+
+  await manager.closeSession("ordinary-session");
+  await manager.closeSession(session.sessionId, {
+    preserveProcessExitProof: true,
+    renewalCleanup,
+    runtime,
+    session
+  });
+
+  assert.equal(closeContexts[0].runtime, null);
+  assert.equal(closeContexts[0].session, null);
+  assert.equal(closeContexts[0].renewalCleanup, null);
+  assert.equal(closeContexts[0].preserveProcessExitProof, false);
+  assert.equal(closeContexts[1].runtime, runtime);
+  assert.equal(closeContexts[1].session, session);
+  assert.equal(closeContexts[1].renewalCleanup, renewalCleanup);
+  assert.equal(closeContexts[1].preserveProcessExitProof, true);
 });
 
 test("session agent manager rejects malformed provider resolutions before provider work", async () => {

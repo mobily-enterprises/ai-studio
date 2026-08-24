@@ -196,6 +196,8 @@ test("work inspection compares the complete session tree with its verified canon
     assert.equal(result.ahead, 1);
     assert.equal(result.behind, 0);
     assert.equal(result.updateAvailable, false);
+    assert.equal(result.worktreeClean, true);
+    assert.equal(path.resolve(result.worktreeTopLevel), path.resolve(session.sourcePath));
     assert.deepEqual(result.changedPaths, ["committed-locally.txt"]);
   } finally {
     await rm(root, { force: true, recursive: true });

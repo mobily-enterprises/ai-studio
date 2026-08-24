@@ -326,6 +326,7 @@ async function githubMirrorCanReference({
 async function cloneCanonicalSource({
   branch = "",
   commandOptions = {},
+  expectedCommit = "",
   referenceRoot = "",
   source = "",
   sourceParent = "",
@@ -386,7 +387,19 @@ async function cloneCanonicalSource({
         "vibe64_session_source_cache_not_dissociated"
       );
     }
-    const commit = await runGit(preparedSourcePath, ["rev-parse", "--verify", "HEAD"], roots, localCommandOptions);
+    const canonicalCommit = await runGit(
+      preparedSourcePath,
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      roots,
+      localCommandOptions
+    );
+    const commit = await resolveExpectedSourceCommit({
+      allowedRoots: roots,
+      baselineCommit: canonicalCommit,
+      commandOptions: localCommandOptions,
+      expectedCommit,
+      sourcePath: preparedSourcePath
+    });
     await rename(preparedSourcePath, sourcePath);
     return {
       branch,
@@ -402,6 +415,53 @@ async function cloneCanonicalSource({
   }
 }
 
+async function resolveExpectedSourceCommit({
+  allowedRoots = [],
+  baselineCommit = "",
+  commandOptions = {},
+  expectedCommit = "",
+  sourcePath = ""
+} = {}) {
+  const expected = normalizeText(expectedCommit).toLowerCase();
+  if (!expected) {
+    return baselineCommit;
+  }
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(expected)) {
+    throw sourceError(
+      "The frozen renewal source commit is not a complete Git object id.",
+      "vibe64_session_source_expected_commit_invalid"
+    );
+  }
+
+  let resolved = "";
+  try {
+    resolved = await runGit(
+      sourcePath,
+      ["rev-parse", "--verify", `${expected}^{commit}`],
+      allowedRoots,
+      commandOptions
+    );
+    await runGit(
+      sourcePath,
+      ["merge-base", "--is-ancestor", resolved, baselineCommit],
+      allowedRoots,
+      commandOptions
+    );
+  } catch {
+    throw sourceError(
+      "The frozen renewal source commit is not available from the configured authority branch.",
+      "vibe64_session_source_expected_commit_unavailable"
+    );
+  }
+  if (resolved !== expected) {
+    throw sourceError(
+      "The frozen renewal source commit did not resolve to the exact requested object.",
+      "vibe64_session_source_expected_commit_mismatch"
+    );
+  }
+  return resolved;
+}
+
 async function attachSessionSource(store, sessionId = "", metadata = {}) {
   const write = async () => {
     await Promise.all(Object.entries(metadata).map(([name, value]) => (
@@ -415,6 +475,7 @@ async function attachSessionSource(store, sessionId = "", metadata = {}) {
 
 async function createSessionSource({
   env = process.env,
+  expectedCommit = "",
   project = {},
   runCommand = runVibe64Command,
   runtime,
@@ -516,6 +577,7 @@ async function createSessionSource({
       baseline = await cloneCanonicalSource({
         branch: canonical.branch,
         commandOptions: githubCommandOptions,
+        expectedCommit,
         referenceRoot: cache.referenceRoot,
         source: canonical.source,
         sourceParent,
@@ -531,9 +593,32 @@ async function createSessionSource({
     }),
     remoteUrl: canonical.remoteUrl
   };
+  resolvedBaseline.commit = await resolveExpectedSourceCommit({
+    allowedRoots: sourceRoots,
+    baselineCommit: resolvedBaseline.commit,
+    commandOptions: {
+      runCommand
+    },
+    expectedCommit,
+    sourcePath
+  });
   await runGit(sourcePath, ["checkout", "-B", branch, resolvedBaseline.commit], sourceRoots, {
     runCommand
   });
+  if (normalizeText(expectedCommit)) {
+    const checkedOutCommit = await runGit(
+      sourcePath,
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      sourceRoots,
+      { runCommand }
+    );
+    if (checkedOutCommit !== resolvedBaseline.commit) {
+      throw sourceError(
+        "The renewal session source did not check out the exact frozen commit.",
+        "vibe64_session_source_expected_commit_mismatch"
+      );
+    }
+  }
   if (resolvedBaseline.remoteUrl) {
     await runGit(sourcePath, ["remote", "set-url", "origin", resolvedBaseline.remoteUrl], sourceRoots, {
       runCommand

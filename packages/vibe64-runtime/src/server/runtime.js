@@ -1,5 +1,6 @@
 import process from "node:process";
 import { rm } from "node:fs/promises";
+import path from "node:path";
 
 import {
   normalizeText,
@@ -18,7 +19,8 @@ import {
 
 import {
   VIBE64_SESSION_STATUS,
-  createVibe64SessionStore
+  createVibe64SessionStore,
+  vibe64SessionStatusIsHidden
 } from "./sessionStore.js";
 import {
   assertSourceInspectionHealthy,
@@ -33,7 +35,11 @@ import {
   sessionClosingMetadata
 } from "./sessionLifecycle.js";
 import {
-  archiveSessionSource as archiveStoredSessionSource
+  archiveSessionSource as archiveStoredSessionSource,
+  commitRenewalSessionSourceStage,
+  prepareRenewalSessionSource,
+  restoreRenewalSessionSourceStage,
+  stagePreparedRenewalSessionSource
 } from "./sessionWorktreeArchive.js";
 import {
   publicSessionMetadata,
@@ -41,6 +47,7 @@ import {
 } from "./workspaceSetupState.js";
 
 const GENESIS_SESSION_KIND = "genesis";
+const SESSION_RENEWAL_HANDOVER_HASH_PATTERN = /^[a-f0-9]{64}$/u;
 
 function unsupportedSessionError(session = {}) {
   const sessionId = normalizeText(session.sessionId || session.id) || "(unknown)";
@@ -59,6 +66,16 @@ function assertSupportedSession(session = {}) {
     throw unsupportedSessionError(session);
   }
   return session;
+}
+
+function assertUsableSession(session = {}) {
+  if (vibe64SessionStatusIsHidden(session.status)) {
+    throw vibe64Error(
+      `Vibe64 session is reserved for an in-progress renewal: ${normalizeText(session.sessionId) || "(unknown)"}`,
+      "vibe64_session_renewal_private"
+    );
+  }
+  return assertSupportedSession(session);
 }
 
 function requireSessionSourceRoot(session = {}) {
@@ -133,6 +150,22 @@ function sessionSourceRecoveryWasSaved(session = {}) {
   return normalizeText(session?.metadata?.source_recovery_saved).toLowerCase() === "yes";
 }
 
+function sessionHasAcknowledgedRenewalSeed(session = {}) {
+  const metadata = session?.metadata && typeof session.metadata === "object"
+    ? session.metadata
+    : {};
+  return normalizeText(metadata.agent_briefing_delivered).toLowerCase() === "yes" &&
+    Boolean(normalizeText(metadata.agent_renewal_seed_acknowledged_at)) &&
+    SESSION_RENEWAL_HANDOVER_HASH_PATTERN.test(
+      normalizeText(metadata.agent_renewal_seed_handover_hash)
+    ) &&
+    Boolean(normalizeText(metadata.agent_renewal_seed_operation_id)) &&
+    Boolean(normalizeText(metadata.agent_renewal_seed_thread_id)) &&
+    Boolean(normalizeText(metadata.agent_renewal_seed_turn_id)) &&
+    Boolean(normalizeText(metadata.renewal_id)) &&
+    Boolean(normalizeText(metadata.renewed_from));
+}
+
 async function sessionIsListable(session = {}) {
   if (!sessionIsSupported(session)) {
     return false;
@@ -145,6 +178,36 @@ async function sessionIsListable(session = {}) {
   }
   const sourcePath = sessionSourcePath(session);
   return Boolean(sourcePath && await pathExists(sourcePath));
+}
+
+async function inspectSessionSource(runtime, session = {}) {
+  assertSupportedSession(session);
+  if (!sessionHasSource(session)) {
+    return null;
+  }
+  if (!runtime.sourceInspectionAvailable || runtime.sourceInspectionError) {
+    return {
+      ...sourceInspectionFailure(),
+      status: "error"
+    };
+  }
+  try {
+    const merge = await inspectSessionSourceMergeState(sessionSourcePath(session));
+    if (merge.hasConflicts) {
+      return {
+        ...sourceInspectionFailure({
+          merge
+        }),
+        status: "error"
+      };
+    }
+    return null;
+  } catch {
+    return {
+      ...sourceInspectionFailure(),
+      status: "error"
+    };
+  }
 }
 
 class Vibe64SessionRuntime {
@@ -235,12 +298,152 @@ class Vibe64SessionRuntime {
     return this.sessionView(session);
   }
 
+  async createRenewalSession({
+    actorDisplayName = "",
+    actorId = "",
+    confirmedAt = "",
+    metadata = {},
+    renewalId = "",
+    renewedFrom = "",
+    sessionId = "",
+    sourceContext = {},
+    startedAt = ""
+  } = {}) {
+    if (!this.projectSessionSourceRoot) {
+      throw vibe64Error(
+        "Renewal session creation requires projectSessionSourceRoot.",
+        "vibe64_project_session_source_root_required"
+      );
+    }
+    let session = await this.store.createRenewalPendingSession({
+      actorDisplayName,
+      actorId,
+      confirmedAt,
+      metadata,
+      renewalId,
+      renewedFrom,
+      runtimeKind: GENESIS_SESSION_KIND,
+      sessionId,
+      startedAt
+    });
+    const expectedSourcePath = managedSessionSourcePath(
+      this.projectSessionSourceRoot,
+      session.sessionId
+    );
+    const recordedSourcePath = normalizeText(session.metadata?.source_path);
+    if (recordedSourcePath && path.resolve(recordedSourcePath) !== expectedSourcePath) {
+      throw vibe64Error(
+        "Renewal session source does not match its managed source path.",
+        "vibe64_session_source_not_attached"
+      );
+    }
+    try {
+      const sourceRoot = sessionSourcePath(session);
+      if (sourceRoot && sourceRoot !== expectedSourcePath) {
+        throw vibe64Error(
+          "Renewal session source does not match its managed source path.",
+          "vibe64_session_source_not_attached"
+        );
+      }
+      if (!sourceRoot || !await pathExists(sourceRoot)) {
+        if (!this.createSessionSource) {
+          throw vibe64Error(
+            "Renewal session creation requires a createSessionSource callback.",
+            "vibe64_session_source_creator_required"
+          );
+        }
+        if (!sourceRoot && await pathExists(expectedSourcePath)) {
+          // A crash can leave the exact private successor clone in place before
+          // its metadata is attached. It has never been usable or selected, so
+          // remove only that managed namespace and materialize it again.
+          await rm(path.dirname(expectedSourcePath), {
+            force: true,
+            recursive: true
+          });
+        }
+        await this.store.mutateSessionForRenewal(session.sessionId, () => (
+          this.createSessionSource({
+            ...(sourceContext && typeof sourceContext === "object" ? sourceContext : {}),
+            runtime: this,
+            session,
+            store: this.store
+          })
+        ));
+        session = await this.store.readSessionForRenewal(session.sessionId);
+      }
+      const materializedSourceRoot = sessionSourcePath(session);
+      if (
+        materializedSourceRoot !== expectedSourcePath ||
+        !await pathExists(materializedSourceRoot)
+      ) {
+        throw vibe64Error(
+          "Renewal session source creation completed without attaching a source directory.",
+          "vibe64_session_source_not_attached"
+        );
+      }
+    } catch (error) {
+      await rm(path.dirname(expectedSourcePath), {
+        force: true,
+        recursive: true
+      });
+      await this.store.removeRenewalPendingSession({
+        renewalId,
+        sessionId: session.sessionId
+      });
+      throw error;
+    }
+    return this.sessionViewForRenewal(session);
+  }
+
+  async discardRenewalSession(sessionId = "", {
+    renewalId = ""
+  } = {}) {
+    const session = await this.store.readSessionForRenewal(sessionId);
+    if (
+      session.status !== VIBE64_SESSION_STATUS.RENEWAL_PENDING ||
+      normalizeText(session.metadata?.renewal_id) !== normalizeText(renewalId)
+    ) {
+      throw vibe64Error(
+        `Session is not the pending successor for renewal ${normalizeText(renewalId) || "(empty)"}: ${normalizeText(sessionId)}`,
+        "vibe64_session_renewal_transition_invalid"
+      );
+    }
+    const expectedSourcePath = managedSessionSourcePath(
+      this.projectSessionSourceRoot,
+      session.sessionId
+    );
+    const sourceRoot = sessionSourcePath(session);
+    if (sourceRoot && sourceRoot !== expectedSourcePath) {
+      throw vibe64Error(
+        "Renewal session source does not match its managed source path.",
+        "vibe64_session_source_not_attached"
+      );
+    }
+    await rm(path.dirname(expectedSourcePath), {
+      force: true,
+      recursive: true
+    });
+    return this.store.removeRenewalPendingSession({
+      renewalId,
+      sessionId: session.sessionId
+    });
+  }
+
   async getSession(sessionId, {
     inspectSource = this.inspectSourceByDefault
   } = {}) {
     return this.sessionView(await this.store.readSession(sessionId), {
       inspectSource
     });
+  }
+
+  async getSessionForRenewal(sessionId, {
+    inspectSource = this.inspectSourceByDefault
+  } = {}) {
+    return this.sessionViewForRenewal(
+      await this.store.readSessionForRenewal(sessionId),
+      { inspectSource }
+    );
   }
 
   async listSessions(options = {}) {
@@ -268,10 +471,26 @@ class Vibe64SessionRuntime {
     return this.store.updateCurrentSession(sessionId);
   }
 
+  async finalizeRenewalCurrentSession(options = {}) {
+    return this.store.finalizeRenewalCurrentSession(options);
+  }
+
+  async activateRenewalSession(options = {}) {
+    return this.store.activateRenewalSuccessor(options);
+  }
+
+  async quiesceSessionForRenewal(options = {}) {
+    return this.store.quiesceSessionForRenewal(options);
+  }
+
+  async restoreSessionAfterRenewalCancellation(options = {}) {
+    return this.store.restoreSessionAfterRenewalCancellation(options);
+  }
+
   async sessionView(session = {}, {
     inspectSource = this.inspectSourceByDefault
   } = {}) {
-    assertSupportedSession(session);
+    assertUsableSession(session);
     const sourceInspection = inspectSource
       ? await this.inspectSourceForSession(session)
       : null;
@@ -280,42 +499,29 @@ class Vibe64SessionRuntime {
     });
   }
 
-  async inspectSourceForSession(session = {}) {
+  async sessionViewForRenewal(session = {}, {
+    inspectSource = this.inspectSourceByDefault
+  } = {}) {
     assertSupportedSession(session);
-    if (!sessionHasSource(session)) {
-      return null;
-    }
-    if (!this.sourceInspectionAvailable || this.sourceInspectionError) {
-      return {
-        ...sourceInspectionFailure(),
-        status: "error"
-      };
-    }
-    try {
-      const merge = await inspectSessionSourceMergeState(sessionSourcePath(session));
-      if (merge.hasConflicts) {
-        return {
-          ...sourceInspectionFailure({
-            merge
-          }),
-          status: "error"
-        };
-      }
-      return null;
-    } catch {
-      return {
-        ...sourceInspectionFailure(),
-        status: "error"
-      };
-    }
+    const sourceInspection = inspectSource
+      ? await inspectSessionSource(this, session)
+      : null;
+    return plainSessionView(session, {
+      sourceInspection
+    });
+  }
+
+  async inspectSourceForSession(session = {}) {
+    assertUsableSession(session);
+    return inspectSessionSource(this, session);
   }
 
   async assertSourceHealthy(sessionOrId = {}) {
     const session = typeof sessionOrId === "string"
       ? await this.store.readSession(sessionOrId)
       : sessionOrId;
-    assertSupportedSession(session);
-    const inspection = await this.inspectSourceForSession(session);
+    assertUsableSession(session);
+    const inspection = await inspectSessionSource(this, session);
     assertSourceInspectionHealthy(inspection);
     return sessionSourcePath(session);
   }
@@ -333,7 +539,7 @@ class Vibe64SessionRuntime {
     if (genesisTask === "work") {
       const conversation = await this.store.readConversationLog(sessionId);
       const hasUserMessage = conversation.some((turn) => Boolean(turn?.user));
-      if (!hasUserMessage) {
+      if (!hasUserMessage && !sessionHasAcknowledgedRenewalSeed(session)) {
         genesisTask = "start";
       }
     }
@@ -367,6 +573,103 @@ class Vibe64SessionRuntime {
         reason,
         session,
         store: this.store
+      });
+    });
+  }
+
+  async prepareSessionSourceForRenewal(sessionId = "", {
+    renewalId = ""
+  } = {}) {
+    return this.store.mutateSessionForRenewal(sessionId, async () => {
+      const session = assertSupportedSession(
+        await this.store.readSessionForRenewal(sessionId)
+      );
+      if (
+        session.status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+        normalizeText(session.metadata?.renewal_quiesced_id) !== normalizeText(renewalId)
+      ) {
+        throw vibe64Error(
+          `Only the exact quiesced session source can be prepared for renewal: ${normalizeText(sessionId)}`,
+          "vibe64_session_renewal_source_not_quiesced"
+        );
+      }
+      return prepareRenewalSessionSource({
+        renewalId,
+        session,
+        store: this.store
+      });
+    });
+  }
+
+  async stagePreparedSessionSourceForRenewal(sessionId = "", {
+    renewalId = ""
+  } = {}) {
+    return this.store.mutateSessionForRenewal(sessionId, async () => {
+      const session = assertSupportedSession(
+        await this.store.readSessionForRenewal(sessionId)
+      );
+      if (
+        session.status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+        normalizeText(session.metadata?.renewal_quiesced_id) !== normalizeText(renewalId)
+      ) {
+        throw vibe64Error(
+          `Only the exact quiesced session source can enter its committed renewal stage: ${normalizeText(sessionId)}`,
+          "vibe64_session_renewal_source_not_quiesced"
+        );
+      }
+      return stagePreparedRenewalSessionSource({
+        renewalId,
+        session
+      });
+    });
+  }
+
+  async restoreSessionSourceAfterRenewalFailure(sessionId = "", {
+    renewalId = ""
+  } = {}) {
+    return this.store.mutateSessionForRenewal(sessionId, async () => {
+      const session = assertSupportedSession(
+        await this.store.readSessionForRenewal(sessionId)
+      );
+      if (
+        session.status !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED ||
+        normalizeText(session.metadata?.renewal_quiesced_id) !== normalizeText(renewalId)
+      ) {
+        throw vibe64Error(
+          `Renewal source restoration requires the exact quiesced predecessor: ${normalizeText(sessionId)}`,
+          "vibe64_session_renewal_source_restore_status_invalid"
+        );
+      }
+      return restoreRenewalSessionSourceStage({
+        renewalId,
+        session
+      });
+    });
+  }
+
+  async commitRenewalSessionSourceRemoval(sessionId = "", {
+    renewalId = ""
+  } = {}) {
+    return this.store.withPublishedRenewalSession(sessionId, async (publishedSession) => {
+      const session = assertSupportedSession(publishedSession);
+      if (session.status !== VIBE64_SESSION_STATUS.ABANDONED) {
+        throw vibe64Error(
+          `Renewal source removal requires an abandoned predecessor archive: ${normalizeText(sessionId)}`,
+          "vibe64_session_renewal_source_commit_status_invalid"
+        );
+      }
+      if (
+        normalizeText(session.metadata?.renewal_id) !== normalizeText(renewalId) ||
+        !normalizeText(session.metadata?.renewed_to)
+      ) {
+        throw vibe64Error(
+          `Archived predecessor does not belong to renewal ${normalizeText(renewalId) || "(empty)"}: ${normalizeText(sessionId)}`,
+          "vibe64_session_renewal_link_mismatch"
+        );
+      }
+      return commitRenewalSessionSourceStage({
+        renewalId,
+        session
       });
     });
   }
@@ -435,43 +738,53 @@ class Vibe64SessionRuntime {
     }
   }
 
-  readConversationLog(sessionId) {
+  async readConversationLog(sessionId) {
+    await this.store.readSession(sessionId);
     return this.store.readConversationLog(sessionId);
   }
 
-  readConversationLogPage(sessionId, options = {}) {
+  async readConversationLogPage(sessionId, options = {}) {
+    await this.store.readSession(sessionId);
     return this.store.readConversationLogPage(sessionId, options);
   }
 
-  writeConversationUserMessage(sessionId, message = {}) {
+  async writeConversationUserMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeConversationUserMessage(sessionId, message);
   }
 
-  writeConversationAssistantMessage(sessionId, message = {}) {
+  async writeConversationAssistantMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeConversationAssistantMessage(sessionId, message);
   }
 
-  upsertConversationAssistantMessage(sessionId, message = {}) {
+  async upsertConversationAssistantMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.upsertConversationAssistantMessage(sessionId, message);
   }
 
-  writeConversationCommentaryMessage(sessionId, message = {}) {
+  async writeConversationCommentaryMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeConversationCommentaryMessage(sessionId, message);
   }
 
-  writeConversationThinkingMessage(sessionId, message = {}) {
+  async writeConversationThinkingMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeConversationThinkingMessage(sessionId, message);
   }
 
-  writeConversationSystemMessage(sessionId, message = {}) {
+  async writeConversationSystemMessage(sessionId, message = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeConversationSystemMessage(sessionId, message);
   }
 
-  readAgentRun(sessionId, runId) {
+  async readAgentRun(sessionId, runId) {
+    await this.store.readSession(sessionId);
     return this.store.readAgentRun(sessionId, runId);
   }
 
-  writeAgentRunEvent(sessionId, runId, event = {}) {
+  async writeAgentRunEvent(sessionId, runId, event = {}) {
+    await this.store.readSession(sessionId);
     return this.store.writeAgentRunEvent(sessionId, runId, event);
   }
 }

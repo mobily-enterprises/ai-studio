@@ -30,6 +30,9 @@ test("project execution environment comes from the project service", async () =>
 
   assert.deepEqual(request, {
     sessionId: "session-1",
+    session: {
+      sessionId: "session-1"
+    },
     target: "codex"
   });
   assert.deepEqual(env, {

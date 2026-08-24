@@ -7,6 +7,9 @@ import {
   createVibe64SessionStore
 } from "@local/vibe64-runtime/server/sessionStore";
 import {
+  runVibe64AgentWriteExclusive
+} from "@local/vibe64-runtime/server/agentWriteLock";
+import {
   vibe64Result
 } from "@local/vibe64-core/server/serverResponses";
 import {
@@ -320,13 +323,47 @@ function createService({
         sourceRoot
       };
     }
-    const session = await sessionStore().readSession(sessionId);
+    // Internal orchestration may already hold a session record obtained
+    // through a narrower capability than the public store reader (for
+    // example, a renewal successor before it becomes visible). Reuse only an
+    // exact-id record; ordinary callers still cross the public read boundary.
+    const providedSessionId = String(input.session?.sessionId || input.session?.id || "").trim();
+    const session = providedSessionId === sessionId
+      ? input.session
+      : await sessionStore().readSession(sessionId);
     return {
       label: "Session source",
       rootKind: "session-source",
       sessionId,
       sourceRoot: sessionSourcePath(session)
     };
+  }
+
+  async function runSessionSourceWorkExclusive(input = {}, operation) {
+    if (typeof operation !== "function") {
+      throw new TypeError("Session source work requires an operation.");
+    }
+    const sessionId = String(input.sessionId || "").trim();
+    if (!sessionId) {
+      return operation();
+    }
+    const runtime = await createRuntime({
+      inspectSource: false
+    });
+    const exclusive = await runVibe64AgentWriteExclusive(
+      runtime,
+      sessionId,
+      operation
+    );
+    if (!exclusive.acquired) {
+      const error = vibe64Error(
+        exclusive.value?.error || "Another assistant operation is starting. Try again in a moment.",
+        exclusive.value?.code || "vibe64_agent_write_mode_busy"
+      );
+      error.retryable = true;
+      throw error;
+    }
+    return exclusive.value;
   }
 
   async function userEnvRecords() {
@@ -875,13 +912,15 @@ function createService({
     },
 
     async projectExecutionEnvironment(input = {}) {
-      const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
-      await materializeProjectEnvironmentFiles({
-        environment: resolved.projectEnvironment,
-        files: resolved.environmentFiles,
-        sourceRoot: resolved.source.sourceRoot
+      return runSessionSourceWorkExclusive(input, async () => {
+        const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+        await materializeProjectEnvironmentFiles({
+          environment: resolved.projectEnvironment,
+          files: resolved.environmentFiles,
+          sourceRoot: resolved.source.sourceRoot
+        });
+        return resolved.projectEnvironment;
       });
-      return resolved.projectEnvironment;
     },
 
     async readCurrentProject() {
@@ -921,7 +960,10 @@ function createService({
       if (!sessionId || typeof resourceEnvironmentProvider?.removeSessionResources !== "function") {
         return { ok: true };
       }
-      const source = await sourceForInput({ sessionId });
+      const source = await sourceForInput({
+        session: input.session,
+        sessionId
+      });
       return resourceEnvironmentProvider.removeSessionResources({
         ...(await currentDevelopmentDatabaseConfiguration()),
         projectRuntimeRoot: selectedProjectRuntimeRoot(),
@@ -962,7 +1004,10 @@ function createService({
     },
 
     async saveEnvUserValues(input = {}) {
-      return projectResult(() => saveEnvState(input));
+      return projectResult(() => runSessionSourceWorkExclusive(
+        input,
+        () => saveEnvState(input)
+      ));
     },
 
     async saveDevelopmentDatabaseScope(input = {}) {
@@ -974,7 +1019,7 @@ function createService({
     },
 
     async savePreviewApplicationIdentities(input = {}) {
-      return projectResult(async () => {
+      return projectResult(() => runSessionSourceWorkExclusive(input, async () => {
         const source = await previewApplicationIdentitySource(input);
         return runProjectSourceMutationExclusive(
           selectedProjectRuntimeRoot(),
@@ -992,7 +1037,7 @@ function createService({
             operation: "save-preview-application-identities"
           }
         );
-      });
+      }));
     },
 
     async selectProject(input = {}) {

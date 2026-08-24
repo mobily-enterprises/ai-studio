@@ -239,6 +239,7 @@ function useVibe64SessionRepositoryStatusRegistry({
   maxVisibleSessions = DEFAULT_VISIBLE_SESSION_LIMIT,
   onState = () => null,
   selectedSessionId,
+  sessionSourceOperationsSuspended = () => false,
   sessions,
   sessionsApiPath
 } = {}) {
@@ -252,9 +253,32 @@ function useVibe64SessionRepositoryStatusRegistry({
     .filter(Boolean));
   const selectedId = computed(() => String(readRefOrGetterValue(selectedSessionId) || "").trim());
   const apiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
+  const suspendedVisibleSessionIds = computed(() => visibleSessionIds.value.filter((sessionId) => (
+    sessionSourceOperationsSuspended(sessionId) === true
+  )));
   const canonicalChecks = new Map();
+  const canonicalAccessRevisions = new Map();
   const forcedCanonicalFollowups = new Set();
   let disposed = false;
+
+  function sourceOperationsSuspended(sessionId = "") {
+    const id = String(sessionId || "").trim();
+    return Boolean(id && sessionSourceOperationsSuspended(id) === true);
+  }
+
+  function canonicalAccessRevision(sessionId = "") {
+    return Number(canonicalAccessRevisions.get(sessionId) || 0);
+  }
+
+  function advanceCanonicalAccessRevision(sessionId = "") {
+    const id = String(sessionId || "").trim();
+    if (!id) {
+      return 0;
+    }
+    const revision = canonicalAccessRevision(id) + 1;
+    canonicalAccessRevisions.set(id, revision);
+    return revision;
+  }
   const queue = createVibe64SessionRepositoryStatusQueue({
     onState,
     async requestWork(sessionId) {
@@ -272,6 +296,7 @@ function useVibe64SessionRepositoryStatusRegistry({
     }
     const requestedId = String(sessionId || "").trim();
     const ids = visibleSessionIds.value.filter((id) => (
+      !sourceOperationsSuspended(id) &&
       (includeSelected || id !== selectedId.value) && (!requestedId || id === requestedId)
     ));
     queue.enqueue(ids, { force });
@@ -279,24 +304,34 @@ function useVibe64SessionRepositoryStatusRegistry({
 
   async function checkCanonical(sessionId = "", { force = false } = {}) {
     const id = String(sessionId || "").trim();
-    if (disposed || !id || !apiPath.value) {
+    if (disposed || !id || !apiPath.value || sourceOperationsSuspended(id)) {
       return null;
     }
+    const accessRevision = canonicalAccessRevision(id);
     if (canonicalChecks.has(id)) {
       const active = canonicalChecks.get(id);
-      if (force && active.force !== true) {
-        forcedCanonicalFollowups.add(id);
+      if (active.accessRevision === accessRevision) {
+        if (force && active.force !== true) {
+          forcedCanonicalFollowups.add(id);
+        }
+        return active.promise;
       }
-      return active.promise;
     }
-    const request = getHttpWebClient().request(vibe64SessionCheckUpdatesPath(
+    let request;
+    const requestIsCurrent = () => Boolean(
+      !disposed &&
+      !sourceOperationsSuspended(id) &&
+      canonicalAccessRevision(id) === accessRevision &&
+      canonicalChecks.get(id)?.promise === request
+    );
+    request = getHttpWebClient().request(vibe64SessionCheckUpdatesPath(
       apiPath.value,
       id
     ), {
       body: { force },
       method: "POST"
     }).then((result) => {
-      if (disposed) {
+      if (!requestIsCurrent()) {
         return null;
       }
       if (result?.ok === false) {
@@ -308,19 +343,26 @@ function useVibe64SessionRepositoryStatusRegistry({
       inspectVisible({ force: true, includeSelected: true, sessionId: id });
       return result;
     }).catch((error) => {
-      if (!disposed) {
+      if (requestIsCurrent()) {
         queue.markCanonicalCheckUnavailable(id, error instanceof Error
           ? error.message
           : String(error || "Repository update status is unavailable."));
       }
       return null;
     }).finally(() => {
+      if (canonicalChecks.get(id)?.promise !== request) {
+        return;
+      }
       canonicalChecks.delete(id);
-      if (!disposed && forcedCanonicalFollowups.delete(id)) {
+      if (
+        !disposed &&
+        !sourceOperationsSuspended(id) &&
+        forcedCanonicalFollowups.delete(id)
+      ) {
         void checkCanonical(id, { force: true });
       }
     });
-    canonicalChecks.set(id, { force, promise: request });
+    canonicalChecks.set(id, { accessRevision, force, promise: request });
     return request;
   }
 
@@ -330,15 +372,43 @@ function useVibe64SessionRepositoryStatusRegistry({
     void checkCanonical(selectedId.value);
   }, { immediate: true });
 
+  let priorSuspendedSessionIds = new Set();
+  watch(suspendedVisibleSessionIds, (sessionIds) => {
+    const nextSuspendedSessionIds = new Set(sessionIds);
+    for (const sessionId of new Set([
+      ...priorSuspendedSessionIds,
+      ...nextSuspendedSessionIds
+    ])) {
+      const wasSuspended = priorSuspendedSessionIds.has(sessionId);
+      const suspended = nextSuspendedSessionIds.has(sessionId);
+      if (wasSuspended === suspended) {
+        continue;
+      }
+      advanceCanonicalAccessRevision(sessionId);
+      forcedCanonicalFollowups.delete(sessionId);
+      if (!suspended && visibleSessionIds.value.includes(sessionId)) {
+        void checkCanonical(sessionId, { force: true });
+      }
+    }
+    priorSuspendedSessionIds = nextSuspendedSessionIds;
+  }, {
+    flush: "sync",
+    immediate: true
+  });
+
   useRealtimeEvent({
     enabled: computed(() => visibleSessionIds.value.length > 0),
     event: VIBE64_SESSION_CHANGED_EVENT,
     matches: ({ payload = {} } = {}) => Boolean(
       visibleSessionIds.value.includes(repositoryStatusSessionId(payload)) &&
+      !sourceOperationsSuspended(repositoryStatusSessionId(payload)) &&
       repositoryStatusRealtimeShouldRefresh(payload)
     ),
     onEvent: ({ payload = {} } = {}) => {
       const sessionId = repositoryStatusSessionId(payload);
+      if (sourceOperationsSuspended(sessionId)) {
+        return;
+      }
       inspectVisible({
         force: true,
         includeSelected: true,
@@ -356,7 +426,7 @@ function useVibe64SessionRepositoryStatusRegistry({
     event: VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
     matches: ({ payload = {} } = {}) => visibleSessionIds.value.includes(
       repositoryStatusSessionId(payload)
-    ),
+    ) && !sourceOperationsSuspended(repositoryStatusSessionId(payload)),
     onEvent: ({ payload = {} } = {}) => inspectVisible({
       force: true,
       includeSelected: true,
@@ -390,6 +460,7 @@ function useVibe64SessionRepositoryStatusRegistry({
       window.clearInterval(canonicalInterval);
     }
     canonicalChecks.clear();
+    canonicalAccessRevisions.clear();
     forcedCanonicalFollowups.clear();
     queue.dispose();
   });

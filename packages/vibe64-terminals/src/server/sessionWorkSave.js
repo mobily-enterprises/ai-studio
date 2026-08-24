@@ -551,12 +551,29 @@ async function inspectSessionWork({
     runCommand,
     worktreePath: context.worktreePath
   });
-  const [canonicalCommit, sessionHead] = await Promise.all([
+  const [canonicalCommit, sessionHead, worktreePorcelain, worktreeTopLevel] = await Promise.all([
     observedCanonicalCommit(runCommand, context, { commandOptions, project }),
     gitOutput(runCommand, context, [
       "rev-parse",
       "--verify",
       "HEAD^{commit}"
+    ], {
+      commandOptions,
+      project
+    }),
+    gitOutput(runCommand, context, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignore-submodules=none",
+      "-z"
+    ], {
+      commandOptions,
+      project
+    }),
+    gitOutput(runCommand, context, [
+      "rev-parse",
+      "--show-toplevel"
     ], {
       commandOptions,
       project
@@ -590,6 +607,7 @@ async function inspectSessionWork({
     .filter(Boolean));
   const changedPaths = comparison.changedPaths.filter((filePath) => !derivedPathSet.has(filePath));
   const relationship = repositoryUpdateRelationship(ahead, behind);
+  const worktreeClean = worktreePorcelain.length === 0;
   return {
     ahead,
     baseCommit: context.baseCommit,
@@ -600,7 +618,7 @@ async function inspectSessionWork({
     changeBaseCommit: comparison.changeBaseCommit,
     changeBaseTree: comparison.changeBaseTree,
     changedPaths,
-    dirty: tree !== headTree,
+    dirty: tree !== headTree || !worktreeClean,
     mode: context.mode,
     ok: true,
     repositoryMode: context.mode,
@@ -612,7 +630,9 @@ async function inspectSessionWork({
     updateAvailable: behind > 0,
     updateStrategy: repositoryUpdateStrategy(relationship),
     unsaved: changedPaths.length > 0,
+    worktreeClean,
     worktreeTree: tree,
+    worktreeTopLevel,
     worktreePath: context.worktreePath
   };
 }

@@ -39,8 +39,10 @@ import {
   refreshGenesisCities
 } from "@local/vibe64-genesis/server";
 import {
+  codexTerminalNamespace,
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
+  launchTargetTerminalNamespace,
   terminalSessionSourceRoot,
   terminalWorktreePath,
   terminalProjectScopeKey
@@ -48,7 +50,10 @@ import {
 import {
   closeTerminalSessionsForCwdRoot,
   closeTerminalSessionsForNamespace,
-  listTerminalSessions
+  freezeTerminalNamespaceAdmission,
+  listTerminalSessions,
+  terminalNamespaceAdmissionFailure,
+  thawTerminalNamespaceAdmission
 } from "@local/vibe64-execution/server/terminalSessions";
 import {
   projectServiceNamespaceRoot
@@ -73,12 +78,21 @@ import {
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 import {
+  VIBE64_SESSION_STATUS,
   vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server/sessionStore";
 import {
-  runVibe64AgentWriteExclusive
+  sessionIsClosing
+} from "@local/vibe64-runtime/server/sessionLifecycle";
+import {
+  runVibe64AgentWriteExclusive,
+  runVibe64RenewalAgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
 import { createWorkspaceSetupRunner } from "./workspaceSetup.js";
+import {
+  defineSessionRenewalHandoverText,
+  sessionRenewalManualHandoverTemplate
+} from "./sessionRenewalHandover.js";
 
 const PROJECT_RUNTIME_DORMANT_CLOSE_AFTER_MS = 30 * 60 * 1000;
 const PROJECT_RUNTIME_DORMANCY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -87,6 +101,81 @@ const PROJECT_RUNTIME_MARKER_MISSING_REASON = "project-runtime-marker-missing";
 
 function normalizeAgentProviderId(value = "") {
   return String(value || "").trim().toLowerCase();
+}
+
+function recordValue(value = null) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : null;
+}
+
+function renewalPredecessorTerminalCleanupContext(session = {}, {
+  renewalId = "",
+  runtime = null
+} = {}) {
+  const sessionRecord = recordValue(session);
+  const normalizedRenewalId = String(renewalId || "").trim();
+  const sessionId = String(sessionRecord?.sessionId || "").trim();
+  const metadata = recordValue(sessionRecord?.metadata) || {};
+  const status = String(sessionRecord?.status || "").trim();
+  const quiescedId = String(metadata.renewal_quiesced_id || "").trim();
+  const isActive = status === VIBE64_SESSION_STATUS.ACTIVE;
+  const isExactQuiesced = status === VIBE64_SESSION_STATUS.RENEWAL_QUIESCED &&
+    quiescedId === normalizedRenewalId;
+  // renewal_restored_id is historical proof of a completed rollback. An
+  // active session is unowned once current quiescence and renewal links clear.
+  if (
+    !runtime ||
+    !sessionId ||
+    !normalizedRenewalId ||
+    (!isActive && !isExactQuiesced) ||
+    (isActive && (
+      quiescedId ||
+      String(metadata.renewed_to || "").trim()
+    ))
+  ) {
+    throw new TypeError("Renewal predecessor terminal cleanup requires its exact active or quiesced session and runtime.");
+  }
+  return {
+    renewalCleanup: Object.freeze({
+      kind: "predecessor",
+      renewalId: normalizedRenewalId,
+      sourceSessionId: sessionId
+    }),
+    runtime,
+    session: sessionRecord,
+    sessionId
+  };
+}
+
+function renewalSuccessorTerminalCleanupContext(session = {}, {
+  renewalId = "",
+  runtime = null
+} = {}) {
+  const sessionRecord = recordValue(session);
+  const normalizedRenewalId = String(renewalId || "").trim();
+  const sessionId = String(sessionRecord?.sessionId || "").trim();
+  const metadata = recordValue(sessionRecord?.metadata) || {};
+  if (
+    !runtime ||
+    !sessionId ||
+    !normalizedRenewalId ||
+    sessionRecord.status !== VIBE64_SESSION_STATUS.RENEWAL_PENDING ||
+    String(metadata.renewal_id || "").trim() !== normalizedRenewalId ||
+    !String(metadata.renewed_from || "").trim()
+  ) {
+    throw new TypeError("Renewal terminal cleanup requires the exact hidden successor and runtime.");
+  }
+  return {
+    renewalCleanup: Object.freeze({
+      kind: "successor",
+      renewalId: normalizedRenewalId,
+      sourceSessionId: String(metadata.renewed_from).trim()
+    }),
+    runtime,
+    session: sessionRecord,
+    sessionId
+  };
 }
 
 function terminalNamespaceMatchesProjectScope(namespace = "", projectScope = "") {
@@ -213,6 +302,7 @@ function codexToolHomeSourceFromEnv(env = process.env) {
 
 async function closeTerminalControllerForSession({
   controller,
+  controllerOptions = {},
   eventPrefix = "server.terminals.closeSessionTerminals",
   label = "",
   sessionId = ""
@@ -229,7 +319,7 @@ async function closeTerminalControllerForSession({
     sessionId
   });
   try {
-    const result = await controller.closeAllForSession(sessionId);
+    const result = await controller.closeAllForSession(sessionId, controllerOptions);
     vibe64SessionDebugLog(`${eventPrefix}.controller.done`, {
       closed: Number(result?.closed || 0),
       controller: label,
@@ -250,12 +340,14 @@ async function closeTerminalControllerForSession({
 }
 
 async function closeTerminalControllersForSession(sessionId = "", controllers = [], {
+  controllerOptions = {},
   eventPrefix = "server.terminals.closeSessionTerminals"
 } = {}) {
   let closed = 0;
   for (const entry of controllers) {
     const result = await closeTerminalControllerForSession({
       ...entry,
+      controllerOptions,
       eventPrefix,
       sessionId
     });
@@ -314,7 +406,8 @@ function createService({
       publish: true
     }),
     projectService,
-    publishSessionChanged: publishSessionChanged.launchTarget
+    publishSessionChanged: publishSessionChanged.launchTarget,
+    sessionAdmissionFailure: (sessionId) => sessionTerminalAdmissionFailure(sessionId, "launch")
   });
   const agentPreviewCommand = createAgentPreviewCommandService({
     launchTarget,
@@ -368,6 +461,113 @@ function createService({
     return exclusive.value;
   }
 
+  async function prepareWorkspaceSetup(sessionId = "", options = {}) {
+    return runMainAgentWrite(sessionId, options, (context) => (
+      prepareWorkspaceSetupInsideAgentWrite(sessionId, context)
+    ));
+  }
+
+  async function prepareRenewalWorkspaceSetup(sessionId = "", options = {}) {
+    const runtime = options.runtime || await projectService.createRuntime({
+      inspectSource: false
+    });
+    const exclusive = await runVibe64RenewalAgentWriteExclusive(
+      runtime,
+      sessionId,
+      async () => prepareWorkspaceSetupInsideAgentWrite(sessionId, {
+        ...options,
+        renewal: true,
+        runtime,
+        session: await renewalSession(runtime, sessionId)
+      })
+    );
+    if (!exclusive.acquired) {
+      const error = new Error(
+        exclusive.value?.error || "Another session operation is starting. Try again in a moment."
+      );
+      error.code = exclusive.value?.code || "vibe64_agent_write_mode_busy";
+      error.retryable = true;
+      throw error;
+    }
+    return exclusive.value;
+  }
+
+  async function renewalSession(runtime, sessionId = "") {
+    if (typeof runtime?.getSessionForRenewal === "function") {
+      return runtime.getSessionForRenewal(sessionId, {
+        inspectSource: false
+      });
+    }
+    const error = new Error("Session renewal requires an internal renewal session reader.");
+    error.code = "vibe64_session_renewal_reader_unavailable";
+    throw error;
+  }
+
+  async function runSessionRenewalOperation(
+    input = {},
+    options = {},
+    context = {},
+    operation,
+    readSession
+  ) {
+    const beforeStart = typeof options.beforeStart === "function"
+      ? await options.beforeStart({
+          ...context,
+          input
+        })
+      : null;
+    if (beforeStart?.ok === false) {
+      return beforeStart;
+    }
+    const nextInput = recordValue(beforeStart?.input)
+      ? {
+          ...input,
+          ...beforeStart.input
+        }
+      : input;
+    // beforeStart is deliberately inside the agent-write lock and may
+    // persist the exact basis used by orchestration. Rehydrate before the
+    // provider operation so it observes that durable state.
+    const session = typeof options.beforeStart === "function"
+      ? await readSession()
+      : context.session;
+    return operation(nextInput, {
+      ...context,
+      session
+    });
+  }
+
+  async function runHiddenSessionRenewalAgentWrite(
+    sessionId = "",
+    input = {},
+    options = {},
+    operation
+  ) {
+    const runtime = options.runtime || await projectService.createRuntime({
+      inspectSource: false
+    });
+    const exclusive = await runVibe64RenewalAgentWriteExclusive(
+      runtime,
+      sessionId,
+      async () => {
+        const readSession = () => renewalSession(runtime, sessionId);
+        const session = await readSession();
+        return runSessionRenewalOperation(
+          input,
+          options,
+          {
+            ...options,
+            runtime,
+            session
+          },
+          operation,
+          readSession
+        );
+      }
+    );
+    return exclusive.value;
+  }
+
   async function runSessionRepositoryWrite(
     sessionId = "",
     options = {},
@@ -406,8 +606,9 @@ function createService({
     });
   }
 
-  async function prepareWorkspaceSetup(sessionId = "", {
+  async function prepareWorkspaceSetupInsideAgentWrite(sessionId = "", {
     publish = false,
+    renewal = false,
     retry = false,
     runtime: existingRuntime = null,
     session: existingSession = null
@@ -419,6 +620,7 @@ function createService({
       inspectSource: false
     });
     const setup = await workspaceSetup.start({
+      renewal,
       retry,
       runtime,
       session
@@ -596,9 +798,13 @@ function createService({
   }
 
   async function reconcileAgentSessions(sessions = [], options = {}) {
-    const sourceFailures = await ensureReconciledSessionSourcesSelfContained(sessions);
+    const admittedSessions = sessions.filter((session) => (
+      String(session?.status || "").trim() !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED &&
+      !sessionIsClosing(session)
+    ));
+    const sourceFailures = await ensureReconciledSessionSourcesSelfContained(admittedSessions);
     await resetKnownAgentSessionsBeforeReconcile();
-    const result = await sessionAgent.reconcileSessions(sessions, options);
+    const result = await sessionAgent.reconcileSessions(admittedSessions, options);
     return reconcileResultWithSourceFailures(result, sourceFailures);
   }
 
@@ -627,18 +833,98 @@ function createService({
     };
   }
 
-  function closeAllSessionTerminals(sessionId) {
+  function closeAllSessionTerminals(sessionId, controllerOptions = {}) {
     return closeTerminalControllersForSession(sessionId, [
       { controller: agentEnvCommand, label: "agentEnv" },
       { controller: agentPreviewCommand, label: "agentPreview" },
       { controller: launchTarget, label: "launchTarget" },
       {
         controller: {
-          closeAllForSession: (id) => sessionAgent.closeSession(id)
+          closeAllForSession: (id, options) => sessionAgent.closeSession(id, options)
         },
         label: "assistant"
       }
-    ]);
+    ], {
+      controllerOptions
+    });
+  }
+
+  function renewalTerminalAdmissionOwner(renewalId = "") {
+    const normalizedRenewalId = String(renewalId || "").trim();
+    if (!normalizedRenewalId) {
+      throw new TypeError("Terminal renewal admission requires a renewal id.");
+    }
+    return `session-renewal:${normalizedRenewalId}`;
+  }
+
+  function renewalTerminalAdmissionNamespaces(sessionId = "") {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) {
+      throw new TypeError("Terminal renewal admission requires a session id.");
+    }
+    return [
+      codexTerminalNamespace(normalizedSessionId),
+      launchTargetTerminalNamespace(normalizedSessionId)
+    ];
+  }
+
+  function assertTerminalAdmissionResult(result = {}) {
+    if (result?.ok !== false) {
+      return result;
+    }
+    const error = new Error(result.error || "Terminal admission could not be changed.");
+    error.code = result.code || "vibe64_session_renewal_terminal_admission_failed";
+    throw error;
+  }
+
+  function freezeSessionTerminalAdmissionForRenewal(sessionId = "", options = {}) {
+    const namespaces = renewalTerminalAdmissionNamespaces(sessionId);
+    const owner = renewalTerminalAdmissionOwner(options.renewalId);
+    const frozen = [];
+    try {
+      for (const namespace of namespaces) {
+        assertTerminalAdmissionResult(freezeTerminalNamespaceAdmission(namespace, {
+          code: "vibe64_session_renewal_quiesced",
+          error: "Session renewal has frozen terminal input.",
+          owner
+        }));
+        frozen.push(namespace);
+      }
+    } catch (error) {
+      for (const namespace of frozen) {
+        thawTerminalNamespaceAdmission(namespace, { owner });
+      }
+      throw error;
+    }
+    return {
+      frozen: true,
+      namespaces,
+      ok: true,
+      renewalId: String(options.renewalId || "").trim(),
+      sessionId: String(sessionId || "").trim()
+    };
+  }
+
+  function thawSessionTerminalAdmissionForRenewal(sessionId = "", options = {}) {
+    const namespaces = renewalTerminalAdmissionNamespaces(sessionId);
+    const owner = renewalTerminalAdmissionOwner(options.renewalId);
+    for (const namespace of namespaces) {
+      assertTerminalAdmissionResult(thawTerminalNamespaceAdmission(namespace, { owner }));
+    }
+    return {
+      frozen: false,
+      namespaces,
+      ok: true,
+      renewalId: String(options.renewalId || "").trim(),
+      sessionId: String(sessionId || "").trim()
+    };
+  }
+
+  function sessionTerminalAdmissionFailure(sessionId = "", kind = "agent") {
+    const namespaces = renewalTerminalAdmissionNamespaces(sessionId);
+    return terminalNamespaceAdmissionFailure(
+      kind === "launch" ? namespaces[1] : namespaces[0]
+    );
   }
 
   async function closeProjectRuntimeIfOpenMarkerMissing(eventName = "server.terminals.projectRuntime.markerMissing") {
@@ -867,6 +1153,10 @@ function createService({
       return prepareWorkspaceSetup(sessionId, options);
     },
 
+    prepareRenewalWorkspaceSetup(sessionId, options = {}) {
+      return prepareRenewalWorkspaceSetup(sessionId, options);
+    },
+
     workspaceSetupIsRunning(sessionId = "") {
       return workspaceSetup.isRunning(sessionId);
     },
@@ -876,8 +1166,32 @@ function createService({
     },
 
     async close() {
-      await launchTarget.close();
+      const [agentClose, launchTargetClose] = await Promise.allSettled([
+        Promise.resolve().then(() => sessionAgent.invalidateRuntimes({
+          reason: "server-shutdown"
+        })),
+        Promise.resolve().then(() => launchTarget.close())
+      ]);
+      const failures = [];
+      const agentResult = agentClose.status === "fulfilled"
+        ? agentClose.value
+        : null;
+      if (agentClose.status === "rejected") {
+        failures.push(agentClose.reason);
+      } else if (agentResult?.ok === false) {
+        const error = new Error("Assistant runtime shutdown did not complete successfully.");
+        error.code = "vibe64_agent_runtime_shutdown_failed";
+        error.details = agentResult;
+        failures.push(error);
+      }
+      if (launchTargetClose.status === "rejected") {
+        failures.push(launchTargetClose.reason);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "Vibe64 terminal shutdown did not complete successfully.");
+      }
       return {
+        agentResult,
         ok: true
       };
     },
@@ -957,12 +1271,73 @@ function createService({
       return closeAllSessionTerminals(sessionId);
     },
 
+    freezeSessionTerminalAdmissionForRenewal(sessionId, options = {}) {
+      return freezeSessionTerminalAdmissionForRenewal(sessionId, options);
+    },
+
+    async closeRenewalPredecessorSessionTerminals(session, options = {}) {
+      const context = renewalPredecessorTerminalCleanupContext(session, options);
+      return closeAllSessionTerminals(context.sessionId, context);
+    },
+
+    async closeRenewalSuccessorSessionTerminals(session, options = {}) {
+      const context = renewalSuccessorTerminalCleanupContext(session, options);
+      return closeAllSessionTerminals(context.sessionId, context);
+    },
+
+    async releaseRenewalPredecessorAttachments(session, options = {}) {
+      const sessionId = String(session?.sessionId || "").trim();
+      return sessionAgent.releaseRenewalPredecessorAttachments(
+        sessionId,
+        {
+          renewalId: String(options.renewalId || "").trim()
+        },
+        {
+          runtime: options.runtime || null,
+          session
+        }
+      );
+    },
+
+    async releaseRenewalPredecessorProcessExitProof(session, options = {}) {
+      const sessionId = String(session?.sessionId || "").trim();
+      return sessionAgent.releaseRenewalPredecessorProcessExitProof(
+        sessionId,
+        {
+          renewalId: String(options.renewalId || "").trim()
+        },
+        {
+          runtime: options.runtime || null,
+          session
+        }
+      );
+    },
+
+    async releaseRenewalSuccessorProcessExitProof(session, options = {}) {
+      const sessionId = String(session?.sessionId || "").trim();
+      return sessionAgent.releaseRenewalSuccessorProcessExitProof(
+        sessionId,
+        {
+          authorization: options.authorization || null,
+          renewalId: String(options.renewalId || "").trim()
+        },
+        {
+          runtime: options.runtime || null,
+          session
+        }
+      );
+    },
+
     async closeSessionNonAgentTerminals(sessionId) {
       return closeTerminalControllersForSession(sessionId, [
         { controller: launchTarget, label: "launchTarget" }
       ], {
         eventPrefix: "server.terminals.closeSessionNonAgentTerminals"
       });
+    },
+
+    thawSessionTerminalAdmissionForRenewal(sessionId, options = {}) {
+      return thawSessionTerminalAdmissionForRenewal(sessionId, options);
     },
 
     async recordSessionGitCommandActor(sessionId, input = {}) {
@@ -1092,14 +1467,23 @@ function createService({
     },
 
     async checkSessionUpdates(sessionId, input = {}) {
-      const { execution, session } = await sessionWorkExecution(sessionId, input, "session-update-check");
-      return checkManagedSessionUpdates({
-        commandOptions: execution.commandOptions,
-        operationId: input.operationId,
-        project: await projectService.readCurrentProject(),
-        runCommand: execution.runCommand,
-        runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-        session
+      return runSessionRepositoryWrite(sessionId, input, {
+        activeCode: "vibe64_session_update_check_agent_active",
+        activeMessage: "Wait for the assistant turn to finish before checking this session for updates."
+      }, async (context) => {
+        const { execution, session } = await sessionWorkExecution(
+          sessionId,
+          context,
+          "session-update-check"
+        );
+        return checkManagedSessionUpdates({
+          commandOptions: execution.commandOptions,
+          operationId: input.operationId,
+          project: await projectService.readCurrentProject(),
+          runCommand: execution.runCommand,
+          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+          session
+        });
       });
     },
 
@@ -1293,7 +1677,9 @@ function createService({
         }
         for (const sessionId of sessionIds) {
           try {
-            const result = await closeAllSessionTerminals(sessionId);
+            const result = await closeAllSessionTerminals(sessionId, {
+              preserveProcessExitProof: true
+            });
             sessionTerminalClosed += Number(result?.closed || 0);
           } catch (error) {
             failed.push({
@@ -1304,6 +1690,7 @@ function createService({
         }
 
         const agentResult = await sessionAgent.closeProject({
+          preserveProcessExitProof: true,
           projectContextRoot,
           reason
         });
@@ -1385,7 +1772,9 @@ function createService({
     },
 
     createAgentConversation(sessionId, input = {}, options = {}) {
-      return sessionAgent.createConversation(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.createConversation(sessionId, input, context)
+      ));
     },
 
     deleteAgentConversation(sessionId, input = {}, options = {}) {
@@ -1393,11 +1782,15 @@ function createService({
     },
 
     runDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
-      return sessionAgent.runDetachedChatTurn(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.runDetachedChatTurn(sessionId, input, context)
+      ));
     },
 
     streamDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
-      return sessionAgent.streamDetachedChatTurn(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.streamDetachedChatTurn(sessionId, input, context)
+      ));
     },
 
     deleteDetachedAgentChatThread(sessionId, input = {}, options = {}) {
@@ -1408,8 +1801,50 @@ function createService({
       return sessionAgent.describeProvider(options);
     },
 
+    generateSessionRenewalHandover(sessionId, input = {}, options = {}) {
+      return runMainAgentWrite(sessionId, options, (context) => (
+        runSessionRenewalOperation(
+          input,
+          options,
+          context,
+          (trustedInput, trustedContext) => sessionAgent.generateSessionRenewalHandover(
+            sessionId,
+            trustedInput,
+            trustedContext
+          ),
+          () => context.runtime.getSession(sessionId, { inspectSource: false })
+        )
+      ));
+    },
+
+    createSessionRenewalManualHandoverTemplate(input = {}) {
+      return sessionRenewalManualHandoverTemplate(input);
+    },
+
     resolveAgentExecutionProfile(sessionId, input = {}, options = {}) {
       return sessionAgent.resolveExecutionProfile(sessionId, input, options);
+    },
+
+    seedSessionRenewalHandover(sessionId, input = {}, options = {}) {
+      return runHiddenSessionRenewalAgentWrite(
+        sessionId,
+        input,
+        options,
+        (trustedInput, context) => sessionAgent.seedSessionRenewalHandover(
+          sessionId,
+          trustedInput,
+          context
+        )
+      );
+    },
+
+    validateSessionRenewalHandover(handover = "", {
+      source = null
+    } = {}) {
+      return defineSessionRenewalHandoverText(handover, {
+        requireStructure: true,
+        source
+      });
     },
 
     interruptDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
@@ -1458,7 +1893,39 @@ function createService({
     },
 
     ensureAgentSession(sessionId, options = {}) {
-      return sessionAgent.ensureSession(sessionId, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.ensureSession(sessionId, context)
+      ));
+    },
+
+    async assertSessionRenewalIdle(sessionId, options = {}) {
+      const runtime = options.runtime || await projectService.createRuntime({
+        inspectSource: false
+      });
+      const session = options.session?.sessionId === sessionId
+        ? options.session
+        : await runtime.getSession(sessionId, { inspectSource: false });
+      const conversation = await sessionAgent.hasActiveTemporaryConversation(
+        sessionId,
+        {},
+        {
+          ...options,
+          runtime,
+          session
+        }
+      );
+      if (conversation?.active === true) {
+        const error = new Error(
+          "Wait for the temporary assistant task to finish before renewing this session."
+        );
+        error.code = "vibe64_session_renewal_temporary_ai_active";
+        error.retryable = true;
+        throw error;
+      }
+      return {
+        idle: true,
+        ok: true
+      };
     },
 
     invalidateAgentRuntimes(input = {}) {
@@ -1538,7 +2005,9 @@ function createService({
     },
 
     startAgentConversationTurn(sessionId, input = {}, options = {}) {
-      return sessionAgent.startConversationTurn(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.startConversationTurn(sessionId, input, context)
+      ));
     },
 
     stopAgentConversation(sessionId, input = {}, options = {}) {
@@ -1550,7 +2019,9 @@ function createService({
     },
 
     startLaunchTargetTerminal(sessionId, input = {}) {
-      return launchTarget.startTerminal(sessionId, input);
+      return runMainAgentWrite(sessionId, input, () => (
+        launchTarget.startTerminal(sessionId, input)
+      ));
     },
 
     async stopLaunchTargetTerminal(sessionId, terminalSessionId) {
@@ -1572,11 +2043,15 @@ function createService({
     },
 
     uploadAgentAttachment(sessionId, input = {}, options = {}) {
-      return sessionAgent.uploadAttachment(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.uploadAttachment(sessionId, input, context)
+      ));
     },
 
     deleteAgentAttachment(sessionId, input = {}, options = {}) {
-      return sessionAgent.deleteAttachment(sessionId, input, options);
+      return runMainAgentWrite(sessionId, options, (context) => (
+        sessionAgent.deleteAttachment(sessionId, input, context)
+      ));
     },
 
     waitForAgentConversationTurn(sessionId, input = {}, options = {}) {
@@ -1590,7 +2065,8 @@ function createService({
       // the assistant-operation lock for every WebSocket input chunk—often
       // every keystroke. Long-lived sessions therefore became progressively
       // slower and terminal restarts contended with ordinary typing.
-      return sessionAgent.writeTerminal(sessionId, terminalSessionId, data, input, options);
+      return sessionTerminalAdmissionFailure(sessionId, "agent") ||
+        sessionAgent.writeTerminal(sessionId, terminalSessionId, data, input, options);
     },
 
     writeGlobalCodexTerminal(terminalSessionId, data) {
@@ -1606,7 +2082,8 @@ function createService({
     },
 
     writeLaunchTargetTerminal(sessionId, terminalSessionId, data) {
-      return launchTarget.writeTerminal(sessionId, terminalSessionId, data);
+      return sessionTerminalAdmissionFailure(sessionId, "launch") ||
+        launchTarget.writeTerminal(sessionId, terminalSessionId, data);
     },
 
     resizeLaunchTargetTerminal(sessionId, terminalSessionId, size) {

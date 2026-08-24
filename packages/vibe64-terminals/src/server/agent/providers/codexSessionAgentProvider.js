@@ -454,8 +454,35 @@ function createCodexSessionAgentProvider({
     async closeProject(_context, input = {}) {
       return controller.closeAllForProject(input);
     },
-    async closeSession({ sessionId }) {
-      return controller.closeAllForSession(sessionId);
+    async closeSession(context) {
+      return controller.closeAllForSession(context.sessionId, {
+        preserveProcessExitProof: context.preserveProcessExitProof === true,
+        renewalCleanup: context.renewalCleanup,
+        runtime: context.runtime,
+        session: context.session
+      });
+    },
+    async releaseRenewalPredecessorProcessExitProof(context, input = {}) {
+      return controller.releaseRenewalPredecessorProcessExitProof(context.sessionId, {
+        renewalId: input.renewalId,
+        runtime: context.runtime,
+        session: context.session
+      });
+    },
+    async releaseRenewalPredecessorAttachments(context, input = {}) {
+      return controller.releaseRenewalPredecessorAttachments(context.sessionId, {
+        renewalId: input.renewalId,
+        runtime: context.runtime,
+        session: context.session
+      });
+    },
+    async releaseRenewalSuccessorProcessExitProof(context, input = {}) {
+      return controller.releaseRenewalSuccessorProcessExitProof(context.sessionId, {
+        authorization: input.authorization,
+        renewalId: input.renewalId,
+        runtime: context.runtime,
+        session: context.session
+      });
     },
     async closeTerminal(context, input = {}) {
       return controller.closeTerminal(context.sessionId, input.terminalSessionId);
@@ -486,6 +513,25 @@ function createCodexSessionAgentProvider({
     },
     async ensureSession(context) {
       return normalizeCodexSessionResult(await controller.ensureThread(context.sessionId));
+    },
+    async generateSessionRenewalHandover(context, input = {}) {
+      if (typeof controller.generateSessionRenewalHandover !== "function") {
+        throw new TypeError("Codex session renewal handover generation is unavailable.");
+      }
+      return controller.generateSessionRenewalHandover(context.sessionId, {
+        ...input,
+        agentSettings: input.agentSettings || context.agentSettings || {},
+        vibe64User: input.vibe64User || context.vibe64User || null
+      }, {
+        runtime: context.runtime,
+        session: context.session
+      });
+    },
+    async hasActiveTemporaryConversation(context) {
+      return {
+        active: controller.hasActiveTemporaryConversation(context.sessionId),
+        ok: true
+      };
     },
     async interruptDetachedChatTurn(context, input = {}) {
       return controller.interruptDetachedChatTurn(context.sessionId, input, {
@@ -550,6 +596,19 @@ function createCodexSessionAgentProvider({
             executionProfile
           }
         : result;
+    },
+    async seedSessionRenewalHandover(context, input = {}) {
+      if (typeof controller.seedSessionRenewalHandover !== "function") {
+        throw new TypeError("Codex renewed-session handover seeding is unavailable.");
+      }
+      return controller.seedSessionRenewalHandover(context.sessionId, {
+        ...input,
+        agentSettings: input.agentSettings || context.agentSettings || {},
+        vibe64User: input.vibe64User || context.vibe64User || null
+      }, {
+        runtime: context.runtime,
+        session: context.session
+      });
     },
     async sendMessage(context, input = {}) {
       const message = input && typeof input === "object" && !Array.isArray(input)

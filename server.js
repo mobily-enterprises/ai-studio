@@ -240,6 +240,7 @@ function createSignalShutdownHandler({
   closeRuntimeTerminals = () => closeTerminalSessionsForNamespacePrefix(""),
   exitProcess = process.exit.bind(process),
   setTimeoutFn = setTimeout,
+  shutdownCapabilityRuntime = () => app.vibe64CapabilityRuntime?.shutdown?.(),
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS
 } = {}) {
   if (!app || typeof app.close !== "function") {
@@ -282,11 +283,45 @@ function createSignalShutdownHandler({
     timeout?.unref?.();
 
     try {
-      if (typeof beforeClose === "function") {
-        await beforeClose(signal);
+      const preCloseOperations = [
+        ...(typeof beforeClose === "function"
+          ? [{ name: "before-close", run: () => beforeClose(signal) }]
+          : []),
+        { name: "runtime-terminals", run: () => closeRuntimeTerminals() },
+        { name: "capability-runtime", run: () => shutdownCapabilityRuntime() }
+      ];
+      const preClosePromises = preCloseOperations.map(({ run }) => (
+        Promise.resolve().then(run)
+      ));
+      const capabilityRuntimeIndex = preCloseOperations.findIndex(({ name }) => (
+        name === "capability-runtime"
+      ));
+      await preClosePromises[capabilityRuntimeIndex].catch(() => null);
+      const operations = [
+        ...preCloseOperations,
+        { name: "fastify", run: () => app.close() }
+      ];
+      const results = await Promise.allSettled([
+        ...preClosePromises,
+        Promise.resolve().then(operations.at(-1).run)
+      ]);
+      const failures = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") {
+          return [];
+        }
+        const cause = result.reason instanceof Error
+          ? result.reason
+          : new Error(String(result.reason || "Shutdown operation failed."));
+        const error = new Error(
+          `Shutdown operation "${operations[index].name}" failed: ${cause.message}`,
+          { cause }
+        );
+        error.operation = operations[index].name;
+        return [error];
+      });
+      if (failures.length > 0) {
+        throw new AggregateError(failures, `${failures.length} shutdown operation(s) failed.`);
       }
-      await closeRuntimeTerminals();
-      await app.close();
       clearTimeoutFn(timeout);
       logOperationalEvent(app.log, "info", {
         component: "server-lifecycle",
@@ -543,6 +578,7 @@ async function createServer(options = {}) {
       logger: app.log,
       fastify: app
     });
+    app.vibe64CapabilityRuntime = runtime?.runtime || null;
   } finally {
     if (previousStudioAppRoot == null) {
       delete process.env[VIBE64_APP_ROOT_ENV];

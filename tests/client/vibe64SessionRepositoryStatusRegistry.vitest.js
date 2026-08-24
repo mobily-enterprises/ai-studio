@@ -1,7 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { effectScope, nextTick, reactive, ref } from "vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const registryHarness = vi.hoisted(() => ({
+  intervalCallbacks: [],
+  realtimeEvents: [],
+  requests: []
+}));
+
+vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
+  getHttpWebClient: () => ({
+    async request(path, options = {}) {
+      registryHarness.requests.push({ options, path });
+      return String(path).endsWith("/updates/check")
+        ? { ok: true, relationship: "current", updateAvailable: false }
+        : { changedPaths: [], ok: true, unsaved: false };
+    }
+  })
+}));
+
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
+  useRealtimeEvent(options) {
+    registryHarness.realtimeEvents.push(options);
+    return {};
+  }
+}));
 
 import {
-  createVibe64SessionRepositoryStatusQueue
+  createVibe64SessionRepositoryStatusQueue,
+  useVibe64SessionRepositoryStatusRegistry
 } from "../../src/composables/useVibe64SessionRepositoryStatusRegistry.js";
 import {
   repositoryStatusRealtimeShouldRefresh,
@@ -12,6 +38,31 @@ import {
 } from "../../src/lib/vibe64SessionToolbarVisibility.js";
 
 describe("session repository status registry", () => {
+  beforeEach(() => {
+    registryHarness.intervalCallbacks.length = 0;
+    registryHarness.realtimeEvents.length = 0;
+    registryHarness.requests.length = 0;
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    vi.stubGlobal("window", {
+      clearInterval: vi.fn(),
+      setInterval: vi.fn((callback) => {
+        registryHarness.intervalCallbacks.push(callback);
+        return registryHarness.intervalCallbacks.length;
+      })
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function settleRegistryRequests() {
+    await nextTick();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
   it("inspects only the session chips the toolbar can actually display", () => {
     const sessions = Array.from({ length: 10 }, (_, index) => ({
       sessionId: `session-${index + 1}`
@@ -169,6 +220,70 @@ describe("session repository status registry", () => {
 
     expect(states).toHaveLength(1);
     expect(states[0].workState.loading).toBe(true);
+  });
+
+  it("keeps every durable-renewal invalidation away from the selected source until release", async () => {
+    const selectedSessionId = ref("session-a");
+    const sessions = ref([{ sessionId: "session-a", status: "active" }]);
+    const sourceAccess = reactive({ "session-a": false });
+    const states = [];
+    const scope = effectScope();
+    const registry = scope.run(() => useVibe64SessionRepositoryStatusRegistry({
+      onState: (state) => states.push(state),
+      selectedSessionId,
+      sessionSourceOperationsSuspended: (sessionId) => sourceAccess[sessionId] === true,
+      sessions,
+      sessionsApiPath: ref("/api/app/sample/vibe64/sessions")
+    }));
+    await settleRegistryRequests();
+    expect(registryHarness.requests.map(({ options, path }) => [options.method, path])).toEqual([
+      ["POST", "/api/app/sample/vibe64/sessions/session-a/updates/check"],
+      ["GET", "/api/app/sample/vibe64/sessions/session-a/work"]
+    ]);
+
+    registryHarness.requests.length = 0;
+    states.length = 0;
+    sourceAccess["session-a"] = true;
+    await nextTick();
+
+    // The confirm response refreshes the list, realtime emits several session
+    // invalidations, and both repository timers can fire while renewal remains
+    // durably running. None may inspect the predecessor source.
+    sessions.value = [{
+      renewalAdvisory: { level: "required" },
+      sessionId: "session-a",
+      status: "active"
+    }];
+    await nextTick();
+    const sessionChanged = registryHarness.realtimeEvents[0];
+    const payload = {
+      reason: "repository-canonical-changed",
+      session: { sessionId: "session-a" }
+    };
+    expect(sessionChanged.matches({ payload })).toBe(false);
+    sessionChanged.onEvent({ payload });
+    sessionChanged.onEvent({ payload });
+    registry.inspectVisible({ force: true, includeSelected: true });
+    for (const callback of registryHarness.intervalCallbacks) {
+      callback();
+    }
+    await settleRegistryRequests();
+
+    expect(registryHarness.requests).toEqual([]);
+    expect(states).toEqual([]);
+
+    sourceAccess["session-a"] = false;
+    await settleRegistryRequests();
+    expect(registryHarness.requests.map(({ options, path }) => [options.method, path])).toEqual([
+      ["POST", "/api/app/sample/vibe64/sessions/session-a/updates/check"],
+      ["GET", "/api/app/sample/vibe64/sessions/session-a/work"]
+    ]);
+    expect(states.at(-1)).toMatchObject({
+      sessionId: "session-a",
+      workState: { error: "", unsaved: false }
+    });
+
+    scope.stop();
   });
 
   it("invalidates only meaningful work events for their exact session", () => {

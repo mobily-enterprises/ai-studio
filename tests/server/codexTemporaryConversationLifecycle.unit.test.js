@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,13 +10,24 @@ import {
   createCodexTerminalController
 } from "../../packages/vibe64-terminals/src/server/codexTerminal.js";
 import {
+  codexTerminalNamespace
+} from "../../packages/vibe64-terminals/src/server/terminalShared.js";
+import {
+  freezeTerminalNamespaceAdmission,
+  thawTerminalNamespaceAdmission
+} from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
+import {
   createService as createTerminalService
 } from "../../packages/vibe64-terminals/src/server/service.js";
 import {
   createService as createSourceEditorService
 } from "../../packages/vibe64-source-editor/src/server/service.js";
 import {
-  codexAppServerRuntimeDir
+  CODEX_APP_SERVER_EXECUTION_MODES,
+  CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+  CODEX_APP_SERVER_PROVIDER_ID,
+  codexAppServerRuntimeDir,
+  stopCodexAppServerRuntime
 } from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
   VIBE64_AGENT_RUN_STATE,
@@ -34,10 +47,50 @@ import {
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
+  currentProjectRequestContext,
+  runWithProjectRequestContext
+} from "../../packages/vibe64-core/src/server/projectRequestContext.js";
+import {
+  sessionRenewalHandoverHash
+} from "../../packages/vibe64-terminals/src/server/sessionRenewalHandover.js";
 
 const TEST_ACCOUNT_IDENTITY_SIGNATURE = `sha256:${"a".repeat(64)}`;
 const TEST_AUTH_STATE_SIGNATURE = `v1:${"b".repeat(24)}`;
 const TEST_OTHER_ACCOUNT_IDENTITY_SIGNATURE = `sha256:${"d".repeat(64)}`;
+
+function exactStoppedRuntimeMetadata(runtimeDir, {
+  stopped = false
+} = {}) {
+  return {
+    pid: 99999999,
+    processExitVerifiedAt: stopped ? "2026-08-25T00:00:00.000Z" : "",
+    processIdentity: {
+      commandHash: "0123456789ab",
+      platform: "linux-proc",
+      runtimeToken: "11111111-1111-4111-8111-111111111111",
+      startTimeTicks: "1",
+      version: 1
+    },
+    processState: stopped ? "stopped" : "running",
+    provider: CODEX_APP_SERVER_PROVIDER_ID,
+    runtimeDir,
+    schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+    transport: "unix"
+  };
+}
+
+async function exactProcessIdentity(pid, runtimeToken, commandHash) {
+  const statText = await readFile(`/proc/${pid}/stat`, "utf8");
+  const fields = statText.slice(statText.lastIndexOf(")") + 1).trim().split(/\s+/u);
+  return {
+    commandHash,
+    platform: "linux-proc",
+    runtimeToken,
+    startTimeTicks: fields[19],
+    version: 1
+  };
+}
 
 function createProvider(calls, subscribers, captures, providerOptions = {}) {
   captures.providerOptions.push(providerOptions);
@@ -53,6 +106,7 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
       return { userAgent: captures.serverUserAgent };
     },
     async currentRuntimeInfo() {
+      captures.onCurrentRuntimeInfo?.();
       return {
         ...captures.runtimeInfo,
         executionMode: providerOptions.executionMode || "interactive"
@@ -70,6 +124,18 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
     },
     async ensureAvailable() {
       calls.push(["ensure"]);
+      captures.onEnsureAvailable?.();
+      if (captures.ensureAvailableWait) {
+        await captures.ensureAvailableWait;
+      }
+    },
+    async ensureRuntime() {
+      calls.push(["ensureRuntime"]);
+      return {
+        endpoint: captures.runtimeInfo.endpoint,
+        runtimeDir: captures.runtimeInfo.runtimeDir,
+        transport: captures.runtimeInfo.transport
+      };
     },
     async listModels(params, options = {}) {
       calls.push(["models", params]);
@@ -180,6 +246,7 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
     },
     async readThread(threadId) {
       calls.push(["read", threadId]);
+      captures.onReadThread?.(threadId);
       throw new Error("ephemeral threads do not support includeTurns");
     },
     async sendTurn(threadId, input, settings) {
@@ -206,10 +273,22 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
       }
       return { id: "conversation-1" };
     },
-    async stopRuntime() {
+    async stopRuntime(options = {}) {
       calls.push(["stopRuntime"]);
       captures.stopRuntimes += 1;
-      return { stopped: true };
+      captures.stopRuntimeOptions.push(options);
+      captures.stopRuntimeProviderOptions.push(providerOptions);
+      captures.onStopRuntime?.();
+      if (captures.stopRuntimeWait) {
+        await captures.stopRuntimeWait;
+      }
+      if (captures.stopRuntimeHandler) {
+        return captures.stopRuntimeHandler({
+          options,
+          providerOptions
+        });
+      }
+      return captures.stopRuntimeResult;
     },
     subscribe(callback) {
       subscribers.add(callback);
@@ -448,6 +527,170 @@ test("source explanations preserve one pre-resolved profile through the terminal
   });
 });
 
+test("terminal renewal callbacks run inside the agent-write lock and hidden seeding uses only its renewal reader", async () => {
+  await withConversationController(async ({ projectRuntimeRoot, projectService, session }) => {
+    let lockDepth = 0;
+    let normalReads = 0;
+    let renewalReads = 0;
+    const runtime = {
+      async getSession() {
+        normalReads += 1;
+        return session;
+      },
+      async getSessionForRenewal() {
+        renewalReads += 1;
+        return {
+          ...session,
+          status: VIBE64_SESSION_STATUS.RENEWAL_PENDING
+        };
+      },
+      projectContextRoot: projectService.createRuntime().projectContextRoot,
+      stateRoot: projectRuntimeRoot,
+      store: {
+        async runSessionExclusive(sessionId, operationName, operation) {
+          assert.equal(sessionId, session.sessionId);
+          assert.equal(operationName, "agent-write-mode");
+          lockDepth += 1;
+          try {
+            return {
+              acquired: true,
+              value: await operation()
+            };
+          } finally {
+            lockDepth -= 1;
+          }
+        },
+        async runSessionExclusiveForRenewal(sessionId, operationName, operation) {
+          assert.equal(sessionId, session.sessionId);
+          assert.equal(operationName, "agent-write-mode");
+          lockDepth += 1;
+          try {
+            return {
+              acquired: true,
+              value: await operation()
+            };
+          } finally {
+            lockDepth -= 1;
+          }
+        }
+      }
+    };
+    const terminalProjectService = {
+      ...projectService,
+      createRuntime() {
+        return runtime;
+      },
+      async readCurrentProject() {
+        return {
+          projectContextRoot: runtime.projectContextRoot,
+          slug: "test-project"
+        };
+      },
+      async readEnv() {
+        return { ok: true, records: [] };
+      },
+      async runInProjectContext(_context, operation) {
+        return operation();
+      },
+      async saveEnvUserValues() {
+        return { ok: true };
+      }
+    };
+    const terminalService = createTerminalService({
+      codexTerminalController: {
+        codexToolHomeRequired: false
+      },
+      env: {
+        VIBE64_RUNTIME_NAMESPACE: "test",
+        VIBE64_WORKSPACE: "test"
+      },
+      projectService: terminalProjectService
+    });
+    const cancelled = {
+      code: "cancelled-inside-lock",
+      ok: false
+    };
+
+    const generated = await terminalService.generateSessionRenewalHandover(
+      session.sessionId,
+      { operationId: "renewal:generate" },
+      {
+        beforeStart(context) {
+          assert.equal(lockDepth, 1);
+          assert.equal(context.session, session);
+          return cancelled;
+        },
+        runtime
+      }
+    );
+    const merged = await terminalService.generateSessionRenewalHandover(
+      session.sessionId,
+      { operationId: "renewal:merged" },
+      {
+        beforeStart() {
+          assert.equal(lockDepth, 1);
+          return {
+            input: {
+              source: {
+                authority: "github",
+                commit: "a".repeat(40),
+                ref: "refs/heads/main\ninvalid",
+                repository: "https://github.com/example/project.git"
+              }
+            },
+            ok: true
+          };
+        },
+        runtime
+      }
+    );
+    const seeded = await terminalService.seedSessionRenewalHandover(
+      session.sessionId,
+      { operationId: "renewal:seed" },
+      {
+        beforeStart(context) {
+          assert.equal(lockDepth, 1);
+          assert.equal(context.session.status, VIBE64_SESSION_STATUS.RENEWAL_PENDING);
+          return cancelled;
+        },
+        runtime
+      }
+    );
+    const renewalId = "renewal-terminal-cleanup";
+    const hiddenSuccessor = {
+      ...session,
+      metadata: {
+        ...session.metadata,
+        renewal_id: renewalId,
+        renewed_from: "source-session"
+      },
+      status: VIBE64_SESSION_STATUS.RENEWAL_PENDING
+    };
+    assert.equal(normalReads, 3);
+    await assert.rejects(
+      () => terminalService.closeRenewalSuccessorSessionTerminals(hiddenSuccessor, {
+        renewalId: "wrong-renewal",
+        runtime
+      }),
+      TypeError
+    );
+    await assert.rejects(
+      () => terminalService.closeRenewalSuccessorSessionTerminals(hiddenSuccessor, {
+        renewalId,
+        runtime
+      }),
+      { code: "vibe64_session_renewal_process_exit_unverified" }
+    );
+
+    assert.equal(generated, cancelled);
+    assert.equal(merged.code, "vibe64_session_renewal_source_invalid");
+    assert.equal(seeded, cancelled);
+    assert.equal(normalReads, 3);
+    assert.equal(renewalReads, 1);
+    assert.equal(lockDepth, 0);
+  });
+});
+
 function emitCodexNotification(subscribers, notification) {
   for (const subscriber of [...subscribers]) {
     subscriber(notification);
@@ -640,6 +883,82 @@ async function managedSessionFixture(temporaryRoot) {
   };
 }
 
+async function managedProjectScopedSessionFixture(temporaryRoot, slug, sessionId) {
+  const projectContextRoot = path.join(temporaryRoot, slug, "authority");
+  const projectRuntimeRoot = path.join(temporaryRoot, slug, "runtime");
+  const projectSessionSourceRoot = path.join(temporaryRoot, slug, "managed", "sessions");
+  const sourcePath = path.join(
+    projectSessionSourceRoot,
+    "active",
+    sessionId,
+    "source"
+  );
+  await Promise.all([
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true }),
+    mkdir(sourcePath, { recursive: true })
+  ]);
+  const metadata = {
+    repository_mode: "local_source",
+    source_kind: "session_clone",
+    source_path: sourcePath,
+    source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+  };
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot
+  });
+  await store.createSession({
+    metadata,
+    runtimeKind: "genesis",
+    sessionId
+  });
+  const session = await store.readSession(sessionId);
+  const runtime = {
+    async getSession() {
+      return store.readSession(sessionId);
+    },
+    async renderPrompt(_sessionId, { request } = {}) {
+      return { prompt: String(request || "Continue.") };
+    },
+    projectContextRoot,
+    stateRoot: projectRuntimeRoot,
+    store
+  };
+  return {
+    context: {
+      projectContextRoot,
+      projectRuntimeRoot,
+      projectSessionSourceRoot,
+      slug,
+      targetRoot: projectContextRoot
+    },
+    runtime,
+    session,
+    store
+  };
+}
+
+function createDeterministicHold() {
+  let enter = () => null;
+  let release = () => null;
+  return {
+    enter() {
+      enter();
+    },
+    entered: new Promise((resolve) => {
+      enter = resolve;
+    }),
+    release() {
+      release();
+    },
+    wait: new Promise((resolve) => {
+      release = resolve;
+    })
+  };
+}
+
 async function withConversationController(operation, {
   aiPolicy = null
 } = {}) {
@@ -656,6 +975,7 @@ async function withConversationController(operation, {
     economyThreadIds: [],
     economyThreadInventories: 0,
     economyThreadInventoryWait: null,
+    ensureAvailableWait: null,
     failModelLists: 0,
     failDeletes: 0,
     failInterrupts: 0,
@@ -680,12 +1000,24 @@ async function withConversationController(operation, {
     interruptCompletesTurns: false,
     modelAborts: 0,
     modelSignals: [],
+    onStopRuntime: null,
+    onCurrentRuntimeInfo: null,
+    onEnsureAvailable: null,
+    onProviderFactory: null,
+    onProjectEnvironment: null,
+    onReadThread: null,
     providerOptions: [],
+    projectEnvironmentWait: null,
     resumes: [],
     runtimeInfo: null,
     serverUserAgent: "vibe64/0.149.0 (unit test)",
     threads: [],
     stopRuntimes: 0,
+    stopRuntimeOptions: [],
+    stopRuntimeProviderOptions: [],
+    stopRuntimeHandler: null,
+    stopRuntimeResult: { stopped: true },
+    stopRuntimeWait: null,
     startThreadWait: null,
     turns: [],
     undefinedDeletes: 0
@@ -720,6 +1052,10 @@ async function withConversationController(operation, {
       };
     },
     async projectExecutionEnvironment() {
+      captures.onProjectEnvironment?.();
+      if (captures.projectEnvironmentWait) {
+        await captures.projectEnvironmentWait;
+      }
       return {
         PROVIDER_OWNERSHIP_VERSION: captures.environmentVersion,
         VIBE64_RUNTIME_NAMESPACE: "test",
@@ -735,6 +1071,7 @@ async function withConversationController(operation, {
   };
   const controller = createCodexTerminalController({
     codexAppServerProviderFactory(providerOptions) {
+      captures.onProviderFactory?.();
       return createProvider(calls, subscribers, captures, providerOptions);
     },
     env: {
@@ -781,16 +1118,22 @@ function restartedCaptures(source = {}, overrides = {}) {
     deletes: [],
     economyThreadInventories: 0,
     economyThreadInventoryWait: null,
+    ensureAvailableWait: null,
     failDeletes: 0,
     failInterrupts: 0,
     hookLists: [],
     interrupts: [],
     modelAborts: 0,
     modelSignals: [],
+    onStopRuntime: null,
     providerOptions: [],
     resumes: [],
     runtimeInfo: { ...source.runtimeInfo },
     stopRuntimes: 0,
+    stopRuntimeOptions: [],
+    stopRuntimeProviderOptions: [],
+    stopRuntimeHandler: null,
+    stopRuntimeWait: null,
     threads: [],
     turns: [],
     undefinedDeletes: 0,
@@ -839,13 +1182,18 @@ async function withAgentMessageController(operation) {
   });
 
   const captures = {
+    finalText: "",
     onSendTurn: null,
     onSteerTurn: null,
     provider: null,
     sendTurnWait: null,
+    sessionThreadIds: [],
     steers: [],
+    stopRuntimes: 0,
+    threadSnapshotTurns: null,
     threadStarts: [],
-    turns: []
+    turns: [],
+    subscribers: null
   };
   const runtime = {
     async getSession(sessionId) {
@@ -863,11 +1211,13 @@ async function withAgentMessageController(operation) {
   const controller = createCodexTerminalController({
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
-    codexAppServerProviderFactory() {
+    codexAppServerProviderFactory(providerOptions) {
       const subscribers = new Set();
+      captures.subscribers = subscribers;
       const provider = {
         closed: 0,
         status: "idle",
+        threadCwd: "",
         threadId: "11111111-1111-4111-8111-111111111111",
         turnId: "",
         close() {
@@ -891,14 +1241,43 @@ async function withAgentMessageController(operation) {
             data: [provider.threadId]
           };
         },
-        async readThread() {
+        async listAppServerThreadsForCwd({ cwd }) {
           return {
+            cwd,
+            threadIds: [...captures.sessionThreadIds]
+          };
+        },
+        async readThread(threadId = provider.threadId) {
+          if (Array.isArray(captures.threadSnapshotTurns)) {
+            return {
+              cwd: provider.threadCwd,
+              id: threadId,
+              turns: captures.threadSnapshotTurns
+            };
+          }
+          const turn = captures.turns.find((candidate) => (
+            candidate.turnId === provider.turnId
+          ));
+          const finalText = typeof captures.finalText === "function"
+            ? captures.finalText(provider.turnId)
+            : captures.finalText || `Completed ${provider.turnId}.`;
+          return {
+            cwd: provider.threadCwd,
+            id: threadId,
             turns: provider.turnId ? [{
               id: provider.turnId,
               items: [{
+                clientId: turn?.settings?.clientUserMessageId || "",
+                content: [{
+                  text: turn?.input || "",
+                  type: "text"
+                }],
+                id: `user-${provider.turnId}`,
+                type: "userMessage"
+              }, {
                 id: `answer-${provider.turnId}`,
                 phase: "final_answer",
-                text: `Completed ${provider.turnId}.`,
+                text: finalText,
                 type: "agentMessage"
               }],
               status: provider.status
@@ -911,8 +1290,9 @@ async function withAgentMessageController(operation) {
             turnId: provider.turnId
           };
         },
-        async resumeThread(threadId) {
+        async resumeThread(threadId, settings = {}) {
           provider.threadId = threadId;
+          provider.threadCwd = settings.cwd || provider.threadCwd;
           return {
             id: threadId
           };
@@ -940,6 +1320,10 @@ async function withAgentMessageController(operation) {
         },
         async startThread(settings) {
           captures.threadStarts.push(settings);
+          provider.threadCwd = settings.cwd || provider.threadCwd;
+          if (!captures.sessionThreadIds.includes(provider.threadId)) {
+            captures.sessionThreadIds.push(provider.threadId);
+          }
           return {
             id: provider.threadId
           };
@@ -964,7 +1348,12 @@ async function withAgentMessageController(operation) {
             id: turnId
           };
         },
-        async stopRuntime() {},
+        async stopRuntime(options = {}) {
+          captures.stopRuntimes += 1;
+          captures.stopRuntimeOptions = options;
+          captures.stopRuntimeProviderOptions = providerOptions;
+          return { stopped: true };
+        },
         subscribe(callback) {
           subscribers.add(callback);
           return () => subscribers.delete(callback);
@@ -1002,6 +1391,7 @@ async function withAgentMessageController(operation) {
     await operation({
       captures,
       controller,
+      runtime,
       sessionId: session.sessionId,
       store
     });
@@ -1015,6 +1405,323 @@ async function withAgentMessageController(operation) {
     await rm(temporaryRoot, { force: true, recursive: true });
   }
 }
+
+const RENEWAL_SOURCE = Object.freeze({
+  authority: "github",
+  commit: "a".repeat(40),
+  ref: "refs/heads/main",
+  repository: "https://github.com/example/project.git"
+});
+
+function renewalHandoverText() {
+  return [
+    "# Session handover",
+    "## Objective",
+    "Finish the exact saved project work.",
+    "## Decisions",
+    "Keep the existing architecture.",
+    "## Saved source",
+    "- Authority: github",
+    "- Repository: https://github.com/example/project.git",
+    "- Ref: refs/heads/main",
+    `- Commit: ${RENEWAL_SOURCE.commit}`,
+    "## Touched areas",
+    "The server.",
+    "## Verification",
+    "Focused tests passed.",
+    "## Unresolved work",
+    "One task remains.",
+    "## Next action",
+    "Implement the remaining task."
+  ].join("\n");
+}
+
+function completeAgentMessageHarnessTurn(captures, provider, turnId, text) {
+  queueMicrotask(() => {
+    provider.status = "completed";
+    completeDetachedTurn(captures.subscribers, {
+      text,
+      threadId: provider.threadId,
+      turnId
+    });
+  });
+}
+
+test("session renewal handover runs on the exact visible main thread with stored interactive settings", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    await store.mutateSession(sessionId, async () => {
+      await Promise.all([
+        store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.6-sol"),
+        store.writeMetadataValue(sessionId, "agent_settings_provider", "codex"),
+        store.writeMetadataValue(sessionId, "agent_settings_thinking", "high")
+      ]);
+    });
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    captures.provider.status = "completed";
+    captures.provider.turnId = "historical-main-turn";
+    const handover = renewalHandoverText();
+    captures.finalText = handover;
+    captures.onSendTurn = ({ provider, turnId }) => {
+      completeAgentMessageHarnessTurn(captures, provider, turnId, handover);
+    };
+
+    const result = await controller.generateSessionRenewalHandover(sessionId, {
+      agentSettings: {
+        model: "gpt-5.6-luna",
+        thinking: "low"
+      },
+      operationKey: "renewal:generate-one",
+      source: RENEWAL_SOURCE
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.handover, handover);
+    assert.equal(result.threadId, prepared.codexThreadId);
+    assert.equal(result.turnId, "turn-1");
+    assert.equal(result.clientMessageId, captures.turns[0].settings.clientUserMessageId);
+    assert.equal(captures.turns[0].settings.model, "gpt-5.6-sol");
+    assert.equal(captures.turns[0].settings.effort, "high");
+    assert.equal(Object.hasOwn(captures.turns[0].settings, "outputSchema"), false);
+    const saved = await store.readSession(sessionId);
+    assert.equal(saved.metadata.agent_renewal_handover_turn_id, "turn-1");
+    assert.equal(saved.metadata.agent_renewal_handover_hash, result.handoverHash);
+    const renewalRun = saved.agentRuns.find(({ id }) => id === "codex_app_server");
+    assert.equal(renewalRun.active, false);
+    assert.equal(renewalRun.state, "completed");
+    assert.equal(renewalRun.providerThreadId, prepared.codexThreadId);
+    assert.equal(renewalRun.providerTurnId, "turn-1");
+
+    const retried = await controller.generateSessionRenewalHandover(sessionId, {
+      operationKey: "renewal:generate-one",
+      source: RENEWAL_SOURCE
+    });
+    assert.equal(retried.ok, true, JSON.stringify(retried));
+    assert.equal(retried.reconciled, true);
+    assert.equal(retried.turnId, "turn-1");
+    assert.equal(captures.turns.length, 1);
+  });
+});
+
+test("renewed-session seeding starts a fresh hidden turn and requires its exact structured acknowledgement", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    await store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.5");
+    await store.writeMetadataValue(sessionId, "agent_settings_provider", "codex");
+    await store.writeMetadataValue(sessionId, "agent_settings_thinking", "high");
+    const handover = renewalHandoverText();
+    const handoverHash = sessionRenewalHandoverHash(handover);
+    const acknowledgement = {
+      handoverHash,
+      message: "Ready to continue from the approved handover.",
+      schemaVersion: "vibe64.session-renewal-acknowledgement.v1",
+      sourceCommit: RENEWAL_SOURCE.commit,
+      status: "ready"
+    };
+    captures.finalText = JSON.stringify(acknowledgement);
+    captures.onSendTurn = ({ provider, turnId }) => {
+      completeAgentMessageHarnessTurn(
+        captures,
+        provider,
+        turnId,
+        JSON.stringify(acknowledgement)
+      );
+    };
+
+    const session = await store.readSession(sessionId);
+    assert.equal(session.metadata.agent_settings_model, "gpt-5.5");
+    assert.equal(session.metadata.agent_settings_provider, "codex");
+    assert.equal(session.metadata.agent_settings_thinking, "high");
+    const result = await controller.seedSessionRenewalHandover(sessionId, {
+      agentSettings: {
+        model: "gpt-5.6-sol",
+        thinking: "low"
+      },
+      handover,
+      handoverHash,
+      oldThreadId: "22222222-2222-4222-8222-222222222222",
+      operationKey: "renewal:seed-one",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.freshThread, true);
+    assert.equal(result.subscriptionDeferred, true);
+    assert.equal(result.acknowledgement.handoverHash, handoverHash);
+    assert.equal(result.turnId, "turn-1");
+    assert.equal(captures.threadStarts.length, 1);
+    assert.equal(captures.threadStarts[0].sandbox, "read-only");
+    assert.equal(captures.turns[0].settings.model, "gpt-5.5");
+    assert.equal(captures.turns[0].settings.effort, "high");
+    assert.deepEqual(captures.turns[0].settings.sandboxPolicy, {
+      networkAccess: false,
+      type: "readOnly"
+    });
+    assert.equal(captures.turns[0].settings.outputSchema.additionalProperties, false);
+    assert.deepEqual(captures.turns[0].settings.outputSchema.properties.handoverHash.enum, [handoverHash]);
+    const saved = await store.readSessionForRenewal(sessionId);
+    assert.equal(saved.metadata.agent_renewal_seed_turn_id, "turn-1");
+    assert.equal(saved.metadata.agent_briefing_delivered, "yes");
+
+    const retried = await controller.seedSessionRenewalHandover(sessionId, {
+      handover,
+      handoverHash,
+      oldThreadId: "22222222-2222-4222-8222-222222222222",
+      operationKey: "renewal:seed-one",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session: saved
+    });
+    assert.equal(retried.ok, true, JSON.stringify(retried));
+    assert.equal(retried.freshThread, false);
+    assert.equal(retried.reconciled, true);
+    assert.equal(retried.turnId, "turn-1");
+    assert.equal(captures.threadStarts.length, 1);
+    assert.equal(captures.turns.length, 1);
+
+    const ordinary = await controller.sendMessage(sessionId, {
+      agentSettings: {
+        model: saved.metadata.agent_settings_model,
+        providerId: saved.metadata.agent_settings_provider,
+        thinking: saved.metadata.agent_settings_thinking
+      },
+      message: "Continue with the renewed session settings.",
+      messageId: "renewal-settings-ordinary-turn"
+    });
+    assert.equal(ordinary.ok, true, JSON.stringify(ordinary));
+    assert.equal(captures.turns.length, 2);
+    assert.equal(captures.turns[1].settings.model, "gpt-5.5");
+    assert.equal(captures.turns[1].settings.effort, "high");
+    assert.deepEqual(captures.turns[1].settings.sandboxPolicy, {
+      networkAccess: "enabled",
+      type: "externalSandbox"
+    });
+    const continued = await store.readSession(sessionId);
+    assert.equal(continued.metadata.agent_settings_model, "gpt-5.5");
+    assert.equal(continued.metadata.agent_settings_provider, "codex");
+    assert.equal(continued.metadata.agent_settings_thinking, "high");
+  });
+});
+
+test("renewed-session seeding starts fresh when a manual handover has no predecessor thread id", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    const handover = renewalHandoverText();
+    const handoverHash = sessionRenewalHandoverHash(handover);
+    const acknowledgement = {
+      handoverHash,
+      message: "Ready to continue from the approved manual handover.",
+      schemaVersion: "vibe64.session-renewal-acknowledgement.v1",
+      sourceCommit: RENEWAL_SOURCE.commit,
+      status: "ready"
+    };
+    captures.finalText = JSON.stringify(acknowledgement);
+    captures.onSendTurn = ({ provider, turnId }) => {
+      completeAgentMessageHarnessTurn(
+        captures,
+        provider,
+        turnId,
+        JSON.stringify(acknowledgement)
+      );
+    };
+
+    const result = await controller.seedSessionRenewalHandover(sessionId, {
+      handover,
+      handoverHash,
+      operationKey: "renewal:manual-without-old-thread",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session: await store.readSession(sessionId)
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.freshThread, true);
+    assert.equal(result.acknowledgement.handoverHash, handoverHash);
+    assert.equal(captures.threadStarts.length, 1);
+    assert.equal(captures.turns.length, 1);
+  });
+});
+
+test("renewed-session seeding rejects a fresh thread that already contains history", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    const handover = renewalHandoverText();
+    captures.threadSnapshotTurns = [{
+      id: "unrelated-turn",
+      items: [{
+        content: [{ text: "Unrelated prior request", type: "text" }],
+        id: "unrelated-user-message",
+        type: "userMessage"
+      }],
+      status: "completed"
+    }];
+
+    const result = await controller.seedSessionRenewalHandover(sessionId, {
+      handover,
+      handoverHash: sessionRenewalHandoverHash(handover),
+      operationKey: "renewal:history-bearing-successor",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session: await store.readSession(sessionId)
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_session_renewal_fresh_thread_required");
+    assert.match(result.error, /unrelated conversation/u);
+    assert.equal(captures.turns.length, 0);
+  });
+});
+
+test("session renewal requires manual fallback when the exact old thread has no readable history", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const result = await controller.generateSessionRenewalHandover(sessionId, {
+      operationKey: "renewal:unreadable",
+      source: RENEWAL_SOURCE
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_session_renewal_thread_unreadable");
+    assert.match(result.error, /manually/u);
+    assert.equal(captures.turns.length, 0);
+  });
+});
+
+test("session renewal provider primitives reject every economy execution profile before provider work", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    const source = RENEWAL_SOURCE;
+    const handover = renewalHandoverText();
+    const handoverHash = sessionRenewalHandoverHash(handover);
+    const generation = await controller.generateSessionRenewalHandover(sessionId, {
+      executionProfile: null,
+      operationKey: "renewal:economy-generate",
+      source
+    });
+    const seed = await controller.seedSessionRenewalHandover(sessionId, {
+      executionProfile: {
+        profileId: "economy"
+      },
+      handover,
+      handoverHash,
+      oldThreadId: "22222222-2222-4222-8222-222222222222",
+      operationKey: "renewal:economy-seed",
+      source
+    }, {
+      runtime,
+      session: await store.readSession(sessionId)
+    });
+
+    assert.equal(generation.code, "vibe64_session_renewal_interactive_provider_required");
+    assert.equal(seed.code, "vibe64_session_renewal_interactive_provider_required");
+    assert.equal(captures.threadStarts.length, 0);
+    assert.equal(captures.turns.length, 0);
+  });
+});
 
 test("duplicate agent messages with the same message id call the provider once", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId }) => {
@@ -1598,16 +2305,14 @@ test("closing a session stops its deterministic runtime before transport metadat
   await mkdir(unscopedRuntimeDir, {
     recursive: true
   });
-  await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
-    pid: 99999999,
-    runtimeDir,
-    transport: "unix"
-  }));
-  await writeFile(path.join(unscopedRuntimeDir, "runtime.json"), JSON.stringify({
-    pid: 99999999,
-    runtimeDir: unscopedRuntimeDir,
-    transport: "unix"
-  }));
+  await writeFile(
+    path.join(runtimeDir, "runtime.json"),
+    JSON.stringify(exactStoppedRuntimeMetadata(runtimeDir))
+  );
+  await writeFile(
+    path.join(unscopedRuntimeDir, "runtime.json"),
+    JSON.stringify(exactStoppedRuntimeMetadata(unscopedRuntimeDir))
+  );
   let currentSession = session;
   const controller = createCodexTerminalController({
     codexAppServerProviderOptions: {
@@ -1734,6 +2439,57 @@ test("temporary conversations receive the saved project policy and trusted actor
       policyVersion: 1
     });
   }, { aiPolicy });
+});
+
+test("temporary workspace-write turns remain active for renewal until completion", async () => {
+  await withConversationController(async ({ controller, subscribers }) => {
+    const conversation = await controller.createConversation("session-1", {
+      ephemeral: true
+    });
+
+    assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+    const turn = await controller.startConversationTurn("session-1", {
+      conversationId: conversation.conversationId,
+      ephemeral: true,
+      message: "Fix the focused issue.",
+      policy: "workspace_write"
+    });
+
+    assert.equal(turn.ok, true, JSON.stringify(turn));
+    assert.equal(controller.hasActiveTemporaryConversation("session-1"), true);
+
+    emitCodexNotification(subscribers, codexEvent({
+      message: "The focused issue is fixed.",
+      phase: "final_answer"
+    }));
+    emitCodexNotification(subscribers, turnCompleted());
+    await flushPromises();
+    assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+  });
+});
+
+test("temporary read-only turns remain active for renewal until completion", async () => {
+  await withConversationController(async ({ controller, subscribers }) => {
+    const conversation = await controller.createConversation("session-1", {
+      ephemeral: true
+    });
+    const turn = await controller.startConversationTurn("session-1", {
+      conversationId: conversation.conversationId,
+      ephemeral: true,
+      message: "Explain the focused issue."
+    });
+
+    assert.equal(turn.ok, true, JSON.stringify(turn));
+    assert.equal(controller.hasActiveTemporaryConversation("session-1"), true);
+
+    emitCodexNotification(subscribers, codexEvent({
+      message: "The focused issue is explained.",
+      phase: "final_answer"
+    }));
+    emitCodexNotification(subscribers, turnCompleted());
+    await flushPromises();
+    assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+  });
 });
 
 test("temporary conversation retries reuse the accepted provider turn", async () => {
@@ -2258,6 +3014,1589 @@ test("session shutdown interrupts and deletes an active economy thread before st
     const result = await pending;
     assert.equal(result.ok, false);
     assert.equal(result.code, "vibe64_codex_economy_thread_unavailable");
+  });
+});
+
+test("ordinary project dormancy close preserves interactive session process-exit proof", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    const catalog = await controller.executionProfileModelCatalog(session.sessionId);
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+    captures.stopRuntimeResult = {
+      processExitVerified: true,
+      runtimeDirPreserved: true,
+      stopped: true
+    };
+
+    await controller.closeAllForSession(session.sessionId, {
+      preserveProcessExitProof: true
+    });
+
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, [{
+      preserveProcessExitProof: true
+    }]);
+  });
+});
+
+test("ordinary runtime invalidation preserves interactive session process-exit proof", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    const conversation = await controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    assert.equal(conversation.ok, true, JSON.stringify(conversation));
+    captures.stopRuntimeResult = {
+      processExitVerified: true,
+      runtimeDirPreserved: true,
+      stopped: true
+    };
+
+    const invalidated = await controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+
+    assert.equal(invalidated.ok, true, JSON.stringify(invalidated));
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, [{
+      preserveProcessExitProof: true
+    }]);
+  });
+});
+
+test("ordinary runtime invalidation stops cached runtimes concurrently and isolates failures", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    const conversation = await controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    assert.equal(conversation.ok, true, JSON.stringify(conversation));
+    const catalog = await controller.executionProfileModelCatalog(session.sessionId);
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+
+    const runtimeStopsHeld = createDeterministicHold();
+    let bothRuntimeStopsStarted = () => null;
+    const bothRuntimeStops = new Promise((resolve) => {
+      bothRuntimeStopsStarted = resolve;
+    });
+    captures.onStopRuntime = () => {
+      if (captures.stopRuntimes === 2) {
+        bothRuntimeStopsStarted();
+      }
+    };
+    captures.stopRuntimeWait = runtimeStopsHeld.wait;
+    captures.stopRuntimeHandler = ({ providerOptions }) => {
+      if (providerOptions.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY) {
+        const error = new Error("Interactive runtime stop failed.");
+        error.code = "test_runtime_stop_failed";
+        error.retryable = true;
+        throw error;
+      }
+      return {
+        processExitVerified: true,
+        runtimeDirPreserved: false,
+        stopped: true
+      };
+    };
+
+    const invalidating = controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+    await bothRuntimeStops;
+    assert.equal(captures.stopRuntimes, 2);
+    runtimeStopsHeld.release();
+
+    const invalidated = await invalidating;
+    assert.equal(invalidated.ok, false);
+    assert.equal(invalidated.providerCount, 2);
+    assert.equal(invalidated.stopped, 1);
+    assert.equal(invalidated.results.length, 1);
+    assert.deepEqual(invalidated.failed.map((failure) => ({
+      code: failure.code,
+      error: failure.error,
+      retryable: failure.retryable
+    })), [{
+      code: "test_runtime_stop_failed",
+      error: "Interactive runtime stop failed.",
+      retryable: true
+    }]);
+    assert.deepEqual(captures.stopRuntimeProviderOptions.map((providerOptions, index) => ({
+      executionMode: providerOptions.executionMode || CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
+      preserveProcessExitProof: captures.stopRuntimeOptions[index].preserveProcessExitProof
+    })).sort((left, right) => left.executionMode.localeCompare(right.executionMode)), [{
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
+      preserveProcessExitProof: false
+    }, {
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
+      preserveProcessExitProof: true
+    }, {
+      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
+      preserveProcessExitProof: true
+    }]);
+  });
+});
+
+test("non-shutdown runtime invalidation keeps the controller reusable", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    const first = await controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+
+    const invalidated = await controller.invalidateAppServerRuntimes({
+      reason: "account-changed"
+    });
+    assert.equal(invalidated.ok, true, JSON.stringify(invalidated));
+    assert.equal(captures.stopRuntimes, 1);
+
+    const second = await controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(captures.providerOptions.length, 2);
+  });
+});
+
+test("server shutdown stops a pruned owned runtime once across duplicate callers", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId }) => {
+    const prepared = await runWithProjectRequestContext({
+      targetRoot: runtime.projectContextRoot
+    }, () => controller.ensureThread(sessionId));
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    assert.equal(captures.provider.closed, 0);
+
+    const pruned = await controller.reconcileThreads([]);
+    assert.equal(pruned.ok, true, JSON.stringify(pruned));
+    assert.equal(captures.provider.closed, 1);
+    assert.equal(captures.stopRuntimes, 0);
+
+    const [first, second] = await Promise.all([
+      controller.invalidateAppServerRuntimes({ reason: "server-shutdown" }),
+      controller.invalidateAppServerRuntimes({ reason: "server-shutdown" })
+    ]);
+
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.deepEqual(second, first);
+    assert.equal(first.providerCount, 1);
+    assert.equal(first.stopped, 1);
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, {
+      preserveProcessExitProof: true
+    });
+  });
+});
+
+test("server shutdown stops a runtime to unblock acquisition and rejects later acquisition", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    const acquisitionHeld = createDeterministicHold();
+    captures.onEnsureAvailable = () => acquisitionHeld.enter();
+    captures.ensureAvailableWait = acquisitionHeld.wait;
+    captures.stopRuntimeHandler = () => {
+      acquisitionHeld.release();
+      if (captures.stopRuntimes === 1) {
+        return {
+          processExitVerified: false,
+          runtimeDirPreserved: false,
+          stopped: false
+        };
+      }
+      return {
+        processExitVerified: true,
+        runtimeDirPreserved: true,
+        stopped: true
+      };
+    };
+
+    const acquiring = controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    await acquisitionHeld.entered;
+    const firstShutdown = controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+    const duplicateShutdown = controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+    const rejectedAcquisition = controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+
+    const [acquired, rejected, first, duplicate] = await Promise.all([
+      acquiring,
+      rejectedAcquisition,
+      firstShutdown,
+      duplicateShutdown
+    ]);
+    assert.equal(acquired.ok, false);
+    assert.equal(acquired.code, "vibe64_server_stopping");
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "vibe64_server_stopping");
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.deepEqual(duplicate, first);
+    assert.equal(captures.stopRuntimes, 2);
+  });
+});
+
+test("server shutdown serializes with an owned runtime before metadata is published", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux process identity is required.");
+    return;
+  }
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-owned-runtime-race-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = `shutdown-race-${randomUUID()}`;
+  const sourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "owned-runtime-race-session",
+    "source"
+  );
+  const projectRuntimeRoot = path.join(temporaryRoot, "runtime");
+  await Promise.all([
+    mkdir(sourcePath, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true })
+  ]);
+  const session = {
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+    },
+    sessionId: "owned-runtime-race-session"
+  };
+  const preMetadata = createDeterministicHold();
+  let child = null;
+  let runtimeDir = "";
+  let stopRuntimeCalls = 0;
+  const controller = createCodexTerminalController({
+    codexAppServerProviderFactory(providerOptions) {
+      runtimeDir = providerOptions.runtimeDir;
+      return {
+        close() {},
+        async ensureAvailable() {
+          const lockDir = path.join(runtimeDir, "runtime.lock");
+          await mkdir(lockDir, { recursive: true });
+          await writeFile(path.join(lockDir, "owner.json"), `${JSON.stringify({
+            createdAt: new Date().toISOString(),
+            pid: process.pid
+          })}\n`);
+          const runtimeToken = randomUUID();
+          const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
+          child = spawn(process.execPath, [
+            "-e",
+            "setInterval(() => {}, 1000);"
+          ], {
+            detached: true,
+            env: {
+              ...process.env,
+              VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+              VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+            },
+            stdio: "ignore"
+          });
+          child.unref();
+          const processIdentity = await exactProcessIdentity(
+            child.pid,
+            runtimeToken,
+            commandHash
+          );
+          preMetadata.enter();
+          await preMetadata.wait;
+          await writeFile(path.join(runtimeDir, "runtime.json"), `${JSON.stringify({
+            ...exactStoppedRuntimeMetadata(runtimeDir),
+            pid: child.pid,
+            processIdentity
+          })}\n`);
+          await rm(lockDir, { force: true, recursive: true });
+        },
+        async startThread() {
+          return { id: "owned-runtime-race-conversation" };
+        },
+        async stopRuntime(options = {}) {
+          stopRuntimeCalls += 1;
+          const stopping = stopCodexAppServerRuntime({
+            ...options,
+            runtimeDir
+          });
+          await flushPromises();
+          preMetadata.release();
+          return stopping;
+        }
+      };
+    },
+    env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
+      VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return {
+          async getSession() {
+            return session;
+          },
+          projectContextRoot: temporaryRoot,
+          stateRoot: projectRuntimeRoot
+        };
+      },
+      async projectExecutionEnvironment() {
+        return {
+          VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
+          VIBE64_WORKSPACE: "test"
+        };
+      },
+      async readProjectAiPolicy() {
+        return { ok: true };
+      }
+    }
+  });
+
+  try {
+    const acquiring = controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    await preMetadata.entered;
+    assert.ok(child?.pid > 1);
+    assert.doesNotThrow(() => process.kill(-child.pid, 0));
+
+    const shutdown = await controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+    const acquired = await acquiring;
+    assert.equal(acquired.ok, false);
+    assert.equal(acquired.code, "vibe64_server_stopping");
+    assert.equal(shutdown.ok, true, JSON.stringify(shutdown));
+    assert.equal(shutdown.providerCount, 1);
+    assert.equal(shutdown.stopped, 1);
+    assert.equal(stopRuntimeCalls, 1);
+    assert.throws(() => process.kill(-child.pid, 0), { code: "ESRCH" });
+  } finally {
+    preMetadata.release();
+    if (runtimeDir) {
+      await rm(path.join(runtimeDir, "runtime.lock"), { force: true, recursive: true });
+      await stopCodexAppServerRuntime({ runtimeDir }).catch(() => null);
+    }
+    if (child?.pid) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The verified shutdown path normally stops the exact process group.
+      }
+    }
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("server shutdown proves exit of the exact owned detached runtime", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux process identity is required.");
+    return;
+  }
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-owned-runtime-shutdown-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = `shutdown-${randomUUID()}`;
+  const sourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "owned-runtime-session",
+    "source"
+  );
+  const projectRuntimeRoot = path.join(temporaryRoot, "runtime");
+  await Promise.all([
+    mkdir(sourcePath, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true })
+  ]);
+  const session = {
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+    },
+    sessionId: "owned-runtime-session"
+  };
+  let child = null;
+  let runtimeDir = "";
+  const controller = createCodexTerminalController({
+    codexAppServerProviderFactory(providerOptions) {
+      runtimeDir = providerOptions.runtimeDir;
+      return {
+        close() {},
+        async ensureAvailable() {
+          await mkdir(runtimeDir, { recursive: true });
+          const runtimeToken = randomUUID();
+          const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
+          child = spawn(process.execPath, [
+            "-e",
+            "setInterval(() => {}, 1000);"
+          ], {
+            detached: true,
+            env: {
+              ...process.env,
+              VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+              VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+            },
+            stdio: "ignore"
+          });
+          child.unref();
+          await writeFile(path.join(runtimeDir, "runtime.json"), `${JSON.stringify({
+            ...exactStoppedRuntimeMetadata(runtimeDir),
+            pid: child.pid,
+            processIdentity: await exactProcessIdentity(child.pid, runtimeToken, commandHash)
+          })}\n`);
+        },
+        async startThread() {
+          return { id: "owned-runtime-conversation" };
+        },
+        stopRuntime(options = {}) {
+          return stopCodexAppServerRuntime({
+            ...options,
+            runtimeDir
+          });
+        }
+      };
+    },
+    env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
+      VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return {
+          async getSession() {
+            return session;
+          },
+          projectContextRoot: temporaryRoot,
+          stateRoot: projectRuntimeRoot
+        };
+      },
+      async projectExecutionEnvironment() {
+        return {
+          VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
+          VIBE64_WORKSPACE: "test"
+        };
+      },
+      async readProjectAiPolicy() {
+        return { ok: true };
+      }
+    }
+  });
+
+  try {
+    const conversation = await controller.createConversation(session.sessionId, {
+      ephemeral: true
+    });
+    assert.equal(conversation.ok, true, JSON.stringify(conversation));
+    assert.ok(child?.pid > 1);
+    assert.doesNotThrow(() => process.kill(-child.pid, 0));
+
+    const shutdown = await controller.invalidateAppServerRuntimes({
+      reason: "server-shutdown"
+    });
+    assert.equal(shutdown.ok, true, JSON.stringify(shutdown));
+    assert.equal(shutdown.providerCount, 1);
+    assert.equal(shutdown.stopped, 1);
+    assert.throws(() => process.kill(-child.pid, 0), { code: "ESRCH" });
+  } finally {
+    if (runtimeDir) {
+      await stopCodexAppServerRuntime({ runtimeDir }).catch(() => null);
+    }
+    if (child?.pid) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The verified shutdown path normally stops the exact process group.
+      }
+    }
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("same raw session closes remain isolated across project request contexts", async () => {
+  await withConversationController(async ({
+    controller,
+    projectService,
+    simulateControllerCrash,
+    temporaryRoot
+  }) => {
+    const sessionId = "shared-session";
+    const alpha = await managedProjectScopedSessionFixture(
+      temporaryRoot,
+      "alpha",
+      sessionId
+    );
+    const beta = await managedProjectScopedSessionFixture(
+      temporaryRoot,
+      "beta",
+      sessionId
+    );
+    const fixtures = new Map([
+      [alpha.context.slug, alpha],
+      [beta.context.slug, beta]
+    ]);
+    const reads = { alpha: 0, beta: 0 };
+    const holds = { alpha: null, beta: null };
+    for (const fixture of fixtures.values()) {
+      fixture.runtime.getSession = async () => {
+        const slug = fixture.context.slug;
+        reads[slug] += 1;
+        const hold = holds[slug];
+        if (hold) {
+          holds[slug] = null;
+          hold.enter();
+          await hold.wait;
+        }
+        return fixture.session;
+      };
+    }
+    projectService.createRuntime = () => {
+      const slug = currentProjectRequestContext()?.slug;
+      const fixture = fixtures.get(slug);
+      assert.ok(fixture, `Missing scoped fixture for ${slug || "no project"}.`);
+      return fixture.runtime;
+    };
+    projectService.createSessionStore = () => {
+      const slug = currentProjectRequestContext()?.slug;
+      return fixtures.get(slug)?.store;
+    };
+
+    const alphaHold = createDeterministicHold();
+    holds.alpha = alphaHold;
+    const alphaClose = runWithProjectRequestContext(
+      alpha.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    await alphaHold.entered;
+
+    await runWithProjectRequestContext(
+      beta.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    assert.equal(reads.alpha, 1);
+    assert.ok(reads.beta > 0);
+
+    const alphaReadsBeforeDuplicate = reads.alpha;
+    const duplicateAlphaClose = runWithProjectRequestContext(
+      alpha.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    await flushPromises();
+    assert.equal(reads.alpha, alphaReadsBeforeDuplicate);
+
+    const betaHold = createDeterministicHold();
+    holds.beta = betaHold;
+    const secondBetaClose = runWithProjectRequestContext(
+      beta.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    await betaHold.entered;
+
+    alphaHold.release();
+    await Promise.all([alphaClose, duplicateAlphaClose]);
+
+    const betaReadsBeforeDuplicate = reads.beta;
+    const duplicateBetaClose = runWithProjectRequestContext(
+      beta.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    await flushPromises();
+    assert.equal(reads.beta, betaReadsBeforeDuplicate);
+
+    betaHold.release();
+    await Promise.all([secondBetaClose, duplicateBetaClose]);
+    simulateControllerCrash();
+  });
+});
+
+test("same raw session delivery admission remains independent across project request contexts", {
+  timeout: 3_000
+}, async () => {
+  await withConversationController(async ({
+    controller,
+    projectService,
+    simulateControllerCrash,
+    temporaryRoot
+  }) => {
+    const sessionId = "shared-session";
+    const alpha = await managedProjectScopedSessionFixture(temporaryRoot, "alpha", sessionId);
+    const beta = await managedProjectScopedSessionFixture(temporaryRoot, "beta", sessionId);
+    const fixtures = new Map([
+      [alpha.context.slug, alpha],
+      [beta.context.slug, beta]
+    ]);
+    const holds = { alpha: null, beta: null };
+    for (const fixture of fixtures.values()) {
+      const readSession = fixture.runtime.getSession.bind(fixture.runtime);
+      fixture.runtime.getSession = async () => {
+        const slug = fixture.context.slug;
+        const hold = holds[slug];
+        if (hold) {
+          holds[slug] = null;
+          hold.enter();
+          await hold.wait;
+        }
+        return readSession();
+      };
+    }
+    projectService.createRuntime = () => {
+      const fixture = fixtures.get(currentProjectRequestContext()?.slug);
+      assert.ok(fixture);
+      return fixture.runtime;
+    };
+    projectService.createSessionStore = () => {
+      return fixtures.get(currentProjectRequestContext()?.slug)?.store;
+    };
+
+    const alphaMessageHold = createDeterministicHold();
+    holds.alpha = alphaMessageHold;
+    const alphaMessage = runWithProjectRequestContext(alpha.context, () => (
+      controller.sendMessage(sessionId, {
+        message: "Start alpha independently.",
+        messageId: "same-message"
+      })
+    ));
+    await alphaMessageHold.entered;
+    const betaMessageHold = createDeterministicHold();
+    holds.beta = betaMessageHold;
+    const betaMessage = runWithProjectRequestContext(beta.context, () => (
+      controller.sendMessage(sessionId, {
+        message: "Start beta independently.",
+        messageId: "same-message"
+      })
+    ));
+    await betaMessageHold.entered;
+    alphaMessageHold.release();
+    betaMessageHold.release();
+    assert.equal((await alphaMessage).ok, true);
+    assert.equal((await betaMessage).ok, true);
+
+    const alphaConversation = await runWithProjectRequestContext(
+      alpha.context,
+      () => controller.createConversation(sessionId, { ephemeral: true })
+    );
+    const betaConversation = await runWithProjectRequestContext(
+      beta.context,
+      () => controller.createConversation(sessionId, { ephemeral: true })
+    );
+    assert.equal(alphaConversation.conversationId, betaConversation.conversationId);
+
+    const alphaTurnHold = createDeterministicHold();
+    holds.alpha = alphaTurnHold;
+    const alphaTurn = runWithProjectRequestContext(alpha.context, () => (
+      controller.startConversationTurn(sessionId, {
+        conversationId: alphaConversation.conversationId,
+        ephemeral: true,
+        message: "Run alpha Temporary AI independently.",
+        messageId: "same-temporary-message"
+      })
+    ));
+    await alphaTurnHold.entered;
+    const betaTurnHold = createDeterministicHold();
+    holds.beta = betaTurnHold;
+    const betaTurn = runWithProjectRequestContext(beta.context, () => (
+      controller.startConversationTurn(sessionId, {
+        conversationId: betaConversation.conversationId,
+        ephemeral: true,
+        message: "Run beta Temporary AI independently.",
+        messageId: "same-temporary-message"
+      })
+    ));
+    await betaTurnHold.entered;
+    alphaTurnHold.release();
+    betaTurnHold.release();
+    assert.equal((await alphaTurn).ok, true);
+    assert.equal((await betaTurn).ok, true);
+    await Promise.all([
+      runWithProjectRequestContext(alpha.context, async () => {
+        await controller.stopConversation(sessionId, {
+          conversationId: alphaConversation.conversationId,
+          ephemeral: true,
+          runId: (await alphaTurn).runId
+        });
+        await controller.deleteConversation(sessionId, {
+          conversationId: alphaConversation.conversationId,
+          ephemeral: true
+        });
+      }),
+      runWithProjectRequestContext(beta.context, async () => {
+        await controller.stopConversation(sessionId, {
+          conversationId: betaConversation.conversationId,
+          ephemeral: true,
+          runId: (await betaTurn).runId
+        });
+        await controller.deleteConversation(sessionId, {
+          conversationId: betaConversation.conversationId,
+          ephemeral: true
+        });
+      })
+    ]);
+    simulateControllerCrash();
+  });
+});
+
+test("renewal cleanup cannot observe or delete another project's Temporary AI state", async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectService,
+    simulateControllerCrash,
+    temporaryRoot
+  }) => {
+    const sessionId = "shared-session";
+    const alpha = await managedProjectScopedSessionFixture(
+      temporaryRoot,
+      "alpha",
+      sessionId
+    );
+    const beta = await managedProjectScopedSessionFixture(
+      temporaryRoot,
+      "beta",
+      sessionId
+    );
+    const fixtures = new Map([
+      [alpha.context.slug, alpha],
+      [beta.context.slug, beta]
+    ]);
+    projectService.createRuntime = () => {
+      const slug = currentProjectRequestContext()?.slug;
+      const fixture = fixtures.get(slug);
+      assert.ok(fixture, `Missing scoped fixture for ${slug || "no project"}.`);
+      return fixture.runtime;
+    };
+    projectService.createSessionStore = () => {
+      const slug = currentProjectRequestContext()?.slug;
+      return fixtures.get(slug)?.store;
+    };
+
+    const alphaConversation = await runWithProjectRequestContext(
+      alpha.context,
+      () => controller.createConversation(sessionId, { ephemeral: true })
+    );
+    const betaConversation = await runWithProjectRequestContext(
+      beta.context,
+      () => controller.createConversation(sessionId, { ephemeral: true })
+    );
+    assert.equal(alphaConversation.conversationId, betaConversation.conversationId);
+
+    const betaTurn = await runWithProjectRequestContext(
+      beta.context,
+      () => controller.startConversationTurn(sessionId, {
+        conversationId: betaConversation.conversationId,
+        ephemeral: true,
+        message: "Keep beta Temporary AI active during alpha renewal cleanup."
+      })
+    );
+    assert.equal(betaTurn.ok, true, JSON.stringify(betaTurn));
+    assert.equal(await runWithProjectRequestContext(
+      alpha.context,
+      () => controller.hasActiveTemporaryConversation(sessionId)
+    ), false);
+    assert.equal(await runWithProjectRequestContext(
+      beta.context,
+      () => controller.hasActiveTemporaryConversation(sessionId)
+    ), true);
+
+    captures.stopRuntimeResult = {
+      processExitVerified: true,
+      runtimeDirPreserved: true,
+      stopped: true
+    };
+    await runWithProjectRequestContext(alpha.context, () => (
+      controller.closeAllForSession(sessionId, {
+        renewalCleanup: {
+          kind: "predecessor",
+          renewalId: "alpha-renewal",
+          sourceSessionId: sessionId
+        },
+        runtime: alpha.runtime,
+        session: alpha.session
+      })
+    ));
+    assert.equal(captures.stopRuntimeProviderOptions.length, 1);
+    assert.equal(
+      captures.stopRuntimeProviderOptions[0].executionRoot,
+      alpha.session.metadata.source_path
+    );
+
+    const alphaAfterCleanup = await runWithProjectRequestContext(
+      alpha.context,
+      () => controller.readConversation(sessionId, {
+        conversationId: alphaConversation.conversationId,
+        ephemeral: true
+      })
+    );
+    const betaAfterCleanup = await runWithProjectRequestContext(
+      beta.context,
+      () => controller.readConversation(sessionId, {
+        conversationId: betaConversation.conversationId,
+        ephemeral: true
+      })
+    );
+    assert.equal(alphaAfterCleanup.conversationExpired, true);
+    assert.equal(betaAfterCleanup.conversationExpired, undefined);
+    assert.equal(betaAfterCleanup.status, "inProgress");
+    assert.equal(await runWithProjectRequestContext(
+      beta.context,
+      () => controller.hasActiveTemporaryConversation(sessionId)
+    ), true);
+
+    await runWithProjectRequestContext(
+      beta.context,
+      () => controller.stopConversation(sessionId, {
+        conversationId: betaConversation.conversationId,
+        ephemeral: true,
+        runId: betaTurn.runId
+      })
+    );
+    await runWithProjectRequestContext(
+      beta.context,
+      () => controller.deleteConversation(sessionId, {
+        conversationId: betaConversation.conversationId,
+        ephemeral: true
+      })
+    );
+    simulateControllerCrash();
+  });
+});
+
+test("renewal cleanup cannot drain another project's notification queue", {
+  timeout: 3_000
+}, async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectService,
+    simulateControllerCrash,
+    subscribers,
+    temporaryRoot
+  }) => {
+    const sessionId = "shared-session";
+    const alpha = await managedProjectScopedSessionFixture(temporaryRoot, "alpha", sessionId);
+    const beta = await managedProjectScopedSessionFixture(temporaryRoot, "beta", sessionId);
+    const fixtures = new Map([
+      [alpha.context.slug, alpha],
+      [beta.context.slug, beta]
+    ]);
+    const originalCreateRuntime = projectService.createRuntime.bind(projectService);
+    projectService.createRuntime = () => {
+      const fixture = fixtures.get(currentProjectRequestContext()?.slug);
+      return fixture?.runtime || originalCreateRuntime();
+    };
+    projectService.createSessionStore = () => {
+      return fixtures.get(currentProjectRequestContext()?.slug)?.store;
+    };
+
+    const betaMessage = await runWithProjectRequestContext(beta.context, () => (
+      controller.sendMessage(sessionId, {
+        message: "Keep beta active while alpha renews.",
+        messageId: "beta-notification-owner"
+      })
+    ));
+    assert.equal(betaMessage.ok, true, JSON.stringify(betaMessage));
+    const betaSession = await beta.store.readSession(sessionId);
+    const betaRun = betaSession.agentRuns.find(({ id }) => id === "codex_app_server");
+    const betaThreadId = betaSession.metadata.agent_identity_conversation_id;
+    const betaTurnId = betaRun?.providerTurnId;
+    assert.ok(betaThreadId);
+    assert.ok(betaTurnId);
+    assert.ok(subscribers.size > 0);
+
+    const notificationHold = createDeterministicHold();
+    const betaNotificationStore = new Proxy(beta.store, {
+      get(target, property) {
+        if (property === "mutateSession") {
+          return async (...args) => {
+            notificationHold.enter();
+            await notificationHold.wait;
+            return target.mutateSession(...args);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    projectService.createSessionStore = () => {
+      const slug = currentProjectRequestContext()?.slug;
+      return slug === "beta" ? betaNotificationStore : fixtures.get(slug)?.store;
+    };
+    await runWithProjectRequestContext(beta.context, async () => {
+      emitCodexNotification(subscribers, {
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: betaThreadId,
+          tokenUsage: {
+            last: {
+              inputTokens: 10,
+              outputTokens: 5,
+              totalTokens: 15
+            },
+            modelContextWindow: 100,
+            total: { totalTokens: 15 }
+          },
+          turnId: betaTurnId
+        }
+      });
+    });
+    await notificationHold.entered;
+
+    await runWithProjectRequestContext(
+      alpha.context,
+      () => controller.createConversation(sessionId, { ephemeral: true })
+    );
+    captures.stopRuntimeResult = {
+      processExitVerified: true,
+      runtimeDirPreserved: true,
+      stopped: true
+    };
+    await runWithProjectRequestContext(alpha.context, () => (
+      controller.closeAllForSession(sessionId, {
+        renewalCleanup: {
+          kind: "predecessor",
+          renewalId: "alpha-notification-renewal",
+          sourceSessionId: sessionId
+        },
+        runtime: alpha.runtime,
+        session: alpha.session
+      })
+    ));
+
+    notificationHold.release();
+    await runWithProjectRequestContext(
+      beta.context,
+      () => controller.closeAllForSession(sessionId)
+    );
+    simulateControllerCrash();
+  });
+});
+
+test("renewal cleanup cannot cancel another project's finalizing recovery timer", {
+  concurrency: false,
+  timeout: 3_000
+}, async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  try {
+    await withConversationController(async ({
+      calls,
+      captures,
+      controller,
+      projectService,
+      simulateControllerCrash,
+      subscribers,
+      temporaryRoot
+    }) => {
+      const sessionId = "shared-session";
+      const alpha = await managedProjectScopedSessionFixture(temporaryRoot, "alpha", sessionId);
+      const beta = await managedProjectScopedSessionFixture(temporaryRoot, "beta", sessionId);
+      const fixtures = new Map([
+        [alpha.context.slug, alpha],
+        [beta.context.slug, beta]
+      ]);
+      const originalCreateRuntime = projectService.createRuntime.bind(projectService);
+      projectService.createRuntime = () => {
+        const fixture = fixtures.get(currentProjectRequestContext()?.slug);
+        return fixture?.runtime || originalCreateRuntime();
+      };
+      projectService.createSessionStore = () => {
+        return fixtures.get(currentProjectRequestContext()?.slug)?.store;
+      };
+
+      const betaMessage = await runWithProjectRequestContext(beta.context, () => (
+        controller.sendMessage(sessionId, {
+          message: "Wait for beta finalization recovery.",
+          messageId: "beta-finalizing-owner"
+        })
+      ));
+      assert.equal(betaMessage.ok, true, JSON.stringify(betaMessage));
+      const startedBeta = await beta.store.readSession(sessionId);
+      const startedRun = startedBeta.agentRuns.find(({ id }) => id === "codex_app_server");
+      const betaThreadId = startedBeta.metadata.agent_identity_conversation_id;
+      const betaTurnId = startedRun?.providerTurnId;
+      await runWithProjectRequestContext(beta.context, async () => {
+        emitCodexNotification(subscribers, turnCompleted({
+          threadId: betaThreadId,
+          turnId: betaTurnId
+        }));
+      });
+      let finalizingRun = null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await flushPromises();
+        const current = await beta.store.readSession(sessionId);
+        finalizingRun = current.agentRuns.find(({ id }) => id === "codex_app_server");
+        if (finalizingRun?.state === VIBE64_AGENT_RUN_STATE.FINALIZING) {
+          break;
+        }
+      }
+      assert.equal(finalizingRun?.state, VIBE64_AGENT_RUN_STATE.FINALIZING);
+
+      const notificationHold = createDeterministicHold();
+      const betaNotificationStore = new Proxy(beta.store, {
+        get(target, property) {
+          if (property === "mutateSession") {
+            return async (...args) => {
+              notificationHold.enter();
+              await notificationHold.wait;
+              return target.mutateSession(...args);
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+      });
+      projectService.createSessionStore = () => {
+        const slug = currentProjectRequestContext()?.slug;
+        return slug === "beta" ? betaNotificationStore : fixtures.get(slug)?.store;
+      };
+      await runWithProjectRequestContext(beta.context, async () => {
+        emitCodexNotification(subscribers, {
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: betaThreadId,
+            tokenUsage: {
+              last: {
+                inputTokens: 10,
+                outputTokens: 5,
+                totalTokens: 15
+              },
+              modelContextWindow: 100,
+              total: { totalTokens: 15 }
+            },
+            turnId: betaTurnId
+          }
+        });
+      });
+      await notificationHold.entered;
+
+      await runWithProjectRequestContext(
+        alpha.context,
+        () => controller.createConversation(sessionId, { ephemeral: true })
+      );
+      captures.stopRuntimeResult = {
+        processExitVerified: true,
+        runtimeDirPreserved: true,
+        stopped: true
+      };
+      await runWithProjectRequestContext(alpha.context, () => (
+        controller.closeAllForSession(sessionId, {
+          renewalCleanup: {
+            kind: "predecessor",
+            renewalId: "alpha-finalizing-renewal",
+            sourceSessionId: sessionId
+          },
+          runtime: alpha.runtime,
+          session: alpha.session
+        })
+      ));
+
+      const readsBeforeRecovery = calls.filter(([operation]) => operation === "read").length;
+      const recoveryRead = new Promise((resolve) => {
+        captures.onReadThread = resolve;
+      });
+      t.mock.timers.tick(10_001);
+      await recoveryRead;
+      captures.onReadThread = null;
+      assert.ok(
+        calls.filter(([operation]) => operation === "read").length > readsBeforeRecovery
+      );
+      notificationHold.release();
+      await runWithProjectRequestContext(
+        beta.context,
+        () => controller.closeAllForSession(sessionId)
+      );
+      simulateControllerCrash();
+    });
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("hidden renewal successor shutdown requires its exact explicit cleanup context", async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectService,
+    session,
+    simulateControllerCrash
+  }) => {
+    const catalog = await controller.executionProfileModelCatalog(session.sessionId);
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+    simulateControllerCrash();
+    const renewalId = "renewal-cleanup-1";
+    const hiddenSession = {
+      ...session,
+      metadata: {
+        ...session.metadata,
+        renewal_id: renewalId,
+        renewed_from: "source-session"
+      },
+      status: VIBE64_SESSION_STATUS.RENEWAL_PENDING
+    };
+    const ordinaryRuntime = projectService.createRuntime();
+    let ordinaryReads = 0;
+    const hiddenRuntime = {
+      ...ordinaryRuntime,
+      async getSession() {
+        ordinaryReads += 1;
+        const error = new Error("Private renewal session");
+        error.code = "vibe64_session_renewal_private";
+        throw error;
+      }
+    };
+    projectService.createRuntime = () => hiddenRuntime;
+
+    await assert.rejects(
+      () => controller.closeAllForSession(hiddenSession.sessionId),
+      { code: "vibe64_session_renewal_private" }
+    );
+    await assert.rejects(
+      () => controller.closeAllForSession(hiddenSession.sessionId, {
+        renewalCleanup: {
+          kind: "successor",
+          renewalId: "wrong-renewal",
+          sourceSessionId: "source-session"
+        },
+        runtime: hiddenRuntime,
+        session: hiddenSession
+      }),
+      TypeError
+    );
+    assert.equal(ordinaryReads, 1);
+
+    let releaseStopRuntime = () => null;
+    const stopRuntimeStarted = new Promise((resolve) => {
+      captures.onStopRuntime = resolve;
+    });
+    captures.stopRuntimeWait = new Promise((resolve) => {
+      releaseStopRuntime = resolve;
+    });
+    const hiddenClose = controller.closeAllForSession(hiddenSession.sessionId, {
+      renewalCleanup: {
+        kind: "successor",
+        renewalId,
+        sourceSessionId: "source-session"
+      },
+      runtime: hiddenRuntime,
+      session: hiddenSession
+    });
+    await stopRuntimeStarted;
+    await assert.rejects(
+      () => controller.closeAllForSession(hiddenSession.sessionId),
+      { code: "vibe64_session_renewal_private" }
+    );
+    releaseStopRuntime();
+    await hiddenClose;
+    assert.equal(ordinaryReads, 2);
+  });
+});
+
+test("renewal predecessor cleanup fails closed when a cached Codex process does not confirm exit", async () => {
+  await withConversationController(async ({ captures, controller, projectService, session }) => {
+    const catalog = await controller.executionProfileModelCatalog(session.sessionId);
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+    captures.stopRuntimeResult = { stopped: false };
+    const renewalId = "renewal-predecessor-unverified-cache";
+    const runtime = projectService.createRuntime();
+    const activeSession = {
+      ...session,
+      status: VIBE64_SESSION_STATUS.ACTIVE
+    };
+
+    await assert.rejects(
+      () => controller.closeAllForSession(session.sessionId, {
+        renewalCleanup: {
+          kind: "predecessor",
+          renewalId,
+          sourceSessionId: session.sessionId
+        },
+        runtime,
+        session: activeSession
+      }),
+      { code: "vibe64_session_renewal_process_exit_unverified" }
+    );
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, [{
+      preserveProcessExitProof: true
+    }]);
+  });
+});
+
+test("renewal predecessor cleanup accepts exact preserved process-exit proof", async () => {
+  await withConversationController(async ({ captures, controller, projectService, session }) => {
+    const catalog = await controller.executionProfileModelCatalog(session.sessionId);
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+    captures.stopRuntimeResult = {
+      processExitVerified: true,
+      runtimeDirPreserved: true,
+      stopped: false
+    };
+    const renewalId = "renewal-predecessor-preserved-proof";
+    const runtime = projectService.createRuntime();
+
+    await controller.closeAllForSession(session.sessionId, {
+      renewalCleanup: {
+        kind: "predecessor",
+        renewalId,
+        sourceSessionId: session.sessionId
+      },
+      runtime,
+      session: {
+        ...session,
+        status: VIBE64_SESSION_STATUS.ACTIVE
+      }
+    });
+
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, [{
+      preserveProcessExitProof: true
+    }]);
+  });
+});
+
+test("renewal predecessor cleanup does not treat an already-missing runtime directory as exit proof", async () => {
+  await withConversationController(async ({ captures, controller, projectService, session, temporaryRoot }) => {
+    const activeSession = {
+      ...session,
+      metadata: {
+        ...session.metadata,
+        agent_transport_runtime_dir: path.join(temporaryRoot, "missing-codex-runtime")
+      },
+      status: VIBE64_SESSION_STATUS.ACTIVE
+    };
+    const renewalId = "renewal-predecessor-missing-runtime";
+    const runtime = projectService.createRuntime();
+
+    await assert.rejects(
+      () => controller.closeAllForSession(session.sessionId, {
+        renewalCleanup: {
+          kind: "predecessor",
+          renewalId,
+          sourceSessionId: session.sessionId
+        },
+        runtime,
+        session: activeSession
+      }),
+      { code: "vibe64_session_renewal_process_exit_unverified" }
+    );
+    assert.equal(captures.providerOptions.length, 0);
+  });
+});
+
+test("archived renewal predecessor releases preserved runtime proof idempotently", async () => {
+  await withConversationController(async ({ controller, projectService, session, temporaryRoot }) => {
+    const renewalId = "renewal-predecessor-proof-release";
+    const runtimeDir = path.join(temporaryRoot, "codex-app-server-renewal-proof");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(
+      path.join(runtimeDir, "runtime.json"),
+      `${JSON.stringify(exactStoppedRuntimeMetadata(runtimeDir, { stopped: true }))}\n`
+    );
+    const archivedSession = {
+      ...session,
+      archived: true,
+      metadata: {
+        ...session.metadata,
+        agent_transport_runtime_dir: runtimeDir,
+        renewal_id: renewalId,
+        renewed_to: "renewal-successor"
+      },
+      status: VIBE64_SESSION_STATUS.ABANDONED
+    };
+    const runtime = projectService.createRuntime();
+
+    const released = await controller.releaseRenewalPredecessorProcessExitProof(
+      session.sessionId,
+      {
+        renewalId,
+        runtime,
+        session: archivedSession
+      }
+    );
+    assert.equal(released.released, true);
+    assert.equal(released.alreadyReleased, false);
+    assert.equal(released.runtimeDirRemoved, true);
+
+    const retried = await controller.releaseRenewalPredecessorProcessExitProof(
+      session.sessionId,
+      {
+        renewalId,
+        runtime,
+        session: archivedSession
+      }
+    );
+    assert.equal(retried.released, true);
+    assert.equal(retried.alreadyReleased, true);
+
+    await assert.rejects(
+      () => controller.releaseRenewalPredecessorProcessExitProof(
+        session.sessionId,
+        {
+          renewalId,
+          runtime,
+          session: {
+            ...archivedSession,
+            archived: false,
+            status: VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+          }
+        }
+      ),
+      TypeError
+    );
+  });
+});
+
+test("authorized renewal successor releases preserved runtime proof idempotently", async () => {
+  await withConversationController(async ({ controller, projectService, session, temporaryRoot }) => {
+    const renewalId = "renewal-successor-proof-release";
+    const sourceSessionId = "source-session";
+    const runtimeDir = path.join(temporaryRoot, "codex-app-server-successor-renewal-proof");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(
+      path.join(runtimeDir, "runtime.json"),
+      `${JSON.stringify(exactStoppedRuntimeMetadata(runtimeDir, { stopped: true }))}\n`
+    );
+    const successor = {
+      ...session,
+      metadata: {
+        ...session.metadata,
+        agent_transport_runtime_dir: runtimeDir,
+        renewal_id: renewalId,
+        renewed_from: sourceSessionId
+      },
+      status: VIBE64_SESSION_STATUS.RENEWAL_PENDING
+    };
+    const authorization = {
+      authorizedAt: "2026-08-25T00:00:00.000Z",
+      kind: "vibe64.session_renewal_successor_process_exit_proof_release",
+      renewalId,
+      runtimeDir,
+      schemaVersion: 1,
+      sourceSessionId,
+      successorSessionId: session.sessionId
+    };
+    const runtime = projectService.createRuntime();
+
+    await assert.rejects(
+      () => controller.releaseRenewalSuccessorProcessExitProof(
+        session.sessionId,
+        {
+          authorization: {
+            ...authorization,
+            runtimeDir: path.join(temporaryRoot, "different-runtime")
+          },
+          renewalId,
+          runtime,
+          session: successor
+        }
+      ),
+      TypeError
+    );
+    assert.match(await readFile(path.join(runtimeDir, "runtime.json"), "utf8"), /"stopped"/u);
+
+    const released = await controller.releaseRenewalSuccessorProcessExitProof(
+      session.sessionId,
+      {
+        authorization,
+        renewalId,
+        runtime,
+        session: successor
+      }
+    );
+    assert.equal(released.released, true);
+    assert.equal(released.alreadyReleased, false);
+    assert.equal(released.runtimeDirRemoved, true);
+
+    const retried = await controller.releaseRenewalSuccessorProcessExitProof(
+      session.sessionId,
+      {
+        authorization,
+        renewalId,
+        runtime,
+        session: successor
+      }
+    );
+    assert.equal(retried.released, true);
+    assert.equal(retried.alreadyReleased, true);
+  });
+});
+
+test("cleanup and renewal freeze share one atomic terminal admission boundary", async () => {
+  await withConversationController(async ({ calls, captures, controller, session }) => {
+    let releaseEnvironment;
+    let environmentStarted;
+    const environmentStartedPromise = new Promise((resolve) => {
+      environmentStarted = resolve;
+    });
+    captures.onProjectEnvironment = environmentStarted;
+    captures.projectEnvironmentWait = new Promise((resolve) => {
+      releaseEnvironment = resolve;
+    });
+    const owner = "session-renewal:cleanup-race";
+    const namespace = codexTerminalNamespace(session.sessionId);
+    const deleting = controller.deleteDetachedChatThread(session.sessionId, {
+      threadId: "conversation-before-freeze"
+    });
+    await environmentStartedPromise;
+    assert.deepEqual(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      owner
+    }), {
+      code: "terminal_admission_busy",
+      error: "A terminal operation is still finishing.",
+      ok: false
+    });
+    releaseEnvironment();
+    const deleted = await deleting;
+    assert.equal(deleted.ok, true);
+    assert.equal(deleted.status, "deleted");
+    assert.equal(calls.some(([operation]) => operation === "ensure"), true);
+    assert.equal(calls.some(([operation]) => operation === "delete"), true);
+
+    assert.equal(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      owner
+    }).ok, true);
+    const providerCount = captures.providerOptions.length;
+    const ensureCount = calls.filter(([operation]) => operation === "ensure").length;
+    const deleteCount = calls.filter(([operation]) => operation === "delete").length;
+    const interruptCount = calls.filter(([operation]) => operation === "interrupt").length;
+    try {
+      const interrupted = await controller.interruptDetachedChatTurn(session.sessionId, {
+        threadId: "conversation-before-freeze",
+        turnId: "turn-before-freeze"
+      });
+      const stopped = await controller.stopConversation(session.sessionId, {
+        conversationId: "conversation-before-freeze",
+        runId: "turn-before-freeze"
+      });
+
+      assert.equal(interrupted.ok, true);
+      assert.equal(interrupted.operationOutcome, "already_idle");
+      assert.equal(stopped.ok, true);
+      assert.equal(stopped.operationOutcome, "already_idle");
+      assert.equal(captures.providerOptions.length, providerCount);
+      assert.equal(calls.filter(([operation]) => operation === "ensure").length, ensureCount);
+      assert.equal(calls.filter(([operation]) => operation === "delete").length, deleteCount);
+      assert.equal(calls.filter(([operation]) => operation === "interrupt").length, interruptCount);
+    } finally {
+      assert.equal(thawTerminalNamespaceAdmission(namespace, { owner }).ok, true);
+    }
+  });
+});
+
+test("renewal freeze cannot cross any Codex provider acquisition boundary", async (t) => {
+  const boundaries = [{
+    hook: "onProviderFactory",
+    title: "provider factory"
+  }, {
+    hook: "onEnsureAvailable",
+    title: "provider availability"
+  }];
+
+  for (const boundary of boundaries) {
+    await t.test(boundary.title, async () => {
+      await withConversationController(async ({ captures, controller, session }) => {
+        const owner = `session-renewal:${boundary.hook}`;
+        const namespace = codexTerminalNamespace(session.sessionId);
+        let freezeAttempt = null;
+        captures[boundary.hook] = () => {
+          freezeAttempt = freezeTerminalNamespaceAdmission(namespace, {
+            code: "vibe64_session_renewal_quiesced",
+            error: "Session renewal has frozen terminal input.",
+            owner
+          });
+        };
+
+        const deleted = await controller.deleteDetachedChatThread(session.sessionId, {
+          threadId: `conversation-${boundary.hook}`
+        });
+
+        assert.equal(deleted.ok, true);
+        assert.deepEqual(freezeAttempt, {
+          code: "terminal_admission_busy",
+          error: "A terminal operation is still finishing.",
+          ok: false
+        });
+        assert.equal(freezeTerminalNamespaceAdmission(namespace, {
+          code: "vibe64_session_renewal_quiesced",
+          error: "Session renewal has frozen terminal input.",
+          owner
+        }).ok, true);
+        assert.equal(thawTerminalNamespaceAdmission(namespace, { owner }).ok, true);
+      });
+    });
+  }
+});
+
+test("renewal freeze cannot cross persisted economy runtime identity recovery", async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectService,
+    session,
+    simulateControllerCrash,
+    subscribers
+  }) => {
+    const executionProfile = sourceExplanationEconomyProfile();
+    const pending = controller.runDetachedChatTurn(session.sessionId, {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Persist one economy thread before the cleanup race."
+    });
+    await waitForCapturedTurns(captures, 1);
+    completeDetachedTurn(subscribers, {
+      text: JSON.stringify({ answer: "Persisted." })
+    });
+    const completed = await pending;
+    simulateControllerCrash();
+
+    const namespace = codexTerminalNamespace(session.sessionId);
+    const owner = "session-renewal:runtime-identity";
+    let freezeAttempt = null;
+    const restarted = restartedCaptures(captures, {
+      onCurrentRuntimeInfo() {
+        freezeAttempt = freezeTerminalNamespaceAdmission(namespace, {
+          code: "vibe64_session_renewal_quiesced",
+          error: "Session renewal has frozen terminal input.",
+          owner
+        });
+      }
+    });
+    const restartedController = createRestartedController({
+      captures: restarted,
+      projectService
+    });
+
+    const deleted = await restartedController.deleteDetachedChatThread(session.sessionId, {
+      executionProfile,
+      threadId: completed.threadId
+    });
+
+    assert.equal(deleted.ok, true, JSON.stringify(deleted));
+    assert.deepEqual(freezeAttempt, {
+      code: "terminal_admission_busy",
+      error: "A terminal operation is still finishing.",
+      ok: false
+    });
+    assert.equal(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      owner
+    }).ok, true);
+    assert.equal(thawTerminalNamespaceAdmission(namespace, { owner }).ok, true);
   });
 });
 

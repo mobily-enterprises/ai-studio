@@ -6,7 +6,8 @@ const VIBE64_SESSION_CLOSING_AT_METADATA = "session_closing_at";
 const VIBE64_SESSION_CLOSING_REASON_METADATA = "session_closing_reason";
 
 function sessionClosingReason(session = {}) {
-  return normalizeText(session?.metadata?.[VIBE64_SESSION_CLOSING_REASON_METADATA]);
+  return normalizeText(session?.metadata?.[VIBE64_SESSION_CLOSING_REASON_METADATA]) ||
+    (normalizeText(session?.status) === "renewal_quiesced" ? "renewing" : "");
 }
 
 function sessionIsClosing(session = {}) {

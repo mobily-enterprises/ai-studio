@@ -378,6 +378,7 @@ const {
   selectVersion,
   selectVersionFile,
   sessionId,
+  sourceOperationsSuspended,
   updates,
   versionDiff,
   versionFiles
@@ -394,7 +395,11 @@ const pageDescription = computed(() => view.value === "history"
   : "Review exactly what this session changes before saving it.");
 const repositoryStatus = computed(() => updates.payload || changes.payload || null);
 const repositoryOperationBusy = computed(() => Boolean(
-  !sessionId.value || updates.checking || updates.applying || saving.value
+  !sessionId.value ||
+  sourceOperationsSuspended.value ||
+  updates.checking ||
+  updates.applying ||
+  saving.value
 ));
 const saveWorkDisabled = computed(() => Boolean(
   repositoryOperationBusy.value ||
@@ -408,6 +413,9 @@ const saveWorkDisabled = computed(() => Boolean(
   typeof dashboard.value.requestSaveWork !== "function"
 ));
 const saveWorkTitle = computed(() => {
+  if (sourceOperationsSuspended.value) {
+    return "Session renewal is safely using this session’s source";
+  }
   if (updates.applying || saving.value) {
     return "Wait for the current repository operation to finish";
   }

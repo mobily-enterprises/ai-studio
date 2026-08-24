@@ -264,6 +264,198 @@ test("Vibe64 ignores a stale hosted namespace checkout and clones the GitHub aut
   });
 });
 
+test("renewal source creation pins the confirmed GitHub commit after authority advances", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remoteRoot = path.join(root, "remote.git");
+    const publisherRoot = path.join(root, "publisher");
+    const context = githubSourceContext(root, "renewal-successor", { remoteRoot });
+    await git(root, ["init", "--bare", "--initial-branch=main", remoteRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    const confirmedCommit = await git(publisherRoot, ["rev-parse", "HEAD^{commit}"]);
+
+    await writeFile(path.join(publisherRoot, "app.txt"), "authority advanced\n", "utf8");
+    await git(publisherRoot, ["add", "app.txt"]);
+    await git(publisherRoot, ["commit", "-m", "advance after renewal confirmation"]);
+    await git(publisherRoot, ["push", "origin", "main"]);
+    const advancedCommit = await git(publisherRoot, ["rev-parse", "HEAD^{commit}"]);
+    assert.notEqual(advancedCommit, confirmedCommit);
+    await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+    const result = await createSessionSource({
+      ...context,
+      expectedCommit: confirmedCommit
+    });
+
+    assert.equal(result.commit, confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD^{commit}"]), confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "initial");
+    assert.equal(
+      await git(result.sourcePath, ["rev-parse", "refs/remotes/origin/main^{commit}"]),
+      advancedCommit
+    );
+    assert.equal(context.metadata.base_commit, confirmedCommit);
+    assert.equal(context.metadata.canonical_commit, confirmedCommit);
+    assert.equal(
+      await git(root, [
+        "--git-dir", context.project.githubMirrorPath,
+        "rev-parse", "refs/heads/main^{commit}"
+      ]),
+      advancedCommit
+    );
+  });
+});
+
+test("renewal source creation pins the confirmed standalone commit after authority advances", async () => {
+  await withTemporaryRoot(async (root) => {
+    const context = sourceContext(root, "standalone-renewal-successor");
+    await createProject(context.runtime.projectContextRoot);
+    const confirmedCommit = await git(
+      context.runtime.projectContextRoot,
+      ["rev-parse", "HEAD^{commit}"]
+    );
+    await writeFile(
+      path.join(context.runtime.projectContextRoot, "app.txt"),
+      "standalone authority advanced\n",
+      "utf8"
+    );
+    await git(context.runtime.projectContextRoot, ["add", "app.txt"]);
+    await git(context.runtime.projectContextRoot, ["commit", "-m", "advance standalone source"]);
+    const advancedCommit = await git(
+      context.runtime.projectContextRoot,
+      ["rev-parse", "HEAD^{commit}"]
+    );
+    assert.notEqual(advancedCommit, confirmedCommit);
+
+    const result = await createSessionSource({
+      ...context,
+      expectedCommit: confirmedCommit
+    });
+
+    assert.equal(result.commit, confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD^{commit}"]), confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "initial");
+    assert.equal(context.metadata.base_commit, confirmedCommit);
+    assert.equal(context.metadata.canonical_commit, confirmedCommit);
+  });
+});
+
+test("renewal source creation pins the confirmed Vibe64 Git commit after authority advances", async () => {
+  await withTemporaryRoot(async (root) => {
+    const canonicalRoot = path.join(root, "canonical-repository", "repository.git");
+    const publisherRoot = path.join(root, "publisher");
+    const context = sourceContext(root, "managed-renewal-successor");
+    await mkdir(path.dirname(canonicalRoot), { recursive: true });
+    await git(root, ["init", "--bare", "--initial-branch=main", canonicalRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", canonicalRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    const confirmedCommit = await git(publisherRoot, ["rev-parse", "HEAD^{commit}"]);
+    await writeFile(path.join(publisherRoot, "app.txt"), "managed authority advanced\n", "utf8");
+    await git(publisherRoot, ["add", "app.txt"]);
+    await git(publisherRoot, ["commit", "-m", "advance managed authority"]);
+    await git(publisherRoot, ["push", "origin", "main"]);
+    const advancedCommit = await git(publisherRoot, ["rev-parse", "HEAD^{commit}"]);
+    context.project = {
+      canonicalRepositoryPath: canonicalRoot,
+      repository: {
+        defaultBranch: "main",
+        mode: "managed_git"
+      },
+      repositoryMode: "managed_git"
+    };
+    await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+    const result = await createSessionSource({
+      ...context,
+      expectedCommit: confirmedCommit
+    });
+
+    assert.notEqual(advancedCommit, confirmedCommit);
+    assert.equal(result.commit, confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["rev-parse", "HEAD^{commit}"]), confirmedCommit);
+    assert.equal(await git(result.sourcePath, ["show", "HEAD:app.txt"]), "initial");
+    assert.equal(
+      await git(result.sourcePath, ["rev-parse", "refs/remotes/origin/main^{commit}"]),
+      advancedCommit
+    );
+    assert.equal(context.metadata.base_commit, confirmedCommit);
+    assert.equal(context.metadata.canonical_commit, confirmedCommit);
+  });
+});
+
+test("renewal source creation rejects a frozen commit outside the authority branch", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remoteRoot = path.join(root, "remote.git");
+    const publisherRoot = path.join(root, "publisher");
+    const unrelatedRoot = path.join(root, "unrelated");
+    const context = githubSourceContext(root, "unavailable-renewal-commit", { remoteRoot });
+    await git(root, ["init", "--bare", "--initial-branch=main", remoteRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    await createProject(unrelatedRoot);
+    await writeFile(path.join(unrelatedRoot, "unrelated.txt"), "outside authority\n", "utf8");
+    await git(unrelatedRoot, ["add", "unrelated.txt"]);
+    await git(unrelatedRoot, ["commit", "-m", "unrelated history"]);
+    const unrelatedCommit = await git(unrelatedRoot, ["rev-parse", "HEAD^{commit}"]);
+    await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+    await assert.rejects(
+      () => createSessionSource({
+        ...context,
+        expectedCommit: unrelatedCommit
+      }),
+      { code: "vibe64_session_source_expected_commit_unavailable" }
+    );
+    await assert.rejects(
+      () => access(managedSessionSourcePath(
+        context.runtime.projectSessionSourceRoot,
+        context.session.sessionId
+      )),
+      { code: "ENOENT" }
+    );
+    assert.deepEqual(context.metadata, {});
+  });
+});
+
+test("renewal source creation rejects a checkout that does not land on the frozen commit", async () => {
+  await withTemporaryRoot(async (root) => {
+    const remoteRoot = path.join(root, "remote.git");
+    const publisherRoot = path.join(root, "publisher");
+    const context = githubSourceContext(root, "mismatched-renewal-checkout", { remoteRoot });
+    await git(root, ["init", "--bare", "--initial-branch=main", remoteRoot]);
+    await createProject(publisherRoot);
+    await git(publisherRoot, ["remote", "add", "origin", remoteRoot]);
+    await git(publisherRoot, ["push", "-u", "origin", "main"]);
+    const confirmedCommit = await git(publisherRoot, ["rev-parse", "HEAD^{commit}"]);
+    await writeFile(path.join(publisherRoot, "app.txt"), "authority advanced\n", "utf8");
+    await git(publisherRoot, ["add", "app.txt"]);
+    await git(publisherRoot, ["commit", "-m", "advance authority"]);
+    await git(publisherRoot, ["push", "origin", "main"]);
+    await mkdir(context.runtime.projectContextRoot, { recursive: true });
+
+    await assert.rejects(
+      () => createSessionSource({
+        ...context,
+        expectedCommit: confirmedCommit,
+        runCommand: async (request) => {
+          if (request.command === "git" && request.args?.[0] === "checkout") {
+            return {
+              ok: true,
+              stdout: ""
+            };
+          }
+          return directCommand(request);
+        }
+      }),
+      { code: "vibe64_session_source_expected_commit_mismatch" }
+    );
+    assert.deepEqual(context.metadata, {});
+  });
+});
+
 test("GitHub mirror acceleration handles cold, warm, stale, and non-main session clones", async () => {
   await withTemporaryRoot(async (root) => {
     const branch = "trunk";

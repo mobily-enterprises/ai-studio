@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -14,9 +17,11 @@ import {
   ensureCodexAppServerThreadForSession,
   prepareCodexAppServerEconomyThreadStartSettings,
   resumeCodexAppServerEconomyThread,
+  resumeExactCodexAppServerThreadForSession,
   sendCodexAppServerEconomyTurn,
   sendCodexAppServerPromptForSession,
-  startCodexAppServerEconomyThread
+  startCodexAppServerEconomyThread,
+  startFreshCodexAppServerThreadForSession
 } from "@local/vibe64-runtime/server/codexAppServerSessionBridge";
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
@@ -27,6 +32,9 @@ import {
   defineVibe64AgentExecutionProfileResolution
 } from "@local/vibe64-runtime/shared";
 import {
+  createVibe64SessionStore
+} from "@local/vibe64-runtime/server/sessionStore";
+import {
   STUDIO_MANAGED_CODEX_COMMAND,
   STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG
 } from "@local/studio-terminal-core/server/studioRuntimeIdentity";
@@ -34,8 +42,7 @@ function fakeRuntime({
   conversationLog = []
 } = {}) {
   const writes = [];
-  return {
-    store: {
+  const store = {
       async mutateSession(sessionId, callback) {
         await callback();
         writes.push({
@@ -54,7 +61,11 @@ function fakeRuntime({
       async readConversationLog() {
         return conversationLog;
       }
-    },
+    };
+  store.mutateSessionForRenewal = store.mutateSession;
+  store.writeMetadataValueForRenewal = store.writeMetadataValue;
+  return {
+    store,
     writes
   };
 }
@@ -70,6 +81,30 @@ function appServerRuntime() {
     socketPath: "/tmp/vibe64/agent-providers/codex-app-server/app-server.sock",
     transport: "unix"
   };
+}
+
+function renewalThreadInventory(threadIds = []) {
+  return {
+    async listAppServerThreadsForCwd({ cwd }) {
+      return {
+        cwd,
+        threadIds: [...threadIds]
+      };
+    }
+  };
+}
+
+function renewalThreadClaim({
+  operationId = "renewal:one",
+  threadId = "new-successor-thread",
+  workdir = "/repo/worktree"
+} = {}) {
+  return JSON.stringify({
+    operationId,
+    schemaVersion: "vibe64.codex-renewal-thread-claim.v1",
+    threadId,
+    workdir
+  });
 }
 
 function sourceExplanationEconomyProfile(overrides = {}) {
@@ -1617,4 +1652,829 @@ test("codex app-server bridge sends context refresh inside the next turn input",
   assert.match(result.input, /Real Vibe64 routed turn context refresh:/u);
   assert.ok(result.input.indexOf("Do the work.") < result.input.indexOf("VIBE64_CONTEXT_REFRESH:"));
   assert.equal(providerCalls[0].input, result.input);
+});
+
+test("session renewal resumes and reads only the exact persisted main thread with normal settings", async () => {
+  const calls = [];
+  const provider = {
+    async ensureRuntime() {
+      calls.push(["ensureRuntime"]);
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      return {
+        id: threadId,
+        raw: {
+          id: threadId,
+          turns: [{ id: "old-turn" }]
+        }
+      };
+    },
+    async resumeThread(threadId, settings) {
+      calls.push(["resumeThread", threadId, settings]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "forbidden-replacement" };
+    }
+  };
+  const result = await resumeExactCodexAppServerThreadForSession({
+    agentSettings: {
+      model: "gpt-5.6-sol",
+      thinking: "high"
+    },
+    developerInstructions: "Ordinary Vibe64 Genesis work semantics.",
+    expectedThreadId: "old-main-thread",
+    provider,
+    session: {
+      metadata: {
+        agent_identity_conversation_id: "old-main-thread",
+        agent_identity_provider: "codex",
+        agent_identity_status: "ready",
+        agent_identity_workdir: "/repo/worktree",
+        agent_transport_id: "codex_app_server"
+      },
+      sessionId: "session-old"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.threadId, "old-main-thread");
+  assert.deepEqual(calls.map(([method]) => method), [
+    "ensureRuntime",
+    "resumeThread",
+    "readThread"
+  ]);
+  assert.equal(calls[1][2].model, "gpt-5.6-sol");
+  assert.equal(calls[1][2].developerInstructions, "Ordinary Vibe64 Genesis work semantics.");
+  assert.equal(Object.hasOwn(calls[1][2], "allowProviderModelFallback"), false);
+});
+
+test("session renewal reports an unreadable old thread distinctly and never replaces it", async () => {
+  const calls = [];
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      const error = new Error("thread not found");
+      error.code = -32600;
+      error.method = "thread/read";
+      throw error;
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "replacement" };
+    }
+  };
+
+  await assert.rejects(
+    () => resumeExactCodexAppServerThreadForSession({
+      expectedThreadId: "old-main-thread",
+      provider,
+      session: {
+        metadata: {
+          agent_identity_conversation_id: "old-main-thread",
+          agent_identity_provider: "codex",
+          agent_identity_status: "ready",
+          agent_identity_workdir: "/repo/worktree",
+          agent_transport_id: "codex_app_server"
+        },
+        sessionId: "session-old"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => (
+      error?.code === "vibe64_session_renewal_thread_unreadable" &&
+      /manually/u.test(error.message)
+    )
+  );
+  assert.deepEqual(calls.map(([method]) => method), ["resumeThread", "readThread"]);
+});
+
+test("session renewal starts a genuinely fresh successor thread and persists its operation identity", async () => {
+  const runtime = fakeRuntime();
+  const calls = [];
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      calls.push(["ensureRuntime"]);
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      return { id: threadId, raw: { cwd: "/repo/worktree", id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread(settings) {
+      calls.push(["startThread", settings]);
+      return { id: "new-successor-thread" };
+    }
+  };
+  const result = await startFreshCodexAppServerThreadForSession({
+    additionalMetadata: {
+      agent_renewal_seed_handover_hash: "a".repeat(64),
+      ordinary_metadata_is_rejected: "yes"
+    },
+    agentSettings: {
+      model: "gpt-5.6-sol",
+      thinking: "xhigh"
+    },
+    developerInstructions: "Ordinary Vibe64 Genesis work semantics.",
+    forbiddenThreadId: "old-main-thread",
+    operationId: "renewal:one",
+    provider,
+    runtime,
+    session: {
+      metadata: {},
+      sessionId: "session-successor"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.fresh, true);
+  assert.equal(result.threadId, "new-successor-thread");
+  assert.deepEqual(calls.map(([method]) => method), [
+    "ensureRuntime",
+    "startThread",
+    "readThread"
+  ]);
+  assert.equal(metadataValue(runtime, "agent_renewal_seed_operation_id"), "renewal:one");
+  assert.equal(metadataValue(runtime, "agent_renewal_seed_thread_id"), "new-successor-thread");
+  assert.equal(metadataValue(runtime, "agent_renewal_seed_handover_hash"), "a".repeat(64));
+  assert.equal(metadataValue(runtime, "ordinary_metadata_is_rejected"), undefined);
+  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "new-successor-thread");
+});
+
+test("session renewal accepts the exact pre-message thread/read state after verifying thread status", async () => {
+  const runtime = fakeRuntime();
+  const calls = [];
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      const error = new Error(
+        `thread ${threadId} is not materialized yet; includeTurns is unavailable before first user message`
+      );
+      error.code = -32600;
+      error.method = "thread/read";
+      throw error;
+    },
+    async readThreadStatus(threadId) {
+      calls.push(["readThreadStatus", threadId]);
+      return {
+        id: threadId,
+        raw: { cwd: "/repo/worktree", id: threadId }
+      };
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  const result = await startFreshCodexAppServerThreadForSession({
+    forbiddenThreadId: "old-main-thread",
+    operationId: "renewal:unmaterialized",
+    provider,
+    runtime,
+    session: { metadata: {}, sessionId: "session-successor" },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.fresh, true);
+  assert.equal(result.threadId, "new-successor-thread");
+  assert.deepEqual(calls, [
+    ["startThread"],
+    ["readThread", "new-successor-thread"],
+    ["readThreadStatus", "new-successor-thread"]
+  ]);
+  assert.equal(result.threadSnapshot.raw.cwd, "/repo/worktree");
+});
+
+test("session renewal rejects every other invalid pre-message thread/read response", async () => {
+  let statusReads = 0;
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread() {
+      const error = new Error("thread is temporarily unavailable");
+      error.code = -32600;
+      error.method = "thread/read";
+      throw error;
+    },
+    async readThreadStatus() {
+      statusReads += 1;
+      return { id: "new-successor-thread", raw: { cwd: "/repo/worktree" } };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:wrong-invalid-request",
+      provider,
+      runtime: fakeRuntime(),
+      session: { metadata: {}, sessionId: "session-successor" },
+      workdir: "/repo/worktree"
+    }),
+    (error) => (
+      error?.code === "vibe64_session_renewal_fresh_thread_required" &&
+      error?.retryable === true
+    )
+  );
+  assert.equal(statusReads, 0);
+});
+
+test("session renewal rejects the exact pre-message state when status belongs to another source", async () => {
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      const error = new Error(
+        `thread ${threadId} is not materialized yet; includeTurns is unavailable before first user message`
+      );
+      error.code = -32600;
+      error.method = "thread/read";
+      throw error;
+    },
+    async readThreadStatus(threadId) {
+      return {
+        id: threadId,
+        raw: { cwd: "/another/worktree", id: threadId }
+      };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:wrong-status-source",
+      provider,
+      runtime: fakeRuntime(),
+      session: { metadata: {}, sessionId: "session-successor" },
+      workdir: "/repo/worktree"
+    }),
+    (error) => (
+      error?.code === "vibe64_session_renewal_fresh_thread_required" &&
+      error?.retryable === true &&
+      /cannot be read/u.test(error.message)
+    )
+  );
+});
+
+test("session renewal starts a fresh successor when the unreadable predecessor has no recorded thread id", async () => {
+  const runtime = fakeRuntime();
+  const calls = [];
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      calls.push(["ensureRuntime"]);
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      return { id: threadId, raw: { cwd: "/repo/worktree", id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  const result = await startFreshCodexAppServerThreadForSession({
+    operationId: "renewal:manual-handover",
+    provider,
+    runtime,
+    session: {
+      metadata: {},
+      sessionId: "session-successor"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.fresh, true);
+  assert.equal(result.threadId, "new-successor-thread");
+  assert.deepEqual(calls.map(([method]) => method), [
+    "ensureRuntime",
+    "startThread",
+    "readThread"
+  ]);
+});
+
+test("session renewal retries only its already-persisted fresh successor thread", async () => {
+  const runtime = fakeRuntime();
+  const calls = [];
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      return { id: threadId, raw: { cwd: "/repo/worktree", id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "wrong-new-thread" };
+    }
+  };
+  const result = await startFreshCodexAppServerThreadForSession({
+    forbiddenThreadId: "old-main-thread",
+    operationId: "renewal:one",
+    provider,
+    runtime,
+    session: {
+      metadata: {
+        agent_identity_conversation_id: "new-successor-thread",
+        agent_identity_provider: "codex",
+        agent_identity_status: "ready",
+        agent_identity_workdir: "/repo/worktree",
+        agent_renewal_seed_operation_id: "renewal:one",
+        agent_renewal_seed_thread_claim: renewalThreadClaim(),
+        agent_transport_id: "codex_app_server"
+      },
+      sessionId: "session-successor"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.fresh, false);
+  assert.equal(result.threadId, "new-successor-thread");
+  assert.deepEqual(calls.map(([method]) => method), ["resumeThread", "readThread"]);
+});
+
+test("session renewal durably records a fresh thread before an unreadable snapshot and never replaces it", async () => {
+  const runtime = fakeRuntime();
+  let starts = 0;
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread() {
+      throw new Error("temporarily unreadable");
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      starts += 1;
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      forbiddenThreadId: "old-main-thread",
+      operationId: "renewal:one",
+      provider,
+      runtime,
+      session: {
+        metadata: {},
+        sessionId: "session-successor"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => (
+      error?.code === "vibe64_session_renewal_fresh_thread_required" &&
+      error?.retryable === true
+    )
+  );
+
+  assert.equal(starts, 1);
+  assert.equal(metadataValue(runtime, "agent_renewal_seed_thread_id"), "new-successor-thread");
+  assert.deepEqual(
+    JSON.parse(metadataValue(runtime, "agent_renewal_seed_thread_claim")),
+    JSON.parse(renewalThreadClaim())
+  );
+  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "new-successor-thread");
+});
+
+test("session renewal adopts the one thread started before an identity-persistence crash", async () => {
+  const runtime = fakeRuntime();
+  const originalMutation = runtime.store.mutateSessionForRenewal;
+  let renewalMutations = 0;
+  runtime.store.mutateSessionForRenewal = async (...args) => {
+    renewalMutations += 1;
+    if (renewalMutations === 1) {
+      const error = new Error("simulated process crash before identity persistence");
+      error.code = "simulated_process_crash";
+      throw error;
+    }
+    return originalMutation(...args);
+  };
+  const discoveredThreadIds = [];
+  let starts = 0;
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async listAppServerThreadsForCwd({ cwd }) {
+      return {
+        cwd,
+        threadIds: [...discoveredThreadIds]
+      };
+    },
+    async readThread(threadId) {
+      return {
+        id: threadId,
+        raw: { cwd: "/repo/worktree", id: threadId, turns: [] }
+      };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      starts += 1;
+      discoveredThreadIds.push("crash-window-thread");
+      return { id: "crash-window-thread" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:crash-window",
+      provider,
+      runtime,
+      session: {
+        metadata: {},
+        sessionId: "session-successor"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => error?.code === "simulated_process_crash"
+  );
+
+  assert.equal(starts, 1);
+  assert.deepEqual(
+    JSON.parse(metadataValue(runtime, "agent_renewal_seed_thread_baseline")),
+    {
+      operationId: "renewal:crash-window",
+      schemaVersion: "vibe64.codex-renewal-thread-baseline.v1",
+      threadIds: [],
+      workdir: "/repo/worktree"
+    }
+  );
+  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), undefined);
+  assert.deepEqual(
+    JSON.parse(metadataValue(runtime, "agent_renewal_seed_thread_claim")),
+    JSON.parse(renewalThreadClaim({
+      operationId: "renewal:crash-window",
+      threadId: "crash-window-thread"
+    }))
+  );
+
+  runtime.store.mutateSessionForRenewal = originalMutation;
+  const metadata = Object.fromEntries(runtime.writes
+    .filter((write) => write.kind === "metadata")
+    .map((write) => [write.name, write.value]));
+  const recovered = await startFreshCodexAppServerThreadForSession({
+    operationId: "renewal:crash-window",
+    provider,
+    runtime,
+    session: {
+      metadata,
+      sessionId: "session-successor"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(starts, 1);
+  assert.equal(recovered.fresh, false);
+  assert.equal(recovered.threadId, "crash-window-thread");
+  assert.equal(metadataValue(runtime, "agent_identity_conversation_id"), "crash-window-thread");
+});
+
+test("session renewal adopts its atomic claim after partial identity persistence and a disk restart", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-renewal-thread-restart-"));
+  t.after(() => rm(root, { force: true, recursive: true }));
+  const projectContextRoot = path.join(root, "authority");
+  const projectRuntimeRoot = path.join(root, "runtime");
+  const workdir = path.join(root, "successor-source");
+  await Promise.all([
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true }),
+    mkdir(workdir, { recursive: true })
+  ]);
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot: path.join(root, "session-sources")
+  });
+  await store.createSession({ runtimeKind: "genesis", sessionId: "predecessor" });
+  await store.quiesceSessionForRenewal({
+    renewalId: "renewal-disk-restart",
+    sourceSessionId: "predecessor"
+  });
+  await store.createRenewalPendingSession({
+    actorId: "renewal-test-actor",
+    confirmedAt: "2026-08-25T00:00:00.000Z",
+    renewalId: "renewal-disk-restart",
+    renewedFrom: "predecessor",
+    runtimeKind: "genesis",
+    sessionId: "successor"
+  });
+  const discoveredThreadIds = [];
+  let starts = 0;
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async listAppServerThreadsForCwd({ cwd }) {
+      return { cwd, threadIds: [...discoveredThreadIds] };
+    },
+    async readThread(threadId) {
+      return { id: threadId, raw: { cwd: workdir, id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      starts += 1;
+      discoveredThreadIds.push("durable-crash-window-thread");
+      return { id: "durable-crash-window-thread" };
+    }
+  };
+  let failPartialIdentity = true;
+  let resolvePartialIdentity;
+  const partialIdentityWritten = new Promise((resolve) => {
+    resolvePartialIdentity = resolve;
+  });
+  const crashingStore = {
+    ...store,
+    async writeMetadataValueForRenewal(sessionId, name, value) {
+      if (!failPartialIdentity || [
+        "agent_renewal_seed_thread_baseline",
+        "agent_renewal_seed_thread_claim"
+      ].includes(name)) {
+        return store.writeMetadataValueForRenewal(sessionId, name, value);
+      }
+      if (name === "agent_identity_conversation_id") {
+        await store.writeMetadataValueForRenewal(sessionId, name, value);
+        resolvePartialIdentity();
+        return;
+      }
+      await partialIdentityWritten;
+      const error = new Error("simulated controller death during identity metadata persistence");
+      error.code = "simulated_controller_death";
+      throw error;
+    }
+  };
+
+  const successorBeforeCrash = await store.readSessionForRenewal("successor");
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:disk-restart",
+      provider,
+      runtime: { store: crashingStore },
+      session: successorBeforeCrash,
+      workdir
+    }),
+    (error) => error?.code === "simulated_controller_death"
+  );
+  assert.equal(starts, 1);
+  failPartialIdentity = false;
+
+  const restartedStore = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot: path.join(root, "session-sources")
+  });
+  const restartedSession = await restartedStore.readSessionForRenewal("successor");
+  assert.equal(
+    restartedSession.metadata.agent_identity_conversation_id,
+    "durable-crash-window-thread"
+  );
+  assert.equal(restartedSession.metadata.agent_identity_workdir, undefined);
+  assert.equal(
+    JSON.parse(restartedSession.metadata.agent_renewal_seed_thread_baseline).operationId,
+    "renewal:disk-restart"
+  );
+  assert.deepEqual(
+    JSON.parse(restartedSession.metadata.agent_renewal_seed_thread_claim),
+    JSON.parse(renewalThreadClaim({
+      operationId: "renewal:disk-restart",
+      threadId: "durable-crash-window-thread",
+      workdir
+    }))
+  );
+  const recovered = await startFreshCodexAppServerThreadForSession({
+    operationId: "renewal:disk-restart",
+    provider,
+    runtime: { store: restartedStore },
+    session: restartedSession,
+    workdir
+  });
+
+  assert.equal(starts, 1);
+  assert.equal(recovered.fresh, false);
+  assert.equal(recovered.threadId, "durable-crash-window-thread");
+  assert.equal(
+    (await restartedStore.readSessionForRenewal("successor"))
+      .metadata.agent_identity_conversation_id,
+    "durable-crash-window-thread"
+  );
+});
+
+test("session renewal can restart cleanly when its one atomic baseline write fails", async () => {
+  const failedRuntime = fakeRuntime();
+  failedRuntime.store.writeMetadataValueForRenewal = async () => {
+    const error = new Error("simulated atomic metadata write failure");
+    error.code = "simulated_atomic_write_failure";
+    throw error;
+  };
+  let starts = 0;
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      return { id: threadId, raw: { cwd: "/repo/worktree", id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      starts += 1;
+      return { id: "thread-after-restart" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:atomic-baseline",
+      provider,
+      runtime: failedRuntime,
+      session: { metadata: {}, sessionId: "session-successor" },
+      workdir: "/repo/worktree"
+    }),
+    (error) => error?.code === "simulated_atomic_write_failure"
+  );
+  assert.equal(starts, 0);
+  assert.equal(metadataValue(failedRuntime, "agent_renewal_seed_thread_baseline"), undefined);
+
+  const restartedRuntime = fakeRuntime();
+  const restarted = await startFreshCodexAppServerThreadForSession({
+    operationId: "renewal:atomic-baseline",
+    provider,
+    runtime: restartedRuntime,
+    session: { metadata: {}, sessionId: "session-successor" },
+    workdir: "/repo/worktree"
+  });
+  assert.equal(starts, 1);
+  assert.equal(restarted.threadId, "thread-after-restart");
+  assert.equal(metadataValue(restartedRuntime, "agent_identity_conversation_id"), "thread-after-restart");
+});
+
+test("session renewal fails closed when more than one thread appeared after its baseline", async () => {
+  let starts = 0;
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async listAppServerThreadsForCwd({ cwd }) {
+      return {
+        cwd,
+        threadIds: ["candidate-one", "candidate-two"]
+      };
+    },
+    async readThread(threadId) {
+      return { id: threadId, raw: { cwd: "/repo/worktree", id: threadId, turns: [] } };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      starts += 1;
+      return { id: "forbidden-extra-thread" };
+    }
+  };
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      operationId: "renewal:ambiguous",
+      provider,
+      runtime: fakeRuntime(),
+      session: {
+        metadata: {
+          agent_renewal_seed_thread_baseline: JSON.stringify({
+            operationId: "renewal:ambiguous",
+            schemaVersion: "vibe64.codex-renewal-thread-baseline.v1",
+            threadIds: [],
+            workdir: "/repo/worktree"
+          })
+        },
+        sessionId: "session-successor"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => (
+      error?.code === "vibe64_session_renewal_fresh_thread_required" &&
+      /More than one/u.test(error.message)
+    )
+  );
+  assert.equal(starts, 0);
+});
+
+test("session renewal never resumes the predecessor or an unrelated successor thread", async () => {
+  const provider = {
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      return { id: threadId, raw: { cwd: "/repo/worktree", turns: [] } };
+    },
+    async resumeThread(threadId) {
+      return { id: threadId };
+    },
+    async startThread() {
+      return { id: "unused" };
+    }
+  };
+  const runtime = fakeRuntime();
+
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      expectedThreadId: "old-main-thread",
+      forbiddenThreadId: "old-main-thread",
+      operationId: "renewal:one",
+      provider,
+      runtime,
+      session: {
+        metadata: {
+          agent_identity_conversation_id: "old-main-thread",
+          agent_identity_provider: "codex",
+          agent_identity_status: "ready",
+          agent_identity_workdir: "/repo/worktree",
+          agent_renewal_seed_operation_id: "renewal:one",
+          agent_transport_id: "codex_app_server"
+        },
+        sessionId: "session-successor"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => error?.code === "vibe64_session_renewal_fresh_thread_required"
+  );
+  await assert.rejects(
+    () => startFreshCodexAppServerThreadForSession({
+      expectedThreadId: "expected-successor",
+      forbiddenThreadId: "old-main-thread",
+      operationId: "renewal:one",
+      provider,
+      runtime,
+      session: {
+        metadata: {
+          agent_identity_conversation_id: "unrelated-successor",
+          agent_identity_provider: "codex",
+          agent_identity_status: "ready",
+          agent_identity_workdir: "/repo/worktree",
+          agent_renewal_seed_operation_id: "renewal:one",
+          agent_transport_id: "codex_app_server"
+        },
+        sessionId: "session-successor"
+      },
+      workdir: "/repo/worktree"
+    }),
+    (error) => error?.code === "vibe64_session_renewal_fresh_thread_required"
+  );
 });

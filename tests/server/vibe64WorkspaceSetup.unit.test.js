@@ -7,6 +7,10 @@ import {
   Vibe64SessionRuntime
 } from "@local/vibe64-runtime/server";
 import {
+  currentProjectRequestContext,
+  runWithProjectRequestContext
+} from "@local/vibe64-core/server/projectRequestContext";
+import {
   WORKSPACE_SETUP_TRANSCRIPT_MAX_LENGTH,
   WORKSPACE_SETUP_TRANSCRIPT_TRUNCATED_MARKER,
   workspaceSetupState,
@@ -453,5 +457,94 @@ test("an active preparation is shared instead of starting another run", async ()
     assert.equal(joined.completion, started.completion);
     finishCommand({ exitCode: 0, ok: true });
     await started.completion;
+  });
+});
+
+test("same raw session workspace preparations remain isolated across project contexts", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "shared-workspace-session";
+    const alpha = await workspaceSession(path.join(targetRoot, "alpha"), sessionId);
+    const beta = await workspaceSession(path.join(targetRoot, "beta"), sessionId);
+    const contexts = {
+      alpha: {
+        projectRuntimeRoot: alpha.runtime.stateRoot,
+        slug: "alpha",
+        targetRoot: alpha.runtime.projectContextRoot
+      },
+      beta: {
+        projectRuntimeRoot: beta.runtime.stateRoot,
+        slug: "beta",
+        targetRoot: beta.runtime.projectContextRoot
+      }
+    };
+    const gates = Object.fromEntries(["alpha", "beta"].map((slug) => {
+      let enter;
+      let release;
+      return [slug, {
+        entered: new Promise((resolve) => {
+          enter = resolve;
+        }),
+        enter,
+        release: () => release(),
+        wait: new Promise((resolve) => {
+          release = resolve;
+        })
+      }];
+    }));
+    const resumedContexts = [];
+    const runner = createWorkspaceSetupRunner({
+      inspect: () => readySetup(),
+      projectService: {},
+      async runCommand() {
+        const slug = currentProjectRequestContext()?.slug;
+        gates[slug].enter();
+        await gates[slug].wait;
+        resumedContexts.push(currentProjectRequestContext()?.slug);
+        return { exitCode: 0, ok: true };
+      }
+    });
+
+    const alphaStarted = await runWithProjectRequestContext(
+      contexts.alpha,
+      () => runner.start({ runtime: alpha.runtime, session: alpha.session })
+    );
+    const betaStarted = await runWithProjectRequestContext(
+      contexts.beta,
+      () => runner.start({ runtime: beta.runtime, session: beta.session })
+    );
+    await Promise.all([gates.alpha.entered, gates.beta.entered]);
+
+    assert.notEqual(alphaStarted.completion, betaStarted.completion);
+    assert.equal(
+      await runWithProjectRequestContext(contexts.alpha, () => runner.isRunning(sessionId)),
+      true
+    );
+    assert.equal(
+      await runWithProjectRequestContext(contexts.beta, () => runner.isRunning(sessionId)),
+      true
+    );
+
+    gates.alpha.release();
+    assert.equal((await alphaStarted.completion).status, "succeeded");
+    assert.equal(
+      await runWithProjectRequestContext(contexts.alpha, () => runner.isRunning(sessionId)),
+      false
+    );
+    assert.equal(
+      await runWithProjectRequestContext(contexts.beta, () => runner.isRunning(sessionId)),
+      true
+    );
+    const betaWait = await runWithProjectRequestContext(contexts.beta, () => ({
+      completion: runner.wait(sessionId)
+    }));
+    assert.equal(betaWait.completion, betaStarted.completion);
+
+    gates.beta.release();
+    assert.equal((await betaStarted.completion).status, "succeeded");
+    assert.deepEqual(resumedContexts.sort(), ["alpha", "beta"]);
+    assert.equal(
+      await runWithProjectRequestContext(contexts.beta, () => runner.isRunning(sessionId)),
+      false
+    );
   });
 });

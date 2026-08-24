@@ -5,6 +5,7 @@ import path from "node:path";
 import stripAnsi from "strip-ansi";
 
 import {
+  beginTerminalNamespaceOperation,
   closeTerminalSession,
   closeTerminalSessionsForNamespace,
   listTerminalSessions,
@@ -1913,7 +1914,8 @@ function createLaunchTargetTerminalController({
   env = process.env,
   projectService,
   publishSessionChanged = async () => null,
-  runCommand = runVibe64Command
+  runCommand = runVibe64Command,
+  sessionAdmissionFailure = () => null
 } = {}) {
   const launchPreviewProxies = createLaunchPreviewProxyRegistry({
     env
@@ -1951,6 +1953,25 @@ function createLaunchTargetTerminalController({
     return run;
   }
 
+  function launchAdmissionFailure(sessionId = "", session = null) {
+    const frozen = sessionAdmissionFailure(sessionId);
+    if (frozen?.ok === false) {
+      return frozen;
+    }
+    const closingReason = sessionClosingReason(session || {});
+    if (!closingReason) {
+      return null;
+    }
+    const renewing = String(session?.status || "").trim() === "renewal_quiesced";
+    return {
+      code: renewing ? "vibe64_session_renewal_quiesced" : "vibe64_session_closing",
+      error: renewing
+        ? "Session renewal has frozen preview access."
+        : `Session is ${closingReason} and preview access is unavailable.`,
+      ok: false
+    };
+  }
+
   const controller = {
     async close() {
       await Promise.allSettled([...launchReadyWrites.values()]);
@@ -1977,29 +1998,47 @@ function createLaunchTargetTerminalController({
     },
 
     async launchStatus(sessionId, options = {}) {
-      return vibe64Result(async () => {
-        const context = await createLaunchContext(projectService, sessionId);
-        const launchTargets = await listLaunchTargets(context);
-        const previewStatus = await resolveLaunchPreviewStatus({
-          context,
-          launchPreviewProxies,
-          launchTargets,
-          markReady: markLaunchReady,
-          options: {
-            ...options,
-            env,
-            projectService,
-            runCommand
-          },
-          publishSessionChanged,
-          sessionId
-        });
-        return launchStatusResponseFromPreviewStatus({
-          launchTargets,
-          previewStatus,
-          previewApplicationIdentities: context.previewApplicationIdentities
-        });
-      });
+      return vibe64Result(async () => withLaunchStartLock(sessionId, async () => {
+        const admission = beginTerminalNamespaceOperation(
+          launchTargetTerminalNamespace(sessionId)
+        );
+        if (admission.ok === false) {
+          return launchAdmissionFailure(sessionId) || admission;
+        }
+        try {
+          const frozen = launchAdmissionFailure(sessionId);
+          if (frozen) {
+            return frozen;
+          }
+          const context = await createLaunchContext(projectService, sessionId);
+          const unavailable = launchAdmissionFailure(sessionId, context.session);
+          if (unavailable) {
+            return unavailable;
+          }
+          const launchTargets = await listLaunchTargets(context);
+          const previewStatus = await resolveLaunchPreviewStatus({
+            context,
+            launchPreviewProxies,
+            launchTargets,
+            markReady: markLaunchReady,
+            options: {
+              ...options,
+              env,
+              projectService,
+              runCommand
+            },
+            publishSessionChanged,
+            sessionId
+          });
+          return launchStatusResponseFromPreviewStatus({
+            launchTargets,
+            previewStatus,
+            previewApplicationIdentities: context.previewApplicationIdentities
+          });
+        } finally {
+          admission.release();
+        }
+      }));
     },
 
     async selectPreviewIdentity(sessionId, input = {}, options = {}) {
@@ -2009,6 +2048,10 @@ function createLaunchTargetTerminalController({
           const error = new Error(status.error || "Preview identity is unavailable.");
           error.code = status.code || "vibe64_preview_identity_unavailable";
           throw error;
+        }
+        const unavailable = launchAdmissionFailure(sessionId, status.session);
+        if (unavailable) {
+          return unavailable;
         }
         if (!["ready", "stale"].includes(String(status.preview?.state || ""))) {
           const error = new Error(status.preview?.message || "Run the preview before selecting an identity.");
@@ -2049,26 +2092,14 @@ function createLaunchTargetTerminalController({
 
     async openLaunchTarget(sessionId) {
       return vibe64Result(async () => {
-        const context = await createLaunchContext(projectService, sessionId);
-        const launchTargets = await listLaunchTargets(context);
-        const previewStatus = await resolveLaunchPreviewStatus({
-          context,
-          launchPreviewProxies,
-          launchTargets,
-          markReady: markLaunchReady,
-          options: {
-            env,
-            projectService,
-            runCommand
-          },
-          publishSessionChanged,
-          sessionId,
-        });
-        const status = launchStatusResponseFromPreviewStatus({
-          launchTargets,
-          previewStatus,
-          previewApplicationIdentities: context.previewApplicationIdentities
-        });
+        const status = await controller.launchStatus(sessionId);
+        if (status?.ok === false) {
+          return status;
+        }
+        const unavailable = launchAdmissionFailure(sessionId, status.session);
+        if (unavailable) {
+          return unavailable;
+        }
         if (!status.openTarget.available) {
           return {
             ok: false,

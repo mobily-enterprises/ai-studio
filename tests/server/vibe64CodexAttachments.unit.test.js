@@ -26,6 +26,7 @@ import {
   CODEX_ATTACHMENT_REQUEST_BODY_LIMIT_BYTES,
   cleanupCodexAttachments,
   prepareCodexAttachmentStorage,
+  releaseCodexSessionAttachments,
   renewCodexAttachments,
   storeCodexAttachment
 } from "../../packages/vibe64-terminals/src/server/codexAttachments.js";
@@ -1165,6 +1166,63 @@ test("busy session cleanup preserves the attachment for its eventual expiry retr
 
       await waitForMissing(result.path, 2_500);
       assert.deepEqual(await attachmentIds(root), []);
+    });
+  } finally {
+    await holder?.dispose();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("strict session attachment release retries busy ownership and cannot cross namespaces", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "vibe64-attachment-strict-release-test-"));
+  let holder = null;
+  try {
+    await withAttachmentRoot(root, async () => {
+      const owned = await storeCodexAttachment({
+        executionRoot: "/source/project",
+        input: { fileName: "owned.txt", stream: Readable.from(["owned"]) },
+        sessionId: "strict-release-session"
+      });
+      const sibling = await storeCodexAttachment({
+        executionRoot: "/source/project",
+        input: { fileName: "sibling.txt", stream: Readable.from(["sibling"]) },
+        sessionId: "strict-release-sibling"
+      });
+      holder = await spawnExclusiveLockHolder(
+        path.join(path.dirname(owned.path), ".lease-lock"),
+        root
+      );
+
+      await assert.rejects(
+        () => releaseCodexSessionAttachments(
+          "/source/project",
+          "strict-release-session",
+          { lockWaitMs: 25 }
+        ),
+        { code: "vibe64_agent_attachment_busy", retryable: true }
+      );
+      assert.equal(await readFile(owned.path, "utf8"), "owned");
+      assert.equal(await readFile(sibling.path, "utf8"), "sibling");
+
+      await holder.release();
+      assert.deepEqual(await releaseCodexSessionAttachments(
+        "/source/project",
+        "strict-release-session",
+        { lockWaitMs: 250 }
+      ), {
+        alreadyReleased: false,
+        released: true
+      });
+      await assert.rejects(() => access(owned.path), { code: "ENOENT" });
+      assert.equal(await readFile(sibling.path, "utf8"), "sibling");
+      assert.deepEqual(await releaseCodexSessionAttachments(
+        "/source/project",
+        "strict-release-session",
+        { lockWaitMs: 250 }
+      ), {
+        alreadyReleased: true,
+        released: true
+      });
     });
   } finally {
     await holder?.dispose();

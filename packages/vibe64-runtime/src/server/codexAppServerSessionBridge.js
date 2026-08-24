@@ -28,7 +28,24 @@ const CODEX_SESSION_REASONING_EFFORT = VIBE64_CODEX_DEFAULT_THINKING;
 const CODEX_SESSION_REASONING_SUMMARY = "concise";
 const CODEX_SESSION_APPROVAL_POLICY = "never";
 const CODEX_SESSION_SANDBOX = "danger-full-access";
+const CODEX_SESSION_READ_ONLY_SANDBOX = "read-only";
 const CODEX_APP_SERVER_CONTEXT_TURN_TIMEOUT_MS = 60000;
+const CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE =
+  "vibe64_session_renewal_thread_unreadable";
+const CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE =
+  "vibe64_session_renewal_fresh_thread_required";
+const CODEX_SESSION_RENEWAL_UNMATERIALIZED_THREAD_SUFFIX =
+  "is not materialized yet; includeTurns is unavailable before first user message";
+const CODEX_SESSION_RENEWAL_BASELINE_MAX_THREADS = 1000;
+const CODEX_SESSION_RENEWAL_THREAD_ID_MAX_LENGTH = 512;
+const CODEX_SESSION_RENEWAL_BASELINE_METADATA =
+  "agent_renewal_seed_thread_baseline";
+const CODEX_SESSION_RENEWAL_BASELINE_SCHEMA =
+  "vibe64.codex-renewal-thread-baseline.v1";
+const CODEX_SESSION_RENEWAL_THREAD_CLAIM_METADATA =
+  "agent_renewal_seed_thread_claim";
+const CODEX_SESSION_RENEWAL_THREAD_CLAIM_SCHEMA =
+  "vibe64.codex-renewal-thread-claim.v1";
 const CODEX_APP_SERVER_ECONOMY_SANDBOX = "read-only";
 const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION = "0.149.0";
 const CODEX_APP_SERVER_ECONOMY_USER_AGENT_MAX_LENGTH = 512;
@@ -1275,25 +1292,680 @@ function codexAppServerIdentityMetadata({
 }
 
 async function writeCodexAppServerIdentityMetadata({
+  additionalMetadata = {},
   appServerRuntime = {},
+  renewalInternal = false,
   runtime,
   sessionId = "",
   terminalSessionId = "",
   threadId = "",
   workdir = ""
 } = {}) {
-  const metadata = codexAppServerIdentityMetadata({
-    appServerRuntime,
-    terminalSessionId,
-    threadId,
-    workdir
-  });
-  await runtime.store.mutateSession(sessionId, async () => {
+  const supplemental = additionalMetadata &&
+    typeof additionalMetadata === "object" &&
+    !Array.isArray(additionalMetadata)
+    ? Object.fromEntries(Object.entries(additionalMetadata)
+        .filter(([name]) => normalizeAgentText(name).startsWith("agent_renewal_"))
+        .map(([name, value]) => [normalizeAgentText(name), normalizeAgentText(value)]))
+    : {};
+  const metadata = {
+    ...supplemental,
+    ...codexAppServerIdentityMetadata({
+      appServerRuntime,
+      terminalSessionId,
+      threadId,
+      workdir
+    })
+  };
+  const mutateSession = renewalInternal
+    ? runtime.store.mutateSessionForRenewal?.bind(runtime.store)
+    : runtime.store.mutateSession?.bind(runtime.store);
+  const writeMetadataValue = renewalInternal
+    ? runtime.store.writeMetadataValueForRenewal?.bind(runtime.store)
+    : runtime.store.writeMetadataValue?.bind(runtime.store);
+  if (typeof mutateSession !== "function" || typeof writeMetadataValue !== "function") {
+    throw new TypeError(renewalInternal
+      ? "Renewed assistant identity requires explicit internal renewal metadata access."
+      : "Assistant identity metadata access is unavailable.");
+  }
+  await mutateSession(sessionId, async () => {
     await Promise.all(Object.entries(metadata).map(([name, value]) => (
-      runtime.store.writeMetadataValue(sessionId, name, String(value || ""))
+      writeMetadataValue(sessionId, name, String(value || ""))
     )));
   });
   return metadata;
+}
+
+function defineCodexSessionRenewalThreadIds(value = []) {
+  if (
+    !Array.isArray(value) ||
+    value.length > CODEX_SESSION_RENEWAL_BASELINE_MAX_THREADS
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread inventory is invalid."
+    );
+  }
+  const threadIds = value.map((threadId) => normalizeAgentText(threadId));
+  if (
+    threadIds.some((threadId) => (
+      !threadId ||
+      threadId.length > CODEX_SESSION_RENEWAL_THREAD_ID_MAX_LENGTH ||
+      codexAppServerTextHasControlCharacters(threadId)
+    )) ||
+    new Set(threadIds).size !== threadIds.length
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread inventory contains an invalid identity."
+    );
+  }
+  return Object.freeze([...threadIds].sort());
+}
+
+function persistedCodexSessionRenewalThreadBaseline(session = {}, {
+  operationId = "",
+  workdir = ""
+} = {}) {
+  const metadata = isPlainRecord(session.metadata) ? session.metadata : {};
+  const rawBaseline = normalizeAgentText(
+    metadata[CODEX_SESSION_RENEWAL_BASELINE_METADATA]
+  );
+  if (!rawBaseline) {
+    return null;
+  }
+  let baseline = null;
+  try {
+    baseline = JSON.parse(rawBaseline);
+  } catch {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread baseline is unreadable."
+    );
+  }
+  const persistedOperationId = normalizeAgentText(baseline?.operationId);
+  const persistedWorkdir = normalizeWorkdir(baseline?.workdir);
+  if (
+    !isPlainRecord(baseline) ||
+    normalizeAgentText(baseline.schemaVersion) !== CODEX_SESSION_RENEWAL_BASELINE_SCHEMA ||
+    persistedOperationId !== normalizeAgentText(operationId) ||
+    persistedWorkdir !== normalizeWorkdir(workdir) ||
+    !Array.isArray(baseline.threadIds)
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread baseline does not belong to this exact renewal operation."
+    );
+  }
+  return defineCodexSessionRenewalThreadIds(baseline.threadIds);
+}
+
+function persistedCodexSessionRenewalThreadClaim(session = {}, {
+  operationId = "",
+  workdir = ""
+} = {}) {
+  const metadata = isPlainRecord(session.metadata) ? session.metadata : {};
+  const rawClaim = normalizeAgentText(
+    metadata[CODEX_SESSION_RENEWAL_THREAD_CLAIM_METADATA]
+  );
+  if (!rawClaim) {
+    return null;
+  }
+  let claim = null;
+  try {
+    claim = JSON.parse(rawClaim);
+  } catch {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread claim is unreadable."
+    );
+  }
+  const claimedThreadIds = defineCodexSessionRenewalThreadIds([claim?.threadId]);
+  const claimedOperationId = normalizeAgentText(claim?.operationId);
+  const claimedWorkdir = normalizeWorkdir(claim?.workdir);
+  if (
+    !isPlainRecord(claim) ||
+    normalizeAgentText(claim.schemaVersion) !== CODEX_SESSION_RENEWAL_THREAD_CLAIM_SCHEMA ||
+    claimedOperationId !== normalizeAgentText(operationId) ||
+    claimedWorkdir !== normalizeWorkdir(workdir)
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The successor assistant thread claim does not belong to this exact renewal operation."
+    );
+  }
+  return Object.freeze({
+    operationId: claimedOperationId,
+    threadId: claimedThreadIds[0],
+    workdir: claimedWorkdir
+  });
+}
+
+async function listCodexSessionRenewalThreadIds(provider, workdir = "") {
+  if (typeof provider?.listAppServerThreadsForCwd !== "function") {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The assistant provider cannot inventory the successor's exact session threads."
+    );
+  }
+  const normalizedWorkdir = normalizeWorkdir(workdir);
+  const inventory = await provider.listAppServerThreadsForCwd({
+    cwd: normalizedWorkdir
+  });
+  if (normalizeWorkdir(inventory?.cwd) !== normalizedWorkdir) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The assistant provider returned a thread inventory for a different session source."
+    );
+  }
+  return defineCodexSessionRenewalThreadIds(inventory?.threadIds);
+}
+
+async function writeCodexSessionRenewalThreadBaseline({
+  operationId = "",
+  runtime,
+  sessionId = "",
+  threadIds = [],
+  workdir = ""
+} = {}) {
+  const writeMetadataValue = runtime?.store?.writeMetadataValueForRenewal?.bind(runtime.store);
+  if (typeof writeMetadataValue !== "function") {
+    throw new TypeError(
+      "Renewed assistant thread baseline requires explicit internal renewal metadata access."
+    );
+  }
+  const baseline = JSON.stringify({
+    operationId: normalizeAgentText(operationId),
+    schemaVersion: CODEX_SESSION_RENEWAL_BASELINE_SCHEMA,
+    threadIds: defineCodexSessionRenewalThreadIds(threadIds),
+    workdir: normalizeWorkdir(workdir)
+  });
+  await writeMetadataValue(
+    sessionId,
+    CODEX_SESSION_RENEWAL_BASELINE_METADATA,
+    baseline
+  );
+  return baseline;
+}
+
+async function writeCodexSessionRenewalThreadClaim({
+  operationId = "",
+  runtime,
+  sessionId = "",
+  threadId = "",
+  workdir = ""
+} = {}) {
+  const writeMetadataValue = runtime?.store?.writeMetadataValueForRenewal?.bind(runtime.store);
+  if (typeof writeMetadataValue !== "function") {
+    throw new TypeError(
+      "Renewed assistant thread claim requires explicit internal renewal metadata access."
+    );
+  }
+  const [normalizedThreadId] = defineCodexSessionRenewalThreadIds([threadId]);
+  const claim = JSON.stringify({
+    operationId: normalizeAgentText(operationId),
+    schemaVersion: CODEX_SESSION_RENEWAL_THREAD_CLAIM_SCHEMA,
+    threadId: normalizedThreadId,
+    workdir: normalizeWorkdir(workdir)
+  });
+  await writeMetadataValue(
+    sessionId,
+    CODEX_SESSION_RENEWAL_THREAD_CLAIM_METADATA,
+    claim
+  );
+  return claim;
+}
+
+function assertCodexSessionRenewalThreadSnapshot(threadSnapshot = null, {
+  threadId = "",
+  workdir = ""
+} = {}) {
+  const expectedThreadId = normalizeAgentText(threadId);
+  const expectedWorkdir = normalizeWorkdir(workdir);
+  const actualThreadId = codexAppServerThreadResponseId(threadSnapshot);
+  const actualWorkdir = normalizeWorkdir(
+    threadSnapshot?.cwd ||
+    threadSnapshot?.raw?.cwd ||
+    threadSnapshot?.response?.thread?.cwd
+  );
+  if (actualThreadId !== expectedThreadId || actualWorkdir !== expectedWorkdir) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The assistant provider could not verify the exact successor thread and session source.",
+      {
+        actualThreadId,
+        actualWorkdir,
+        expectedThreadId,
+        expectedWorkdir
+      }
+    );
+  }
+  return threadSnapshot;
+}
+
+function codexSessionRenewalThreadIsUnmaterialized(error = null, threadId = "") {
+  const normalizedThreadId = normalizeAgentText(threadId);
+  return Boolean(
+    normalizedThreadId &&
+    codexAppServerRequestIsInvalid(error, "thread/read") &&
+    normalizeAgentText(error?.message) ===
+      `thread ${normalizedThreadId} ${CODEX_SESSION_RENEWAL_UNMATERIALIZED_THREAD_SUFFIX}`
+  );
+}
+
+async function readCodexSessionRenewalSuccessorThreadSnapshot({
+  provider,
+  threadId = "",
+  workdir = ""
+} = {}) {
+  try {
+    return assertCodexSessionRenewalThreadSnapshot(
+      await provider.readThread(threadId),
+      { threadId, workdir }
+    );
+  } catch (error) {
+    if (
+      !codexSessionRenewalThreadIsUnmaterialized(error, threadId) ||
+      typeof provider?.readThreadStatus !== "function"
+    ) {
+      throw error;
+    }
+    return assertCodexSessionRenewalThreadSnapshot(
+      await provider.readThreadStatus(threadId),
+      { threadId, workdir }
+    );
+  }
+}
+
+function codexSessionRenewalThreadError(code, message, details = {}, {
+  retryable = false
+} = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = {
+    ...details,
+    retryable
+  };
+  error.retryable = retryable;
+  return error;
+}
+
+function codexAppServerThreadResponseId(thread = null, fallback = "") {
+  return normalizeAgentText(
+    thread?.id ||
+    thread?.response?.thread?.id ||
+    fallback
+  );
+}
+
+async function resumeExactCodexAppServerThreadForSession({
+  agentSettings = {},
+  developerInstructions = "",
+  expectedThreadId = "",
+  provider,
+  session = {},
+  workdir = ""
+} = {}) {
+  const normalizedWorkdir = normalizeWorkdir(workdir);
+  const persistedThreadId = codexAppServerThreadIdForSession(session, normalizedWorkdir);
+  const normalizedExpectedThreadId = normalizeAgentText(expectedThreadId) || persistedThreadId;
+  if (!normalizedExpectedThreadId || persistedThreadId !== normalizedExpectedThreadId) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE,
+      "The old assistant thread is no longer the exact readable main thread for this session.",
+      {
+        expectedThreadId: normalizedExpectedThreadId,
+        persistedThreadId
+      }
+    );
+  }
+  if (
+    typeof provider?.ensureRuntime !== "function" ||
+    typeof provider?.resumeThread !== "function" ||
+    typeof provider?.readThread !== "function"
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE,
+      "The old assistant provider cannot read its exact main thread.",
+      { expectedThreadId: normalizedExpectedThreadId }
+    );
+  }
+  const appServerRuntime = await provider.ensureRuntime();
+  const config = await codexAppServerProjectHookTrustConfig(provider, normalizedWorkdir);
+  const threadSettings = codexAppServerThreadSettings({
+    agentSettings,
+    config,
+    cwd: normalizedWorkdir,
+    developerInstructions
+  });
+  let thread = null;
+  let threadSnapshot = null;
+  try {
+    thread = await provider.resumeThread(normalizedExpectedThreadId, threadSettings);
+    const resumedThreadId = codexAppServerThreadResponseId(thread, normalizedExpectedThreadId);
+    if (resumedThreadId !== normalizedExpectedThreadId) {
+      throw codexSessionRenewalThreadError(
+        CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE,
+        "The old assistant provider resumed a different thread.",
+        {
+          expectedThreadId: normalizedExpectedThreadId,
+          resumedThreadId
+        }
+      );
+    }
+    threadSnapshot = await provider.readThread(normalizedExpectedThreadId);
+  } catch (error) {
+    if (
+      error?.code === CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE ||
+      codexAppServerRequestIsInvalid(error, "thread/resume") ||
+      codexAppServerRequestIsInvalid(error, "thread/read")
+    ) {
+      if (error?.code === CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE) {
+        throw error;
+      }
+      throw codexSessionRenewalThreadError(
+        CODEX_SESSION_RENEWAL_THREAD_UNREADABLE_CODE,
+        "The old assistant thread cannot be read. Write or edit the handover manually instead.",
+        {
+          expectedThreadId: normalizedExpectedThreadId,
+          providerError: normalizeAgentText(error?.message)
+        }
+      );
+    }
+    throw error;
+  }
+  return Object.freeze({
+    appServerRuntime,
+    thread,
+    threadId: normalizedExpectedThreadId,
+    threadSnapshot,
+    threadSettings
+  });
+}
+
+async function startFreshCodexAppServerThreadForSession({
+  additionalMetadata = {},
+  agentSettings = {},
+  developerInstructions = "",
+  expectedThreadId = "",
+  forbiddenThreadId = "",
+  operationId = "",
+  provider,
+  readOnly = false,
+  runtime,
+  session = {},
+  workdir = ""
+} = {}) {
+  const normalizedWorkdir = normalizeWorkdir(workdir);
+  const normalizedExpectedThreadId = normalizeAgentText(expectedThreadId);
+  const normalizedForbiddenThreadId = normalizeAgentText(forbiddenThreadId);
+  const normalizedOperationId = normalizeAgentText(operationId);
+  const persistedThreadId = codexAppServerThreadIdForSession(session, normalizedWorkdir);
+  const persistedOperationId = normalizeAgentText(
+    session.metadata?.agent_renewal_seed_operation_id
+  );
+  const persistedClaim = persistedCodexSessionRenewalThreadClaim(session, {
+    operationId: normalizedOperationId,
+    workdir: normalizedWorkdir
+  });
+  const claimedThreadId = normalizeAgentText(persistedClaim?.threadId);
+  if (
+    persistedOperationId &&
+    normalizedOperationId &&
+    persistedOperationId !== normalizedOperationId
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The renewed session already belongs to a different renewal operation.",
+      {
+        operationId: normalizedOperationId,
+        persistedOperationId
+      }
+    );
+  }
+  if (
+    (persistedThreadId || persistedOperationId || normalizedExpectedThreadId) &&
+    !claimedThreadId
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The renewed session has assistant identity metadata without its atomic renewal thread claim.",
+      {
+        expectedThreadId: normalizedExpectedThreadId,
+        persistedThreadId,
+        persistedOperationId
+      }
+    );
+  }
+  if (
+    claimedThreadId &&
+    (
+      (persistedThreadId && persistedThreadId !== claimedThreadId) ||
+      (normalizedExpectedThreadId && normalizedExpectedThreadId !== claimedThreadId)
+    )
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The renewed session already owns a different assistant thread; Vibe64 will not reuse or replace it.",
+      {
+        claimedThreadId,
+        expectedThreadId: normalizedExpectedThreadId,
+        persistedThreadId
+      }
+    );
+  }
+  const resumableThreadId = claimedThreadId;
+  if (resumableThreadId && resumableThreadId === normalizedForbiddenThreadId) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The renewed session cannot reuse the old session's assistant thread.",
+      { forbiddenThreadId: normalizedForbiddenThreadId }
+    );
+  }
+  if (
+    typeof provider?.ensureRuntime !== "function" ||
+    typeof provider?.resumeThread !== "function" ||
+    typeof provider?.readThread !== "function" ||
+    typeof provider?.startThread !== "function"
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      "The assistant provider cannot prove a genuinely fresh renewal thread."
+    );
+  }
+  const appServerRuntime = await provider.ensureRuntime();
+  const config = await codexAppServerProjectHookTrustConfig(provider, normalizedWorkdir);
+  const ordinaryThreadSettings = codexAppServerThreadSettings({
+    agentSettings,
+    config,
+    cwd: normalizedWorkdir,
+    developerInstructions
+  });
+  const ordinaryThreadStartSettings = codexAppServerThreadStartSettings({
+    agentSettings,
+    config,
+    cwd: normalizedWorkdir,
+    developerInstructions
+  });
+  const threadSettings = readOnly
+    ? { ...ordinaryThreadSettings, sandbox: CODEX_SESSION_READ_ONLY_SANDBOX }
+    : ordinaryThreadSettings;
+  const threadStartSettings = readOnly
+    ? { ...ordinaryThreadStartSettings, sandbox: CODEX_SESSION_READ_ONLY_SANDBOX }
+    : ordinaryThreadStartSettings;
+  let fresh = false;
+  let thread = null;
+  let threadSnapshot = null;
+  let baselineThreadIds = Object.freeze([]);
+  if (resumableThreadId) {
+    try {
+      thread = await provider.resumeThread(resumableThreadId, threadSettings);
+      const resumedThreadId = codexAppServerThreadResponseId(thread, resumableThreadId);
+      if (resumedThreadId !== resumableThreadId) {
+        throw codexSessionRenewalThreadError(
+          CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+          "The assistant provider resumed a different renewal thread.",
+          {
+            expectedThreadId: resumableThreadId,
+            resumedThreadId
+          }
+        );
+      }
+      threadSnapshot = await readCodexSessionRenewalSuccessorThreadSnapshot({
+        provider,
+        threadId: resumableThreadId,
+        workdir: normalizedWorkdir
+      });
+    } catch (error) {
+      if (
+        error?.code === CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE ||
+        codexAppServerRequestIsInvalid(error, "thread/resume") ||
+        codexAppServerRequestIsInvalid(error, "thread/read")
+      ) {
+        if (error?.code === CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE) {
+          throw error;
+        }
+        throw codexSessionRenewalThreadError(
+          CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+          "The previously started renewal thread is no longer readable; Vibe64 will not replace it silently.",
+          {
+            expectedThreadId: resumableThreadId,
+            providerError: normalizeAgentText(error?.message)
+          }
+        );
+      }
+      throw error;
+    }
+  } else {
+    if (!normalizedOperationId) {
+      throw codexSessionRenewalThreadError(
+        CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+        "Starting a fresh successor thread requires its exact renewal operation id."
+      );
+    }
+    baselineThreadIds = persistedCodexSessionRenewalThreadBaseline(session, {
+      operationId: normalizedOperationId,
+      workdir: normalizedWorkdir
+    });
+    if (!baselineThreadIds) {
+      baselineThreadIds = await listCodexSessionRenewalThreadIds(
+        provider,
+        normalizedWorkdir
+      );
+      await writeCodexSessionRenewalThreadBaseline({
+        operationId: normalizedOperationId,
+        runtime,
+        sessionId: session.sessionId,
+        threadIds: baselineThreadIds,
+        workdir: normalizedWorkdir
+      });
+    }
+    const currentThreadIds = await listCodexSessionRenewalThreadIds(
+      provider,
+      normalizedWorkdir
+    );
+    const baseline = new Set(baselineThreadIds);
+    const candidateThreadIds = currentThreadIds.filter((threadId) => !baseline.has(threadId));
+    if (candidateThreadIds.length > 1) {
+      throw codexSessionRenewalThreadError(
+        CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+        "More than one unclaimed assistant thread appeared for this renewal; Vibe64 will not guess which one is authoritative.",
+        { candidateThreadIds }
+      );
+    }
+    if (candidateThreadIds.length === 1) {
+      const [candidateThreadId] = candidateThreadIds;
+      thread = await provider.resumeThread(candidateThreadId, threadSettings);
+      const resumedThreadId = codexAppServerThreadResponseId(thread, candidateThreadId);
+      if (resumedThreadId !== candidateThreadId) {
+        throw codexSessionRenewalThreadError(
+          CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+          "The assistant provider resumed a different recovered renewal thread.",
+          {
+            expectedThreadId: candidateThreadId,
+            resumedThreadId
+          }
+        );
+      }
+      threadSnapshot = await readCodexSessionRenewalSuccessorThreadSnapshot({
+        provider,
+        threadId: candidateThreadId,
+        workdir: normalizedWorkdir
+      });
+    } else {
+      thread = await provider.startThread(threadStartSettings);
+      fresh = true;
+    }
+  }
+  const threadId = codexAppServerThreadResponseId(thread, resumableThreadId);
+  if (
+    !threadId ||
+    threadId === normalizedForbiddenThreadId ||
+    (fresh && baselineThreadIds.includes(threadId))
+  ) {
+    throw codexSessionRenewalThreadError(
+      CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+      threadId
+        ? "The assistant provider reused the old session's thread instead of starting a fresh one."
+        : "The assistant provider did not return a fresh renewal thread id.",
+      {
+        forbiddenThreadId: normalizedForbiddenThreadId,
+        threadId
+      }
+    );
+  }
+  if (!persistedClaim) {
+    await writeCodexSessionRenewalThreadClaim({
+      operationId: normalizedOperationId,
+      runtime,
+      sessionId: session.sessionId,
+      threadId,
+      workdir: normalizedWorkdir
+    });
+  }
+  await writeCodexAppServerIdentityMetadata({
+    additionalMetadata: {
+      ...additionalMetadata,
+      ...(normalizedOperationId
+        ? { agent_renewal_seed_operation_id: normalizedOperationId }
+        : {}),
+      agent_renewal_seed_thread_id: threadId
+    },
+    appServerRuntime,
+    renewalInternal: true,
+    runtime,
+    sessionId: session.sessionId,
+    threadId,
+    workdir: normalizedWorkdir
+  });
+  if (fresh) {
+    try {
+      threadSnapshot = await readCodexSessionRenewalSuccessorThreadSnapshot({
+        provider,
+        threadId,
+        workdir: normalizedWorkdir
+      });
+    } catch (error) {
+      throw codexSessionRenewalThreadError(
+        CODEX_SESSION_RENEWAL_FRESH_THREAD_REQUIRED_CODE,
+        "The newly started renewal thread cannot be read; Vibe64 will not replace it silently.",
+        {
+          providerError: normalizeAgentText(error?.message),
+          threadId
+        },
+        { retryable: true }
+      );
+    }
+  }
+  return Object.freeze({
+    appServerRuntime,
+    fresh,
+    thread,
+    threadId,
+    threadSnapshot,
+    threadStartSettings,
+    threadSettings
+  });
 }
 
 function codexAppServerThreadIdForSession(session = {}, workdir = "") {
@@ -1606,6 +2278,7 @@ async function sendCodexAppServerPromptForSession({
   prompt = "",
   promptLabel = "",
   threadId = "",
+  readOnly = false,
   workdir = ""
 } = {}) {
   const input = codexAppServerTurnPrompt({
@@ -1621,6 +2294,14 @@ async function sendCodexAppServerPromptForSession({
       agentSettings,
       cwd: workdir
     }),
+    ...(readOnly
+      ? {
+          sandboxPolicy: {
+            networkAccess: false,
+            type: "readOnly"
+          }
+        }
+      : {}),
     ...(normalizeAgentText(clientUserMessageId)
       ? { clientUserMessageId: normalizeAgentText(clientUserMessageId) }
       : {})
@@ -1660,8 +2341,10 @@ export {
   ensureCodexAppServerThreadForSession,
   prepareCodexAppServerEconomyThreadStartSettings,
   resumeCodexAppServerEconomyThread,
+  resumeExactCodexAppServerThreadForSession,
   sendCodexAppServerEconomyTurn,
   sendCodexAppServerPromptForSession,
   startCodexAppServerEconomyThread,
+  startFreshCodexAppServerThreadForSession,
   writeCodexAppServerIdentityMetadata
 };

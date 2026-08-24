@@ -1,0 +1,586 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import test from "node:test";
+import { promisify } from "node:util";
+
+import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
+  CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+  CODEX_APP_SERVER_PROVIDER_ID
+} from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
+import {
+  VIBE64_CODEX_ATTACHMENTS_ROOT_ENV
+} from "../../packages/vibe64-runtime/src/server/codexAttachmentPaths.js";
+import {
+  runVibe64AgentWriteExclusive,
+  runVibe64RenewalAgentWriteExclusive
+} from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
+import {
+  createVibe64SessionStore
+} from "../../packages/vibe64-runtime/src/server/sessionStore.js";
+import {
+  createService as createTerminalService
+} from "../../packages/vibe64-terminals/src/server/service.js";
+
+const execFileAsync = promisify(execFile);
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function agentWriteLockHarness({ holdFirst = false } = {}) {
+  let active = false;
+  let attemptNumber = 0;
+  const attempts = [];
+  const firstEntered = deferred();
+  const releaseFirst = deferred();
+
+  async function runSessionExclusive(sessionId, operationName, operation) {
+    attemptNumber += 1;
+    attempts.push({ operationName, sessionId });
+    if (active) {
+      return {
+        acquired: false,
+        value: null
+      };
+    }
+    active = true;
+    if (attemptNumber === 1) {
+      firstEntered.resolve();
+      if (holdFirst) {
+        await releaseFirst.promise;
+      }
+    }
+    try {
+      return {
+        acquired: true,
+        value: await operation()
+      };
+    } finally {
+      active = false;
+    }
+  }
+
+  return {
+    attempts,
+    firstEntered: firstEntered.promise,
+    releaseFirst: releaseFirst.resolve,
+    store: {
+      runSessionExclusive,
+      runSessionExclusiveForRenewal: runSessionExclusive
+    }
+  };
+}
+
+async function terminalServiceFixture(t, lock) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-session-work-admission-"));
+  const sourcePath = path.join(root, "managed", "sessions", "active", "session-1", "source");
+  const projectContextRoot = path.join(root, "authority");
+  const projectRuntimeRoot = path.join(root, "runtime");
+  const attachmentRoot = path.join(root, "attachments");
+  await Promise.all([
+    mkdir(sourcePath, { recursive: true }),
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true })
+  ]);
+  const session = {
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+    },
+    sessionId: "session-1",
+    sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-1"),
+    status: "active",
+    workspaceSetup: {
+      status: "unconfigured"
+    }
+  };
+  const runtime = {
+    async getSession() {
+      return session;
+    },
+    projectContextRoot,
+    promptEnvironment: {},
+    stateRoot: projectRuntimeRoot,
+    store: {
+      ...lock.store,
+      async writeMetadataValue(_sessionId, name, value) {
+        session.metadata[name] = value;
+        if (name === "workspace_setup") {
+          session.workspaceSetup = JSON.parse(value);
+        }
+      }
+    }
+  };
+  const projectService = {
+    createRuntime() {
+      return runtime;
+    },
+    currentTargetRoot() {
+      return projectContextRoot;
+    },
+    async projectExecutionEnvironment() {
+      return {};
+    },
+    async readCurrentProject() {
+      return {
+        projectContextRoot,
+        slug: "test-project"
+      };
+    },
+    async readEnv() {
+      return { ok: true, records: [] };
+    },
+    async runInProjectContext(_context, operation) {
+      return operation();
+    },
+    async saveEnvUserValues() {
+      return { ok: true };
+    }
+  };
+  const service = createTerminalService({
+    codexTerminalController: {
+      codexToolHomeRequired: false
+    },
+    env: {
+      [VIBE64_CODEX_ATTACHMENTS_ROOT_ENV]: attachmentRoot,
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService
+  });
+  t.after(async () => {
+    await service.close();
+    await rm(root, { force: true, recursive: true });
+  });
+  return {
+    attachmentRoot,
+    root,
+    runtime,
+    service,
+    session
+  };
+}
+
+test("workspace setup admission uses the session agent-write lock", async (t) => {
+  const lock = agentWriteLockHarness({ holdFirst: true });
+  const { service, session } = await terminalServiceFixture(t, lock);
+
+  const preparing = service.prepareWorkspaceSetup(session.sessionId, {
+    retry: true
+  });
+  await lock.firstEntered;
+  const competing = await service.prepareWorkspaceSetup(session.sessionId, {
+    retry: true
+  });
+
+  assert.deepEqual(competing, {
+    code: "vibe64_agent_write_mode_busy",
+    error: "Another assistant operation is starting. Try again in a moment.",
+    ok: false,
+    retryable: true
+  });
+  lock.releaseFirst();
+  const prepared = await preparing;
+  assert.equal(typeof prepared.state.status, "string");
+  assert.deepEqual(lock.attempts, [
+    { operationName: "agent-write-mode", sessionId: session.sessionId },
+    { operationName: "agent-write-mode", sessionId: session.sessionId }
+  ]);
+});
+
+test("workspace setup reuses an already-held session agent-write lock", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-workspace-nested-lock-"));
+  const sourcePath = path.join(root, "managed", "session-1", "source");
+  const projectContextRoot = path.join(root, "authority");
+  const projectRuntimeRoot = path.join(root, "runtime");
+  await Promise.all([
+    mkdir(sourcePath, { recursive: true }),
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(projectRuntimeRoot, { recursive: true })
+  ]);
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot
+  });
+  await store.createSession({
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+    },
+    runtimeKind: "genesis",
+    sessionId: "session-1"
+  });
+  const runtime = {
+    getSession(sessionId) {
+      return store.readSession(sessionId);
+    },
+    projectContextRoot,
+    promptEnvironment: {},
+    stateRoot: projectRuntimeRoot,
+    store
+  };
+  const projectService = {
+    createRuntime() {
+      return runtime;
+    },
+    currentTargetRoot() {
+      return projectContextRoot;
+    },
+    async projectExecutionEnvironment() {
+      return {};
+    },
+    async readCurrentProject() {
+      return { projectContextRoot, slug: "test-project" };
+    },
+    async readEnv() {
+      return { ok: true, records: [] };
+    },
+    async runInProjectContext(_context, operation) {
+      return operation();
+    },
+    async saveEnvUserValues() {
+      return { ok: true };
+    }
+  };
+  const service = createTerminalService({
+    codexTerminalController: { codexToolHomeRequired: false },
+    env: {
+      [VIBE64_CODEX_ATTACHMENTS_ROOT_ENV]: path.join(root, "attachments"),
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService
+  });
+  t.after(async () => {
+    await service.close();
+    await rm(root, { force: true, recursive: true });
+  });
+
+  const nested = await runVibe64AgentWriteExclusive(
+    runtime,
+    "session-1",
+    () => service.prepareWorkspaceSetup("session-1", {
+      retry: true,
+      runtime
+    })
+  );
+
+  assert.equal(nested.acquired, true);
+  assert.equal(typeof nested.value.state.status, "string");
+  assert.notEqual(nested.value.code, "vibe64_agent_write_mode_busy");
+});
+
+test("renewal workspace setup privately resumes a pending successor while public setup rejects it", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-renewal-workspace-setup-"));
+  const projectContextRoot = path.join(root, "authority");
+  const projectRuntimeRoot = path.join(root, "runtime");
+  const sourcePath = path.join(root, "managed", "sessions", "active", "renewal-successor", "source");
+  await Promise.all([
+    mkdir(projectContextRoot, { recursive: true }),
+    mkdir(sourcePath, { recursive: true })
+  ]);
+  await execFileAsync("git", ["init", "--quiet", sourcePath]);
+  const store = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot
+  });
+  await store.createSession({
+    runtimeKind: "genesis",
+    sessionId: "renewal-source"
+  });
+  await store.quiesceSessionForRenewal({
+    renewalId: "workspace-setup-renewal",
+    sourceSessionId: "renewal-source"
+  });
+  await store.createRenewalPendingSession({
+    actorDisplayName: "Ada",
+    actorId: "ada-owner",
+    confirmedAt: "2026-08-24T01:01:00.000Z",
+    metadata: {
+      repository_mode: "local_source",
+      source_kind: "session_clone",
+      source_path: sourcePath,
+      source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED,
+      workspace_setup: JSON.stringify({
+        startedAt: "2026-08-24T01:02:00.000Z",
+        status: "running",
+        updatedAt: "2026-08-24T01:02:00.000Z"
+      })
+    },
+    renewalId: "workspace-setup-renewal",
+    renewedFrom: "renewal-source",
+    runtimeKind: "genesis",
+    sessionId: "renewal-successor"
+  });
+  const runtime = {
+    async getSession(sessionId) {
+      const session = await store.readSession(sessionId);
+      return {
+        ...session,
+        workspaceSetup: JSON.parse(session.metadata.workspace_setup)
+      };
+    },
+    async getSessionForRenewal(sessionId) {
+      const session = await store.readSessionForRenewal(sessionId);
+      return {
+        ...session,
+        workspaceSetup: JSON.parse(session.metadata.workspace_setup)
+      };
+    },
+    projectContextRoot,
+    promptEnvironment: {},
+    stateRoot: projectRuntimeRoot,
+    store
+  };
+  const projectService = {
+    createRuntime() {
+      return runtime;
+    },
+    currentTargetRoot() {
+      return projectContextRoot;
+    },
+    async projectExecutionEnvironment() {
+      return {};
+    },
+    async readCurrentProject() {
+      return { projectContextRoot, slug: "test-project" };
+    },
+    async readEnv() {
+      return { ok: true, records: [] };
+    },
+    async runInProjectContext(_context, operation) {
+      return operation();
+    },
+    async saveEnvUserValues() {
+      return { ok: true };
+    }
+  };
+  const service = createTerminalService({
+    codexTerminalController: { codexToolHomeRequired: false },
+    env: {
+      [VIBE64_CODEX_ATTACHMENTS_ROOT_ENV]: path.join(root, "attachments"),
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService
+  });
+  t.after(async () => {
+    await service.close();
+    await rm(root, { force: true, recursive: true });
+  });
+
+  await assert.rejects(
+    () => service.prepareWorkspaceSetup("renewal-successor", {
+      retry: true,
+      runtime
+    }),
+    { code: "vibe64_session_renewal_private" }
+  );
+
+  const privateAttempt = await service.prepareRenewalWorkspaceSetup("renewal-successor", {
+    retry: true,
+    runtime
+  });
+  assert.equal(privateAttempt.state.status, "unconfigured");
+  const successor = await store.readSessionForRenewal("renewal-successor");
+  assert.equal(
+    JSON.parse(successor.metadata.workspace_setup).status,
+    "unconfigured"
+  );
+  await assert.rejects(
+    () => store.readSession("renewal-successor"),
+    { code: "vibe64_session_renewal_private" }
+  );
+});
+
+test("renewal terminal cleanup accepts a restored active predecessor for a later renewal", async (t) => {
+  const lock = agentWriteLockHarness();
+  const { root, runtime, service, session } = await terminalServiceFixture(t, lock);
+  const transitionStore = createVibe64SessionStore({
+    projectContextRoot: path.join(root, "renewal-authority"),
+    projectRuntimeRoot: path.join(root, "renewal-runtime")
+  });
+  await transitionStore.createSession({
+    runtimeKind: "genesis",
+    sessionId: session.sessionId
+  });
+  await transitionStore.quiesceSessionForRenewal({
+    renewalId: "finished-renewal",
+    sourceSessionId: session.sessionId
+  });
+  const restored = await transitionStore.restoreSessionAfterRenewalCancellation({
+    renewalId: "finished-renewal",
+    restoredAt: "2026-08-25T01:00:00.000Z",
+    sourceSessionId: session.sessionId
+  });
+  const runtimeDir = path.join(root, "codex-app-server-restored-renewal");
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(
+    path.join(runtimeDir, "runtime.json"),
+    `${JSON.stringify({
+      pid: 99_999_999,
+      processExitVerifiedAt: "2026-08-25T01:00:01.000Z",
+      processIdentity: {
+        commandHash: "0123456789ab",
+        platform: "linux-proc",
+        runtimeToken: "11111111-1111-4111-8111-111111111111",
+        startTimeTicks: "1",
+        version: 1
+      },
+      processState: "stopped",
+      provider: CODEX_APP_SERVER_PROVIDER_ID,
+      runtimeDir,
+      schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
+      transport: "unix"
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  session.metadata.agent_transport_runtime_dir = runtimeDir;
+  Object.assign(session.metadata, restored.metadata);
+  session.status = restored.status;
+  assert.equal(session.metadata.renewal_restored_id, "finished-renewal");
+  assert.equal(session.metadata.renewal_quiesced_id, undefined);
+
+  const closed = await service.closeRenewalPredecessorSessionTerminals(session, {
+    renewalId: "later-renewal",
+    runtime
+  });
+
+  assert.equal(closed.ok, true);
+  const requiesced = await transitionStore.quiesceSessionForRenewal({
+    renewalId: "later-renewal",
+    sourceSessionId: session.sessionId
+  });
+  assert.equal(requiesced.metadata.renewal_quiesced_id, "later-renewal");
+  assert.equal(requiesced.metadata.renewal_restored_id, undefined);
+});
+
+test("renewal terminal cleanup rejects foreign quiescence and already-renewed predecessors", async (t) => {
+  const lock = agentWriteLockHarness();
+  const { runtime, service, session } = await terminalServiceFixture(t, lock);
+
+  session.metadata.renewal_quiesced_id = "foreign-renewal";
+  await assert.rejects(
+    () => service.closeRenewalPredecessorSessionTerminals(session, {
+      renewalId: "requested-renewal",
+      runtime
+    }),
+    { name: "TypeError" }
+  );
+
+  session.status = "renewal_quiesced";
+  await assert.rejects(
+    () => service.closeRenewalPredecessorSessionTerminals(session, {
+      renewalId: "requested-renewal",
+      runtime
+    }),
+    { name: "TypeError" }
+  );
+
+  session.status = "active";
+  delete session.metadata.renewal_quiesced_id;
+  session.metadata.renewed_to = "renewal-successor";
+  await assert.rejects(
+    () => service.closeRenewalPredecessorSessionTerminals(session, {
+      renewalId: "requested-renewal",
+      runtime
+    }),
+    { name: "TypeError" }
+  );
+});
+
+test("an active attachment upload finishes before renewal can freeze and cleanup the session", async (t) => {
+  const lock = agentWriteLockHarness();
+  const { runtime, service, session } = await terminalServiceFixture(t, lock);
+  const streamStarted = deferred();
+  const releaseStream = deferred();
+  const events = [];
+  const stream = Readable.from((async function *attachmentBytes() {
+    events.push("upload-stream-started");
+    streamStarted.resolve();
+    yield "partial";
+    await releaseStream.promise;
+    yield "-complete";
+  })());
+
+  const uploading = service.uploadAgentAttachment(session.sessionId, {
+    fileName: "renewal-race.txt",
+    stream
+  }).then((result) => {
+    events.push("upload-completed");
+    return result;
+  });
+  await streamStarted.promise;
+
+  const prematureRenewal = await runVibe64RenewalAgentWriteExclusive(
+    runtime,
+    session.sessionId,
+    async () => {
+      events.push("renewal-entered-too-early");
+    }
+  );
+  assert.equal(prematureRenewal.acquired, false);
+  assert.equal(prematureRenewal.value.code, "vibe64_agent_write_mode_busy");
+
+  releaseStream.resolve();
+  const uploaded = await uploading;
+  assert.equal(uploaded.ok, true, JSON.stringify(uploaded));
+  assert.equal(await readFile(uploaded.path, "utf8"), "partial-complete");
+
+  const releaseRenewal = deferred();
+  const renewalEntered = deferred();
+  const renewal = runVibe64RenewalAgentWriteExclusive(
+    runtime,
+    session.sessionId,
+    async () => {
+      events.push("renewal-entered");
+      renewalEntered.resolve();
+      await releaseRenewal.promise;
+      events.push("renewal-finished");
+    }
+  );
+  await renewalEntered.promise;
+
+  const blockedDelete = await service.deleteAgentAttachment(session.sessionId, {
+    attachmentId: uploaded.attachmentId
+  });
+  assert.equal(blockedDelete.ok, false);
+  assert.equal(blockedDelete.code, "vibe64_agent_write_mode_busy");
+  assert.equal(await readFile(uploaded.path, "utf8"), "partial-complete");
+
+  releaseRenewal.resolve();
+  assert.equal((await renewal).acquired, true);
+  const deleted = await service.deleteAgentAttachment(session.sessionId, {
+    attachmentId: uploaded.attachmentId
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  await assert.rejects(() => access(uploaded.path), { code: "ENOENT" });
+  assert.deepEqual(events, [
+    "upload-stream-started",
+    "upload-completed",
+    "renewal-entered",
+    "renewal-finished"
+  ]);
+});

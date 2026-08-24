@@ -28,6 +28,7 @@ async function loadProjectExecutionEnvRecords({
   const sessionId = String(session?.sessionId || session?.id || "").trim();
   const env = await projectService.projectExecutionEnvironment({
     ...(sessionId ? { sessionId } : {}),
+    ...(sessionId ? { session } : {}),
     target: String(target || "").trim()
   });
   return {

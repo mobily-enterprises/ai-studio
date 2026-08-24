@@ -8,6 +8,10 @@ import {
   normalizeText
 } from "@local/vibe64-core/server/core";
 import {
+  currentProjectRequestContext,
+  runWithProjectRequestContext
+} from "@local/vibe64-core/server/projectRequestContext";
+import {
   createStreamingLogSanitizer,
   sanitizeOperationText
 } from "@local/vibe64-core/server/logging";
@@ -28,8 +32,12 @@ import {
 import {
   loadProjectExecutionEnv
 } from "@local/vibe64-terminals/server/projectExecutionEnv";
+import {
+  terminalNamespace
+} from "./terminalShared.js";
 
 const WORKSPACE_SETUP_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
+const WORKSPACE_SETUP_RUN_NAMESPACE = "vibe64-workspace-setup";
 
 function diagnosticText(diagnostics = []) {
   return (Array.isArray(diagnostics) ? diagnostics : [])
@@ -146,6 +154,10 @@ function commandDiagnostic(result = {}, label = "", secrets = []) {
   return `${safeLabel} exited with code ${Number(result.exitCode) || 1}.`;
 }
 
+function workspaceSetupRunKey(sessionId = "") {
+  return terminalNamespace(WORKSPACE_SETUP_RUN_NAMESPACE, sessionId);
+}
+
 function createWorkspaceSetupRunner({
   clock = () => new Date(),
   inspect = inspectVibe64WorkspaceSetup,
@@ -157,14 +169,16 @@ function createWorkspaceSetupRunner({
   }
   const activeRuns = new Map();
 
-  async function persist(runtime, sessionId, value) {
+  async function persist(runtime, sessionId, value, renewal = false) {
     return writeWorkspaceSetupState(runtime.store, sessionId, {
       ...value,
       updatedAt: stateTimestamp(clock)
+    }, {
+      renewal
     });
   }
 
-  async function persistInspectedState(runtime, sessionId, previous, value) {
+  async function persistInspectedState(runtime, sessionId, previous, value, renewal = false) {
     const next = workspaceSetupState({
       transcript: previous.transcript,
       ...value
@@ -178,7 +192,7 @@ function createWorkspaceSetupRunner({
     ].every((name) => previous[name] === next[name]);
     return unchanged && previous.status !== "running"
       ? previous
-      : persist(runtime, sessionId, next);
+      : persist(runtime, sessionId, next, renewal);
   }
 
   async function failed(runtime, sessionId, {
@@ -186,6 +200,7 @@ function createWorkspaceSetupRunner({
     diagnostic = "Workspace preparation failed.",
     recipeHash = "",
     redactionSecrets = [],
+    renewal = false,
     startedAt = "",
     transcript = ""
   } = {}) {
@@ -202,7 +217,7 @@ function createWorkspaceSetupRunner({
         sanitizeOperationText(transcript, redactionSecrets),
         stepStatus(safeLabel, "Failed", redactionSecrets)
       )
-    });
+    }, renewal);
   }
 
   async function execute({
@@ -241,7 +256,7 @@ function createWorkspaceSetupRunner({
         startedAt,
         status: "running",
         transcript: context.transcript
-      });
+      }, context.renewal);
       const result = await runCommand({
         actor: "app",
         allowedRoots: [sourcePath],
@@ -268,6 +283,7 @@ function createWorkspaceSetupRunner({
           diagnostic: commandDiagnostic(result, currentLabel, redactionSecrets),
           recipeHash: recipe.recipeHash,
           redactionSecrets,
+          renewal: context.renewal,
           startedAt,
           transcript: context.transcript
         });
@@ -288,16 +304,20 @@ function createWorkspaceSetupRunner({
         context.transcript,
         "Workspace preparation succeeded."
       )
-    });
+    }, context.renewal);
   }
 
   function observe(sessionId, operation, context) {
+    const inProjectContext = (callback) => context.projectContext
+      ? runWithProjectRequestContext(context.projectContext, callback)
+      : callback();
     const completion = operation
-      .catch(async (error) => failed(context.runtime, sessionId, {
+      .catch((error) => inProjectContext(async () => failed(context.runtime, sessionId, {
         currentLabel: context.currentLabel,
         diagnostic: normalizeText(error?.message) || "Workspace preparation failed.",
         recipeHash: context.recipeHash,
         redactionSecrets: context.redactionSecrets,
+        renewal: context.renewal,
         startedAt: context.startedAt,
         transcript: context.transcript
       }).catch(() => workspaceSetupState({
@@ -315,29 +335,34 @@ function createWorkspaceSetupRunner({
           stepStatus(context.currentLabel, "Failed", context.redactionSecrets)
         ),
         updatedAt: stateTimestamp(clock)
-      })))
-      .finally(() => {
-        activeRuns.delete(sessionId);
-      });
-    activeRuns.set(sessionId, completion);
+      }))))
+      .finally(() => inProjectContext(() => {
+        if (activeRuns.get(context.runKey) === completion) {
+          activeRuns.delete(context.runKey);
+        }
+      }));
+    activeRuns.set(context.runKey, completion);
     return completion;
   }
 
-  async function start({ retry = false, runtime, session } = {}) {
+  async function start({ renewal = false, retry = false, runtime, session } = {}) {
     const sessionId = normalizeText(session?.sessionId || session?.id);
     if (!sessionId || !runtime?.store) {
       throw new TypeError("Workspace preparation requires a stored Vibe64 session.");
     }
-    if (activeRuns.has(sessionId)) {
+    const projectContext = currentProjectRequestContext();
+    const runKey = workspaceSetupRunKey(sessionId);
+    if (activeRuns.has(runKey)) {
       return {
-        completion: activeRuns.get(sessionId),
+        completion: activeRuns.get(runKey),
         state: workspaceSetupState(session.workspaceSetup)
       };
     }
     const sourcePath = sessionSourcePath(session);
     if (!sourcePath) {
       const state = await failed(runtime, sessionId, {
-        diagnostic: "Workspace preparation requires an attached session source."
+        diagnostic: "Workspace preparation requires an attached session source.",
+        renewal
       });
       return { completion: null, state };
     }
@@ -358,7 +383,7 @@ function createWorkspaceSetupRunner({
           recipeHash: "",
           startedAt: "",
           status: "unconfigured"
-        });
+        }, renewal);
         return { completion: null, state };
       }
       const state = await persistInspectedState(runtime, sessionId, previous, {
@@ -368,7 +393,7 @@ function createWorkspaceSetupRunner({
         recipeHash: "",
         startedAt: "",
         status: "failed"
-      });
+      }, renewal);
       return { completion: null, state };
     }
 
@@ -380,7 +405,7 @@ function createWorkspaceSetupRunner({
         recipeHash: "",
         startedAt: "",
         status: "unconfigured"
-      });
+      }, renewal);
       return { completion: null, state };
     }
     if (normalizeText(setup?.status) !== "ready") {
@@ -395,7 +420,7 @@ function createWorkspaceSetupRunner({
         recipeHash: "",
         startedAt: "",
         status: ambiguous ? "ambiguous" : "failed"
-      });
+      }, renewal);
       return { completion: null, state };
     }
 
@@ -410,7 +435,7 @@ function createWorkspaceSetupRunner({
         recipeHash: "",
         startedAt: "",
         status: "failed"
-      });
+      }, renewal);
       return { completion: null, state };
     }
     if (
@@ -442,33 +467,49 @@ function createWorkspaceSetupRunner({
       startedAt,
       status: "running",
       transcript
-    });
+    }, renewal);
     const context = {
       currentLabel,
       recipeHash: recipe.recipeHash,
       redactionSecrets: [],
+      renewal,
+      projectContext,
       runtime,
+      runKey,
       startedAt,
       transcript
     };
-    const completion = observe(sessionId, execute({
-      context,
-      recipe,
-      runtime,
-      session,
-      sourcePath,
-      startedAt
-    }), context);
+    const completion = observe(
+      sessionId,
+      projectContext
+        ? runWithProjectRequestContext(projectContext, () => execute({
+            context,
+            recipe,
+            runtime,
+            session,
+            sourcePath,
+            startedAt
+          }))
+        : execute({
+            context,
+            recipe,
+            runtime,
+            session,
+            sourcePath,
+            startedAt
+          }),
+      context
+    );
     return { completion, state };
   }
 
   return Object.freeze({
     isRunning(sessionId = "") {
-      return activeRuns.has(normalizeText(sessionId));
+      return activeRuns.has(workspaceSetupRunKey(normalizeText(sessionId)));
     },
     start,
     wait(sessionId = "") {
-      return activeRuns.get(normalizeText(sessionId)) || null;
+      return activeRuns.get(workspaceSetupRunKey(normalizeText(sessionId))) || null;
     }
   });
 }

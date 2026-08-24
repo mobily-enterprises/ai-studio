@@ -8,6 +8,7 @@ const creationHarness = vi.hoisted(() => ({
   queryData: null,
   querySetData: null,
   refetch: null,
+  renewalEndpointResource: null,
   selectedId: null,
   select: null,
   selectAvailableId: null,
@@ -34,7 +35,15 @@ vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
 }));
 
 vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
-  useEndpointResource: () => creationHarness.endpointResource
+  useEndpointResource: (options = {}) => {
+    const queryKey = options.queryKey?.value || options.queryKey || [];
+    return (
+      String(options.path?.value || options.path || "").endsWith("/renewal") ||
+      (Array.isArray(queryKey) && queryKey.at(-1) === "renewal")
+      ? creationHarness.renewalEndpointResource
+      : creationHarness.endpointResource
+    );
+  }
 }));
 
 vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
@@ -61,6 +70,10 @@ vi.mock("@/composables/useVibe64SessionSelection.js", () => ({
 import {
   useVibe64SessionData
 } from "../../src/composables/useVibe64SessionData.js";
+import {
+  SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS,
+  useVibe64SessionRenewal
+} from "../../src/composables/useVibe64SessionRenewal.js";
 
 function deferred() {
   let reject;
@@ -97,7 +110,16 @@ beforeEach(() => {
   creationHarness.select = vi.fn((sessionId = "") => {
     creationHarness.selectedId.value = sessionId;
   });
-  creationHarness.selectAvailableId = vi.fn();
+  creationHarness.selectAvailableId = vi.fn((items, {
+    fallbackId = "",
+    getId = (item) => item?.id
+  } = {}) => {
+    const ids = items.map(getId);
+    if (!ids.includes(creationHarness.selectedId.value)) {
+      creationHarness.selectedId.value = fallbackId;
+    }
+    return creationHarness.selectedId.value;
+  });
   creationHarness.endpointResource = {
     data: computed(() => creationHarness.queryData.value),
     isInitialLoading: ref(false),
@@ -108,9 +130,293 @@ beforeEach(() => {
     },
     reload: creationHarness.refetch
   };
+  creationHarness.renewalEndpointResource = {
+    data: ref({
+      ok: true,
+      renewal: null,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`
+    }),
+    isInitialLoading: ref(false),
+    isLoading: ref(false),
+    loadError: ref(""),
+    reload: vi.fn(async () => creationHarness.renewalEndpointResource.data.value)
+  };
 });
 
 describe("Vibe64 session creation", () => {
+  it("holds a missing predecessor until its renewal is durably completed", async () => {
+    const predecessorId = "predecessor-a";
+    const unrelatedSessionId = "session-b";
+    const successorId = "successor-a";
+    creationHarness.selectedId.value = predecessorId;
+    creationHarness.queryData.value = {
+      creation: { canCreate: true, showCreateAction: true },
+      limits: { maxOpenSessions: 4, openSessionCount: 2 },
+      sessions: [
+        {
+          createdAt: "2026-08-25T00:00:00.000Z",
+          sessionId: predecessorId,
+          status: "active"
+        },
+        {
+          createdAt: "2026-08-25T00:00:30.000Z",
+          sessionId: unrelatedSessionId,
+          status: "active"
+        }
+      ]
+    };
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 2,
+        sessionId: predecessorId,
+        stage: "successor_setup",
+        status: "running"
+      }
+    };
+    const { scope } = mountSessionData();
+    creationHarness.selectAvailableId.mockClear();
+
+    creationHarness.queryData.value = {
+      creation: { canCreate: true, showCreateAction: true },
+      limits: { maxOpenSessions: 4, openSessionCount: 1 },
+      sessions: [{
+        createdAt: "2026-08-25T00:00:30.000Z",
+        sessionId: unrelatedSessionId,
+        status: "active"
+      }]
+    };
+    await nextTick();
+    expect(creationHarness.selectedId.value).toBe(predecessorId);
+    expect(creationHarness.selectAvailableId).not.toHaveBeenCalled();
+
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 3,
+        sessionId: predecessorId,
+        stage: "successor_activating",
+        status: "running",
+        successor: {
+          availableAt: "2026-08-25T00:02:01.000Z",
+          sessionId: successorId
+        }
+      }
+    };
+    creationHarness.queryData.value = {
+      creation: { canCreate: true, showCreateAction: true },
+      limits: { maxOpenSessions: 4, openSessionCount: 2 },
+      sessions: [
+        {
+          createdAt: "2026-08-25T00:00:30.000Z",
+          sessionId: unrelatedSessionId,
+          status: "active"
+        },
+        {
+          createdAt: "2026-08-25T00:02:00.000Z",
+          metadata: { renewed_from: predecessorId },
+          sessionId: successorId,
+          status: "active"
+        }
+      ]
+    };
+    await nextTick();
+    expect(creationHarness.selectAvailableId).not.toHaveBeenCalled();
+    expect(creationHarness.selectedId.value).toBe(predecessorId);
+
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 4,
+        sessionId: predecessorId,
+        stage: "completed",
+        status: "completed",
+        successor: { sessionId: successorId }
+      }
+    };
+    await nextTick();
+
+    expect(creationHarness.selectAvailableId).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionId: successorId }),
+        expect.objectContaining({ sessionId: unrelatedSessionId })
+      ]),
+      expect.objectContaining({ fallbackId: successorId })
+    );
+    expect(creationHarness.selectedId.value).toBe(successorId);
+    scope.stop();
+  });
+
+  it("keeps a completed successor selected without overriding a later explicit selection", async () => {
+    const predecessorId = "predecessor-a";
+    const unrelatedSessionId = "session-b";
+    const successorId = "successor-a";
+    creationHarness.selectedId.value = successorId;
+    creationHarness.queryData.value = {
+      creation: { canCreate: true, showCreateAction: true },
+      limits: { maxOpenSessions: 4, openSessionCount: 2 },
+      sessions: [
+        {
+          createdAt: "2026-08-25T00:00:30.000Z",
+          sessionId: unrelatedSessionId,
+          status: "active"
+        },
+        {
+          createdAt: "2026-08-25T00:02:00.000Z",
+          metadata: { renewed_from: predecessorId },
+          sessionId: successorId,
+          status: "active"
+        }
+      ]
+    };
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 3,
+        sessionId: predecessorId,
+        stage: "completed",
+        status: "completed",
+        successor: { sessionId: successorId }
+      }
+    };
+
+    const { scope, sessionData } = mountSessionData();
+    await nextTick();
+    expect(creationHarness.select).not.toHaveBeenCalledWith(predecessorId);
+    expect(creationHarness.selectedId.value).toBe(successorId);
+
+    creationHarness.select.mockClear();
+    sessionData.selectSessionId(unrelatedSessionId);
+    await nextTick();
+    expect(creationHarness.selectedId.value).toBe(unrelatedSessionId);
+
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 4,
+        sessionId: predecessorId,
+        stage: "completed",
+        status: "completed",
+        successor: { sessionId: successorId }
+      }
+    };
+    await nextTick();
+
+    expect(creationHarness.selectedId.value).toBe(unrelatedSessionId);
+    expect(creationHarness.select).toHaveBeenCalledOnce();
+    expect(creationHarness.select).toHaveBeenCalledWith(unrelatedSessionId);
+    scope.stop();
+  });
+
+  it("recovers a closed-dialog renewal after missed realtime by polling, reloading the list, and selecting its exact successor", async () => {
+    vi.useFakeTimers();
+    const predecessorId = "predecessor-a";
+    const successorId = "successor-a";
+    creationHarness.selectedId.value = predecessorId;
+    creationHarness.queryData.value = {
+      creation: { canCreate: true, showCreateAction: true },
+      limits: { maxOpenSessions: 4, openSessionCount: 2 },
+      sessions: [{
+        createdAt: "2026-08-25T00:00:00.000Z",
+        sessionId: predecessorId,
+        status: "active"
+      }]
+    };
+    creationHarness.renewalEndpointResource.data.value = {
+      ok: true,
+      viewerScope: `viewer-v1-${"1".repeat(32)}`,
+      renewal: {
+        operationKey: "renewal:predecessor-a:one",
+        renewalId: "renewal-a",
+        revision: 2,
+        sessionId: predecessorId,
+        stage: "successor_setup",
+        status: "running"
+      }
+    };
+    creationHarness.refetch.mockImplementation(async () => {
+      creationHarness.queryData.value = {
+        creation: { canCreate: true, showCreateAction: true },
+        limits: { maxOpenSessions: 4, openSessionCount: 2 },
+        sessions: [{
+          createdAt: "2026-08-25T00:02:00.000Z",
+          metadata: { renewed_from: predecessorId },
+          sessionId: successorId,
+          status: "active"
+        }, {
+          createdAt: "2026-08-25T00:03:00.000Z",
+          metadata: { renewed_from: "predecessor-b" },
+          sessionId: "successor-b",
+          status: "active"
+        }]
+      };
+      return { data: creationHarness.queryData.value };
+    });
+    creationHarness.renewalEndpointResource.reload.mockImplementation(async () => {
+      creationHarness.renewalEndpointResource.data.value = {
+        ok: true,
+        viewerScope: `viewer-v1-${"1".repeat(32)}`,
+        renewal: {
+          operationKey: "renewal:predecessor-a:one",
+          renewalId: "renewal-a",
+          revision: 3,
+          sessionId: predecessorId,
+          stage: "completed",
+          status: "completed",
+          successor: { sessionId: successorId }
+        }
+      };
+      return creationHarness.renewalEndpointResource.data.value;
+    });
+    const { scope, sessionData } = mountSessionData();
+    const renewal = scope.run(() => useVibe64SessionRenewal({
+      focusSession: vi.fn(async () => true),
+      refreshSessionData: sessionData.refreshSessionData,
+      selectSession: sessionData.selectSessionId,
+      selectedSession: sessionData.selectedSession,
+      selectedSessionId: sessionData.selectedSessionId,
+      sessionsApiPath: sessionData.sessionsApiPath
+    }));
+
+    try {
+      expect(renewal.open.value).toBe(false);
+      await vi.advanceTimersByTimeAsync(SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS);
+      await nextTick();
+      await nextTick();
+
+      expect(creationHarness.renewalEndpointResource.reload).toHaveBeenCalledOnce();
+      expect(creationHarness.refetch).toHaveBeenCalledOnce();
+      expect(creationHarness.selectAvailableId).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionId: successorId }),
+          expect.objectContaining({ sessionId: "successor-b" })
+        ]),
+        expect.objectContaining({ fallbackId: successorId })
+      );
+      expect(creationHarness.selectedId.value).toBe(successorId);
+      expect(creationHarness.select).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      scope.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("fails closed until the server projects both creation permissions", () => {
     creationHarness.queryData.value = {
       limits: { maxOpenSessions: 3, openSessionCount: 0 },

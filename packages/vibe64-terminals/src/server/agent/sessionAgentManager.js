@@ -346,13 +346,75 @@ function createSessionAgentManager({
   async function closeSession(sessionId = "", options = {}) {
     const id = normalizeText(sessionId);
     const provider = bindSession(id, options);
+    const context = {
+      preserveProcessExitProof: options.preserveProcessExitProof === true,
+      providerId: provider.id,
+      renewalCleanup: options.renewalCleanup || null,
+      runtime: options.runtime || null,
+      session: options.session || null,
+      sessionId: id,
+      transportId: provider.transportId
+    };
     const result = typeof provider.closeSession !== "function"
       ? agentOperationResult(provider, id, { closed: false, ok: true })
-      : agentOperationResult(provider, id, await provider.closeSession({
-          providerId: provider.id,
-          sessionId: id,
-          transportId: provider.transportId
-        }));
+      : agentOperationResult(provider, id, await provider.closeSession(context));
+    if (result.ok !== false) {
+      bindings.delete(id);
+      bindingTokens.delete(id);
+    }
+    return result;
+  }
+
+  async function releaseRenewalPredecessorProcessExitProof(
+    sessionId = "",
+    input = {},
+    options = {}
+  ) {
+    const id = normalizeText(sessionId);
+    const result = await callSessionProvider(
+      "releaseRenewalPredecessorProcessExitProof",
+      id,
+      input,
+      options
+    );
+    if (result.ok !== false) {
+      bindings.delete(id);
+      bindingTokens.delete(id);
+    }
+    return result;
+  }
+
+  async function releaseRenewalPredecessorAttachments(
+    sessionId = "",
+    input = {},
+    options = {}
+  ) {
+    const id = normalizeText(sessionId);
+    const result = await callSessionProvider(
+      "releaseRenewalPredecessorAttachments",
+      id,
+      input,
+      options
+    );
+    if (result.ok !== false) {
+      bindings.delete(id);
+      bindingTokens.delete(id);
+    }
+    return result;
+  }
+
+  async function releaseRenewalSuccessorProcessExitProof(
+    sessionId = "",
+    input = {},
+    options = {}
+  ) {
+    const id = normalizeText(sessionId);
+    const result = await callSessionProvider(
+      "releaseRenewalSuccessorProcessExitProof",
+      id,
+      input,
+      options
+    );
     if (result.ok !== false) {
       bindings.delete(id);
       bindingTokens.delete(id);
@@ -418,6 +480,8 @@ function createSessionAgentManager({
         coalesceIdentity: "session"
       });
     },
+    generateSessionRenewalHandover: sessionMethod("generateSessionRenewalHandover"),
+    hasActiveTemporaryConversation: sessionMethod("hasActiveTemporaryConversation"),
     interruptDetachedChatTurn: sessionMethod("interruptDetachedChatTurn"),
     interruptTurn: sessionMethod("interruptTurn"),
     invalidateRuntimes(input = {}, options = {}) {
@@ -442,6 +506,10 @@ function createSessionAgentManager({
       return callSessionProvider("resizeTerminal", sessionId, { size, terminalSessionId }, options);
     },
     runDetachedChatTurn: sessionMethod("runDetachedChatTurn"),
+    releaseRenewalPredecessorAttachments,
+    releaseRenewalPredecessorProcessExitProof,
+    releaseRenewalSuccessorProcessExitProof,
+    seedSessionRenewalHandover: sessionMethod("seedSessionRenewalHandover"),
     sendMessage: sessionMethod("sendMessage"),
     sessionState(sessionId = "", options = {}) {
       return callSessionProvider("sessionState", sessionId, {}, options);

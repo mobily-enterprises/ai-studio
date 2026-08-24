@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -189,6 +190,7 @@ function executionContextHash({
 function metadataForRuntime(runtimeDir, {
   authStateSignature = "test-auth-state-signature",
   pid = process.pid,
+  processIdentity = null,
   project = {},
   session = {},
   terminalEnv = {},
@@ -209,6 +211,14 @@ function metadataForRuntime(runtimeDir, {
     logPath: path.join(runtimeDir, "app-server.log"),
     pid,
     processCwd: runtimeDir,
+    processIdentity: processIdentity || {
+      commandHash: "0123456789ab",
+      platform: "linux-proc",
+      runtimeToken: "11111111-1111-4111-8111-111111111111",
+      startTimeTicks: "1",
+      version: 1
+    },
+    processState: "running",
     provider: CODEX_APP_SERVER_PROVIDER_ID,
     readyz: "",
     runtimeDir,
@@ -219,6 +229,18 @@ function metadataForRuntime(runtimeDir, {
     terminalEnvHash: terminalEnvHash(terminalEnv),
     toolHomeSource,
     transport: CODEX_APP_SERVER_TRANSPORT.UNIX
+  };
+}
+
+async function processIdentityForFixture(pid, runtimeToken, commandHash) {
+  const statText = await readFile(`/proc/${pid}/stat`, "utf8");
+  const fields = statText.slice(statText.lastIndexOf(")") + 1).trim().split(/\s+/u);
+  return {
+    commandHash,
+    platform: "linux-proc",
+    runtimeToken,
+    startTimeTicks: fields[19],
+    version: 1
   };
 }
 
@@ -233,6 +255,13 @@ function codexAppServerCommandRunner(runtimeDir, commandCalls = []) {
       ok: true,
       output: "",
       pid: 12345,
+      processIdentity: {
+        commandHash: request.baseEnv.VIBE64_CODEX_APP_SERVER_COMMAND_HASH,
+        platform: "linux-proc",
+        runtimeToken: request.baseEnv.VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN,
+        startTimeTicks: "12345",
+        version: 1
+      },
       signal: "",
       stderr: "",
       stdout: "",
@@ -259,20 +288,82 @@ async function startOrphanedDetachedProcessGroup(directory) {
     "const { writeFileSync } = require('node:fs');",
     "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });",
     "writeFileSync(process.argv[1], String(child.pid));",
-    "child.unref();"
+    "child.unref();",
+    "setTimeout(() => {}, 100);"
   ].join("\n");
+  const runtimeToken = randomUUID();
+  const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
   const leader = spawn(process.execPath, ["-e", script, childPidPath], {
     detached: true,
+    env: {
+      ...process.env,
+      VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+      VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+    },
     stdio: "ignore"
   });
   const processGroupId = leader.pid;
+  const processIdentity = await processIdentityForFixture(
+    processGroupId,
+    runtimeToken,
+    commandHash
+  );
   await new Promise((resolve, reject) => {
     leader.once("error", reject);
     leader.once("exit", resolve);
   });
   return {
     childPid: Number(await readFile(childPidPath, "utf8")),
-    processGroupId
+    processGroupId,
+    processIdentity
+  };
+}
+
+async function startDetachedProcessGroupWithTransientUnmarkedMember(directory) {
+  const readyPath = path.join(directory, "transient-member.ready");
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const exact = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });",
+    "const unmarkedEnv = { ...process.env };",
+    "delete unmarkedEnv.VIBE64_CODEX_APP_SERVER_COMMAND_HASH;",
+    "delete unmarkedEnv.VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN;",
+    "const transient = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 400);'], { env: unmarkedEnv, stdio: 'ignore' });",
+    "writeFileSync(process.argv[1], JSON.stringify({ exactPid: exact.pid, transientPid: transient.pid }));",
+    "setInterval(() => {}, 1000);"
+  ].join("\n");
+  const runtimeToken = randomUUID();
+  const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
+  const leader = spawn(process.execPath, ["-e", script, readyPath], {
+    detached: true,
+    env: {
+      ...process.env,
+      VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+      VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+    },
+    stdio: "ignore"
+  });
+  leader.unref();
+  let members = null;
+  const readyDeadline = Date.now() + 1000;
+  while (!members && Date.now() < readyDeadline) {
+    try {
+      members = JSON.parse(await readFile(readyPath, "utf8"));
+    } catch {
+      await delay(5);
+    }
+  }
+  if (!Number.isSafeInteger(Number(members?.transientPid))) {
+    throw new Error("Timed out waiting for transient process-group member.");
+  }
+  return {
+    ...members,
+    processGroupId: leader.pid,
+    processIdentity: await processIdentityForFixture(
+      leader.pid,
+      runtimeToken,
+      commandHash
+    )
   };
 }
 
@@ -286,17 +377,30 @@ async function startDetachedProcessWithDetachedCommand(directory) {
     "command.unref();",
     "setInterval(() => {}, 1000);"
   ].join("\n");
+  const runtimeToken = randomUUID();
+  const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
   const leader = spawn(process.execPath, ["-e", script, commandPidPath], {
     detached: true,
+    env: {
+      ...process.env,
+      VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+      VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+    },
     stdio: "ignore"
   });
+  const processIdentity = await processIdentityForFixture(
+    leader.pid,
+    runtimeToken,
+    commandHash
+  );
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
       const commandPid = Number(await readFile(commandPidPath, "utf8"));
       if (commandPid > 0) {
         return {
           commandPid,
-          processGroupId: leader.pid
+          processGroupId: leader.pid,
+          processIdentity
         };
       }
     } catch {
@@ -1170,10 +1274,8 @@ test("codex provider removes a dead managed app-server runtime directory", async
     await mkdir(runtimeDir, {
       recursive: true
     });
-    await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
-      pid: 99999999,
-      runtimeDir,
-      transport: "unix"
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 99999999
     }));
 
     const result = await stopCodexAppServerRuntime({
@@ -1190,6 +1292,257 @@ test("codex provider removes a dead managed app-server runtime directory", async
   });
 });
 
+test("codex provider does not invent exit proof for malformed runtime metadata", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-malformed");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
+      pid: 99999999,
+      runtimeDir
+    }));
+
+    const result = await stopCodexAppServerRuntime({ runtimeDir });
+
+    assert.equal(result.processExitVerified, false);
+    assert.equal(result.runtimeDirRemoved, false);
+    assert.equal(await access(runtimeDir).then(() => true), true);
+  });
+});
+
+test("codex provider never signals a reused process group and preserves exact exit proof", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-reused-pgid");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 45123
+    }));
+    const signals = [];
+
+    const result = await stopCodexAppServerRuntime({
+      preserveProcessExitProof: true,
+      processIdentityInspector: async () => ({
+        processGroupIds: [],
+        status: "mismatch"
+      }),
+      runtimeDir,
+      signalProcessGroup(processGroupId, signal) {
+        signals.push([processGroupId, signal]);
+      }
+    });
+
+    assert.equal(result.processExitVerified, true);
+    assert.equal(result.runtimeDirPreserved, true);
+    assert.deepEqual(signals, []);
+    const proof = JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8"));
+    assert.equal(proof.processState, "stopped");
+    assert.match(proof.processExitVerifiedAt, /^\d{4}-\d{2}-\d{2}T/u);
+  });
+});
+
+test("codex provider fails closed without signaling an ambiguous process group", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-ambiguous-pgid");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 45124
+    }));
+    const signals = [];
+
+    const result = await stopCodexAppServerRuntime({
+      preserveProcessExitProof: true,
+      processIdentitySettleTimeoutMs: 1,
+      processIdentityInspector: async () => ({
+        processGroupIds: [45124],
+        status: "ambiguous"
+      }),
+      runtimeDir,
+      signalProcessGroup(processGroupId, signal) {
+        signals.push([processGroupId, signal]);
+      }
+    });
+
+    assert.equal(result.processExitVerified, false);
+    assert.equal(result.runtimeDirPreserved, false);
+    assert.deepEqual(signals, []);
+    assert.equal(
+      JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8")).processState,
+      "running"
+    );
+  });
+});
+
+test("codex provider waits for transient identity ambiguity before signaling an exact process group", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-transient-ambiguous-pgid");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 45126
+    }));
+    let inspections = 0;
+    const signals = [];
+
+    const result = await stopCodexAppServerRuntime({
+      preserveProcessExitProof: true,
+      processIdentityInspector: async () => {
+        inspections += 1;
+        if (inspections === 1) {
+          return {
+            processGroupIds: [],
+            status: "ambiguous"
+          };
+        }
+        return signals.length > 0
+          ? { processGroupIds: [], status: "absent" }
+          : { processGroupIds: [45126], status: "exact" };
+      },
+      processIdentitySettlePollMs: 1,
+      processIdentitySettleTimeoutMs: 50,
+      runtimeDir,
+      signalProcessGroup(processGroupId, signal) {
+        signals.push([processGroupId, signal]);
+      }
+    });
+
+    assert.equal(result.processExitVerified, true);
+    assert.equal(result.runtimeDirPreserved, true);
+    assert.deepEqual(signals, [[45126, "SIGTERM"]]);
+    assert.ok(inspections >= 5);
+    assert.equal(
+      JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8")).processState,
+      "stopped"
+    );
+  });
+});
+
+test("renewal shutdown waits for a transient unmarked process-group member without weakening identity proof", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux /proc process-group identity inspection is required.");
+    return;
+  }
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-transient-member");
+    await mkdir(runtimeDir, { recursive: true });
+    const fixture = await startDetachedProcessGroupWithTransientUnmarkedMember(runtimeDir);
+    try {
+      await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+        pid: fixture.processGroupId,
+        processIdentity: fixture.processIdentity
+      }));
+      const startedAt = Date.now();
+
+      const result = await stopCodexAppServerRuntime({
+        preserveProcessExitProof: true,
+        processIdentitySettleTimeoutMs: 2500,
+        runtimeDir
+      });
+
+      assert.equal(result.stopped, true, JSON.stringify(result));
+      assert.equal(result.processExitVerified, true);
+      assert.equal(result.runtimeDirPreserved, true);
+      assert.ok(Date.now() - startedAt >= 100);
+      assert.throws(() => process.kill(-fixture.processGroupId, 0), {
+        code: "ESRCH"
+      });
+    } finally {
+      try {
+        process.kill(-fixture.processGroupId, "SIGKILL");
+      } catch {
+        // The verified shutdown path normally stops the complete fixture group.
+      }
+    }
+  });
+});
+
+test("codex provider rechecks exact identity before escalation", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-escalation-race");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 45125
+    }));
+    let status = "exact";
+    const signals = [];
+
+    const result = await stopCodexAppServerRuntime({
+      processIdentityInspector: async () => ({
+        processGroupIds: status === "exact" ? [45125] : [],
+        status
+      }),
+      runtimeDir,
+      signalProcessGroup(processGroupId, signal) {
+        signals.push([processGroupId, signal]);
+        status = "ambiguous";
+      },
+      termTimeoutMs: 1
+    });
+
+    assert.equal(result.processExitVerified, false);
+    assert.deepEqual(signals, [[45125, "SIGTERM"]]);
+  });
+});
+
+test("renewal shutdown preserves exact process-exit proof across restart until final release", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX process groups are not available on Windows.");
+    return;
+  }
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-renewal-proof");
+    await mkdir(runtimeDir, { recursive: true });
+    const fixture = await startOrphanedDetachedProcessGroup(runtimeDir);
+    try {
+      await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+        pid: fixture.processGroupId,
+        processIdentity: fixture.processIdentity
+      }));
+
+      const stopped = await stopCodexAppServerRuntime({
+        preserveProcessExitProof: true,
+        runtimeDir
+      });
+      assert.equal(stopped.stopped, true);
+      assert.equal(stopped.processExitVerified, true);
+      assert.equal(stopped.runtimeDirPreserved, true);
+      assert.equal(stopped.runtimeDirRemoved, false);
+      assert.throws(() => process.kill(-fixture.processGroupId, 0), {
+        code: "ESRCH"
+      });
+      assert.equal(
+        JSON.parse(await readFile(path.join(runtimeDir, "runtime.json"), "utf8")).pid,
+        fixture.processGroupId
+      );
+
+      const restartedCleanup = await stopCodexAppServerRuntime({
+        preserveProcessExitProof: true,
+        runtimeDir
+      });
+      assert.equal(restartedCleanup.stopped, false);
+      assert.equal(restartedCleanup.processExitVerified, true);
+      assert.equal(restartedCleanup.runtimeDirPreserved, true);
+      assert.equal(restartedCleanup.runtimeDirRemoved, false);
+
+      const released = await stopCodexAppServerRuntime({ runtimeDir });
+      assert.equal(released.processExitVerified, true);
+      assert.equal(released.runtimeDirRemoved, true);
+      await assert.rejects(access(runtimeDir), { code: "ENOENT" });
+
+      const missing = await stopCodexAppServerRuntime({
+        preserveProcessExitProof: true,
+        runtimeDir
+      });
+      assert.equal(missing.processExitVerified, false);
+      assert.equal(missing.runtimeDirPreserved, false);
+      assert.equal(missing.runtimeDirRemoved, false);
+    } finally {
+      try {
+        process.kill(-fixture.processGroupId, "SIGKILL");
+      } catch {
+        // The verified shutdown path normally stops the complete fixture group.
+      }
+    }
+  });
+});
+
 test("codex provider reuses and stops the detached process group after its leader exits", async (t) => {
   if (process.platform === "win32") {
     t.skip("POSIX process groups are not available on Windows.");
@@ -1203,7 +1556,8 @@ test("codex provider reuses and stops the detached process group after its leade
     const fixture = await startOrphanedDetachedProcessGroup(runtimeDir);
     try {
       const metadata = metadataForRuntime(runtimeDir, {
-        pid: fixture.processGroupId
+        pid: fixture.processGroupId,
+        processIdentity: fixture.processIdentity
       });
       await writeFile(metadata.socketPath, "");
       await writeMetadata(runtimeDir, metadata);
@@ -1256,7 +1610,8 @@ test("codex provider stops detached command groups below its session runtime", a
     const fixture = await startDetachedProcessWithDetachedCommand(runtimeDir);
     try {
       await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
-        pid: fixture.processGroupId
+        pid: fixture.processGroupId,
+        processIdentity: fixture.processIdentity
       }));
 
       const result = await stopCodexAppServerRuntime({
@@ -1277,6 +1632,87 @@ test("codex provider stops detached command groups below its session runtime", a
           process.kill(-processGroupId, "SIGKILL");
         } catch {
           // The assertion path normally stops both groups first.
+        }
+      }
+    }
+  });
+});
+
+test("codex provider does not signal a live group when its persisted start time is wrong", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux /proc process identity is required.");
+    return;
+  }
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-starttime-mismatch");
+    await mkdir(runtimeDir, { recursive: true });
+    const fixture = await startDetachedProcessWithDetachedCommand(runtimeDir);
+    try {
+      await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+        pid: fixture.processGroupId,
+        processIdentity: {
+          ...fixture.processIdentity,
+          startTimeTicks: String(Number(fixture.processIdentity.startTimeTicks) + 1)
+        }
+      }));
+
+      const result = await stopCodexAppServerRuntime({ runtimeDir });
+
+      assert.equal(result.identityStatus, "ambiguous");
+      assert.equal(result.processExitVerified, false);
+      assert.doesNotThrow(() => process.kill(-fixture.processGroupId, 0));
+      assert.doesNotThrow(() => process.kill(-fixture.commandPid, 0));
+    } finally {
+      for (const processGroupId of [fixture.commandPid, fixture.processGroupId]) {
+        try {
+          process.kill(-processGroupId, "SIGKILL");
+        } catch {
+          // This test deliberately leaves both exact fixture groups alive.
+        }
+      }
+    }
+  });
+});
+
+test("codex provider refuses to replace live legacy metadata without an exact identity", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("Linux process groups are required.");
+    return;
+  }
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-live-legacy");
+    await mkdir(runtimeDir, { recursive: true });
+    const fixture = await startDetachedProcessWithDetachedCommand(runtimeDir);
+    try {
+      await writeMetadata(runtimeDir, {
+        ...metadataForRuntime(runtimeDir, {
+          pid: fixture.processGroupId,
+          processIdentity: fixture.processIdentity
+        }),
+        processIdentity: undefined,
+        processState: undefined,
+        schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION - 1
+      });
+
+      await assert.rejects(
+        () => ensureCodexAppServerRuntime({
+          authStateSignature: "test-auth-state-signature",
+          commandRunner() {
+            throw new Error("unidentifiable live legacy runtime must not be replaced");
+          },
+          runtimeDir,
+          WebSocketImpl: ResponsiveFakeWebSocket
+        }),
+        { code: "vibe64_codex_app_server_process_identity_unverified" }
+      );
+      assert.doesNotThrow(() => process.kill(-fixture.processGroupId, 0));
+      assert.doesNotThrow(() => process.kill(-fixture.commandPid, 0));
+    } finally {
+      for (const processGroupId of [fixture.commandPid, fixture.processGroupId]) {
+        try {
+          process.kill(-processGroupId, "SIGKILL");
+        } catch {
+          // The exact safety behavior leaves this unidentifiable runtime alone.
         }
       }
     }
@@ -1326,10 +1762,8 @@ test("codex provider treats inaccessible stale app-server runtime directories as
     await mkdir(runtimeDir, {
       recursive: true
     });
-    await writeFile(path.join(runtimeDir, "runtime.json"), JSON.stringify({
-      pid: 99999999,
-      runtimeDir,
-      transport: "unix"
+    await writeMetadata(runtimeDir, metadataForRuntime(runtimeDir, {
+      pid: 99999999
     }));
     await chmod(inaccessibleParent, 0o500);
     try {
@@ -1709,7 +2143,9 @@ test("codex economy provider starts from a private empty home and strips project
       "TERM",
       "TMPDIR",
       "TZ",
-      "USER"
+      "USER",
+      "VIBE64_CODEX_APP_SERVER_COMMAND_HASH",
+      "VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN"
     ]);
 
     const stored = await readFile(path.join(runtimeDir, "runtime.json"), "utf8");
@@ -1729,10 +2165,14 @@ test("codex economy provider retires a detached child when startup never becomes
         readyTimeoutMs: 50,
         runtimeDir,
         WebSocketImpl: UnresponsiveFakeWebSocket,
-        async commandRunner() {
+        async commandRunner(request) {
           await writeFile(socketPathForRuntime(runtimeDir), "");
           child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
             detached: true,
+            env: {
+              ...process.env,
+              ...request.baseEnv
+            },
             stdio: "ignore"
           });
           child.unref();
@@ -1786,10 +2226,14 @@ test("codex economy provider retires a started child when metadata persistence f
         readyTimeoutMs: 1000,
         runtimeDir,
         WebSocketImpl: ResponsiveFakeWebSocket,
-        async commandRunner() {
+        async commandRunner(request) {
           await writeFile(socketPathForRuntime(runtimeDir), "");
           child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
             detached: true,
+            env: {
+              ...process.env,
+              ...request.baseEnv
+            },
             stdio: "ignore"
           });
           child.unref();
@@ -2463,6 +2907,88 @@ test("codex economy provider authoritatively inventories active and archived thr
   }]);
 });
 
+test("codex provider inventories only active app-server threads for one exact session cwd", async () => {
+  const calls = [];
+  const provider = new CodexAppServerAgentProvider({});
+  const responses = [{
+    data: [{ cwd: "/repo/session-source", id: "thread-two" }],
+    nextCursor: "next-page"
+  }, {
+    data: [{ cwd: "/repo/session-source", id: "thread-one" }],
+    nextCursor: null
+  }];
+  provider.activeClient = async () => ({
+    async request(method, params, options) {
+      calls.push({ method, options, params });
+      return responses.shift();
+    }
+  });
+
+  const result = await provider.listAppServerThreadsForCwd({
+    cwd: "/repo/session-source"
+  });
+
+  assert.deepEqual(result, {
+    cwd: "/repo/session-source",
+    threadIds: ["thread-one", "thread-two"]
+  });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.threadIds), true);
+  assert.deepEqual(calls.map(({ method, params }) => ({ method, params })), [{
+    method: "thread/list",
+    params: {
+      archived: false,
+      cwd: "/repo/session-source",
+      limit: 100,
+      sourceKinds: ["appServer"],
+      useStateDbOnly: false
+    }
+  }, {
+    method: "thread/list",
+    params: {
+      archived: false,
+      cursor: "next-page",
+      cwd: "/repo/session-source",
+      limit: 100,
+      sourceKinds: ["appServer"],
+      useStateDbOnly: false
+    }
+  }]);
+});
+
+test("codex session thread inventory fails closed for another cwd or repeated pagination", async () => {
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        data: [{ cwd: "/repo/another-source", id: "wrong-thread" }],
+        nextCursor: null
+      };
+    }
+  });
+
+  await assert.rejects(
+    provider.listAppServerThreadsForCwd({ cwd: "/repo/session-source" }),
+    (error) => error?.code === "vibe64_codex_session_thread_inventory_invalid"
+  );
+
+  provider.activeClient = async () => ({
+    async request() {
+      return {
+        data: [],
+        nextCursor: "same-cursor"
+      };
+    }
+  });
+  await assert.rejects(
+    provider.listAppServerThreadsForCwd({ cwd: "/repo/session-source" }),
+    (error) => (
+      error?.code === "vibe64_codex_session_thread_inventory_invalid" &&
+      !error.message.includes("same-cursor")
+    )
+  );
+});
+
 test("codex economy thread inventory fails closed on repeated or oversized provider data", async () => {
   const runtimeDir = "/tmp/vibe64-economy-thread-inventory-invalid";
   const accountIdentitySignature = `sha256:${"c".repeat(64)}`;
@@ -2662,12 +3188,24 @@ test("codex economy provider retires its runtime when in-memory account activati
       mkdir(codexAppServerEconomyHomeDir(runtimeDir), { recursive: true }),
       mkdir(codexAppServerEconomyWorkspaceDir(runtimeDir), { recursive: true })
     ]);
+    const runtimeToken = randomUUID();
+    const commandHash = randomUUID().replaceAll("-", "").slice(0, 12);
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
       detached: true,
+      env: {
+        ...process.env,
+        VIBE64_CODEX_APP_SERVER_COMMAND_HASH: commandHash,
+        VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN: runtimeToken
+      },
       stdio: "ignore"
     });
     child.unref();
     try {
+      const processIdentity = await processIdentityForFixture(
+        child.pid,
+        runtimeToken,
+        commandHash
+      );
       const accountIdentitySignature = await currentCodexAccountIdentitySignature({
         executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
         toolHomeSource
@@ -2687,6 +3225,7 @@ test("codex economy provider retires its runtime when in-memory account activati
           executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
           pid: child.pid,
           processCwd: codexAppServerEconomyWorkspaceDir(runtimeDir),
+          processIdentity,
           runtimeDir
         };
         return provider.runtime;

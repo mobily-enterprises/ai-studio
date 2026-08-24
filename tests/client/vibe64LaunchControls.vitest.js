@@ -17,6 +17,7 @@ import {
   LAUNCH_STATUS_RETRY_LIMIT,
   launchTargetsRealtimeShouldRefresh,
   launchControlScopeKey,
+  launchStatusAgentWriteBusy,
   launchStatusErrorText,
   launchStatusRetryDelay,
   launchStatusShouldRetry,
@@ -197,6 +198,26 @@ describe("Vibe64 launch controls", () => {
       displayed: false,
       session
     })).toBe(false);
+    expect(launchControlsCanLoadTargets({
+      displayed: true,
+      session,
+      sourceOperationsSuspended: true
+    })).toBe(false);
+  });
+
+  it("recognizes only the renewal write-boundary response as a suppressible status collision", () => {
+    expect(launchStatusAgentWriteBusy({
+      code: "vibe64_agent_write_mode_busy"
+    })).toBe(true);
+    expect(launchStatusAgentWriteBusy({
+      response: {
+        errors: [{ code: "vibe64_agent_write_mode_busy" }]
+      }
+    })).toBe(true);
+    expect(launchStatusAgentWriteBusy({
+      code: "vibe64_launch_invalid"
+    })).toBe(false);
+    expect(launchStatusAgentWriteBusy(new Error("Request failed."))).toBe(false);
   });
 
   it("keeps closed or closing sessions out of launch controls", () => {

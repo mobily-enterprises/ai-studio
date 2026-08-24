@@ -1,6 +1,10 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
 
+import {
+  SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS
+} from "./sessionRenewalState.js";
+
 const optionalUser = {
   vibe64User: {
     type: "object",
@@ -17,10 +21,60 @@ const optionalOrigin = {
   }
 };
 
+const renewalOperationFields = {
+  ...optionalOrigin,
+  operationKey: {
+    type: "string",
+    noTrim: false,
+    minLength: 1,
+    maxLength: 128,
+    pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u,
+    required: true
+  }
+};
+
+const renewalDraftGuardFields = {
+  ...renewalOperationFields,
+  expectedHash: {
+    type: "string",
+    noTrim: false,
+    minLength: 64,
+    maxLength: 64,
+    pattern: /^[a-f0-9]{64}$/u,
+    required: true
+  },
+  expectedRevision: {
+    type: "integer",
+    min: 1,
+    required: true
+  }
+};
+
+const renewalDraftFields = {
+  ...renewalDraftGuardFields,
+  draft: {
+    // json-rest-schema counts UTF-16 code units while the domain contract
+    // counts Unicode code points. Two code units per allowed code point keeps
+    // transport input bounded without rejecting 20,000 astral characters;
+    // sessionRenewalState performs the exact domain check.
+    maxLength: SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS * 2,
+    type: "string",
+    noTrim: true,
+    required: true
+  }
+};
+
 function patchSchema(fields) {
   return deepFreeze({
     schema: createSchema(fields),
     mode: "patch"
+  });
+}
+
+function requiredInputSchema(fields) {
+  return deepFreeze({
+    schema: createSchema(fields),
+    mode: "create"
   });
 }
 
@@ -207,6 +261,54 @@ const sessionInspectInputValidator = patchSchema({
   }
 });
 
+const sessionRenewalInspectActionInputValidator = requiredInputSchema({
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionRenewalDraftRequestInputValidator = requiredInputSchema(renewalOperationFields);
+const sessionRenewalDraftRequestActionInputValidator = requiredInputSchema({
+  ...renewalOperationFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionRenewalDraftUpdateInputValidator = requiredInputSchema(renewalDraftFields);
+const sessionRenewalDraftUpdateActionInputValidator = requiredInputSchema({
+  ...renewalDraftFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionRenewalDraftGuardInputValidator = requiredInputSchema(renewalDraftGuardFields);
+const sessionRenewalDraftGuardActionInputValidator = requiredInputSchema({
+  ...renewalDraftGuardFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const sessionRenewalRetryInputValidator = requiredInputSchema(renewalOperationFields);
+const sessionRenewalRetryActionInputValidator = requiredInputSchema({
+  ...renewalOperationFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
 const sessionChangesInputValidator = patchSchema({
   ...optionalUser,
   limit: {
@@ -290,6 +392,7 @@ const repositoryVersionFileDiffInputValidator = patchSchema({
 });
 
 export {
+  SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS,
   agentMessageActionInputValidator,
   agentMessageInputValidator,
   agentTurnInterruptActionInputValidator,
@@ -304,6 +407,15 @@ export {
   sessionCreateInputValidator,
   sessionIdInputValidator,
   sessionInspectInputValidator,
+  sessionRenewalDraftGuardActionInputValidator,
+  sessionRenewalDraftGuardInputValidator,
+  sessionRenewalDraftRequestActionInputValidator,
+  sessionRenewalDraftRequestInputValidator,
+  sessionRenewalDraftUpdateActionInputValidator,
+  sessionRenewalDraftUpdateInputValidator,
+  sessionRenewalInspectActionInputValidator,
+  sessionRenewalRetryActionInputValidator,
+  sessionRenewalRetryInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
   sessionSaveInputValidator,

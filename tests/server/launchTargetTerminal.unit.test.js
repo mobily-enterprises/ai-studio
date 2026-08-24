@@ -28,6 +28,16 @@ import {
   inspectVibe64WorkspaceSetup
 } from "../../packages/vibe64-genesis/src/server/index.js";
 import {
+  closeTerminalSession,
+  freezeTerminalNamespaceAdmission,
+  readTerminalSession,
+  startTerminalSession,
+  thawTerminalNamespaceAdmission
+} from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
+import {
+  launchTargetTerminalNamespace
+} from "../../packages/vibe64-terminals/src/server/terminalShared.js";
+import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
@@ -37,6 +47,39 @@ import {
 process.env[VIBE64_RUNTIME_NAMESPACE_ENV] = "unit-owner";
 
 const execFileAsync = promisify(execFile);
+
+test("preview status, open, and identity selection reject frozen sessions before project access", async (t) => {
+  let projectReads = 0;
+  const frozen = {
+    code: "vibe64_session_renewal_quiesced",
+    error: "Session renewal has frozen preview access.",
+    ok: false
+  };
+  const controller = createLaunchTargetTerminalController({
+    projectService: {
+      async createRuntime() {
+        projectReads += 1;
+        throw new Error("Frozen preview must not read the project.");
+      }
+    },
+    sessionAdmissionFailure() {
+      return frozen;
+    }
+  });
+  t.after(() => controller.close());
+
+  const status = await controller.launchStatus("session-frozen");
+  const opened = await controller.openLaunchTarget("session-frozen");
+  const identity = await controller.selectPreviewIdentity("session-frozen", {
+    identity: "guest"
+  });
+
+  assert.deepEqual(status, frozen);
+  assert.deepEqual(opened, frozen);
+  assert.equal(identity.ok, false);
+  assert.equal(identity.code, frozen.code);
+  assert.equal(projectReads, 0);
+});
 
 test("HTTP launch readiness requires the declared exact success status", async () => {
   const { createServer } = await import("node:http");
@@ -89,7 +132,7 @@ async function runGit(cwd, args) {
   });
 }
 
-test("launch start reruns and awaits a changed workspace recipe", async () => {
+test("launch start awaits workspace preparation and cleanup cannot retain its preview child", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-launch-workspace-"));
   const sessionId = "session-workspace";
   const projectContextRoot = path.join(root, "project-namespace");
@@ -100,6 +143,7 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
   });
 
   let controller;
+  let releaseLaunchCleanupPublication = () => null;
   try {
     await runGit(sourceRoot, ["init", "--initial-branch=main"]);
     await writeFile(path.join(sourceRoot, "package.json"), JSON.stringify({
@@ -145,11 +189,28 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
       finishPreparation = resolve;
     });
     let previewIdentityInput = null;
+    let blockProjectEnvironment = false;
+    let capturedLaunchTerminal = null;
+    let cleanupTerminalId = "terminal-workspace";
+    let holdLaunchCleanupPublication = false;
+    let projectEnvironmentStarted = null;
+    let releaseProjectEnvironment = null;
+    const launchCleanupPublication = new Promise((resolve) => {
+      releaseLaunchCleanupPublication = resolve;
+    });
     const runtime = {
       async getSession() {
         return session;
       },
-      store: {}
+      store: {
+        async deleteMetadataValue() {},
+        async mutateSession(_sessionId, operation) {
+          return operation();
+        },
+        async readMetadataValue(_sessionId, name) {
+          return name === "launch_target_terminal_id" ? cleanupTerminalId : "";
+        }
+      }
     };
     const projectService = {
       async createRuntime() {
@@ -162,6 +223,12 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
         return projectContextRoot;
       },
       async projectExecutionEnvironment() {
+        if (blockProjectEnvironment) {
+          projectEnvironmentStarted?.();
+          await new Promise((resolve) => {
+            releaseProjectEnvironment = resolve;
+          });
+        }
         return {};
       },
       async readPreviewApplicationIdentities(input) {
@@ -190,9 +257,15 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
         };
       },
       projectService,
+      async publishSessionChanged(_sessionId, event = {}) {
+        if (holdLaunchCleanupPublication && event.reason === "launch-target-stale-cleared") {
+          await launchCleanupPublication;
+        }
+      },
       async runCommand(input) {
         events.push("launch-started");
         assert.equal(session.workspaceSetup.recipeHash, currentSetup.recipeHash);
+        capturedLaunchTerminal = input.terminal;
         return {
           id: "terminal-workspace",
           metadata: {
@@ -230,7 +303,80 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
       "prepare-completed",
       "launch-started"
     ]);
+
+    const environmentStarted = new Promise((resolve) => {
+      projectEnvironmentStarted = resolve;
+    });
+    blockProjectEnvironment = true;
+    const status = controller.launchStatus(sessionId);
+    await environmentStarted;
+    const namespace = launchTargetTerminalNamespace(sessionId);
+    const owner = "session-renewal:preview-status";
+    assert.deepEqual(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen preview access.",
+      owner
+    }), {
+      code: "terminal_admission_busy",
+      error: "A terminal operation is still finishing.",
+      ok: false
+    });
+    blockProjectEnvironment = false;
+    releaseProjectEnvironment();
+    assert.equal((await status).ok, true);
+    assert.equal(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen preview access.",
+      owner
+    }).ok, true);
+    assert.equal(thawTerminalNamespaceAdmission(namespace, { owner }).ok, true);
+
+    assert.equal(typeof capturedLaunchTerminal?.onStop, "function");
+    assert.equal(typeof capturedLaunchTerminal?.onClose, "function");
+    holdLaunchCleanupPublication = true;
+    const realLaunchTerminal = startTerminalSession({
+      args: [
+        "-lc",
+        `"${process.execPath}" -e 'process.stdin.resume(); setInterval(() => {}, 1000);' & ` +
+          "child=$!; printf 'SHELL:%s CHILD:%s\\n' \"$$\" \"$child\"; wait \"$child\""
+      ],
+      command: "bash",
+      commandPreview: "bash launch cleanup deadline",
+      namespace,
+      onClose: capturedLaunchTerminal.onClose,
+      onStop: capturedLaunchTerminal.onStop
+    });
+    cleanupTerminalId = realLaunchTerminal.id;
+    await waitForLaunchTest(() => /SHELL:\d+ CHILD:\d+/u.test(
+      readTerminalSession(realLaunchTerminal.id, { namespace }).output
+    ));
+    const launchProcessIds = /SHELL:(\d+) CHILD:(\d+)/u.exec(
+      readTerminalSession(realLaunchTerminal.id, { namespace }).output
+    ).slice(1).map(Number);
+
+    await assert.rejects(
+      closeTerminalSession(realLaunchTerminal.id, {
+        namespace,
+        timeoutMs: 400
+      }),
+      (error) => {
+        assert.equal(error.code, "terminal_cleanup_failed");
+        assert.equal(error.errors.some((failure) => (
+          failure.code === "terminal_stop_hook_timeout" ||
+          failure.code === "terminal_close_hook_timeout"
+        )), true);
+        return true;
+      }
+    );
+    await waitForLaunchTest(() => launchProcessIds.every((pid) => !processIsAlive(pid)));
+
+    releaseLaunchCleanupPublication();
+    assert.equal((await closeTerminalSession(realLaunchTerminal.id, {
+      namespace,
+      timeoutMs: 400
+    })).closed, true);
   } finally {
+    releaseLaunchCleanupPublication?.();
     await controller?.close();
     await rm(root, {
       force: true,
@@ -238,6 +384,32 @@ test("launch start reruns and awaits a changed workspace recipe", async () => {
     });
   }
 });
+
+async function waitForLaunchTest(predicate, {
+  intervalMs = 25,
+  timeoutMs = 2000
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  assert.fail("Timed out waiting for launch terminal state.");
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
+}
 
 async function createLaunchSpecFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-launch-spec-"));

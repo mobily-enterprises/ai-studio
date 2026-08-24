@@ -255,9 +255,14 @@ function launchControlsSessionCanRun(session = {}) {
 
 function launchControlsCanLoadTargets({
   displayed = true,
-  session = {}
+  session = {},
+  sourceOperationsSuspended = false
 } = {}) {
-  return Boolean(displayed && launchControlsSessionCanRun(session));
+  return Boolean(
+    displayed &&
+    sourceOperationsSuspended !== true &&
+    launchControlsSessionCanRun(session)
+  );
 }
 
 function launchControlScopeKey(projectSlug = "", sessionId = "") {
@@ -364,6 +369,15 @@ function launchStatusErrorText({
     requestPath
   ].filter(Boolean).join(", ");
   return details ? `${message} (${details})` : message;
+}
+
+function launchStatusAgentWriteBusy(error = null) {
+  return String(
+    error?.code ||
+    error?.response?.code ||
+    error?.response?.errors?.[0]?.code ||
+    ""
+  ).trim() === "vibe64_agent_write_mode_busy";
 }
 
 function browserSessionStorage() {
@@ -649,6 +663,7 @@ function useVibe64LaunchControls({
   busy = () => false,
   previewDisplayed = () => true,
   session = null,
+  sourceOperationsSuspended = () => false,
   windowDisplayed = () => true
 } = {}) {
   const paths = usePaths();
@@ -662,6 +677,7 @@ function useVibe64LaunchControls({
   const autoStartCooldownVersion = ref(0);
   const launchStatusAttempt = ref(0);
   const launchTargetsSettledForAutoStart = ref(false);
+  const sourceOperationsResumePending = ref(false);
   let attachedTerminalId = "";
   let autoStartTimer = 0;
   let autoStartCooldownTimer = 0;
@@ -684,9 +700,13 @@ function useVibe64LaunchControls({
   ));
   const terminalDisplayed = computed(() => readRefOrGetterValue(windowDisplayed) !== false);
   const previewPaneDisplayed = computed(() => readRefOrGetterValue(previewDisplayed) !== false);
+  const launchSourceOperationsSuspended = computed(() => (
+    readRefOrGetterValue(sourceOperationsSuspended) === true
+  ));
   const canLoadLaunchTargets = computed(() => launchControlsCanLoadTargets({
     displayed: terminalDisplayed.value,
-    session: selectedSession.value || {}
+    session: selectedSession.value || {},
+    sourceOperationsSuspended: launchSourceOperationsSuspended.value
   }));
   const sessionsApiPath = computed(() => paths.api(VIBE64_SESSIONS_API_SUFFIX, {
     surface: VIBE64_SURFACE_ID
@@ -828,11 +848,20 @@ function useVibe64LaunchControls({
   });
 
   const status = computed(() => launchTargetsResource.data.value || {});
-  const launchStatusLoadError = computed(() => launchStatusErrorText({
-    error: launchTargetsResource.query?.error?.value || null,
-    fallback: launchTargetsResource.loadError.value,
-    path: launchTargetsPath.value
-  }));
+  const launchStatusLoadError = computed(() => {
+    const error = launchTargetsResource.query?.error?.value || null;
+    if (
+      sourceOperationsResumePending.value &&
+      launchStatusAgentWriteBusy(error)
+    ) {
+      return "";
+    }
+    return launchStatusErrorText({
+      error,
+      fallback: launchTargetsResource.loadError.value,
+      path: launchTargetsPath.value
+    });
+  });
   const preview = computed(() => launchPreviewFromStatus(status.value));
   const previewIdentity = computed(() => {
     const value = status.value.previewIdentity;
@@ -1088,7 +1117,8 @@ function useVibe64LaunchControls({
       !currentSessionId ||
       !launchControlsCanLoadTargets({
         displayed: terminalDisplayed.value,
-        session: currentSession
+        session: currentSession,
+        sourceOperationsSuspended: launchSourceOperationsSuspended.value
       }) ||
       !terminalDisplayed.value ||
       operationBusy.value ||
@@ -1121,7 +1151,8 @@ function useVibe64LaunchControls({
         startedScopeKey !== launchScopeKey.value ||
         !launchControlsCanLoadTargets({
           displayed: terminalDisplayed.value,
-          session: selectedSession.value || {}
+          session: selectedSession.value || {},
+          sourceOperationsSuspended: launchSourceOperationsSuspended.value
         })
       ) {
         return false;
@@ -1258,6 +1289,28 @@ function useVibe64LaunchControls({
       sessionId: sessionId.value
     });
   }
+
+  watch(launchSourceOperationsSuspended, (suspended, wasSuspended) => {
+    if (suspended) {
+      sourceOperationsResumePending.value = true;
+      return;
+    }
+    if (wasSuspended !== true) {
+      return;
+    }
+    const resumeScopeKey = launchScopeKey.value;
+    void Promise.resolve(refresh({ scopeKey: resumeScopeKey })).finally(() => {
+      if (
+        !launchSourceOperationsSuspended.value &&
+        launchScopeKey.value === resumeScopeKey
+      ) {
+        sourceOperationsResumePending.value = false;
+      }
+    });
+  }, {
+    flush: "sync",
+    immediate: true
+  });
 
   useRealtimeEvent({
     enabled: canLoadLaunchTargets,
@@ -1805,6 +1858,7 @@ export {
   launchBrowserTargetHref,
   launchBrowserTargetName,
   launchAutoStartAttemptStorageKey,
+  launchStatusAgentWriteBusy,
   launchStatusErrorText,
   launchStatusRetryDelay,
   launchStatusShouldRetry,

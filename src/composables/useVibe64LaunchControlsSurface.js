@@ -653,6 +653,7 @@ function useVibe64LaunchControlsSurface(props) {
     autoStartManagedPreview: () => props.autoStartManagedPreview,
     autoStartTargetId: () => props.autoStartTargetId,
     previewDisplayed: () => props.previewDisplayed,
+    sourceOperationsSuspended: () => props.sourceOperationsSuspended,
     windowDisplayed: () => props.windowDisplayed,
     busy: () => props.busy,
     session: () => props.session

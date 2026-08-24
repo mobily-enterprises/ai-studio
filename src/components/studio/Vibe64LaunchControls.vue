@@ -825,6 +825,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  sourceOperationsSuspended: {
+    default: false,
+    type: Boolean
+  },
   toolbarTeleportTarget: {
     default: "",
     type: String

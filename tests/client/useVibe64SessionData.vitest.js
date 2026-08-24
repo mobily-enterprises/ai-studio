@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  renewedSuccessorSessionId,
   sessionListRealtimeShouldRefresh,
   selectedSessionIdForCurrentAlias,
   shouldPreserveSelectedSessionDuringRefresh
@@ -22,6 +23,34 @@ import {
 } from "../../src/lib/vibe64CurrentSessionPublisher.js";
 
 describe("current session selection", () => {
+  it("uses only one exact renewed-from successor for a missing predecessor", () => {
+    const sessions = [
+      {
+        metadata: { renewed_from: "predecessor-b" },
+        sessionId: "successor-b"
+      },
+      {
+        metadata: { renewed_from: "predecessor-a" },
+        sessionId: "successor-a"
+      }
+    ];
+
+    expect(renewedSuccessorSessionId({
+      predecessorSessionId: "predecessor-a",
+      sessions
+    })).toBe("successor-a");
+    expect(renewedSuccessorSessionId({
+      predecessorSessionId: "predecessor-a",
+      sessions: [
+        ...sessions,
+        {
+          metadata: { renewed_from: "predecessor-a" },
+          sessionId: "ambiguous-successor-a"
+        }
+      ]
+    })).toBe("");
+  });
+
   it("publishes only a selection confirmed by the loaded list", () => {
     const sessions = [{ sessionId: "session-1" }, { sessionId: "session-2" }];
 

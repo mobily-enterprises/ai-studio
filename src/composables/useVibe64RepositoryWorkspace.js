@@ -77,9 +77,17 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   const sessionsApiPath = computed(() => String(
     readRefOrGetterValue(context.value.sessionsApiPath) || ""
   ).trim());
+  const sourceOperationsSuspended = computed(() => (
+    readRefOrGetterValue(context.value.sourceOperationsSuspended) === true
+  ));
+  let updateAccessRevision = 0;
 
   function requestContextKey() {
     return `${sessionsApiPath.value}\0${sessionId.value}`;
+  }
+
+  function updateCheckContextKey() {
+    return `${requestContextKey()}\0${updateAccessRevision}`;
   }
 
   function beginRequest(name) {
@@ -95,6 +103,12 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   function requestIsCurrent(request) {
     return !disposed && request?.contextKey === requestContextKey() &&
       requestRevisions[request.name] === request.revision;
+  }
+
+  function updateRequestIsCurrent(request) {
+    return requestIsCurrent(request) &&
+      request?.updateAccessRevision === updateAccessRevision &&
+      !sourceOperationsSuspended.value;
   }
 
   function invalidateRequests() {
@@ -358,10 +372,10 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   }
 
   async function checkForUpdates({ force = true } = {}) {
-    if (!sessionId.value || updates.applying) {
+    if (!sessionId.value || updates.applying || sourceOperationsSuspended.value) {
       return false;
     }
-    const contextKey = requestContextKey();
+    const contextKey = updateCheckContextKey();
     const active = updateChecks.get(contextKey);
     if (active) {
       if (force && active.force !== true) {
@@ -369,7 +383,10 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       }
       return active.promise;
     }
-    const request = beginRequest("updates");
+    const request = {
+      ...beginRequest("updates"),
+      updateAccessRevision
+    };
     updates.checking = true;
     updates.error = "";
     updates.errorCode = "";
@@ -383,7 +400,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
           body: { force },
           method: "POST"
         });
-        if (!requestIsCurrent(request)) {
+        if (!updateRequestIsCurrent(request)) {
           return false;
         }
         updates.payload = result;
@@ -398,7 +415,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         }
         return result;
       } catch (error) {
-        if (requestIsCurrent(request)) {
+        if (updateRequestIsCurrent(request)) {
           updates.error = message(error, "Updates could not be checked.");
           updates.errorCode = String(error?.code || "").trim();
           if (activeView.value === "changes") {
@@ -407,14 +424,14 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         }
         return false;
       } finally {
-        if (requestIsCurrent(request)) {
+        if (updateRequestIsCurrent(request)) {
           updates.checking = false;
         }
         const registered = updateChecks.get(contextKey);
         if (registered?.promise === promise) {
           updateChecks.delete(contextKey);
         }
-        if (!disposed && forcedUpdateFollowups.delete(contextKey) && contextKey === requestContextKey()) {
+        if (!disposed && forcedUpdateFollowups.delete(contextKey) && contextKey === updateCheckContextKey()) {
           void checkForUpdates({ force: true });
         }
       }
@@ -427,6 +444,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     const requestUpdateWork = context.value.requestUpdateWork;
     if (
       !sessionId.value ||
+      sourceOperationsSuspended.value ||
       updates.checking ||
       updates.applying ||
       !(updates.canonicalChangePending || updates.payload?.updateAvailable === true) ||
@@ -471,6 +489,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     const requestSaveWork = context.value.requestSaveWork;
     if (
       !sessionId.value ||
+      sourceOperationsSuspended.value ||
       saving.value ||
       updates.checking ||
       updates.applying ||
@@ -533,11 +552,31 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
             return;
           }
         }
-        void checkForUpdates({ force: false });
+        if (!sourceOperationsSuspended.value) {
+          void checkForUpdates({ force: false });
+        }
       }
     },
     { immediate: true }
   );
+
+  watch(sourceOperationsSuspended, (suspended, wasSuspended) => {
+    if (suspended) {
+      updateAccessRevision += 1;
+      updates.checking = false;
+      return;
+    }
+    if (wasSuspended !== true) {
+      return;
+    }
+    updateAccessRevision += 1;
+    if (sessionId.value) {
+      void checkForUpdates({ force: false });
+    }
+  }, {
+    flush: "sync",
+    immediate: true
+  });
 
   useRealtimeEvent({
     enabled: computed(() => Boolean(sessionId.value)),
@@ -601,6 +640,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     selectVersion,
     selectVersionFile,
     sessionId,
+    sourceOperationsSuspended,
     updates,
     versionDiff,
     versionFiles

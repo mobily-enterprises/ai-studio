@@ -1,4 +1,5 @@
 import {
+  ACTION_CANCEL_SESSION_RENEWAL,
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
@@ -7,22 +8,31 @@ import {
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
+  ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION,
+  ACTION_INSPECT_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION_CHANGE_DIFF,
   ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
+  ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+  ACTION_RETRY_SESSION_RENEWAL,
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_WORK
 } from "./actions.js";
 import {
   agentMessageInputValidator,
-  agentTurnInterruptInputValidator
+  agentTurnInterruptInputValidator,
+  sessionRenewalDraftGuardInputValidator,
+  sessionRenewalDraftRequestInputValidator,
+  sessionRenewalDraftUpdateInputValidator,
+  sessionRenewalRetryInputValidator
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
@@ -112,6 +122,69 @@ function registerRoutes(http, {
       });
     },
     summary: "Inspect a Vibe64 chat session."
+  });
+
+  routes.actionRoute("GET", "/sessions/:sessionId/renewal", {
+    actionId: ACTION_INSPECT_SESSION_RENEWAL,
+    buildInput: (request) => ({
+      sessionId: request.params.sessionId
+    }),
+    summary: "Inspect the resumable renewal state for a Vibe64 session."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/renewal/draft", {
+    actionId: ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+    body: sessionRenewalDraftRequestInputValidator,
+    bodyLimit: 32 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Request an editable handover draft for a Vibe64 session."
+  });
+
+  routes.actionRoute("PATCH", "/sessions/:sessionId/renewal/draft", {
+    actionId: ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+    body: sessionRenewalDraftUpdateInputValidator,
+    bodyLimit: 256 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Save an edited Vibe64 session handover draft."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/renewal/cancel", {
+    actionId: ACTION_CANCEL_SESSION_RENEWAL,
+    body: sessionRenewalDraftGuardInputValidator,
+    bodyLimit: 32 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Cancel an unconfirmed Vibe64 session renewal."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/renewal/confirm", {
+    actionId: ACTION_CONFIRM_SESSION_RENEWAL,
+    body: sessionRenewalDraftGuardInputValidator,
+    bodyLimit: 32 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Confirm the reviewed Vibe64 session handover."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/renewal/retry", {
+    actionId: ACTION_RETRY_SESSION_RENEWAL,
+    body: sessionRenewalRetryInputValidator,
+    bodyLimit: 32 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Resume a failed or interrupted Vibe64 session renewal."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/work", {
@@ -249,12 +322,17 @@ function firstValue(value) {
   return Array.isArray(value) ? value[0] || "" : value || "";
 }
 
-function withVibe64User(request, input = {}) {
+function withoutVibe64User(input = {}) {
   const {
     vibe64User: _ignored,
     ...safeInput
   } = input || {};
   void _ignored;
+  return safeInput;
+}
+
+function withVibe64User(request, input = {}) {
+  const safeInput = withoutVibe64User(input);
   return request.vibe64User
     ? {
         ...safeInput,

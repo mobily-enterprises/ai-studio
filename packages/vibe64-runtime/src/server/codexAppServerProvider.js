@@ -45,7 +45,7 @@ import {
   prepareCodexAttachmentRoot
 } from "./codexAttachmentPaths.js";
 
-const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 16;
+const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 17;
 const CODEX_APP_SERVER_PROVIDER_ID = AGENT_PROVIDER_IDS.CODEX_APP_SERVER;
 const CODEX_APP_SERVER_TRANSPORT = Object.freeze({
   UNIX: "unix"
@@ -58,7 +58,13 @@ const CODEX_APP_SERVER_LOCK_DIR = "runtime.lock";
 const CODEX_APP_SERVER_READY_TIMEOUT_MS = 15000;
 const CODEX_APP_SERVER_LIVENESS_TIMEOUT_MS = 2000;
 const CODEX_APP_SERVER_LOCK_TIMEOUT_MS = 10000;
+const CODEX_APP_SERVER_PROCESS_IDENTITY_SETTLE_TIMEOUT_MS = 1000;
+const CODEX_APP_SERVER_PROCESS_IDENTITY_SETTLE_POLL_MS = 25;
 const CODEX_APP_SERVER_LOCK_STALE_MS = 120000;
+const CODEX_APP_SERVER_PROCESS_IDENTITY_VERSION = 1;
+const CODEX_APP_SERVER_PROCESS_IDENTITY_PLATFORM = "linux-proc";
+const CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV = "VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN";
+const CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV = "VIBE64_CODEX_APP_SERVER_COMMAND_HASH";
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const CODEX_APP_SERVER_INVALID_REQUEST_CODE = -32600;
 const CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE = "vibe64_codex_model_catalog_invalid";
@@ -68,12 +74,12 @@ const CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRIES = 1000;
 const CODEX_APP_SERVER_MODEL_CATALOG_MAX_ENTRY_BYTES = 32 * 1024;
 const CODEX_APP_SERVER_MODEL_CATALOG_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
 const CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH = 512;
-const CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT = 100;
-const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_PAGES = 100;
-const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_COUNT = 1000;
-const CODEX_APP_SERVER_ECONOMY_THREAD_ID_MAX_LENGTH = 512;
-const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES = 64 * 1024;
-const CODEX_APP_SERVER_ECONOMY_THREAD_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
+const CODEX_APP_SERVER_THREAD_INVENTORY_PAGE_LIMIT = 100;
+const CODEX_APP_SERVER_THREAD_INVENTORY_MAX_PAGES = 100;
+const CODEX_APP_SERVER_THREAD_INVENTORY_MAX_COUNT = 1000;
+const CODEX_APP_SERVER_THREAD_INVENTORY_ID_MAX_LENGTH = 512;
+const CODEX_APP_SERVER_THREAD_INVENTORY_MAX_ENTRY_BYTES = 64 * 1024;
+const CODEX_APP_SERVER_THREAD_INVENTORY_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
 const CODEX_APP_SERVER_SELECTED_AUTH_MAX_BYTES = 1024 * 1024;
 const CODEX_APP_SERVER_CHATGPT_ACCESS_TOKEN_MAX_LENGTH = 256 * 1024;
 const CODEX_APP_SERVER_ACCOUNT_ID_MAX_LENGTH = 512;
@@ -102,6 +108,7 @@ const CODEX_APP_SERVER_ECONOMY_STARTUP_SCRIPT = [
   "exec /usr/bin/env -i \\",
   '  HOME="$HOME" LOGNAME="$LOGNAME" USER="$USER" PATH="$PATH" \\',
   '  CODEX_HOME="$CODEX_HOME" LANG="$LANG" LC_ALL="$LC_ALL" LC_CTYPE="$LC_CTYPE" \\',
+  `  ${CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV}="$${CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV}" ${CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV}="$${CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV}" \\`,
   '  SSL_CERT_DIR="$SSL_CERT_DIR" SSL_CERT_FILE="$SSL_CERT_FILE" TERM="$TERM" TMPDIR="$TMPDIR" TZ="$TZ" \\',
   '  "$@"'
 ].join("\n");
@@ -119,6 +126,17 @@ const CODEX_APP_SERVER_RUNTIME_STATUS = Object.freeze({
   LIVE: "live",
   MISSING: "missing",
   SUSPECT: "suspect"
+});
+const CODEX_APP_SERVER_PROCESS_STATE = Object.freeze({
+  RUNNING: "running",
+  STOPPED: "stopped"
+});
+const CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS = Object.freeze({
+  ABSENT: "absent",
+  AMBIGUOUS: "ambiguous",
+  EXACT: "exact",
+  INVALID: "invalid",
+  MISMATCH: "mismatch"
 });
 
 function delay(ms) {
@@ -448,17 +466,6 @@ function signalProcessGroup(processGroupId, signal) {
   }
 }
 
-async function waitForProcessGroupsExit(processGroupIds = [], timeoutMs = 0) {
-  const groups = [...new Set(processGroupIds
-    .map((value) => Number(value))
-    .filter((value) => Number.isSafeInteger(value) && value > 0))];
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline && groups.some(processGroupIsAlive)) {
-    await delay(100);
-  }
-  return groups.every((processGroupId) => !processGroupIsAlive(processGroupId));
-}
-
 function linuxProcessStat(value = "") {
   const text = String(value || "");
   const commandEnd = text.lastIndexOf(")");
@@ -466,73 +473,227 @@ function linuxProcessStat(value = "") {
     return null;
   }
   const fields = text.slice(commandEnd + 1).trim().split(/\s+/u);
+  const state = String(fields[0] || "");
   const parentPid = Number(fields[1]);
   const processGroupId = Number(fields[2]);
+  const startTimeTicks = String(fields[19] || "");
   if (
+    !/^[A-Z]$/u.test(state) ||
     !Number.isSafeInteger(parentPid) || parentPid < 0 ||
-    !Number.isSafeInteger(processGroupId) || processGroupId <= 0
+    !Number.isSafeInteger(processGroupId) || processGroupId <= 0 ||
+    !/^\d+$/u.test(startTimeTicks)
   ) {
     return null;
   }
   return {
     parentPid,
-    processGroupId
+    processGroupId,
+    startTimeTicks,
+    state
   };
 }
 
-async function descendantProcessGroups(rootPid = 0) {
-  const normalizedRootPid = Number(rootPid);
-  if (
-    process.platform !== "linux" ||
-    !Number.isSafeInteger(normalizedRootPid) ||
-    normalizedRootPid <= 0
-  ) {
-    return [];
+function normalizeCodexAppServerProcessIdentity(value = {}) {
+  const normalized = isPlainObject(value) ? value : {};
+  return {
+    commandHash: normalizeAgentText(normalized.commandHash),
+    platform: normalizeAgentText(normalized.platform),
+    runtimeToken: normalizeAgentText(normalized.runtimeToken),
+    startTimeTicks: normalizeAgentText(normalized.startTimeTicks),
+    version: Number(normalized.version || 0)
+  };
+}
+
+function codexAppServerProcessIdentityIsWellFormed(value = {}) {
+  const identity = normalizeCodexAppServerProcessIdentity(value);
+  return Boolean(
+    identity.version === CODEX_APP_SERVER_PROCESS_IDENTITY_VERSION &&
+    identity.platform === CODEX_APP_SERVER_PROCESS_IDENTITY_PLATFORM &&
+    /^[a-f0-9]{12}$/u.test(identity.commandHash) &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(identity.runtimeToken) &&
+    /^\d+$/u.test(identity.startTimeTicks)
+  );
+}
+
+function codexAppServerProcessMetadataIsIdentifiable(metadata = {}, runtimeDir = "") {
+  const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
+  return Boolean(
+    Number(metadata.schemaVersion) === CODEX_APP_SERVER_METADATA_SCHEMA_VERSION &&
+    metadata.provider === CODEX_APP_SERVER_PROVIDER_ID &&
+    Number.isSafeInteger(Number(metadata.pid)) && Number(metadata.pid) > 0 &&
+    (!normalizedRuntimeDir || metadata.runtimeDir === normalizedRuntimeDir) &&
+    codexAppServerProcessIdentityIsWellFormed(metadata.processIdentity) &&
+    [
+      CODEX_APP_SERVER_PROCESS_STATE.RUNNING,
+      CODEX_APP_SERVER_PROCESS_STATE.STOPPED
+    ].includes(metadata.processState)
+  );
+}
+
+function codexAppServerLegacyProcessExitIsVerified(metadata = {}, runtimeDir = "") {
+  const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
+  const pid = Number(metadata?.pid);
+  return Boolean(
+    Number(metadata?.schemaVersion) === CODEX_APP_SERVER_METADATA_SCHEMA_VERSION - 1 &&
+    metadata?.provider === CODEX_APP_SERVER_PROVIDER_ID &&
+    Number.isSafeInteger(pid) && pid > 0 &&
+    metadata?.runtimeDir === normalizedRuntimeDir &&
+    !processGroupIsAlive(pid)
+  );
+}
+
+function linuxProcessEnvironmentValue(buffer = Buffer.alloc(0), name = "") {
+  const prefix = `${name}=`;
+  for (const entry of buffer.toString("utf8").split("\0")) {
+    if (entry.startsWith(prefix)) {
+      return entry.slice(prefix.length);
+    }
   }
-  const children = new Map();
-  for (const entry of await readdir("/proc", {
+  return "";
+}
+
+async function linuxProcessRecords() {
+  const records = [];
+  const entries = await readdir("/proc", {
     withFileTypes: true
-  }).catch(() => [])) {
+  }).catch(() => []);
+  for (const entry of entries) {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) {
       continue;
     }
     const pid = Number(entry.name);
     const statValue = await readFile(`/proc/${entry.name}/stat`, "utf8").catch(() => "");
-    const stat = linuxProcessStat(statValue);
-    if (!stat) {
+    const processStat = linuxProcessStat(statValue);
+    if (!processStat || processStat.state === "Z") {
       continue;
     }
-    const siblings = children.get(stat.parentPid) || [];
-    siblings.push({
-      pid,
-      processGroupId: stat.processGroupId
+    let environment = null;
+    let environmentReadable = true;
+    try {
+      environment = await readFile(`/proc/${entry.name}/environ`);
+    } catch (error) {
+      if (String(error?.code || "") === "ENOENT") {
+        continue;
+      }
+      environmentReadable = false;
+    }
+    records.push({
+      ...processStat,
+      environment,
+      environmentReadable,
+      pid
     });
-    children.set(stat.parentPid, siblings);
   }
-  const descendants = [];
-  const pending = [...(children.get(normalizedRootPid) || [])];
-  const visited = new Set();
-  while (pending.length > 0) {
-    const child = pending.pop();
-    if (!child || visited.has(child.pid)) {
-      continue;
-    }
-    visited.add(child.pid);
-    descendants.push(child);
-    pending.push(...(children.get(child.pid) || []));
-  }
-  return [...new Set(descendants
-    .map(({ processGroupId }) => processGroupId)
-    .filter((processGroupId) => processGroupId !== normalizedRootPid))];
+  return records;
 }
 
-async function signalCodexProcessTree(rootPid = 0, signal = "SIGTERM") {
-  const descendantGroups = await descendantProcessGroups(rootPid);
-  for (const processGroupId of descendantGroups.reverse()) {
-    signalProcessGroup(processGroupId, signal);
+function normalizeCodexAppServerProcessIdentityInspection(value = {}) {
+  const status = Object.values(CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS).includes(value?.status)
+    ? value.status
+    : CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS;
+  return {
+    processGroupIds: [...new Set((Array.isArray(value?.processGroupIds)
+      ? value.processGroupIds
+      : [])
+      .map(Number)
+      .filter((processGroupId) => Number.isSafeInteger(processGroupId) && processGroupId > 0))],
+    status
+  };
+}
+
+async function inspectLinuxCodexAppServerProcessIdentity(metadata = {}) {
+  if (!codexAppServerProcessMetadataIsIdentifiable(metadata)) {
+    return {
+      processGroupIds: [],
+      status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.INVALID
+    };
   }
-  signalProcessGroup(rootPid, signal);
-  return descendantGroups;
+  if (metadata.processState === CODEX_APP_SERVER_PROCESS_STATE.STOPPED) {
+    return {
+      processGroupIds: [],
+      status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT
+    };
+  }
+  if (process.platform !== "linux") {
+    return {
+      processGroupIds: [],
+      status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS
+    };
+  }
+  const identity = metadata.processIdentity;
+  const records = await linuxProcessRecords();
+  const rootProcessGroupId = Number(metadata.pid);
+  const rootGroupMembers = records.filter(({ processGroupId }) => processGroupId === rootProcessGroupId);
+  const exactRecords = [];
+  const rootUnreadable = rootGroupMembers.some(({ environmentReadable }) => !environmentReadable);
+  for (const record of records) {
+    if (!record.environmentReadable) {
+      continue;
+    }
+    const runtimeToken = linuxProcessEnvironmentValue(
+      record.environment,
+      CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV
+    );
+    const commandHash = linuxProcessEnvironmentValue(
+      record.environment,
+      CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV
+    );
+    if (runtimeToken === identity.runtimeToken && commandHash === identity.commandHash) {
+      exactRecords.push(record);
+    }
+  }
+  const exactLeader = exactRecords.find(({ pid }) => pid === rootProcessGroupId);
+  if (exactLeader && exactLeader.startTimeTicks !== identity.startTimeTicks) {
+    return {
+      processGroupIds: [],
+      status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS
+    };
+  }
+  if (exactRecords.length === 0) {
+    if (rootUnreadable) {
+      return {
+        processGroupIds: [],
+        status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS
+      };
+    }
+    return {
+      processGroupIds: [],
+      status: rootGroupMembers.length > 0 || processGroupIsAlive(rootProcessGroupId)
+        ? CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.MISMATCH
+        : CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT
+    };
+  }
+  const processGroupIds = [...new Set(exactRecords.map(({ processGroupId }) => processGroupId))];
+  for (const processGroupId of processGroupIds) {
+    const groupMembers = records.filter((record) => record.processGroupId === processGroupId);
+    if (groupMembers.some((record) => (
+      !record.environmentReadable || !exactRecords.some(({ pid }) => pid === record.pid)
+    ))) {
+      return {
+        processGroupIds: [],
+        status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS
+      };
+    }
+  }
+  if (
+    rootGroupMembers.some((record) => !exactRecords.some(({ pid }) => pid === record.pid))
+  ) {
+    return {
+      processGroupIds: [],
+      status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS
+    };
+  }
+  return {
+    processGroupIds,
+    status: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT
+  };
+}
+
+async function inspectCodexAppServerProcessIdentity(metadata = {}, options = {}) {
+  const inspector = typeof options.processIdentityInspector === "function"
+    ? options.processIdentityInspector
+    : inspectLinuxCodexAppServerProcessIdentity;
+  return normalizeCodexAppServerProcessIdentityInspection(await inspector(metadata));
 }
 
 async function ensurePrivateDirectory(dirPath = "") {
@@ -857,20 +1018,6 @@ function codexAppServerRuntimeDirIsManaged(runtimeDir = "") {
     basename.startsWith(`${CODEX_APP_SERVER_RUNTIME_DIR_NAME}-`);
 }
 
-async function codexAppServerRuntimeProcessState(runtimeDir = "") {
-  const metadata = await readCodexAppServerMetadata(runtimeDir);
-  if (!metadata?.pid) {
-    return {
-      hasMetadata: Boolean(metadata),
-      alive: false
-    };
-  }
-  return {
-    hasMetadata: true,
-    alive: processGroupIsAlive(metadata.pid)
-  };
-}
-
 async function removeCodexAppServerRuntimeDir(runtimeDir = "") {
   const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
   if (!codexAppServerRuntimeDirIsManaged(normalizedRuntimeDir)) {
@@ -883,40 +1030,202 @@ async function removeCodexAppServerRuntimeDir(runtimeDir = "") {
   return true;
 }
 
-async function stopCodexAppServerProcessGroup(pid) {
-  const normalizedPid = Number(pid);
-  if (!Number.isSafeInteger(normalizedPid) || normalizedPid <= 0 || !processGroupIsAlive(normalizedPid)) {
+async function waitForCodexAppServerProcessIdentityExit(metadata = {}, options = {}, timeoutMs = 0) {
+  const deadline = Date.now() + timeoutMs;
+  let inspection = await inspectCodexAppServerProcessIdentity(metadata, options);
+  while (
+    Date.now() < deadline &&
+    inspection.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT
+  ) {
+    await delay(100);
+    inspection = await inspectCodexAppServerProcessIdentity(metadata, options);
+  }
+  return inspection;
+}
+
+async function waitForCodexAppServerProcessIdentityToSettle(metadata = {}, options = {}) {
+  const timeoutMs = normalizePositiveInteger(
+    options.processIdentitySettleTimeoutMs,
+    CODEX_APP_SERVER_PROCESS_IDENTITY_SETTLE_TIMEOUT_MS
+  );
+  const pollMs = normalizePositiveInteger(
+    options.processIdentitySettlePollMs,
+    CODEX_APP_SERVER_PROCESS_IDENTITY_SETTLE_POLL_MS
+  );
+  const deadline = Date.now() + timeoutMs;
+  let inspection = await inspectCodexAppServerProcessIdentity(metadata, options);
+  while (
+    inspection.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS &&
+    Date.now() < deadline
+  ) {
+    await delay(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+    inspection = await inspectCodexAppServerProcessIdentity(metadata, options);
+  }
+  return inspection;
+}
+
+async function signalVerifiedCodexAppServerProcessGroups(metadata = {}, signal = "SIGTERM", options = {}) {
+  const signalProcessGroupImpl = typeof options.signalProcessGroup === "function"
+    ? options.signalProcessGroup
+    : signalProcessGroup;
+  const initial = await waitForCodexAppServerProcessIdentityToSettle(metadata, options);
+  if (initial.status !== CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT) {
     return {
-      stopped: false
+      inspection: initial,
+      signaledProcessGroups: []
     };
   }
-  let descendantGroups = await signalCodexProcessTree(normalizedPid, "SIGTERM");
-  let stopped = await waitForProcessGroupsExit([normalizedPid, ...descendantGroups], 3000);
-  if (!stopped) {
-    descendantGroups = [
-      ...new Set([
-        ...descendantGroups,
-        ...await signalCodexProcessTree(normalizedPid, "SIGKILL")
-      ])
-    ];
-    stopped = await waitForProcessGroupsExit([normalizedPid, ...descendantGroups], 1000);
+  const rootProcessGroupId = Number(metadata.pid);
+  const orderedProcessGroupIds = [
+    ...initial.processGroupIds.filter((processGroupId) => processGroupId !== rootProcessGroupId),
+    ...initial.processGroupIds.filter((processGroupId) => processGroupId === rootProcessGroupId)
+  ];
+  const signaledProcessGroups = [];
+  for (const processGroupId of orderedProcessGroupIds) {
+    const current = await waitForCodexAppServerProcessIdentityToSettle(metadata, options);
+    if (
+      current.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT ||
+      current.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.MISMATCH
+    ) {
+      return {
+        inspection: current,
+        signaledProcessGroups
+      };
+    }
+    if (current.status !== CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT) {
+      return {
+        inspection: current,
+        signaledProcessGroups
+      };
+    }
+    if (!current.processGroupIds.includes(processGroupId)) {
+      continue;
+    }
+    signalProcessGroupImpl(processGroupId, signal);
+    signaledProcessGroups.push(processGroupId);
   }
   return {
-    descendantProcessGroups: descendantGroups,
-    pid: normalizedPid,
-    stopped
+    inspection: await waitForCodexAppServerProcessIdentityToSettle(metadata, options),
+    signaledProcessGroups
   };
 }
 
-async function stopCodexAppServerProcess(runtimeDir = "") {
-  const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
-  if (!codexAppServerRuntimeDirIsManaged(normalizedRuntimeDir)) {
+async function stopCodexAppServerProcessGroup(metadata = {}, options = {}) {
+  if (!codexAppServerProcessMetadataIsIdentifiable(metadata)) {
     return {
+      identityStatus: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.INVALID,
+      processExitVerified: false,
+      stopped: false
+    };
+  }
+  if (
+    metadata.processState === CODEX_APP_SERVER_PROCESS_STATE.STOPPED &&
+    metadata.processExitVerifiedAt
+  ) {
+    return {
+      alreadyStopped: true,
+      identityStatus: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT,
+      processExitVerified: true,
+      stopped: false
+    };
+  }
+  const before = await waitForCodexAppServerProcessIdentityToSettle(metadata, options);
+  if (
+    before.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT ||
+    before.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.MISMATCH
+  ) {
+    return {
+      identityStatus: before.status,
+      processExitVerified: true,
+      stopped: false
+    };
+  }
+  if (before.status !== CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT) {
+    return {
+      identityStatus: before.status,
+      processExitVerified: false,
+      stopped: false
+    };
+  }
+  const term = await signalVerifiedCodexAppServerProcessGroups(metadata, "SIGTERM", options);
+  if (term.inspection.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS) {
+    return {
+      identityStatus: term.inspection.status,
+      processExitVerified: false,
+      signaledProcessGroups: term.signaledProcessGroups,
+      stopped: false
+    };
+  }
+  let after = await waitForCodexAppServerProcessIdentityExit(
+    metadata,
+    options,
+    normalizePositiveInteger(options.termTimeoutMs, 3000)
+  );
+  let signaledProcessGroups = [...term.signaledProcessGroups];
+  if (after.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT) {
+    const kill = await signalVerifiedCodexAppServerProcessGroups(metadata, "SIGKILL", options);
+    signaledProcessGroups = [...new Set([
+      ...signaledProcessGroups,
+      ...kill.signaledProcessGroups
+    ])];
+    if (kill.inspection.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.AMBIGUOUS) {
+      return {
+        identityStatus: kill.inspection.status,
+        processExitVerified: false,
+        signaledProcessGroups,
+        stopped: false
+      };
+    }
+    after = await waitForCodexAppServerProcessIdentityExit(
+      metadata,
+      options,
+      normalizePositiveInteger(options.killTimeoutMs, 1000)
+    );
+  }
+  const processExitVerified = [
+    CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT,
+    CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.MISMATCH
+  ].includes(after.status);
+  return {
+    descendantProcessGroups: signaledProcessGroups.filter((processGroupId) => (
+      processGroupId !== Number(metadata.pid)
+    )),
+    identityStatus: after.status,
+    pid: Number(metadata.pid),
+    processExitVerified,
+    signaledProcessGroups,
+    stopped: processExitVerified && signaledProcessGroups.length > 0
+  };
+}
+
+async function stopCodexAppServerProcess(runtimeDir = "", options = {}) {
+  const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
+  if (!normalizedRuntimeDir) {
+    return {
+      processExitVerified: false,
       stopped: false
     };
   }
   const metadata = await readCodexAppServerMetadata(normalizedRuntimeDir);
-  return stopCodexAppServerProcessGroup(metadata?.pid);
+  if (!codexAppServerProcessMetadataIsIdentifiable(metadata, normalizedRuntimeDir)) {
+    if (
+      options.allowDeadLegacyRuntimeReplacement === true &&
+      codexAppServerLegacyProcessExitIsVerified(metadata, normalizedRuntimeDir)
+    ) {
+      return {
+        identityStatus: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT,
+        legacyRuntime: true,
+        processExitVerified: true,
+        stopped: false
+      };
+    }
+    return {
+      identityStatus: CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.INVALID,
+      processExitVerified: false,
+      stopped: false
+    };
+  }
+  return stopCodexAppServerProcessGroup(metadata, options);
 }
 
 async function removeCodexAppServerMetadataTemps(runtimeDir = "") {
@@ -931,11 +1240,18 @@ async function removeCodexAppServerMetadataTemps(runtimeDir = "") {
     .map((name) => rm(path.join(runtimeDir, name), { force: true })));
 }
 
-async function cleanupFailedCodexEconomyRuntimeStart(runtimeDir = "", pid = null) {
+async function cleanupFailedCodexEconomyRuntimeStart(runtimeDir = "", pid = null, processIdentity = null, options = {}) {
   let processStop = { stopped: false };
   let processCleanupFailed = false;
   try {
-    processStop = await stopCodexAppServerProcessGroup(pid);
+    processStop = await stopCodexAppServerProcessGroup({
+      pid: Number(pid),
+      processIdentity,
+      processState: CODEX_APP_SERVER_PROCESS_STATE.RUNNING,
+      provider: CODEX_APP_SERVER_PROVIDER_ID,
+      runtimeDir: normalizeAgentText(runtimeDir),
+      schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION
+    }, options);
   } catch {
     processCleanupFailed = true;
   }
@@ -947,13 +1263,11 @@ async function cleanupFailedCodexEconomyRuntimeStart(runtimeDir = "", pid = null
     rm(codexAppServerMetadataPath(runtimeDir), { force: true }),
     removeCodexAppServerMetadataTemps(runtimeDir)
   ]);
-  const normalizedPid = Number(pid);
-  const processAlive = Number.isSafeInteger(normalizedPid) && normalizedPid > 0
-    ? processGroupIsAlive(normalizedPid)
-    : false;
   return {
     ...processStop,
-    cleanupFailed: processCleanupFailed || processAlive || removals.some(({ status }) => status === "rejected")
+    cleanupFailed: processCleanupFailed ||
+      processStop.processExitVerified !== true ||
+      removals.some(({ status }) => status === "rejected")
   };
 }
 
@@ -963,41 +1277,85 @@ function codexAppServerRuntimeCleanupCanSkip(error) {
 
 async function stopCodexAppServerRuntime(options = {}) {
   const runtimeDir = normalizeAgentText(options.runtimeDir);
-  const processStop = runtimeDir
-    ? await stopCodexAppServerProcess(runtimeDir)
-    : {
-        stopped: false
-      };
-  const runtimeProcessState = runtimeDir
-    ? await codexAppServerRuntimeProcessState(runtimeDir)
-    : {
-        alive: false,
-        hasMetadata: false
-      };
+  const preserveProcessExitProof = options.preserveProcessExitProof === true;
+  if (!runtimeDir || !codexAppServerRuntimeDirIsManaged(runtimeDir)) {
+    return {
+      processExitVerified: false,
+      runtimeDirPreserved: false,
+      runtimeDirRemoved: false,
+      stopped: false
+    };
+  }
+  let releaseLock;
+  try {
+    releaseLock = await acquireRuntimeLock(runtimeDir, options);
+  } catch (error) {
+    if (!codexAppServerRuntimeCleanupCanSkip(error)) {
+      throw error;
+    }
+    return {
+      processExitVerified: false,
+      runtimeDirCleanupError: String(error?.message || error || ""),
+      runtimeDirCleanupSkipped: String(error?.code || "") !== "ENOENT",
+      runtimeDirPreserved: false,
+      runtimeDirRemoved: false,
+      stopped: false
+    };
+  }
   let runtimeDirRemoved = false;
   let runtimeDirCleanupSkipped = false;
   let runtimeDirCleanupError = "";
-  if (
-    runtimeDir &&
-    (
-      processStop.stopped === true ||
-      (runtimeProcessState.hasMetadata && !runtimeProcessState.alive)
-    )
-  ) {
-    try {
-      runtimeDirRemoved = await removeCodexAppServerRuntimeDir(runtimeDir);
-    } catch (error) {
-      if (!codexAppServerRuntimeCleanupCanSkip(error)) {
-        throw error;
-      }
-      runtimeDirCleanupSkipped = true;
-      runtimeDirCleanupError = String(error?.message || error || "");
+  let runtimeDirPreserved = false;
+  let processStop = {
+    processExitVerified: false,
+    stopped: false
+  };
+  try {
+    const existing = await readCodexAppServerMetadata(runtimeDir);
+    if (!existing) {
+      return {
+        processExitVerified: false,
+        runtimeDirPreserved: false,
+        runtimeDirRemoved: false,
+        stopped: false
+      };
     }
+    processStop = await stopCodexAppServerProcess(runtimeDir, options);
+    if (processStop.processExitVerified === true && preserveProcessExitProof) {
+      const metadata = await readCodexAppServerMetadata(runtimeDir);
+      if (!codexAppServerProcessMetadataIsIdentifiable(metadata, runtimeDir)) {
+        return {
+          ...processStop,
+          processExitVerified: false,
+          runtimeDirPreserved: false,
+          runtimeDirRemoved: false
+        };
+      }
+      await writeCodexAppServerMetadata(runtimeDir, {
+        ...metadata,
+        processExitVerifiedAt: metadata.processExitVerifiedAt || new Date().toISOString(),
+        processState: CODEX_APP_SERVER_PROCESS_STATE.STOPPED
+      });
+      runtimeDirPreserved = true;
+    } else if (processStop.processExitVerified === true) {
+      try {
+        runtimeDirRemoved = await removeCodexAppServerRuntimeDir(runtimeDir);
+      } catch (error) {
+        if (!codexAppServerRuntimeCleanupCanSkip(error)) {
+          throw error;
+        }
+        runtimeDirCleanupSkipped = true;
+        runtimeDirCleanupError = String(error?.message || error || "");
+      }
+    }
+  } finally {
+    await releaseLock();
   }
   return {
     ...processStop,
     runtimeDirCleanupError,
     runtimeDirCleanupSkipped,
+    runtimeDirPreserved,
     runtimeDirRemoved
   };
 }
@@ -1158,6 +1516,9 @@ function normalizeCodexAppServerMetadata(metadata = {}) {
     logPath: normalizeAgentText(normalized.logPath),
     pid: Number.isSafeInteger(Number(normalized.pid)) ? Number(normalized.pid) : null,
     processCwd: normalizeAgentText(normalized.processCwd),
+    processExitVerifiedAt: normalizeAgentText(normalized.processExitVerifiedAt),
+    processIdentity: normalizeCodexAppServerProcessIdentity(normalized.processIdentity),
+    processState: normalizeAgentText(normalized.processState),
     provider: normalizeAgentText(normalized.provider),
     readyz: normalizeAgentText(normalized.readyz),
     runtimeDir: normalizeAgentText(normalized.runtimeDir),
@@ -1193,6 +1554,8 @@ function codexAppServerMetadataIsWellFormed(metadata = {}, options = {}) {
     metadata.executionContextHash === expectedExecutionContextHash &&
     metadata.executionMode === expectedExecutionMode &&
     metadata.processCwd &&
+    codexAppServerProcessMetadataIsIdentifiable(metadata) &&
+    metadata.processState === CODEX_APP_SERVER_PROCESS_STATE.RUNNING &&
     (!expectedEconomyProcessCwd || metadata.processCwd === expectedEconomyProcessCwd) &&
     metadata.provider === CODEX_APP_SERVER_PROVIDER_ID &&
     metadata.runtimesHash === expectedRuntimesHash &&
@@ -1293,6 +1656,18 @@ function codexAppServerLivenessTimeoutMs(options = {}) {
 
 async function codexAppServerRuntimeStatus(metadata = {}, options = {}) {
   const normalized = normalizeCodexAppServerMetadata(metadata);
+  if (
+    codexAppServerProcessMetadataIsIdentifiable(normalized) &&
+    normalized.processState === CODEX_APP_SERVER_PROCESS_STATE.STOPPED &&
+    normalized.processExitVerifiedAt
+  ) {
+    return {
+      metadata: normalized,
+      replace: true,
+      reusable: false,
+      status: CODEX_APP_SERVER_RUNTIME_STATUS.EXITED
+    };
+  }
   if (!codexAppServerMetadataIsWellFormed(normalized, options)) {
     return {
       metadata: normalized,
@@ -1310,15 +1685,35 @@ async function codexAppServerRuntimeStatus(metadata = {}, options = {}) {
       status: CODEX_APP_SERVER_RUNTIME_STATUS.INCOMPATIBLE
     };
   }
-  const runtimeProcessGroupIsAlive = typeof options.processGroupIsAlive === "function"
-    ? options.processGroupIsAlive(normalized.pid)
-    : processGroupIsAlive(normalized.pid);
-  if (!runtimeProcessGroupIsAlive) {
+  let processIdentity = null;
+  if (typeof options.processGroupIsAlive === "function") {
+    const alive = options.processGroupIsAlive(normalized.pid);
+    processIdentity = {
+      processGroupIds: alive ? [normalized.pid] : [],
+      status: alive
+        ? CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT
+        : CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT
+    };
+  } else {
+    processIdentity = await inspectCodexAppServerProcessIdentity(normalized, options);
+  }
+  if (
+    processIdentity.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.ABSENT ||
+    processIdentity.status === CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.MISMATCH
+  ) {
     return {
       metadata: normalized,
       replace: true,
       reusable: false,
       status: CODEX_APP_SERVER_RUNTIME_STATUS.EXITED
+    };
+  }
+  if (processIdentity.status !== CODEX_APP_SERVER_PROCESS_IDENTITY_STATUS.EXACT) {
+    return {
+      metadata: normalized,
+      replace: false,
+      reusable: false,
+      status: CODEX_APP_SERVER_RUNTIME_STATUS.SUSPECT
     };
   }
   const endpoint = await codexAppServerEndpointStatus(normalized.endpoint, {
@@ -1458,6 +1853,65 @@ async function waitForCodexAppServer(endpoint = "", {
   return false;
 }
 
+function codexAppServerProcessCommandHash({
+  codexArgs = [],
+  codexCommand = "",
+  executionMode = "",
+  processCwd = "",
+  runtimeDir = ""
+} = {}) {
+  return stableHash(JSON.stringify({
+    codexArgs,
+    codexCommand: normalizeAgentText(codexCommand),
+    executionMode: codexAppServerExecutionMode({ executionMode }),
+    processCwd: normalizeAgentText(processCwd),
+    runtimeDir: normalizeAgentText(runtimeDir)
+  }));
+}
+
+async function captureCodexAppServerProcessIdentity({
+  commandHash = "",
+  pid = null,
+  reportedIdentity = null,
+  runtimeToken = ""
+} = {}) {
+  const expectedCommandHash = normalizeAgentText(commandHash);
+  const expectedRuntimeToken = normalizeAgentText(runtimeToken);
+  const reported = normalizeCodexAppServerProcessIdentity(reportedIdentity);
+  if (
+    codexAppServerProcessIdentityIsWellFormed(reported) &&
+    reported.commandHash === expectedCommandHash &&
+    reported.runtimeToken === expectedRuntimeToken
+  ) {
+    return reported;
+  }
+  const normalizedPid = Number(pid);
+  if (
+    process.platform !== "linux" ||
+    !Number.isSafeInteger(normalizedPid) ||
+    normalizedPid <= 0
+  ) {
+    const error = new Error("Codex app-server process identity could not be captured.");
+    error.code = "vibe64_codex_app_server_process_identity_unavailable";
+    throw error;
+  }
+  const processStat = linuxProcessStat(
+    await readFile(`/proc/${normalizedPid}/stat`, "utf8").catch(() => "")
+  );
+  if (!processStat || processStat.processGroupId !== normalizedPid) {
+    const error = new Error("Codex app-server process identity could not be captured.");
+    error.code = "vibe64_codex_app_server_process_identity_unavailable";
+    throw error;
+  }
+  return {
+    commandHash: expectedCommandHash,
+    platform: CODEX_APP_SERVER_PROCESS_IDENTITY_PLATFORM,
+    runtimeToken: expectedRuntimeToken,
+    startTimeTicks: processStat.startTimeTicks,
+    version: CODEX_APP_SERVER_PROCESS_IDENTITY_VERSION
+  };
+}
+
 async function startCodexAppServerProcess({
   accountIdentitySignature = "",
   authStateSignature = "",
@@ -1466,11 +1920,15 @@ async function startCodexAppServerProcess({
   env = process.env,
   executionRoot = "",
   executionMode = CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
+  killTimeoutMs = 0,
+  processIdentityInspector = null,
   readyTimeoutMs = CODEX_APP_SERVER_READY_TIMEOUT_MS,
+  signalProcessGroup: signalProcessGroupOverride = null,
   systemRoot = "",
   project = {},
   session = {},
   terminalEnv = {},
+  termTimeoutMs = 0,
   toolHomeSource = "",
   userKey = "",
   WebSocketImpl = WebSocket,
@@ -1484,6 +1942,12 @@ async function startCodexAppServerProcess({
     workdir
   })
 } = {}) {
+  const processLifecycleOptions = {
+    killTimeoutMs,
+    processIdentityInspector,
+    signalProcessGroup: signalProcessGroupOverride,
+    termTimeoutMs
+  };
   await ensureWritablePrivateDirectory(runtimeDir);
   const economy = codexAppServerExecutionMode({ executionMode }) ===
     CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY;
@@ -1521,7 +1985,7 @@ async function startCodexAppServerProcess({
   const projectTrustOverride = economy ? "" : codexAppServerProjectTrustOverride(workdir);
   const normalizedTerminalEnv = normalizeCodexAppServerTerminalEnv(economy ? {} : terminalEnv);
   const normalizedRuntimes = codexAppServerRuntimes(economy ? [] : runtimes);
-  const baseEnv = economy
+  const commandBaseEnv = economy
     ? codexAppServerEconomyCommandBaseEnv(env, economyHome)
     : codexAppServerCommandBaseEnv({
         env,
@@ -1544,6 +2008,19 @@ async function startCodexAppServerProcess({
     "--listen",
     endpoint
   ];
+  const runtimeToken = randomUUID();
+  const commandHash = codexAppServerProcessCommandHash({
+    codexArgs,
+    codexCommand,
+    executionMode,
+    processCwd,
+    runtimeDir
+  });
+  const baseEnv = {
+    ...commandBaseEnv,
+    [CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV]: commandHash,
+    [CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV]: runtimeToken
+  };
   const startResult = await commandRunner({
     actor: "app",
     allowedRoots: processCwd ? [processCwd] : [],
@@ -1574,7 +2051,18 @@ async function startCodexAppServerProcess({
   });
   if (!startResult.ok) {
     if (economy) {
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, startResult.pid);
+      const failedProcessIdentity = await captureCodexAppServerProcessIdentity({
+        commandHash,
+        pid: startResult.pid,
+        reportedIdentity: startResult.processIdentity,
+        runtimeToken
+      }).catch(() => null);
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
+        runtimeDir,
+        startResult.pid,
+        failedProcessIdentity,
+        processLifecycleOptions
+      );
       const error = new Error("Codex isolated economy runtime failed to start.");
       error.code = cleanup.cleanupFailed
         ? "vibe64_codex_economy_runtime_cleanup_required"
@@ -1584,6 +2072,13 @@ async function startCodexAppServerProcess({
     }
     throw new Error(startResult.output || startResult.error || "Codex app-server failed to start.");
   }
+
+  const processIdentity = await captureCodexAppServerProcessIdentity({
+    commandHash,
+    pid: startResult.pid,
+    reportedIdentity: startResult.processIdentity,
+    runtimeToken
+  });
 
   const ready = await waitForCodexAppServer(endpoint, {
     timeoutMs: readyTimeoutMs,
@@ -1602,7 +2097,12 @@ async function startCodexAppServerProcess({
       });
     }
     if (economy) {
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, startResult.pid);
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
+        runtimeDir,
+        startResult.pid,
+        processIdentity,
+        processLifecycleOptions
+      );
       const error = new Error("Codex isolated economy runtime did not become ready.");
       error.code = cleanup.cleanupFailed
         ? "vibe64_codex_economy_runtime_cleanup_required"
@@ -1635,6 +2135,8 @@ async function startCodexAppServerProcess({
     logPath,
     pid: Number.isSafeInteger(Number(startResult.pid)) ? Number(startResult.pid) : null,
     processCwd,
+    processIdentity,
+    processState: CODEX_APP_SERVER_PROCESS_STATE.RUNNING,
     provider: CODEX_APP_SERVER_PROVIDER_ID,
     readyz: "",
     runtimeDir,
@@ -1688,8 +2190,18 @@ async function ensureCodexAppServerRuntime(options = {}) {
       };
     }
 
-    if (!afterLockStatus || afterLockStatus.replace !== false) {
-      await stopCodexAppServerProcess(runtimeDir);
+    if (afterLock && (!afterLockStatus || afterLockStatus.replace !== false)) {
+      const stopped = await stopCodexAppServerProcess(runtimeDir, {
+        ...runtimeOptions,
+        allowDeadLegacyRuntimeReplacement: true
+      });
+      if (stopped.processExitVerified !== true) {
+        const error = new Error(
+          "Existing Codex app-server process identity could not be verified for replacement."
+        );
+        error.code = "vibe64_codex_app_server_process_identity_unverified";
+        throw error;
+      }
     }
 
     const started = await startCodexAppServerProcess({
@@ -1702,7 +2214,12 @@ async function ensureCodexAppServerRuntime(options = {}) {
       if (!codexAppServerIsEconomy(runtimeOptions)) {
         throw error;
       }
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(runtimeDir, started.pid);
+      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
+        runtimeDir,
+        started.pid,
+        started.processIdentity,
+        runtimeOptions
+      );
       const failure = new Error("Codex isolated economy runtime metadata could not be recorded.");
       failure.code = cleanup.cleanupFailed
         ? "vibe64_codex_economy_runtime_cleanup_required"
@@ -2076,6 +2593,115 @@ function codexCliResumeCommand({
   };
 }
 
+function codexAppServerThreadInventoryError(errorCode, label, detail) {
+  const error = new Error(`Codex ${label} thread inventory ${detail}.`);
+  error.code = errorCode;
+  return error;
+}
+
+async function listBoundedCodexAppServerThreadIds({
+  archived = false,
+  client,
+  cwd = "",
+  errorCode = "",
+  label = "",
+  requestLabel = "",
+  runRequest,
+  signal = null,
+  state,
+  verifyCwd = false
+} = {}) {
+  const seenCursors = new Set();
+  let cursor = "";
+  for (let page = 0; page < CODEX_APP_SERVER_THREAD_INVENTORY_MAX_PAGES; page += 1) {
+    if (cursor && seenCursors.has(cursor)) {
+      throw codexAppServerThreadInventoryError(
+        errorCode,
+        label,
+        "repeated a pagination cursor"
+      );
+    }
+    if (cursor) {
+      seenCursors.add(cursor);
+    }
+    const response = await runRequest(
+      () => client.request("thread/list", {
+        archived,
+        ...(cursor ? { cursor } : {}),
+        cwd,
+        limit: CODEX_APP_SERVER_THREAD_INVENTORY_PAGE_LIMIT,
+        sourceKinds: ["appServer"],
+        useStateDbOnly: false
+      }, { signal }),
+      requestLabel
+    );
+    if (
+      !Array.isArray(response?.data) ||
+      response.data.length > CODEX_APP_SERVER_THREAD_INVENTORY_PAGE_LIMIT ||
+      state.entryCount + response.data.length > CODEX_APP_SERVER_THREAD_INVENTORY_MAX_COUNT
+    ) {
+      throw codexAppServerThreadInventoryError(
+        errorCode,
+        label,
+        "exceeded its entry limit"
+      );
+    }
+    for (const entry of response.data) {
+      const threadId = normalizeAgentText(entry?.id);
+      const threadCwd = normalizeAgentText(entry?.cwd);
+      let entryBytes = 0;
+      try {
+        entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+      } catch {
+        entryBytes = CODEX_APP_SERVER_THREAD_INVENTORY_MAX_ENTRY_BYTES + 1;
+      }
+      if (
+        !isPlainObject(entry) ||
+        !threadId ||
+        threadId.length > CODEX_APP_SERVER_THREAD_INVENTORY_ID_MAX_LENGTH ||
+        codexAppServerTextHasControlCharacters(threadId) ||
+        (verifyCwd && threadCwd !== cwd) ||
+        entryBytes > CODEX_APP_SERVER_THREAD_INVENTORY_MAX_ENTRY_BYTES ||
+        state.totalBytes + entryBytes > CODEX_APP_SERVER_THREAD_INVENTORY_MAX_TOTAL_BYTES
+      ) {
+        throw codexAppServerThreadInventoryError(
+          errorCode,
+          label,
+          "contained an invalid entry"
+        );
+      }
+      state.entryCount += 1;
+      state.totalBytes += entryBytes;
+      state.threadIds.add(threadId);
+    }
+    const nextCursor = response.nextCursor === undefined || response.nextCursor === null || response.nextCursor === ""
+      ? ""
+      : typeof response.nextCursor === "string"
+        ? response.nextCursor.trim()
+        : null;
+    if (
+      nextCursor === null ||
+      nextCursor.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH ||
+      (nextCursor && seenCursors.has(nextCursor))
+    ) {
+      throw codexAppServerThreadInventoryError(
+        errorCode,
+        label,
+        "returned an invalid pagination cursor"
+      );
+    }
+    if (!nextCursor) {
+      return state;
+    }
+    cursor = nextCursor;
+  }
+  throw codexAppServerThreadInventoryError(
+    errorCode,
+    label,
+    "exceeded its page limit"
+  );
+}
+
 class CodexAppServerAgentProvider {
   constructor(options = {}) {
     this.availabilityPromise = null;
@@ -2270,7 +2896,9 @@ class CodexAppServerAgentProvider {
       });
     } catch (error) {
       if (error?.code === CODEX_RECONNECT_REQUIRED_CODE) {
-        await this.stopRuntime().catch(() => null);
+        await this.stopRuntime({
+          preserveProcessExitProof: !this.isEconomyProvider()
+        }).catch(() => null);
       }
       throw error;
     }
@@ -2285,7 +2913,9 @@ class CodexAppServerAgentProvider {
     if (!codexAuthOutputRequiresReconnect(logTail)) {
       return;
     }
-    await this.stopRuntime().catch(() => null);
+    await this.stopRuntime({
+      preserveProcessExitProof: !this.isEconomyProvider()
+    }).catch(() => null);
     await markCodexAppServerReconnectRequired({
       ...this.options,
       toolHomeSource: runtime.toolHomeSource || this.options.toolHomeSource
@@ -2313,7 +2943,9 @@ class CodexAppServerAgentProvider {
       ].filter(Boolean).join("\n");
       if (codexAuthOutputRequiresReconnect(observed)) {
         const runtime = this.runtime || {};
-        await this.stopRuntime().catch(() => null);
+        await this.stopRuntime({
+          preserveProcessExitProof: !this.isEconomyProvider()
+        }).catch(() => null);
         await markCodexAppServerReconnectRequired({
           ...this.options,
           toolHomeSource: runtime.toolHomeSource || this.options.toolHomeSource
@@ -2389,7 +3021,9 @@ class CodexAppServerAgentProvider {
       if (this.isEconomyProvider()) {
         const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
           runtime.runtimeDir,
-          runtime.pid
+          runtime.pid,
+          runtime.processIdentity,
+          this.options
         );
         this.runtime = null;
         this.economyAuth = null;
@@ -2628,6 +3262,39 @@ class CodexAppServerAgentProvider {
     );
   }
 
+  async listAppServerThreadsForCwd({
+    cwd = "",
+    signal = null
+  } = {}) {
+    const normalizedCwd = normalizeAgentText(cwd);
+    if (!normalizedCwd || codexAppServerTextHasControlCharacters(normalizedCwd)) {
+      const error = new Error("Codex session thread inventory requires an exact cwd.");
+      error.code = "vibe64_codex_session_thread_inventory_invalid";
+      throw error;
+    }
+    const client = await this.activeClient();
+    const state = await listBoundedCodexAppServerThreadIds({
+      archived: false,
+      client,
+      cwd: normalizedCwd,
+      errorCode: "vibe64_codex_session_thread_inventory_invalid",
+      label: "session",
+      requestLabel: "codex-app-server-session-thread-list",
+      runRequest: this.runRequest.bind(this),
+      signal,
+      state: {
+        entryCount: 0,
+        threadIds: new Set(),
+        totalBytes: 0
+      },
+      verifyCwd: true
+    });
+    return Object.freeze({
+      cwd: normalizedCwd,
+      threadIds: Object.freeze([...state.threadIds].sort())
+    });
+  }
+
   async listEconomyThreads({
     signal = null
   } = {}) {
@@ -2638,92 +3305,26 @@ class CodexAppServerAgentProvider {
     }
     const client = await this.activeClient();
     const execution = await this.currentEconomyExecutionContext();
-    const threadIds = new Set();
-    let totalBytes = 0;
+    const state = {
+      entryCount: 0,
+      threadIds: new Set(),
+      totalBytes: 0
+    };
     for (const archived of [false, true]) {
-      const seenCursors = new Set();
-      let cursor = "";
-      let completed = false;
-      for (let page = 0; page < CODEX_APP_SERVER_ECONOMY_THREAD_MAX_PAGES; page += 1) {
-        if (cursor && seenCursors.has(cursor)) {
-          const error = new Error("Codex economy thread inventory repeated a pagination cursor.");
-          error.code = "vibe64_codex_economy_thread_inventory_invalid";
-          throw error;
-        }
-        if (cursor) {
-          seenCursors.add(cursor);
-        }
-        const response = await this.runRequest(
-          () => client.request("thread/list", {
-            archived,
-            ...(cursor ? { cursor } : {}),
-            cwd: execution.cwd,
-            limit: CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT,
-            sourceKinds: ["appServer"],
-            useStateDbOnly: false
-          }, { signal }),
-          "codex-app-server-economy-thread-list"
-        );
-        if (
-          !Array.isArray(response?.data) ||
-          response.data.length > CODEX_APP_SERVER_ECONOMY_THREAD_PAGE_LIMIT ||
-          threadIds.size + response.data.length > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_COUNT
-        ) {
-          const error = new Error("Codex economy thread inventory exceeded its entry limit.");
-          error.code = "vibe64_codex_economy_thread_inventory_invalid";
-          throw error;
-        }
-        for (const entry of response.data) {
-          const threadId = normalizeAgentText(entry?.id);
-          let entryBytes = 0;
-          try {
-            entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
-          } catch {
-            entryBytes = CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES + 1;
-          }
-          if (
-            !isPlainObject(entry) ||
-            !threadId ||
-            threadId.length > CODEX_APP_SERVER_ECONOMY_THREAD_ID_MAX_LENGTH ||
-            codexAppServerTextHasControlCharacters(threadId) ||
-            entryBytes > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_ENTRY_BYTES ||
-            totalBytes + entryBytes > CODEX_APP_SERVER_ECONOMY_THREAD_MAX_TOTAL_BYTES
-          ) {
-            const error = new Error("Codex economy thread inventory contained an invalid entry.");
-            error.code = "vibe64_codex_economy_thread_inventory_invalid";
-            throw error;
-          }
-          totalBytes += entryBytes;
-          threadIds.add(threadId);
-        }
-        const nextCursor = response.nextCursor === undefined || response.nextCursor === null || response.nextCursor === ""
-          ? ""
-          : typeof response.nextCursor === "string"
-            ? response.nextCursor.trim()
-            : null;
-        if (
-          nextCursor === null ||
-          nextCursor.length > CODEX_APP_SERVER_MODEL_CATALOG_MAX_CURSOR_LENGTH ||
-          (nextCursor && seenCursors.has(nextCursor))
-        ) {
-          const error = new Error("Codex economy thread inventory returned an invalid pagination cursor.");
-          error.code = "vibe64_codex_economy_thread_inventory_invalid";
-          throw error;
-        }
-        if (!nextCursor) {
-          completed = true;
-          break;
-        }
-        cursor = nextCursor;
-      }
-      if (!completed) {
-        const error = new Error("Codex economy thread inventory exceeded its page limit.");
-        error.code = "vibe64_codex_economy_thread_inventory_invalid";
-        throw error;
-      }
+      await listBoundedCodexAppServerThreadIds({
+        archived,
+        client,
+        cwd: execution.cwd,
+        errorCode: "vibe64_codex_economy_thread_inventory_invalid",
+        label: "economy",
+        requestLabel: "codex-app-server-economy-thread-list",
+        runRequest: this.runRequest.bind(this),
+        signal,
+        state
+      });
     }
     return Object.freeze({
-      threadIds: Object.freeze([...threadIds].sort())
+      threadIds: Object.freeze([...state.threadIds].sort())
     });
   }
 
@@ -2930,11 +3531,14 @@ class CodexAppServerAgentProvider {
     this.economyAuthBlocked = false;
   }
 
-  async stopRuntime() {
+  async stopRuntime({
+    preserveProcessExitProof = false
+  } = {}) {
     this.close();
     const runtime = this.runtime || {};
     const result = await stopCodexAppServerRuntime({
       ...this.options,
+      preserveProcessExitProof,
       runtimeDir: runtime.runtimeDir || this.options.runtimeDir
     });
     this.runtime = null;

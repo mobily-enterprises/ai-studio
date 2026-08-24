@@ -40,6 +40,12 @@ import {
   vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
+  runVibe64AgentWriteExclusive
+} from "@local/vibe64-runtime/server/agentWriteLock";
+import {
+  sessionClosingReason
+} from "@local/vibe64-runtime/server/sessionLifecycle";
+import {
   createSourceEditorFileObserver
 } from "./sourceChangeObserver.js";
 
@@ -592,6 +598,7 @@ function createService({
 
   async function sourceEditorContext(sessionId = "", {
     agentOperation = false,
+    runtime: existingRuntime = null,
     vibe64User = null
   } = {}) {
     const normalizedSessionId = normalizeText(sessionId);
@@ -599,10 +606,26 @@ function createService({
       throw sourceEditorError("Missing Vibe64 session id.", "vibe64_invalid_session_id");
     }
 
-    const runtime = await projectService.createRuntime({
+    const runtime = existingRuntime || await projectService.createRuntime({
       sessionId: normalizedSessionId
     });
     const session = await runtime.getSession(normalizedSessionId);
+    const closingReason = sessionClosingReason(session);
+    if (agentOperation && closingReason) {
+      throw sourceEditorError(
+        closingReason === "renewing"
+          ? "Source explanations are unavailable while this session is renewing."
+          : "Source explanations are unavailable while this session is closing.",
+        closingReason === "renewing"
+          ? "vibe64_session_renewal_quiesced"
+          : "vibe64_session_closing",
+        {
+          reason: closingReason,
+          sessionId: normalizedSessionId
+        },
+        409
+      );
+    }
     const sourceRoot = sessionSourcePath(session);
     if (!sourceRoot || !await pathExists(sourceRoot)) {
       throw sourceEditorError(
@@ -675,6 +698,34 @@ function createService({
     };
   }
 
+  async function runSourceEditorWriteExclusive(input = {}, operation, {
+    agentOperation = false
+  } = {}) {
+    const sessionId = normalizeText(input.sessionId);
+    if (!sessionId) {
+      throw sourceEditorError("Missing Vibe64 session id.", "vibe64_invalid_session_id");
+    }
+    const runtime = await projectService.createRuntime({ sessionId });
+    const exclusive = await runVibe64AgentWriteExclusive(
+      runtime,
+      sessionId,
+      async () => operation(await sourceEditorContext(sessionId, {
+        agentOperation,
+        runtime,
+        vibe64User: input.vibe64User
+      }))
+    );
+    if (!exclusive.acquired) {
+      throw sourceEditorError(
+        normalizeText(exclusive.value?.error) || "Another source-changing operation is starting. Try again in a moment.",
+        normalizeText(exclusive.value?.code) || "vibe64_source_editor_write_busy",
+        {},
+        409
+      );
+    }
+    return exclusive.value;
+  }
+
   return Object.freeze({
     async readTree(input = {}) {
       return runSourceEditorOperation(async () => {
@@ -721,28 +772,30 @@ function createService({
 
     async saveFile(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
-        const file = await saveSourceEditorFile(context, input);
-        return {
-          file,
-          fileChange: sourceEditorFileChange(context, input, file),
-          ok: true
-        };
+        return runSourceEditorWriteExclusive(input, async (context) => {
+          const file = await saveSourceEditorFile(context, input);
+          return {
+            file,
+            fileChange: sourceEditorFileChange(context, input, file),
+            ok: true
+          };
+        });
       });
     },
 
     async createFile(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
-        const file = await createSourceEditorFile(context, input);
-        return {
-          file,
-          fileOpen: sourceEditorFileOpen(context, input, {
-            relativePath: file.path
-          }),
-          revealTree: await sourceEditorFileRevealTree(context, file.path),
-          ok: true
-        };
+        return runSourceEditorWriteExclusive(input, async (context) => {
+          const file = await createSourceEditorFile(context, input);
+          return {
+            file,
+            fileOpen: sourceEditorFileOpen(context, input, {
+              relativePath: file.path
+            }),
+            revealTree: await sourceEditorFileRevealTree(context, file.path),
+            ok: true
+          };
+        });
       });
     },
 
@@ -778,20 +831,56 @@ function createService({
 
     async explainSelection(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
-          vibe64User: input.vibe64User
+        return runSourceEditorWriteExclusive(input, async (context) => {
+          const explanationInput = await sourceEditorExplanationInput(context, input);
+          const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
+          return {
+            explanation: await explanationCache.run(cacheKey, {
+              completedCache: Boolean(context.agentAccountIdentitySignature),
+              force: input.force === true,
+              generate: () => createSourceEditorExplanation(context, input, {
+                explanationChats,
+                explanationGenerator: sourceExplanationGenerator,
+                explanationInput
+              }),
+              reuse: (template, cacheState) => createCachedSourceEditorExplanation(
+                context,
+                input,
+                explanationInput,
+                template,
+                {
+                  cacheState,
+                  explanationChats
+                }
+              ),
+              validateCompleted: (template) => sourceEditorCompletedCacheIdentityUnchanged(
+                terminalService,
+                context,
+                template
+              )
+            }),
+            ok: true
+          };
+        }, {
+          agentOperation: true
         });
-        const explanationInput = await sourceEditorExplanationInput(context, input);
-        const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
-        return {
-          explanation: await explanationCache.run(cacheKey, {
+      });
+    },
+
+    async streamExplanation(input = {}, stream = {}) {
+      await streamSourceEditorOperation(async () => {
+        await runSourceEditorWriteExclusive(input, async (context) => {
+          const explanationInput = await sourceEditorExplanationInput(context, input);
+          const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
+          await explanationCache.run(cacheKey, {
             completedCache: Boolean(context.agentAccountIdentitySignature),
             force: input.force === true,
-            generate: () => createSourceEditorExplanation(context, input, {
+            generate: () => streamSourceEditorExplanation(context, input, {
+              emit: stream.emit,
               explanationChats,
-              explanationGenerator: sourceExplanationGenerator,
-              explanationInput
+              explanationInput,
+              isClosed: stream.isClosed,
+              terminalService
             }),
             reuse: (template, cacheState) => createCachedSourceEditorExplanation(
               context,
@@ -800,7 +889,9 @@ function createService({
               template,
               {
                 cacheState,
-                explanationChats
+                emit: stream.emit,
+                explanationChats,
+                isClosed: stream.isClosed
               }
             ),
             validateCompleted: (template) => sourceEditorCompletedCacheIdentityUnchanged(
@@ -808,78 +899,38 @@ function createService({
               context,
               template
             )
-          }),
-          ok: true
-        };
-      });
-    },
-
-    async streamExplanation(input = {}, stream = {}) {
-      await streamSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
-          vibe64User: input.vibe64User
-        });
-        const explanationInput = await sourceEditorExplanationInput(context, input);
-        const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
-        await explanationCache.run(cacheKey, {
-          completedCache: Boolean(context.agentAccountIdentitySignature),
-          force: input.force === true,
-          generate: () => streamSourceEditorExplanation(context, input, {
-            emit: stream.emit,
-            explanationChats,
-            explanationInput,
-            isClosed: stream.isClosed,
-            terminalService
-          }),
-          reuse: (template, cacheState) => createCachedSourceEditorExplanation(
-            context,
-            input,
-            explanationInput,
-            template,
-            {
-              cacheState,
-              emit: stream.emit,
-              explanationChats,
-              isClosed: stream.isClosed
-            }
-          ),
-          validateCompleted: (template) => sourceEditorCompletedCacheIdentityUnchanged(
-            terminalService,
-            context,
-            template
-          )
+          });
+        }, {
+          agentOperation: true
         });
       }, stream);
     },
 
     async addExplanationFollowup(input = {}) {
       return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
-          vibe64User: input.vibe64User
-        });
-        return {
+        return runSourceEditorWriteExclusive(input, async (context) => ({
           explanation: await addSourceEditorExplanationFollowup(context, input, {
             explanationChats,
             explanationFollowupGenerator: sourceExplanationFollowupGenerator
           }),
           ok: true
-        };
+        }), {
+          agentOperation: true
+        });
       });
     },
 
     async streamExplanationFollowup(input = {}, stream = {}) {
       await streamSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
-          vibe64User: input.vibe64User
-        });
-        await streamSourceEditorExplanationFollowup(context, input, {
-          emit: stream.emit,
-          explanationChats,
-          isClosed: stream.isClosed,
-          terminalService
+        await runSourceEditorWriteExclusive(input, (context) => (
+          streamSourceEditorExplanationFollowup(context, input, {
+            emit: stream.emit,
+            explanationChats,
+            isClosed: stream.isClosed,
+            terminalService
+          })
+        ), {
+          agentOperation: true
         });
       }, stream);
     },
@@ -887,7 +938,6 @@ function createService({
     async stopExplanation(input = {}) {
       return runSourceEditorOperation(async () => {
         const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
           vibe64User: input.vibe64User
         });
         return {
@@ -903,7 +953,6 @@ function createService({
     async deleteExplanation(input = {}) {
       return runSourceEditorOperation(async () => {
         const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
           vibe64User: input.vibe64User
         });
         return {
@@ -919,7 +968,6 @@ function createService({
     async cleanupExplanations(input = {}) {
       return runSourceEditorOperation(async () => {
         const context = await sourceEditorContext(input.sessionId, {
-          agentOperation: true,
           vibe64User: input.vibe64User
         });
         return {

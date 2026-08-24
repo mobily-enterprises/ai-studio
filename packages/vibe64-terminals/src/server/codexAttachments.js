@@ -263,6 +263,25 @@ async function cleanupCodexAttachments(executionRoot, sessionId, attachmentId = 
   }
 }
 
+async function releaseCodexSessionAttachments(executionRoot, sessionId, options = {}) {
+  const sessionDirectory = attachmentHostDirectory(executionRoot, sessionId, "", options);
+  const existed = await attachmentDirectoryExists(sessionDirectory);
+  await cleanupCodexAttachments(executionRoot, sessionId, "", options);
+  if (await attachmentDirectoryExists(sessionDirectory)) {
+    const error = attachmentUploadValidationError(
+      "vibe64_agent_attachment_busy",
+      "Session attachments are still in use. Try releasing them again.",
+      409
+    );
+    error.retryable = true;
+    throw error;
+  }
+  return {
+    alreadyReleased: !existed,
+    released: true
+  };
+}
+
 async function retireAttachmentDirectory(directory) {
   const resolvedDirectory = path.resolve(directory);
   const quarantine = path.join(
@@ -1037,6 +1056,7 @@ export {
   cleanupCodexAttachments,
   prepareCodexAttachmentStorage,
   prepareCodexAttachmentRoot,
+  releaseCodexSessionAttachments,
   renewCodexAttachments,
   storeCodexAttachment
 };

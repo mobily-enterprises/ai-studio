@@ -30,6 +30,27 @@ async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation) 
       };
 }
 
+async function runVibe64RenewalAgentWriteExclusive(runtime, sessionId = "", operation) {
+  if (typeof operation !== "function") {
+    throw new TypeError("Exclusive Vibe64 renewal agent work requires an operation.");
+  }
+  if (typeof runtime?.store?.runSessionExclusiveForRenewal !== "function") {
+    throw new TypeError("Exclusive Vibe64 renewal agent work requires the private renewal lock boundary.");
+  }
+  const exclusive = await runtime.store.runSessionExclusiveForRenewal(
+    sessionId,
+    VIBE64_AGENT_WRITE_LOCK,
+    operation
+  );
+  return exclusive.acquired
+    ? exclusive
+    : {
+        acquired: false,
+        value: VIBE64_AGENT_WRITE_BUSY_RESULT
+      };
+}
+
 export {
-  runVibe64AgentWriteExclusive
+  runVibe64AgentWriteExclusive,
+  runVibe64RenewalAgentWriteExclusive
 };

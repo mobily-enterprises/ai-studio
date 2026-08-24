@@ -14,6 +14,129 @@ import {
   resolveCodexEconomyExecutionProfile
 } from "../../packages/vibe64-terminals/src/server/agent/providers/codexSessionAgentProvider.js";
 
+test("Codex adapter forwards trusted renewal operations without selecting an economy profile", async () => {
+  const calls = [];
+  const runtime = { stateRoot: "/runtime/project" };
+  const session = { sessionId: "session-1" };
+  const provider = createCodexSessionAgentProvider({
+    controller: {
+      async closeAllForSession(sessionId, options) {
+        calls.push(["close", sessionId, options]);
+        return { closed: true, ok: true };
+      },
+      async generateSessionRenewalHandover(sessionId, input, options) {
+        calls.push(["generate", sessionId, input, options]);
+        return { ok: true, turnId: "turn-old" };
+      },
+      async releaseRenewalPredecessorProcessExitProof(sessionId, options) {
+        calls.push(["release-proof", sessionId, options]);
+        return { ok: true, released: true };
+      },
+      async releaseRenewalPredecessorAttachments(sessionId, options) {
+        calls.push(["release-attachments", sessionId, options]);
+        return { ok: true, released: true };
+      },
+      async releaseRenewalSuccessorProcessExitProof(sessionId, options) {
+        calls.push(["release-successor-proof", sessionId, options]);
+        return { ok: true, released: true };
+      },
+      async seedSessionRenewalHandover(sessionId, input, options) {
+        calls.push(["seed", sessionId, input, options]);
+        return { ok: true, turnId: "turn-new" };
+      }
+    }
+  });
+  const context = {
+    agentSettings: {
+      model: "gpt-5.6-sol",
+      thinking: "high"
+    },
+    runtime,
+    preserveProcessExitProof: true,
+    renewalCleanup: {
+      renewalId: "renewal-1",
+      sourceSessionId: "source-session"
+    },
+    session,
+    sessionId: session.sessionId,
+    vibe64User: { userId: "user-1" }
+  };
+
+  await provider.generateSessionRenewalHandover(context, {
+    operationId: "renewal:generate"
+  });
+  await provider.seedSessionRenewalHandover(context, {
+    operationId: "renewal:seed"
+  });
+  await provider.closeSession(context);
+  await provider.releaseRenewalPredecessorAttachments(context, {
+    renewalId: "renewal-1"
+  });
+  await provider.releaseRenewalPredecessorProcessExitProof(context, {
+    renewalId: "renewal-1"
+  });
+  const successorAuthorization = {
+    renewalId: "renewal-1",
+    successorSessionId: session.sessionId
+  };
+  await provider.releaseRenewalSuccessorProcessExitProof(context, {
+    authorization: successorAuthorization,
+    renewalId: "renewal-1"
+  });
+
+  assert.deepEqual(calls.map(([name]) => name), [
+    "generate",
+    "seed",
+    "close",
+    "release-attachments",
+    "release-proof",
+    "release-successor-proof"
+  ]);
+  for (const [, sessionId, input, options] of calls.slice(0, 2)) {
+    assert.equal(sessionId, session.sessionId);
+    assert.deepEqual(input.agentSettings, context.agentSettings);
+    assert.equal(Object.hasOwn(input, "executionProfile"), false);
+    assert.equal(options.runtime, runtime);
+    assert.equal(options.session, session);
+  }
+  assert.equal(calls[2][1], session.sessionId);
+  assert.equal(calls[2][2].runtime, runtime);
+  assert.equal(calls[2][2].session, session);
+  assert.equal(calls[2][2].renewalCleanup, context.renewalCleanup);
+  assert.equal(calls[2][2].preserveProcessExitProof, true);
+  assert.equal(calls[3][1], session.sessionId);
+  assert.equal(calls[3][2].renewalId, "renewal-1");
+  assert.equal(calls[3][2].runtime, runtime);
+  assert.equal(calls[3][2].session, session);
+  assert.equal(calls[4][1], session.sessionId);
+  assert.equal(calls[4][2].renewalId, "renewal-1");
+  assert.equal(calls[4][2].runtime, runtime);
+  assert.equal(calls[4][2].session, session);
+  assert.equal(calls[5][1], session.sessionId);
+  assert.equal(calls[5][2].authorization, successorAuthorization);
+  assert.equal(calls[5][2].renewalId, "renewal-1");
+  assert.equal(calls[5][2].runtime, runtime);
+  assert.equal(calls[5][2].session, session);
+});
+
+test("Codex adapter reports every active Temporary AI turn", async () => {
+  const provider = createCodexSessionAgentProvider({
+    controller: {
+      hasActiveTemporaryConversation(sessionId) {
+        assert.equal(sessionId, "session-1");
+        return true;
+      }
+    }
+  });
+
+  assert.deepEqual(await provider.hasActiveTemporaryConversation({
+    sessionId: "session-1"
+  }), {
+    active: true,
+    ok: true
+  });
+});
+
 function catalogModel({
   hidden = false,
   model = "gpt-5.6-luna",

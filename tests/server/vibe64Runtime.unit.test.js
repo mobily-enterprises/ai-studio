@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  VIBE64_SESSION_STATUS,
   Vibe64SessionRuntime
 } from "@local/vibe64-runtime/server";
 import {
@@ -167,6 +168,59 @@ test("plain runtime uses Genesis onboarding for the first user turn, then ordina
   });
 });
 
+test("an acknowledged renewal seed keeps the successor's first visible prompt in work mode", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      promptRenderer: renderTestGenesisPrompt,
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot)
+    });
+    await Promise.all([
+      mkdir(sourcePath(targetRoot, "renewal-seeded"), { recursive: true }),
+      mkdir(sourcePath(targetRoot, "renewal-partial"), { recursive: true })
+    ]);
+    const renewalMetadata = {
+      agent_briefing_delivered: "yes",
+      agent_renewal_seed_acknowledged_at: "2026-08-24T01:03:00.000Z",
+      agent_renewal_seed_handover_hash: "a".repeat(64),
+      agent_renewal_seed_operation_id: "renewal:seed:one",
+      agent_renewal_seed_thread_id: "successor-thread",
+      agent_renewal_seed_turn_id: "successor-turn",
+      renewed_from: "renewal-source",
+      renewal_id: "renewal-one"
+    };
+    await runtime.store.createSession({
+      metadata: {
+        ...sourceMetadata(targetRoot, "renewal-seeded"),
+        ...renewalMetadata
+      },
+      runtimeKind: "genesis",
+      sessionId: "renewal-seeded"
+    });
+    await runtime.store.createSession({
+      metadata: {
+        ...sourceMetadata(targetRoot, "renewal-partial"),
+        ...renewalMetadata,
+        agent_renewal_seed_turn_id: ""
+      },
+      runtimeKind: "genesis",
+      sessionId: "renewal-partial"
+    });
+
+    const seededPrompt = await runtime.renderPrompt("renewal-seeded", {
+      request: "Continue from the approved handover.",
+      task: "work"
+    });
+    const partialPrompt = await runtime.renderPrompt("renewal-partial", {
+      request: "Continue from the approved handover.",
+      task: "work"
+    });
+
+    assert.equal(seededPrompt.context.task, "work");
+    assert.equal(partialPrompt.context.task, "start");
+  });
+});
+
 test("plain runtime refuses to return a session without chat-ready source", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
@@ -306,5 +360,312 @@ test("plain runtime hides sessions using an unsupported runtime record", async (
       { code: "vibe64_session_runtime_unsupported" }
     );
     assert.deepEqual(await runtime.listSessions(), []);
+  });
+});
+
+test("renewal runtime materializes a private successor through the explicit store boundary", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const calls = [];
+    const runtime = new Vibe64SessionRuntime({
+      createSessionSource: async ({ session, store }) => {
+        calls.push(session.sessionId);
+        const metadata = sourceMetadata(targetRoot, session.sessionId);
+        await mkdir(metadata.source_path, { recursive: true });
+        await Promise.all(Object.entries(metadata).map(([name, value]) => (
+          store.writeMetadataValue(session.sessionId, name, value)
+        )));
+      },
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: managedSessionSourceRoot(targetRoot)
+    });
+    await mkdir(sourcePath(targetRoot, "renewal-source"), { recursive: true });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "renewal-source"),
+      runtimeKind: "genesis",
+      sessionId: "renewal-source"
+    });
+    await runtime.quiesceSessionForRenewal({
+      renewalId: "runtime-create-renewal",
+      sourceSessionId: "renewal-source"
+    });
+    await runtime.store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      renewalId: "runtime-create-renewal",
+      renewedFrom: "renewal-source",
+      runtimeKind: "genesis",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+
+    const successor = await runtime.createRenewalSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      renewalId: "runtime-create-renewal",
+      renewedFrom: "renewal-source",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+
+    assert.deepEqual(calls, ["renewal-successor"]);
+    assert.equal(successor.status, VIBE64_SESSION_STATUS.RENEWAL_PENDING);
+    assert.equal(successor.sourcePath, sourcePath(targetRoot, "renewal-successor"));
+    assert.equal(
+      (await runtime.getSessionForRenewal("renewal-successor", { inspectSource: false })).status,
+      VIBE64_SESSION_STATUS.RENEWAL_PENDING
+    );
+    assert.equal((await runtime.createRenewalSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      renewalId: "runtime-create-renewal",
+      renewedFrom: "renewal-source",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    })).sessionId, "renewal-successor");
+    assert.deepEqual(calls, ["renewal-successor"]);
+    await assert.rejects(
+      () => runtime.createRenewalSession({
+        actorDisplayName: "Ada",
+        actorId: "ada-owner",
+        confirmedAt: "2026-08-24T02:01:00.000Z",
+        renewalId: "runtime-create-renewal",
+        renewedFrom: "renewal-source",
+        sessionId: "renewal-successor",
+        startedAt: "2026-08-24T01:00:00.000Z"
+      }),
+      { code: "vibe64_session_renewal_conflict" }
+    );
+    await assert.rejects(
+      () => runtime.getSession("renewal-successor", { inspectSource: false }),
+      { code: "vibe64_session_renewal_private" }
+    );
+  });
+});
+
+test("renewal runtime replaces only an exact partial managed successor clone", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const calls = [];
+    const runtime = new Vibe64SessionRuntime({
+      createSessionSource: async ({ session, store }) => {
+        calls.push(session.sessionId);
+        const metadata = sourceMetadata(targetRoot, session.sessionId);
+        await mkdir(metadata.source_path, { recursive: true });
+        await Promise.all(Object.entries(metadata).map(([name, value]) => (
+          store.writeMetadataValueForRenewal(session.sessionId, name, value)
+        )));
+      },
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: managedSessionSourceRoot(targetRoot)
+    });
+    await mkdir(sourcePath(targetRoot, "renewal-source"), { recursive: true });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "renewal-source"),
+      runtimeKind: "genesis",
+      sessionId: "renewal-source"
+    });
+    await runtime.quiesceSessionForRenewal({
+      renewalId: "runtime-partial-renewal",
+      sourceSessionId: "renewal-source"
+    });
+    await runtime.store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      renewalId: "runtime-partial-renewal",
+      renewedFrom: "renewal-source",
+      runtimeKind: "genesis",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+    const partialRoot = path.dirname(sourcePath(targetRoot, "renewal-successor"));
+    const siblingRoot = path.dirname(sourcePath(targetRoot, "unrelated-successor"));
+    await Promise.all([
+      mkdir(path.join(partialRoot, "source", ".git"), { recursive: true }),
+      mkdir(path.join(siblingRoot, "source"), { recursive: true })
+    ]);
+
+    const successor = await runtime.createRenewalSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      renewalId: "runtime-partial-renewal",
+      renewedFrom: "renewal-source",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+
+    assert.deepEqual(calls, ["renewal-successor"]);
+    assert.equal(successor.sourcePath, sourcePath(targetRoot, "renewal-successor"));
+    await access(path.join(siblingRoot, "source"));
+  });
+});
+
+test("failed renewal materialization removes only its private record and managed source", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      createSessionSource: async ({ session }) => {
+        await mkdir(sourcePath(targetRoot, session.sessionId), { recursive: true });
+        throw new Error("clone failed");
+      },
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: managedSessionSourceRoot(targetRoot)
+    });
+    await mkdir(sourcePath(targetRoot, "renewal-source"), { recursive: true });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "renewal-source"),
+      runtimeKind: "genesis",
+      sessionId: "renewal-source"
+    });
+    await runtime.quiesceSessionForRenewal({
+      renewalId: "runtime-failed-renewal",
+      sourceSessionId: "renewal-source"
+    });
+
+    await assert.rejects(
+      () => runtime.createRenewalSession({
+        actorId: "ada-owner",
+        confirmedAt: "2026-08-24T01:01:00.000Z",
+        renewalId: "runtime-failed-renewal",
+        renewedFrom: "renewal-source",
+        sessionId: "renewal-successor"
+      }),
+      /clone failed/u
+    );
+    await assert.rejects(
+      () => runtime.store.readSessionForRenewal("renewal-successor"),
+      { code: "vibe64_session_not_found" }
+    );
+    await assert.rejects(
+      () => access(path.dirname(sourcePath(targetRoot, "renewal-successor"))),
+      { code: "ENOENT" }
+    );
+    assert.equal(
+      (await runtime.getSession("renewal-source", { inspectSource: false })).status,
+      VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
+    );
+  });
+});
+
+test("renewal retry rejects mismatched durable source ownership without repairing it", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let materializationCalls = 0;
+    const runtime = new Vibe64SessionRuntime({
+      createSessionSource: async () => {
+        materializationCalls += 1;
+      },
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: managedSessionSourceRoot(targetRoot)
+    });
+    await mkdir(sourcePath(targetRoot, "renewal-source"), { recursive: true });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "renewal-source"),
+      runtimeKind: "genesis",
+      sessionId: "renewal-source"
+    });
+    await runtime.quiesceSessionForRenewal({
+      renewalId: "runtime-mismatched-renewal",
+      sourceSessionId: "renewal-source"
+    });
+    await runtime.store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      metadata: {
+        source_kind: "session_clone",
+        source_path: path.join(targetRoot, "wrong", "sessions", "active", "renewal-successor", "source"),
+        source_path_authority: "managed_session_source"
+      },
+      renewalId: "runtime-mismatched-renewal",
+      renewedFrom: "renewal-source",
+      runtimeKind: "genesis",
+      sessionId: "renewal-successor",
+      startedAt: "2026-08-24T01:00:00.000Z"
+    });
+
+    await assert.rejects(
+      () => runtime.createRenewalSession({
+        actorDisplayName: "Ada",
+        actorId: "ada-owner",
+        confirmedAt: "2026-08-24T01:01:00.000Z",
+        renewalId: "runtime-mismatched-renewal",
+        renewedFrom: "renewal-source",
+        sessionId: "renewal-successor",
+        startedAt: "2026-08-24T01:00:00.000Z"
+      }),
+      { code: "vibe64_session_source_not_attached" }
+    );
+    assert.equal(materializationCalls, 0);
+    assert.equal(
+      (await runtime.store.readSessionForRenewal("renewal-successor")).metadata.source_path,
+      path.join(targetRoot, "wrong", "sessions", "active", "renewal-successor", "source")
+    );
+  });
+});
+
+test("plain runtime cannot expose or use a private renewal successor", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = new Vibe64SessionRuntime({
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      projectSessionSourceRoot: targetRoot
+    });
+    await Promise.all([
+      mkdir(sourcePath(targetRoot, "renewal-source"), { recursive: true }),
+      mkdir(sourcePath(targetRoot, "renewal-successor"), { recursive: true })
+    ]);
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "renewal-source"),
+      runtimeKind: "genesis",
+      sessionId: "renewal-source"
+    });
+    await runtime.quiesceSessionForRenewal({
+      renewalId: "renewal-runtime",
+      sourceSessionId: "renewal-source"
+    });
+    await runtime.store.createRenewalPendingSession({
+      actorDisplayName: "Ada",
+      actorId: "ada-owner",
+      confirmedAt: "2026-08-24T01:01:00.000Z",
+      metadata: sourceMetadata(targetRoot, "renewal-successor"),
+      renewalId: "renewal-runtime",
+      renewedFrom: "renewal-source",
+      runtimeKind: "genesis",
+      sessionId: "renewal-successor"
+    });
+    const hidden = await runtime.store.readSessionForRenewal("renewal-successor");
+    assert.equal(hidden.status, VIBE64_SESSION_STATUS.RENEWAL_PENDING);
+
+    for (const operation of [
+      () => runtime.getSession("renewal-successor", { inspectSource: false }),
+      () => runtime.updateCurrentSession("renewal-successor"),
+      () => runtime.sessionView(hidden, { inspectSource: false }),
+      () => runtime.inspectSourceForSession(hidden),
+      () => runtime.assertSourceHealthy(hidden),
+      () => runtime.renderPrompt("renewal-successor", { request: "Keep working." }),
+      () => runtime.readConversationLog("renewal-successor"),
+      () => runtime.readConversationLogPage("renewal-successor"),
+      () => runtime.writeConversationUserMessage("renewal-successor", { text: "Hello" }),
+      () => runtime.writeConversationAssistantMessage("renewal-successor", { text: "Hello" }),
+      () => runtime.writeConversationCommentaryMessage("renewal-successor", { text: "Hello" }),
+      () => runtime.writeConversationThinkingMessage("renewal-successor", { text: "Hello" }),
+      () => runtime.writeConversationSystemMessage("renewal-successor", { text: "Hello" }),
+      () => runtime.readAgentRun("renewal-successor", "codex"),
+      () => runtime.writeAgentRunEvent("renewal-successor", "codex", {})
+    ]) {
+      await assert.rejects(operation, {
+        code: "vibe64_session_renewal_private"
+      });
+    }
+    assert.deepEqual(
+      (await runtime.listSessions({ statusGroup: "all" })).map((session) => session.sessionId),
+      ["renewal-source"]
+    );
   });
 });

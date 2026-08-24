@@ -56,15 +56,85 @@
           @select-session="activateRealSession"
         />
 
-        <div class="studio-autopilot__header-actions">
+        <div class="studio-autopilot__header-actions studio-autopilot__header-actions--compact">
+          <v-menu
+            location="bottom end"
+          >
+            <template #activator="{ props: menuProps }">
+              <v-badge
+                :color="sessionRenewalActionPresentation.color || 'primary'"
+                dot
+                :model-value="sessionRenewalActionPresentation.attention === true"
+                offset-x="5"
+                offset-y="5"
+              >
+                <v-btn
+                  ref="sessionActionsTrigger"
+                  v-bind="menuProps"
+                  :aria-label="sessionActionsLabel"
+                  data-vibe64-session-actions
+                  height="48"
+                  :icon="mdiDotsVertical"
+                  title="Session actions"
+                  type="button"
+                  variant="text"
+                  width="48"
+                />
+              </v-badge>
+            </template>
+            <v-list aria-label="Session actions" density="compact" min-width="17rem">
+              <v-list-item
+                v-if="props.sessionRenewal?.visible"
+                class="studio-autopilot__session-action-item"
+                data-vibe64-session-renew-action
+                :prepend-icon="mdiAutorenew"
+                :subtitle="sessionRenewalActionPresentation.reason"
+                :title="sessionRenewalActionPresentation.label"
+                @click="requestSessionRenewal(sessionActionsTrigger)"
+              />
+              <v-list-item
+                class="studio-autopilot__session-action-item"
+                data-vibe64-temporary-ai-action
+                :disabled="!sessionId"
+                :prepend-icon="mdiIncognito"
+                subtitle="Open a separate short-lived conversation"
+                title="Temporary AI"
+                @click="openTemporaryAi"
+              />
+            </v-list>
+          </v-menu>
+        </div>
+        <div class="studio-autopilot__header-actions studio-autopilot__header-actions--expanded">
+          <v-badge
+            v-if="props.sessionRenewal?.visible"
+            :color="sessionRenewalActionPresentation.color || 'primary'"
+            dot
+            :model-value="sessionRenewalActionPresentation.attention === true"
+            offset-x="5"
+            offset-y="5"
+          >
+            <v-btn
+              :aria-label="sessionRenewalActionPresentation.label"
+              :color="sessionRenewalActionPresentation.color"
+              data-vibe64-session-renew-action
+              height="48"
+              :icon="mdiAutorenew"
+              :title="sessionRenewalActionPresentation.reason"
+              type="button"
+              variant="text"
+              width="48"
+              @click="requestSessionRenewal($event.currentTarget)"
+            />
+          </v-badge>
           <v-btn
             aria-label="Open temporary AI"
             :disabled="!sessionId"
+            height="48"
             :icon="mdiIncognito"
-            size="small"
             title="Open a temporary AI conversation"
             type="button"
             variant="text"
+            width="48"
             @click="openTemporaryAi"
           />
         </div>
@@ -493,6 +563,7 @@
           embedded-preview
           :preview-displayed="rightPaneTab === 'preview' && props.projectPane === 'preview'"
           :session="props.session"
+          :source-operations-suspended="sourceOperationsSuspended"
           :toolbar-teleport-target="rightPaneTab === 'preview' && props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
           :window-displayed="props.active"
           @preview-attachment-state="updatePreviewAttachmentState"
@@ -533,8 +604,10 @@ import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from "vue
 import {
   mdiArrowLeft,
   mdiArrowTopRight,
+  mdiAutorenew,
   mdiConsoleNetworkOutline,
   mdiContentSaveOutline,
+  mdiDotsVertical,
   mdiEyePlusOutline,
   mdiGithub,
   mdiIncognito,
@@ -563,12 +636,30 @@ import {
 
 const emit = defineEmits(vibe64AutopilotViewEmits);
 const props = defineProps(vibe64AutopilotViewProps);
+const sessionRenewalActionPresentation = computed(() => (
+  props.sessionRenewal?.actionPresentation ||
+  props.sessionRenewal?.advisoryPresentation || {
+    attention: false,
+    color: undefined,
+    label: "Renew session",
+    reason: "Renew this session with a reviewed handover."
+  }
+));
+const sessionActionsLabel = computed(() => (
+  sessionRenewalActionPresentation.value.attention
+    ? `Session actions: ${sessionRenewalActionPresentation.value.label}`
+    : "Session actions"
+));
+const sourceOperationsSuspended = computed(() => (
+  props.sessionRenewal?.sourceOperationsSuspended === true
+));
 const Vibe64SystemWorldView = defineAsyncComponent(() => (
   import("@local/vibe64-system-graph/client").then((module) => module.loadVibe64SystemWorldView())
 ));
 const composerInput = ref(null);
 const composerSendButton = ref(null);
 const mainChat = ref(null);
+const sessionActionsTrigger = ref(null);
 const temporaryAiWorkspace = ref(null);
 const thinkingStatusId = `studio-autopilot-thinking-${useId()}`;
 
@@ -689,7 +780,8 @@ const {
 const dashboardContext = computed(() => ({
   ...(dashboardSessionContext.value || {}),
   requestUpdateWork: props.updateSessionWork,
-  requestTemporaryAi: fixRepositoryError
+  requestTemporaryAi: fixRepositoryError,
+  sourceOperationsSuspended: sourceOperationsSuspended.value
 }));
 
 const sessionAbandonDisabled = computed(() => Boolean(
@@ -759,6 +851,12 @@ async function attachPreviewFile(file) {
 async function attachPreviewFileProducer(options = {}) {
   const uploaded = await composerInput.value?.attachFileProducer?.(options);
   return Array.isArray(uploaded) && uploaded.length > 0 ? uploaded[0] : null;
+}
+
+function requestSessionRenewal(returnFocusTarget = null) {
+  props.sessionRenewal?.request?.({
+    returnFocusTarget: returnFocusTarget?.$el || returnFocusTarget
+  });
 }
 </script>
 
@@ -854,6 +952,24 @@ async function attachPreviewFileProducer(options = {}) {
 
 .studio-autopilot__header-actions {
   flex: 0 0 auto;
+}
+
+.studio-autopilot__header-actions--compact {
+  display: none;
+}
+
+@container studio-chat-pane (max-width: 32rem) {
+  .studio-autopilot__header-actions--compact {
+    display: flex;
+  }
+
+  .studio-autopilot__header-actions--expanded {
+    display: none;
+  }
+}
+
+.studio-autopilot__session-action-item {
+  min-height: 3rem;
 }
 
 .studio-autopilot__conversation {

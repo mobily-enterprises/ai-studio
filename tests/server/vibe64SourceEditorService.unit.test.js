@@ -76,8 +76,10 @@ async function createSourceEditorFixture({
   explanationFollowupGenerator = null,
   explanationGenerator = null,
   extraFiles = [],
+  sessionState = null,
   sourceFileObserver = null,
-  terminalService = null
+  terminalService = null,
+  writeExclusive = null
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-source-editor-"));
   const sessionId = "session-1";
@@ -176,15 +178,27 @@ async function createSourceEditorFixture({
             const providerId = typeof agentProviderId === "function"
               ? agentProviderId()
               : agentProviderId;
+            const currentSessionState = typeof sessionState === "function"
+              ? sessionState()
+              : (sessionState || {});
             return {
+              ...currentSessionState,
               metadata: {
                 ...sourceMetadata(sourceRoot),
-                ...(providerId ? { agent_identity_provider: providerId } : {})
+                ...(providerId ? { agent_identity_provider: providerId } : {}),
+                ...(currentSessionState.metadata || {})
               },
               sessionId,
               sourceReady: true
             };
-          }
+          },
+          ...(typeof writeExclusive === "function"
+            ? {
+                store: {
+                  runSessionExclusive: writeExclusive
+                }
+              }
+            : {})
         };
       }
     },
@@ -526,6 +540,254 @@ test("source editor creates new files without overwriting existing or excluded p
     });
     assert.equal(traversalResponse.ok, false);
     assert.equal(traversalResponse.errors[0].code, "vibe64_invalid_source_editor_path");
+  } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor serializes writes with session renewal and keeps quiesced source read-only", async () => {
+  const lockCalls = [];
+  let quiesced = false;
+  const fixture = await createSourceEditorFixture({
+    async writeExclusive(sessionId, operationName, operation) {
+      lockCalls.push({ operationName, sessionId });
+      if (quiesced) {
+        const error = new Error("Session renewal is in progress.");
+        error.code = "vibe64_session_renewal_quiesced";
+        error.statusCode = 409;
+        throw error;
+      }
+      return {
+        acquired: true,
+        value: await operation()
+      };
+    }
+  });
+  try {
+    const read = await fixture.service.readFile({
+      path: "src/app.js",
+      sessionId: "session-1"
+    });
+    const saved = await fixture.service.saveFile({
+      baseHash: read.file.hash,
+      path: "src/app.js",
+      sessionId: "session-1",
+      text: "console.log('before renewal');\n"
+    });
+    assert.equal(saved.ok, true);
+    quiesced = true;
+
+    const blockedSave = await fixture.service.saveFile({
+      baseHash: saved.file.hash,
+      path: "src/app.js",
+      sessionId: "session-1",
+      text: "console.log('after renewal');\n"
+    });
+    const blockedCreate = await fixture.service.createFile({
+      path: "src/created-during-renewal.js",
+      sessionId: "session-1"
+    });
+
+    assert.equal(blockedSave.ok, false);
+    assert.equal(blockedSave.statusCode, 409);
+    assert.equal(blockedSave.errors[0].code, "vibe64_session_renewal_quiesced");
+    assert.equal(blockedCreate.ok, false);
+    assert.equal(blockedCreate.errors[0].code, "vibe64_session_renewal_quiesced");
+    assert.equal(
+      await readFile(path.join(fixture.sourceRoot, "src", "app.js"), "utf8"),
+      "console.log('before renewal');\n"
+    );
+    await assert.rejects(
+      readFile(path.join(fixture.sourceRoot, "src", "created-during-renewal.js")),
+      { code: "ENOENT" }
+    );
+    assert.deepEqual(lockCalls, [
+      { operationName: "agent-write-mode", sessionId: "session-1" },
+      { operationName: "agent-write-mode", sessionId: "session-1" },
+      { operationName: "agent-write-mode", sessionId: "session-1" }
+    ]);
+  } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor rejects assistant-backed explanations before inspecting a quiesced provider", async () => {
+  let providerInspections = 0;
+  const fixture = await createSourceEditorFixture({
+    sessionState: {
+      status: "renewal_quiesced"
+    },
+    terminalService: {
+      describeAgentProvider() {
+        providerInspections += 1;
+        throw new Error("The provider must not be inspected after renewal quiescence.");
+      }
+    }
+  });
+  try {
+    const blocked = await fixture.service.explainSelection({
+      endColumn: 20,
+      endLine: 1,
+      path: "src/app.js",
+      sessionId: "session-1",
+      startColumn: 1,
+      startLine: 1
+    });
+
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(blocked.errors[0].code, "vibe64_session_renewal_quiesced");
+    assert.equal(providerInspections, 0);
+  } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor rejects explanation admission before provider inspection or ledger writes", async () => {
+  let providerInspections = 0;
+  const fixture = await createSourceEditorFixture({
+    terminalService: {
+      describeAgentProvider() {
+        providerInspections += 1;
+        throw new Error("Provider inspection must stay behind session admission.");
+      }
+    },
+    async writeExclusive() {
+      return {
+        acquired: false,
+        value: {
+          code: "vibe64_session_renewal_quiesced",
+          error: "Session renewal is in progress.",
+          ok: false,
+          retryable: true
+        }
+      };
+    }
+  });
+  try {
+    const blocked = await fixture.service.explainSelection({
+      endColumn: 20,
+      endLine: 1,
+      path: "src/app.js",
+      sessionId: "session-1",
+      startColumn: 1,
+      startLine: 1
+    });
+
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(blocked.errors[0].code, "vibe64_agent_write_mode_busy");
+    assert.equal(providerInspections, 0);
+    await assert.rejects(
+      readFile(path.join(fixture.sourceEditorTempRoot, "source-editor-explanation-cleanup.json"), "utf8"),
+      { code: "ENOENT" }
+    );
+  } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor keeps provider failure cleanup ownership inside session admission", async () => {
+  let fixture = null;
+  let lockHeld = false;
+  let lockReleased = false;
+  const providerStages = [];
+  fixture = await createSourceEditorFixture({
+    terminalService: {
+      describeAgentProvider() {
+        assert.equal(lockHeld, true);
+        providerStages.push("describe");
+        return {
+          accountIdentitySignature: "codex-account-fixture-v1",
+          providerId: "codex",
+          transportId: "codex_app_server"
+        };
+      },
+      async deleteDetachedAgentChatThread(_sessionId, input = {}) {
+        assert.equal(lockHeld, true);
+        providerStages.push("cleanup");
+        return {
+          code: "unit_cleanup_failed",
+          error: "Unit cleanup failed.",
+          ok: false,
+          threadId: input.threadId
+        };
+      },
+      resolveAgentExecutionProfile() {
+        assert.equal(lockHeld, true);
+        providerStages.push("profile");
+        return resolvedSourceExplanationProfile();
+      },
+      async runDetachedAgentChatTurn(_sessionId, _input, options = {}) {
+        assert.equal(lockHeld, true);
+        providerStages.push("turn");
+        options.onEvent({
+          executionProfile: resolvedSourceExplanationProfile(),
+          type: "execution-profile"
+        });
+        options.onEvent({
+          threadId: "agent-thread-admission-failure",
+          type: "thread"
+        });
+        options.onEvent({
+          threadId: "agent-thread-admission-failure",
+          turnId: "agent-turn-admission-failure",
+          type: "turn"
+        });
+        const error = new Error("Unit detached turn failed.");
+        error.code = "unit_detached_turn_failed";
+        error.statusCode = 502;
+        throw error;
+      }
+    },
+    async writeExclusive(_sessionId, _operationName, operation) {
+      assert.equal(lockHeld, false);
+      lockHeld = true;
+      try {
+        return {
+          acquired: true,
+          value: await operation()
+        };
+      } catch (error) {
+        const ledger = JSON.parse(await readFile(path.join(
+          fixture.sourceEditorTempRoot,
+          "source-editor-explanation-cleanup.json"
+        ), "utf8"));
+        assert.equal(ledger.records.length, 1);
+        assert.equal(ledger.records[0].agentThreadId, "agent-thread-admission-failure");
+        throw error;
+      } finally {
+        lockHeld = false;
+        lockReleased = true;
+      }
+    }
+  });
+  try {
+    const failed = await fixture.service.explainSelection({
+      endColumn: 20,
+      endLine: 1,
+      path: "src/app.js",
+      sessionId: "session-1",
+      startColumn: 1,
+      startLine: 1
+    });
+
+    assert.equal(failed.ok, false);
+    assert.equal(failed.code, "unit_detached_turn_failed");
+    assert.equal(lockReleased, true);
+    assert.deepEqual(providerStages, ["describe", "profile", "turn", "cleanup"]);
   } finally {
     await rm(fixture.root, {
       force: true,

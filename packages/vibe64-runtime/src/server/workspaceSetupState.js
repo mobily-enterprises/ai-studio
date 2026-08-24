@@ -76,9 +76,22 @@ function publicSessionMetadata(metadata = {}) {
   ).filter(([name]) => name !== WORKSPACE_SETUP_METADATA_NAME));
 }
 
-async function writeWorkspaceSetupState(store, sessionId = "", value = {}) {
+async function writeWorkspaceSetupState(store, sessionId = "", value = {}, {
+  renewal = false
+} = {}) {
   const state = workspaceSetupState(value);
-  await store.writeMetadataValue(
+  const writeMetadataValue = renewal
+    ? store.writeMetadataValueForRenewal
+    : store.writeMetadataValue;
+  if (typeof writeMetadataValue !== "function") {
+    throw new TypeError(
+      renewal
+        ? "Renewal workspace preparation requires the private metadata writer."
+        : "Workspace preparation requires the session metadata writer."
+    );
+  }
+  await writeMetadataValue.call(
+    store,
     sessionId,
     WORKSPACE_SETUP_METADATA_NAME,
     JSON.stringify(state)

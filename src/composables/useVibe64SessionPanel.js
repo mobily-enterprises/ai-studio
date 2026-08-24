@@ -72,6 +72,9 @@ function useVibe64SessionPanel(props, emit) {
   repositoryStatusRegistry = useVibe64SessionRepositoryStatusRegistry({
     onState: applyRuntimeWorkState,
     selectedSessionId: () => selection.selectedSessionId,
+    sessionSourceOperationsSuspended: (sessionId) => (
+      runtimeStateBySessionId[sessionId]?.sourceOperationsSuspended === true
+    ),
     sessions: sessionData.sessions,
     sessionsApiPath: sessionData.sessionsApiPath
   });
@@ -247,6 +250,7 @@ function useVibe64SessionPanel(props, emit) {
     sessionData,
     setRuntimeBusy,
     setRuntimePageError,
+    setRuntimeSourceOperationsSuspended,
     setRuntimeWorkState,
     setRuntimeToolbarControls,
     toolbar,
@@ -276,6 +280,7 @@ function useVibe64SessionPanel(props, emit) {
         agentThinking: false,
         busy: false,
         pageError: "",
+        sourceOperationsSuspended: false,
         repositoryWorkState: {
           checkedAt: "",
           state: "checking"
@@ -326,6 +331,16 @@ function useVibe64SessionPanel(props, emit) {
     const state = ensureRuntimeState(sessionId);
     if (state) {
       state.pageError = String(error || "");
+    }
+  }
+
+  function setRuntimeSourceOperationsSuspended({
+    sessionId = "",
+    suspended = false
+  } = {}) {
+    const state = ensureRuntimeState(sessionId);
+    if (state) {
+      state.sourceOperationsSuspended = suspended === true;
     }
   }
 

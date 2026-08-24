@@ -15,6 +15,8 @@ import {
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
+  vibe64SessionPath,
+  vibe64SessionQueryKey,
   vibe64SessionsQueryKey
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
@@ -80,6 +82,20 @@ const SESSION_LIST_IGNORED_REALTIME_REASONS = new Set([
 function sessionIdExistsInList(sessionId = "", nextSessions = []) {
   const normalizedSessionId = String(sessionId || "").trim();
   return Boolean(normalizedSessionId) && nextSessions.some((session) => session.sessionId === normalizedSessionId);
+}
+
+function renewedSuccessorSessionId({
+  predecessorSessionId = "",
+  sessions = []
+} = {}) {
+  const predecessorId = String(predecessorSessionId || "").trim();
+  if (!predecessorId) {
+    return "";
+  }
+  const matches = sessions.filter((session) => (
+    String(session?.metadata?.renewed_from || "").trim() === predecessorId
+  ));
+  return matches.length === 1 ? String(matches[0]?.sessionId || "").trim() : "";
 }
 
 function shouldPreserveSelectedSessionDuringRefresh({
@@ -266,10 +282,67 @@ function useVibe64SessionData({
     currentSessionPublisher.stop();
   });
   const sessions = computed(() => visibleVibe64Sessions(sessionList.items || []));
-  const creationOptions = computed(() => sessionList.pages?.[0]?.creation || {});
   const selectedListSession = computed(() => {
     return sessions.value.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
+  const selectedSessionMissing = computed(() => {
+    const selectedId = String(selectedSessionId.value || "").trim();
+    if (
+      !selectedId ||
+      sessionList.pages.length < 1 ||
+      String(sessionList.loadError || "").trim() ||
+      sessionIdExistsInList(selectedId, sessions.value)
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const selectionRenewalPredecessorId = computed(() => {
+    const selectedId = String(selectedSessionId.value || "").trim();
+    if (!selectedId || sessionList.pages.length < 1 || String(sessionList.loadError || "").trim()) {
+      return "";
+    }
+    if (selectedSessionMissing.value) {
+      return selectedId;
+    }
+    return String(selectedListSession.value?.metadata?.renewed_from || "").trim();
+  });
+  const selectionRenewalPath = computed(() => (
+    selectionRenewalPredecessorId.value
+      ? vibe64SessionPath(
+          sessionsApiPath.value,
+          selectionRenewalPredecessorId.value,
+          "/renewal"
+        )
+      : ""
+  ));
+  const selectionRenewalResource = useEndpointResource({
+    enabled: computed(() => Boolean(selectionRenewalPredecessorId.value)),
+    fallbackLoadError: "The selected session renewal could not be checked.",
+    path: selectionRenewalPath,
+    queryKey: computed(() => [
+      ...vibe64SessionQueryKey(
+        VIBE64_SURFACE_ID,
+        ROUTE_VISIBILITY_PUBLIC,
+        projectSlug.value
+      ),
+      selectionRenewalPredecessorId.value,
+      "renewal"
+    ]),
+    queryOptions: {
+      refetchOnMount: "always",
+      refetchOnWindowFocus: false
+    },
+    readMethod: "GET",
+    realtime: {
+      event: VIBE64_SESSION_CHANGED_EVENT,
+      matches: ({ payload = {} } = {}) => (
+        String(payload?.sessionId || "").trim() === selectionRenewalPredecessorId.value
+      )
+    },
+    requestRecoveryLabel: "Selected session renewal"
+  });
+  const creationOptions = computed(() => sessionList.pages?.[0]?.creation || {});
   const selectedSession = computed(() => enrichVibe64SessionForDisplay(selectedListSession.value));
   const isSelectedSessionClosed = computed(() => isClosedVibe64Session(selectedSession.value || {}));
   const pageLoading = computed(() => Boolean(sessionList.isLoading));
@@ -343,11 +416,12 @@ function useVibe64SessionData({
   }
 
   function selectSessionId(sessionId = "") {
+    const normalizedSessionId = String(sessionId || "").trim();
     vibe64SessionDebugLog("client.sessionData.selectSession", {
       fromSessionId: String(selectedSessionId.value || ""),
-      toSessionId: String(sessionId || "")
+      toSessionId: normalizedSessionId
     });
-    sessionSelection.select(sessionId);
+    sessionSelection.select(normalizedSessionId);
   }
 
   function clearSelectedSession() {
@@ -441,6 +515,21 @@ function useVibe64SessionData({
     return {
       createSessionRunning: createSessionRunning.value,
       currentSessionApiPath: currentSessionApiPath.value,
+      selectionRenewal: selectionRenewalResource.data.value?.renewal || null,
+      selectionRenewalLoadError: String(
+        selectionRenewalResource.loadError?.value || ""
+      ),
+      selectionRenewalLoaded: Boolean(
+        selectionRenewalResource.data.value &&
+        typeof selectionRenewalResource.data.value === "object" &&
+        !Array.isArray(selectionRenewalResource.data.value)
+      ),
+      selectionRenewalLoading: Boolean(
+        selectionRenewalResource.isInitialLoading?.value ||
+        selectionRenewalResource.isLoading?.value
+      ),
+      selectionRenewalPredecessorId: selectionRenewalPredecessorId.value,
+      selectedSessionMissing: selectedSessionMissing.value,
       nextSessions,
       selectedSessionId: String(selectedSessionId.value || ""),
       sessionIds: nextSessions.map((session) => session.sessionId).join("|"),
@@ -468,6 +557,44 @@ function useVibe64SessionData({
       })
     ) {
       return;
+    }
+    if (state.selectionRenewalPredecessorId) {
+      if (
+        state.selectionRenewalLoading ||
+        state.selectionRenewalLoadError ||
+        !state.selectionRenewalLoaded
+      ) {
+        return;
+      }
+      const selectionRenewal = state.selectionRenewal;
+      if (
+        selectionRenewal &&
+        String(selectionRenewal.sessionId || "").trim() === state.selectionRenewalPredecessorId
+      ) {
+        const renewalStatus = String(selectionRenewal.status || "").trim();
+        if (state.selectedSessionMissing) {
+          if (renewalStatus === "completed") {
+            const renewedSuccessorId = renewedSuccessorSessionId({
+              predecessorSessionId: state.selectedSessionId,
+              sessions: nextSessions
+            });
+            if (renewedSuccessorId) {
+              sessionSelection.selectAvailableId(nextSessions, {
+                fallbackId: renewedSuccessorId,
+                getId: (session) => session.sessionId
+              });
+            }
+            return;
+          }
+          if (["failed", "running"].includes(renewalStatus)) {
+            return;
+          }
+        }
+        if (["failed", "running"].includes(renewalStatus)) {
+          sessionSelection.select(state.selectionRenewalPredecessorId);
+          return;
+        }
+      }
     }
     sessionSelection.selectAvailableId(nextSessions, {
       fallbackId: nextSessions.at(-1)?.sessionId || "",
@@ -531,6 +658,7 @@ function useVibe64SessionData({
 
 export {
   sessionListRealtimeShouldRefresh,
+  renewedSuccessorSessionId,
   selectedSessionIdForCurrentAlias,
   sessionIdExistsInList,
   shouldPreserveSelectedSessionDuringRefresh,

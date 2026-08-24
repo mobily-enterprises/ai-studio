@@ -153,6 +153,10 @@ const vibe64AutopilotViewProps = {
     default: () => ({}),
     type: Object
   },
+  sessionRenewal: {
+    default: () => ({}),
+    type: Object
+  },
   sessionSelectionClosed: {
     default: false,
     type: Boolean

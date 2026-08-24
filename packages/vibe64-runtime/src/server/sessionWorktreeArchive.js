@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -11,7 +11,8 @@ import {
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
   checkpointRefRoot,
-  runVibe64Command
+  runVibe64Command,
+  writeGitWorktreeTree
 } from "@local/vibe64-execution/server";
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -23,6 +24,7 @@ const RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/checkpoin
 const RECOVERY_PATCH_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/worktree.patch`;
 const RECOVERY_UNTRACKED_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/untracked-files.tar.gz`;
 const RECOVERY_UNTRACKED_LIST_ARTIFACT = `${RECOVERY_ARTIFACT_ROOT}/untracked-files.list`;
+const SESSION_RENEWAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 
 async function runCommand(command, args = [], {
   allowedRoots = [],
@@ -104,6 +106,32 @@ function sameResolvedPath(left = "", right = "") {
   return Boolean(left && right) && path.resolve(left) === path.resolve(right);
 }
 
+function assertSessionRenewalId(renewalId = "") {
+  const normalizedRenewalId = normalizeText(renewalId);
+  if (!SESSION_RENEWAL_ID_PATTERN.test(normalizedRenewalId)) {
+    throw vibe64Error(
+      `Invalid Vibe64 session renewal id: ${normalizedRenewalId || "(empty)"}`,
+      "vibe64_invalid_session_renewal_id"
+    );
+  }
+  return normalizedRenewalId;
+}
+
+function renewalSourceStagePath(session = {}, renewalId = "") {
+  const worktreePath = sessionSourcePath(session);
+  if (!worktreePath) {
+    throw vibe64Error(
+      `Session ${normalizeText(session.sessionId) || "(unknown)"} has no managed source to stage for renewal.`,
+      "vibe64_session_source_required"
+    );
+  }
+  return `${path.resolve(worktreePath)}.renewal-${assertSessionRenewalId(renewalId)}`;
+}
+
+function renewalSourceDeletionPath(session = {}, renewalId = "") {
+  return `${renewalSourceStagePath(session, renewalId)}.deleting`;
+}
+
 async function isExactGitWorktree(worktreePath = "") {
   if (!await pathExists(worktreePath)) {
     return false;
@@ -112,6 +140,45 @@ async function isExactGitWorktree(worktreePath = "") {
     timeout: 15_000
   });
   return result.ok && sameResolvedPath(normalizeText(result.stdout || result.output), worktreePath);
+}
+
+async function inspectWorktreeDirty(worktreePath = "") {
+  let worktreeTree = "";
+  try {
+    worktreeTree = await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      runCommand: runVibe64Command,
+      worktreePath
+    });
+  } catch (error) {
+    throw vibe64Error(
+      `Cannot inspect session worktree before archive: ${normalizeText(error?.message)}`,
+      "vibe64_worktree_archive_status_failed"
+    );
+  }
+  const [statusResult, headTreeResult] = await Promise.all([
+    runGit(worktreePath, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=normal",
+      "--ignore-submodules=none"
+    ], {
+      timeout: 15_000
+    }),
+    runGit(worktreePath, ["rev-parse", "--verify", "HEAD^{tree}"], {
+      timeout: 15_000
+    })
+  ]);
+  if (!statusResult.ok || !headTreeResult.ok) {
+    throw vibe64Error(
+      `Cannot inspect session worktree before archive: ${
+        statusResult.ok ? headTreeResult.output : statusResult.output
+      }`,
+      "vibe64_worktree_archive_status_failed"
+    );
+  }
+  return Boolean(normalizeText(statusResult.stdout)) ||
+    normalizeText(worktreeTree) !== normalizeText(headTreeResult.stdout);
 }
 
 function sessionOwnsWorktreePath(session = {}, worktreePath = "") {
@@ -152,20 +219,7 @@ async function writeDirtyRecoveryArtifacts({
   store,
   worktreePath = ""
 } = {}) {
-  const statusResult = await runGit(worktreePath, [
-    "status",
-    "--porcelain=v1",
-    "--untracked-files=normal"
-  ], {
-    timeout: 15_000
-  });
-  if (!statusResult.ok) {
-    throw vibe64Error(
-      `Cannot inspect session worktree before archive: ${statusResult.output}`,
-      "vibe64_worktree_archive_status_failed"
-    );
-  }
-  const dirty = Boolean(normalizeText(statusResult.stdout));
+  const dirty = await inspectWorktreeDirty(worktreePath);
   if (!dirty) {
     return {
       dirty: false,
@@ -426,43 +480,27 @@ async function writeCheckpointRecoveryBundle({
   return RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT;
 }
 
-async function archiveSessionSource({
-  reason = "archive",
-  session = {},
-  store
-} = {}) {
-  const worktreePath = recoveryWorktreePath(session);
-  if (!worktreePath) {
-    return {
-      ok: true,
-      removed: false,
-      recoverable: false,
-      reason: "worktree_missing"
-    };
-  }
+function recoveryDetailsFromSession(session = {}) {
+  return {
+    branch: metadataValue(session, "source_recovery_branch"),
+    branchBundleArtifact: metadataValue(session, "source_recovery_bundle_artifact"),
+    checkpointBundleArtifact: metadataValue(session, "source_recovery_checkpoint_bundle_artifact"),
+    dirty: metadataValue(session, "source_recovery_dirty") === "yes",
+    head: metadataValue(session, "source_recovery_head"),
+    patchArtifact: metadataValue(session, "source_recovery_patch_artifact"),
+    recoverySaved: metadataValue(session, "source_recovery_saved") === "yes",
+    recoverySourcePath: metadataValue(session, "source_recovery_source_path"),
+    untrackedArtifact: metadataValue(session, "source_recovery_untracked_artifact"),
+    untrackedCount: Number(metadataValue(session, "source_recovery_untracked_count") || 0)
+  };
+}
 
-  const recoveryKind = metadataValue(session, "source_kind") ||
-    metadataValue(session, "source_recovery_kind");
-  if (recoveryKind !== "session_clone") {
-    return {
-      ok: true,
-      removed: false,
-      recoverable: false,
-      reason: "not_session_clone"
-    };
-  }
-  const worktreeExists = await pathExists(worktreePath);
-  const worktreeIsGitWorktree = worktreeExists
-    ? await isExactGitWorktree(worktreePath)
-    : false;
-  if (worktreeExists && !worktreeIsGitWorktree && !sessionOwnsWorktreePath(session, worktreePath)) {
-    throw vibe64Error(
-      `Cannot archive session worktree because the path exists but is not the session-owned Git worktree: ${worktreePath}`,
-      "vibe64_worktree_archive_path_not_session_owned"
-    );
-  }
-  const sessionId = normalizeText(session.sessionId);
-  const sessionName = recoverySessionName(session);
+async function saveSessionSourceRecovery({
+  session = {},
+  store,
+  worktreeIsGitWorktree = false,
+  worktreePath = ""
+} = {}) {
   const branch = worktreeIsGitWorktree
     ? await readWorktreeGitFact(worktreePath, ["branch", "--show-current"], metadataValue(session, "branch"))
     : metadataValue(session, "branch") || metadataValue(session, "source_recovery_branch");
@@ -500,24 +538,445 @@ async function archiveSessionSource({
     })
     : metadataValue(session, "source_recovery_checkpoint_bundle_artifact");
   const archivedAt = new Date().toISOString();
-  await writeMetadataValues(store, sessionId, {
+  const details = {
+    branch,
+    branchBundleArtifact,
+    checkpointBundleArtifact,
+    dirty: dirtyArtifacts.dirty,
+    head,
+    patchArtifact: dirtyArtifacts.patchArtifact,
+    recoverySaved: true,
+    recoverySourcePath: worktreePath,
+    untrackedArtifact: dirtyArtifacts.untrackedArtifact,
+    untrackedCount: dirtyArtifacts.untrackedCount || 0
+  };
+  await writeMetadataValues(store, session.sessionId, {
     source_recovery_base_branch: metadataValue(session, "base_branch"),
     source_recovery_base_commit: metadataValue(session, "base_commit"),
-    source_recovery_branch: branch,
-    source_recovery_bundle_artifact: branchBundleArtifact,
-    source_recovery_checkpoint_bundle_artifact: checkpointBundleArtifact,
+    source_recovery_branch: details.branch,
+    source_recovery_bundle_artifact: details.branchBundleArtifact,
+    source_recovery_checkpoint_bundle_artifact: details.checkpointBundleArtifact,
     source_recovery_default_branch: metadataValue(session, "source_default_branch") || metadataValue(session, "base_branch"),
-    source_recovery_dirty: dirtyArtifacts.dirty ? "yes" : "no",
-    source_recovery_head: head,
-    source_recovery_kind: recoveryKind,
-    source_recovery_patch_artifact: dirtyArtifacts.patchArtifact,
+    source_recovery_dirty: details.dirty ? "yes" : "no",
+    source_recovery_head: details.head,
+    source_recovery_kind: metadataValue(session, "source_kind") || metadataValue(session, "source_recovery_kind"),
+    source_recovery_patch_artifact: details.patchArtifact,
     source_recovery_remote_url: remoteUrl,
-    source_recovery_session_name: sessionName,
+    source_recovery_session_name: recoverySessionName(session),
     source_recovery_saved: "yes",
     source_recovery_saved_at: archivedAt,
-    source_recovery_untracked_artifact: dirtyArtifacts.untrackedArtifact,
-    source_recovery_untracked_count: String(dirtyArtifacts.untrackedCount || 0),
+    source_recovery_untracked_artifact: details.untrackedArtifact,
+    source_recovery_untracked_count: String(details.untrackedCount),
     source_recovery_source_path: worktreePath
+  });
+  return details;
+}
+
+async function validateRecoveryBundle({
+  artifact = "",
+  expectedArtifact = "",
+  session = {},
+  worktreePath = ""
+} = {}) {
+  if (!artifact) {
+    return;
+  }
+  if (artifact !== expectedArtifact) {
+    throw vibe64Error(
+      `Renewal recovery references an unexpected artifact: ${artifact}`,
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+  const artifactPath = path.join(session.artifactsRoot, artifact);
+  if (!await pathExists(artifactPath)) {
+    throw vibe64Error(
+      `Renewal recovery artifact is missing: ${artifact}`,
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+  const verification = await runGit(worktreePath, ["bundle", "verify", artifactPath], {
+    allowedRoots: [session.artifactsRoot],
+    timeout: SNAPSHOT_TIMEOUT_MS
+  });
+  if (!verification.ok) {
+    throw vibe64Error(
+      `Renewal recovery artifact is invalid: ${artifact}: ${verification.output}`,
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+}
+
+async function validateCleanRenewalRecovery({
+  details = {},
+  session = {},
+  sourcePath = "",
+  worktreePath = ""
+} = {}) {
+  if (
+    details.recoverySaved !== true ||
+    !sameResolvedPath(details.recoverySourcePath, sourcePath) ||
+    details.dirty === true ||
+    details.patchArtifact ||
+    details.untrackedArtifact ||
+    Number(details.untrackedCount || 0) !== 0
+  ) {
+    throw vibe64Error(
+      "A renewal source stage requires complete clean-worktree recovery evidence.",
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+  const head = await readWorktreeGitFact(worktreePath, ["rev-parse", "--verify", "HEAD"]);
+  if (!details.head || head !== details.head) {
+    throw vibe64Error(
+      "The renewal recovery commit does not match the staged worktree.",
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+  const branch = await readWorktreeGitFact(worktreePath, ["branch", "--show-current"]);
+  if (details.branch && branch !== details.branch) {
+    throw vibe64Error(
+      "The renewal recovery branch does not match the staged worktree.",
+      "vibe64_session_renewal_recovery_invalid"
+    );
+  }
+  await validateRecoveryBundle({
+    artifact: details.branchBundleArtifact,
+    expectedArtifact: RECOVERY_BRANCH_BUNDLE_ARTIFACT,
+    session,
+    worktreePath
+  });
+  await validateRecoveryBundle({
+    artifact: details.checkpointBundleArtifact,
+    expectedArtifact: RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT,
+    session,
+    worktreePath
+  });
+}
+
+async function prepareRenewalSessionSource({
+  renewalId = "",
+  session = {},
+  store
+} = {}) {
+  const sourcePath = sessionSourcePath(session);
+  const stagePath = renewalSourceStagePath(session, renewalId);
+  const [sourceExists, stageExists] = await Promise.all([
+    pathExists(sourcePath),
+    pathExists(stagePath)
+  ]);
+  if (sourceExists && stageExists) {
+    throw vibe64Error(
+      `Renewal source exists in both active and staged locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_stage_conflict"
+    );
+  }
+  if (!sourceExists) {
+    throw vibe64Error(
+      stageExists
+        ? `Renewal source was staged before its durable commit: ${normalizeText(session.sessionId)}`
+        : `Renewal source is missing from its active location: ${normalizeText(session.sessionId)}`,
+      stageExists
+        ? "vibe64_session_renewal_source_prematurely_staged"
+        : "vibe64_session_renewal_source_missing"
+    );
+  }
+  if (!sessionOwnsWorktreePath(session, sourcePath) || !await isExactGitWorktree(sourcePath)) {
+    throw vibe64Error(
+      `Renewal requires the exact session-owned Git worktree: ${sourcePath}`,
+      "vibe64_session_renewal_source_invalid"
+    );
+  }
+  if (await inspectWorktreeDirty(sourcePath)) {
+    throw vibe64Error(
+      "Renewal requires a clean, saved session source.",
+      "vibe64_session_renewal_source_dirty"
+    );
+  }
+  const existingDetails = recoveryDetailsFromSession(session);
+  const [currentHead, currentBranch] = await Promise.all([
+    readWorktreeGitFact(sourcePath, ["rev-parse", "--verify", "HEAD"]),
+    readWorktreeGitFact(sourcePath, ["branch", "--show-current"])
+  ]);
+  if (
+    existingDetails.recoverySaved === true &&
+    sameResolvedPath(existingDetails.recoverySourcePath, sourcePath) &&
+    existingDetails.head === currentHead &&
+    (!existingDetails.branch || existingDetails.branch === currentBranch)
+  ) {
+    await validateCleanRenewalRecovery({
+      details: existingDetails,
+      session,
+      sourcePath,
+      worktreePath: sourcePath
+    });
+    return {
+      changed: false,
+      prepared: true,
+      renewalId: assertSessionRenewalId(renewalId),
+      sessionId: normalizeText(session.sessionId),
+      sourcePath,
+      stagePath,
+      staged: false
+    };
+  }
+  await Promise.all([
+    RECOVERY_BRANCH_BUNDLE_ARTIFACT,
+    RECOVERY_CHECKPOINT_BUNDLE_ARTIFACT
+  ].map((relativePath) => rm(path.join(session.artifactsRoot, relativePath), {
+    force: true
+  })));
+  const details = await saveSessionSourceRecovery({
+    session,
+    store,
+    worktreeIsGitWorktree: true,
+    worktreePath: sourcePath
+  });
+  await validateCleanRenewalRecovery({
+    details,
+    session,
+    sourcePath,
+    worktreePath: sourcePath
+  });
+  if (await inspectWorktreeDirty(sourcePath)) {
+    throw vibe64Error(
+      "Renewal source changed while its recovery evidence was being prepared.",
+      "vibe64_session_renewal_source_dirty"
+    );
+  }
+  return {
+    changed: true,
+    prepared: true,
+    renewalId: assertSessionRenewalId(renewalId),
+    sessionId: normalizeText(session.sessionId),
+    sourcePath,
+    stagePath,
+    staged: false
+  };
+}
+
+async function stagePreparedRenewalSessionSource({
+  renewalId = "",
+  session = {}
+} = {}) {
+  const sourcePath = sessionSourcePath(session);
+  const stagePath = renewalSourceStagePath(session, renewalId);
+  const [sourceExists, stageExists] = await Promise.all([
+    pathExists(sourcePath),
+    pathExists(stagePath)
+  ]);
+  if (sourceExists && stageExists) {
+    throw vibe64Error(
+      `Renewal source exists in both active and staged locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_stage_conflict"
+    );
+  }
+  if (!sourceExists && !stageExists) {
+    throw vibe64Error(
+      `Renewal source is missing from both active and staged locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_missing"
+    );
+  }
+  const currentPath = sourceExists ? sourcePath : stagePath;
+  if (!sessionOwnsWorktreePath(session, sourcePath) || !await isExactGitWorktree(currentPath)) {
+    throw vibe64Error(
+      `Renewal requires the exact session-owned Git worktree: ${currentPath}`,
+      "vibe64_session_renewal_source_invalid"
+    );
+  }
+  if (await inspectWorktreeDirty(currentPath)) {
+    throw vibe64Error(
+      "Renewal requires the exact clean source used for its recovery proof.",
+      "vibe64_session_renewal_source_dirty"
+    );
+  }
+  await validateCleanRenewalRecovery({
+    details: recoveryDetailsFromSession(session),
+    session,
+    sourcePath,
+    worktreePath: currentPath
+  });
+  if (sourceExists) {
+    if (await inspectWorktreeDirty(sourcePath)) {
+      throw vibe64Error(
+        "Renewal source changed before its committed stage transition.",
+        "vibe64_session_renewal_source_dirty"
+      );
+    }
+    await rename(sourcePath, stagePath);
+  }
+  return {
+    changed: sourceExists,
+    renewalId: assertSessionRenewalId(renewalId),
+    sessionId: normalizeText(session.sessionId),
+    sourcePath,
+    stagePath,
+    staged: true
+  };
+}
+
+async function restoreRenewalSessionSourceStage({
+  renewalId = "",
+  session = {}
+} = {}) {
+  const sourcePath = sessionSourcePath(session);
+  const stagePath = renewalSourceStagePath(session, renewalId);
+  const [sourceExists, stageExists] = await Promise.all([
+    pathExists(sourcePath),
+    pathExists(stagePath)
+  ]);
+  if (sourceExists && stageExists) {
+    throw vibe64Error(
+      `Renewal source exists in both active and staged locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_stage_conflict"
+    );
+  }
+  if (!sourceExists && !stageExists) {
+    throw vibe64Error(
+      `Renewal source is missing from both active and staged locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_missing"
+    );
+  }
+  const currentPath = stageExists ? stagePath : sourcePath;
+  if (!await isExactGitWorktree(currentPath) || await inspectWorktreeDirty(currentPath)) {
+    throw vibe64Error(
+      `Renewal source stage is no longer the exact clean session Git worktree: ${currentPath}`,
+      "vibe64_session_renewal_source_invalid"
+    );
+  }
+  await validateCleanRenewalRecovery({
+    details: recoveryDetailsFromSession(session),
+    session,
+    sourcePath,
+    worktreePath: currentPath
+  });
+  if (stageExists) {
+    await rename(stagePath, sourcePath);
+  }
+  if (!await isExactGitWorktree(sourcePath)) {
+    throw vibe64Error(
+      `Restored renewal source is not the exact session Git worktree: ${sourcePath}`,
+      "vibe64_session_renewal_source_invalid"
+    );
+  }
+  return {
+    changed: stageExists,
+    renewalId: assertSessionRenewalId(renewalId),
+    restored: true,
+    sessionId: normalizeText(session.sessionId),
+    sourcePath,
+    stagePath
+  };
+}
+
+async function commitRenewalSessionSourceStage({
+  renewalId = "",
+  session = {}
+} = {}) {
+  if (
+    session.archived !== true ||
+    normalizeText(session.archiveStatus || session.status) !== "abandoned" ||
+    !normalizeText(session.archivePath) ||
+    !normalizeText(session.artifactsRoot)
+  ) {
+    throw vibe64Error(
+      `Renewal source removal requires the published predecessor archive: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_commit_status_invalid"
+    );
+  }
+  const sourcePath = sessionSourcePath(session);
+  const stagePath = renewalSourceStagePath(session, renewalId);
+  const deletionPath = renewalSourceDeletionPath(session, renewalId);
+  if (await pathExists(sourcePath)) {
+    throw vibe64Error(
+      `Refusing to remove a renewal stage while the active source still exists: ${sourcePath}`,
+      "vibe64_session_renewal_source_not_staged"
+    );
+  }
+  const [stageExists, deletionExists] = await Promise.all([
+    pathExists(stagePath),
+    pathExists(deletionPath)
+  ]);
+  if (stageExists && deletionExists) {
+    throw vibe64Error(
+      `Renewal source exists in both staged and deleting locations: ${normalizeText(session.sessionId)}`,
+      "vibe64_session_renewal_source_stage_conflict"
+    );
+  }
+  if (stageExists) {
+    if (!await isExactGitWorktree(stagePath) || await inspectWorktreeDirty(stagePath)) {
+      throw vibe64Error(
+        `Refusing to remove an invalid renewal source stage: ${stagePath}`,
+        "vibe64_session_renewal_source_invalid"
+      );
+    }
+    await validateCleanRenewalRecovery({
+      details: recoveryDetailsFromSession(session),
+      session,
+      sourcePath,
+      worktreePath: stagePath
+    });
+    await rename(stagePath, deletionPath);
+  }
+  if (stageExists || deletionExists) {
+    await rm(deletionPath, {
+      force: true,
+      maxRetries: 20,
+      recursive: true,
+      retryDelay: 100
+    });
+  }
+  return {
+    changed: stageExists || deletionExists,
+    deletionPath,
+    removed: true,
+    renewalId: assertSessionRenewalId(renewalId),
+    sessionId: normalizeText(session.sessionId),
+    sourcePath,
+    stagePath
+  };
+}
+
+async function archiveSessionSource({
+  reason = "archive",
+  session = {},
+  store
+} = {}) {
+  const worktreePath = recoveryWorktreePath(session);
+  if (!worktreePath) {
+    return {
+      ok: true,
+      removed: false,
+      recoverable: false,
+      reason: "worktree_missing"
+    };
+  }
+
+  const recoveryKind = metadataValue(session, "source_kind") ||
+    metadataValue(session, "source_recovery_kind");
+  if (recoveryKind !== "session_clone") {
+    return {
+      ok: true,
+      removed: false,
+      recoverable: false,
+      reason: "not_session_clone"
+    };
+  }
+  const worktreeExists = await pathExists(worktreePath);
+  const worktreeIsGitWorktree = worktreeExists
+    ? await isExactGitWorktree(worktreePath)
+    : false;
+  if (worktreeExists && !worktreeIsGitWorktree && !sessionOwnsWorktreePath(session, worktreePath)) {
+    throw vibe64Error(
+      `Cannot archive session worktree because the path exists but is not the session-owned Git worktree: ${worktreePath}`,
+      "vibe64_worktree_archive_path_not_session_owned"
+    );
+  }
+  const sessionId = normalizeText(session.sessionId);
+  const recovery = await saveSessionSourceRecovery({
+    session,
+    store,
+    worktreeIsGitWorktree,
+    worktreePath
   });
 
   const removal = await removeSessionOwnedWorktreeDirectory({
@@ -531,11 +990,16 @@ async function archiveSessionSource({
   });
   return {
     ...removal,
-    dirty: dirtyArtifacts.dirty,
+    dirty: recovery.dirty,
     worktreePath
   };
 }
 
 export {
-  archiveSessionSource
+  archiveSessionSource,
+  commitRenewalSessionSourceStage,
+  prepareRenewalSessionSource,
+  renewalSourceStagePath,
+  restoreRenewalSessionSourceStage,
+  stagePreparedRenewalSessionSource
 };

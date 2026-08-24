@@ -13,6 +13,11 @@ import {
   sessionInspectInputValidator,
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
+  sessionRenewalDraftGuardActionInputValidator,
+  sessionRenewalDraftRequestActionInputValidator,
+  sessionRenewalDraftUpdateActionInputValidator,
+  sessionRenewalInspectActionInputValidator,
+  sessionRenewalRetryActionInputValidator,
   sessionSaveInputValidator,
   sessionUpdateInputValidator,
   sessionViewStateInputValidator
@@ -30,6 +35,12 @@ const ACTION_SAVE_SESSION_WORK = "vibe64.sessions.work.save";
 const ACTION_CHECK_SESSION_UPDATES = "vibe64.sessions.updates.check";
 const ACTION_UPDATE_SESSION_WORK = "vibe64.sessions.updates.apply";
 const ACTION_INSPECT_SESSION = "vibe64.sessions.inspect";
+const ACTION_INSPECT_SESSION_RENEWAL = "vibe64.sessions.renewal.inspect";
+const ACTION_REQUEST_SESSION_RENEWAL_DRAFT = "vibe64.sessions.renewal.draft.request";
+const ACTION_UPDATE_SESSION_RENEWAL_DRAFT = "vibe64.sessions.renewal.draft.update";
+const ACTION_CANCEL_SESSION_RENEWAL = "vibe64.sessions.renewal.cancel";
+const ACTION_CONFIRM_SESSION_RENEWAL = "vibe64.sessions.renewal.confirm";
+const ACTION_RETRY_SESSION_RENEWAL = "vibe64.sessions.renewal.retry";
 const ACTION_INSPECT_SESSION_CHANGES = "vibe64.sessions.changes.inspect";
 const ACTION_INSPECT_SESSION_CHANGE_DIFF = "vibe64.sessions.changes.diff.inspect";
 const ACTION_READ_SESSION_CONVERSATION_LOG = "vibe64.sessions.conversation-log.read";
@@ -43,14 +54,21 @@ const ACTION_INSPECT_REPOSITORY_HISTORY = "vibe64.repository.history.inspect";
 const ACTION_INSPECT_REPOSITORY_VERSION_FILES = "vibe64.repository.history.files.inspect";
 const ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF = "vibe64.repository.history.diff.inspect";
 
-function action({ events = [], execute, id, input, kind }) {
+function action({
+  events = [],
+  execute,
+  id,
+  input,
+  kind,
+  idempotency = kind === "query" ? "none" : "optional"
+}) {
   return Object.freeze({
     id,
     version: 1,
     kind,
     input,
     output: null,
-    idempotency: kind === "query" ? "none" : "optional",
+    idempotency,
     audit: {
       actionName: id
     },
@@ -58,6 +76,13 @@ function action({ events = [], execute, id, input, kind }) {
     events,
     execute
   });
+}
+
+function authenticatedVibe64User(context = {}) {
+  const vibe64User = context?.requestMeta?.request?.vibe64User;
+  return vibe64User && typeof vibe64User === "object" && !Array.isArray(vibe64User)
+    ? vibe64User
+    : null;
 }
 
 function withoutSessionId(input = {}) {
@@ -115,6 +140,76 @@ function createSessionActions({ sessions } = {}) {
       execute: (input) => sessions.inspectSession(input.sessionId, {
         projectSlug: input.projectSlug,
         vibe64User: input.vibe64User || null
+      })
+    }),
+    action({
+      id: ACTION_INSPECT_SESSION_RENEWAL,
+      kind: "query",
+      input: sessionRenewalInspectActionInputValidator,
+      execute: (input, context) => sessions.inspectSessionRenewal(input.sessionId, {
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
+      id: ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionRenewalDraftRequestActionInputValidator,
+      execute: (input, context) => sessions.requestSessionRenewalDraft(input.sessionId, {
+        operationKey: input.operationKey,
+        originId: input.originId,
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
+      id: ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionRenewalDraftUpdateActionInputValidator,
+      execute: (input, context) => sessions.updateSessionRenewalDraft(input.sessionId, {
+        draft: input.draft,
+        expectedHash: input.expectedHash,
+        expectedRevision: input.expectedRevision,
+        operationKey: input.operationKey,
+        originId: input.originId,
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
+      id: ACTION_CANCEL_SESSION_RENEWAL,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionRenewalDraftGuardActionInputValidator,
+      execute: (input, context) => sessions.cancelSessionRenewal(input.sessionId, {
+        expectedHash: input.expectedHash,
+        expectedRevision: input.expectedRevision,
+        operationKey: input.operationKey,
+        originId: input.originId,
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
+      id: ACTION_CONFIRM_SESSION_RENEWAL,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionRenewalDraftGuardActionInputValidator,
+      execute: (input, context) => sessions.confirmSessionRenewal(input.sessionId, {
+        expectedHash: input.expectedHash,
+        expectedRevision: input.expectedRevision,
+        operationKey: input.operationKey,
+        originId: input.originId,
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
+      id: ACTION_RETRY_SESSION_RENEWAL,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionRenewalRetryActionInputValidator,
+      execute: (input, context) => sessions.retrySessionRenewal(input.sessionId, {
+        operationKey: input.operationKey,
+        originId: input.originId,
+        vibe64User: authenticatedVibe64User(context)
       })
     }),
     action({
@@ -218,6 +313,7 @@ function createSessionActions({ sessions } = {}) {
 }
 
 export {
+  ACTION_CANCEL_SESSION_RENEWAL,
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
@@ -226,17 +322,22 @@ export {
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
+  ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION,
+  ACTION_INSPECT_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION_CHANGE_DIFF,
   ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
+  ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+  ACTION_RETRY_SESSION_RENEWAL,
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_WORK,
   createSessionActions
 };

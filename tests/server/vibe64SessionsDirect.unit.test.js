@@ -2,22 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTION_CANCEL_SESSION_RENEWAL,
+  ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_CREATE_SESSION,
   ACTION_INSPECT_SESSION,
+  ACTION_INSPECT_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION_CHANGE_DIFF,
   ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
+  ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+  ACTION_RETRY_SESSION_RENEWAL,
   ACTION_RETRY_WORKSPACE_SETUP,
   ACTION_SAVE_SESSION_WORK,
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_UPDATE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_BROADCAST_SESSION_VIEW_STATE,
@@ -105,6 +111,11 @@ function sessionCreationPolicyHarness({
   const creationInputs = [];
   let nextSession = openSessions.length + 1;
   const runtime = {
+    store: {
+      async listSessionsForRenewal() {
+        return openSessions.map((session) => ({ ...session }));
+      }
+    },
     async createSession(input) {
       creationInputs.push(input);
       await beforeCreate();
@@ -123,7 +134,9 @@ function sessionCreationPolicyHarness({
       return openSessions.find((session) => session.sessionId === sessionId) || null;
     },
     async listSessionSummaries() {
-      return openSessions.map((session) => ({ ...session }));
+      return openSessions
+        .filter((session) => ["active", "blocked", "renewal_quiesced"].includes(session.status))
+        .map((session) => ({ ...session }));
     }
   };
   const project = {
@@ -169,6 +182,12 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_CREATE_SESSION,
     ACTION_UPDATE_CURRENT_SESSION,
     ACTION_INSPECT_SESSION,
+    ACTION_INSPECT_SESSION_RENEWAL,
+    ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
+    ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+    ACTION_CANCEL_SESSION_RENEWAL,
+    ACTION_CONFIRM_SESSION_RENEWAL,
+    ACTION_RETRY_SESSION_RENEWAL,
     ACTION_INSPECT_SESSION_CHANGES,
     ACTION_INSPECT_SESSION_CHANGE_DIFF,
     ACTION_INSPECT_SESSION_WORK,
@@ -2069,6 +2088,52 @@ test("concurrent shared-database creation admits one request and leaves no rejec
   });
 });
 
+test("an unfinished renewal durably reserves the shared-database session slot", async (t) => {
+  for (const scenario of [
+    {
+      metadata: { renewal_quiesced_id: "renewal-1" },
+      name: "quiesced before successor creation",
+      sessionId: "renewal-source",
+      status: "renewal_quiesced"
+    },
+    {
+      metadata: {
+        renewal_id: "renewal-1",
+        renewed_from: "renewal-source"
+      },
+      name: "hidden successor transition",
+      sessionId: "renewal-successor",
+      status: "renewal_pending"
+    }
+  ]) {
+    await t.test(scenario.name, async () => {
+      await withTemporaryRoot(async (targetRoot) => {
+        const harness = sessionCreationPolicyHarness({
+          initialSessions: [{
+            metadata: scenario.metadata,
+            sessionId: scenario.sessionId,
+            status: scenario.status
+          }],
+          managed: true,
+          projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+          scope: "project"
+        });
+
+        const listed = await harness.service.listSessions();
+        assert.equal(listed.creation.canCreate, false);
+        assert.equal(listed.creation.showCreateAction, false);
+        assert.deepEqual(listed.limits, {
+          maxOpenSessions: 1,
+          openSessionCount: 1
+        });
+        const rejected = await harness.service.createSession();
+        assert.equal(rejected.code, "vibe64_session_creation_limit");
+        assert.equal(harness.creationInputs.length, 0);
+      });
+    });
+  }
+});
+
 test("shared-session admission releases its lock before workspace setup starts", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     let releaseSetup;
@@ -2263,6 +2328,7 @@ test("new sessions publish running workspace preparation and its eventual result
 });
 
 test("workspace preparation starts newly configured recipes and retries failed attempts", async () => {
+  let admissionBlocked = false;
   let status = "succeeded";
   let startCount = 0;
   const retryValues = [];
@@ -2288,6 +2354,14 @@ test("workspace preparation starts newly configured recipes and retries failed a
       async start(input) {
         startCount += 1;
         retryValues.push(input.retry);
+        if (admissionBlocked) {
+          return {
+            code: "vibe64_agent_write_mode_busy",
+            error: "Another assistant operation is starting. Try again in a moment.",
+            ok: false,
+            retryable: true
+          };
+        }
         status = "running";
         return {
           completion: null,
@@ -2315,4 +2389,13 @@ test("workspace preparation starts newly configured recipes and retries failed a
   assert.equal(retried.workspaceSetup.status, "running");
   assert.equal(startCount, 2);
   assert.deepEqual(retryValues, [true, true]);
+
+  status = "failed";
+  admissionBlocked = true;
+  const blocked = await service.retryWorkspaceSetup("session-1");
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, "vibe64_agent_write_mode_busy");
+  assert.equal(blocked.retryable, true);
+  assert.equal(status, "failed");
+  assert.equal(startCount, 3);
 });

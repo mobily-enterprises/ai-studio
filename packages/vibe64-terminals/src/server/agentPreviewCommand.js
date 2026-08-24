@@ -1001,6 +1001,14 @@ async function terminateProcessGroup(groupId, expectedStartTimeTicks = "") {
       // The process group exited before the fallback signal was sent.
     }
   }
+  for (let attempt = 0; attempt < 20 && await processGroupIsAlive(groupId); attempt += 1) {
+    await delay(50);
+  }
+  if (await processGroupIsAlive(groupId)) {
+    const error = new Error(`Preview process group did not exit: ${groupId}`);
+    error.code = "vibe64_agent_preview_process_exit_timeout";
+    throw error;
+  }
 }
 
 async function terminateRegisteredWorker(metadata = null) {

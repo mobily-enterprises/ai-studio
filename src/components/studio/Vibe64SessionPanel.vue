@@ -176,6 +176,7 @@
         @busy-change="setRuntimeBusy"
         @chat-attention="emitChatAttention"
         @page-error-change="setRuntimePageError"
+        @source-operations-suspension-change="setRuntimeSourceOperationsSuspended"
         @work-state-change="setRuntimeWorkState"
         @toolbar-controls-ready="setRuntimeToolbarControls"
         @project-attention="emitProjectAttention"
@@ -232,6 +233,7 @@ const {
   sessionData,
   setRuntimeBusy,
   setRuntimePageError,
+  setRuntimeSourceOperationsSuspended,
   setRuntimeWorkState,
   setRuntimeToolbarControls,
   toolbar,

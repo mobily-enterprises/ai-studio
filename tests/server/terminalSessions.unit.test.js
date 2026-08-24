@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   MAX_TERMINAL_BUFFER_LENGTH,
   MAX_TERMINAL_BUFFER_ROWS,
+  beginTerminalNamespaceOperation,
   closeDetachedTerminalSessions,
   closeTerminalSession,
+  closeTerminalSessionsForNamespace,
   closeTerminalSessionsForNamespacePrefix,
   countRunningTerminalSessions,
+  freezeTerminalNamespaceAdmission,
   listTerminalSessions,
   readTerminalSession,
   readTerminalSessionControlState,
@@ -18,6 +25,7 @@ import {
   terminalKeyInput,
   terminalMovementState,
   terminalSessionContainsText,
+  thawTerminalNamespaceAdmission,
   writeTerminalSession,
   writeTerminalSessionKey,
   writeTerminalSessionText
@@ -315,6 +323,329 @@ test("terminal sessions stream PTY output to subscribers", async () => {
     subscription.unsubscribe();
   } finally {
     await closeTerminalSessionsForNamespacePrefix(namespace);
+  }
+});
+
+test("terminal namespace operations and renewal freeze are atomic", () => {
+  const namespace = `terminal-operation-test-${crypto.randomUUID()}`;
+  const owner = `renewal:${crypto.randomUUID()}`;
+  const operation = beginTerminalNamespaceOperation(namespace);
+  assert.equal(operation.ok, true);
+  assert.deepEqual(freezeTerminalNamespaceAdmission(namespace, { owner }), {
+    code: "terminal_admission_busy",
+    error: "A terminal operation is still finishing.",
+    ok: false
+  });
+
+  operation.release();
+  operation.release();
+  assert.equal(freezeTerminalNamespaceAdmission(namespace, { owner }).ok, true);
+  assert.deepEqual(beginTerminalNamespaceOperation(namespace), {
+    code: "terminal_admission_frozen",
+    error: "Terminal input is temporarily unavailable.",
+    ok: false
+  });
+  assert.equal(thawTerminalNamespaceAdmission(namespace, { owner }).ok, true);
+});
+
+test("a frozen terminal namespace rejects input and close awaits process exit", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-terminal-freeze-"));
+  const sentinelPath = path.join(root, "sentinel.txt");
+  const namespace = `terminal-freeze-test-${crypto.randomUUID()}`;
+  const owner = `renewal:${crypto.randomUUID()}`;
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      [
+        "const fs = require('node:fs');",
+        "const sentinel = process.argv[1];",
+        "console.log(`READY:${process.pid}`);",
+        "process.stdin.on('data', (chunk) => fs.appendFileSync(sentinel, chunk));",
+        "process.stdin.resume();",
+        "setInterval(() => {}, 1000);"
+      ].join(" "),
+      sentinelPath
+    ],
+    command: process.execPath,
+    commandPreview: "node terminal freeze sentinel",
+    namespace
+  });
+
+  try {
+    await waitFor(() => /READY:\d+/u.test(readTerminalSession(session.id, { namespace }).output));
+    const pid = Number(/READY:(\d+)/u.exec(
+      readTerminalSession(session.id, { namespace }).output
+    )?.[1]);
+    assert.ok(Number.isSafeInteger(pid) && pid > 1);
+
+    assert.equal(writeTerminalSession(session.id, "before\n", { namespace }).ok, true);
+    await waitFor(() => existsSync(sentinelPath) && readFileSync(sentinelPath, "utf8") === "before\n");
+
+    assert.deepEqual(freezeTerminalNamespaceAdmission(namespace, {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      owner
+    }), {
+      frozen: true,
+      namespace,
+      ok: true,
+      owner
+    });
+    assert.deepEqual(writeTerminalSession(session.id, "after\n", { namespace }), {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      ok: false
+    });
+    assert.deepEqual(startTerminalSession({
+      args: longRunningNodeArgs(),
+      command: process.execPath,
+      commandPreview: "node rejected after freeze",
+      namespace
+    }), {
+      code: "vibe64_session_renewal_quiesced",
+      error: "Session renewal has frozen terminal input.",
+      ok: false
+    });
+
+    assert.deepEqual(await closeTerminalSessionsForNamespace(namespace), {
+      closed: 1,
+      ok: true
+    });
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    assert.equal(readFileSync(sentinelPath, "utf8"), "before\n");
+  } finally {
+    thawTerminalNamespaceAdmission(namespace, { owner });
+    await closeTerminalSessionsForNamespacePrefix(namespace);
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("bulk shutdown stops terminals across namespaces concurrently and idempotently", async () => {
+  const namespacePrefix = `terminal-concurrent-close-${crypto.randomUUID()}`;
+  const stopStarts = [];
+  let releaseHeldStop = () => null;
+  const heldStop = new Promise((resolve) => {
+    releaseHeldStop = resolve;
+  });
+  const specifications = [{
+    label: "held",
+    namespace: `${namespacePrefix}:one`
+  }, {
+    label: "same-namespace",
+    namespace: `${namespacePrefix}:one`
+  }, {
+    label: "other-namespace",
+    namespace: `${namespacePrefix}:two`
+  }];
+  const sessions = specifications.map(({ label, namespace }) => startTerminalSession({
+    args: [
+      "-e",
+      `console.log('PID:${label}:' + process.pid); process.stdin.resume(); setInterval(() => {}, 1000);`
+    ],
+    command: process.execPath,
+    commandPreview: `node concurrent close ${label}`,
+    namespace,
+    async onStop() {
+      stopStarts.push(label);
+      if (label === "held") {
+        await heldStop;
+      }
+    }
+  }));
+  const closing = [];
+
+  try {
+    await Promise.all(sessions.map(async (session, index) => {
+      const { label, namespace } = specifications[index];
+      await waitFor(() => readTerminalSession(session.id, { namespace }).output.includes(
+        `PID:${label}:`
+      ));
+    }));
+    const pids = sessions.map((session, index) => {
+      const { label, namespace } = specifications[index];
+      return Number(new RegExp(`PID:${label}:(\\d+)`, "u").exec(
+        readTerminalSession(session.id, { namespace }).output
+      )?.[1]);
+    });
+    assert.equal(pids.every((pid) => Number.isSafeInteger(pid) && pid > 1), true);
+
+    let bulkCloseSettled = false;
+    closing.push(closeTerminalSessionsForNamespacePrefix(namespacePrefix).finally(() => {
+      bulkCloseSettled = true;
+    }));
+    closing.push(closeTerminalSessionsForNamespacePrefix(namespacePrefix));
+    await waitFor(() => stopStarts.length === specifications.length);
+
+    assert.deepEqual([...stopStarts].sort(), specifications.map(({ label }) => label).sort());
+    await waitFor(() => pids.every((pid) => !processIsAlive(pid)), {
+      timeoutMs: 2500
+    });
+    assert.equal(bulkCloseSettled, false);
+
+    releaseHeldStop();
+    const results = await Promise.all(closing);
+    assert.deepEqual(results, [{
+      closed: 3,
+      ok: true
+    }, {
+      closed: 3,
+      ok: true
+    }]);
+    assert.equal(pids.every((pid) => !processIsAlive(pid)), true);
+    assert.equal(sessions.every((session, index) => readTerminalSession(
+      session.id,
+      { namespace: specifications[index].namespace }
+    ).ok === false), true);
+  } finally {
+    releaseHeldStop();
+    await Promise.allSettled(closing);
+    await closeTerminalSessionsForNamespacePrefix(namespacePrefix);
+  }
+});
+
+test("terminal close deadline kills the PTY process tree without waiting indefinitely for onStop", async () => {
+  const namespace = `terminal-stop-deadline-${crypto.randomUUID()}`;
+  let releaseStopHook = () => null;
+  const heldStopHook = new Promise((resolve) => {
+    releaseStopHook = resolve;
+  });
+  const session = startTerminalSession({
+    args: [
+      "-lc",
+      `"${process.execPath}" -e 'process.stdin.resume(); setInterval(() => {}, 1000);' & ` +
+        "child=$!; printf 'SHELL:%s CHILD:%s\\n' \"$$\" \"$child\"; wait \"$child\""
+    ],
+    command: "bash",
+    commandPreview: "bash with held stop hook",
+    namespace,
+    async onStop() {
+      await heldStopHook;
+    }
+  });
+
+  try {
+    await waitFor(() => /SHELL:\d+ CHILD:\d+/u.test(
+      readTerminalSession(session.id, { namespace }).output
+    ));
+    const processIds = /SHELL:(\d+) CHILD:(\d+)/u.exec(
+      readTerminalSession(session.id, { namespace }).output
+    ).slice(1).map(Number);
+    const startedAt = Date.now();
+
+    await assert.rejects(
+      closeTerminalSession(session.id, {
+        namespace,
+        timeoutMs: 400
+      }),
+      (error) => {
+        assert.equal(error instanceof AggregateError, true);
+        assert.equal(error.code, "terminal_cleanup_failed");
+        assert.equal(error.errors.some((failure) => failure.code === "terminal_stop_hook_timeout"), true);
+        return true;
+      }
+    );
+
+    assert.ok(Date.now() - startedAt < 1200);
+    await waitFor(() => processIds.every((pid) => !processIsAlive(pid)));
+    assert.equal(readTerminalSession(session.id, { namespace }).status, "exited");
+
+    releaseStopHook();
+    assert.deepEqual(await closeTerminalSession(session.id, {
+      namespace,
+      timeoutMs: 400
+    }), {
+      closed: true,
+      ok: true
+    });
+  } finally {
+    releaseStopHook();
+    await closeTerminalSessionsForNamespacePrefix(namespace).catch(() => null);
+  }
+});
+
+test("terminal close deadline observes process exit separately from a hanging onClose", async () => {
+  const namespace = `terminal-close-deadline-${crypto.randomUUID()}`;
+  let releaseCloseHook = () => null;
+  const heldCloseHook = new Promise((resolve) => {
+    releaseCloseHook = resolve;
+  });
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      "console.log(`PID:${process.pid}`); process.stdin.resume(); setInterval(() => {}, 1000);"
+    ],
+    command: process.execPath,
+    commandPreview: "node held close hook",
+    namespace,
+    async onClose() {
+      await heldCloseHook;
+    }
+  });
+
+  try {
+    await waitFor(() => /PID:\d+/u.test(readTerminalSession(session.id, { namespace }).output));
+    const pid = Number(/PID:(\d+)/u.exec(readTerminalSession(session.id, { namespace }).output)?.[1]);
+
+    await assert.rejects(
+      closeTerminalSession(session.id, {
+        namespace,
+        timeoutMs: 400
+      }),
+      (error) => {
+        assert.equal(error instanceof AggregateError, true);
+        assert.equal(error.code, "terminal_cleanup_failed");
+        assert.equal(error.errors.some((failure) => failure.code === "terminal_close_hook_timeout"), true);
+        return true;
+      }
+    );
+
+    assert.equal(processIsAlive(pid), false);
+    assert.equal(readTerminalSession(session.id, { namespace }).status, "exited");
+
+    releaseCloseHook();
+    assert.deepEqual(await closeTerminalSession(session.id, {
+      namespace,
+      timeoutMs: 400
+    }), {
+      closed: true,
+      ok: true
+    });
+  } finally {
+    releaseCloseHook();
+    await closeTerminalSessionsForNamespacePrefix(namespace).catch(() => null);
+  }
+});
+
+test("terminal close kills the child and reports a rejected stop hook", async () => {
+  const namespace = `terminal-stop-rejection-${crypto.randomUUID()}`;
+  const session = startTerminalSession({
+    args: [
+      "-e",
+      "console.log(`PID:${process.pid}`); process.stdin.resume(); setInterval(() => {}, 1000);"
+    ],
+    command: process.execPath,
+    commandPreview: "node rejected stop hook",
+    namespace,
+    async onStop() {
+      throw new Error("stop cleanup rejected");
+    }
+  });
+
+  try {
+    await waitFor(() => /PID:\d+/u.test(readTerminalSession(session.id, { namespace }).output));
+    const pid = Number(/PID:(\d+)/u.exec(readTerminalSession(session.id, { namespace }).output)?.[1]);
+
+    assert.deepEqual(await closeTerminalSession(session.id, {
+      namespace,
+      timeoutMs: 400
+    }), {
+      closed: true,
+      cleanupErrors: ["stop cleanup rejected"],
+      ok: true
+    });
+    assert.equal(processIsAlive(pid), false);
+  } finally {
+    await closeTerminalSessionsForNamespacePrefix(namespace).catch(() => null);
   }
 });
 
@@ -845,4 +1176,16 @@ function waitFor(predicate, { timeoutMs = 2000, intervalMs = 25 } = {}) {
       }
     }, intervalMs);
   });
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
 }
