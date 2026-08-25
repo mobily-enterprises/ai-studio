@@ -622,12 +622,18 @@ function createService({
     return result;
   }
 
-  async function publishTerminalSessionChanged(kind = "", sessionId = "", reason = "") {
+  async function publishTerminalSessionChanged(
+    kind = "",
+    sessionId = "",
+    reason = "",
+    payload = {}
+  ) {
     const publisher = publishSessionChanged?.[kind];
     if (typeof publisher !== "function" || !String(sessionId || "").trim()) {
       return null;
     }
     return publisher(sessionId, {
+      ...payload,
       reason
     });
   }
@@ -2054,10 +2060,17 @@ function createService({
       return codex.startGlobalTerminal();
     },
 
-    startLaunchTargetTerminal(sessionId, input = {}) {
-      return runMainAgentWrite(sessionId, input, () => (
+    async startLaunchTargetTerminal(sessionId, input = {}) {
+      const result = await runMainAgentWrite(sessionId, input, () => (
         launchTarget.startTerminal(sessionId, input)
       ));
+      await publishTerminalSessionChanged(
+        "launchTarget",
+        sessionId,
+        "launch-target-started",
+        { originId: input.originId }
+      );
+      return result;
     },
 
     async stopLaunchTargetTerminal(sessionId, terminalSessionId) {

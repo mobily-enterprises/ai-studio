@@ -89,7 +89,9 @@ function agentWriteLockHarness({ holdFirst = false } = {}) {
   };
 }
 
-async function terminalServiceFixture(t, lock) {
+async function terminalServiceFixture(t, lock, {
+  publishSessionChanged = {}
+} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-session-work-admission-"));
   const sourcePath = path.join(root, "managed", "sessions", "active", "session-1", "source");
   const projectContextRoot = path.join(root, "authority");
@@ -166,7 +168,8 @@ async function terminalServiceFixture(t, lock) {
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
-    projectService
+    projectService,
+    publishSessionChanged
   });
   t.after(async () => {
     await service.close();
@@ -180,6 +183,32 @@ async function terminalServiceFixture(t, lock) {
     session
   };
 }
+
+test("launch attempts invalidate preview state in other clients", async (t) => {
+  const published = [];
+  const lock = agentWriteLockHarness();
+  const { service, session } = await terminalServiceFixture(t, lock, {
+    publishSessionChanged: {
+      async launchTarget(sessionId, payload) {
+        published.push({ payload, sessionId });
+      }
+    }
+  });
+
+  const result = await service.startLaunchTargetTerminal(session.sessionId, {
+    launchTargetId: "missing",
+    originId: "tab:preview-a"
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(published, [{
+    payload: {
+      originId: "tab:preview-a",
+      reason: "launch-target-started"
+    },
+    sessionId: session.sessionId
+  }]);
+});
 
 test("workspace setup admission uses the session agent-write lock", async (t) => {
   const lock = agentWriteLockHarness({ holdFirst: true });
