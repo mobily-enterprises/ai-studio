@@ -341,6 +341,9 @@ function launchStatusShouldRetry(failureCount = 0, error = null) {
   if (Math.max(0, Number(failureCount) || 0) >= LAUNCH_STATUS_RETRY_LIMIT) {
     return false;
   }
+  if (launchStatusAgentWriteBusy(error)) {
+    return true;
+  }
   const status = normalizeHttpStatus(error?.status ?? error?.statusCode);
   return status == null ||
     status === 0 ||
@@ -358,6 +361,9 @@ function launchStatusErrorText({
   const fallbackText = String(fallback || "").trim();
   if (!error) {
     return fallbackText;
+  }
+  if (launchStatusAgentWriteBusy(error)) {
+    return "";
   }
   const message = String(error?.message || fallbackText || "Request failed.").trim();
   const status = normalizeHttpStatus(error?.status ?? error?.statusCode);
@@ -850,12 +856,6 @@ function useVibe64LaunchControls({
   const status = computed(() => launchTargetsResource.data.value || {});
   const launchStatusLoadError = computed(() => {
     const error = launchTargetsResource.query?.error?.value || null;
-    if (
-      sourceOperationsResumePending.value &&
-      launchStatusAgentWriteBusy(error)
-    ) {
-      return "";
-    }
     return launchStatusErrorText({
       error,
       fallback: launchTargetsResource.loadError.value,

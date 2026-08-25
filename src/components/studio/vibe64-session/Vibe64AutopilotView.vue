@@ -563,7 +563,7 @@
           embedded-preview
           :preview-displayed="rightPaneTab === 'preview' && props.projectPane === 'preview'"
           :session="props.session"
-          :source-operations-suspended="sourceOperationsSuspended"
+          :source-operations-suspended="sourceOperationsSuspended || agentActive"
           :toolbar-teleport-target="rightPaneTab === 'preview' && props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
           :window-displayed="props.active"
           @preview-attachment-state="updatePreviewAttachmentState"
@@ -665,6 +665,7 @@ const thinkingStatusId = `studio-autopilot-thinking-${useId()}`;
 
 const {
   Vibe64LaunchControls,
+  agentActive,
   agentStopEnabled,
   agentStopVisible,
   answerChoices,

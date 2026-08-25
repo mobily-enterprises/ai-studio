@@ -205,7 +205,7 @@ describe("Vibe64 launch controls", () => {
     })).toBe(false);
   });
 
-  it("recognizes only the renewal write-boundary response as a suppressible status collision", () => {
+  it("recognizes the source write-boundary response as a suppressible status collision", () => {
     expect(launchStatusAgentWriteBusy({
       code: "vibe64_agent_write_mode_busy"
     })).toBe(true);
@@ -623,6 +623,10 @@ describe("Vibe64 launch controls", () => {
     expect(launchStatusShouldRetry(0, { status: 0 })).toBe(true);
     expect(launchStatusShouldRetry(0, { status: 502 })).toBe(true);
     expect(launchStatusShouldRetry(0, { status: 429 })).toBe(true);
+    expect(launchStatusShouldRetry(0, {
+      code: "vibe64_agent_write_mode_busy",
+      status: 400
+    })).toBe(true);
     expect(launchStatusShouldRetry(0, { status: 404 })).toBe(false);
     expect(launchStatusShouldRetry(0, { status: 401 })).toBe(false);
     expect(launchStatusShouldRetry(LAUNCH_STATUS_RETRY_LIMIT, { status: 502 })).toBe(false);
@@ -640,6 +644,14 @@ describe("Vibe64 launch controls", () => {
       }),
       path: "/api/vibe64/sessions/session-1/launch-targets"
     })).toBe("Network request failed. (network, /api/vibe64/sessions/session-1/launch-targets)");
+
+    expect(launchStatusErrorText({
+      error: Object.assign(new Error("Assistant owns the source."), {
+        code: "vibe64_agent_write_mode_busy",
+        status: 400
+      }),
+      path: "/api/vibe64/sessions/session-1/launch-targets"
+    })).toBe("");
   });
 
   it("refreshes launch targets for lifecycle events and explicit refresh hints", () => {

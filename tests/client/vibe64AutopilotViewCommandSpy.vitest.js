@@ -34,6 +34,7 @@ describe("Vibe64 direct session view", () => {
 
     expect(component).toContain("<Vibe64ConversationLog");
     expect(component).toContain(':welcome-message="emptyConversationWelcome"');
+    expect(component).toContain(':source-operations-suspended="sourceOperationsSuspended || agentActive"');
     expect(component).toContain("<Vibe64AutopilotPromptTextarea");
     for (const retiredName of retiredNames) {
       expect(component).not.toContain(retiredName);

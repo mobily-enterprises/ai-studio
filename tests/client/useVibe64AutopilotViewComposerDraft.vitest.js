@@ -167,6 +167,38 @@ describe("useVibe64AutopilotView direct chat", () => {
     );
   });
 
+  it("makes renewed-session continuity explicit instead of showing new-project onboarding", async () => {
+    const { emptyConversationWelcomeText } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        metadata: {
+          ...viewProps().session.metadata,
+          renewed_from: "previous-session"
+        }
+      }
+    });
+
+    expect(view.emptyConversationWelcome.value).toBe(
+      "Hi! 👋 I’ve received the handover from the previous session and I’m ready to continue. Tell me what you’d like to do next."
+    );
+    expect(emptyConversationWelcomeText({
+      existingProject: false,
+      renewedSession: true
+    })).toBe(
+      "Hi! 👋 I’ve received the handover from the previous session and I’m ready to continue. Tell me what you’d like to do next."
+    );
+    expect(emptyConversationWelcomeText({
+      existingProject: true,
+      preferredName: "Ada",
+      renewedSession: true
+    })).toBe(
+      "Hi Ada! 👋 I’ve received the handover from the previous session and I’m ready to continue. Tell me what you’d like to do next."
+    );
+  });
+
   it("uses a saved preferred name naturally in both project welcomes", async () => {
     const { emptyConversationWelcomeText } = await import(
       "../../src/composables/useVibe64AutopilotView.js"
