@@ -142,6 +142,9 @@ import {
   prepareAgentEnvCommand
 } from "./agentEnvCommand.js";
 import {
+  prepareAgentDatabaseCommand
+} from "./agentDatabaseCommand.js";
+import {
   agentTerminalIdentityForWorkdir,
   agentTerminalIdentityState
 } from "./agentTerminalIdentity.js";
@@ -1282,6 +1285,7 @@ function codexTerminalArgs({
 }
 
 function createCodexTerminalController({
+  agentDatabaseCommand = null,
   agentEnvCommand = null,
   agentPreviewCommand = null,
   codexAuthPreflight = assertCodexAuthPreflightReady,
@@ -1585,10 +1589,16 @@ function createCodexTerminalController({
       sessionId,
       wrapperHostDir: prepared.hostWrapperDir
     });
+    const databasePrepared = await prepareAgentDatabaseCommand({
+      commandService: agentDatabaseCommand,
+      sessionId,
+      wrapperHostDir: prepared.hostWrapperDir
+    });
     return {
       ...(prepared.env || {}),
       ...(previewPrepared?.env || {}),
-      ...(envPrepared?.env || {})
+      ...(envPrepared?.env || {}),
+      ...(databasePrepared?.env || {})
     };
   }
 

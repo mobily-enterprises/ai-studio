@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   createService
@@ -19,6 +21,10 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
+  addGenesisStack,
+  initializeGenesisProject
+} from "../../packages/vibe64-genesis/src/server/index.js";
+import {
   runVibe64RenewalAgentWriteExclusive
 } from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
 import {
@@ -26,6 +32,8 @@ import {
   sourcePath,
   withTemporaryRoot
 } from "./vibe64TestHelpers.js";
+
+const execFileAsync = promisify(execFile);
 
 function projectService(targetRoot, options = {}) {
   return createService({
@@ -773,7 +781,11 @@ test("Genesis Stack resources define expected Env names without technology check
             resource: {
               environmentAlternatives: [{
                 allowEmpty: [],
-                required: ["EXAMPLE_ORIGIN", "VIBE64_EXAMPLE_TOKEN"]
+                bindings: {
+                  origin: "EXAMPLE_ORIGIN",
+                  token: "VIBE64_EXAMPLE_TOKEN"
+                },
+                preferred: true
               }],
               id: "example-service",
               kind: "example-service"
@@ -1102,7 +1114,7 @@ test("hidden renewal resource cleanup requires and reuses its exact internal ses
   });
 });
 
-test("a host resource provider satisfies Genesis resources and projects the resolved Env", async () => {
+test("a host maps semantic database values onto exact Laravel-style Stack bindings", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sessionId = "session-1";
     const sessionSource = sourcePath(targetRoot, sessionId);
@@ -1120,20 +1132,36 @@ test("a host resource provider satisfies Genesis resources and projects the reso
         return {
           components: ["example-stack"],
           environmentDefaults: [{
-            name: "DB_CLIENT",
+            name: "DB_CONNECTION",
             sources: ["component:example-stack"],
-            value: "mysql2"
+            value: "mysql"
           }],
           files: [{ format: "dotenv", path: ".env" }],
           resources: [{
             component: "example-stack",
             resource: {
               environmentAlternatives: [{
+                allowEmpty: ["password"],
+                bindings: {
+                  database: "DB_DATABASE",
+                  host: "DB_HOST",
+                  password: "DB_PASSWORD",
+                  port: "DB_PORT",
+                  username: "DB_USERNAME"
+                },
+                preferred: true
+              }, {
                 allowEmpty: [],
-                required: ["DB_HOST", "DB_PASSWORD"]
+                bindings: {
+                  url: "DATABASE_URL"
+                },
+                preferred: false
               }],
               id: "database",
-              kind: "mysql"
+              kind: "mysql",
+              optionalBindings: {
+                testDatabase: "TEST_DB_NAME"
+              }
             }
           }],
           status: "missing-inputs"
@@ -1146,10 +1174,41 @@ test("a host resource provider satisfies Genesis resources and projects the reso
       async environmentForResources(input) {
         providerCalls.push(input);
         return {
-          environment: {
-            DB_HOST: "127.0.0.1",
-            DB_PASSWORD: "managed-secret"
-          }
+          contract: "vibe64.resource-environment.v2",
+          databaseToolEnvironment: {
+            contract: "vibe64.database-tool-environment.v1",
+            kind: "mysql",
+            read: {
+              database: "managed_catalogue",
+              host: "127.0.0.1",
+              password: "reader-secret",
+              port: 23060,
+              username: "managed_reader"
+            },
+            write: {
+              database: "managed_catalogue",
+              host: "127.0.0.1",
+              password: "managed-secret",
+              port: 23060,
+              username: "managed_writer"
+            }
+          },
+          resourceValues: [{
+            declaration: {
+              component: "example-stack",
+              id: "database",
+              kind: "mysql"
+            },
+            values: {
+              database: "managed_catalogue",
+              host: "127.0.0.1",
+              password: "managed-secret",
+              port: 23060,
+              testDatabase: "managed_catalogue_test",
+              url: "mysql://managed_writer:managed-secret@127.0.0.1:23060/managed_catalogue",
+              username: "managed_writer"
+            }
+          }]
         };
       },
       async removeSessionResources(input) {
@@ -1159,40 +1218,23 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
 
     const read = await service.readEnv();
-    assert.deepEqual(read.env.records.map((record) => record.key), ["DB_CLIENT", "DB_HOST", "DB_PASSWORD"]);
-    assert.deepEqual(read.env.records.map((record) => ({
-      editable: record.editable,
-      key: record.key,
-      owner: record.owner,
-      source: record.source,
-      value: record.value,
-      valuePresent: record.valuePresent
-    })), [{
-      editable: false,
-      key: "DB_CLIENT",
-      owner: "system",
-      source: "genesis-stack:default",
-      value: "mysql2",
-      valuePresent: true
-    }, {
-      editable: true,
-      key: "DB_HOST",
-      owner: "user",
-      source: "genesis-stack:example-stack:database",
-      value: "",
-      valuePresent: false
-    }, {
-      editable: true,
-      key: "DB_PASSWORD",
-      owner: "user",
-      source: "genesis-stack:example-stack:database",
-      value: "********",
-      valuePresent: false
-    }]);
+    const unconfigured = Object.fromEntries(read.env.records.map((record) => [record.key, record]));
+    assert.deepEqual(Object.keys(unconfigured).sort(), [
+      "DB_CONNECTION",
+      "DB_DATABASE",
+      "DB_HOST",
+      "DB_PASSWORD",
+      "DB_PORT",
+      "DB_USERNAME"
+    ]);
+    assert.equal(unconfigured.DB_CONNECTION.value, "mysql");
+    assert.equal(unconfigured.DB_DATABASE.owner, "user");
+    assert.equal(unconfigured.DB_PASSWORD.value, "********");
+    assert.equal(unconfigured.DB_PASSWORD.valuePresent, false);
     assert.equal(JSON.stringify(read).includes("managed-secret"), false);
 
     assert.deepEqual(await service.projectExecutionEnvironment(), {
-      DB_CLIENT: "mysql2"
+      DB_CONNECTION: "mysql"
     });
     assert.equal(providerCalls.length, 0);
 
@@ -1204,35 +1246,22 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
 
     const sessionRead = await service.readEnv({ sessionId });
-    assert.deepEqual(sessionRead.env.records.map((record) => ({
-      editable: record.editable,
-      key: record.key,
-      owner: record.owner,
-      source: record.source,
-      value: record.value,
-      valuePresent: record.valuePresent
-    })), [{
-      editable: false,
-      key: "DB_CLIENT",
-      owner: "system",
-      source: "genesis-stack:default",
-      value: "mysql2",
-      valuePresent: true
-    }, {
-      editable: false,
-      key: "DB_HOST",
-      owner: "system",
-      source: "vibe64-host:managed-resource",
-      value: "127.0.0.1",
-      valuePresent: true
-    }, {
-      editable: false,
-      key: "DB_PASSWORD",
-      owner: "system",
-      source: "vibe64-host:managed-resource",
-      value: "********",
-      valuePresent: true
-    }]);
+    const configured = Object.fromEntries(sessionRead.env.records.map((record) => [record.key, record]));
+    assert.deepEqual(Object.keys(configured).sort(), [
+      "DB_CONNECTION",
+      "DB_DATABASE",
+      "DB_HOST",
+      "DB_PASSWORD",
+      "DB_PORT",
+      "DB_USERNAME",
+      "TEST_DB_NAME"
+    ]);
+    assert.equal(configured.DB_DATABASE.value, "managed_catalogue");
+    assert.equal(configured.DB_DATABASE.owner, "system");
+    assert.equal(configured.DB_DATABASE.source, "vibe64-host:managed-resource:mysql:database");
+    assert.equal(configured.DB_PASSWORD.value, "********");
+    assert.equal(configured.DB_PASSWORD.valuePresent, true);
+    assert.equal(configured.TEST_DB_NAME.value, "managed_catalogue_test");
     assert.equal(JSON.stringify(sessionRead).includes("managed-secret"), false);
     assert.deepEqual(await service.revealEnvSecret({
       key: "DB_PASSWORD",
@@ -1244,14 +1273,24 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     });
 
     assert.deepEqual(await service.projectExecutionEnvironment({ sessionId }), {
-      DB_CLIENT: "mysql2",
+      DB_CONNECTION: "mysql",
+      DB_DATABASE: "managed_catalogue",
       DB_HOST: "127.0.0.1",
-      DB_PASSWORD: "managed-secret"
+      DB_PASSWORD: "managed-secret",
+      DB_PORT: "23060",
+      DB_USERNAME: "managed_writer",
+      TEST_DB_NAME: "managed_catalogue_test"
     });
-    assert.match(await readFile(path.join(sessionSource, ".env"), "utf8"), /DB_CLIENT=mysql2/u);
-    assert.match(await readFile(path.join(sessionSource, ".env"), "utf8"), /DB_PASSWORD=managed-secret/u);
+    const materialized = await readFile(path.join(sessionSource, ".env"), "utf8");
+    assert.match(materialized, /DB_CONNECTION=mysql/u);
+    assert.match(materialized, /DB_USERNAME=managed_writer/u);
+    assert.match(materialized, /DB_PASSWORD=managed-secret/u);
+    assert.doesNotMatch(materialized, /reader-secret|managed_reader/u);
     assert.match(await readFile(path.join(sessionSource, ".git", "info", "exclude"), "utf8"), /^\/\.env$/mu);
-    assert.equal(providerCalls.length, 3);
+    const tool = await service.sessionDatabaseEnvironment({ sessionId });
+    assert.equal(tool.databaseToolEnvironment.read.username, "managed_reader");
+    assert.equal(tool.databaseToolEnvironment.write.username, "managed_writer");
+    assert.equal(providerCalls.length, 4);
     assert.equal(providerCalls.every((call) => call.sessionId === sessionId), true);
     assert.equal(providerCalls.every((call) => call.developmentDatabaseScope === "session"), true);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
@@ -1262,6 +1301,158 @@ test("a host resource provider satisfies Genesis resources and projects the reso
     assert.equal(released.length, 1);
     assert.equal(released[0].sessionId, sessionId);
     assert.equal(released[0].developmentDatabaseScope, "session");
+  });
+});
+
+test("the installed JSKIT MySQL Stack materializes its declared names without exposing the reader", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "jskit-resource-session";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await mkdir(path.join(sessionSource, ".git", "info"), { recursive: true });
+    await execFileAsync("git", ["init"], { cwd: sessionSource });
+    await initializeGenesisProject({ projectRoot: sessionSource });
+    await addGenesisStack({
+      pieces: ["jskit-mysql"],
+      projectRoot: sessionSource
+    });
+
+    const service = projectService(targetRoot);
+    service.setResourceEnvironmentProvider({
+      managedDevelopmentDatabase: true,
+      async environmentForResources({ resources }) {
+        const [{ component, resource }] = resources;
+        return {
+          contract: "vibe64.resource-environment.v2",
+          databaseToolEnvironment: {
+            contract: "vibe64.database-tool-environment.v1",
+            kind: "mysql",
+            read: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "reader-private",
+              port: 23060,
+              username: "jskit_reader"
+            },
+            write: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "writer-private",
+              port: 23060,
+              username: "jskit_writer"
+            }
+          },
+          resourceValues: [{
+            declaration: {
+              component,
+              id: resource.id,
+              kind: resource.kind
+            },
+            values: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "writer-private",
+              port: 23060,
+              testDatabase: "jskit_catalogue_test",
+              url: "mysql://jskit_writer:writer-private@127.0.0.1:23060/jskit_catalogue",
+              username: "jskit_writer"
+            }
+          }]
+        };
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
+      runtimeKind: "genesis",
+      sessionId
+    });
+
+    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId }), {
+      DB_CLIENT: "mysql2",
+      DB_HOST: "127.0.0.1",
+      DB_NAME: "jskit_catalogue",
+      DB_PASSWORD: "writer-private",
+      DB_PORT: "23060",
+      DB_USER: "jskit_writer",
+      TEST_DB_NAME: "jskit_catalogue_test"
+    });
+    const dotenv = await readFile(path.join(sessionSource, ".env"), "utf8");
+    assert.doesNotMatch(dotenv, /jskit_reader|reader-private/u);
+  });
+});
+
+test("the installed JSKIT PostgreSQL Stack materializes its declared names without exposing the reader", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "jskit-postgresql-resource-session";
+    const sessionSource = sourcePath(targetRoot, sessionId);
+    await mkdir(path.join(sessionSource, ".git", "info"), { recursive: true });
+    await execFileAsync("git", ["init"], { cwd: sessionSource });
+    await initializeGenesisProject({ projectRoot: sessionSource });
+    await addGenesisStack({
+      pieces: ["jskit-postgresql"],
+      projectRoot: sessionSource
+    });
+
+    const service = projectService(targetRoot);
+    service.setResourceEnvironmentProvider({
+      managedDevelopmentDatabase: true,
+      async environmentForResources({ resources }) {
+        const [{ component, resource }] = resources;
+        return {
+          contract: "vibe64.resource-environment.v2",
+          databaseToolEnvironment: {
+            contract: "vibe64.database-tool-environment.v1",
+            kind: "postgresql",
+            read: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "reader-private",
+              port: 33060,
+              username: "jskit_reader"
+            },
+            write: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "writer-private",
+              port: 33060,
+              username: "jskit_writer"
+            }
+          },
+          resourceValues: [{
+            declaration: {
+              component,
+              id: resource.id,
+              kind: resource.kind
+            },
+            values: {
+              database: "jskit_catalogue",
+              host: "127.0.0.1",
+              password: "writer-private",
+              port: 33060,
+              url: "postgresql://jskit_writer:writer-private@127.0.0.1:33060/jskit_catalogue",
+              username: "jskit_writer"
+            }
+          }]
+        };
+      }
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: sourceMetadata(targetRoot, sessionId),
+      runtimeKind: "genesis",
+      sessionId
+    });
+
+    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId }), {
+      DB_CLIENT: "pg",
+      DB_HOST: "127.0.0.1",
+      DB_NAME: "jskit_catalogue",
+      DB_PASSWORD: "writer-private",
+      DB_PORT: "33060",
+      DB_USER: "jskit_writer"
+    });
+    const dotenv = await readFile(path.join(sessionSource, ".env"), "utf8");
+    assert.doesNotMatch(dotenv, /jskit_reader|reader-private/u);
   });
 });
 

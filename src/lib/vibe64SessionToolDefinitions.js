@@ -1,4 +1,5 @@
 import {
+  mdiDatabaseOutline,
   mdiFileCompare,
   mdiFileCodeOutline,
   mdiGraphOutline,
@@ -43,6 +44,14 @@ const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
     order: 200,
     routeSegment: "files",
     title: "Browse, edit, and explain session source files"
+  },
+  {
+    icon: mdiDatabaseOutline,
+    id: "database",
+    label: "Database",
+    order: 225,
+    routeSegment: "database",
+    title: "Query, edit, and map the active session database"
   },
   {
     icon: mdiGraphOutline,

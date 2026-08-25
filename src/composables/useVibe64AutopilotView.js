@@ -55,11 +55,13 @@ const DIRECT_SESSION_TOOL_IDS = new Set([
   "changes",
   "repository",
   "editor",
+  "database",
   "system",
   "ai-terminal"
 ]);
 const STANDALONE_SESSION_TOOL_IDS = new Set([
   "editor",
+  "database",
   "system"
 ]);
 const EMPTY_CONVERSATION_WELCOME = "Hi! 👋 I’m excited to build something with you. Tell me what you have in mind—even a half-formed idea is perfect. We’ll shape it together.";
@@ -1304,11 +1306,17 @@ function useVibe64AutopilotView(props, emit, {
   ));
 
   function sessionToolRuntimeState(toolId = "") {
-    if (["editor", "system"].includes(toolId)) {
+    if (["editor", "database", "system"].includes(toolId)) {
       return {
         disabled: !sessionSourceRoot.value,
         title: sessionSourceRoot.value
-          ? (toolId === "editor" ? "Browse session source files" : "Explore the current project Cities")
+          ? (
+              toolId === "editor"
+                ? "Browse session source files"
+                : toolId === "database"
+                  ? "Query and map the active session database"
+                  : "Explore the current project Cities"
+            )
           : "Create the session source first"
       };
     }

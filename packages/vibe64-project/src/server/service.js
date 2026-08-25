@@ -68,6 +68,12 @@ import {
   materializeProjectEnvironmentFiles
 } from "./projectEnvironmentFiles.js";
 import {
+  applicationDatabaseToolEnvironment,
+  normalizeResourceEnvironment,
+  preferredAlternative,
+  satisfiedAlternative
+} from "./resourceEnvironment.js";
+import {
   developmentDatabasePolicy as resolveDevelopmentDatabasePolicy
 } from "./developmentDatabasePolicy.js";
 import {
@@ -131,7 +137,7 @@ function publicProject(project = {}, {
   };
 }
 
-function valuePresent(environment = {}, name = "", allowEmpty = []) {
+function valuePresent(environment = {}, name = "", allowEmpty = false) {
   if (!Object.hasOwn(environment, name) || typeof environment[name] !== "string") {
     return false;
   }
@@ -139,35 +145,37 @@ function valuePresent(environment = {}, name = "", allowEmpty = []) {
   if (value === `$${name}` || value === `\${${name}}`) {
     return false;
   }
-  return value.length > 0 || allowEmpty.includes(name);
+  return value.length > 0 || allowEmpty;
 }
 
 function requiredAlternative(resource = {}, environment = {}) {
   const alternatives = Array.isArray(resource.environmentAlternatives)
     ? resource.environmentAlternatives
     : [];
-  const satisfied = alternatives.find((alternative) => (
-    alternative.required.every((name) => valuePresent(environment, name, alternative.allowEmpty))
-  ));
-  if (satisfied) {
+  if (satisfiedAlternative(resource, environment)) {
     return null;
   }
   return alternatives
     .map((alternative, index) => ({
       alternative,
       index,
-      present: alternative.required.filter((name) => (
-        valuePresent(environment, name, alternative.allowEmpty)
+      preferred: alternative.preferred === true,
+      present: Object.entries(alternative.bindings || {}).filter(([semantic, name]) => (
+        valuePresent(environment, name, (alternative.allowEmpty || []).includes(semantic))
       )).length
     }))
-    .sort((left, right) => right.present - left.present || left.index - right.index)[0]?.alternative || null;
+    .sort((left, right) => (
+      right.present - left.present ||
+      Number(right.preferred) - Number(left.preferred) ||
+      left.index - right.index
+    ))[0]?.alternative || preferredAlternative(resource);
 }
 
 function stackResourceRecords(resources = [], environment = {}) {
   const records = new Map();
   for (const declaration of resources) {
     const alternative = requiredAlternative(declaration.resource, environment);
-    for (const key of alternative?.required || []) {
+    for (const [semantic, key] of Object.entries(alternative?.bindings || {})) {
       if (records.has(key)) {
         continue;
       }
@@ -178,7 +186,7 @@ function stackResourceRecords(resources = [], environment = {}) {
         owner: "user",
         requiredFor: [RUNTIME_CONFIG_PHASES.SERVER],
         scope: RUNTIME_CONFIG_SCOPES.DEV,
-        secret: undefined,
+        secret: ["password", "url"].includes(semantic) ? true : undefined,
         source: `genesis-stack:${declaration.component}:${declaration.resource.id}`,
         value: ""
       });
@@ -197,7 +205,9 @@ function environmentRecord(value = {}) {
 }
 
 function systemEnvironmentRecords(environment = {}, {
-  source = "system"
+  secretKeys = new Set(),
+  source = "system",
+  sources = {}
 } = {}) {
   return Object.entries(environmentRecord(environment)).map(([key, value]) => ({
     editable: false,
@@ -205,7 +215,8 @@ function systemEnvironmentRecords(environment = {}, {
     owner: "system",
     requiredFor: [],
     scope: RUNTIME_CONFIG_SCOPES.DEV,
-    source,
+    secret: secretKeys.has(key) ? true : undefined,
+    source: sources[key] || source,
     value,
     valuePresent: true
   }));
@@ -381,12 +392,15 @@ function createService({
     });
     if (!sourceRoot) {
       return {
+        databaseToolEnvironment: null,
         effectiveEnvironment: {
           ...env,
           ...userEnvironment
         },
         environmentFiles: [],
         projectEnvironment: userEnvironment,
+        platformEnvironmentSecrets: new Set(),
+        platformEnvironmentSources: {},
         resources: [],
         source,
         warning: ""
@@ -403,12 +417,15 @@ function createService({
       });
     } catch (error) {
       return {
+        databaseToolEnvironment: null,
         effectiveEnvironment: {
           ...env,
           ...userEnvironment
         },
         environmentFiles: [],
         projectEnvironment: userEnvironment,
+        platformEnvironmentSecrets: new Set(),
+        platformEnvironmentSources: {},
         resources: [],
         source,
         warning: genesisEnvironmentIsUnconfigured(error)
@@ -431,7 +448,15 @@ function createService({
           sourceRoot
         })
       : {};
-    const platformEnvironment = environmentRecord(provided?.environment || provided);
+    const contribution = developmentDatabase
+      ? normalizeResourceEnvironment(declaration.resources, provided)
+      : {
+          databaseToolEnvironment: null,
+          environment: {},
+          secretKeys: new Set(),
+          sources: {}
+        };
+    const platformEnvironment = contribution.environment;
     const defaultEnvironment = declaredEnvironmentDefaults(declaration.environmentDefaults);
     const projectEnvironment = {
       ...defaultEnvironment,
@@ -440,12 +465,15 @@ function createService({
     };
     return {
       defaultEnvironment,
+      databaseToolEnvironment: contribution.databaseToolEnvironment,
       effectiveEnvironment: {
         ...env,
         ...projectEnvironment
       },
       environmentFiles: declaration.files,
       platformEnvironment,
+      platformEnvironmentSecrets: contribution.secretKeys,
+      platformEnvironmentSources: contribution.sources,
       projectEnvironment,
       resources: declaration.resources,
       source,
@@ -461,7 +489,9 @@ function createService({
           source: "genesis-stack:default"
         }),
         ...systemEnvironmentRecords(resolved.platformEnvironment, {
-          source: "vibe64-host:managed-resource"
+          secretKeys: resolved.platformEnvironmentSecrets,
+          source: "vibe64-host:managed-resource",
+          sources: resolved.platformEnvironmentSources
         }),
         ...stackResourceRecords(resolved.resources, resolved.effectiveEnvironment)
       ],
@@ -921,6 +951,17 @@ function createService({
         });
         return resolved.projectEnvironment;
       });
+    },
+
+    async sessionDatabaseEnvironment(input = {}) {
+      const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+      const databaseToolEnvironment = resolved.databaseToolEnvironment ||
+        applicationDatabaseToolEnvironment(resolved.resources, resolved.projectEnvironment);
+      return {
+        ...(await currentDevelopmentDatabaseConfiguration()),
+        databaseToolEnvironment,
+        source: resolved.source,
+      };
     },
 
     async readCurrentProject() {

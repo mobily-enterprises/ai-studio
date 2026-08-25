@@ -115,4 +115,33 @@ describe("useVibe64AutopilotView route hydration", () => {
     await nextTick();
     expect(view.rightPaneTab.value).toBe("editor");
   });
+
+  it("rehydrates the session Database route when warm source state is already available", async () => {
+    route.path = "/app/project/chat-test/dashboard/database";
+    const props = viewProps();
+    props.session = {
+      ...props.session,
+      metadata: {
+        source_kind: "session_clone",
+        source_path: "/tmp/sessions/active/session-1/source",
+        source_path_authority: "managed_session_source"
+      },
+      source: "/tmp/sessions/active/session-1/source"
+    };
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = useVibe64AutopilotView(props, vi.fn());
+
+    expect(view.rightPaneTab.value).toBe("database");
+
+    route.path = "/app/project/chat-test/dashboard";
+    await nextTick();
+    expect(view.rightPaneTab.value).toBe("dashboard");
+
+    route.path = "/app/project/chat-test/dashboard/database";
+    await nextTick();
+    expect(view.rightPaneTab.value).toBe("database");
+    expect(router.push).not.toHaveBeenCalled();
+  });
 });
