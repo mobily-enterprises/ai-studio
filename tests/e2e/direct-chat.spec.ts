@@ -769,10 +769,6 @@ async function mockDirectChat(page: Page, {
       });
       return;
     }
-    if (method === "POST" && url.pathname.endsWith("/view-state")) {
-      await fulfillJson(route, { ok: true });
-      return;
-    }
     if (method === "POST" && url.pathname.endsWith("/agent-message")) {
       const body = requestBodyWithoutOrigin(request);
       await onMessage(body);

@@ -10,7 +10,6 @@ import {
 } from "@/composables/useVibe64SourceEditorFileSync.js";
 import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-  VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   vibe64SourceEditorCreateFilePath,
   vibe64SourceEditorExplanationFollowupsStreamPath,
   vibe64SourceEditorExplanationPath,
@@ -19,7 +18,6 @@ import {
   vibe64SourceEditorExplanationsStreamPath,
   vibe64SourceEditorFilePath,
   vibe64SourceEditorFilesPath,
-  vibe64SourceEditorOpenFilePath,
   vibe64SourceEditorResolvePathPath,
   vibe64SourceEditorSearchPath,
   vibe64SourceEditorTreePath
@@ -44,7 +42,6 @@ const SOURCE_EDITOR_FILE_MATCH_DELAY_MS = 120;
 const SOURCE_EDITOR_SEARCH_DELAY_MS = 260;
 const SOURCE_EDITOR_TREE_PAGE_SIZE = 20;
 const SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE = "This file changed in another window. Reload it before saving.";
-const SOURCE_EDITOR_REMOTE_OPEN_MESSAGE = "Another window opened a different file. Save or reload local edits before switching.";
 let sourceExplanationClientIdCounter = 0;
 
 function normalizeEditorPath(value = "") {
@@ -79,57 +76,6 @@ function sourceEditorFileChangePayloadMatches({
     return false;
   }
   return Boolean(normalizeSourceEditorSyncValue(payload?.hash));
-}
-
-function sourceEditorFileOpenPayloadMatches({
-  originId = vibe64BrowserTabOriginId(),
-  payload = {},
-  projectSlug = "",
-  sessionId = ""
-} = {}) {
-  const normalizedProjectSlug = normalizeSourceEditorSyncValue(projectSlug);
-  const normalizedSessionId = normalizeSourceEditorSyncValue(sessionId);
-  if (
-    !normalizedProjectSlug ||
-    !normalizedSessionId ||
-    !normalizeEditorPath(payload?.path) ||
-    normalizeSourceEditorSyncValue(payload?.projectSlug) !== normalizedProjectSlug ||
-    normalizeSourceEditorSyncValue(payload?.sessionId) !== normalizedSessionId ||
-    vibe64RealtimePayloadFromCurrentTab(payload, {
-      originId
-    })
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function sourceEditorFileOpenStateMatches({
-  payload = {},
-  projectSlug = "",
-  sessionId = ""
-} = {}) {
-  const normalizedProjectSlug = normalizeSourceEditorSyncValue(projectSlug);
-  const normalizedSessionId = normalizeSourceEditorSyncValue(sessionId);
-  return Boolean(
-    normalizedProjectSlug &&
-    normalizedSessionId &&
-    normalizeEditorPath(payload?.path) &&
-    normalizeSourceEditorSyncValue(payload?.projectSlug) === normalizedProjectSlug &&
-    normalizeSourceEditorSyncValue(payload?.sessionId) === normalizedSessionId
-  );
-}
-
-function sourceEditorFileOpenStateSignature(payload = {}) {
-  const filePath = normalizeEditorPath(payload?.path);
-  return filePath
-    ? [
-        normalizeSourceEditorSyncValue(payload?.sessionId),
-        normalizeSourceEditorSyncValue(payload?.projectSlug),
-        filePath,
-        normalizeSourceEditorSyncValue(payload?.updatedAt)
-      ].join("\u0000")
-    : "";
 }
 
 function normalizeEditorQuery(value = "") {
@@ -615,7 +561,6 @@ function appendSourceEditorExplanationMessages(explanation = null, messages = []
 function useVibe64SourceEditor({
   active = true,
   navigateReferencedSource = null,
-  openSyncState = null,
   projectSlug,
   readCurrentText = null,
   sessionsApiPath,
@@ -672,12 +617,9 @@ function useVibe64SourceEditor({
   let searchTimer = null;
   let pendingFileRevalidation = false;
   let savePromise = null;
-  let lastAppliedOpenSyncSignature = "";
-
   const currentSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
   const currentSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
   const currentProjectSlug = computed(() => String(readRefOrGetterValue(projectSlug) || "").trim());
-  const currentOpenSyncState = computed(() => readRefOrGetterValue(openSyncState) || null);
   const currentActive = computed(() => readRefOrGetterValue(active) !== false);
   const canLoad = computed(() => Boolean(currentSessionsApiPath.value && currentSessionId.value));
   const statusLabel = computed(() => {
@@ -734,23 +676,6 @@ function useVibe64SourceEditor({
     path: selectedPath,
     sessionId: currentSessionId,
     sessionsApiPath: currentSessionsApiPath
-  });
-
-  useRealtimeEvent({
-    enabled: computed(() => Boolean(
-      canLoad.value &&
-      currentProjectSlug.value
-    )),
-    event: VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
-    matches: ({ payload = {} } = {}) => sourceEditorFileOpenPayloadMatches({
-      originId,
-      payload,
-      projectSlug: currentProjectSlug.value,
-      sessionId: currentSessionId.value
-    }),
-    onEvent: ({ payload = {} } = {}) => {
-      void applyRemoteFileOpen(payload);
-    }
   });
 
   function clearAutosave() {
@@ -1026,9 +951,6 @@ function useVibe64SourceEditor({
       })) {
         return false;
       }
-      if (options.publish !== false) {
-        publishOpenFile(selectedPath.value);
-      }
       return true;
     } catch (error) {
       if (requestId === fileRequestId) {
@@ -1080,7 +1002,6 @@ function useVibe64SourceEditor({
       })) {
         return false;
       }
-      publishOpenFile(selectedPath.value);
       return true;
     } catch (error) {
       if (fileSelectionRequestId === fileRequestId) {
@@ -1190,82 +1111,6 @@ function useVibe64SourceEditor({
       return;
     }
     await applySelectedFileChange(payload);
-  }
-
-  async function applyRemoteFileOpen(payload = {}) {
-    const filePath = normalizeEditorPath(payload.path);
-    if (
-      !sourceEditorFileOpenPayloadMatches({
-        originId,
-        payload,
-        projectSlug: currentProjectSlug.value,
-        sessionId: currentSessionId.value
-      }) ||
-      !filePath ||
-      filePath === selectedPath.value
-    ) {
-      return;
-    }
-    if (dirty.value || saving.value) {
-      saveError.value = SOURCE_EDITOR_REMOTE_OPEN_MESSAGE;
-      return;
-    }
-    await openFile(filePath, {
-      publish: false
-    });
-  }
-
-  async function applyOpenSyncState() {
-    const payload = currentOpenSyncState.value;
-    const filePath = normalizeEditorPath(payload?.path);
-    if (
-      !canLoad.value ||
-      !sourceEditorFileOpenStateMatches({
-        payload,
-        projectSlug: currentProjectSlug.value,
-        sessionId: currentSessionId.value
-      }) ||
-      !filePath ||
-      filePath === selectedPath.value
-    ) {
-      return;
-    }
-    const signature = sourceEditorFileOpenStateSignature(payload);
-    if (!signature || signature === lastAppliedOpenSyncSignature) {
-      return;
-    }
-    lastAppliedOpenSyncSignature = signature;
-    if (dirty.value || saving.value) {
-      saveError.value = SOURCE_EDITOR_REMOTE_OPEN_MESSAGE;
-      return;
-    }
-    await openFile(filePath, {
-      publish: false
-    });
-  }
-
-  function publishOpenFile(filePath = "") {
-    const normalizedPath = normalizeEditorPath(filePath);
-    if (!normalizedPath || !canLoad.value || !currentProjectSlug.value) {
-      return;
-    }
-    void sourceEditorRequest(vibe64SourceEditorOpenFilePath(
-      currentSessionsApiPath.value,
-      currentSessionId.value
-    ), {
-      body: {
-        originId,
-        path: normalizedPath,
-        projectSlug: currentProjectSlug.value
-      },
-      method: "POST"
-    }).catch((error) => {
-      vibe64SessionDebugLog("client.sourceEditor.openFile.publish.error", {
-        error: vibe64SessionDebugError(error),
-        path: normalizedPath,
-        sessionId: currentSessionId.value
-      });
-    });
   }
 
   function cleanupAbandonedExplanations() {
@@ -1913,18 +1758,6 @@ function useVibe64SourceEditor({
     immediate: true
   });
 
-  watch(() => [
-    canLoad.value,
-    currentProjectSlug.value,
-    currentSessionId.value,
-    sourceEditorFileOpenStateSignature(currentOpenSyncState.value)
-  ], () => {
-    void applyOpenSyncState();
-  }, {
-    flush: "post",
-    immediate: true
-  });
-
   onBeforeUnmount(() => {
     clearExplanationStream();
     clearAutosave();
@@ -2000,9 +1833,7 @@ export {
   SOURCE_EDITOR_AUTOSAVE_DELAY_MS,
   SOURCE_EDITOR_FILE_MATCH_DELAY_MS,
   SOURCE_EDITOR_REMOTE_CHANGE_MESSAGE,
-  SOURCE_EDITOR_REMOTE_OPEN_MESSAGE,
   SOURCE_EDITOR_SEARCH_DELAY_MS,
   sourceEditorFileChangePayloadMatches,
-  sourceEditorFileOpenPayloadMatches,
   useVibe64SourceEditor
 };

@@ -1,7 +1,6 @@
 import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions";
 
 const VIBE64_SESSION_CHANGED_EVENT = "vibe64.session.changed";
-const VIBE64_SESSION_VIEW_CHANGED_EVENT = "vibe64.session.view.changed";
 
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -64,18 +63,6 @@ function sessionRealtimePayload(result = {}, input = {}, reason = "", payload = 
   };
 }
 
-function viewStateRealtimePayload(value = {}) {
-  const viewState = record(value);
-  return {
-    originId: String(viewState.originId || "").trim(),
-    projectPane: String(viewState.projectPane || "").trim(),
-    projectSlug: String(viewState.projectSlug || "").trim(),
-    routeFullPath: String(viewState.routeFullPath || "").trim(),
-    sessionId: sessionId(viewState),
-    updatedAt: String(viewState.updatedAt || "").trim()
-  };
-}
-
 function sessionChangedActionEvent({ operation = "updated", reason = "" } = {}) {
   return createEntityChangedActionEvent({
     source: "vibe64",
@@ -88,23 +75,6 @@ function sessionChangedActionEvent({ operation = "updated", reason = "" } = {}) 
       audience: "all_clients",
       event: VIBE64_SESSION_CHANGED_EVENT,
       payload: ({ input, result }) => sessionRealtimePayload(result, input, reason)
-    }
-  });
-}
-
-function sessionViewChangedActionEvent() {
-  return createEntityChangedActionEvent({
-    source: "vibe64",
-    entity: "session_view",
-    operation: "updated",
-    entityId: ({ result }) => {
-      const id = sessionId(record(result).viewState);
-      return id ? `${id}:view` : null;
-    },
-    realtime: {
-      audience: "all_clients",
-      event: VIBE64_SESSION_VIEW_CHANGED_EVENT,
-      payload: ({ result }) => viewStateRealtimePayload(record(result).viewState)
     }
   });
 }
@@ -151,8 +121,6 @@ function createSessionChangedPublisher(events) {
 
 export {
   VIBE64_SESSION_CHANGED_EVENT,
-  VIBE64_SESSION_VIEW_CHANGED_EVENT,
   createSessionChangedPublisher,
-  sessionChangedActionEvent,
-  sessionViewChangedActionEvent
+  sessionChangedActionEvent
 };

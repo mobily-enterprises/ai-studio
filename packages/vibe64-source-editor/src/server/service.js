@@ -13,9 +13,6 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  writeSessionUiSyncSourceEditorOpen
-} from "@local/vibe64-core/server/sessionUiSyncState";
-import {
   pathInsideOrEqual
 } from "@local/vibe64-core/server/studioProjectContext";
 import {
@@ -757,19 +754,6 @@ function createService({
       return streamSourceEditorFileChanges(context, file, stream, fileObserver);
     },
 
-    async broadcastOpenFile(input = {}) {
-      return runSourceEditorOperation(async () => {
-        const context = await sourceEditorContext(input.sessionId);
-        const file = await sourceEditorExistingFile(context, input.path);
-        const fileOpen = sourceEditorFileOpen(context, input, file);
-        writeSessionUiSyncSourceEditorOpen(fileOpen);
-        return {
-          fileOpen,
-          ok: true
-        };
-      });
-    },
-
     async saveFile(input = {}) {
       return runSourceEditorOperation(async () => {
         return runSourceEditorWriteExclusive(input, async (context) => {
@@ -789,9 +773,6 @@ function createService({
           const file = await createSourceEditorFile(context, input);
           return {
             file,
-            fileOpen: sourceEditorFileOpen(context, input, {
-              relativePath: file.path
-            }),
             revealTree: await sourceEditorFileRevealTree(context, file.path),
             ok: true
           };
@@ -4152,16 +4133,6 @@ function sourceEditorFileChange(context = {}, input = {}, file = {}) {
     projectSlug: normalizeText(input.projectSlug),
     sessionId: normalizeText(context.sessionId || input.sessionId),
     size: file.size,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function sourceEditorFileOpen(context = {}, input = {}, file = {}) {
-  return {
-    originId: normalizeText(input.originId),
-    path: normalizeSourceEditorRelativePath(file.relativePath || input.path),
-    projectSlug: normalizeText(input.projectSlug),
-    sessionId: normalizeText(context.sessionId || input.sessionId),
     updatedAt: new Date().toISOString()
   };
 }

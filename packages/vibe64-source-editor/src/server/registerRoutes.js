@@ -77,7 +77,6 @@ function registerRoutes(
   http,
   {
     publishFileChanged = async () => null,
-    publishFileOpened = async () => null,
     projectContext = null,
     routeSurface = "",
     routeRelativePath = "",
@@ -290,21 +289,6 @@ function registerRoutes(
       projectSlug: body.projectSlug,
       sessionId: request.params.sessionId
     });
-  });
-
-  routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/open-file", {
-    bodyLimit: 32 * 1024,
-    summary: "Broadcast the selected source file for a Vibe64 session."
-  }, async (request) => {
-    const body = routes.requestBody(request);
-    const result = await sourceEditor.broadcastOpenFile({
-      originId: body.originId,
-      path: body.path,
-      projectSlug: body.projectSlug,
-      sessionId: request.params.sessionId
-    });
-    await publishFileOpened(result);
-    return result;
   });
 
   routes.serviceRoute("PUT", "/sessions/:sessionId/source-editor/file", {

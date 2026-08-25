@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
+import * as sessionRequestConfig from "../../src/lib/vibe64SessionRequestConfig.js";
 
 import {
   VIBE64_SESSION_CHANGED_EVENT,
-  VIBE64_SESSION_VIEW_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-  VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   SELECTED_SESSION_STORAGE_KEY,
   selectedSessionStorageKey,
   vibe64AgentAttachmentPath,
@@ -16,7 +15,6 @@ import {
   vibe64SessionQueryKey,
   vibe64SessionPath,
   vibe64SessionPreviewStatePath,
-  vibe64SessionViewStatePath,
   vibe64SessionsQueryKey,
   vibe64SourceEditorCreateFilePath,
   vibe64SourceEditorExplanationFollowupsPath,
@@ -24,17 +22,18 @@ import {
   vibe64SourceEditorExplanationPath,
   vibe64SourceEditorExplanationStopPath,
   vibe64SourceEditorExplanationsPath,
-  vibe64SourceEditorExplanationsStreamPath,
-  vibe64SourceEditorOpenFilePath
+  vibe64SourceEditorExplanationsStreamPath
 } from "../../src/lib/vibe64SessionRequestConfig.js";
 
 describe("Vibe64 session request config", () => {
   it("uses current Vibe64 storage and route names", () => {
     expect(SELECTED_SESSION_STORAGE_KEY).toBe("vibe64:selected-session-id");
     expect(VIBE64_SESSION_CHANGED_EVENT).toBe("vibe64.session.changed");
-    expect(VIBE64_SESSION_VIEW_CHANGED_EVENT).toBe("vibe64.session.view.changed");
     expect(VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT).toBe("vibe64.source-editor.file.changed");
-    expect(VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT).toBe("vibe64.source-editor.file.opened");
+    expect(sessionRequestConfig).not.toHaveProperty("VIBE64_SESSION_VIEW_CHANGED_EVENT");
+    expect(sessionRequestConfig).not.toHaveProperty("VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT");
+    expect(sessionRequestConfig).not.toHaveProperty("vibe64SessionViewStatePath");
+    expect(sessionRequestConfig).not.toHaveProperty("vibe64SourceEditorOpenFilePath");
     expect(vibe64SessionsQueryKey("home", "public")).toEqual([
       "vibe64",
       "project",
@@ -80,9 +79,7 @@ describe("Vibe64 session request config", () => {
     expect(vibe64AgentAttachmentPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/agent-attachments`);
     expect(vibe64ConversationLogPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/conversation-log`);
     expect(vibe64SessionPreviewStatePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/preview-state`);
-    expect(vibe64SessionViewStatePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/view-state`);
     expect(vibe64SourceEditorCreateFilePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/file`);
-    expect(vibe64SourceEditorOpenFilePath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/open-file`);
     expect(vibe64SourceEditorExplanationsPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations`);
     expect(vibe64SourceEditorExplanationsStreamPath(apiPath, sessionId)).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/stream`);
     expect(vibe64SourceEditorExplanationPath(apiPath, sessionId, "exp one")).toBe(`${apiPath}/2026-05-16_01%3Atwo/source-editor/explanations/exp%20one`);

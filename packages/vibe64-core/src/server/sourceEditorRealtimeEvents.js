@@ -1,5 +1,4 @@
 const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.changed";
-const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
 const VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT = "vibe64.source-editor.sync.error";
 const VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT = "vibe64.source-editor.sync.ready";
 
@@ -19,11 +18,6 @@ function plainObject(value = null) {
 function sourceEditorFileChangeFromResult(result = {}) {
   const source = plainObject(result) ? result : {};
   return plainObject(source.fileChange) ? source.fileChange : null;
-}
-
-function sourceEditorFileOpenFromResult(result = {}) {
-  const source = plainObject(result) ? result : {};
-  return plainObject(source.fileOpen) ? source.fileOpen : null;
 }
 
 function sourceEditorFileRealtimePayload({ result = {} } = {}) {
@@ -53,32 +47,9 @@ function sourceEditorFileRealtimePayload({ result = {} } = {}) {
   };
 }
 
-function sourceEditorFileOpenRealtimePayload({ result = {} } = {}) {
-  const fileOpen = sourceEditorFileOpenFromResult(result);
-  if (!fileOpen) {
-    return {};
-  }
-  const originId = normalizeSourceEditorFileValue(fileOpen.originId);
-  const path = normalizeSourceEditorFileValue(fileOpen.path);
-  const projectSlug = normalizeSourceEditorFileValue(fileOpen.projectSlug);
-  const sessionId = normalizeSourceEditorFileValue(fileOpen.sessionId);
-  if (!originId || !path || !projectSlug || !sessionId) {
-    return {};
-  }
-  return {
-    originId,
-    path,
-    projectSlug,
-    sessionId,
-    updatedAt: normalizeSourceEditorFileValue(fileOpen.updatedAt)
-  };
-}
-
 export {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-  VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT,
-  sourceEditorFileOpenRealtimePayload,
   sourceEditorFileRealtimePayload
 };

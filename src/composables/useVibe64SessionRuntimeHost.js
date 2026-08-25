@@ -6,7 +6,6 @@ import { useVibe64ConversationLog } from "@/composables/useVibe64ConversationLog
 import { useVibe64MountedSessionData } from "@/composables/useVibe64MountedSessionData.js";
 import { useVibe64SessionDialogs } from "@/composables/useVibe64SessionDialogs.js";
 import { useVibe64SessionRenewal } from "@/composables/useVibe64SessionRenewal.js";
-import { useVibe64SessionViewSync } from "@/composables/useVibe64SessionViewSync.js";
 import { sessionRecordHasActiveAgentWork } from "@/lib/vibe64MountedSessionState.js";
 import {
   isClosedVibe64Session,
@@ -275,13 +274,6 @@ function useVibe64SessionRuntimeHost(props, emit) {
       props.sessionData.refreshSessionData(options)
     ]);
   }
-
-  useVibe64SessionViewSync({
-    enabled: computed(() => Boolean(props.active && selectedSessionId.value)),
-    sessionId: selectedSessionId,
-    sessionsApiPath: props.sessionData.sessionsApiPath,
-    viewState: computed(() => selectedSession.value?.uiSync?.viewState || null)
-  });
 
   const dialogModels = useVibe64SessionDialogs({
     clearSelectedSession: props.sessionData.clearSelectedSession,

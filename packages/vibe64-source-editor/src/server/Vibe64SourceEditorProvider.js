@@ -1,8 +1,7 @@
 import { defineFeature } from "@jskit-ai/kernel/server/features";
 
 import {
-  createSourceEditorFileChangedPublisher,
-  createSourceEditorFileOpenedPublisher
+  createSourceEditorFileChangedPublisher
 } from "./events.js";
 import { createService } from "./service.js";
 import { registerRoutes } from "./registerRoutes.js";
@@ -28,7 +27,6 @@ const Vibe64SourceEditorProvider = defineFeature({
     });
     registerRoutes(http, {
       publishFileChanged: createSourceEditorFileChangedPublisher(events),
-      publishFileOpened: createSourceEditorFileOpenedPublisher(events),
       routeRelativePath: "vibe64",
       routeSurface: "app",
       sourceEditor

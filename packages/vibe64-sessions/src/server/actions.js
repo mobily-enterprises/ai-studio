@@ -19,12 +19,10 @@ import {
   sessionRenewalInspectActionInputValidator,
   sessionRenewalRetryActionInputValidator,
   sessionSaveInputValidator,
-  sessionUpdateInputValidator,
-  sessionViewStateInputValidator
+  sessionUpdateInputValidator
 } from "./inputSchemas.js";
 import {
-  sessionChangedActionEvent,
-  sessionViewChangedActionEvent
+  sessionChangedActionEvent
 } from "./events.js";
 
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
@@ -48,7 +46,6 @@ const ACTION_RETRY_WORKSPACE_SETUP = "vibe64.sessions.workspace-setup.retry";
 const ACTION_ABANDON_SESSION = "vibe64.sessions.abandon";
 const ACTION_SEND_AGENT_MESSAGE = "vibe64.sessions.agent-message.send";
 const ACTION_INTERRUPT_AGENT_TURN = "vibe64.sessions.agent-turn.interrupt";
-const ACTION_BROADCAST_SESSION_VIEW_STATE = "vibe64.sessions.view-state.broadcast";
 const ACTION_BROADCAST_SESSION_PREVIEW_STATE = "vibe64.sessions.preview-state.broadcast";
 const ACTION_INSPECT_REPOSITORY_HISTORY = "vibe64.repository.history.inspect";
 const ACTION_INSPECT_REPOSITORY_VERSION_FILES = "vibe64.repository.history.files.inspect";
@@ -297,13 +294,6 @@ function createSessionActions({ sessions } = {}) {
       execute: (input) => sessions.interruptAgentTurn(input.sessionId, withoutSessionId(input))
     }),
     action({
-      id: ACTION_BROADCAST_SESSION_VIEW_STATE,
-      kind: "command",
-      input: sessionViewStateInputValidator,
-      events: [sessionViewChangedActionEvent()],
-      execute: (input) => sessions.broadcastSessionViewState(input.sessionId, withoutSessionId(input))
-    }),
-    action({
       id: ACTION_BROADCAST_SESSION_PREVIEW_STATE,
       kind: "command",
       input: sessionPreviewStateInputValidator,
@@ -320,7 +310,6 @@ export {
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
-  ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION,

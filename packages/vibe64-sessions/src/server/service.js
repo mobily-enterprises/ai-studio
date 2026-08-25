@@ -2,9 +2,7 @@ import crypto from "node:crypto";
 
 import { vibe64Result } from "@local/vibe64-core/server/serverResponses";
 import {
-  readSessionUiSyncState,
-  writeSessionUiSyncPreviewState,
-  writeSessionUiSyncViewState
+  writeSessionUiSyncPreviewState
 } from "@local/vibe64-core/server/sessionUiSyncState";
 import {
   vibe64SessionDebugError,
@@ -565,28 +563,6 @@ function createService({
       };
     },
 
-    async broadcastSessionViewState(sessionId, input = {}) {
-      const viewState = {
-        originId: text(input.originId),
-        projectPane: text(input.projectPane),
-        projectSlug: text(input.projectSlug),
-        routeFullPath: text(input.routeFullPath),
-        sessionId: text(sessionId),
-        updatedAt: new Date().toISOString()
-      };
-      if (!viewState.sessionId || !viewState.projectSlug || !viewState.routeFullPath || !viewState.originId) {
-        return {
-          error: "Session view updates require a session, project, route, and origin.",
-          ok: false
-        };
-      }
-      writeSessionUiSyncViewState(viewState);
-      return {
-        ok: true,
-        viewState
-      };
-    },
-
     async createSession(input = {}) {
       return sessionResult(async () => {
         const runtime = await project.createRuntime(sessionRuntimeOptions(terminals));
@@ -672,7 +648,7 @@ function createService({
       }, "Vibe64 could not create a chat session.");
     },
 
-    async inspectSession(sessionId, input = {}) {
+    async inspectSession(sessionId) {
       return sessionResult(async () => {
         const runtime = await project.createRuntime();
         const session = await runtime.getSession(sessionId);
@@ -685,10 +661,6 @@ function createService({
             : null,
           runtime.readConversationLogPage(sessionId, { limit: 1 })
         ]);
-        const uiSync = readSessionUiSyncState({
-          projectSlug: input.projectSlug,
-          sessionId
-        });
         return publicSession(session, {
           ...(agentSession?.ok === false ? {} : { agentSession }),
           renewalAdvisory: sessionRenewalAdvisory({
@@ -697,8 +669,7 @@ function createService({
             }),
             conversationTurnCount: conversation?.pagination?.totalTurnCount,
             session
-          }),
-          ...(uiSync ? { uiSync } : {})
+          })
         });
       });
     },

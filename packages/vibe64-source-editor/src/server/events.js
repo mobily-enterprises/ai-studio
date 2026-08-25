@@ -1,7 +1,5 @@
 import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-  VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
-  sourceEditorFileOpenRealtimePayload,
   sourceEditorFileRealtimePayload
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
 
@@ -46,14 +44,6 @@ function createSourceEditorFileChangedPublisher(events) {
   });
 }
 
-function createSourceEditorFileOpenedPublisher(events) {
-  return createSourceEditorPublisher(events, {
-    realtimeEvent: VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
-    toPayload: sourceEditorFileOpenRealtimePayload
-  });
-}
-
 export {
-  createSourceEditorFileChangedPublisher,
-  createSourceEditorFileOpenedPublisher
+  createSourceEditorFileChangedPublisher
 };

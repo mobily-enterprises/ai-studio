@@ -26,7 +26,6 @@ import {
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
-  ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   createSessionActions
 } from "../../packages/vibe64-sessions/src/server/actions.js";
@@ -199,7 +198,6 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_ABANDON_SESSION,
     ACTION_SEND_AGENT_MESSAGE,
     ACTION_INTERRUPT_AGENT_TURN,
-    ACTION_BROADCAST_SESSION_VIEW_STATE,
     ACTION_BROADCAST_SESSION_PREVIEW_STATE
   ]);
 });
@@ -307,6 +305,7 @@ test("session detail exposes renewal advice from the current thread and durable 
   assert.equal(result.renewalAdvisory.severity, "soon");
   assert.equal(result.renewalAdvisory.signals.contextUsage.usedTokens, 232560);
   assert.equal(result.renewalAdvisory.signals.conversationTurnCount, 57);
+  assert.equal(Object.hasOwn(result, "uiSync"), false);
 });
 
 test("assistant messages use the plain message contract", async () => {

@@ -81,9 +81,6 @@ function useVibe64MountedSessionData({
     ),
     activeSessionId.value
   ]);
-  const detailReadQuery = computed(() => (
-    projectSlug.value ? { projectSlug: projectSlug.value } : {}
-  ));
   const detailResource = useEndpointResource({
     enabled: computed(() => Boolean(activeSessionId.value && activeSessionsApiPath.value)),
     fallbackLoadError: "Vibe64 session could not be loaded.",
@@ -94,7 +91,6 @@ function useVibe64MountedSessionData({
       refetchOnWindowFocus: false
     },
     readMethod: "GET",
-    readQuery: detailReadQuery,
     realtime: {
       event: VIBE64_SESSION_CHANGED_EVENT,
       matches: ({ payload = {} } = {}) => mountedSessionRealtimeShouldRefresh(

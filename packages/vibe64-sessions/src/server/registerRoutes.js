@@ -6,7 +6,6 @@ import {
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
-  ACTION_BROADCAST_SESSION_VIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION,
@@ -114,13 +113,9 @@ function registerRoutes(http, {
 
   routes.actionRoute("GET", "/sessions/:sessionId", {
     actionId: ACTION_INSPECT_SESSION,
-    buildInput(request) {
-      const query = routes.requestQuery(request);
-      return withVibe64User(request, {
-        projectSlug: firstValue(query.projectSlug),
-        sessionId: request.params.sessionId
-      });
-    },
+    buildInput: (request) => withVibe64User(request, {
+      sessionId: request.params.sessionId
+    }),
     summary: "Inspect a Vibe64 chat session."
   });
 
@@ -279,15 +274,6 @@ function registerRoutes(http, {
       sessionId: request.params.sessionId
     }),
     summary: "Interrupt the active Vibe64 assistant turn."
-  });
-
-  routes.actionRoute("POST", "/sessions/:sessionId/view-state", {
-    actionId: ACTION_BROADCAST_SESSION_VIEW_STATE,
-    buildInput: (request) => ({
-      ...routes.requestBody(request),
-      sessionId: request.params.sessionId
-    }),
-    summary: "Publish a Vibe64 session view state."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/preview-state", {

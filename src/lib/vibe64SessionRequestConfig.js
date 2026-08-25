@@ -10,9 +10,7 @@ const VIBE64_SESSIONS_API_SUFFIX = "/vibe64/sessions";
 const VIBE64_CURRENT_SESSION_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/current`;
 const VIBE64_API_SUFFIX = "/vibe64";
 const VIBE64_SESSION_CHANGED_EVENT = "vibe64.session.changed";
-const VIBE64_SESSION_VIEW_CHANGED_EVENT = "vibe64.session.view.changed";
 const VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT = "vibe64.source-editor.file.changed";
-const VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT = "vibe64.source-editor.file.opened";
 const VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT = "vibe64.source-editor.sync.error";
 const VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT = "vibe64.source-editor.sync.ready";
 const DEFAULT_MAX_OPEN_SESSIONS = 3;
@@ -210,10 +208,6 @@ function vibe64SessionPromptHintsCancelPath(sessionsApiPath = "", sessionId = ""
   return `${vibe64SessionPromptHintsPath(sessionsApiPath, sessionId)}/cancel`;
 }
 
-function vibe64SessionViewStatePath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/view-state");
-}
-
 function vibe64SessionPreviewStatePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/preview-state");
 }
@@ -283,10 +277,6 @@ function vibe64SourceEditorFilePath(sessionsApiPath = "", sessionId = "", source
 
 function vibe64SourceEditorCreateFilePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/source-editor/file");
-}
-
-function vibe64SourceEditorOpenFilePath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/source-editor/open-file");
 }
 
 function vibe64SourceEditorChangesStreamPath(sessionsApiPath = "", sessionId = "", sourcePath = "") {
@@ -359,9 +349,7 @@ function agentSettingsInputFromContext(context = {}) {
 
 export {
   VIBE64_SESSION_CHANGED_EVENT,
-  VIBE64_SESSION_VIEW_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-  VIBE64_SOURCE_EDITOR_FILE_OPENED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT,
   VIBE64_API_SUFFIX,
@@ -380,7 +368,6 @@ export {
   vibe64SessionPromptHintsCancelPath,
   vibe64SessionPromptHintsPath,
   vibe64SessionPreviewStatePath,
-  vibe64SessionViewStatePath,
   vibe64GlobalCodexTerminalPath,
   vibe64LaunchTargetOpenPath,
   vibe64LaunchTargetsPath,
@@ -409,7 +396,6 @@ export {
   vibe64SourceEditorExplanationsStreamPath,
   vibe64SourceEditorFilesPath,
   vibe64SourceEditorFilePath,
-  vibe64SourceEditorOpenFilePath,
   vibe64SourceEditorResolvePathPath,
   vibe64SourceEditorSearchPath,
   vibe64SourceEditorTreePath,

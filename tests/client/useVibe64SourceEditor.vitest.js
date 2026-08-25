@@ -327,17 +327,7 @@ describe("useVibe64SourceEditor", () => {
       "src",
       "src/pages"
     ]);
-    expect(mocks.requestCalls.at(-1)).toEqual([
-      "/api/app/vibe64/sessions/session-1/source-editor/open-file",
-      {
-        body: {
-          originId: expect.stringMatching(/^tab:/u),
-          path: "src/pages/new-view.jsx",
-          projectSlug: "beepollen"
-        },
-        method: "POST"
-      }
-    ]);
+    expect(mocks.requestCalls.some(([url]) => url.endsWith("/source-editor/open-file"))).toBe(false);
   });
 
   it("requests abandoned explanation cleanup after startup", async () => {
@@ -493,136 +483,26 @@ describe("useVibe64SourceEditor", () => {
     expect(editor.dirty.value).toBe(false);
   });
 
-  it("publishes opened files and follows matching remote opened-file events", async () => {
-    const currentText = ref("");
-    const editor = await createLoadedEditor({
-      currentText
+  it("keeps selected files independent between editors without publishing open state", async () => {
+    const firstEditor = await createLoadedEditor({
+      currentText: ref("")
     });
-    const openPublishCall = mocks.requestCalls.find((call) => call[0].endsWith("/source-editor/open-file"));
-    const realtime = realtimeForEvent("vibe64.source-editor.file.opened");
+    const secondEditor = await createLoadedEditor({
+      currentText: ref("")
+    });
 
-    expect(openPublishCall).toEqual([
-      "/api/app/vibe64/sessions/session-1/source-editor/open-file",
-      {
-        body: {
-          originId: expect.stringMatching(/^tab:/u),
-          path: "src/app.js",
-          projectSlug: "beepollen"
-        },
-        method: "POST"
-      }
-    ]);
-    expect(realtime.matches({
-      payload: {
-        originId: "other-tab",
-        path: "src/other.js",
-        projectSlug: "beepollen",
-        sessionId: "session-1"
-      }
-    })).toBe(true);
-    expect(realtime.matches({
-      payload: {
-        originId: "other-tab",
-        path: "src/other.js",
-        projectSlug: "other",
-        sessionId: "session-1"
-      }
-    })).toBe(false);
-
-    const requestCount = mocks.requestCalls.length;
     mocks.requestResults.push(fileResponse({
       hash: "hash-other",
       path: "src/other.js",
       text: "console.log('other');\n"
     }));
-    realtime.onEvent({
-      payload: {
-        originId: "other-tab",
-        path: "src/other.js",
-        projectSlug: "beepollen",
-        sessionId: "session-1"
-      }
-    });
-    await flushPromises();
+    await firstEditor.openFile("src/other.js");
 
-    expect(mocks.requestCalls).toHaveLength(requestCount + 1);
-    expect(mocks.requestCalls.at(-1)).toEqual([
-      "/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fother.js",
-      {}
-    ]);
-    expect(editor.selectedPath.value).toBe("src/other.js");
-    expect(editor.text.value).toBe("console.log('other');\n");
-  });
-
-  it("opens the selected file from session startup state without publishing it back", async () => {
-    const currentText = ref("");
-    const openSyncState = ref({
-      originId: "other-tab",
-      path: "src/pages/admin/index.jsx",
-      projectSlug: "beepollen",
-      sessionId: "session-1",
-      updatedAt: "2026-07-02T00:00:00.000Z"
-    });
-    const {
-      useVibe64SourceEditor
-    } = await import("../../src/composables/useVibe64SourceEditor.js");
-    mocks.requestResults.push(
-      treeResponse(),
-      fileResponse({
-        hash: "hash-other",
-        path: "src/pages/admin/index.jsx",
-        revealTree: revealTreeForNestedFile(),
-        text: "export default null;\n"
-      })
-    );
-
-    const editor = useVibe64SourceEditor({
-      openSyncState,
-      projectSlug: ref("beepollen"),
-      readCurrentText: () => currentText.value,
-      sessionId: ref("session-1"),
-      sessionsApiPath: ref("/api/app/vibe64/sessions")
-    });
-    await flushPromises();
-
-    expect(editor.selectedPath.value).toBe("src/pages/admin/index.jsx");
-    expect(editor.text.value).toBe("export default null;\n");
-    expect(editor.revealedDirectoryPaths.value).toEqual([
-      "src",
-      "src/pages",
-      "src/pages/admin"
-    ]);
-    expect(editor.tree.value.children[0].children[0].children[0].children[0].path)
-      .toBe("src/pages/admin/index.jsx");
+    expect(firstEditor.selectedPath.value).toBe("src/other.js");
+    expect(firstEditor.text.value).toBe("console.log('other');\n");
+    expect(secondEditor.selectedPath.value).toBe("src/app.js");
+    expect(realtimeForEvent("vibe64.source-editor.file.opened")).toBeUndefined();
     expect(mocks.requestCalls.some(([url]) => url.endsWith("/source-editor/open-file"))).toBe(false);
-  });
-
-  it("warns instead of switching files when a remote open arrives during local edits", async () => {
-    const currentText = ref("");
-    const editor = await createLoadedEditor({
-      currentText
-    });
-    const requestCount = mocks.requestCalls.length;
-    const realtime = realtimeForEvent("vibe64.source-editor.file.opened");
-    const {
-      SOURCE_EDITOR_REMOTE_OPEN_MESSAGE
-    } = await import("../../src/composables/useVibe64SourceEditor.js");
-
-    currentText.value = "console.log('local');\n";
-    editor.updateText();
-    realtime.onEvent({
-      payload: {
-        originId: "other-tab",
-        path: "src/other.js",
-        projectSlug: "beepollen",
-        sessionId: "session-1"
-      }
-    });
-    await flushPromises();
-
-    expect(mocks.requestCalls).toHaveLength(requestCount);
-    expect(editor.selectedPath.value).toBe("src/app.js");
-    expect(editor.saveError.value).toBe(SOURCE_EDITOR_REMOTE_OPEN_MESSAGE);
   });
 
   it("warns instead of overwriting a dirty file after a matching remote save", async () => {

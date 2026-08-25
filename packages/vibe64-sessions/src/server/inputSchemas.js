@@ -141,30 +141,6 @@ const agentTurnInterruptActionInputValidator = patchSchema({
   }
 });
 
-const sessionViewStateInputValidator = patchSchema({
-  ...optionalOrigin,
-  projectPane: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
-  projectSlug: {
-    type: "string",
-    noTrim: false,
-    required: true
-  },
-  routeFullPath: {
-    type: "string",
-    noTrim: false,
-    required: true
-  },
-  sessionId: {
-    type: "string",
-    noTrim: false,
-    required: true
-  }
-});
-
 const sessionPreviewStateInputValidator = patchSchema({
   ...optionalOrigin,
   projectSlug: {
@@ -247,13 +223,7 @@ const sessionUpdateInputValidator = patchSchema({
 });
 
 const sessionInspectInputValidator = patchSchema({
-  ...optionalOrigin,
   ...optionalUser,
-  projectSlug: {
-    type: "string",
-    noTrim: false,
-    required: false
-  },
   sessionId: {
     type: "string",
     noTrim: false,
@@ -419,6 +389,5 @@ export {
   sessionListInputValidator,
   sessionPreviewStateInputValidator,
   sessionSaveInputValidator,
-  sessionUpdateInputValidator,
-  sessionViewStateInputValidator
+  sessionUpdateInputValidator
 };

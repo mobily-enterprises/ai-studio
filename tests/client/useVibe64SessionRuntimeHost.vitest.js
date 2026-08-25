@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { validateSchemaPayload } from "@jskit-ai/kernel/shared/validators";
 
@@ -14,6 +15,16 @@ import {
 } from "../../src/composables/useVibe64SessionRuntimeHost.js";
 
 describe("Vibe64 direct session runtime host", () => {
+  it("keeps browser route selection local instead of hydrating or broadcasting it", () => {
+    const source = readFileSync(new URL(
+      "../../src/composables/useVibe64SessionRuntimeHost.js",
+      import.meta.url
+    ), "utf8");
+
+    expect(source).not.toContain("useVibe64SessionViewSync");
+    expect(source).not.toContain("uiSync");
+  });
+
   it("places focus in the newly selected renewed session after it mounts", async () => {
     const focus = vi.fn();
     const target = { focus };

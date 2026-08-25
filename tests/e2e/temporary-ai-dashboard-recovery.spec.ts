@@ -136,10 +136,6 @@ async function mockRepositoryRecovery(page: Page, {
       });
       return;
     }
-    if (method === "POST" && url.pathname.endsWith("/view-state")) {
-      await fulfillJson(route, { ok: true });
-      return;
-    }
     if (method === "POST" && url.pathname.endsWith("/agent-message")) {
       mainChatMessages.push(requestBodyWithoutOrigin(request));
       await fulfillJson(route, { delivered: true, ok: true });

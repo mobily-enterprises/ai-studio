@@ -12,19 +12,12 @@ import {
   sourceEditorLanguageForPath
 } from "../../packages/vibe64-source-editor/src/server/service.js";
 import {
-  clearSessionUiSyncState,
-  readSessionUiSyncState
-} from "@local/vibe64-core/server/sessionUiSyncState";
-import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
-import {
-  vibe64SessionToolDashboardSuffix
-} from "../../src/lib/vibe64SessionToolDefinitions.js";
 
 const RIPGREP_AVAILABLE = spawnSync("rg", ["--version"], {
   encoding: "utf8"
@@ -409,7 +402,6 @@ test("source editor tree reads one directory page at a time", async () => {
 });
 
 test("source editor reads and saves files with hash conflict protection", async () => {
-  clearSessionUiSyncState();
   const fixture = await createSourceEditorFixture();
   try {
     const readResponse = await fixture.service.readFile({
@@ -430,29 +422,6 @@ test("source editor reads and saves files with hash conflict protection", async 
       nestedReadResponse.revealTree.children[0].children[0].children[0].children[0].path,
       "src/pages/admin/index.jsx"
     );
-
-    const openResponse = await fixture.service.broadcastOpenFile({
-      originId: "tab-1",
-      path: "src/app.js",
-      projectSlug: "beepollen",
-      sessionId: "session-1"
-    });
-    assert.equal(openResponse.ok, true);
-    assert.equal(openResponse.fileOpen.originId, "tab-1");
-    assert.equal(openResponse.fileOpen.path, "src/app.js");
-    assert.equal(openResponse.fileOpen.projectSlug, "beepollen");
-    assert.equal(openResponse.fileOpen.sessionId, "session-1");
-    assert.match(openResponse.fileOpen.updatedAt, /^\d{4}-\d{2}-\d{2}T/u);
-    assert.deepEqual(readSessionUiSyncState({
-      projectSlug: "beepollen",
-      sessionId: "session-1"
-    }).sourceEditor, openResponse.fileOpen);
-    const editorRoutePath = `/app/project/beepollen${vibe64SessionToolDashboardSuffix("editor")}`;
-    assert.equal(readSessionUiSyncState({
-      projectSlug: "beepollen",
-      sessionId: "session-1"
-    }).viewState.routeFullPath, editorRoutePath);
-    assert.equal(editorRoutePath, "/app/project/beepollen/dashboard/files");
 
     const saveResponse = await fixture.service.saveFile({
       baseHash: readResponse.file.hash,
@@ -509,8 +478,6 @@ test("source editor creates new files without overwriting existing or excluded p
     assert.equal(createResponse.ok, true);
     assert.equal(createResponse.file.path, "src/features/new-view.ts");
     assert.equal(createResponse.file.text, "");
-    assert.equal(createResponse.fileOpen.path, "src/features/new-view.ts");
-    assert.equal(createResponse.fileOpen.projectSlug, "beepollen");
     assert.equal(createResponse.revealTree.children[0].path, "src");
     assert.equal(createResponse.revealTree.children[0].children[0].path, "src/features");
     assert.equal(

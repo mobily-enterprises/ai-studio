@@ -112,10 +112,6 @@ async function mockRenewal(page: Page, {
       await fulfillJson(route, { ok: true, sessionId: state.selectedSessionId });
       return;
     }
-    if (method === "POST" && url.pathname.endsWith("/view-state")) {
-      await fulfillJson(route, { ok: true });
-      return;
-    }
     if (method === "GET" && url.pathname.endsWith("/conversation-log")) {
       await fulfillJson(route, {
         conversationLog: [],

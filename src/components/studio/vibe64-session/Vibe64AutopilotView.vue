@@ -512,7 +512,6 @@
           :ask-codex-available="sourceEditorAskCodexAvailable"
           class="studio-autopilot__session-tool-content"
           :open-request="sourceEditorOpenRequest"
-          :open-sync-state="props.session?.uiSync?.sourceEditor || null"
           :project-slug="projectSlug"
           :session-id="sessionId"
           :sessions-api-path="props.sessionsApiPath"

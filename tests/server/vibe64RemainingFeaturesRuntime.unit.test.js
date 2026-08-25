@@ -11,8 +11,7 @@ import { CurrentAppProvider } from "../../packages/current-app/src/server/Curren
 import { StudioHealthProvider } from "../../packages/studio-health/src/server/StudioHealthProvider.js";
 import { Vibe64SourceEditorProvider } from "../../packages/vibe64-source-editor/src/server/Vibe64SourceEditorProvider.js";
 import {
-  createSourceEditorFileChangedPublisher,
-  createSourceEditorFileOpenedPublisher
+  createSourceEditorFileChangedPublisher
 } from "../../packages/vibe64-source-editor/src/server/events.js";
 import { Vibe64SystemGraphProvider } from "../../packages/vibe64-system-graph/src/server/Vibe64SystemGraphProvider.js";
 
@@ -90,7 +89,7 @@ test("remaining Vibe64 features use named capabilities and register direct route
     "vibe64.current-app.read",
     "vibe64.studio-health.read"
   ]);
-  assert.equal(routes.length, 22);
+  assert.equal(routes.length, 21);
   assert.equal(routes.every((route) => typeof route.handler === "function"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.current-app"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.source-editor"), true);
@@ -109,7 +108,6 @@ test("source editor publishes explicit top-level realtime events", async () => {
     }
   };
   const publishChanged = createSourceEditorFileChangedPublisher(events);
-  const publishOpened = createSourceEditorFileOpenedPublisher(events);
 
   await publishChanged({
     fileChange: {
@@ -122,22 +120,10 @@ test("source editor publishes explicit top-level realtime events", async () => {
     },
     ok: true
   });
-  await publishOpened({
-    fileOpen: {
-      originId: "tab-2",
-      path: "src/other.js",
-      projectSlug: "example",
-      sessionId: "session-1",
-      updatedAt: "2026-08-16T00:00:01.000Z"
-    },
-    ok: true
-  });
   await publishChanged({ ok: false });
 
-  assert.equal(published.length, 2);
+  assert.equal(published.length, 1);
   assert.equal(published[0].entityId, "session-1:src/app.js");
   assert.equal(published[0].realtime.event, "vibe64.source-editor.file.changed");
-  assert.equal(published[1].entityId, "session-1:src/other.js");
-  assert.equal(published[1].realtime.event, "vibe64.source-editor.file.opened");
   assert.equal(published.every((event) => event.type === "entity.changed"), true);
 });
