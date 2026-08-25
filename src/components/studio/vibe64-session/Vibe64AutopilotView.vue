@@ -248,6 +248,16 @@
         @resend-turn="resendOptimisticMessage"
       />
 
+      <Vibe64PromptHints
+        :assistant-label="thinkingVisible ? thinkingLabel : ''"
+        :loading="!thinkingVisible && promptHintsVisible && promptHintsLoading"
+        :status-id="thinkingStatusId"
+        :suggestions="!thinkingVisible && promptHintsVisible ? promptHintSuggestions : []"
+        @dismiss="dismissPromptHintsAndFocus"
+        @focusout="handlePromptHintsFocusOut"
+        @select="selectPromptHint"
+      />
+
       <div
         class="studio-autopilot__composer"
         @focusout="handleComposerRegionFocusOut"
@@ -427,16 +437,6 @@
           </template>
         </Vibe64AutopilotPromptTextarea>
       </div>
-
-      <Vibe64PromptHints
-        :assistant-label="thinkingVisible ? thinkingLabel : ''"
-        :loading="!thinkingVisible && promptHintsVisible && promptHintsLoading"
-        :status-id="thinkingStatusId"
-        :suggestions="!thinkingVisible && promptHintsVisible ? promptHintSuggestions : []"
-        @dismiss="dismissPromptHintsAndFocus"
-        @focusout="handlePromptHintsFocusOut"
-        @select="selectPromptHint"
-      />
 
       <Vibe64TemporaryAiWorkspace
         ref="temporaryAiWorkspace"

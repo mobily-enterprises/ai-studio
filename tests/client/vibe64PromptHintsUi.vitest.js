@@ -154,15 +154,14 @@ describe("Vibe64 prompt hints UI", () => {
     expect(component).toContain(':title="suggestion"');
     expect(component).toContain('variant="text"');
     expect(component).toContain("grid-template-columns: repeat(3, minmax(0, 1fr));");
-    expect(component).toContain("height: 3.5rem;");
-    expect(component).toContain("height: 3rem;");
-    expect(component).toContain("-webkit-line-clamp: 2;");
+    expect(component).toContain("height: 4.5rem;");
+    expect(component).toContain("height: 100%;");
+    expect(component).not.toContain("-webkit-line-clamp");
     expect(component).toContain("vibe64-prompt-hints__option + .vibe64-prompt-hints__option");
     expect(component).toContain("@container studio-chat-pane");
     expect(component).toContain("height: 5.5rem;");
     expect(component).toContain("overflow-x: auto;");
     expect(component).toContain("flex: 0 0 calc(100% - 1.25rem);");
-    expect(component).toContain("-webkit-line-clamp: unset;");
     expect(component).toContain("white-space: normal;");
     expect(component).toContain("@media (prefers-reduced-motion: reduce)");
     expect(component).not.toMatch(/v-progress|spinner|circular-progress/iu);
@@ -179,7 +178,7 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot.indexOf("<Vibe64PromptHints")).toBeGreaterThan(
       autopilot.indexOf("<Vibe64ConversationLog")
     );
-    expect(autopilot.indexOf("<Vibe64PromptHints")).toBeGreaterThan(
+    expect(autopilot.indexOf("<Vibe64PromptHints")).toBeLessThan(
       autopilot.indexOf('class="studio-autopilot__composer"')
     );
     expect(autopilot.indexOf("<Vibe64PromptHints")).toBeLessThan(
@@ -220,8 +219,10 @@ describe("Vibe64 prompt hints UI", () => {
     expect(nodeText(statuses[0])).toBe("Thinking of a few ideas.");
 
     mounted.state.loading = false;
+    const maximumLengthSuggestion = "Review the latest changes and suggest the safest useful next improvement, including how we can verify it together today.";
+    expect(maximumLengthSuggestion).toHaveLength(120);
     mounted.state.suggestions = [
-      "Review the latest changes and tell me the safest useful improvement to make next",
+      maximumLengthSuggestion,
       "Explain the current project in plain language before we decide what to change",
       "Help me plan one small improvement that we can verify together"
     ];
@@ -230,7 +231,7 @@ describe("Vibe64 prompt hints UI", () => {
     statuses = findNodes(mounted.container, (node) => node.props?.role === "status");
     expect(statuses).toHaveLength(1);
     expect(nodeText(statuses[0])).toBe(
-      "Three suggested prompts are available after the message controls."
+      "Three suggested prompts are available before the message controls."
     );
     const groups = findNodes(mounted.container, (node) => node.props?.role === "group");
     expect(groups).toHaveLength(1);
@@ -238,6 +239,7 @@ describe("Vibe64 prompt hints UI", () => {
     const buttons = findNodes(groups[0], (node) => node.type === "button");
     expect(buttons).toHaveLength(3);
     expect(buttons[0].props["aria-label"]).toContain(mounted.state.suggestions[0]);
+    expect(nodeText(buttons[0])).toBe(maximumLengthSuggestion);
     buttons[0].props.onClick();
     expect(mounted.events.select).toHaveBeenCalledWith(mounted.state.suggestions[0]);
 

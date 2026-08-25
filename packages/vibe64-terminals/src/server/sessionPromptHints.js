@@ -97,10 +97,11 @@ function visibleConversation(conversation = {}) {
     : [];
   let remaining = PROMPT_HINT_CONVERSATION_MAX_CHARACTERS;
   const visible = [];
-  for (const turn of turns) {
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex];
     const messages = [
-      ["user", turn?.user?.text],
-      ["assistant", turn?.assistant?.text]
+      ["assistant", turn?.assistant?.text],
+      ["user", turn?.user?.text]
     ];
     for (const [role, value] of messages) {
       if (remaining <= 0) {
@@ -113,7 +114,7 @@ function visibleConversation(conversation = {}) {
       if (!text) {
         continue;
       }
-      visible.push({ role, text });
+      visible.unshift({ role, text });
       remaining -= Array.from(text).length;
     }
   }

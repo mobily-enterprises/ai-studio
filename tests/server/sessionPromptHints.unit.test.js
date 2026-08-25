@@ -6,7 +6,8 @@ import test from "node:test";
 
 import {
   createSessionPromptHintsService,
-  readPromptHintBlueprint
+  readPromptHintBlueprint,
+  visibleConversation
 } from "../../packages/vibe64-terminals/src/server/sessionPromptHints.js";
 import {
   currentProjectScopeKey,
@@ -104,6 +105,33 @@ function conversationPage({
     }
   };
 }
+
+test("prompt-hint context keeps the newest turns when its character budget is exhausted", () => {
+  const conversationLog = Array.from({ length: 8 }, (_value, index) => ({
+    assistant: {
+      text: `ASSISTANT-${index + 1}-${"a".repeat(1_600)}`
+    },
+    turnId: `turn-${index + 1}`,
+    user: {
+      text: `USER-${index + 1}-${"u".repeat(1_600)}`
+    }
+  }));
+  const visible = visibleConversation({ conversationLog });
+  assert.equal(visible.length, 8);
+  assert.deepEqual(visible.map(({ role, text }) => ({
+    role,
+    turn: /(?:USER|ASSISTANT)-(\d+)/u.exec(text)?.[1]
+  })), [
+    { role: "user", turn: "5" },
+    { role: "assistant", turn: "5" },
+    { role: "user", turn: "6" },
+    { role: "assistant", turn: "6" },
+    { role: "user", turn: "7" },
+    { role: "assistant", turn: "7" },
+    { role: "user", turn: "8" },
+    { role: "assistant", turn: "8" }
+  ]);
+});
 
 function deferred() {
   let reject;

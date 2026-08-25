@@ -108,7 +108,7 @@ const statusAnnouncement = computed(() => {
     return "Thinking of a few ideas.";
   }
   if (mode.value === "ready") {
-    return "Three suggested prompts are available after the message controls.";
+    return "Three suggested prompts are available before the message controls.";
   }
   return "";
 });
@@ -122,8 +122,8 @@ const statusAnnouncement = computed(() => {
   display: grid;
   grid-row: 4;
   grid-template-columns: auto minmax(0, 1fr);
-  height: 3.5rem;
-  min-height: 3.5rem;
+  height: 4.5rem;
+  min-height: 4.5rem;
   min-width: 0;
   padding-inline: 0.3rem;
 }
@@ -199,6 +199,7 @@ const statusAnnouncement = computed(() => {
 .vibe64-prompt-hints__options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 100%;
   min-width: 0;
 }
 
@@ -207,7 +208,7 @@ const statusAnnouncement = computed(() => {
   color: rgb(var(--v-theme-on-surface));
   font-size: 0.72rem;
   font-weight: 500;
-  height: 3rem;
+  height: 100%;
   letter-spacing: 0;
   line-height: 1.25;
   min-height: 3rem;
@@ -221,16 +222,14 @@ const statusAnnouncement = computed(() => {
 }
 
 .vibe64-prompt-hints__option span {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  display: -webkit-box;
+  display: block;
   max-width: 100%;
-  overflow: hidden;
   overflow-wrap: anywhere;
   text-align: start;
+  white-space: normal;
 }
 
-@container studio-chat-pane (max-width: 26rem) {
+@container studio-chat-pane (max-width: 42rem) {
   .vibe64-prompt-hints {
     height: 5.5rem;
     min-height: 5.5rem;
@@ -263,10 +262,7 @@ const statusAnnouncement = computed(() => {
   }
 
   .vibe64-prompt-hints__option span {
-    -webkit-line-clamp: unset;
-    display: block;
-    overflow: visible;
-    white-space: normal;
+    max-width: 100%;
   }
 }
 
