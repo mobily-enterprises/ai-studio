@@ -24,6 +24,7 @@ import {
   ACTION_UPDATE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+  ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
@@ -47,6 +48,9 @@ import {
 import {
   runVibe64AgentWriteExclusive
 } from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
+import {
+  runWithProjectRequestContext
+} from "../../packages/vibe64-core/src/server/projectRequestContext.js";
 import {
   createVibe64SessionStore
 } from "../../packages/vibe64-runtime/src/server/sessionStore.js";
@@ -198,8 +202,72 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_ABANDON_SESSION,
     ACTION_SEND_AGENT_MESSAGE,
     ACTION_INTERRUPT_AGENT_TURN,
+    ACTION_UPDATE_SESSION_PRESENCE,
     ACTION_BROADCAST_SESSION_PREVIEW_STATE
   ]);
+});
+
+test("typing presence trusts the authenticated request user and never accepts a draft", async () => {
+  const updates = [];
+  const sessionPresence = {
+    close() {},
+    async update(input) {
+      updates.push(input);
+      return { ok: true, status: "typing" };
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return { sessionId, status: "active" };
+          }
+        };
+      }
+    },
+    sessionPresence,
+    terminals: {}
+  });
+  const action = createSessionActions({ sessions: service })
+    .find((candidate) => candidate.id === ACTION_UPDATE_SESSION_PRESENCE);
+  const validated = action.input.schema.create({
+    originId: "tab:member-1",
+    sequence: 7,
+    sessionId: "session-1",
+    typing: true
+  });
+  assert.deepEqual(validated.errors, {});
+  assert.equal(Object.hasOwn(validated.validatedObject, "draft"), false);
+
+  const unavailable = await action.execute(validated.validatedObject, {
+    requestMeta: { request: {} }
+  });
+  assert.deepEqual(unavailable, { ok: true, status: "unavailable" });
+  assert.equal(updates.length, 0);
+
+  const result = await runWithProjectRequestContext({ slug: "beepollen" }, () => (
+    action.execute(validated.validatedObject, {
+      requestMeta: {
+        request: {
+          vibe64User: {
+            preferredName: "John",
+            username: "member-1"
+          }
+        }
+      }
+    })
+  ));
+  assert.deepEqual(result, { ok: true, status: "typing" });
+  assert.deepEqual(updates, [{
+    actorId: "member-1",
+    displayName: "John",
+    originId: "tab:member-1",
+    projectSlug: "beepollen",
+    sequence: 7,
+    sessionId: "session-1",
+    typing: true
+  }]);
 });
 
 test("assistant message action accepts attachment lease ids", () => {

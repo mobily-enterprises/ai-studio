@@ -165,6 +165,36 @@ const sessionPreviewStateInputValidator = patchSchema({
   }
 });
 
+const sessionPresenceFields = {
+  originId: {
+    type: "string",
+    noTrim: false,
+    minLength: 1,
+    maxLength: 128,
+    pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u,
+    required: true
+  },
+  sequence: {
+    type: "integer",
+    min: 1,
+    required: true
+  },
+  typing: {
+    type: "boolean",
+    required: true
+  }
+};
+
+const sessionPresenceInputValidator = requiredInputSchema(sessionPresenceFields);
+const sessionPresenceActionInputValidator = requiredInputSchema({
+  ...sessionPresenceFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
 const sessionListInputValidator = patchSchema({
   ...optionalUser,
   archive: {
@@ -387,6 +417,8 @@ export {
   sessionRenewalRetryActionInputValidator,
   sessionRenewalRetryInputValidator,
   sessionListInputValidator,
+  sessionPresenceActionInputValidator,
+  sessionPresenceInputValidator,
   sessionPreviewStateInputValidator,
   sessionSaveInputValidator,
   sessionUpdateInputValidator

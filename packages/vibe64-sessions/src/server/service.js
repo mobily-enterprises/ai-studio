@@ -2,12 +2,18 @@ import crypto from "node:crypto";
 
 import { vibe64Result } from "@local/vibe64-core/server/serverResponses";
 import {
+  currentProjectRequestContext
+} from "@local/vibe64-core/server/projectRequestContext";
+import {
   writeSessionUiSyncPreviewState
 } from "@local/vibe64-core/server/sessionUiSyncState";
 import {
   vibe64SessionDebugError,
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
+import {
+  vibe64SessionStatusIsOpen
+} from "@local/vibe64-runtime/server/sessionStore";
 import {
   runVibe64AgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
@@ -20,6 +26,7 @@ import {
   sessionRenewalAdvisory
 } from "./sessionRenewalAdvisory.js";
 import { createSessionRenewalController } from "./sessionRenewal.js";
+import { presenceActor } from "./sessionPresence.js";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -186,6 +193,7 @@ function createService({
   project,
   publishSessionChanged = async () => null,
   renewalActorResolver = null,
+  sessionPresence = null,
   terminals,
   workspaceSetupRunner = null
 } = {}) {
@@ -194,6 +202,15 @@ function createService({
   }
   if (!terminals) {
     throw new TypeError("createService requires vibe64.terminals.");
+  }
+  if (
+    sessionPresence !== null &&
+    (
+      typeof sessionPresence?.update !== "function" ||
+      typeof sessionPresence?.close !== "function"
+    )
+  ) {
+    throw new TypeError("Vibe64 session presence requires update() and close().");
   }
   assertRenewalActorResolver(renewalActorResolver);
   const setupRunner = workspaceSetupRunner || Object.freeze({
@@ -462,6 +479,9 @@ function createService({
 
   return Object.freeze({
     ...renewal,
+    closeSessionPresence() {
+      sessionPresence?.close?.();
+    },
     setRenewalActorResolver(resolver = null) {
       configuredRenewalActorResolver = assertRenewalActorResolver(resolver);
     },
@@ -1164,6 +1184,41 @@ function createService({
         });
         throw error;
       }
+    },
+
+    async updateSessionPresence(sessionId, input = {}) {
+      const actor = presenceActor(input.vibe64User);
+      if (!actor || !sessionPresence) {
+        return {
+          ok: true,
+          status: "unavailable"
+        };
+      }
+      return sessionResult(async () => {
+        const projectSlug = text(currentProjectRequestContext()?.slug);
+        if (!projectSlug) {
+          return {
+            ok: true,
+            status: "unavailable"
+          };
+        }
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        if (!vibe64SessionStatusIsOpen(session?.status)) {
+          return {
+            ok: true,
+            status: "unavailable"
+          };
+        }
+        return sessionPresence.update({
+          ...actor,
+          originId: input.originId,
+          projectSlug,
+          sequence: input.sequence,
+          sessionId,
+          typing: input.typing
+        });
+      }, "Vibe64 could not update typing presence.");
     },
 
     async updateCurrentSession(sessionId = "") {

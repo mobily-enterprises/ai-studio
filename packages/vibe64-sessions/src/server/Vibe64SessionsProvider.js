@@ -9,6 +9,10 @@ import { createSessionActions } from "./actions.js";
 import { createSessionChangedPublisher } from "./events.js";
 import { registerRoutes } from "./registerRoutes.js";
 import { createService } from "./service.js";
+import {
+  createSessionPresencePublisher,
+  createSessionPresenceService
+} from "./sessionPresence.js";
 
 function createSessionRenewalRecoveryTask({ recover } = {}) {
   if (typeof recover !== "function") {
@@ -86,9 +90,18 @@ function createVibe64SessionsFeature() {
       surfaces: ["app"]
     },
     setup({ events, http, project, terminals }) {
+      const sessionPresence = createSessionPresenceService({
+        onPublishError: (error) => {
+          vibe64SessionDebugLog("server.sessions.presence.publish.error", {
+            error: vibe64SessionDebugError(error)
+          });
+        },
+        publishPresence: createSessionPresencePublisher(events)
+      });
       const sessions = createService({
         project,
         publishSessionChanged: createSessionChangedPublisher(events),
+        sessionPresence,
         terminals
       });
       registerRoutes(http, {
@@ -115,6 +128,7 @@ function createVibe64SessionsFeature() {
       const task = recoveryTasks.get(sessions);
       const operations = [
         Promise.resolve(closing),
+        Promise.resolve(sessions.closeSessionPresence?.()),
         ...(task ? [task.stop()] : []),
         Promise.resolve().then(async () => {
           const result = await terminals.invalidateAgentRuntimes({

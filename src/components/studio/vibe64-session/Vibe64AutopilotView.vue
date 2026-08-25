@@ -249,10 +249,10 @@
       />
 
       <Vibe64PromptHints
-        :assistant-label="thinkingVisible ? thinkingLabel : ''"
-        :loading="!thinkingVisible && promptHintsVisible && promptHintsLoading"
+        :assistant-label="composerAssistantLabel"
+        :loading="!composerAssistantLabel && promptHintsVisible && promptHintsLoading"
         :status-id="thinkingStatusId"
-        :suggestions="!thinkingVisible && promptHintsVisible ? promptHintSuggestions : []"
+        :suggestions="!composerAssistantLabel && promptHintsVisible ? promptHintSuggestions : []"
         @dismiss="dismissPromptHintsAndFocus"
         @focusout="handlePromptHintsFocusOut"
         @select="selectPromptHint"
@@ -282,6 +282,7 @@
           @blur="handleComposerBlur"
           @escape="dismissPromptHints"
           @focus="focusPromptHints"
+          @input-activity="noteTypingActivity"
           @submit="sendComposerMessage"
           @tab-to-submit="focusComposerSendButton"
         >
@@ -643,6 +644,9 @@ import {
   promptHintConversationFingerprint,
   useVibe64PromptHints
 } from "@/composables/useVibe64PromptHints.js";
+import {
+  useVibe64SessionTypingPresence
+} from "@/composables/useVibe64SessionTypingPresence.js";
 
 const emit = defineEmits(vibe64AutopilotViewEmits);
 const props = defineProps(vibe64AutopilotViewProps);
@@ -795,6 +799,21 @@ const {
   requestTemporaryAi: startTemporaryAiTask
 });
 
+const {
+  blur: stopTypingOnBlur,
+  noteInputActivity: noteTypingActivity,
+  submit: stopTypingOnSubmit,
+  typingLabel
+} = useVibe64SessionTypingPresence({
+  active: computed(() => props.active && !props.sessionSelectionClosed),
+  projectSlug,
+  sessionId,
+  sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
+});
+const composerAssistantLabel = computed(() => (
+  thinkingVisible.value ? thinkingLabel.value : typingLabel.value
+));
+
 const promptHintsCanRequest = computed(() => Boolean(
   props.active &&
   props.agentConnectionStatus === "connected" &&
@@ -845,7 +864,7 @@ const {
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
 });
 const composerSupportStatusVisible = computed(() => Boolean(
-  thinkingVisible.value || promptHintsVisible.value
+  composerAssistantLabel.value || promptHintsVisible.value
 ));
 
 const dashboardContext = computed(() => ({
@@ -866,6 +885,7 @@ async function sendComposerMessage() {
   if (composerInput.value?.attachmentsCanSubmit?.() === false) {
     return false;
   }
+  stopTypingOnSubmit();
   const accepted = await submitComposerMessage();
   if (accepted && composerAcceptedAttachments.value) {
     composerInput.value?.clearAttachments?.();
@@ -891,6 +911,7 @@ function focusTargetInside(target, selector) {
 }
 
 function handleComposerBlur(event = {}) {
+  stopTypingOnBlur();
   if (focusTargetInside(
     event.relatedTarget,
     "[data-vibe64-prompt-hints], .studio-autopilot__composer"

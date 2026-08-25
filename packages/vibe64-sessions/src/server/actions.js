@@ -12,6 +12,7 @@ import {
   sessionIdInputValidator,
   sessionInspectInputValidator,
   sessionListInputValidator,
+  sessionPresenceActionInputValidator,
   sessionPreviewStateInputValidator,
   sessionRenewalDraftGuardActionInputValidator,
   sessionRenewalDraftRequestActionInputValidator,
@@ -47,6 +48,7 @@ const ACTION_ABANDON_SESSION = "vibe64.sessions.abandon";
 const ACTION_SEND_AGENT_MESSAGE = "vibe64.sessions.agent-message.send";
 const ACTION_INTERRUPT_AGENT_TURN = "vibe64.sessions.agent-turn.interrupt";
 const ACTION_BROADCAST_SESSION_PREVIEW_STATE = "vibe64.sessions.preview-state.broadcast";
+const ACTION_UPDATE_SESSION_PRESENCE = "vibe64.sessions.presence.update";
 const ACTION_INSPECT_REPOSITORY_HISTORY = "vibe64.repository.history.inspect";
 const ACTION_INSPECT_REPOSITORY_VERSION_FILES = "vibe64.repository.history.files.inspect";
 const ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF = "vibe64.repository.history.diff.inspect";
@@ -294,6 +296,18 @@ function createSessionActions({ sessions } = {}) {
       execute: (input) => sessions.interruptAgentTurn(input.sessionId, withoutSessionId(input))
     }),
     action({
+      id: ACTION_UPDATE_SESSION_PRESENCE,
+      kind: "command",
+      idempotency: "domain_native",
+      input: sessionPresenceActionInputValidator,
+      execute: (input, context) => sessions.updateSessionPresence(input.sessionId, {
+        originId: input.originId,
+        sequence: input.sequence,
+        typing: input.typing,
+        vibe64User: authenticatedVibe64User(context)
+      })
+    }),
+    action({
       id: ACTION_BROADCAST_SESSION_PREVIEW_STATE,
       kind: "command",
       input: sessionPreviewStateInputValidator,
@@ -327,6 +341,7 @@ export {
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+  ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_UPDATE_SESSION_WORK,
   createSessionActions
 };

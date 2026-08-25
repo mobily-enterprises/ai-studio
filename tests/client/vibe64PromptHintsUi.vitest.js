@@ -164,6 +164,7 @@ describe("Vibe64 prompt hints UI", () => {
     expect(component).toContain("flex: 0 0 calc(100% - 1.25rem);");
     expect(component).toContain("white-space: normal;");
     expect(component).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(component).toContain("overflow-wrap: anywhere");
     expect(component).not.toMatch(/v-progress|spinner|circular-progress/iu);
   });
 
@@ -189,6 +190,22 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot).not.toContain("studio-autopilot__thinking-mark");
   });
 
+  it("reuses the support row for authenticated typing presence", () => {
+    const autopilot = fs.readFileSync(autopilotPath, "utf8");
+    const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");
+
+    expect(autopilot).toContain("useVibe64SessionTypingPresence({");
+    expect(autopilot).toContain(
+      "thinkingVisible.value ? thinkingLabel.value : typingLabel.value"
+    );
+    expect(autopilot).toContain(':assistant-label="composerAssistantLabel"');
+    expect(autopilot).toContain('@input-activity="noteTypingActivity"');
+    expect(autopilot).toContain("stopTypingOnSubmit();");
+    expect(autopilot).toContain("stopTypingOnBlur();");
+    expect(promptTextarea).toContain('"input-activity"');
+    expect(promptTextarea).toContain('emit("input-activity");');
+  });
+
   it("fills and refocuses the editable composer rather than sending", () => {
     const component = hintComponentSource;
     const autopilot = fs.readFileSync(autopilotPath, "utf8");
@@ -206,7 +223,7 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot).toContain('@blur="handleComposerBlur"');
     expect(autopilot).toContain('@focusout="handleComposerRegionFocusOut"');
     expect(autopilot).toContain('@dismiss="dismissPromptHintsAndFocus"');
-    expect(autopilot).toContain("thinkingVisible.value || promptHintsVisible.value");
+    expect(autopilot).toContain("composerAssistantLabel.value || promptHintsVisible.value");
     expect(component).toContain('@keydown.esc.stop.prevent="$emit(\'dismiss\')"');
   });
 

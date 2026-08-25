@@ -155,6 +155,9 @@ const statusAnnouncement = computed(() => {
   font-size: 0.78rem;
   gap: 0.45rem;
   grid-column: 1 / -1;
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding-inline: 0.55rem;
 }
 

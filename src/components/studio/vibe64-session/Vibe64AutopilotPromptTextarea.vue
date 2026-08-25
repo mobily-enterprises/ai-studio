@@ -110,6 +110,7 @@ const emit = defineEmits([
   "blur",
   "escape",
   "focus",
+  "input-activity",
   "submit",
   "tab-to-submit",
   "update:modelValue"
@@ -278,6 +279,7 @@ function queueResizeTextarea() {
 }
 
 function handleTextareaInput(event = {}) {
+  emit("input-activity");
   emit("update:modelValue", String(event?.target?.value || ""));
   queueResizeTextarea();
 }

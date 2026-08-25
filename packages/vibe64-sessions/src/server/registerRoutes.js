@@ -23,6 +23,7 @@ import {
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
+  ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_UPDATE_SESSION_WORK
 } from "./actions.js";
 import {
@@ -31,7 +32,8 @@ import {
   sessionRenewalDraftGuardInputValidator,
   sessionRenewalDraftRequestInputValidator,
   sessionRenewalDraftUpdateInputValidator,
-  sessionRenewalRetryInputValidator
+  sessionRenewalRetryInputValidator,
+  sessionPresenceInputValidator
 } from "./inputSchemas.js";
 import { createVibe64FeatureRoutes } from "@local/vibe64-core/server/featureRoutes";
 
@@ -274,6 +276,17 @@ function registerRoutes(http, {
       sessionId: request.params.sessionId
     }),
     summary: "Interrupt the active Vibe64 assistant turn."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/presence", {
+    actionId: ACTION_UPDATE_SESSION_PRESENCE,
+    body: sessionPresenceInputValidator,
+    bodyLimit: 4 * 1024,
+    buildInput: (request) => ({
+      ...withoutVibe64User(routes.requestBody(request)),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Publish ephemeral typing presence for a Vibe64 session."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/preview-state", {
