@@ -215,34 +215,9 @@ function createSessionPresenceService({
       removeEntry(key, existing);
     }
     const updatedAt = now();
-    if (!presence.typing) {
-      const payload = presencePayload(presence, {
-        expiresAt: updatedAt,
-        now: updatedAt
-      });
-      const entry = {
-        payload,
-        presence,
-        timer: null
-      };
-      entries.set(key, entry);
-      while (entries.size > Math.max(1, Number(maxEntries) || SESSION_PRESENCE_MAX_ENTRIES)) {
-        await evictOldestEntry();
-      }
-      await publish(payload);
-      if (entries.get(key) === entry && !closed) {
-        scheduleExpiry(
-          key,
-          entry,
-          Math.max(1, Number(idleMs) || SESSION_PRESENCE_IDLE_MS)
-        );
-      }
-      return Object.freeze({ ok: true, presence: payload, status: "idle" });
-    }
-
     const expiryDelay = Math.max(1, Number(idleMs) || SESSION_PRESENCE_IDLE_MS);
     const payload = presencePayload(presence, {
-      expiresAt: updatedAt + expiryDelay,
+      expiresAt: presence.typing ? updatedAt + expiryDelay : updatedAt,
       now: updatedAt
     });
     const entry = {
@@ -258,7 +233,11 @@ function createSessionPresenceService({
     if (entries.get(key) === entry && !closed) {
       scheduleExpiry(key, entry, expiryDelay);
     }
-    return Object.freeze({ ok: true, presence: payload, status: "typing" });
+    return Object.freeze({
+      ok: true,
+      presence: payload,
+      status: presence.typing ? "typing" : "idle"
+    });
   }
 
   function close() {
