@@ -73,7 +73,7 @@ async function listJavaScriptFiles(root) {
   for (const entry of entries) {
     const filePath = path.join(root, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules") {
+      if (["node_modules", "templates"].includes(entry.name)) {
         continue;
       }
       files.push(...await listJavaScriptFiles(filePath));

@@ -149,7 +149,7 @@ Vibe64 decides whether this host can run them safely.
 
 <details class="vibe-faq-item">
 <summary>Will it work with my stack?</summary>
-<p>A blank Genesis project assumes no technology. Select the Stack components that describe the project, or adopt an existing codebase and add them later. Vibe64 does not require a fixed project-type adapter.</p>
+<p>Existing repositories keep their own technology choices. A newly created hosted web app starts from Vibe64's current JSKIT foundation, while local projects continue to use the folder and tools you selected.</p>
 </details>
 </div>
 </div>

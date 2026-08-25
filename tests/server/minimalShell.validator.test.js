@@ -9,6 +9,8 @@ const __dirname = path.dirname(__filename);
 const APP_ROOT = path.resolve(__dirname, "../..");
 
 const EXPECTED_APPLICATION_SCRIPTS = Object.freeze({
+  "jskit:check": "jskit check",
+  "jskit:update": "npx --yes @jskit-ai/jskit-catalog@latest update",
   verify: "npm run lint && npm run test && npm run test:client && npm run build && npm run verify:packages"
 });
 
@@ -33,7 +35,8 @@ const REQUIRED_TOP_LEVEL_ENTRIES = Object.freeze([
 const RECURSIVE_SOURCE_IGNORED_DIRECTORIES = new Set([
   "coverage",
   "dist",
-  "node_modules"
+  "node_modules",
+  "templates"
 ]);
 
 async function readPackageJson() {
@@ -94,8 +97,6 @@ test("the application owns verification and uses exact JSKIT dependency specifie
 
   assert.equal(packageJson.devDependencies?.["@jskit-ai/jskit-cli"], undefined);
   assert.equal(packageJson.scripts?.["jskit:release"], undefined);
-  assert.equal(packageJson.scripts?.["jskit:update"], undefined);
-  assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /(?:npx\s+)?jskit(?:\s|$)/u);
 
   for (const [scriptName, expectedValue] of Object.entries(EXPECTED_APPLICATION_SCRIPTS)) {
     assert.equal(packageJson.scripts?.[scriptName], expectedValue, `Unexpected ${scriptName} script.`);

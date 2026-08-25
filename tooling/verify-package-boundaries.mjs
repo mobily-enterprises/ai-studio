@@ -261,8 +261,8 @@ function verifyRootPackage({
   }
 
   for (const [scriptName, scriptBody] of Object.entries(rootManifest.scripts || {})) {
-    if (/(?:^|[;&|]\s*)(?:npx\s+)?jskit(?:\s|$)/u.test(String(scriptBody))) {
-      errors.push(`root package.json script "${scriptName}" must not invoke the retired JSKIT CLI.`);
+    if (/\bjskit\s+(?:app|create(?:-app)?)\b/u.test(String(scriptBody))) {
+      errors.push(`root package.json script "${scriptName}" must not invoke a retired JSKIT scaffolding command.`);
     }
   }
 }

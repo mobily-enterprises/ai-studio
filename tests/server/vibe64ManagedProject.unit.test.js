@@ -7,8 +7,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  initializeManagedGenesisProject,
-  materializeInitialGenesisProject
+  initializeManagedJskitProject,
+  materializeInitialJskitProject
 } from "@local/vibe64-project/server/managedProject";
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +37,7 @@ async function directCommand({ args = [], command = "", cwd = "" } = {}) {
   }
 }
 
-test("initial Genesis materialization publishes one authoritative commit through explicit callbacks", async (t) => {
+test("initial JSKIT materialization publishes one authoritative commit through explicit callbacks", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-initial-project-"));
   t.after(() => rm(root, {
     force: true,
@@ -47,7 +47,7 @@ test("initial Genesis materialization publishes one authoritative commit through
   await mkdir(projectRuntimeRoot);
   const calls = [];
 
-  const result = await materializeInitialGenesisProject({
+  const result = await materializeInitialJskitProject({
     afterAuthorityVerification: ({ commit }) => {
       calls.push(["after", commit]);
     },
@@ -80,7 +80,7 @@ test("initial Genesis materialization publishes one authoritative commit through
   assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
 });
 
-test("managed blank projects begin as one canonical Genesis commit without a namespace checkout", async (t) => {
+test("managed projects begin as one canonical JSKIT foundation commit without a namespace checkout", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-"));
   t.after(() => rm(root, {
     force: true,
@@ -93,7 +93,8 @@ test("managed blank projects begin as one canonical Genesis commit without a nam
     mkdir(projectRuntimeRoot)
   ]);
 
-  const initialized = await initializeManagedGenesisProject({
+  const initialized = await initializeManagedJskitProject({
+    projectName: "managed-foundation",
     projectContextRoot: namespaceRoot,
     projectRuntimeRoot,
     runCommand: directCommand
@@ -109,15 +110,32 @@ test("managed blank projects begin as one canonical Genesis commit without a nam
   assert.match((await execFileAsync("git", [
     "--git-dir", initialized.repositoryPath, "show", "main:genesis/blueprint.md"
   ])).stdout, /# Blueprint/u);
-  assert.equal((await execFileAsync("git", [
+  assert.match((await execFileAsync("git", [
     "--git-dir", initialized.repositoryPath, "show", "main:genesis/stack.md"
-  ])).stdout, "# Stack\n\n## Components\n");
+  ])).stdout, /## Components[\s\S]*- `nodejs`[\s\S]*- `jskit`/u);
+  const packageJson = JSON.parse((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:package.json"
+  ])).stdout);
+  assert.equal(packageJson.name, "managed-foundation");
+  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.198");
+  assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
+  assert.equal(packageJson.scripts["jskit:check"], "jskit check");
+  assert.equal(packageJson.workspaces[0], "packages/*");
+  const lockfile = JSON.parse((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:package-lock.json"
+  ])).stdout);
+  assert.equal(lockfile.lockfileVersion, 3);
+  assert.equal(lockfile.name, "managed-foundation");
+  assert.equal(lockfile.packages[""].name, "managed-foundation");
+  assert.equal((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:packages/main/package.json"
+  ])).stdout.includes('"@local/main"'), true);
   assert.deepEqual(await readdir(namespaceRoot), []);
   assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
   assert.equal(initialized.sourceRoot, undefined);
 });
 
-test("managed Genesis initialization removes its temporary checkout after every failure stage", async (t) => {
+test("managed JSKIT initialization removes its temporary checkout after every failure stage", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-failures-"));
   t.after(() => rm(root, {
     force: true,
@@ -161,7 +179,7 @@ test("managed Genesis initialization removes its temporary checkout after every 
     };
 
     await assert.rejects(
-      () => initializeManagedGenesisProject({
+      () => initializeManagedJskitProject({
         ...(stage === "genesis" ? {
           initializeProject: async () => {
             throw new Error("simulated Genesis failure");

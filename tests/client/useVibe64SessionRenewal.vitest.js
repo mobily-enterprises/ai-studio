@@ -86,6 +86,9 @@ function renewalState(overrides = {}) {
 function mountRenewal(overrides = {}) {
   const scope = effectScope();
   const active = overrides.active || ref(true);
+  const draftStorage = Object.hasOwn(overrides, "draftStorage")
+    ? overrides.draftStorage
+    : memoryStorage();
   const focusSession = overrides.focusSession || vi.fn(async () => true);
   const refreshSessionData = overrides.refreshSessionData || vi.fn(async () => null);
   const selectSession = overrides.selectSession || vi.fn();
@@ -101,7 +104,7 @@ function mountRenewal(overrides = {}) {
   const selectedSessionId = overrides.selectedSessionId || ref("session-1");
   const controller = scope.run(() => useVibe64SessionRenewal({
     active,
-    draftStorage: overrides.draftStorage,
+    draftStorage,
     focusSession,
     refreshSessionData,
     selectSession,

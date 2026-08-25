@@ -19,8 +19,8 @@ import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
-  initializeGenesisProject
-} from "@local/vibe64-genesis/server";
+  materializeInitialProjectFoundation
+} from "./projectFoundation.js";
 
 function initialProjectError(result = {}, fallback = "Initial project materialization failed.") {
   return vibe64Error(
@@ -103,7 +103,7 @@ async function installCanonicalCommit(repositoryPath, sourceRoot, branch, {
     timeout: 60_000
   });
   if (result?.ok !== true) {
-    throw initialProjectError(result, "The initial Genesis commit could not be installed in canonical Git storage.");
+    throw initialProjectError(result, "The initial project commit could not be installed in canonical Git storage.");
   }
 }
 
@@ -118,17 +118,18 @@ function absoluteRuntimeRoot(projectRuntimeRoot = "") {
   return path.resolve(input);
 }
 
-async function materializeInitialGenesisProject({
+async function materializeInitialJskitProject({
   afterAuthorityVerification = null,
   beforeAuthorityMutation = null,
   defaultBranch = "main",
-  initializeProject = initializeGenesisProject,
+  initializeProject = materializeInitialProjectFoundation,
+  projectName = "",
   projectRuntimeRoot = "",
   publish,
   runCommand = runVibe64Command
 } = {}) {
   if (typeof publish !== "function") {
-    throw new TypeError("materializeInitialGenesisProject requires publish.");
+    throw new TypeError("materializeInitialJskitProject requires publish.");
   }
   const runtimeRoot = absoluteRuntimeRoot(projectRuntimeRoot);
   const branch = normalizeText(defaultBranch) || "main";
@@ -136,7 +137,7 @@ async function materializeInitialGenesisProject({
   await mkdir(temporaryRoot, {
     recursive: true
   });
-  const sourceRoot = await mkdtemp(path.join(temporaryRoot, "initial-genesis-"));
+  const sourceRoot = await mkdtemp(path.join(temporaryRoot, "initial-jskit-"));
   const allowedRoots = [sourceRoot, runtimeRoot];
   try {
     await runGit(["init", `--initial-branch=${branch}`], {
@@ -145,6 +146,7 @@ async function materializeInitialGenesisProject({
       runCommand
     });
     await initializeProject({
+      projectName,
       projectRoot: sourceRoot
     });
     await runGit(["add", "-A"], {
@@ -155,7 +157,7 @@ async function materializeInitialGenesisProject({
     await runGit([
       "-c", "user.name=Vibe64",
       "-c", "user.email=vibe64@localhost",
-      "commit", "-m", "Initialize Genesis project"
+      "commit", "-m", "Initialize Vibe64 project"
     ], {
       allowedRoots,
       cwd: sourceRoot,
@@ -216,10 +218,11 @@ async function materializeInitialGenesisProject({
   }
 }
 
-async function initializeManagedGenesisProject({
+async function initializeManagedJskitProject({
   defaultBranch = "main",
-  initializeProject = initializeGenesisProject,
+  initializeProject = materializeInitialProjectFoundation,
   projectContextRoot = "",
+  projectName = "",
   projectRuntimeRoot = "",
   runCommand = runVibe64Command
 } = {}) {
@@ -249,9 +252,10 @@ async function initializeManagedGenesisProject({
     projectRuntimeRoot: runtimeRoot
   });
   const repositoryRoot = path.dirname(repositoryPath);
-  const result = await materializeInitialGenesisProject({
+  const result = await materializeInitialJskitProject({
     defaultBranch,
     initializeProject,
+    projectName,
     projectRuntimeRoot: runtimeRoot,
     publish: async ({ branch, commit, sourceRoot }) => {
       const allowedRoots = [sourceRoot, runtimeRoot, repositoryRoot, repositoryPath];
@@ -278,7 +282,7 @@ async function initializeManagedGenesisProject({
       });
       if (canonicalCommit !== commit) {
         throw vibe64Error(
-          "The canonical repository did not retain the exact initial Genesis commit.",
+          "The canonical repository did not retain the exact initial project commit.",
           "vibe64_managed_project_canonical_verification_failed"
         );
       }
@@ -292,6 +296,6 @@ async function initializeManagedGenesisProject({
 }
 
 export {
-  initializeManagedGenesisProject,
-  materializeInitialGenesisProject
+  initializeManagedJskitProject,
+  materializeInitialJskitProject
 };
