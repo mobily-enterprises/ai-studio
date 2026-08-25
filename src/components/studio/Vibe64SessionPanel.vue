@@ -170,6 +170,7 @@
         :github-actor-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.githubActorTeleportTarget : ''"
         :project-context="props.projectContext"
         :preview-toolbar-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.previewToolbarTeleportTarget : ''"
+        :prompt-hint-policy="promptHintPolicy"
         :project-pane="projectPane"
         :save-work-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.saveWorkTeleportTarget : ''"
         :toolbar-sessions="toolbar.sessions"
@@ -225,6 +226,7 @@ const {
   emptyStateInitialLoading,
   emptyStateStatusText,
   pageError,
+  promptHintPolicy,
   projectPane,
   runtimeHostSessionIds,
   selectedAbandon,

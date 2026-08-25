@@ -9,6 +9,9 @@ const sessionPanelPath = path.resolve("src/components/studio/Vibe64SessionPanel.
 const promptTextareaPath = path.resolve(
   "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue"
 );
+const promptHintsPath = path.resolve(
+  "src/components/studio/vibe64-session/Vibe64PromptHints.vue"
+);
 const runtimeHostPath = path.resolve("src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue");
 const temporaryAiPath = path.resolve(
   "src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
@@ -181,6 +184,7 @@ describe("Vibe64 direct session view", () => {
   it("labels active-turn messages as compact steering", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
+    const promptHints = fs.readFileSync(promptHintsPath, "utf8");
 
     expect(component).toContain('v-if="agentStopVisible"');
     expect(component).toContain(':aria-label="composerSubmitAriaLabel"');
@@ -190,8 +194,9 @@ describe("Vibe64 direct session view", () => {
     expect(component).not.toContain(':loading="composerSending"');
     expect(component).not.toContain(':loading="interrupting"');
     expect(component).toContain('{{ interrupting ? "Stopping…" : "Stop" }}');
-    expect(component).toContain(':described-by="thinkingVisible ? thinkingStatusId : \'\'"');
-    expect(component).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(component).toContain(':described-by="composerSupportStatusVisible ? thinkingStatusId : \'\'"');
+    expect(component).toContain("<Vibe64PromptHints");
+    expect(promptHints).toContain("@media (prefers-reduced-motion: reduce)");
     expect(composable).toContain('waiting: "Waiting…"');
     expect(composable).toContain('steering: "Steering…"');
     expect(composable).toContain('retry: "Retry"');

@@ -202,6 +202,14 @@ function vibe64ConversationLogPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/conversation-log");
 }
 
+function vibe64SessionPromptHintsPath(sessionsApiPath = "", sessionId = "") {
+  return vibe64SessionPath(sessionsApiPath, sessionId, "/prompt-hints");
+}
+
+function vibe64SessionPromptHintsCancelPath(sessionsApiPath = "", sessionId = "") {
+  return `${vibe64SessionPromptHintsPath(sessionsApiPath, sessionId)}/cancel`;
+}
+
 function vibe64SessionViewStatePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/view-state");
 }
@@ -369,6 +377,8 @@ export {
   vibe64AgentTerminalPath,
   vibe64ConversationLogPath,
   vibe64ConversationLogQueryKey,
+  vibe64SessionPromptHintsCancelPath,
+  vibe64SessionPromptHintsPath,
   vibe64SessionPreviewStatePath,
   vibe64SessionViewStatePath,
   vibe64GlobalCodexTerminalPath,

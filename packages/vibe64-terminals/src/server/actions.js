@@ -4,6 +4,7 @@ import {
   launchTargetActionInputValidator,
   openLaunchTargetActionInputValidator,
   previewIdentityActionInputValidator,
+  sessionPromptHintsActionInputValidator,
   temporaryConversationCreateActionInputValidator,
   temporaryConversationInputValidator,
   temporaryConversationStopActionInputValidator,
@@ -20,6 +21,8 @@ const ACTION_READ_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversat
 const ACTION_START_TEMPORARY_CONVERSATION_TURN = "vibe64.terminals.temporary-conversation.turn.start";
 const ACTION_STOP_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.stop";
 const ACTION_DELETE_TEMPORARY_CONVERSATION = "vibe64.terminals.temporary-conversation.delete";
+const ACTION_GENERATE_SESSION_PROMPT_HINTS = "vibe64.terminals.prompt-hints.generate";
+const ACTION_CANCEL_SESSION_PROMPT_HINTS = "vibe64.terminals.prompt-hints.cancel";
 
 function action({ execute, id, idempotency = "optional", input, kind = "command" }) {
   return Object.freeze({
@@ -122,14 +125,36 @@ function createTerminalActions({ terminals } = {}) {
         ...input,
         ephemeral: true
       })
+    }),
+    action({
+      id: ACTION_GENERATE_SESSION_PROMPT_HINTS,
+      idempotency: "none",
+      input: sessionPromptHintsActionInputValidator,
+      execute: (input) => terminals.generateSessionPromptHints(input.sessionId, {
+        operationId: input.operationId,
+        originId: input.originId || "",
+        vibe64User: input.vibe64User || null
+      })
+    }),
+    action({
+      id: ACTION_CANCEL_SESSION_PROMPT_HINTS,
+      idempotency: "none",
+      input: sessionPromptHintsActionInputValidator,
+      execute: (input) => terminals.cancelSessionPromptHints(input.sessionId, {
+        operationId: input.operationId,
+        originId: input.originId || "",
+        vibe64User: input.vibe64User || null
+      })
     })
   ]);
 }
 
 export {
+  ACTION_CANCEL_SESSION_PROMPT_HINTS,
   ACTION_CREATE_TEMPORARY_CONVERSATION,
   ACTION_DELETE_AGENT_ATTACHMENT,
   ACTION_DELETE_TEMPORARY_CONVERSATION,
+  ACTION_GENERATE_SESSION_PROMPT_HINTS,
   ACTION_OPEN_LAUNCH_TARGET,
   ACTION_READ_TEMPORARY_CONVERSATION,
   ACTION_SELECT_PREVIEW_IDENTITY,

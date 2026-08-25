@@ -5,10 +5,12 @@ import {
   terminalControlTextInputValidator
 } from "./inputSchemas.js";
 import {
+  ACTION_CANCEL_SESSION_PROMPT_HINTS,
   ACTION_OPEN_LAUNCH_TARGET,
   ACTION_CREATE_TEMPORARY_CONVERSATION,
   ACTION_DELETE_AGENT_ATTACHMENT,
   ACTION_DELETE_TEMPORARY_CONVERSATION,
+  ACTION_GENERATE_SESSION_PROMPT_HINTS,
   ACTION_READ_TEMPORARY_CONVERSATION,
   ACTION_SELECT_PREVIEW_IDENTITY,
   ACTION_START_LAUNCH_TARGET_TERMINAL,
@@ -359,6 +361,18 @@ function registerRoutes(
     summary: "Delete an ephemeral Vibe64 assistant conversation."
   });
 
+  routes.actionRoute("POST", "/sessions/:sessionId/prompt-hints", {
+    actionId: ACTION_GENERATE_SESSION_PROMPT_HINTS,
+    buildInput: (request) => promptHintRouteInput(routes, request),
+    summary: "Suggest useful next prompts for a Vibe64 session."
+  });
+
+  routes.actionRoute("POST", "/sessions/:sessionId/prompt-hints/cancel", {
+    actionId: ACTION_CANCEL_SESSION_PROMPT_HINTS,
+    buildInput: (request) => promptHintRouteInput(routes, request),
+    summary: "Cancel prompt suggestions that are no longer relevant."
+  });
+
   registerTerminalSnapshotRoutes(routes, {
     close: (sessionId, terminalSessionId) => terminalService().closeLaunchTargetTerminal(sessionId, terminalSessionId),
     path: "/sessions/:sessionId/launch-terminal/:terminalSessionId",
@@ -408,6 +422,15 @@ function bodyWithSessionId(routes) {
       sessionId: request.params.sessionId
     };
   };
+}
+
+function promptHintRouteInput(routes, request) {
+  const body = routes.requestBody(request);
+  return withVibe64User(request, {
+    operationId: body.operationId,
+    originId: body.originId,
+    sessionId: request.params.sessionId
+  });
 }
 
 function sessionInput(request) {

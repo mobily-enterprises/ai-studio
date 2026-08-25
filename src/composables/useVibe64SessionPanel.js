@@ -1,5 +1,7 @@
 import { computed, proxyRefs, reactive, ref, unref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
+import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import {
   blockingVibe64SessionPageError
 } from "@/lib/vibe64SessionPanelModel.js";
@@ -15,6 +17,17 @@ import {
 import {
   sessionRecordHasActiveAgentWork
 } from "@/lib/vibe64MountedSessionState.js";
+import {
+  useVibe64ProjectSlug
+} from "@/composables/useVibe64ProjectScope.js";
+import {
+  PROJECT_SETTINGS_ENDPOINT,
+  VIBE64_PROJECT_CHANGED_EVENT,
+  projectSettingsQueryKey
+} from "@/lib/studioGateApi.js";
+import {
+  VIBE64_SURFACE_ID
+} from "@/lib/vibe64RequestConfig.js";
 
 const vibe64SessionPanelEmits = ["chat-attention", "title-change", "project-attention"];
 const vibe64SessionPanelProps = {
@@ -46,6 +59,7 @@ const vibe64SessionPanelProps = {
 
 function useVibe64SessionPanel(props, emit) {
   const route = useRoute();
+  const projectSlug = useVibe64ProjectSlug();
 
   const fallbackAbandon = {
     command: {
@@ -60,6 +74,30 @@ function useVibe64SessionPanel(props, emit) {
     onTitleChange(title) {
       emit("title-change", title);
     }
+  });
+  const projectSettings = useEndpointResource({
+    enabled: computed(() => Boolean(projectSlug.value)),
+    fallbackLoadError: "Project settings could not load.",
+    path: PROJECT_SETTINGS_ENDPOINT,
+    queryKey: computed(() => projectSettingsQueryKey(
+      VIBE64_SURFACE_ID,
+      ROUTE_VISIBILITY_PUBLIC,
+      projectSlug.value
+    )),
+    realtime: {
+      event: VIBE64_PROJECT_CHANGED_EVENT
+    },
+    refreshOnPull: true,
+    requestRecoveryLabel: "Project settings"
+  });
+  const promptHintPolicy = computed(() => {
+    const aiPolicy = projectSettings.data.value?.aiPolicy;
+    return {
+      enabled: aiPolicy?.promptHints !== false,
+      ready: Boolean(aiPolicy && !projectSettings.loadError.value),
+      revision: Number(aiPolicy?.revision || 0),
+      version: Number(aiPolicy?.version || 0)
+    };
   });
   const selection = proxyRefs({
     isClosed: sessionData.isSelectedSessionClosed,
@@ -242,6 +280,7 @@ function useVibe64SessionPanel(props, emit) {
     emptyStateLoading,
     emptyStateStatusText,
     pageError,
+    promptHintPolicy,
     projectPane,
     runtimeHostSessionIds,
     selectedAbandon,

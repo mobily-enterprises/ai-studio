@@ -85,6 +85,7 @@ const SessionRuntimeHost = componentFromSfcTemplate(
       chatCollapsed: { default: false, type: Boolean },
       githubActorTeleportTarget: { default: "", type: String },
       previewToolbarTeleportTarget: { default: "", type: String },
+      promptHintPolicy: { default: () => ({}), type: Object },
       projectContext: { default: () => ({}), type: Object },
       projectPane: { default: "preview", type: String },
       sessionData: { required: true, type: Object },
@@ -156,6 +157,12 @@ const SessionPanel = componentFromSfcTemplate(
         emptyStateLoading: ref(false),
         emptyStateStatusText: ref(""),
         pageError: ref(""),
+        promptHintPolicy: ref({
+          enabled: true,
+          ready: true,
+          revision: 1,
+          version: 1
+        }),
         projectPane: computed(() => props.projectPane),
         props,
         resizeChatColumnWithKeyboard: vi.fn(),

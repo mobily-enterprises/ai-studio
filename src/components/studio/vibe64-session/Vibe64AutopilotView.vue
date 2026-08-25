@@ -249,24 +249,15 @@
       />
 
       <div
-        :id="thinkingStatusId"
-        class="studio-autopilot__thinking"
-        :class="{ 'studio-autopilot__thinking--hidden': !thinkingVisible }"
-        :aria-hidden="thinkingVisible ? undefined : 'true'"
-        aria-live="polite"
-        role="status"
+        class="studio-autopilot__composer"
+        @focusout="handleComposerRegionFocusOut"
       >
-        <span class="studio-autopilot__thinking-mark" />
-        <span>{{ thinkingLabel }}</span>
-      </div>
-
-      <div class="studio-autopilot__composer">
         <Vibe64AutopilotPromptTextarea
           ref="composerInput"
           v-model="composerDraft"
           aria-label="Message Codex"
           :attachments-enabled="composerAttachmentsEnabled"
-          :described-by="thinkingVisible ? thinkingStatusId : ''"
+          :described-by="composerSupportStatusVisible ? thinkingStatusId : ''"
           :disabled="composerDisabled"
           :error-messages="composerError"
           :hint="composerHint"
@@ -276,7 +267,11 @@
           :session-id="sessionId"
           :submit-enabled="composerCanSubmit"
           tab-to-submit
+          @attachment-state-change="updateComposerAttachmentState"
           @attachments-change="updateComposerAttachments"
+          @blur="handleComposerBlur"
+          @escape="dismissPromptHints"
+          @focus="focusPromptHints"
           @submit="sendComposerMessage"
           @tab-to-submit="focusComposerSendButton"
         >
@@ -432,6 +427,16 @@
           </template>
         </Vibe64AutopilotPromptTextarea>
       </div>
+
+      <Vibe64PromptHints
+        :assistant-label="thinkingVisible ? thinkingLabel : ''"
+        :loading="!thinkingVisible && promptHintsVisible && promptHintsLoading"
+        :status-id="thinkingStatusId"
+        :suggestions="!thinkingVisible && promptHintsVisible ? promptHintSuggestions : []"
+        @dismiss="dismissPromptHintsAndFocus"
+        @focusout="handlePromptHintsFocusOut"
+        @select="selectPromptHint"
+      />
 
       <Vibe64TemporaryAiWorkspace
         ref="temporaryAiWorkspace"
@@ -620,6 +625,7 @@ import {
 } from "@mdi/js";
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
+import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64TerminalSurface from "@/components/studio/Vibe64TerminalSurface.vue";
 import Vibe64SessionSourceEditor from "@/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue";
@@ -628,11 +634,16 @@ import Vibe64TemporaryAiWorkspace from "@/components/studio/vibe64-session/Vibe6
 import Vibe64DashboardShell from "@/components/studio/Vibe64DashboardShell.vue";
 import { writeClipboardText } from "@/lib/clipboard.js";
 import { resolveStudioRequestUrl } from "@/lib/studioUrls.js";
+import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import {
   useVibe64AutopilotView,
   vibe64AutopilotViewEmits,
   vibe64AutopilotViewProps
 } from "@/composables/useVibe64AutopilotView.js";
+import {
+  promptHintConversationFingerprint,
+  useVibe64PromptHints
+} from "@/composables/useVibe64PromptHints.js";
 
 const emit = defineEmits(vibe64AutopilotViewEmits);
 const props = defineProps(vibe64AutopilotViewProps);
@@ -662,6 +673,11 @@ const mainChat = ref(null);
 const sessionActionsTrigger = ref(null);
 const temporaryAiWorkspace = ref(null);
 const thinkingStatusId = `studio-autopilot-thinking-${useId()}`;
+const composerAttachmentState = ref({
+  count: 0,
+  hasUnresolved: false,
+  uploading: false
+});
 
 const {
   Vibe64LaunchControls,
@@ -719,6 +735,7 @@ const {
   questionAnswers,
   reloadChatPane,
   repositoryRecoverySending,
+  repositoryOperationActive,
   retrySaveWork,
   retryWorkspaceSetup,
   requestSaveWork,
@@ -753,6 +770,7 @@ const {
   selectedAnswerChoice,
   sourceEditorAskCodexAvailable,
   sourceEditorOpenRequest,
+  structuredQuestionActive,
   submitComposerMessage,
   systemBackAvailable,
   systemRestoreRequest,
@@ -777,6 +795,59 @@ const {
 } = useVibe64AutopilotView(props, emit, {
   requestTemporaryAi: startTemporaryAiTask
 });
+
+const promptHintsCanRequest = computed(() => Boolean(
+  props.active &&
+  props.agentConnectionStatus === "connected" &&
+  !props.conversationLog?.loading &&
+  !props.conversationLog?.error &&
+  !props.sessionSelectionClosed &&
+  sessionId.value &&
+  sessionSourceRoot.value &&
+  !agentActive.value &&
+  !composerSending.value &&
+  !interrupting.value &&
+  !repositoryOperationActive.value &&
+  !repositoryRecoverySending.value &&
+  !saveWorkSending.value &&
+  !workspaceSetupRunning.value &&
+  !workspaceSetupRetrying.value &&
+  !sourceOperationsSuspended.value &&
+  !structuredQuestionActive.value &&
+  composerAttachmentState.value.count < 1 &&
+  !composerAttachmentState.value.uploading &&
+  !composerAttachmentState.value.hasUnresolved &&
+  !previewAttachmentState.value.captureBusy &&
+  !previewAttachmentState.value.diagnosticsBusy
+));
+const promptHintsConversationKey = computed(() => (
+  promptHintConversationFingerprint(chatTurns.value)
+));
+const promptHintsBlankConversation = computed(() => chatTurns.value.length < 1);
+const promptHintsExistingProject = computed(() => workspaceSetupStatus.value !== "unconfigured");
+const {
+  blurComposer: blurPromptHints,
+  dismissPromptHints,
+  focusComposer: focusPromptHints,
+  loading: promptHintsLoading,
+  selectPromptHint,
+  suggestions: promptHintSuggestions,
+  visible: promptHintsVisible
+} = useVibe64PromptHints({
+  active: computed(() => props.active),
+  blankConversation: promptHintsBlankConversation,
+  canRequest: promptHintsCanRequest,
+  conversationKey: promptHintsConversationKey,
+  draft: composerDraft,
+  existingProject: promptHintsExistingProject,
+  onSelect: applyPromptHint,
+  policy: computed(() => props.promptHintPolicy),
+  sessionId,
+  sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
+});
+const composerSupportStatusVisible = computed(() => Boolean(
+  thinkingVisible.value || promptHintsVisible.value
+));
 
 const dashboardContext = computed(() => ({
   ...(dashboardSessionContext.value || {}),
@@ -806,6 +877,65 @@ async function sendComposerMessage() {
 function focusComposerSendButton() {
   const button = composerSendButton.value?.$el || composerSendButton.value;
   button?.focus?.();
+}
+
+function updateComposerAttachmentState(state = {}) {
+  composerAttachmentState.value = {
+    count: Number(state?.count || 0),
+    hasUnresolved: state?.hasUnresolved === true,
+    uploading: state?.uploading === true
+  };
+}
+
+function focusTargetInside(target, selector) {
+  return Boolean(target?.closest?.(selector));
+}
+
+function handleComposerBlur(event = {}) {
+  if (focusTargetInside(
+    event.relatedTarget,
+    "[data-vibe64-prompt-hints], .studio-autopilot__composer"
+  )) {
+    return;
+  }
+  blurPromptHints();
+}
+
+function handleComposerRegionFocusOut(event = {}) {
+  if (
+    event.currentTarget?.contains?.(event.relatedTarget) ||
+    focusTargetInside(event.relatedTarget, "[data-vibe64-prompt-hints]")
+  ) {
+    return;
+  }
+  blurPromptHints();
+}
+
+function handlePromptHintsFocusOut(event = {}) {
+  if (
+    event.currentTarget?.contains?.(event.relatedTarget) ||
+    focusTargetInside(event.relatedTarget, ".studio-autopilot-prompt-textarea")
+  ) {
+    return;
+  }
+  blurPromptHints();
+}
+
+function dismissPromptHintsAndFocus() {
+  dismissPromptHints();
+  composerInput.value?.focus?.({ preventScroll: true });
+}
+
+function applyPromptHint(text = "") {
+  const suggestion = String(text || "").trim();
+  if (!suggestion) {
+    return false;
+  }
+  composerDraft.value = suggestion;
+  void nextTick(() => {
+    composerInput.value?.focus?.({ preventScroll: true });
+  });
+  return true;
 }
 
 function copyActivityOutput(output = "") {
@@ -989,29 +1119,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
   padding: 0.35rem 0.5rem;
 }
 
-.studio-autopilot__thinking {
-  align-items: center;
-  color: rgba(var(--v-theme-on-surface), 0.66);
-  display: flex;
-  font-size: 0.78rem;
-  gap: 0.45rem;
-  grid-row: 4;
-  min-height: 1.8rem;
-  padding: 0.15rem 0.85rem;
-}
-
-.studio-autopilot__thinking-mark {
-  animation: studio-autopilot-pulse 1.2s ease-in-out infinite;
-  background: rgb(var(--v-theme-primary));
-  border-radius: 50%;
-  height: 0.42rem;
-  width: 0.42rem;
-}
-
-.studio-autopilot__thinking--hidden {
-  visibility: hidden;
-}
-
 .studio-autopilot__recovery-action {
   min-block-size: 3rem;
   min-inline-size: 11.75rem;
@@ -1137,18 +1244,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
   height: 100%;
 }
 
-@keyframes studio-autopilot-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 @media (min-width: 981px) {
   .studio-autopilot {
     gap: var(--studio-home-project-gap, 0.75rem);
@@ -1196,11 +1291,4 @@ function requestSessionRenewal(returnFocusTarget = null) {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .studio-autopilot__thinking-mark {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-}
 </style>

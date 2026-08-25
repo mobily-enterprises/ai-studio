@@ -57,6 +57,8 @@
         :placeholder="placeholder"
         :rows="rows"
         :value="modelValue"
+        @blur="handleTextareaBlur"
+        @focus="handleTextareaFocus"
         @input="handleTextareaInput"
         @keydown="handleTextareaKeydown"
         @paste="handlePaste"
@@ -103,7 +105,11 @@ import {
 import Vibe64AttachmentQueue from "@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
 
 const emit = defineEmits([
+  "attachment-state-change",
   "attachments-change",
+  "blur",
+  "escape",
+  "focus",
   "submit",
   "tab-to-submit",
   "update:modelValue"
@@ -276,7 +282,19 @@ function handleTextareaInput(event = {}) {
   queueResizeTextarea();
 }
 
+function handleTextareaFocus(event = {}) {
+  emit("focus", event);
+}
+
+function handleTextareaBlur(event = {}) {
+  emit("blur", event);
+}
+
 function handleTextareaKeydown(event = {}) {
+  if (event.key === "Escape") {
+    emit("escape", event);
+    return;
+  }
   if (
     props.tabToSubmit &&
     props.submitEnabled &&
@@ -363,6 +381,10 @@ function openFilePicker() {
   return true;
 }
 
+function focusTextarea(options = { preventScroll: true }) {
+  textareaRef.value?.focus?.(options);
+}
+
 const handleDragEnter = attachments.handleDragEnter;
 const handleDragOver = attachments.handleDragOver;
 const handleDragLeave = attachments.handleDragLeave;
@@ -383,6 +405,12 @@ watch(() => [
   props.rows
 ], queueResizeTextarea);
 
+watch(attachmentState, (state) => {
+  emit("attachment-state-change", state);
+}, {
+  immediate: true
+});
+
 defineExpose({
   attachmentState,
   attachmentsCanSubmit,
@@ -390,6 +418,7 @@ defineExpose({
   attachFiles,
   canSubmit: attachments.canSubmit,
   clearAttachments,
+  focus: focusTextarea,
   openFilePicker,
   queueItems
 });

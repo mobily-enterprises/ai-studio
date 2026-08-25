@@ -4,8 +4,12 @@ import test from "node:test";
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
-  VIBE64_AGENT_EXECUTION_WORKLOAD_IDS
+  VIBE64_AGENT_EXECUTION_WORKLOAD_IDS,
+  VIBE64_PROMPT_HINT_OUTPUT_SCHEMA
 } from "../../packages/vibe64-runtime/src/shared/index.js";
+import {
+  codexAppServerEconomyTurnSettings
+} from "../../packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js";
 import {
   CODEX_ECONOMY_MODEL_CANDIDATES,
   CODEX_ECONOMY_PROFILE_REVISION,
@@ -214,6 +218,24 @@ test("Codex economy resolves Luna-low from the live catalog with bounded tool-fr
     result.limits,
     CODEX_ECONOMY_WORKLOAD_LIMITS[VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SOURCE_EXPLANATION]
   );
+});
+
+test("Codex prompt-hint profile can enforce its complete three-suggestion schema", () => {
+  const profile = resolveCodexEconomyExecutionProfile({
+    profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
+    workloadId: VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.PROMPT_HINT
+  }, {
+    data: [catalogModel()]
+  });
+
+  const settings = codexAppServerEconomyTurnSettings({
+    cwd: "/workspace/session",
+    executionProfile: profile,
+    outputSchema: VIBE64_PROMPT_HINT_OUTPUT_SCHEMA
+  });
+
+  assert.equal(profile.limits.maxOutputCharacters, 2_500);
+  assert.equal(settings.outputSchema, VIBE64_PROMPT_HINT_OUTPUT_SCHEMA);
 });
 
 test("Codex economy ignores catalog upgrade advice and never falls back to an interactive model", () => {

@@ -93,6 +93,9 @@ import {
   defineSessionRenewalHandoverText,
   sessionRenewalManualHandoverTemplate
 } from "./sessionRenewalHandover.js";
+import {
+  createSessionPromptHintsService
+} from "./sessionPromptHints.js";
 
 const PROJECT_RUNTIME_DORMANT_CLOSE_AFTER_MS = 30 * 60 * 1000;
 const PROJECT_RUNTIME_DORMANCY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -436,6 +439,29 @@ function createService({
     providers: [createCodexSessionAgentProvider({
       controller: codex
     })]
+  });
+  const sessionPromptHints = createSessionPromptHintsService({
+    deleteAgentThread: (sessionId, input, options) => (
+      sessionAgent.deleteDetachedChatThread(sessionId, input, options)
+    ),
+    describeProvider: (options) => sessionAgent.describeProvider(options),
+    diagnostic: (event = {}) => logOperationalEvent(logger, "warn", {
+      code: event.code,
+      component: "vibe64.prompt_hints",
+      details: event.details,
+      error: event.error,
+      event: event.event
+    }, "Vibe64 prompt hints were unavailable."),
+    interruptAgentTurn: (sessionId, input, options) => (
+      sessionAgent.interruptDetachedChatTurn(sessionId, input, options)
+    ),
+    projectService,
+    resolveExecutionProfile: (sessionId, input, options) => (
+      sessionAgent.resolveExecutionProfile(sessionId, input, options)
+    ),
+    runAgentTurn: (sessionId, input, options) => (
+      sessionAgent.streamDetachedChatTurn(sessionId, input, options)
+    )
   });
 
   async function runMainAgentWrite(sessionId = "", options = {}, operation) {
@@ -1855,8 +1881,17 @@ function createService({
       return sessionAgent.interruptTurn(sessionId, input, options);
     },
 
+    generateSessionPromptHints(sessionId, input = {}) {
+      return sessionPromptHints.generateSessionPromptHints(sessionId, input);
+    },
+
+    cancelSessionPromptHints(sessionId, input = {}) {
+      return sessionPromptHints.cancelSessionPromptHints(sessionId, input);
+    },
+
     async sendAgentMessage(sessionId, input = {}, options = {}) {
       const startedAt = Date.now();
+      void sessionPromptHints.cancelSessionPromptHintsForSession(sessionId);
       try {
         const result = await runMainAgentWrite(sessionId, options, (context) => (
           sessionAgent.sendMessage(sessionId, input, context)
@@ -2005,6 +2040,7 @@ function createService({
     },
 
     startAgentConversationTurn(sessionId, input = {}, options = {}) {
+      void sessionPromptHints.cancelSessionPromptHintsForSession(sessionId);
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.startConversationTurn(sessionId, input, context)
       ));

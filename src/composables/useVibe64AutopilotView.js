@@ -110,6 +110,15 @@ const vibe64AutopilotViewProps = {
     default: "",
     type: String
   },
+  promptHintPolicy: {
+    default: () => ({
+      enabled: true,
+      ready: false,
+      revision: 0,
+      version: 0
+    }),
+    type: Object
+  },
   projectContext: {
     default: () => ({}),
     type: Object
@@ -1571,6 +1580,7 @@ function useVibe64AutopilotView(props, emit, {
     questionAnswers,
     reloadChatPane,
     repositoryRecoverySending,
+    repositoryOperationActive,
     retrySaveWork,
     retryWorkspaceSetup,
     requestSaveWork,
@@ -1611,6 +1621,7 @@ function useVibe64AutopilotView(props, emit, {
     selectedAnswerChoice,
     sourceEditorAskCodexAvailable,
     sourceEditorOpenRequest,
+    structuredQuestionActive,
     submitComposerMessage,
     systemBackAvailable,
     systemRestoreRequest,

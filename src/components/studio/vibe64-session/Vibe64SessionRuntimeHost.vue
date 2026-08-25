@@ -14,6 +14,7 @@
       :page="guardedPage"
       :project-context="props.projectContext"
       :preview-toolbar-teleport-target="props.previewToolbarTeleportTarget"
+      :prompt-hint-policy="props.promptHintPolicy"
       :refresh-session-data="refreshSessionData"
       :refresh-session-work="refreshWorkState"
       :retry-workspace-setup="retryWorkspaceSetup"
@@ -100,6 +101,15 @@ const props = defineProps({
   previewToolbarTeleportTarget: {
     default: "",
     type: String
+  },
+  promptHintPolicy: {
+    default: () => ({
+      enabled: true,
+      ready: false,
+      revision: 0,
+      version: 0
+    }),
+    type: Object
   },
   saveWorkTeleportTarget: {
     default: "",

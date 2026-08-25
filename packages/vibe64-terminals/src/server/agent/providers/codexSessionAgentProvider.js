@@ -40,7 +40,7 @@ const CODEX_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
   }),
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.PROMPT_HINT]: Object.freeze({
     maxInputCharacters: 24_000,
-    maxOutputCharacters: 2_000,
+    maxOutputCharacters: 2_500,
     timeoutMs: 30_000
   }),
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SESSION_TITLE]: Object.freeze({

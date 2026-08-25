@@ -105,6 +105,23 @@ const temporaryConversationStopActionInputValidator = validator({
   runId: optionalText,
   sessionId: sessionIdField
 });
+const sessionPromptHintsActionInputValidator = validator({
+  operationId: {
+    type: "string",
+    maxLength: 128,
+    noTrim: false,
+    pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u,
+    required: true
+  },
+  originId: {
+    type: "string",
+    maxLength: 128,
+    noTrim: false,
+    required: false
+  },
+  sessionId: sessionIdField,
+  vibe64User: vibe64UserField
+});
 const launchTargetInputValidator = validator(launchTargetFields);
 const launchTargetActionInputValidator = validator({
   ...launchTargetFields,
@@ -162,6 +179,7 @@ export {
   openLaunchTargetActionInputValidator,
   previewIdentityActionInputValidator,
   previewIdentityInputValidator,
+  sessionPromptHintsActionInputValidator,
   terminalControlKeyInputValidator,
   terminalControlTextInputValidator,
   temporaryConversationCreateActionInputValidator,
