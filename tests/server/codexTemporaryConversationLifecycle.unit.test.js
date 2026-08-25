@@ -738,8 +738,104 @@ function turnCompleted({
   };
 }
 
+function turnStarted({
+  status = "inProgress",
+  threadId = "conversation-1",
+  turnId = "turn-1"
+} = {}) {
+  return {
+    method: "turn/started",
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        status
+      },
+      turnId
+    }
+  };
+}
+
+function threadGoalUpdated({
+  status = "active",
+  threadId = "conversation-1",
+  turnId = "turn-1"
+} = {}) {
+  return {
+    method: "thread/goal/updated",
+    params: {
+      goal: {
+        createdAt: 1_777_777_700_000,
+        objective: "Complete the representative goal stream.",
+        status,
+        threadId,
+        timeUsedSeconds: 60,
+        tokenBudget: null,
+        tokensUsed: 1_000,
+        updatedAt: 1_777_777_760_000
+      },
+      threadId,
+      turnId
+    }
+  };
+}
+
+function reasoningSummaryDelta({
+  itemId = "reasoning-1",
+  text = "",
+  threadId = "conversation-1",
+  turnId = "turn-1"
+} = {}) {
+  return {
+    method: "item/reasoning/summaryTextDelta",
+    params: {
+      delta: text,
+      itemId,
+      summaryIndex: 0,
+      threadId,
+      turnId
+    }
+  };
+}
+
+function assistantItemCompleted({
+  itemId = "assistant-1",
+  phase = "commentary",
+  text = "",
+  threadId = "conversation-1",
+  turnId = "turn-1"
+} = {}) {
+  return {
+    method: "item/completed",
+    params: {
+      completedAtMs: 1_777_777_760_000,
+      item: {
+        id: itemId,
+        phase,
+        text,
+        type: "agentMessage"
+      },
+      threadId,
+      turnId
+    }
+  };
+}
+
 function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitForSessionValue(readValue, predicate, description) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1_000) {
+    const value = await readValue();
+    if (predicate(value)) {
+      return value;
+    }
+    await flushPromises();
+  }
+  const value = await readValue();
+  assert.fail(`Timed out waiting for ${description}: ${JSON.stringify(value)}`);
 }
 
 async function waitForCapturedTurns(captures, expectedCount) {
@@ -1872,6 +1968,372 @@ test("completion during steer starts one ordinary turn with the same message id"
     assert.equal(conversationLog.filter((turn) => (
       turn.user?.text === "Continue as an ordinary turn."
     )).length, 1);
+  });
+});
+
+test("goal continuation events retain one outer chat turn and persist only the terminal final", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const messageId = "message-goal-cadence-owner";
+    const started = await controller.sendMessage(sessionId, {
+      message: "Run the durable goal cadence fixture.",
+      messageId
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    const provider = captures.provider;
+    const threadId = provider.threadId;
+    const firstTurnId = provider.turnId;
+    emitCodexNotification(captures.subscribers, threadGoalUpdated({
+      status: "active",
+      threadId,
+      turnId: firstTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerGoalStatus === "active",
+      "the active goal owner"
+    );
+
+    const goalTurns = [{
+      commentary: "Verifying the current checkpoint.",
+      final: "Internal checkpoint one.\n\nThis provider turn is not the outer chat result.",
+      reasoning: "Confirming task completion",
+      turnId: firstTurnId
+    }, {
+      commentary: "Continuing the goal in the same outer turn.",
+      final: "Internal checkpoint two.\n\nThe active goal will continue again.",
+      reasoning: "Confirming idle state",
+      turnId: "goal-turn-2"
+    }, {
+      commentary: "Preparing the terminal goal result.",
+      final: "The goal is paused with the verified checkpoint preserved.",
+      reasoning: "Waiting for more information",
+      turnId: "goal-turn-3"
+    }];
+
+    for (let index = 0; index < goalTurns.length; index += 1) {
+      const turn = goalTurns[index];
+      emitCodexNotification(captures.subscribers, reasoningSummaryDelta({
+        itemId: `reasoning-${index + 1}`,
+        text: turn.reasoning,
+        threadId,
+        turnId: turn.turnId
+      }));
+      emitCodexNotification(captures.subscribers, assistantItemCompleted({
+        itemId: `commentary-${index + 1}`,
+        phase: "commentary",
+        text: turn.commentary,
+        threadId,
+        turnId: turn.turnId
+      }));
+      emitCodexNotification(captures.subscribers, assistantItemCompleted({
+        itemId: `final-${index + 1}`,
+        phase: "final_answer",
+        text: turn.final,
+        threadId,
+        turnId: turn.turnId
+      }));
+
+      const successor = goalTurns[index + 1];
+      provider.status = successor ? "inProgress" : "completed";
+      provider.turnId = successor?.turnId || turn.turnId;
+      emitCodexNotification(captures.subscribers, turnCompleted({
+        threadId,
+        turnId: turn.turnId
+      }));
+      if (successor) {
+        emitCodexNotification(captures.subscribers, turnStarted({
+          threadId,
+          turnId: successor.turnId
+        }));
+        const adopted = await waitForSessionValue(
+          () => store.readAgentRun(sessionId, "codex_app_server"),
+          (run) => run?.providerTurnId === successor.turnId &&
+            run?.state === VIBE64_AGENT_RUN_STATE.ACTIVE,
+          `goal successor ${successor.turnId}`
+        );
+        assert.equal(adopted.inputSource, "chat");
+        assert.equal(adopted.outerTurnId, messageId);
+        assert.equal(adopted.providerGoalStatus, "active");
+      }
+    }
+
+    const held = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerTurnId === "goal-turn-3" &&
+        run?.state === VIBE64_AGENT_RUN_STATE.FINALIZING,
+      "the terminal provider turn to remain goal-owned"
+    );
+    assert.equal(held.inputSource, "chat");
+    assert.equal(held.outerTurnId, messageId);
+
+    const beforeGoalSettlement = await store.readConversationLog(sessionId);
+    assert.equal(beforeGoalSettlement.filter((turn) => turn.assistant).length, 0);
+    assert.deepEqual(
+      beforeGoalSettlement.flatMap((turn) => turn.thinking || []).map(({ text }) => text),
+      goalTurns.map(({ reasoning }) => reasoning)
+    );
+    assert.deepEqual(
+      beforeGoalSettlement.flatMap((turn) => turn.commentary || []).map(({ text }) => text),
+      goalTurns.map(({ commentary }) => commentary)
+    );
+
+    emitCodexNotification(captures.subscribers, threadGoalUpdated({
+      status: "paused",
+      threadId,
+      turnId: "goal-turn-3"
+    }));
+    const settled = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerGoalStatus === "paused" &&
+        run?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the outer goal result to settle"
+    );
+    assert.equal(settled.inputSource, "chat");
+    assert.equal(settled.outerTurnId, messageId);
+
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "final-3",
+      phase: "final_answer",
+      text: goalTurns[2].final,
+      threadId,
+      turnId: "goal-turn-3"
+    }));
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: "goal-turn-3"
+    }));
+    emitCodexNotification(captures.subscribers, threadGoalUpdated({
+      status: "paused",
+      threadId,
+      turnId: "goal-turn-3"
+    }));
+    await controller.closeAllForSession(sessionId);
+
+    const conversation = await store.readConversationLog(sessionId);
+    const assistantMessages = conversation.map((turn) => turn.assistant).filter(Boolean);
+    assert.deepEqual(assistantMessages.map(({ text }) => text), [goalTurns[2].final]);
+    const allVisibleText = JSON.stringify(conversation);
+    assert.equal(allVisibleText.includes("Internal checkpoint one."), false);
+    assert.equal(allVisibleText.includes("Internal checkpoint two."), false);
+
+    const run = await store.readAgentRun(sessionId, "codex_app_server");
+    assert.equal(run.events.filter(({ kind }) => (
+      kind === "codex-app-server-turn-continued"
+    )).length, 2);
+    assert.equal(run.events.filter(({ kind }) => (
+      kind === "codex-app-server-result-processed"
+    )).length, 1);
+    assert.equal(run.events.filter(({ kind }) => (
+      kind === "codex-app-server-goal-status-updated"
+    )).length, 2);
+  });
+});
+
+test("a persisted active goal restores its chat owner when a successor is observed from idle", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const messageId = "message-persisted-goal-owner";
+    const started = await controller.sendMessage(sessionId, {
+      message: "Exercise the persisted goal ownership boundary.",
+      messageId
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    const provider = captures.provider;
+    const threadId = provider.threadId;
+    emitCodexNotification(captures.subscribers, threadGoalUpdated({
+      status: "active",
+      threadId,
+      turnId: provider.turnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerGoalStatus === "active",
+      "the durable active goal status"
+    );
+
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "test-persisted-goal-idle-boundary",
+        state: VIBE64_AGENT_RUN_STATE.COMPLETED
+      },
+      patch: {
+        providerStatus: "completed",
+        state: VIBE64_AGENT_RUN_STATE.COMPLETED
+      }
+    });
+    const persistedIdle = await store.readAgentRun(sessionId, "codex_app_server");
+    assert.equal(persistedIdle.inputSource, "chat");
+    assert.equal(persistedIdle.outerTurnId, messageId);
+    assert.equal(persistedIdle.providerGoalStatus, "active");
+
+    const successorTurnId = "persisted-goal-successor";
+    captures.finalText = (turnId) => turnId === successorTurnId
+      ? "Recovered goal final."
+      : `Completed ${turnId}.`;
+    provider.status = "inProgress";
+    provider.turnId = successorTurnId;
+    emitCodexNotification(captures.subscribers, turnStarted({
+      threadId,
+      turnId: successorTurnId
+    }));
+    const recovered = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerTurnId === successorTurnId &&
+        run?.state === VIBE64_AGENT_RUN_STATE.ACTIVE,
+      "the idle goal successor to recover"
+    );
+    assert.equal(recovered.inputSource, "chat");
+    assert.equal(recovered.outerTurnId, messageId);
+    assert.equal(recovered.providerGoalStatus, "active");
+
+    emitCodexNotification(captures.subscribers, reasoningSummaryDelta({
+      itemId: "recovered-goal-reasoning",
+      text: "Confirming idle state",
+      threadId,
+      turnId: successorTurnId
+    }));
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "recovered-goal-commentary",
+      phase: "commentary",
+      text: "The persisted outer owner is still active.",
+      threadId,
+      turnId: successorTurnId
+    }));
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "recovered-goal-final",
+      phase: "final_answer",
+      text: "Recovered goal final.",
+      threadId,
+      turnId: successorTurnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: successorTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.state === VIBE64_AGENT_RUN_STATE.FINALIZING,
+      "the recovered goal final to remain outer-owned"
+    );
+    emitCodexNotification(captures.subscribers, threadGoalUpdated({
+      status: "complete",
+      threadId,
+      turnId: successorTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerGoalStatus === "complete" &&
+        run?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the recovered goal to complete"
+    );
+    await controller.closeAllForSession(sessionId);
+
+    const conversation = await store.readConversationLog(sessionId);
+    assert.deepEqual(
+      conversation.flatMap((turn) => turn.thinking || []).map(({ text }) => text),
+      ["Confirming idle state"]
+    );
+    assert.deepEqual(
+      conversation.flatMap((turn) => turn.commentary || []).map(({ text }) => text),
+      ["The persisted outer owner is still active."]
+    );
+    assert.deepEqual(
+      conversation.map((turn) => turn.assistant).filter(Boolean).map(({ text }) => text),
+      ["Recovered goal final."]
+    );
+  });
+});
+
+test("goal ownership does not change genuine terminal-origin message mirroring", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const started = await controller.sendMessage(sessionId, {
+      message: "Establish the visible chat thread.",
+      messageId: "message-before-terminal-origin"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    const provider = captures.provider;
+    const threadId = provider.threadId;
+    const chatTurnId = provider.turnId;
+    captures.finalText = "Visible chat final.";
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "chat-final",
+      phase: "final_answer",
+      text: "Visible chat final.",
+      threadId,
+      turnId: chatTurnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: chatTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the visible chat turn to complete"
+    );
+
+    const terminalTurnId = "terminal-origin-turn";
+    provider.status = "inProgress";
+    provider.turnId = terminalTurnId;
+    emitCodexNotification(captures.subscribers, turnStarted({
+      threadId,
+      turnId: terminalTurnId
+    }));
+    const terminalRun = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerTurnId === terminalTurnId &&
+        run?.state === VIBE64_AGENT_RUN_STATE.ACTIVE,
+      "the terminal-origin turn to activate"
+    );
+    assert.equal(terminalRun.inputSource, "terminal");
+
+    emitCodexNotification(captures.subscribers, reasoningSummaryDelta({
+      itemId: "terminal-reasoning",
+      text: "Terminal reasoning remains outside chat thinking.",
+      threadId,
+      turnId: terminalTurnId
+    }));
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "terminal-commentary",
+      phase: "commentary",
+      text: "Visible terminal commentary.",
+      threadId,
+      turnId: terminalTurnId
+    }));
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "terminal-final",
+      phase: "final_answer",
+      text: "Visible terminal final.",
+      threadId,
+      turnId: terminalTurnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: terminalTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.providerTurnId === terminalTurnId &&
+        run?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the terminal-origin turn to complete"
+    );
+    await controller.closeAllForSession(sessionId);
+
+    const conversation = await store.readConversationLog(sessionId);
+    assert.deepEqual(
+      conversation.map((turn) => turn.assistant).filter(Boolean).map(({ text }) => text),
+      ["Visible chat final.", "Visible terminal final."]
+    );
+    assert.deepEqual(
+      conversation.flatMap((turn) => turn.commentary || []).map(({ text }) => text),
+      ["Visible terminal commentary."]
+    );
+    assert.equal(JSON.stringify(conversation).includes("Terminal reasoning remains outside chat thinking."), false);
   });
 });
 

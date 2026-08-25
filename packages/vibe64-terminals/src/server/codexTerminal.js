@@ -232,6 +232,14 @@ const CODEX_APP_SERVER_ACTIVE_RECONCILE_MS = 2000;
 const CODEX_APP_SERVER_DAEMON_WELLBEING_MS = 15000;
 const CODEX_APP_SERVER_FINALIZING_GRACE_MS = 10000;
 const CODEX_APP_SERVER_LIVE_PROGRESS_MAX_LENGTH = 320;
+const CODEX_APP_SERVER_GOAL_STATUSES = new Set([
+  "active",
+  "blocked",
+  "budgetLimited",
+  "complete",
+  "paused",
+  "usageLimited"
+]);
 const CODEX_APP_SERVER_SNAPSHOT_RECOVERY_ITEM_LIMIT = 25;
 const CODEX_APP_SERVER_DETACHED_TURN_TIMEOUT_MS = 180_000;
 const CODEX_APP_SERVER_DETACHED_FAILURE_DETAIL_GRACE_MS = 500;
@@ -492,6 +500,8 @@ function codexAppServerTurnStateFromAgentRun(run = {}) {
     active,
     completedAt: normalizeText(run.finishedAt),
     error: normalizeText(run.error),
+    goalStatus: normalizeText(run.providerGoalStatus),
+    goalThreadId: normalizeText(run.providerGoalThreadId),
     inputSource: normalizeText(run.inputSource),
     outerTurnId: normalizeText(run.outerTurnId),
     runId: normalizeText(run.id),
@@ -749,6 +759,8 @@ function codexAppServerTurnState(session = {}) {
     active: false,
     completedAt: "",
     error: "",
+    goalStatus: "",
+    goalThreadId: "",
     outerTurnId: "",
     runId: "",
     runState: "",
@@ -759,6 +771,18 @@ function codexAppServerTurnState(session = {}) {
     turnId: "",
     updatedAt: ""
   };
+}
+
+function codexAppServerTurnOwnsActiveGoal(turn = {}, threadId = "") {
+  const normalizedThreadId = normalizeText(threadId);
+  const goalThreadId = normalizeText(turn.goalThreadId);
+  const inputSource = normalizeText(turn.inputSource);
+  return normalizeText(turn.goalStatus) === "active" &&
+    Boolean(normalizedThreadId) &&
+    goalThreadId === normalizedThreadId &&
+    Boolean(normalizeText(turn.outerTurnId)) &&
+    Boolean(inputSource) &&
+    inputSource !== "terminal";
 }
 
 function codexAppServerTurnMatches(turn = {}, threadId = "", turnId = "") {
@@ -5265,6 +5289,9 @@ function createCodexTerminalController({
         status: "starting",
         updatedAt
       });
+      runPatch.providerGoalStatus = "";
+      runPatch.providerGoalThreadId = "";
+      runPatch.providerGoalUpdatedAt = "";
       await runtime.store.writeAgentRunEvent(normalizedSessionId, CODEX_APP_SERVER_AGENT_RUN_ID, {
         event: {
           kind: "codex-app-server-turn-claimed",
@@ -5439,6 +5466,7 @@ function createCodexTerminalController({
       };
     }
     const runtime = await createRuntimeForSession();
+    let continuesOwnedGoal = false;
     let previousTurnId = "";
     let runPatch = null;
     let outcome = {
@@ -5471,6 +5499,7 @@ function createCodexTerminalController({
         };
         return currentSession;
       }
+      continuesOwnedGoal = codexAppServerTurnOwnsActiveGoal(currentTurn, normalizedThreadId);
       previousTurnId = normalizeText(currentTurn.turnId);
       const updatedAt = new Date().toISOString();
       runPatch = codexAppServerAgentRunPatch({
@@ -5539,7 +5568,9 @@ function createCodexTerminalController({
         normalizedThreadId,
         previousTurnId
       );
-      if (previousAssistantResult?.text) {
+      // A provider-turn final inside an active goal is an internal checkpoint.
+      // The final provider turn is promoted when the outer goal stops being active.
+      if (previousAssistantResult?.text && !continuesOwnedGoal) {
         await persistCodexAppServerAssistantResponseBundle(
           runtime,
           normalizedSessionId,
@@ -5622,7 +5653,10 @@ function createCodexTerminalController({
     const pendingInputSource = codexAppServerPendingUserMessageClientIds(currentRun).length > 0
       ? codexAppServerRunInputSource(currentRun)
       : "";
-    const inputSource = normalizeText(input.inputSource) || pendingInputSource;
+    const goalInputSource = codexAppServerTurnOwnsActiveGoal(turn, normalizedThreadId)
+      ? codexAppServerRunInputSource(currentRun)
+      : "";
+    const inputSource = normalizeText(input.inputSource) || pendingInputSource || goalInputSource;
     if (codexAppServerTurnCanReceiveProviderActivity(turn, normalizedThreadId, normalizedTurnId)) {
       return markCodexAppServerTurnActive(normalizedSessionId, {
         inputSource,
@@ -6083,6 +6117,21 @@ function createCodexTerminalController({
     const normalizedSessionId = normalizeText(sessionId);
     const normalizedThreadId = normalizeText(threadId);
     const normalizedTurnId = normalizeText(turnId);
+    const runtime = await createRuntimeForSession();
+    const session = await runtime.getSession(normalizedSessionId);
+    const turn = codexAppServerTurnState(session);
+    if (codexAppServerTurnOwnsActiveGoal(turn, normalizedThreadId)) {
+      clearCodexAppServerFinalizingTimer(
+        normalizedSessionId,
+        normalizedThreadId,
+        normalizedTurnId
+      );
+      return {
+        ok: true,
+        processed: false,
+        reason: "goal_continuation_pending"
+      };
+    }
     const result = await finalizeCodexAppServerAssistantResult(
       normalizedSessionId,
       normalizedThreadId,
@@ -6095,9 +6144,6 @@ function createCodexTerminalController({
     if (result?.processed) {
       return result;
     }
-    const runtime = await createRuntimeForSession();
-    const session = await runtime.getSession(normalizedSessionId);
-    const turn = codexAppServerTurnState(session);
     if (!codexAppServerFinalizingExpired(turn)) {
       scheduleCodexAppServerFinalizingRecovery(normalizedSessionId, normalizedThreadId, normalizedTurnId, {
         completedAt: turn.completedAt,
@@ -6174,6 +6220,10 @@ function createCodexTerminalController({
     const runtime = await createRuntimeForSession();
     const session = await runtime.getSession(normalizedSessionId);
     const existingTurn = codexAppServerTurnState(session);
+    const continuesOwnedGoal = codexAppServerTurnOwnsActiveGoal(
+      existingTurn,
+      normalizedThreadId
+    );
     if (codexAppServerTurnAwaitsProviderIdentity(existingTurn, normalizedThreadId, normalizedTurnId)) {
       return {
         ok: true,
@@ -6278,6 +6328,20 @@ function createCodexTerminalController({
         threadId: normalizedThreadId,
         turnId: normalizedTurnId
       });
+    }
+    if (continuesOwnedGoal) {
+      // Keep the outer Vibe64 turn active so the next provider turn can adopt
+      // its chat ownership without exposing this internal final as an answer.
+      clearCodexAppServerFinalizingTimer(
+        normalizedSessionId,
+        normalizedThreadId,
+        normalizedTurnId
+      );
+      return {
+        ok: true,
+        processed: true,
+        reason: "goal_continuation_pending"
+      };
     }
     return recoverCodexAppServerFinalizingTurn(
       normalizedSessionId,
@@ -6472,13 +6536,45 @@ function createCodexTerminalController({
     const normalizedThreadId = normalizeText(threadId);
     const notificationTurnId = codexAppServerNotificationTurnId(notification);
     const goalStatus = normalizeText(notification.params?.goal?.status);
-    const store = await createStoreForSession(normalizedSessionId);
-    const run = await readCodexAppServerAgentRunForSession(store, normalizedSessionId);
+    const runtime = await createRuntimeForSession();
+    let run = await readCodexAppServerAgentRunForSession(
+      runtime.store,
+      normalizedSessionId
+    );
+    const currentThreadId = normalizeText(run?.providerThreadId);
+    if (
+      run &&
+      CODEX_APP_SERVER_GOAL_STATUSES.has(goalStatus) &&
+      (!currentThreadId || currentThreadId === normalizedThreadId) &&
+      (
+        normalizeText(run.providerGoalStatus) !== goalStatus ||
+        normalizeText(run.providerGoalThreadId) !== normalizedThreadId
+      )
+    ) {
+      const updatedAt = new Date().toISOString();
+      await runtime.store.writeAgentRunEvent(normalizedSessionId, CODEX_APP_SERVER_AGENT_RUN_ID, {
+        event: {
+          goalStatus,
+          kind: "codex-app-server-goal-status-updated",
+          message: "",
+          providerThreadId: normalizedThreadId
+        },
+        patch: {
+          providerGoalStatus: goalStatus,
+          providerGoalThreadId: normalizedThreadId,
+          providerGoalUpdatedAt: updatedAt
+        }
+      });
+      run = await readCodexAppServerAgentRunForSession(
+        runtime.store,
+        normalizedSessionId
+      );
+    }
     const turn = codexAppServerTurnStateFromAgentRun(run || {});
     const alreadyFollowingGoalTurn = (
       goalStatus === "active" &&
       turn.active &&
-      turn.state === "active" &&
+      ["active", "finalizing"].includes(turn.state) &&
       turn.threadId === normalizedThreadId &&
       (!notificationTurnId || turn.turnId === notificationTurnId)
     );
@@ -6488,6 +6584,22 @@ function createCodexTerminalController({
         processed: false,
         reason: "goal_turn_already_active"
       };
+    }
+    if (
+      CODEX_APP_SERVER_GOAL_STATUSES.has(goalStatus) &&
+      goalStatus !== "active" &&
+      turn.state === "finalizing" &&
+      turn.threadId === normalizedThreadId &&
+      (!notificationTurnId || turn.turnId === notificationTurnId)
+    ) {
+      return recoverCodexAppServerFinalizingTurn(
+        normalizedSessionId,
+        normalizedThreadId,
+        turn.turnId,
+        {
+          status: turn.status || "completed"
+        }
+      );
     }
     return reconcileCodexAppServerThreadStatus(
       normalizedSessionId,
