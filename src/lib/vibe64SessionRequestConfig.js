@@ -7,6 +7,7 @@ import {
 } from "@/lib/vibe64ProjectScope.js";
 
 const VIBE64_SESSIONS_API_SUFFIX = "/vibe64/sessions";
+const VIBE64_ASSISTANTS_API_SUFFIX = "/vibe64/assistants/capabilities";
 const VIBE64_CURRENT_SESSION_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/current`;
 const VIBE64_API_SUFFIX = "/vibe64";
 const VIBE64_SESSION_CHANGED_EVENT = "vibe64.session.changed";
@@ -26,6 +27,22 @@ function vibe64SessionsQueryKey(surfaceId, ownershipFilter, projectSlug) {
 
 function vibe64SessionQueryKey(surfaceId, ownershipFilter, projectSlug) {
   return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "session"];
+}
+
+function vibe64AssistantCapabilitiesQueryKey(
+  surfaceId,
+  ownershipFilter,
+  projectSlug,
+  scope = "overview"
+) {
+  return [
+    "vibe64",
+    ...vibe64ProjectQueryScope(projectSlug),
+    surfaceId,
+    ownershipFilter,
+    "assistant-capabilities",
+    String(scope || "overview")
+  ];
 }
 
 function encodePathSegment(value = "") {
@@ -348,6 +365,7 @@ function agentSettingsInputFromContext(context = {}) {
 }
 
 export {
+  VIBE64_ASSISTANTS_API_SUFFIX,
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
@@ -358,8 +376,10 @@ export {
   VIBE64_SURFACE_ID,
   DEFAULT_MAX_OPEN_SESSIONS,
   SELECTED_SESSION_STORAGE_KEY,
+  agentSettingsInputFromContext,
   vibe64AgentAttachmentDeletePath,
   vibe64AgentAttachmentPath,
+  vibe64AssistantCapabilitiesQueryKey,
   vibe64AgentTerminalControlTextPath,
   vibe64AgentSessionsReconcilePath,
   vibe64AgentTerminalPath,
@@ -403,6 +423,5 @@ export {
   vibe64TemporaryConversationsPath,
   vibe64TemporaryConversationStopPath,
   vibe64TemporaryConversationTurnsPath,
-  vibe64SessionsQueryKey,
-  agentSettingsInputFromContext
+  vibe64SessionsQueryKey
 };

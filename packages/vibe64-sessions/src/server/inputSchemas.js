@@ -205,8 +205,66 @@ const sessionListInputValidator = patchSchema({
 });
 
 const sessionCreateInputValidator = patchSchema({
+  assistantSelection: {
+    type: "object",
+    additionalProperties: true,
+    required: false
+  },
   ...optionalOrigin,
   ...optionalUser
+});
+
+const assistantCapabilitiesInputValidator = patchSchema({
+  ...optionalUser,
+  cursor: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  engineId: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  limit: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  modelProviderId: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
+  search: {
+    type: "string",
+    noTrim: false,
+    required: false
+  }
+});
+
+const assistantSelectionUpdateInputValidator = patchSchema({
+  assistantSelection: {
+    type: "object",
+    additionalProperties: true,
+    required: true
+  },
+  ...optionalOrigin
+});
+
+const assistantSelectionUpdateActionInputValidator = patchSchema({
+  assistantSelection: {
+    type: "object",
+    additionalProperties: true,
+    required: true
+  },
+  ...optionalOrigin,
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
 });
 
 const currentSessionInputValidator = patchSchema({
@@ -395,6 +453,9 @@ export {
   SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS,
   agentMessageActionInputValidator,
   agentMessageInputValidator,
+  assistantCapabilitiesInputValidator,
+  assistantSelectionUpdateActionInputValidator,
+  assistantSelectionUpdateInputValidator,
   agentTurnInterruptActionInputValidator,
   agentTurnInterruptInputValidator,
   currentSessionInputValidator,

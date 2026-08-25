@@ -14,6 +14,7 @@ import {
   ACTION_INSPECT_SESSION_CHANGE_DIFF,
   ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
+  ACTION_LIST_ASSISTANT_CAPABILITIES,
   ACTION_LIST_SESSIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
@@ -23,6 +24,7 @@ import {
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_UPDATE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_SEND_AGENT_MESSAGE,
@@ -30,6 +32,12 @@ import {
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   createSessionActions
 } from "../../packages/vibe64-sessions/src/server/actions.js";
+import {
+  VIBE64_ASSISTANT_ENGINE_IDS,
+  VIBE64_CODEX_DEFAULT_MODEL,
+  VIBE64_CODEX_DEFAULT_THINKING,
+  vibe64AssistantSelectionFromMetadata
+} from "../../packages/vibe64-runtime/src/shared/index.js";
 import {
   createService
 } from "../../packages/vibe64-sessions/src/server/service.js";
@@ -85,6 +93,21 @@ function agentWriteLockHarness() {
       }
     }
   };
+}
+
+function assertDefaultCodexAssistantSelectionMetadata(metadata = {}, createdBy = "") {
+  assert.equal(metadata.created_by, createdBy);
+  assert.deepEqual(vibe64AssistantSelectionFromMetadata(metadata), {
+    agentId: "codex",
+    catalogRevision: metadata.assistant_selection
+      ? JSON.parse(metadata.assistant_selection).catalogRevision
+      : "",
+    engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX,
+    modelId: VIBE64_CODEX_DEFAULT_MODEL,
+    modelProviderId: "openai",
+    schema: "vibe64.assistant-selection.v1",
+    variantId: VIBE64_CODEX_DEFAULT_THINKING
+  });
 }
 
 async function requireAgentWrite(runtime, sessionId, operation) {
@@ -182,9 +205,11 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_INSPECT_REPOSITORY_VERSION_FILES,
     ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
     ACTION_LIST_SESSIONS,
+    ACTION_LIST_ASSISTANT_CAPABILITIES,
     ACTION_CREATE_SESSION,
     ACTION_UPDATE_CURRENT_SESSION,
     ACTION_INSPECT_SESSION,
+    ACTION_UPDATE_ASSISTANT_SELECTION,
     ACTION_INSPECT_SESSION_RENEWAL,
     ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
     ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
@@ -2145,9 +2170,7 @@ test("concurrent shared-database creation admits one request and leaves no rejec
       openSessionCount: 1
     });
     assert.equal(harness.creationInputs.length, 1);
-    assert.deepEqual(harness.creationInputs[0].metadata, {
-      created_by: "ada"
-    });
+    assertDefaultCodexAssistantSelectionMetadata(harness.creationInputs[0].metadata, "ada");
     assert.deepEqual(harness.openSessions.map(({ sessionId, status }) => ({ sessionId, status })), [{
       sessionId: "session-1",
       status: "active"
@@ -2376,14 +2399,9 @@ test("new sessions publish running workspace preparation and its eventual result
     vibe64User
   });
   assert.equal(created.workspaceSetup.status, "running");
-  assert.deepEqual(sessionCreationInputs, [{
-    metadata: {
-      created_by: "ada"
-    },
-    sourceContext: {
-      vibe64User
-    }
-  }]);
+  assert.equal(sessionCreationInputs.length, 1);
+  assertDefaultCodexAssistantSelectionMetadata(sessionCreationInputs[0].metadata, "ada");
+  assert.deepEqual(sessionCreationInputs[0].sourceContext, { vibe64User });
   assert.equal(publications[0][1].reason, "session-created");
   assert.equal(publications[0][1].session.workspaceSetup.status, "running");
 

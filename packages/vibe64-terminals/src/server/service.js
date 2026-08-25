@@ -5,6 +5,10 @@ import {
 import {
   createCodexSessionAgentProvider
 } from "./agent/providers/codexSessionAgentProvider.js";
+import {
+  createOpenCodeSessionAgentProvider
+} from "./agent/providers/opencodeSessionAgentProvider.js";
+import { createOpenCodeTerminalController } from "./opencodeTerminal.js";
 import process from "node:process";
 import { createAgentEnvCommandService } from "./agentEnvCommand.js";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
@@ -88,6 +92,13 @@ import {
   runVibe64AgentWriteExclusive,
   runVibe64RenewalAgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
+import {
+  VIBE64_ASSISTANT_ENGINE_IDS,
+  VIBE64_ASSISTANT_SELECTION_METADATA,
+  resolveVibe64AssistantSelection,
+  serializeVibe64AssistantSelection,
+  vibe64AssistantSelectionFromMetadata
+} from "@local/vibe64-runtime/shared";
 import { createWorkspaceSetupRunner } from "./workspaceSetup.js";
 import {
   defineSessionRenewalHandoverText,
@@ -367,6 +378,7 @@ function createService({
   codexTerminalController = {},
   env = process.env,
   logger = null,
+  opencodeTerminalController = {},
   projectService,
   publishProjectRuntimeChanged = async () => null,
   publishSessionChanged = {}
@@ -374,6 +386,12 @@ function createService({
   if (!projectService) {
     throw new TypeError("createService requires vibe64.project.");
   }
+
+  const assistantRuntime = {
+    codexConnectionStatus: async () => true,
+    listConnections: async () => [],
+    resolveConnection: async () => null
+  };
 
   const workspaceSetup = createWorkspaceSetupRunner({
     projectService
@@ -383,7 +401,9 @@ function createService({
     if (typeof publisher === "function") {
       await publisher(sessionId, payload);
     }
-    if (String(payload?.reason || "").trim() !== "codex-app-server-turn-idle") {
+    if (!["codex-app-server-turn-idle", "opencode-server-turn-idle"].includes(
+      String(payload?.reason || "").trim()
+    )) {
       return;
     }
     void prepareWorkspaceSetup(sessionId, {
@@ -435,10 +455,26 @@ function createService({
     projectService,
     publishSessionChanged: publishAgentSessionChanged
   });
+  const opencode = createOpenCodeTerminalController({
+    ...opencodeTerminalController,
+    codexGitCommand,
+    command: opencodeTerminalController.command || env.VIBE64_OPENCODE_COMMAND || "opencode",
+    env,
+    listConnections: (context) => assistantRuntime.listConnections(context),
+    projectService,
+    publishSessionChanged: publishAgentSessionChanged,
+    resolveConnection: (context) => assistantRuntime.resolveConnection(context)
+  });
   const sessionAgent = createSessionAgentManager({
-    providers: [createCodexSessionAgentProvider({
-      controller: codex
-    })]
+    providers: [
+      createCodexSessionAgentProvider({
+        connectionStatus: (context) => assistantRuntime.codexConnectionStatus(context),
+        controller: codex
+      }),
+      createOpenCodeSessionAgentProvider({
+        controller: opencode
+      })
+    ]
   });
   const sessionPromptHints = createSessionPromptHintsService({
     deleteAgentThread: (sessionId, input, options) => (
@@ -829,15 +865,95 @@ function createService({
     };
   }
 
+  async function migrateLegacyAssistantSelections(sessions = [], options = {}) {
+    const failed = [];
+    const migrated = [];
+    const legacy = [];
+    for (const session of sessions) {
+      const sessionId = String(session?.sessionId || session?.id || "").trim();
+      if (!String(session?.metadata?.[VIBE64_ASSISTANT_SELECTION_METADATA] || "").trim()) {
+        legacy.push(session);
+        continue;
+      }
+      try {
+        vibe64AssistantSelectionFromMetadata(session.metadata);
+        migrated.push(session);
+      } catch (error) {
+        failed.push({
+          code: error?.code || "vibe64_assistant_selection_migration_failed",
+          error: error instanceof Error ? error.message : String(error || "Assistant selection is invalid."),
+          sessionId
+        });
+      }
+    }
+    if (!legacy.length) {
+      return { failed, sessions: migrated };
+    }
+    const capabilitiesResult = await sessionAgent.listCapabilities({
+      engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX
+    }, options);
+    const capabilities = capabilitiesResult.engines?.[0];
+    const migrationCapabilities = {
+      ...capabilities,
+      modelProviders: capabilities.modelProviders.map((provider) => ({
+        ...provider,
+        connected: true
+      }))
+    };
+    const runtime = await projectService.createRuntime({ inspectSource: false });
+    for (const session of legacy) {
+      const sessionId = String(session?.sessionId || session?.id || "").trim();
+      try {
+        const metadata = session.metadata || {};
+        const selection = resolveVibe64AssistantSelection(migrationCapabilities, {
+          agentId: "codex",
+          engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX,
+          modelProviderId: "openai",
+          ...(String(metadata.agent_settings_model || "").trim()
+            ? { modelId: String(metadata.agent_settings_model).trim() }
+            : {}),
+          ...(String(metadata.agent_settings_thinking || "").trim()
+            ? { variantId: String(metadata.agent_settings_thinking).trim() }
+            : {})
+        });
+        const serialized = serializeVibe64AssistantSelection(selection);
+        await runtime.store.writeMetadataValue(
+          sessionId,
+          VIBE64_ASSISTANT_SELECTION_METADATA,
+          serialized
+        );
+        migrated.push({
+          ...session,
+          metadata: {
+            ...metadata,
+            [VIBE64_ASSISTANT_SELECTION_METADATA]: serialized
+          }
+        });
+      } catch (error) {
+        failed.push({
+          code: error?.code || "vibe64_assistant_selection_migration_failed",
+          error: error instanceof Error ? error.message : String(error || "Assistant selection migration failed."),
+          sessionId
+        });
+        migrated.push(session);
+      }
+    }
+    return { failed, sessions: migrated };
+  }
+
   async function reconcileAgentSessions(sessions = [], options = {}) {
     const admittedSessions = sessions.filter((session) => (
       String(session?.status || "").trim() !== VIBE64_SESSION_STATUS.RENEWAL_QUIESCED &&
       !sessionIsClosing(session)
     ));
-    const sourceFailures = await ensureReconciledSessionSourcesSelfContained(admittedSessions);
+    const migration = await migrateLegacyAssistantSelections(admittedSessions, options);
+    const sourceFailures = await ensureReconciledSessionSourcesSelfContained(migration.sessions);
     await resetKnownAgentSessionsBeforeReconcile();
-    const result = await sessionAgent.reconcileSessions(admittedSessions, options);
-    return reconcileResultWithSourceFailures(result, sourceFailures);
+    const result = await sessionAgent.reconcileSessions(migration.sessions, options);
+    return reconcileResultWithSourceFailures(result, [
+      ...migration.failed,
+      ...sourceFailures
+    ]);
   }
 
   async function closeProjectScopedTerminalNamespaces({
@@ -1162,6 +1278,18 @@ function createService({
   }
 
   const service = {
+    configureAssistantRuntime(input = {}) {
+      for (const name of ["codexConnectionStatus", "listConnections", "resolveConnection"]) {
+        if (Object.hasOwn(input, name)) {
+          if (typeof input[name] !== "function") {
+            throw new TypeError(`Assistant runtime ${name} must be a function.`);
+          }
+          assistantRuntime[name] = input[name];
+        }
+      }
+      return { configured: true, ok: true };
+    },
+
     async createSessionSource(input = {}) {
       if (typeof projectService.runProjectSourceExclusive !== "function") {
         const error = new Error("Session source creation requires the project source mutation lock.");
@@ -1831,6 +1959,14 @@ function createService({
 
     describeAgentProvider(options = {}) {
       return sessionAgent.describeProvider(options);
+    },
+
+    listAssistantCapabilities(input = {}, options = {}) {
+      return sessionAgent.listCapabilities(input, options);
+    },
+
+    resolveAssistantSelection(input = {}, options = {}) {
+      return sessionAgent.resolveSelection(input, options);
     },
 
     generateSessionRenewalHandover(sessionId, input = {}, options = {}) {

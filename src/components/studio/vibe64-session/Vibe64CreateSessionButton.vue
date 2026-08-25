@@ -20,11 +20,19 @@
     <v-icon v-if="iconOnly" :icon="mdiPlus" />
     <template v-if="!iconOnly">{{ buttonLabel }}</template>
   </v-btn>
+
+  <Vibe64AssistantSessionDialog
+    v-model="dialogOpen"
+    :toolbar="toolbar"
+    @created="handleCreated"
+  />
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { mdiPlus } from "@mdi/js";
+
+import Vibe64AssistantSessionDialog from "@/components/studio/vibe64-session/Vibe64AssistantSessionDialog.vue";
 
 const props = defineProps({
   ariaLabel: {
@@ -62,6 +70,7 @@ const props = defineProps({
 });
 
 const button = ref(null);
+const dialogOpen = ref(false);
 const createSessionRunning = computed(() => props.toolbar.createSessionRunning === true);
 const creationUnavailable = computed(() => (
   !createSessionRunning.value && props.toolbar.canCreateSession !== true
@@ -83,26 +92,17 @@ const buttonTitle = computed(() => (
     ? "Creating session…"
     : String(props.toolbar.createSessionTitle || props.ariaLabel || props.label || "New session").trim()
 ));
-let restoreFocusAfterCreation = false;
-
 function requestCreateSession() {
   if (creationUnavailable.value || createSessionRunning.value) {
     return;
   }
-  restoreFocusAfterCreation = true;
-  void Promise.resolve(props.toolbar.createSession?.())
-    .then((response) => {
-      if (
-        response?.creation?.showCreateAction === false &&
-        response?.sessionId
-      ) {
-        void focusCreatedSession(response.sessionId);
-      }
-    })
-    .catch(() => {
-      // useCommand owns transient action feedback; do not also surface the
-      // rejected click-handler promise through Vue's global error boundary.
-    });
+  dialogOpen.value = true;
+}
+
+function handleCreated(response = {}) {
+  if (response?.sessionId) {
+    void focusCreatedSession(response.sessionId);
+  }
 }
 
 async function focusCreatedSession(sessionId = "") {
@@ -119,16 +119,6 @@ async function focusCreatedSession(sessionId = "") {
   target?.focus?.({ preventScroll: true });
 }
 
-watch(createSessionRunning, (running, wasRunning) => {
-  if (running || !wasRunning || !restoreFocusAfterCreation) {
-    return;
-  }
-  restoreFocusAfterCreation = false;
-  void nextTick(() => {
-    const target = button.value?.$el || button.value;
-    target?.focus?.({ preventScroll: true });
-  });
-});
 </script>
 
 <style scoped>

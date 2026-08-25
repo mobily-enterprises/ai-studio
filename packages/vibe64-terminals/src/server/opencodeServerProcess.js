@@ -1,0 +1,258 @@
+import { randomBytes } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
+import net from "node:net";
+import path from "node:path";
+import process from "node:process";
+
+import {
+  isolatedProcessEnv,
+  startSupervisedProcess
+} from "@local/vibe64-execution/server";
+
+import { createOpenCodeServerClient } from "./opencodeServerClient.js";
+
+const OPENCODE_EXPECTED_VERSION = "1.18.22";
+const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
+const OPENCODE_HOST = "127.0.0.1";
+const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
+const OPENCODE_READY_TIMEOUT_MS = 30_000;
+const OPENCODE_STOP_TIMEOUT_MS = 3_000;
+const OPENCODE_INLINE_CONFIG = JSON.stringify({
+  agent: {
+    [OPENCODE_ECONOMY_AGENT_ID]: {
+      description: "Vibe64 bounded helper turns without tools.",
+      hidden: true,
+      mode: "primary",
+      permission: {
+        "*": "deny"
+      }
+    }
+  }
+});
+
+function text(value = "") {
+  return String(value ?? "").trim();
+}
+
+function wait(milliseconds = 0) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function safeOpenCodeEnvironment(baseEnv = {}, {
+  cacheRoot = "",
+  dbPath = "",
+  managedEnv = {},
+  password = "",
+  privateRoot = "",
+  shimDirs = []
+} = {}) {
+  const homeRoot = path.join(privateRoot, "home");
+  const managed = Object.fromEntries(Object.entries(managedEnv || {})
+    .filter(([name, value]) => (
+      /^VIBE64_[A-Z0-9_]+$/u.test(name) && value !== undefined && value !== null
+    ))
+    .map(([name, value]) => [name, String(value)]));
+  return isolatedProcessEnv(baseEnv, {
+    cacheRoot: cacheRoot || path.join(privateRoot, "cache"),
+    configRoot: path.join(privateRoot, "config"),
+    dataRoot: path.join(privateRoot, "data"),
+    extraEnv: {
+      ...managed,
+      NO_PROXY: [text(baseEnv.NO_PROXY), OPENCODE_HOST, "localhost", "::1"]
+        .filter(Boolean)
+        .join(","),
+      OPENCODE_DB: dbPath,
+      OPENCODE_CONFIG_CONTENT: OPENCODE_INLINE_CONFIG,
+      OPENCODE_DISABLE_AUTOUPDATE: "1",
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+      OPENCODE_DISABLE_SHARE: "1",
+      OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
+      OPENCODE_PRINT_LOGS: "0",
+      OPENCODE_PURE: "1",
+      OPENCODE_SERVER_PASSWORD: password,
+      OPENCODE_SERVER_USERNAME: "opencode"
+    },
+    homeRoot,
+    pathEntries: shimDirs,
+    stateRoot: path.join(privateRoot, "state")
+  });
+}
+
+async function availableLoopbackPort() {
+  const server = net.createServer();
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, OPENCODE_HOST, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(port);
+        }
+      });
+    });
+  });
+}
+
+async function waitForOpenCodeReady({
+  client,
+  expectedVersion = OPENCODE_EXPECTED_VERSION,
+  processHandle,
+  timeoutMs = OPENCODE_READY_TIMEOUT_MS
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (processHandle.exited) {
+      throw new Error("OpenCode exited before its server became ready.");
+    }
+    try {
+      const health = await client.health({
+        signal: AbortSignal.timeout(Math.max(100, Math.min(2_000, deadline - Date.now())))
+      });
+      if (health?.healthy === true) {
+        if (expectedVersion && text(health.version) !== expectedVersion) {
+          const error = new Error(
+            `OpenCode ${text(health.version) || "(unknown)"} is installed; Vibe64 requires ${expectedVersion}.`
+          );
+          error.code = "vibe64_opencode_version_mismatch";
+          throw error;
+        }
+        return health;
+      }
+    } catch (error) {
+      if (error?.code === "vibe64_opencode_version_mismatch") {
+        throw error;
+      }
+      lastError = error;
+    }
+    await wait(100);
+  }
+  const error = new Error("OpenCode did not become ready before the startup deadline.");
+  error.cause = lastError;
+  error.code = "vibe64_opencode_start_timeout";
+  throw error;
+}
+
+async function createOpenCodeServerProcess({
+  apiKey = "",
+  cacheRoot = "",
+  command = "opencode",
+  dbPath = "",
+  env = process.env,
+  expectedVersion = OPENCODE_EXPECTED_VERSION,
+  fetchImpl = globalThis.fetch,
+  managedEnv = {},
+  modelProviderId = "",
+  port = 0,
+  privateRoot = "",
+  readinessTimeoutMs = OPENCODE_READY_TIMEOUT_MS,
+  shimDirs = [],
+  spawnImpl = null,
+  workdir = ""
+} = {}) {
+  const normalizedDbPath = path.resolve(text(dbPath));
+  const normalizedPrivateRoot = path.resolve(text(privateRoot));
+  const normalizedWorkdir = path.resolve(text(workdir));
+  if (!text(dbPath) || !text(privateRoot) || !text(workdir)) {
+    throw new TypeError("OpenCode server processes require database, private, and working roots.");
+  }
+  await Promise.all([
+    mkdir(path.dirname(normalizedDbPath), { mode: 0o700, recursive: true }),
+    ...(text(cacheRoot) ? [mkdir(path.resolve(text(cacheRoot)), { mode: 0o700, recursive: true })] : []),
+    mkdir(normalizedPrivateRoot, { mode: 0o700, recursive: true }),
+    mkdir(normalizedWorkdir, { recursive: true })
+  ]);
+  const selectedPort = Number(port) || await availableLoopbackPort();
+  const password = randomBytes(32).toString("base64url");
+  const client = createOpenCodeServerClient({
+    baseUrl: `http://${OPENCODE_HOST}:${selectedPort}`,
+    fetchImpl,
+    password
+  });
+  let processHandle = null;
+  let stopPromise = null;
+
+  function stop() {
+    if (stopPromise) {
+      return stopPromise;
+    }
+    stopPromise = Promise.resolve().then(async () => {
+      const exitProof = processHandle
+        ? await processHandle.stop()
+        : { code: null, exited: true, signal: "" };
+      await rm(normalizedPrivateRoot, { force: true, recursive: true });
+      return exitProof;
+    });
+    return stopPromise;
+  }
+
+  try {
+    processHandle = await startSupervisedProcess({
+      args: [
+        "serve",
+        "--pure",
+        "--hostname",
+        OPENCODE_HOST,
+        "--port",
+        String(selectedPort),
+        "--mdns=false"
+      ],
+      command: text(command) || "opencode",
+      cwd: normalizedWorkdir,
+      env: safeOpenCodeEnvironment(env, {
+        cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
+        dbPath: normalizedDbPath,
+        managedEnv,
+        password,
+        privateRoot: normalizedPrivateRoot,
+        shimDirs
+      }),
+      logLimitBytes: OPENCODE_LOG_LIMIT_BYTES,
+      ...(typeof spawnImpl === "function" ? { spawnImpl } : {}),
+      stopTimeoutMs: OPENCODE_STOP_TIMEOUT_MS
+    });
+    const health = await waitForOpenCodeReady({
+      client,
+      expectedVersion,
+      processHandle,
+      timeoutMs: readinessTimeoutMs
+    });
+    if (text(modelProviderId) || String(apiKey)) {
+      await client.authenticateApiKey(modelProviderId, apiKey);
+    }
+    return Object.freeze({
+      client,
+      dbPath: normalizedDbPath,
+      health: Object.freeze({ ...health }),
+      modelProviderId: text(modelProviderId),
+      pid: processHandle.pid,
+      port: selectedPort,
+      privateRoot: normalizedPrivateRoot,
+      readLogs() {
+        return processHandle.readLogs();
+      },
+      stop,
+      workdir: normalizedWorkdir
+    });
+  } catch (error) {
+    const logs = processHandle?.readLogs?.() || { stderr: "", stdout: "" };
+    await stop().catch(() => null);
+    error.code ||= "vibe64_opencode_start_failed";
+    error.details = logs;
+    throw error;
+  }
+}
+
+export {
+  OPENCODE_ECONOMY_AGENT_ID,
+  OPENCODE_EXPECTED_VERSION,
+  OPENCODE_HOST,
+  OPENCODE_READY_TIMEOUT_MS,
+  OPENCODE_STOP_TIMEOUT_MS,
+  availableLoopbackPort,
+  createOpenCodeServerProcess,
+  safeOpenCodeEnvironment
+};

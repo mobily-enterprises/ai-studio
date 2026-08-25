@@ -15,6 +15,7 @@ import {
   ACTION_INSPECT_SESSION_WORK,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
+  ACTION_LIST_ASSISTANT_CAPABILITIES,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
   ACTION_RETRY_SESSION_RENEWAL,
@@ -22,6 +23,7 @@ import {
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_UPDATE_SESSION_WORK
@@ -29,6 +31,7 @@ import {
 import {
   agentMessageInputValidator,
   agentTurnInterruptInputValidator,
+  assistantSelectionUpdateInputValidator,
   sessionRenewalDraftGuardInputValidator,
   sessionRenewalDraftRequestInputValidator,
   sessionRenewalDraftUpdateInputValidator,
@@ -101,6 +104,21 @@ function registerRoutes(http, {
     summary: "List Vibe64 sessions."
   });
 
+  routes.actionRoute("GET", "/assistants/capabilities", {
+    actionId: ACTION_LIST_ASSISTANT_CAPABILITIES,
+    buildInput(request) {
+      const query = routes.requestQuery(request);
+      return withVibe64User(request, {
+        cursor: firstValue(query.cursor),
+        engineId: firstValue(query.engineId),
+        limit: firstValue(query.limit),
+        modelProviderId: firstValue(query.modelProviderId),
+        search: firstValue(query.search)
+      });
+    },
+    summary: "Read the live assistant engine, provider, model, agent, and variant catalog."
+  });
+
   routes.actionRoute("POST", "/sessions", {
     actionId: ACTION_CREATE_SESSION,
     buildInput: (request) => withVibe64User(request, routes.requestBody(request)),
@@ -119,6 +137,17 @@ function registerRoutes(http, {
       sessionId: request.params.sessionId
     }),
     summary: "Inspect a Vibe64 chat session."
+  });
+
+  routes.actionRoute("PATCH", "/sessions/:sessionId/assistant-selection", {
+    actionId: ACTION_UPDATE_ASSISTANT_SELECTION,
+    body: assistantSelectionUpdateInputValidator,
+    bodyLimit: 32 * 1024,
+    buildInput: (request) => withVibe64User(request, {
+      ...routes.requestBody(request),
+      sessionId: request.params.sessionId
+    }),
+    summary: "Change provider, model, primary agent, or variant between turns."
   });
 
   routes.actionRoute("GET", "/sessions/:sessionId/renewal", {

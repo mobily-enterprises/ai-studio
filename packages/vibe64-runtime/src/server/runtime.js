@@ -16,6 +16,9 @@ import {
   assertGenesisPromptTask,
   renderGenesisPrompt
 } from "@local/vibe64-genesis/server";
+import {
+  vibe64AssistantSelectionFromMetadata
+} from "@local/vibe64-runtime/shared";
 
 import {
   VIBE64_SESSION_STATUS,
@@ -116,6 +119,9 @@ function plainSessionView(session = {}, {
         }
       : {}),
     agentRuns: Array.isArray(session.agentRuns) ? session.agentRuns : [],
+    assistantSelection: vibe64AssistantSelectionFromMetadata(session.metadata, {
+      required: false
+    }),
     backgroundTasks: Array.isArray(session.backgroundTasks) ? session.backgroundTasks : [],
     companion: {
       id: GENESIS_SESSION_KIND,

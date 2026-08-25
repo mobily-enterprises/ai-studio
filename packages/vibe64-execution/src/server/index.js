@@ -56,6 +56,16 @@ export {
   resolveCommandEnv
 } from "./env/resolveCommandEnv.js";
 export {
+  ISOLATED_PROCESS_BASE_ENV_NAMES,
+  ISOLATED_PROCESS_RESERVED_ENV_NAMES,
+  isolatedProcessEnv
+} from "./env/isolatedProcessEnv.js";
+export {
+  DEFAULT_SUPERVISED_LOG_LIMIT_BYTES,
+  DEFAULT_SUPERVISED_STOP_TIMEOUT_MS,
+  startSupervisedProcess
+} from "./engines/supervised.js";
+export {
   GITHUB_SSH_TO_HTTPS_GIT_CONFIG,
   absoluteUniqueGitPaths,
   applyGitConfigEntriesToEnv,

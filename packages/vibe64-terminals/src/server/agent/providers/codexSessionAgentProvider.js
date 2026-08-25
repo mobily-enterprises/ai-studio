@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   normalizeText
 } from "@local/vibe64-core/server/core";
@@ -10,6 +12,10 @@ import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_TOOL_POLICIES,
   VIBE64_AGENT_EXECUTION_WORKLOAD_IDS,
+  VIBE64_AGENT_PARAMETER_IDS,
+  VIBE64_AGENT_PROVIDERS,
+  VIBE64_CODEX_DEFAULT_MODEL,
+  VIBE64_CODEX_DEFAULT_THINKING,
   Vibe64AgentExecutionProfileError,
   defineVibe64AgentExecutionProfileRequest,
   defineVibe64AgentExecutionProfileResolution,
@@ -55,6 +61,81 @@ const CODEX_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
   })
 });
 const acceptedAttachmentRenewalTimers = new WeakMap();
+
+function codexAssistantSettings(context = {}, input = {}) {
+  const requested = input?.agentSettings && typeof input.agentSettings === "object"
+    ? input.agentSettings
+    : context?.agentSettings && typeof context.agentSettings === "object"
+      ? context.agentSettings
+      : {};
+  const selection = context?.assistantSelection;
+  return selection?.engineId === CODEX_PRODUCT_PROVIDER_ID
+    ? {
+        ...requested,
+        model: selection.modelId,
+        providerId: CODEX_PRODUCT_PROVIDER_ID,
+        thinking: selection.variantId
+      }
+    : requested;
+}
+
+function codexAssistantCapabilities(connected = true) {
+  const definition = VIBE64_AGENT_PROVIDERS.find((provider) => (
+    provider.id === CODEX_PRODUCT_PROVIDER_ID
+  ));
+  const modelParameter = definition?.parameters?.find((parameter) => (
+    parameter.id === VIBE64_AGENT_PARAMETER_IDS.MODEL
+  ));
+  const models = (Array.isArray(modelParameter?.options) ? modelParameter.options : [])
+    .filter((option) => normalizeText(option.value))
+    .map((option) => ({
+      id: normalizeText(option.value),
+      label: normalizeText(option.label) || normalizeText(option.value),
+      status: "available",
+      variants: (Array.isArray(option.supportedThinking) ? option.supportedThinking : [])
+        .map((variantId) => ({
+          id: normalizeText(variantId),
+          label: normalizeText(variantId).replace(/^./u, (value) => value.toUpperCase())
+        }))
+    }));
+  const revision = `sha256:${createHash("sha256").update(JSON.stringify({
+    connected,
+    models
+  })).digest("hex")}`;
+  return {
+    agents: [{
+      description: "OpenAI Codex coding agent",
+      id: "codex",
+      label: "Codex",
+      mode: "primary"
+    }],
+    authentication: {
+      management: "account-owner",
+      modes: ["oauth", "api-key"]
+    },
+    defaults: {
+      agentId: "codex",
+      modelId: VIBE64_CODEX_DEFAULT_MODEL,
+      modelProviderId: "openai",
+      variantId: VIBE64_CODEX_DEFAULT_THINKING
+    },
+    engineId: CODEX_PRODUCT_PROVIDER_ID,
+    health: {
+      message: connected ? "" : "Connect Codex before starting a Codex session.",
+      status: connected ? "ready" : "unavailable"
+    },
+    label: "Codex",
+    modelProviders: [{
+      connected,
+      description: "Codex models provided by OpenAI",
+      id: "openai",
+      label: "OpenAI",
+      models
+    }],
+    revision,
+    transportId: CODEX_APP_SERVER_TRANSPORT_ID
+  };
+}
 
 function codexExecutionProfileError(code, message, details = {}) {
   return new Vibe64AgentExecutionProfileError(code, message, details);
@@ -440,6 +521,7 @@ function emitCodexExecutionProfile(context = {}, executionProfile = null) {
 }
 
 function createCodexSessionAgentProvider({
+  connectionStatus = async () => true,
   controller
 } = {}) {
   if (!controller) {
@@ -451,6 +533,9 @@ function createCodexSessionAgentProvider({
     ]),
     id: CODEX_PRODUCT_PROVIDER_ID,
     transportId: CODEX_APP_SERVER_TRANSPORT_ID,
+    async capabilities(context) {
+      return codexAssistantCapabilities((await connectionStatus(context)) !== false);
+    },
     async closeProject(_context, input = {}) {
       return controller.closeAllForProject(input);
     },
@@ -520,7 +605,7 @@ function createCodexSessionAgentProvider({
       }
       return controller.generateSessionRenewalHandover(context.sessionId, {
         ...input,
-        agentSettings: input.agentSettings || context.agentSettings || {},
+        agentSettings: codexAssistantSettings(context, input),
         vibe64User: input.vibe64User || context.vibe64User || null
       }, {
         runtime: context.runtime,
@@ -603,7 +688,7 @@ function createCodexSessionAgentProvider({
       }
       return controller.seedSessionRenewalHandover(context.sessionId, {
         ...input,
-        agentSettings: input.agentSettings || context.agentSettings || {},
+        agentSettings: codexAssistantSettings(context, input),
         vibe64User: input.vibe64User || context.vibe64User || null
       }, {
         runtime: context.runtime,
@@ -614,11 +699,11 @@ function createCodexSessionAgentProvider({
       const message = input && typeof input === "object" && !Array.isArray(input)
         ? {
             ...input,
-            agentSettings: input.agentSettings || context.agentSettings || {},
+            agentSettings: codexAssistantSettings(context, input),
             vibe64User: input.vibe64User || context.vibe64User || null
           }
         : {
-            agentSettings: context.agentSettings || {},
+            agentSettings: codexAssistantSettings(context),
             message: input,
             vibe64User: context.vibe64User || null
           };

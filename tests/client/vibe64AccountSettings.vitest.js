@@ -29,6 +29,8 @@ describe("standalone personal AI profile settings", () => {
     expect(handler.mock.calls[0][0].detail).toEqual({
       codexReconnectRequired: false,
       providerId: "",
+      providerLabel: "",
+      providerRevision: "",
       refresh: false,
       section: "profile"
     });

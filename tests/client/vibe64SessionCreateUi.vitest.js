@@ -19,6 +19,10 @@ vi.mock("vuetify/components/VChip", () => ({
   VChip: passthroughComponent("button")
 }));
 
+vi.mock("@/components/studio/vibe64-session/Vibe64AssistantSessionDialog.vue", () => ({
+  default: emptyComponent()
+}));
+
 import Vibe64CreateSessionButton from "../../src/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
 import Vibe64SessionToolbar from "../../src/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 
@@ -65,6 +69,14 @@ function passthroughComponent(element) {
     inheritAttrs: false,
     setup(_props, { attrs, slots }) {
       return () => h(element, attrs, slots.default?.());
+    }
+  });
+}
+
+function emptyComponent() {
+  return defineComponent({
+    setup() {
+      return () => null;
     }
   });
 }

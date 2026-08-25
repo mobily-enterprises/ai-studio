@@ -18,6 +18,16 @@ import {
   runVibe64AgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
 import {
+  VIBE64_ASSISTANT_ENGINE_IDS,
+  VIBE64_ASSISTANT_SELECTION_METADATA,
+  VIBE64_CODEX_DEFAULT_MODEL,
+  VIBE64_CODEX_DEFAULT_THINKING,
+  assertVibe64AssistantSelectionUpdate,
+  defineVibe64AssistantSelection,
+  serializeVibe64AssistantSelection,
+  vibe64AssistantSelectionFromMetadata
+} from "@local/vibe64-runtime/shared";
+import {
   REPOSITORY_UPDATE_RELATIONSHIPS,
   normalizeRepositoryUpdateCheck
 } from "@local/vibe64-core/shared";
@@ -188,6 +198,19 @@ function assertRenewalActorResolver(resolver = null) {
 
 const SESSION_SAVE_TASK_ID = "save-work";
 const SESSION_UPDATE_TASK_ID = "update-session";
+const LEGACY_CODEX_CATALOG_REVISION =
+  "sha256:cd4f63e20cf4c9a130dc9581a295517e1273bc501b166d9d4a0ba8e6bec54729";
+
+function legacyCodexAssistantSelection() {
+  return defineVibe64AssistantSelection({
+    agentId: "codex",
+    catalogRevision: LEGACY_CODEX_CATALOG_REVISION,
+    engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX,
+    modelId: VIBE64_CODEX_DEFAULT_MODEL,
+    modelProviderId: "openai",
+    variantId: VIBE64_CODEX_DEFAULT_THINKING
+  });
+}
 
 function createService({
   project,
@@ -244,6 +267,22 @@ function createService({
     setupRunner,
     terminals
   });
+
+  async function resolveAssistantSelection(input = {}, vibe64User = null) {
+    const requested = record(input);
+    if (typeof terminals.resolveAssistantSelection === "function") {
+      return defineVibe64AssistantSelection(await terminals.resolveAssistantSelection(
+        Object.keys(requested).length > 0
+          ? requested
+          : { engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX },
+        { vibe64User }
+      ));
+    }
+    if (Object.keys(requested).length > 0) {
+      throw new TypeError("This Vibe64 host cannot resolve assistant selections.");
+    }
+    return legacyCodexAssistantSelection();
+  }
 
   async function sessionsOccupyingPolicySlots(runtime, openSessions = null) {
     const visible = Array.isArray(openSessions)
@@ -585,6 +624,10 @@ function createService({
 
     async createSession(input = {}) {
       return sessionResult(async () => {
+        const assistantSelection = await resolveAssistantSelection(
+          input.assistantSelection,
+          input.vibe64User || null
+        );
         const runtime = await project.createRuntime(sessionRuntimeOptions(terminals));
         if (
           typeof project.developmentDatabasePolicy !== "function" ||
@@ -603,6 +646,9 @@ function createService({
           }
           const session = await runtime.createSession({
             metadata: {
+              [VIBE64_ASSISTANT_SELECTION_METADATA]: serializeVibe64AssistantSelection(
+                assistantSelection
+              ),
               created_by: text(input.vibe64User?.username || input.vibe64User?.name)
             },
             sourceContext: {
@@ -692,6 +738,21 @@ function createService({
           })
         });
       });
+    },
+
+    async listAssistantCapabilities(input = {}) {
+      return sessionResult(async () => {
+        if (typeof terminals.listAssistantCapabilities !== "function") {
+          return {
+            engines: [],
+            ok: true,
+            unavailable: true
+          };
+        }
+        return terminals.listAssistantCapabilities(input, {
+          vibe64User: input.vibe64User || null
+        });
+      }, "Vibe64 could not read the current assistant catalog.");
     },
 
     async inspectSessionWork(sessionId) {
@@ -1184,6 +1245,51 @@ function createService({
         });
         throw error;
       }
+    },
+
+    async updateAssistantSelection(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const session = await runtime.getSession(sessionId, { inspectSource: false });
+          const current = vibe64AssistantSelectionFromMetadata(session.metadata);
+          const requested = {
+            ...record(input.assistantSelection),
+            engineId: text(input.assistantSelection?.engineId) || current.engineId
+          };
+          const resolved = await resolveAssistantSelection(
+            requested,
+            input.vibe64User || null
+          );
+          const agentSession = typeof terminals.agentSessionState === "function"
+            ? await terminals.agentSessionState(sessionId, { runtime, session })
+            : null;
+          const next = assertVibe64AssistantSelectionUpdate(current, resolved, {
+            turnActive: agentSession?.turn?.active === true
+          });
+          await runtime.store.writeMetadataValue(
+            sessionId,
+            VIBE64_ASSISTANT_SELECTION_METADATA,
+            serializeVibe64AssistantSelection(next)
+          );
+          return {
+            assistantSelection: next,
+            session: await runtime.getSession(sessionId, { inspectSource: false })
+          };
+        });
+        if (!exclusive.acquired) {
+          return exclusive.value;
+        }
+        await publishSessionChanged(sessionId, {
+          operation: "updated",
+          originId: text(input.originId),
+          reason: "session-assistant-selection-updated",
+          session: exclusive.value.session
+        });
+        return publicSession(exclusive.value.session, {
+          assistantSelection: exclusive.value.assistantSelection
+        });
+      }, "Vibe64 could not update this session's assistant selection.");
     },
 
     async updateSessionPresence(sessionId, input = {}) {

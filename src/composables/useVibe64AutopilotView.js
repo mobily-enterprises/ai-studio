@@ -422,7 +422,11 @@ function useVibe64AutopilotView(props, emit, {
     !sessionId.value ||
     props.sessionSelectionClosed
   ));
+  const composerAttachmentsSupported = computed(() => (
+    normalizedAgentTurnText(props.session?.assistantSelection?.engineId) !== "opencode"
+  ));
   const composerAttachmentsEnabled = computed(() => Boolean(
+    composerAttachmentsSupported.value &&
     !composerDisabled.value &&
     !composerSending.value &&
     !interrupting.value &&
@@ -1315,8 +1319,14 @@ function useVibe64AutopilotView(props, emit, {
     return {};
   }
 
+  const assistantEngineId = computed(() => normalizedAgentTurnText(
+    props.session?.assistantSelection?.engineId
+  ) || "codex");
   const sessionToolControls = computed(() => VIBE64_SESSION_TOOL_DEFINITIONS
-    .filter((definition) => DIRECT_SESSION_TOOL_IDS.has(definition.id))
+    .filter((definition) => (
+      DIRECT_SESSION_TOOL_IDS.has(definition.id) &&
+      (definition.id !== "ai-terminal" || assistantEngineId.value === "codex")
+    ))
     .map((definition) => ({
       ...definition,
       ...sessionToolRuntimeState(definition.id)
@@ -1332,7 +1342,7 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     }
     const tool = sessionToolControls.value.find((item) => item.id === toolId);
-    if (tool?.disabled) {
+    if (!tool || tool.disabled) {
       return false;
     }
     rightPaneTab.value = toolId;
@@ -1455,6 +1465,7 @@ function useVibe64AutopilotView(props, emit, {
   }
 
   watch(() => [
+    assistantEngineId.value,
     projectPaneValue.value,
     route.path,
     routeSessionToolId.value,
@@ -1465,7 +1476,15 @@ function useVibe64AutopilotView(props, emit, {
       return;
     }
     if (routeSessionToolId.value) {
-      selectSessionTool(routeSessionToolId.value, { navigate: false });
+      if (selectSessionTool(routeSessionToolId.value, { navigate: false })) {
+        return;
+      }
+      const fallbackPath = projectAppPath(projectSlug.value, "/dashboard/env");
+      lastDashboardRoutePath.value = fallbackPath;
+      rightPaneTab.value = "dashboard";
+      if (normalizeProjectRoutePath(fallbackPath) !== normalizeProjectRoutePath(route.path)) {
+        void router.replace(fallbackPath);
+      }
       return;
     }
     lastDashboardRoutePath.value = route.path;
@@ -1546,6 +1565,7 @@ function useVibe64AutopilotView(props, emit, {
     composerAttachments,
     composerAcceptedAttachments,
     composerAttachmentsEnabled,
+    composerAttachmentsSupported,
     composerCanSubmit,
     composerDisabled,
     composerDraft,
