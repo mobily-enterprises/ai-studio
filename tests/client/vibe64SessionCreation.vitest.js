@@ -144,6 +144,28 @@ beforeEach(() => {
 });
 
 describe("Vibe64 session creation", () => {
+  it("does not auto-select a session created remotely after a settled empty list", async () => {
+    const { scope } = mountSessionData();
+    await nextTick();
+    expect(creationHarness.selectedId.value).toBe("");
+
+    creationHarness.selectAvailableId.mockClear();
+    creationHarness.queryData.value = {
+      creation: { canCreate: false, showCreateAction: false },
+      limits: { maxOpenSessions: 1, openSessionCount: 1 },
+      sessions: [{
+        createdAt: "2026-08-25T02:00:00.000Z",
+        sessionId: "remote-session",
+        status: "active"
+      }]
+    };
+    await nextTick();
+
+    expect(creationHarness.selectedId.value).toBe("");
+    expect(creationHarness.selectAvailableId).not.toHaveBeenCalled();
+    scope.stop();
+  });
+
   it("holds a missing predecessor until its renewal is durably completed", async () => {
     const predecessorId = "predecessor-a";
     const unrelatedSessionId = "session-b";

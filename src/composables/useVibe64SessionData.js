@@ -218,6 +218,7 @@ function useVibe64SessionData({
     reload: sessionListResource.reload,
     resource: sessionListResource
   });
+  let emptySessionListObservedForProject = "";
   const createSessionCommand = useCommand({
     access: "never",
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
@@ -421,10 +422,14 @@ function useVibe64SessionData({
       fromSessionId: String(selectedSessionId.value || ""),
       toSessionId: normalizedSessionId
     });
+    if (normalizedSessionId) {
+      emptySessionListObservedForProject = "";
+    }
     sessionSelection.select(normalizedSessionId);
   }
 
   function clearSelectedSession() {
+    emptySessionListObservedForProject = String(projectSlug.value || "").trim();
     sessionSelection.clear();
   }
 
@@ -529,6 +534,7 @@ function useVibe64SessionData({
         selectionRenewalResource.isLoading?.value
       ),
       selectionRenewalPredecessorId: selectionRenewalPredecessorId.value,
+      projectSlug: String(projectSlug.value || "").trim(),
       selectedSessionMissing: selectedSessionMissing.value,
       nextSessions,
       selectedSessionId: String(selectedSessionId.value || ""),
@@ -557,6 +563,9 @@ function useVibe64SessionData({
       })
     ) {
       return;
+    }
+    if (!state.selectedSessionId && nextSessions.length === 0) {
+      emptySessionListObservedForProject = state.projectSlug;
     }
     if (state.selectionRenewalPredecessorId) {
       if (
@@ -595,6 +604,12 @@ function useVibe64SessionData({
           return;
         }
       }
+    }
+    if (
+      !state.selectedSessionId &&
+      emptySessionListObservedForProject === state.projectSlug
+    ) {
+      return;
     }
     sessionSelection.selectAvailableId(nextSessions, {
       fallbackId: nextSessions.at(-1)?.sessionId || "",
