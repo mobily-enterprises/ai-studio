@@ -29,10 +29,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from "vue";
+import { computed, ref } from "vue";
 import { mdiPlus } from "@mdi/js";
 
 import Vibe64AssistantSessionDialog from "@/components/studio/vibe64-session/Vibe64AssistantSessionDialog.vue";
+import {
+  focusCreatedVibe64SessionTab
+} from "@/lib/vibe64SessionFocus.js";
 
 const props = defineProps({
   ariaLabel: {
@@ -101,22 +104,8 @@ function requestCreateSession() {
 
 function handleCreated(response = {}) {
   if (response?.sessionId) {
-    void focusCreatedSession(response.sessionId);
+    void focusCreatedVibe64SessionTab(response.sessionId);
   }
-}
-
-async function focusCreatedSession(sessionId = "") {
-  if (typeof document === "undefined") {
-    return;
-  }
-  await nextTick();
-  await nextTick();
-  const target = [...document.querySelectorAll("[data-vibe64-session-id]")]
-    .find((element) => (
-      element.getAttribute("data-vibe64-session-id") === String(sessionId) &&
-      element.getClientRects().length > 0
-    ));
-  target?.focus?.({ preventScroll: true });
 }
 
 </script>

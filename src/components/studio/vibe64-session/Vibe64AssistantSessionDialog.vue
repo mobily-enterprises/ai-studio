@@ -264,6 +264,8 @@
         <span class="vibe64-assistant-dialog__validation">{{ validationMessage }}</span>
         <v-btn :disabled="submitting" variant="text" @click="close">Cancel</v-btn>
         <v-btn
+          ref="submitButton"
+          :aria-busy="submitting ? 'true' : undefined"
           color="primary"
           :disabled="!canSubmit || submitting"
           variant="flat"
@@ -277,7 +279,7 @@
 </template>
 
 <script setup>
-import { computed, onScopeDispose, ref, watch } from "vue";
+import { computed, nextTick, onScopeDispose, ref, watch } from "vue";
 import {
   mdiCheck,
   mdiCheckCircleOutline,
@@ -337,6 +339,7 @@ const providerCursor = ref("");
 const providerCursorHistory = ref([]);
 const modelSearchInput = ref("");
 const modelSearch = ref("");
+const submitButton = ref(null);
 let providerSearchTimer = null;
 let modelSearchTimer = null;
 let initialHydratedForOpen = false;
@@ -573,6 +576,20 @@ watch(() => props.modelValue, (open) => {
   }
   hydrateOpenSelection();
 }, { immediate: true });
+
+watch(submitting, async (running, wasRunning) => {
+  if (running || !wasRunning || !props.modelValue) {
+    return;
+  }
+  await nextTick();
+  if (!props.modelValue) {
+    return;
+  }
+  const target = submitButton.value?.$el || submitButton.value;
+  if (target?.isConnected === true && typeof target.focus === "function") {
+    target.focus({ preventScroll: true });
+  }
+});
 
 watch(catalog.engines, (engines) => {
   hydrateOpenSelection(engines);

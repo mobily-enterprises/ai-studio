@@ -23,6 +23,7 @@ import {
 const SESSION_ID = "session-renderer";
 const TARGET_APP_URL = "http://127.0.0.1:4103/home";
 const PROXY_APP_URL = "http://127.0.0.1:49000/home";
+const TEST_ASSISTANT_CATALOG_REVISION = `sha256:${"a".repeat(64)}`;
 type SourceExplanationPayload = Record<string, unknown>;
 type SourceExplanationResponse = unknown[] | ((payload: SourceExplanationPayload) => unknown[]);
 type PreviewIdentitySelector = {
@@ -53,6 +54,75 @@ type AttachmentUpload = {
   contentType: string;
   fileName: string;
 };
+
+function assistantCatalogPayload() {
+  return {
+    engines: [{
+      agents: [{
+        id: "codex",
+        label: "Codex",
+        mode: "primary"
+      }],
+      authentication: {
+        management: "account-owner",
+        modes: ["oauth", "api-key"]
+      },
+      defaults: {
+        agentId: "codex",
+        modelId: "gpt-5.6-sol",
+        modelProviderId: "openai",
+        variantId: "xhigh"
+      },
+      engineId: "codex",
+      health: {
+        status: "ready"
+      },
+      label: "Codex",
+      modelProviders: [{
+        connected: true,
+        connectionStatus: "connected",
+        id: "openai",
+        label: "OpenAI",
+        models: [{
+          id: "gpt-5.6-sol",
+          label: "GPT-5.6 Sol",
+          status: "available",
+          variants: [{
+            id: "xhigh",
+            label: "Extra high"
+          }]
+        }]
+      }],
+      revision: TEST_ASSISTANT_CATALOG_REVISION,
+      schema: "vibe64.assistant-capabilities.v1",
+      transportId: "codex_app_server"
+    }],
+    ok: true
+  };
+}
+
+async function submitAssistantSessionDialog(page: Page, {
+  doubleSubmit = false
+}: {
+  doubleSubmit?: boolean;
+} = {}) {
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  const submitButton = dialog.locator(".vibe64-assistant-dialog__actions button").last();
+  await expect(submitButton).toHaveText("Create session");
+  await expect(submitButton).toBeEnabled();
+  if (doubleSubmit) {
+    await submitButton.evaluate((element) => {
+      const button = element as HTMLButtonElement;
+      button.focus();
+      button.click();
+      button.click();
+    });
+  } else {
+    await submitButton.click();
+  }
+  return submitButton;
+}
 
 async function readMultipartAttachment(request: PlaywrightRequest): Promise<AttachmentUpload> {
   const contentType = String(request.headers()["content-type"] || "");
@@ -605,7 +675,7 @@ for (const viewportWidth of [390, 960, 1600]) {
 
     const fileName = `retry-note-${viewportWidth}.txt`;
     const fileContents = `retry this multipart upload at ${viewportWidth}px`;
-    await page.getByLabel("Message Codex").fill("Use the attached note.");
+    await page.getByLabel("Message AI assistant").fill("Use the attached note.");
     const sendMessage = page.getByRole("button", {
       name: "Send message"
     });
@@ -1570,14 +1640,15 @@ for (const viewportWidth of [390, 960, 1600]) {
     const firstTrigger = viewportWidth >= 1600 ? previewCreate : toolbarCreate;
     const idleBox = await firstTrigger.boundingBox();
 
-    await firstTrigger.evaluate((element) => {
-      const button = element as HTMLButtonElement;
-      button.focus();
-      button.click();
-      button.click();
+    await firstTrigger.click();
+    const dialogCreate = await submitAssistantSessionDialog(page, {
+      doubleSubmit: true
     });
 
     await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(1);
+    await expect(dialogCreate).toBeDisabled();
+    await expect(dialogCreate).toHaveAttribute("aria-busy", "true");
+    await expect(dialogCreate).toHaveText("Creating session…");
     await expect(toolbarCreate).toBeDisabled();
     await expect(toolbarCreate).toHaveAttribute("aria-busy", "true");
     await expect(toolbarCreate).toHaveAttribute("aria-label", "Creating session…");
@@ -1599,11 +1670,12 @@ for (const viewportWidth of [390, 960, 1600]) {
     await expect(page.getByText("Session creation failed for this test.", {
       exact: true
     })).toBeVisible();
-    await expect(firstTrigger).toBeFocused();
+    await expect(dialogCreate).toBeEnabled();
+    await expect(dialogCreate).toHaveText("Create session");
+    await expect(dialogCreate).toBeFocused();
     expect(creation.getSessionCreationRequestCount()).toBe(1);
 
-    await toolbarCreate.focus();
-    await toolbarCreate.press("Enter");
+    await dialogCreate.press("Enter");
     await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(2);
     await expect(toolbarCreate).toBeDisabled();
     creation.releaseNextSessionCreation();
@@ -1614,6 +1686,7 @@ for (const viewportWidth of [390, 960, 1600]) {
 
     const activeToolbarCreate = page.locator("button.studio-ai-sessions__create-button");
     await activeToolbarCreate.click();
+    await submitAssistantSessionDialog(page);
     await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(3);
     await expect(activeToolbarCreate).toBeDisabled();
     await expect(activeToolbarCreate).toHaveAttribute("aria-busy", "true");
@@ -1654,6 +1727,7 @@ for (const viewportWidth of [390, 960, 1600]) {
     }
 
     await toolbarCreate.click();
+    await submitAssistantSessionDialog(page);
     await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(1);
     await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(1);
     await expect(page.locator(
@@ -1863,6 +1937,7 @@ for (const viewportWidth of [390, 960, 1600]) {
     for (let expectedCount = 1; expectedCount <= 3; expectedCount += 1) {
       await expect(toolbarCreate).toBeEnabled();
       await toolbarCreate.click();
+      await submitAssistantSessionDialog(page);
       await expect.poll(() => creation.getSessionCreationRequestCount()).toBe(expectedCount);
       await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(expectedCount);
     }
@@ -2587,6 +2662,12 @@ async function mockLaunchSession(page: Page, {
     };
   }
   await mockProjectGateReady(page);
+  await page.route(
+    /\/api(?:\/app\/[^/]+)?\/vibe64\/assistants\/capabilities(?:\?.*)?$/u,
+    async (route) => {
+      await fulfillJson(route, assistantCatalogPayload());
+    }
+  );
   await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/sessions(?:\/.*)?(?:\?.*)?$/u, async (route) => {
     const request = route.request();
     const url = new URL(request.url());

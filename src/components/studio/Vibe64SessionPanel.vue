@@ -81,7 +81,7 @@
             :max-visible-sessions="3"
             :selected-session-id="selection.selectedSessionId"
             :selection-closed="selection.isClosed"
-            :toolbar="toolbar"
+            :toolbar="emptyToolbar"
           />
         </div>
         <div class="studio-ai-sessions__empty-chat-body">
@@ -146,7 +146,7 @@
               :icon-only="false"
               label="Create session"
               menu-location="bottom center"
-              :toolbar="toolbar"
+              :toolbar="emptyToolbar"
             />
           </div>
         </div>
@@ -195,6 +195,7 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
 import { mdiArchiveArrowDownOutline } from "@mdi/js";
 import Vibe64SessionRuntimeHost from "@/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
@@ -208,6 +209,9 @@ import {
   vibe64SessionPanelEmits,
   vibe64SessionPanelProps
 } from "@/composables/useVibe64SessionPanel.js";
+import {
+  focusCreatedVibe64SessionTab
+} from "@/lib/vibe64SessionFocus.js";
 
 const emit = defineEmits(vibe64SessionPanelEmits);
 const props = defineProps(vibe64SessionPanelProps);
@@ -242,6 +246,19 @@ const {
   toolbar,
   visiblePageError
 } = useVibe64SessionPanel(props, emit);
+
+async function createSessionForEmptyState(assistantSelection = {}) {
+  const response = await toolbar.createSession?.(assistantSelection);
+  if (response?.sessionId) {
+    void focusCreatedVibe64SessionTab(response.sessionId);
+  }
+  return response;
+}
+
+const emptyToolbar = computed(() => ({
+  ...toolbar,
+  createSession: createSessionForEmptyState
+}));
 
 const {
   bounds: chatColumnBounds,
