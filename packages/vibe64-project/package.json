@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     "./server/actions": "./src/server/actions.js",
-    "./server/managedProject": "./src/server/managedProject.js"
+    "./server/managedProject": "./src/server/managedProject.js",
+    "./server/resourceEnvironment": "./src/server/resourceEnvironment.js"
   },
   "jskit": {
     "kind": "runtime",
@@ -43,6 +44,10 @@
           {
             "subpath": "./server/managedProject",
             "summary": "Builds one Vibe64-owned JSKIT foundation commit and publishes it through an explicit repository authority."
+          },
+          {
+            "subpath": "./server/resourceEnvironment",
+            "summary": "Validates semantic host resource values and maps them through exact application-declared environment bindings."
           }
         ],
         "capabilities": [

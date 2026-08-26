@@ -188,8 +188,9 @@ describe("Vibe64 direct session view", () => {
 
     expect(component).toContain('v-if="agentStopVisible"');
     expect(component).toContain(':aria-label="composerSubmitAriaLabel"');
+    expect(component).toContain("composerSubmitMode === 'send' ? mdiSend");
     expect(component).toContain("['steer', 'steering'].includes(composerSubmitMode)");
-    expect(component).toContain("composerSubmitMode === 'send' ? mdiSend : undefined");
+    expect(component).toContain('{{ composerSubmitMode === "send" ? "Send" : composerSubmitLabel }}');
     expect(component).toContain(':aria-busy="composerSending ? \'true\' : undefined"');
     expect(component).not.toContain(':loading="composerSending"');
     expect(component).not.toContain(':loading="interrupting"');

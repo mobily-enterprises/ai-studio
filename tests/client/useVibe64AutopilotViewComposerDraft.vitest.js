@@ -1067,6 +1067,7 @@ describe("useVibe64AutopilotView direct chat", () => {
       "changes",
       "repository",
       "editor",
+      "database",
       "system",
       "ai-terminal"
     ]);

@@ -424,17 +424,14 @@
                 class="studio-autopilot__composer-action studio-autopilot__send-action"
                 color="primary"
                 :disabled="!composerCanSubmit || !attachmentState.canSubmit"
-                :icon="composerSubmitMode === 'send' ? mdiSend : undefined"
-                :prepend-icon="['steer', 'steering'].includes(composerSubmitMode) ? mdiArrowTopRight : undefined"
+                :prepend-icon="composerSubmitMode === 'send' ? mdiSend : (['steer', 'steering'].includes(composerSubmitMode) ? mdiArrowTopRight : undefined)"
                 size="small"
                 :title="composerSubmitTitle"
                 type="button"
                 variant="flat"
                 @click="sendComposerMessage"
               >
-                <template v-if="composerSubmitMode !== 'send'">
-                  {{ composerSubmitLabel }}
-                </template>
+                {{ composerSubmitMode === "send" ? "Send" : composerSubmitLabel }}
               </v-btn>
             </div>
           </template>
@@ -519,6 +516,32 @@
           :session-id="sessionId"
           :sessions-api-path="props.sessionsApiPath"
           @ask-codex-about-file="askCodexAboutSourceEditorFile"
+        />
+      </section>
+
+      <section
+        v-show="props.projectPane === 'dashboard' && rightPaneTab === 'database'"
+        class="studio-autopilot__right-pane-page studio-autopilot__session-tool-pane"
+        role="tabpanel"
+      >
+        <header class="studio-autopilot__session-tool-header">
+          <v-btn
+            :prepend-icon="mdiArrowLeft"
+            size="x-small"
+            type="button"
+            variant="tonal"
+            @click="backToDashboard"
+          >
+            Back to dashboard
+          </v-btn>
+        </header>
+        <Vibe64DatabaseWorkspace
+          v-if="rightPaneTabMounted('database')"
+          :active="props.projectPane === 'dashboard' && rightPaneTab === 'database'"
+          class="studio-autopilot__session-tool-content"
+          :project-slug="projectSlug"
+          :session-id="sessionId"
+          :sessions-api-path="props.sessionsApiPath"
         />
       </section>
 
@@ -671,6 +694,9 @@ const sourceOperationsSuspended = computed(() => (
 ));
 const Vibe64SystemWorldView = defineAsyncComponent(() => (
   import("@local/vibe64-system-graph/client").then((module) => module.loadVibe64SystemWorldView())
+));
+const Vibe64DatabaseWorkspace = defineAsyncComponent(() => (
+  import("@local/vibe64-database-tools/client").then((module) => module.loadVibe64DatabaseWorkspace())
 ));
 const composerInput = ref(null);
 const composerSendButton = ref(null);

@@ -1116,12 +1116,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.deepEqual(JSON.parse(envProbe.stdout), {
       browsers: "/opt/vibe64/runtime-packs/playwright/browsers",
       dbHost: "127.0.0.1",
-      dbName: "codex_app_server_db",
-      mysqlDatabase: "codex_app_server_db",
-      mysqlHost: "127.0.0.1",
-      mysqlPassword: "test-root-password",
-      mysqlTcpPort: "24712",
-      mysqlUser: "vibe64_dev_app"
+      dbName: "codex_app_server_db"
     });
     const initProbe = await runVibe64Command({
       ...runCall,

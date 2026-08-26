@@ -1922,6 +1922,14 @@ function createVibe64SessionStore({
     });
   }
 
+  async function writeJsonArtifact(sessionId, relativePath, value) {
+    return mutateSession(sessionId, async (sessionPaths) => {
+      const artifactPath = artifactFilePath(sessionPaths, relativePath);
+      await writeJsonFile(artifactPath, value);
+      return artifactPath;
+    });
+  }
+
   async function readArtifact(sessionId, relativePath) {
     return withReadableSessionPaths(sessionId, (sessionPaths) => {
       return readTextIfExists(artifactFilePath(sessionPaths, relativePath));
@@ -4673,6 +4681,7 @@ function createVibe64SessionStore({
     transitionRenewalSuccessor,
     finalizeRenewalCurrentSession,
     writeArtifact,
+    writeJsonArtifact,
     writeAgentRunEvent,
     writeBackgroundTaskEvent,
     upsertConversationAssistantMessage,

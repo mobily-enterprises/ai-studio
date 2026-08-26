@@ -11,6 +11,7 @@ import {
 import { createOpenCodeTerminalController } from "./opencodeTerminal.js";
 import process from "node:process";
 import { createAgentEnvCommandService } from "./agentEnvCommand.js";
+import { createAgentDatabaseCommandService } from "./agentDatabaseCommand.js";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
 import {
@@ -440,8 +441,13 @@ function createService({
     logger,
     projectService
   });
+  const agentDatabaseCommand = createAgentDatabaseCommandService({
+    logger,
+    projectService
+  });
   const codex = createCodexTerminalController({
     ...codexTerminalController,
+    agentDatabaseCommand,
     agentEnvCommand,
     agentPreviewCommand,
     codexAppServerProviderOptions: selfTargetCodexAppServerProviderOptions({
@@ -983,6 +989,7 @@ function createService({
 
   function closeAllSessionTerminals(sessionId, controllerOptions = {}) {
     return closeTerminalControllersForSession(sessionId, [
+      { controller: agentDatabaseCommand, label: "agentDatabase" },
       { controller: agentEnvCommand, label: "agentEnv" },
       { controller: agentPreviewCommand, label: "agentPreview" },
       { controller: launchTarget, label: "launchTarget" },
@@ -1303,6 +1310,10 @@ function createService({
       }), {
         operation: "session-source-create"
       });
+    },
+
+    setDatabaseToolsProvider(provider = null) {
+      agentDatabaseCommand.setDatabaseToolsProvider(provider);
     },
 
     setProductionEnvironmentProvider(provider = null) {

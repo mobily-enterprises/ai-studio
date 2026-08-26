@@ -164,7 +164,7 @@ test("Vibe64 owns deployment interpretation while Genesis exposes its opaque Sta
     );
     const deployment = await inspectVibe64Deployment({ projectRoot });
 
-    assert.equal(environment.contract, "genesis.environment.v1");
+    assert.equal(environment.contract, "genesis.environment.v2");
     assert.equal(deployment.contract, "vibe64.application-deployment.v1");
     assert.equal(deployment.status, "ready");
     assert.equal(deployment.readiness.path, "/health");
