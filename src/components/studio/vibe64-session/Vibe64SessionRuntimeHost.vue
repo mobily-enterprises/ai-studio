@@ -37,6 +37,7 @@
     >
       <template #ai-terminal="{ active: tabActive }">
         <Vibe64CodexSession
+          v-if="selectedAssistantEngineId === 'codex'"
           class="studio-ai-sessions__tab-terminal"
           :allow-start="tabActive && codexTerminalCanStart"
           :display-mode="tabActive ? 'full' : 'headless'"
@@ -48,6 +49,13 @@
           :visible="tabActive"
           @session-update="agentTerminal.sessionUpdate"
         />
+        <div v-else class="studio-ai-sessions__terminal-unavailable">
+          <strong>OpenCode is managed in the background</strong>
+          <span>
+            This session keeps its native OpenCode history through the supervised server.
+            Use the AI chat to work with it; a raw Codex terminal is not available.
+          </span>
+        </div>
       </template>
 
       <template #dashboard="dashboardSlotProps">
@@ -63,6 +71,7 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
 import Vibe64AutopilotView from "@/components/studio/vibe64-session/Vibe64AutopilotView.vue";
 import Vibe64CodexSession from "@/components/studio/Vibe64CodexSession.vue";
 import Vibe64SessionDialogs from "@/components/studio/vibe64-session/Vibe64SessionDialogs.vue";
@@ -158,6 +167,9 @@ const {
   updateSessionWork,
   workState
 } = useVibe64SessionRuntimeHost(props, emit);
+const selectedAssistantEngineId = computed(() => String(
+  selection.selectedSession?.assistantSelection?.engineId || "codex"
+));
 </script>
 
 <style scoped>
@@ -179,5 +191,24 @@ const {
 .studio-ai-sessions__tab-terminal :deep(.studio-ai-sessions__codex-terminal-shell),
 .studio-ai-sessions__tab-terminal :deep(.studio-ai-sessions__codex-terminal) {
   height: 100%;
+}
+
+.studio-ai-sessions__terminal-unavailable {
+  align-content: center;
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  display: grid;
+  gap: 0.4rem;
+  height: 100%;
+  justify-items: center;
+  padding: 2rem;
+  text-align: center;
+}
+
+.studio-ai-sessions__terminal-unavailable strong {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.studio-ai-sessions__terminal-unavailable span {
+  max-width: 32rem;
 }
 </style>

@@ -81,7 +81,7 @@
             <v-list-item
               v-if="child.type === 'file' && askCodexAvailable"
               :prepend-icon="mdiRobotOutline"
-              title="Ask Codex about this file"
+              title="Ask the AI assistant about this file"
               @click="emit('ask-codex', child.path || '')"
             />
           </v-list>

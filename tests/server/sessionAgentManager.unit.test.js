@@ -6,8 +6,39 @@ import {
   createSessionAgentManager
 } from "../../packages/vibe64-terminals/src/server/agent/sessionAgentManager.js";
 import {
+  VIBE64_ASSISTANT_SELECTION_METADATA,
   VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE
 } from "@local/vibe64-runtime/shared";
+
+const catalogRevision = `sha256:${"a".repeat(64)}`;
+
+function providerCapabilities(engineId, transportId, {
+  connected = true
+} = {}) {
+  return {
+    agents: [{ id: engineId, mode: "primary" }],
+    authentication: { modes: [engineId === "codex" ? "oauth" : "api-key"] },
+    defaults: {
+      agentId: engineId,
+      modelId: "model-1",
+      modelProviderId: engineId === "codex" ? "openai" : "deepseek",
+      variantId: "high"
+    },
+    engineId,
+    health: { status: "ready" },
+    label: engineId,
+    modelProviders: [{
+      connected,
+      id: engineId === "codex" ? "openai" : "deepseek",
+      models: [{
+        id: "model-1",
+        variants: [{ id: "high" }]
+      }]
+    }],
+    revision: catalogRevision,
+    transportId
+  };
+}
 
 test("session agent manager sends a message through the selected provider", async () => {
   let received = null;
@@ -253,6 +284,131 @@ test("session agent manager keeps one provider bound to a session", async () => 
     }),
     (error) => error?.code === SESSION_AGENT_PROVIDER_BINDING_CONFLICT_CODE
   );
+});
+
+test("session agent manager treats durable engine metadata as authoritative", async () => {
+  const calls = [];
+  const adapter = (id) => ({
+    id,
+    transportId: `${id}_transport`,
+    async sendMessage(context) {
+      calls.push([id, context.assistantSelection]);
+      return { ok: true };
+    }
+  });
+  const manager = createSessionAgentManager({
+    providers: [adapter("codex"), adapter("opencode")]
+  });
+  const selection = {
+    agentId: "build",
+    catalogRevision,
+    engineId: "opencode",
+    modelId: "deepseek-chat",
+    modelProviderId: "deepseek",
+    schema: "vibe64.assistant-selection.v1",
+    variantId: "high"
+  };
+  const session = {
+    metadata: {
+      [VIBE64_ASSISTANT_SELECTION_METADATA]: JSON.stringify(selection)
+    },
+    sessionId: "session-1"
+  };
+
+  const result = await manager.sendMessage(session.sessionId, { message: "Hello" }, {
+    agentSettings: { providerId: "codex" },
+    session
+  });
+
+  assert.equal(result.engineId, "opencode");
+  assert.deepEqual(calls, [["opencode", selection]]);
+  await assert.rejects(
+    manager.sendMessage(session.sessionId, { message: "No" }, {
+      engineId: "codex",
+      session
+    }),
+    (error) => error.code === SESSION_AGENT_PROVIDER_BINDING_CONFLICT_CODE
+  );
+});
+
+test("session agent manager resolves live engine capabilities without fallback", async () => {
+  const manager = createSessionAgentManager({
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
+      async capabilities() {
+        return providerCapabilities("codex", "codex_app_server");
+      }
+    }, {
+      id: "opencode",
+      transportId: "opencode_server",
+      async capabilities() {
+        return providerCapabilities("opencode", "opencode_server");
+      }
+    }]
+  });
+
+  const catalog = await manager.listCapabilities();
+  assert.deepEqual(catalog.engines.map((engine) => engine.engineId), ["codex", "opencode"]);
+  assert.deepEqual(await manager.resolveSelection({
+    engineId: "opencode",
+    modelId: "model-1",
+    modelProviderId: "deepseek"
+  }), {
+    agentId: "opencode",
+    catalogRevision,
+    engineId: "opencode",
+    modelId: "model-1",
+    modelProviderId: "deepseek",
+    schema: "vibe64.assistant-selection.v1",
+    variantId: "high"
+  });
+  await assert.rejects(
+    manager.resolveSelection({
+      engineId: "opencode",
+      modelId: "made-up",
+      modelProviderId: "deepseek"
+    }),
+    (error) => error.code === "vibe64_assistant_selection_unavailable"
+  );
+});
+
+test("session agent manager reconciles each durable engine separately", async () => {
+  const calls = [];
+  const adapter = (id) => ({
+    id,
+    transportId: `${id}_transport`,
+    async reconcileSessions(_context, sessions) {
+      calls.push([id, sessions.map((session) => session.sessionId)]);
+      return { count: sessions.length, ok: true };
+    }
+  });
+  const selectionMetadata = (engineId) => ({
+    [VIBE64_ASSISTANT_SELECTION_METADATA]: JSON.stringify({
+      agentId: engineId,
+      catalogRevision,
+      engineId,
+      modelId: "model-1",
+      modelProviderId: engineId === "codex" ? "openai" : "deepseek",
+      schema: "vibe64.assistant-selection.v1",
+      variantId: "high"
+    })
+  });
+  const manager = createSessionAgentManager({
+    providers: [adapter("codex"), adapter("opencode")]
+  });
+
+  const result = await manager.reconcileSessions([
+    { metadata: selectionMetadata("opencode"), sessionId: "open-1" },
+    { metadata: selectionMetadata("codex"), sessionId: "codex-1" },
+    { metadata: selectionMetadata("opencode"), sessionId: "open-2" }
+  ]);
+
+  assert.deepEqual(calls, [
+    ["opencode", ["open-1", "open-2"]],
+    ["codex", ["codex-1"]]
+  ]);
+  assert.equal(result.results.length, 2);
 });
 
 test("session agent manager describes providers without binding a session", async () => {

@@ -2,7 +2,9 @@ const VIBE64_ACCOUNT_CONNECTIONS_OPEN_EVENT = "vibe64:account-connections:open";
 
 function requestVibe64AccountConnectionsDialog({
   codexReconnectRequired = false,
+  providerLabel = "",
   providerId = "",
+  providerRevision = "",
   refresh = true,
   section = ""
 } = {}) {
@@ -12,7 +14,9 @@ function requestVibe64AccountConnectionsDialog({
   window.dispatchEvent(new CustomEvent(VIBE64_ACCOUNT_CONNECTIONS_OPEN_EVENT, {
     detail: {
       codexReconnectRequired: codexReconnectRequired === true,
+      providerLabel: String(providerLabel || ""),
       providerId: String(providerId || ""),
+      providerRevision: String(providerRevision || ""),
       refresh: refresh !== false,
       section: String(section || "")
     }

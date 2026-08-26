@@ -2,7 +2,10 @@ import {
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE,
   Vibe64AgentExecutionProfileError,
+  defineVibe64AssistantCapabilities,
   defineVibe64AgentExecutionProfileRequest,
+  resolveVibe64AssistantSelection,
+  vibe64AssistantSelectionFromMetadata,
   vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
@@ -37,13 +40,25 @@ function looksLikeExecutionProfileResolution(value = null) {
 }
 
 function sessionAgentProviderId(options = {}, fallbackProviderId = "") {
+  const durableSelection = vibe64AssistantSelectionFromMetadata(
+    options?.session?.metadata,
+    { required: false }
+  );
   return normalizeText(
+    durableSelection?.engineId ||
+    options?.engineId ||
     options?.providerId ||
     options?.agentSettings?.providerId ||
     options?.session?.agentSession?.providerId ||
     options?.session?.metadata?.agent_identity_provider ||
     fallbackProviderId
   );
+}
+
+function sessionAssistantSelection(options = {}) {
+  return vibe64AssistantSelectionFromMetadata(options?.session?.metadata, {
+    required: false
+  });
 }
 
 function providerNotImplementedError(providerId = "") {
@@ -84,6 +99,7 @@ function agentOperationResult(provider = {}, sessionId = "", result = {}) {
     : { value: result };
   return {
     ...source,
+    engineId: provider.id,
     providerId: provider.id,
     sessionId: normalizeText(sessionId),
     transportId: provider.transportId
@@ -162,6 +178,11 @@ function createSessionAgentManager({
       throw new TypeError("Session agent operations require a session id.");
     }
     const currentProviderId = bindings.get(id);
+    const selection = sessionAssistantSelection(options);
+    const explicitEngineId = normalizeText(options?.engineId);
+    if (selection && explicitEngineId && selection.engineId !== explicitEngineId) {
+      throw providerBindingConflictError(id, selection.engineId, explicitEngineId);
+    }
     const requestedProviderId = sessionAgentProviderId(options);
     if (currentProviderId && requestedProviderId && currentProviderId !== requestedProviderId) {
       throw providerBindingConflictError(id, currentProviderId, requestedProviderId);
@@ -248,6 +269,7 @@ function createSessionAgentManager({
     }
     const context = {
       agentSettings: operationOptions.agentSettings,
+      assistantSelection: sessionAssistantSelection(operationOptions),
       onEvent: typeof operationOptions.onEvent === "function" ? operationOptions.onEvent : null,
       providerId: provider.id,
       runtime: operationOptions.runtime || null,
@@ -334,6 +356,44 @@ function createSessionAgentManager({
     return agentOperationResult(provider, "", await provider[method]({
       providerId: provider.id,
       transportId: provider.transportId
+    }, input, options));
+  }
+
+  async function callAllProviders(method = "", input = {}, options = {}) {
+    const requestedProviderId = sessionAgentProviderId(options);
+    const targets = requestedProviderId
+      ? [providerFor(options)]
+      : [...providerById.values()];
+    const results = await Promise.all(targets.map(async (provider) => {
+      if (typeof provider[method] !== "function") {
+        throw new TypeError(`Assistant provider ${provider.id} does not implement ${method}().`);
+      }
+      return agentOperationResult(provider, "", await provider[method]({
+        providerId: provider.id,
+        transportId: provider.transportId
+      }, input, options));
+    }));
+    if (results.length === 1) {
+      return results[0];
+    }
+    const failed = results.filter((result) => result.ok === false);
+    return Object.freeze({
+      closed: results.reduce((total, result) => total + Number(result.closed || 0), 0),
+      failed,
+      ok: failed.length === 0,
+      results: Object.freeze(results),
+      stopped: results.reduce((total, result) => total + Number(result.stopped || 0), 0)
+    });
+  }
+
+  async function providerCapabilities(provider = {}, input = {}, options = {}) {
+    if (typeof provider.capabilities !== "function") {
+      throw new TypeError(`Assistant provider ${provider.id} does not implement capabilities().`);
+    }
+    return defineVibe64AssistantCapabilities(await provider.capabilities({
+      engineId: provider.id,
+      transportId: provider.transportId,
+      vibe64User: options.vibe64User || null
     }, input, options));
   }
 
@@ -427,7 +487,7 @@ function createSessionAgentManager({
       return bindings.get(normalizeText(sessionId)) || "";
     },
     closeProject(input = {}, options = {}) {
-      return callProvider("closeProject", input, options);
+      return callAllProviders("closeProject", input, options);
     },
     closeSession,
     closeTerminal: sessionMethod("closeTerminal"),
@@ -485,17 +545,49 @@ function createSessionAgentManager({
     interruptDetachedChatTurn: sessionMethod("interruptDetachedChatTurn"),
     interruptTurn: sessionMethod("interruptTurn"),
     invalidateRuntimes(input = {}, options = {}) {
-      return callProvider("invalidateRuntimes", input, options);
+      return callAllProviders("invalidateRuntimes", input, options);
+    },
+    async listCapabilities(input = {}, options = {}) {
+      const requestedEngineId = normalizeText(input?.engineId);
+      const providersToInspect = requestedEngineId
+        ? [providerFor({ engineId: requestedEngineId })]
+        : [...providerById.values()];
+      return Object.freeze({
+        engines: Object.freeze(await Promise.all(providersToInspect.map((provider) => (
+          providerCapabilities(provider, input, options)
+        )))),
+        ok: true
+      });
     },
     async reconcileSessions(sessions = [], options = {}) {
-      const provider = providerFor(options);
-      if (typeof provider.reconcileSessions !== "function") {
-        throw new TypeError(`Assistant provider ${provider.id} does not implement reconcileSessions().`);
+      const grouped = new Map();
+      for (const session of sessions) {
+        const provider = providerFor({ ...options, session });
+        const values = grouped.get(provider.id) || [];
+        values.push(session);
+        grouped.set(provider.id, values);
       }
-      return agentOperationResult(provider, "", await provider.reconcileSessions({
-        providerId: provider.id,
-        transportId: provider.transportId
-      }, sessions, options));
+      const results = [];
+      for (const [providerId, providerSessions] of grouped) {
+        const provider = providerById.get(providerId);
+        if (typeof provider.reconcileSessions !== "function") {
+          throw new TypeError(
+            `Assistant provider ${provider.id} does not implement reconcileSessions().`
+          );
+        }
+        results.push(agentOperationResult(provider, "", await provider.reconcileSessions({
+          providerId: provider.id,
+          transportId: provider.transportId
+        }, providerSessions, options)));
+      }
+      return Object.freeze({ ok: true, results: Object.freeze(results) });
+    },
+    async resolveSelection(input = {}, options = {}) {
+      const provider = providerFor({ engineId: input?.engineId });
+      return resolveVibe64AssistantSelection(
+        await providerCapabilities(provider, input, options),
+        input
+      );
     },
     readConversation: sessionMethod("readConversation"),
     resolveExecutionProfile: sessionMethod("resolveExecutionProfile"),

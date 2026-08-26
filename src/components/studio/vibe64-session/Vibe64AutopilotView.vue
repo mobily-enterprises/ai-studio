@@ -226,6 +226,7 @@
       </div>
 
       <Vibe64ConversationLog
+        :assistant-label="conversationAssistantLabel"
         class="studio-autopilot__conversation"
         :error="props.conversationLog?.error"
         :follow-latest-key="conversationFollowLatestKey"
@@ -265,7 +266,7 @@
         <Vibe64AutopilotPromptTextarea
           ref="composerInput"
           v-model="composerDraft"
-          aria-label="Message Codex"
+          aria-label="Message AI assistant"
           :attachments-enabled="composerAttachmentsEnabled"
           :described-by="composerSupportStatusVisible ? thinkingStatusId : ''"
           :disabled="composerDisabled"
@@ -358,12 +359,13 @@
           </template>
           <template #footer="{ attachmentState }">
             <div class="studio-autopilot__composer-actions">
-              <Vibe64AgentSettingsMenu
-                :agent-settings="currentAgentSettings"
-                :disabled="composerSending"
-                @update-setting="updateAgentSetting"
+              <Vibe64SessionAssistantMenu
+                :disabled="composerSending || agentActive"
+                :session="props.session"
+                :sessions-api-path="props.sessionsApiPath"
               />
               <v-btn
+                v-if="composerAttachmentsSupported"
                 aria-label="Attach files"
                 class="studio-autopilot__composer-action"
                 :disabled="!composerAttachmentsEnabled || !attachmentState.canAddFiles"
@@ -375,7 +377,7 @@
                 @click="composerInput?.openFilePicker?.()"
               />
               <v-btn
-                v-if="previewAttachmentState.captureAvailable"
+                v-if="composerAttachmentsSupported && previewAttachmentState.captureAvailable"
                 aria-label="Attach visible preview"
                 class="studio-autopilot__composer-action"
                 :aria-busy="previewAttachmentState.captureBusy ? 'true' : undefined"
@@ -388,7 +390,7 @@
                 @click="captureVisiblePreview"
               />
               <v-btn
-                v-if="previewAttachmentState.diagnosticsAvailable"
+                v-if="composerAttachmentsSupported && previewAttachmentState.diagnosticsAvailable"
                 aria-label="Attach console & network"
                 class="studio-autopilot__composer-action"
                 :aria-busy="previewAttachmentState.diagnosticsBusy ? 'true' : undefined"
@@ -623,7 +625,7 @@ import {
   mdiSourcePull,
   mdiStopCircleOutline
 } from "@mdi/js";
-import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
+import Vibe64SessionAssistantMenu from "@/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
@@ -704,6 +706,7 @@ const {
   chatTurns,
   composerAcceptedAttachments,
   composerAttachmentsEnabled,
+  composerAttachmentsSupported,
   composerCanSubmit,
   composerDisabled,
   composerDraft,
@@ -779,7 +782,6 @@ const {
   systemRestoreRequest,
   thinkingLabel,
   thinkingVisible,
-  updateAgentSetting,
   updateComposerAttachments,
   updatePreviewAttachmentState,
   workspaceSetupAskDisabled,
@@ -812,6 +814,9 @@ const {
 });
 const composerAssistantLabel = computed(() => (
   thinkingVisible.value ? thinkingLabel.value : typingLabel.value
+));
+const conversationAssistantLabel = computed(() => (
+  props.session?.assistantSelection?.engineId === "opencode" ? "OpenCode" : "Codex"
 ));
 
 const promptHintsCanRequest = computed(() => Boolean(

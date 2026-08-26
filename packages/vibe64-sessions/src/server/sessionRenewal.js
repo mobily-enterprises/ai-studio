@@ -52,6 +52,7 @@ const SESSION_RENEWAL_SUCCESSOR_REPLACEMENT_LIMIT_CODE =
 const SESSION_RENEWAL_WORKFLOW_LOCK_RETRY_MS = 1_000;
 const SESSION_RENEWAL_COMPLETION_RETRY_MAX_MS = 30_000;
 const SESSION_RENEWAL_AGENT_SETTINGS_METADATA = Object.freeze([
+  "assistant_selection",
   "agent_settings_model",
   "agent_settings_provider",
   "agent_settings_thinking"

@@ -5,7 +5,8 @@ const route = reactive({
   path: "/app/project/chat-test/dashboard/files"
 });
 const router = {
-  push: vi.fn()
+  push: vi.fn(),
+  replace: vi.fn()
 };
 
 vi.mock("vue-router", () => ({
@@ -80,6 +81,7 @@ describe("useVibe64AutopilotView route hydration", () => {
   beforeEach(() => {
     route.path = "/app/project/chat-test/dashboard/files";
     router.push.mockReset();
+    router.replace.mockReset();
   });
 
   it("opens a directly routed source tool when the selected source arrives", async () => {

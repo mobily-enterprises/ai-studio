@@ -5,7 +5,8 @@ const route = reactive({
   path: "/app/project/chat-test/dashboard/env"
 });
 const router = {
-  push: vi.fn()
+  push: vi.fn(),
+  replace: vi.fn()
 };
 
 vi.mock("vue-router", () => ({
@@ -118,6 +119,7 @@ describe("useVibe64AutopilotView direct chat", () => {
   beforeEach(() => {
     route.path = "/app/project/chat-test/dashboard/env";
     router.push.mockReset();
+    router.replace.mockReset();
   });
 
   it("uses the new-build welcome for a blank, workspace-unconfigured project", async () => {
@@ -1076,6 +1078,23 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(router.push).toHaveBeenCalledWith("/app/project/chat-test/dashboard/session");
 
     expect(view.selectSessionTool("diff")).toBe(false);
+  });
+
+  it("hides the Codex-only raw terminal from OpenCode sessions", async () => {
+    route.path = "/app/project/chat-test/dashboard/ai-terminal";
+    const view = await createView({
+      session: {
+        ...viewProps().session,
+        assistantSelection: {
+          engineId: "opencode"
+        }
+      }
+    });
+
+    expect(view.sessionToolControls.value.map((tool) => tool.id)).not.toContain("ai-terminal");
+    expect(view.selectSessionTool("ai-terminal")).toBe(false);
+    expect(view.rightPaneTab.value).toBe("dashboard");
+    expect(router.replace).toHaveBeenCalledWith("/app/project/chat-test/dashboard/env");
   });
 
   it("prefills chat from source and City tools", async () => {

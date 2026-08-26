@@ -1,6 +1,8 @@
 import {
   agentMessageActionInputValidator,
   agentTurnInterruptActionInputValidator,
+  assistantCapabilitiesInputValidator,
+  assistantSelectionUpdateActionInputValidator,
   currentSessionInputValidator,
   repositoryHistoryInputValidator,
   repositoryVersionFileDiffInputValidator,
@@ -27,7 +29,9 @@ import {
 } from "./events.js";
 
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
+const ACTION_LIST_ASSISTANT_CAPABILITIES = "vibe64.assistants.capabilities.list";
 const ACTION_CREATE_SESSION = "vibe64.sessions.create";
+const ACTION_UPDATE_ASSISTANT_SELECTION = "vibe64.sessions.assistant-selection.update";
 const ACTION_UPDATE_CURRENT_SESSION = "vibe64.sessions.current.update";
 const ACTION_INSPECT_SESSION_WORK = "vibe64.sessions.work.inspect";
 const ACTION_SAVE_SESSION_WORK = "vibe64.sessions.work.save";
@@ -121,6 +125,12 @@ function createSessionActions({ sessions } = {}) {
       execute: (input) => sessions.listSessions(input || {})
     }),
     action({
+      id: ACTION_LIST_ASSISTANT_CAPABILITIES,
+      kind: "query",
+      input: assistantCapabilitiesInputValidator,
+      execute: (input) => sessions.listAssistantCapabilities(input || {})
+    }),
+    action({
       id: ACTION_CREATE_SESSION,
       kind: "command",
       input: sessionCreateInputValidator,
@@ -140,6 +150,16 @@ function createSessionActions({ sessions } = {}) {
         projectSlug: input.projectSlug,
         vibe64User: input.vibe64User || null
       })
+    }),
+    action({
+      id: ACTION_UPDATE_ASSISTANT_SELECTION,
+      kind: "command",
+      input: assistantSelectionUpdateActionInputValidator,
+      events: [sessionChangedActionEvent({ reason: "session-assistant-selection-updated" })],
+      execute: (input) => sessions.updateAssistantSelection(
+        input.sessionId,
+        withoutSessionId(input)
+      )
     }),
     action({
       id: ACTION_INSPECT_SESSION_RENEWAL,
@@ -317,6 +337,7 @@ function createSessionActions({ sessions } = {}) {
 }
 
 export {
+  ACTION_LIST_ASSISTANT_CAPABILITIES,
   ACTION_CANCEL_SESSION_RENEWAL,
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_INSPECT_REPOSITORY_HISTORY,
@@ -340,6 +361,7 @@ export {
   ACTION_SAVE_SESSION_WORK,
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_UPDATE_SESSION_WORK,
