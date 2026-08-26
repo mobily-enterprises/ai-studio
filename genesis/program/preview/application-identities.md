@@ -7,14 +7,18 @@ users without turning that convenience into a production sign-in mechanism.
 
 - `packages/vibe64-project/src/server/previewApplicationIdentities.js`
 - `packages/vibe64-terminals/src/server/previewIdentityCommand.js`
-- `packages/vibe64-genesis/src/server/launch.js`
+- `packages/vibe64-genesis/src/server/outputs.js`
+- `packages/vibe64-terminals/src/server/outputTargetTerminal.js`
 - `src/components/studio/PreviewIdentitySettings.vue`
 
 ## Public contract
 
 The project workspace stores named selectors outside source control. When a
-Vibe64 Launch target declares `vibe64.preview-identity.command.v1`, Vibe64
-offers those names and guest mode, invokes the application-owned identity
-command with a per-launch secret, and refreshes the managed browser session.
-Arbitrary caller identities are rejected and Vibe64 never creates or changes
-application users.
+web-presented Vibe64 Outputs target declares
+`vibe64.preview-identity.command.v1`, Vibe64 offers those names and guest mode,
+maps the command's declared runtimes, invokes the safe committed
+application-owned executable with a fresh per-run secret, and refreshes the
+managed browser session. The executable may select an existing application
+user by the declared email, login, or user-ID selector. Arbitrary caller
+identities are rejected, and Vibe64 never creates users or changes their roles
+or data.

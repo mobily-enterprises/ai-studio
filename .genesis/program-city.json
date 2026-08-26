@@ -120,46 +120,50 @@
       "implementationMap": "",
       "name": "application-identities",
       "path": "genesis/program/preview/application-identities.md",
-      "publicContract": "The project workspace stores named selectors outside source control. When a\nVibe64 Launch target declares `vibe64.preview-identity.command.v1`, Vibe64\noffers those names and guest mode, invokes the application-owned identity\ncommand with a per-launch secret, and refreshes the managed browser session.\nArbitrary caller identities are rejected and Vibe64 never creates or changes\napplication users.",
+      "publicContract": "The project workspace stores named selectors outside source control. When a\nweb-presented Vibe64 Outputs target declares\n`vibe64.preview-identity.command.v1`, Vibe64 offers those names and guest mode,\nmaps the command's declared runtimes, invokes the safe committed\napplication-owned executable with a fresh per-run secret, and refreshes the\nmanaged browser session. The executable may select an existing application\nuser by the declared email, login, or user-ID selector. Arbitrary caller\nidentities are rejected, and Vibe64 never creates users or changes their roles\nor data.",
       "sourceFileIds": [
         "file:packages/vibe64-project/src/server/previewApplicationIdentities.js",
         "file:packages/vibe64-terminals/src/server/previewIdentityCommand.js",
-        "file:packages/vibe64-genesis/src/server/launch.js",
+        "file:packages/vibe64-genesis/src/server/outputs.js",
+        "file:packages/vibe64-terminals/src/server/outputTargetTerminal.js",
         "file:src/components/studio/PreviewIdentitySettings.vue"
       ],
       "sources": [
         "packages/vibe64-project/src/server/previewApplicationIdentities.js",
         "packages/vibe64-terminals/src/server/previewIdentityCommand.js",
-        "packages/vibe64-genesis/src/server/launch.js",
+        "packages/vibe64-genesis/src/server/outputs.js",
+        "packages/vibe64-terminals/src/server/outputTargetTerminal.js",
         "src/components/studio/PreviewIdentitySettings.vue"
       ],
       "subsystem": "preview",
       "title": "Preview application identities"
     },
     {
-      "description": "People can start and inspect a project application without leaving the coding\nworkspace.",
+      "description": "People can run and inspect a project's web, terminal, and finite build outputs\nwithout leaving the coding workspace.",
       "districtId": "subsystem:preview",
       "id": "operation:preview/managed-application",
       "implementationMap": "",
       "name": "managed-application",
       "path": "genesis/program/preview/managed-application.md",
-      "publicContract": "Vibe64 lists only targets in the strict Markdown `vibe64.launch.v1` contract\ntransported as an opaque Stack section by Genesis. Vibe64 mechanically parses\nTarget headings and exact list entries, maps abstract runtime needs to supported\nhost tools, allocates the host and port, starts the declared argv, waits for the\ndeclared readiness condition, and proxies the result into the managed preview.\nStatus, logs, retry, stop, open, and fresh restart remain available. The managed\nbrowser comes from Vibe64's pinned runtime and project commands cannot download\ntheir own browser.",
+      "publicContract": "Vibe64 lists only targets in the strict Markdown `vibe64.outputs.v1` contract\ntransported as an opaque Stack section by Genesis. Each target declares exact\nPrepare, Build, and Run argv, a working directory and runtime requirements,\nplus either an interactive presentation or finite downloadable results. Vibe64\nnever guesses a framework command or substitutes an unknown runtime.\nStarting a target waits for the separately owned workspace-setup recipe, then\nruns every step through the managed execution gateway. Web targets use the\npreview resource profile, finite targets use the bounded job profile, and\ninteractive terminal targets use the terminal profile. Web presentation owns\nport allocation, readiness and the managed proxy. Finite runs snapshot only\ntheir declared regular files into bounded immutable result storage and expose\ndownloads by generated result identity rather than a caller-supplied path.\nStatus inspection never starts work. Logs, retry, stop, open, fresh restart,\nresult history, and authenticated downloads remain available through the\nsession-owned output controller and studio controls.",
       "sourceFileIds": [
-        "file:packages/vibe64-terminals/src/server/launchTargetTerminal.js",
+        "file:packages/vibe64-genesis/src/server/outputs.js",
+        "file:packages/vibe64-terminals/src/server/vibe64OutputTargets.js",
+        "file:packages/vibe64-terminals/src/server/outputTargetTerminal.js",
+        "file:packages/vibe64-terminals/src/server/outputResults.js",
         "file:packages/vibe64-terminals/src/server/launchPreviewProxy.js",
-        "file:packages/vibe64-terminals/src/server/vibe64LaunchTargets.js",
-        "file:packages/vibe64-genesis/src/server/launch.js",
-        "file:src/components/studio/Vibe64LaunchControls.vue"
+        "file:src/components/studio/Vibe64OutputControls.vue"
       ],
       "sources": [
-        "packages/vibe64-terminals/src/server/launchTargetTerminal.js",
+        "packages/vibe64-genesis/src/server/outputs.js",
+        "packages/vibe64-terminals/src/server/vibe64OutputTargets.js",
+        "packages/vibe64-terminals/src/server/outputTargetTerminal.js",
+        "packages/vibe64-terminals/src/server/outputResults.js",
         "packages/vibe64-terminals/src/server/launchPreviewProxy.js",
-        "packages/vibe64-terminals/src/server/vibe64LaunchTargets.js",
-        "packages/vibe64-genesis/src/server/launch.js",
-        "src/components/studio/Vibe64LaunchControls.vue"
+        "src/components/studio/Vibe64OutputControls.vue"
       ],
       "subsystem": "preview",
-      "title": "Managed application preview"
+      "title": "Managed project outputs"
     },
     {
       "description": "Vibe64 turns a project's opaque Stack Deployment section into a safe,\nmachine-readable publication plan without AI interpretation or framework\nguessing.",
@@ -454,7 +458,12 @@
     {
       "fromId": "operation:preview/application-identities",
       "kind": "implemented-by",
-      "toId": "file:packages/vibe64-genesis/src/server/launch.js"
+      "toId": "file:packages/vibe64-genesis/src/server/outputs.js"
+    },
+    {
+      "fromId": "operation:preview/application-identities",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/outputTargetTerminal.js"
     },
     {
       "fromId": "operation:preview/application-identities",
@@ -464,7 +473,22 @@
     {
       "fromId": "operation:preview/managed-application",
       "kind": "implemented-by",
-      "toId": "file:packages/vibe64-terminals/src/server/launchTargetTerminal.js"
+      "toId": "file:packages/vibe64-genesis/src/server/outputs.js"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/vibe64OutputTargets.js"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/outputTargetTerminal.js"
+    },
+    {
+      "fromId": "operation:preview/managed-application",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/outputResults.js"
     },
     {
       "fromId": "operation:preview/managed-application",
@@ -474,17 +498,7 @@
     {
       "fromId": "operation:preview/managed-application",
       "kind": "implemented-by",
-      "toId": "file:packages/vibe64-terminals/src/server/vibe64LaunchTargets.js"
-    },
-    {
-      "fromId": "operation:preview/managed-application",
-      "kind": "implemented-by",
-      "toId": "file:packages/vibe64-genesis/src/server/launch.js"
-    },
-    {
-      "fromId": "operation:preview/managed-application",
-      "kind": "implemented-by",
-      "toId": "file:src/components/studio/Vibe64LaunchControls.vue"
+      "toId": "file:src/components/studio/Vibe64OutputControls.vue"
     },
     {
       "fromId": "operation:projects/application-deployment",
@@ -577,7 +591,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:40f301179e09c5e4f0b1e5efcba724b97dfa1932392ffdca0a54220beb3fe639",
+  "programHash": "sha256:5d7026ddea0a9963fde72562964a6912ce195d56fadc78ef651fee6a728ca7f7",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"
