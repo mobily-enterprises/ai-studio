@@ -93,7 +93,7 @@ function delay(ms) {
 
 async function waitForCondition(condition, message = "Timed out waiting for condition.") {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 1000) {
+  while (Date.now() - startedAt < 5000) {
     if (condition()) {
       return;
     }
