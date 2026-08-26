@@ -1150,6 +1150,10 @@ function createOpenCodeTerminalController({
       target,
       tracked
     } = await detachedTarget(sessionId, input, options);
+    options.onEvent?.({
+      threadId: conversationId,
+      type: "thread"
+    });
     const inputMessageId = upstreamMessageId(input.messageId || input.operationId || randomUUID());
     const admitted = await target.server.client.prompt(conversationId, {
       agent: openCodeAgent(context.selection, executionProfile),

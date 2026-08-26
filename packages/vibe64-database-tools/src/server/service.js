@@ -110,10 +110,9 @@ function auditSql(sql = "") {
 }
 
 function createService({
-  env = {},
   logger = null,
-  openAiClientFactory,
   projectService,
+  terminalService = null,
   withKnex = withSessionKnex
 } = {}) {
   if (
@@ -290,7 +289,7 @@ function createService({
           readWorkspace(context.store, context.sessionId, context.vibe64User)
         ]);
         return {
-          assistant: databaseAssistantAvailability(env),
+          assistant: databaseAssistantAvailability(context.session),
           connection: safeConnectionDescriptor(context.writeConnection, context),
           defaultQuery: schema.tables[0]
             ? defaultQuery(schema.tables[0], schema.engine)
@@ -525,14 +524,30 @@ function createService({
 
     async askAssistant(input = {}) {
       return databaseResult(async () => {
+        if (
+          typeof terminalService?.deleteDetachedAgentChatThread !== "function" ||
+          typeof terminalService?.runDetachedAgentChatTurn !== "function"
+        ) {
+          throw databaseError(
+            "The selected session assistant is not available for the database copilot.",
+            "vibe64_database_assistant_unavailable"
+          );
+        }
         const context = await sessionContext(input);
         const schema = await currentSchema(context);
         const startedAt = Date.now();
         const queries = sessionQueries(context.sessionId);
         try {
           const result = await runDatabaseAssistant({
-            clientFactory: openAiClientFactory,
-            environment: env,
+            agentContext: {
+              vibe64User: context.vibe64User
+            },
+            assistant: databaseAssistantAvailability(context.session),
+            deleteThread: (threadInput, options) => terminalService.deleteDetachedAgentChatThread(
+              context.sessionId,
+              threadInput,
+              options
+            ),
             executeReadQuery: (sql) => withKnex(context.readEndpoint, ({ connection, knex }) => (
               executeDatabaseQuery({
                 activeQueries: queries,
@@ -544,6 +559,11 @@ function createService({
               })
             )),
             messages: input.messages,
+            runAgentTurn: (turnInput, options) => terminalService.runDetachedAgentChatTurn(
+              context.sessionId,
+              turnInput,
+              options
+            ),
             schema
           });
           logOperation(context, {

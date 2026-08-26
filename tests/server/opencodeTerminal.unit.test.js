@@ -382,6 +382,7 @@ test("OpenCode restarts on key replacement while preserving its database and nat
 
 test("OpenCode helper turns use the hidden deny-all agent and bounded structured output", async (t) => {
   const harness = await controllerHarness();
+  const events = [];
   t.after(async () => {
     await harness.controller.closeAllForProject();
     await rm(harness.root, { force: true, recursive: true });
@@ -404,10 +405,17 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     },
     prompt: "Name this work"
   }, {
+    onEvent(event) {
+      events.push(event);
+    },
     runtime: harness.runtime,
     session: harness.session
   });
 
+  assert.deepEqual(events[0], {
+    threadId: result.threadId,
+    type: "thread"
+  });
   const helperSession = harness.createdSessions.find((entry) => entry.id === result.threadId);
   assert.equal(helperSession.agent, OPENCODE_ECONOMY_AGENT_ID);
   assert.deepEqual(helperSession.model, {

@@ -22,17 +22,16 @@ const Vibe64DatabaseToolsProvider = defineFeature({
     databaseTools: "vibe64.database-tools"
   },
   requires: {
-    env: "runtime.env",
     http: "runtime.http",
     logger: "runtime.logger",
     project: "vibe64.project",
     terminals: "vibe64.terminals"
   },
-  setup({ env, http, logger, project, terminals }) {
+  setup({ http, logger, project, terminals }) {
     const databaseTools = createService({
-      env,
       logger,
-      projectService: project
+      projectService: project,
+      terminalService: terminals
     });
     registerRoutes(http, {
       databaseTools,

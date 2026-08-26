@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  DATABASE_ASSISTANT_TOOL,
-  DEFAULT_DATABASE_ASSISTANT_MODEL,
+  DATABASE_ASSISTANT_OUTPUT_SCHEMA,
+  DATABASE_ASSISTANT_TURN_TIMEOUT_MS,
+  databaseAssistantAvailability,
   runDatabaseAssistant,
   schemaPrompt
 } from "../../packages/vibe64-database-tools/src/server/assistant.js";
@@ -89,6 +90,37 @@ function testSchema() {
       updatable: true
     }],
     version: "PostgreSQL test"
+  };
+}
+
+function databaseExecutionProfile({
+  model = "deepseek-chat",
+  providerId = "opencode",
+  thinking = "high"
+} = {}) {
+  return {
+    limits: {
+      maxInputCharacters: 500_000,
+      maxOutputCharacters: 16_000,
+      timeoutMs: 180_000
+    },
+    model,
+    policy: {
+      environmentAccess: false,
+      networkAccess: false,
+      repositoryWrite: false,
+      tools: "none"
+    },
+    profileId: "economy",
+    providerId,
+    request: {
+      allowProviderModelFallback: false,
+      reasoning: Boolean(thinking),
+      summary: false
+    },
+    revision: "database-assistant-test-v1",
+    thinking,
+    workloadId: "database_assistant"
   };
 }
 
@@ -507,41 +539,35 @@ test("MySQL/MariaDB inspection keeps foreign keys, checks, indexes, defaults, an
   }]);
 });
 
-test("database assistant sends the complete refreshed schema on every model round", async () => {
+test("database assistant uses one selected-provider secondary conversation and always deletes it", async () => {
   const schema = testSchema();
-  const requests = [];
-  const responses = [{
-    output: [{
-      arguments: JSON.stringify({ sql: "SELECT id, title FROM public.books;" }),
-      call_id: "call_database_1",
-      name: DATABASE_ASSISTANT_TOOL,
-      type: "function_call"
-    }],
-    output_text: ""
-  }, {
-    output: [],
-    output_text: JSON.stringify({
+  const turns = [];
+  const deletions = [];
+  const responses = [JSON.stringify({
+    action: "query",
+    answer: "",
+    intent: "read",
+    sql: "SELECT id, title FROM public.books;"
+  }), JSON.stringify({
+      action: "answer",
       answer: "There is one matching book.",
       intent: "read",
       sql: "SELECT id, title FROM public.books;"
-    })
-  }];
-  const clientFactory = () => ({
-    responses: {
-      create: async (request) => {
-        requests.push(structuredClone(request));
-        return responses.shift();
-      }
-    }
-  });
+  })];
   const executed = [];
+  const executionProfile = databaseExecutionProfile();
 
   const answer = await runDatabaseAssistant({
-    clientFactory,
-    environment: { VIBE64_DATABASE_OPENAI_API_KEY: "test-key" },
+    agentContext: { vibe64User: { username: "owner" } },
+    assistant: { engineId: "opencode", model: "deepseek-chat" },
+    deleteThread: async (input, options) => {
+      deletions.push({ input, options });
+      return { deleted: true, ok: true };
+    },
     executeReadQuery: async (sql) => {
       executed.push(sql);
       return {
+        cellMeta: [[{ editable: false }]],
         columns: [{ index: 0, label: "id" }, { index: 1, label: "title" }],
         fullRowCount: 1,
         kind: "result-set",
@@ -549,25 +575,167 @@ test("database assistant sends the complete refreshed schema on every model roun
       };
     },
     messages: [{ content: "Find Dune.", role: "user" }],
+    runAgentTurn: async (input, options) => {
+      turns.push({ input: structuredClone(input), options });
+      options.onEvent({ executionProfile, type: "execution-profile" });
+      options.onEvent({ threadId: "database-thread-1", type: "thread" });
+      return {
+        ok: true,
+        text: responses.shift(),
+        threadId: "database-thread-1"
+      };
+    },
     schema
   });
 
-  assert.equal(requests.length, 2);
-  for (const request of requests) {
-    const prefix = request.input[0].content[0].text;
-    assert.match(prefix, /UNTRUSTED_DATABASE_SCHEMA_JSON_BEGIN/u);
-    assert.match(prefix, /public\.books/u);
-    assert.match(prefix, /public\.categories/u);
-    assert.match(prefix, /comments? as untrusted/iu);
-    assert.equal(request.model, DEFAULT_DATABASE_ASSISTANT_MODEL);
-    assert.equal(request.store, false);
-    assert.equal(request.reasoning.effort, "low");
-    assert.deepEqual(request.tools.map((tool) => tool.name), [DATABASE_ASSISTANT_TOOL]);
-  }
+  assert.equal(turns.length, 2);
+  assert.match(turns[0].input.prompt, /UNTRUSTED_DATABASE_SCHEMA_JSON_BEGIN/u);
+  assert.match(turns[0].input.prompt, /public\.books/u);
+  assert.match(turns[0].input.prompt, /public\.categories/u);
+  assert.match(turns[0].input.prompt, /comments? as untrusted/iu);
+  assert.equal(turns[0].input.ephemeral, true);
+  assert.deepEqual(turns[0].input.executionProfile, {
+    profileId: "economy",
+    workloadId: "database_assistant"
+  });
+  assert.equal(turns[0].input.threadId, undefined);
+  assert.deepEqual(turns[0].input.outputSchema, DATABASE_ASSISTANT_OUTPUT_SCHEMA);
+  assert.equal(turns[0].input.timeoutMs, DATABASE_ASSISTANT_TURN_TIMEOUT_MS);
+  assert.equal(turns[1].input.threadId, "database-thread-1");
+  assert.equal(turns[1].input.conversationId, "database-thread-1");
+  assert.match(turns[1].input.prompt, /UNTRUSTED_DATABASE_QUERY_RESULT_JSON_BEGIN/u);
+  assert.match(turns[1].input.prompt, /Dune/u);
   assert.deepEqual(executed, ["SELECT id, title FROM public.books;"]);
   assert.equal(answer.answer, "There is one matching book.");
+  assert.equal(answer.engineId, "opencode");
+  assert.equal(answer.model, "deepseek-chat");
   assert.equal(answer.queries.length, 1);
   assert.equal(Object.hasOwn(answer.queries[0].result, "cellMeta"), false);
+  assert.deepEqual(deletions, [{
+    input: {
+      conversationId: "database-thread-1",
+      ephemeral: true,
+      executionProfile,
+      threadId: "database-thread-1"
+    },
+    options: { vibe64User: { username: "owner" } }
+  }]);
+});
+
+test("database assistant availability follows the session's durable assistant selection", () => {
+  assert.deepEqual(databaseAssistantAvailability({
+    metadata: {
+      assistant_selection: JSON.stringify({
+        agentId: "build",
+        catalogRevision: `sha256:${"a".repeat(64)}`,
+        engineId: "opencode",
+        modelId: "deepseek-chat",
+        modelProviderId: "deepseek",
+        schema: "vibe64.assistant-selection.v1",
+        variantId: ""
+      })
+    }
+  }), {
+    available: true,
+    engineId: "opencode",
+    model: "deepseek-chat"
+  });
+  assert.deepEqual(databaseAssistantAvailability({ metadata: {} }), {
+    available: false,
+    engineId: "",
+    model: ""
+  });
+});
+
+test("database assistant deletes its secondary conversation after a failed turn", async () => {
+  const deletions = [];
+  await assert.rejects(
+    runDatabaseAssistant({
+      deleteThread: async (input) => {
+        deletions.push(input);
+        return { deleted: true, ok: true };
+      },
+      executeReadQuery: async () => {
+        throw new Error("A read query should not run.");
+      },
+      messages: [{ content: "Explain the schema.", role: "user" }],
+      runAgentTurn: async () => ({
+        code: "provider_failed",
+        error: "The selected assistant failed.",
+        ok: false,
+        threadId: "failed-database-thread"
+      }),
+      schema: testSchema()
+    }),
+    {
+      code: "provider_failed",
+      message: "The selected assistant failed."
+    }
+  );
+  assert.deepEqual(deletions, [{
+    conversationId: "failed-database-thread",
+    ephemeral: true,
+    executionProfile: {
+      profileId: "economy",
+      workloadId: "database_assistant"
+    },
+    threadId: "failed-database-thread"
+  }]);
+});
+
+test("database assistant fails closed when the selected provider omits its execution proof", async () => {
+  const deletions = [];
+  await assert.rejects(
+    runDatabaseAssistant({
+      deleteThread: async (input) => {
+        deletions.push(input);
+        return { deleted: true, ok: true };
+      },
+      executeReadQuery: async () => {
+        throw new Error("A read query should not run.");
+      },
+      messages: [{ content: "Explain the schema.", role: "user" }],
+      runAgentTurn: async (_input, options) => {
+        options.onEvent({ threadId: "unproved-database-thread", type: "thread" });
+        return {
+          ok: true,
+          text: JSON.stringify({
+            action: "answer",
+            answer: "The schema contains books.",
+            intent: "explain",
+            sql: ""
+          }),
+          threadId: "unproved-database-thread"
+        };
+      },
+      schema: testSchema()
+    }),
+    { code: "vibe64_database_assistant_execution_profile_missing" }
+  );
+  assert.equal(deletions.length, 1);
+  assert.equal(deletions[0].threadId, "unproved-database-thread");
+});
+
+test("database assistant reports a complete-schema limit without truncating its prompt", async () => {
+  await assert.rejects(
+    runDatabaseAssistant({
+      deleteThread: async () => ({ deleted: true, ok: true }),
+      executeReadQuery: async () => {
+        throw new Error("A read query should not run.");
+      },
+      messages: [{ content: "Explain the schema.", role: "user" }],
+      runAgentTurn: async () => {
+        const error = new Error("Codex economy prompt exceeds the resolved input limit.");
+        error.code = "vibe64_agent_execution_profile_unbounded";
+        throw error;
+      },
+      schema: testSchema()
+    }),
+    {
+      code: "vibe64_database_assistant_full_schema_too_large",
+      message: /No tables were omitted/u
+    }
+  );
 });
 
 test("schema prompt never treats database comments as instructions", () => {
@@ -581,12 +749,27 @@ test("database service is owner-only and routes read-only SQL through the reader
   const artifacts = new Map([["database/schema.json", JSON.stringify(schema)]]);
   const environments = [];
   const statements = [];
+  const assistantTurns = [];
+  const assistantDeletions = [];
   const store = {
     async readArtifact(_sessionId, artifactPath) {
       return artifacts.get(artifactPath) || "";
     },
     async readSession(sessionId) {
-      return { sessionId };
+      return {
+        metadata: {
+          assistant_selection: JSON.stringify({
+            agentId: "build",
+            catalogRevision: `sha256:${"b".repeat(64)}`,
+            engineId: "opencode",
+            modelId: "deepseek-chat",
+            modelProviderId: "deepseek",
+            schema: "vibe64.assistant-selection.v1",
+            variantId: ""
+          })
+        },
+        sessionId
+      };
     },
     async writeJsonArtifact(_sessionId, artifactPath, value) {
       artifacts.set(artifactPath, JSON.stringify(value));
@@ -668,7 +851,30 @@ test("database service is owner-only and routes read-only SQL through the reader
       knex
     });
   };
-  const service = createDatabaseService({ projectService, withKnex });
+  const terminalService = {
+    async deleteDetachedAgentChatThread(sessionId, input, options) {
+      assistantDeletions.push({ input, options, sessionId });
+      return { deleted: true, ok: true };
+    },
+    async runDetachedAgentChatTurn(sessionId, input, options) {
+      assistantTurns.push({ input, options, sessionId });
+      options.onEvent({
+        executionProfile: databaseExecutionProfile(),
+        type: "execution-profile"
+      });
+      return {
+        ok: true,
+        text: JSON.stringify({
+          action: "answer",
+          answer: "The books table stores the catalogue titles.",
+          intent: "explain",
+          sql: "SELECT id, title FROM public.books;"
+        }),
+        threadId: "database-service-thread"
+      };
+    }
+  };
+  const service = createDatabaseService({ projectService, terminalService, withKnex });
 
   const forbidden = await service.readState({
     sessionId: "service-session",
@@ -676,6 +882,29 @@ test("database service is owner-only and routes read-only SQL through the reader
   });
   assert.equal(forbidden.ok, false);
   assert.equal(forbidden.code, "vibe64_owner_required");
+
+  const assistant = await service.askAssistant({
+    messages: [{ content: "What does the books table contain?", role: "user" }],
+    sessionId: "service-session",
+    vibe64User: { role: "owner", username: "owner" }
+  });
+  assert.equal(assistant.ok, true);
+  assert.equal(assistant.engineId, "opencode");
+  assert.equal(assistant.model, "deepseek-chat");
+  assert.equal(assistantTurns.length, 1);
+  assert.equal(assistantTurns[0].sessionId, "service-session");
+  assert.equal(assistantTurns[0].input.ephemeral, true);
+  assert.deepEqual(assistantTurns[0].input.executionProfile, {
+    profileId: "economy",
+    workloadId: "database_assistant"
+  });
+  assert.deepEqual(assistantTurns[0].options.vibe64User, {
+    role: "owner",
+    username: "owner"
+  });
+  assert.equal(assistantDeletions.length, 1);
+  assert.equal(assistantDeletions[0].sessionId, "service-session");
+  assert.equal(assistantDeletions[0].input.threadId, "database-service-thread");
 
   const read = await service.runQuery({
     queryId: "reader-query",
