@@ -1,11 +1,15 @@
 <template>
-  <section class="database-erd">
-    <header class="database-erd__toolbar">
-      <div>
-        <strong>Entity relationship diagram</strong>
-        <span>Arrows run 1 → N from referenced tables to foreign-key tables. Drag to arrange; positions stay with this session.</span>
-      </div>
-      <div>
+  <section
+    ref="erdRoot"
+    class="database-erd"
+    :class="{ 'database-erd--fullscreen': fullscreen }"
+  >
+    <header
+      v-if="!fullscreen"
+      aria-label="ERD controls"
+      class="database-erd__toolbar"
+    >
+      <div class="database-erd__toolbar-actions">
         <v-btn
           :disabled="layoutPending || nodes.length === 0"
           :prepend-icon="mdiImageFilterCenterFocus"
@@ -26,10 +30,21 @@
         >
           Auto-arrange
         </v-btn>
+        <v-btn
+          :disabled="layoutPending || nodes.length === 0 || !fullscreenAvailable"
+          :prepend-icon="mdiFullscreen"
+          size="small"
+          :title="fullscreenAvailable ? 'Show only the ERD in full screen' : 'Full screen is unavailable'"
+          type="button"
+          variant="text"
+          @click="enterFullscreen"
+        >
+          Full screen
+        </v-btn>
       </div>
     </header>
 
-    <div v-if="layoutError" class="database-erd__error" role="alert">
+    <div v-if="!fullscreen && layoutError" class="database-erd__error" role="alert">
       <v-icon :icon="mdiAlertOutline" size="18" />
       <span>{{ layoutError }}</span>
       <v-btn size="x-small" type="button" variant="text" @click="autoArrange">Retry</v-btn>
@@ -57,7 +72,10 @@
         @node-drag-stop="persistPositions"
       >
         <template #node-table="nodeProps">
-          <DatabaseErdNode v-bind="nodeProps" />
+          <DatabaseErdNode
+            v-bind="nodeProps"
+            :controls-visible="!fullscreen"
+          />
         </template>
         <MiniMap pannable zoomable />
       </VueFlow>
@@ -73,9 +91,11 @@ import {
   ref,
   watch
 } from "vue";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiAlertOutline,
   mdiAutoFix,
+  mdiFullscreen,
   mdiImageFilterCenterFocus
 } from "@mdi/js";
 import {
@@ -103,8 +123,14 @@ const LAYOUT_TIMEOUT_MS = 15_000;
 
 const nodes = ref([]);
 const edges = ref([]);
+const erdRoot = ref(null);
+const fullscreen = ref(false);
+const fullscreenAvailable = ref(false);
 const layoutError = ref("");
 const layoutPending = ref(false);
+const fullscreenFeedback = useUiFeedback({
+  source: "vibe64.database-erd.fullscreen.feedback"
+});
 const defaultEdgeOptions = {
   interactionWidth: 24,
   labelBgBorderRadius: 6,
@@ -125,6 +151,7 @@ const defaultEdgeOptions = {
   type: "smoothstep"
 };
 let flow = null;
+let fullscreenDocument = null;
 let layoutWorker = null;
 let layoutRequestId = 0;
 const layoutResolvers = new Map();
@@ -366,6 +393,26 @@ function autoArrange() {
   return rebuild({ force: true });
 }
 
+function onFullscreenChange() {
+  const active = fullscreenDocument?.fullscreenElement === erdRoot.value;
+  if (fullscreen.value === active) {
+    return;
+  }
+  fullscreen.value = active;
+  void nextTick().then(fitDiagram);
+}
+
+async function enterFullscreen() {
+  if (!fullscreenAvailable.value || typeof erdRoot.value?.requestFullscreen !== "function") {
+    return;
+  }
+  try {
+    await erdRoot.value.requestFullscreen();
+  } catch (error) {
+    fullscreenFeedback.error(error, "The ERD could not enter full screen.");
+  }
+}
+
 watch(() => props.schema, () => {
   if (layoutWorker) {
     void rebuild();
@@ -373,6 +420,9 @@ watch(() => props.schema, () => {
 }, { immediate: true });
 
 onMounted(() => {
+  fullscreenDocument = erdRoot.value?.ownerDocument || globalThis.document;
+  fullscreenAvailable.value = typeof erdRoot.value?.requestFullscreen === "function";
+  fullscreenDocument?.addEventListener("fullscreenchange", onFullscreenChange);
   layoutWorker = new Worker(new URL("../workers/erdLayout.worker.js", import.meta.url), {
     type: "module"
   });
@@ -397,6 +447,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  fullscreenDocument?.removeEventListener("fullscreenchange", onFullscreenChange);
+  fullscreenDocument = null;
   rejectPendingLayouts(new Error("ERD closed."));
   layoutWorker?.terminate();
 });
@@ -423,29 +475,34 @@ onBeforeUnmount(() => {
 .database-erd__toolbar {
   grid-area: toolbar;
   display: flex;
-  gap: 1rem;
   align-items: center;
-  justify-content: space-between;
-  min-height: 3.7rem;
-  padding: 0.55rem 0.8rem 0.55rem 1rem;
+  justify-content: flex-end;
+  min-height: 2.85rem;
+  overflow-x: auto;
+  padding: 0.25rem 0.5rem;
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.16);
 }
 
-.database-erd__toolbar > div:first-child {
-  min-width: 0;
-}
-
-.database-erd__toolbar strong,
-.database-erd__toolbar span {
-  display: block;
-}
-
-.database-erd__toolbar span {
-  overflow: hidden;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  font-size: 0.72rem;
-  text-overflow: ellipsis;
+.database-erd__toolbar-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  align-items: center;
   white-space: nowrap;
+}
+
+.database-erd--fullscreen,
+.database-erd:fullscreen {
+  width: 100%;
+  height: 100%;
+  grid-template-areas: "canvas";
+  grid-template-rows: minmax(0, 1fr);
+  background: rgb(var(--v-theme-surface));
+}
+
+.database-erd--fullscreen .database-erd__canvas,
+.database-erd:fullscreen .database-erd__canvas {
+  min-height: 0;
 }
 
 .database-erd__error {
@@ -501,10 +558,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .database-erd__toolbar span {
-    display: none;
-  }
-
   .database-erd__skeleton {
     grid-template-columns: repeat(2, minmax(12rem, 1fr));
   }

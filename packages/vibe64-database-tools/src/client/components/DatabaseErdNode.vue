@@ -7,6 +7,7 @@
         <strong>{{ data.table.name }}</strong>
       </div>
       <button
+        v-if="controlsVisible"
         :aria-label="data.collapsed ? 'Expand table' : 'Collapse table'"
         type="button"
         @click.stop="data.onToggle?.(id)"
@@ -55,6 +56,10 @@ import {
 } from "@vue-flow/core";
 
 defineProps({
+  controlsVisible: {
+    default: true,
+    type: Boolean
+  },
   data: {
     required: true,
     type: Object
