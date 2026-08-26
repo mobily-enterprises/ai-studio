@@ -32,6 +32,9 @@ function projectApi() {
     },
     async projectExecutionEnvironment() {
       return {};
+    },
+    async projectInspectionEnvironment() {
+      return {};
     }
   });
 }

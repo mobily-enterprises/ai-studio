@@ -69,7 +69,11 @@ function createService({
   inspectLaunch = inspectVibe64Launch,
   projectService
 } = {}) {
-  if (!projectService || typeof projectService.createRuntime !== "function") {
+  if (
+    !projectService ||
+    typeof projectService.createRuntime !== "function" ||
+    typeof projectService.projectInspectionEnvironment !== "function"
+  ) {
     throw new TypeError("createService requires the Vibe64 Project API.");
   }
 
@@ -102,12 +106,10 @@ function createService({
   }
 
   async function projectEnvironment(input = {}) {
-    const userEnvironment = typeof projectService.projectExecutionEnvironment === "function"
-      ? await projectService.projectExecutionEnvironment({
-          scope: "dev",
-          sessionId: input.sessionId
-        })
-      : {};
+    const userEnvironment = await projectService.projectInspectionEnvironment({
+      scope: "dev",
+      sessionId: input.sessionId
+    });
     return {
       ...env,
       ...userEnvironment

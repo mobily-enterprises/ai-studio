@@ -876,7 +876,7 @@ test("project execution Env reuses an exact internally authorized session record
   });
 });
 
-test("current-app Env projection cannot write after renewal quiesces its session source", async () => {
+test("current-app inspection resolves Env without materializing session files", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const activeSessionId = "current-app-active";
     const quiescedSessionId = "current-app-quiesced";
@@ -933,6 +933,7 @@ test("current-app Env projection cannot write after renewal quiesces its session
     const inspected = [];
     const currentApp = createCurrentAppService({
       inspectLaunch(input) {
+        assert.equal(input.environment.CURRENT_APP_VALUE, "active-value");
         inspected.push(input.projectRoot);
         return {
           components: [],
@@ -949,7 +950,10 @@ test("current-app Env projection cannot write after renewal quiesces its session
 
     const active = await currentApp.inspectCurrentApp({ sessionId: activeSessionId });
     assert.equal(active.ok, true);
-    assert.match(await readFile(path.join(activeSource, ".env"), "utf8"), /CURRENT_APP_VALUE=active-value/u);
+    await assert.rejects(
+      () => readFile(path.join(activeSource, ".env"), "utf8"),
+      { code: "ENOENT" }
+    );
     assert.deepEqual(inspected, [activeSource]);
 
     const envPath = path.join(quiescedSource, ".env");
@@ -965,12 +969,11 @@ test("current-app Env projection cannot write after renewal quiesces its session
     });
     releaseTargetInspection();
 
-    const blocked = await pendingInspection;
-    assert.equal(blocked.ok, false);
-    assert.equal(blocked.code, "vibe64_session_renewal_quiesced");
+    const completed = await pendingInspection;
+    assert.equal(completed.ok, true);
     assert.equal(await readFile(envPath, "utf8"), "preserved-env\n");
     assert.equal(await readFile(excludePath, "utf8"), "preserved-exclude\n");
-    assert.deepEqual(inspected, [activeSource]);
+    assert.deepEqual(inspected, [activeSource, quiescedSource]);
   });
 });
 
@@ -1169,47 +1172,53 @@ test("a host maps semantic database values onto exact Laravel-style Stack bindin
       }
     });
     const released = [];
+    const resolvedProviderCalls = [];
+    const managedEnvironment = {
+      contract: "vibe64.resource-environment.v2",
+      databaseToolEnvironment: {
+        contract: "vibe64.database-tool-environment.v1",
+        kind: "mysql",
+        read: {
+          database: "managed_catalogue",
+          host: "127.0.0.1",
+          password: "reader-secret",
+          port: 23060,
+          username: "managed_reader"
+        },
+        write: {
+          database: "managed_catalogue",
+          host: "127.0.0.1",
+          password: "managed-secret",
+          port: 23060,
+          username: "managed_writer"
+        }
+      },
+      resourceValues: [{
+        declaration: {
+          component: "example-stack",
+          id: "database",
+          kind: "mysql"
+        },
+        values: {
+          database: "managed_catalogue",
+          host: "127.0.0.1",
+          password: "managed-secret",
+          port: 23060,
+          testDatabase: "managed_catalogue_test",
+          url: "mysql://managed_writer:managed-secret@127.0.0.1:23060/managed_catalogue",
+          username: "managed_writer"
+        }
+      }]
+    };
     service.setResourceEnvironmentProvider({
       managedDevelopmentDatabase: true,
+      async environmentForProvisionedResources(input) {
+        resolvedProviderCalls.push(input);
+        return managedEnvironment;
+      },
       async environmentForResources(input) {
         providerCalls.push(input);
-        return {
-          contract: "vibe64.resource-environment.v2",
-          databaseToolEnvironment: {
-            contract: "vibe64.database-tool-environment.v1",
-            kind: "mysql",
-            read: {
-              database: "managed_catalogue",
-              host: "127.0.0.1",
-              password: "reader-secret",
-              port: 23060,
-              username: "managed_reader"
-            },
-            write: {
-              database: "managed_catalogue",
-              host: "127.0.0.1",
-              password: "managed-secret",
-              port: 23060,
-              username: "managed_writer"
-            }
-          },
-          resourceValues: [{
-            declaration: {
-              component: "example-stack",
-              id: "database",
-              kind: "mysql"
-            },
-            values: {
-              database: "managed_catalogue",
-              host: "127.0.0.1",
-              password: "managed-secret",
-              port: 23060,
-              testDatabase: "managed_catalogue_test",
-              url: "mysql://managed_writer:managed-secret@127.0.0.1:23060/managed_catalogue",
-              username: "managed_writer"
-            }
-          }]
-        };
+        return managedEnvironment;
       },
       async removeSessionResources(input) {
         released.push(input);
@@ -1290,8 +1299,11 @@ test("a host maps semantic database values onto exact Laravel-style Stack bindin
     const tool = await service.sessionDatabaseEnvironment({ sessionId });
     assert.equal(tool.databaseToolEnvironment.read.username, "managed_reader");
     assert.equal(tool.databaseToolEnvironment.write.username, "managed_writer");
-    assert.equal(providerCalls.length, 4);
+    assert.equal(providerCalls.length, 1);
+    assert.equal(resolvedProviderCalls.length, 3);
     assert.equal(providerCalls.every((call) => call.sessionId === sessionId), true);
+    assert.equal(resolvedProviderCalls[0].sessionId, sessionId);
+    assert.equal(resolvedProviderCalls[0].developmentDatabaseScope, "session");
     assert.equal(providerCalls.every((call) => call.developmentDatabaseScope === "session"), true);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.id), ["database"]);
     assert.deepEqual(providerCalls[0].resources.map(({ resource }) => resource.kind), ["mysql"]);

@@ -383,7 +383,9 @@ function createService({
     })).records;
   }
 
-  async function resolvedProjectEnvironment(input = {}, userRecords = []) {
+  async function resolvedProjectEnvironment(input = {}, userRecords = [], {
+    provisionResources = false
+  } = {}) {
     const source = await sourceForInput(input);
     const sourceRoot = source.sourceRoot;
     const userEnvironment = runtimeConfigEnv(userRecords, {
@@ -436,8 +438,18 @@ function createService({
     const developmentDatabase = resourceEnvironmentProvider && source.sessionId && declaration.resources.length > 0
       ? await currentDevelopmentDatabaseConfiguration()
       : null;
+    const environmentForResources = provisionResources
+      ? resourceEnvironmentProvider?.environmentForResources
+      : resourceEnvironmentProvider?.environmentForProvisionedResources;
+    if (developmentDatabase && typeof environmentForResources !== "function") {
+      throw new TypeError(
+        provisionResources
+          ? "Vibe64 resource environment provider must expose environmentForResources()."
+          : "Vibe64 resource environment provider must expose environmentForProvisionedResources()."
+      );
+    }
     const provided = developmentDatabase
-      ? await resourceEnvironmentProvider.environmentForResources({
+      ? await environmentForResources.call(resourceEnvironmentProvider, {
           components: declaration.components,
           ...developmentDatabase,
           projectRuntimeRoot: selectedProjectRuntimeRoot(),
@@ -943,7 +955,11 @@ function createService({
 
     async projectExecutionEnvironment(input = {}) {
       return runSessionSourceWorkExclusive(input, async () => {
-        const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+        const resolved = await resolvedProjectEnvironment(
+          input,
+          await userEnvRecords(),
+          { provisionResources: true }
+        );
         await materializeProjectEnvironmentFiles({
           environment: resolved.projectEnvironment,
           files: resolved.environmentFiles,
@@ -953,8 +969,17 @@ function createService({
       });
     },
 
-    async sessionDatabaseEnvironment(input = {}) {
+    async projectInspectionEnvironment(input = {}) {
       const resolved = await resolvedProjectEnvironment(input, await userEnvRecords());
+      return resolved.projectEnvironment;
+    },
+
+    async sessionDatabaseEnvironment(input = {}) {
+      const resolved = await resolvedProjectEnvironment(
+        input,
+        await userEnvRecords(),
+        { provisionResources: false }
+      );
       const databaseToolEnvironment = resolved.databaseToolEnvironment ||
         applicationDatabaseToolEnvironment(resolved.resources, resolved.projectEnvironment);
       return {

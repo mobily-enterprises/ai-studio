@@ -36,7 +36,7 @@ function projectService(root, {
     currentTargetRoot() {
       return root;
     },
-    async projectExecutionEnvironment() {
+    async projectInspectionEnvironment() {
       return userEnvironment;
     }
   };
