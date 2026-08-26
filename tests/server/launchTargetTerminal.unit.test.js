@@ -109,20 +109,40 @@ test("HTTP launch readiness requires the declared exact success status", async (
 });
 
 test("HTTP launch readiness stops immediately when the server exits", async () => {
-  const startedAt = Date.now();
+  let markLaunchStarted;
+  const launchStarted = new Promise((resolve) => {
+    markLaunchStarted = resolve;
+  });
   const command = commandWithHttpReadiness({
-    command: "exit 23",
+    command: "printf '[[LAUNCH-STARTED]]\\n'; exit 23",
     expectedStatus: 200,
     href: "http://127.0.0.1:9/api/health",
     marker: "[[NEVER-READY]]",
     method: "GET",
     timeoutSeconds: 30
   });
+  const completion = new Promise((resolve, reject) => {
+    const child = execFile("bash", ["-lc", command], (error, stdout) => {
+      if (error) {
+        error.stdout = stdout;
+        reject(error);
+        return;
+      }
+      resolve({ stdout });
+    });
+    child.stdout.once("data", (chunk) => {
+      assert.match(String(chunk), /\[\[LAUNCH-STARTED\]\]/u);
+      markLaunchStarted();
+    });
+  });
 
+  await launchStarted;
+  const startedAt = Date.now();
   await assert.rejects(
-    execFileAsync("bash", ["-lc", command]),
+    completion,
     (error) => {
       assert.equal(error.code, 23);
+      assert.match(error.stdout, /\[\[LAUNCH-STARTED\]\]/u);
       return true;
     }
   );
