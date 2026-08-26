@@ -703,6 +703,19 @@ async function createOutputTargetSpec(input = {}) {
   return createVibe64OutputTargetTerminalSpec(input);
 }
 
+function outputTargetExecutionDescriptor(outputTarget = {}, spec = {}) {
+  const presentationKind = String(spec.metadata?.outputPresentationKind || "").trim();
+  const outputMode = String(spec.metadata?.outputMode || "").trim();
+  return {
+    kind: presentationKind === "web"
+      ? "preview"
+      : outputMode === "finite"
+        ? "job"
+        : "terminal",
+    label: String(outputTarget.label || spec.metadata?.outputTargetLabel || "Output target").trim()
+  };
+}
+
 function findOutputTarget(targets = [], outputTargetId = "") {
   const normalizedOutputTargetId = normalizeOutputTargetId(outputTargetId);
   return targets.find((target) => target.id === normalizedOutputTargetId) || null;
@@ -2441,6 +2454,7 @@ function createOutputTargetTerminalController({
             cwd: spec.cwd || cwd,
             env: launchEnvironment.env,
             envPolicy: webOutput ? "preview" : "project",
+            execution: outputTargetExecutionDescriptor(outputTarget, spec),
             mode: "pty",
             project: commandProject,
             purpose: webOutput ? "preview" : "output",
@@ -2819,6 +2833,7 @@ export {
   launchReadinessMarkerLineSeen,
   launchRestartState,
   listOutputTargets,
+  outputTargetExecutionDescriptor,
   previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch,
   workspaceSetupLaunchDisabledReason,

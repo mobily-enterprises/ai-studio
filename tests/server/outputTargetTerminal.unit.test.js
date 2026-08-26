@@ -19,6 +19,7 @@ import {
   createLaunchRestartBaseline,
   createOutputTargetTerminalController,
   launchRestartState,
+  outputTargetExecutionDescriptor,
   previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch
 } from "../../packages/vibe64-terminals/src/server/outputTargetTerminal.js";
@@ -82,6 +83,36 @@ test("preview status, open, and identity selection reject frozen sessions before
   assert.equal(identity.ok, false);
   assert.equal(identity.code, frozen.code);
   assert.equal(projectReads, 0);
+});
+
+test("output targets declare the managed workload kind independently of their PTY transport", () => {
+  assert.deepEqual(outputTargetExecutionDescriptor({ label: "Build binary" }, {
+    metadata: {
+      outputMode: "finite",
+      outputPresentationKind: "none"
+    }
+  }), {
+    kind: "job",
+    label: "Build binary"
+  });
+  assert.deepEqual(outputTargetExecutionDescriptor({ label: "Run CLI" }, {
+    metadata: {
+      outputMode: "interactive",
+      outputPresentationKind: "terminal"
+    }
+  }), {
+    kind: "terminal",
+    label: "Run CLI"
+  });
+  assert.deepEqual(outputTargetExecutionDescriptor({ label: "Run app" }, {
+    metadata: {
+      outputMode: "interactive",
+      outputPresentationKind: "web"
+    }
+  }), {
+    kind: "preview",
+    label: "Run app"
+  });
 });
 
 test("HTTP launch readiness requires the declared exact success status", async () => {
@@ -218,6 +249,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
     });
     let previewIdentityInput = null;
     let blockProjectEnvironment = false;
+    let capturedLaunchExecution = null;
     let capturedLaunchProject = null;
     let capturedLaunchTerminal = null;
     let cleanupTerminalId = "terminal-workspace";
@@ -294,6 +326,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       async runCommand(input) {
         events.push("launch-started");
         assert.equal(session.workspaceSetup.recipeHash, currentSetup.recipeHash);
+        capturedLaunchExecution = input.execution;
         capturedLaunchProject = input.project;
         capturedLaunchTerminal = input.terminal;
         return {
@@ -329,6 +362,10 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
 
     assert.equal(terminal.ok, true);
     assert.equal(capturedLaunchProject.slug, "launch-project");
+    assert.deepEqual(capturedLaunchExecution, {
+      kind: "preview",
+      label: "Run app"
+    });
     assert.deepEqual(previewIdentityInput, {
       sessionId
     });

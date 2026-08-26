@@ -18,6 +18,9 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
+  runtimePackManagedCommands
+} from "../../packages/vibe64-execution/src/server/runtime/runtimePacks.js";
+import {
   listOutputTargets,
   workspaceSetupLaunchDisabledReason
 } from "../../packages/vibe64-terminals/src/server/outputTargetTerminal.js";
@@ -65,6 +68,53 @@ function webOutputTarget(overrides = {}) {
     ...overrides
   };
 }
+
+test("the C and C++ pack owns every advertised compiler, build, binary, and debugger command", () => {
+  assert.deepEqual(runtimePackManagedCommands("cpp"), [
+    "addr2line",
+    "ar",
+    "as",
+    "c++",
+    "c++filt",
+    "cc",
+    "clang",
+    "clang++",
+    "cmake",
+    "cpack",
+    "cpp",
+    "ctest",
+    "g++",
+    "gcc",
+    "gcore",
+    "gdb",
+    "gdb-add-index",
+    "gdbserver",
+    "gprof",
+    "gstack",
+    "ld",
+    "ld.bfd",
+    "ld.gold",
+    "ld.lld",
+    "ld64.lld",
+    "lld",
+    "lld-link",
+    "lldb",
+    "lldb-dap",
+    "lldb-server",
+    "make",
+    "ninja",
+    "nm",
+    "objcopy",
+    "objdump",
+    "pkg-config",
+    "ranlib",
+    "readelf",
+    "size",
+    "strings",
+    "strip",
+    "wasm-ld"
+  ]);
+});
 
 function outputTargetView(overrides = {}) {
   return {
