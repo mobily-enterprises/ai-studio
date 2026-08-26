@@ -23,6 +23,7 @@ const VIBE64_COMMAND_ACTORS = Object.freeze([
 ]);
 const VIBE64_COMMAND_PURPOSES = Object.freeze([
   "account",
+  "assistant",
   "terminal",
   "codex",
   "github",
@@ -85,6 +86,7 @@ const VIBE64_COMMAND_RUNTIMES = Object.freeze([
 ]);
 const DEFAULT_COMMAND_MAX_BUFFER_BYTES = 1000 * 1000 * 100;
 const DEFAULT_INTERACTIVE_RUNTIME_PURPOSES = new Set([
+  "assistant",
   "codex",
   "deployment",
   "preview",
@@ -175,11 +177,15 @@ function normalizeCredentialHome(value = {}) {
     return {};
   }
   return {
+    cacheRoot: normalizeAbsolutePath(credentialHome.cacheRoot),
+    configRoot: normalizeAbsolutePath(credentialHome.configRoot),
+    dataRoot: normalizeAbsolutePath(credentialHome.dataRoot),
     gid: Number.isSafeInteger(Number(credentialHome.gid ?? credentialHome.hostGid))
       ? Number(credentialHome.gid ?? credentialHome.hostGid)
       : null,
     home,
     scope: normalizeText(credentialHome.scope),
+    stateRoot: normalizeAbsolutePath(credentialHome.stateRoot),
     uid: Number.isSafeInteger(Number(credentialHome.uid ?? credentialHome.hostUid))
       ? Number(credentialHome.uid ?? credentialHome.hostUid)
       : null,
@@ -346,6 +352,7 @@ function normalizeVibe64CommandRequest(input = {}) {
     gitAuthToken: normalizeText(request.gitAuthToken || request.gitCredentials?.token),
     gitSafeDirectories: normalizeAbsolutePaths(request.gitSafeDirectories || request.safeDirectories),
     gitTransport: normalizeEnum(request.gitTransport, VIBE64_COMMAND_GIT_TRANSPORTS, request.githubTransport ? "github-https" : "none", "git_transport"),
+    inheritProcessEnv: request.inheritProcessEnv !== false,
     input: request.stdin ?? request.input,
     logPath: normalizeAbsolutePath(request.logPath),
     maxBuffer: Number.isSafeInteger(Number(request.maxBuffer)) && Number(request.maxBuffer) > 0

@@ -438,6 +438,10 @@ function createOpenCodeTerminalController({
     };
   }
 
+  function projectExecutionSlug(runtime = {}) {
+    return text(path.basename(path.resolve(runtime.projectContextRoot || runtime.stateRoot)));
+  }
+
   function scheduleCatalogStop() {
     clearTimeout(catalogIdleTimer);
     catalogIdleTimer = setTimeout(() => {
@@ -464,6 +468,12 @@ function createOpenCodeTerminalController({
         command,
         dbPath: roots.dbPath,
         env,
+        execution: {
+          label: "OpenCode model catalogue",
+          operationId: "opencode-catalog",
+          ownerId: `opencode-catalog-${fingerprint(runtime.stateRoot).slice(0, 40)}`,
+          projectSlug: projectExecutionSlug(runtime)
+        },
         privateRoot: roots.privateRoot,
         workdir: roots.workdir
       });
@@ -650,6 +660,13 @@ function createOpenCodeTerminalController({
         command,
         dbPath: roots.dbPath,
         env,
+        execution: {
+          label: "OpenCode assistant",
+          operationId: "opencode-server",
+          ownerId: context.sessionId,
+          projectSlug: projectExecutionSlug(context.runtime),
+          sessionId: context.sessionId
+        },
         managedEnv: commands.env,
         modelProviderId: connection.modelProviderId,
         privateRoot: roots.privateRoot,

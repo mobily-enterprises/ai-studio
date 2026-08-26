@@ -153,6 +153,60 @@ test("a managed host fails closed when its execution provider is unavailable", a
   await assert.rejects(readFile(markerPath, "utf8"), { code: "ENOENT" });
 });
 
+test("isolated managed commands exclude the daemon environment and own their XDG roots", async (t) => {
+  const previousSecret = process.env.VIBE64_TEST_DAEMON_SECRET;
+  process.env.VIBE64_TEST_DAEMON_SECRET = "must-not-leak";
+  let observed = null;
+  const release = installVibe64ManagedExecutionProvider({
+    async runCommand(request, context) {
+      observed = { request, env: context.env };
+      return { execution: request.execution, ok: true };
+    },
+    async stopExecution() {
+      return { ok: true, scopeEmpty: true };
+    }
+  });
+  t.after(() => {
+    release();
+    if (previousSecret === undefined) {
+      delete process.env.VIBE64_TEST_DAEMON_SECRET;
+    } else {
+      process.env.VIBE64_TEST_DAEMON_SECRET = previousSecret;
+    }
+  });
+
+  const result = await runVibe64Command({
+    baseEnv: { LANG: "en_AU.UTF-8", SAFE_VALUE: "kept" },
+    command: process.execPath,
+    credentialHome: {
+      cacheRoot: "/tmp/v64-isolated/cache",
+      configRoot: "/tmp/v64-isolated/config",
+      dataRoot: "/tmp/v64-isolated/data",
+      home: "/tmp/v64-isolated/home",
+      stateRoot: "/tmp/v64-isolated/state"
+    },
+    execution: {
+      kind: "assistant",
+      lifecycle: "service",
+      ownerId: "isolated-assistant"
+    },
+    inheritProcessEnv: false,
+    mode: "detached",
+    purpose: "assistant",
+    runtimes: []
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(observed.request.inheritProcessEnv, false);
+  assert.equal(observed.env.VIBE64_TEST_DAEMON_SECRET, undefined);
+  assert.equal(observed.env.SAFE_VALUE, "kept");
+  assert.equal(observed.env.HOME, "/tmp/v64-isolated/home");
+  assert.equal(observed.env.XDG_CACHE_HOME, "/tmp/v64-isolated/cache");
+  assert.equal(observed.env.XDG_CONFIG_HOME, "/tmp/v64-isolated/config");
+  assert.equal(observed.env.XDG_DATA_HOME, "/tmp/v64-isolated/data");
+  assert.equal(observed.env.XDG_STATE_HOME, "/tmp/v64-isolated/state");
+});
+
 test("standalone detached execution stops and drains its exact process group", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-owned-detached-"));
   const markerPath = path.join(root, "started.txt");

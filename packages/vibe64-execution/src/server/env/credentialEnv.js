@@ -41,12 +41,27 @@ function credentialEnv({ actor = {}, request = {} } = {}) {
     throw error;
   }
   const username = normalizeText(credentialHome.username || actor.user?.username);
-  return homeEnvForUser({
+  const env = homeEnvForUser({
     home,
     username
   }, {
     VIBE64_CREDENTIAL_HOME: home,
   });
+  return {
+    ...env,
+    ...(normalizeAbsolutePath(credentialHome.cacheRoot)
+      ? { XDG_CACHE_HOME: normalizeAbsolutePath(credentialHome.cacheRoot) }
+      : {}),
+    ...(normalizeAbsolutePath(credentialHome.configRoot)
+      ? { XDG_CONFIG_HOME: normalizeAbsolutePath(credentialHome.configRoot) }
+      : {}),
+    ...(normalizeAbsolutePath(credentialHome.dataRoot)
+      ? { XDG_DATA_HOME: normalizeAbsolutePath(credentialHome.dataRoot) }
+      : {}),
+    ...(normalizeAbsolutePath(credentialHome.stateRoot)
+      ? { XDG_STATE_HOME: normalizeAbsolutePath(credentialHome.stateRoot) }
+      : {})
+  };
 }
 
 export {

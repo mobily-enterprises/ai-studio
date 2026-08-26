@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -7,6 +10,8 @@ import {
 
 import {
   OPENCODE_ECONOMY_AGENT_ID,
+  OPENCODE_EXPECTED_VERSION,
+  createOpenCodeServerProcess,
   safeOpenCodeEnvironment
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 
@@ -65,4 +70,79 @@ test("OpenCode child cleanup terminates its detached process group", async () =>
   const result = await supervised.stop();
   assert.equal(result.exited, true);
   assert.equal(result.signal, "SIGTERM");
+});
+
+test("OpenCode servers run and drain through one managed execution id", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-managed-"));
+  const privateRoot = path.join(root, "private");
+  const requests = [];
+  const stops = [];
+  const executionId = "11111111-1111-4111-8111-111111111111";
+  t.after(() => rm(root, { force: true, recursive: true }));
+
+  const server = await createOpenCodeServerProcess({
+    commandRunner: async (request) => {
+      requests.push(request);
+      return {
+        execution: { ...request.execution, id: executionId },
+        ok: true,
+        pid: 4242
+      };
+    },
+    dbPath: path.join(root, "state", "opencode.db"),
+    env: {
+      ANTHROPIC_API_KEY: "must-not-leak",
+      LANG: "en_AU.UTF-8",
+      PATH: "/usr/bin"
+    },
+    execution: {
+      ownerId: "session-1",
+      projectSlug: "catalogue",
+      sessionId: "session-1"
+    },
+    expectedVersion: OPENCODE_EXPECTED_VERSION,
+    fetchImpl: async (url) => {
+      assert.equal(new URL(url).pathname, "/global/health");
+      return new Response(JSON.stringify({
+        healthy: true,
+        version: OPENCODE_EXPECTED_VERSION
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200
+      });
+    },
+    port: 43210,
+    privateRoot,
+    stopExecution: async (id, options) => {
+      stops.push({ id, options });
+      return { executionId: id, ok: true, scopeEmpty: true, stopped: true };
+    },
+    workdir: root
+  });
+
+  assert.equal(requests.length, 1);
+  const [request] = requests;
+  assert.equal(request.mode, "detached");
+  assert.equal(request.purpose, "assistant");
+  assert.equal(request.inheritProcessEnv, false);
+  assert.equal(request.execution.kind, "assistant");
+  assert.equal(request.execution.lifecycle, "service");
+  assert.equal(request.execution.ownerId, "session-1");
+  assert.equal(request.execution.projectSlug, "catalogue");
+  assert.equal(request.execution.sessionId, "session-1");
+  assert.equal(request.baseEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(request.baseEnv.OPENCODE_DB, path.join(root, "state", "opencode.db"));
+  assert.equal(request.credentialHome.home, path.join(privateRoot, "home"));
+  assert.equal(server.executionId, executionId);
+
+  const proof = await server.stop();
+  assert.equal(proof.exited, true);
+  assert.deepEqual(stops, [{
+    id: executionId,
+    options: {
+      reason: "opencode-server-stop",
+      termTimeoutMs: 3000
+    }
+  }]);
+  await assert.rejects(access(privateRoot), { code: "ENOENT" });
 });

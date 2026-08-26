@@ -1,4 +1,10 @@
 import { randomBytes } from "node:crypto";
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readSync
+} from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -6,7 +12,9 @@ import process from "node:process";
 
 import {
   isolatedProcessEnv,
-  startSupervisedProcess
+  runVibe64Command,
+  stableHash,
+  stopVibe64Execution
 } from "@local/vibe64-execution/server";
 
 import { createOpenCodeServerClient } from "./opencodeServerClient.js";
@@ -17,6 +25,14 @@ const OPENCODE_HOST = "127.0.0.1";
 const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
 const OPENCODE_READY_TIMEOUT_MS = 30_000;
 const OPENCODE_STOP_TIMEOUT_MS = 3_000;
+const OPENCODE_MANAGED_STARTUP_SCRIPT = [
+  "set -eu",
+  "log_path=\"$1\"",
+  "shift",
+  ": > \"$log_path\"",
+  "chmod 600 \"$log_path\"",
+  "exec \"$@\" >>\"$log_path\" 2>&1"
+].join("\n");
 const OPENCODE_INLINE_CONFIG = JSON.stringify({
   agent: {
     [OPENCODE_ECONOMY_AGENT_ID]: {
@@ -140,8 +156,10 @@ async function createOpenCodeServerProcess({
   apiKey = "",
   cacheRoot = "",
   command = "opencode",
+  commandRunner = runVibe64Command,
   dbPath = "",
   env = process.env,
+  execution = {},
   expectedVersion = OPENCODE_EXPECTED_VERSION,
   fetchImpl = globalThis.fetch,
   managedEnv = {},
@@ -150,7 +168,7 @@ async function createOpenCodeServerProcess({
   privateRoot = "",
   readinessTimeoutMs = OPENCODE_READY_TIMEOUT_MS,
   shimDirs = [],
-  spawnImpl = null,
+  stopExecution = stopVibe64Execution,
   workdir = ""
 } = {}) {
   const normalizedDbPath = path.resolve(text(dbPath));
@@ -175,6 +193,34 @@ async function createOpenCodeServerProcess({
   let processHandle = null;
   let stopPromise = null;
 
+  const logPath = path.join(normalizedPrivateRoot, "opencode-server.log");
+
+  function readLogs() {
+    let descriptor = null;
+    try {
+      descriptor = openSync(logPath, "r");
+      const size = Number(fstatSync(descriptor).size) || 0;
+      const length = Math.min(size, OPENCODE_LOG_LIMIT_BYTES);
+      const output = Buffer.alloc(length);
+      if (length > 0) {
+        readSync(descriptor, output, 0, length, Math.max(0, size - length));
+      }
+      return {
+        stderr: output.toString("utf8").trim(),
+        stdout: ""
+      };
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return { stderr: "", stdout: "" };
+      }
+      throw error;
+    } finally {
+      if (descriptor !== null) {
+        closeSync(descriptor);
+      }
+    }
+  }
+
   function stop() {
     if (stopPromise) {
       return stopPromise;
@@ -183,15 +229,32 @@ async function createOpenCodeServerProcess({
       const exitProof = processHandle
         ? await processHandle.stop()
         : { code: null, exited: true, signal: "" };
-      await rm(normalizedPrivateRoot, { force: true, recursive: true });
+      if (exitProof.exited === true) {
+        await rm(normalizedPrivateRoot, { force: true, recursive: true });
+      }
       return exitProof;
     });
     return stopPromise;
   }
 
   try {
-    processHandle = await startSupervisedProcess({
+    const processEnv = safeOpenCodeEnvironment(env, {
+      cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
+      dbPath: normalizedDbPath,
+      managedEnv,
+      password,
+      privateRoot: normalizedPrivateRoot,
+      shimDirs
+    });
+    const startResult = await commandRunner({
+      actor: "app",
+      allowedRoots: [normalizedWorkdir],
       args: [
+        "-c",
+        OPENCODE_MANAGED_STARTUP_SCRIPT,
+        "vibe64-opencode-server",
+        logPath,
+        text(command) || "opencode",
         "serve",
         "--pure",
         "--hostname",
@@ -200,19 +263,59 @@ async function createOpenCodeServerProcess({
         String(selectedPort),
         "--mdns=false"
       ],
-      command: text(command) || "opencode",
+      baseEnv: processEnv,
+      command: "/bin/sh",
+      credentialHome: {
+        cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : path.join(normalizedPrivateRoot, "cache"),
+        configRoot: path.join(normalizedPrivateRoot, "config"),
+        dataRoot: path.join(normalizedPrivateRoot, "data"),
+        home: path.join(normalizedPrivateRoot, "home"),
+        stateRoot: path.join(normalizedPrivateRoot, "state")
+      },
       cwd: normalizedWorkdir,
-      env: safeOpenCodeEnvironment(env, {
-        cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
-        dbPath: normalizedDbPath,
-        managedEnv,
-        password,
-        privateRoot: normalizedPrivateRoot,
-        shimDirs
-      }),
-      logLimitBytes: OPENCODE_LOG_LIMIT_BYTES,
-      ...(typeof spawnImpl === "function" ? { spawnImpl } : {}),
-      stopTimeoutMs: OPENCODE_STOP_TIMEOUT_MS
+      envPolicy: "auth",
+      execution: {
+        kind: "assistant",
+        label: text(execution.label) || "OpenCode assistant",
+        lifecycle: "service",
+        operationId: text(execution.operationId) || "opencode-server",
+        ownerId: text(execution.ownerId) || stableHash(`${normalizedDbPath}\0${normalizedWorkdir}`),
+        projectSlug: text(execution.projectSlug),
+        sessionId: text(execution.sessionId)
+      },
+      inheritProcessEnv: false,
+      mode: "detached",
+      purpose: "assistant",
+      shimDirs
+    });
+    if (startResult?.ok !== true || !text(startResult?.execution?.id)) {
+      const error = new Error(
+        text(startResult?.error || startResult?.output) || "OpenCode failed to start."
+      );
+      error.code = text(startResult?.code) || "vibe64_opencode_start_failed";
+      error.execution = startResult?.execution;
+      error.retryable = startResult?.retryable === true;
+      throw error;
+    }
+    let stopped = false;
+    processHandle = Object.freeze({
+      get exited() {
+        return stopped;
+      },
+      executionId: startResult.execution.id,
+      pid: startResult.pid,
+      readLogs,
+      async stop() {
+        const proof = await stopExecution(startResult.execution.id, {
+          reason: "opencode-server-stop",
+          termTimeoutMs: OPENCODE_STOP_TIMEOUT_MS
+        });
+        stopped = proof?.scopeEmpty === true;
+        return {
+          ...(proof && typeof proof === "object" ? proof : {}),
+          exited: stopped
+        };
+      }
     });
     const health = await waitForOpenCodeReady({
       client,
@@ -228,11 +331,12 @@ async function createOpenCodeServerProcess({
       dbPath: normalizedDbPath,
       health: Object.freeze({ ...health }),
       modelProviderId: text(modelProviderId),
+      executionId: processHandle.executionId,
       pid: processHandle.pid,
       port: selectedPort,
       privateRoot: normalizedPrivateRoot,
       readLogs() {
-        return processHandle.readLogs();
+        return readLogs();
       },
       stop,
       workdir: normalizedWorkdir

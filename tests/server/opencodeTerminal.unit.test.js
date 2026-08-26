@@ -309,6 +309,19 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     harness.processStarts.find((entry) => entry.options.apiKey).options.apiKey,
     "deepseek-key-one"
   );
+  const sessionProcess = harness.processStarts.find((entry) => entry.options.apiKey);
+  assert.deepEqual(sessionProcess.options.execution, {
+    label: "OpenCode assistant",
+    operationId: "opencode-server",
+    ownerId: "session-1",
+    projectSlug: path.basename(harness.root),
+    sessionId: "session-1"
+  });
+  const catalogProcess = harness.processStarts.find((entry) => !entry.options.apiKey);
+  assert.equal(catalogProcess.options.execution.label, "OpenCode model catalogue");
+  assert.equal(catalogProcess.options.execution.operationId, "opencode-catalog");
+  assert.equal(catalogProcess.options.execution.projectSlug, path.basename(harness.root));
+  assert.match(catalogProcess.options.execution.ownerId, /^opencode-catalog-[a-f0-9]{40}$/u);
   const mainPrompt = harness.promptCalls.find((entry) => entry.id === delivered.thread.id).input;
   assert.equal(mainPrompt.agent, "build");
   assert.deepEqual(mainPrompt.model, {

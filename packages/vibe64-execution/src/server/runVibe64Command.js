@@ -103,10 +103,12 @@ async function runVibe64Command(input = {}) {
   try {
     request = normalizeVibe64CommandRequest(input);
     const actor = await resolveVibe64CommandActor(request);
-    const baseEnv = {
-      ...process.env,
-      ...request.baseEnv
-    };
+    const baseEnv = request.inheritProcessEnv
+      ? {
+          ...process.env,
+          ...request.baseEnv
+        }
+      : { ...request.baseEnv };
     const executionEnv = (value = {}) => ({
       ...value,
       VIBE64_EXECUTION_ID: request.execution.id
@@ -160,7 +162,10 @@ async function runVibe64Command(input = {}) {
         runLocal: local
       });
     }
-    if (vibe64ManagedExecutionRequired(baseEnv)) {
+    if (
+      vibe64ManagedExecutionRequired(baseEnv) ||
+      vibe64ManagedExecutionRequired(process.env)
+    ) {
       return commandErrorResult(
         "Managed execution safety is unavailable. Vibe64 did not start this work.",
         "vibe64_managed_execution_provider_unavailable",
