@@ -152,6 +152,27 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
       }
     ],
     [
+      "/api/vibe64/settings",
+      {
+        aiPolicy: {
+          customNote: "",
+          expertise: "comfortable",
+          promptHints: true,
+          rationale: "concise",
+          responseLength: "concise",
+          revision: 0,
+          tone: "encouraging",
+          version: 1
+        },
+        aiPolicyCanEdit: true,
+        developmentDatabase: {
+          managed: false,
+          scope: "external"
+        },
+        ok: true
+      }
+    ],
+    [
       "/api/studio/current-app",
       {
         components: ["nodejs"],

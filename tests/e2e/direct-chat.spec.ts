@@ -22,6 +22,21 @@ const REPOSITORY_RECOVERY_GIT_BOUNDARY = [
   "Record the initial HEAD and index with read-only commands, leave both byte-for-byte unchanged, and do not publish. Resolve only by editing the conflicting working-tree files so the user can retry the Vibe64 operation.",
   "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
 ].join("\n");
+
+async function openTemporaryAiWorkspace(page: Page) {
+  await expect(page.getByRole("region", { name: "Session chat" })).toBeVisible();
+  const expandedAction = page.getByRole("button", {
+    name: "Open temporary AI",
+    exact: true
+  });
+  if (await expandedAction.isVisible()) {
+    await expandedAction.click();
+    return;
+  }
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await page.locator("[data-vibe64-temporary-ai-action]").click();
+}
+
 test.describe("direct chat", () => {
   test("sends an ordinary chat message without orchestration metadata or a prompts section", async ({ page }) => {
     const messages: Record<string, unknown>[] = [];
@@ -35,7 +50,7 @@ test.describe("direct chat", () => {
 
     await expect(page.getByText("Prompts", { exact: true })).toHaveCount(0);
 
-    const composer = page.getByLabel("Message Codex");
+    const composer = page.getByLabel("Message AI assistant");
     await composer.fill("Make the smallest safe change.");
     await page.getByRole("button", { name: "Send message" }).click();
 
@@ -85,7 +100,7 @@ test.describe("direct chat", () => {
 
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-      const composer = page.getByLabel("Message Codex");
+      const composer = page.getByLabel("Message AI assistant");
       await composer.fill("Start the careful implementation.");
       await page.getByRole("button", { name: "Send message" }).click();
       await expect.poll(() => messages).toHaveLength(1);
@@ -316,7 +331,7 @@ test.describe("direct chat", () => {
       });
 
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
-      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await openTemporaryAiWorkspace(page);
 
       const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
       const navigation = workspace.getByRole("navigation", {
@@ -367,12 +382,12 @@ test.describe("direct chat", () => {
       mainChatVisible = true;
       await expect(workspace).not.toBeVisible();
       await expect(page.getByRole("region", { name: "Session chat" })).toBeFocused();
-      await page.getByLabel("Message Codex").fill("Continue in the main conversation.");
+      await page.getByLabel("Message AI assistant").fill("Continue in the main conversation.");
       await page.getByRole("button", { name: "Send message", exact: true }).click();
       await expect.poll(() => messages).toHaveLength(1);
       await expect.poll(() => pollsWhileMainChatVisible).toBeGreaterThan(0);
 
-      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await openTemporaryAiWorkspace(page);
       await expect(workspace).toBeVisible();
       await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
       await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
@@ -408,7 +423,7 @@ test.describe("direct chat", () => {
       await page.setViewportSize({ height: 900, width });
       await mockDirectChat(page);
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
-      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await openTemporaryAiWorkspace(page);
 
       const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
       const navigation = workspace.getByRole("navigation", {
@@ -423,7 +438,7 @@ test.describe("direct chat", () => {
       await expect(workspace).not.toBeVisible();
       await expect(page.getByRole("region", { name: "Session chat" })).toBeFocused();
 
-      await page.getByRole("button", { name: "Open temporary AI" }).click();
+      await openTemporaryAiWorkspace(page);
       await expect(navigation.getByRole("button", { name: "Temporary 1", exact: true })).toBeVisible();
       await expect(navigation.getByRole("button", { name: "Temporary 2", exact: true })).toHaveAttribute(
         "aria-current",
@@ -640,7 +655,7 @@ test.describe("direct chat", () => {
       await page.waitForTimeout(180);
       await expect.poll(() => conversationDistanceFromBottom(body)).toBeGreaterThan(100);
 
-      await page.getByLabel("Message Codex").fill("Resume following after my accepted message.");
+      await page.getByLabel("Message AI assistant").fill("Resume following after my accepted message.");
       await page.getByRole("button", { name: "Send message" }).click();
       await expect(page.getByText("Resume following after my accepted message.", { exact: true })).toBeVisible();
       await expect.poll(() => conversationDistanceFromBottom(body)).toBeLessThanOrEqual(48);
