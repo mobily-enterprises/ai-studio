@@ -1,6 +1,17 @@
 #!/opt/vibe64/runtime-packs/node26/bin/node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -19,6 +30,7 @@ const ALLOWED_OPERATIONS = new Set([
   "github-api-command",
   "github-toolchain",
   "github-workflow-command",
+  "managed-execution",
   "managed-service",
   "vibe64-command"
 ]);
@@ -65,6 +77,28 @@ const MANAGED_ROOT = "/var/lib/vibe64";
 const RESERVED_HUMAN_USERNAMES = new Set([
   "root"
 ]);
+const MANAGED_EXECUTION_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
+const MANAGED_EXECUTION_KINDS = new Set([
+  "assistant",
+  "browser",
+  "control",
+  "job",
+  "preview",
+  "service",
+  "terminal"
+]);
+const MANAGED_EXECUTION_MODES = new Set([
+  "capture",
+  "detached",
+  "pty"
+]);
+const MANAGED_EXECUTION_MEMORY_MIN_BYTES = 64 * 1024 * 1024;
+const MANAGED_EXECUTION_MEMORY_MAX_BYTES = 64 * 1024 * 1024 * 1024;
+const MANAGED_EXECUTION_WORK_MEMORY_MIN_BYTES = 256 * 1024 * 1024;
+const MANAGED_EXECUTION_WORK_MEMORY_MAX_BYTES = 1024 * 1024 * 1024 * 1024;
+const MANAGED_EXECUTION_TASKS_MIN = 8;
+const MANAGED_EXECUTION_TASKS_MAX = 8192;
+const MANAGED_EXECUTION_STOP_TIMEOUT_MS = 15_000;
 
 main().catch((error) => {
   process.stderr.write(`${String(error?.message || error)}\n`);
@@ -72,6 +106,10 @@ main().catch((error) => {
 });
 
 async function main() {
+  if (process.argv[2] === "run-managed") {
+    runManagedExecutionPayload(process.argv[3] || "");
+    return;
+  }
   if (process.argv[2] !== "execute") {
     throw new Error("Usage: vibe64-exec-helper execute [payload-json-file]");
   }
@@ -87,6 +125,10 @@ async function main() {
   }
   if (operation === "managed-service") {
     handleManagedServiceOperation(payload);
+    return;
+  }
+  if (operation === "managed-execution") {
+    handleManagedExecutionOperation(payload, process.argv[3] || "");
     return;
   }
   const username = safeUsername(payload.username);
@@ -138,6 +180,542 @@ async function main() {
     throw child.error;
   }
   process.exit(typeof child.status === "number" ? child.status : 1);
+}
+
+function handleManagedExecutionOperation(payload = {}, requestPayloadPath = "") {
+  const owner = resolveOwnerUser();
+  consumeManagedExecutionRequestPayload(requestPayloadPath, owner);
+  ensureGroup(VIBE64_GROUP);
+  const action = String(payload.action || "").trim();
+  const executionId = managedExecutionId(payload.executionId);
+  const unitName = managedExecutionUnitName(executionId, owner);
+  if (action === "inspect") {
+    writeManagedExecutionState(unitName, executionId, owner);
+    return;
+  }
+  if (action === "stop") {
+    stopManagedExecution(unitName, executionId, owner);
+    return;
+  }
+  if (action !== "start") {
+    throw new Error("Vibe64 exec helper rejected an unknown managed execution action.");
+  }
+
+  const mode = managedExecutionMode(payload.mode);
+  const kind = managedExecutionKind(payload.kind);
+  const lifecycle = String(payload.lifecycle || "").trim();
+  const expectedLifecycle = mode === "capture"
+    ? "finite"
+    : mode === "pty"
+      ? "interactive"
+      : "service";
+  if (lifecycle !== expectedLifecycle) {
+    throw new Error("Vibe64 exec helper rejected a managed execution lifecycle mismatch.");
+  }
+  const targetUser = managedExecutionTargetUser(payload, owner);
+  const commandOperation = String(payload.commandOperation || "").trim();
+  const cwd = resolveAllowedCwd(payload.cwd || "", owner.username, {
+    operation: commandOperation,
+    targetUser
+  });
+  const command = String(payload.command || "").trim();
+  if (!command || /[\r\n]/u.test(command)) {
+    throw new Error("Vibe64 exec helper rejected an invalid managed execution command.");
+  }
+  if (targetUser.username !== owner.username && !ALLOWED_COMMANDS.has(path.basename(command))) {
+    throw new Error("Vibe64 exec helper rejected an unsupported real-user managed command.");
+  }
+  const args = Array.isArray(payload.args) ? payload.args.map((arg) => String(arg)) : [];
+  const env = helperChildEnv(payload.env || {}, targetUser, owner.username);
+  const memoryMaxBytes = managedExecutionInteger(
+    payload.memoryMaxBytes,
+    MANAGED_EXECUTION_MEMORY_MIN_BYTES,
+    MANAGED_EXECUTION_MEMORY_MAX_BYTES,
+    "memory limit"
+  );
+  const tasksMax = managedExecutionInteger(
+    payload.tasksMax,
+    MANAGED_EXECUTION_TASKS_MIN,
+    MANAGED_EXECUTION_TASKS_MAX,
+    "task limit"
+  );
+  const workMemoryMaxBytes = managedExecutionInteger(
+    payload.workMemoryMaxBytes,
+    MANAGED_EXECUTION_WORK_MEMORY_MIN_BYTES,
+    MANAGED_EXECUTION_WORK_MEMORY_MAX_BYTES,
+    "work-slice memory limit"
+  );
+  const workTasksMax = managedExecutionInteger(
+    payload.workTasksMax,
+    MANAGED_EXECUTION_TASKS_MIN,
+    MANAGED_EXECUTION_TASKS_MAX,
+    "work-slice task limit"
+  );
+  if (memoryMaxBytes > workMemoryMaxBytes || tasksMax > workTasksMax) {
+    throw new Error("Vibe64 exec helper rejected an execution limit above its work-slice limit.");
+  }
+  configureManagedExecutionWorkSlice(owner, {
+    memoryMaxBytes: workMemoryMaxBytes,
+    tasksMax: workTasksMax
+  });
+  ensureManagedExecutionRuntimeParents(owner);
+  const executionRoot = managedExecutionRuntimeRoot(owner, executionId);
+  const runnerPayloadPath = path.join(executionRoot, "command.json");
+  mkdirSync(executionRoot, {
+    mode: 0o700,
+    recursive: true
+  });
+  chownSync(executionRoot, targetUser.uid, targetUser.gid);
+  writeFileSync(runnerPayloadPath, `${JSON.stringify({
+    args,
+    command,
+    cwd,
+    env,
+    inputBase64: String(payload.inputBase64 || ""),
+    inputPresent: payload.inputPresent === true,
+    executionId,
+    schema: "vibe64.managed-execution.command",
+    schemaVersion: 1
+  })}\n`, {
+    flag: "wx",
+    mode: 0o600
+  });
+  chmodSync(runnerPayloadPath, 0o600);
+  chownSync(runnerPayloadPath, targetUser.uid, targetUser.gid);
+
+  const helperPath = path.resolve(process.argv[1]);
+  const systemdArgs = [
+    "--quiet",
+    `--unit=${unitName}`,
+    "--service-type=exec",
+    `--slice=${managedExecutionSliceName(owner)}`,
+    `--property=Description=Vibe64 ${kind} execution`,
+    `--property=User=${targetUser.username}`,
+    `--property=Group=${VIBE64_GROUP}`,
+    "--property=SupplementaryGroups=nix-users",
+    "--property=UMask=0007",
+    `--property=WorkingDirectory=${cwd}`,
+    "--property=KillMode=control-group",
+    "--property=ExitType=cgroup",
+    "--property=OOMPolicy=stop",
+    "--property=MemoryAccounting=yes",
+    "--property=CPUAccounting=yes",
+    "--property=IOAccounting=yes",
+    "--property=TasksAccounting=yes",
+    `--property=MemoryMax=${memoryMaxBytes}`,
+    `--property=TasksMax=${tasksMax}`,
+    "--property=TimeoutStopSec=10s",
+    ...(mode === "capture" ? ["--wait", "--pipe"] : []),
+    ...(mode === "pty" ? ["--wait", "--pty"] : []),
+    helperPath,
+    "run-managed",
+    runnerPayloadPath
+  ];
+  const started = spawnSync("systemd-run", systemdArgs, {
+    stdio: "inherit"
+  });
+  if (mode !== "detached" || started.error || started.status !== 0) {
+    rmSync(executionRoot, {
+      force: true,
+      recursive: true
+    });
+  }
+  if (started.error) {
+    throw started.error;
+  }
+  process.exit(typeof started.status === "number" ? started.status : 1);
+}
+
+function consumeManagedExecutionRequestPayload(payloadPath = "", owner = {}) {
+  const normalized = String(payloadPath || "").trim();
+  if (!normalized) {
+    return;
+  }
+  const resolved = path.resolve(normalized);
+  const allowedRoot = path.join(workspaceTempRoot(owner.username), "managed-execution-payloads");
+  if (relativePathParts(allowedRoot, resolved).length !== 1) {
+    throw new Error("Vibe64 exec helper rejected an unsafe managed execution payload path.");
+  }
+  unlinkSync(resolved);
+}
+
+function runManagedExecutionPayload(payloadPath = "") {
+  const resolved = path.resolve(String(payloadPath || ""));
+  const input = readFileSync(resolved, "utf8");
+  unlinkSync(resolved);
+  const payload = JSON.parse(input);
+  if (
+    payload?.schema !== "vibe64.managed-execution.command" ||
+    payload?.schemaVersion !== 1
+  ) {
+    throw new Error("Vibe64 managed execution runner rejected an invalid payload.");
+  }
+  const command = String(payload.command || "").trim();
+  if (!command || /[\r\n]/u.test(command)) {
+    throw new Error("Vibe64 managed execution runner rejected an invalid command.");
+  }
+  process.umask(0o007);
+  const child = spawnSync(command, Array.isArray(payload.args) ? payload.args.map(String) : [], {
+    cwd: String(payload.cwd || "/"),
+    env: payload.env && typeof payload.env === "object" && !Array.isArray(payload.env)
+      ? payload.env
+      : {},
+    ...(payload.inputPresent === true
+      ? {
+          input: Buffer.from(String(payload.inputBase64 || ""), "base64"),
+          stdio: ["pipe", "inherit", "inherit"]
+        }
+      : {
+          stdio: "inherit"
+        })
+  });
+  if (child.error) {
+    throw child.error;
+  }
+  const status = typeof child.status === "number" ? child.status : 1;
+  writeManagedExecutionResult(path.dirname(resolved), {
+    ...managedRunnerCgroupMeasurements(),
+    executionId: managedExecutionId(payload.executionId),
+    execMainCode: child.signal ? "killed" : "exited",
+    execMainStatus: child.signal || String(status),
+    result: child.signal ? "signal" : status === 0 ? "success" : "exit-code",
+    signal: String(child.signal || "")
+  });
+  process.exit(status);
+}
+
+function configureManagedExecutionWorkSlice(owner = {}, {
+  memoryMaxBytes = 0,
+  tasksMax = 0
+} = {}) {
+  const sliceName = managedExecutionSliceName(owner);
+  runRootCommand("systemctl", ["start", sliceName]);
+  runRootCommand("systemctl", [
+    "set-property",
+    "--runtime",
+    sliceName,
+    `MemoryMax=${memoryMaxBytes}`,
+    `TasksMax=${tasksMax}`,
+    "MemoryAccounting=yes",
+    "CPUAccounting=yes",
+    "IOAccounting=yes",
+    "TasksAccounting=yes"
+  ]);
+}
+
+function managedExecutionTargetUser(payload = {}, owner = {}) {
+  const username = safeUsername(payload.username || owner.username);
+  const targetUser = resolveOsUser(username);
+  assertExpectedId("uid", payload.uid, targetUser.uid);
+  assertExpectedId("gid", payload.gid, targetUser.gid);
+  if (targetUser.username !== owner.username) {
+    assertHumanUsername(targetUser.username);
+    assertEnabledForVibe64(owner, targetUser.username);
+  }
+  assertUserInGroup(targetUser.username, VIBE64_GROUP);
+  return targetUser;
+}
+
+function managedExecutionId(value = "") {
+  const executionId = String(value || "").trim();
+  if (!MANAGED_EXECUTION_ID_PATTERN.test(executionId)) {
+    throw new Error("Vibe64 exec helper rejected an invalid managed execution id.");
+  }
+  return executionId.toLowerCase();
+}
+
+function managedExecutionKind(value = "") {
+  const kind = String(value || "").trim();
+  if (!MANAGED_EXECUTION_KINDS.has(kind)) {
+    throw new Error("Vibe64 exec helper rejected an unknown managed execution kind.");
+  }
+  return kind;
+}
+
+function managedExecutionMode(value = "") {
+  const mode = String(value || "").trim();
+  if (!MANAGED_EXECUTION_MODES.has(mode)) {
+    throw new Error("Vibe64 exec helper rejected an unknown managed execution mode.");
+  }
+  return mode;
+}
+
+function managedExecutionInteger(value, minimum, maximum, label = "value") {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`Vibe64 exec helper rejected an invalid managed execution ${label}.`);
+  }
+  return parsed;
+}
+
+function managedExecutionUnitName(executionId = "", owner = {}) {
+  const workspace = workspaceFromDaemonUsername(safeUsername(owner.username));
+  return `vibe64-exec-${workspace}-${managedExecutionId(executionId).replaceAll("-", "")}.service`;
+}
+
+function managedExecutionSliceName(owner = {}) {
+  const workspace = workspaceFromDaemonUsername(safeUsername(owner.username));
+  return `vibe64-${workspace}-work.slice`;
+}
+
+function managedExecutionRuntimeRoot(owner = {}, executionId = "") {
+  return path.join(
+    managedExecutionRuntimeBase(owner),
+    "executions",
+    managedExecutionId(executionId)
+  );
+}
+
+function managedExecutionRuntimeBase(owner = {}) {
+  const workspace = workspaceFromDaemonUsername(safeUsername(owner.username));
+  return `/run/vibe64-${workspace}`;
+}
+
+function ensureManagedExecutionRuntimeParents(owner = {}) {
+  const runtimeBase = managedExecutionRuntimeBase(owner);
+  runRootCommand("install", [
+    "-d",
+    "-o",
+    safeUsername(owner.username),
+    "-g",
+    VIBE64_GROUP,
+    "-m",
+    "2750",
+    runtimeBase,
+    path.join(runtimeBase, "executions")
+  ]);
+}
+
+function managedExecutionResultPath(owner = {}, executionId = "") {
+  return path.join(managedExecutionRuntimeRoot(owner, executionId), "result.json");
+}
+
+function readManagedExecutionResult(owner = {}, executionId = "") {
+  const resultPath = managedExecutionResultPath(owner, executionId);
+  try {
+    const result = JSON.parse(readFileSync(resultPath, "utf8"));
+    return result?.schema === "vibe64.managed-execution.result" &&
+      result.schemaVersion === 1 &&
+      result.executionId === managedExecutionId(executionId)
+      ? result
+      : {};
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) {
+      return {};
+    }
+    throw error;
+  }
+}
+
+function writeManagedExecutionResult(executionRoot = "", result = {}) {
+  const resultPath = path.join(executionRoot, "result.json");
+  const temporaryPath = `${resultPath}.tmp-${process.pid}`;
+  writeFileSync(temporaryPath, `${JSON.stringify({
+    ...result,
+    schema: "vibe64.managed-execution.result",
+    schemaVersion: 1
+  })}\n`, {
+    flag: "wx",
+    mode: 0o600
+  });
+  renameSync(temporaryPath, resultPath);
+}
+
+function managedRunnerCgroupMeasurements() {
+  const membership = String(readFileSync("/proc/self/cgroup", "utf8") || "")
+    .split("\n")
+    .find((line) => line.startsWith("0::"));
+  const relative = String(membership || "").slice(3).replace(/^\/+/, "");
+  const cgroupPath = relative ? path.join("/sys/fs/cgroup", relative) : "";
+  if (!cgroupPath || !existsSync(cgroupPath)) {
+    return {};
+  }
+  const cpu = cgroupKeyValues(path.join(cgroupPath, "cpu.stat"));
+  const memoryEvents = cgroupKeyValues(path.join(cgroupPath, "memory.events"));
+  const io = cgroupIoTotals(path.join(cgroupPath, "io.stat"));
+  return {
+    cpuUsageNSec: String(Number(cpu.usage_usec || 0) * 1000),
+    ioReadBytes: String(io.readBytes),
+    ioWriteBytes: String(io.writeBytes),
+    memoryCurrent: cgroupSingleValue(path.join(cgroupPath, "memory.current")),
+    memoryPeak: cgroupSingleValue(path.join(cgroupPath, "memory.peak")),
+    memorySwapCurrent: cgroupSingleValue(path.join(cgroupPath, "memory.swap.current")),
+    oomKillCount: String(Number(memoryEvents.oom_kill || 0)),
+    tasksCurrent: cgroupSingleValue(path.join(cgroupPath, "pids.current")),
+    tasksPeak: cgroupSingleValue(path.join(cgroupPath, "pids.peak"))
+  };
+}
+
+function cgroupSingleValue(filePath = "") {
+  try {
+    const value = String(readFileSync(filePath, "utf8") || "0").trim();
+    return /^[0-9]+$/u.test(value) ? value : "0";
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return "0";
+    }
+    throw error;
+  }
+}
+
+function cgroupKeyValues(filePath = "") {
+  try {
+    return Object.fromEntries(String(readFileSync(filePath, "utf8") || "")
+      .split(/\r?\n/u)
+      .flatMap((line) => {
+        const [key, value] = line.trim().split(/\s+/u);
+        return key && /^[0-9]+$/u.test(value || "") ? [[key, value]] : [];
+      }));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+function cgroupIoTotals(filePath = "") {
+  let text = "";
+  try {
+    text = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { readBytes: 0, writeBytes: 0 };
+    }
+    throw error;
+  }
+  let readBytes = 0;
+  let writeBytes = 0;
+  for (const line of String(text || "").split(/\r?\n/u)) {
+    for (const field of line.trim().split(/\s+/u).slice(1)) {
+      const [key, value] = field.split("=");
+      if (key === "rbytes") readBytes += Number(value || 0);
+      if (key === "wbytes") writeBytes += Number(value || 0);
+    }
+  }
+  return { readBytes, writeBytes };
+}
+
+function managedExecutionState(unitName = "", executionId = "", owner = {}) {
+  const stateResult = runRootCommandAllowFailure("systemctl", [
+    "show",
+    unitName,
+    "--no-pager",
+    "--property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,MainPID,ControlGroup,MemoryCurrent,MemoryPeak,MemorySwapCurrent,TasksCurrent,TasksMax,CPUUsageNSec,IOReadBytes,IOWriteBytes"
+  ]);
+  const values = {};
+  for (const line of String(stateResult.stdout || "").split(/\r?\n/u)) {
+    const separator = line.indexOf("=");
+    if (separator > 0) {
+      values[line.slice(0, separator)] = line.slice(separator + 1);
+    }
+  }
+  const controlGroup = String(values.ControlGroup || "").trim();
+  const cgroupPath = controlGroup
+    ? path.join("/sys/fs/cgroup", controlGroup.replace(/^\/+/, ""))
+    : "";
+  let scopeEmpty = true;
+  if (cgroupPath && existsSync(cgroupPath)) {
+    try {
+      scopeEmpty = String(readFileSync(path.join(cgroupPath, "cgroup.procs"), "utf8") || "").trim() === "";
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  const recorded = executionId ? readManagedExecutionResult(owner, executionId) : {};
+  return {
+    activeState: String(values.ActiveState || (recorded.executionId ? "inactive" : "unknown")),
+    controlGroup,
+    cpuUsageNSec: maximumCounter(values.CPUUsageNSec, recorded.cpuUsageNSec),
+    execMainCode: String(values.ExecMainCode || recorded.execMainCode || ""),
+    execMainStatus: String(values.ExecMainStatus || recorded.execMainStatus || ""),
+    ioReadBytes: maximumCounter(values.IOReadBytes, recorded.ioReadBytes),
+    ioWriteBytes: maximumCounter(values.IOWriteBytes, recorded.ioWriteBytes),
+    loadState: String(
+      values.LoadState && values.LoadState !== "not-found"
+        ? values.LoadState
+        : recorded.executionId
+          ? "recorded"
+          : "not-found"
+    ),
+    mainPid: String(values.MainPID || "0"),
+    memoryCurrent: maximumCounter(values.MemoryCurrent, recorded.memoryCurrent),
+    memoryPeak: maximumCounter(values.MemoryPeak, recorded.memoryPeak),
+    memorySwapCurrent: maximumCounter(values.MemorySwapCurrent, recorded.memorySwapCurrent),
+    oomKillCount: maximumCounter(recorded.oomKillCount),
+    result: String(values.Result || recorded.result || ""),
+    signal: String(recorded.signal || ""),
+    scopeEmpty,
+    subState: String(values.SubState || "unknown"),
+    tasksCurrent: maximumCounter(values.TasksCurrent, recorded.tasksCurrent),
+    tasksPeak: maximumCounter(recorded.tasksPeak),
+    tasksMax: String(values.TasksMax || "0"),
+    unitName
+  };
+}
+
+function maximumCounter(...values) {
+  return String(values.reduce((maximum, value) => {
+    const number = Number(value);
+    return Number.isFinite(number) && number > maximum ? number : maximum;
+  }, 0));
+}
+
+function writeManagedExecutionState(unitName = "", executionId = "", owner = {}) {
+  process.stdout.write(`${JSON.stringify({
+    executionId,
+    ok: true,
+    ...managedExecutionState(unitName, executionId, owner)
+  })}\n`);
+}
+
+function stopManagedExecution(unitName = "", executionId = "", owner = {}) {
+  const initial = managedExecutionState(unitName, executionId, owner);
+  if (!initial.scopeEmpty) {
+    runRootCommandAllowFailure("systemctl", [
+      "kill",
+      "--kill-who=all",
+      "--signal=SIGTERM",
+      unitName
+    ]);
+    runRootCommandAllowFailure("systemctl", ["stop", unitName]);
+  }
+  const deadline = Date.now() + MANAGED_EXECUTION_STOP_TIMEOUT_MS;
+  let state = managedExecutionState(unitName, executionId, owner);
+  const waitSignal = new Int32Array(new SharedArrayBuffer(4));
+  while (!state.scopeEmpty && Date.now() < deadline) {
+    Atomics.wait(waitSignal, 0, 0, 25);
+    state = managedExecutionState(unitName, executionId, owner);
+  }
+  if (!state.scopeEmpty) {
+    runRootCommandAllowFailure("systemctl", [
+      "kill",
+      "--kill-who=all",
+      "--signal=SIGKILL",
+      unitName
+    ]);
+    runRootCommandAllowFailure("systemctl", ["stop", unitName]);
+    state = managedExecutionState(unitName, executionId, owner);
+  }
+  if (state.scopeEmpty) {
+    rmSync(managedExecutionRuntimeRoot(owner, executionId), {
+      force: true,
+      recursive: true
+    });
+    runRootCommandAllowFailure("systemctl", ["reset-failed", unitName]);
+  }
+  process.stdout.write(`${JSON.stringify({
+    executionId,
+    ok: state.scopeEmpty,
+    scopeEmpty: state.scopeEmpty,
+    stopped: initial.scopeEmpty === false,
+    ...state
+  })}\n`);
+  if (!state.scopeEmpty) {
+    process.exit(1);
+  }
 }
 
 function assertNormalizedPayload(payload = {}) {
@@ -745,6 +1323,19 @@ function serviceAccountUnitLines(owner = {}) {
   ];
 }
 
+function serviceResourceUnitLines(owner = {}) {
+  const workspace = workspaceFromDaemonUsername(safeUsername(owner.username));
+  return [
+    `Slice=vibe64-${workspace}-work.slice`,
+    "MemoryAccounting=yes",
+    "CPUAccounting=yes",
+    "IOAccounting=yes",
+    "TasksAccounting=yes",
+    "KillMode=control-group",
+    "OOMPolicy=stop"
+  ];
+}
+
 function deploymentServiceUnit({
   environmentFile = "",
   owner = {},
@@ -766,6 +1357,7 @@ function deploymentServiceUnit({
     "[Service]",
     "Type=simple",
     ...serviceAccountUnitLines(owner),
+    ...serviceResourceUnitLines(owner),
     `WorkingDirectory=${systemdUnitSafeValue(workingDirectory)}`,
     `EnvironmentFile=${systemdUnitSafeValue(environmentFile)}`,
     `Environment=PATH=${systemdUnitSafeValue(DEFAULT_PATH)}`,
@@ -800,6 +1392,7 @@ function managedServiceUnit({
     "[Service]",
     `Type=${normalizedProcessModel}`,
     ...serviceAccountUnitLines(owner),
+    ...serviceResourceUnitLines(owner),
     `WorkingDirectory=${systemdUnitSafeValue(workingDirectory)}`,
     `Environment=PATH=${systemdUnitSafeValue(DEFAULT_PATH)}`,
     `Environment=TMPDIR=${systemdUnitSafeValue(workspaceTempRoot(owner.username))}`,

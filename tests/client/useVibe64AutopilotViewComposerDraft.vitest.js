@@ -94,9 +94,13 @@ async function createViewWithProps(overrides = {}, options = {}) {
     "../../src/composables/useVibe64AutopilotView.js"
   );
   const props = viewProps(overrides);
+  const emit = options.emit || vi.fn();
+  const viewOptions = { ...options };
+  delete viewOptions.emit;
   return {
+    emit,
     props,
-    view: useVibe64AutopilotView(props, vi.fn(), options)
+    view: useVibe64AutopilotView(props, emit, viewOptions)
   };
 }
 
@@ -1030,6 +1034,27 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.composerError.value).toBe(
       "Codex app-server connection closed during thread reconciliation."
     );
+  });
+
+  it("raises structured execution attention when assistant ownership blocks a send", async () => {
+    const message = "Vibe64 refused to start a replacement until the earlier execution is proven empty.";
+    const sendAgentMessage = vi.fn(async () => {
+      const error = new Error(message);
+      error.code = "vibe64_codex_app_server_process_identity_unverified";
+      throw error;
+    });
+    const emit = vi.fn();
+    const { view } = await createViewWithProps({ sendAgentMessage }, { emit });
+    view.composerDraft.value = "Continue safely.";
+
+    await expect(view.submitComposerMessage()).resolves.toBe(false);
+
+    expect(emit).toHaveBeenCalledWith("execution-attention", {
+      category: "ownership",
+      code: "vibe64_codex_app_server_process_identity_unverified",
+      message
+    });
+    expect(view.chatTurns.value.at(-1).optimistic.status).toBe("failed");
   });
 
   it("exposes only the direct session tools, including changes and history", async () => {

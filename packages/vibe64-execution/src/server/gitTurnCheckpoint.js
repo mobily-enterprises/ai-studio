@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, statfs } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -7,12 +7,15 @@ import {
 } from "./runVibe64Command.js";
 
 const GIT_CHECKPOINT_TIMEOUT_MS = 30_000;
+const DEFAULT_CHECKPOINT_TEMPORARY_DISK_BUDGET_BYTES = 512 * 1024 * 1024;
+const DEFAULT_CHECKPOINT_DISK_RESERVE_BYTES = 1024 * 1024 * 1024;
 const CHECKPOINT_OUTCOMES = new Set([
   "cancelled",
   "completed",
   "failed",
   "interrupted"
 ]);
+const checkpointOperations = new Map();
 
 async function createGitTurnCheckpoint({
   outerTurnId = "",
@@ -20,6 +23,8 @@ async function createGitTurnCheckpoint({
   project = {},
   runCommand = runVibe64Command,
   sessionId = "",
+  temporaryDiskBudgetBytes,
+  temporaryDiskReserveBytes,
   timestamp = "",
   worktreePath = ""
 } = {}) {
@@ -31,6 +36,24 @@ async function createGitTurnCheckpoint({
     worktreePath
   });
   const refs = checkpointRefs(identity);
+  return withSerializedCheckpoint(identity.worktreePath, () => createGitTurnCheckpointUnlocked({
+    identity,
+    project,
+    refs,
+    runCommand,
+    temporaryDiskBudgetBytes,
+    temporaryDiskReserveBytes
+  }));
+}
+
+async function createGitTurnCheckpointUnlocked({
+  identity = {},
+  project = {},
+  refs = {},
+  runCommand = runVibe64Command,
+  temporaryDiskBudgetBytes,
+  temporaryDiskReserveBytes
+} = {}) {
   const existingCommit = await optionalGitOutput(runCommand, identity.worktreePath, [
     "rev-parse",
     "--verify",
@@ -56,10 +79,12 @@ async function createGitTurnCheckpoint({
     "--verify",
     "HEAD"
   ], { project });
-  const tree = await writeGitWorktreeTree({
+  const tree = await writeGitWorktreeTreeUnlocked({
     baseCommit,
     project,
     runCommand,
+    temporaryDiskBudgetBytes,
+    temporaryDiskReserveBytes,
     worktreePath: identity.worktreePath
   });
   const message = checkpointMessage(identity);
@@ -105,6 +130,29 @@ async function writeGitWorktreeTree({
   paths = [],
   project = {},
   runCommand = runVibe64Command,
+  temporaryDiskBudgetBytes,
+  temporaryDiskReserveBytes,
+  worktreePath = ""
+} = {}) {
+  const normalizedWorktreePath = path.resolve(singleLine(worktreePath, "worktreePath"));
+  return withSerializedCheckpoint(normalizedWorktreePath, () => writeGitWorktreeTreeUnlocked({
+    baseCommit,
+    paths,
+    project,
+    runCommand,
+    temporaryDiskBudgetBytes,
+    temporaryDiskReserveBytes,
+    worktreePath: normalizedWorktreePath
+  }));
+}
+
+async function writeGitWorktreeTreeUnlocked({
+  baseCommit = "HEAD",
+  paths = [],
+  project = {},
+  runCommand = runVibe64Command,
+  temporaryDiskBudgetBytes,
+  temporaryDiskReserveBytes,
   worktreePath = ""
 } = {}) {
   const normalizedWorktreePath = path.resolve(singleLine(worktreePath, "worktreePath"));
@@ -125,6 +173,15 @@ async function writeGitWorktreeTree({
     const selectedPaths = Array.isArray(paths)
       ? paths.map((entry) => String(entry || "")).filter(Boolean)
       : [];
+    await assertCheckpointDiskBudget({
+      gitDirectory,
+      paths: selectedPaths,
+      project,
+      runCommand,
+      temporaryDiskBudgetBytes,
+      temporaryDiskReserveBytes,
+      worktreePath: normalizedWorktreePath
+    });
     await requiredGitOutput(runCommand, normalizedWorktreePath, [
       "add",
       "-A",
@@ -137,6 +194,119 @@ async function writeGitWorktreeTree({
   } finally {
     await rm(temporaryRoot, { force: true, recursive: true });
   }
+}
+
+function withSerializedCheckpoint(worktreePath = "", operation = async () => null) {
+  const key = path.resolve(worktreePath);
+  const previous = checkpointOperations.get(key) || Promise.resolve();
+  const result = previous.catch(() => null).then(operation);
+  const tail = result.then(() => null, () => null).finally(() => {
+    if (checkpointOperations.get(key) === tail) {
+      checkpointOperations.delete(key);
+    }
+  });
+  checkpointOperations.set(key, tail);
+  return result;
+}
+
+async function assertCheckpointDiskBudget({
+  gitDirectory = "",
+  paths = [],
+  project = {},
+  runCommand = runVibe64Command,
+  temporaryDiskBudgetBytes,
+  temporaryDiskReserveBytes,
+  worktreePath = ""
+} = {}) {
+  const pathspec = paths.length > 0 ? paths : ["."];
+  const [trackedText, untrackedText, filesystem] = await Promise.all([
+    requiredGitOutput(runCommand, worktreePath, [
+      "diff",
+      "--name-only",
+      "-z",
+      "HEAD",
+      "--",
+      ...pathspec
+    ], { project }),
+    requiredGitOutput(runCommand, worktreePath, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ...pathspec
+    ], { project }),
+    statfs(gitDirectory)
+  ]);
+  const candidates = [...new Set([
+    ...nullSeparatedPaths(trackedText),
+    ...nullSeparatedPaths(untrackedText)
+  ])];
+  const sizedCandidates = [];
+  for (const candidate of candidates) {
+    const candidatePath = path.resolve(worktreePath, candidate);
+    const relativePath = path.relative(worktreePath, candidatePath);
+    if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+      throw checkpointError(
+        "Git returned a checkpoint candidate outside the session source.",
+        "vibe64_checkpoint_candidate_invalid"
+      );
+    }
+    const entry = await lstat(candidatePath).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+    if (entry?.isFile()) {
+      sizedCandidates.push({
+        bytes: Number(entry.size || 0),
+        path: relativePath
+      });
+    }
+  }
+  const candidateBytes = sizedCandidates.reduce((total, candidate) => total + candidate.bytes, 0);
+  const estimatedTemporaryBytes = Math.min(Number.MAX_SAFE_INTEGER, candidateBytes * 2);
+  const configuredBudgetBytes = checkpointDiskSetting(
+    temporaryDiskBudgetBytes,
+    process.env.VIBE64_CHECKPOINT_TEMPORARY_DISK_BUDGET_BYTES,
+    DEFAULT_CHECKPOINT_TEMPORARY_DISK_BUDGET_BYTES,
+    1
+  );
+  const reserveBytes = checkpointDiskSetting(
+    temporaryDiskReserveBytes,
+    process.env.VIBE64_CHECKPOINT_DISK_RESERVE_BYTES,
+    DEFAULT_CHECKPOINT_DISK_RESERVE_BYTES,
+    0
+  );
+  const availableBytes = Math.max(0, Number(filesystem.bavail) * Number(filesystem.bsize));
+  const effectiveBudgetBytes = Math.min(
+    configuredBudgetBytes,
+    Math.max(0, availableBytes - reserveBytes)
+  );
+  if (estimatedTemporaryBytes <= effectiveBudgetBytes) {
+    return;
+  }
+  const largest = sizedCandidates
+    .sort((left, right) => right.bytes - left.bytes || left.path.localeCompare(right.path))
+    .slice(0, 5)
+    .map((candidate) => `${candidate.path} (${candidate.bytes} bytes)`)
+    .join(", ");
+  throw checkpointError(
+    [
+      `Vibe64 refused this checkpoint because changed, unignored files may need about ${estimatedTemporaryBytes} temporary bytes; the safe budget is ${effectiveBudgetBytes} bytes.`,
+      largest ? `Largest candidates: ${largest}.` : "",
+      "Keep needed files in place and add generated or local-only artifacts to .gitignore, or ask an operator to review the checkpoint disk budget."
+    ].filter(Boolean).join(" "),
+    "vibe64_checkpoint_disk_budget_exceeded"
+  );
+}
+
+function nullSeparatedPaths(value = "") {
+  return String(value || "").split("\0").filter(Boolean);
+}
+
+function checkpointDiskSetting(explicitValue, envValue, fallback, minimum) {
+  const value = explicitValue === undefined || explicitValue === null || explicitValue === ""
+    ? envValue
+    : explicitValue;
+  const number = Number(value === undefined || value === "" ? fallback : value);
+  return Number.isSafeInteger(number) && number >= minimum ? number : fallback;
 }
 
 async function validateExistingCheckpoint({

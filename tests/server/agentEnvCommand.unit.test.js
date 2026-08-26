@@ -515,3 +515,49 @@ test("agent Env wrapper forwards stdin over its authenticated session socket", a
     });
   }
 });
+
+test("agent Env preparation repairs one missing cached socket and fences its old generation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-env-command-repair-"));
+  const project = createProjectService();
+  const command = createAgentEnvCommandService({ projectService: project });
+  const sessionId = "env-repair-session";
+  try {
+    const options = {
+      commandService: command,
+      sessionId,
+      wrapperHostDir: root
+    };
+    const first = await prepareAgentEnvCommand(options);
+    await rm(first.hostSocketPath, { force: true });
+
+    const [left, right] = await Promise.all([
+      prepareAgentEnvCommand(options),
+      prepareAgentEnvCommand(options)
+    ]);
+
+    assert.notEqual(left.controlGenerationId, first.controlGenerationId);
+    assert.equal(right.controlGenerationId, left.controlGenerationId);
+    assert.equal((await stat(left.hostSocketPath)).isSocket(), true);
+    const stale = await runWithInput(first.hostWrapperPath, ["status"], {
+      env: {
+        ...process.env,
+        ...first.env
+      }
+    });
+    assert.notEqual(stale.code, 0);
+    assert.match(stale.stderr, /vibe64_agent_control_unavailable/u);
+    const current = await runWithInput(left.hostWrapperPath, ["status"], {
+      env: {
+        ...process.env,
+        ...left.env
+      }
+    });
+    assert.equal(current.code, 0);
+  } finally {
+    await command.closeAllForSession(sessionId);
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
+});

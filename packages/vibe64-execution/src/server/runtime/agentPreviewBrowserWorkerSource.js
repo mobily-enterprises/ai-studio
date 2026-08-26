@@ -201,7 +201,9 @@ const metadataPath = String(process.argv[3] || "").trim();
 const controlSocketPath = String(process.argv[4] || "").trim();
 const workerToken = String(process.env.VIBE64_PREVIEW_BROWSER_WORKER_TOKEN || "").trim();
 const controlToken = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_TOKEN || "").trim();
+const controlGeneration = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION || "").trim();
 const sessionId = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID || "").trim();
+const executionId = String(process.env.VIBE64_EXECUTION_ID || "").trim();
 const playwrightModulePath = ${JSON.stringify(String(playwrightModulePath || ""))};
 const identityControlPath = ${JSON.stringify(String(identityControlPath || ""))};
 const contractVersion = ${JSON.stringify(String(contractVersion || "1"))};
@@ -210,7 +212,7 @@ const requestLimitBytes = 1024 * 1024;
 const controlHealthIntervalMs = ${Number(controlHealthIntervalMs) || 15_000};
 const controlHealthFailureLimit = ${Number(controlHealthFailureLimit) || 4};
 
-if (!socketPath || !metadataPath || !controlSocketPath || !workerToken || !controlToken || !sessionId || !playwrightModulePath || !identityControlPath) {
+if (!socketPath || !metadataPath || !controlSocketPath || !workerToken || !controlToken || !controlGeneration || !sessionId || !executionId || !playwrightModulePath || !identityControlPath) {
   process.stderr.write("Vibe64 managed browser worker configuration is incomplete.\\n");
   process.exit(64);
 }
@@ -318,6 +320,7 @@ function metadataSignature(metadata = {}) {
     .update([
       workerToken,
       String(metadata.contractVersion || ""),
+      String(metadata.executionId || ""),
       String(metadata.pid || ""),
       String(metadata.socketPath || ""),
       String(metadata.startTimeTicks || ""),
@@ -326,6 +329,24 @@ function metadataSignature(metadata = {}) {
       JSON.stringify(normalizedBrowserProcessGroups(metadata.browserProcessGroups))
     ].join("\\n"))
     .digest("hex");
+}
+
+async function createWorkerMetadata() {
+  const identity = processIdentity(process.pid);
+  const metadata = {
+    browserProcessGroups: [],
+    contractVersion,
+    executionId,
+    pid: process.pid,
+    socketPath,
+    startTimeTicks: String(identity?.startTimeTicks || ""),
+    startedAt: new Date().toISOString(),
+    workerScriptPath: path.resolve(process.argv[1] || "")
+  };
+  metadata.signature = metadataSignature(metadata);
+  const temporaryPath = metadataPath + "." + process.pid + ".tmp";
+  await writeFile(temporaryPath, JSON.stringify(metadata) + "\\n", { mode: 0o600 });
+  await rename(temporaryPath, metadataPath);
 }
 
 async function writeWorkerMetadata() {
@@ -432,6 +453,7 @@ function statusPayload() {
     contractVersion,
     connected: Boolean(browser?.isConnected?.()),
     contextReady: Boolean(context),
+    executionId,
     applicationIdentity,
     pageReady: Boolean(page && !page.isClosed()),
     pid: process.pid,
@@ -812,7 +834,11 @@ async function shutdown() {
 }
 
 function controlHealthRequest() {
-  const body = JSON.stringify({ sessionId, token: controlToken });
+  const body = JSON.stringify({
+    generationId: controlGeneration,
+    sessionId,
+    token: controlToken
+  });
   return new Promise((resolve) => {
     const request = http.request({
       headers: {
@@ -846,6 +872,7 @@ function closeServerAndExit() {
   });
 }
 
+await createWorkerMetadata();
 await rm(socketPath, { force: true });
 const server = http.createServer(async (request, response) => {
   if (request.method !== "POST" || request.url !== "/command") {

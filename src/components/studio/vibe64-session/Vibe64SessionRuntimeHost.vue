@@ -32,6 +32,7 @@
       :project-pane="props.projectPane"
       @busy-change="setAutopilotBusy"
       @chat-attention="emitChatAttention"
+      @execution-attention="emit('execution-attention', $event)"
       @project-attention="emitProjectAttention"
     >
       <template #ai-terminal="{ active: tabActive }">
@@ -124,6 +125,7 @@ const props = defineProps({
 const emit = defineEmits([
   "busy-change",
   "chat-attention",
+  "execution-attention",
   "page-error-change",
   "source-operations-suspension-change",
   "work-state-change",

@@ -91,9 +91,9 @@ function delay(ms) {
   });
 }
 
-async function waitForCondition(condition, message = "Timed out waiting for condition.") {
+async function waitForCondition(condition, message = "Timed out waiting for condition.", timeoutMs = 5000) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 1000) {
+  while (Date.now() - startedAt < timeoutMs) {
     if (condition()) {
       return;
     }
@@ -202,6 +202,7 @@ function metadataForRuntime(runtimeDir, {
     attachmentHostRoot: CODEX_ATTACHMENT_HOST_ROOT,
     authStateSignature,
     endpoint: `unix://${socketPath}`,
+    executionId: "11111111-1111-4111-8111-111111111112",
     executionContextHash: executionContextHash({
       project,
       session,
@@ -251,6 +252,10 @@ function codexAppServerCommandRunner(runtimeDir, commandCalls = []) {
     }
     commandCalls.push(request);
     return {
+      execution: {
+        ...request.execution,
+        id: randomUUID()
+      },
       exitCode: 0,
       ok: true,
       output: "",
@@ -973,6 +978,30 @@ test("codex provider preserves a live-looking runtime when liveness probe times 
   });
 });
 
+test("codex provider reuses an owned runtime while its process identity is still settling", async () => {
+  await withTemporaryDirectory(async (runtimeDir) => {
+    const metadata = metadataForRuntime(runtimeDir);
+    await writeMetadata(runtimeDir, metadata);
+
+    const runtime = await ensureCodexAppServerRuntime({
+      authStateSignature: metadata.authStateSignature,
+      processIdentityInspector: async () => ({
+        processGroupIds: [metadata.pid],
+        status: "ambiguous"
+      }),
+      runtimeDir,
+      commandRunner() {
+        throw new Error("command runner must not replace an owned app-server whose identity is settling");
+      },
+      WebSocketImpl: ResponsiveFakeWebSocket
+    });
+
+    assert.equal(runtime.reused, true);
+    assert.equal(runtime.runtimeStatus, "suspect");
+    assert.equal(runtime.executionId, metadata.executionId);
+  });
+});
+
 test("codex provider starts one app-server and stores reusable runtime metadata", async () => {
   await withTemporaryDirectory(async (runtimeDir) => {
     const targetRoot = path.join(runtimeDir, "target");
@@ -1063,6 +1092,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     ]);
     const envProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: [
         "-e",
         [
@@ -1095,6 +1125,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     });
     const initProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: ["init", "-b", "main"],
       command: "git",
       logPath: "",
@@ -1105,6 +1136,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     await writeFile(path.join(workdir, "README.md"), "codex app-server identity probe\n", "utf8");
     const addProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: ["add", "README.md"],
       command: "git",
       logPath: "",
@@ -1114,6 +1146,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.equal(addProbe.ok, true, addProbe.output);
     const commitProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: ["commit", "-m", "Codex app-server identity probe"],
       command: "git",
       logPath: "",
@@ -1123,6 +1156,7 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.equal(commitProbe.ok, true, commitProbe.output);
     const lsRemoteProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: ["ls-remote", ".", "refs/heads/main"],
       command: "git",
       logPath: "",
@@ -1703,7 +1737,13 @@ test("codex provider refuses to replace live legacy metadata without an exact id
           runtimeDir,
           WebSocketImpl: ResponsiveFakeWebSocket
         }),
-        { code: "vibe64_codex_app_server_process_identity_unverified" }
+        (error) => {
+          assert.equal(error.code, "vibe64_codex_app_server_process_identity_unverified");
+          assert.equal(error.cleanupRequired, true);
+          assert.equal(error.retryable, false);
+          assert.match(error.message, /refused to start a replacement/iu);
+          return true;
+        }
       );
       assert.doesNotThrow(() => process.kill(-fixture.processGroupId, 0));
       assert.doesNotThrow(() => process.kill(-fixture.commandPid, 0));
@@ -1952,7 +1992,11 @@ test("codex provider preflight records reconnect-required when Codex rejects aut
   await withTemporaryDirectory(async (runtimeDir) => {
     const systemRoot = path.join(runtimeDir, "system");
     const toolHomeSource = path.join(runtimeDir, "homes", "owner");
+    const workdir = path.join(runtimeDir, "source");
     await mkdir(toolHomeSource, {
+      recursive: true
+    });
+    await mkdir(workdir, {
       recursive: true
     });
     const commandCalls = [];
@@ -1972,7 +2016,8 @@ test("codex provider preflight records reconnect-required when Codex rejects aut
         };
       },
       systemRoot,
-      toolHomeSource
+      toolHomeSource,
+      workdir
     });
 
     await assert.rejects(
@@ -1992,6 +2037,8 @@ test("codex provider preflight records reconnect-required when Codex rejects aut
       "models"
     ]);
     assert.equal(commandCalls[0].credentialHome.home, toolHomeSource);
+    assert.equal(commandCalls[0].cwd, workdir);
+    assert.deepEqual(commandCalls[0].allowedRoots, [workdir]);
     assert.equal(Object.hasOwn(commandCalls[0].env || {}, "NPM_CONFIG_PREFIX"), false);
 
     const authStatus = await readCodexAuthStatus(systemRoot);
@@ -2104,6 +2151,7 @@ test("codex economy provider starts from a private empty home and strips project
 
     const envProbe = await runVibe64Command({
       ...runCall,
+      execution: undefined,
       args: [
         "-c",
         runCall.args[1],

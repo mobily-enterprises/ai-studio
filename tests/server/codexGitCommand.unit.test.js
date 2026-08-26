@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -372,6 +372,66 @@ test("Codex Git command preparation coalesces concurrent socket startup and repl
     assert.equal(replacementRun.stdout, "replacement-service\n");
     assert.equal(firstServiceCalls, 1);
     assert.equal(replacementServiceCalls, 1);
+  });
+});
+
+test("Codex Git preparation repairs a missing cached socket once and fences the old generation", async () => {
+  await withTemporaryRoot(async (root) => {
+    const sourcePath = path.join(root, "source");
+    await mkdir(sourcePath, { recursive: true });
+    const options = {
+      commandService: {
+        async run() {
+          return {
+            exitCode: 0,
+            ok: true,
+            stdout: "healthy-generation\n"
+          };
+        }
+      },
+      env: {
+        VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(root, "attachments")
+      },
+      sessionId: "missing-socket-session",
+      stateRoot: path.join(root, "state")
+    };
+    const first = await prepareCodexGitCommand(options);
+    await rm(first.hostSocketPath, { force: true });
+
+    const repaired = await Promise.all(Array.from({ length: 8 }, () => (
+      prepareCodexGitCommand(options)
+    )));
+    assert.equal(new Set(repaired.map((entry) => entry.controlGenerationId)).size, 1);
+    assert.notEqual(repaired[0].controlGenerationId, first.controlGenerationId);
+    assert.equal((await stat(repaired[0].hostSocketPath)).isSocket(), true);
+
+    const stale = await runProcessWithInput(
+      path.join(first.hostWrapperDir, "git"),
+      ["status", "--short"],
+      {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...first.env
+        }
+      }
+    );
+    assert.equal(stale.exitCode, 1);
+    assert.match(stale.stderr, /vibe64_agent_control_unavailable/u);
+
+    const current = await runProcessWithInput(
+      path.join(repaired[0].hostWrapperDir, "git"),
+      ["status", "--short"],
+      {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...repaired[0].env
+        }
+      }
+    );
+    assert.equal(current.exitCode, 0, current.stderr);
+    assert.equal(current.stdout, "healthy-generation\n");
   });
 });
 

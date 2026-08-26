@@ -9,8 +9,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  agentPreviewBrowserWorkerSource,
-  agentPreviewWrapperSource
+  agentPreviewBrowserWorkerSource
 } from "../../packages/vibe64-execution/src/server/index.js";
 import {
   PREVIEW_IDENTITY_CONTROL_PATH
@@ -297,6 +296,8 @@ exports.chromium = {
 function createReadyPreviewCommandService({
   selectPreviewIdentity = null,
   previewUrl,
+  runManagedCommand,
+  stopManagedExecution,
   terminalId = () => "launch-terminal"
 } = {}) {
   return createAgentPreviewCommandService({
@@ -333,7 +334,9 @@ function createReadyPreviewCommandService({
         }
         return selectPreviewIdentity(sessionId, input);
       }
-    }
+    },
+    ...(typeof runManagedCommand === "function" ? { runManagedCommand } : {}),
+    ...(typeof stopManagedExecution === "function" ? { stopManagedExecution } : {})
   });
 }
 
@@ -824,6 +827,62 @@ test("agent preview wrapper forwards command input over the private session sock
   }
 });
 
+test("managed preview browser surfaces capacity refusal without creating a worker", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-capacity-"));
+  const runtimeRoot = path.join(root, "runtime-packs");
+  const sessionId = "browser-capacity-session";
+  const requests = [];
+  const commandService = createReadyPreviewCommandService({
+    previewUrl: "https://preview.example.test/capacity",
+    async runManagedCommand(request) {
+      requests.push(request);
+      return {
+        code: "vibe64_capacity_rejected",
+        error: "This work cannot start while available memory is this low.",
+        exitCode: 1,
+        ok: false,
+        retryable: false
+      };
+    }
+  });
+  try {
+    await createFakePlaywrightRuntime(runtimeRoot);
+    const prepared = await prepareAgentPreviewCommand({
+      commandService,
+      env: {
+        VIBE64_RUNTIME_PACK_ROOT: runtimeRoot
+      },
+      sessionId,
+      worktreePath: root,
+      wrapperHostDir: root
+    });
+    await assert.rejects(
+      execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], {
+        cwd: root,
+        env: {
+          ...process.env,
+          ...prepared.env
+        }
+      }),
+      (error) => {
+        assert.match(error.stderr, /available memory is this low/u);
+        return true;
+      }
+    );
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].execution.kind, "browser");
+    assert.equal(requests[0].execution.lifecycle, "service");
+    await assert.rejects(stat(prepared.hostBrowserSocketPath), { code: "ENOENT" });
+    await assert.rejects(stat(prepared.hostBrowserMetadataPath), { code: "ENOENT" });
+  } finally {
+    await commandService.closeAllForSession(sessionId);
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
 test("managed preview browser selects real application identities inside its own context", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-identity-"));
   const runtimeRoot = path.join(root, "runtime-packs");
@@ -1301,7 +1360,7 @@ test("managed preview browser inspects auxiliary localhost apps and recovers kil
   }
 });
 
-test("managed preview browser replaces and cleans up a stale worker contract", async () => {
+test("managed preview browser drains the previous control generation before replacement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-browser-upgrade-"));
   const runtimeRoot = path.join(root, "runtime-packs");
   const sessionId = "browser-upgrade-session";
@@ -1309,7 +1368,7 @@ test("managed preview browser replaces and cleans up a stale worker contract", a
     previewUrl: "https://preview.example.test/upgrade?vibe64_preview_token=upgrade-token"
   });
   try {
-    const runtime = await createFakePlaywrightRuntime(runtimeRoot);
+    await createFakePlaywrightRuntime(runtimeRoot);
     const preparationOptions = {
       commandService,
       env: {
@@ -1319,47 +1378,36 @@ test("managed preview browser replaces and cleans up a stale worker contract", a
       wrapperHostDir: root
     };
     const prepared = await prepareAgentPreviewCommand(preparationOptions);
-    const commandEnv = {
+    const firstCommandEnv = {
       ...process.env,
       ...prepared.env
     };
     const currentContractVersion = prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV];
-    const staleContractVersion = String(Number(currentContractVersion) - 1);
-    await Promise.all([
-      writeExecutable(prepared.hostBrowserWorkerPath, agentPreviewBrowserWorkerSource({
-        contractVersion: staleContractVersion,
-        identityControlPath: PREVIEW_IDENTITY_CONTROL_PATH,
-        playwrightModulePath: runtime.playwrightModule
-      })),
-      writeExecutable(prepared.hostWrapperPath, agentPreviewWrapperSource({
-        contractVersion: staleContractVersion,
-        managedNodePath: runtime.nodePath,
-        workerScriptPath: prepared.hostBrowserWorkerPath
-      }))
-    ]);
-
-    const staleBrowser = JSON.parse((await execWithInput(prepared.hostWrapperPath, ["browser", "eval"], {
-      env: commandEnv,
+    const firstGeneration = prepared.controlGenerationId;
+    const firstBrowser = JSON.parse((await execWithInput(prepared.hostWrapperPath, ["browser", "eval"], {
+      env: firstCommandEnv,
       input: "return { childPid: browser.childPid };"
     })).stdout);
-    const staleMetadata = JSON.parse(await readFile(prepared.hostBrowserMetadataPath, "utf8"));
-    assert.equal(staleMetadata.contractVersion, staleContractVersion);
+    const firstMetadata = JSON.parse(await readFile(prepared.hostBrowserMetadataPath, "utf8"));
+    assert.equal(firstMetadata.contractVersion, currentContractVersion);
 
-    await prepareAgentPreviewCommand(preparationOptions);
+    await commandService.releaseControlForSession(sessionId);
+    assert.equal(processRunning(firstMetadata.pid), false);
+    assert.equal(processRunning(firstBrowser.result.childPid), false);
+
+    const replacement = await prepareAgentPreviewCommand(preparationOptions);
+    assert.notEqual(replacement.controlGenerationId, firstGeneration);
+    const replacementEnv = {
+      ...process.env,
+      ...replacement.env
+    };
     const currentStatus = JSON.parse((await execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], {
-      env: commandEnv
+      env: replacementEnv
     })).stdout);
     const currentMetadata = JSON.parse(await readFile(prepared.hostBrowserMetadataPath, "utf8"));
     assert.equal(currentStatus.contractVersion, currentContractVersion);
     assert.equal(currentMetadata.contractVersion, currentContractVersion);
-    assert.notEqual(currentMetadata.pid, staleMetadata.pid);
-    for (let attempt = 0; attempt < 20 && (
-      processRunning(staleMetadata.pid) || processRunning(staleBrowser.result.childPid)
-    ); attempt += 1) {
-      await wait(25);
-    }
-    assert.equal(processRunning(staleMetadata.pid), false);
-    assert.equal(processRunning(staleBrowser.result.childPid), false);
+    assert.notEqual(currentMetadata.pid, firstMetadata.pid);
   } finally {
     await commandService.closeAllForSession(sessionId);
     await rm(root, {
@@ -1440,6 +1488,54 @@ test("agent preview command preparation does not rewrite an unchanged wrapper fi
     assert.equal(second.hostWrapperPath, first.hostWrapperPath);
     assert.equal(secondStat.mtimeMs, firstStat.mtimeMs);
   } finally {
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("agent preview preparation repairs one missing cached socket and fences its old generation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-command-repair-"));
+  const sessionId = "preview-repair-session";
+  const commandService = createReadyPreviewCommandService({
+    previewUrl: "https://preview.example.test/repair"
+  });
+  try {
+    const options = {
+      commandService,
+      sessionId,
+      wrapperHostDir: root
+    };
+    const first = await prepareAgentPreviewCommand(options);
+    await rm(first.hostSocketPath, { force: true });
+
+    const [left, right] = await Promise.all([
+      prepareAgentPreviewCommand(options),
+      prepareAgentPreviewCommand(options)
+    ]);
+
+    assert.notEqual(left.controlGenerationId, first.controlGenerationId);
+    assert.equal(right.controlGenerationId, left.controlGenerationId);
+    assert.equal((await stat(left.hostSocketPath)).isSocket(), true);
+    await assert.rejects(execFileAsync(first.hostWrapperPath, ["status", "--json"], {
+      env: {
+        ...process.env,
+        ...first.env
+      }
+    }), (error) => {
+      assert.match(error.stderr, /vibe64_agent_control_unavailable/u);
+      return true;
+    });
+    const current = await execFileAsync(left.hostWrapperPath, ["status", "--json"], {
+      env: {
+        ...process.env,
+        ...left.env
+      }
+    });
+    assert.equal(JSON.parse(current.stdout).ready, true);
+  } finally {
+    await commandService.closeAllForSession(sessionId);
     await rm(root, {
       force: true,
       recursive: true

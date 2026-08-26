@@ -1282,6 +1282,7 @@ async function withAgentMessageController(operation) {
     onSendTurn: null,
     onSteerTurn: null,
     provider: null,
+    providerOptions: [],
     sendTurnWait: null,
     sessionThreadIds: [],
     steers: [],
@@ -1308,6 +1309,7 @@ async function withAgentMessageController(operation) {
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
     codexAppServerProviderFactory(providerOptions) {
+      captures.providerOptions.push(providerOptions);
       const subscribers = new Set();
       captures.subscribers = subscribers;
       const provider = {
@@ -3613,6 +3615,18 @@ test("non-shutdown runtime invalidation keeps the controller reusable", async ()
     });
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(captures.providerOptions.length, 2);
+  });
+});
+
+test("Codex runtime execution records carry the active project slug", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId }) => {
+    const prepared = await runWithProjectRequestContext({
+      slug: "assistant-project",
+      targetRoot: runtime.projectContextRoot
+    }, () => controller.ensureThread(sessionId));
+
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    assert.equal(captures.providerOptions[0].project.slug, "assistant-project");
   });
 });
 

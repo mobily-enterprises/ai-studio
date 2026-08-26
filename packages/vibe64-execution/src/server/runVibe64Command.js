@@ -33,76 +33,149 @@ import {
 import {
   commandErrorResult
 } from "./result.js";
+import {
+  vibe64ManagedExecutionProvider,
+  vibe64ManagedExecutionRequired
+} from "./managedExecution.js";
+
+async function runLocalVibe64Command(request, {
+  actor,
+  baseEnv,
+  cwd,
+  env,
+  requiresHelper
+} = {}) {
+  if (request.mode === "pty") {
+    return runPtyCommand(request, {
+      actor,
+      baseEnv,
+      cwd,
+      env
+    });
+  }
+  if (request.mode === "detached") {
+    if (actor.requiresRealUser && (!processMatchesActor(actor) || requiresHelper)) {
+      return commandErrorResult(
+        "Detached real-user command execution is unsupported when the helper is required.",
+        "vibe64_command_detached_real_user_unsupported",
+        { execution: request.execution }
+      );
+    }
+    return runDetachedCommand(request, {
+      actor,
+      cwd,
+      env
+    });
+  }
+  if (requiresHelper) {
+    const result = await runHelperCommand(helperPayload({
+      actor,
+      args: request.args,
+      command: request.command,
+      cwd,
+      env,
+      input: request.input,
+      operation: helperOperationForRequest(request)
+    }), {
+      maxBuffer: request.maxBuffer,
+      outputEncoding: request.outputEncoding,
+      timeout: request.timeout
+    });
+    return {
+      ...result,
+      execution: request.execution
+    };
+  }
+  return runCaptureCommand(request.command, request.args, {
+    cwd,
+    env,
+    execution: request.execution,
+    input: request.input,
+    maxBuffer: request.maxBuffer,
+    onOutput: request.onOutput,
+    outputEncoding: request.outputEncoding,
+    timeout: request.timeout
+  });
+}
 
 async function runVibe64Command(input = {}) {
+  let request = null;
   try {
-    const request = normalizeVibe64CommandRequest(input);
+    request = normalizeVibe64CommandRequest(input);
     const actor = await resolveVibe64CommandActor(request);
     const baseEnv = {
       ...process.env,
       ...request.baseEnv
     };
-    const env = resolveCommandEnv({
+    const executionEnv = (value = {}) => ({
+      ...value,
+      VIBE64_EXECUTION_ID: request.execution.id
+    });
+    const env = executionEnv(resolveCommandEnv({
       actor,
       baseEnv,
       request
-    });
+    }));
     assertActorHomeEnv(actor, env);
     const cwd = assertCwdAllowed(request.cwd, {
       allowedRoots: request.allowedRoots
     });
     assertManagedSourceFilesystemActor(actor, request, cwd);
     const requiresHelper = realUserActorRequiresInstalledHelper(actor);
+    const resolveArgs = (input = {}) => typeof request.args === "function"
+      ? request.args(input)
+      : request.args;
+    const resolveEnv = (input = {}) => executionEnv(request.envFactory
+      ? resolveCommandEnv({
+          actor,
+          baseEnv,
+          request: {
+            ...request,
+            env: request.envFactory(input),
+            envFactory: null
+          }
+        })
+      : env);
 
-    if (request.mode === "pty") {
-      return runPtyCommand(request, {
+    const local = (localRequest = request, localContext = {}) => runLocalVibe64Command(
+      localRequest,
+      {
         actor,
         baseEnv,
         cwd,
-        env
-      });
-    }
-    if (request.mode === "detached") {
-      if (actor.requiresRealUser && (!processMatchesActor(actor) || requiresHelper)) {
-        return commandErrorResult(
-          "Detached real-user command execution is unsupported when the helper is required.",
-          "vibe64_command_detached_real_user_unsupported"
-        );
+        env,
+        requiresHelper,
+        ...localContext
       }
-      return runDetachedCommand(request, {
+    );
+    const provider = vibe64ManagedExecutionProvider();
+    if (provider) {
+      return await provider.runCommand(request, {
         actor,
-        cwd,
-        env
-      });
-    }
-    if (requiresHelper) {
-      return runHelperCommand(helperPayload({
-        actor,
-        args: request.args,
-        command: request.command,
+        baseEnv,
         cwd,
         env,
-        input: request.input,
-        operation: helperOperationForRequest(request)
-      }), {
-        maxBuffer: request.maxBuffer,
-        outputEncoding: request.outputEncoding,
-        timeout: request.timeout
+        resolveArgs,
+        resolveEnv,
+        runLocal: local
       });
     }
-    return runCaptureCommand(request.command, request.args, {
-      cwd,
-      env,
-      input: request.input,
-      maxBuffer: request.maxBuffer,
-      onOutput: request.onOutput,
-      outputEncoding: request.outputEncoding,
-      timeout: request.timeout
-    });
+    if (vibe64ManagedExecutionRequired(baseEnv)) {
+      return commandErrorResult(
+        "Managed execution safety is unavailable. Vibe64 did not start this work.",
+        "vibe64_managed_execution_provider_unavailable",
+        {
+          execution: request.execution,
+          retryable: false
+        }
+      );
+    }
+    return local();
   } catch (error) {
     return commandErrorResult(
       error?.message || "Vibe64 command failed.",
-      error?.code || "vibe64_command_failed"
+      error?.code || "vibe64_command_failed",
+      { execution: request?.execution }
     );
   }
 }

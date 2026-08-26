@@ -30,11 +30,14 @@ import {
   isVibe64DebugLoggingEnabled
 } from "@local/vibe64-core/shared";
 import {
+  CODEX_AUTH_RECONNECTING_CODE,
+  CODEX_AUTH_RECONNECTING_MESSAGE,
   CODEX_RECONNECT_REQUIRED_CODE,
   CODEX_RECONNECT_REQUIRED_MESSAGE,
   clearCodexAuthStatus,
   codexAuthMarkerPath,
   codexAuthOutputRequiresReconnect,
+  markCodexAuthReconnecting,
   markCodexReconnectRequired,
   readCodexAuthStatus
 } from "@local/vibe64-core/server/codexAuthState";
@@ -569,6 +572,17 @@ async function readCodexLocalStatus({
   systemRoot = ""
 } = {}) {
   const authStatus = await readCodexAuthStatus(systemRoot);
+  if (authStatus?.status === "reconnecting") {
+    return accountDisconnected({
+      code: authStatus.code || CODEX_AUTH_RECONNECTING_CODE,
+      id: "codex",
+      label: "Codex",
+      message: authStatus.message || CODEX_AUTH_RECONNECTING_MESSAGE,
+      observed: "Vibe64 is retiring Codex runtimes from the previous authentication generation.",
+      scope: APP_CREDENTIAL_SCOPE,
+      status: "reconnecting"
+    });
+  }
   if (authStatus?.status === "reconnect_required") {
     return accountDisconnected({
       code: authStatus.code || CODEX_RECONNECT_REQUIRED_CODE,
@@ -1336,6 +1350,7 @@ function createService({
     try {
       const result = await invalidateAgentRuntimes({
         account,
+        includeOwned: true,
         markerPath,
         provider: "codex",
         reason: reason || "codex-auth-state-changed",
@@ -1350,13 +1365,19 @@ function createService({
         reason: reason || "codex-auth-state-changed",
         stopped: Number(result?.stopped || 0)
       });
+      if (result?.ok === false) {
+        const error = new Error("Codex app-server authentication turnover could not retire every old runtime.");
+        error.code = "vibe64_codex_auth_runtime_invalidation_failed";
+        error.details = result;
+        throw error;
+      }
       return result;
     } catch (error) {
       authDebug("server.auth.codex_app_server.invalidate.error", {
         error: String(error?.message || error || "Codex app-server invalidation failed."),
         reason: reason || "codex-auth-state-changed"
       });
-      return null;
+      throw error;
     }
   }
 
@@ -1374,15 +1395,22 @@ function createService({
     }
     const existingMarkerPresent = Boolean(existingMarkerText);
     const existingConnected = existingMarker?.connected === true;
+    const existingAuthStatus = await readCodexAuthStatus(resolvedSystemRoot);
+    const transitionPending = existingAuthStatus?.status === "reconnecting";
+    const preserveReconnectRequired = account?.status === "reconnect_required";
     if (account?.connected === true) {
-      await clearCodexAuthStatus(resolvedSystemRoot);
-      if (existingConnected && !rotateMarker) {
+      if (existingConnected && !rotateMarker && !transitionPending) {
         authDebug("server.auth.codex_marker.unchanged", {
           account: accountDebugSummary(account),
           markerPath,
           reason: reason || "codex-status-refresh"
         });
         return;
+      }
+      if (!preserveReconnectRequired) {
+        await markCodexAuthReconnecting(resolvedSystemRoot, {
+          reason: reason || "codex-connected"
+        });
       }
       authDebug("server.auth.codex_marker.write", {
         account: accountDebugSummary(account),
@@ -1400,15 +1428,23 @@ function createService({
         markerPath,
         reason: reason || "codex-connected"
       });
+      if (!preserveReconnectRequired) {
+        await clearCodexAuthStatus(resolvedSystemRoot);
+      }
       return;
     }
-    if (!existingMarkerPresent && !rotateMarker) {
+    if (!existingMarkerPresent && !rotateMarker && !transitionPending) {
       authDebug("server.auth.codex_marker.missing", {
         account: accountDebugSummary(account),
         markerPath,
         reason: reason || "codex-status-refresh"
       });
       return;
+    }
+    if (!preserveReconnectRequired) {
+      await markCodexAuthReconnecting(resolvedSystemRoot, {
+        reason: reason || "codex-disconnected"
+      });
     }
     authDebug("server.auth.codex_marker.remove", {
       account: accountDebugSummary(account),
@@ -1424,6 +1460,9 @@ function createService({
       markerPath,
       reason: reason || "codex-disconnected"
     });
+    if (!preserveReconnectRequired) {
+      await clearCodexAuthStatus(resolvedSystemRoot);
+    }
   }
 
   async function readLiveCodexStatus({

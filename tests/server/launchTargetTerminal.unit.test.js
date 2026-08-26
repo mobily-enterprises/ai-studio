@@ -41,6 +41,9 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
+  runWithProjectRequestContext
+} from "../../packages/vibe64-core/src/server/projectRequestContext.js";
+import {
   launchRestartRulesMatcher,
   launchRestartRulesMatcherSource
 } from "../../packages/vibe64-core/src/server/launchRestartRules.js";
@@ -190,6 +193,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
     });
     let previewIdentityInput = null;
     let blockProjectEnvironment = false;
+    let capturedLaunchProject = null;
     let capturedLaunchTerminal = null;
     let cleanupTerminalId = "terminal-workspace";
     let holdLaunchCleanupPublication = false;
@@ -265,6 +269,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       async runCommand(input) {
         events.push("launch-started");
         assert.equal(session.workspaceSetup.recipeHash, currentSetup.recipeHash);
+        capturedLaunchProject = input.project;
         capturedLaunchTerminal = input.terminal;
         return {
           id: "terminal-workspace",
@@ -278,9 +283,12 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       }
     });
 
-    const starting = controller.startTerminal(sessionId, {
+    const starting = runWithProjectRequestContext({
+      slug: "launch-project",
+      targetRoot: projectContextRoot
+    }, () => controller.startTerminal(sessionId, {
       launchTargetId: "app"
-    });
+    }));
     await preparationStartedPromise;
     let closeFinished = false;
     const closing = controller.closeAllForSession(sessionId).then((result) => {
@@ -295,6 +303,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
     await closing;
 
     assert.equal(terminal.ok, true);
+    assert.equal(capturedLaunchProject.slug, "launch-project");
     assert.deepEqual(previewIdentityInput, {
       sessionId
     });

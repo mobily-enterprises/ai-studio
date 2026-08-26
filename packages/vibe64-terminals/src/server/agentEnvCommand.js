@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -28,8 +29,10 @@ import {
 } from "./writeExecutableFileIfChanged.js";
 import {
   readJsonCommandRequest,
+  requestUnixJsonCommand,
   sendJsonCommandResponse,
-  shortCommandHash
+  shortCommandHash,
+  unixCommandSocketIsPresent
 } from "./unixJsonCommand.js";
 
 const AGENT_ENV_COMMAND_NAME = "vibe64-env";
@@ -37,6 +40,7 @@ const AGENT_ENV_COMMAND_SOCKET_NAME = "env-command.sock";
 const AGENT_ENV_COMMAND_CONTRACT_VERSION = "1";
 const AGENT_ENV_COMMAND_REQUEST_MAX_BYTES = 1024 * 1024;
 const VIBE64_AGENT_ENV_COMMAND_CONTRACT_VERSION_ENV = "VIBE64_AGENT_ENV_COMMAND_CONTRACT_VERSION";
+const VIBE64_AGENT_ENV_COMMAND_GENERATION_ENV = "VIBE64_AGENT_ENV_COMMAND_GENERATION";
 const VIBE64_AGENT_ENV_COMMAND_SESSION_ID_ENV = "VIBE64_AGENT_ENV_COMMAND_SESSION_ID";
 const VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV = "VIBE64_AGENT_ENV_COMMAND_SOCKET";
 const VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV = "VIBE64_AGENT_ENV_COMMAND_TOKEN";
@@ -45,6 +49,7 @@ const ENV_SCOPE_PRODUCTION = "production";
 const ENV_SCOPE_ALL = "all";
 
 const commandServers = new Map();
+const commandServerPrepares = new Map();
 
 function normalizedProjectContextRoot(project = {}) {
   const root = normalizeText(project?.projectRoot || project?.path);
@@ -331,6 +336,9 @@ async function readRequestJson(request) {
 
 async function closeAgentEnvCommandServersForSession(sessionId = "") {
   const normalizedSessionId = normalizeText(sessionId);
+  await Promise.all([...commandServerPrepares.values()].map((preparation) => (
+    preparation.catch(() => null)
+  )));
   let closed = 0;
   for (const [socketPath, entryValue] of [...commandServers.entries()]) {
     const entry = entryValue?.promise
@@ -351,42 +359,135 @@ async function closeAgentEnvCommandServersForSession(sessionId = "") {
   return closed;
 }
 
+async function agentEnvCommandServerIsHealthy(entry = {}, {
+  sessionId = "",
+  socketPath = ""
+} = {}) {
+  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
+    return false;
+  }
+  try {
+    const response = await requestUnixJsonCommand({
+      body: {
+        generationId: entry.generationId,
+        sessionId,
+        token: entry.token
+      },
+      path: "/agent-env-command/health",
+      socketPath,
+      timeoutMs: 2000
+    });
+    return response.statusCode === 200 &&
+      response.payload?.ok === true &&
+      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
+      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
+  } catch {
+    return false;
+  }
+}
+
+async function closeAgentEnvCommandServer(socketPath = "", entry = null) {
+  if (entry?.server) {
+    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
+  }
+  if (commandServers.get(socketPath) === entry) {
+    commandServers.delete(socketPath);
+  }
+}
+
+async function removeDeadAgentEnvCommandSocket(socketPath = "") {
+  if (!await unixCommandSocketIsPresent(socketPath)) {
+    return;
+  }
+  try {
+    await requestUnixJsonCommand({
+      body: {},
+      path: "/agent-env-command/health",
+      socketPath,
+      timeoutMs: 2000
+    });
+  } catch (error) {
+    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
+      await rm(socketPath, {
+        force: true
+      });
+      return;
+    }
+    throw error;
+  }
+  const error = new Error("The managed Env socket is owned by an unverified listener.");
+  error.code = "vibe64_agent_control_owner_unverified";
+  throw error;
+}
+
 async function ensureAgentEnvCommandServer({
   commandService,
   sessionId = "",
   wrapperHostDir = ""
 } = {}) {
   const socketPath = commandSocketHostPath(wrapperHostDir);
-  const existing = commandServers.get(socketPath);
-  if (existing?.commandService === commandService) {
-    return existing.promise || existing;
+  const pending = commandServerPrepares.get(socketPath);
+  if (pending) {
+    await pending.catch(() => null);
+    return ensureAgentEnvCommandServer({
+      commandService,
+      sessionId,
+      wrapperHostDir
+    });
   }
-  if (existing?.promise) {
-    await existing.promise.catch(() => null);
-    const current = commandServers.get(socketPath);
-    if (current?.commandService === commandService) {
-      return current.promise || current;
+  const preparation = ensureAgentEnvCommandServerUnlocked({
+    commandService,
+    sessionId,
+    wrapperHostDir
+  });
+  commandServerPrepares.set(socketPath, preparation);
+  try {
+    return await preparation;
+  } finally {
+    if (commandServerPrepares.get(socketPath) === preparation) {
+      commandServerPrepares.delete(socketPath);
     }
   }
-  if (existing?.server) {
-    await new Promise((resolve) => existing.server.close(() => resolve())).catch(() => null);
-    commandServers.delete(socketPath);
+}
+
+async function ensureAgentEnvCommandServerUnlocked({
+  commandService,
+  sessionId = "",
+  wrapperHostDir = ""
+} = {}) {
+  const socketPath = commandSocketHostPath(wrapperHostDir);
+  let existing = commandServers.get(socketPath);
+  if (existing?.promise) {
+    await existing.promise.catch(() => null);
+    existing = commandServers.get(socketPath);
   }
+  if (
+    existing?.commandService === commandService &&
+    await agentEnvCommandServerIsHealthy(existing, {
+      sessionId,
+      socketPath
+    })
+  ) {
+    return existing;
+  }
+  await closeAgentEnvCommandServer(socketPath, existing);
   const promise = (async () => {
     await mkdir(path.dirname(socketPath), {
       recursive: true
     });
-    await rm(socketPath, {
-      force: true
-    });
+    await removeDeadAgentEnvCommandSocket(socketPath);
     const token = commandServerToken({
       sessionId,
       socketPath,
       wrapperHostDir
     });
+    const generationId = randomUUID();
     const server = http.createServer(async (request, response) => {
       try {
-        if (request.method !== "POST" || request.url !== "/agent-env-command/run") {
+        if (request.method !== "POST" || ![
+          "/agent-env-command/health",
+          "/agent-env-command/run"
+        ].includes(request.url)) {
           sendJsonCommandResponse(response, 404, responseError(
             "Unknown Vibe64 Env command route.",
             "vibe64_agent_env_command_route_not_found"
@@ -394,11 +495,23 @@ async function ensureAgentEnvCommandServer({
           return;
         }
         const input = await readRequestJson(request);
-        if (!verifyRequestToken(input, token) || normalizeText(input.sessionId) !== normalizeText(sessionId)) {
-          sendJsonCommandResponse(response, 403, responseError(
-            "Vibe64 Env command token is invalid.",
-            "vibe64_agent_env_command_token_invalid"
+        if (
+          !verifyRequestToken(input, token) ||
+          normalizeText(input.sessionId) !== normalizeText(sessionId) ||
+          normalizeText(input.generationId) !== generationId
+        ) {
+          sendJsonCommandResponse(response, 409, responseError(
+            "Managed Env control generation is no longer current. Reconnect the assistant.",
+            "vibe64_agent_control_unavailable"
           ));
+          return;
+        }
+        if (request.url === "/agent-env-command/health") {
+          sendJsonCommandResponse(response, 200, {
+            generationId,
+            ok: true,
+            sessionId: normalizeText(sessionId)
+          });
           return;
         }
         sendJsonCommandResponse(response, 200, await commandService.run(input));
@@ -427,12 +540,25 @@ async function ensureAgentEnvCommandServer({
     server.unref?.();
     const stored = {
       commandService,
+      generationId,
       server,
       sessionId: normalizeText(sessionId),
       socketPath,
       token
     };
     commandServers.set(socketPath, stored);
+    if (!await agentEnvCommandServerIsHealthy(stored, {
+      sessionId,
+      socketPath
+    })) {
+      await closeAgentEnvCommandServer(socketPath, stored);
+      await rm(socketPath, {
+        force: true
+      }).catch(() => null);
+      const error = new Error("Managed Env control did not pass its ownership health check.");
+      error.code = "vibe64_agent_control_unavailable";
+      throw error;
+    }
     return stored;
   })();
   commandServers.set(socketPath, {
@@ -809,8 +935,10 @@ async function prepareAgentEnvCommand({
     wrapperHostDir: normalizedWrapperHostDir
   });
   return {
+    controlGenerationId: server.generationId,
     env: {
       [VIBE64_AGENT_ENV_COMMAND_CONTRACT_VERSION_ENV]: AGENT_ENV_COMMAND_CONTRACT_VERSION,
+      [VIBE64_AGENT_ENV_COMMAND_GENERATION_ENV]: server.generationId,
       [VIBE64_AGENT_ENV_COMMAND_SESSION_ID_ENV]: normalizedSessionId,
       [VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV]: commandSocketHostPath(normalizedWrapperHostDir),
       [VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV]: server.token
@@ -824,6 +952,7 @@ async function prepareAgentEnvCommand({
 export {
   AGENT_ENV_COMMAND_NAME,
   VIBE64_AGENT_ENV_COMMAND_CONTRACT_VERSION_ENV,
+  VIBE64_AGENT_ENV_COMMAND_GENERATION_ENV,
   VIBE64_AGENT_ENV_COMMAND_SESSION_ID_ENV,
   VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV,
   VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV,

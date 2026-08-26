@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -10,6 +10,8 @@ import {
 const CODEX_AUTH_MARKER_RELATIVE_PATH = Object.freeze(["auth", "codex", "status.json"]);
 const CODEX_AUTH_STATUS_RELATIVE_PATH = Object.freeze(["auth", "codex", "auth-status.json"]);
 const CODEX_AUTH_STATE_SIGNATURE_VERSION = 1;
+const CODEX_AUTH_RECONNECTING_CODE = "vibe64_codex_reconnecting";
+const CODEX_AUTH_RECONNECTING_MESSAGE = "Codex is reconnecting with the current account.";
 const CODEX_AUTH_INVALIDATED_PATTERN =
   /\b(?:token_invalidated|refresh_token_invalidated)\b|authentication token has been invalidated|HTTP error:\s*401 Unauthorized|401 Unauthorized/iu;
 
@@ -73,29 +75,49 @@ async function clearCodexAuthStatus(systemRoot = "") {
   });
 }
 
-async function markCodexReconnectRequired(systemRoot = "", {
-  reason = "codex-command"
-} = {}) {
+async function writeCodexAuthStatus(systemRoot = "", status = {}) {
   const statusPath = codexAuthStatusPath(systemRoot);
+  const tempPath = `${statusPath}.${process.pid}.${randomUUID()}.tmp`;
   await mkdir(path.dirname(statusPath), {
     mode: 0o700,
     recursive: true
   });
-  await writeFile(statusPath, `${JSON.stringify({
+  await writeFile(tempPath, `${JSON.stringify(status, null, 2)}\n`, {
+    mode: 0o600
+  });
+  await chmod(tempPath, 0o600).catch(() => null);
+  await rename(tempPath, statusPath);
+  await chmod(statusPath, 0o600).catch(() => null);
+  return status;
+}
+
+async function markCodexAuthReconnecting(systemRoot = "", {
+  reason = "codex-auth-change"
+} = {}) {
+  const status = {
+    code: CODEX_AUTH_RECONNECTING_CODE,
+    generation: randomUUID(),
+    message: CODEX_AUTH_RECONNECTING_MESSAGE,
+    reason: String(reason || "codex-auth-change"),
+    status: "reconnecting",
+    updatedAt: new Date().toISOString(),
+    version: 1
+  };
+  await writeCodexAuthStatus(systemRoot, status);
+  return status;
+}
+
+async function markCodexReconnectRequired(systemRoot = "", {
+  reason = "codex-command"
+} = {}) {
+  return writeCodexAuthStatus(systemRoot, {
     code: CODEX_RECONNECT_REQUIRED_CODE,
     message: CODEX_RECONNECT_REQUIRED_MESSAGE,
     reason: String(reason || "codex-command"),
     status: "reconnect_required",
     updatedAt: new Date().toISOString(),
     version: 1
-  }, null, 2)}\n`, {
-    mode: 0o600
   });
-  return {
-    code: CODEX_RECONNECT_REQUIRED_CODE,
-    message: CODEX_RECONNECT_REQUIRED_MESSAGE,
-    status: "reconnect_required"
-  };
 }
 
 function codexAuthOutputRequiresReconnect(output = "") {
@@ -118,6 +140,8 @@ async function codexAuthStateSignature({
 
 export {
   CODEX_AUTH_MARKER_RELATIVE_PATH,
+  CODEX_AUTH_RECONNECTING_CODE,
+  CODEX_AUTH_RECONNECTING_MESSAGE,
   CODEX_AUTH_STATUS_RELATIVE_PATH,
   CODEX_AUTH_STATE_SIGNATURE_VERSION,
   CODEX_RECONNECT_REQUIRED_CODE,
@@ -127,6 +151,7 @@ export {
   codexAuthMarkerPath,
   codexAuthStateSignature,
   codexAuthStatusPath,
+  markCodexAuthReconnecting,
   markCodexReconnectRequired,
   requireCodexAuthSystemRoot,
   readCodexAuthStatus

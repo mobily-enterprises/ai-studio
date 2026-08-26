@@ -29,7 +29,12 @@ import {
   VIBE64_SURFACE_ID
 } from "@/lib/vibe64RequestConfig.js";
 
-const vibe64SessionPanelEmits = ["chat-attention", "title-change", "project-attention"];
+const vibe64SessionPanelEmits = [
+  "chat-attention",
+  "execution-attention",
+  "title-change",
+  "project-attention"
+];
 const vibe64SessionPanelProps = {
   chatCollapsed: {
     default: false,

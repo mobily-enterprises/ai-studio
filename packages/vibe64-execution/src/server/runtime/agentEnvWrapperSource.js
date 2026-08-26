@@ -11,6 +11,7 @@ const contractVersion = ${JSON.stringify(String(contractVersion || "1"))};
 const socketPath = String(process.env.VIBE64_AGENT_ENV_COMMAND_SOCKET || "").trim();
 const sessionId = String(process.env.VIBE64_AGENT_ENV_COMMAND_SESSION_ID || "").trim();
 const token = String(process.env.VIBE64_AGENT_ENV_COMMAND_TOKEN || "").trim();
+const generationId = String(process.env.VIBE64_AGENT_ENV_COMMAND_GENERATION || "").trim();
 const activeContractVersion = String(process.env.VIBE64_AGENT_ENV_COMMAND_CONTRACT_VERSION || "").trim();
 
 function fail(message, code = 1) {
@@ -36,7 +37,8 @@ function requestSocket(body) {
       },
       method: "POST",
       path: "/agent-env-command/run",
-      socketPath
+      socketPath,
+      timeout: 5000
     }, (response) => {
       let text = "";
       response.setEncoding("utf8");
@@ -46,6 +48,11 @@ function requestSocket(body) {
       response.once("end", () => resolve(text));
     });
     request.once("error", reject);
+    request.once("timeout", () => {
+      const error = new Error("Managed Env control timed out.");
+      error.code = "ETIMEDOUT";
+      request.destroy(error);
+    });
     request.end(requestBody);
   });
 }
@@ -66,20 +73,28 @@ function writePayload(payload = {}) {
     }
   }
   if (payload.stderr) {
-    process.stderr.write(String(payload.stderr));
-    if (!String(payload.stderr).endsWith("\\n")) {
+    const stderr = String(payload.stderr);
+    const prefix = payload.code === "vibe64_agent_control_unavailable" &&
+      !stderr.includes("vibe64_agent_control_unavailable")
+      ? "vibe64_agent_control_unavailable: "
+      : "";
+    process.stderr.write(prefix + stderr);
+    if (!stderr.endsWith("\\n")) {
       process.stderr.write("\\n");
     }
   } else if (payload.ok === false && payload.error) {
-    process.stderr.write(String(payload.error) + "\\n");
+    const prefix = payload.code === "vibe64_agent_control_unavailable"
+      ? "vibe64_agent_control_unavailable: "
+      : "";
+    process.stderr.write(prefix + String(payload.error) + "\\n");
   }
 }
 
 if (commandName !== "vibe64-env") {
   fail("Vibe64 Env command wrapper was invoked with an unsupported command.");
 }
-if (!socketPath || !sessionId || !token) {
-  fail("Vibe64 Env command identity is not available for this session.");
+if (!socketPath || !sessionId || !token || !generationId) {
+  fail("vibe64_agent_control_unavailable: Managed Env control identity is unavailable. Reconnect the assistant.");
 }
 if (activeContractVersion !== contractVersion) {
   fail("Vibe64 Env command contract does not match this session.");
@@ -90,10 +105,14 @@ const command = args.find((arg) => !String(arg || "").startsWith("-")) || "";
 const stdin = command === "set" ? await readStdin() : "";
 const response = await requestSocket({
   args,
+  generationId,
   sessionId,
   stdin,
   token
 }).catch((error) => {
+  if (["ECONNREFUSED", "ENOENT", "ENOTSOCK", "ETIMEDOUT"].includes(String(error?.code || ""))) {
+    fail("vibe64_agent_control_unavailable: Managed Env control is unavailable. Reconnect the assistant.");
+  }
   fail(error?.message || error);
 });
 const payload = parsedResponse(response);

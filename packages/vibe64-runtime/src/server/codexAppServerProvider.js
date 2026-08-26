@@ -17,15 +17,20 @@ import process from "node:process";
 import WebSocket from "ws";
 
 import {
+  CODEX_AUTH_RECONNECTING_CODE,
+  CODEX_AUTH_RECONNECTING_MESSAGE,
   CODEX_RECONNECT_REQUIRED_CODE,
   CODEX_RECONNECT_REQUIRED_MESSAGE,
   codexAuthOutputRequiresReconnect,
   codexAuthStateSignature,
-  markCodexReconnectRequired
+  markCodexReconnectRequired,
+  readCodexAuthStatus
 } from "@local/vibe64-core/server/codexAuthState";
 import {
   runVibe64Command as defaultCommandRunner,
   stableHash,
+  stopVibe64Execution,
+  vibe64ManagedExecutionProvider,
   VIBE64_INTERACTIVE_RUNTIME_PACKS
 } from "@local/vibe64-execution/server";
 import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
@@ -45,7 +50,7 @@ import {
   prepareCodexAttachmentRoot
 } from "./codexAttachmentPaths.js";
 
-const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 17;
+const CODEX_APP_SERVER_METADATA_SCHEMA_VERSION = 18;
 const CODEX_APP_SERVER_PROVIDER_ID = AGENT_PROVIDER_IDS.CODEX_APP_SERVER;
 const CODEX_APP_SERVER_TRANSPORT = Object.freeze({
   UNIX: "unix"
@@ -55,7 +60,7 @@ const CODEX_APP_SERVER_METADATA_FILE = "runtime.json";
 const CODEX_APP_SERVER_LOG_FILE = "app-server.log";
 const CODEX_APP_SERVER_SOCKET_FILE = "app-server.sock";
 const CODEX_APP_SERVER_LOCK_DIR = "runtime.lock";
-const CODEX_APP_SERVER_READY_TIMEOUT_MS = 15000;
+const CODEX_APP_SERVER_READY_TIMEOUT_MS = 60000;
 const CODEX_APP_SERVER_LIVENESS_TIMEOUT_MS = 2000;
 const CODEX_APP_SERVER_LOCK_TIMEOUT_MS = 10000;
 const CODEX_APP_SERVER_PROCESS_IDENTITY_SETTLE_TIMEOUT_MS = 1000;
@@ -882,6 +887,36 @@ async function currentCodexAuthStateSignature(options = {}) {
   });
 }
 
+async function assertCodexAuthGenerationCurrent(capturedSignature = "", options = {}) {
+  const systemRoot = normalizeAgentText(options.systemRoot);
+  if (!systemRoot) {
+    return normalizeAgentText(capturedSignature);
+  }
+  const authStatus = await readCodexAuthStatus(systemRoot);
+  if (authStatus?.status === "reconnecting") {
+    const error = new Error(authStatus.message || CODEX_AUTH_RECONNECTING_MESSAGE);
+    error.code = authStatus.code || CODEX_AUTH_RECONNECTING_CODE;
+    error.retryable = false;
+    throw error;
+  }
+  if (authStatus?.status === "reconnect_required") {
+    throw codexReconnectRequiredError();
+  }
+  const currentSignature = await codexAuthStateSignature({
+    systemRoot
+  });
+  if (
+    normalizeAgentText(capturedSignature) &&
+    normalizeAgentText(capturedSignature) !== currentSignature
+  ) {
+    const error = new Error("Codex authentication changed while the app-server was starting.");
+    error.code = "vibe64_codex_auth_generation_changed";
+    error.retryable = false;
+    throw error;
+  }
+  return currentSignature;
+}
+
 function codexReconnectRequiredError({
   cause = null,
   observed = ""
@@ -919,10 +954,12 @@ async function runCodexAuthPreflight({
   codexCommand = STUDIO_MANAGED_CODEX_COMMAND,
   commandRunner = defaultCommandRunner,
   env = process.env,
+  executionRoot = "",
   runtimes = [],
   terminalEnv = {},
   timeoutMs = CODEX_AUTH_PREFLIGHT_TIMEOUT_MS,
-  toolHomeSource = ""
+  toolHomeSource = "",
+  workdir = ""
 } = {}) {
   const normalizedToolHomeSource = normalizeAgentText(toolHomeSource);
   if (normalizedToolHomeSource) {
@@ -932,13 +969,19 @@ async function runCodexAuthPreflight({
     env,
     terminalEnv
   });
+  const processCwd = codexAppServerProcessCwd({
+    executionRoot,
+    workdir
+  });
   try {
     const result = await commandRunner({
       actor: "app",
+      allowedRoots: processCwd ? [processCwd] : [],
       args: codexAuthPreflightArgs(),
       baseEnv,
       command: codexCommand,
       credentialHome: codexAppServerCredentialHome(normalizedToolHomeSource, baseEnv),
+      cwd: processCwd,
       envPolicy: "auth",
       mode: "capture",
       purpose: "codex",
@@ -1198,6 +1241,49 @@ async function stopCodexAppServerProcessGroup(metadata = {}, options = {}) {
   };
 }
 
+async function stopOwnedCodexAppServerExecution(metadata = {}, options = {}) {
+  const executionId = normalizeAgentText(metadata.executionId);
+  if (executionId) {
+    const stopExecution = typeof options.stopExecution === "function"
+      ? options.stopExecution
+      : stopVibe64Execution;
+    let executionStop;
+    try {
+      executionStop = await stopExecution(executionId, {
+        killTimeoutMs: options.killTimeoutMs,
+        reason: options.reason || "codex-app-server-stop",
+        termTimeoutMs: options.termTimeoutMs
+      });
+    } catch (error) {
+      return {
+        error: String(error?.message || error || "The owned execution could not be stopped."),
+        executionId,
+        processExitVerified: false,
+        scopeEmpty: false,
+        stopped: false
+      };
+    }
+    if (executionStop?.ok === true && executionStop?.scopeEmpty === true) {
+      return {
+        ...executionStop,
+        executionId,
+        processExitVerified: true,
+        stopped: executionStop.stopped === true
+      };
+    }
+    if (typeof options.stopExecution === "function" || vibe64ManagedExecutionProvider()) {
+      return {
+        ...(executionStop && typeof executionStop === "object" ? executionStop : {}),
+        executionId,
+        processExitVerified: false,
+        scopeEmpty: false,
+        stopped: false
+      };
+    }
+  }
+  return stopCodexAppServerProcessGroup(metadata, options);
+}
+
 async function stopCodexAppServerProcess(runtimeDir = "", options = {}) {
   const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
   if (!normalizedRuntimeDir) {
@@ -1225,7 +1311,7 @@ async function stopCodexAppServerProcess(runtimeDir = "", options = {}) {
       stopped: false
     };
   }
-  return stopCodexAppServerProcessGroup(metadata, options);
+  return stopOwnedCodexAppServerExecution(metadata, options);
 }
 
 async function removeCodexAppServerMetadataTemps(runtimeDir = "") {
@@ -1240,34 +1326,56 @@ async function removeCodexAppServerMetadataTemps(runtimeDir = "") {
     .map((name) => rm(path.join(runtimeDir, name), { force: true })));
 }
 
-async function cleanupFailedCodexEconomyRuntimeStart(runtimeDir = "", pid = null, processIdentity = null, options = {}) {
-  let processStop = { stopped: false };
+async function cleanupFailedCodexAppServerStart(runtimeDir = "", {
+  economy = false,
+  executionId = "",
+  neverStarted = false,
+  pid = null,
+  processIdentity = null
+} = {}, options = {}) {
+  let processStop = {
+    processExitVerified: neverStarted === true,
+    scopeEmpty: neverStarted === true,
+    stopped: false
+  };
   let processCleanupFailed = false;
-  try {
-    processStop = await stopCodexAppServerProcessGroup({
-      pid: Number(pid),
-      processIdentity,
-      processState: CODEX_APP_SERVER_PROCESS_STATE.RUNNING,
-      provider: CODEX_APP_SERVER_PROVIDER_ID,
-      runtimeDir: normalizeAgentText(runtimeDir),
-      schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION
-    }, options);
-  } catch {
-    processCleanupFailed = true;
+  if (!neverStarted) {
+    try {
+      processStop = await stopOwnedCodexAppServerExecution({
+        executionId: normalizeAgentText(executionId),
+        pid: Number(pid),
+        processIdentity,
+        processState: CODEX_APP_SERVER_PROCESS_STATE.RUNNING,
+        provider: CODEX_APP_SERVER_PROVIDER_ID,
+        runtimeDir: normalizeAgentText(runtimeDir),
+        schemaVersion: CODEX_APP_SERVER_METADATA_SCHEMA_VERSION
+      }, options);
+    } catch {
+      processCleanupFailed = true;
+    }
   }
+  if (processCleanupFailed || processStop.processExitVerified !== true) {
+    return {
+      ...processStop,
+      cleanupFailed: true
+    };
+  }
+  const economyRemovals = economy
+    ? [
+        rm(codexAppServerEconomyHomeDir(runtimeDir), { force: true, recursive: true }),
+        rm(codexAppServerEconomyWorkspaceDir(runtimeDir), { force: true, recursive: true }),
+        rm(codexAppServerLogPath(runtimeDir), { force: true })
+      ]
+    : [];
   const removals = await Promise.allSettled([
-    rm(codexAppServerEconomyHomeDir(runtimeDir), { force: true, recursive: true }),
-    rm(codexAppServerEconomyWorkspaceDir(runtimeDir), { force: true, recursive: true }),
+    ...economyRemovals,
     rm(codexAppServerSocketPath(runtimeDir), { force: true }),
-    rm(codexAppServerLogPath(runtimeDir), { force: true }),
     rm(codexAppServerMetadataPath(runtimeDir), { force: true }),
     removeCodexAppServerMetadataTemps(runtimeDir)
   ]);
   return {
     ...processStop,
-    cleanupFailed: processCleanupFailed ||
-      processStop.processExitVerified !== true ||
-      removals.some(({ status }) => status === "rejected")
+    cleanupFailed: removals.some(({ status }) => status === "rejected")
   };
 }
 
@@ -1381,6 +1489,7 @@ function codexAppServerRuntimeIdentity(runtime = {}) {
     normalizeAgentText(runtime.accountIdentitySignature),
     normalizeAgentText(runtime.authStateSignature),
     normalizeAgentText(runtime.endpoint),
+    normalizeAgentText(runtime.executionId),
     normalizeAgentText(runtime.executionMode),
     normalizeAgentText(runtime.runtimesHash),
     normalizeAgentText(runtime.terminalEnvHash),
@@ -1421,6 +1530,18 @@ function normalizeCodexAppServerTerminalEnv(terminalEnv = {}) {
       String(value ?? "")
     ])
     .filter(([name, value]) => name && String(value || "")));
+}
+
+function codexAppServerControlGeneration(terminalEnv = {}) {
+  const normalized = normalizeCodexAppServerTerminalEnv(terminalEnv);
+  const generations = [
+    normalized.VIBE64_CODEX_GIT_COMMAND_GENERATION,
+    normalized.VIBE64_AGENT_ENV_COMMAND_GENERATION,
+    normalized.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION
+  ].map(normalizeAgentText);
+  return generations.every(Boolean)
+    ? stableHash(JSON.stringify(generations))
+    : "";
 }
 
 function codexAppServerCommandBaseEnv({
@@ -1510,6 +1631,7 @@ function normalizeCodexAppServerMetadata(metadata = {}) {
     attachmentHostRoot: normalizeAgentText(normalized.attachmentHostRoot),
     authStateSignature: normalizeAgentText(normalized.authStateSignature),
     endpoint,
+    executionId: normalizeAgentText(normalized.executionId),
     executionMode: normalizeAgentText(normalized.executionMode) || CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
     executionContextHash: normalizeAgentText(normalized.executionContextHash),
     healthz: normalizeAgentText(normalized.healthz),
@@ -1551,6 +1673,7 @@ function codexAppServerMetadataIsWellFormed(metadata = {}, options = {}) {
     metadata.accountIdentitySignature === expectedAccountIdentitySignature &&
     metadata.attachmentHostRoot === expectedAttachmentHostRoot &&
     metadata.authStateSignature &&
+    metadata.executionId &&
     metadata.executionContextHash === expectedExecutionContextHash &&
     metadata.executionMode === expectedExecutionMode &&
     metadata.processCwd &&
@@ -1586,16 +1709,6 @@ async function writeCodexAppServerMetadata(runtimeDir = "", metadata = {}) {
   await chmod(tempPath, 0o600).catch(() => null);
   await rename(tempPath, metadataPath);
   await chmod(metadataPath, 0o600).catch(() => null);
-}
-
-async function codexAppServerEndpointIsResponsive(endpoint = "", {
-  timeoutMs = CODEX_APP_SERVER_LIVENESS_TIMEOUT_MS,
-  WebSocketImpl = WebSocket
-} = {}) {
-  return (await codexAppServerEndpointStatus(endpoint, {
-    timeoutMs,
-    WebSocketImpl
-  })).status === CODEX_APP_SERVER_ENDPOINT_STATUS.RESPONSIVE;
 }
 
 async function codexAppServerEndpointStatus(endpoint = "", {
@@ -1712,7 +1825,7 @@ async function codexAppServerRuntimeStatus(metadata = {}, options = {}) {
     return {
       metadata: normalized,
       replace: false,
-      reusable: false,
+      reusable: true,
       status: CODEX_APP_SERVER_RUNTIME_STATUS.SUSPECT
     };
   }
@@ -1840,17 +1953,39 @@ async function waitForCodexAppServer(endpoint = "", {
     return false;
   }
   const startedAt = Date.now();
-  while (Date.now() - startedAt <= timeoutMs) {
-    const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
-    if (await codexAppServerEndpointIsResponsive(endpoint, {
-      timeoutMs: Math.min(CODEX_APP_SERVER_LIVENESS_TIMEOUT_MS, remainingMs),
-      WebSocketImpl
-    })) {
-      return true;
-    }
+  while (!await fileExists(socketPath) && Date.now() - startedAt <= timeoutMs) {
     await delay(100);
   }
-  return false;
+  const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+  if (!await fileExists(socketPath) || remainingMs <= 0) {
+    return false;
+  }
+  const client = new CodexAppServerJsonRpcClient({
+    endpoint,
+    requestTimeoutMs: remainingMs,
+    WebSocketImpl
+  });
+  let timeout = null;
+  const handshake = (async () => {
+    await client.connect();
+    await client.initialize();
+    return true;
+  })();
+  handshake.catch(() => null);
+  try {
+    return await Promise.race([
+      handshake,
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve(false), remainingMs);
+        timeout.unref?.();
+      })
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    client.close();
+  }
 }
 
 function codexAppServerProcessCommandHash({
@@ -1924,6 +2059,7 @@ async function startCodexAppServerProcess({
   processIdentityInspector = null,
   readyTimeoutMs = CODEX_APP_SERVER_READY_TIMEOUT_MS,
   signalProcessGroup: signalProcessGroupOverride = null,
+  stopExecution = null,
   systemRoot = "",
   project = {},
   session = {},
@@ -1935,6 +2071,7 @@ async function startCodexAppServerProcess({
   workdir = "",
   runtimeInstanceId = "",
   runtimes = [],
+  socketOwnerDrained = false,
   runtimeDir = codexAppServerRuntimeDir({
     env,
     executionRoot,
@@ -1946,6 +2083,7 @@ async function startCodexAppServerProcess({
     killTimeoutMs,
     processIdentityInspector,
     signalProcessGroup: signalProcessGroupOverride,
+    stopExecution,
     termTimeoutMs
   };
   await ensureWritablePrivateDirectory(runtimeDir);
@@ -1958,6 +2096,9 @@ async function startCodexAppServerProcess({
   const resolvedAuthStateSignature = await currentCodexAuthStateSignature({
     authStateSignature,
     env,
+    systemRoot
+  });
+  await assertCodexAuthGenerationCurrent(resolvedAuthStateSignature, {
     systemRoot
   });
   const socketPath = codexAppServerSocketPath(runtimeDir);
@@ -1991,6 +2132,19 @@ async function startCodexAppServerProcess({
         env,
         terminalEnv: normalizedTerminalEnv
       });
+  if (await fileExists(socketPath) && !socketOwnerDrained) {
+    const endpointStatus = await codexAppServerEndpointStatus(endpoint, {
+      timeoutMs: CODEX_APP_SERVER_LIVENESS_TIMEOUT_MS,
+      WebSocketImpl
+    });
+    if (![CODEX_APP_SERVER_ENDPOINT_STATUS.MISSING, CODEX_APP_SERVER_ENDPOINT_STATUS.UNREACHABLE]
+      .includes(endpointStatus.status)) {
+      const error = new Error("The existing Codex app-server socket still has an unretired owner.");
+      error.code = "vibe64_codex_app_server_socket_owner_unverified";
+      error.retryable = false;
+      throw error;
+    }
+  }
   await rm(socketPath, {
     force: true
   });
@@ -2039,6 +2193,15 @@ async function startCodexAppServerProcess({
     ),
     cwd: processCwd || process.cwd(),
     envPolicy: "auth",
+    execution: {
+      controlGenerationId: economy ? "" : codexAppServerControlGeneration(normalizedTerminalEnv),
+      kind: "assistant",
+      label: economy ? "Economy assistant" : "Assistant",
+      lifecycle: "service",
+      operationId: "codex-app-server",
+      ownerId: normalizeAgentText(runtimeInstanceId || session?.sessionId || session?.id) ||
+        stableHash(runtimeDir)
+    },
     logPath,
     mode: "detached",
     project: economy ? {} : project,
@@ -2050,35 +2213,60 @@ async function startCodexAppServerProcess({
     userKey: economy ? "" : normalizeAgentText(userKey)
   });
   if (!startResult.ok) {
-    if (economy) {
-      const failedProcessIdentity = await captureCodexAppServerProcessIdentity({
-        commandHash,
-        pid: startResult.pid,
-        reportedIdentity: startResult.processIdentity,
-        runtimeToken
-      }).catch(() => null);
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
-        runtimeDir,
-        startResult.pid,
-        failedProcessIdentity,
-        processLifecycleOptions
-      );
-      const error = new Error("Codex isolated economy runtime failed to start.");
-      error.code = cleanup.cleanupFailed
-        ? "vibe64_codex_economy_runtime_cleanup_required"
-        : "vibe64_codex_economy_runtime_start_failed";
-      error.cleanupRequired = cleanup.cleanupFailed;
-      throw error;
-    }
-    throw new Error(startResult.output || startResult.error || "Codex app-server failed to start.");
+    const failedProcessIdentity = await captureCodexAppServerProcessIdentity({
+      commandHash,
+      pid: startResult.pid,
+      reportedIdentity: startResult.processIdentity,
+      runtimeToken
+    }).catch(() => null);
+    const cleanup = await cleanupFailedCodexAppServerStart(runtimeDir, {
+      economy,
+      executionId: startResult.execution?.id,
+      neverStarted: !Number.isSafeInteger(Number(startResult.pid)),
+      pid: startResult.pid,
+      processIdentity: failedProcessIdentity
+    }, processLifecycleOptions);
+    const error = new Error(
+      startResult.output || startResult.error ||
+      (economy ? "Codex isolated economy runtime failed to start." : "Codex app-server failed to start.")
+    );
+    error.code = cleanup.cleanupFailed
+      ? (economy
+          ? "vibe64_codex_economy_runtime_cleanup_required"
+          : "vibe64_codex_app_server_cleanup_required")
+      : (startResult.code || (economy
+          ? "vibe64_codex_economy_runtime_start_failed"
+          : "vibe64_codex_app_server_start_failed"));
+    error.cleanupRequired = cleanup.cleanupFailed;
+    error.execution = startResult.execution;
+    error.retryable = cleanup.cleanupFailed ? false : startResult.retryable === true;
+    throw error;
   }
 
-  const processIdentity = await captureCodexAppServerProcessIdentity({
-    commandHash,
-    pid: startResult.pid,
-    reportedIdentity: startResult.processIdentity,
-    runtimeToken
-  });
+  let processIdentity;
+  try {
+    processIdentity = await captureCodexAppServerProcessIdentity({
+      commandHash,
+      pid: startResult.pid,
+      reportedIdentity: startResult.processIdentity,
+      runtimeToken
+    });
+  } catch (cause) {
+    const cleanup = await cleanupFailedCodexAppServerStart(runtimeDir, {
+      economy,
+      executionId: startResult.execution?.id,
+      pid: startResult.pid,
+      processIdentity: startResult.processIdentity
+    }, processLifecycleOptions);
+    const error = new Error("Codex app-server process ownership could not be recorded.", {
+      cause
+    });
+    error.code = cleanup.cleanupFailed
+      ? "vibe64_codex_app_server_cleanup_required"
+      : "vibe64_codex_app_server_process_identity_unavailable";
+    error.cleanupRequired = cleanup.cleanupFailed;
+    throw error;
+  }
 
   const ready = await waitForCodexAppServer(endpoint, {
     timeoutMs: readyTimeoutMs,
@@ -2086,7 +2274,13 @@ async function startCodexAppServerProcess({
   });
   if (!ready) {
     const logTail = await tailTextFile(logPath);
-    if (!economy && codexAuthOutputRequiresReconnect(logTail)) {
+    const cleanup = await cleanupFailedCodexAppServerStart(runtimeDir, {
+      economy,
+      executionId: startResult.execution?.id,
+      pid: startResult.pid,
+      processIdentity
+    }, processLifecycleOptions);
+    if (!cleanup.cleanupFailed && !economy && codexAuthOutputRequiresReconnect(logTail)) {
       await markCodexAppServerReconnectRequired({
         env,
         systemRoot,
@@ -2096,24 +2290,45 @@ async function startCodexAppServerProcess({
         reason: "codex-app-server-start"
       });
     }
-    if (economy) {
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
-        runtimeDir,
-        startResult.pid,
-        processIdentity,
-        processLifecycleOptions
-      );
-      const error = new Error("Codex isolated economy runtime did not become ready.");
-      error.code = cleanup.cleanupFailed
-        ? "vibe64_codex_economy_runtime_cleanup_required"
-        : "vibe64_codex_economy_runtime_start_failed";
-      error.cleanupRequired = cleanup.cleanupFailed;
-      throw error;
-    }
-    throw new Error([
-      `Codex app-server did not become ready at ${endpoint}.`,
+    const error = new Error([
+      economy
+        ? "Codex isolated economy runtime did not become ready."
+        : `Codex app-server did not become ready at ${endpoint}.`,
       logTail ? `Recent log output:\n${logTail}` : ""
     ].filter(Boolean).join("\n"));
+    error.code = cleanup.cleanupFailed
+      ? (economy
+          ? "vibe64_codex_economy_runtime_cleanup_required"
+          : "vibe64_codex_app_server_cleanup_required")
+      : (economy
+          ? "vibe64_codex_economy_runtime_start_failed"
+          : "vibe64_codex_app_server_ready_timeout");
+    error.cleanupRequired = cleanup.cleanupFailed;
+    error.retryable = false;
+    throw error;
+  }
+
+  try {
+    await assertCodexAuthGenerationCurrent(resolvedAuthStateSignature, {
+      systemRoot
+    });
+  } catch (cause) {
+    const cleanup = await cleanupFailedCodexAppServerStart(runtimeDir, {
+      economy,
+      executionId: startResult.execution?.id,
+      pid: startResult.pid,
+      processIdentity
+    }, processLifecycleOptions);
+    if (cleanup.cleanupFailed) {
+      const error = new Error("Codex app-server authentication changed and its execution could not be drained.", {
+        cause
+      });
+      error.code = "vibe64_codex_app_server_cleanup_required";
+      error.cleanupRequired = true;
+      error.retryable = false;
+      throw error;
+    }
+    throw cause;
   }
 
   return {
@@ -2123,6 +2338,7 @@ async function startCodexAppServerProcess({
     }),
     authStateSignature: resolvedAuthStateSignature,
     endpoint,
+    executionId: normalizeAgentText(startResult.execution?.id),
     executionMode: economy
       ? CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
       : CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
@@ -2180,6 +2396,7 @@ async function ensureCodexAppServerRuntime(options = {}) {
 
   const releaseLock = await acquireRuntimeLock(runtimeDir, runtimeOptions);
   try {
+    let socketOwnerDrained = false;
     const afterLock = await readCodexAppServerMetadata(runtimeDir);
     const afterLockStatus = afterLock ? await codexAppServerRuntimeStatus(afterLock, runtimeOptions) : null;
     if (afterLockStatus?.reusable) {
@@ -2197,34 +2414,48 @@ async function ensureCodexAppServerRuntime(options = {}) {
       });
       if (stopped.processExitVerified !== true) {
         const error = new Error(
-          "Existing Codex app-server process identity could not be verified for replacement."
+          "Vibe64 found an earlier Codex app-server but could not prove that its owned execution was stopped. It refused to start a replacement because two assistant processes could damage the session or worsen resource pressure."
         );
         error.code = "vibe64_codex_app_server_process_identity_unverified";
+        error.cleanupRequired = true;
+        error.retryable = false;
         throw error;
       }
+      socketOwnerDrained = true;
     }
 
     const started = await startCodexAppServerProcess({
       ...runtimeOptions,
-      runtimeDir
+      runtimeDir,
+      socketOwnerDrained
     });
     try {
+      await assertCodexAuthGenerationCurrent(started.authStateSignature, runtimeOptions);
       await runtimeMetadataWriter(runtimeDir, started);
+      await assertCodexAuthGenerationCurrent(started.authStateSignature, runtimeOptions);
     } catch (error) {
-      if (!codexAppServerIsEconomy(runtimeOptions)) {
-        throw error;
-      }
-      const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
-        runtimeDir,
-        started.pid,
-        started.processIdentity,
-        runtimeOptions
+      const economy = codexAppServerIsEconomy(runtimeOptions);
+      const cleanup = await cleanupFailedCodexAppServerStart(runtimeDir, {
+        economy,
+        executionId: started.executionId,
+        pid: started.pid,
+        processIdentity: started.processIdentity
+      }, runtimeOptions);
+      const failure = new Error(
+        economy
+          ? "Codex isolated economy runtime metadata could not be recorded."
+          : "Codex app-server runtime could not be published safely.",
+        { cause: error }
       );
-      const failure = new Error("Codex isolated economy runtime metadata could not be recorded.");
       failure.code = cleanup.cleanupFailed
-        ? "vibe64_codex_economy_runtime_cleanup_required"
-        : "vibe64_codex_economy_runtime_metadata_failed";
+        ? (economy
+            ? "vibe64_codex_economy_runtime_cleanup_required"
+            : "vibe64_codex_app_server_cleanup_required")
+        : (error?.code || (economy
+            ? "vibe64_codex_economy_runtime_metadata_failed"
+            : "vibe64_codex_app_server_metadata_failed"));
       failure.cleanupRequired = cleanup.cleanupFailed;
+      failure.retryable = false;
       throw failure;
     }
     return {
@@ -2895,10 +3126,8 @@ class CodexAppServerAgentProvider {
         reason
       });
     } catch (error) {
-      if (error?.code === CODEX_RECONNECT_REQUIRED_CODE) {
-        await this.stopRuntime({
-          preserveProcessExitProof: !this.isEconomyProvider()
-        }).catch(() => null);
+      if (error?.code === CODEX_RECONNECT_REQUIRED_CODE && this.runtime?.runtimeDir) {
+        await this.stopRuntimeAndRequireDrain(reason);
       }
       throw error;
     }
@@ -2909,20 +3138,31 @@ class CodexAppServerAgentProvider {
       return;
     }
     const runtime = this.runtime || {};
+    let generationError = null;
+    try {
+      await assertCodexAuthGenerationCurrent(runtime.authStateSignature, this.options);
+    } catch (error) {
+      generationError = error;
+    }
     const logTail = await tailTextFile(runtime.logPath || "");
-    if (!codexAuthOutputRequiresReconnect(logTail)) {
+    const reconnectRequired = codexAuthOutputRequiresReconnect(logTail);
+    if (!generationError && !reconnectRequired) {
       return;
     }
-    await this.stopRuntime({
-      preserveProcessExitProof: !this.isEconomyProvider()
-    }).catch(() => null);
-    await markCodexAppServerReconnectRequired({
-      ...this.options,
-      toolHomeSource: runtime.toolHomeSource || this.options.toolHomeSource
-    }, {
-      observed: logTail,
-      reason
-    });
+    await this.stopRuntimeAndRequireDrain(reason);
+    if (reconnectRequired) {
+      await markCodexAppServerReconnectRequired({
+        ...this.options,
+        toolHomeSource: runtime.toolHomeSource || this.options.toolHomeSource
+      }, {
+        observed: logTail,
+        reason
+      });
+      throw codexReconnectRequiredError({
+        observed: logTail
+      });
+    }
+    throw generationError;
   }
 
   async runRequest(operation, reason = "codex-app-server-request") {
@@ -2943,9 +3183,9 @@ class CodexAppServerAgentProvider {
       ].filter(Boolean).join("\n");
       if (codexAuthOutputRequiresReconnect(observed)) {
         const runtime = this.runtime || {};
-        await this.stopRuntime({
-          preserveProcessExitProof: !this.isEconomyProvider()
-        }).catch(() => null);
+        if (runtime.runtimeDir) {
+          await this.stopRuntimeAndRequireDrain(reason);
+        }
         await markCodexAppServerReconnectRequired({
           ...this.options,
           toolHomeSource: runtime.toolHomeSource || this.options.toolHomeSource
@@ -2956,6 +3196,27 @@ class CodexAppServerAgentProvider {
       }
       throw error;
     }
+  }
+
+  async stopRuntimeAndRequireDrain(reason = "codex-app-server-stop") {
+    const result = await this.stopRuntime({
+      preserveProcessExitProof: !this.isEconomyProvider()
+    });
+    if (
+      result?.processExitVerified === true ||
+      result?.runtimeDirRemoved === true ||
+      result?.stopped === true
+    ) {
+      return result;
+    }
+    const error = new Error("Codex app-server execution could not be proven empty.");
+    error.code = this.isEconomyProvider()
+      ? "vibe64_codex_economy_runtime_cleanup_required"
+      : "vibe64_codex_app_server_cleanup_required";
+    error.cleanupRequired = true;
+    error.reason = normalizeAgentText(reason);
+    error.retryable = false;
+    throw error;
   }
 
   async connect() {
@@ -3018,22 +3279,34 @@ class CodexAppServerAgentProvider {
       await this.authenticateEconomyClient(client, runtime);
     } catch (error) {
       client.close();
-      if (this.isEconomyProvider()) {
-        const cleanup = await cleanupFailedCodexEconomyRuntimeStart(
-          runtime.runtimeDir,
-          runtime.pid,
-          runtime.processIdentity,
-          this.options
-        );
-        this.runtime = null;
+      if (!runtime.runtimeDir) {
+        throw error;
+      }
+      const economy = this.isEconomyProvider();
+      const cleanup = await cleanupFailedCodexAppServerStart(runtime.runtimeDir, {
+        economy,
+        executionId: runtime.executionId,
+        pid: runtime.pid,
+        processIdentity: runtime.processIdentity
+      }, this.options);
+      this.runtime = null;
+      if (economy) {
         this.economyAuth = null;
         this.economyAuthBlocked = true;
-        if (cleanup.cleanupFailed) {
-          const failure = new Error("Codex isolated economy runtime could not be retired after startup failed.");
-          failure.code = "vibe64_codex_economy_runtime_cleanup_required";
-          failure.cleanupRequired = true;
-          throw failure;
-        }
+      }
+      if (cleanup.cleanupFailed) {
+        const failure = new Error(
+          economy
+            ? "Codex isolated economy runtime could not be retired after startup failed."
+            : "Codex app-server runtime could not be retired after initialization failed.",
+          { cause: error }
+        );
+        failure.code = economy
+          ? "vibe64_codex_economy_runtime_cleanup_required"
+          : "vibe64_codex_app_server_cleanup_required";
+        failure.cleanupRequired = true;
+        failure.retryable = false;
+        throw failure;
       }
       throw error;
     }

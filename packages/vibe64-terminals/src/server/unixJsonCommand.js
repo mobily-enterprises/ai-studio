@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import http from "node:http";
+import { stat } from "node:fs/promises";
 
 function commandRequestError({
   code = "",
@@ -15,6 +17,61 @@ function shortCommandHash(value = "") {
     .update(String(value || ""))
     .digest("hex")
     .slice(0, 16);
+}
+
+async function unixCommandSocketIsPresent(socketPath = "") {
+  try {
+    return (await stat(socketPath)).isSocket();
+  } catch {
+    return false;
+  }
+}
+
+function requestUnixJsonCommand({
+  body = {},
+  path = "/",
+  socketPath = "",
+  timeoutMs = 2000
+} = {}) {
+  const requestBody = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      headers: {
+        "Content-Length": Buffer.byteLength(requestBody),
+        "Content-Type": "application/json"
+      },
+      method: "POST",
+      path,
+      socketPath,
+      timeout: timeoutMs
+    }, (response) => {
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        text += chunk;
+      });
+      response.once("end", () => {
+        let payload = null;
+        try {
+          payload = JSON.parse(text || "{}");
+        } catch {
+          payload = null;
+        }
+        resolve({
+          payload,
+          statusCode: Number(response.statusCode || 0),
+          text
+        });
+      });
+    });
+    request.once("error", reject);
+    request.once("timeout", () => {
+      const error = new Error("Unix command request timed out.");
+      error.code = "ETIMEDOUT";
+      request.destroy(error);
+    });
+    request.end(requestBody);
+  });
 }
 
 async function readJsonCommandRequest(request, {
@@ -61,6 +118,8 @@ function sendJsonCommandResponse(response, statusCode, payload = {}) {
 
 export {
   readJsonCommandRequest,
+  requestUnixJsonCommand,
   sendJsonCommandResponse,
-  shortCommandHash
+  shortCommandHash,
+  unixCommandSocketIsPresent
 };
