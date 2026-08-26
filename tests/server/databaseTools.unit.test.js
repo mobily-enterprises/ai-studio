@@ -1005,3 +1005,79 @@ test("database service is owner-only and routes read-only SQL through the reader
   assert.equal(environments.at(-1), "reader");
   await service.close();
 });
+
+test("database service replaces a schema snapshot owned by a different database", async () => {
+  const currentSchema = testSchema();
+  const staleSchema = {
+    ...currentSchema,
+    database: "previous_catalogue"
+  };
+  const artifacts = new Map([["database/schema.json", JSON.stringify(staleSchema)]]);
+  const store = {
+    async readArtifact(_sessionId, artifactPath) {
+      return artifacts.get(artifactPath) || "";
+    },
+    async readSession(sessionId) {
+      return { sessionId };
+    },
+    async writeJsonArtifact(_sessionId, artifactPath, value) {
+      artifacts.set(artifactPath, JSON.stringify(value));
+    }
+  };
+  const projectService = {
+    async createSessionStore() {
+      return store;
+    },
+    async sessionDatabaseEnvironment() {
+      return {
+        databaseToolEnvironment: {
+          contract: "vibe64.database-tool-environment.v1",
+          kind: "postgresql",
+          read: {
+            database: "catalogue",
+            host: "127.0.0.1",
+            password: "reader-secret",
+            port: 5432,
+            username: "reader"
+          },
+          write: {
+            database: "catalogue",
+            host: "127.0.0.1",
+            password: "writer-secret",
+            port: 5432,
+            username: "writer"
+          }
+        },
+        developmentDatabaseScope: "session",
+        source: { label: "Session source" }
+      };
+    }
+  };
+  let refreshCount = 0;
+  const service = createDatabaseService({
+    projectService,
+    withKnex: async (endpoint) => {
+      assert.equal(endpoint.username, "reader");
+      refreshCount += 1;
+      return currentSchema;
+    }
+  });
+
+  const refreshed = await service.readState({
+    sessionId: "service-session",
+    vibe64User: { role: "owner", username: "owner" }
+  });
+  assert.equal(refreshed.ok, true);
+  assert.equal(refreshed.schema.database, "catalogue");
+  assert.equal(refreshCount, 1);
+
+  const cached = await service.readState({
+    sessionId: "service-session",
+    vibe64User: { role: "owner", username: "owner" }
+  });
+  assert.equal(cached.ok, true);
+  assert.equal(cached.schema.database, "catalogue");
+  assert.equal(refreshCount, 1);
+  assert.equal(JSON.parse(artifacts.get("database/schema.json")).database, "catalogue");
+  await service.close();
+});

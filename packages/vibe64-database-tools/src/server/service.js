@@ -227,10 +227,16 @@ function createService({
 
   async function currentSchema(context, { initialize = true } = {}) {
     const schema = await readSchemaSnapshot(context.store, context.sessionId);
-    if (schema || !initialize) {
+    const matchesConnection = schema &&
+      schema.engine === context.readConnection.engine &&
+      schema.database === context.readConnection.database;
+    if (matchesConnection || !initialize) {
       return schema;
     }
-    return refreshSchema(context, "initial-missing-snapshot");
+    return refreshSchema(
+      context,
+      schema ? "database-identity-changed" : "initial-missing-snapshot"
+    );
   }
 
   function assertWriteQueryConfirmed(context, input = {}) {
