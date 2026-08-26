@@ -17,7 +17,9 @@ function commandResult({
   signal = "",
   stderr = "",
   stdout = "",
-  timedOut = false
+  timedOut = false,
+  execution = null,
+  retryable = null
 } = {}) {
   const normalizedExitCode = normalizeExitCode(exitCode);
   const normalizedStdout = String(stdout || "");
@@ -33,7 +35,11 @@ function commandResult({
     signal: normalizeText(signal),
     stderr: normalizedStderr.trim(),
     stdout: normalizedStdout.trim(),
-    timedOut: timedOut === true
+    timedOut: timedOut === true,
+    ...(execution && typeof execution === "object" && !Array.isArray(execution)
+      ? { execution }
+      : {}),
+    ...(typeof retryable === "boolean" ? { retryable } : {})
   };
 }
 

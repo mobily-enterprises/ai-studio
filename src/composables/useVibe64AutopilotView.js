@@ -72,7 +72,26 @@ const NUMBERED_QUESTION_UNSURE_CHOICE = Object.freeze({
   selectLabel: NUMBERED_QUESTION_UNSURE_VALUE,
   value: NUMBERED_QUESTION_UNSURE_VALUE
 });
-const vibe64AutopilotViewEmits = ["busy-change", "chat-attention", "project-attention"];
+const EXECUTION_CAPACITY_ERROR_CODES = new Set([
+  "vibe64_capacity_rejected"
+]);
+const EXECUTION_SAFETY_ERROR_CODES = new Set([
+  "vibe64_codex_app_server_cleanup_required",
+  "vibe64_codex_app_server_metadata_failed",
+  "vibe64_codex_app_server_process_identity_unverified",
+  "vibe64_codex_economy_runtime_cleanup_required",
+  "vibe64_codex_economy_runtime_metadata_failed",
+  "vibe64_execution_cleanup_required",
+  "vibe64_execution_drain_failed",
+  "vibe64_execution_ownership_unknown",
+  "vibe64_managed_execution_provider_unavailable"
+]);
+const vibe64AutopilotViewEmits = [
+  "busy-change",
+  "chat-attention",
+  "execution-attention",
+  "project-attention"
+];
 const vibe64AutopilotViewProps = {
   active: {
     default: true,
@@ -805,6 +824,10 @@ function useVibe64AutopilotView(props, emit, {
         error: message,
         status: "failed"
       });
+      const attention = executionAttentionForError(error, message);
+      if (attention) {
+        emit("execution-attention", attention);
+      }
       return false;
     } finally {
       composerSending.value = false;
@@ -1644,6 +1667,23 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupTitle,
     workspaceSetupVisible
   };
+}
+
+function executionAttentionForError(error = null, message = "") {
+  const code = normalizedAgentTurnText(error?.code);
+  const category = EXECUTION_CAPACITY_ERROR_CODES.has(code)
+    ? "capacity"
+    : EXECUTION_SAFETY_ERROR_CODES.has(code)
+      ? "ownership"
+      : "";
+  if (!category) {
+    return null;
+  }
+  return Object.freeze({
+    category,
+    code,
+    message: normalizedAgentTurnText(message) || "This work could not start safely."
+  });
 }
 
 export {

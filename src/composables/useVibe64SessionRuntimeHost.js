@@ -408,7 +408,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
           { body, method: "POST", signal }
         );
         if (result?.ok === false) {
-          throw new Error(vibe64ApiResponseError(result, "Message could not be sent."));
+          throw vibe64ApiError(result, "Message could not be sent.");
         }
         await refreshSessionData({ reason: "agent-message-accepted" }).catch(() => null);
         return true;

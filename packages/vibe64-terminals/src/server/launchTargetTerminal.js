@@ -30,6 +30,9 @@ import {
   normalizeHostName
 } from "@local/vibe64-core/server/localStudioRequest";
 import {
+  currentProjectRequestContext
+} from "@local/vibe64-core/server/projectRequestContext";
+import {
   VIBE64_PREVIEW_PUBLIC_DOMAIN_ENV,
   VIBE64_PUBLIC_PROTOCOL_ENV,
   VIBE64_PUBLIC_USER_DOMAIN_ENV
@@ -1673,6 +1676,7 @@ function launchExecutionProject(context = {}, terminalEnvRecords = {}) {
     runtimeConfigEnv: terminalEnvRecords.runtimeConfigEnv,
     runtimeTargetRoot: context.projectContextRoot || "",
     serviceDataRoot: context.serviceDataRoot || "",
+    slug: String(currentProjectRequestContext()?.slug || "").trim(),
     targetRoot: context.sessionSourceRoot || ""
   };
 }

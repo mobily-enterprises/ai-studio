@@ -21,16 +21,20 @@ import {
   agentPlaywrightCommandSource,
   agentPreviewBrowserWorkerSource,
   agentPreviewWrapperSource,
+  runVibe64Command,
   runtimePackBinPaths,
-  runtimePackRoot
+  runtimePackRoot,
+  stopVibe64Execution
 } from "@local/vibe64-execution/server";
 import {
   writeExecutableFileIfChanged
 } from "./writeExecutableFileIfChanged.js";
 import {
   readJsonCommandRequest,
+  requestUnixJsonCommand,
   sendJsonCommandResponse,
-  shortCommandHash
+  shortCommandHash,
+  unixCommandSocketIsPresent
 } from "./unixJsonCommand.js";
 
 const AGENT_PREVIEW_COMMAND_NAME = "vibe64-preview";
@@ -42,6 +46,8 @@ const AGENT_PREVIEW_COMMAND_SOCKET_NAME = "preview-command.sock";
 const AGENT_PREVIEW_COMMAND_CONTRACT_VERSION = "8";
 const AGENT_PREVIEW_COMMAND_REQUEST_MAX_BYTES = 1024 * 1024;
 const AGENT_PREVIEW_COMMAND_ROUTES = new Set([
+  "/agent-preview-command/browser-start",
+  "/agent-preview-command/browser-stop",
   "/agent-preview-command/health",
   "/agent-preview-command/identity",
   "/agent-preview-command/run"
@@ -55,8 +61,11 @@ const VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID_ENV = "VIBE64_AGENT_PREVIEW_COMMAN
 const VIBE64_AGENT_PREVIEW_COMMAND_SOCKET_ENV = "VIBE64_AGENT_PREVIEW_COMMAND_SOCKET";
 const VIBE64_AGENT_PREVIEW_COMMAND_TOKEN_ENV = "VIBE64_AGENT_PREVIEW_COMMAND_TOKEN";
 const VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV = "VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION";
+const VIBE64_AGENT_PREVIEW_COMMAND_GENERATION_ENV = "VIBE64_AGENT_PREVIEW_COMMAND_GENERATION";
+const VIBE64_PREVIEW_BROWSER_WORKER_TOKEN_ENV = "VIBE64_PREVIEW_BROWSER_WORKER_TOKEN";
 
 const commandServers = new Map();
+const commandServerPrepares = new Map();
 
 function delay(ms) {
   return new Promise((resolve) => {
@@ -516,7 +525,9 @@ function logPreviewCommandResult(logger, result = {}, fields = {}) {
 function createAgentPreviewCommandService({
   launchTarget = null,
   logger = null,
-  readSessionUiState = readSessionUiSyncStateForSession
+  readSessionUiState = readSessionUiSyncStateForSession,
+  runManagedCommand = runVibe64Command,
+  stopManagedExecution = stopVibe64Execution
 } = {}) {
   const browserWorkers = new Map();
 
@@ -560,8 +571,17 @@ function createAgentPreviewCommandService({
       return false;
     }
     const sessionWorkers = browserWorkers.get(normalizedSessionId) || new Map();
+    const existing = sessionWorkers.get(socketPath);
+    const sameGeneration = normalizeText(existing?.token) === normalizeText(descriptor.token);
     sessionWorkers.set(socketPath, {
       ...descriptor,
+      executionId: sameGeneration ? normalizeText(existing?.executionId) : "",
+      retiredDescriptors: sameGeneration
+        ? (existing?.retiredDescriptors || [])
+        : [
+            ...(existing?.retiredDescriptors || []),
+            ...(existing ? [existing] : [])
+          ],
       sessionId: normalizedSessionId,
       socketPath
     });
@@ -575,7 +595,10 @@ function createAgentPreviewCommandService({
     browserWorkers.delete(normalizedSessionId);
     let closed = 0;
     for (const descriptor of sessionWorkers.values()) {
-      await closeRegisteredBrowserWorker(descriptor);
+      await stopRegisteredBrowserWorker(descriptor, {
+        reason: "session-close",
+        stopExecution: stopManagedExecution
+      });
       closed += 1;
     }
     await closeAgentPreviewCommandServersForSession(normalizedSessionId);
@@ -586,6 +609,14 @@ function createAgentPreviewCommandService({
   }
 
   async function releaseControlForSession(sessionId = "") {
+    const normalizedSessionId = normalizeText(sessionId);
+    const sessionWorkers = browserWorkers.get(normalizedSessionId) || new Map();
+    for (const descriptor of sessionWorkers.values()) {
+      await stopRegisteredBrowserWorker(descriptor, {
+        reason: "control-release",
+        stopExecution: stopManagedExecution
+      });
+    }
     await closeAgentPreviewCommandServersForSession(sessionId);
     return {
       ok: true
@@ -767,6 +798,15 @@ function createAgentPreviewCommandService({
 
   return Object.freeze({
     authorizeBrowserIdentity,
+    browserStart: (sessionId, input) => startRegisteredBrowserWorker(sessionId, input, {
+      browserWorkers,
+      runCommand: runManagedCommand,
+      stopExecution: stopManagedExecution
+    }),
+    browserStop: (sessionId, input) => stopRegisteredBrowserWorkerForInput(sessionId, input, {
+      browserWorkers,
+      stopExecution: stopManagedExecution
+    }),
     closeAllForSession,
     registerBrowserWorker,
     releaseControlForSession,
@@ -793,6 +833,7 @@ function commandServerToken({
 
 function browserWorkerToken({
   commandToken = "",
+  generationId = "",
   sessionId = ""
 } = {}) {
   return crypto
@@ -800,6 +841,7 @@ function browserWorkerToken({
     .update([
       "vibe64-preview-browser",
       normalizeText(sessionId),
+      normalizeText(generationId),
       normalizeText(commandToken)
     ].join("\n"))
     .digest("hex");
@@ -826,6 +868,7 @@ function browserWorkerMetadataSignature(metadata = {}, token = "") {
     .update([
       normalizeText(token),
       normalizeText(metadata.contractVersion),
+      normalizeText(metadata.executionId),
       String(metadata.pid || ""),
       normalizeText(metadata.socketPath),
       normalizeText(metadata.startTimeTicks),
@@ -836,61 +879,25 @@ function browserWorkerMetadataSignature(metadata = {}, token = "") {
     .digest("hex");
 }
 
-function browserWorkerRequest({
+async function browserWorkerRequest({
   input = {},
   socketPath = "",
   token = "",
   timeoutMs = 2000
 } = {}) {
-  const body = JSON.stringify({
-    ...input,
-    token
+  const response = await requestUnixJsonCommand({
+    body: {
+      ...input,
+      token
+    },
+    path: "/command",
+    socketPath,
+    timeoutMs
   });
-  return new Promise((resolve, reject) => {
-    const request = http.request({
-      headers: {
-        "Content-Length": Buffer.byteLength(body),
-        "Content-Type": "application/json"
-      },
-      method: "POST",
-      path: "/command",
-      socketPath,
-      timeout: timeoutMs
-    }, (response) => {
-      response.resume();
-      response.once("end", () => resolve(response.statusCode));
-    });
-    request.once("error", reject);
-    request.once("timeout", () => request.destroy(new Error("Managed browser close timed out.")));
-    request.end(body);
-  });
-}
-
-async function processGroupIsAlive(groupId) {
-  if (!Number.isSafeInteger(groupId) || groupId <= 1) {
-    return false;
-  }
-  try {
-    for (const entry of await readdir("/proc", {
-      withFileTypes: true
-    })) {
-      if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) {
-        continue;
-      }
-      const identity = await registeredProcessIdentity(Number(entry.name));
-      if (identity?.groupId === groupId && identity.state !== "Z") {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    try {
-      process.kill(-groupId, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return response.payload || responseError(
+    "Managed browser returned an invalid response.",
+    "vibe64_managed_browser_response_invalid"
+  );
 }
 
 async function registeredProcessIdentity(pid) {
@@ -910,52 +917,68 @@ async function registeredProcessIdentity(pid) {
 
 async function registeredProcessGroupIsAlive(entry = {}) {
   const groupId = Number(entry?.groupId);
-  const identity = await registeredProcessIdentity(groupId);
-  return Boolean(
-    identity &&
-    identity.groupId === groupId &&
-    identity.startTimeTicks === normalizeText(entry?.startTimeTicks) &&
-    await processGroupIsAlive(groupId)
-  );
+  const leader = await registeredProcessIdentity(groupId);
+  if (
+    !leader ||
+    leader.groupId !== groupId ||
+    leader.startTimeTicks !== normalizeText(entry?.startTimeTicks)
+  ) {
+    return false;
+  }
+  for (const processEntry of await readdir("/proc", { withFileTypes: true }).catch(() => [])) {
+    if (!processEntry.isDirectory() || !/^\d+$/u.test(processEntry.name)) {
+      continue;
+    }
+    const identity = await registeredProcessIdentity(Number(processEntry.name));
+    if (identity?.groupId === groupId && identity.state !== "Z") {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function drainRegisteredProcessGroup(entry = {}) {
+  if (!await registeredProcessGroupIsAlive(entry)) {
+    return true;
+  }
+  try {
+    process.kill(-Number(entry.groupId), "SIGTERM");
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      throw error;
+    }
+  }
+  for (let attempt = 0; attempt < 60 && await registeredProcessGroupIsAlive(entry); attempt += 1) {
+    await delay(50);
+  }
+  if (await registeredProcessGroupIsAlive(entry)) {
+    try {
+      process.kill(-Number(entry.groupId), "SIGKILL");
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        throw error;
+      }
+    }
+  }
+  for (let attempt = 0; attempt < 20 && await registeredProcessGroupIsAlive(entry); attempt += 1) {
+    await delay(50);
+  }
+  return !await registeredProcessGroupIsAlive(entry);
 }
 
 async function registeredWorkerMetadata(descriptor = {}) {
   try {
     const metadata = JSON.parse(await readFile(descriptor.metadataPath, "utf8"));
-    const pid = Number(metadata?.pid);
-    const identity = await registeredProcessIdentity(pid);
+    const executionId = normalizeText(metadata?.executionId);
     if (
+      !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,254}[A-Za-z0-9])?$/u.test(executionId) ||
+      (normalizeText(descriptor.executionId) && executionId !== normalizeText(descriptor.executionId)) ||
       metadata?.socketPath !== descriptor.socketPath ||
       metadata?.workerScriptPath !== descriptor.workerScriptPath ||
+      metadata?.contractVersion !== descriptor.contractVersion ||
       metadata?.signature !== browserWorkerMetadataSignature(metadata, descriptor.token)
     ) {
       return null;
-    }
-    if (!identity) {
-      const startedAtMs = Date.parse(normalizeText(metadata.startedAt));
-      const ownsBrowserGroup = (await Promise.all(
-        normalizedBrowserProcessGroups(metadata?.browserProcessGroups)
-          .map((entry) => registeredProcessGroupIsAlive(entry))
-      )).some(Boolean);
-      return Number.isFinite(startedAtMs) &&
-        Date.now() - startedAtMs < 24 * 60 * 60 * 1000 &&
-        (await processGroupIsAlive(pid) || ownsBrowserGroup)
-        ? metadata
-        : null;
-    }
-    if (identity.groupId !== pid || identity.startTimeTicks !== String(metadata?.startTimeTicks || "")) {
-      return null;
-    }
-    if (identity.state === "Z") {
-      return metadata;
-    }
-    try {
-      const commandLine = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
-      if (!commandLine.includes(descriptor.workerScriptPath) || !commandLine.includes(descriptor.socketPath)) {
-        return null;
-      }
-    } catch {
-      // Signed metadata and the matching process identity already establish ownership.
     }
     return metadata;
   } catch {
@@ -963,72 +986,57 @@ async function registeredWorkerMetadata(descriptor = {}) {
   }
 }
 
-async function terminateProcessGroup(groupId, expectedStartTimeTicks = "") {
-  if (expectedStartTimeTicks) {
-    const identity = await registeredProcessIdentity(groupId);
-    if (
-      !identity ||
-      identity.groupId !== groupId ||
-      identity.startTimeTicks !== normalizeText(expectedStartTimeTicks)
-    ) {
-      return;
-    }
-  }
-  if (!await processGroupIsAlive(groupId)) {
-    return;
-  }
+async function registeredWorkerStatus(descriptor = {}) {
   try {
-    process.kill(-groupId, "SIGTERM");
+    const payload = await browserWorkerRequest({
+      input: { command: "status" },
+      socketPath: descriptor.socketPath,
+      token: descriptor.token
+    });
+    return payload?.ok === true &&
+      payload.value?.contractVersion === descriptor.contractVersion
+      ? payload.value
+      : null;
   } catch {
-    try {
-      process.kill(groupId, "SIGTERM");
-    } catch {
-      return;
-    }
-  }
-  for (let attempt = 0; attempt < 20 && await processGroupIsAlive(groupId); attempt += 1) {
-    await delay(50);
-  }
-  if (!await processGroupIsAlive(groupId)) {
-    return;
-  }
-  try {
-    process.kill(-groupId, "SIGKILL");
-  } catch {
-    try {
-      process.kill(groupId, "SIGKILL");
-    } catch {
-      // The process group exited before the fallback signal was sent.
-    }
-  }
-  for (let attempt = 0; attempt < 20 && await processGroupIsAlive(groupId); attempt += 1) {
-    await delay(50);
-  }
-  if (await processGroupIsAlive(groupId)) {
-    const error = new Error(`Preview process group did not exit: ${groupId}`);
-    error.code = "vibe64_agent_preview_process_exit_timeout";
-    throw error;
+    return null;
   }
 }
 
-async function terminateRegisteredWorker(metadata = null) {
-  const pid = Number(metadata?.pid);
-  if (!Number.isSafeInteger(pid) || pid <= 1) {
-    return;
+async function fileExists(filePath = "") {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch {
+    return false;
   }
-  const browserGroups = [];
-  for (const entry of normalizedBrowserProcessGroups(metadata?.browserProcessGroups)) {
-    if (await registeredProcessGroupIsAlive(entry)) {
-      browserGroups.push(entry);
-    }
-  }
-  await Promise.all([
-    terminateProcessGroup(pid, metadata?.startTimeTicks),
-    ...browserGroups.map((entry) => terminateProcessGroup(entry.groupId, entry.startTimeTicks))
-  ]);
 }
 
-async function closeRegisteredBrowserWorker(descriptor = {}) {
+function browserCleanupFault(message = "The managed browser execution could not be proven empty.") {
+  return responseError(message, "vibe64_execution_cleanup_required", {
+    retryable: false
+  });
+}
+
+async function stopRegisteredBrowserWorker(descriptor = {}, {
+  reason = "browser-stop",
+  skipStartWait = false,
+  stopExecution = stopVibe64Execution
+} = {}) {
+  if (!skipStartWait && descriptor.startPromise) {
+    await descriptor.startPromise.catch(() => null);
+  }
+  const retiredDescriptors = descriptor.retiredDescriptors || [];
+  descriptor.retiredDescriptors = [];
+  for (const retired of retiredDescriptors) {
+    const retiredResult = await stopRegisteredBrowserWorker(retired, {
+      reason: "browser-generation-replaced",
+      stopExecution
+    });
+    if (retiredResult.ok !== true) {
+      descriptor.retiredDescriptors.unshift(retired);
+      return retiredResult;
+    }
+  }
   const metadata = await registeredWorkerMetadata(descriptor);
   await browserWorkerRequest({
     input: {
@@ -1037,7 +1045,31 @@ async function closeRegisteredBrowserWorker(descriptor = {}) {
     socketPath: descriptor.socketPath,
     token: descriptor.token
   }).catch(() => null);
-  await terminateRegisteredWorker(metadata);
+  const executionIds = [...new Set([
+    normalizeText(descriptor.executionId),
+    normalizeText(metadata?.executionId)
+  ].filter(Boolean))];
+  if (executionIds.length === 0 && (
+    await unixCommandSocketIsPresent(descriptor.socketPath) ||
+    await fileExists(descriptor.metadataPath)
+  )) {
+    return browserCleanupFault(
+      "The managed browser has no valid execution ownership record; no replacement was started."
+    );
+  }
+  for (const executionId of executionIds) {
+    const stopped = await stopExecution(executionId, { reason });
+    if (stopped?.scopeEmpty !== true) {
+      return browserCleanupFault(stopped?.error);
+    }
+  }
+  for (const group of normalizedBrowserProcessGroups(metadata?.browserProcessGroups)) {
+    if (!await drainRegisteredProcessGroup(group)) {
+      return browserCleanupFault(
+        `Managed browser process group ${group.groupId} did not become empty.`
+      );
+    }
+  }
   await Promise.all([
     rm(descriptor.socketPath, {
       force: true
@@ -1046,10 +1078,211 @@ async function closeRegisteredBrowserWorker(descriptor = {}) {
       force: true
     })
   ]).catch(() => null);
+  descriptor.executionId = "";
+  return {
+    ok: true,
+    scopeEmpty: true,
+    stopped: executionIds.length > 0
+  };
+}
+
+function registeredBrowserWorkerForInput(sessionId = "", input = {}, browserWorkers = new Map()) {
+  const normalizedSessionId = normalizeText(sessionId);
+  const socketPath = normalizeText(input.browserSocketPath);
+  const descriptor = browserWorkers.get(normalizedSessionId)?.get(socketPath);
+  if (!descriptor) {
+    return {
+      error: responseError(
+        "The managed browser is not registered for this assistant session.",
+        "vibe64_managed_browser_not_registered"
+      )
+    };
+  }
+  if (
+    normalizeText(input.managedNodePath) !== descriptor.managedNodePath ||
+    normalizeText(input.workerScriptPath) !== descriptor.workerScriptPath
+  ) {
+    return {
+      error: responseError(
+        "The managed browser command does not match the registered runtime.",
+        "vibe64_managed_browser_runtime_invalid"
+      )
+    };
+  }
+  const worktreePath = path.resolve(descriptor.worktreePath);
+  const cwd = path.resolve(normalizeText(input.cwd) || worktreePath);
+  const relativeCwd = path.relative(worktreePath, cwd);
+  if (relativeCwd === ".." || relativeCwd.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCwd)) {
+    return {
+      error: responseError(
+        "The managed browser working directory is outside this session source.",
+        "vibe64_managed_browser_cwd_invalid"
+      )
+    };
+  }
+  return { cwd, descriptor };
+}
+
+async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
+  browserWorkers = new Map(),
+  runCommand = runVibe64Command,
+  stopExecution = stopVibe64Execution
+} = {}) {
+  const registered = registeredBrowserWorkerForInput(sessionId, input, browserWorkers);
+  if (registered.error) {
+    return registered.error;
+  }
+  const { cwd, descriptor } = registered;
+  if (descriptor.startPromise) {
+    return descriptor.startPromise;
+  }
+  const startPromise = (async () => {
+    for (const retired of descriptor.retiredDescriptors || []) {
+      const retiredResult = await stopRegisteredBrowserWorker(retired, {
+        reason: "browser-generation-replaced",
+        stopExecution
+      });
+      if (retiredResult.ok !== true) {
+        return retiredResult;
+      }
+    }
+    descriptor.retiredDescriptors = [];
+
+    const existingStatus = await registeredWorkerStatus(descriptor);
+    const existingMetadata = await registeredWorkerMetadata(descriptor);
+    if (existingStatus) {
+      if (!existingMetadata) {
+        return browserCleanupFault(
+          "The running managed browser has no valid execution ownership record."
+        );
+      }
+      descriptor.executionId = existingMetadata.executionId;
+      return {
+        executionId: descriptor.executionId,
+        ok: true,
+        value: existingStatus
+      };
+    }
+    if (existingMetadata || normalizeText(descriptor.executionId)) {
+      const drained = await stopRegisteredBrowserWorker(descriptor, {
+        reason: "browser-restart",
+        skipStartWait: true,
+        stopExecution
+      });
+      if (drained.ok !== true) {
+        return drained;
+      }
+    } else if (
+      await unixCommandSocketIsPresent(descriptor.socketPath) ||
+      await fileExists(descriptor.metadataPath)
+    ) {
+      return browserCleanupFault(
+        "Stale managed browser state has no valid execution owner; no replacement was started."
+      );
+    }
+
+    const result = await runCommand({
+      actor: "daemon",
+      allowedRoots: [descriptor.worktreePath],
+      args: [
+        descriptor.workerScriptPath,
+        descriptor.socketPath,
+        descriptor.metadataPath,
+        descriptor.controlSocketPath
+      ],
+      command: descriptor.managedNodePath,
+      cwd,
+      env: descriptor.env,
+      envPolicy: "preview",
+      execution: {
+        controlGenerationId: descriptor.controlGenerationId,
+        kind: "browser",
+        label: "Managed browser",
+        lifecycle: "service",
+        ownerId: descriptor.sessionId,
+        parentExecutionId: normalizeText(input.parentExecutionId),
+        projectSlug: descriptor.project?.slug,
+        sessionId: descriptor.sessionId
+      },
+      mode: "detached",
+      project: descriptor.project,
+      purpose: "preview",
+      runtimes: ["node26", "playwright"],
+      session: {
+        sessionId: descriptor.sessionId
+      }
+    });
+    if (result?.ok !== true) {
+      return result;
+    }
+    descriptor.executionId = normalizeText(result.execution?.id);
+    if (!descriptor.executionId) {
+      return browserCleanupFault(
+        "The managed browser started without an execution ownership record."
+      );
+    }
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const [status, metadata] = await Promise.all([
+        registeredWorkerStatus(descriptor),
+        registeredWorkerMetadata(descriptor)
+      ]);
+      if (status && metadata?.executionId === descriptor.executionId) {
+        return {
+          executionId: descriptor.executionId,
+          ok: true,
+          value: status
+        };
+      }
+      await delay(100);
+    }
+    const drained = await stopRegisteredBrowserWorker(descriptor, {
+      reason: "browser-readiness-timeout",
+      skipStartWait: true,
+      stopExecution
+    });
+    if (drained.ok !== true) {
+      return drained;
+    }
+    return responseError(
+      "The managed browser worker did not become ready.",
+      "vibe64_managed_browser_readiness_timeout"
+    );
+  })();
+  descriptor.startPromise = startPromise;
+  try {
+    return await startPromise;
+  } finally {
+    if (descriptor.startPromise === startPromise) {
+      descriptor.startPromise = null;
+    }
+  }
+}
+
+async function stopRegisteredBrowserWorkerForInput(sessionId = "", input = {}, {
+  browserWorkers = new Map(),
+  stopExecution = stopVibe64Execution
+} = {}) {
+  const normalizedSessionId = normalizeText(sessionId);
+  const descriptor = browserWorkers
+    .get(normalizedSessionId)
+    ?.get(normalizeText(input.browserSocketPath));
+  if (!descriptor) {
+    return responseError(
+      "The managed browser is not registered for this assistant session.",
+      "vibe64_managed_browser_not_registered"
+    );
+  }
+  return stopRegisteredBrowserWorker(descriptor, {
+    reason: "browser-close",
+    stopExecution
+  });
 }
 
 async function closeAgentPreviewCommandServersForSession(sessionId = "") {
   const normalizedSessionId = normalizeText(sessionId);
+  await Promise.all([...commandServerPrepares.values()].map((preparation) => (
+    preparation.catch(() => null)
+  )));
   for (const [socketPath, entryValue] of [...commandServers.entries()]) {
     const entry = entryValue?.promise
       ? await entryValue.promise.catch(() => null)
@@ -1067,41 +1300,129 @@ async function closeAgentPreviewCommandServersForSession(sessionId = "") {
   }
 }
 
+async function agentPreviewCommandServerIsHealthy(entry = {}, {
+  sessionId = "",
+  socketPath = ""
+} = {}) {
+  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
+    return false;
+  }
+  try {
+    const response = await requestUnixJsonCommand({
+      body: {
+        generationId: entry.generationId,
+        sessionId,
+        token: entry.token
+      },
+      path: "/agent-preview-command/health",
+      socketPath,
+      timeoutMs: 2000
+    });
+    return response.statusCode === 200 &&
+      response.payload?.ok === true &&
+      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
+      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
+  } catch {
+    return false;
+  }
+}
+
+async function closeAgentPreviewCommandServer(socketPath = "", entry = null) {
+  if (entry?.server) {
+    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
+  }
+  if (commandServers.get(socketPath) === entry) {
+    commandServers.delete(socketPath);
+  }
+}
+
+async function removeDeadAgentPreviewCommandSocket(socketPath = "") {
+  if (!await unixCommandSocketIsPresent(socketPath)) {
+    return;
+  }
+  try {
+    await requestUnixJsonCommand({
+      body: {},
+      path: "/agent-preview-command/health",
+      socketPath,
+      timeoutMs: 2000
+    });
+  } catch (error) {
+    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
+      await rm(socketPath, {
+        force: true
+      });
+      return;
+    }
+    throw error;
+  }
+  const error = new Error("The managed preview socket is owned by an unverified listener.");
+  error.code = "vibe64_agent_control_owner_unverified";
+  throw error;
+}
+
 async function ensureAgentPreviewCommandServer({
   commandService,
   sessionId = "",
   wrapperHostDir = ""
 } = {}) {
   const socketPath = commandSocketHostPath(wrapperHostDir);
-  const existing = commandServers.get(socketPath);
-  if (existing?.commandService === commandService) {
-    return existing.promise || existing;
+  const pending = commandServerPrepares.get(socketPath);
+  if (pending) {
+    await pending.catch(() => null);
+    return ensureAgentPreviewCommandServer({
+      commandService,
+      sessionId,
+      wrapperHostDir
+    });
   }
-  if (existing?.promise) {
-    await existing.promise.catch(() => null);
-    const current = commandServers.get(socketPath);
-    if (current?.commandService === commandService) {
-      return current.promise || current;
+  const preparation = ensureAgentPreviewCommandServerUnlocked({
+    commandService,
+    sessionId,
+    wrapperHostDir
+  });
+  commandServerPrepares.set(socketPath, preparation);
+  try {
+    return await preparation;
+  } finally {
+    if (commandServerPrepares.get(socketPath) === preparation) {
+      commandServerPrepares.delete(socketPath);
     }
   }
-  if (existing?.server) {
-    await new Promise((resolve) => {
-      existing.server.close(() => resolve());
-    }).catch(() => null);
-    commandServers.delete(socketPath);
+}
+
+async function ensureAgentPreviewCommandServerUnlocked({
+  commandService,
+  sessionId = "",
+  wrapperHostDir = ""
+} = {}) {
+  const socketPath = commandSocketHostPath(wrapperHostDir);
+  let existing = commandServers.get(socketPath);
+  if (existing?.promise) {
+    await existing.promise.catch(() => null);
+    existing = commandServers.get(socketPath);
   }
+  if (
+    existing?.commandService === commandService &&
+    await agentPreviewCommandServerIsHealthy(existing, {
+      sessionId,
+      socketPath
+    })
+  ) {
+    return existing;
+  }
+  await closeAgentPreviewCommandServer(socketPath, existing);
   const promise = (async () => {
     await mkdir(path.dirname(socketPath), {
       recursive: true
     });
-    await rm(socketPath, {
-      force: true
-    });
+    await removeDeadAgentPreviewCommandSocket(socketPath);
     const token = commandServerToken({
       sessionId,
       socketPath,
       wrapperHostDir
     });
+    const generationId = crypto.randomUUID();
     const server = http.createServer(async (request, response) => {
       try {
         if (request.method !== "POST" || !AGENT_PREVIEW_COMMAND_ROUTES.has(request.url)) {
@@ -1109,12 +1430,20 @@ async function ensureAgentPreviewCommandServer({
           return;
         }
         const input = await readRequestJson(request);
-        if (!verifyRequestToken(input, token) || normalizeText(input.sessionId) !== normalizeText(sessionId)) {
-          sendJsonCommandResponse(response, 403, responseError("Vibe64 preview command token is invalid.", "vibe64_agent_preview_command_token_invalid"));
+        if (
+          !verifyRequestToken(input, token) ||
+          normalizeText(input.sessionId) !== normalizeText(sessionId) ||
+          normalizeText(input.generationId) !== generationId
+        ) {
+          sendJsonCommandResponse(response, 409, responseError(
+            "Managed preview control generation is no longer current. Reconnect the assistant.",
+            "vibe64_agent_control_unavailable"
+          ));
           return;
         }
         if (request.url === "/agent-preview-command/health") {
           sendJsonCommandResponse(response, 200, {
+            generationId,
             ok: true,
             sessionId: normalizeText(sessionId)
           });
@@ -1125,6 +1454,16 @@ async function ensureAgentPreviewCommandServer({
             sessionId,
             input.identity
           );
+          sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
+          return;
+        }
+        if (request.url === "/agent-preview-command/browser-start") {
+          const payload = await commandService.browserStart(sessionId, input);
+          sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
+          return;
+        }
+        if (request.url === "/agent-preview-command/browser-stop") {
+          const payload = await commandService.browserStop(sessionId, input);
           sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
           return;
         }
@@ -1140,37 +1479,36 @@ async function ensureAgentPreviewCommandServer({
         sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
       }
     });
-    const listenResult = await new Promise((resolve, reject) => {
-      const handleError = (error) => {
-        if (error?.code === "EADDRINUSE") {
-          resolve("reused");
-          return;
-        }
-        reject(error);
-      };
+    await new Promise((resolve, reject) => {
+      const handleError = (error) => reject(error);
       server.once("error", handleError);
       server.listen(socketPath, () => {
         server.off("error", handleError);
-        resolve("listening");
+        resolve();
       });
     });
-    if (listenResult === "reused") {
-      server.close(() => null);
-      const current = commandServers.get(socketPath);
-      if (current?.server) {
-        return current;
-      }
-    } else {
-      server.unref?.();
-    }
+    server.unref?.();
     const stored = {
       commandService,
-      server: listenResult === "reused" ? null : server,
+      generationId,
+      server,
       sessionId: normalizeText(sessionId),
       socketPath,
       token
     };
     commandServers.set(socketPath, stored);
+    if (!await agentPreviewCommandServerIsHealthy(stored, {
+      sessionId,
+      socketPath
+    })) {
+      await closeAgentPreviewCommandServer(socketPath, stored);
+      await rm(socketPath, {
+        force: true
+      }).catch(() => null);
+      const error = new Error("Managed preview control did not pass its ownership health check.");
+      error.code = "vibe64_agent_control_unavailable";
+      throw error;
+    }
     return stored;
   })();
   commandServers.set(socketPath, {
@@ -1193,7 +1531,9 @@ async function prepareAgentPreviewCommand({
   browserControlHealthIntervalMs = 15_000,
   commandService,
   env = process.env,
+  project = {},
   sessionId = "",
+  worktreePath = "",
   wrapperHostDir = ""
 } = {}) {
   const normalizedSessionId = normalizeText(sessionId);
@@ -1212,6 +1552,7 @@ async function prepareAgentPreviewCommand({
   });
   const managedNodePath = path.join(nodeBinDir, "node");
   const managedNpmPath = path.join(nodeBinDir, "npm");
+  const normalizedWorktreePath = path.resolve(normalizeText(worktreePath) || process.cwd());
   const workerScriptPath = browserWorkerHostPath(normalizedWrapperHostDir);
   const playwrightModulePath = path.join(
     packRoot,
@@ -1248,21 +1589,38 @@ async function prepareAgentPreviewCommand({
     sessionId: normalizedSessionId,
     wrapperHostDir: normalizedWrapperHostDir
   });
+  const token = browserWorkerToken({
+    commandToken: server.token,
+    generationId: server.generationId,
+    sessionId: normalizedSessionId
+  });
   const workerDescriptor = {
     contractVersion: AGENT_PREVIEW_COMMAND_CONTRACT_VERSION,
-    metadataPath: browserMetadataHostPath(normalizedWrapperHostDir),
-    socketPath: browserSocketHostPath(normalizedWrapperHostDir),
-    token: browserWorkerToken({
-      commandToken: server.token,
-      sessionId: normalizedSessionId
-    }),
-    workerScriptPath
-  };
-  commandService.registerBrowserWorker?.(normalizedSessionId, workerDescriptor);
-  return {
+    controlGenerationId: server.generationId,
+    controlSocketPath: commandSocketHostPath(normalizedWrapperHostDir),
     env: {
       [VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV]: AGENT_PREVIEW_COMMAND_CONTRACT_VERSION,
       [VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID_ENV]: normalizedSessionId,
+      [VIBE64_AGENT_PREVIEW_COMMAND_GENERATION_ENV]: server.generationId,
+      [VIBE64_AGENT_PREVIEW_COMMAND_SOCKET_ENV]: commandSocketHostPath(normalizedWrapperHostDir),
+      [VIBE64_AGENT_PREVIEW_COMMAND_TOKEN_ENV]: server.token,
+      [VIBE64_PREVIEW_BROWSER_WORKER_TOKEN_ENV]: token
+    },
+    managedNodePath,
+    metadataPath: browserMetadataHostPath(normalizedWrapperHostDir),
+    project: isRecord(project) ? project : {},
+    socketPath: browserSocketHostPath(normalizedWrapperHostDir),
+    token,
+    workerScriptPath,
+    worktreePath: normalizedWorktreePath
+  };
+  commandService.registerBrowserWorker?.(normalizedSessionId, workerDescriptor);
+  return {
+    controlGenerationId: server.generationId,
+    env: {
+      [VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV]: AGENT_PREVIEW_COMMAND_CONTRACT_VERSION,
+      [VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID_ENV]: normalizedSessionId,
+      [VIBE64_AGENT_PREVIEW_COMMAND_GENERATION_ENV]: server.generationId,
       [VIBE64_AGENT_PREVIEW_COMMAND_SOCKET_ENV]: commandSocketHostPath(normalizedWrapperHostDir),
       [VIBE64_AGENT_PREVIEW_COMMAND_TOKEN_ENV]: server.token
     },
@@ -1280,6 +1638,7 @@ export {
   AGENT_PLAYWRIGHT_COMMAND_NAME,
   AGENT_PREVIEW_COMMAND_NAME,
   VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV,
+  VIBE64_AGENT_PREVIEW_COMMAND_GENERATION_ENV,
   VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID_ENV,
   VIBE64_AGENT_PREVIEW_COMMAND_SOCKET_ENV,
   VIBE64_AGENT_PREVIEW_COMMAND_TOKEN_ENV,

@@ -5,9 +5,6 @@ function agentPreviewWrapperSource({
 } = {}) {
   return `#!/usr/bin/env node
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -18,13 +15,12 @@ const managedNodePath = ${JSON.stringify(String(managedNodePath || ""))};
 const workerScriptPath = ${JSON.stringify(String(workerScriptPath || ""))};
 const wrapperDir = path.dirname(process.argv[1] || "");
 const browserSocketPath = path.join(wrapperDir, "preview-browser.sock");
-const browserMetadataPath = path.join(wrapperDir, "preview-browser.json");
-const browserLockPath = path.join(wrapperDir, "preview-browser.lock");
 const controlSocketPath = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_SOCKET || "").trim();
 const controlToken = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_TOKEN || "").trim();
+const controlGeneration = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION || "").trim();
 const sessionId = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID || "").trim();
 const workerToken = crypto.createHash("sha256")
-  .update(["vibe64-preview-browser", sessionId, controlToken].join("\\n"))
+  .update(["vibe64-preview-browser", sessionId, controlGeneration, controlToken].join("\\n"))
   .digest("hex");
 
 function delay(ms) {
@@ -65,7 +61,11 @@ function requestSocket({ body, requestPath, socketPath, timeoutMs = 0 }) {
       }));
     });
     request.once("error", reject);
-    request.once("timeout", () => request.destroy(new Error("Vibe64 preview command timed out.")));
+    request.once("timeout", () => {
+      const error = new Error("Vibe64 preview command timed out.");
+      error.code = "ETIMEDOUT";
+      request.destroy(error);
+    });
     request.end(requestBody);
   });
 }
@@ -96,20 +96,35 @@ function writePayload(payload = {}) {
     }
   }
   if (payload.ok === false && !payload.stderr && payload.error) {
-    process.stderr.write(errorText(payload.error) + "\\n");
+    const prefix = payload.code === "vibe64_agent_control_unavailable"
+      ? "vibe64_agent_control_unavailable: "
+      : "";
+    process.stderr.write(prefix + errorText(payload.error) + "\\n");
   }
 }
 
 async function controlRequest(requestPath, input = {}) {
-  const response = await requestSocket({
-    body: {
-      ...input,
-      sessionId,
-      token: controlToken
-    },
-    requestPath,
-    socketPath: controlSocketPath
-  });
+  let response;
+  try {
+    response = await requestSocket({
+      body: {
+        ...input,
+        generationId: controlGeneration,
+        sessionId,
+        token: controlToken
+      },
+      requestPath,
+      socketPath: controlSocketPath,
+      timeoutMs: 5000
+    });
+  } catch (error) {
+    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK", "ETIMEDOUT"].includes(String(error?.code || ""))) {
+      const unavailable = new Error("vibe64_agent_control_unavailable: Managed preview control is unavailable. Reconnect the assistant.");
+      unavailable.code = "vibe64_agent_control_unavailable";
+      throw unavailable;
+    }
+    throw error;
+  }
   return parsedResponse(response);
 }
 
@@ -186,195 +201,6 @@ async function previewSession() {
   };
 }
 
-async function readMetadata() {
-  try {
-    const value = JSON.parse(await readFile(browserMetadataPath, "utf8"));
-    return value && typeof value === "object" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizedBrowserProcessGroups(value = []) {
-  const groups = new Map();
-  for (const entry of Array.isArray(value) ? value : []) {
-    const groupId = Number(entry?.groupId);
-    const startTimeTicks = String(entry?.startTimeTicks || "");
-    if (Number.isSafeInteger(groupId) && groupId > 1 && startTimeTicks) {
-      groups.set(groupId, { groupId, startTimeTicks });
-    }
-  }
-  return [...groups.values()].sort((left, right) => left.groupId - right.groupId);
-}
-
-function metadataSignature(metadata = {}) {
-  return crypto.createHash("sha256")
-    .update([
-      workerToken,
-      String(metadata.contractVersion || ""),
-      String(metadata.pid || ""),
-      String(metadata.socketPath || ""),
-      String(metadata.startTimeTicks || ""),
-      String(metadata.startedAt || ""),
-      String(metadata.workerScriptPath || ""),
-      JSON.stringify(normalizedBrowserProcessGroups(metadata.browserProcessGroups))
-    ].join("\\n"))
-    .digest("hex");
-}
-
-function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 1) {
-    return false;
-  }
-  try {
-    const identity = processIdentity(pid);
-    if (!identity || identity.state === "Z") return false;
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function processIdentity(pid) {
-  try {
-    const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
-    const closeIndex = stat.lastIndexOf(") ");
-    const fields = stat.slice(closeIndex + 2).trim().split(/\\s+/u);
-    return {
-      groupId: Number(fields[2]),
-      startTimeTicks: String(fields[19] || ""),
-      state: String(fields[0] || "")
-    };
-  } catch {
-    return null;
-  }
-}
-
-function processGroupAlive(groupId) {
-  if (!Number.isSafeInteger(groupId) || groupId <= 1) {
-    return false;
-  }
-  try {
-    for (const entry of readdirSync("/proc", { withFileTypes: true })) {
-      if (!entry.isDirectory() || !/^\\d+$/u.test(entry.name)) continue;
-      const identity = processIdentity(Number(entry.name));
-      if (identity?.groupId === groupId && identity.state !== "Z") return true;
-    }
-    return false;
-  } catch {
-    try {
-      process.kill(-groupId, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function trackedProcessGroupAlive(entry = {}) {
-  const groupId = Number(entry?.groupId);
-  const identity = processIdentity(groupId);
-  return Boolean(
-    identity &&
-    identity.groupId === groupId &&
-    identity.startTimeTicks === String(entry?.startTimeTicks || "") &&
-    processGroupAlive(groupId)
-  );
-}
-
-async function metadataOwnsProcess(metadata = {}) {
-  const pid = Number(metadata?.pid);
-  if (
-    metadata?.socketPath !== browserSocketPath ||
-    metadata?.workerScriptPath !== workerScriptPath ||
-    metadata?.signature !== metadataSignature(metadata)
-  ) {
-    return false;
-  }
-  const identity = processIdentity(pid);
-  if (!identity) {
-    const startedAtMs = Date.parse(String(metadata?.startedAt || ""));
-    const ownsLiveGroup = processGroupAlive(pid) ||
-      normalizedBrowserProcessGroups(metadata?.browserProcessGroups).some(trackedProcessGroupAlive);
-    return Number.isFinite(startedAtMs) &&
-      Date.now() - startedAtMs < 24 * 60 * 60 * 1000 &&
-      ownsLiveGroup;
-  }
-  if (
-    identity.groupId !== pid ||
-    identity.startTimeTicks !== String(metadata?.startTimeTicks || "")
-  ) {
-    return false;
-  }
-  if (identity.state === "Z") {
-    return true;
-  }
-  try {
-    const commandLine = (await readFile("/proc/" + pid + "/cmdline", "utf8")).split("\\0");
-    return commandLine.includes(workerScriptPath) && commandLine.includes(browserSocketPath);
-  } catch {
-    // Signed metadata and the matching process identity already establish ownership.
-    return true;
-  }
-}
-
-async function terminateProcessGroup(groupId, expectedStartTimeTicks = "") {
-  if (expectedStartTimeTicks) {
-    const identity = processIdentity(groupId);
-    if (
-      !identity ||
-      identity.groupId !== groupId ||
-      identity.startTimeTicks !== String(expectedStartTimeTicks)
-    ) {
-      return;
-    }
-  }
-  if (!processGroupAlive(groupId)) {
-    return;
-  }
-  try {
-    process.kill(-groupId, "SIGTERM");
-  } catch {
-    try {
-      process.kill(groupId, "SIGTERM");
-    } catch {}
-  }
-  for (let attempt = 0; attempt < 10 && processGroupAlive(groupId); attempt += 1) {
-    await delay(50);
-  }
-  if (processGroupAlive(groupId)) {
-    try {
-      process.kill(-groupId, "SIGKILL");
-    } catch {
-      try {
-        process.kill(groupId, "SIGKILL");
-      } catch {}
-    }
-  }
-}
-
-async function killWorkerGroup(metadata = null) {
-  const current = metadata || await readMetadata();
-  if (!await metadataOwnsProcess(current || {})) {
-    return;
-  }
-  const pid = Number(current.pid);
-  const browserGroups = normalizedBrowserProcessGroups(current.browserProcessGroups)
-    .filter(trackedProcessGroupAlive);
-  await Promise.all([
-    terminateProcessGroup(pid, current.startTimeTicks),
-    ...browserGroups.map((entry) => terminateProcessGroup(entry.groupId, entry.startTimeTicks))
-  ]);
-}
-
-async function removeWorkerFiles() {
-  await Promise.all([
-    rm(browserSocketPath, { force: true }),
-    rm(browserMetadataPath, { force: true })
-  ]).catch(() => null);
-}
-
 async function workerRequest(input = {}, { timeoutMs = 0 } = {}) {
   const response = await requestSocket({
     body: {
@@ -399,95 +225,32 @@ async function workerStatus() {
   }
 }
 
-async function acquireWorkerLock() {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      await mkdir(browserLockPath);
-      return;
-    } catch (error) {
-      if (error?.code !== "EEXIST") {
-        throw error;
-      }
-      if (await workerStatus()) {
-        return false;
-      }
-      await delay(100);
-    }
-  }
-  await rm(browserLockPath, { force: true, recursive: true });
-  await mkdir(browserLockPath);
-}
-
 async function startWorker() {
-  const acquired = await acquireWorkerLock();
-  if (acquired === false) {
-    return workerStatus();
+  const existing = await workerStatus();
+  if (existing) {
+    return existing;
   }
-  try {
-    const existing = await workerStatus();
-    if (existing) {
-      return existing;
-    }
-    const metadata = await readMetadata();
-    await killWorkerGroup(metadata);
-    await removeWorkerFiles();
-    const child = spawn(managedNodePath, [
-      workerScriptPath,
-      browserSocketPath,
-      browserMetadataPath,
-      controlSocketPath
-    ], {
-      cwd: process.cwd(),
-      detached: true,
-      env: {
-        ...process.env,
-        VIBE64_PREVIEW_BROWSER_WORKER_TOKEN: workerToken
-      },
-      stdio: "ignore"
-    });
-    let spawnError = null;
-    child.once("error", (error) => {
-      spawnError = error;
-    });
-    child.unref();
-    let identity = processIdentity(child.pid);
-    for (let attempt = 0; attempt < 20 && !identity && !spawnError; attempt += 1) {
-      await delay(5);
-      identity = processIdentity(child.pid);
-    }
-    const nextMetadata = {
-      browserProcessGroups: [],
-      contractVersion,
-      pid: child.pid,
-      socketPath: browserSocketPath,
-      startTimeTicks: identity?.startTimeTicks || "",
-      startedAt: new Date().toISOString(),
-      workerScriptPath
-    };
-    nextMetadata.signature = metadataSignature(nextMetadata);
-    await writeFile(browserMetadataPath, JSON.stringify(nextMetadata) + "\\n", { mode: 0o600 });
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (spawnError) {
-        break;
-      }
-      const status = await workerStatus();
-      if (status) {
-        return status;
-      }
-      if (!processAlive(child.pid)) {
-        break;
-      }
-      await delay(100);
-    }
-    await killWorkerGroup(await readMetadata());
-    await removeWorkerFiles();
-    if (spawnError) {
-      throw spawnError;
-    }
-    throw new Error("Vibe64 managed browser worker did not start.");
-  } finally {
-    await rm(browserLockPath, { force: true, recursive: true });
+  const started = await controlRequest("/agent-preview-command/browser-start", {
+    browserSocketPath,
+    cwd: process.cwd(),
+    managedNodePath,
+    parentExecutionId: String(process.env.VIBE64_EXECUTION_ID || "").trim(),
+    workerScriptPath
+  });
+  if (started.ok === false) {
+    const error = new Error(started.error || "Managed browser could not start.");
+    error.code = started.code || "vibe64_managed_browser_start_failed";
+    throw error;
   }
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const status = await workerStatus();
+    if (status) {
+      return status;
+    }
+    await delay(100);
+  }
+  await controlRequest("/agent-preview-command/browser-stop", { browserSocketPath }).catch(() => null);
+  throw new Error("Vibe64 managed browser worker did not become ready.");
 }
 
 async function ensureWorker() {
@@ -495,15 +258,15 @@ async function ensureWorker() {
 }
 
 async function closeWorker() {
-  const metadata = await readMetadata();
   try {
     await workerRequest({ command: "close" }, { timeoutMs: 2000 });
   } catch {}
-  for (let attempt = 0; attempt < 20 && processAlive(Number(metadata?.pid)); attempt += 1) {
-    await delay(50);
+  const stopped = await controlRequest("/agent-preview-command/browser-stop", {
+    browserSocketPath
+  });
+  if (stopped.ok === false) {
+    throw new Error(stopped.error || "Managed browser did not stop cleanly.");
   }
-  await killWorkerGroup(metadata);
-  await removeWorkerFiles();
 }
 
 async function runWorker(input = {}) {
@@ -514,8 +277,6 @@ async function runWorker(input = {}) {
     if (!["ECONNREFUSED", "ENOENT"].includes(String(error?.code || ""))) {
       throw error;
     }
-    await killWorkerGroup(await readMetadata());
-    await removeWorkerFiles();
     await startWorker();
     return workerRequest(input);
   }
@@ -553,8 +314,8 @@ function printJson(value) {
 if (commandName !== "vibe64-preview") {
   fail("Vibe64 preview command wrapper was invoked with an unsupported command.", 64);
 }
-if (!controlSocketPath || !controlToken || !sessionId || !path.isAbsolute(managedNodePath) || !path.isAbsolute(workerScriptPath)) {
-  fail("Vibe64 preview command identity is not available for this session.", 64);
+if (!controlSocketPath || !controlToken || !controlGeneration || !sessionId || !path.isAbsolute(managedNodePath) || !path.isAbsolute(workerScriptPath)) {
+  fail("vibe64_agent_control_unavailable: Managed preview control identity is unavailable. Reconnect the assistant.", 64);
 }
 
 const args = process.argv.slice(2);

@@ -175,3 +175,12 @@ test("execution helper centrally assigns the shared workspace TMPDIR", async () 
   );
   assert.doesNotMatch(source, /actorTemp|FLOCK_PATH|mkdtemp/u);
 });
+
+test("managed executions can traverse their private workspace runtime directory", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /ensureManagedExecutionRuntimeParents\(owner\)/u);
+  assert.match(source, /function managedExecutionRuntimeBase\(owner = \{\}\)/u);
+  assert.match(source, /runRootCommand\("install", \[/u);
+  assert.match(source, /"2750",\s+runtimeBase,\s+path\.join\(runtimeBase, "executions"\)/u);
+});

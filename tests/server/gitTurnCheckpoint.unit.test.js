@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,9 @@ import {
   createGitTurnCheckpoint,
   writeGitWorktreeTree
 } from "../../packages/vibe64-execution/src/server/gitTurnCheckpoint.js";
+import {
+  runVibe64Command
+} from "../../packages/vibe64-execution/src/server/runVibe64Command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -108,6 +111,69 @@ test("turn checkpoint refs use safe digests and invalid identities fail closed",
     timestamp: "2026-08-18T09:00:00.000Z",
     worktreePath: "/tmp"
   }), { code: "vibe64_checkpoint_outerturnid_invalid" });
+});
+
+test("whole-worktree checkpoint staging is serialized per worktree", async () => {
+  const root = await createRepository();
+  let activeAdds = 0;
+  let maximumConcurrentAdds = 0;
+  const runCommand = async (request) => {
+    if (request.args?.[0] === "add") {
+      activeAdds += 1;
+      maximumConcurrentAdds = Math.max(maximumConcurrentAdds, activeAdds);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      try {
+        return await runVibe64Command(request);
+      } finally {
+        activeAdds -= 1;
+      }
+    }
+    return runVibe64Command(request);
+  };
+  try {
+    await writeFile(path.join(root, "tracked.txt"), "serialized\n", "utf8");
+
+    const trees = await Promise.all([
+      writeGitWorktreeTree({ runCommand, worktreePath: root }),
+      writeGitWorktreeTree({ runCommand, worktreePath: root })
+    ]);
+
+    assert.equal(maximumConcurrentAdds, 1);
+    assert.equal(trees[0], trees[1]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("checkpoint disk budget ignores ignored files and names oversized unignored candidates", async () => {
+  const root = await createRepository();
+  try {
+    await writeFile(path.join(root, ".gitignore"), "/ignored.bin\n", "utf8");
+    await writeFile(path.join(root, "ignored.bin"), "i".repeat(1024), "utf8");
+    await writeGitWorktreeTree({
+      temporaryDiskBudgetBytes: 128,
+      temporaryDiskReserveBytes: 0,
+      worktreePath: root
+    });
+
+    await writeFile(path.join(root, "unignored.bin"), "u".repeat(1024), "utf8");
+    await assert.rejects(writeGitWorktreeTree({
+      temporaryDiskBudgetBytes: 128,
+      temporaryDiskReserveBytes: 0,
+      worktreePath: root
+    }), (error) => {
+      assert.equal(error.code, "vibe64_checkpoint_disk_budget_exceeded");
+      assert.match(error.message, /unignored\.bin/u);
+      assert.doesNotMatch(error.message, /(?:^|[ ,])ignored\.bin \(/u);
+      assert.match(error.message, /\.gitignore/u);
+      return true;
+    });
+    const checkpointEntries = await readdir(path.join(root, ".git", "vibe64-checkpoints"));
+    assert.equal(checkpointEntries.some((name) => name.startsWith(".tree-")), false);
+    assert.equal(await readFile(path.join(root, "unignored.bin"), "utf8"), "u".repeat(1024));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 async function createRepository() {

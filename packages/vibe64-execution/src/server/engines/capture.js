@@ -4,20 +4,27 @@ import {
   commandErrorResult,
   commandResult
 } from "../result.js";
+import {
+  drainProcessGroup
+} from "./detached.js";
 
 async function runCaptureCommand(command = "", args = [], {
   cwd = "",
   env = {},
+  execution = null,
   input = undefined,
   maxBuffer = undefined,
   onOutput = null,
   outputEncoding = "utf8",
   timeout = 15_000
 } = {}) {
+  let processGroupId = null;
+  let outcome;
   try {
     const subprocess = execa(command, args, {
       all: true,
       cwd,
+      detached: process.platform !== "win32",
       encoding: outputEncoding,
       env,
       extendEnv: false,
@@ -27,6 +34,7 @@ async function runCaptureCommand(command = "", args = [], {
       stdin: input === undefined || input === null ? "ignore" : "pipe",
       timeout
     });
+    processGroupId = Number(subprocess.pid);
     if (typeof onOutput === "function" && subprocess.all) {
       subprocess.all.on("data", (chunk) => {
         try {
@@ -38,7 +46,7 @@ async function runCaptureCommand(command = "", args = [], {
     }
     const result = await subprocess;
     const exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
-    return commandResult({
+    outcome = commandResult({
       code: result.timedOut === true ? "vibe64_command_capture_timed_out" : "",
       error: exitCode === 0 ? "" : result.shortMessage,
       exitCode,
@@ -46,10 +54,12 @@ async function runCaptureCommand(command = "", args = [], {
       signal: result.signal,
       stderr: result.stderr,
       stdout: result.stdout,
-      timedOut: result.timedOut === true
+      timedOut: result.timedOut === true,
+      execution
     });
   } catch (error) {
-    return commandErrorResult(error.message, "vibe64_command_capture_failed", {
+    outcome = commandErrorResult(error.message, "vibe64_command_capture_failed", {
+      execution,
       exitCode: typeof error.exitCode === "number" ? error.exitCode : 1,
       output: error.all,
       signal: error.signal,
@@ -58,6 +68,23 @@ async function runCaptureCommand(command = "", args = [], {
       timedOut: error.timedOut === true
     });
   }
+  if (
+    process.platform !== "win32" &&
+    Number.isSafeInteger(processGroupId) &&
+    !await drainProcessGroup(processGroupId)
+  ) {
+    return commandErrorResult(
+      "The command finished, but its execution scope did not become empty.",
+      "vibe64_execution_drain_failed",
+      {
+        execution,
+        output: outcome?.output,
+        stderr: outcome?.stderr,
+        stdout: outcome?.stdout
+      }
+    );
+  }
+  return outcome;
 }
 
 export {

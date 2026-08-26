@@ -47,6 +47,19 @@ export {
   runVibe64Command
 } from "./runVibe64Command.js";
 export {
+  VIBE64_MANAGED_EXECUTION_REQUIRED_ENV,
+  installVibe64ManagedExecutionProvider,
+  stopVibe64Execution,
+  vibe64CapacityRejectedResult,
+  vibe64ManagedExecutionProvider,
+  vibe64ManagedExecutionRequired
+} from "./managedExecution.js";
+export {
+  VIBE64_EXECUTION_KINDS,
+  VIBE64_EXECUTION_LIFECYCLES,
+  normalizeExecutionDescriptor
+} from "./request.js";
+export {
   checkpointRefRoot,
   checkpointRefs,
   createGitTurnCheckpoint,

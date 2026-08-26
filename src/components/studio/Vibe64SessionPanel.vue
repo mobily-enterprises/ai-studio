@@ -176,6 +176,7 @@
         :toolbar-sessions="toolbar.sessions"
         @busy-change="setRuntimeBusy"
         @chat-attention="emitChatAttention"
+        @execution-attention="emit('execution-attention', $event)"
         @page-error-change="setRuntimePageError"
         @source-operations-suspension-change="setRuntimeSourceOperationsSuspended"
         @work-state-change="setRuntimeWorkState"

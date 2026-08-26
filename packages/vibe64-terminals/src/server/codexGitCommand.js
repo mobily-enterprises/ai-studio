@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -37,14 +38,17 @@ import {
 } from "./writeExecutableFileIfChanged.js";
 import {
   readJsonCommandRequest,
+  requestUnixJsonCommand,
   sendJsonCommandResponse,
-  shortCommandHash
+  shortCommandHash,
+  unixCommandSocketIsPresent
 } from "./unixJsonCommand.js";
 
 const CODEX_GIT_COMMAND_DIR_NAME = "codex-git-command";
 const CODEX_GIT_COMMAND_WRAPPER_NAMES = Object.freeze(["git", "gh"]);
 const CODEX_GIT_COMMAND_INPUT_MAX_BYTES = 20 * 1024 * 1024;
 const CODEX_GIT_COMMAND_TIMEOUT_MS = 120_000;
+const CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS = 2000;
 const CODEX_LOCAL_GIT_OPERATIONS = new Set([
   "add",
   "am",
@@ -134,6 +138,7 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
 const VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV = "VIBE64_CODEX_GIT_COMMAND_SESSION_ID";
 const VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV = "VIBE64_CODEX_GIT_COMMAND_SOCKET";
 const VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV = "VIBE64_CODEX_GIT_COMMAND_TOKEN";
+const VIBE64_CODEX_GIT_COMMAND_GENERATION_ENV = "VIBE64_CODEX_GIT_COMMAND_GENERATION";
 const VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV = "VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR";
 const CODEX_GIT_COMMAND_METADATA_NAMES = Object.freeze([
   ...SESSION_GIT_COMMAND_ACTOR_METADATA_KEYS,
@@ -238,7 +243,8 @@ function requestSocket({ body, socketPath }) {
       },
       method: "POST",
       path: "/codex-git-command/run",
-      socketPath
+      socketPath,
+      timeout: 5000
     }, (response) => {
       let text = "";
       response.setEncoding("utf8");
@@ -251,6 +257,11 @@ function requestSocket({ body, socketPath }) {
       }));
     });
     request.once("error", reject);
+    request.once("timeout", () => {
+      const error = new Error("Managed Git control timed out.");
+      error.code = "ETIMEDOUT";
+      request.destroy(error);
+    });
     request.end(requestBody);
   });
 }
@@ -262,9 +273,10 @@ if (!allowedCommands.has(command)) {
 const socketPath = process.env.${VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV} || "";
 const sessionId = process.env.${VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV} || "";
 const token = process.env.${VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV} || "";
+const generationId = process.env.${VIBE64_CODEX_GIT_COMMAND_GENERATION_ENV} || "";
 
-if (!socketPath || !sessionId || !token) {
-  fail("Codex git command identity is not available for this session.");
+if (!socketPath || !sessionId || !token || !generationId) {
+  fail("vibe64_agent_control_unavailable: Managed Git control identity is unavailable. Reconnect the assistant.");
 }
 
 const inputBase64 = await readStdinBase64();
@@ -274,11 +286,15 @@ const response = await requestSocket({
     args: process.argv.slice(2),
     command,
     cwd: process.cwd(),
+    generationId,
     inputBase64,
     sessionId,
     token
   }
 }).catch((error) => {
+  if (["ECONNREFUSED", "ENOENT", "ENOTSOCK", "ETIMEDOUT"].includes(String(error?.code || ""))) {
+    fail("vibe64_agent_control_unavailable: Managed Git control is unavailable. Reconnect the assistant.");
+  }
   fail(error?.message || error || "Codex git command request failed.");
 });
 
@@ -302,7 +318,10 @@ if (payload.stderr) {
   }
 }
 if (payload.ok === false && !payload.stderr && payload.error) {
-  process.stderr.write(String(payload.error) + "\\n");
+  const prefix = payload.code === "vibe64_agent_control_unavailable"
+    ? "vibe64_agent_control_unavailable: "
+    : "";
+  process.stderr.write(prefix + String(payload.error) + "\\n");
 }
 
 const exitCode = Number.isInteger(payload.exitCode) ? payload.exitCode : (payload.ok === false ? 1 : 0);
@@ -868,6 +887,67 @@ function commandServerToken({
   ].join("\n"));
 }
 
+async function codexGitCommandServerIsHealthy(entry = {}, {
+  sessionId = "",
+  socketPath = ""
+} = {}) {
+  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
+    return false;
+  }
+  try {
+    const response = await requestUnixJsonCommand({
+      body: {
+        generationId: entry.generationId,
+        sessionId,
+        token: entry.token
+      },
+      path: "/codex-git-command/health",
+      socketPath,
+      timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
+    });
+    return response.statusCode === 200 &&
+      response.payload?.ok === true &&
+      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
+      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
+  } catch {
+    return false;
+  }
+}
+
+async function closeCodexGitCommandServer(socketPath = "", entry = null) {
+  if (entry?.server) {
+    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
+  }
+  if (commandServers.get(socketPath) === entry) {
+    commandServers.delete(socketPath);
+  }
+}
+
+async function removeDeadCodexGitCommandSocket(socketPath = "") {
+  if (!await unixCommandSocketIsPresent(socketPath)) {
+    return;
+  }
+  try {
+    await requestUnixJsonCommand({
+      body: {},
+      path: "/codex-git-command/health",
+      socketPath,
+      timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
+    });
+  } catch (error) {
+    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
+      await rm(socketPath, {
+        force: true
+      });
+      return;
+    }
+    throw error;
+  }
+  const error = new Error("The managed Git socket is owned by an unverified listener.");
+  error.code = "vibe64_agent_control_owner_unverified";
+  throw error;
+}
+
 async function replaceCodexGitCommandServer({
   commandService,
   sessionId = "",
@@ -875,32 +955,41 @@ async function replaceCodexGitCommandServer({
   stateRoot = ""
 } = {}) {
   const existing = commandServers.get(socketPath);
-  if (existing?.commandService === commandService) {
-    return existing;
-  }
-  if (existing?.server) {
-    await new Promise((resolve) => {
-      existing.server.close(() => resolve());
-    }).catch(() => null);
-    commandServers.delete(socketPath);
-  }
+  await closeCodexGitCommandServer(socketPath, existing);
   await mkdir(path.dirname(socketPath), {
     recursive: true
   });
-  await rm(socketPath, {
-    force: true
-  });
+  await removeDeadCodexGitCommandSocket(socketPath);
   const token = commandServerToken({
     sessionId,
     socketPath,
     stateRoot
   });
+  const generationId = randomUUID();
   const server = http.createServer(async (request, response) => {
     try {
-      if (request.method === "POST" && request.url === "/codex-git-command/run") {
+      if (request.method === "POST" && [
+        "/codex-git-command/health",
+        "/codex-git-command/run"
+      ].includes(request.url)) {
         const input = await readRequestJson(request);
-        if (!verifyRequestToken(input, token)) {
-          sendJsonCommandResponse(response, 403, responseError("Codex git command token is invalid.", "vibe64_codex_git_command_token_invalid"));
+        if (
+          !verifyRequestToken(input, token) ||
+          normalizeText(input.sessionId) !== normalizeText(sessionId) ||
+          normalizeText(input.generationId) !== generationId
+        ) {
+          sendJsonCommandResponse(response, 409, responseError(
+            "Managed Git control generation is no longer current. Reconnect the assistant.",
+            "vibe64_agent_control_unavailable"
+          ));
+          return;
+        }
+        if (request.url === "/codex-git-command/health") {
+          sendJsonCommandResponse(response, 200, {
+            generationId,
+            ok: true,
+            sessionId: normalizeText(sessionId)
+          });
           return;
         }
         sendJsonCommandResponse(response, 200, await commandService.run(input));
@@ -925,10 +1014,25 @@ async function replaceCodexGitCommandServer({
   server.unref?.();
   const stored = {
     commandService,
+    generationId,
     server,
+    sessionId: normalizeText(sessionId),
+    socketPath,
     token
   };
   commandServers.set(socketPath, stored);
+  if (!await codexGitCommandServerIsHealthy(stored, {
+    sessionId,
+    socketPath
+  })) {
+    await closeCodexGitCommandServer(socketPath, stored);
+    await rm(socketPath, {
+      force: true
+    }).catch(() => null);
+    const error = new Error("Managed Git control did not pass its ownership health check.");
+    error.code = "vibe64_agent_control_unavailable";
+    throw error;
+  }
   return stored;
 }
 
@@ -947,10 +1051,6 @@ async function ensureCodexGitCommandServer({
   if (pending?.commandService === commandService) {
     return pending.promise;
   }
-  const existing = commandServers.get(socketPath);
-  if (!pending && existing?.commandService === commandService) {
-    return existing;
-  }
 
   const waitForPrevious = pending?.promise
     ? pending.promise.catch(() => null)
@@ -959,12 +1059,24 @@ async function ensureCodexGitCommandServer({
     commandService,
     promise: null
   };
-  preparation.promise = waitForPrevious.then(() => replaceCodexGitCommandServer({
-    commandService,
-    sessionId,
-    socketPath,
-    stateRoot
-  }));
+  preparation.promise = waitForPrevious.then(async () => {
+    const existing = commandServers.get(socketPath);
+    if (
+      existing?.commandService === commandService &&
+      await codexGitCommandServerIsHealthy(existing, {
+        sessionId,
+        socketPath
+      })
+    ) {
+      return existing;
+    }
+    return replaceCodexGitCommandServer({
+      commandService,
+      sessionId,
+      socketPath,
+      stateRoot
+    });
+  });
   commandServerPreparations.set(socketPath, preparation);
   try {
     return await preparation.promise;
@@ -977,6 +1089,7 @@ async function ensureCodexGitCommandServer({
 
 function commandEnvironment({
   env = process.env,
+  generationId = "",
   sessionId = "",
   stateRoot = "",
   token = ""
@@ -987,6 +1100,7 @@ function commandEnvironment({
     stateRoot
   });
   const commandEnv = {
+    [VIBE64_CODEX_GIT_COMMAND_GENERATION_ENV]: normalizeText(generationId),
     [VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV]: normalizeText(sessionId),
     [VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV]: commandSocketHostPath({
       env,
@@ -1027,8 +1141,10 @@ async function prepareCodexGitCommand({
     stateRoot
   });
   return {
+    controlGenerationId: server.generationId,
     env: commandEnvironment({
       env,
+      generationId: server.generationId,
       sessionId: normalizedSessionId,
       stateRoot,
       token: server.token
@@ -1048,6 +1164,7 @@ async function prepareCodexGitCommand({
 }
 
 export {
+  VIBE64_CODEX_GIT_COMMAND_GENERATION_ENV,
   VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV,
   VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV,
   VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV,

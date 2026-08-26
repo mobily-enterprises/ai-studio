@@ -3,6 +3,10 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { spawn as spawnPty } from "node-pty";
 
+import {
+  drainProcessGroup
+} from "./detached.js";
+
 const MAX_TERMINAL_BUFFER_LENGTH = 256 * 1024;
 const MAX_TERMINAL_BUFFER_ROWS = 300;
 const DEFAULT_TERMINAL_COLS = 100;
@@ -791,6 +795,11 @@ function markTerminalExited(session) {
 
 async function settleTerminalExitStatus(session, deadlineAt) {
   try {
+    await session.scopeDrainCompletion;
+  } catch (error) {
+    reportTerminalLifecycleFailure(session, error);
+  }
+  try {
     await waitForTerminalLifecyclePromise(
       beginTerminalCloseHook(session, session.stopReason || "exit"),
       deadlineAt,
@@ -929,6 +938,7 @@ function startTerminalSession({
     rows: DEFAULT_TERMINAL_ROWS,
     status: "running",
     stopHookCompletion: null,
+    scopeDrainCompletion: Promise.resolve(),
     namespace,
     subscribers: new Set(),
     terminal
@@ -969,6 +979,17 @@ function startTerminalSession({
     session.processExited = true;
     session.exitCode = exitCode;
     session.status = "closing";
+    session.scopeDrainCompletion = (async () => {
+      if (
+        process.platform !== "win32" &&
+        !await drainProcessGroup(session.terminal.pid)
+      ) {
+        const error = new Error(`Terminal execution scope did not become empty: ${session.id}`);
+        error.code = "terminal_execution_drain_failed";
+        throw error;
+      }
+    })();
+    session.scopeDrainCompletion.catch(() => null);
     sendToSubscribers(session, {
       exitCode,
       status: session.status,
@@ -1213,6 +1234,15 @@ async function closeTerminalSession(id, {
     }
     try {
       await waitForTerminalExit(session, deadlineAt);
+    } catch (error) {
+      fatalFailures.push(reportTerminalLifecycleFailure(session, error));
+    }
+    try {
+      await waitForTerminalLifecyclePromise(
+        session.scopeDrainCompletion,
+        deadlineAt,
+        () => terminalLifecycleTimeout(session, "drain")
+      );
     } catch (error) {
       fatalFailures.push(reportTerminalLifecycleFailure(session, error));
     }

@@ -12,6 +12,7 @@ import {
   resolveCommandEnv
 } from "../env/resolveCommandEnv.js";
 import {
+  closeTerminalSession,
   startTerminalSession
 } from "./terminalSessions.js";
 import {
@@ -24,6 +25,8 @@ import {
 import {
   realUserActorRequiresInstalledHelper
 } from "../policy/permissionPolicy.js";
+
+const ptyExecutions = new Map();
 
 function ptyHelperPayloadPath(root = "") {
   const resolvedRoot = String(root || "").trim();
@@ -124,13 +127,14 @@ async function runPtyCommand(request = {}, {
 } = {}) {
   try {
     const terminal = request.terminal || {};
+    const executionId = request.execution?.id || "";
     const sessionInput = terminalSessionInputForRequest(request, {
       actor,
       baseEnv: baseEnv || env,
       cwd,
       env
     });
-    return startTerminalSession({
+    const result = startTerminalSession({
       args: sessionInput.args,
       command: sessionInput.command,
       commandPreview: terminal.commandPreview,
@@ -141,20 +145,93 @@ async function runPtyCommand(request = {}, {
       metadata: terminal.metadata,
       namespace: terminal.namespace,
       namespaceLimitPrefix: terminal.namespaceLimitPrefix,
-      onClose: terminal.onClose,
+      onClose: async (input) => {
+        try {
+          if (typeof terminal.onClose === "function") {
+            await terminal.onClose(input);
+          }
+        } finally {
+          if (executionId) {
+            ptyExecutions.set(executionId, {
+              id: input.id,
+              namespace: terminal.namespace,
+              scopeEmpty: true
+            });
+          }
+        }
+      },
       onOutput: terminal.onOutput,
       onStop: terminal.onStop,
       reuseRunning: terminal.reuseRunning,
       runningLimitFilter: terminal.runningLimitFilter
     });
+    if (result?.ok === true && executionId) {
+      ptyExecutions.set(executionId, {
+        id: result.id,
+        namespace: terminal.namespace
+      });
+    }
+    return result?.ok === true
+      ? {
+          ...result,
+          execution: request.execution
+        }
+      : result;
   } catch (error) {
     return commandErrorResult(
       error?.message || "Vibe64 PTY command failed.",
-      error?.code || "vibe64_command_pty_failed"
+      error?.code || "vibe64_command_pty_failed",
+      { execution: request.execution }
     );
   }
 }
 
+async function stopPtyExecution(executionId = "") {
+  const normalizedExecutionId = String(executionId || "").trim();
+  const execution = ptyExecutions.get(normalizedExecutionId);
+  if (!execution) {
+    return {
+      code: "vibe64_execution_not_found",
+      error: "The execution is not owned by this process.",
+      executionId: normalizedExecutionId,
+      ok: false,
+      scopeEmpty: false,
+      stopped: false
+    };
+  }
+  if (execution.scopeEmpty === true) {
+    ptyExecutions.delete(normalizedExecutionId);
+    return {
+      executionId: normalizedExecutionId,
+      ok: true,
+      scopeEmpty: true,
+      stopped: false
+    };
+  }
+  try {
+    const result = await closeTerminalSession(execution.id, {
+      namespace: execution.namespace
+    });
+    ptyExecutions.delete(normalizedExecutionId);
+    return {
+      executionId: normalizedExecutionId,
+      ok: true,
+      scopeEmpty: true,
+      stopped: result.closed === true
+    };
+  } catch (error) {
+    return {
+      code: error?.code || "vibe64_execution_drain_failed",
+      error: error?.message || "The terminal execution did not become empty.",
+      executionId: normalizedExecutionId,
+      ok: false,
+      scopeEmpty: false,
+      stopped: false
+    };
+  }
+}
+
 export {
-  runPtyCommand
+  runPtyCommand,
+  stopPtyExecution
 };

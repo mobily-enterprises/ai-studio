@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   envRecord,
   normalizeAbsolutePath,
@@ -51,6 +53,20 @@ const VIBE64_COMMAND_GIT_TRANSPORTS = Object.freeze([
   "none",
   "github-https",
   "github-token"
+]);
+const VIBE64_EXECUTION_KINDS = Object.freeze([
+  "assistant",
+  "browser",
+  "control",
+  "job",
+  "preview",
+  "service",
+  "terminal"
+]);
+const VIBE64_EXECUTION_LIFECYCLES = Object.freeze([
+  "finite",
+  "interactive",
+  "service"
 ]);
 const VIBE64_COMMAND_RUNTIMES = Object.freeze([
   "node26",
@@ -171,6 +187,99 @@ function normalizeCredentialHome(value = {}) {
   };
 }
 
+function defaultExecutionLifecycle(mode = "capture") {
+  if (mode === "detached") {
+    return "service";
+  }
+  if (mode === "pty") {
+    return "interactive";
+  }
+  return "finite";
+}
+
+function defaultExecutionKind({
+  mode = "capture",
+  purpose = "terminal"
+} = {}) {
+  if (purpose === "preview") {
+    return "preview";
+  }
+  if (mode === "pty") {
+    return "terminal";
+  }
+  return "job";
+}
+
+function normalizeExecutionIdentifier(value = "") {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,254}[A-Za-z0-9])?$/u.test(normalized)) {
+    throw commandRequestError(
+      `Invalid Vibe64 execution identifier: ${normalized}.`,
+      "vibe64_execution_identifier_invalid"
+    );
+  }
+  return normalized;
+}
+
+function normalizeExecutionDescriptor(value = {}, {
+  mode = "capture",
+  project = {},
+  purpose = "terminal",
+  session = {}
+} = {}) {
+  const execution = recordValue(value);
+  const kind = normalizeEnum(
+    execution.kind,
+    VIBE64_EXECUTION_KINDS,
+    defaultExecutionKind({ mode, purpose }),
+    "execution_kind"
+  );
+  const lifecycle = normalizeEnum(
+    execution.lifecycle,
+    VIBE64_EXECUTION_LIFECYCLES,
+    defaultExecutionLifecycle(mode),
+    "execution_lifecycle"
+  );
+  if (
+    (mode === "detached" && lifecycle !== "service") ||
+    (mode === "pty" && lifecycle !== "interactive") ||
+    (mode === "capture" && lifecycle !== "finite")
+  ) {
+    throw commandRequestError(
+      `Execution lifecycle ${lifecycle} is incompatible with command mode ${mode}.`,
+      "vibe64_execution_lifecycle_incompatible"
+    );
+  }
+  const ownerId = normalizeExecutionIdentifier(
+    execution.ownerId || session.sessionId || session.id
+  );
+  if (lifecycle === "service" && !ownerId) {
+    throw commandRequestError(
+      "Service execution requires a durable owner id.",
+      "vibe64_execution_owner_required"
+    );
+  }
+  return Object.freeze({
+    controlGenerationId: normalizeExecutionIdentifier(execution.controlGenerationId),
+    id: randomUUID(),
+    kind,
+    label: normalizeText(execution.label),
+    lifecycle,
+    operationId: normalizeExecutionIdentifier(execution.operationId),
+    ownerId,
+    parentExecutionId: normalizeExecutionIdentifier(execution.parentExecutionId),
+    projectSlug: normalizeExecutionIdentifier(
+      execution.projectSlug || project.slug || project.projectSlug
+    ),
+    sessionId: normalizeExecutionIdentifier(
+      execution.sessionId || session.sessionId || session.id
+    )
+  });
+}
+
 function defaultRuntimesForPurpose(purpose = "") {
   return DEFAULT_INTERACTIVE_RUNTIME_PURPOSES.has(purpose)
     ? VIBE64_INTERACTIVE_RUNTIME_PACKS
@@ -213,6 +322,8 @@ function normalizeVibe64CommandRequest(input = {}) {
       throw commandRequestError(`Unsupported Vibe64 runtime: ${runtime}.`, "vibe64_command_runtime_unsupported");
     }
   }
+  const project = recordValue(request.project);
+  const session = recordValue(request.session);
   return {
     actor: normalizeEnum(request.actor, VIBE64_COMMAND_ACTORS, "daemon", "actor"),
     allowedRoots: normalizeAbsolutePaths(request.allowedRoots),
@@ -225,6 +336,12 @@ function normalizeVibe64CommandRequest(input = {}) {
     env: normalizedEnv.env,
     envFactory: normalizedEnv.envFactory,
     envPolicy: normalizeEnum(request.envPolicy, VIBE64_COMMAND_ENV_POLICIES, "session", "env_policy"),
+    execution: normalizeExecutionDescriptor(request.execution, {
+      mode,
+      project,
+      purpose,
+      session
+    }),
     credentialHome: normalizeCredentialHome(request.credentialHome),
     gitAuthToken: normalizeText(request.gitAuthToken || request.gitCredentials?.token),
     gitSafeDirectories: normalizeAbsolutePaths(request.gitSafeDirectories || request.safeDirectories),
@@ -242,10 +359,10 @@ function normalizeVibe64CommandRequest(input = {}) {
       "utf8",
       "output_encoding"
     ),
-    project: recordValue(request.project),
+    project,
     purpose,
     runtimes,
-    session: recordValue(request.session),
+    session,
     shimDirs: normalizeAbsolutePaths(request.shimDirs),
     terminal: normalizeTerminalOptions(request.terminal || request.pty),
     timeout: Number.isSafeInteger(Number(request.timeout)) && Number(request.timeout) > 0
@@ -264,6 +381,9 @@ export {
   VIBE64_COMMAND_MODES,
   VIBE64_COMMAND_PURPOSES,
   VIBE64_COMMAND_RUNTIMES,
+  VIBE64_EXECUTION_KINDS,
+  VIBE64_EXECUTION_LIFECYCLES,
+  normalizeExecutionDescriptor,
   normalizeVibe64CommandRequest,
   rejectCallerEnvPolicy
 };

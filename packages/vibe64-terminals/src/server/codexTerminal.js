@@ -1560,6 +1560,7 @@ function createCodexTerminalController({
 
   async function codexManagedCommandEnv({
     runtime = null,
+    session = {},
     sessionId = ""
   } = {}) {
     if (!codexGitCommand || !normalizeText(sessionId)) {
@@ -1574,10 +1575,15 @@ function createCodexTerminalController({
     if (prepared?.ok !== true) {
       return prepared?.env || {};
     }
+    const project = typeof projectService?.readCurrentProject === "function"
+      ? await projectService.readCurrentProject()
+      : projectService?.selectedProject || {};
     const previewPrepared = await prepareAgentPreviewCommand({
       commandService: agentPreviewCommand,
       env,
+      project,
       sessionId,
+      worktreePath: terminalWorktreePath(session),
       wrapperHostDir: prepared.hostWrapperDir
     });
     const envPrepared = await prepareAgentEnvCommand({
@@ -1644,6 +1650,7 @@ function createCodexTerminalController({
       }),
       ...await codexManagedCommandEnv({
         runtime,
+        session: currentSession,
         sessionId
       })
     });
@@ -2029,6 +2036,7 @@ function createCodexTerminalController({
 
   function codexAppServerProjectContext(terminalEnv = {}) {
     return {
+      slug: normalizeText(currentProjectRequestContext()?.slug),
       tenant: normalizeText(terminalEnv.VIBE64_RUNTIME_NAMESPACE || terminalEnv.VIBE64_WORKSPACE),
       workspace: normalizeText(terminalEnv.VIBE64_WORKSPACE || terminalEnv.VIBE64_RUNTIME_NAMESPACE)
     };
@@ -2077,6 +2085,7 @@ function createCodexTerminalController({
       ...baseTerminalEnv,
         ...await codexManagedCommandEnv({
           runtime: effectiveRuntime,
+          session,
           sessionId: normalizeText(session.sessionId || session.id)
         })
     };

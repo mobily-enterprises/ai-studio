@@ -447,6 +447,9 @@ test("execution gateway bars same-user detached real-user commands in managed wo
         "-e",
         "console.log('should-not-run')"
       ],
+      execution: {
+        ownerId: "managed-detached-test"
+      },
       mode: "detached",
       userKey: currentUser.username
     });
@@ -1409,6 +1412,9 @@ test("execution gateway detached mode starts a long-running process and returns 
       `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started\\n");`
     ],
     cwd: root,
+    execution: {
+      ownerId: "detached-test"
+    },
     logPath,
     mode: "detached",
     purpose: "codex"
@@ -1433,6 +1439,9 @@ test("execution gateway rejects detached real-user commands when the process is 
       "-e",
       "console.log('should not run')"
     ],
+    execution: {
+      ownerId: "real-user-detached-test"
+    },
     mode: "detached",
     purpose: "codex",
     userKey: username
@@ -1632,7 +1641,13 @@ test("execution helper client preserves captured stdout and stderr", async () =>
 });
 
 test("execution gateway rejects caller-owned identity and temp policy", async () => {
-  for (const envName of ["HOME", "PATH", "TMPDIR"]) {
+  for (const envName of [
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "VIBE64_EXECUTION_ID",
+    "VIBE64_MANAGED_EXECUTION_REQUIRED"
+  ]) {
     const result = await runVibe64Command({
       command: process.execPath,
       args: ["-e", ""],
