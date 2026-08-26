@@ -120,8 +120,7 @@ import {
   stableHash
 } from "@local/vibe64-execution/server";
 import {
-  VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV,
-  prepareCodexGitCommand
+  VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR_ENV
 } from "./codexGitCommand.js";
 import {
   recordSessionGitCommandActor,
@@ -134,16 +133,12 @@ import {
   defineCodexEconomyThreadRecord
 } from "./codexEconomyThreadLedger.js";
 import {
-  prepareAgentPreviewCommand
-} from "./agentPreviewCommand.js";
-import {
   VIBE64_AGENT_ENV_COMMAND_SOCKET_ENV,
-  VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV,
-  prepareAgentEnvCommand
+  VIBE64_AGENT_ENV_COMMAND_TOKEN_ENV
 } from "./agentEnvCommand.js";
 import {
-  prepareAgentDatabaseCommand
-} from "./agentDatabaseCommand.js";
+  prepareAgentSessionCommandEnvironment
+} from "./agentCommandEnvironment.js";
 import {
   agentTerminalIdentityForWorkdir,
   agentTerminalIdentityState
@@ -1570,42 +1565,22 @@ function createCodexTerminalController({
     if (!codexGitCommand || !normalizeText(sessionId)) {
       return {};
     }
-    const prepared = await prepareCodexGitCommand({
-      commandService: codexGitCommand,
-      env: codexAttachmentEnv(),
-      sessionId,
-      stateRoot: normalizeText(runtime?.stateRoot)
-    });
-    if (prepared?.ok !== true) {
-      return prepared?.env || {};
-    }
     const project = typeof projectService?.readCurrentProject === "function"
       ? await projectService.readCurrentProject()
       : projectService?.selectedProject || {};
-    const previewPrepared = await prepareAgentPreviewCommand({
-      commandService: agentPreviewCommand,
+    const prepared = await prepareAgentSessionCommandEnvironment({
+      agentDatabaseCommand,
+      agentEnvCommand,
+      agentPreviewCommand,
       env,
+      gitCommand: codexGitCommand,
+      gitEnvironment: codexAttachmentEnv(),
       project,
+      runtime,
       sessionId,
-      worktreePath: terminalWorktreePath(session),
-      wrapperHostDir: prepared.hostWrapperDir
+      worktreePath: terminalWorktreePath(session)
     });
-    const envPrepared = await prepareAgentEnvCommand({
-      commandService: agentEnvCommand,
-      sessionId,
-      wrapperHostDir: prepared.hostWrapperDir
-    });
-    const databasePrepared = await prepareAgentDatabaseCommand({
-      commandService: agentDatabaseCommand,
-      sessionId,
-      wrapperHostDir: prepared.hostWrapperDir
-    });
-    return {
-      ...(prepared.env || {}),
-      ...(previewPrepared?.env || {}),
-      ...(envPrepared?.env || {}),
-      ...(databasePrepared?.env || {})
-    };
+    return prepared.env;
   }
 
   async function withCodexSessionStartupGate({

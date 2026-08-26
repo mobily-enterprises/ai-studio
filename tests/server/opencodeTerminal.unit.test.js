@@ -57,7 +57,7 @@ const providerRevision = openCodeAssistantCapabilities({
   providers: providerResult
 }).modelProviders[0].definitionRevision;
 
-async function controllerHarness() {
+async function controllerHarness({ withCommandBoundary = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
   const sourceRoot = path.join(root, "sessions", "active", "session-1", "source");
   const sessionRoot = path.join(root, "session-state", "session-1");
@@ -125,6 +125,7 @@ async function controllerHarness() {
   };
   const processStarts = [];
   const processStops = [];
+  const commandEnvironmentCalls = [];
   const createdSessions = [];
   const promptCalls = [];
   const switchedAgents = [];
@@ -211,6 +212,26 @@ async function controllerHarness() {
   }
 
   const controller = createOpenCodeTerminalController({
+    ...(withCommandBoundary ? {
+      agentDatabaseCommand: { id: "database" },
+      agentEnvCommand: { id: "environment" },
+      agentPreviewCommand: { id: "preview" },
+      codexGitCommand: { id: "git" },
+      async prepareCommandEnvironment(input) {
+        commandEnvironmentCalls.push(input);
+        return {
+          env: {
+            VIBE64_AGENT_DATABASE_COMMAND_SOCKET: "/managed/database.sock",
+            VIBE64_AGENT_ENV_COMMAND_SOCKET: "/managed/environment.sock",
+            VIBE64_AGENT_PREVIEW_COMMAND_SOCKET: "/managed/preview.sock",
+            VIBE64_CODEX_GIT_COMMAND_SOCKET: "/managed/git.sock"
+          },
+          hostWrapperDir: "/managed/wrappers",
+          ok: true,
+          shimDirs: ["/managed/wrappers"]
+        };
+      }
+    } : {}),
     async createServerProcess(options) {
       const started = {
         client: client(),
@@ -250,6 +271,7 @@ async function controllerHarness() {
 
   return {
     connection,
+    commandEnvironmentCalls,
     controller,
     createdSessions,
     failPrompt() {
@@ -423,4 +445,36 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     (error) => error?.code === "vibe64_opencode_execution_input_too_large"
   );
   assert.equal(harness.processStarts.length, startsBeforeRejectedInput);
+});
+
+test("OpenCode receives the same complete session command boundary as Codex", async (t) => {
+  const harness = await controllerHarness({ withCommandBoundary: true });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.ensureSession("session-1", {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(harness.commandEnvironmentCalls.length, 1);
+  assert.equal(harness.commandEnvironmentCalls[0].sessionId, "session-1");
+  assert.equal(harness.commandEnvironmentCalls[0].worktreePath, path.join(
+    harness.root,
+    "sessions",
+    "active",
+    "session-1",
+    "source"
+  ));
+  const sessionProcess = harness.processStarts.find((entry) => entry.options.apiKey);
+  assert.deepEqual(sessionProcess.options.managedEnv, {
+    VIBE64_AGENT_DATABASE_COMMAND_SOCKET: "/managed/database.sock",
+    VIBE64_AGENT_ENV_COMMAND_SOCKET: "/managed/environment.sock",
+    VIBE64_AGENT_PREVIEW_COMMAND_SOCKET: "/managed/preview.sock",
+    VIBE64_CODEX_GIT_COMMAND_SOCKET: "/managed/git.sock"
+  });
+  assert.deepEqual(sessionProcess.options.shimDirs, ["/managed/wrappers"]);
 });

@@ -463,6 +463,9 @@ function createService({
   });
   const opencode = createOpenCodeTerminalController({
     ...opencodeTerminalController,
+    agentDatabaseCommand,
+    agentEnvCommand,
+    agentPreviewCommand,
     codexGitCommand,
     command: opencodeTerminalController.command || env.VIBE64_OPENCODE_COMMAND || "opencode",
     env,

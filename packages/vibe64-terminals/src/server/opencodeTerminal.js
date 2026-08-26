@@ -28,8 +28,8 @@ import {
   resolveAiTurnContext
 } from "./aiTurnContext.js";
 import {
-  prepareCodexGitCommand
-} from "./codexGitCommand.js";
+  prepareAgentSessionCommandEnvironment
+} from "./agentCommandEnvironment.js";
 import {
   OPENCODE_ECONOMY_AGENT_ID,
   createOpenCodeServerProcess
@@ -371,12 +371,15 @@ function openCodeTurnSnapshot(turn = null, threadId = "") {
 }
 
 function createOpenCodeTerminalController({
+  agentDatabaseCommand = null,
+  agentEnvCommand = null,
+  agentPreviewCommand = null,
   codexGitCommand = null,
   command = "opencode",
   createServerProcess = createOpenCodeServerProcess,
   env = process.env,
   listConnections = async () => [],
-  prepareManagedCommand = prepareCodexGitCommand,
+  prepareCommandEnvironment = prepareAgentSessionCommandEnvironment,
   projectService,
   publishSessionChanged = async () => null,
   recordGitActor = recordSessionGitCommandActor,
@@ -572,14 +575,22 @@ function createOpenCodeTerminalController({
   }
 
   async function managedCommandEnvironment(context = {}) {
-    if (!codexGitCommand || typeof prepareManagedCommand !== "function") {
+    if (!codexGitCommand) {
       return { env: {}, shimDirs: [] };
     }
-    const prepared = await prepareManagedCommand({
-      commandService: codexGitCommand,
+    const project = typeof projectService?.readCurrentProject === "function"
+      ? await projectService.readCurrentProject()
+      : projectService?.selectedProject || {};
+    const prepared = await prepareCommandEnvironment({
+      agentDatabaseCommand,
+      agentEnvCommand,
+      agentPreviewCommand,
       env,
+      gitCommand: codexGitCommand,
+      project,
+      runtime: context.runtime,
       sessionId: context.sessionId,
-      stateRoot: text(context.runtime?.stateRoot)
+      worktreePath: context.workdir
     });
     if (prepared?.ok !== true) {
       throw openCodeError(
@@ -591,7 +602,7 @@ function createOpenCodeTerminalController({
     }
     return {
       env: record(prepared.env),
-      shimDirs: [text(prepared.hostWrapperDir)].filter(Boolean)
+      shimDirs: prepared.shimDirs
     };
   }
 
