@@ -95,7 +95,7 @@ async function main() {
     ));
     assert.equal(packageJson.name, "created-project-proof");
     assert.deepEqual(packageJson.workspaces, ["packages/*"]);
-    assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.198");
+    assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.200");
     assert.equal(packageJson.devDependencies["@jskit-ai/jskit-cli"], undefined);
     assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
     assert.equal(packageJson.scripts["jskit:check"], "jskit check");

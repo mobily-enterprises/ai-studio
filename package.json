@@ -133,8 +133,8 @@
     "diff2html": "^3.4.56",
     "execa": "^9.6.1",
     "fastify": "^5.7.4",
-    "genesis-compiler": "1.2.16",
-    "genesis-stack": "1.0.3",
+    "genesis-compiler": "1.2.17",
+    "genesis-stack": "1.0.4",
     "get-port": "^7.2.0",
     "json-rest-schema": "^1.0.16",
     "node-pty": "^1.1.0",
@@ -150,7 +150,7 @@
     "ws": "^8.20.1"
   },
   "devDependencies": {
-    "@jskit-ai/agent-docs": "0.1.145",
+    "@jskit-ai/agent-docs": "0.1.147",
     "@jskit-ai/config-eslint": "0.1.170",
     "@playwright/test": "1.61.1",
     "@vitejs/plugin-vue": "^5.2.1",
